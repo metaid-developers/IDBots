@@ -38,10 +38,13 @@ const TOOL_NAMES = [
   'mrc721_collection_info',
   'mrc721_verify_holding',
   'mrc721_search_collections',
+  'mrc721_sell_intent',
+  'mrc721_sell_intent_cancel',
+  'mrc721_sell_intents',
 ];
 
 function makeHarness(overrides = {}) {
-  const calls = { collectionCreate: [], collectionUpdate: [], mint: [], transfer: [], sell: [], buy: [] };
+  const calls = { collectionCreate: [], collectionUpdate: [], mint: [], transfer: [], sell: [], buy: [], sellIntentDeclare: [], sellIntentCancel: [], listSellIntents: [] };
   const control = {
     getMetabotMvcAddress: (id) => (id === 1 ? BOT_ADDRESS : id === 15 ? OTHER_ADDRESS : null),
     resolveMetabotIdByName: (name) => (name === 'AI_Sunny' ? 1 : null),
@@ -113,6 +116,41 @@ function makeHarness(overrides = {}) {
       };
     },
     listSellOrders: async () => overrides.sellOrders ?? [],
+    sellIntentDeclare: async (input) => {
+      calls.sellIntentDeclare.push(input);
+      if (overrides.sellIntentError) throw overrides.sellIntentError;
+      return {
+        sellPinId: `${'se'.repeat(32)}i0`,
+        txids: ['tx1'],
+        totalCost: 500,
+        intent: {
+          protocol: 'mrc721-sell-intent',
+          version: 1,
+          active: true,
+          itemPinId: input.itemPinId,
+          collectionName: 'pixel-cats',
+          sellerAddress: BOT_ADDRESS,
+          priceHintSats: input.priceHintSats,
+          acceptedCurrencies: input.acceptedCurrencies?.length ? input.acceptedCurrencies : ['space'],
+          settlement: input.settlement?.length ? input.settlement : ['atomic-swap', 'escrow'],
+          createdAt: Date.now(),
+        },
+      };
+    },
+    sellIntentCancel: async (input) => {
+      calls.sellIntentCancel.push(input);
+      if (overrides.sellIntentCancelError) throw overrides.sellIntentCancelError;
+      return {
+        sellPinId: `${'se'.repeat(32)}i0`,
+        txids: ['tx1'],
+        totalCost: 300,
+        intent: { protocol: 'mrc721-sell-intent', version: 1, active: false, itemPinId: input.itemPinId, sellerAddress: BOT_ADDRESS, acceptedCurrencies: ['space'], settlement: ['atomic-swap', 'escrow'], createdAt: Date.now() },
+      };
+    },
+    listSellIntents: async (input) => {
+      calls.listSellIntents.push(input);
+      return overrides.sellIntents ?? [];
+    },
   };
   const tools = buildMrc721AgentTools({
     tool: (name, description, schema, handler) => ({ name, description, schema, handler }),
@@ -749,4 +787,99 @@ test('mrc721_search_collections scans multiple pages and reports truncation hone
   assert.match(result.content[0].text, /scanned 2 registered collection\(s\) \(page cap hit/);
   assert.match(result.content[0].text, /matched: 2/);
   assert.match(result.content[0].text, /Late Cats/);
+});
+
+// ---------------------------------------------------------------------------
+// Sell-intent protocol tools (NFT 售): declare / cancel / list + sell_orders
+// collection filter
+// ---------------------------------------------------------------------------
+
+const SELL_PIN_ID = `${'se'.repeat(32)}i0`;
+
+test('mrc721_sell_intent declares via control and appends a selling card', async () => {
+  const { calls, byName } = makeHarness();
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/item/info', () => jsonResponse({ code: 1, data: { itemPinId: PINID, collectionName: 'pixel-cats', ownerAddress: BOT_ADDRESS } })],
+      ['/api/mrc721/collection/info', () => jsonResponse({ code: 1, data: collectionRow() })],
+    ]),
+    () => byName.mrc721_sell_intent.handler({
+      item_pin_id: PINID,
+      price_hint_sats: 30000,
+      accepted_currencies: ['space', 'fiat:CNY'],
+      note: 'first come first served',
+    }),
+  );
+  assert.equal(result.isError, undefined);
+  assert.equal(calls.sellIntentDeclare.length, 1);
+  assert.equal(calls.sellIntentDeclare[0].itemPinId, PINID);
+  assert.equal(calls.sellIntentDeclare[0].priceHintSats, 30000);
+  assert.match(result.content[0].text, /sell intent declared on-chain/);
+  assert.match(result.content[0].text, new RegExp(SELL_PIN_ID));
+  assert.match(result.content[0].text, /space, fiat:CNY/);
+  assert.match(result.content[0].text, /"action":"selling"/);
+  assert.match(result.content[0].text, /"hostStamp":"v1\./);
+});
+
+test('mrc721_sell_intent refuses BTC-side writes before any control call', async () => {
+  const { calls, byName } = makeHarness();
+  const result = await byName.mrc721_sell_intent.handler({ item_pin_id: PINID, network: 'btc' });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /BTC-side writes are not supported/);
+  assert.equal(calls.sellIntentDeclare.length, 0);
+});
+
+test('mrc721_sell_intent surfaces the holder-view refusal from the service', async () => {
+  const { calls, byName } = makeHarness({ sellIntentError: new Error('item abcd…i0 is held by 1SomeoneElse, not by the declaring bot') });
+  const result = await byName.mrc721_sell_intent.handler({ item_pin_id: PINID });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /not by the declaring bot/);
+  assert.equal(calls.sellIntentDeclare.length, 1);
+});
+
+test('mrc721_sell_intent_cancel renders the cancellation receipt', async () => {
+  const { calls, byName } = makeHarness();
+  const result = await byName.mrc721_sell_intent_cancel.handler({ item_pin_id: PINID });
+  assert.equal(result.isError, undefined);
+  assert.equal(calls.sellIntentCancel.length, 1);
+  assert.match(result.content[0].text, /sell intent cancelled/);
+  assert.match(result.content[0].text, /active=false/);
+});
+
+test('mrc721_sell_intents renders statuses with honest stale reasons', async () => {
+  const { byName } = makeHarness({
+    sellIntents: [
+      { id: 'i1', itemPinId: PINID, status: 'active', intent: { itemPinId: PINID, priceHintSats: 30000, acceptedCurrencies: ['space'], note: 'cheap' }, sellPinId: SELL_PIN_ID },
+      { id: 'i2', itemPinId: `${'ff'.repeat(32)}i0`, status: 'stale', reason: 'the item is no longer held by the seller address', intent: { itemPinId: `${'ff'.repeat(32)}i0`, acceptedCurrencies: ['space'] }, sellPinId: SELL_PIN_ID },
+      { id: 'i3', itemPinId: `${'ee'.repeat(32)}i0`, status: 'cancelled', intent: { itemPinId: `${'ee'.repeat(32)}i0`, acceptedCurrencies: ['space'] } },
+    ],
+  });
+  const result = await byName.mrc721_sell_intents.handler({});
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, /3 sell intent\(s\)/);
+  assert.match(result.content[0].text, /ACTIVE/);
+  assert.match(result.content[0].text, /STALE/);
+  assert.match(result.content[0].text, /no longer held by the seller/);
+  assert.match(result.content[0].text, /CANCELLED/);
+});
+
+test('mrc721_sell_orders filters by collection through the indexer item view', async () => {
+  const { byName } = makeHarness({
+    sellOrders: [
+      { id: 'o1', status: 'valid', itemPinId: PINID, buyerAddress: OTHER_ADDRESS, priceSats: 22000, outpoint: `${'ab'.repeat(32)}:0` },
+      { id: 'o2', status: 'valid', itemPinId: `${'ff'.repeat(32)}i0`, buyerAddress: OTHER_ADDRESS, priceSats: 30000, outpoint: `${'ff'.repeat(32)}:1` },
+    ],
+  });
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/item/info', (raw) => jsonResponse({
+        code: 1,
+        data: { itemPinId: PINID, collectionName: String(raw).includes('ff'.repeat(8)) ? 'other-cats' : 'pixel-cats' },
+      })],
+    ]),
+    () => byName.mrc721_sell_orders.handler({ collection_name: 'pixel-cats' }),
+  );
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, /Local MRC-721 listings \(1\)/);
+  assert.doesNotMatch(result.content[0].text, /30000 sats/);
 });

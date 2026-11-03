@@ -737,7 +737,7 @@ export interface Mrc721PinWriteResult {
   feeAssist?: unknown;
 }
 
-async function broadcastMrc721Pin(
+export async function broadcastMrc721Pin(
   createPin: Mrc721CreatePinFn,
   metabotId: number,
   metaidData: Parameters<Mrc721CreatePinFn>[1],

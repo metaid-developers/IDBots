@@ -25,6 +25,7 @@ import {
   type Mrc721ItemTransferRecord,
   type Mrc721VerifyInfo,
 } from '../services/mrc721Service';
+import type { Mrc721SellIntentContent } from '../services/mrc721SellIntentService';
 
 /**
  * MRC-721 (pin-based MetaID NFT) agent tools — R6 of the IDBots MRC-721
@@ -163,6 +164,46 @@ export type Mrc721ToolsControl = {
     buyerAddress: string;
     priceSats: number;
     outpoint: string;
+  }>>;
+  /** Sell-intent protocol (docs/nft-sell-protocol-draft.md): declare/cancel/list. */
+  sellIntentDeclare(input: {
+    metabotId: number;
+    itemPinId: string;
+    priceHintSats?: number;
+    acceptedCurrencies?: string[];
+    settlement?: string[];
+    note?: string;
+    expiresInHours?: number;
+    network?: 'mvc' | 'btc';
+  }): Promise<{
+    sellPinId: string;
+    txids: string[];
+    totalCost: number;
+    feeAssist?: unknown;
+    intent: Mrc721SellIntentContent;
+  }>;
+  sellIntentCancel(input: {
+    metabotId: number;
+    itemPinId: string;
+    network?: 'mvc' | 'btc';
+  }): Promise<{
+    sellPinId: string;
+    txids: string[];
+    totalCost: number;
+    feeAssist?: unknown;
+    intent: Mrc721SellIntentContent;
+  }>;
+  listSellIntents(input: {
+    metabotId: number;
+    collectionName?: string;
+    collectionPinId?: string;
+  }): Promise<Array<{
+    id: string;
+    itemPinId: string;
+    status: 'active' | 'cancelled' | 'stale';
+    reason?: string;
+    intent: Mrc721SellIntentContent;
+    sellPinId?: string;
   }>>;
 };
 
@@ -1322,14 +1363,29 @@ export function buildMrc721AgentTools(deps: {
     'mrc721_sell_orders',
     [
       'List MRC-721 atomic-swap listings THIS session MetaBot created locally, and recheck each one.',
-      'There is no on-chain order book. A listing is valid only while the seller signature, indexer ownership, and unspent outpoint still match. Expired means the off-chain expiresAt passed.',
+      'There is no on-chain order book. A listing is valid only while the seller signature, indexer ownership, and unspent outpoint still match. Expired means the off-chain expiresAt passed. Optional collection filter resolves each item\'s collection via the indexer (best effort).',
     ].join(' '),
-    {},
-    async () => {
+    {
+      collection_name: z.string().optional().describe('Filter to one collection by namespace name (resolved per item via the indexer).'),
+      collection_pinid: z.string().optional().describe('Filter to one collection by collectionid.'),
+    },
+    async (args: { collection_name?: string; collection_pinid?: string }) => {
       const owner = requireSessionMetabot('mrc721_sell_orders');
       if (typeof owner === 'string') return textResult(owner, true);
+      const filterName = asString(args.collection_name) || undefined;
+      const filterPinId = asString(args.collection_pinid) || undefined;
       try {
-        const orders = await control.listSellOrders({ metabotId: owner });
+        let orders = await control.listSellOrders({ metabotId: owner });
+        if (filterName || filterPinId) {
+          const kept = [];
+          for (const order of orders) {
+            const item = await loadMrc721CardItem(control, order.itemPinId);
+            if (filterPinId && (item?.collectionPinId ?? '') !== filterPinId) continue;
+            if (filterName && (item?.collectionName ?? '') !== filterName) continue;
+            kept.push(order);
+          }
+          orders = kept;
+        }
         if (!orders.length) {
           return textResult('No local MRC-721 listings. Create one with mrc721_sell and give the listing JSON to the buyer.');
         }
@@ -1341,6 +1397,134 @@ export function buildMrc721AgentTools(deps: {
         return textResult(lines.join('\n'));
       } catch (error) {
         return textResult(`mrc721_sell_orders failed: ${errorMessage(error)}`, true);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // mrc721_sell_intent / cancel / list (sell-intent protocol, "NFT 售")
+  // -------------------------------------------------------------------------
+  const mrc721SellIntent = tool(
+    'mrc721_sell_intent',
+    [
+      'Declare the intent to sell one MRC-721 item (pin-based MetaID NFT) as an on-chain sell-intent pin (docs/nft-sell-protocol-draft.md) — the discoverable, currency-agnostic "I want to sell this" announcement.',
+      'The pin moves no funds and transfers nothing: settlement later runs over the locked atomic-swap rail (mrc721_sell to the agreed buyer, native SPACE) or the escrow/guarantor rail (any currency). The item must currently be held by this bot; the declaration is refused otherwise.',
+      'price_hint_sats is a display reference only, NOT an on-chain ask. accepted_currencies is an open vocabulary (space, btc, fiat:CNY, points:<scope>, ...). Broadcasts a pin under /nft/mrc721sell/ and appends an ```nft-card fence with action "selling" — include it verbatim in your announcement.',
+    ].join(' '),
+    {
+      item_pin_id: z.string().min(1).describe('Item pinId from mrc721_item_info (64-hex txid + "i" + index).'),
+      price_hint_sats: z.number().int().positive().optional().describe('Reference price in native sats, display only. Omit for "make an offer".'),
+      accepted_currencies: z.array(z.string().min(1)).optional().describe('Accepted settlement currencies, e.g. ["space","btc","fiat:CNY"]. Default ["space"].'),
+      settlement: z.array(z.enum(['atomic-swap', 'escrow'])).optional().describe('Settlement rails the seller accepts. Default both.'),
+      note: z.string().optional().describe('Free-text note for potential buyers.'),
+      expires_in_hours: z.number().int().positive().optional().describe('Display-only expiry window in hours (e.g. 168 for a week). Omit = no stated expiry.'),
+      network: z.enum(['mvc', 'btc']).optional().describe('Write network; default mvc (BTC writes are not yet supported in this version).'),
+    },
+    async (args: {
+      item_pin_id: string;
+      price_hint_sats?: number;
+      accepted_currencies?: string[];
+      settlement?: string[];
+      note?: string;
+      expires_in_hours?: number;
+      network?: 'mvc' | 'btc';
+    }) => {
+      const owner = requireSessionMetabot('mrc721_sell_intent');
+      if (typeof owner === 'string') return textResult(owner, true);
+      if (args.network === 'btc') {
+        return textResult('mrc721_sell_intent: BTC-side writes are not supported in this version — use network mvc.', true);
+      }
+      try {
+        const snapshot = await loadMrc721CardItem(control, args.item_pin_id);
+        const result = await control.sellIntentDeclare({
+          metabotId: owner,
+          itemPinId: args.item_pin_id,
+          priceHintSats: args.price_hint_sats,
+          acceptedCurrencies: args.accepted_currencies,
+          settlement: args.settlement,
+          note: args.note,
+          expiresInHours: args.expires_in_hours,
+          network: args.network,
+        });
+        const cardFields = buildMrc721CardFields({
+          pinId: result.intent.itemPinId,
+          facts: { item: snapshot, issuerAddress: await loadMrc721IssuerAddress(control, result.intent.collectionName) },
+          owner: control.getMetabotMvcAddress(owner) || undefined,
+          priceSats: result.intent.priceHintSats,
+          action: 'selling',
+        });
+        return textResult(appendNftCardBlock([
+          'MRC-721 sell intent declared on-chain. This is a discoverable announcement, not an escrowed listing — buyers reach you, then settlement runs over atomic-swap (locked listing) or the guarantor flow.',
+          `- item pinId: ${result.intent.itemPinId}`,
+          `- sell-intent pin: pin://${result.sellPinId}`,
+          `- price hint: ${result.intent.priceHintSats != null ? `${result.intent.priceHintSats} sats` : 'make an offer'}`,
+          `- accepted currencies: ${result.intent.acceptedCurrencies.join(', ')}`,
+          `- settlement: ${result.intent.settlement.join(' / ')}`,
+        ].join('\n'), withNftCardHostStamp(cardFields, sessionId)));
+      } catch (error) {
+        return textResult(`mrc721_sell_intent failed: ${errorMessage(error)}${chainWriteFailureDetail(error)}`, true);
+      }
+    },
+  );
+
+  const mrc721SellIntentCancel = tool(
+    'mrc721_sell_intent_cancel',
+    [
+      'Cancel one of THIS bot\'s MRC-721 sell-intent declarations: modifies the /nft/mrc721sell/ pin with active=false and flips the local record. The item itself is untouched.',
+      'Read-only on funds; one modify pin. Use mrc721_sell_intents to see your declared intents first.',
+    ].join(' '),
+    {
+      item_pin_id: z.string().min(1).describe('Item pinId of the intent to cancel.'),
+      network: z.enum(['mvc', 'btc']).optional().describe('Write network; default mvc.'),
+    },
+    async (args: { item_pin_id: string; network?: 'mvc' | 'btc' }) => {
+      const owner = requireSessionMetabot('mrc721_sell_intent_cancel');
+      if (typeof owner === 'string') return textResult(owner, true);
+      if (args.network === 'btc') {
+        return textResult('mrc721_sell_intent_cancel: BTC-side writes are not supported in this version — use network mvc.', true);
+      }
+      try {
+        const result = await control.sellIntentCancel({ metabotId: owner, itemPinId: args.item_pin_id, network: args.network });
+        return textResult([
+          'MRC-721 sell intent cancelled on-chain.',
+          `- item pinId: ${result.intent.itemPinId}`,
+          `- sell-intent pin: pin://${result.sellPinId} (modified, active=false)`,
+        ].join('\n'));
+      } catch (error) {
+        return textResult(`mrc721_sell_intent_cancel failed: ${errorMessage(error)}${chainWriteFailureDetail(error)}`, true);
+      }
+    },
+  );
+
+  const mrc721SellIntents = tool(
+    'mrc721_sell_intents',
+    [
+      'List THIS bot\'s MRC-721 sell-intent declarations (the /nft/mrc721sell/ pins recorded locally). Each row is re-checked against the live holder view: active = still held and declared; stale = the item is no longer in this bot\'s hand (transferred away — declare nothing, sell nothing); cancelled = withdrawn.',
+      'Read-only, no wallet involvement. There is no indexer-side market yet (requirements R-C pending); discovery of OTHER bots\' intents runs through chat announcements.',
+    ].join(' '),
+    {
+      collection_name: z.string().optional().describe('Filter to one collection by namespace name.'),
+      collection_pinid: z.string().optional().describe('Filter to one collection by collectionid.'),
+    },
+    async (args: { collection_name?: string; collection_pinid?: string }) => {
+      const owner = requireSessionMetabot('mrc721_sell_intents');
+      if (typeof owner === 'string') return textResult(owner, true);
+      try {
+        const views = await control.listSellIntents({
+          metabotId: owner,
+          collectionName: asString(args.collection_name) || undefined,
+          collectionPinId: asString(args.collection_pinid) || undefined,
+        });
+        if (!views.length) return textResult('No sell intents declared by this bot.');
+        const lines = [`${views.length} sell intent(s):`];
+        for (const view of views) {
+          lines.push(`- ${view.status.toUpperCase()} ${view.itemPinId} | hint ${view.intent.priceHintSats != null ? `${view.intent.priceHintSats} sats` : 'make an offer'} | ${view.intent.acceptedCurrencies.join(',')} | pin://${view.sellPinId ?? '(unrecorded)'}`);
+          if (view.reason) lines.push(`  reason: ${view.reason}`);
+          if (view.intent.note) lines.push(`  note: ${view.intent.note}`);
+        }
+        return textResult(lines.join('\n'));
+      } catch (error) {
+        return textResult(`mrc721_sell_intents failed: ${errorMessage(error)}`, true);
       }
     },
   );
@@ -1493,6 +1677,9 @@ export function buildMrc721AgentTools(deps: {
     mrc721Sell,
     mrc721Buy,
     mrc721SellOrders,
+    mrc721SellIntent,
+    mrc721SellIntentCancel,
+    mrc721SellIntents,
     mrc721Balance,
     mrc721Collections,
     mrc721ItemInfo,

@@ -214,6 +214,12 @@ import {
   updateMrc721Collection,
   type Mrc721CreatePinFn,
 } from './services/mrc721Service';
+import {
+  cancelMrc721SellIntent,
+  declareMrc721SellIntent,
+  listMrc721MySellIntents,
+  mrc721SellIntentsFromSqlite,
+} from './services/mrc721SellIntentService';
 import { buildMvc721SellPartialTx, buildMvcTransferRawTx, completeMvc721BuyTx } from './services/walletRawTxService';
 import { BotWalletTransferStore } from './services/botWalletTransferStore';
 import {
@@ -7971,6 +7977,25 @@ const getCoworkRunner = () => {
             outpoint: `${view.listing.outpoint.txid}:${view.listing.outpoint.vout}`,
           }));
         },
+        sellIntentDeclare: (input) => withChainWriteBudget(
+          'mrc721_sell_intent',
+          () => declareMrc721SellIntent(
+            { createPin: mrc721CreatePinBackend },
+            { ...input, store: getMetabotStore(), intents: mrc721SellIntentsFromSqlite(getStore()) },
+          ),
+        ),
+        sellIntentCancel: (input) => withChainWriteBudget(
+          'mrc721_sell_intent_cancel',
+          () => cancelMrc721SellIntent(
+            { createPin: mrc721CreatePinBackend },
+            { ...input, store: getMetabotStore(), intents: mrc721SellIntentsFromSqlite(getStore()) },
+          ),
+        ),
+        listSellIntents: (input) => listMrc721MySellIntents(
+          mrc721SellIntentsFromSqlite(getStore()),
+          input.metabotId,
+          { collectionName: input.collectionName, collectionPinId: input.collectionPinId },
+        ),
       },
       // send_private_chat tool backend (replacing metabot-chat-privatechat).
       // Mirrors the skill script: resolve the peer chatpubkey on-chain, then

@@ -48,7 +48,7 @@ const NFT_CARD_FENCE_TAGS = new Set(['nft-card', 'nftcard', 'nft']);
 const NFT_CARD_GROUP_FENCE_TAG = 'nft-card-group';
 
 /** Actions that count as peer-to-peer trade activity (sale/listing/transfer). */
-const P2P_ACTIONS = new Set(['listed', 'sold', 'bought', 'delisted', 'transferred']);
+const P2P_ACTIONS = new Set(['listed', 'sold', 'bought', 'delisted', 'transferred', 'selling']);
 /** Actions that count as escrow activity. */
 const ESCROW_ACTIONS = new Set(['escrow']);
 

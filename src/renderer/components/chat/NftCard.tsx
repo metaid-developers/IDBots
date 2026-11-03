@@ -57,6 +57,7 @@ const ACTION_LABELS: Record<string, string> = {
   escrow: 'ESCROW',
   delisted: 'DELISTED',
   minted: 'MINTED',
+  selling: 'SELLING',
   info: 'NFT',
 };
 
@@ -68,6 +69,7 @@ const ACTION_BADGE_CLASS: Record<string, string> = {
   escrow: 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
   delisted: 'bg-rose-500/15 text-rose-600 dark:text-rose-400',
   minted: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
+  selling: 'bg-orange-500/15 text-orange-600 dark:text-orange-400',
   info: 'bg-claude-accent/15 text-claude-accent',
 };
 
