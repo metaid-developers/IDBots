@@ -121,7 +121,7 @@ function buildSegmentEnvelope(backupKey, botGid, objects) {
  * the requested metaid+path; the platform-global path feed returns an empty
  * page and records that it was touched.
  */
-function stubIndexer(pins, scopedListings) {
+function stubIndexer(pins, scopedListings, files) {
   const calls = { globalPathList: 0, addressList: 0, metaidList: 0 };
   const originalFetch = globalThis.fetch;
   const ownerByAddress = { 'mvc-user': USER_GID };
@@ -143,6 +143,10 @@ function stubIndexer(pins, scopedListings) {
       status,
       json: async () => body,
       text: async () => (typeof body === 'string' ? body : JSON.stringify(body)),
+      arrayBuffer: async () => {
+        const buf = Buffer.isBuffer(body) ? body : Buffer.from(typeof body === 'string' ? body : JSON.stringify(body));
+        return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+      },
       headers: { get: () => contentType },
     });
     if (href.includes('/api/metaid/pin/list/')) {
@@ -177,6 +181,13 @@ function stubIndexer(pins, scopedListings) {
     if (href.includes('/api/v1/info/address/')) {
       return respond(200, { code: 1, data: { name: 'restored-from-chain' } });
     }
+    const metafileContent = href.match(/\/api\/v1\/files\/(?:accelerate\/)?content\/([^/?]+)/);
+    if (metafileContent) {
+      const pinId = decodeURIComponent(metafileContent[1]);
+      const body = files instanceof Map ? files.get(pinId) : files?.[pinId];
+      if (body == null) return respond(404, { code: 0, message: 'not found' });
+      return respond(200, body, 'application/octet-stream');
+    }
     const content = href.match(/\/content\/([^/?]+)/);
     if (content) {
       const pinId = decodeURIComponent(content[1]);
@@ -208,6 +219,7 @@ async function seedSourceBot(source, gid, name, walletPath = "m/44'/10001'/0'/0/
 
 function createBackupHarness() {
   const pins = {};
+  const files = new Map(); // pinId -> Buffer (metafile segment ciphertext)
   const scopedListings = {};
   const modifyTargets = [];
   let sequence = 0;
@@ -233,12 +245,20 @@ function createBackupHarness() {
     return { pinId, txids: [`tx-live-${sequence}`], totalCost: 0 };
   };
 
+  const uploadMetaFileImpl = async (metabotStore, params) => {
+    sequence += 1;
+    const pinId = `file-live-${sequence}`;
+    files.set(pinId, fs.readFileSync(params.filePath));
+    return { pinId, metafileUri: `metafile://${pinId}`, totalCost: 0 };
+  };
+
   const runBackup = async (metabotStore, userStore, sqliteStore) => runChainBackup({
     db: sqliteStore.getDatabase(),
     metabotStore,
     userStore,
     saveDb: sqliteStore.getSaveFunction(),
     createPinImpl,
+    uploadMetaFileImpl,
     syncBotsManifestImpl: async (_users, store) => {
       const bots = store.listMetabots()
         .filter((bot) => bot.metabot_type !== 'welcome' && bot.globalmetaid)
@@ -256,7 +276,7 @@ function createBackupHarness() {
     sleep: async () => undefined,
   });
 
-  return { pins, scopedListings, modifyTargets, runBackup };
+  return { pins, files, scopedListings, modifyTargets, runBackup };
 }
 
 test('discovery rides the address-scoped listing; a dead segment degrades to a partial restore', async () => {
@@ -675,7 +695,7 @@ test('ten bots survive backup, modified-manifest restore, reopen, and the next i
   const manifestHeads = new Map(secondBackup.bots.map((bot) => [bot.globalMetaId, bot.manifestPinId]));
   const secondModifyCount = harness.modifyTargets.length;
 
-  const stub = stubIndexer(harness.pins, harness.scopedListings);
+  const stub = stubIndexer(harness.pins, harness.scopedListings, harness.files);
   let target;
   try {
     target = await openStore('idbots-full-target-');
@@ -819,7 +839,7 @@ test('restore onto a device that already ran the welcome flow: the backup Twin w
   const backup = await harness.runBackup(source.metabotStore, sourceUser, source.sqliteStore);
   assert.equal(backup.success, true, JSON.stringify(backup));
 
-  const stub = stubIndexer(harness.pins, harness.scopedListings);
+  const stub = stubIndexer(harness.pins, harness.scopedListings, harness.files);
   try {
     const target = await openStore('idbots-twin-target-');
     const targetUser = insertUserIdentity(target.db, target.sqliteStore.getSaveFunction());
