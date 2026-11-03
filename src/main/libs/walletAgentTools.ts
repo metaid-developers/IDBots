@@ -12,6 +12,7 @@ import type {
 } from '../services/walletQueryService';
 import type { MvcNftBalance, MvcNftSellOrders, MvcNftSellOrder } from '../services/mvcNftService';
 import { appendNftCardBlock, findNftCardDetail, type NftCardEmitFields } from './nftCardMarkdown';
+import { withNftCardHostStamp } from './tradeActivityStamp';
 
 /**
  * Host control surface for the wallet tools, wired in main.ts: UTXO-sum
@@ -579,7 +580,7 @@ export function buildWalletAgentTools(deps: {
           `- to: ${toAddress}${toMetabotId != null ? ` (metabot_id ${toMetabotId})` : ''}`,
           '- Verify with wallet_nft_balance after the tx confirms.',
         ];
-        return textResult(appendNftCardBlock(lines.join('\n'), {
+        const cardFields: NftCardEmitFields = {
           format: 'metacontract',
           genesis,
           codehash,
@@ -588,7 +589,8 @@ export function buildWalletAgentTools(deps: {
           owner: toAddress || undefined,
           ownerLabel: toName,
           action: 'transferred',
-        }));
+        };
+        return textResult(appendNftCardBlock(lines.join('\n'), withNftCardHostStamp(cardFields, sessionId)));
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         return textResult(`wallet_nft_transfer failed: ${msg}`, true);
@@ -720,7 +722,7 @@ export function buildWalletAgentTools(deps: {
           `- ask price: ${priceSats} sats (${(priceSats / 100000000).toFixed(8)} SPACE)`,
           '- Verify with wallet_nft_sell_orders; cancel with wallet_nft_cancel_sell.',
         ];
-        return textResult(appendNftCardBlock(lines.join('\n'), {
+        const cardFields: NftCardEmitFields = {
           format: 'metacontract',
           genesis,
           codehash,
@@ -729,7 +731,8 @@ export function buildWalletAgentTools(deps: {
           owner: sellerAddress ?? undefined,
           priceSats,
           action: 'listed',
-        }));
+        };
+        return textResult(appendNftCardBlock(lines.join('\n'), withNftCardHostStamp(cardFields, sessionId)));
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         return textResult(`wallet_nft_sell failed: ${msg}`, true);
@@ -810,7 +813,7 @@ export function buildWalletAgentTools(deps: {
           `- token: #${tokenIndex} (genesis ${genesis})`,
           '- Verify the order is gone with wallet_nft_sell_orders.',
         ];
-        return textResult(appendNftCardBlock(lines.join('\n'), {
+        const cardFields: NftCardEmitFields = {
           format: 'metacontract',
           genesis,
           codehash,
@@ -818,7 +821,8 @@ export function buildWalletAgentTools(deps: {
           ...facts,
           owner: ownerAddress ?? undefined,
           action: 'delisted',
-        }));
+        };
+        return textResult(appendNftCardBlock(lines.join('\n'), withNftCardHostStamp(cardFields, sessionId)));
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         return textResult(`wallet_nft_cancel_sell failed: ${msg}`, true);
@@ -882,7 +886,7 @@ export function buildWalletAgentTools(deps: {
           `- token: #${tokenIndex} (genesis ${genesis})`,
           '- Verify ownership with wallet_nft_balance and the order closure with wallet_nft_sell_orders after the txs confirm.',
         ];
-        return textResult(appendNftCardBlock(lines.join('\n'), {
+        const cardFields: NftCardEmitFields = {
           format: 'metacontract',
           genesis,
           codehash,
@@ -891,7 +895,8 @@ export function buildWalletAgentTools(deps: {
           owner: buyerAddress ?? undefined,
           priceSats: sellUtxo?.price,
           action: 'bought',
-        }));
+        };
+        return textResult(appendNftCardBlock(lines.join('\n'), withNftCardHostStamp(cardFields, sessionId)));
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         return textResult(`wallet_nft_buy failed: ${msg}`, true);

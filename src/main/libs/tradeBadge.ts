@@ -11,6 +11,19 @@
  *              convention). On the wire: action 'escrow' (syntax-layer
  *              reserved value; group escrow emitters write it by hand).
  *
+ * Source-signing correction slice (owner decision A, 2026-11-03): for the
+ * wallet/NFT-tool trade actions ('p2p' family) the fence must carry a
+ * `hostStamp` the host derives when it ACTUALLY executes the trade and the
+ * stamp must still bind to the session being written to —
+ * tradeActivityStamp.verifyNftCardHostStamp. Unsigned cards (relay/report
+ * citations, hand-written demos — e.g. the "Pixel Sun #05 transferred" copy
+ * that briefly mis-marked the MRC721-回填对接 session) never mark, and a copy
+ * of a signed fence pasted into a DIFFERENT session fails the session
+ * binding, so another session's real trade can no longer mark this one.
+ * The 'escrow' action stays on its reserved hand-written syntax-layer
+ * contract: group-card emitters predate host tooling and there is no host
+ * emit point to sign them with.
+ *
  * Detection basis, honestly scoped: the chat store (cowork_messages) keeps
  * the conversation bubbles, not tool-call records — tool-call details live in
  * the agent transcript and never reach the message table (code-level fact,
@@ -25,6 +38,8 @@
  * sides are pinned together by tests so they cannot drift. This module is
  * DOM-free and dependency-free so the store write path can call it inline.
  */
+
+import { verifyNftCardHostStamp } from './tradeActivityStamp';
 
 export type TradeBadgeKind = 'p2p' | 'escrow';
 
@@ -46,6 +61,8 @@ const TOKEN_INDEX_RE = /^\d{1,10}$/;
 const MRC721_PIN_ID_RE = /^[0-9a-f]{64}i\d{1,6}$/;
 
 const MAX_CARD_TEXT_FIELD = 64;
+
+
 
 /**
  * Does this parsed card payload carry a valid NFT identity? Mirrors the
@@ -107,10 +124,43 @@ const mergeKind = (a: TradeBadgeKind | null, b: TradeBadgeKind | null): TradeBad
  * candidate body must survive the strict identity validation — analysis text
  * that quotes a fence carries line-number prefixes and fails JSON.parse by
  * construction.
+ *
+ * Signing (p2p family): the card must carry a `hostStamp` verified against
+ * `context.sessionId` (the session the message is being written INTO) —
+ * unsigned cards and out-of-session copies (cross-session relays) yield null.
+ * Escrow action cards keep the reserved hand-written syntax-layer contract.
  */
-export const scanMessageTradeBadge = (content: string): TradeBadgeKind | null => {
+export const scanMessageTradeBadge = (
+  content: string,
+  context?: { sessionId?: string },
+): TradeBadgeKind | null => scanMessageTradeBadgeImpl(content, context, false);
+
+/**
+ * The pre-signing semantics, kept ONLY for the one-shot corrective migration
+ * sweep that re-judges marks the old scanner planted. Historical messages
+ * never carry stamps, so a p2p row survives the re-judge only as a HOST BARE
+ * EMIT (the announcing message IS the tool output — its first line matches an
+ * emit-station anchor; verified live: the transfer-test announcement, the
+ * #6734/#9131-era purchase broadcasts) or as a verifiably signed card.
+ * Design prose, demo cards and cross-session relay copies ("```nft-card"-first
+ * mirrors, orchestration briefings embedding another session's card) fail the
+ * anchors and unmark. Escrow keeps the unchanged hand-written contract. Never
+ * call this on the write path — fresh marks require host stamps.
+ */
+export const scanMessageTradeBadgeLegacy = (content: string, sessionId?: string): TradeBadgeKind | null =>
+  scanMessageTradeBadgeImpl(content, sessionId ? { sessionId } : undefined, true);
+
+const scanMessageTradeBadgeImpl = (
+  content: string,
+  context: { sessionId?: string } | undefined,
+  legacy: boolean,
+): TradeBadgeKind | null => {
   const text = typeof content === 'string' ? content : '';
   if (!text || !text.includes('```')) return null;
+
+  // Bare-emit facts are message-level: a real host emit IS the tool output,
+  // so (legacy re-judge) one anchor pass per message, not per card row.
+  const bareEmit = legacy && isBareTradeEmit(text);
 
   const lines = text.split('\n');
   let kind: TradeBadgeKind | null = null;
@@ -146,7 +196,9 @@ export const scanMessageTradeBadge = (content: string): TradeBadgeKind | null =>
         if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
         const record = row as Record<string, unknown>;
         if (!hasValidNftIdentity(record)) continue;
-        kind = mergeKind(kind, cardTradeKind(record));
+        const rowKind = cardTradeKind(record);
+        if (rowKind === 'p2p' && !p2pMarkAllowed(rowKind, record, bareEmit, context)) continue;
+        kind = mergeKind(kind, rowKind);
       }
       continue;
     }
@@ -154,10 +206,35 @@ export const scanMessageTradeBadge = (content: string): TradeBadgeKind | null =>
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
     const record = parsed as Record<string, unknown>;
     if (!hasValidNftIdentity(record)) continue;
-    kind = mergeKind(kind, cardTradeKind(record));
+    const recordKind = cardTradeKind(record);
+    if (recordKind === 'p2p' && !p2pMarkAllowed(recordKind, record, bareEmit, context)) continue;
+    kind = mergeKind(kind, recordKind);
   }
 
   return kind;
+};
+
+/**
+ * p2p signing gate: fresh semantics require the fence to carry a host stamp
+ * that still binds to the session being written INTO; the legacy re-judge
+ * additionally accepts a bare host emit (tool output IS the message, stamped
+ * eras predate the stamp mechanism). Unsigned and unanchored → no mark.
+ */
+const p2pMarkAllowed = (
+  record: Record<string, unknown>,
+  bareEmit: boolean,
+  context?: { sessionId?: string },
+): boolean => bareEmit || hostStampVerified(record, context);
+
+/**
+ * p2p-only signing gate...
+ */
+const hostStampVerified = (record: Record<string, unknown>, context?: { sessionId?: string }): boolean => {
+  const sessionId = context?.sessionId;
+  if (!sessionId) return false;
+  const hostStamp = typeof record.hostStamp === 'string' ? record.hostStamp.trim() : '';
+  if (!hostStamp) return false;
+  return verifyNftCardHostStamp({ hostStamp, sessionId, fields: record as Parameters<typeof verifyNftCardHostStamp>[0]['fields'] });
 };
 
 /** Session-level rollup: escrow outranks p2p, null = no trade activity seen. */

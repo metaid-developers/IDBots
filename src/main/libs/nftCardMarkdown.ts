@@ -48,12 +48,18 @@ export interface NftCardEmitFields {
   issuerLabel?: string;
   priceSats?: number;
   action?: string;
+  /**
+   * Host source signature (S4 Correction slice, owner decision A): stamped by
+   * tradeActivityStamp when the host actually executes this card's trade —
+   * only stamps allow the trade-mark scanner to produce trade markers.
+   */
+  hostStamp?: string;
 }
 
 const NFT_CARD_KEY_ORDER: Array<keyof NftCardEmitFields> = [
   'format', 'pinId', 'genesis', 'codehash', 'tokenIndex', 'number', 'name',
   'series', 'imgUrl', 'icon', 'owner', 'ownerLabel', 'issuer', 'issuerLabel',
-  'priceSats', 'action',
+  'priceSats', 'action', 'hostStamp',
 ];
 
 const cleanOptional = (value: string | undefined, max: number): string | undefined => {

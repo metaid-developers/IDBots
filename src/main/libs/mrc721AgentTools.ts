@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { markdownSelfLink } from './metawebUri';
 import { chainWriteFailureDetail, feeAssistReceiptLines } from './chainFeeAssistReceipt';
 import { appendNftCardBlock, buildMrc721CardFields } from './nftCardMarkdown';
+import { withNftCardHostStamp } from './tradeActivityStamp';
 import {
   fetchMrc721AddressCollections,
   fetchMrc721AddressItems,
@@ -886,7 +887,10 @@ export function buildMrc721AgentTools(deps: {
           ownerLabel: 'name' in target ? target.name : undefined,
           action: 'transferred',
         });
-        return textResult(appendNftCardBlock(formatMrc721TransferResult(result), cardFields));
+        return textResult(appendNftCardBlock(
+          formatMrc721TransferResult(result),
+          withNftCardHostStamp(cardFields, sessionId),
+        ));
       } catch (error) {
         return textResult(`mrc721_transfer failed: ${errorMessage(error)}`, true);
       }
@@ -1201,7 +1205,7 @@ export function buildMrc721AgentTools(deps: {
           `- NFT outpoint: ${result.outpoint}`,
           '- listing JSON:',
           result.listingJson,
-        ].join('\n'), cardFields));
+        ].join('\n'), withNftCardHostStamp(cardFields, sessionId)));
       } catch (error) {
         return textResult(`mrc721_sell failed: ${errorMessage(error)}${chainWriteFailureDetail(error)}`, true);
       }
@@ -1244,7 +1248,7 @@ export function buildMrc721AgentTools(deps: {
           `- paid seller ${result.sellerAddress}: ${result.priceSats} sats`,
           `- miner fee: ${result.feeSats} sats (${result.feeRateEffective.toFixed(2)} sat/byte, no change output)`,
           'When it confirms, mrc721_item_info should show you as owner and mrc721_item_info transfer history should include this txid.',
-        ].join('\n'), cardFields));
+        ].join('\n'), withNftCardHostStamp(cardFields, sessionId)));
       } catch (error) {
         return textResult(`mrc721_buy failed: ${errorMessage(error)}${chainWriteFailureDetail(error)}`, true);
       }

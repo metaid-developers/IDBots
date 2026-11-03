@@ -5639,9 +5639,14 @@ export class CoworkStore implements MemoryBackend {
    * keeps its marker even after later plain messages (trade history is a
    * fact); escrow outranks p2p (mergeTradeBadge). The scan short-circuits on
    * fence-less text, so plain messages pay one substring probe.
+   *
+   * Source-signing slice: the scan verifies host stamps against THIS session
+   * id — a signed card copy relayed from another session's emit fails the
+   * binding here, so the mislabel (a relay copy marking an orchestration
+   * session) cannot reproduce.
    */
   private bumpSessionTradeBadge(sessionId: string, content: string): void {
-    const kind = scanMessageTradeBadge(content);
+    const kind = scanMessageTradeBadge(content, { sessionId });
     if (!kind) return;
     const current = this.getOne<{ trade_badge: string | null }>(
       'SELECT trade_badge FROM cowork_sessions WHERE id = ?',

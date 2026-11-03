@@ -2493,34 +2493,17 @@ export class SqliteStore {
         // Write-path maintained (coworkStore.addMessageWithId only upgrades),
         // read by listSessions; this backfill seeds historical sessions once.
         this.db.run('ALTER TABLE cowork_sessions ADD COLUMN trade_badge TEXT;');
-        try {
-          // One-shot backfill: prefilter messages that could carry an
-          // nft-card fence (cheap LIKE), classify in JS with the strict
-          // scanner, roll each session up to its strongest kind. 70w-row
-          // libraries hit the prefilter on ~14 sessions (measured
-          // 2026-11-02), so the JS pass is tiny; the LIKE sweep itself is a
-          // single one-time sequential scan paid only on this migration.
-          const candidates = this.db.exec(`
-            SELECT session_id, content FROM cowork_messages
-            WHERE content LIKE '%\`\`\`nft%' OR content LIKE '%\`\`\`nftcard%'
-          `);
-          const rollup = new Map<string, string>();
-          for (const row of candidates[0]?.values ?? []) {
-            const sessionId = String(row[0] ?? '');
-            const content = String(row[1] ?? '');
-            if (!sessionId || !content) continue;
-            const kind = scanMessageTradeBadge(content);
-            if (!kind) continue;
-            const existing = rollup.get(sessionId);
-            rollup.set(sessionId, kind === 'escrow' || existing === 'escrow' ? 'escrow' : 'p2p');
-          }
-          for (const [sessionId, kind] of rollup) {
-            this.db.run('UPDATE cowork_sessions SET trade_badge = ? WHERE id = ?', [kind, sessionId]);
-          }
-        } catch {
-          // Backfill is best-effort: the write path heals any session the
-          // sweep missed on its next trade message (upgrade-only).
-        }
+        this.backfillTradeBadges(false);
+        this.save();
+      } else if (!this.getConfigValue('tradeBadgeSourceSignSwept')) {
+        // Source-signing correction slice (2026-11-03): the column already
+        // existed on this database, so the ORIGINAL unsigned scanner may have
+        // seeded its marks (on the live build: one marked session carried a
+        // cross-session relay copy of another session's real trade, two more
+        // were demo/analysis cards). Re-judge every session once under the
+        // post-signing rules; one-shot via the cowork_config flag, cost
+        // profile identical to the original backfill.
+        this.backfillTradeBadges(true);
         this.save();
       }
 
