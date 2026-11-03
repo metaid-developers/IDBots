@@ -874,4 +874,5 @@ blob-report/
 
 # AX-first desktop locate (feat/agent-desktop-ax)
 !tests/desktopAxLiveHarness.mjs
+!tests/desktopAxComputerUseGate.test.mjs
 !docs/two-layer-desktop-locate.md

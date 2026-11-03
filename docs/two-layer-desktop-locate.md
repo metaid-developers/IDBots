@@ -126,6 +126,28 @@ Packaging status: the packaged lookup path is unit-covered with a simulated
 real (`binary=runtime-dependency`). A full `electron-builder` run was **not**
 executed in this environment, so the signed/notarized artefact itself is unproven.
 
+## Security gate (identical to the driver it fronts)
+
+`desktop_ax` can change desktop state, so it must never be registered the way the
+read-only screenshot tool is (`buildScreenshotAgentTools` mounts unconditionally
+on every cowork session). It is a DSH plugin hung on `input.computerUse`, which is
+fed by `computerUseProvider` → `metabotAutomationProviders.computer()`, which
+checks BOTH levels in this order:
+
+1. app-wide kill switch `automation.experimentalEnabled` (`'0'` disables every bot);
+2. per-bot `cowork.computerUse` (`'0'` opts that bot out; missing means on).
+
+A bot-less session (`metabotId: null`) resolves to `false` as well. There is **no
+unconditionally mounted AX tool**: the read-only `locate` action lives in the same
+plugin and disappears with the same gate. The read-only screenshot tool stays
+unconditional and unchanged — it captures pixels and never acts.
+
+`tests/desktopAxComputerUseGate.test.mjs` runs the real gate functions, the real
+generator and the real plugin, and asserts the resulting tool list in five
+combinations (both on, per-bot off, app off, app-off-overrides-bot-on, bot-less),
+plus source drift guards on `main.ts` / `coworkRunner.ts` / the generator so the
+gate cannot be weakened silently.
+
 ## Route guard
 
 `dsh-runtime/plugins/idbots-cu-route-guard.mjs` is untouched. The new tool exposes
