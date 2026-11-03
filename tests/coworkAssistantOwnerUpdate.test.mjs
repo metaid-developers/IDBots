@@ -27,6 +27,10 @@ function loadRunner() {
   }
 }
 
+function loadTurnAckReply() {
+  return require('../dist-electron/main/libs/turnAckReply.js')
+}
+
 class RecordingStore {
   constructor() {
     this.messages = []
@@ -66,6 +70,8 @@ function setup({ assistant = true, active = true, waitTimeoutMs = 0 } = {}) {
 const callUpdate = (runner, message, kind = 'milestone') => (
   runner.executeDshHostTool('s1', 'owner_update', { message, kind })
 )
+
+const { buildInstantTurnAckOpening } = loadTurnAckReply()
 
 test('owner_update mounts only for an active assistant owner turn', () => {
   const assistant = setup()
@@ -251,27 +257,45 @@ test('turn teardown clears the waiting timer so it cannot leak into the next sub
   t.mock.timers.reset()
 })
 
-test('opening fallback persists at two seconds and a late LLM opening cannot duplicate it', (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout'] })
+// 2026-11-03 rework: the opening is emitted synchronously (no timer), and
+// the LLM ack refines that bubble in place at most once — never a second
+// bubble, never a duplicate after the model produced visible text.
+test('opening bubble is emitted synchronously and refined in place exactly once', () => {
   const { runner, store } = setup()
   const active = runner.activeSessions.get('s1')
   active.dshTurnAckSerial = 1
   const prompt = '你要不搜一下本机看有没有这个文件？'
-  runner.armTurnAckOpeningFallback('s1', prompt, active, 1)
 
-  t.mock.timers.tick(1_999)
-  assert.equal(store.messages.length, 0)
-  t.mock.timers.tick(1)
+  runner.emitTurnAckOpeningBubble('s1', prompt, active, 1, '我先在本机查找相关文件和信息。')
   assert.equal(store.messages.length, 1)
   assert.equal(store.messages[0].metadata.turnAckReply, true)
-  assert.match(store.messages[0].content, /本机查找/)
+  assert.equal(store.messages[0].content, '我先在本机查找相关文件和信息。')
+  assert.equal(active.dshTurnAckOpeningMessageId, store.messages[0].id)
+  assert.equal(active.dshTurnAckOpeningText, '我先在本机查找相关文件和信息。')
   assert.equal(active.assistantOwnerUpdateCount, 1)
 
-  runner.emitTurnAckOpeningBubble('s1', prompt, active, 1, 'A late model opening', false)
+  // A second emit (late timer, double kick) cannot duplicate the bubble.
+  runner.emitTurnAckOpeningBubble('s1', prompt, active, 1, '另一条开场白')
   assert.equal(store.messages.length, 1)
   runner.removeActiveSession('s1', active)
-  assert.equal(active.dshTurnAckFallbackTimer, null)
-  t.mock.timers.reset()
+})
+
+test('delivery prompts: the refine path emits nothing; the instant opening carries the actor context', async () => {
+  const { runner, store } = setup()
+  const active = runner.activeSessions.get('s1')
+  active.dshTurnAckSerial = 1
+  const prompt = '来自af3365c8-dfb6-4348-b350-0a0db4edbcc4 的信息：<cross_session_message trust="untrusted">[ORCH-NOTIFY] worker Builder阿码 已完成 task 46828477-0719-4984-8391-3148bec1a3fc → review，请验收</cross_session_message>'
+
+  // The refine (LLM ack) never touches delivery prompts — their opening is
+  // deterministic and actor-aware, emitted synchronously by the site.
+  await runner.emitTurnAckReplyBubble('s1', prompt, active, 1)
+  assert.equal(store.messages.length, 0)
+
+  runner.emitTurnAckOpeningBubble('s1', prompt, active, 1, buildInstantTurnAckOpening(prompt, 's1:1'))
+  assert.equal(store.messages.length, 1)
+  assert.match(store.messages[0].content, /^Builder阿码已交付一个子任务/)
+  assert.ok(!store.messages[0].content.includes('cross_session'))
+  runner.removeActiveSession('s1', active)
 })
 
 test('the finalization stage rejects every tool through the host policy', async () => {
@@ -283,13 +307,15 @@ test('the finalization stage rejects every tool through the host policy', async 
   assert.match(result.reason, /does not allow tool calls/)
 })
 
-test('an orchestration delivery gets an immediate contextual opening without waiting for a model', async () => {
+test('a delivery opening via the instant builder keeps the per-turn budget seeded at one', async () => {
   const { runner, store } = setup()
   const active = runner.activeSessions.get('s1')
   active.dshTurnAckSerial = 1
   const prompt = '来自af3365c8-dfb6-4348-b350-0a0db4edbcc4 的信息：<cross_session_message trust="untrusted">[ORCH-NOTIFY] worker Builder阿码 已完成 task 46828477-0719-4984-8391-3148bec1a3fc → review，请验收</cross_session_message>'
-  await runner.emitTurnAckReplyBubble('s1', prompt, active, 1)
+  runner.emitTurnAckOpeningBubble('s1', prompt, active, 1, buildInstantTurnAckOpening(prompt, 's1:1'))
   assert.equal(store.messages.length, 1)
-  assert.match(store.messages[0].content, /^Builder阿码已交付一个子任务/)
-  assert.ok(!store.messages[0].content.includes('cross_session'))
+  assert.equal(active.assistantOwnerUpdateCount, 1, 'the host opening consumes one budget slot')
+  // The model's own kind:'opening' is rejected now — the host bubble IS the opening.
+  const rejection = await callUpdate(runner, '收到，这是一条模型自己的开场。', 'opening')
+  assert.deepEqual(JSON.parse(rejection.text), { shown: false, reason: 'opening already delivered; report only new milestones or problems' })
 })

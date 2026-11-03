@@ -3,16 +3,21 @@ export const PERMISSION_RESPONSE_TIMEOUT_MS = 60_000;
 export type PermissionTimeoutDefault = 'allow' | 'deny';
 
 /**
- * Host policy asks that explain a destructive confirmation keep the deny
- * default. Ordinary tool approvals (the kernel approval seam for bash, write,
- * and similar) default to allow. Matched on the reason text the approval
- * dialog already shows, so the countdown and the watchdog agree.
+ * Host policy: every unanswered tool approval is DENIED after the response
+ * window (fail-closed). An earlier build auto-allowed ordinary approvals here
+ * (keeping only safety confirms on deny); the 2026-11-03 pre-release review
+ * reverted that — an unattended bot must never execute an unanswered
+ * bash/write approval just because nobody clicked in time, and a
+ * human-language regex carve-out cannot be the safety boundary.
+ *
+ * AskUserQuestion requests without a default never pass through this
+ * resolver: they mount with no watchdog and wait for a person indefinitely.
+ * The reason parameter is kept so call sites stay honest about what they
+ * pass; it no longer changes the outcome.
  */
-const SAFETY_APPROVAL_REASON_RE = /外部 Agent CLI|external agent CLI|将执行删除|will delete files/i;
-
 export function timeoutDefaultForToolApproval(reason: string | null | undefined): PermissionTimeoutDefault {
-  const text = typeof reason === 'string' ? reason : '';
-  return SAFETY_APPROVAL_REASON_RE.test(text) ? 'deny' : 'allow';
+  void (typeof reason === 'string' ? reason : '');
+  return 'deny';
 }
 
 export function stampPermissionDeadline<T extends {

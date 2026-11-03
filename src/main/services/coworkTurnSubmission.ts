@@ -87,7 +87,7 @@ interface SubmissionRunner {
   continueSession(
     sessionId: string,
     text: string,
-    options?: { systemPrompt?: string; skillIds?: string[]; skipUserMessage?: boolean }
+    options?: { systemPrompt?: string; skillIds?: string[]; skipUserMessage?: boolean; acknowledgeOwner?: boolean }
   ): Promise<void>;
   on?: {
     (event: 'steerSettled', listener: (sessionId: string, submissionId: string) => void): unknown;
@@ -532,6 +532,10 @@ export class CoworkTurnSubmissionController {
       });
       await this.runner.continueSession(sessionId, buildOwnerTurnInputPrompt(text), {
         skipUserMessage: true,
+        // The owner typed this in the composer: mark the turn owner-initiated
+        // so the assistant-mode first-sentence bubble fires on follow-ups too
+        // (the message is already persisted above, hence skipUserMessage).
+        acknowledgeOwner: true,
         systemPrompt: resolvedSystemPrompt,
         skillIds: requestedSkillIds,
       });

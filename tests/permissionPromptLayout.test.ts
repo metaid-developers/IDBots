@@ -25,11 +25,10 @@ test('a single card taller than the viewport still gets its own column', () => {
   assert.equal(columns[0]?.[0]?.requestId, 'tall');
 });
 
-test('ordinary tool approvals default to allow and safety confirms default to deny', () => {
-  assert.equal(timeoutDefaultForToolApproval('Bash needs approval'), 'allow');
-  assert.equal(timeoutDefaultForToolApproval(''), 'allow');
+test('every unanswered tool approval resolves deny after the window (fail-closed)', () => {
+  assert.equal(timeoutDefaultForToolApproval('Bash needs approval'), 'deny');
+  assert.equal(timeoutDefaultForToolApproval(''), 'deny');
+  assert.equal(timeoutDefaultForToolApproval(null), 'deny');
   assert.equal(timeoutDefaultForToolApproval('工具 "bash" 将启动外部 Agent CLI "cursor-agent"。'), 'deny');
-  assert.equal(timeoutDefaultForToolApproval('Tool "bash" will launch the external agent CLI "claude".'), 'deny');
-  assert.equal(timeoutDefaultForToolApproval('工具 "bash" 将执行删除操作。'), 'deny');
   assert.equal(timeoutDefaultForToolApproval('Tool "bash" will delete files. Safety policy requires a human confirmation.'), 'deny');
 });

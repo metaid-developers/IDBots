@@ -11,11 +11,7 @@ import {
   shouldStickToBottom,
   dedupeDeliverablesByPinid,
   deliverableKindBadge,
-  deliverableVerificationBadgeClass,
-  deliverableVerificationState,
   isDigitalDeliverable,
-  openGroupTaskUri,
-  isBotBrowserUri,
 } from './groupTaskUtils';
 import {
   openTeamCollabStatusBadgeClass,
@@ -23,7 +19,8 @@ import {
   openTeamCollabTitle,
   shortGlobalMetaId,
 } from './OpenTeamCollabsSection';
-import { GroupTaskTinyAvatar } from './GroupTaskListMeta';
+import { GroupTaskTinyAvatar, GroupTaskDeliverableUri } from './GroupTaskListMeta';
+import { GroupTaskTypeBadge } from './GroupTaskSidebarList';
 import { ArrowLeftIcon, ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import ComposeIcon from '../icons/ComposeIcon';
@@ -135,7 +132,9 @@ const OpenTeamCollabDetailView: React.FC<OpenTeamCollabDetailViewProps> = ({
   const botLabel = collab.botName?.trim() || `bot-${collab.metabotId}`;
   const ownBotGlobalMetaId = collab.globalmetaid?.trim() || null;
 
-  // Compute deliverables from messages (similar to GroupTaskDetailView)
+  // Compute deliverables from messages (similar to GroupTaskDetailView). The
+  // URI/text split mirrors the local rail: only real URIs become link cards;
+  // plain process text is not a deliverable.
   const deliverables = useMemo(
     () => {
       const extracted = messages
@@ -146,13 +145,22 @@ const OpenTeamCollabDetailView: React.FC<OpenTeamCollabDetailViewProps> = ({
           if (!match) return null;
           const uriOrText = match[1]?.trim();
           if (!uriOrText) return null;
-          // Parse as simple URI or metafile
+          // Same kind buckets as the local rail's badge helper
+          const kind = /^metafile:\/\//i.test(uriOrText)
+            ? 'metafile'
+            : /^metaapp:\/\//i.test(uriOrText)
+              ? 'metaapp'
+              : /^https?:\/\//i.test(uriOrText)
+                ? 'url'
+                : /[0-9a-f]{64}i0/i.test(uriOrText)
+                  ? 'pinid'
+                  : 'text';
           return {
             id: msg.id,
             pinId: msg.pinId,
-            kind: uriOrText.startsWith('metafile://') ? 'metafile' : 'uri',
-            uri: uriOrText,
-            text: null,
+            kind,
+            uri: kind === 'text' ? null : uriOrText,
+            text: uriOrText,
             authorGlobalMetaId: msg.senderGlobalMetaId,
             status: 'delivered' as const,
             createdAt: msg.chainTimestamp,
@@ -217,12 +225,7 @@ const OpenTeamCollabDetailView: React.FC<OpenTeamCollabDetailViewProps> = ({
             <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${openTeamCollabStatusBadgeClass(collab)}`}>
               {openTeamCollabStatusLabel(collab)}
             </span>
-            <span className="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium bg-green-500/15 text-green-600 dark:text-green-400">
-              OpenTeam
-            </span>
-            <span className="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium bg-sky-500/15 text-sky-600 dark:text-sky-400">
-              {i18nService.t('groupTasksTaskBadgeGuest')}
-            </span>
+            <GroupTaskTypeBadge type="openteam-guest" />
           </div>
           <WindowTitleBar inline />
         </div>
@@ -291,8 +294,8 @@ const OpenTeamCollabDetailView: React.FC<OpenTeamCollabDetailViewProps> = ({
             </p>
           ) : (
             <div className="space-y-1.5">
-              {members.map((member) => (
-                <React.Fragment key={member.id ?? member.globalmetaid}>
+              {members.map((member, index) => (
+                <React.Fragment key={member.globalmetaid || `member-${index}`}>
                   <div className="group flex items-center gap-2">
                     <GroupTaskTinyAvatar
                       src={member.avatar}
@@ -355,45 +358,41 @@ const OpenTeamCollabDetailView: React.FC<OpenTeamCollabDetailViewProps> = ({
                     : deliverable.status === 'delivered'
                       ? 'groupTasksDeliverableStatusDelivered'
                       : 'groupTasksDeliverableStatusPending';
-                const verification = deliverableVerificationState(deliverable);
-                const canOpen = isBotBrowserUri(deliverable.uri ?? '');
+                const statusHintKey = deliverable.status === 'accepted'
+                  ? 'groupTasksDeliverableStatusAcceptedHint'
+                  : deliverable.status === 'rejected'
+                    ? 'groupTasksDeliverableStatusRejectedHint'
+                    : deliverable.status === 'delivered'
+                      ? 'groupTasksDeliverableStatusDeliveredHint'
+                      : 'groupTasksDeliverableStatusPendingHint';
 
                 return (
                   <div
                     key={deliverable.pinId || deliverable.id}
-                    className="relative rounded-lg border dark:border-claude-darkBorder/50 border-claude-border/50 p-2.5 dark:bg-claude-darkSurfaceHover/30 bg-claude-surfaceHover/30"
+                    className="rounded-lg border dark:border-claude-darkBorder/60 border-claude-border/60 px-2.5 py-2"
                   >
-                    <div className="flex items-start justify-between gap-2 mb-1.5">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium leading-tight ${kindBadge.class}`}>
-                          {kindBadge.label}
-                        </span>
-                        {verification && (
-                          <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium leading-tight ${deliverableVerificationBadgeClass(verification)}`}>
-                            {verification}
-                          </span>
-                        )}
-                      </div>
-                      <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium leading-tight bg-slate-500/10 text-slate-600 dark:text-slate-400">
+                    <div className="flex items-center gap-2">
+                      <span className={`shrink-0 rounded px-1 py-px text-[10px] font-medium leading-tight ${kindBadge.className}`}>
+                        {i18nService.t(kindBadge.labelKey)}
+                      </span>
+                      <span
+                        className="text-[11px] dark:text-claude-darkTextSecondary/70 text-claude-textSecondary/70"
+                        title={i18nService.t(statusHintKey)}
+                      >
                         {i18nService.t(statusKey)}
                       </span>
                     </div>
-                    <p className="text-[11px] leading-snug dark:text-claude-darkText text-claude-text break-all line-clamp-2 mb-1.5">
-                      {deliverable.uri ?? deliverable.text ?? '—'}
-                    </p>
-                    <div className="flex items-center justify-between text-[10px] dark:text-claude-darkTextSecondary/70 text-claude-textSecondary/70">
+                    {deliverable.uri ? (
+                      <GroupTaskDeliverableUri uri={deliverable.uri} />
+                    ) : (
+                      <p className="mt-1 text-[11px] leading-snug dark:text-claude-darkText text-claude-text break-all line-clamp-2">
+                        {deliverable.text ?? '—'}
+                      </p>
+                    )}
+                    <div className="mt-1 flex items-center justify-between text-[10px] dark:text-claude-darkTextSecondary/70 text-claude-textSecondary/70">
                       <span>{deliverableAuthorName(deliverable.authorGlobalMetaId)}</span>
                       <span>{formatGroupTaskTime(deliverable.createdAt)}</span>
                     </div>
-                    {canOpen && deliverable.uri && (
-                      <button
-                        type="button"
-                        onClick={() => openGroupTaskUri(deliverable.uri!)}
-                        className="mt-2 w-full flex items-center justify-center gap-1.5 py-1.5 px-2 rounded text-[11px] font-medium dark:text-claude-darkText text-claude-text dark:bg-claude-darkSurface bg-claude-surface hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover border dark:border-claude-darkBorder border-claude-border transition-colors"
-                      >
-                        {i18nService.t('groupTasksDeliverableOpen')}
-                      </button>
-                    )}
                   </div>
                 );
               })}

@@ -1754,6 +1754,14 @@
       ]
     },
     {
+      "path": "idbots.healNftCard",
+      "kind": "invoke",
+      "channel": "idbots:healNftCard",
+      "args": [
+        "input"
+      ]
+    },
+    {
       "path": "idbots.installOfficialSkill",
       "kind": "invoke",
       "channel": "idbots:installOfficialSkill",
@@ -2481,6 +2489,14 @@
       "channel": "network:status-change",
       "args": [
         "status"
+      ]
+    },
+    {
+      "path": "openTeamCollab.getMembers",
+      "kind": "invoke",
+      "channel": "openTeamCollab:getMembers",
+      "args": [
+        "input"
       ]
     },
     {
