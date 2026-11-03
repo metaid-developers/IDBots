@@ -343,6 +343,33 @@ function readOrders(kv: SellOrderKv, metabotId: number): Mrc721SellOrderRecord[]
   return Array.isArray(stored) ? stored : [];
 }
 
+/**
+ * Dedup key for the local ledger: one NFT outpoint carries at most one live
+ * listing — two partial transactions on the same outpoint race on-chain and the
+ * first one eaten makes the other void. Format-tolerant on purpose: a malformed
+ * legacy record gets a unique key instead of crashing the listing views.
+ */
+function recordLedgerKey(itemPinId: string, listing: Mrc721AtomicSwapListing): string {
+  const pin = String(itemPinId ?? '').trim().toLowerCase();
+  try {
+    return `${pin}@${outpointKey(normalizeMrc721Outpoint(listing.outpoint))}`;
+  } catch {
+    return `${pin}@malformed:${randomBytes(8).toString('hex')}`;
+  }
+}
+
+/** Keep only the latest record per (itemPinId + outpoint); ties keep the last in array order. */
+function dedupeOrders(records: Mrc721SellOrderRecord[]): Mrc721SellOrderRecord[] {
+  const latest = new Map<string, Mrc721SellOrderRecord>();
+  for (const record of records) {
+    const key = recordLedgerKey(record.listing.itemPinId, record.listing);
+    const kept = latest.get(key);
+    if (!kept || record.createdAt >= kept.createdAt) latest.set(key, record);
+  }
+  const kept = new Set(latest.values());
+  return records.filter((record) => kept.has(record));
+}
+
 export function recordMrc721Listing(
   kv: SellOrderKv,
   metabotId: number,
@@ -354,12 +381,16 @@ export function recordMrc721Listing(
     listing,
     createdAt: listing.createdAt,
   };
-  kv.set(ordersKey(metabotId), [...readOrders(kv, metabotId), record]);
+  const key = recordLedgerKey(listing.itemPinId, listing);
+  const prior = readOrders(kv, metabotId).filter(
+    (existing) => recordLedgerKey(existing.listing.itemPinId, existing.listing) !== key,
+  );
+  kv.set(ordersKey(metabotId), [...prior, record]);
   return record;
 }
 
 export function listMrc721SellOrderRecords(kv: SellOrderKv, metabotId: number): Mrc721SellOrderRecord[] {
-  return readOrders(kv, metabotId);
+  return dedupeOrders(readOrders(kv, metabotId));
 }
 
 export async function sellMrc721Item(
@@ -547,7 +578,7 @@ export async function listMrc721MySellOrders(
 ): Promise<Mrc721SellOrderView[]> {
   const now = deps.nowSeconds ?? Math.floor(Date.now() / 1000);
   const views: Mrc721SellOrderView[] = [];
-  for (const record of readOrders(kv, metabotId)) {
+  for (const record of dedupeOrders(readOrders(kv, metabotId))) {
     try {
       await verifyMrc721Listing(record.listing, deps);
       if (record.listing.expiresAt > 0 && record.listing.expiresAt < now) {

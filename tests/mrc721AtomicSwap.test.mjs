@@ -22,6 +22,7 @@ const {
   buyMrc721Listing,
   isMrc721OutpointUnspent,
   listMrc721MySellOrders,
+  listMrc721SellOrderRecords,
   recordMrc721Listing,
   sellMrc721Item,
   verifyMrc721Listing,
@@ -425,4 +426,128 @@ test('unspent check treats a dust outpoint missing from the wallet list as spent
     outpoint: { ...outpoint, satoshis: 10000 },
     fetchImpl: fetchImpl({ [otherTxid]: idle.getRawHex() }),
   }), false);
+});
+
+function memoryOrders() {
+  const data = new Map();
+  return {
+    get: (key) => data.get(key),
+    set: (key, value) => data.set(key, value),
+    stored: () => data.get('mrc721_sell_orders:1'),
+  };
+}
+
+function makeListing(seller, buyer, txid, priceSats = MRC721_MIN_SELL_PRICE_SATS, nowSeconds = 1_700_000_000) {
+  const outpoint = { txid, vout: 0, satoshis: 546 };
+  const built = buildMvc721SellPartialTx({
+    sellerWif: seller.wif,
+    sellerAddress: seller.address,
+    buyerAddress: buyer.address,
+    outpoint,
+    priceSats,
+  });
+  return buildMrc721AtomicSwapListing({
+    itemPinId: `${txid}i0`,
+    collectionPinId: `${'cd'.repeat(32)}i0`,
+    outpoint,
+    sellerAddress: seller.address,
+    buyerAddress: buyer.address,
+    priceSats,
+    partialTx: built.partialTx,
+    sigtype: built.sigtype,
+    feeRate: 1,
+    nowSeconds,
+  });
+}
+
+test('re-listing the same item and outpoint replaces the old ledger record with the latest listing', async () => {
+  const seller = keypair();
+  const buyer = keypair();
+  const store = {
+    getMetabotById: (id) => ({ mvc_address: id === 1 ? seller.address : buyer.address }),
+  };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mrc721-dedupe-'));
+  const sqliteStore = await SqliteStore.create(dir);
+  try {
+    const orders = {
+      get: (key) => sqliteStore.get(key),
+      set: (key, value) => sqliteStore.set(key, value),
+    };
+    const buildPartialTx = async (_store, params) => buildMvc721SellPartialTx({
+      sellerWif: seller.wif,
+      sellerAddress: seller.address,
+      buyerAddress: params.buyerAddress,
+      outpoint: params.outpoint,
+      priceSats: params.priceSats,
+    });
+    const baseInput = {
+      store,
+      metabotId: 1,
+      itemPinId: PIN_ID,
+      buyerAddress: buyer.address,
+      feeRate: 1,
+      itemInfo: itemInfo(seller),
+      orders,
+    };
+    await sellMrc721Item({ buildPartialTx }, { ...baseInput, priceSats: MRC721_MIN_SELL_PRICE_SATS, nowSeconds: 1_700_000_000 });
+    await sellMrc721Item({ buildPartialTx }, { ...baseInput, priceSats: 30_000, nowSeconds: 1_700_001_000 });
+
+    const records = listMrc721SellOrderRecords(orders, 1);
+    assert.equal(records.length, 1, 'the second sell on the same outpoint must replace the first');
+    assert.equal(records[0].listing.priceSats, 30_000, 'the kept record is the latest listing');
+
+    const stored = sqliteStore.get('mrc721_sell_orders:1');
+    assert.ok(Array.isArray(stored));
+    assert.equal(stored.length, 1, 'the stored array itself was replaced, not just the view');
+  } finally {
+    try { sqliteStore.close(); } catch { /* already closed */ }
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* windows handle */ }
+  }
+});
+
+test('listings for different items stay independent through the write and dedup paths', async () => {
+  const seller = keypair();
+  const buyer = keypair();
+  const orders = memoryOrders();
+  recordMrc721Listing(orders, 1, makeListing(seller, buyer, TXID));
+  recordMrc721Listing(orders, 1, makeListing(seller, buyer, 'ef'.repeat(32)));
+  const records = listMrc721SellOrderRecords(orders, 1);
+  assert.equal(records.length, 2, 'different items must not absorb each other');
+  assert.deepEqual(
+    records.map((record) => record.listing.itemPinId).sort(),
+    [`${'ef'.repeat(32)}i0`, PIN_ID].sort(),
+  );
+});
+
+test('a legacy stored array with duplicate records dedupes to the latest one per outpoint', async () => {
+  const seller = keypair();
+  const buyer = keypair();
+  const orders = memoryOrders();
+  const newest = makeListing(seller, buyer, TXID, 50_000, 1_700_002_000);
+  const mid = makeListing(seller, buyer, TXID, 33_333, 1_700_001_000);
+  const stale = makeListing(seller, buyer, TXID, 22_000, 1_700_000_000);
+  const other = makeListing(seller, buyer, 'ef'.repeat(32), MRC721_MIN_SELL_PRICE_SATS);
+  recordMrc721Listing(orders, 1, mid);
+  const midRecord = orders.stored()[0];
+  // Hand-inject the historical duplicate corpus: same outpoint listed three times.
+  orders.set('mrc721_sell_orders:1', [
+    { id: 'legacy-stale', metabotId: 1, listing: stale, createdAt: stale.createdAt },
+    { id: 'legacy-other', metabotId: 1, listing: other, createdAt: other.createdAt },
+    midRecord,
+    { id: 'legacy-newest', metabotId: 1, listing: newest, createdAt: newest.createdAt },
+  ]);
+
+  const records = listMrc721SellOrderRecords(orders, 1);
+  assert.equal(records.length, 2, 'one record per outpoint');
+  const sameOutpoint = records.filter((record) => record.listing.itemPinId === PIN_ID);
+  assert.equal(sameOutpoint.length, 1);
+  assert.equal(sameOutpoint[0].listing.priceSats, 50_000, 'the latest listing wins');
+  assert.equal(sameOutpoint[0].id, 'legacy-newest');
+
+  // Raw storage must stay untouched by the read-side dedupe.
+  assert.equal(orders.stored().length, 4);
+
+  const views = await listMrc721MySellOrders(orders, 1, verifyDeps(seller));
+  assert.equal(views.filter((view) => view.listing.itemPinId === PIN_ID).length, 1,
+    'the sell_orders display path also shows each outpoint once');
 });
