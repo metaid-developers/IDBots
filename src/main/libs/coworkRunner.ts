@@ -10933,6 +10933,12 @@ export class CoworkRunner extends EventEmitter {
             );
           }
           this.armAssistantOwnerWaitTimer(sessionId, activeSession);
+          if (!activeSession.assistantOwnerHeartbeatTimer) {
+            // The heartbeat is the last-resort "still working" bubble (session
+            // 32a29372: a 6-minute tool loop with no text and no heartbeat —
+            // if it never even arms, say so in the log).
+            coworkLog('DEBUG', 'turn:ack', 'owner wait heartbeat not armed for this turn', { sessionId });
+          }
           // The LLM first sentence (fire-and-forget): the bot's own words
           // about THIS message, emitted as the first bubble when the one-shot
           // call lands — but ONLY when the cerebellum ack gate inside says the
@@ -12650,8 +12656,16 @@ export class CoworkRunner extends EventEmitter {
     const delayMs = Math.max(1, waitWindowMs - (Date.now() - lastVisibleAt))
     activeSession.assistantOwnerHeartbeatTimer = setTimeout(() => {
       activeSession.assistantOwnerHeartbeatTimer = null
-      if (this.activeSessions.get(sessionId) !== activeSession || activeSession.abortController.signal.aborted) return
+      // 2026-11-03 session 32a29372: a turn looped tools for ~6 minutes with
+      // no user-facing text and the wait heartbeat never appeared in the
+      // transcript — the guards below used to skip silently. Log every
+      // due-but-suppressed heartbeat so the next occurrence self-explains.
+      if (this.activeSessions.get(sessionId) !== activeSession || activeSession.abortController.signal.aborted) {
+        coworkLog('DEBUG', 'turn:ack', 'owner wait heartbeat dropped: turn no longer active', { sessionId })
+        return
+      }
       if (activeSession.pendingPermission) {
+        coworkLog('DEBUG', 'turn:ack', 'owner wait heartbeat deferred: permission prompt pending', { sessionId })
         activeSession.assistantOwnerLastVisibleAt = Date.now()
         this.armAssistantOwnerWaitTimer(sessionId, activeSession)
         return
@@ -12665,7 +12679,10 @@ export class CoworkRunner extends EventEmitter {
           '这一轮仍在处理和核对中，暂时没有新的关键结果。我会继续推进；如果需要你决定或操作，我会马上告诉你。',
           'This turn is still being processed and checked, with no new key result yet. I’ll keep moving it forward and let you know immediately if a decision or action is needed from you.',
         )
-      this.emitAssistantOwnerUpdate(sessionId, { message, kind: 'waiting' }, activeSession)
+      const outcome = this.emitAssistantOwnerUpdate(sessionId, { message, kind: 'waiting' }, activeSession)
+      if (!outcome.shown) {
+        coworkLog('DEBUG', 'turn:ack', 'owner wait heartbeat suppressed', { sessionId, reason: outcome.reason ?? 'unknown' })
+      }
     }, delayMs)
     activeSession.assistantOwnerHeartbeatTimer.unref?.()
   }

@@ -473,3 +473,12 @@ test('runner: an empty first ack attempt gets exactly one retry, gates re-applie
   const retryIdx = body.indexOf('retrying first sentence after an empty first attempt');
   assert.ok(skipIdx > 0 && skipIdx < retryIdx, 'the skip return precedes the retry branch');
 });
+
+test('runner: the owner wait heartbeat logs due-but-suppressed outcomes', () => {
+  const source = read('src/main/libs/coworkRunner.ts');
+  assert.ok(source.includes("'owner wait heartbeat suppressed'"), 'a suppressed heartbeat is logged with its reason');
+  assert.ok(source.includes("'owner wait heartbeat deferred: permission prompt pending'"), 'permission deferrals are logged');
+  assert.ok(source.includes("'owner wait heartbeat dropped: turn no longer active'"), 'stale-turn drops are logged');
+  assert.ok(source.includes("'owner wait heartbeat not armed for this turn'"),
+    'an entry-arm early-exit is logged (the session-32a29372 silent-stretch diagnostic)');
+});
