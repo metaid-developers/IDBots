@@ -362,3 +362,61 @@ test('renderer: the turnAckReply origin tag is part of the message metadata cont
   assert.ok(types.includes('turnAckReply?: boolean'),
     'the metadata type documents the host-side ack bubble');
 });
+
+// ---------------------------------------------------------------------------
+// 2026-11-03 third pass (session 3ecd2a2f): content-free acks + cerebellum gate
+// ---------------------------------------------------------------------------
+
+// The ack call sees only the user text and the session title — no local time,
+// no memory. The old "for a simple question, respond naturally" line invited
+// it to answer "你知道明天是几月几号吗" with "我没法确定今天的日期", while the
+// main answer (riding the local-time prompt) named the date — two bubbles in
+// open contradiction. The ack now acknowledges only; only pure greetings get
+// content (a greeting back carries nothing to contradict).
+test('buildTurnAckReplyMessages: the ack never answers content; greetings stay natural', () => {
+  const messages = buildTurnAckReplyMessages({ userText: '你知道明天是几月几号吗？' });
+  const system = messages[0].content;
+  assert.ok(system.includes("NEVER answer the user's question"),
+    'the no-answering rule is part of the system prompt');
+  assert.ok(system.includes('can contradict the real reply'),
+    'the rule carries its rationale (the contradiction incident)');
+  assert.ok(system.includes('a greeting gets a greeting back'),
+    'pure greetings still get a natural greeting — that IS the ack');
+  assert.ok(!system.includes('For a simple question or a greeting, respond naturally'),
+    'the old answer-simple-questions line is gone');
+});
+
+test('runner: the cerebellum ack gate runs before the ack LLM call and skips on a false verdict', () => {
+  const source = read('src/main/libs/coworkRunner.ts');
+  const start = source.indexOf('private async emitTurnAckReplyBubble(');
+  const body = source.slice(start, source.indexOf('private emitSdkRuntimeStatus(', start));
+  const gateCall = body.indexOf('this.cerebellumTurnAckGate({ currentUserText: userPrompt })');
+  const ackCall = body.indexOf('generateTurnAckReply(userPrompt, sessionTitle)');
+  assert.ok(gateCall > 0, 'the gate is consulted inside the ack path');
+  assert.ok(gateCall < ackCall,
+    'the gate is awaited BEFORE the ack completion fires — a skip saves the call entirely');
+  assert.ok(body.includes('if (needsAck === false)'),
+    'only an explicit false verdict skips; true and null both emit (fail-open)');
+  assert.ok(body.includes('.catch(() => null)'),
+    'a throwing gate callback degrades to null, never breaks the ack path');
+});
+
+test('runner + main.ts: the ack gate is a runner option wired to the cerebellum factory', () => {
+  const source = read('src/main/libs/coworkRunner.ts');
+  const mainSource = read('src/main/main.ts');
+  assert.ok(source.includes("cerebellumTurnAckGate?: (input: {"),
+    'CoworkRunnerOptions declares the gate callback');
+  assert.ok(source.includes("this.cerebellumTurnAckGate = options?.cerebellumTurnAckGate;"),
+    'the constructor stores it');
+  assert.ok(mainSource.includes("import { classifyTurnAckNeedWithCerebellum } from './cerebellum/ackGate';"),
+    'main.ts imports the gate classifier');
+  assert.ok(mainSource.includes('cerebellumTurnAckGate: createCerebellumTurnAckGate(),'),
+    'the runner option rides the lazy cerebellum-context factory');
+  const factory = mainSource.indexOf('const createCerebellumTurnAckGate =');
+  const factoryBody = mainSource.slice(factory, factory + 1200);
+  assert.ok(factoryBody.includes('resolveCerebellumCallContext()'),
+    'the factory resolves the cerebellum context lazily per call');
+  const logCall = factoryBody.slice(factoryBody.indexOf("coworkLog('INFO', 'turn:ackGate'"));
+  assert.ok(!logCall.includes('currentUserText'),
+    'the gate log never carries user text');
+});

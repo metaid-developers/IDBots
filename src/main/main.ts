@@ -67,6 +67,7 @@ import { classifyDailyReportTriagedSessions } from './cerebellum/dailyReportTria
 import { rankWorkersWithCerebellum, CEREBELLUM_WORKER_RANK_TOP_K } from './cerebellum/workerRank';
 import { gateMemoryWriteWithCerebellum } from './cerebellum/memoryWriteGate';
 import { selectEffortWithCerebellum } from './cerebellum/effortSelector';
+import { classifyTurnAckNeedWithCerebellum } from './cerebellum/ackGate';
 import { askCerebellumIntuition } from './cerebellum/intuitionTool';
 import { runCerebellumTurnDecisions } from './cerebellum/turnDecisionBundle';
 import {
@@ -3948,6 +3949,39 @@ const createCerebellumEffortSelector = () =>
   };
 
 /**
+ * Cerebellum (小脑) turn-ack gate (owner decision 2026-11-03, session
+ * 3ecd2a2f): one JEV Noul per assistant-mode owner-chat turn decides whether
+ * the LLM first-sentence bubble is needed at all — conversational messages the
+ * main reply covers directly get a single-bubble turn, tool-bound/multi-step
+ * work keeps the interim ack. Same lazy shape as the factories above — config
+ * re-resolved per call (Settings edits apply on the next turn), fetch on the
+ * Electron net stack (system proxy). null on any failure keeps the historical
+ * behavior (the ack fires — fail-open). Never logs user text — only whether
+ * the call landed, the verdict, and its latency.
+ */
+const createCerebellumTurnAckGate = () =>
+  async ({ currentUserText }: {
+    currentUserText: string;
+  }): Promise<boolean | null> => {
+    const context = await resolveCerebellumCallContext();
+    if (!context) {
+      return null;
+    }
+    const startedAt = Date.now();
+    const verdict = await classifyTurnAckNeedWithCerebellum({
+      config: context.config,
+      fetchImpl: context.fetchImpl,
+      currentUserText,
+    });
+    coworkLog('INFO', 'turn:ackGate', 'turn-ack gate evaluated', {
+      used: verdict !== null,
+      needsAck: verdict,
+      latencyMs: Date.now() - startedAt,
+    });
+    return verdict;
+  };
+
+/**
  * R3: rough upper-bound MVC fee estimate for a typical pin (funding + payload
  * outputs, ~600 vB at the resolved fee rate) — feeds the `need ~N sats` part
  * of balance-hint error messages. Marked as an estimate everywhere it shows.
@@ -6957,6 +6991,10 @@ const getCoworkRunner = () => {
       // "auto" rung on unpicked sessions resolves from one JEV choice verdict
       // per turn (see createCerebellumEffortSelector).
       cerebellumEffortSelector: createCerebellumEffortSelector(),
+      // Cerebellum (小脑) turn-ack gate: conversational turns skip the LLM
+      // first-sentence bubble entirely (the main reply is the single bubble);
+      // tool-bound/multi-step turns keep it (see createCerebellumTurnAckGate).
+      cerebellumTurnAckGate: createCerebellumTurnAckGate(),
       // Cerebellum (小脑) session follow-up gate (Follow-Up Tasks / 待跟进任务):
       // re-judges every completed turn of an auto-origin session and moves the
       // session between the Autonomous fold and the Follow-Up bucket

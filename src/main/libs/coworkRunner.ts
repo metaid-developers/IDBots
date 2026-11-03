@@ -2583,6 +2583,22 @@ export interface CoworkRunnerOptions {
     currentUserText: string;
   }) => Promise<Record<'off' | 'low' | 'high' | 'max', number> | null>;
   /**
+   * Optional cerebellum (小脑) gate for the LLM first-sentence bubble
+   * (owner decision 2026-11-03, session 3ecd2a2f): one Noul over the
+   * just-arrived user message decides whether the turn needs an interim
+   * acknowledgment at all. false = the message is conversational enough that
+   * the main reply arrives as the SINGLE bubble (no redundant ack on greetings
+   * and simple questions); true or null (unconfigured, timeout, error) = emit
+   * the ack exactly as before — fail-open, because a redundant bubble beats a
+   * silent wait on a heavy turn. Consulted on every assistant-mode owner-chat
+   * turn regardless of the effort pick. The callback must never throw; main.ts
+   * resolves the cerebellum call context lazily inside the callback so
+   * Settings edits apply on the next turn without a restart.
+   */
+  cerebellumTurnAckGate?: (input: {
+    currentUserText: string;
+  }) => Promise<boolean | null>;
+  /**
    * Optional cerebellum (小脑) turn-end classifier behind the "Follow-Up
    * Tasks" (待跟进任务) bucket: one Noul over the session title + the turn's
    * final assistant message decides whether a completed turn on an
@@ -2773,6 +2789,7 @@ export class CoworkRunner extends EventEmitter {
   private cerebellumIntuitionAvailable?: CoworkRunnerOptions['cerebellumIntuitionAvailable'];
   private cerebellumIntuition?: CoworkRunnerOptions['cerebellumIntuition'];
   private cerebellumEffortSelector?: CoworkRunnerOptions['cerebellumEffortSelector'];
+  private cerebellumTurnAckGate?: CoworkRunnerOptions['cerebellumTurnAckGate'];
   private cerebellumSessionFollowUpGate?: CoworkRunnerOptions['cerebellumSessionFollowUpGate'];
   /**
    * Per-session sticky state for the auto effort rung: the last escalated
@@ -2988,6 +3005,7 @@ export class CoworkRunner extends EventEmitter {
     this.cerebellumIntuitionAvailable = options?.cerebellumIntuitionAvailable;
     this.cerebellumIntuition = options?.cerebellumIntuition;
     this.cerebellumEffortSelector = options?.cerebellumEffortSelector;
+    this.cerebellumTurnAckGate = options?.cerebellumTurnAckGate;
     this.cerebellumSessionFollowUpGate = options?.cerebellumSessionFollowUpGate;
     this.localTurnStallTimeoutMs = Math.max(
       0,
@@ -10917,9 +10935,13 @@ export class CoworkRunner extends EventEmitter {
           this.armAssistantOwnerWaitTimer(sessionId, activeSession);
           // The LLM first sentence (fire-and-forget): the bot's own words
           // about THIS message, emitted as the first bubble when the one-shot
-          // call lands. Dropped when the model's own visible text beat it, a
-          // newer turn started, or the output was unusable — no bubble beats
-          // a canned or wrong one.
+          // call lands — but ONLY when the cerebellum ack gate inside says the
+          // turn needs an interim acknowledgment (tool-bound / multi-step /
+          // long-form work); conversational messages skip it and the main
+          // reply arrives as the single bubble (owner decision 2026-11-03,
+          // session 3ecd2a2f). Dropped when the model's own visible text beat
+          // it, a newer turn started, or the output was unusable — no bubble
+          // beats a canned or wrong one.
           void this.emitTurnAckReplyBubble(sessionId, prompt, activeSession, turnAckSerial);
         }
       } catch { /* best-effort: the ack must never break a turn */ }
@@ -16697,14 +16719,20 @@ export class CoworkRunner extends EventEmitter {
   }
 
   /**
-   * The LLM-written first sentence — THE first bubble for every generic turn
-   * (owner decision 2026-11-03, session 2c70849f: a rotating canned line is
-   * worse than no line, so the phrase pool is gone and this call CREATES the
-   * bubble instead of refining a placeholder). Delivered when the one-shot
-   * call lands (~1-3s, primary + fallback brain); dropped entirely when the
-   * model's own visible text beat it, a newer turn started, or the output was
-   * unusable — the activity indicator covers the wait, and no bubble beats a
-   * canned or wrong one.
+   * The LLM-written first sentence — the first bubble for generic turns that
+   * need an interim acknowledgment (owner decision 2026-11-03, session
+   * 2c70849f: a rotating canned line is worse than no line, so the phrase pool
+   * is gone and this call CREATES the bubble instead of refining a
+   * placeholder). Since the same day's second review (session 3ecd2a2f) the
+   * cerebellum ack gate runs FIRST: conversational messages the main reply
+   * covers in one short answer get NO ack bubble at all (single-bubble turns),
+   * and the ack prompt never answers content. A null gate verdict
+   * (unconfigured/timeout/malformed) fails open to emitting — a redundant
+   * bubble beats a silent wait. Delivered when the one-shot call lands (~1-3s,
+   * primary + fallback brain); dropped entirely when the model's own visible
+   * text beat it, a newer turn started, or the output was unusable — the
+   * activity indicator covers the wait, and no bubble beats a canned or wrong
+   * one.
    */
   private async emitTurnAckReplyBubble(
     sessionId: string,
@@ -16714,6 +16742,18 @@ export class CoworkRunner extends EventEmitter {
   ): Promise<void> {
     if (resolveTurnAckActivity(userPrompt) === 'verify_delivery') return;
     try {
+      // Cerebellum ack gate, awaited BEFORE the ack LLM call fires: the JEV
+      // verdict costs ~0.2-1.5s (own abort budget) and a "skip" saves the ack
+      // completion entirely — stacking it behind generation would burn the
+      // quota anyway and only shave the emission, not the call.
+      if (this.cerebellumTurnAckGate) {
+        const needsAck = await this.cerebellumTurnAckGate({ currentUserText: userPrompt })
+          .catch(() => null);
+        if (needsAck === false) {
+          coworkLog('INFO', 'turn:ack', 'first sentence skipped: cerebellum judged the message directly answerable', { sessionId });
+          return;
+        }
+      }
       const sessionTitle = this.store.getSession(sessionId)?.title ?? null;
       const generatedReply = await generateTurnAckReply(userPrompt, sessionTitle);
       if (!generatedReply) return;
