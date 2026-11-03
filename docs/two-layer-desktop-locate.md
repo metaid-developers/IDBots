@@ -53,6 +53,14 @@ returns `ok: true` without the selector is a **failed** verification, and an
 action with no expectation is reported `unverified` — never assumed to have
 worked.
 
+One exception, measured live: the acting call can fail its wait with a transient
+read error (`APP_UNRESPONSIVE`, "Accessibility surface read was incomplete") while
+the press actually landed — the DOM advanced but the post-condition poll could not
+read the tree. Reporting that as "failed" is a false negative, so the layer does
+one **read-only** re-read of the expectation and records
+`verified` + `recoveredAfter: <code>` when it shows up. That third spawn happens
+only on this failure path; the happy path stays at two calls.
+
 Measured on this machine (macOS 26, agent-desktop 1.1.0, Electron harness,
 720×460 window):
 

@@ -56,6 +56,8 @@ const DEFAULT_RETRY_DELAY_MS = 150
 const DEFAULT_TIMEOUT_MS = 5000
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const RETRYABLE_AX_ERRORS = new Set(['WINDOW_NOT_FOUND', 'TIMEOUT', 'APP_UNRESPONSIVE'])
+/** Acting-call read failures worth one read-only re-check before declaring "failed". */
+const RETRYABLE_VERIFICATION_ERRORS = new Set(['APP_UNRESPONSIVE', 'TIMEOUT', 'WAIT_TIMEOUT', 'CLI_TIMEOUT'])
 
 // ---------------------------------------------------------------------------
 // Binary resolution: AGD_BIN → packaged/runtime resource → PATH
@@ -463,6 +465,27 @@ export class DesktopAxLocator {
         selector: selectorOf(expect),
         errorCode: call.errorCode,
         detail: call.errorMessage || 'the CLI did not observe the post-condition',
+      }
+      // A transient read failure (the app's AX surface answered incompletely,
+      // or the wait timed out) is NOT the same as "the action did not land": the
+      // press may well have been delivered. Re-read once, read-only, before
+      // calling it failed — the extra spawn happens only on this path, so the
+      // two-call budget of the happy path is untouched.
+      if (RETRYABLE_VERIFICATION_ERRORS.has(call.errorCode || '')) {
+        const reread = await this.invoke(
+          findArgv({ windowId: input.query.windowId, app: input.query.app, role: expect.role || 'statictext', text: expect.text, exact: true }),
+          this.defaultTimeoutMs + 5000,
+        )
+        calls.push(reread.call)
+        const rereadParsed = parseFindEnvelope(reread.stdout)
+        if (rereadParsed.ok && rereadParsed.match) {
+          verification = {
+            state: 'verified',
+            selector: selectorOf(expect),
+            snapshotId: rereadParsed.snapshotId,
+            recoveredAfter: call.errorCode,
+          }
+        }
       }
     } else {
       verification = {

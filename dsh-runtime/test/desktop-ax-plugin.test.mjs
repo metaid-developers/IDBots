@@ -272,6 +272,36 @@ test('a post-condition that never appears fails verification but keeps the deliv
   assert.equal(outcome.delivered, true, 'the press may have landed even though the proof did not')
 })
 
+test('a transient read failure on the acting call is re-read once before being called failed', async () => {
+  // Measured for real: the press landed (DOM advanced) but the post-condition
+  // wait answered APP_UNRESPONSIVE. Reporting that as "failed" would be a false
+  // negative, so the layer re-reads once, read-only, and says how it recovered.
+  const { run, calls } = fakeRun((argv, n) => {
+    if (n === 1) return { stdout: FIND_HIT() }
+    if (n === 2) {
+      return {
+        stdout: envelope({
+          ok: false,
+          command: 'click',
+          error: { code: 'APP_UNRESPONSIVE', message: 'Accessibility surface read was incomplete', disposition: { delivery: 'delivered_unverified', retry: 'safe' } },
+        }),
+        exitCode: 1,
+      }
+    }
+    return { stdout: FIND_HIT({ role: 'statictext', name: 'count=1', value: 'count=1' }) }
+  })
+  const locator = new DesktopAxLocator({ run, bin: 'x', retryDelayMs: 0 })
+  const outcome = await locator.perform({
+    action: 'click',
+    query: { windowId: 'w-1', role: 'button', text: '计数器' },
+    expect: { role: 'statictext', text: 'count=1' },
+  })
+  assert.equal(outcome.verification.state, 'verified')
+  assert.equal(outcome.verification.recoveredAfter, 'APP_UNRESPONSIVE')
+  assert.equal(calls.length, 3, 'the happy path stays at two calls; only this recovery path costs a third')
+  assert.equal(calls[2].argv[0], 'find')
+})
+
 test('type / set-value / scroll share the same shape with their own argv', async () => {
   const expected = {
     type: ['type', '@s1:e1', 'hello', '--timeout-ms', '5000'],
