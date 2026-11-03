@@ -152,6 +152,56 @@ export interface OrchestrationClosureMark {
   pinId: string | null;
 }
 
+/**
+ * Twin acceptance (append-only). The step row is the WORKER's claim
+ * (`status` + `acceptedResult`); an acceptance row is the TWIN's separate
+ * statement about that claim. It is deliberately NOT routed through
+ * `updateStepStatus`: nothing here rewrites the step, flips
+ * `acceptedResult.verified`, or edits an earlier acceptance. Every accept is a
+ * new row, so reading a step shows claim and acceptance(s) in order.
+ */
+export type OrchestrationAcceptanceEvidenceKind = 'dir' | 'metaapp' | 'pin' | 'url' | 'other';
+
+export interface OrchestrationAcceptanceEvidence {
+  kind: OrchestrationAcceptanceEvidenceKind;
+  uri: string;
+  note?: string | null;
+}
+
+export interface OrchestrationStepAcceptance {
+  id: string;
+  stepId: string;
+  taskId: string;
+  acceptedByMetabotId: number | null;
+  evidence: OrchestrationAcceptanceEvidence[];
+  note: string | null;
+  createdAt: string;
+}
+
+export interface RecordStepAcceptanceInput {
+  stepId: string;
+  /** Optional cross-check: when set it must match the step's own task. */
+  taskId?: string | null;
+  acceptedByMetabotId?: number | null;
+  /** Raw evidence list; validated here so every writer shares one gate. */
+  evidence: unknown;
+  note?: string | null;
+}
+
+/**
+ * A refusal the caller can report verbatim (readable code + reason). Thrown
+ * BEFORE any write, so a refused acceptance leaves no trace.
+ */
+export class StepAcceptanceRefusal extends Error {
+  readonly code: string;
+
+  constructor(code: string, message: string) {
+    super(`${code}: ${message}`);
+    this.name = 'StepAcceptanceRefusal';
+    this.code = code;
+  }
+}
+
 interface Row { [key: string]: unknown }
 
 const TASK_TRANSITIONS: Record<OrchestrationTaskStatus, OrchestrationTaskStatus[]> = {
@@ -192,6 +242,49 @@ const ATTEMPT_TRANSITIONS: Record<OrchestrationAttemptStatus, OrchestrationAttem
 function parseJson(value: unknown, fallback: unknown): unknown {
   if (typeof value !== 'string' || !value.trim()) return fallback;
   try { return JSON.parse(value); } catch { return fallback; }
+}
+
+const ACCEPTANCE_EVIDENCE_KINDS: readonly OrchestrationAcceptanceEvidenceKind[] = ['dir', 'metaapp', 'pin', 'url', 'other'];
+const ACCEPTANCE_EVIDENCE_URI_MAX = 2048;
+const ACCEPTANCE_EVIDENCE_NOTE_MAX = 500;
+const ACCEPTANCE_NOTE_MAX = 2000;
+
+/**
+ * Evidence is mandatory and shape-checked: at least one `{ kind, uri }` entry,
+ * every entry carrying a non-empty uri and a known kind. A malformed entry
+ * refuses the whole call rather than being silently dropped — the acceptance
+ * row IS the audit trail.
+ */
+function normalizeAcceptanceEvidence(raw: unknown): OrchestrationAcceptanceEvidence[] {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    throw new StepAcceptanceRefusal(
+      'ACCEPTANCE_EVIDENCE_REQUIRED',
+      `Acceptance requires at least one evidence entry ({ kind, uri }); kinds: ${ACCEPTANCE_EVIDENCE_KINDS.join('|')}.`,
+    );
+  }
+  return raw.map((entry, index) => {
+    const position = index + 1;
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      throw new StepAcceptanceRefusal('ACCEPTANCE_EVIDENCE_INVALID', `Evidence entry ${position} is not an object.`);
+    }
+    const record = entry as Record<string, unknown>;
+    const uri = typeof record.uri === 'string' ? record.uri.trim() : '';
+    if (!uri) {
+      throw new StepAcceptanceRefusal('ACCEPTANCE_EVIDENCE_INVALID', `Evidence entry ${position} has no uri.`);
+    }
+    if (uri.length > ACCEPTANCE_EVIDENCE_URI_MAX) {
+      throw new StepAcceptanceRefusal('ACCEPTANCE_EVIDENCE_INVALID', `Evidence entry ${position} uri exceeds ${ACCEPTANCE_EVIDENCE_URI_MAX} characters.`);
+    }
+    const kind = typeof record.kind === 'string' ? record.kind.trim().toLowerCase() : '';
+    if (!ACCEPTANCE_EVIDENCE_KINDS.includes(kind as OrchestrationAcceptanceEvidenceKind)) {
+      throw new StepAcceptanceRefusal(
+        'ACCEPTANCE_EVIDENCE_INVALID',
+        `Evidence entry ${position} kind must be one of ${ACCEPTANCE_EVIDENCE_KINDS.join('|')}.`,
+      );
+    }
+    const note = typeof record.note === 'string' ? record.note.trim().slice(0, ACCEPTANCE_EVIDENCE_NOTE_MAX) : '';
+    return { kind: kind as OrchestrationAcceptanceEvidenceKind, uri, ...(note ? { note } : {}) };
+  });
 }
 
 function taskFromRow(row: Row): OrchestrationTask {
@@ -237,6 +330,18 @@ function stepFromRow(row: Row): OrchestrationStep {
     activeAttemptId: row.active_attempt_id == null ? null : String(row.active_attempt_id),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
+  };
+}
+
+function acceptanceFromRow(row: Row): OrchestrationStepAcceptance {
+  return {
+    id: String(row.id),
+    stepId: String(row.step_id),
+    taskId: String(row.task_id),
+    acceptedByMetabotId: row.accepted_by_metabot_id == null ? null : Number(row.accepted_by_metabot_id),
+    evidence: parseJson(row.evidence_json, []) as OrchestrationAcceptanceEvidence[],
+    note: row.note == null ? null : String(row.note),
+    createdAt: String(row.created_at),
   };
 }
 
@@ -342,6 +447,26 @@ export class OrchestrationStore {
       );
       CREATE INDEX IF NOT EXISTS idx_orchestration_attempts_step_status
         ON orchestration_attempts(step_id, status, queued_at DESC);
+      -- Twin acceptance records: APPEND-ONLY. One row per accept; the step row
+      -- and earlier acceptance rows are never rewritten (the UPDATE trigger
+      -- below makes that a database fact, not a convention).
+      CREATE TABLE IF NOT EXISTS orchestration_step_acceptances (
+        id TEXT PRIMARY KEY,
+        step_id TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        accepted_by_metabot_id INTEGER,
+        evidence_json TEXT NOT NULL DEFAULT '[]',
+        note TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(step_id) REFERENCES orchestration_steps(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_orchestration_step_acceptances_step
+        ON orchestration_step_acceptances(step_id, created_at ASC);
+      CREATE TRIGGER IF NOT EXISTS trg_orchestration_step_acceptances_append_only
+        BEFORE UPDATE ON orchestration_step_acceptances
+      BEGIN
+        SELECT RAISE(ABORT, 'orchestration_step_acceptances is append-only');
+      END;
     `);
 
     // 方案 A: additive migration for long-term task linkage columns (idempotent).
@@ -507,6 +632,73 @@ export class OrchestrationStore {
 
   listSteps(taskId: string): OrchestrationStep[] {
     return this.getAll<Row>('SELECT * FROM orchestration_steps WHERE task_id = ? ORDER BY ordinal ASC', [taskId]).map(stepFromRow);
+  }
+
+  /**
+   * Record the Twin's acceptance of a delegated step as a NEW row.
+   *
+   * Invariants (the reason this is not `updateStepStatus`):
+   *  - the step row is never written here — `status` and `acceptedResult`
+   *    stay exactly as the Worker's claim left them;
+   *  - earlier acceptance rows are never updated or replaced; a second accept
+   *    is a second row with its own id and a strictly later `created_at`;
+   *  - validation runs before the INSERT, so a refused call writes nothing.
+   */
+  recordStepAcceptance(input: RecordStepAcceptanceInput): OrchestrationStepAcceptance {
+    const stepId = String(input.stepId ?? '').trim();
+    if (!stepId) throw new StepAcceptanceRefusal('ACCEPTANCE_STEP_REQUIRED', 'stepId is required.');
+    const step = this.getStep(stepId);
+    if (!step) throw new StepAcceptanceRefusal('ACCEPTANCE_STEP_NOT_FOUND', `No orchestration step ${stepId}.`);
+    const requestedTaskId = String(input.taskId ?? '').trim();
+    if (requestedTaskId && requestedTaskId !== step.taskId) {
+      throw new StepAcceptanceRefusal(
+        'ACCEPTANCE_TASK_MISMATCH',
+        `Step ${stepId} belongs to task ${step.taskId}, not ${requestedTaskId}.`,
+      );
+    }
+    const evidence = normalizeAcceptanceEvidence(input.evidence);
+    const note = typeof input.note === 'string' ? input.note.trim().slice(0, ACCEPTANCE_NOTE_MAX) : '';
+    const acceptedBy = input.acceptedByMetabotId == null ? null : Math.trunc(Number(input.acceptedByMetabotId));
+    const id = uuidv4();
+    const createdAt = this.nextAcceptanceTimestamp(stepId);
+    this.db.run(`INSERT INTO orchestration_step_acceptances
+      (id, step_id, task_id, accepted_by_metabot_id, evidence_json, note, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`, [
+      id, step.id, step.taskId,
+      acceptedBy != null && Number.isFinite(acceptedBy) ? acceptedBy : null,
+      JSON.stringify(evidence), note || null, createdAt,
+    ]);
+    this.saveDb();
+    return this.getStepAcceptance(id)!;
+  }
+
+  getStepAcceptance(id: string): OrchestrationStepAcceptance | null {
+    const row = this.getOne<Row>('SELECT * FROM orchestration_step_acceptances WHERE id = ?', [id]);
+    return row ? acceptanceFromRow(row) : null;
+  }
+
+  /** Acceptances for ONE step, oldest first (insertion order breaks ms ties). */
+  listStepAcceptances(stepId: string): OrchestrationStepAcceptance[] {
+    return this.getAll<Row>(
+      'SELECT * FROM orchestration_step_acceptances WHERE step_id = ? ORDER BY created_at ASC, rowid ASC',
+      [stepId],
+    ).map(acceptanceFromRow);
+  }
+
+  /**
+   * Acceptance timestamps are strictly increasing per step even when two
+   * accepts land inside the same millisecond: the second row must be visibly
+   * later than the first, never a look-alike.
+   */
+  private nextAcceptanceTimestamp(stepId: string): string {
+    const last = this.getOne<{ created_at: unknown }>(
+      'SELECT created_at FROM orchestration_step_acceptances WHERE step_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1',
+      [stepId],
+    );
+    let ms = Date.now();
+    const previous = last?.created_at == null ? NaN : Date.parse(String(last.created_at));
+    if (Number.isFinite(previous) && previous >= ms) ms = previous + 1;
+    return new Date(ms).toISOString();
   }
 
   updateStepStatus(id: string, status: OrchestrationStepStatus, patch: { acceptedResult?: unknown; activeAttemptId?: string | null } = {}): OrchestrationStep {
