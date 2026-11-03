@@ -298,6 +298,11 @@ import {
   buildMrc721AgentTools,
   type Mrc721ToolsControl,
 } from './mrc721AgentTools';
+import {
+  buildEscrowAgentTools,
+  type EscrowAgentToolsControl,
+} from './escrowAgentTools';
+import type { EscrowOrderStore } from '../services/escrowOrderStore';
 import type { ExternalTransferInfo } from '../services/walletTransferService';
 import {
   buildPrivateChatAgentTools,
@@ -2431,6 +2436,15 @@ export interface CoworkRunnerOptions {
    */
   mrc721Tools?: Mrc721ToolsControl;
   /**
+   * When set, every cowork session gets the escrow_* tools (S3 generalized
+   * escrow, first-round slice): escrow_order_create / act / list / info /
+   * tick drive the pure escrowOrderStateMachine over the escrow_orders table.
+   * Zero funds flow — the tools record machine transitions and never move
+   * money or goods (the custody legs run through the party bots' own
+   * mrc721_transfer / wallet tools).
+   */
+  escrowTools?: { control: EscrowAgentToolsControl; orders: EscrowOrderStore };
+  /**
    * When set, every cowork session gets the describe_image tool backed by
    * recognizeImageViaRelay() (services/visionRelayService.ts). The relay's
    * VLM reads a local image and returns a text description + OCR, so sessions
@@ -2790,6 +2804,7 @@ export class CoworkRunner extends EventEmitter {
   private metaFileUpload?: MetaFileUploadControl;
   private walletTools?: WalletToolsControl;
   private mrc721Tools?: Mrc721ToolsControl;
+  private escrowTools?: { control: EscrowAgentToolsControl; orders: EscrowOrderStore };
   private visionRelay?: VisionRelayControl;
   private mediaTools?: MediaToolsControl;
   private metabotManage?: MetabotManageControl;
@@ -3007,6 +3022,7 @@ export class CoworkRunner extends EventEmitter {
     this.metaFileUpload = options?.metaFileUpload;
     this.walletTools = options?.walletTools;
     this.mrc721Tools = options?.mrc721Tools;
+    this.escrowTools = options?.escrowTools;
     this.visionRelay = options?.visionRelay;
     this.mediaTools = options?.mediaTools;
     this.metabotManage = options?.metabotManage;
@@ -13745,6 +13761,22 @@ export class CoworkRunner extends EventEmitter {
         ...buildMrc721AgentTools({
           tool,
           control: this.mrc721Tools,
+          sessionId,
+          resolveMetabotId: (sid) => this.getMemoryBackend().resolveMetabotIdForMemory(sid) ?? undefined,
+        })
+      );
+    }
+    // Escrow tools (S3 generalized escrow, first-round runtime slice): drive
+    // the pure escrowOrderStateMachine over the escrow_orders store. Zero
+    // funds flow — no wallet/transfer call lives in these tools; the goods
+    // custody legs are the party bots' own mrc721_transfer txids recorded as
+    // machine proof. Mounted next to the mrc721 tools (same session-scope).
+    if (this.escrowTools) {
+      memoryTools.push(
+        ...buildEscrowAgentTools({
+          tool,
+          control: this.escrowTools.control,
+          orders: this.escrowTools.orders,
           sessionId,
           resolveMetabotId: (sid) => this.getMemoryBackend().resolveMetabotIdForMemory(sid) ?? undefined,
         })

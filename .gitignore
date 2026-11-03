@@ -82,6 +82,7 @@ tests/*
 !tests/tradeBadge.test.mjs
 !tests/escrowOrderStateMachine.test.ts
 !tests/escrowCardMarkdown.test.tsx
+!tests/escrowAgentTools.test.mjs
 !tests/tradeActivityUi.test.tsx
 !tests/qqSecurity.test.ts
 !tests/qqSessionClassification.test.ts

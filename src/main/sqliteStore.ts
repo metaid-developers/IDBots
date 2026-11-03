@@ -1977,6 +1977,31 @@ export class SqliteStore {
         ON remote_skill_service(updated_at DESC);
     `);
 
+    // Escrow order documents (S3 generalized escrow, first-round runtime slice):
+    // one row per escrow order; `payload` holds the FULL EscrowOrder JSON
+    // document from escrowOrderStateMachine (state machine is the tested
+    // contract — the row only mirrors its id/kind/state/stateEnteredAt into
+    // columns for cheap queries). `metabot_id` is the CREATING local MetaBot.
+    // CREATE TABLE IF NOT EXISTS is the idempotent first-run migration —
+    // upgraded users get the table before any escrow tool touches it, and
+    // nothing here ever deletes or reshapes user data.
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS escrow_orders (
+        id TEXT PRIMARY KEY,
+        metabot_id INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        state TEXT NOT NULL,
+        state_entered_at INTEGER NOT NULL,
+        payload TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `);
+    this.db.run(`
+      CREATE INDEX IF NOT EXISTS idx_escrow_orders_metabot_id
+        ON escrow_orders(metabot_id);
+    `);
+
     // Service order ledger (buyer/seller local runtime truth)
     migrateLegacyServiceOrdersTable(this.db);
     this.db.run(SERVICE_ORDER_TABLE_SQL);

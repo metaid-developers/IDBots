@@ -222,6 +222,7 @@ import {
 } from './services/mrc721SellIntentService';
 import { buildMvc721SellPartialTx, buildMvcTransferRawTx, completeMvc721BuyTx } from './services/walletRawTxService';
 import { BotWalletTransferStore } from './services/botWalletTransferStore';
+import { EscrowOrderStore } from './services/escrowOrderStore';
 import {
   buildTokenTransferPreview as buildTokenTransferPreviewService,
   executeTokenTransfer as executeTokenTransferService,
@@ -4097,6 +4098,21 @@ function getBotWalletTransferStore(): BotWalletTransferStore {
     getStore().getSaveFunction(),
   );
   return botWalletTransferStore;
+}
+
+/**
+ * S3 generalized escrow order documents (escrowOrderStore), memoized — same
+ * SqliteStore-backed pattern as the other stores. The escrow_orders table is
+ * created idempotently by SqliteStore.initializeTables; all order semantics
+ * live in libs/escrowOrderStateMachine.ts (the tested contract).
+ */
+let escrowOrderStore: EscrowOrderStore | undefined;
+function getEscrowOrderStore(): EscrowOrderStore {
+  escrowOrderStore ??= new EscrowOrderStore(
+    getStore().getDatabase(),
+    getStore().getSaveFunction(),
+  );
+  return escrowOrderStore;
 }
 
 interface SqliteBackedRestartState {
@@ -7996,6 +8012,21 @@ const getCoworkRunner = () => {
           input.metabotId,
           { collectionName: input.collectionName, collectionPinId: input.collectionPinId },
         ),
+      },
+      // escrow_* tool backends (S3 generalized escrow, first-round slice):
+      // party resolution through the local roster plus the shared escrow
+      // order store. NO chain-write budget — escrow tools move no funds and
+      // no goods (zero-funds-flow red line); custody legs are the party
+      // bots' own mrc721_transfer txids recorded as machine proof.
+      escrowTools: {
+        control: {
+          resolveMetabotIdByName: (name) => resolveMetabotIdByName(getMetabotStore(), name),
+          getMetabotMvcAddress: (metabotId) =>
+            getMetabotStore().getMetabotById(metabotId)?.mvc_address ?? null,
+          getMetabotDisplayName: (metabotId) =>
+            getMetabotStore().getMetabotById(metabotId)?.name?.trim() || null,
+        },
+        orders: getEscrowOrderStore(),
       },
       // send_private_chat tool backend (replacing metabot-chat-privatechat).
       // Mirrors the skill script: resolve the peer chatpubkey on-chain, then
