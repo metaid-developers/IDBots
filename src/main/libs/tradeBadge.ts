@@ -40,6 +40,7 @@
  */
 
 import { verifyNftCardHostStamp } from './tradeActivityStamp';
+import { NFT_CARD_RESULT_HINT } from './nftCardMarkdown';
 
 export type TradeBadgeKind = 'p2p' | 'escrow';
 
@@ -272,3 +273,15 @@ export const mergeTradeBadge = (
 export const tradeBadgeColumnValue = (kind: TradeBadgeKind | null): string | null => kind ?? null;
 
 export const TRADE_BADGE_MAX_TEXT_FIELD = MAX_CARD_TEXT_FIELD;
+
+/**
+ * Legacy re-judge only: does this message text read as a HOST tool-output
+ * trade emit rather than a quote/report of one? The emit site appends every
+ * host-composed card to its tool result WITH the standard result hint line
+ * (appendNftCardBlock's NFT_CARD_RESULT_HINT); a bare fence inside prose —
+ * an orchestration relay copy, a demo emit, a design spec — omits it. This
+ * is the anchor 阿码's interrupted slice referenced as "emit-station anchor";
+ * the transfer-test and purchase-broadcast records verified live carry the
+ * hint line verbatim.
+ */
+const isBareTradeEmit = (text: string): boolean => text.includes(NFT_CARD_RESULT_HINT);
