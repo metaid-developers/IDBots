@@ -8,7 +8,7 @@
     "node": ">=22.19"
   },
   "scripts": {
-    "test": "node test/wire-extension.test.mjs && node test/attachment-store.test.mjs && node test/approval-channel.test.mjs && node test/m3-config.test.mjs && node test/host-tool-bridge.test.mjs && node test/mcp-bridge.test.mjs && node test/ask-bridge.test.mjs && node test/plugin-mount.test.mjs && node test/llm-retry.test.mjs && node test/policy-bridge.test.mjs && node test/compaction.test.mjs && node test/compaction-policy-config.test.mjs && node test/image-offload.test.mjs && node test/subagent.test.mjs && node test/subagent-cold-resume.test.mjs && node test/usage-projection.test.mjs && node test/session-model-switch.test.mjs && node test/session-workspace-cwd.test.mjs && node test/workspace-instructions.test.mjs && node test/tool-result-shaping.test.mjs && node test/spill-policy.test.mjs && node test/subprocess-spill-resilience.test.mjs && node test/session-title.test.mjs && node test/subagent-catalog.test.mjs && node test/fs-search.test.mjs && node test/plan-mode.test.mjs && node test/guard-policies.test.mjs && node test/v0-abort-cause-sanitize.test.mjs && node test/win32-spawn-shim.test.mjs && node test/bin-orphan-exit.test.mjs && node test/session-ensure-contention.test.mjs && node test/browser-use.test.mjs && node test/automation-approval.test.mjs && node test/cu-route-guard.test.mjs && node test/time-context.test.mjs"
+    "test": "node test/wire-extension.test.mjs && node test/attachment-store.test.mjs && node test/approval-channel.test.mjs && node test/m3-config.test.mjs && node test/host-tool-bridge.test.mjs && node test/mcp-bridge.test.mjs && node test/ask-bridge.test.mjs && node test/plugin-mount.test.mjs && node test/llm-retry.test.mjs && node test/policy-bridge.test.mjs && node test/compaction.test.mjs && node test/compaction-policy-config.test.mjs && node test/image-offload.test.mjs && node test/subagent.test.mjs && node test/subagent-cold-resume.test.mjs && node test/usage-projection.test.mjs && node test/session-model-switch.test.mjs && node test/session-workspace-cwd.test.mjs && node test/workspace-instructions.test.mjs && node test/tool-result-shaping.test.mjs && node test/spill-policy.test.mjs && node test/subprocess-spill-resilience.test.mjs && node test/session-title.test.mjs && node test/subagent-catalog.test.mjs && node test/fs-search.test.mjs && node test/plan-mode.test.mjs && node test/guard-policies.test.mjs && node test/v0-abort-cause-sanitize.test.mjs && node test/win32-spawn-shim.test.mjs && node test/bin-orphan-exit.test.mjs && node test/session-ensure-contention.test.mjs && node test/browser-use.test.mjs && node test/automation-approval.test.mjs && node test/cu-route-guard.test.mjs && node test/desktop-ax-plugin.test.mjs && node test/time-context.test.mjs"
   },
   "dependencies": {
     "@deepseek-ai/dsh-agent": "0.2.1-rc.2",
@@ -74,6 +74,7 @@
     "@deepseek-ai/dsh-web-deepseek-api": "0.2.1-rc.2",
     "@deepseek-ai/dsh-web-search-deepseek": "0.2.1-rc.2",
     "@deepseek-ai/dsh-working-directory": "0.2.1-rc.2",
+    "agent-desktop": "^1.1.0",
     "node-addon-require-builtin": "^0.1.4"
   },
   "packageManager": "pnpm@11.24.0"
