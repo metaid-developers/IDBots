@@ -1,6 +1,7 @@
+import { gunzipSync } from 'node:zlib';
 import { DEFAULT_MANAPI_BASE_URL } from './manapiPinService';
 import { restoreMetabotFromMnemonicCore, type MetaidRestoreProfile } from './metabotRestoreService';
-import { chainBackupObjectId, decryptJson, deriveBackupKey, objectId } from './chainBackupCrypto';
+import { chainBackupObjectId, decryptBytes, deriveBackupKey, objectId } from './chainBackupCrypto';
 import { materializeBackupObjects } from './chainBackupSegments';
 import {
   importBackupObjects,
@@ -10,6 +11,7 @@ import {
 } from './chainBackupData';
 import {
   CHAIN_BACKUP_CIPHER,
+  CHAIN_BACKUP_ENCODING_GZIP,
   CHAIN_BACKUP_KDF,
   CHAIN_BACKUP_MANIFEST_PATH,
   type ChainBackupSegmentRef,
@@ -81,6 +83,7 @@ interface SegmentEnvelope {
   segment: string;
   cipher: string;
   kdf: string;
+  encoding?: string;
   payload: string;
 }
 
@@ -545,7 +548,14 @@ export async function runChainBackupRestore(deps: RunChainBackupRestoreDeps): Pr
           if (text(envelope.segment) && envelope.segment !== ref.segment) {
             throw new Error(`segment reference mismatch for pin ${ref.pinId}`);
           }
-          const plaintext = decryptJson(backupKey, Buffer.from(envelope.payload, 'base64'));
+          const decrypted = decryptBytes(backupKey, Buffer.from(envelope.payload, 'base64'));
+          const encoding = text(envelope.encoding);
+          if (encoding && encoding !== CHAIN_BACKUP_ENCODING_GZIP) {
+            throw new Error(`unsupported backup encoding: ${encoding}`);
+          }
+          const plaintext = JSON.parse(
+            (encoding === CHAIN_BACKUP_ENCODING_GZIP ? gunzipSync(decrypted) : decrypted).toString('utf8'),
+          );
           if (objectId(plaintext) !== ref.segment) {
             throw new Error(`segment hash mismatch for pin ${ref.pinId}`);
           }

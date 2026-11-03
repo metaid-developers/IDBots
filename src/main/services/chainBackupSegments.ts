@@ -1,6 +1,8 @@
-import { canonicalJson, chainBackupObjectId, encryptJson, objectId } from './chainBackupCrypto';
+import { gzipSync } from 'node:zlib';
+import { canonicalJson, chainBackupObjectId, encryptBytes, objectId } from './chainBackupCrypto';
 import {
   CHAIN_BACKUP_CIPHER,
+  CHAIN_BACKUP_ENCODING_GZIP,
   CHAIN_BACKUP_KDF,
   CHAIN_BACKUP_SEGMENT_PLAINTEXT_LIMIT,
   CHAIN_BACKUP_VERSION,
@@ -105,7 +107,7 @@ export function buildObjectPinContent(
   segmentPlaintext: Record<string, unknown>,
   segmentKey?: string,
 ): string {
-  const encrypted = encryptJson(backupKey, segmentPlaintext);
+  const encrypted = encryptBytes(backupKey, gzipSync(Buffer.from(canonicalJson(segmentPlaintext), 'utf8')));
   return canonicalJson({
     version: CHAIN_BACKUP_VERSION,
     bot: botGlobalMetaId,
@@ -113,6 +115,7 @@ export function buildObjectPinContent(
     ...(segmentKey ? { segmentKey } : {}),
     cipher: CHAIN_BACKUP_CIPHER,
     kdf: CHAIN_BACKUP_KDF,
+    encoding: CHAIN_BACKUP_ENCODING_GZIP,
     payload: encrypted.toString('base64'),
   });
 }

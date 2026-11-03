@@ -6,6 +6,83 @@ import type { ChainBackupObject, ChainBackupImportOptions } from './chainBackupD
 const DAY_MS = 24 * 60 * 60 * 1000;
 const CONVERSATION_WINDOW_DAYS = 60;
 
+/**
+ * Conversation slimming. Messages are the dominant share of a real backup
+ * (measured: >95% of plaintext bytes on an active install), and most of that
+ * is machine-generated bulk that is useless on restore: full tool inputs
+ * (whole files passed to write/edit, shell scripts), duplicated tool results
+ * (metadata.toolResult repeats content verbatim), and inline base64 payloads.
+ * Caps keep the human-readable transcript intact while bounding worst-case
+ * rows; everything removed here stays in the local DB — only the on-chain
+ * copy is slimmed.
+ */
+const MESSAGE_CONTENT_LIMITS: Record<string, number> = {
+  user: 64 * 1024,
+  assistant: 64 * 1024,
+  tool_use: 8 * 1024,
+  tool_result: 8 * 1024,
+  system: 8 * 1024,
+};
+const DEFAULT_MESSAGE_CONTENT_LIMIT = 16 * 1024;
+const TOOL_INPUT_LIMIT = 2 * 1024;
+/** Matches inline base64 data URIs with a payload of >=512 chars. */
+const INLINE_DATA_URI_RE = /data:[a-z0-9.+-]+\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]{512,}/gi;
+
+function stripInlineBinaryPayloads(value: string): string {
+  INLINE_DATA_URI_RE.lastIndex = 0;
+  return value.replace(INLINE_DATA_URI_RE, '[binary payload omitted from chain backup]');
+}
+
+function capUtf8(value: string, limit: number): string {
+  const bytes = Buffer.byteLength(value, 'utf8');
+  if (bytes <= limit) return value;
+  const head = Buffer.from(value, 'utf8').subarray(0, limit).toString('utf8').replace(/\uFFFD+$/, '');
+  return `${head}\n\n[chain-backup: truncated, original ${bytes} bytes]`;
+}
+
+function slimMessageMetadata(raw: unknown): unknown {
+  if (typeof raw !== 'string' || !raw) return raw;
+  let parsed: Record<string, unknown> | null = null;
+  try {
+    const value = JSON.parse(raw) as unknown;
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      parsed = value as Record<string, unknown>;
+    }
+  } catch {
+    return stripInlineBinaryPayloads(raw);
+  }
+  if (!parsed) return stripInlineBinaryPayloads(raw);
+  let changed = false;
+  if ('toolResult' in parsed) {
+    delete parsed.toolResult;
+    changed = true;
+  }
+  if (parsed.toolInput && typeof parsed.toolInput === 'object') {
+    const serialized = JSON.stringify(parsed.toolInput);
+    const bytes = Buffer.byteLength(serialized, 'utf8');
+    if (bytes > TOOL_INPUT_LIMIT) {
+      parsed.toolInput = {
+        backupTrimmed: true,
+        originalBytes: bytes,
+        preview: capUtf8(serialized, TOOL_INPUT_LIMIT),
+      };
+      changed = true;
+    }
+  }
+  return stripInlineBinaryPayloads(changed ? JSON.stringify(parsed) : raw);
+}
+
+function slimConversationMessage(row: Record<string, unknown>): Record<string, unknown> {
+  const type = typeof row.type === 'string' ? row.type : '';
+  const limit = MESSAGE_CONTENT_LIMITS[type] ?? DEFAULT_MESSAGE_CONTENT_LIMIT;
+  const content = typeof row.content === 'string' ? row.content : '';
+  return {
+    ...row,
+    content: capUtf8(stripInlineBinaryPayloads(content), limit),
+    metadata: slimMessageMetadata(row.metadata),
+  };
+}
+
 export interface ExtractExtendedBackupOptions {
   bot?: Metabot;
   includeShared?: boolean;
@@ -225,7 +302,7 @@ function extractConversations(db: SqliteDatabase, metabotId: number, cutoffMs: n
       : [];
     return [
       makeObject('conversation', { ...session, mappings }),
-      ...messages.map((message) => makeObject('conversation_message', message)),
+      ...messages.map((message) => makeObject('conversation_message', slimConversationMessage(message))),
     ];
   });
 }

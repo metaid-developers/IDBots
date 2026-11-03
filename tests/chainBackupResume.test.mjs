@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
@@ -17,7 +18,7 @@ const { ensureMetaIDImpressionSchema } = require('../dist-electron/main/metaidIm
 const { ensureTeamCultureSchema } = require('../dist-electron/main/teamCultureStore.js');
 const { ensureSkillAssignmentSchema } = require('../dist-electron/main/libs/skillAssignmentStore.js');
 const { createMetaBotWallet } = require('../dist-electron/main/services/metabotWalletService.js');
-const { decryptJson, deriveBackupKey } = require('../dist-electron/main/services/chainBackupCrypto.js');
+const { decryptBytes, deriveBackupKey } = require('../dist-electron/main/services/chainBackupCrypto.js');
 const { extractBackupObjects, readChainBackupState } = require('../dist-electron/main/services/chainBackupData.js');
 const {
   CHAIN_BACKUP_MANIFEST_PATH,
@@ -468,7 +469,10 @@ test('oversized objects are chunked within budget, restored byte-for-byte, and s
     try {
       const envelope = JSON.parse(payload);
       if (!envelope.payload) continue;
-      const plaintext = decryptJson(backupKey, Buffer.from(envelope.payload, 'base64'));
+      const decrypted = decryptBytes(backupKey, Buffer.from(envelope.payload, 'base64'));
+      const plaintext = JSON.parse(
+        (envelope.encoding === 'gzip' ? zlib.gunzipSync(decrypted) : decrypted).toString('utf8'),
+      );
       assert.ok(Buffer.byteLength(JSON.stringify(plaintext), 'utf8') <= CHAIN_BACKUP_SEGMENT_PLAINTEXT_LIMIT);
       chunkCount += plaintext.objects.filter((obj) => obj.kind === 'object_chunk').length;
     } catch { /* public manifest */ }

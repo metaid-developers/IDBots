@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
@@ -10,7 +11,7 @@ const { SqliteStore } = require('../dist-electron/main/sqliteStore.js');
 const { MetabotStore } = require('../dist-electron/main/metabotStore.js');
 const { MetaIDKnowledgeStore } = require('../dist-electron/main/metaidKnowledgeStore.js');
 const { DreamStore } = require('../dist-electron/main/dreamStore.js');
-const { deriveBackupKey, encryptJson, decryptJson, objectId } = require('../dist-electron/main/services/chainBackupCrypto.js');
+const { deriveBackupKey, encryptJson, decryptJson, decryptBytes, objectId } = require('../dist-electron/main/services/chainBackupCrypto.js');
 const { extractBackupObjects, importBackupObjects, selectLatestBackupObjects } = require('../dist-electron/main/services/chainBackupData.js');
 const { recordChainBackupTombstones, listChainBackupTombstones } = require('../dist-electron/main/libs/chainBackupTombstones.js');
 
@@ -261,8 +262,11 @@ test('runChainBackup: publishes encrypted segments + manifest, incremental secon
   // The object pin decrypts with the mnemonic-derived key and hashes correctly.
   const envelope = JSON.parse(objectPins[0].metaidData.payload);
   assert.equal(envelope.cipher, 'aes-256-gcm');
+  assert.equal(envelope.encoding, 'gzip');
   const key = deriveBackupKey(TEST_MNEMONIC, TEST_GID);
-  const segment = decryptJson(key, Buffer.from(envelope.payload, 'base64'));
+  const segment = JSON.parse(
+    zlib.gunzipSync(decryptBytes(key, Buffer.from(envelope.payload, 'base64'))).toString('utf8'),
+  );
   assert.equal(objectId(segment), envelope.segment);
   assert.equal(segment.objects.length, 3);
 

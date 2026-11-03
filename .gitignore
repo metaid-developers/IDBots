@@ -301,6 +301,7 @@ tests/*
 !tests/coworkPrePipelineTurnFailure.test.mjs
 !tests/coworkMessageVisibility.test.ts
 !tests/chainBackupRestore.test.mjs
+!tests/chainBackupSlimming.test.mjs
 !tests/coworkAbandonedStreamingHeal.test.mjs
 !tests/dshStreamUiGate.test.mjs
 !tests/coworkFormatTransform.test.mjs
