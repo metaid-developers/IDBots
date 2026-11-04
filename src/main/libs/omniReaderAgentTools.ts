@@ -303,6 +303,194 @@ function clampSiblings(container: Record<string, unknown>, pageKey: string | und
   return clamped;
 }
 
+/**
+ * Read-side honesty for cursor-paged chain reads.
+ *
+ * Some indexer routes answer a continuation page with ZERO rows while the
+ * envelope's own accounting still says rows exist beyond the cursor (observed
+ * 2026-11: a publisher-scoped `pins_by_metaid` continuation answered
+ * `list: null` on every page, so a reader concluded "the rest does not
+ * exist"). A silent empty page is worse than an error: nothing in the answer
+ * tells the caller the read was incomplete.
+ *
+ * Measured counter-constraint (live manapi, 2026-11-04): a NORMAL walk also
+ * ends with an empty page, not with the last non-empty one —
+ * `/protocols/agentpedia/challenge` (total 16, size 5) answers 5/5/5/1 rows and
+ * then a 0-row page with the cursor cleared; a 2-row list behaves the same. A
+ * `total` alone therefore cannot decide: judging on it would flag every
+ * completed walk. The walk ledger carries how many rows this session has
+ * actually seen for the same (action, identity, path), which is what separates
+ * "the list is exhausted" from "the envelope reports rows this walk never
+ * received".
+ *
+ * The layer never changes what upstream is asked for. It only annotates the
+ * parsed answer, and passes it through unchanged whenever the page is
+ * trustworthy or cannot be judged:
+ *  - no cursor on the request (page 1 — also resets the walk ledger),
+ *  - an error response (including HTTP 200 whose body carries a non-success
+ *    `code`, as manapi does for a bad route),
+ *  - the page has rows,
+ *  - the envelope exposes no usable total AND no continuation token,
+ *  - the list is provably exhausted: `offset + returned >= total`, the whole
+ *    list fits one page (`total <= size`), or the rows this walk has seen
+ *    already reach the envelope's total.
+ *
+ * On detection it adds a machine-readable `pagination` block at the payload
+ * root, so an empty continuation page can never be read as completeness.
+ */
+type PageEnvelopeShape = {
+  returned: number;
+  total: number | null;
+  totalField: string | null;
+  size: number | null;
+  nextCursor: string | null;
+  offset: number | null;
+};
+
+/** Rows seen so far per cursor walk, keyed by action + identity + path. */
+export type PaginationWalkLedger = Map<string, number>;
+
+const TOTAL_FIELDS = ['total', 'totalCount', 'count'] as const;
+const SIZE_FIELDS = ['size', 'pageSize', 'limit'] as const;
+const OFFSET_FIELDS = ['offset', 'skip', 'start'] as const;
+/** Bounded so a long session cannot accumulate walk keys without limit. */
+const PAGINATION_WALK_LIMIT = 64;
+/** `code` values the indexer families use for a successful answer. */
+const SUCCESS_CODES = new Set([0, 1, 200]);
+
+function toNonNegativeInteger(value: unknown): number | null {
+  const parsed = typeof value === 'number'
+    ? value
+    : typeof value === 'string' && value.trim() !== ''
+      ? Number(value)
+      : NaN;
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.trunc(parsed) : null;
+}
+
+function isErrorEnvelope(envelope: Record<string, unknown>): boolean {
+  if (envelope.error) return true;
+  if (envelope.success === false) return true;
+  const code = envelope.code;
+  if (typeof code === 'number') return !SUCCESS_CODES.has(code);
+  if (typeof code === 'string' && code.trim() !== '') {
+    const numeric = Number(code);
+    if (Number.isFinite(numeric)) return !SUCCESS_CODES.has(numeric);
+    const word = code.trim().toLowerCase();
+    return word !== 'ok' && word !== 'success';
+  }
+  return false;
+}
+
+function readNumericField(
+  scopes: Array<Record<string, unknown>>,
+  fields: readonly string[],
+): { value: number; field: string } | null {
+  for (const field of fields) {
+    for (const scope of scopes) {
+      if (!(field in scope)) continue;
+      const value = toNonNegativeInteger(scope[field]);
+      if (value !== null) return { value, field };
+    }
+  }
+  return null;
+}
+
+/** Locate the page envelope and its row count, allowing an empty/null page. */
+function readPageShape(envelope: Record<string, unknown>): PageEnvelopeShape | null {
+  const scopes: Array<Record<string, unknown>> = [envelope];
+  const nested = envelope.data;
+  if (nested !== null && typeof nested === 'object' && !Array.isArray(nested)) {
+    scopes.push(nested as Record<string, unknown>);
+  }
+  for (const scope of scopes) {
+    const rowKey = LIST_ROW_KEYS.find((key) => key in scope);
+    if (rowKey === undefined) continue;
+    const value = scope[rowKey];
+    let returned: number;
+    if (value === null || value === undefined) returned = 0;
+    else if (Array.isArray(value)) returned = value.length;
+    else return null; // unknown shape — cannot judge
+    const total = readNumericField(scopes, TOTAL_FIELDS);
+    const size = readNumericField(scopes, SIZE_FIELDS);
+    const offset = readNumericField(scopes, OFFSET_FIELDS);
+    const cursor = responseCursor(envelope);
+    return {
+      returned,
+      // A total smaller than the rows already returned is not a total (live
+      // case: pins_by_address answers total: 0 beside two rows) — treat it as
+      // unusable rather than judging on it.
+      total: total !== null && total.value >= returned ? total.value : null,
+      totalField: total !== null && total.value >= returned ? total.field : null,
+      size: size !== null ? size.value : null,
+      nextCursor: cursor ? cursor.value : null,
+      offset: offset !== null ? offset.value : null,
+    };
+  }
+  return null;
+}
+
+/** Record a walk's progress; re-inserting keeps eviction least-recently-used. */
+function rememberWalk(ledger: PaginationWalkLedger, key: string, seen: number): void {
+  ledger.delete(key);
+  ledger.set(key, seen);
+  while (ledger.size > PAGINATION_WALK_LIMIT) {
+    const oldest = ledger.keys().next().value;
+    if (oldest === undefined) break;
+    ledger.delete(oldest);
+  }
+}
+
+export function withPaginationIntegrity(
+  action: string,
+  payload: unknown,
+  requestedCursor: string,
+  walkKey: string,
+  ledger: PaginationWalkLedger,
+): unknown {
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return payload;
+  const envelope = payload as Record<string, unknown>;
+  if (isErrorEnvelope(envelope)) return payload;
+  const shape = readPageShape(envelope);
+  if (!requestedCursor) {
+    rememberWalk(ledger, walkKey, shape ? shape.returned : 0); // page 1 opens a fresh walk
+    return payload;
+  }
+  if (shape === null) return payload; // cannot judge
+  const rowsSeen = (ledger.get(walkKey) ?? 0) + shape.returned;
+  rememberWalk(ledger, walkKey, rowsSeen);
+  if (shape.returned > 0) return payload;
+  // Empty continuation page: pass only when the envelope itself proves the walk
+  // finished. An explicit offset is conclusive...
+  if (shape.offset !== null && shape.total !== null && shape.offset + shape.returned >= shape.total) {
+    return payload;
+  }
+  // ...a live continuation token is positive evidence that it did not (and
+  // overrides a zero total, which pins_by_address hands out beside real rows)...
+  if (!shape.nextCursor) {
+    if (shape.total === null) return payload; // cannot judge
+    if (shape.total === 0) return payload;
+    if (shape.size !== null && shape.total <= shape.size) return payload; // one page holds it all
+    if (rowsSeen >= shape.total) return payload; // this walk already has every row
+  }
+  return {
+    ...envelope,
+    pagination: {
+      action,
+      requestedCursor,
+      returned: 0,
+      rowsSeen,
+      total: shape.total,
+      totalField: shape.totalField,
+      unaccounted: shape.total !== null ? Math.max(0, shape.total - rowsSeen) : null,
+      nextCursor: shape.nextCursor,
+      complete: false,
+      note: shape.total !== null && shape.total > 0
+        ? `continuation returned no rows while this walk has seen ${rowsSeen} of the ${shape.total} rows the envelope reports — this read is INCOMPLETE; do not treat this as the end of the list`
+        : 'continuation returned no rows but the envelope still carries a continuation token — this read is INCOMPLETE; do not treat this as the end of the list',
+    },
+  };
+}
+
 function formatData(data: unknown): string {
   const budget = MAX_RESULT_CHARS - TRUNCATION_NOTE_RESERVE;
   const text = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
@@ -453,6 +641,11 @@ export function buildOmniReaderAgentTools(deps: {
     return json;
   }
 
+  // Per-session witness of how many rows each cursor walk has actually
+  // returned; read by withPaginationIntegrity (see its note on why a total
+  // alone cannot distinguish an exhausted walk from a silent empty page).
+  const pagedWalks: PaginationWalkLedger = new Map();
+
   const omniRead = tool(
     'omni_read',
     [
@@ -460,6 +653,7 @@ export function buildOmniReaderAgentTools(deps: {
       'Actions: user_info, search_users, buzz_newest | buzz_recommended | buzz_hot | buzz_search | buzz_info, notifications, followers | following, pin, pin_version, pin_list, metaid_list, block_list, mempool_list, pins_by_path | pins_by_metaid | pins_by_address, pin_content, file_info, file_latest, files_by_creator | files_by_metaid | files_by_extension, indexer_status | indexer_stats, global_counts.',
       'Social reads (buzz_*, notifications, followers/following) run on an ordered base list with fallback (docs/social-read-resilience.md): level 1 metaso-p2p aggregation (so.metaid.io, extend via IDBOTS_SOCIAL_AGG_BASES), level 2 chain-sourced direct pin reads via manapi where the read shape allows (buzz_newest/buzz_info — their payloads carry _degraded and counts "unavailable"), level 3 explicit error naming every failed base — never a blank. Engagement counts are TRI-STATE: a number (including 0) is a real count; a pin the buzz-only index does not cover has NO counts (buzz_info answers code 40400 "social post not found", level-2 rows carry the string "unavailable") — unknown, NEVER 0 (unknown ≠ 0; only value === "unavailable" is unknown).',
       'List pages that exceed the result budget come back as VALID JSON holding whole rows only, with `truncated: true` and `returned` telling you how much of the page you got; the server\'s own `total`/`nextCursor` are preserved, so when `truncated` is true the page is PARTIAL — page with cursor/size instead of treating it as the full list. When not even one whole row fits, the result falls back to a declared `[omni_read: first N of M chars — …]` cut instead (still page with cursor/size); either way an over-budget result is never a silently torn document.',
+      'When a continuation page (a cursor was supplied) comes back with no rows while its own envelope says rows exist beyond that cursor, the result carries a `pagination` block with `complete: false` and the cursor that was tried — that page is an INCOMPLETE read, not the end of the list; do not conclude the remaining rows do not exist.',
       'Parameters per action are documented on the fields below; paged actions echo cursor/nextCursor — pass it back for the next page (buzz feeds and followers/following page with cursor; notifications-lastId-style paging retired with the old backend). Prefer search_metaids / metaid_profile for identity discovery and search_social_posts for full-text social search when those fit.',
     ].join(' '),
     {
@@ -737,23 +931,31 @@ export function buildOmniReaderAgentTools(deps: {
             if (args.size !== undefined && (args.size < 1 || args.size > 100)) {
               return textResult('omni_read pins_by_path size must be between 1 and 100.', true);
             }
+            const cursor = asString(args.cursor);
             const url = buildUrl(MANAPI_BASE, 'api/pin/path/list', {
               path,
               size: args.size,
-              cursor: asString(args.cursor) || undefined,
+              cursor: cursor || undefined,
             });
-            return textResult(formatData(await control.fetchJson(url)));
+            const json = await control.fetchJson(url);
+            return textResult(formatData(
+              withPaginationIntegrity(args.action, json, cursor, `pins_by_path|${path}`, pagedWalks),
+            ));
           }
 
           case 'pins_by_metaid': {
             const metaid = asString(args.metaid);
             if (!metaid) return textResult('omni_read pins_by_metaid requires metaid.', true);
+            const cursor = asString(args.cursor);
             const url = buildUrl(MANAPI_BASE, `api/metaid/pin/list/${encodeURIComponent(metaid)}`, {
               path: asString(args.path) || undefined,
               size: args.size,
-              cursor: asString(args.cursor) || undefined,
+              cursor: cursor || undefined,
             });
-            return textResult(formatData(await control.fetchJson(url)));
+            const json = await control.fetchJson(url);
+            return textResult(formatData(
+              withPaginationIntegrity(args.action, json, cursor, `pins_by_metaid|${metaid}|${asString(args.path)}`, pagedWalks),
+            ));
           }
 
           case 'pins_by_address': {
@@ -761,12 +963,16 @@ export function buildOmniReaderAgentTools(deps: {
             if (!address) return textResult('omni_read pins_by_address requires address.', true);
             const path = asString(args.path);
             if (!path) return textResult('omni_read pins_by_address requires path.', true);
+            const cursor = asString(args.cursor);
             const url = buildUrl(MANAPI_BASE, `api/address/pin/list/${encodeURIComponent(address)}`, {
               path,
               size: args.size,
-              cursor: asString(args.cursor) || undefined,
+              cursor: cursor || undefined,
             });
-            return textResult(formatData(await control.fetchJson(url)));
+            const json = await control.fetchJson(url);
+            return textResult(formatData(
+              withPaginationIntegrity(args.action, json, cursor, `pins_by_address|${address}|${path}`, pagedWalks),
+            ));
           }
 
           case 'pin_content': {

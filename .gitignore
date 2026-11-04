@@ -467,6 +467,7 @@ man_base_data_pebble/
 !tests/groupChatAgentTools.test.mjs
 !tests/omniReaderAgentTools.test.mjs
 !tests/buzzAppSocialSources.test.mjs
+!tests/omniReadPaginationIntegrity.test.mjs
 !tests/browserOpenAgentTools.test.mjs
 !tests/screenshotAgentTools.test.mjs
 !tests/hostLocationService.test.mjs
