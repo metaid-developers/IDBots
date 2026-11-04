@@ -2360,6 +2360,14 @@
       ]
     },
     {
+      "path": "mePoints.submitSubscriptionOrder",
+      "kind": "invoke",
+      "channel": "me:subscriptionOrder",
+      "args": [
+        "input"
+      ]
+    },
+    {
       "path": "mePoints.submitTopupOrder",
       "kind": "invoke",
       "channel": "me:submitTopupOrder",

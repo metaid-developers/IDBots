@@ -839,6 +839,10 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('me:getHistory', input ?? {}),
     submitTopupOrder: (input: { packageId: string; periodDays?: number; voucherUrl?: string; voucherRemark?: string; idempotencyKey?: string }) =>
       ipcRenderer.invoke('me:submitTopupOrder', input ?? {}),
+    // S9-A: subscription orders have their own endpoint (a planId is not a
+    // topup packageId). Desktop vouchers use the same remark/URL channel.
+    submitSubscriptionOrder: (input: { planId: string; period: 'month' | 'quarter' | 'year'; channel: 'desktop' | 'cloud' | 'mobile'; voucherUrl?: string; voucherRemark?: string; idempotencyKey?: string }) =>
+      ipcRenderer.invoke('me:subscriptionOrder', input ?? {}),
     getTopupOrders: () => ipcRenderer.invoke('me:getTopupOrders'),
     pickVoucher: (input?: Record<string, never>) => ipcRenderer.invoke('me:pickVoucher', input ?? {}),
     getPaymentInfo: () => ipcRenderer.invoke('me:getPaymentInfo'),
