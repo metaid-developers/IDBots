@@ -2553,6 +2553,8 @@ interface DiscordConfig {
 interface IMSettings {
   systemPrompt?: string;
   skillsEnabled: boolean;
+  /** Per-turn wall-clock budget in ms; unset/invalid → 120 s, clamped to [10 s, 30 min]. Mirrors src/main/im/types.ts. */
+  turnTimeoutMs?: number;
 }
 
 interface ElectronMrc20Asset {

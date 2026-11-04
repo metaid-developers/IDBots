@@ -6,13 +6,23 @@ in §8 exactly as measured.** Added on top of the text channel documented in
 
 | In scope | Out of scope |
 | --- | --- |
-| Inbound image / file / **video** (download → AES decrypt → persist → `IMMessage.attachments`) | Voice (only `voice_item.text` is read as text; no audio transcoding) |
+| Inbound image / file / **video** (download → AES decrypt → persist → `IMMessage.attachments`) | Inbound voice **audio** (only `voice_item.text` is read; the clip is never downloaded) |
 | Outbound image / file / **video** (`sendMedia`) | Group chats (`groupPolicy` is `disabled` server-side) |
+| Outbound **audio as a file attachment** (`sendMedia`, `file_item` / `media_type: 3`) | Outbound voice bubble (attempted with SILK on 2026-11-04; the client did not render it — §8) |
 | Image down-scale/re-encode before upload | Video transcoding / frame extraction |
 
 Video is **not** a second pipeline: it is the same `downloadWeixinMedia()` call as
 images and files. The only differences are a separate size cap, the media type
 reported upward, and the (optional) `duration`.
+
+**Audio is a file attachment, not a voice bubble.** This channel has no voice
+path. A SILK `voice_item` pipeline was implemented and measured on-device on
+2026-11-04: the transcode and the send both succeeded, but the WeChat client did
+not render a bubble (§8). The layer — `weixinSilk.ts`, the `silk-wasm`
+dependency and the voice-item branches — was removed the same day. An mp3 / wav /
+m4a / ogg therefore leaves as a `file_item` (`media_type: 3`), exactly like a
+.pdf, and arrives as an audio file attachment. Inbound voice policy is unchanged
+(transcript only).
 
 ---
 
@@ -22,9 +32,9 @@ reported upward, and the (optional) `duration`.
 | --- | --- |
 | `src/main/im/weixinMedia.ts` | AES-128-ECB, CDN URL building/allow-listing, filename + path safety, item→ref parsing, `downloadWeixinMedia`, upload preparation, `item_list` builders, image compression decision |
 | `src/main/im/weixinImage.ts` | Image re-encode helper used before upload (no new dependency; falls back to the original when no encoder is available) |
-| `src/main/im/weixinGateway.ts` | `collectInboundMedia()` (download every kept ref, never throw) and `sendMedia()` (upload → `sendmessage`) |
+| `src/main/im/weixinGateway.ts` | `collectInboundMedia()` (download every kept ref, never throw) and `sendMedia()` (upload → `sendmessage`; audio is a file) |
 | `src/main/im/weixinProtocol.ts` | Item types, priority rule (image > video > file), `toIMMessage()`, one-line attachment descriptions |
-| `tests/weixinMedia.test.ts` | 32 offline tests: AES key formats, path traversal, caps, degradation, outbound item shape, gateway media paths |
+| `tests/weixinMedia.test.ts` | 39 offline tests: AES key formats, path traversal, caps, degradation, outbound item shape, gateway media paths, audio-as-file (no voice bubble) |
 
 ---
 
@@ -161,7 +171,8 @@ and file path are in `docs/weixin-media-verification.md` §5.
 
 ## 6. Not covered
 
-* Voice download/transcode (voice `text` is still surfaced as text).
+* Inbound voice **audio** (voice `text` is still surfaced as text; the clip is not downloaded).
+* Outbound voice **bubbles**: audio is sent as a file attachment (§8).
 * Group chats (server-side `groupPolicy: disabled`).
 * Video transcoding, thumbnails, frame extraction.
 * Resumable/chunked uploads; the vendor plugin has none either.
@@ -180,10 +191,31 @@ and file path are in `docs/weixin-media-verification.md` §5.
 
 ## 8. Verification log
 
-Unit tests (`npx tsx --test tests/weixinMedia.test.ts`): 32 passed / 0 failed —
-offline, no real network (see the `FakeMediaNetwork` double).
+Weixin suite (`npm run test:weixin`, 3 files): **82 passed / 0 failed** — offline,
+no real network (see the `FakeMediaNetwork` double). Per file: `weixinGateway` 28,
+`weixinMedia` 39, `weixinLedger` 15.
 
 Live on-machine legs are recorded in `docs/weixin-media-verification.md`, with the
 raw log lines and absolute file paths for each of: WeChat → IDBots image, file,
 video; IDBots → WeChat image, video. Any leg that could not be run is written there
 as **未实测 + reason**, never as a pass.
+
+### Voice bubble (SILK) — attempted, measured, withdrawn 2026-11-04
+
+The goal was a real WeChat voice bubble. The pipeline was ffmpeg →
+`pcm_s16le` 24000 Hz mono → `silk-wasm` → `voice_item` (`media_type: 4`,
+item `type: 3`, `playtime` measured from the PCM).
+
+| Stage | Measured on the owner's machine |
+| --- | --- |
+| transcode | **succeeded** — SILK payload, 24 kHz |
+| upload + `sendmessage` | **succeeded** — 40 592 SILK bytes accepted, `ret = 0` |
+| client rendering | **no voice bubble** — the receiving WeChat client did not render the item as a voice message |
+
+The transcode and the protocol were not the problem; the client simply did not
+render the bubble. Per the owner's decision the layer was withdrawn the same day
+rather than debugged further: `weixinSilk.ts`, the `silk-wasm` dependency, the
+`voice_item` build branch and the `audioToSilk` gateway hook are all removed,
+and `audio/*` is back to a plain `file_item` send. The offline tests that pinned
+the SILK path were deleted with it; one test now pins the restored behaviour
+(`sendMedia sends an audio file as a FILE item, never a voice bubble`).

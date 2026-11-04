@@ -12,7 +12,12 @@ export { WeixinGateway } from './weixinGateway';
 export { WeixinStore } from './weixinStore';
 export * from './weixinProtocol';
 export { IMChatHandler } from './imChatHandler';
-export { IMCoworkHandler, type IMCoworkHandlerOptions } from './imCoworkHandler';
+export {
+  IMCoworkHandler,
+  type IMCoworkHandlerOptions,
+  type IMCoworkOutboundTarget,
+  type IMCoworkConversationSender,
+} from './imCoworkHandler';
 export { IMGatewayManager, type IMGatewayManagerOptions } from './imGatewayManager';
 export * from './dingtalkMedia';
 export { parseMediaMarkers, stripMediaMarkers } from './dingtalkMediaParser';

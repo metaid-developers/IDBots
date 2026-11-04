@@ -56,6 +56,23 @@ export const WEIXIN_MESSAGE_TYPE_BOT = 2;
 /** message_state: 2 = finished. */
 export const WEIXIN_MESSAGE_STATE_FINISH = 2;
 
+/**
+ * Group messaging is DISABLED by the platform for these bot accounts. Evidence:
+ * the channel was built and observed on 2026-11-01..04 as direct-chat only, and
+ * `weixinGateway.ts` states it in its scope header ("the platform disables group
+ * messaging for these accounts"). Exported so a capability manifest can cite the
+ * fact instead of hard-coding the claim a second time.
+ */
+export const WEIXIN_GROUP_MESSAGING_SUPPORTED = false;
+
+/**
+ * Inbound voice audio is NOT downloaded: the gateway only reads the server-side
+ * transcript (`voice_item.text`) and never runs speech-to-text itself
+ * (docs/weixin-media.md). This is about INBOUND only: outbound has no voice
+ * bubble either — audio leaves as a file attachment (§8 of the same doc).
+ */
+export const WEIXIN_INBOUND_VOICE_AUDIO_SUPPORTED = false;
+
 /** Thrown when the server answers ret/errcode = -14 (session expired). */
 export class WeixinSessionExpiredError extends Error {
   constructor(message = 'Weixin session expired; scan the QR code again') {
@@ -137,6 +154,34 @@ export interface WeixinVideoItem {
   thumb_media?: WeixinCdnMedia;
 }
 
+/**
+ * Quoted-message reference carried by one inbound item.
+ *
+ * REAL capture (2026-11-04, dev + IDBOTS_WEIXIN_RAW_LOG=1):
+ *   item_list[0].ref_msg.message_item = {
+ *     type: 0, create_time_ms: 1793738959000, msg_id: "7523486488309966856",
+ *     is_completed: true, button_item_list: [], at_bot_username_list: []
+ *   }
+ *
+ * It carries NO text and NO sender. `type: 0` was observed only on a TEXT
+ * quote, so no media type mapping is inferred here — unknown fields stay
+ * unknown rather than becoming an invented protocol.
+ */
+export interface WeixinRefMessageItem {
+  /** Server id of the quoted message. The only usable part of the reference. */
+  msg_id?: number | string;
+  type?: number;
+  create_time_ms?: number;
+  update_time_ms?: number;
+  is_completed?: boolean;
+  [key: string]: unknown;
+}
+
+export interface WeixinRefMessage {
+  message_item?: WeixinRefMessageItem | null;
+  [key: string]: unknown;
+}
+
 export interface WeixinMessageItem {
   type?: number;
   text_item?: { text?: string } | null;
@@ -144,6 +189,8 @@ export interface WeixinMessageItem {
   voice_item?: WeixinVoiceItem | null;
   file_item?: WeixinFileItem | null;
   video_item?: WeixinVideoItem | null;
+  /** Present when this item is a reply to / quote of an earlier message. */
+  ref_msg?: WeixinRefMessage | null;
   [key: string]: unknown;
 }
 
@@ -332,6 +379,257 @@ export function parseUpdatesResponse(raw: unknown): WeixinUpdates {
   return { messages, nextBuf, longPollingTimeoutMs };
 }
 
+// ---------------------------------------------------------------------------
+// Raw inbound debug log (opt-in, default OFF)
+// ---------------------------------------------------------------------------
+
+/**
+ * Environment variable that turns on the raw inbound dump. Off unless it is
+ * exactly `1`; it exists to capture the REAL `getupdates` payload shape once
+ * (e.g. to identify the field that carries a quoted/referenced message) and is
+ * not a runtime feature.
+ */
+export const WEIXIN_RAW_LOG_ENV_VAR = 'IDBOTS_WEIXIN_RAW_LOG';
+/** Cap for the serialized `item_list` in one debug line (characters). */
+export const WEIXIN_RAW_LOG_ITEM_LIST_MAX_CHARS = 2000;
+
+/**
+ * Field names whose value must never reach a log line. Matched against the KEY
+ * only, so unknown vendor fields still get redacted: `aes_key`, `aeskey`,
+ * `encrypt_query_param`, `upload_param`, `token`, `cookie`, `signature`, ...
+ */
+const WEIXIN_RAW_LOG_SECRET_KEY = /token|cookie|secret|passw|credential|aes[_-\s]?key|file[_-\s]?key|query_param|upload_param|signature/i;
+/**
+ * Credentials that ride inside a URL/query string instead of a dedicated JSON
+ * field (`.../download?encrypted_query_param=...`). Scrubbed on the serialized
+ * text as a second pass, because the key-name pass cannot see them.
+ */
+const WEIXIN_RAW_LOG_SECRET_IN_TEXT = /((?:encrypted?_query_param|upload_param|file_?key|aes_?key|token|cookie|signature)=)[^&\s"']+/gi;
+const WEIXIN_RAW_LOG_MAX_KEY_PATHS = 80;
+
+export function isWeixinRawLogEnabled(
+  env: Record<string, string | undefined> = process.env
+): boolean {
+  return env[WEIXIN_RAW_LOG_ENV_VAR] === '1';
+}
+
+/** Deep-copy with secret-looking values replaced by `[REDACTED]`. */
+function redactRawLogValue(value: unknown, depth = 0): unknown {
+  if (depth > 8) return '[depth-limit]';
+  if (Array.isArray(value)) return value.map((item) => redactRawLogValue(item, depth + 1));
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = WEIXIN_RAW_LOG_SECRET_KEY.test(key)
+        ? '[REDACTED]'
+        : redactRawLogValue(child, depth + 1);
+    }
+    return out;
+  }
+  return value;
+}
+
+/**
+ * Collect dotted key paths (`image_item.aes_key`, `ref_msg.title`, ...) from the
+ * UNREDACTED structure. The value dump below is capped at 2000 characters, but
+ * the key skeleton is cheap and stays complete, so a field name is still
+ * visible even when its value was cut.
+ */
+function collectRawLogKeyPaths(
+  value: unknown,
+  prefix: string,
+  out: string[],
+  depth: number
+): void {
+  if (out.length >= WEIXIN_RAW_LOG_MAX_KEY_PATHS || depth > 6) return;
+  if (Array.isArray(value)) {
+    // The top-level array IS item_list, so its element keys read as
+    // `text_item.text`; only nested arrays keep the `[]` marker.
+    const nextPrefix = prefix === '' ? '' : `${prefix}[]`;
+    for (const item of value) collectRawLogKeyPaths(item, nextPrefix, out, depth + 1);
+    return;
+  }
+  if (value && typeof value === 'object') {
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      const path = prefix ? `${prefix}.${key}` : key;
+      if (!out.includes(path)) out.push(path);
+      collectRawLogKeyPaths(child, path, out, depth + 1);
+    }
+  }
+}
+
+/**
+ * Build ONE single-line debug record for an inbound `msgs[]` entry.
+ *
+ * Shape:
+ *   `[Weixin Raw Inbound] message_id="…" logged_at="…" create_time_ms=… seq=…
+ *    message_type=… from_user_id="…" item_count=… truncated=…
+ *    message_keys=[…] item_keys=[…] item_list=<JSON>`
+ *
+ * Only `item_list` VALUES are dumped. `message_keys` is a key-name skeleton of
+ * the whole `msgs[]` entry, so a quote field carried at MESSAGE level (not
+ * inside item_list) is still visible — as a name, never a value.
+ * `context_token`, headers and the bot token never enter the value dump, and
+ * secret-looking item fields are redacted. The serialized `item_list` is capped
+ * at {@link WEIXIN_RAW_LOG_ITEM_LIST_MAX_CHARS} and the cut is marked in-line,
+ * so a single runaway payload cannot flood the log.
+ */
+export function formatWeixinRawInboundLogLine(
+  raw: WeixinInboundMessage,
+  now: number = Date.now()
+): string {
+  const itemList = Array.isArray(raw?.item_list) ? raw.item_list : [];
+  const serialized = (JSON.stringify(redactRawLogValue(itemList)) ?? '[]')
+    .replace(WEIXIN_RAW_LOG_SECRET_IN_TEXT, '$1[REDACTED]');
+  const truncated = serialized.length > WEIXIN_RAW_LOG_ITEM_LIST_MAX_CHARS;
+  const payload = truncated
+    ? `${serialized.slice(0, WEIXIN_RAW_LOG_ITEM_LIST_MAX_CHARS)}…[truncated: ${serialized.length} chars total]`
+    : serialized;
+
+  const keyPaths: string[] = [];
+  collectRawLogKeyPaths(itemList, '', keyPaths, 0);
+
+  const messageKeyPaths: string[] = [];
+  const messageShape = redactRawLogValue({ ...raw, item_list: '[see item_keys]' });
+  collectRawLogKeyPaths(messageShape, '', messageKeyPaths, 0);
+
+  const fields: Array<[string, unknown]> = [
+    ['message_id', raw?.message_id != null ? String(raw.message_id) : null],
+    ['logged_at', new Date(now).toISOString()],
+    ['create_time_ms', typeof raw?.create_time_ms === 'number' ? raw.create_time_ms : null],
+    ['seq', typeof raw?.seq === 'number' ? raw.seq : null],
+    ['message_type', typeof raw?.message_type === 'number' ? raw.message_type : null],
+    ['from_user_id', typeof raw?.from_user_id === 'string' ? raw.from_user_id : null],
+    ['item_count', itemList.length],
+    ['truncated', truncated],
+    ['message_keys', messageKeyPaths],
+    ['item_keys', keyPaths],
+  ];
+  const head = fields.map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(' ');
+  return `[Weixin Raw Inbound] ${head} item_list=${payload}`;
+}
+
+/**
+ * Normalized content of a referenced message, produced by a LOCAL lookup keyed
+ * by `ref_msg.message_item.msg_id`.
+ *
+ * The platform returns no text and no sender, so both fields can only come
+ * from records this host stored itself. `kind` wins over `text`: a quoted media
+ * message is labelled by TYPE and never downloaded.
+ */
+export interface WeixinQuoteSummary {
+  /** Plain text of the quoted message, when the local record has it. */
+  text?: string | null;
+  /** Quoted media type, when the local record says the quoted message was media. */
+  kind?: 'image' | 'file' | 'voice' | 'video';
+}
+
+/** Media label for a quote prefix; only the TYPE is stated — nothing is fetched. */
+const WEIXIN_QUOTE_KIND_LABELS: Record<NonNullable<WeixinQuoteSummary['kind']>, string> = {
+  image: '一张图片',
+  file: '一个文件',
+  voice: '一条语音',
+  video: '一段视频',
+};
+
+/** Summary cap for the quoted text inside the prefix. */
+export const WEIXIN_QUOTE_TEXT_MAX_CHARS = 120;
+
+/**
+ * Shown when the item HAS a `ref_msg` but the quoted message cannot be resolved
+ * locally. Never replaced with guessed content.
+ */
+export const WEIXIN_QUOTE_UNRESOLVED_PREFIX = '（引用了一条此前的消息）';
+
+/**
+ * Read `item_list[*].ref_msg.message_item.msg_id` — the ONLY quote information
+ * the Weixin platform returns (2026-11-04 capture). Malformed/missing refs are
+ * ignored rather than throwing: the message itself must still be delivered.
+ */
+export function readWeixinQuoteRef(
+  itemList: WeixinMessageItem[] | undefined
+): { msgId: string } | null {
+  if (!Array.isArray(itemList)) return null;
+  for (const item of itemList) {
+    const raw = item?.ref_msg?.message_item?.msg_id;
+    if (typeof raw === 'string' && raw.trim()) return { msgId: raw.trim() };
+    if (typeof raw === 'number' && Number.isFinite(raw)) return { msgId: String(raw) };
+  }
+  return null;
+}
+
+/**
+ * Render the quote prefix.
+ *
+ *   text resolved   → `（引用：<120 字摘要>）`
+ *   media resolved  → `（引用了一张图片）` / 一个文件 / 一条语音 / 一段视频
+ *   nothing usable  → null (caller uses {@link WEIXIN_QUOTE_UNRESOLVED_PREFIX})
+ */
+export function formatWeixinQuotePrefix(quote: WeixinQuoteSummary | null | undefined): string | null {
+  if (!quote) return null;
+  const mediaLabel = quote.kind ? WEIXIN_QUOTE_KIND_LABELS[quote.kind] : '';
+  if (mediaLabel) return `（引用了${mediaLabel}）`;
+
+  const text = typeof quote.text === 'string'
+    ? quote.text.replace(/\s+/g, ' ').trim()
+    : '';
+  if (!text) return null;
+  // Count CODE POINTS, not UTF-16 units: an emoji must not be split in half.
+  const chars = Array.from(text);
+  const body = chars.length > WEIXIN_QUOTE_TEXT_MAX_CHARS
+    ? `${chars.slice(0, WEIXIN_QUOTE_TEXT_MAX_CHARS).join('')}…`
+    : text;
+  return `（引用：${body}）`;
+}
+
+/**
+ * Result of reading `ilink/bot/sendmessage`'s response.
+ *
+ * `rejection` exists so a present-but-unusable id is reported instead of being
+ * silently dropped: the quote ledger then has no entry for this message, and
+ * that is a fact the log should carry.
+ */
+export interface WeixinSendMessageResult {
+  /** Exact server message id (the value a quote reference will carry). */
+  messageId: string | null;
+  rejection: 'unsafe-number' | 'malformed' | null;
+}
+
+/** Id fields the sendmessage response has been seen to use. */
+function pickSendMessageId(record: Record<string, unknown> | null): unknown {
+  if (!record) return undefined;
+  if (record.message_id !== undefined) return record.message_id;
+  const nested = asRecord(record.msg);
+  if (nested && nested.message_id !== undefined) return nested.message_id;
+  if (record.msg_id !== undefined) return record.msg_id;
+  return undefined;
+}
+
+/**
+ * Read the message id from a `sendmessage` response.
+ *
+ * REAL capture (2026-11-04, dev): `{"message_id":7523489994131519368}` — a bare
+ * JSON number that is ALSO past Number.MAX_SAFE_INTEGER. The transport now
+ * preserves such ids as exact strings; if a caller hands us an already-rounded
+ * number we refuse it rather than store a key that can never match.
+ */
+export function parseSendMessageResponse(raw: unknown): WeixinSendMessageResult {
+  const record = asRecord(raw);
+  const value = pickSendMessageId(record);
+  if (value === undefined || value === null) return { messageId: null, rejection: null };
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? { messageId: trimmed, rejection: null } : { messageId: null, rejection: 'malformed' };
+  }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || !Number.isSafeInteger(value)) {
+      return { messageId: null, rejection: 'unsafe-number' };
+    }
+    return { messageId: String(value), rejection: null };
+  }
+  return { messageId: null, rejection: 'malformed' };
+}
+
 /** Read the typing ticket returned by getconfig (used by sendtyping). */
 export function parseTypingTicket(raw: unknown): string | null {
   assertWeixinOk(raw, 'getconfig');
@@ -440,6 +738,22 @@ export interface WeixinInboundAttachmentInfo {
   failed?: number;
 }
 
+export interface WeixinInboundQuoteResolver {
+  /**
+   * Resolve a quoted message from LOCAL records by its server `msg_id`.
+   *
+   * The platform's `ref_msg` carries only that id. Return null when the id is
+   * unknown — the caller then writes the honest fallback instead of guessing.
+   *
+   * Production wires this to `IMStore`'s local message ledger
+   * (`im_weixin_message_ledger`, filled from the outbound `sendmessage`
+   * response and from every inbound message). The resolver is OPTIONAL: with no
+   * ledger, or with a ledger that throws, every quote falls back to
+   * {@link WEIXIN_QUOTE_UNRESOLVED_PREFIX} and delivery is unaffected.
+   */
+  resolveQuote?: (msgId: string) => WeixinQuoteSummary | null;
+}
+
 /**
  * Convert an inbound Weixin message into the shared IMMessage contract.
  * Returns null for messages the gateway must ignore (bot echoes, empty bodies).
@@ -447,11 +761,17 @@ export interface WeixinInboundAttachmentInfo {
  * Media: the gateway downloads attachments first and passes them in. A media-only
  * message gets a generated description; a partially failed one keeps its text or
  * description plus an explicit "附件下载失败" note — the message is never dropped.
+ *
+ * Quote: when `item.ref_msg.message_item.msg_id` is present, the body is
+ * prefixed with the resolved summary, or with the honest fallback sentence when
+ * no local record matches. Only the reply's OWN attachments are downloaded;
+ * the quoted message is never fetched.
  */
 export function toIMMessage(
   raw: WeixinInboundMessage,
   now: number = Date.now(),
-  attachmentInfo: WeixinInboundAttachmentInfo = {}
+  attachmentInfo: WeixinInboundAttachmentInfo = {},
+  quoteResolver: WeixinInboundQuoteResolver = {}
 ): IMMessage | null {
   if (!raw || typeof raw !== 'object') return null;
   if (raw.message_type === WEIXIN_MESSAGE_TYPE_BOT) return null;
@@ -475,6 +795,20 @@ export function toIMMessage(
   if (!content) return null;
   if (failed > 0 && attachments.length > 0) {
     content = `${content}\n（附件下载失败：${failed} 个）`;
+  }
+
+  // Quote: the wire carries only an id, so this is a LOCAL lookup. Unresolvable
+  // → a plain sentence; never a fabricated body or sender.
+  const quoteRef = readWeixinQuoteRef(raw.item_list);
+  if (quoteRef) {
+    let quoted: WeixinQuoteSummary | null = null;
+    try {
+      quoted = quoteResolver.resolveQuote?.(quoteRef.msgId) ?? null;
+    } catch {
+      quoted = null;
+    }
+    const prefix = formatWeixinQuotePrefix(quoted) ?? WEIXIN_QUOTE_UNRESOLVED_PREFIX;
+    content = `${prefix}${content}`;
   }
 
   const timestamp = typeof raw.create_time_ms === 'number' && Number.isFinite(raw.create_time_ms)

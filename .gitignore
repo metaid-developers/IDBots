@@ -588,6 +588,12 @@ man_base_data_pebble/
 # dev DSH instance user-data/app-data dirs ("npm run electron:dev:dsh")
 .dev-userdata-dsh/
 .dev-appdata-dsh/
+
+# Data-guard fingerprints live NEXT TO the data dir, not inside it. For a dev
+# instance whose userData is <repo>/.dev-userdata-*, "next to" is the repo root
+# (src/main/libs/dataGuard.ts:49). Anchored to the root on purpose, so a nested
+# directory that happens to share the name is never ignored by accident.
+/IDBots-dataguard/
 !tests/metabotLlmBrainMigration.test.mjs
 !tests/sqliteStoreMetabotsRebuildExtras.test.mjs
 !tests/knowledgeBaseText.test.mjs
@@ -866,6 +872,9 @@ blob-report/
 !tests/mrc721AtomicSwap.test.mjs
 !tests/weixinGateway.test.ts
 !tests/weixinMedia.test.ts
+!tests/outboundImReceiptBubble.test.mjs
+# A timed-out IM turn must return its partial result instead of restarting from zero
+!tests/imCoworkTurnTimeout.test.mjs
 !docs/weixin-media.md
 !docs/weixin-media-delegated-verification.md
 !docs/weixin-media-verification.md

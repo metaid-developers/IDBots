@@ -8,10 +8,11 @@ import { useDispatch, useSelector } from 'react-redux';
 import { SignalIcon, XMarkIcon, CheckCircleIcon, XCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { RootState, store } from '../../store';
 import { imService } from '../../services/im';
-import { setDingTalkConfig, setFeishuConfig, setTelegramConfig, setDiscordConfig, setQQConfig, clearError } from '../../store/slices/imSlice';
+import { coworkService } from '../../services/cowork';
+import { setDingTalkConfig, setFeishuConfig, setTelegramConfig, setDiscordConfig, setQQConfig, setIMSettings, clearError } from '../../store/slices/imSlice';
 import { getPlatformConfigAction } from './platformConfigActions';
 import { i18nService } from '../../services/i18n';
-import type { IMPlatform, IMConnectivityCheck, IMConnectivityTestResult, IMGatewayConfig } from '../../types/im';
+import type { IMPlatform, IMConnectivityCheck, IMConnectivityTestResult, IMGatewayConfig, IMChannelPermissionMode } from '../../types/im';
 import type { QQGroupCandidateView } from '../../types/im';
 import { getVisibleIMPlatforms } from '../../utils/regionFilter';
 import MetaBotSelector, { type MetaBotForSelector } from '../cowork/MetaBotSelector';
@@ -1192,6 +1193,42 @@ const IMSettings: React.FC = () => {
             </p>
 
             {renderMetabotSelector('weixin')}
+
+            {/* Channel permission mode. DEFAULT = inherit the same persisted
+                global mode the desktop uses, so 完全信任 chosen there is also in
+                force in chat. An override exists for the rare per-channel case. */}
+            <div className="rounded-xl border dark:border-claude-darkBorder border-claude-border px-3 py-2.5 space-y-1.5">
+              <label className="block text-xs font-medium dark:text-claude-darkText text-claude-text">
+                {i18nService.t('weixinPermissionModeLabel')}
+              </label>
+              <select
+                value={config.settings.channelPermissions?.weixinPermissionMode ?? 'inherit'}
+                onChange={(e) => {
+                  dispatch(setIMSettings({
+                    channelPermissions: {
+                      ...config.settings.channelPermissions,
+                      weixinPermissionMode: e.target.value as IMChannelPermissionMode,
+                    },
+                  }));
+                  void imService.updateConfig(store.getState().im.config).then((saved) => {
+                    // The open WeChat session's permission label is resolved
+                    // from this setting on read; refresh it so the window never
+                    // shows the stale row value.
+                    if (saved) void coworkService.refreshImSessionPermissionMode();
+                  });
+                }}
+                className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors"
+              >
+                <option value="inherit">{i18nService.t('imPermissionModeInherit')}</option>
+                <option value="default">{i18nService.t('imPermissionModeDefault')}</option>
+                <option value="plan">{i18nService.t('imPermissionModePlan')}</option>
+                <option value="acceptEdits">{i18nService.t('imPermissionModeAcceptEdits')}</option>
+                <option value="bypassPermissions">{i18nService.t('imPermissionModeBypass')}</option>
+              </select>
+              <p className="text-[11px] leading-4 text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                {i18nService.t('weixinPermissionModeHint')}
+              </p>
+            </div>
 
             {weixinLoginError && (
               <div className="text-xs text-red-500 bg-red-500/10 px-3 py-2 rounded-lg">

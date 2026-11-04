@@ -321,12 +321,21 @@ export function splitQQText(text: string, limit = QQ_TEXT_CHUNK_LIMIT, maxChunks
   return chunks.filter((chunk) => chunk.length > 0);
 }
 
+/**
+ * Outbound extension tables (WITHOUT the dot) — one source for both the
+ * classifier below and the channel capability manifest the desktop prompt
+ * advertises.
+ */
+export const QQ_OUTBOUND_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'] as const;
+export const QQ_OUTBOUND_VIDEO_EXTENSIONS = ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v'] as const;
+export const QQ_OUTBOUND_VOICE_EXTENSIONS = ['silk', 'amr', 'slk'] as const;
+
 /** Which SDK sender a local file should use. */
 export function classifyQQOutbound(filePath: string): 'image' | 'video' | 'voice' | 'file' {
   const ext = path.extname(filePath || '').toLowerCase();
-  if (['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'].includes(ext)) return 'image';
-  if (['.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v'].includes(ext)) return 'video';
-  if (['.silk', '.amr', '.slk'].includes(ext)) return 'voice';
+  if (QQ_OUTBOUND_IMAGE_EXTENSIONS.some((extension) => `.${extension}` === ext)) return 'image';
+  if (QQ_OUTBOUND_VIDEO_EXTENSIONS.some((extension) => `.${extension}` === ext)) return 'video';
+  if (QQ_OUTBOUND_VOICE_EXTENSIONS.some((extension) => `.${extension}` === ext)) return 'voice';
   return 'file';
 }
 

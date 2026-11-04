@@ -918,6 +918,19 @@ class CoworkService {
   }
 
   /**
+   * Re-read the on-screen session after an out-of-band IM permission change.
+   *
+   * `cowork:session:get` resolves the effective mode for IM sessions (their
+   * stored row is frozen at creation), so pulling the session again is enough
+   * to replace a stale label. Display-only: nothing is written back to the row.
+   */
+  async refreshImSessionPermissionMode(): Promise<void> {
+    const current = store.getState().cowork.currentSession;
+    if (!current?.imChannel || !current.imChannel.startsWith('im:')) return;
+    await this.loadSession(current.id, { onlyIfCurrent: true });
+  }
+
+  /**
    * /goal command: set, update, or clear a session's goal (null clears).
    * Patches the active session in the store on success.
    */

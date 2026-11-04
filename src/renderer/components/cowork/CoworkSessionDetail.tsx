@@ -119,10 +119,12 @@ import {
   getCoworkSessionTitleClassName,
   shouldShowA2AServiceSessionId,
 } from './coworkSessionPresentation.js';
-import { isAssistantTurnComplete, findDeliveryAssistantIndex, shouldShowAssistantBubbleActions } from './assistantTurnPresentation.js';
+import { isAssistantTurnComplete, findDeliveryAssistantIndex, shouldShowAssistantBubbleActions, splitOutboundImReceipts } from './assistantTurnPresentation.js';
 import { isAssistantModeOwnerChatSession } from './assistantModeSessionGate';
+import { readOutboundImReceiptBubble } from './outboundImReceiptBubble.js';
 import { reuseStableTurns } from './conversationTurnReuse.js';
 import TurnNavigator, { buildTurnNavigatorItems, type TurnNavigatorItem } from './TurnNavigator';
+import LocalFileLink from '../ui/LocalFileLink';
 import {
   buildRefundStatusDismissKey,
   getRefundCardVariant,
@@ -1254,6 +1256,85 @@ const ImagePreviewStrip: React.FC<{ imagePaths: string[]; inline?: boolean }> = 
         onClose={() => setLightboxSrc(null)}
       />
     </>
+  );
+};
+
+/**
+ * One delivered `im_send_message` (a proactive send), drawn the way the owner
+ * reads a chat: the sent body VERBATIM in a normal outgoing bubble, then one
+ * entry per attachment — an image thumbnail for pictures, a file entry for
+ * everything else. No direction/channel/time header, no target line, no
+ * 摘要/结果 fields, no 200-char cut: those live in the row's metadata now.
+ *
+ * Failures never reach this component — their audited card (reason visible) is
+ * the message.
+ */
+const OutboundImReceiptMessage: React.FC<{
+  view: {
+    body: string;
+    attachments: Array<{ path: string; name: string; kind: string }>;
+    fallbackNote: string | null;
+  };
+  onOpenLocalFile?: (filePath: string, event: React.MouseEvent) => boolean | void;
+}> = ({ view, onOpenLocalFile }) => {
+  const openFile = async (filePath: string, event: React.MouseEvent) => {
+    if (onOpenLocalFile?.(filePath, event) === true) {
+      return;
+    }
+    try {
+      await window.electron.shell.openPath(filePath);
+    } catch (error) {
+      console.error('Failed to open the sent attachment:', filePath, error);
+    }
+  };
+
+  return (
+    <div className="space-y-1 py-1">
+      {view.body ? (
+        <div className="w-fit max-w-[min(720px,82%)]">
+          <div
+            className="assistant-bubble rounded-[22px] px-[16px] py-[10px] dark:text-claude-darkText text-claude-text shadow-subtle"
+          >
+            {/* Same markdown pipeline as every other bubble; whitespace-pre-wrap
+                keeps the sent line breaks exactly as they went out. */}
+            <MarkdownContent
+              content={view.body}
+              emojiImages
+              className="prose dark:prose-invert max-w-none whitespace-pre-wrap [overflow-wrap:anywhere]"
+              onOpenLocalFile={onOpenLocalFile}
+              chatExperienceMode="assistant"
+            />
+          </div>
+        </div>
+      ) : null}
+      {view.attachments.map((attachment) => (
+        <div key={attachment.path} className="w-fit max-w-[min(720px,82%)]">
+          {attachment.kind === 'image' ? (
+            // Existing image-message display: the thumbnail strip, one picture.
+            <ImagePreviewStrip imagePaths={[attachment.path]} inline />
+          ) : (
+            // Existing file display: a file entry (name + type icon + open menu).
+            <div className="assistant-bubble rounded-[22px] px-[16px] py-[10px] text-sm dark:text-claude-darkText text-claude-text">
+              <LocalFileLink
+                filePath={attachment.path}
+                title={attachment.path}
+                className="inline-flex items-center gap-1 text-claude-accent hover:text-claude-accentHover underline decoration-claude-accent/50 hover:decoration-claude-accent"
+                onOpen={(_path, event) => openFile(attachment.path, event)}
+              >
+                {attachment.name}
+              </LocalFileLink>
+            </div>
+          )}
+        </div>
+      ))}
+      {view.fallbackNote ? (
+        <div className="w-fit max-w-[min(720px,82%)]">
+          <div className="assistant-bubble rounded-[22px] px-[16px] py-[10px] text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
+            {view.fallbackNote}
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 };
 
@@ -2415,6 +2496,21 @@ const AssistantTurnBlock = React.memo(function AssistantTurnBlock({
   const renderSystemMessage = (message: CoworkMessage) => {
     const meta = message.metadata ?? {};
 
+    // A DELIVERED proactive send (im_send_message) is a normal outgoing chat
+    // bubble: the body verbatim, then one entry per attachment. Failed and
+    // partially delivered attempts keep the audited card below — there the
+    // visible reason is the message. Legacy rows (no record version) also keep
+    // the card: their `content` IS the card text.
+    const outboundReceipt = readOutboundImReceiptBubble(message);
+    if (outboundReceipt) {
+      return (
+        <OutboundImReceiptMessage
+          view={outboundReceipt}
+          onOpenLocalFile={onOpenLocalFile}
+        />
+      );
+    }
+
     // Structured SDK event messages (previously silently dropped events are
     // now surfaced here: notification / informational / compact_boundary /
     // permission_denied / rate_limit_event / conversation_reset).
@@ -2689,6 +2785,11 @@ const AssistantTurnBlock = React.memo(function AssistantTurnBlock({
   const processItems = deliveryMessage
     ? visibleAssistantItems.filter((_, index) => index !== deliveryIndex)
     : [];
+  // Outbound-IM receipts (im_send_message) never fold into "Worked for X":
+  // they are the proof of what went out to the phone, so they render below the
+  // delivery bubble in every state. Only the real process chrome collapses.
+  const { receipts: outboundReceiptItems, rest: collapsibleProcessItems } =
+    splitOutboundImReceipts(processItems);
   const workedForMs = deliveryMessage && turn.userMessage
     ? Math.max(0, deliveryMessage.timestamp - turn.userMessage.timestamp)
     : 0;
@@ -2699,7 +2800,7 @@ const AssistantTurnBlock = React.memo(function AssistantTurnBlock({
     !isAssistantMode
     && isTurnComplete
     && deliveryMessage
-    && processItems.length > 0
+    && collapsibleProcessItems.length > 0
     && turn.userMessage
     && workedForMs > 0
   );
@@ -2736,7 +2837,7 @@ const AssistantTurnBlock = React.memo(function AssistantTurnBlock({
                 </button>
                 {processExpanded && (
                   <div className="space-y-3">
-                    {processItems.map((processItem) => (
+                    {collapsibleProcessItems.map((processItem) => (
                       renderVisibleItem(processItem, visibleAssistantItems.indexOf(processItem), visibleAssistantItems)
                     ))}
                   </div>
@@ -2754,6 +2855,10 @@ const AssistantTurnBlock = React.memo(function AssistantTurnBlock({
                   isTurnEnd
                   sessionId={sessionId ?? undefined}
                 />
+                {/* Outbound-IM receipts always visible: never behind the fold. */}
+                {outboundReceiptItems.map((item) => (
+                  renderVisibleItem(item, visibleAssistantItems.indexOf(item), visibleAssistantItems)
+                ))}
               </>
             ) : (
               visibleAssistantItems.map((item, index) => renderVisibleItem(item, index, visibleAssistantItems))
