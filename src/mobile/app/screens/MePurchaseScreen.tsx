@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { t } from '../../i18n';
 import { getMobileElectron } from '../appBridge';
 import { MeTierCards } from '../components/MeTierCards';
+import { buildMePurchaseOrderRequest, submitMePurchaseOrder } from '../me/purchaseSubmit';
 import { QrCanvas } from './recharge/QrCanvas';
 import {
   formatMe,
@@ -153,14 +154,21 @@ export default function MePurchaseScreen(props: {
 
   const submit = useCallback(async () => {
     if (submittingRef.current) return;
-    const packageId = section === 'subscribe' ? selectedPlan?.planId : selectedPackage?.packageId;
-    if (!packageId) return;
     const defaultRemark = section === 'subscribe' && selectedPlan
       ? `${t('mobile.me.purchase.subscribeTitle')} ${selectedPlan.name} / ${t(PERIODS.find((p) => p.id === period)!.labelKey)}`
       : selectedPackage
         ? `${t('mobile.me.purchase.topupTitle')} ${selectedPackage.packageId}`
         : '';
     const voucherRemark = remark.trim() || (voucher ? '' : defaultRemark);
+    const request = buildMePurchaseOrderRequest({
+      section,
+      planId: selectedPlan?.planId,
+      packageId: selectedPackage?.packageId,
+      period,
+      voucherUrl: voucher?.url ?? undefined,
+      voucherRemark: voucherRemark || undefined,
+    });
+    if (!request) return;
     if (!voucher && !voucherRemark) {
       setSubmitError(t('mobile.me.purchase.voucherRequired'));
       return;
@@ -170,23 +178,17 @@ export default function MePurchaseScreen(props: {
     setSubmitError('');
     setErrorCode('');
     try {
-      const res = await window.electron.mePoints.submitTopupOrder({
-        packageId,
-        periodDays: section === 'subscribe' ? days : undefined,
-        voucherUrl: voucher?.url ?? undefined,
-        voucherRemark: voucherRemark || undefined,
-        idempotencyKey: `mobile-${section}-${packageId}-${Date.now()}`,
-      });
-      if (res.success) {
-        setOrderId(res.submission?.order?.orderId ?? '');
+      const result = await submitMePurchaseOrder(window.electron.mePoints, request);
+      if (result.ok) {
+        setOrderId(result.orderId);
         setPhase('submitted');
         invalidateMeBalance();
         void refreshMeTopupOrders();
         props.onSubmitted?.();
       } else {
         setPhase('form');
-        setSubmitError(res.error || t('mobile.me.purchase.errorTitle'));
-        setErrorCode(res.errorCode || '');
+        setSubmitError(result.error || t('mobile.me.purchase.errorTitle'));
+        setErrorCode(result.errorCode || '');
       }
     } catch (error) {
       setPhase('form');
