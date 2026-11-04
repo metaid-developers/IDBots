@@ -1,5 +1,6 @@
 import type { ComponentType } from 'react';
 import {
+  ChatBubbleLeftEllipsisIcon,
   ChatBubbleLeftRightIcon,
   Cog6ToothIcon,
   CpuChipIcon,
@@ -27,6 +28,7 @@ export type MeRoute =
   | 'profile'
   | 'traffic'
   | 'bots'
+  | 'weixinBind'
   | 'skills'
   | 'memory'
   | 'general'
@@ -67,6 +69,13 @@ export const ME_ENTRIES: readonly MeEntry[] = [
     testId: 'me-entry-bots',
     summary: (input) =>
       input.botCount === null ? null : t('mobile.me.summary.botsCount', { count: input.botCount }),
+  },
+  {
+    id: 'weixinBind',
+    group: 'bots',
+    icon: ChatBubbleLeftEllipsisIcon,
+    titleKey: 'mobile.me.entry.weixinBind',
+    testId: 'me-entry-weixin-bind',
   },
   {
     id: 'skills',
@@ -120,7 +129,7 @@ export const ME_ENTRIES: readonly MeEntry[] = [
 
 /** Group order + titles for the registry renderer (IA-PLAN §4.1). */
 export const ME_ENTRY_GROUPS: ReadonlyArray<{ group: MeEntryGroup; titleKey: string | null }> = [
-  // The bots group has no visible heading (single "My Bots" row on top).
+  // The bots group has no visible heading (My Bots + WeChat bot rows on top).
   { group: 'bots', titleKey: null },
   { group: 'general', titleKey: 'mobile.me.group.general' },
   { group: 'account', titleKey: 'mobile.me.group.account' },

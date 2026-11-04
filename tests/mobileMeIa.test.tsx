@@ -18,6 +18,7 @@ import { SkillsPage } from '../src/mobile/app/screens/me/SkillsPage.tsx';
 import { MemoryPage } from '../src/mobile/app/screens/me/MemoryPage.tsx';
 import { GeneralPage } from '../src/mobile/app/screens/me/GeneralPage.tsx';
 import { AccountDeleteSheet, AccountPage } from '../src/mobile/app/screens/me/AccountPage.tsx';
+import { WeixinBindPage, classifyWeixinPoll } from '../src/mobile/app/screens/me/WeixinBindPage.tsx';
 import { AboutPage } from '../src/mobile/app/screens/me/AboutPage.tsx';
 import { mobileI18n } from '../src/mobile/i18n.ts';
 import type { MobileUserIdentity } from '../src/mobile/app/hooks/useIdentity.ts';
@@ -29,14 +30,15 @@ import type { MobileUserIdentity } from '../src/mobile/app/hooks/useIdentity.ts'
  * (e2e/mobile/me-ia.spec.ts) — renderToStaticMarkup never runs effects.
  */
 
-test('registry: six list entries in three groups, profile/traffic ride the cards', () => {
+test('registry: seven list entries in three groups, profile/traffic ride the cards', () => {
   assert.deepEqual(
     ME_ENTRIES.map((entry) => entry.id),
-    ['bots', 'skills', 'memory', 'general', 'account', 'about'],
+    ['bots', 'weixinBind', 'skills', 'memory', 'general', 'account', 'about'],
   );
   assert.deepEqual(ME_ENTRY_GROUPS.map((group) => group.group), ['bots', 'general', 'account']);
-  // The bots group renders without a heading (single row on top).
+  // The bots group renders without a heading (My Bots + WeChat bot rows on top).
   assert.equal(ME_ENTRY_GROUPS[0].titleKey, null);
+  assert.deepEqual(meEntriesForGroup('bots').map((entry) => entry.id), ['bots', 'weixinBind']);
   assert.deepEqual(meEntriesForGroup('general').map((entry) => entry.id), ['skills', 'memory', 'general']);
   assert.deepEqual(meEntriesForGroup('account').map((entry) => entry.id), ['account', 'about']);
   // profile/traffic are NOT registry rows (card entries, IA-PLAN §2.1).
@@ -180,6 +182,26 @@ test('remaining secondary pages render their shells', () => {
   assert.match(about, /data-testid="about-link-terms"/);
   assert.match(about, /data-testid="about-link-privacy"/);
   assert.match(about, /data-testid="about-link-custody"/);
+});
+
+// --- WeChat bot binding page -------------------------------------------------
+
+test('weixin bind page: mock environments render the unavailable note, never a bind button', () => {
+  // SSR has no bridge (and the mock bridge has no `im` facade either), so the
+  // page must degrade instead of throwing.
+  const html = renderToStaticMarkup(React.createElement(WeixinBindPage, { onBack: () => undefined }));
+  assert.match(html, /data-testid="weixin-bind-unavailable"/);
+  assert.doesNotMatch(html, /data-testid="weixin-bind-start"/);
+});
+
+test('weixin bind poll classifier: connected wins, pending reads as waiting, quiet pending-free reads as expired', () => {
+  assert.equal(classifyWeixinPoll({ loginState: 'idle', loginPending: false, connected: true }, null), 'connected');
+  assert.equal(classifyWeixinPoll({ loginState: 'wait', loginPending: true, connected: false }, null), 'waiting');
+  assert.equal(classifyWeixinPoll({ loginState: 'scanned', loginPending: true, connected: false }, null), 'scanned');
+  // Confirm+start lag: credentials exist before `connected` flips true.
+  assert.equal(classifyWeixinPoll({ loginState: 'idle', loginPending: false, connected: false }, true), 'connected');
+  // Terminal states clear pendingQr: quiet + no credentials = the QR died.
+  assert.equal(classifyWeixinPoll({ loginState: 'idle', loginPending: false, connected: false }, null), 'expired');
 });
 
 // --- account deletion typed-confirmation gate --------------------------------
