@@ -9,6 +9,7 @@ import { ArrowPathIcon, CpuChipIcon, DocumentDuplicateIcon, GlobeAltIcon, MoonIc
 import { i18nService } from '../../services/i18n';
 import type { Metabot } from '../../types/metabot';
 import TwinBadge from './TwinBadge';
+import NftAvatarFrame from './NftAvatarFrame';
 import {
   buildMetaBotToggleViewModel,
   copyGlobalMetaIdToClipboard,
@@ -85,17 +86,16 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
               title="Open in Bot Browser"
               aria-label="Open in Bot Browser"
             >
-              {metabot.avatar && (metabot.avatar.startsWith('data:') || metabot.avatar.startsWith('http')) ? (
-                <img
-                  src={metabot.avatar}
-                  alt=""
-                  className="w-12 h-12 rounded-xl object-cover"
-                />
-              ) : (
-                <div className="w-12 h-12 rounded-xl dark:bg-claude-darkSurface bg-claude-surface flex items-center justify-center">
-                  <CpuChipIcon className="h-6 w-6 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
-                </div>
-              )}
+              <NftAvatarFrame
+                avatar={metabot.avatar}
+                frameClassName="w-12 h-12 rounded-xl"
+                alt=""
+                fallback={(
+                  <div className="w-12 h-12 rounded-xl dark:bg-claude-darkSurface bg-claude-surface flex items-center justify-center">
+                    <CpuChipIcon className="h-6 w-6 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
+                  </div>
+                )}
+              />
             </button>
             {shortGlobalMetaId && (
               <div className="flex items-center gap-1 max-w-[136px] text-[11px] leading-4 dark:text-claude-darkTextSecondary text-claude-textSecondary">

@@ -141,6 +141,7 @@ import {
   type ConversationTurn,
   type ToolGroupItem,
 } from '../../services/coworkConversationProjection';
+import NftAvatarFrame from '../metabots/NftAvatarFrame';
 
 export { buildConversationTurns, buildDisplayItems } from '../../services/coworkConversationProjection';
 export type { ConversationTurn } from '../../services/coworkConversationProjection';
@@ -4991,15 +4992,19 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
           )}
           {sessionMetabot && (
             <div className="non-draggable flex items-center gap-2 shrink-0">
-              <div className="w-7 h-7 rounded-full overflow-hidden flex items-center justify-center dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border">
-                {sessionMetabot.avatar ? (
-                  <img src={sessionMetabot.avatar} alt="" className="w-full h-full object-cover" />
-                ) : (
-                  <span className="text-[10px] font-semibold dark:text-claude-darkText text-claude-text uppercase">
-                    {sessionMetabot.name.slice(0, 2) || '?'}
-                  </span>
+              <NftAvatarFrame
+                avatar={sessionMetabot.avatar}
+                frameClassName="w-7 h-7 rounded-full"
+                imgClassName="border dark:border-claude-darkBorder border-claude-border"
+                alt=""
+                fallback={(
+                  <div className="w-7 h-7 rounded-full overflow-hidden flex items-center justify-center dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border">
+                    <span className="text-[10px] font-semibold dark:text-claude-darkText text-claude-text uppercase">
+                      {sessionMetabot.name.slice(0, 2) || '?'}
+                    </span>
+                  </div>
                 )}
-              </div>
+              />
               <span className="text-sm font-medium dark:text-claude-darkText text-claude-text truncate max-w-[100px]">
                 {sessionMetabot.name}
               </span>

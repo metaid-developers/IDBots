@@ -1664,6 +1664,14 @@
       ]
     },
     {
+      "path": "idbots.buyMrc721Listing",
+      "kind": "invoke",
+      "channel": "idbots:buyMrc721Listing",
+      "args": [
+        "params"
+      ]
+    },
+    {
       "path": "idbots.createMetaBotOnChain",
       "kind": "invoke",
       "channel": "idbots:createMetaBotOnChain",
@@ -1740,6 +1748,14 @@
       ]
     },
     {
+      "path": "idbots.getNftCaRegistry",
+      "kind": "invoke",
+      "channel": "idbots:getNftCaRegistry",
+      "args": [
+        "input"
+      ]
+    },
+    {
       "path": "idbots.getOfficialSkillsStatus",
       "kind": "invoke",
       "channel": "idbots:getOfficialSkillsStatus",
@@ -1778,6 +1794,14 @@
       ]
     },
     {
+      "path": "idbots.listMrc721SellOrders",
+      "kind": "invoke",
+      "channel": "idbots:listMrc721SellOrders",
+      "args": [
+        "params"
+      ]
+    },
+    {
       "path": "idbots.restoreMetaBotFromMnemonic",
       "kind": "invoke",
       "channel": "idbots:restoreMetaBotFromMnemonic",
@@ -1791,6 +1815,14 @@
       "channel": "idbots:resumeMetabotSetup",
       "args": [
         "input"
+      ]
+    },
+    {
+      "path": "idbots.sellMrc721Listing",
+      "kind": "invoke",
+      "channel": "idbots:sellMrc721Listing",
+      "args": [
+        "params"
       ]
     },
     {
@@ -1837,6 +1869,14 @@
       "channel": "idbots:uploadMetabotHomepageFile",
       "args": [
         "input"
+      ]
+    },
+    {
+      "path": "idbots.verifyMrc721Listing",
+      "kind": "invoke",
+      "channel": "idbots:verifyMrc721Listing",
+      "args": [
+        "params"
       ]
     },
     {

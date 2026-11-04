@@ -4,6 +4,7 @@ import { chainWriteFailureDetail, feeAssistReceiptLines } from './chainFeeAssist
 import { appendNftCardBlock, buildMrc721CardFields } from './nftCardMarkdown';
 import { withNftCardHostStamp } from './tradeActivityStamp';
 import {
+  fetchMrc721AddressByMetaId,
   fetchMrc721AddressCollections,
   fetchMrc721AddressItems,
   fetchMrc721CollectionInfo,
@@ -14,7 +15,9 @@ import {
   fetchMrc721ItemVerify,
   isMvcAddress,
   MRC721_MIN_SELL_PRICE_SATS,
+  searchMrc721Collections,
   validateMrc721CollectionName,
+  verifyMrc721Holding,
   waitForMrc721CollectionInfo,
   waitForMrc721ItemInfo,
   type Mrc721CollectionSummary,
@@ -22,6 +25,10 @@ import {
   type Mrc721ItemTransferRecord,
   type Mrc721VerifyInfo,
 } from '../services/mrc721Service';
+import {
+  fetchMrc721SellIntents,
+  type Mrc721SellIntentContent,
+} from '../services/mrc721SellIntentService';
 
 /**
  * MRC-721 (pin-based MetaID NFT) agent tools — R6 of the IDBots MRC-721
@@ -160,6 +167,46 @@ export type Mrc721ToolsControl = {
     buyerAddress: string;
     priceSats: number;
     outpoint: string;
+  }>>;
+  /** Sell-intent protocol (docs/nft-sell-protocol-draft.md): declare/cancel/list. */
+  sellIntentDeclare(input: {
+    metabotId: number;
+    itemPinId: string;
+    priceHintSats?: number;
+    acceptedCurrencies?: string[];
+    settlement?: string[];
+    note?: string;
+    expiresInHours?: number;
+    network?: 'mvc' | 'btc';
+  }): Promise<{
+    sellPinId: string;
+    txids: string[];
+    totalCost: number;
+    feeAssist?: unknown;
+    intent: Mrc721SellIntentContent;
+  }>;
+  sellIntentCancel(input: {
+    metabotId: number;
+    itemPinId: string;
+    network?: 'mvc' | 'btc';
+  }): Promise<{
+    sellPinId: string;
+    txids: string[];
+    totalCost: number;
+    feeAssist?: unknown;
+    intent: Mrc721SellIntentContent;
+  }>;
+  listSellIntents(input: {
+    metabotId: number;
+    collectionName?: string;
+    collectionPinId?: string;
+  }): Promise<Array<{
+    id: string;
+    itemPinId: string;
+    status: 'active' | 'cancelled' | 'stale';
+    reason?: string;
+    intent: Mrc721SellIntentContent;
+    sellPinId?: string;
   }>>;
 };
 
@@ -489,6 +536,40 @@ function resolveReadTargets(input: {
     push(sessionMetabotId, control.getMetabotMvcAddress(sessionMetabotId) ?? '');
   }
   return targets;
+}
+
+/**
+ * MetaID read-target flavor (requirement S8): resolve a 64-hex MetaID to its
+ * holder address through the metafile-indexer user-info route. Returns null
+ * when unresolvable — callers surface a descriptive error instead of silently
+ * dropping the target.
+ */
+async function resolveMetaidTargetAddress(metaIdRaw: string): Promise<string | null> {
+  const metaId = asString(metaIdRaw);
+  if (!metaId) return null;
+  try {
+    return await fetchMrc721AddressByMetaId({ metaId });
+  } catch {
+    return null;
+  }
+}
+
+/** Issuer filter resolution for the search tool: local name → address → MetaID. */
+async function resolveIssuerFilter(
+  issuerRaw: string,
+  control: Mrc721ToolsControl,
+): Promise<string | { error: string }> {
+  const raw = asString(issuerRaw);
+  if (!raw) return { error: 'issuer is empty' };
+  if (isMvcAddress(raw)) return raw;
+  const localId = control.resolveMetabotIdByName(raw);
+  if (localId != null) {
+    const address = control.getMetabotMvcAddress(localId);
+    if (address) return address;
+  }
+  const byMetaId = await resolveMetaidTargetAddress(raw);
+  if (byMetaId) return byMetaId;
+  return { error: `"${raw}" is neither a local MetaBot name, an MVC address, nor a resolvable MetaID` };
 }
 
 /**
@@ -903,7 +984,7 @@ export function buildMrc721AgentTools(deps: {
   const mrc721Balance = tool(
     'mrc721_balance',
     [
-      'Query the MRC-721 NFT holdings (pin-based MetaID NFTs) of local MetaBots by id, or of a raw address — the pin-based counterpart of wallet_nft_balance (MetaContract NFTs).',
+      'Query the MRC-721 NFT holdings (pin-based MetaID NFTs) of local MetaBots by id, or of a raw address or external MetaID — the pin-based counterpart of wallet_nft_balance (MetaContract NFTs).',
       'Reads the indexer holder view (address/item), optionally filtered to one collection; grouping and per-item identity (item pinId, collection, number, official-mint badge) come from the index.',
       'Read-only index data; cross-chain — a raw BTC address works as-is. Batch multiple metabot_ids in ONE call. Defaults to THIS session bot when nothing is passed.',
     ].join(' '),
@@ -911,6 +992,7 @@ export function buildMrc721AgentTools(deps: {
       metabot_ids: z.array(z.number().int().positive()).optional().describe('Local MetaBot ids to query, e.g. [1, 15]. Batch in one call.'),
       names: z.array(z.string()).optional().describe('Local MetaBot names to resolve and query, e.g. ["AI_Sunny"].'),
       address: z.string().optional().describe('Explicit address to query (MVC or BTC; used as-is).'),
+      metaid: z.string().optional().describe('64-hex MetaID to query — resolved to its holder address via the user-info indexer (external users).'),
       collection_name: z.string().optional().describe('Filter to one collection by name (resolved via the indexer).'),
       collection_pinid: z.string().optional().describe('Filter to one collection by collectionid (the collection_desc pinId).'),
     },
@@ -918,9 +1000,17 @@ export function buildMrc721AgentTools(deps: {
       metabot_ids?: number[];
       names?: string[];
       address?: string;
+      metaid?: string;
       collection_name?: string;
       collection_pinid?: string;
     }) => {
+      let metaidAddress: string | undefined;
+      if (args.metaid) {
+        metaidAddress = (await resolveMetaidTargetAddress(args.metaid)) ?? undefined;
+        if (!metaidAddress) {
+          return textResult(`mrc721_balance: could not resolve MetaID "${asString(args.metaid)}" to a holder address.`, true);
+        }
+      }
       let collectionPinId = asString(args.collection_pinid) || undefined;
       const collectionName = asString(args.collection_name);
       if (!collectionPinId && collectionName) {
@@ -934,9 +1024,13 @@ export function buildMrc721AgentTools(deps: {
           return textResult(`mrc721_balance: collection lookup failed: ${errorMessage(error)}`, true);
         }
       }
-      const targets = resolveReadTargets(args, control, sessionMetabotId());
+      const targets = resolveReadTargets(
+        { metabot_ids: args.metabot_ids, names: args.names, address: metaidAddress ?? args.address },
+        control,
+        sessionMetabotId(),
+      );
       if (!targets.length) {
-        return textResult('mrc721_balance requires metabot_ids or address (or a session bot).', true);
+        return textResult('mrc721_balance requires metabot_ids, address, metaid (or a session bot).', true);
       }
       const lines: string[] = [];
       for (const target of targets) {
@@ -971,6 +1065,7 @@ export function buildMrc721AgentTools(deps: {
       metabot_ids: z.array(z.number().int().positive()).optional().describe('Local MetaBot ids for scope "mine". Batch in one call.'),
       names: z.array(z.string()).optional().describe('Local MetaBot names for scope "mine", e.g. ["AI_Sunny"].'),
       address: z.string().optional().describe('Explicit address for scope "mine" (used as-is).'),
+      metaid: z.string().optional().describe('64-hex MetaID for scope "mine" — resolved to its holder address via the user-info indexer (external users).'),
       cursor: z.string().optional().describe('Page cursor for scope "market" (from the previous call).'),
       size: z.number().int().positive().max(100).optional().describe('Page size for scope "market".'),
     },
@@ -979,6 +1074,7 @@ export function buildMrc721AgentTools(deps: {
       metabot_ids?: number[];
       names?: string[];
       address?: string;
+      metaid?: string;
       cursor?: string;
       size?: number;
     }) => {
@@ -994,9 +1090,20 @@ export function buildMrc721AgentTools(deps: {
           return textResult(`mrc721_collections (market) failed: ${errorMessage(error)}`, true);
         }
       }
-      const targets = resolveReadTargets(args, control, sessionMetabotId());
+      let metaidAddress: string | undefined;
+      if (args.metaid) {
+        metaidAddress = (await resolveMetaidTargetAddress(args.metaid)) ?? undefined;
+        if (!metaidAddress) {
+          return textResult(`mrc721_collections: could not resolve MetaID "${asString(args.metaid)}" to a holder address.`, true);
+        }
+      }
+      const targets = resolveReadTargets(
+        { metabot_ids: args.metabot_ids, names: args.names, address: metaidAddress ?? args.address },
+        control,
+        sessionMetabotId(),
+      );
       if (!targets.length) {
-        return textResult('mrc721_collections (mine) requires metabot_ids or address (or a session bot).', true);
+        return textResult('mrc721_collections (mine) requires metabot_ids, address, metaid (or a session bot).', true);
       }
       const lines: string[] = [];
       for (const target of targets) {
@@ -1259,14 +1366,29 @@ export function buildMrc721AgentTools(deps: {
     'mrc721_sell_orders',
     [
       'List MRC-721 atomic-swap listings THIS session MetaBot created locally, and recheck each one.',
-      'There is no on-chain order book. A listing is valid only while the seller signature, indexer ownership, and unspent outpoint still match. Expired means the off-chain expiresAt passed.',
+      'There is no on-chain order book. A listing is valid only while the seller signature, indexer ownership, and unspent outpoint still match. Expired means the off-chain expiresAt passed. Optional collection filter resolves each item\'s collection via the indexer (best effort).',
     ].join(' '),
-    {},
-    async () => {
+    {
+      collection_name: z.string().optional().describe('Filter to one collection by namespace name (resolved per item via the indexer).'),
+      collection_pinid: z.string().optional().describe('Filter to one collection by collectionid.'),
+    },
+    async (args: { collection_name?: string; collection_pinid?: string }) => {
       const owner = requireSessionMetabot('mrc721_sell_orders');
       if (typeof owner === 'string') return textResult(owner, true);
+      const filterName = asString(args.collection_name) || undefined;
+      const filterPinId = asString(args.collection_pinid) || undefined;
       try {
-        const orders = await control.listSellOrders({ metabotId: owner });
+        let orders = await control.listSellOrders({ metabotId: owner });
+        if (filterName || filterPinId) {
+          const kept = [];
+          for (const order of orders) {
+            const item = await loadMrc721CardItem(control, order.itemPinId);
+            if (filterPinId && (item?.collectionPinId ?? '') !== filterPinId) continue;
+            if (filterName && (item?.collectionName ?? '') !== filterName) continue;
+            kept.push(order);
+          }
+          orders = kept;
+        }
         if (!orders.length) {
           return textResult('No local MRC-721 listings. Create one with mrc721_sell and give the listing JSON to the buyer.');
         }
@@ -1282,6 +1404,348 @@ export function buildMrc721AgentTools(deps: {
     },
   );
 
+  // -------------------------------------------------------------------------
+  // mrc721_sell_intent / cancel / list (sell-intent protocol, "NFT 售")
+  // -------------------------------------------------------------------------
+  const mrc721SellIntent = tool(
+    'mrc721_sell_intent',
+    [
+      'Declare the intent to sell one MRC-721 item (pin-based MetaID NFT) as an on-chain sell-intent pin (docs/nft-sell-protocol-draft.md) — the discoverable, currency-agnostic "I want to sell this" announcement.',
+      'The pin moves no funds and transfers nothing: settlement later runs over the locked atomic-swap rail (mrc721_sell to the agreed buyer, native SPACE) or the escrow/guarantor rail (any currency). The item must currently be held by this bot; the declaration is refused otherwise.',
+      'price_hint_sats is a display reference only, NOT an on-chain ask. accepted_currencies is an open vocabulary (space, btc, fiat:CNY, points:<scope>, ...). Broadcasts a declaration pin on /protocols/mrc721sell (append-only log, latest declaration per item wins) and appends an ```nft-card fence with action "selling" — include it verbatim in your announcement.',
+    ].join(' '),
+    {
+      item_pin_id: z.string().min(1).describe('Item pinId from mrc721_item_info (64-hex txid + "i" + index).'),
+      price_hint_sats: z.number().int().positive().optional().describe('Reference price in native sats, display only. Omit for "make an offer".'),
+      accepted_currencies: z.array(z.string().min(1)).optional().describe('Accepted settlement currencies, e.g. ["space","btc","fiat:CNY"]. Default ["space"].'),
+      settlement: z.array(z.enum(['atomic-swap', 'escrow'])).optional().describe('Settlement rails the seller accepts. Default both.'),
+      note: z.string().optional().describe('Free-text note for potential buyers.'),
+      expires_in_hours: z.number().int().positive().optional().describe('Display-only expiry window in hours (e.g. 168 for a week). Omit = no stated expiry.'),
+      network: z.enum(['mvc', 'btc']).optional().describe('Write network; default mvc (BTC writes are not yet supported in this version).'),
+    },
+    async (args: {
+      item_pin_id: string;
+      price_hint_sats?: number;
+      accepted_currencies?: string[];
+      settlement?: string[];
+      note?: string;
+      expires_in_hours?: number;
+      network?: 'mvc' | 'btc';
+    }) => {
+      const owner = requireSessionMetabot('mrc721_sell_intent');
+      if (typeof owner === 'string') return textResult(owner, true);
+      if (args.network === 'btc') {
+        return textResult('mrc721_sell_intent: BTC-side writes are not supported in this version — use network mvc.', true);
+      }
+      try {
+        const snapshot = await loadMrc721CardItem(control, args.item_pin_id);
+        const result = await control.sellIntentDeclare({
+          metabotId: owner,
+          itemPinId: args.item_pin_id,
+          priceHintSats: args.price_hint_sats,
+          acceptedCurrencies: args.accepted_currencies,
+          settlement: args.settlement,
+          note: args.note,
+          expiresInHours: args.expires_in_hours,
+          network: args.network,
+        });
+        const cardFields = buildMrc721CardFields({
+          pinId: result.intent.itemPinId,
+          facts: { item: snapshot, issuerAddress: await loadMrc721IssuerAddress(control, result.intent.collectionName) },
+          owner: control.getMetabotMvcAddress(owner) || undefined,
+          priceSats: result.intent.priceHintSats,
+          action: 'selling',
+        });
+        return textResult(appendNftCardBlock([
+          'MRC-721 sell intent declared on-chain. This is a discoverable announcement, not an escrowed listing — buyers reach you, then settlement runs over atomic-swap (locked listing) or the guarantor flow.',
+          `- item pinId: ${result.intent.itemPinId}`,
+          `- sell-intent pin: pin://${result.sellPinId}`,
+          `- price hint: ${result.intent.priceHintSats != null ? `${result.intent.priceHintSats} sats` : 'make an offer'}`,
+          `- accepted currencies: ${result.intent.acceptedCurrencies.join(', ')}`,
+          `- settlement: ${result.intent.settlement.join(' / ')}`,
+        ].join('\n'), withNftCardHostStamp(cardFields, sessionId)));
+      } catch (error) {
+        return textResult(`mrc721_sell_intent failed: ${errorMessage(error)}${chainWriteFailureDetail(error)}`, true);
+      }
+    },
+  );
+
+  const mrc721SellIntentCancel = tool(
+    'mrc721_sell_intent_cancel',
+    [
+      'Cancel one of THIS bot\'s MRC-721 sell-intent declarations: broadcasts a closing declaration (active=false) on /protocols/mrc721sell — the item\'s latest declaration — and flips the local record. The item itself is untouched.',
+      'Read-only on funds; one declaration pin. Use mrc721_sell_intents to see your declared intents first.',
+    ].join(' '),
+    {
+      item_pin_id: z.string().min(1).describe('Item pinId of the intent to cancel.'),
+      network: z.enum(['mvc', 'btc']).optional().describe('Write network; default mvc.'),
+    },
+    async (args: { item_pin_id: string; network?: 'mvc' | 'btc' }) => {
+      const owner = requireSessionMetabot('mrc721_sell_intent_cancel');
+      if (typeof owner === 'string') return textResult(owner, true);
+      if (args.network === 'btc') {
+        return textResult('mrc721_sell_intent_cancel: BTC-side writes are not supported in this version — use network mvc.', true);
+      }
+      try {
+        const result = await control.sellIntentCancel({ metabotId: owner, itemPinId: args.item_pin_id, network: args.network });
+        return textResult([
+          'MRC-721 sell intent cancelled on-chain.',
+          `- item pinId: ${result.intent.itemPinId}`,
+          `- sell-intent pin: pin://${result.sellPinId} (modified, active=false)`,
+        ].join('\n'));
+      } catch (error) {
+        return textResult(`mrc721_sell_intent_cancel failed: ${errorMessage(error)}${chainWriteFailureDetail(error)}`, true);
+      }
+    },
+  );
+
+  const mrc721SellIntents = tool(
+    'mrc721_sell_intents',
+    [
+      'List THIS bot\'s MRC-721 sell-intent declarations (the /protocols/mrc721sell pins recorded locally). Each row is re-checked against the live holder view: active = still held and declared; stale = the item is no longer in this bot\'s hand (transferred away — declare nothing, sell nothing); cancelled = withdrawn.',
+      'Read-only, no wallet involvement. There is no indexer-side market yet (requirements R-C pending); discovery of OTHER bots\' intents runs through chat announcements.',
+    ].join(' '),
+    {
+      collection_name: z.string().optional().describe('Filter to one collection by namespace name.'),
+      collection_pinid: z.string().optional().describe('Filter to one collection by collectionid.'),
+    },
+    async (args: { collection_name?: string; collection_pinid?: string }) => {
+      const owner = requireSessionMetabot('mrc721_sell_intents');
+      if (typeof owner === 'string') return textResult(owner, true);
+      try {
+        const views = await control.listSellIntents({
+          metabotId: owner,
+          collectionName: asString(args.collection_name) || undefined,
+          collectionPinId: asString(args.collection_pinid) || undefined,
+        });
+        if (!views.length) return textResult('No sell intents declared by this bot.');
+        const lines = [`${views.length} sell intent(s):`];
+        for (const view of views) {
+          lines.push(`- ${view.status.toUpperCase()} ${view.itemPinId} | hint ${view.intent.priceHintSats != null ? `${view.intent.priceHintSats} sats` : 'make an offer'} | ${view.intent.acceptedCurrencies.join(',')} | pin://${view.sellPinId ?? '(unrecorded)'}`);
+          if (view.reason) lines.push(`  reason: ${view.reason}`);
+          if (view.intent.note) lines.push(`  note: ${view.intent.note}`);
+        }
+        return textResult(lines.join('\n'));
+      } catch (error) {
+        return textResult(`mrc721_sell_intents failed: ${errorMessage(error)}`, true);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // mrc721_market_intents (S2 read: discover declared sell intents)
+  // -------------------------------------------------------------------------
+  const mrc721MarketIntents = tool(
+    'mrc721_market_intents',
+    [
+      'Discover declared MRC-721 sell intents (the "NFT 售" on-chain declarations, docs/nft-sell-protocol-draft.md) from the indexer: what is up for sale in a collection, by an issuer, or for one item — with each seller\'s accepted currencies and settlement rails (atomic-swap for native SPACE, escrow for any currency).',
+      'Read-only. These are INTENTS, not escrowed listings: before engaging, re-verify the seller still holds the item (mrc721_item_info or mrc721_verify_holding) and confirm the deal terms with the seller directly.',
+      'Served by MetaSo-P2P (indexer requirement R-C) — point IDBOTS_METASO_API_BASE at a MetaSo instance; without it the tool degrades honestly. Your own intents are better listed via mrc721_sell_intents.',
+    ].join(' '),
+    {
+      collection_name: z.string().optional().describe('Filter to one collection by namespace name.'),
+      collection_pinid: z.string().optional().describe('Filter to one collection by collectionid (collection_desc pinId).'),
+      seller: z.string().optional().describe('Filter by seller: local MetaBot name, 64-hex MetaID, or MVC address.'),
+      item_pin_id: z.string().optional().describe('Filter to one item.'),
+      active: z.boolean().optional().describe('Only live intents when true; only withdrawn/closed ones when false. Default: all.'),
+      cursor: z.string().optional().describe('Page cursor from the previous call.'),
+      size: z.number().int().min(1).max(100).optional().describe('Page size (default 20).'),
+    },
+    async (args: {
+      collection_name?: string;
+      collection_pinid?: string;
+      seller?: string;
+      item_pin_id?: string;
+      active?: boolean;
+      cursor?: string;
+      size?: number;
+    }) => {
+      let sellerAddress: string | undefined;
+      if (args.seller) {
+        const resolved = await resolveIssuerFilter(args.seller, control);
+        if (typeof resolved === 'object') {
+          return textResult(`mrc721_market_intents: ${resolved.error}.`, true);
+        }
+        sellerAddress = resolved;
+      }
+      try {
+        const page = await fetchMrc721SellIntents({
+          collectionName: asString(args.collection_name) || undefined,
+          collectionPinId: asString(args.collection_pinid) || undefined,
+          itemPinId: asString(args.item_pin_id) || undefined,
+          sellerAddress,
+          active: args.active,
+          cursor: args.cursor,
+          size: args.size ?? 20,
+        });
+        if (!page.items.length) return textResult('No sell intents match these filters (or none declared yet).');
+        const lines = [`Declared MRC-721 sell intents${page.total != null ? ` (${page.items.length} of ${page.total})` : ` (${page.items.length})`}:`];
+        for (const row of page.items) {
+          const state = row.active === false ? 'INACTIVE' : 'ACTIVE';
+          lines.push(`- ${state} ${row.itemPinId}${row.collectionName ? ` · ${row.collectionName}` : ''} · hint ${row.priceHintSats != null ? `${row.priceHintSats} sats` : 'make an offer'} · ${row.acceptedCurrencies?.join(',') ?? 'space'} · ${row.settlement?.join('/') ?? 'atomic-swap/escrow'} · seller ${row.sellerAddress ?? 'unknown'}`);
+          if (row.note) lines.push(`  note: ${row.note}`);
+          if (row.sellPinId) lines.push(`  intent pin: pin://${row.sellPinId}`);
+        }
+        if (page.cursor) lines.push(`- next cursor: ${page.cursor}`);
+        return textResult(lines.join('\n'));
+      } catch (error) {
+        const status = (error as { mrc721Status?: number }).mrc721Status;
+        const code = (error as { mrc721Code?: unknown }).mrc721Code;
+        // Both miss flavors degrade to the same honest guidance: HTTP 404
+        // (route absent on older indexers) and an envelope miss (code !== 1,
+        // the house convention for "not served here").
+        if (status === 404 || code !== undefined) {
+          return textResult(
+            'mrc721_market_intents: no reachable MetaSo sell-intent index (indexer requirement R-C). '
+            + 'Set IDBOTS_METASO_API_BASE to a MetaSo-P2P instance serving /api/mrc721/*; until then, discovery of other bots\' intents runs through chat announcements.',
+            true,
+          );
+        }
+        return textResult(`mrc721_market_intents failed: ${errorMessage(error)}`, true);
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // mrc721_verify_holding (S4 read: hard holder gate for badge/access flows)
+  // -------------------------------------------------------------------------
+  const mrc721VerifyHolding = tool(
+    'mrc721_verify_holding',
+    [
+      'Verify whether a holder currently holds at least one MRC-721 item (pin-based MetaID NFT) of a given collection — the hard holder gate for badge/access flows (e.g. only fans holding the badge collection may get a reply).',
+      'Holders: local MetaBot ids/names, a raw address, or an external 64-hex MetaID (resolved via the user-info indexer). The verdict covers live (non-burned) items only and reads the live holder view, so a transferred-away NFT flips it to NOT_HOLDING.',
+      'Read-only, no wallet involvement. Use for gating decisions; use mrc721_balance for full holdings inventories.',
+    ].join(' '),
+    {
+      metabot_ids: z.array(z.number().int().positive()).optional().describe('Local MetaBot ids to check, e.g. [1, 15]. Batch in one call.'),
+      names: z.array(z.string()).optional().describe('Local MetaBot names to check, e.g. ["AI_Sunny"].'),
+      address: z.string().optional().describe('Explicit holder address (MVC livenet; BTC addresses read-only).'),
+      metaid: z.string().optional().describe('64-hex MetaID to check — resolved to its holder address via the user-info indexer (external users).'),
+      collection_name: z.string().optional().describe('Collection to check against, by namespace name (resolved via the indexer).'),
+      collection_pinid: z.string().optional().describe('Collection to check against, as the collectionid (collection_desc pinId).'),
+    },
+    async (args: {
+      metabot_ids?: number[];
+      names?: string[];
+      address?: string;
+      metaid?: string;
+      collection_name?: string;
+      collection_pinid?: string;
+    }) => {
+      const collectionName = asString(args.collection_name) || undefined;
+      const collectionPinId = asString(args.collection_pinid) || undefined;
+      if (!collectionName && !collectionPinId) {
+        return textResult('mrc721_verify_holding requires collection_name or collection_pinid.', true);
+      }
+      let metaidAddress: string | undefined;
+      if (args.metaid) {
+        metaidAddress = (await resolveMetaidTargetAddress(args.metaid)) ?? undefined;
+        if (!metaidAddress) {
+          return textResult(`mrc721_verify_holding: could not resolve MetaID "${asString(args.metaid)}" to a holder address.`, true);
+        }
+      }
+      const targets = resolveReadTargets(
+        { metabot_ids: args.metabot_ids, names: args.names, address: metaidAddress ?? args.address },
+        control,
+        sessionMetabotId(),
+      );
+      if (!targets.length) {
+        return textResult('mrc721_verify_holding requires metabot_ids, names, address, or metaid.', true);
+      }
+      const lines: string[] = [`MRC-721 holding check — collection: ${collectionName ?? collectionPinId}`];
+      for (const target of targets) {
+        const label = target.metabotId != null ? `metabot_id ${target.metabotId}` : 'address';
+        if (!target.address) {
+          lines.push(`# ${label}\n- lookup failed: local MetaBot not found or has no MVC address`);
+          continue;
+        }
+        try {
+          const verdict = await verifyMrc721Holding({
+            holderAddress: target.address,
+            collectionName,
+            collectionPinId,
+          });
+          lines.push(`# ${label} ${target.address}\n- verdict: ${verdict.holds ? `HOLDS (${verdict.count} item(s))` : 'NOT_HOLDING'}`);
+          if (verdict.count) {
+            const itemList = verdict.items
+              .map((item) => `${item.itemPinId}${item.number != null ? ` (#${item.number})` : ''}`)
+              .join(', ');
+            lines.push(`- items: ${itemList}`);
+          }
+        } catch (error) {
+          // Distinguishable from NOT_HOLDING on purpose: an unindexed
+          // collection or an index outage must not read as "no badge".
+          lines.push(`# ${label} ${target.address}\n- lookup failed: ${errorMessage(error)}`);
+        }
+      }
+      return textResult(lines.join('\n'));
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // mrc721_search_collections (S1 read: keyword/issuer collection search)
+  // -------------------------------------------------------------------------
+  const mrc721SearchCollections = tool(
+    'mrc721_search_collections',
+    [
+      'Search MRC-721 collections (pin-based MetaID NFT albums) by keyword and/or by issuer — keyword matches (case-insensitive) the display name, the collection namespace, the description, and the collectionid; issuer accepts a local MetaBot name, a 64-hex MetaID, or an MVC address.',
+      'Returns matching collection summaries (display name, mint progress, royalty, issuer identity, collectionid) plus each description. supply_state=true also computes per-collection minted counts (minted vs totalSupply, first 20 matches) for issuer/creator flows like "which of my albums still has slots".',
+      'Read-only index data. Server-side search via MetaSo when IDBOTS_METASO_API_BASE is set; otherwise filtering runs client-side over the registered-collection page list (scanned count is reported); use max_pages for deeper scans.',
+    ].join(' '),
+    {
+      keyword: z.string().optional().describe('Search text matched (case-insensitive) against name, collection namespace, description, collectionid.'),
+      issuer: z.string().optional().describe('Issuer filter: local MetaBot name, 64-hex MetaID, or MVC address (collections this issuer created).'),
+      supply_state: z.boolean().optional().describe('Also compute mintedCount vs totalSupply per matched collection (first 20 matches; slower). Default false.'),
+      max_pages: z.number().int().min(1).max(50).optional().describe('Indexer page-list pages to scan (default 20).'),
+      size: z.number().int().min(1).max(50).optional().describe('Max collections returned (default 20).'),
+    },
+    async (args: {
+      keyword?: string;
+      issuer?: string;
+      supply_state?: boolean;
+      max_pages?: number;
+      size?: number;
+    }) => {
+      const keyword = asString(args.keyword);
+      let issuerAddress: string | undefined;
+      if (args.issuer) {
+        const resolved = await resolveIssuerFilter(args.issuer, control);
+        if (typeof resolved === 'object') {
+          return textResult(`mrc721_search_collections: ${resolved.error}.`, true);
+        }
+        issuerAddress = resolved;
+      }
+      if (!keyword && !issuerAddress) {
+        return textResult('mrc721_search_collections requires a keyword or an issuer.', true);
+      }
+      try {
+        const result = await searchMrc721Collections({
+          keyword: keyword || undefined,
+          issuerAddress,
+          includeSupplyState: args.supply_state === true,
+          maxPages: args.max_pages,
+        });
+        const lines: string[] = ['MRC-721 collection search:'];
+        lines.push(`- keyword: ${keyword ? `"${keyword}"` : '(none)'} | issuer: ${issuerAddress ?? '(none)'}`);
+        lines.push(`- scanned ${result.scanned} registered collection(s)${result.truncated ? ' (page cap hit — raise max_pages for deeper scans)' : ''}, matched: ${result.items.length}`);
+        if (!result.items.length) lines.push('- no matching collections');
+        for (const collection of result.items.slice(0, args.size ?? 20)) {
+          lines.push(formatMrc721CollectionLine(collection));
+          if (collection.desc) lines.push(`  desc: ${collection.desc}`);
+          const state = result.supplyState?.[collection.pinid ?? ''];
+          if (state) {
+            const supplySuffix = state.totalSupply != null && state.totalSupply >= 0 ? `/${state.totalSupply}` : '';
+            const suffix = state.complete === true ? ' (supply exhausted)' : state.complete === false ? ' (slots remaining)' : '';
+            lines.push(`  minted: ${state.mintedCount}${supplySuffix}${suffix}`);
+          }
+        }
+        return textResult(lines.join('\n'));
+      } catch (error) {
+        return textResult(`mrc721_search_collections failed: ${errorMessage(error)}`, true);
+      }
+    }
+  );
+
   return [
     mrc721CollectionCreate,
     mrc721CollectionUpdate,
@@ -1290,9 +1754,15 @@ export function buildMrc721AgentTools(deps: {
     mrc721Sell,
     mrc721Buy,
     mrc721SellOrders,
+    mrc721SellIntent,
+    mrc721SellIntentCancel,
+    mrc721SellIntents,
+    mrc721MarketIntents,
     mrc721Balance,
     mrc721Collections,
     mrc721ItemInfo,
     mrc721CollectionInfo,
+    mrc721VerifyHolding,
+    mrc721SearchCollections,
   ];
 }

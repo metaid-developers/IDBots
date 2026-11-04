@@ -214,10 +214,18 @@ import {
   sellMrc721Item,
   transferMrc721Item,
   updateMrc721Collection,
+  verifyMrc721Listing,
   type Mrc721CreatePinFn,
 } from './services/mrc721Service';
+import {
+  cancelMrc721SellIntent,
+  declareMrc721SellIntent,
+  listMrc721MySellIntents,
+  mrc721SellIntentsFromSqlite,
+} from './services/mrc721SellIntentService';
 import { buildMvc721SellPartialTx, buildMvcTransferRawTx, completeMvc721BuyTx } from './services/walletRawTxService';
 import { BotWalletTransferStore } from './services/botWalletTransferStore';
+import { EscrowOrderStore } from './services/escrowOrderStore';
 import {
   buildTokenTransferPreview as buildTokenTransferPreviewService,
   executeTokenTransfer as executeTokenTransferService,
@@ -231,6 +239,8 @@ import {
 } from './services/metabotNftService';
 import { registerMetabotNftIpcHandlers } from './services/metabotNftIpc';
 import { healNftCard } from './services/nftCardHealService';
+import { getNftCaRegistry } from './services/nftCaService';
+import { parseNftAvatarReference, resolveNftAvatar } from './services/nftAvatarService';
 import { initTrafficAccountService, registerTrafficAccountIpcHandlers } from './services/trafficAccountService';
 import { initBundleService, registerBundleIpcHandlers } from './services/bundleService';
 import { initLlmRelayService, registerLlmRelayIpcHandlers, getLlmRelayQuota } from './services/llmRelayService';
@@ -4117,6 +4127,21 @@ function getBotWalletTransferStore(): BotWalletTransferStore {
     getStore().getSaveFunction(),
   );
   return botWalletTransferStore;
+}
+
+/**
+ * S3 generalized escrow order documents (escrowOrderStore), memoized — same
+ * SqliteStore-backed pattern as the other stores. The escrow_orders table is
+ * created idempotently by SqliteStore.initializeTables; all order semantics
+ * live in libs/escrowOrderStateMachine.ts (the tested contract).
+ */
+let escrowOrderStore: EscrowOrderStore | undefined;
+function getEscrowOrderStore(): EscrowOrderStore {
+  escrowOrderStore ??= new EscrowOrderStore(
+    getStore().getDatabase(),
+    getStore().getSaveFunction(),
+  );
+  return escrowOrderStore;
 }
 
 interface SqliteBackedRestartState {
@@ -8023,6 +8048,40 @@ const getCoworkRunner = () => {
             outpoint: `${view.listing.outpoint.txid}:${view.listing.outpoint.vout}`,
           }));
         },
+        sellIntentDeclare: (input) => withChainWriteBudget(
+          'mrc721_sell_intent',
+          () => declareMrc721SellIntent(
+            { createPin: mrc721CreatePinBackend },
+            { ...input, store: getMetabotStore(), intents: mrc721SellIntentsFromSqlite(getStore()) },
+          ),
+        ),
+        sellIntentCancel: (input) => withChainWriteBudget(
+          'mrc721_sell_intent_cancel',
+          () => cancelMrc721SellIntent(
+            { createPin: mrc721CreatePinBackend },
+            { ...input, store: getMetabotStore(), intents: mrc721SellIntentsFromSqlite(getStore()) },
+          ),
+        ),
+        listSellIntents: (input) => listMrc721MySellIntents(
+          mrc721SellIntentsFromSqlite(getStore()),
+          input.metabotId,
+          { collectionName: input.collectionName, collectionPinId: input.collectionPinId },
+        ),
+      },
+      // escrow_* tool backends (S3 generalized escrow, first-round slice):
+      // party resolution through the local roster plus the shared escrow
+      // order store. NO chain-write budget — escrow tools move no funds and
+      // no goods (zero-funds-flow red line); custody legs are the party
+      // bots' own mrc721_transfer txids recorded as machine proof.
+      escrowTools: {
+        control: {
+          resolveMetabotIdByName: (name) => resolveMetabotIdByName(getMetabotStore(), name),
+          getMetabotMvcAddress: (metabotId) =>
+            getMetabotStore().getMetabotById(metabotId)?.mvc_address ?? null,
+          getMetabotDisplayName: (metabotId) =>
+            getMetabotStore().getMetabotById(metabotId)?.name?.trim() || null,
+        },
+        orders: getEscrowOrderStore(),
       },
       // send_private_chat tool backend (replacing metabot-chat-privatechat).
       // Mirrors the skill script: resolve the peer chatpubkey on-chain, then
@@ -18427,6 +18486,54 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     getMetabotNftItems: (store, input) => getMetabotNftItems(store, input),
     transferMetabotMvcNft: (store, input) => transferMetabotMvcNft(store, input),
     transferMetabotMrc721: (store, input) => transferMetabotMrc721(store, input),
+    getNftCaRegistry: (input) => getNftCaRegistry(input),
+    // MRC-721 atomic-swap trade backends for the NFT wallet modal — the exact
+    // same service deps as the mrc721Tools.sell/buy backends above, WITHOUT
+    // the agent-tool chain-write budget (UI transfers like
+    // idbots:transferMetabotMrc721 do not budget either).
+    sellMrc721Listing: (store, input) => sellMrc721Item(
+      { buildPartialTx: (partialTxStore, params) => buildMvc721SellPartialTx(partialTxStore, params) },
+      {
+        ...input,
+        store,
+        feeRate: getGlobalFeeRate('mvc'),
+        orders: mrc721SellOrdersFromSqlite(getStore()),
+      },
+    ).then((listing) => ({
+      listingJson: JSON.stringify(listing),
+      itemPinId: listing.itemPinId,
+      buyerAddress: listing.buyerAddress,
+      priceSats: listing.priceSats,
+      outpoint: `${listing.outpoint.txid}:${listing.outpoint.vout}`,
+    })),
+    buyMrc721Listing: (store, input) => buyMrc721Listing(
+      { completeBuy: (buyStore, params) => completeMvc721BuyTx(buyStore, params) },
+      {
+        ...input,
+        store,
+        feeRate: getGlobalFeeRate('mvc'),
+      },
+    ).then((result) => ({
+      txId: result.txId,
+      itemPinId: result.itemPinId,
+      priceSats: result.priceSats,
+      sellerAddress: result.sellerAddress,
+      feeSats: result.feeSats,
+      feeRateEffective: result.feeRateEffective,
+    })),
+    listMrc721SellOrders: (_store, metabotId) => listMrc721MySellOrders(
+      mrc721SellOrdersFromSqlite(getStore()),
+      metabotId,
+    ).then((views) => views.map((view) => ({
+      id: view.id,
+      status: view.status,
+      reason: view.reason,
+      itemPinId: view.listing.itemPinId,
+      buyerAddress: view.listing.buyerAddress,
+      priceSats: view.listing.priceSats,
+      outpoint: `${view.listing.outpoint.txid}:${view.listing.outpoint.vout}`,
+    }))),
+    verifyMrc721Listing: (listing) => verifyMrc721Listing(listing).then((verified) => verified.listing),
   });
 
   // Chat NftCard heal channel: renderer-side fallback lookups for missing
@@ -19514,6 +19621,14 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
       const reference = toSafeString(params?.reference).trim();
       if (!reference) {
         return { success: true, avatarUrl: null };
+      }
+      // NFT avatar references (nft://mrc721/<itemPinId>) resolve through the
+      // mrc721 item-info → cover → pin-asset chain; the item's collection
+      // facts ride along so the renderer can draw the CA-registry badge.
+      const nftRef = parseNftAvatarReference(reference);
+      if (nftRef) {
+        const resolved = await resolveNftAvatar(nftRef);
+        return { success: true, avatarUrl: resolved.avatarUrl, nft: resolved.nft };
       }
       return {
         success: true,

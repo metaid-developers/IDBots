@@ -18,6 +18,7 @@ const {
 } = require('../dist-electron/main/libs/mrc721AgentTools.js');
 
 process.env.IDBOTS_MAN_P2P_LOCAL_BASE && delete process.env.IDBOTS_MAN_P2P_LOCAL_BASE;
+process.env.IDBOTS_METASO_API_BASE && delete process.env.IDBOTS_METASO_API_BASE;
 
 const PINID = `${'ab'.repeat(32)}i0`;
 const DESC_PINID = `${'cd'.repeat(32)}i0`;
@@ -36,10 +37,16 @@ const TOOL_NAMES = [
   'mrc721_collections',
   'mrc721_item_info',
   'mrc721_collection_info',
+  'mrc721_verify_holding',
+  'mrc721_search_collections',
+  'mrc721_sell_intent',
+  'mrc721_sell_intent_cancel',
+  'mrc721_sell_intents',
+  'mrc721_market_intents',
 ];
 
 function makeHarness(overrides = {}) {
-  const calls = { collectionCreate: [], collectionUpdate: [], mint: [], transfer: [], sell: [], buy: [] };
+  const calls = { collectionCreate: [], collectionUpdate: [], mint: [], transfer: [], sell: [], buy: [], sellIntentDeclare: [], sellIntentCancel: [], listSellIntents: [] };
   const control = {
     getMetabotMvcAddress: (id) => (id === 1 ? BOT_ADDRESS : id === 15 ? OTHER_ADDRESS : null),
     resolveMetabotIdByName: (name) => (name === 'AI_Sunny' ? 1 : null),
@@ -111,6 +118,41 @@ function makeHarness(overrides = {}) {
       };
     },
     listSellOrders: async () => overrides.sellOrders ?? [],
+    sellIntentDeclare: async (input) => {
+      calls.sellIntentDeclare.push(input);
+      if (overrides.sellIntentError) throw overrides.sellIntentError;
+      return {
+        sellPinId: `${'se'.repeat(32)}i0`,
+        txids: ['tx1'],
+        totalCost: 500,
+        intent: {
+          protocol: 'mrc721-sell-intent',
+          version: 1,
+          active: true,
+          itemPinId: input.itemPinId,
+          collectionName: 'pixel-cats',
+          sellerAddress: BOT_ADDRESS,
+          priceHintSats: input.priceHintSats,
+          acceptedCurrencies: input.acceptedCurrencies?.length ? input.acceptedCurrencies : ['space'],
+          settlement: input.settlement?.length ? input.settlement : ['atomic-swap', 'escrow'],
+          createdAt: Date.now(),
+        },
+      };
+    },
+    sellIntentCancel: async (input) => {
+      calls.sellIntentCancel.push(input);
+      if (overrides.sellIntentCancelError) throw overrides.sellIntentCancelError;
+      return {
+        sellPinId: `${'se'.repeat(32)}i0`,
+        txids: ['tx1'],
+        totalCost: 300,
+        intent: { protocol: 'mrc721-sell-intent', version: 1, active: false, itemPinId: input.itemPinId, sellerAddress: BOT_ADDRESS, acceptedCurrencies: ['space'], settlement: ['atomic-swap', 'escrow'], createdAt: Date.now() },
+      };
+    },
+    listSellIntents: async (input) => {
+      calls.listSellIntents.push(input);
+      return overrides.sellIntents ?? [];
+    },
   };
   const tools = buildMrc721AgentTools({
     tool: (name, description, schema, handler) => ({ name, description, schema, handler }),
@@ -536,4 +578,448 @@ test('mrc721_sell_orders lists a local listing with its invalid reason', async (
   assert.equal(result.isError, undefined);
   assert.match(result.content[0].text, /invalid order1/);
   assert.match(result.content[0].text, /no longer in the seller's hand/);
+});
+
+// ---------------------------------------------------------------------------
+// P0: mrc721_verify_holding (S4 hard holder gate) + mrc721_search_collections
+// (S1 keyword/issuer search) + MetaID read targets (S8)
+// ---------------------------------------------------------------------------
+
+const METAID = '2eb21238314aca030b67ed7b7c4c613f2e8cb7e42ee9140589a4df9da3854aa2';
+
+function holderItem(overrides = {}) {
+  return {
+    itemPinId: PINID,
+    collectionName: 'pixel-cats',
+    number: 5,
+    burned: false,
+    ...overrides,
+  };
+}
+
+function collectionRow(overrides = {}) {
+  return {
+    collectionName: 'pixel-cats',
+    name: 'Pixel Cats',
+    totalSupply: 10,
+    totalnum: 3,
+    royaltyRate: 5,
+    desc: 'A pixel cat album for tests',
+    pinid: DESC_PINID,
+    createAddress: BOT_ADDRESS,
+    createMetaId: METAID,
+    createTime: 1793537073,
+    genesisChainName: 'mvc',
+    ...overrides,
+  };
+}
+
+function manapiDispatch(routes) {
+  return async (url) => {
+    const raw = String(url);
+    for (const [pattern, responder] of routes) {
+      if (raw.includes(pattern)) return responder(raw);
+    }
+    throw new Error(`unexpected fetch: ${raw}`);
+  };
+}
+
+test('mrc721_verify_holding returns HOLDS with the item list for a live holding', async () => {
+  const { byName } = makeHarness();
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/collection/info', () => jsonResponse({ code: 1, data: collectionRow() })],
+      ['/api/mrc721/address/item', () => jsonResponse({ code: 1, data: { list: [holderItem()] } })],
+    ]),
+    () => byName.mrc721_verify_holding.handler({ names: ['AI_Sunny'], collection_name: 'pixel-cats' }),
+  );
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, /# metabot_id 1/);
+  assert.match(result.content[0].text, /verdict: HOLDS \(1 item\(s\)\)/);
+  assert.match(result.content[0].text, new RegExp(PINID));
+  assert.match(result.content[0].text, /\(#5\)/);
+});
+
+test('mrc721_verify_holding returns NOT_HOLDING for an empty live holder view', async () => {
+  const { byName } = makeHarness();
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/collection/info', () => jsonResponse({ code: 1, data: collectionRow() })],
+      ['/api/mrc721/address/item', () => jsonResponse({ code: 1, data: { list: [holderItem({ burned: true })] } })],
+    ]),
+    () => byName.mrc721_verify_holding.handler({ address: OTHER_ADDRESS, collection_name: 'pixel-cats' }),
+  );
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, /verdict: NOT_HOLDING/);
+});
+
+test('mrc721_verify_holding reports an unindexed collection as a lookup failure, never as NOT_HOLDING', async () => {
+  const { byName } = makeHarness();
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/collection/info', () => jsonResponse({ code: 0, message: 'not found' })],
+    ]),
+    () => byName.mrc721_verify_holding.handler({ names: ['AI_Sunny'], collection_name: 'ghost-cats' }),
+  );
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, /lookup failed/);
+  assert.match(result.content[0].text, /not indexed/);
+  assert.doesNotMatch(result.content[0].text, /NOT_HOLDING/);
+});
+
+test('mrc721_verify_holding resolves an external MetaID to its holder address', async () => {
+  const { byName } = makeHarness();
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['metafile-indexer/api/v1/info/metaid', () => jsonResponse({ code: 1, data: { address: OTHER_ADDRESS } })],
+      ['/api/mrc721/address/item', () => jsonResponse({ code: 1, data: { list: [holderItem()] } })],
+    ]),
+    () => byName.mrc721_verify_holding.handler({ metaid: METAID, collection_pinid: DESC_PINID }),
+  );
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, new RegExp(OTHER_ADDRESS));
+  assert.match(result.content[0].text, /verdict: HOLDS/);
+});
+
+test('mrc721_verify_holding requires a collection to check against', async () => {
+  const { byName } = makeHarness();
+  const result = await byName.mrc721_verify_holding.handler({ names: ['AI_Sunny'] });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /requires collection_name or collection_pinid/);
+});
+
+test('mrc721_search_collections matches a keyword against name and returns the description', async () => {
+  const { byName } = makeHarness();
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/collection/pageList', () => jsonResponse({
+        code: 1,
+        data: { list: [collectionRow(), collectionRow({ collectionName: 'dog-pics', name: 'Dog Pics', desc: 'dogs only' })], },
+      })],
+    ]),
+    () => byName.mrc721_search_collections.handler({ keyword: 'pixel' }),
+  );
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, /scanned 2 registered collection\(s\), matched: 1/);
+  assert.match(result.content[0].text, /Pixel Cats/);
+  assert.match(result.content[0].text, /A pixel cat album for tests/);
+});
+
+test('mrc721_search_collections filters by issuer via the local bot name', async () => {
+  const { byName } = makeHarness();
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/collection/pageList', () => jsonResponse({
+        code: 1,
+        data: { list: [collectionRow(), collectionRow({ collectionName: 'other-cats', createAddress: OTHER_ADDRESS })] },
+      })],
+    ]),
+    () => byName.mrc721_search_collections.handler({ issuer: 'AI_Sunny' }),
+  );
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, new RegExp(`issuer: ${BOT_ADDRESS}`.replace(/[$()*+.?[\\\]^{|}]/g, '\\$&')));
+  assert.match(result.content[0].text, /matched: 1/);
+});
+
+test('mrc721_search_collections computes minted counts when supply_state is requested', async () => {
+  const { byName } = makeHarness();
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/collection/pageList', () => jsonResponse({ code: 1, data: { list: [collectionRow()] } })],
+      ['/api/mrc721/collection/items/pageList', () => jsonResponse({
+        code: 1,
+        data: { list: [holderItem(), holderItem(), holderItem()] },
+      })],
+    ]),
+    () => byName.mrc721_search_collections.handler({ issuer: 'AI_Sunny', supply_state: true }),
+  );
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, /minted: 3\/10 \(slots remaining\)/);
+});
+
+test('mrc721_search_collections requires a keyword or an issuer', async () => {
+  const { byName } = makeHarness();
+  const result = await byName.mrc721_search_collections.handler({});
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /requires a keyword or an issuer/);
+});
+
+test('mrc721_balance resolves a MetaID read target and renders its holdings', async () => {
+  const { byName } = makeHarness();
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['metafile-indexer/api/v1/info/metaid', () => jsonResponse({ code: 1, data: { address: OTHER_ADDRESS } })],
+      ['/api/mrc721/address/item', () => jsonResponse({ code: 1, data: { list: [holderItem()] } })],
+    ]),
+    () => byName.mrc721_balance.handler({ metaid: METAID }),
+  );
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, new RegExp(OTHER_ADDRESS));
+  assert.match(result.content[0].text, /pixel-cats: 1 item\(s\)/);
+});
+
+test('mrc721_balance reports an unresolvable MetaID instead of silently dropping it', async () => {
+  const { byName } = makeHarness();
+  const result = await withFetchStub(
+    async () => jsonResponse({ code: 1, data: {} }),
+    () => byName.mrc721_balance.handler({ metaid: METAID }),
+  );
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /could not resolve MetaID/);
+});
+
+test('mrc721_search_collections scans multiple pages and reports truncation honestly', async () => {
+  const { byName } = makeHarness();
+  let page = 0;
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/collection/pageList', () => {
+        page += 1;
+        return jsonResponse({
+          code: 1,
+          data: page === 1
+            ? { list: [collectionRow()], cursor: 'next-page-token' }
+            : { list: [collectionRow({ collectionName: 'late-cats', name: 'Late Cats' })], cursor: 'still-more' },
+        });
+      }],
+    ]),
+    () => byName.mrc721_search_collections.handler({ keyword: 'cats', max_pages: 2 }),
+  );
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, /scanned 2 registered collection\(s\) \(page cap hit/);
+  assert.match(result.content[0].text, /matched: 2/);
+  assert.match(result.content[0].text, /Late Cats/);
+});
+
+// ---------------------------------------------------------------------------
+// Sell-intent protocol tools (NFT 售): declare / cancel / list + sell_orders
+// collection filter
+// ---------------------------------------------------------------------------
+
+const SELL_PIN_ID = `${'se'.repeat(32)}i0`;
+
+test('mrc721_sell_intent declares via control and appends a selling card', async () => {
+  const { calls, byName } = makeHarness();
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/item/info', () => jsonResponse({ code: 1, data: { itemPinId: PINID, collectionName: 'pixel-cats', ownerAddress: BOT_ADDRESS } })],
+      ['/api/mrc721/collection/info', () => jsonResponse({ code: 1, data: collectionRow() })],
+    ]),
+    () => byName.mrc721_sell_intent.handler({
+      item_pin_id: PINID,
+      price_hint_sats: 30000,
+      accepted_currencies: ['space', 'fiat:CNY'],
+      note: 'first come first served',
+    }),
+  );
+  assert.equal(result.isError, undefined);
+  assert.equal(calls.sellIntentDeclare.length, 1);
+  assert.equal(calls.sellIntentDeclare[0].itemPinId, PINID);
+  assert.equal(calls.sellIntentDeclare[0].priceHintSats, 30000);
+  assert.match(result.content[0].text, /sell intent declared on-chain/);
+  assert.match(result.content[0].text, new RegExp(SELL_PIN_ID));
+  assert.match(result.content[0].text, /space, fiat:CNY/);
+  assert.match(result.content[0].text, /"action":"selling"/);
+  assert.match(result.content[0].text, /"hostStamp":"v1\./);
+});
+
+test('mrc721_sell_intent refuses BTC-side writes before any control call', async () => {
+  const { calls, byName } = makeHarness();
+  const result = await byName.mrc721_sell_intent.handler({ item_pin_id: PINID, network: 'btc' });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /BTC-side writes are not supported/);
+  assert.equal(calls.sellIntentDeclare.length, 0);
+});
+
+test('mrc721_sell_intent surfaces the holder-view refusal from the service', async () => {
+  const { calls, byName } = makeHarness({ sellIntentError: new Error('item abcd…i0 is held by 1SomeoneElse, not by the declaring bot') });
+  const result = await byName.mrc721_sell_intent.handler({ item_pin_id: PINID });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /not by the declaring bot/);
+  assert.equal(calls.sellIntentDeclare.length, 1);
+});
+
+test('mrc721_sell_intent_cancel renders the cancellation receipt', async () => {
+  const { calls, byName } = makeHarness();
+  const result = await byName.mrc721_sell_intent_cancel.handler({ item_pin_id: PINID });
+  assert.equal(result.isError, undefined);
+  assert.equal(calls.sellIntentCancel.length, 1);
+  assert.match(result.content[0].text, /sell intent cancelled/);
+  assert.match(result.content[0].text, /active=false/);
+});
+
+test('mrc721_sell_intents renders statuses with honest stale reasons', async () => {
+  const { byName } = makeHarness({
+    sellIntents: [
+      { id: 'i1', itemPinId: PINID, status: 'active', intent: { itemPinId: PINID, priceHintSats: 30000, acceptedCurrencies: ['space'], note: 'cheap' }, sellPinId: SELL_PIN_ID },
+      { id: 'i2', itemPinId: `${'ff'.repeat(32)}i0`, status: 'stale', reason: 'the item is no longer held by the seller address', intent: { itemPinId: `${'ff'.repeat(32)}i0`, acceptedCurrencies: ['space'] }, sellPinId: SELL_PIN_ID },
+      { id: 'i3', itemPinId: `${'ee'.repeat(32)}i0`, status: 'cancelled', intent: { itemPinId: `${'ee'.repeat(32)}i0`, acceptedCurrencies: ['space'] } },
+    ],
+  });
+  const result = await byName.mrc721_sell_intents.handler({});
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, /3 sell intent\(s\)/);
+  assert.match(result.content[0].text, /ACTIVE/);
+  assert.match(result.content[0].text, /STALE/);
+  assert.match(result.content[0].text, /no longer held by the seller/);
+  assert.match(result.content[0].text, /CANCELLED/);
+});
+
+test('mrc721_sell_orders filters by collection through the indexer item view', async () => {
+  const { byName } = makeHarness({
+    sellOrders: [
+      { id: 'o1', status: 'valid', itemPinId: PINID, buyerAddress: OTHER_ADDRESS, priceSats: 22000, outpoint: `${'ab'.repeat(32)}:0` },
+      { id: 'o2', status: 'valid', itemPinId: `${'ff'.repeat(32)}i0`, buyerAddress: OTHER_ADDRESS, priceSats: 30000, outpoint: `${'ff'.repeat(32)}:1` },
+    ],
+  });
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/item/info', (raw) => jsonResponse({
+        code: 1,
+        data: { itemPinId: PINID, collectionName: String(raw).includes('ff'.repeat(8)) ? 'other-cats' : 'pixel-cats' },
+      })],
+    ]),
+    () => byName.mrc721_sell_orders.handler({ collection_name: 'pixel-cats' }),
+  );
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, /Local MRC-721 listings \(1\)/);
+  assert.doesNotMatch(result.content[0].text, /30000 sats/);
+});
+
+test('mrc721_market_intents renders indexer sell intents with settlement rails', async () => {
+  const { byName } = makeHarness();
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/sell/intents', () => jsonResponse({
+        code: 1,
+        data: {
+          list: [{
+            itemPinId: PINID,
+            sellPinId: SELL_PIN_ID,
+            active: true,
+            collectionName: 'pixel-cats',
+            sellerAddress: OTHER_ADDRESS,
+            priceHintSats: 30000,
+            acceptedCurrencies: ['space', 'fiat:CNY'],
+            settlement: ['atomic-swap', 'escrow'],
+            note: 'open to offers',
+          }],
+          total: 1,
+        },
+      })],
+    ]),
+    () => byName.mrc721_market_intents.handler({ collection_name: 'pixel-cats' }),
+  );
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, /ACTIVE/);
+  assert.match(result.content[0].text, /30000 sats/);
+  assert.match(result.content[0].text, /space,fiat:CNY/);
+  assert.match(result.content[0].text, /atomic-swap\/escrow/);
+  assert.match(result.content[0].text, new RegExp(SELL_PIN_ID));
+});
+
+test('mrc721_market_intents degrades honestly when the indexer lacks the endpoint', async () => {
+  const { byName } = makeHarness();
+  const result = await withFetchStub(
+    async () => new Response('404 page not found', { status: 404 }),
+    () => byName.mrc721_market_intents.handler({ collection_name: 'pixel-cats' }),
+  );
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /no reachable MetaSo sell-intent index/);
+  assert.match(result.content[0].text, /IDBOTS_METASO_API_BASE/);
+});
+
+// ---------------------------------------------------------------------------
+// MetaSo base wiring (indexing architecture: MetaSo serves NFT business
+// indexes when IDBOTS_METASO_API_BASE is set)
+// ---------------------------------------------------------------------------
+
+test('mrc721_market_intents prefers the configured MetaSo base for sell-intent reads', async () => {
+  process.env.IDBOTS_METASO_API_BASE = 'http://metaso.test:8080/';
+  try {
+    const { byName } = makeHarness();
+    const seen = [];
+    const result = await withFetchStub(
+      async (url) => {
+        seen.push(String(url));
+        return jsonResponse({
+          code: 1,
+          data: { list: [{ itemPinId: PINID, sellPinId: SELL_PIN_ID, active: true, sellerAddress: OTHER_ADDRESS, priceHintSats: 30000, acceptedCurrencies: ['space'], settlement: ['atomic-swap', 'escrow'] }], total: 1 },
+        });
+      },
+      () => byName.mrc721_market_intents.handler({ collection_name: 'pixel-cats' }),
+    );
+    assert.equal(result.isError, undefined);
+    assert.ok(seen.length >= 1);
+    assert.ok(seen[0].startsWith('http://metaso.test:8080/api/mrc721/sell/intents'), `expected metaso base, got ${seen[0]}`);
+    assert.match(result.content[0].text, /ACTIVE/);
+  } finally {
+    delete process.env.IDBOTS_METASO_API_BASE;
+  }
+});
+
+test('mrc721_search_collections uses the MetaSo server-side search when configured and degrades on error', async () => {
+  process.env.IDBOTS_METASO_API_BASE = 'http://metaso.test:8080';
+  try {
+    const { byName } = makeHarness();
+    const seen = [];
+    const result = await withFetchStub(
+      async (url) => {
+        seen.push(String(url));
+        if (String(url).includes('/api/mrc721/collection/search')) {
+          return jsonResponse({ code: 1, data: { list: [collectionRow()], total: 1 } });
+        }
+        return jsonResponse({ code: 1, data: { list: [] } });
+      },
+      () => byName.mrc721_search_collections.handler({ keyword: 'pixel' }),
+    );
+    assert.equal(result.isError, undefined);
+    assert.ok(seen.some((url) => url.includes('/api/mrc721/collection/search')));
+    assert.match(result.content[0].text, /matched: 1/);
+    assert.match(result.content[0].text, /scanned 1 registered collection/);
+
+    // Transport error → degrade to the client-side pageList scan.
+    const seen2 = [];
+    const result2 = await withFetchStub(
+      async (url) => {
+        seen2.push(String(url));
+        if (String(url).includes('/api/mrc721/collection/search')) {
+          throw new Error('connection refused');
+        }
+        return jsonResponse({ code: 1, data: { list: [collectionRow()] } });
+      },
+      () => byName.mrc721_search_collections.handler({ keyword: 'pixel' }),
+    );
+    assert.equal(result2.isError, undefined);
+    assert.ok(seen2.some((url) => url.includes('/api/mrc721/collection/pageList')), 'must fall back to pageList');
+    assert.match(result2.content[0].text, /matched: 1/);
+  } finally {
+    delete process.env.IDBOTS_METASO_API_BASE;
+  }
+});
+
+test('mrc721_search_collections serves supply state from MetaSo rows without item paging', async () => {
+  process.env.IDBOTS_METASO_API_BASE = 'http://metaso.test:8080';
+  try {
+    const { byName } = makeHarness();
+    const seen = [];
+    const result = await withFetchStub(
+      async (url) => {
+        seen.push(String(url));
+        if (String(url).includes('/api/mrc721/collection/search')) {
+          return jsonResponse({
+            code: 1,
+            data: { list: [collectionRow({ totalnum: 10, mintedCount: 10 })], total: 1 },
+          });
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      },
+      () => byName.mrc721_search_collections.handler({ issuer: 'AI_Sunny', supply_state: true }),
+    );
+    assert.equal(result.isError, undefined);
+    assert.match(result.content[0].text, /minted: 10\/10 \(supply exhausted\)/);
+    assert.ok(!seen.some((url) => url.includes('items/pageList')), 'server rows must remove the need for per-collection item paging');
+  } finally {
+    delete process.env.IDBOTS_METASO_API_BASE;
+  }
 });

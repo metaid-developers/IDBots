@@ -34,7 +34,7 @@ export interface TradeActivity {
 }
 
 /** Actions that announce peer-to-peer trade activity. */
-const P2P_ACTIONS = new Set(['listed', 'sold', 'bought', 'delisted', 'transferred']);
+const P2P_ACTIONS = new Set(['listed', 'sold', 'bought', 'delisted', 'transferred', 'selling']);
 /** Actions that announce escrow activity. */
 const ESCROW_ACTIONS = new Set(['escrow']);
 

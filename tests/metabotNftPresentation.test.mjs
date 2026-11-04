@@ -6,7 +6,10 @@ import {
   buildNftTileViewModel,
   buildNftTransferPayload,
   formatNftTime,
+  MRC721_MIN_SELL_PRICE_SATS,
   metafileToSourceUrls,
+  mrc721SellOrderStatusKey,
+  validateMrc721SellDraft,
   validateNftTransferDraft,
 } from '../src/renderer/components/metabots/metabotNftPresentation.js';
 
@@ -167,4 +170,26 @@ test('buildNftTransferPayload shapes per-kind transfer inputs', () => {
     feeRate: 1,
   });
   assert.deepEqual(mrc721, { metabotId: 7, pinId: 'pin…i0', toAddress: 'addr', feeRate: 1 });
+});
+
+test('validateMrc721SellDraft enforces the whole-sat price floor and base58 buyer', () => {
+  assert.equal(MRC721_MIN_SELL_PRICE_SATS, 22000);
+
+  assert.equal(validateMrc721SellDraft({ priceSats: '', buyerAddress: '1MvcAddressLikeBase5812345' }).errorKey, 'metabotNftSellPriceRequired');
+  assert.equal(validateMrc721SellDraft({ priceSats: 'abc', buyerAddress: '1MvcAddressLikeBase5812345' }).errorKey, 'metabotNftSellPriceRequired');
+  assert.equal(validateMrc721SellDraft({ priceSats: '22.5', buyerAddress: '1MvcAddressLikeBase5812345' }).errorKey, 'metabotNftSellPriceRequired');
+  assert.equal(validateMrc721SellDraft({ priceSats: '21999', buyerAddress: '1MvcAddressLikeBase5812345' }).errorKey, 'metabotNftSellPriceBelowFloor');
+  assert.equal(validateMrc721SellDraft({ priceSats: '22000', buyerAddress: '' }).errorKey, 'transferReceiverRequired');
+  assert.equal(validateMrc721SellDraft({ priceSats: '22000', buyerAddress: 'not valid' }).errorKey, 'metabotNftTransferInvalidAddress');
+  assert.deepEqual(
+    validateMrc721SellDraft({ priceSats: '22000', buyerAddress: '1MvcAddressLikeBase5812345' }),
+    { valid: true },
+  );
+});
+
+test('mrc721SellOrderStatusKey maps every sell-order status onto an i18n key', () => {
+  assert.equal(mrc721SellOrderStatusKey('valid'), 'metabotNftListingStatusValid');
+  assert.equal(mrc721SellOrderStatusKey('invalid'), 'metabotNftListingStatusInvalid');
+  assert.equal(mrc721SellOrderStatusKey('expired'), 'metabotNftListingStatusExpired');
+  assert.equal(mrc721SellOrderStatusKey('nonsense'), 'metabotNftListingStatusInvalid');
 });

@@ -152,6 +152,38 @@ export function validateNftTransferDraft({ toAddress }) {
   return { valid: true };
 }
 
+/**
+ * MRC-721 atomic-swap sell floor (mirror of
+ * src/main/libs/mrc721AtomicSwapTx.ts MRC721_MIN_SELL_PRICE_SATS).
+ */
+export const MRC721_MIN_SELL_PRICE_SATS = 22000;
+
+/**
+ * Sell-listing draft validation: whole-sat price at or above the protocol
+ * floor, buyer must be a base58 MVC address. Same shape as
+ * validateNftTransferDraft ({ valid, errorKey }) for the modal's
+ * validate-then-confirm convention; errorKeys map onto i18n.
+ */
+export function validateMrc721SellDraft({ priceSats, buyerAddress }) {
+  const price = Number(priceSats);
+  if (priceSats === '' || priceSats == null || !Number.isInteger(price)) {
+    return { valid: false, errorKey: 'metabotNftSellPriceRequired' };
+  }
+  if (price < MRC721_MIN_SELL_PRICE_SATS) {
+    return { valid: false, errorKey: 'metabotNftSellPriceBelowFloor' };
+  }
+  const buyerValidation = validateNftTransferDraft({ toAddress: buyerAddress });
+  if (!buyerValidation.valid) return buyerValidation;
+  return { valid: true };
+}
+
+/** Sell-order status → i18n key for the "My Listings" badges. */
+export function mrc721SellOrderStatusKey(status) {
+  if (status === 'valid') return 'metabotNftListingStatusValid';
+  if (status === 'expired') return 'metabotNftListingStatusExpired';
+  return 'metabotNftListingStatusInvalid';
+}
+
 /** Build the transfer IPC payload for one NFT + draft. */
 export function buildNftTransferPayload({ metabotId, item, toAddress, feeRate }) {
   const to = String(toAddress || '').trim();
