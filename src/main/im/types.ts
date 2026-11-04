@@ -361,20 +361,54 @@ export interface IMChannelPermissionSettings {
  * whatever the turn had already produced plus the limit it hit (see
  * IMCoworkHandler.createAccumulatorPromise). The bounds exist so a bad config
  * can neither abort every turn on arrival (0 / negative) nor park a chat for
- * hours (MAX); DEFAULT applies whenever the stored value is missing or invalid.
+ * hours (MAX); the channel default (see below) applies whenever the stored
+ * value is missing or invalid.
  */
 export const DEFAULT_IM_TURN_TIMEOUT_MS = 120_000;
 export const MIN_IM_TURN_TIMEOUT_MS = 10_000;
 export const MAX_IM_TURN_TIMEOUT_MS = 30 * 60_000;
+
+/**
+ * Channel-level turn budget used when no explicit `IMSettings.turnTimeoutMs`
+ * is configured.
+ *
+ * WeChat is the one channel with a measured profile: main.log 2026-11-04
+ * 10:13–10:17 shows two owner turns cut at exactly 120 s while the bot was
+ * still producing (three long-running jobs had just been listed). The
+ * partial-result fix (708fe79ab) keeps that content, but the budget a WeChat
+ * turn is allowed to spend is 10 minutes — a real chat task routinely runs
+ * longer than a plain ping, and 600 s still sits inside
+ * [MIN_IM_TURN_TIMEOUT_MS, MAX_IM_TURN_TIMEOUT_MS].
+ *
+ * Every other channel keeps DEFAULT_IM_TURN_TIMEOUT_MS. These are defaults
+ * only: a valid, explicit IMSettings.turnTimeoutMs always outranks them.
+ */
+export const DEFAULT_WEIXIN_IM_TURN_TIMEOUT_MS = 600_000;
+
+const DEFAULT_IM_TURN_TIMEOUT_BY_PLATFORM: Partial<Record<IMPlatform, number>> = {
+  weixin: DEFAULT_WEIXIN_IM_TURN_TIMEOUT_MS,
+};
+
+/**
+ * Default turn budget for one channel: its own entry when one exists, the
+ * generic DEFAULT_IM_TURN_TIMEOUT_MS otherwise. Pure lookup — the caller still
+ * applies [MIN, MAX] and lets an explicit setting win.
+ */
+export function defaultImTurnTimeoutMs(platform?: IMPlatform | null): number {
+  if (!platform) return DEFAULT_IM_TURN_TIMEOUT_MS;
+  return DEFAULT_IM_TURN_TIMEOUT_BY_PLATFORM[platform] ?? DEFAULT_IM_TURN_TIMEOUT_MS;
+}
 
 export interface IMSettings {
   systemPrompt?: string;
   skillsEnabled: boolean;
   channelPermissions?: IMChannelPermissionSettings;
   /**
-   * Per-turn wall-clock budget in milliseconds. Unset or invalid (NaN, 0,
-   * negative, non-number, unreadable settings) falls back to
-   * DEFAULT_IM_TURN_TIMEOUT_MS; a legal but extreme value is clamped into
+   * Per-turn wall-clock budget in milliseconds, outranking every channel
+   * default. Unset or invalid (NaN, 0, negative, non-number, unreadable
+   * settings) falls back to the channel default — 600 s on WeChat, 120 s
+   * elsewhere (DEFAULT_WEIXIN_IM_TURN_TIMEOUT_MS /
+   * DEFAULT_IM_TURN_TIMEOUT_MS). A legal but extreme value is clamped into
    * [MIN_IM_TURN_TIMEOUT_MS, MAX_IM_TURN_TIMEOUT_MS]. Re-read at the start of
    * every turn, so a change applies to the next message without a restart.
    */

@@ -213,7 +213,11 @@ export interface IMSettings {
   systemPrompt?: string;
   skillsEnabled: boolean;
   channelPermissions?: IMChannelPermissionSettings;
-  /** Per-turn wall-clock budget in ms; unset/invalid → 120 s, clamped to [10 s, 30 min]. Mirrors src/main/im/types.ts. */
+  /**
+   * Per-turn wall-clock budget in ms; outranks the channel default. Unset or
+   * invalid → channel default (WeChat 600 s, others 120 s), clamped to
+   * [10 s, 30 min]. Mirrors src/main/im/types.ts.
+   */
   turnTimeoutMs?: number;
 }
 
