@@ -6,7 +6,7 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { dshModelReasoningDeclaration } from '../dist-electron/main/libs/dshModelReasoning.js'
+import { dshModelReasoningDeclaration, dshRouteReasoningEffort } from '../dist-electron/main/libs/dshModelReasoning.js'
 
 test('deepseek-v4 family declares the official chat-completions dialect, vendor prefix or not', () => {
   for (const id of [
@@ -79,13 +79,15 @@ test('GLM models use the Z.AI thinking wire without reasoning_effort', () => {
 });
 
 test('GLM on the Responses wire opts into reasoning explicitly (2026-09-03 z.ai default flip)', () => {
-  for (const id of ['glm-5.3-flash', 'z-ai/glm-5.3-flash', 'glm-4.6-air']) {
+  for (const id of ['glm-5.3-flash', 'z-ai/glm-5.3-flash']) {
     const declaration = dshModelReasoningDeclaration(id, 'responses');
     assert.ok(declaration, id);
-    // Enabled rungs ride reasoning.effort; off keeps the send-nothing shape
-    // (Responses has no disable parameter — off falls back to the provider
-    // default instead of pretending to disable).
-    assert.equal(declaration.reasoningEfforts.off, null);
+    // GLM-5.x always thinks and cannot disable: zhipu's chat wire 400s effort
+    // 'none' and Volcengine Ark ignores it while running unbounded default
+    // thinking that burned the whole output budget (2026-11-05 session
+    // 1ed5daec). off therefore rides the bounded lowest rung — the same rule
+    // the OpenAI-compat proxy applies via responsesEffortForThinkingOff.
+    assert.equal(declaration.reasoningEfforts.off, 'low');
     assert.equal(declaration.reasoningEfforts.low, 'low');
     assert.equal(declaration.reasoningEfforts.high, 'high');
     assert.equal(declaration.reasoningEfforts.max, 'high');
@@ -97,15 +99,24 @@ test('GLM on the Responses wire opts into reasoning explicitly (2026-09-03 z.ai 
     assert.equal('supportsStore' in declaration.compat, false);
     assert.equal('thinkingFormat' in declaration.compat, false);
   }
+  // GLM-4.x honors 'none': off keeps the send-nothing spelling.
+  const glm4 = dshModelReasoningDeclaration('glm-4.6-air', 'responses');
+  assert.ok(glm4);
+  assert.equal(glm4.reasoningEfforts.off, null);
 });
 
 test('GLM on the Anthropic wire speaks adaptive thinking with output_config effort (Ark GLM routes)', () => {
-  for (const id of ['glm-5.3-flash', 'z-ai/glm-5.3-flash', 'glm-4.6-air']) {
+  // GLM-5.x: off is OMITTED — pi-ai pins thinkingLevelMap.off to null, so once
+  // the runner drops the off effort (dshRouteReasoningEffort) the writer emits
+  // no thinking control and the provider default applies. Declaring any off
+  // value here (null included) would make the writer emit the explicit
+  // thinking:{type:'disabled'} that Ark 400s (2026-11-05 session 1ed5daec).
+  for (const id of ['glm-5.3-flash', 'z-ai/glm-5.3-flash']) {
     const declaration = dshModelReasoningDeclaration(id, 'anthropic');
     assert.ok(declaration, id);
+    assert.equal('off' in declaration.reasoningEfforts, false);
     // Enabled rungs ride output_config.effort; Ark's accepted vocabulary is
     // low/medium/high/max (it 400s xhigh), and max stays max here.
-    assert.equal(declaration.reasoningEfforts.off, null);
     assert.equal(declaration.reasoningEfforts.low, 'low');
     assert.equal(declaration.reasoningEfforts.high, 'high');
     assert.equal(declaration.reasoningEfforts.max, 'max');
@@ -116,6 +127,36 @@ test('GLM on the Anthropic wire speaks adaptive thinking with output_config effo
     // GLM-serving endpoint does not document.
     assert.deepEqual(declaration.compat, { forceAdaptiveThinking: true });
   }
+  // GLM-4.x keeps the disable spelling (honored by disable-capable gateways).
+  const glm4 = dshModelReasoningDeclaration('glm-4.6-air', 'anthropic');
+  assert.ok(glm4);
+  assert.equal(glm4.reasoningEfforts.off, null);
+});
+
+test('dshRouteReasoningEffort re-spells off per wire for always-thinking GLM-5.x only', () => {
+  // Zai chat dialect: no silent off exists — any rung produces the identical
+  // thinking:{type:'enabled'} object, so off must carry the lowest rung to
+  // avoid the hardcoded thinking:disabled kill switch.
+  assert.equal(dshRouteReasoningEffort('glm-5.3-flash', 'openai', 'https://ark.cn-beijing.volces.com/api/coding/v3', 'off'), 'low');
+  assert.equal(dshRouteReasoningEffort('z-ai/glm-5.3-flash', 'openai', 'https://api.commandcode.ai/provider/v1', 'off'), 'low');
+  assert.equal(dshRouteReasoningEffort('GLM-5.3-Flash', 'openai', 'https://api.scnet.cn/api/llm/v1', 'off'), 'low');
+  // The reasoning_effort dialect (OpenCode Go) already sends nothing for off.
+  assert.equal(dshRouteReasoningEffort('glm-5.3-flash', 'openai', 'https://opencode.ai/zen/go/v1', 'off'), 'off');
+  // Responses/anthropic: the effort is dropped and the declaration decides
+  // (responses off→'low' minimal shape; anthropic off omitted → no control).
+  assert.equal(dshRouteReasoningEffort('glm-5.3-flash', 'responses', 'https://ark.cn-beijing.volces.com/api/coding/v3', 'off'), undefined);
+  assert.equal(dshRouteReasoningEffort('glm-5.3-flash', 'anthropic', 'https://ark.cn-beijing.volces.com/api/coding/v3', 'off'), undefined);
+  // Disable-capable GLM-4.x, DeepSeek and unknown families ride off untouched.
+  assert.equal(dshRouteReasoningEffort('glm-4.6-air', 'openai', null, 'off'), 'off');
+  assert.equal(dshRouteReasoningEffort('glm-4.6-air', 'anthropic', null, 'off'), 'off');
+  assert.equal(dshRouteReasoningEffort('deepseek-flash', 'openai', null, 'off'), 'off');
+  assert.equal(dshRouteReasoningEffort('doubao-seed-1.6', 'anthropic', null, 'off'), 'off');
+  // Non-off efforts and absent efforts pass through everywhere.
+  assert.equal(dshRouteReasoningEffort('glm-5.3-flash', 'openai', null, 'low'), 'low');
+  assert.equal(dshRouteReasoningEffort('glm-5.3-flash', 'anthropic', null, 'high'), 'high');
+  assert.equal(dshRouteReasoningEffort('glm-5.3-flash', 'responses', null, 'max'), 'max');
+  assert.equal(dshRouteReasoningEffort('glm-5.3-flash', 'openai', null, undefined), undefined);
+  assert.equal(dshRouteReasoningEffort('glm-5.3-flash', 'openai', null, null), undefined);
 });
 
 test('undeclared-reasoning route warning fires once per route identity', async () => {
