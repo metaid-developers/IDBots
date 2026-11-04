@@ -75,7 +75,7 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
   const [errorCode, setErrorCode] = useState('');
   const [pending, setPending] = useState(false);
   const [topupPackages, setTopupPackages] = useState<MeTopupPackageInfo[]>([]);
-  const [payQr, setPayQr] = useState<{ qrContent: string; payeeHint: string } | null>(null);
+  const [payQr, setPayQr] = useState<{ qrContent: string; payeeHint: string; qrImageDataUrl?: string } | null>(null);
   const [payQrImage, setPayQrImage] = useState<string | null>(null);
 
   const plans = snapshot.plans.filter((plan) => plan.tier !== 'free');
@@ -196,6 +196,12 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
   }, [section, selectedPlan, selectedTopup, periodDays, remark, voucher, voucherRemarkFor]);
 
   useEffect(() => {
+    // S9 v1.2: prefer the owner-uploaded payee QR image (收款设置 page); only
+    // synthesize one from qrContent when no image was archived.
+    if (payQr?.qrImageDataUrl) {
+      setPayQrImage(payQr.qrImageDataUrl);
+      return;
+    }
     if (!payQr?.qrContent) {
       setPayQrImage(null);
       return;

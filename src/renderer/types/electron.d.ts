@@ -1743,7 +1743,7 @@ interface IElectronAPI {
     getTopupOrders: () => Promise<{ success: boolean; orders?: MeTopupOrderInfo[]; error?: string; featureUnavailable?: boolean }>;
     /** Pick + stage a payment-voucher screenshot; voucherUrl is a signed gateway download URL when the gateway is running. */
     pickVoucher: (input?: Record<string, never>) => Promise<{ success: boolean; fileLabel?: string; voucherUrl?: string; signedUrlError?: string; error?: string }>;
-    getPaymentInfo: () => Promise<{ success: boolean; payment?: { qrContent: string; payeeHint: string }; error?: string }>;
+    getPaymentInfo: () => Promise<{ success: boolean; payment?: { qrContent: string; payeeHint: string; qrImageDataUrl?: string }; error?: string }>;
   };
   jevRelay: {
     resolveCredentials: () => Promise<{ success: boolean; credentials?: JevRelayCredentials; error?: string }>;

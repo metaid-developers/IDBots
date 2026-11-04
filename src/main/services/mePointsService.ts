@@ -646,11 +646,17 @@ function normalizeMeTopupOrder(record: Record<string, unknown>, orderIdFallback?
  * QR payload such as https://qr.alipay.com/...) into the host environment.
  * When unset the UI shows an honest "not issued yet" placeholder and keeps
  * the remark+voucher path — it never fabricates a scannable QR.
+ *
+ * S9 v1.2 (owner ruling 2026-11-05): ship a sensible default instead of an
+ * empty hint. The payee is described as the platform collection account and is
+ * never named outright — only an ops-supplied hint may name a real account.
  */
+const DEFAULT_ME_PAYEE_HINT = '平台收款账户（收款人信息以平台发布的收款码为准）';
+
 export function getMePaymentInfo(): { qrContent: string; payeeHint: string } {
   return {
     qrContent: normalizeText(process.env.ME_PAY_QR_CONTENT),
-    payeeHint: normalizeText(process.env.ME_PAY_PAYEE_HINT),
+    payeeHint: normalizeText(process.env.ME_PAY_PAYEE_HINT) || DEFAULT_ME_PAYEE_HINT,
   };
 }
 
@@ -668,7 +674,11 @@ export function isMeErrorCode(error: unknown, code: string): boolean {
 
 type RegisterIpcHandlerFn = (channel: string, handler: (...args: unknown[]) => unknown) => void;
 
-export function registerMePointsIpcHandlers(deps: { registerIpcHandler: RegisterIpcHandlerFn }): void {
+export function registerMePointsIpcHandlers(deps: {
+  registerIpcHandler: RegisterIpcHandlerFn;
+  /** S9 v1.2: owner-editable payee QR from the 「收款设置」 page (decrypted on demand). */
+  getSavedPaymentInfo?: () => { qrContent?: string; qrImageDataUrl?: string };
+}): void {
   const { registerIpcHandler } = deps;
   const wrap = (
     channel: string,
@@ -715,7 +725,19 @@ export function registerMePointsIpcHandlers(deps: { registerIpcHandler: Register
     }),
   }));
   wrap('me:getTopupOrders', async () => ({ orders: await getMeTopupOrders() }));
-  wrap('me:getPaymentInfo', async () => ({ payment: getMePaymentInfo() }));
+  // S9 v1.2: the S3 「收款设置」 page lets ops paste a QR image/link on-device.
+  // Prefer that (owner-editable, no rebuild) and fall back to the env seam.
+  wrap('me:getPaymentInfo', async () => {
+    const fromEnv = getMePaymentInfo();
+    const saved = deps.getSavedPaymentInfo?.() ?? {};
+    return {
+      payment: {
+        qrContent: saved.qrContent || fromEnv.qrContent,
+        payeeHint: fromEnv.payeeHint,
+        qrImageDataUrl: saved.qrImageDataUrl,
+      },
+    };
+  });
   registerIpcHandler('me:pickVoucher', async (_event, rawInput?: unknown) => {
     void rawInput;
     try {

@@ -18564,7 +18564,26 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
   // optional — a missing local identity only fails the signed calls; public
   // endpoints (plans/rates/packages) still work signed-out.
   initMePointsService({ getUserIdentityStore });
-  registerMePointsIpcHandlers({ registerIpcHandler });
+  registerMePointsIpcHandlers({
+    registerIpcHandler,
+    // S9 v1.2: reuse the S3 receiving-info row so ops can paste the payee QR
+    // in 收款设置 and have the ME purchase flow pick it up without a rebuild.
+    getSavedPaymentInfo: () => {
+      try {
+        const identity = getUserIdentityStore().get();
+        if (!identity?.mnemonic || !identity.globalmetaid?.trim()) return {};
+        const row = getPaymentInfoStore().get();
+        if (!row) return {};
+        const key = derivePaymentInfoKey(identity.mnemonic, identity.globalmetaid.trim());
+        const info = decryptPaymentInfo(key, row.cipher);
+        return { qrContent: info.qrContent, qrImageDataUrl: info.qrImageDataUrl };
+      } catch (error) {
+        const errMsg = error instanceof Error ? error.message : String(error);
+        console.error('[ME] saved payment info unreadable:', errMsg);
+        return {};
+      }
+    },
+  });
 
   // Free LLM quota relay: identity-signed bootstrap issues the relay key for
   // the built-in `metaid-free` provider (first-run welcome experience).
