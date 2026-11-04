@@ -103,6 +103,7 @@ tests/*
 !tests/gatewayServer.test.mjs
 !tests/reverifyTokenCrossImpl.test.mjs
 !tests/bundleService.test.mjs
+!tests/bundleCreditBalance.test.mjs
 !tests/mobileChannels.test.mjs
 !tests/mobileShim.test.ts
 !tests/mobileNativeBootstrap.test.ts

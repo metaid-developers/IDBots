@@ -59,6 +59,8 @@ export async function startTestApp(options: {
   asr?: import('../src/server.js').PublicServerOptions['asr'];
   /** CP_LOGIN_BUNDLE_DIR override. */
   loginBundleDir?: string;
+  /** CP_ADMIN_API_TOKEN override (credit routes; unset = surface disabled). */
+  adminApiToken?: string;
 }): Promise<TestApp> {
   const port = await freePort();
   const metricsPort = await freePort();
@@ -78,6 +80,7 @@ export async function startTestApp(options: {
       ? Object.fromEntries(Object.entries(options.tenantEnv).map(([k, v]) => [`CP_TENANT_ENV_${k}`, v]))
       : {}),
     ...(options.loginBundleDir ? { CP_LOGIN_BUNDLE_DIR: options.loginBundleDir } : {}),
+    ...(options.adminApiToken ? { CP_ADMIN_API_TOKEN: options.adminApiToken } : {}),
   };
   const config = loadConfig(env);
   const app: AppContext = {

@@ -20,6 +20,8 @@ import { encryptSecret, sha256Hex, maskPhone } from './crypto.js';
 import { upgradeTenants, findContainerId, recreateContainer } from './services/upgrade.js';
 import { MetricsRegistry } from './metrics.js';
 import type { AppContext } from './context.js';
+import { grantCredit, listCredits } from './services/creditService.js';
+import { HttpError } from './http.js';
 
 // --- CLI-scoped config (no listen/SMS/origin requirements) ------------------
 
@@ -89,6 +91,9 @@ function loadCliContext(env: NodeJS.ProcessEnv): AppContext {
       funasrEndpoint: null,
       stub: { delayMs: 0, disconnectAfterMs: 0, slowFinalMs: 0 },
     },
+    // The CLI grants credits through services/creditService directly (actor
+    // admin:<name>); the HTTP token is irrelevant here — inert default.
+    adminApiToken: null,
   } as ControlPlaneConfig;
   const docker = new DockerClient(config.dockerUrl);
   return {
@@ -319,6 +324,56 @@ function cmdRedeemStats(ctx: AppContext): void {
     )
     .get() as { imported: number; assigned: number; remaining: number };
   console.log(`imported=${one.imported} assigned=${one.assigned} remaining=${one.remaining}`);
+}
+
+function cmdCreditGrant(ctx: AppContext, flags: Map<string, string | boolean>, as: string): void {
+  const userId = requireFlag(flags, 'user');
+  const bytesText = requireFlag(flags, 'bytes');
+  const bytes = Number(bytesText);
+  if (!Number.isInteger(bytes) || bytes <= 0) {
+    throw new CliError(`--bytes must be a positive integer (bytes), got "${bytesText}"`);
+  }
+  const reason = requireFlag(flags, 'reason');
+  let result;
+  try {
+    result = grantCredit(ctx, {
+      userId,
+      bytes,
+      reason,
+      source: 'manual',
+      actor: `admin:${as}`,
+      referenceKey: flagString(flags, 'reference'),
+    });
+  } catch (err) {
+    if (err instanceof HttpError) {
+      throw new CliError(`${err.code}: ${err.message}`);
+    }
+    throw err;
+  }
+  if (result.duplicate) {
+    console.log(
+      `credit #${result.creditId} already exists for reference ${result.referenceKey} — no second grant`,
+    );
+  } else {
+    console.log(
+      `credit #${result.creditId}: ${result.bytes} bytes → user ${result.userId} (reference ${result.referenceKey ?? '-'})`,
+    );
+  }
+}
+
+function cmdCreditList(ctx: AppContext, flags: Map<string, string | boolean>): void {
+  const user = flagString(flags, 'user');
+  const rows = listCredits(ctx, { userId: user ?? undefined });
+  if (rows.length === 0) {
+    console.log('no credit grants recorded');
+    return;
+  }
+  for (const row of rows) {
+    console.log(
+      `#${row.id}  user=${row.user_id}  bytes=${row.bytes_total}  source=${row.source}  ` +
+        `by=${row.actor}  at=${row.created_at}  ref=${row.reference_key ?? '-'}  reason=${row.reason}`,
+    );
+  }
 }
 
 function cmdUserList(ctx: AppContext, flags: Map<string, string | boolean>): void {
@@ -570,6 +625,7 @@ const MUTATING = new Set([
   'invite.create',
   'invite.disable',
   'redeem.import',
+  'credit.grant',
   'user.disable',
   'user.enable',
   'tenant.restart',
@@ -593,7 +649,7 @@ async function run(argv: string[]): Promise<void> {
     requireOperator(as);
   }
   if (!domain) {
-    throw new CliError('usage: cli.js <invite|redeem|user|tenant|deletion> <command> [flags] [--as NAME]');
+    throw new CliError('usage: cli.js <invite|redeem|credit|user|tenant|deletion> <command> [flags] [--as NAME]');
   }
 
   const ctx = loadCliContext(process.env);
@@ -613,6 +669,12 @@ async function run(argv: string[]): Promise<void> {
         break;
       case 'redeem.stats':
         cmdRedeemStats(ctx);
+        break;
+      case 'credit.grant':
+        cmdCreditGrant(ctx, flags, as!);
+        break;
+      case 'credit.list':
+        cmdCreditList(ctx, flags);
         break;
       case 'user.list':
         cmdUserList(ctx, flags);

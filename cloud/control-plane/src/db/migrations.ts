@@ -153,7 +153,35 @@ function migration2(db: Database.Database): void {
   `);
 }
 
+/**
+ * Migration 3 (payment credit channel, NEW capability — no C2/C3 contract
+ * change): operator credit ledger. One row per granted credit: who granted
+ * (actor), when (created_at), to whom (user_id), how much (bytes_total,
+ * integer bytes — never floats), and on what grounds (reason). A grant that
+ * belongs to an order carries the C4 orderId in reference_key; the UNIQUE
+ * index makes re-submission of the same reference return the existing row
+ * instead of a second grant. Records only — the byte-level application to a
+ * tenant traffic account happens through the upstream traffic admin channel,
+ * which the operator references in `reason`.
+ */
+function migration3(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE credit_ledger (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id       TEXT NOT NULL REFERENCES users(id),
+      bytes_total   INTEGER NOT NULL CHECK (bytes_total > 0),
+      source        TEXT NOT NULL CHECK (source IN ('manual', 'bundle-order')),
+      reason        TEXT NOT NULL,
+      actor         TEXT NOT NULL,
+      reference_key TEXT UNIQUE,
+      created_at    INTEGER NOT NULL
+    );
+    CREATE INDEX idx_credit_ledger_user ON credit_ledger(user_id, created_at);
+  `);
+}
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: 'initial-schema', up: migration1 },
   { version: 2, name: 'asr-usage', up: migration2 },
+  { version: 3, name: 'credit-ledger', up: migration3 },
 ];

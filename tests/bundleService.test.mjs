@@ -24,6 +24,7 @@ const {
   BundleOrderCreationRejectedError,
   getBundleMeters,
   getBundleOrder,
+  getBundleOrderVoucher,
   getBundlePlans,
   createBundleOrder,
   initBundleService,
@@ -570,4 +571,115 @@ test('createOrder IPC distinguishes a definite business rejection from an uncert
   assert.equal(uncertain.success, false);
   assert.equal(uncertain.errorCode, BUNDLE_ORDER_OUTCOME_UNCERTAIN);
   assert.equal(uncertain.error.includes('upstream unavailable'), true);
+});
+
+// ---------------------------------------------------------------------------
+// Local order vouchers (payment-credit channel)
+// ---------------------------------------------------------------------------
+
+function makeStore() {
+  const kv = {};
+  return {
+    kv,
+    get: (key) => kv[key],
+    set: (key, value) => {
+      kv[key] = value;
+    },
+  };
+}
+
+test('stub create persists a local order voucher keyed by the upstream orderId', async (t) => {
+  const store = makeStore();
+  const restore = initService({ baseUrl: 'stub://local', store });
+  t.after(restore);
+
+  const order = await createBundleOrder({ planId: 'bundle_basic_cny' });
+  assert.ok(order.orderId);
+
+  const voucher = getBundleOrderVoucher(order.orderId);
+  assert.ok(voucher, 'a fresh order must have a local voucher');
+  assert.equal(voucher.orderId, order.orderId, 'the voucher keys on the verbatim upstream orderId');
+  assert.equal(voucher.planId, 'bundle_basic_cny');
+  assert.equal(voucher.payAmount, '19.90');
+  assert.equal(voucher.payCurrency, 'CNY');
+  assert.equal(voucher.trafficBytes, 104857600);
+  assert.equal(voucher.llmQuota, 2000000);
+  assert.equal(voucher.gateway, 'alipay');
+  assert.ok(Number.isInteger(voucher.createdAt) && voucher.createdAt > 0);
+  assert.equal(voucher.paidAt, undefined, 'nothing stamps the voucher before a payment-success observation');
+
+  // Cross-check: the KV record itself carries the upstream orderId verbatim.
+  assert.ok(store.kv['bundle.orderVouchers'][order.orderId]);
+});
+
+test('stub first-poll payment-success stamps the voucher exactly once', async (t) => {
+  const store = makeStore();
+  const restore = initService({ baseUrl: 'stub://local', store });
+  t.after(restore);
+
+  const order = await createBundleOrder({ planId: 'bundle_basic_cny' });
+  const first = await getBundleOrder({ orderId: order.orderId });
+  assert.equal(first.status, BUNDLE_ORDER_STATUS.CREDITED, 'stub confirms payment on the first poll');
+
+  const stamped = getBundleOrderVoucher(order.orderId);
+  assert.ok(Number.isInteger(stamped.paidAt) && stamped.paidAt > 0);
+  assert.ok(Number.isInteger(stamped.creditedAt) && stamped.creditedAt > 0);
+  assert.equal(stamped.createdAt, getBundleOrderVoucher(order.orderId).createdAt);
+
+  // Second poll: the stub only flips CREATED once, so the stamp cannot move.
+  await getBundleOrder({ orderId: order.orderId });
+  const after = getBundleOrderVoucher(order.orderId);
+  assert.equal(after.paidAt, stamped.paidAt);
+  assert.equal(after.creditedAt, stamped.creditedAt);
+});
+
+test('real-mode create persists the upstream orderId verbatim in the voucher', async (t) => {
+  const store = makeStore();
+  const fetchImpl = createFetchStub([
+    ['/v1/bundle/orders', {
+      orderId: 'bo_voucher_real_1',
+      planId: 'bundle_basic_cny',
+      payAmount: '19.90',
+      payCurrency: 'CNY',
+      trafficBytes: 104857600,
+      llmQuota: 2000000,
+      gatewayParams: { qrCode: 'https://qr.alipay.com/real', alipayOutTradeNo: 'out-1' },
+      expiresAt: 1760000000,
+    }],
+  ]);
+  const restore = initService({ baseUrl: 'https://bundle.test', fetchImpl, store });
+  t.after(restore);
+
+  const order = await createBundleOrder({ planId: 'bundle_basic_cny' });
+  assert.equal(order.orderId, 'bo_voucher_real_1');
+
+  const voucher = getBundleOrderVoucher('bo_voucher_real_1');
+  assert.ok(voucher, 'the real-path voucher is readable by the upstream orderId');
+  assert.equal(voucher.payAmount, '19.90');
+  assert.equal(voucher.gateway, 'alipay');
+  assert.equal(voucher.paidAt, undefined);
+});
+
+test('an uncertain create outcome writes no voucher', async (t) => {
+  const store = makeStore();
+  const fetchImpl = createFetchStub([
+    ['/v1/bundle/orders', { __httpStatus: 500, __body: { code: 500, message: 'upstream unavailable' } }],
+  ]);
+  const restore = initService({ baseUrl: 'https://bundle.test', fetchImpl, store });
+  t.after(restore);
+
+  await assert.rejects(createBundleOrder({ planId: 'bundle_basic_cny' }));
+  assert.equal(getBundleOrderVoucher('bo_never_created'), null, 'no local record for an order the server may or may not have taken');
+  assert.deepEqual(Object.keys(store.kv['bundle.orderVouchers'] ?? {}), []);
+});
+
+test('a client without a configured store keeps paying — voucher absence never blocks a live payment', async (t) => {
+  const restore = initService({ baseUrl: 'stub://local' });
+  t.after(restore);
+
+  const order = await createBundleOrder({ planId: 'bundle_basic_cny' });
+  assert.ok(order.orderId);
+  assert.equal(getBundleOrderVoucher(order.orderId), null, 'no store → no voucher, order still fine');
+  const status = await getBundleOrder({ orderId: order.orderId });
+  assert.equal(status.status, BUNDLE_ORDER_STATUS.CREDITED, 'the payment-success path works without a voucher');
 });
