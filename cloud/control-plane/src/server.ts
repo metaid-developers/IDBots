@@ -7,6 +7,7 @@ import { accountRoutes } from './routes/account.js';
 import { asrRoutes } from './routes/asr.js';
 import { authRoutes } from './routes/auth.js';
 import { creditRoutes } from './routes/credit.js';
+import { tenantCreditRoutes } from './routes/tenantCredit.js';
 import { sensitiveRoutes } from './routes/sensitive.js';
 import { requireUser } from './routes/auth.js';
 import { maskPhone } from './crypto.js';
@@ -139,14 +140,6 @@ async function handle(
       return;
     }
 
-    if (method !== 'GET') {
-      const origin = req.headers.origin;
-      if (!isOriginAllowed(typeof origin === 'string' ? origin : undefined, app.config.publicOrigin)) {
-        reqCtx.log('warn', 'origin not allowed');
-        throw new HttpError(403, 'ORIGIN_NOT_ALLOWED', 'the Origin header does not match the deployment origin');
-      }
-    }
-
     let matched: Route | undefined;
     let params: Record<string, string> = {};
     for (const route of routes) {
@@ -162,6 +155,18 @@ async function handle(
     }
     if (!matched) {
       throw new HttpError(404, 'NOT_FOUND', `no route for ${method} ${url.pathname}`);
+    }
+
+    // REQ-B-8 / C3: state-changing requests must carry the deployment Origin.
+    // Server-to-server routes authenticated by a bearer secret opt out
+    // (`skipOriginCheck`): they carry no cookie, so the CSRF reason for this
+    // gate does not apply, and a machine client has no Origin to send.
+    if (method !== 'GET' && !matched.skipOriginCheck) {
+      const origin = req.headers.origin;
+      if (!isOriginAllowed(typeof origin === 'string' ? origin : undefined, app.config.publicOrigin)) {
+        reqCtx.log('warn', 'origin not allowed');
+        throw new HttpError(403, 'ORIGIN_NOT_ALLOWED', 'the Origin header does not match the deployment origin');
+      }
     }
     const route = matched;
     routePattern = route.path;
@@ -217,6 +222,7 @@ const routes: Route[] = [
   ...sensitiveRoutes,
   ...accountRoutes,
   ...creditRoutes,
+  ...tenantCreditRoutes,
   ...asrRoutes,
   ...proxyRoutes,
   ...loginRoutes,

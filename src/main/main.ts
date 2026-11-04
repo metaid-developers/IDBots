@@ -244,6 +244,7 @@ import { getNftCaRegistry } from './services/nftCaService';
 import { parseNftAvatarReference, resolveNftAvatar } from './services/nftAvatarService';
 import { initTrafficAccountService, registerTrafficAccountIpcHandlers } from './services/trafficAccountService';
 import { initMePointsService, registerMePointsIpcHandlers } from './services/mePointsService';
+import { startCreditPullLoop, type CreditPullLoop } from './services/creditPullService';
 import { initBundleService, registerBundleIpcHandlers } from './services/bundleService';
 import { initLlmRelayService, registerLlmRelayIpcHandlers, getLlmRelayQuota } from './services/llmRelayService';
 import { createRelayCatalogRefresh, RELAY_CATALOG_REFRESH_INTERVAL_MS } from './services/relayCatalogFreshness';
@@ -2976,6 +2977,8 @@ let sqliteMaintenanceInterval: ReturnType<typeof setInterval> | null = null;
 let sqliteRecoveryRelaunchRequested = false;
 let relayCatalogRefresh: ReturnType<typeof createRelayCatalogRefresh> | null = null;
 let relayCatalogRefreshTimer: ReturnType<typeof setInterval> | null = null;
+/** Plan B: tenant-side pull of pending credit grants (server mode only). */
+let creditPullLoop: CreditPullLoop | null = null;
 
 function text(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -20322,6 +20325,8 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
       relayCatalogRefreshTimer = null;
     }
     relayCatalogRefresh = null;
+    creditPullLoop?.stop();
+    creditPullLoop = null;
     await stopMetaAppServer().catch((error) => {
       console.error('[metaapps] Failed to stop local server during cleanup:', error);
     });
@@ -20604,6 +20609,13 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     if (isServerMode()) {
       serverBootstrapRun = startServerModeBootstrap();
       startupLog('server bootstrap started');
+      // Plan B: the tenant discovers the control-plane credit grants recorded
+      // for its user and applies them through the identity-signed redeem-code
+      // channel. First tick is delayed so the bootstrap can create the traffic
+      // account; retries never mark a grant applied on failure.
+      creditPullLoop = startCreditPullLoop({
+        log: (level, msg, extra) => serverPhaseLog(level, 'credit-pull', msg, extra),
+      });
     }
 
     relayCatalogRefresh = createRelayCatalogRefresh({

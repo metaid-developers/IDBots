@@ -180,8 +180,54 @@ function migration3(db: Database.Database): void {
   `);
 }
 
+/**
+ * Migration 4 (credit application, NEW capability — no C2/C3 contract change):
+ * track whether a ledger grant actually reached the user's upstream traffic
+ * account, and carry the single-use upstream redeem code that delivers it.
+ *
+ * Why a code and not a key: the owner's decision (plan B) is that the control
+ * plane must never hold a credential that can mint credit on ANY account. The
+ * tenant applies the bytes itself through the identity-signed redeem-code
+ * channel it already owns; the operator only supplies the one code that this
+ * grant is worth. `apply_code_enc` is AES-256-GCM ciphertext under
+ * CP_MASTER_KEY, exactly like gateway secrets, and is never returned by the
+ * admin list routes.
+ *
+ * `apply_state`:
+ *   pending      — recorded, not yet in the user's upstream account.
+ *   applied      — the tenant reported a successful redemption; applied_*
+ *                  columns carry the evidence (codeId / trafficBytes /
+ *                  balanceAfter) the tenant observed upstream.
+ *   not-required — the upstream already credited the bytes through another
+ *                  channel (bundle-order rows: the payment webhook credits
+ *                  traffic before this row is written). Applying those again
+ *                  would double-credit, so they never enter the pending set.
+ *
+ * Existing rows: bundle-order rows are backfilled to not-required for exactly
+ * that reason; manual rows stay pending (production row #1 included) so the
+ * new pull path can pick them up.
+ */
+function migration4(db: Database.Database): void {
+  db.exec(`
+    ALTER TABLE credit_ledger ADD COLUMN apply_state TEXT NOT NULL DEFAULT 'pending';
+    ALTER TABLE credit_ledger ADD COLUMN apply_code_enc TEXT;
+    ALTER TABLE credit_ledger ADD COLUMN applied_at INTEGER;
+    ALTER TABLE credit_ledger ADD COLUMN applied_by TEXT;
+    ALTER TABLE credit_ledger ADD COLUMN applied_bytes INTEGER;
+    ALTER TABLE credit_ledger ADD COLUMN applied_evidence TEXT;
+    ALTER TABLE credit_ledger ADD COLUMN apply_attempts INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE credit_ledger ADD COLUMN last_apply_error TEXT;
+    ALTER TABLE credit_ledger ADD COLUMN last_apply_at INTEGER;
+    UPDATE credit_ledger SET apply_state = 'not-required' WHERE source = 'bundle-order';
+  `);
+  db.exec(`
+    CREATE INDEX idx_credit_ledger_pending ON credit_ledger(user_id, apply_state);
+  `);
+}
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: 'initial-schema', up: migration1 },
   { version: 2, name: 'asr-usage', up: migration2 },
   { version: 3, name: 'credit-ledger', up: migration3 },
+  { version: 4, name: 'credit-apply', up: migration4 },
 ];

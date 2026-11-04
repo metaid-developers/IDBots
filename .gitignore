@@ -115,6 +115,7 @@ tests/*
 !tests/update-notification.test.mjs
 !tests/serverMode.test.mjs
 !tests/serverBootstrap.test.mjs
+!tests/creditPullService.test.mjs
 !tests/relayCatalogFreshness.test.mjs
 !tests/mobileSettings.test.ts
 !tests/mobileRechargeRecovery.test.ts

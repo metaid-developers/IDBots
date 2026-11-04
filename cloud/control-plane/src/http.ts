@@ -60,6 +60,12 @@ export interface Route {
   auth?: boolean;
   /** Skip JSON body parsing — the handler streams reqCtx.req itself. */
   raw?: boolean;
+  /**
+   * Skip the Origin gate on state-changing requests. Only for server-to-server
+   * routes authenticated by an explicit bearer secret (no cookie, so CSRF does
+   * not apply) — e.g. /api/v1/tenant/*. Never set this on a session route.
+   */
+  skipOriginCheck?: boolean;
   handler: RouteHandler;
 }
 
