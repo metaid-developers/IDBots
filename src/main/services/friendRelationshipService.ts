@@ -374,14 +374,14 @@ export class MetasoFriendRelationshipProvider implements FriendRelationshipProvi
     const first = normalizeGlobalMetaID(input.firstGlobalMetaID);
     const second = normalizeGlobalMetaID(input.secondGlobalMetaID);
     if (!first || !second || first === second) {
-      return { status: 'unknown', blocking: null, blockedBy: null };
+      return { status: 'unknown', blocking: null, blockedBy: null, followsMe: null, followedByMe: null };
     }
     const key = `${first}\u0000${second}`;
     const now = this.now();
     const cached = this.cache.get(key);
     if (cached && cached.expiresAt > now) return cached.state;
     if (this.breakerOpenUntil > now) {
-      return { status: 'unknown', blocking: null, blockedBy: null };
+      return { status: 'unknown', blocking: null, blockedBy: null, followsMe: null, followedByMe: null };
     }
     try {
       const [relationship] = await fetchSocialRelationships(
@@ -393,10 +393,15 @@ export class MetasoFriendRelationshipProvider implements FriendRelationshipProvi
       }
       // The fold carries 'blocked' separately from friendship; the resolver's
       // friend fact stays tri-state while the block flags ride alongside.
+      // The directional /follow flags (S6 defect #4) ride along the same
+      // record so callers can distinguish the three pre-friend states
+      // (neither follows / peer follows me / I follow the peer).
       const state: FriendPairState = {
         status: relationship.relation === 'friend' ? 'confirmed' : 'not_confirmed',
         blocking: relationship.blocking,
         blockedBy: relationship.blockedBy,
+        followsMe: relationship.followsMe,
+        followedByMe: relationship.followedByMe,
       };
       this.cache.set(key, { state, expiresAt: now + this.cacheTtlMs });
       this.consecutiveFailures = 0;

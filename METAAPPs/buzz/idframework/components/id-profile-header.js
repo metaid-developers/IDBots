@@ -418,7 +418,7 @@ class IdProfileHeader extends HTMLElement {
     }
     if (text[0] === '/') {
       var serviceLocator = (typeof window !== 'undefined' && window.ServiceLocator) ? window.ServiceLocator : {};
-      var manBase = this._pickFirstString([serviceLocator.metaid_man, 'https://www.show.now/man']).replace(/\/+$/, '');
+      var manBase = this._pickFirstString([serviceLocator.metaid_man, 'https://manapi.metaid.io']).replace(/\/+$/, '');
       return manBase + text;
     }
     return text;

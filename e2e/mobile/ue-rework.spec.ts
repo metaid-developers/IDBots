@@ -14,7 +14,7 @@ import { test, expect, attachScreen } from './fixtures';
 
 async function openChat(page: import('@playwright/test').Page): Promise<void> {
   await page.goto('/app/');
-  await page.getByRole('button', { name: 'Chat' }).click();
+  await page.getByRole('button', { name: 'Chat', exact: true }).click();
 }
 
 test.describe('chat UE rework', () => {
@@ -56,11 +56,13 @@ test.describe('chat UE rework', () => {
     await expect(list).toBeVisible();
     // Seeded mock sessions were all touched "today" — one group header.
     await expect(list.getByTestId('session-group-today')).toBeVisible();
-    const rows = list.getByRole('button');
-    const rowCount = await rows.count();
+    const sessionRows = list.locator('[data-testid^="session-actions-"]');
+    const rowCount = await sessionRows.count();
     expect(rowCount).toBeGreaterThan(0);
+    const avatars = list.locator('[data-testid^="session-bot-avatar-"]');
+    await expect(avatars).toHaveCount(rowCount);
     for (let index = 0; index < rowCount; index += 1) {
-      await expect(rows.nth(index).getByTestId(/session-bot-avatar-/)).toBeVisible();
+      await expect(avatars.nth(index)).toBeVisible();
     }
     await attachScreen(testInfo, page, 'a4-session-groups');
   });
@@ -96,7 +98,7 @@ test.describe('chat UE rework', () => {
     await attachScreen(testInfo, page, 'a1-truncated-avatar-fallback');
 
     // The same gate applies to the chat header bot resolution.
-    await page.getByRole('button', { name: 'Chat' }).click();
+    await page.getByRole('button', { name: 'Chat', exact: true }).click();
     await expect(page.getByTestId('chat-header-avatar')).toHaveAttribute('data-avatar-state', 'fallback');
   });
 });

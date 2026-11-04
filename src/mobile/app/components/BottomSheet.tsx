@@ -20,23 +20,24 @@ export function BottomSheet(props: {
       <button
         type="button"
         aria-label={props.title}
-        className="absolute inset-0 bg-black/40"
+        className="twin-sheet-backdrop absolute inset-0"
         onClick={props.onClose}
         tabIndex={-1}
       />
       <div
         role="dialog"
         aria-label={props.title}
-        className="relative max-h-[80dvh] overflow-y-auto rounded-t-2xl border-t border-[var(--border-color)] bg-[var(--bg-panel)] px-4 pt-4"
+        className="twin-sheet relative max-h-[80dvh] overflow-y-auto px-4 pt-2"
         style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 16px)' }}
       >
+        <div className="twin-sheet-handle" aria-hidden />
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-base font-semibold text-[var(--text-primary)]">{props.title}</h2>
+          <h2 className="twin-sheet-title">{props.title}</h2>
           {props.onClose ? (
             <button
               type="button"
               onClick={props.onClose}
-              className="min-h-[44px] min-w-[44px] px-2 text-sm text-[var(--text-secondary)] active:text-[var(--text-primary)]"
+              className="twin-icon-button"
             >
               {'✕'}
             </button>

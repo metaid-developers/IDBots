@@ -57,6 +57,8 @@ export type DshMapperAction =
       reason: { kind: string; reason?: string }
       /** True when the turn stopped cleanly having produced no text and no tool calls. */
       emptyTerminal?: boolean
+      finalizationRequired?: boolean
+      fallbackFinalText?: string
     }
   | { kind: 'usage'; usage: DshUsageSnapshot }
 
@@ -307,7 +309,7 @@ export interface DshKernelHandlers {
   onMessage: (sessionId: string, message: CoworkMessageInput, slot?: DshStreamSlot) => string
   onMessageUpdate: (sessionId: string, messageId: string, content: string) => void
   onMessageFinalize: (sessionId: string, messageId: string, content: string, metadata?: DshFinalizeMetadata) => void
-  onTurnEnd: (sessionId: string, reason: { kind: string; reason?: string }, emptyTerminal?: boolean) => void
+  onTurnEnd: (sessionId: string, reason: { kind: string; reason?: string }, emptyTerminal?: boolean, finalizationRequired?: boolean, fallbackFinalText?: string) => void
   onUsage: (sessionId: string, usage: DshUsageSnapshot) => void
   onApprovalRequest: (sessionId: string, ask: DshApprovalAsk) => void
   onApprovalCancelled: (askId: string) => void

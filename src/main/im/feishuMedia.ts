@@ -23,7 +23,18 @@ export interface FeishuFileUploadResult {
 
 // Constants
 const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.ico', '.tiff'];
-const MAX_FILE_SIZE = 30 * 1024 * 1024; // 30MB for Feishu
+const AUDIO_EXTENSIONS = ['.opus', '.ogg', '.mp3', '.wav', '.m4a', '.aac', '.amr'];
+/** Feishu's documented per-file upload ceiling (30 MB). */
+export const FEISHU_MAX_UPLOAD_BYTES = 30 * 1024 * 1024;
+const MAX_FILE_SIZE = FEISHU_MAX_UPLOAD_BYTES;
+/**
+ * Extension tables WITHOUT the leading dot, exported for the channel
+ * capability manifest. Derived from the same arrays the send path classifies
+ * with — the prompt can never advertise an extension the code treats
+ * differently.
+ */
+export const FEISHU_IMAGE_EXTENSIONS = IMAGE_EXTENSIONS.map((extension) => extension.slice(1));
+export const FEISHU_AUDIO_EXTENSIONS = AUDIO_EXTENSIONS.map((extension) => extension.slice(1));
 
 /**
  * Upload image to Feishu
@@ -192,7 +203,7 @@ export function isFeishuImagePath(filePath: string): boolean {
  */
 export function isFeishuAudioPath(filePath: string): boolean {
   const ext = path.extname(filePath).toLowerCase();
-  return ['.opus', '.ogg', '.mp3', '.wav', '.m4a', '.aac', '.amr'].includes(ext);
+  return AUDIO_EXTENSIONS.includes(ext);
 }
 
 /**

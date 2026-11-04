@@ -27,7 +27,7 @@ test.describe('WP1 gateway regressions', () => {
     await expect(page.getByText('Scheduled tasks').first()).toBeVisible();
     await page.reload();
     await expect(page.getByText('Scheduled tasks').first()).toBeVisible();
-    await page.getByRole('button', { name: 'Chat' }).click();
+    await page.getByRole('button', { name: 'Chat', exact: true }).click();
     await page.getByRole('button', { name: 'Sessions' }).click();
     await startNewChatViaPicker(page);
     await page.getByPlaceholder('Type a message…').fill('unsent gateway draft');

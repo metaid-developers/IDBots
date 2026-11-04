@@ -98,6 +98,40 @@ Attempt states are `queued`, `running`, `completed`, `failed`, `timed_out`, and 
 
 All schema changes must be safe, additive, and idempotent for existing user databases.
 
+### Cross-session delivery outbox
+
+`cowork_cross_session_deliveries` persists the wake obligation created by `insertCrossSessionMessageAndQueue`, independently of the message already stored in `cowork_messages`. The delivery is recorded before message insertion and uses the same id as the message, so recovery can adopt an already-written message instead of inserting a duplicate.
+
+Delivery states are `pending`, `running`, `completed`, `failed`, and `cancelled`. A delivery also records its rendered message, attempt count, next retry time, last error, and creation, insertion, start, completion, and update timestamps. `failed` and `cancelled` are terminal audit states; a stopped target retains its message but cancels the wake obligation.
+
+At startup, `running` deliveries return to `pending` while completed and terminal records remain untouched. Before any retry, the host reconciles the delivery id with the persisted message. Target-busy rules and per-target FIFO ordering remain in force. Retries use the stored rendered message and bounded exponential backoff; they do not regenerate content with another model call.
+
+`getCrossSessionDeliveryReliabilitySnapshot` exposes the baseline metrics for this layer: state counts, retrying deliveries, total attempts, oldest pending age, and average and maximum completion latency. These metrics distinguish a persisted message from a continuation that actually started and finished.
+
+The outbox provides durable, idempotent delivery of the wake obligation. It does not claim exactly-once semantics for tools chosen by the target model: external side effects still require their own idempotency and authorization boundaries.
+
+### Structured Worker handoff and attention
+
+A Worker closes its turn with a `<worker_handoff>` JSON block containing `state`, `summary`, `deliverables`, `verificationEvidence`, `blockers`, and `humanAction`. States are `progress`, `ready`, `blocked`, `waiting_external`, `failed`, and `dropped`. Legacy plain-text replies remain valid and mean `ready`; malformed or unknown structured states fail closed instead of being accepted as completed work.
+
+The Attempt stores the handoff as evidence, not proof. `ready` and `dropped` still require Twin verification. `progress`, `blocked`, `waiting_external`, and any handoff carrying `humanAction` leave the Step in `waiting_input`; a human question never silently becomes owner acceptance. `failed` leaves the Step and task eligible for Twin recovery rather than automatic replay.
+
+`twin_task_status` exposes a derived `attention` read model alongside the raw task, steps, and attempts. It identifies who must act next and why:
+
+- `worker`: an Attempt is queued, running, or recoverably timed out.
+- `twin`: work needs planning, verification, correction, retry, or reassignment.
+- `owner`: a Worker asked a concrete human question, or owner acceptance is required.
+- `external`: an external event or condition is the actual blocker.
+- `none`: the task is completed or cancelled.
+
+A concrete human question has priority over other active work. Active Attempts take priority over passive external waits, and failed or ready-but-unexecuted steps remain Twin responsibilities. This read model is derived from facts at read time rather than stored as another lifecycle field that could contradict the ledger.
+
+The long-term advancement handler consumes the same attention model to close the loop. It selects Owner before Twin, External, and Worker attention across every delegation linked by `longterm_task_id + longterm_subtask_id`. Owner questions are journaled as `waiting_owner` and delivered with their concrete `humanAction`; external blockers are journaled as `waiting_external` without an unnecessary model turn; Twin attention produces one supervision turn; Worker attention suppresses duplicate quiet pushes.
+
+Each attention has a persistent action key composed from its orchestration task, wait kind, step, attempt, question, and reason. A failed turn may retry, while the same condition never creates duplicate turns or reminders. A new attempt or question bypasses the ordinary nudge throttle exactly once, while the existing duration and failure-streak supervision remain as fallbacks.
+
+Every attention-driven turn is followed by another read of the current attention. `resolved` means the attention changed, the Owner has taken over, or the condition is otherwise cleared; `actioned` means a turn completed but the original attention remains. Unchanged actioned work is retried only after a 30-minute backoff. After two consecutive unresolved actions, it escalates to `escalated` and the Owner receives a concrete decision instead of another blind retry. The store also keeps the last action time, next retry time, and action count. Legacy rows with only `lastAttentionKey` are interpreted as `actioned`, so they receive a result review instead of being silently swallowed.
+
 ### Worker Cowork execution
 
 Each delegation attempt creates a new task-specific Cowork session attributed to the selected Worker `metabotId`. A fresh session avoids contaminating an unrelated historical conversation while preserving the Worker's persistent identity through persona, memory, experience, wallet, skills, and workspace attribution.

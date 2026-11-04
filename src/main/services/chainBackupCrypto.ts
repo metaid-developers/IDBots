@@ -89,17 +89,22 @@ export function chainBackupObjectId(kind: string, data: Record<string, unknown>)
   return objectId({ kind, data: withoutDeviceLocalReferences(data) });
 }
 
-/** Encrypt a JSON-serializable value: returns nonce || tag || ciphertext. */
-export function encryptJson(key: Buffer, plaintext: unknown): Buffer {
+/** Encrypt raw bytes: returns nonce || tag || ciphertext. */
+export function encryptBytes(key: Buffer, plaintext: Buffer): Buffer {
   const nonce = randomBytes(CHAIN_BACKUP_NONCE_BYTES);
   const cipher = createCipheriv('aes-256-gcm', key, nonce);
-  const body = Buffer.concat([cipher.update(canonicalJson(plaintext), 'utf8'), cipher.final()]);
+  const body = Buffer.concat([cipher.update(plaintext), cipher.final()]);
   const tag = cipher.getAuthTag();
   return Buffer.concat([nonce, tag, body]);
 }
 
-/** Decrypt a buffer produced by encryptJson. Throws on tamper/wrong key. */
-export function decryptJson(key: Buffer, payload: Buffer): unknown {
+/** Encrypt a JSON-serializable value: returns nonce || tag || ciphertext. */
+export function encryptJson(key: Buffer, plaintext: unknown): Buffer {
+  return encryptBytes(key, Buffer.from(canonicalJson(plaintext), 'utf8'));
+}
+
+/** Decrypt a buffer produced by encryptBytes/encryptJson. Throws on tamper/wrong key. */
+export function decryptBytes(key: Buffer, payload: Buffer): Buffer {
   if (payload.length < CHAIN_BACKUP_NONCE_BYTES + CHAIN_BACKUP_TAG_BYTES) {
     throw new Error('chain-backup payload too short');
   }
@@ -108,6 +113,10 @@ export function decryptJson(key: Buffer, payload: Buffer): unknown {
   const body = payload.subarray(CHAIN_BACKUP_NONCE_BYTES + CHAIN_BACKUP_TAG_BYTES);
   const decipher = createDecipheriv('aes-256-gcm', key, nonce);
   decipher.setAuthTag(tag);
-  const plain = Buffer.concat([decipher.update(body), decipher.final()]);
-  return JSON.parse(plain.toString('utf8'));
+  return Buffer.concat([decipher.update(body), decipher.final()]);
+}
+
+/** Decrypt a buffer produced by encryptJson. Throws on tamper/wrong key. */
+export function decryptJson(key: Buffer, payload: Buffer): unknown {
+  return JSON.parse(decryptBytes(key, payload).toString('utf8'));
 }

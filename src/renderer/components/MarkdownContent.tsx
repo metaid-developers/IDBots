@@ -56,6 +56,18 @@ import { dispatchViewSession, parseIdbotsSessionUri } from '../utils/sessionDeep
 import { buildLocalFileUrl, isMobileBridgeRuntime } from '../services/localFileUrl';
 import { isTwemojiAssetUrl } from './chat/twemoji';
 import remarkTwemoji from './chat/remarkTwemoji';
+import NftCard, { NftCardGroup } from './chat/NftCard';
+import {
+  groupAdjacentNftCardFences,
+  isNftCardFenceLanguage,
+  isNftCardGroupFenceLanguage,
+  parseNftCardFence,
+  parseNftCardGroupFence,
+} from './chat/nftCardSyntax';
+import PaymentCard from './chat/PaymentCard';
+import { isPayCardFenceLanguage, parsePayCardFence } from './chat/paymentCardSyntax';
+import EscrowCard from './chat/EscrowCard';
+import { isEscrowCardFenceLanguage, parseEscrowCardFence } from './chat/escrowCardSyntax';
 
 /**
  * Code-block languages worth highlighting in chat output.
@@ -482,6 +494,47 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
   }, [trimmedCodeText]);
 
   if (!isInline) {
+    // S3 chat NFT cards: a fenced block tagged `nft-card` carrying a JSON
+    // payload renders as an NftCard instead of a code block (every markdown
+    // surface — CoWork, A2A, group transcripts — shares this path); adjacent
+    // nft-card fences are pre-merged into one `nft-card-group` fence so
+    // several cards lay out side by side in a horizontal scroller. An
+    // unparsable payload keeps the plain code-block rendering, so a hostile
+    // or truncated fence degrades exactly like any unknown fence tag.
+    if (isNftCardGroupFenceLanguage(fenceLanguage)) {
+      const cards = parseNftCardGroupFence(trimmedCodeText);
+      if (cards) {
+        return <NftCardGroup cards={cards} />;
+      }
+    }
+    if (isNftCardFenceLanguage(fenceLanguage)) {
+      const cardData = parseNftCardFence(trimmedCodeText);
+      if (cardData) {
+        return <NftCard data={cardData} />;
+      }
+    }
+    // S3 fiat payment cards: a `pay-card` fence carrying a JSON payload
+    // renders as a PaymentCard (Alipay point-to-point + QR degrade path).
+    // Unparsable payloads keep the plain code-block rendering.
+    if (isPayCardFenceLanguage(fenceLanguage)) {
+      const paymentData = parsePayCardFence(trimmedCodeText);
+      if (paymentData) {
+        return <PaymentCard data={paymentData} />;
+      }
+    }
+
+    // S3 escrow trade cards: an `escrow-card` fence renders the escrow state
+    // machine skeleton (current state / next actor / remaining time).
+    // Unparsable payloads keep the plain code-block rendering, same as the
+    // nft-card branch. Its own fence tag keeps it disjoint from nft-card and
+    // pay-card.
+    if (isEscrowCardFenceLanguage(fenceLanguage)) {
+      const escrowData = parseEscrowCardFence(trimmedCodeText);
+      if (escrowData) {
+        return <EscrowCard data={escrowData} />;
+      }
+    }
+
     // Simple code block without language - minimal styling
     if (!match) {
       return (
@@ -744,11 +797,17 @@ const createMarkdownComponents = (
     // chat/twemoji.ts).
     if (typeof src === 'string' && isTwemojiAssetUrl(src)) {
       return (
+        // my-0: assistant bubbles (and any other surface) wrap this content in
+        // typography's `prose`, whose img rule paints margin-top/bottom
+        // (~1.7em) on EVERY image — on an inline glyph that margin shoved the
+        // emoji visibly above the text baseline (reported 2026-11-03). The
+        // inline twemoji is text-height and carries its own alignment; block
+        // margins must stay at zero.
         <img
           src={src}
           alt={alt}
           draggable={false}
-          className="inline-block h-[1.25em] w-[1.25em] align-[-0.2em] mx-[0.06em]"
+          className="my-0 inline-block h-[1.25em] w-[1.25em] align-[-0.2em] mx-[0.06em]"
         />
       );
     }
@@ -791,11 +850,12 @@ const createMarkdownComponents = (
 
     const hrefValue = typeof href === 'string' ? href.trim() : '';
 
-    // In-app session deep links (idbots://session/<sessionId>, emitted e.g. by
-    // the Twin Bot's daily report) jump straight to the referenced CoWork
+    // In-app session deep links jump straight to the referenced CoWork
     // conversation via the shared sessionDeepLink helper (the app-wide
     // 'cowork:viewSession' DOM event, handler in App.tsx) — they never leave
-    // the app. Unrecognised idbots:// shapes are a no-op with a warning.
+    // the app. Both shapes parse: the daily report's idbots://session/<id>
+    // and the bare IDBots://<id> form the app itself emits everywhere.
+    // Unrecognised idbots:// shapes are a no-op with a warning.
     if (hrefValue && getHrefProtocol(hrefValue) === 'idbots') {
       const sessionId = parseIdbotsSessionUri(hrefValue);
       const handleIdbotsClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
@@ -1020,7 +1080,10 @@ const MarkdownContent = React.memo(({
     [emojiImages]
   );
   const normalizedContent = useMemo(
-    () => encodeFileUrlsInMarkdown(linkifyAgentInternetUris(content)),
+    // groupAdjacentNftCardFences merges runs of ≥2 adjacent nft-card fences
+    // (blank lines only between them) into nft-card-group fences; everything
+    // else — including non-adjacent single fences — passes through verbatim.
+    () => groupAdjacentNftCardFences(encodeFileUrlsInMarkdown(linkifyAgentInternetUris(content))),
     [content]
   );
   return (

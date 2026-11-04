@@ -60,6 +60,7 @@ import {
 } from './services/jevRelayService';
 import { rankMemoriesWithCerebellum } from './cerebellum/memoryRank';
 import { startEventLoopLagMonitor } from './libs/eventLoopLagMonitor';
+import { startRendererHangMonitor } from './libs/rendererHangMonitor';
 import { rankConversationsWithCerebellum } from './cerebellum/conversationSearchRank';
 import { decideGroupReplyWithCerebellum } from './cerebellum/groupReplyGate';
 import { classifySessionFollowUpWithCerebellum } from './cerebellum/sessionFollowUpGate';
@@ -67,6 +68,7 @@ import { classifyDailyReportTriagedSessions } from './cerebellum/dailyReportTria
 import { rankWorkersWithCerebellum, CEREBELLUM_WORKER_RANK_TOP_K } from './cerebellum/workerRank';
 import { gateMemoryWriteWithCerebellum } from './cerebellum/memoryWriteGate';
 import { selectEffortWithCerebellum } from './cerebellum/effortSelector';
+import { classifyTurnAckNeedWithCerebellum } from './cerebellum/ackGate';
 import { askCerebellumIntuition } from './cerebellum/intuitionTool';
 import { runCerebellumTurnDecisions } from './cerebellum/turnDecisionBundle';
 import {
@@ -105,7 +107,15 @@ import { getGitBranch } from './libs/gitWorkspace';
 import { detectSystemChromium } from './libs/chromiumRuntime';
 import { CoworkStreamUiDeltaEncoder } from './libs/coworkStreamUiDelta';
 import { IMGatewayManager, IMPlatform, IMGatewayConfig } from './im';
-import { APP_NAME } from './appConstants';
+import { resolveSessionDisplayPermissionMode } from './im/imPermissionPolicy';
+import { APP_NAME, DB_FILENAME } from './appConstants';
+import {
+  detectMissingDatabase,
+  describeMissingDbEvidence,
+  fingerprintPathFor,
+  writeDataGuardFingerprint,
+  type DataGuardFingerprint,
+} from './libs/dataGuard';
 import { getSkillServiceManager } from './skillServices';
 import { createTray, destroyTray, updateTrayMenu } from './trayManager';
 import { isAutoLaunched, getAutoLaunchEnabled, setAutoLaunchEnabled } from './autoLaunchManager';
@@ -129,10 +139,32 @@ import { MetaIDRelationshipResolver } from './services/metaidRelationshipResolve
 import { MetaIDContactViewService } from './services/metaidContactViewService';
 import { Scheduler } from './libs/scheduler';
 import { initLogger, getLogFilePath } from './logger';
-import { resolveRuntimeDataPaths } from './libs/runtimeDataPaths';
+import {
+  APP_DATA_PATH_ENV,
+  USER_DATA_PATH_ENV,
+  resolveRuntimeDataPaths,
+} from './libs/runtimeDataPaths';
+import {
+  runStartupDataRecoveryGuard,
+  runVersionChangeBackup,
+  hasExistingSqliteDataFile,
+  readDataDirectoryOverrideMarker,
+  resolveLocalAppDataRoot,
+  resolveWindowsOldUsersRoot,
+  backupsDirFor,
+  SKIPPED_CANDIDATES_KV_KEY,
+} from './services/dataRecoveryService';
 import { shouldAcquireSingleInstanceLock, shouldRefuseSharedUserData } from './libs/singleInstanceLock';
 import { mockCreateWalletAndFund, mockPushConfigToChain } from './services/chainActionMock';
 import { createMetaBotWallet, getPrivateKeyBufferForEcdh } from './services/metabotWalletService';
+import { PaymentInfoStore } from './services/paymentInfoStore';
+import {
+  decryptPaymentInfo,
+  derivePaymentInfoKey,
+  encryptPaymentInfo,
+  validatePaymentReceivingInfo,
+  type PaymentReceivingInfo,
+} from './services/paymentInfoCrypto';
 import { UserIdentityStore } from './userIdentityStore';
 import type { UserIdentity } from './types/userIdentity';
 import {
@@ -168,8 +200,23 @@ import {
   type WalletQueryChain,
 } from './services/walletQueryService';
 import { executeWalletMvcTransfer } from './services/walletTransferService';
-import { executeMvcNftTransfer, executeMvcNftTrade, getMvcNftBalance, getMvcNftSellOrders } from './services/mvcNftService';
+import { executeMvcNftTransfer, executeMvcNftTrade, getMvcNftBalance, getMvcNftChainSellUtxo, getMvcNftSellOrders } from './services/mvcNftService';
 import { executeMvcTokenSellTrade, getMvcFtTokenBalance, verifyMvcTokenSellListing } from './services/mvcTokenSellService';
+import {
+  broadcastMvcTx,
+  buyMrc721Listing,
+  createMrc721Collection,
+  createMrc721Mint,
+  fetchMrc721CollectionInfo,
+  fetchMrc721ItemInfo,
+  listMrc721MySellOrders,
+  mrc721SellOrdersFromSqlite,
+  sellMrc721Item,
+  transferMrc721Item,
+  updateMrc721Collection,
+  type Mrc721CreatePinFn,
+} from './services/mrc721Service';
+import { buildMvc721SellPartialTx, buildMvcTransferRawTx, completeMvc721BuyTx } from './services/walletRawTxService';
 import { BotWalletTransferStore } from './services/botWalletTransferStore';
 import {
   buildTokenTransferPreview as buildTokenTransferPreviewService,
@@ -177,6 +224,13 @@ import {
   getTokenTransferChain,
 } from './services/metabotTokenTransferService';
 import { registerMetabotWalletIpcHandlers } from './services/metabotWalletIpc';
+import {
+  getMetabotNftItems,
+  transferMetabotMrc721,
+  transferMetabotMvcNft,
+} from './services/metabotNftService';
+import { registerMetabotNftIpcHandlers } from './services/metabotNftIpc';
+import { healNftCard } from './services/nftCardHealService';
 import { initTrafficAccountService, registerTrafficAccountIpcHandlers } from './services/trafficAccountService';
 import { initBundleService, registerBundleIpcHandlers } from './services/bundleService';
 import { initLlmRelayService, registerLlmRelayIpcHandlers, getLlmRelayQuota } from './services/llmRelayService';
@@ -255,11 +309,14 @@ import {
   recordOwnerSentPrivateChatA2AMessage,
   startPrivateChatDaemon,
   stopPrivateChatDaemon,
+  triggerFriendActionFromGuidance,
 } from './services/privateChatDaemon';
+import { detectMutualFriendInviteIntent } from './services/friendGuidanceIntent';
 import {
   startPrivateChatBackfill,
   stopPrivateChatBackfill,
 } from './services/privateChatBackfillService';
+import { reconcilePrivateChatDisplayGaps } from './services/privateChatDisplayReconcile';
 import {
   startGroupChatBackfill,
   stopGroupChatBackfill,
@@ -286,6 +343,8 @@ import {
   createGroupTask,
   listGroupTaskSummaries,
   getGroupTask,
+  getGroupTaskMemberStatus,
+  type GroupTaskMemberSummary,
   closeGroupTask,
   reopenGroupTask,
   reworkGroupTask,
@@ -341,6 +400,7 @@ import { A2A_GUIDANCE_MAX_LENGTH, a2aGuidanceQueue, normalizeA2AGuidanceText } f
 import { coworkLog } from './libs/coworkLogger';
 import {
   buildA2AGuidanceRestartPrompt,
+  composeA2AGuidanceRestartDelivery,
   generateA2AGuidanceRestartMessage,
   shouldRestartA2APrivateChatForGuidance,
 } from './services/a2aGuidanceRestart';
@@ -390,6 +450,8 @@ import { withChainWriteBudget } from './libs/chainWriteBudget';
 import { buildTwinWorkerDirectory } from './services/twinWorkerDirectoryService';
 import { TwinOrchestrationService } from './services/twinOrchestrationService';
 import { GroupTaskOrchestrationBridge } from './services/groupTaskOrchestrationBridge';
+import { deriveOrchestrationAttention } from './services/orchestrationProgress';
+import { CrossSessionDeliveryStore } from './crossSessionDeliveryStore';
 import { LongTermTaskStore } from './longTermTaskStore';
 import { MetaTaskProjectionStore } from './services/metatask/projectionStore';
 import { MetaTaskRefresher } from './services/metatask/refresher';
@@ -451,6 +513,8 @@ import {
   type BotBrowserHostPickedFile,
   type BotBrowserLlmCompleteInput,
   type BotBrowserMetaFileUploadInput,
+  type BotBrowserNftBuyInput,
+  type BotBrowserMrc721BuyInput,
   type BotBrowserPinWriteInput,
   type BotBrowserPermissionsInput,
   type HumanBridgeActor,
@@ -2055,6 +2119,40 @@ async function fetchMetaidUserInfoByGlobalMetaId(globalMetaId: string): Promise<
   return payload;
 }
 
+/**
+ * Address flavor of the same info lookup (chat NFT card owner/issuer chips):
+ * hits the indexer info route omni_read user_info already uses for addresses
+ * (api/v1/info/address/{addr}) — same payload shape, same unwrap, same avatar
+ * resolution.
+ */
+async function fetchMetaidUserInfoByAddress(address: string): Promise<{
+  code?: number;
+  message?: string;
+  data?: Record<string, unknown>;
+}> {
+  const normalizedAddress = toSafeString(address).trim();
+  if (!normalizedAddress) {
+    return {};
+  }
+  const fallbackUrl = `https://file.metaid.io/metafile-indexer/api/v1/info/address/${encodeURIComponent(normalizedAddress)}`;
+  const res = await fetchJsonWithFallbackOnMiss(
+    `/api/v1/users/info/address/${encodeURIComponent(normalizedAddress)}`,
+    fallbackUrl,
+    isSemanticallyEmptyMetaidInfoPayload,
+    { degradeToLocalOnRemoteError: true },
+  );
+  const payload = await res.json() as { code?: number; message?: string; data?: Record<string, unknown> };
+  const data = unwrapMetaidInfoRecord(payload?.data);
+  if (data) {
+    const avatarUrl = await resolveMetaidAvatarSource(data);
+    if (avatarUrl) {
+      data.avatarUrl = avatarUrl;
+    }
+    payload.data = data;
+  }
+  return payload;
+}
+
 let gigSquareMyServicesSyncPromise: Promise<void> | null = null;
 let gigSquareMyServicesPendingRemoteRefresh = false;
 
@@ -2452,6 +2550,11 @@ const downloadMetafileWithDialog = async (
   return { success: true, canceled: false, path: saveResult.filePath };
 };
 
+/** True when an env data-path override (dev/testing escape hatch) is set;
+ *  runtimeDataPaths.ts (via resolveRuntimeDataPaths) honors these first. */
+const hasRuntimeDataPathEnvOverride = (): boolean =>
+  Boolean((process.env[APP_DATA_PATH_ENV] ?? '').trim() || (process.env[USER_DATA_PATH_ENV] ?? '').trim());
+
 const configureUserDataPath = (): void => {
   const currentUserDataPath = app.getPath('userData');
   const currentAppDataPath = app.getPath('appData');
@@ -2466,14 +2569,27 @@ const configureUserDataPath = (): void => {
     console.log(`[Main] appData path updated: ${currentAppDataPath} -> ${resolvedPaths.appDataPath}`);
   }
 
-  const nextUserDataPath = resolvedPaths.userDataPath;
+  let nextUserDataPath = resolvedPaths.userDataPath;
+  // feat/legacy-data-recovery: honor a persisted "switch data directory"
+  // choice from the data-recovery dialog — unless an env override (the
+  // dev/testing escape hatch) is present, which always wins. An invalid
+  // marker (target gone) is ignored, never deleted.
+  if (!hasRuntimeDataPathEnvOverride()) {
+    const overrideTarget = readDataDirectoryOverrideMarker(resolvedPaths.appDataPath);
+    if (overrideTarget) {
+      console.log(`[Main] userData path override (data recovery): ${nextUserDataPath} -> ${overrideTarget}`);
+      nextUserDataPath = overrideTarget;
+    }
+  }
+
   if (currentUserDataPath !== nextUserDataPath) {
     app.setPath('userData', nextUserDataPath);
     console.log(`[Main] userData path updated: ${currentUserDataPath} -> ${nextUserDataPath}`);
   }
 };
 
-const migrateLegacyUserData = (): void => {
+/** Returns true when any entry was copied in from a legacy app directory. */
+const migrateLegacyUserData = (): boolean => {
   const appDataPath = app.getPath('appData');
   const userDataPath = app.getPath('userData');
   const legacyRoots = LEGACY_APP_NAMES
@@ -2481,13 +2597,14 @@ const migrateLegacyUserData = (): void => {
     .filter(legacyPath => legacyPath !== userDataPath && fs.existsSync(legacyPath));
 
   if (legacyRoots.length === 0) {
-    return;
+    return false;
   }
 
   if (!fs.existsSync(userDataPath)) {
     fs.mkdirSync(userDataPath, { recursive: true });
   }
 
+  let copiedAny = false;
   for (const legacyRoot of legacyRoots) {
     try {
       const entries = fs.readdirSync(legacyRoot);
@@ -2503,12 +2620,14 @@ const migrateLegacyUserData = (): void => {
           force: false,
           errorOnExist: false,
         });
+        copiedAny = true;
       }
       console.log(`[Main] Migrated missing user data from legacy directory: ${legacyRoot}`);
     } catch (error) {
       console.warn(`[Main] Failed to migrate legacy user data from ${legacyRoot}:`, error);
     }
   }
+  return copiedAny;
 };
 
 // REQ-A-1/REQ-A-7: apply the C1 /data path defaults BEFORE app path
@@ -3062,6 +3181,43 @@ function getBotBrowserBridgeServiceForWindow(ownerWindow: BrowserWindow | null):
       }
     },
     pickFiles: (input) => pickBotBrowserMetaFiles(ownerWindow, input),
+    // browser.nft.buy backend: the SAME signer path and chain-write budget the
+    // wallet_nft_buy agent tool uses (executeMvcNftTrade action=buy). Runs
+    // only for a confirmed purchase intent; keys stay in the main process.
+    buyNft: (params) => withChainWriteBudget(
+      'wallet_nft_buy',
+      () => executeMvcNftTrade(getMetabotStore(), {
+        ...params,
+        action: 'buy',
+        feeRate: getGlobalFeeRate('mvc'),
+      }),
+    ),
+    // browser.nft.buy price verification: the live chain ask for one token,
+    // consulted at confirm time so the signed amount always equals the ask
+    // the user confirmed (see botBrowserBridgeService buyNft).
+    fetchNftChainSellUtxo: ({ codehash, genesis, tokenIndex }) =>
+      getMvcNftChainSellUtxo(codehash, genesis, tokenIndex),
+    // browser.mrc721.buy backend: the mrc721_buy worker chain
+    // (buyMrc721Listing → completeMvc721BuyTx) with the same op budget the
+    // agent tool uses. The worker chain re-verifies the entire listing
+    // against chain truth before the buyer wallet signs; runs only for a
+    // confirmed purchase intent, and keys stay in the main process.
+    buyMrc721: (params) => withChainWriteBudget(
+      'mrc721_buy',
+      () => buyMrc721Listing(
+        {
+          completeBuy: (store, mrcParams) => completeMvc721BuyTx(store, mrcParams),
+        },
+        {
+          ...params,
+          store: getMetabotStore(),
+          feeRate: getGlobalFeeRate('mvc'),
+        },
+      ),
+    ),
+    // browser.mrc721.buy confirmation-card jig display (best-effort; an
+    // un-indexed pin degrades the card to the bare credential).
+    fetchMrc721ItemDisplay: (pinId) => fetchMrc721ItemInfo({ pinId }),
   });
   if (ownerWindow) {
     botBrowserBridgeServices.set(ownerWindow, service);
@@ -3077,7 +3233,8 @@ function botBrowserBridgeInput<
     | BotBrowserPinWriteInput
     | BotBrowserMetaFileUploadInput
     | BotBrowserLlmCompleteInput
-    | BotBrowserPermissionsInput,
+    | BotBrowserPermissionsInput
+    | BotBrowserNftBuyInput,
 >(
   input: unknown,
 ): T {
@@ -3248,7 +3405,11 @@ const initStore = async (): Promise<SqliteStore> => {
     if (!app.isReady()) {
       throw new Error('Store accessed before app is ready.');
     }
-    storeInitPromise = SqliteStore.create(app.getPath('userData'));
+    await ensureDataGuardAck();
+    // Another caller may have raced through the data-guard gate first.
+    if (!storeInitPromise) {
+      storeInitPromise = SqliteStore.create(app.getPath('userData'));
+    }
   }
   return storeInitPromise;
 };
@@ -3293,6 +3454,97 @@ const getStoreOrNull = (): SqliteStore | null => {
   } catch {
     return null;
   }
+};
+
+// --- Data guard (missing-database startup protection; see libs/dataGuard.ts) ---
+// When the database file is gone while the environment shows signs of a
+// previous installation, warn before a brand-new empty database is created.
+// Detection runs OUTSIDE the database (fingerprint file + usage artifacts) so
+// it still works when the data directory itself was swapped out.
+
+let dataGuardAckPromise: Promise<void> | null = null;
+// Set by initApp: a legacy (OctoBot) migration copying entries in this boot
+// explains a database-less directory without any data loss.
+let legacyUserDataCopiedThisBoot = false;
+
+const getDataGuardFingerprintPath = (): string =>
+  fingerprintPathFor(path.dirname(app.getPath('userData')), app.getPath('userData'));
+
+const writeDataGuardSnapshot = (phase: string): void => {
+  try {
+    const storeSnapshot = getStoreOrNull();
+    if (!storeSnapshot) {
+      return;
+    }
+    const snapshot: DataGuardFingerprint = {
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      userDataPath: app.getPath('userData'),
+      stats: storeSnapshot.getDataGuardStats(),
+    };
+    writeDataGuardFingerprint(getDataGuardFingerprintPath(), snapshot);
+    console.log(`[Main] Data guard snapshot written (${phase}).`);
+  } catch (error) {
+    // Best-effort by design: a failed snapshot write must never disturb
+    // startup or shutdown.
+    console.warn(`[Main] Data guard snapshot write failed (${phase}):`, error);
+  }
+};
+
+const ensureDataGuardAck = (): Promise<void> => {
+  if (!dataGuardAckPromise) {
+    dataGuardAckPromise = (async () => {
+      if (process.env.IDBOTS_DISABLE_DATA_GUARD === '1') {
+        return;
+      }
+      const userDataPath = app.getPath('userData');
+      const evidence = detectMissingDatabase({
+        userDataPath,
+        dbFilename: DB_FILENAME,
+        fingerprintPath: getDataGuardFingerprintPath(),
+      });
+      if (!evidence) {
+        return;
+      }
+      if (legacyUserDataCopiedThisBoot) {
+        console.warn('[Main] Data guard: database missing but legacy user data was migrated this boot; skipping the missing-data dialog.');
+        return;
+      }
+      console.warn(`[Main] Data guard: database missing while prior usage was detected (${describeMissingDbEvidence(evidence)})`);
+      if (isServerMode()) {
+        // Headless: no dialog is possible; surface the condition and keep
+        // booting (server deployments manage their own recovery).
+        return;
+      }
+      const detailParts = [
+        `Data directory:\n${evidence.userDataPath}`,
+        describeMissingDbEvidence(evidence),
+        'If you expected your existing bots and conversations to be here, choose "Quit", then restore your database file (idbots.sqlite — together with any idbots.sqlite-wal / idbots.sqlite-shm files) into the data directory above before starting IDBots again.',
+        'Choosing "Start with a new database" creates an empty database. It does not delete your previous data, but IDBots will no longer read or write it.',
+      ];
+      const choice = dialog.showMessageBoxSync({
+        type: 'warning',
+        title: 'IDBots — previous data not found',
+        message: 'IDBots is about to start with a brand-new empty database.',
+        detail: detailParts.join('\n\n'),
+        buttons: ['Quit', 'Start with a new database'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      if (choice === 0) {
+        console.error('[Main] Data guard: quitting instead of starting on an empty database.');
+        app.exit(0);
+        throw new Error('data-guard: quit before creating an empty database');
+      }
+      console.warn('[Main] Data guard: continuing with a new empty database by user choice.');
+    })().catch((error) => {
+      // The guard must never wedge startup: an internal failure falls back to
+      // the historical behavior (create the database silently).
+      console.error('[Main] Data guard failed; continuing startup:', error);
+    });
+  }
+  return dataGuardAckPromise;
 };
 
 /**
@@ -3721,6 +3973,39 @@ const createCerebellumEffortSelector = () =>
   };
 
 /**
+ * Cerebellum (小脑) turn-ack gate (owner decision 2026-11-03, session
+ * 3ecd2a2f): one JEV Noul per assistant-mode owner-chat turn decides whether
+ * the LLM first-sentence bubble is needed at all — conversational messages the
+ * main reply covers directly get a single-bubble turn, tool-bound/multi-step
+ * work keeps the interim ack. Same lazy shape as the factories above — config
+ * re-resolved per call (Settings edits apply on the next turn), fetch on the
+ * Electron net stack (system proxy). null on any failure keeps the historical
+ * behavior (the ack fires — fail-open). Never logs user text — only whether
+ * the call landed, the verdict, and its latency.
+ */
+const createCerebellumTurnAckGate = () =>
+  async ({ currentUserText }: {
+    currentUserText: string;
+  }): Promise<boolean | null> => {
+    const context = await resolveCerebellumCallContext();
+    if (!context) {
+      return null;
+    }
+    const startedAt = Date.now();
+    const verdict = await classifyTurnAckNeedWithCerebellum({
+      config: context.config,
+      fetchImpl: context.fetchImpl,
+      currentUserText,
+    });
+    coworkLog('INFO', 'turn:ackGate', 'turn-ack gate evaluated', {
+      used: verdict !== null,
+      needsAck: verdict,
+      latencyMs: Date.now() - startedAt,
+    });
+    return verdict;
+  };
+
+/**
  * R3: rough upper-bound MVC fee estimate for a typical pin (funding + payload
  * outputs, ~600 vB at the resolved fee rate) — feeds the `need ~N sats` part
  * of balance-hint error messages. Marked as an estimate everywhere it shows.
@@ -3728,6 +4013,25 @@ const createCerebellumEffortSelector = () =>
 function estimateMvcPinNeedSats(): number {
   return Math.ceil(resolveCreatePinFeeRate('mvc') * 600);
 }
+
+/**
+ * mrc721_* tool backends (R6 of the IDBots MRC-721 requirements): pin-based
+ * MetaID NFT writes from the session bot's OWN wallet. createPin resolves the
+ * fee tier like the metabotChainWrite backend; the chain-write budget is
+ * applied per tool op in the mrc721Tools control below (one budget per
+ * collection_create / mint / transfer, not per pin).
+ */
+const mrc721CreatePinBackend: Mrc721CreatePinFn = (metabotId, metaidData, options) =>
+  withMvcBalanceHint(
+    getMetabotStore(),
+    metabotId,
+    options?.network,
+    () => createPin(getMetabotStore(), metabotId, metaidData, {
+      ...options,
+      feeRate: options?.feeRate ?? resolveCreatePinFeeRate(options?.network ?? 'mvc'),
+    }),
+    { estimateNeedSats: () => estimateMvcPinNeedSats() },
+  );
 
 // metaso-p2p social (friend & simpleblock) API options: IDBOTS_SOCIAL_API_BASE_URL
 // overrides the default so.metaid.io base for staging integration ahead of
@@ -4515,8 +4819,21 @@ const startStartupMessageTier = (): void => {
         globalMetaId: toSafeString(metabot.globalmetaid).trim(),
       })),
     historySync: getPrivateChatHistorySyncService(),
-    onMessagesStored: ({ identity, peerGlobalMetaID }) => {
+    onMessagesStored: ({ identity, peerGlobalMetaID, archivedPinIds }) => {
       try {
+        if (archivedPinIds.length > 0) {
+          const repaired = reconcilePrivateChatDisplayGaps({
+            db: getStore().getDatabase(),
+            coworkStore: getCoworkStore(),
+            identities: [{
+              metabotId: identity.metabotId,
+              globalMetaId: identity.globalMetaId,
+            }],
+            onlyMetabotId: identity.metabotId,
+            onlyPeerGlobalMetaId: peerGlobalMetaID,
+          });
+          if (repaired.inserted > 0) getStore().getSaveFunction()();
+        }
         const backfillExperienceStore = new MetaIDExperienceStore(
           getStore().getDatabase(),
           () => undefined,
@@ -5093,7 +5410,25 @@ const startStartupIdleTier = (): void => {
     { label: 'group task comm stats backfill', run: runStartupGroupTaskCommStatsBackfill },
     { label: 'nightly services', run: startStartupNightlyServices },
     { label: 'idle sync jobs', run: runInitialSqliteBackgroundJobs },
+    { label: 'jev relay credential warm', run: warmJevRelayCredentials },
   ]);
+};
+
+/**
+ * First-turn first-sentence latency (2026-11-03, session 3ecd2a2f: the ack
+ * landed ~17s after the owner's message): when no relay key is persisted, the
+ * identity-signed bootstrap — observed at 15s+ — used to fire inside the first
+ * turn's ack/cerebellum calls. Resolving the credentials here moves that cost
+ * into the idle startup tier; a persisted key makes this a pure local read.
+ * Fail-silent: a failed warm changes nothing, the first turn just bootstraps
+ * on demand as before.
+ */
+const warmJevRelayCredentials = async (): Promise<void> => {
+  try {
+    await resolveJevRelayCredentials();
+  } catch {
+    // best-effort warm — the on-demand path stays the fallback
+  }
 };
 
 /**
@@ -6552,6 +6887,7 @@ const getCoworkRunner = () => {
       },
     };
     coworkRunner = new CoworkRunner(getCoworkStore(), {
+      crossSessionDeliveryStore: new CrossSessionDeliveryStore(getStore().getDatabase(), getStore().getSaveFunction()),
       getSkillSessionEnvOverrides: async (sessionId: string): Promise<Record<string, string>> => {
         const session = getCoworkStore().getSession(sessionId);
         const overrides: Record<string, string> = {};
@@ -6697,6 +7033,10 @@ const getCoworkRunner = () => {
       // "auto" rung on unpicked sessions resolves from one JEV choice verdict
       // per turn (see createCerebellumEffortSelector).
       cerebellumEffortSelector: createCerebellumEffortSelector(),
+      // Cerebellum (小脑) turn-ack gate: conversational turns skip the LLM
+      // first-sentence bubble entirely (the main reply is the single bubble);
+      // tool-bound/multi-step turns keep it (see createCerebellumTurnAckGate).
+      cerebellumTurnAckGate: createCerebellumTurnAckGate(),
       // Cerebellum (小脑) session follow-up gate (Follow-Up Tasks / 待跟进任务):
       // re-judges every completed turn of an auto-origin session and moves the
       // session between the Autonomous fold and the Follow-Up bucket
@@ -6855,6 +7195,31 @@ const getCoworkRunner = () => {
       },
       isIMSession: (sessionId: string): boolean => {
         return imGatewayManager?.isIMSession(sessionId) ?? false;
+      },
+      // Desktop-initiated IM outbound (im_send_message). Lazy for the same
+      // reason as the two callbacks above: the IM manager singleton is created
+      // after this runner. `listChannels()` returns [] before it exists, which
+      // makes the cowork_ui capability block say "当前没有可用通道" instead of
+      // advertising something the send path could not deliver.
+      imOutbound: {
+        listChannels: () => imGatewayManager?.listOutboundChannels() ?? [],
+        send: async (request) => {
+          if (!imGatewayManager) {
+            return {
+              ok: false,
+              channel: request.channel,
+              label: request.channel,
+              target: null,
+              targetIsOwnerDirect: false,
+              targetIdentityBasis: 'last-direct' as const,
+              textChars: 0,
+              attachments: [],
+              warnings: [],
+              errors: ['IM 通道管理器尚未初始化：本次没有发出任何内容。'],
+            };
+          }
+          return imGatewayManager.sendImOutbound(request);
+        },
       },
       controlBotBrowser: {
         openUri: (input) => sendBotBrowserOpenUri(input),
@@ -7537,6 +7902,14 @@ const getCoworkRunner = () => {
       },
       // read-only: no chain-write budget for listing verification.
       verifyMvcTokenSellListing: (listing) => verifyMvcTokenSellListing(listing),
+      transferToken: (params) => withChainWriteBudget(
+        'wallet_token_transfer',
+        () => executeMvcTokenSellTrade(getMetabotStore(), {
+          ...params,
+          action: 'transfer',
+          feeRate: getGlobalFeeRate('mvc'),
+        }),
+      ),
       sellToken: (params) => withChainWriteBudget(
         'wallet_token_sell',
         () => executeMvcTokenSellTrade(getMetabotStore(), {
@@ -7546,7 +7919,7 @@ const getCoworkRunner = () => {
         }),
       ),
       takeToken: (params) => withChainWriteBudget(
-        'wallet_token_take',
+        'wallet_token_buy',
         () => executeMvcTokenSellTrade(getMetabotStore(), {
           ...params,
           action: 'take',
@@ -7561,6 +7934,92 @@ const getCoworkRunner = () => {
           feeRate: getGlobalFeeRate('mvc'),
         }),
       ),
+      },
+      // mrc721_* tool backends (MRC-721 pin-based MetaID NFTs, R6): one
+      // chain-write budget per tool op (collection_create / collection_update
+      // / mint / transfer), not per pin — a mint is one mint pin plus an
+      // optional item_desc pin. The transfer backend spends the item UTXO via
+      // the forced-outpoint raw-tx builder (include_outpoints) and broadcasts
+      // through wallet-api.
+      mrc721Tools: {
+        getMetabotMvcAddress: (metabotId) =>
+          getMetabotStore().getMetabotById(metabotId)?.mvc_address ?? null,
+        resolveMetabotIdByName: (name) => resolveMetabotIdByName(getMetabotStore(), name),
+        // S3 chat NFT card enrichment (best-effort index reads).
+        fetchItemInfo: (pinId) => fetchMrc721ItemInfo({ pinId }),
+        fetchCollectionInfo: (input) => fetchMrc721CollectionInfo({ name: input.name, pinId: input.pinId }),
+        collectionCreate: (input) => withChainWriteBudget(
+          'mrc721_collection_create',
+          () => createMrc721Collection({ createPin: mrc721CreatePinBackend }, input),
+        ),
+        collectionUpdate: (input) => withChainWriteBudget(
+          'mrc721_collection_update',
+          () => updateMrc721Collection(
+            { createPin: mrc721CreatePinBackend, store: getMetabotStore() },
+            input,
+          ),
+        ),
+        mint: (input) => withChainWriteBudget(
+          'mrc721_mint',
+          () => createMrc721Mint({ createPin: mrc721CreatePinBackend }, input),
+        ),
+        transfer: (input) => withChainWriteBudget(
+          'mrc721_transfer',
+          () => transferMrc721Item(
+            {
+              buildRawTx: (store, params) => buildMvcTransferRawTx(store, params),
+              broadcastTx: broadcastMvcTx,
+            },
+            { ...input, store: getMetabotStore(), feeRate: getGlobalFeeRate('mvc') },
+          ),
+        ),
+        sell: (input) => withChainWriteBudget(
+          'mrc721_sell',
+          async () => {
+            const listing = await sellMrc721Item(
+              { buildPartialTx: (store, params) => buildMvc721SellPartialTx(store, params) },
+              {
+                ...input,
+                store: getMetabotStore(),
+                feeRate: getGlobalFeeRate('mvc'),
+                orders: mrc721SellOrdersFromSqlite(getStore()),
+              },
+            );
+            return {
+              listingJson: JSON.stringify(listing),
+              itemPinId: listing.itemPinId,
+              buyerAddress: listing.buyerAddress,
+              priceSats: listing.priceSats,
+              outpoint: `${listing.outpoint.txid}:${listing.outpoint.vout}`,
+            };
+          },
+        ),
+        buy: (input) => withChainWriteBudget(
+          'mrc721_buy',
+          () => buyMrc721Listing(
+            { completeBuy: (store, params) => completeMvc721BuyTx(store, params) },
+            {
+              ...input,
+              store: getMetabotStore(),
+              feeRate: getGlobalFeeRate('mvc'),
+            },
+          ),
+        ),
+        listSellOrders: async (input) => {
+          const views = await listMrc721MySellOrders(
+            mrc721SellOrdersFromSqlite(getStore()),
+            input.metabotId,
+          );
+          return views.map((view) => ({
+            id: view.id,
+            status: view.status,
+            reason: view.reason,
+            itemPinId: view.listing.itemPinId,
+            buyerAddress: view.listing.buyerAddress,
+            priceSats: view.listing.priceSats,
+            outpoint: `${view.listing.outpoint.txid}:${view.listing.outpoint.vout}`,
+          }));
+        },
       },
       // send_private_chat tool backend (replacing metabot-chat-privatechat).
       // Mirrors the skill script: resolve the peer chatpubkey on-chain, then
@@ -8407,9 +8866,17 @@ const getOrchestrationStore = () => {
   if (!orchestrationStore) {
     const sqliteStore = getStore();
     orchestrationStore = new OrchestrationStore(sqliteStore.getDatabase(), sqliteStore.getSaveFunction());
-    const recovered = orchestrationStore.recoverAfterRestart();
+    const recovered = orchestrationStore.recoverAfterRestartWithDetails();
     if (recovered.attempts > 0) {
       console.warn(`[Orchestration] Recovered ${recovered.attempts} in-flight attempt(s) after restart`);
+      const notifyTimer = setTimeout(() => {
+        try {
+          getTwinOrchestrationService().notifyRestartRecoveredAttempts(recovered.recoveredAttempts);
+        } catch (error) {
+          console.warn(`[Orchestration] Restart notification failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }, 0);
+      notifyTimer.unref?.();
     }
   }
   return orchestrationStore;
@@ -8497,6 +8964,22 @@ const getLongTermAdvanceService = () => {
       },
       // The heartbeat hand-off message follows the owner's UI language.
       getAppLanguage: () => getPersistedAppLanguage(),
+      listOrchestrationAttention: (taskId: string, subtaskId: string) => {
+        try {
+          return getOrchestrationStore().listTasksForLongTermSubtask(taskId, subtaskId).map((task) => {
+            const steps = getOrchestrationStore().listSteps(task.id).map((step) => ({
+              ...step,
+              attempts: getOrchestrationStore().listAttempts(step.id),
+            }));
+            return {
+              orchestrationTaskId: task.id,
+              attention: deriveOrchestrationAttention(task, steps),
+            };
+          });
+        } catch {
+          return [];
+        }
+      },
       // P1 supervision telemetry: worker dispatch attempts sourced from every
       // session EVER bound to THIS sub-project (rotation-safe — the failure
       // streak must survive a session rotation), and only this sub-project's
@@ -8778,6 +9261,18 @@ const getUserIdentityStore = () => {
     userIdentityStore = new UserIdentityStore(sqliteStore.getDatabase(), sqliteStore.getSaveFunction());
   }
   return userIdentityStore;
+};
+
+// S3 payment receiving-info: lazy singleton over the same sqlite handle.
+// The store only ever sees ciphertext; derive/encrypt/decrypt happen in the
+// IPC layer below with the identity's mnemonic-derived key.
+let paymentInfoStore: PaymentInfoStore | null = null;
+const getPaymentInfoStore = () => {
+  if (!paymentInfoStore) {
+    const sqliteStore = getStore();
+    paymentInfoStore = new PaymentInfoStore(sqliteStore.getDatabase(), sqliteStore.getSaveFunction());
+  }
+  return paymentInfoStore;
 };
 
 // Extracted cores shared by the IPC handlers and the C2 sensitive route
@@ -10856,6 +11351,16 @@ if (!gotTheLock) {
 
   registerIpcHandler('app:getVersion', () => app.getVersion());
   registerIpcHandler('app:getSystemLocale', () => getOsLocale());
+  // feat/legacy-data-recovery ②: data-directory visibility for the Settings
+  // page (path display + "open directory" button).
+  registerIpcHandler('app:getDataDirectory', () => {
+    const userDataPath = app.getPath('userData');
+    return {
+      userDataPath,
+      backupsPath: backupsDirFor(userDataPath),
+      appVersion: app.getVersion(),
+    };
+  });
 
   // Update notification IPC handlers
   registerIpcHandler('updateNotification:shouldForceShow', () => {
@@ -11165,6 +11670,27 @@ if (!gotTheLock) {
     const ownerWindow = BrowserWindow.fromWebContents(event.sender);
     return getBotBrowserBridgeServiceForWindow(ownerWindow).requestPermissions(
       botBrowserBridgeInput<BotBrowserPermissionsInput>(input),
+    );
+  });
+
+  // browser.nft.buy trusted action: two-phase confirmed NFT purchase. The
+  // service refuses to run the signer without a valid user-approved
+  // confirmRequest (payment gate for the archived wallet_nft_buy bypass
+  // defect); keys never leave the main process.
+  registerIpcHandler('botBrowser:buyNft', async (event, input: unknown) => {
+    const ownerWindow = BrowserWindow.fromWebContents(event.sender);
+    return getBotBrowserBridgeServiceForWindow(ownerWindow).buyNft(
+      botBrowserBridgeInput<BotBrowserNftBuyInput>(input),
+    );
+  });
+
+  // browser.mrc721.buy trusted action: two-phase confirmed MRC-721 atomic-swap
+  // purchase (same payment gate as browser.nft.buy; the worker chain
+  // re-verifies the listing against chain truth before any signature).
+  registerIpcHandler('botBrowser:mrc721Buy', async (event, input: unknown) => {
+    const ownerWindow = BrowserWindow.fromWebContents(event.sender);
+    return getBotBrowserBridgeServiceForWindow(ownerWindow).buyMrc721(
+      botBrowserBridgeInput<BotBrowserMrc721BuyInput>(input),
     );
   });
 
@@ -11727,6 +12253,7 @@ if (!gotTheLock) {
       }
       runner.startSession(session.id, options.prompt, {
         skipInitialUserMessage: true,
+        acknowledgeOwner: true,
         skillIds: sanitizedSkillIds,
         workspaceRoot: selectedWorkspaceRoot,
         confirmationMode: 'modal',
@@ -12366,6 +12893,48 @@ if (!gotTheLock) {
             )
           : null;
         const currentMetadata = parseJsonRecord(currentMapping?.metadataJson);
+
+        // S6 final-verification defect #4: an explicit owner mutual-friend
+        // instruction (「请完成互相关注」) must reach the S5 owner-authorization
+        // chain deterministically. Neither guidance delivery path could do it
+        // alone — the queued path only applies inside the next inbound peer
+        // message turn (in the followsMe=true endgame the peer has just
+        // followed and stays silent), and the restart path is a one-shot
+        // composer with no friend-tag protocol. Fire the card here, then let
+        // the guidance continue through its normal queued/restart delivery.
+        if (detectMutualFriendInviteIntent(guidance)) {
+          const guidanceMetabot = getMetabotStore().getMetabotById(session.metabotId);
+          const guidancePeerGlobalMetaId = toSafeString(
+            session.peerGlobalMetaId || currentMetadata.peerGlobalMetaId
+          ).trim();
+          triggerFriendActionFromGuidance({
+            coworkStore: coworkStoreInst,
+            sessionId,
+            externalConversationId: sourceContext.externalConversationId,
+            metabot: guidanceMetabot
+              ? {
+                id: guidanceMetabot.id,
+                name: guidanceMetabot.name,
+                globalmetaid: guidanceMetabot.globalmetaid ?? '',
+              }
+              : { id: session.metabotId, name: session.metabotName ?? '', globalmetaid: '' },
+            peerGlobalMetaId: guidancePeerGlobalMetaId,
+            peerName: session.peerName ?? null,
+            action: 'invite',
+            createPin: (metabotStore, metabot_id, payload, options) => createPin(
+              metabotStore,
+              metabot_id,
+              payload,
+              { ...options, feeRate: getGlobalFeeRate('mvc') }
+            ),
+            metabotStore: getMetabotStore(),
+            requestFriendActionApproval: requestDaemonFriendActionApproval,
+            resolveFriendPairState: resolveDaemonFriendPairState,
+            emitLog: (msg) => console.log(msg),
+            emitToRenderer: (channel, data) => broadcastToRenderers(channel, data),
+          });
+        }
+
         const shouldRestart = shouldRestartA2APrivateChatForGuidance({
           session,
           sourceChannel: sourceContext.sourceChannel,
@@ -12446,15 +13015,49 @@ if (!gotTheLock) {
           });
           if (!replyText) throw new Error('Local MetaBot did not generate a restart message');
 
+          // S6 defect #4 hardening: the restart prompt carries no friend-tag
+          // protocol, so a tag here means the model echoed one from the
+          // embedded recent-message context. Never deliver it verbatim —
+          // strip it and route the action through the owner-authorization
+          // flow exactly like the daemon's reply chain does.
+          const restartDelivery = composeA2AGuidanceRestartDelivery(replyText);
+
           const sent = await sendEncryptedSimplemsg({
             metabotId: session.metabotId,
             wallet,
             peerGlobalMetaId,
             peerChatPubkey: chatPubkey,
-            plaintext: replyText,
+            plaintext: restartDelivery.text,
             replyPin,
             createPin: async (metabotId, payload) => createPin(metabotStoreInst, metabotId, payload, { feeRate: getGlobalFeeRate('mvc') }),
           });
+
+          if (restartDelivery.friendAction) {
+            triggerFriendActionFromGuidance({
+              coworkStore: coworkStoreInst,
+              sessionId,
+              externalConversationId: sourceContext.externalConversationId,
+              metabot: {
+                id: metabot.id,
+                name: metabot.name,
+                globalmetaid: metabot.globalmetaid ?? '',
+              },
+              peerGlobalMetaId,
+              peerName: session.peerName ?? null,
+              action: restartDelivery.friendAction,
+              createPin: (metabotStore, metabot_id, payload, options) => createPin(
+                metabotStore,
+                metabot_id,
+                payload,
+                { ...options, feeRate: getGlobalFeeRate('mvc') }
+              ),
+              metabotStore: metabotStoreInst,
+              requestFriendActionApproval: requestDaemonFriendActionApproval,
+              resolveFriendPairState: resolveDaemonFriendPairState,
+              emitLog: (msg) => console.log(msg),
+              emitToRenderer: (channel, data) => broadcastToRenderers(channel, data),
+            });
+          }
 
           coworkStoreInst.updateConversationMappingMetadata(
             'metaweb_private',
@@ -13328,7 +13931,31 @@ if (!gotTheLock) {
         } catch {
           usageStats = null;
         }
-        return { success: true, session: { ...sessionWithLiveStream, contextUsage, usageStats } };
+        // IM sessions run under the channel override / persisted global mode,
+        // but their cowork_sessions row freezes the mode from creation. Show
+        // what is actually in force instead of that stale row value. Read-only:
+        // writing it back would leak a channel policy into the desktop view of
+        // the same conversation.
+        const sessionWithDisplayPermission = (() => {
+          const imManager = imGatewayManager;
+          if (!session.imChannel || !imManager) return sessionWithLiveStream;
+          try {
+            const displayMode = resolveSessionDisplayPermissionMode({
+              imChannel: session.imChannel,
+              sessionPermissionMode: session.permissionMode,
+              channelOverride: imManager.getImChannelPermissionOverride(session.imChannel),
+              globalMode: getPersistedCoworkPermissionMode(),
+            });
+            return { ...sessionWithLiveStream, permissionMode: displayMode };
+          } catch (error) {
+            console.warn(
+              '[Cowork] IM session permission display resolve failed:',
+              error instanceof Error ? error.message : String(error)
+            );
+            return sessionWithLiveStream;
+          }
+        })();
+        return { success: true, session: { ...sessionWithDisplayPermission, contextUsage, usageStats } };
       } catch (error) {
         if (isSqliteWasmBoundsError(error)) throw error;
         return {
@@ -14663,6 +15290,80 @@ if (!gotTheLock) {
       return { success: true, messages };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to list external collaboration messages' };
+    }
+  });
+
+  registerIpcHandler('openTeamCollab:getMembers', async (_event, input: { groupId?: string }) => {
+    try {
+      const groupId = String(input?.groupId ?? '').trim();
+      if (!groupId) {
+        throw new Error('groupId is required');
+      }
+      if (!getOpenTeamMembershipStore().hasMembershipForGroup(groupId)) {
+        throw new Error('No OpenTeam membership for this group on this machine');
+      }
+
+      // For OpenTeam guest collab, members are reconstructed from the group's
+      // indexed messages: a speaker whose GlobalMetaID maps to a metabots row
+      // is THIS machine's bot (metabotId + freshest name/avatar — it must read
+      // as 本地, not remote); everyone else is remote and keeps the sender
+      // name/avatar snapshot from their first indexed message.
+      const roster = getOpenTeamMembershipStore().listGroupMemberRoster(groupId);
+
+      const globalMetaIds = roster
+        .map((entry) => entry.globalMetaId)
+        .filter((value): value is string => Boolean(value));
+
+      // Get last speak timestamps
+      const lastSpeakMap = await withSqliteRecovery('openTeamCollab:getMembers:lastSpeak', () =>
+        getGroupTaskStore().getMembersLastSpeakAt(groupId, globalMetaIds));
+
+      // Get last working timestamps
+      const lastWorkingMap = await withSqliteRecovery('openTeamCollab:getMembers:lastWorking', () =>
+        getGroupTaskStore().getMembersWorkingAt(groupId, globalMetaIds));
+
+      // Build member summaries
+      const members: GroupTaskMemberSummary[] = roster.map((entry) => {
+        const gmid = (entry.globalMetaId ?? '').toLowerCase();
+        const lastSpeakAt = lastSpeakMap.get(gmid) ?? null;
+        const lastWorkingAt = lastWorkingMap.get(gmid) ?? null;
+        const lastActivityAt = Math.max(lastSpeakAt ?? 0, lastWorkingAt ?? 0) || null;
+        const fallbackName = entry.metabotId != null
+          ? `bot-${entry.metabotId}`
+          : entry.globalMetaId
+            ? `${entry.globalMetaId.slice(0, 10)}…`
+            : 'remote bot';
+
+        return {
+          // Required GroupTaskMember fields (synthetic for OpenTeam guests)
+          id: 0, // No local row for guest members
+          taskId: 0, // Not tied to a local task
+          metabotId: entry.metabotId,
+          globalmetaid: entry.globalMetaId,
+          // GroupTaskMemberRole has no guest variant; guests read as plain
+          // workers (the member UI only special-cases 'chair').
+          role: 'worker' as const,
+          joinedPinId: null,
+          createdAt: null,
+          displayName: entry.name || fallbackName,
+          removedAt: null,
+          removePinId: null,
+          name: entry.name || fallbackName,
+          status: 'standby' as const, // Default status for guest members
+          statusChangedAt: null,
+          // GroupTaskMemberSummary extension fields
+          avatar: entry.avatar, // Local metabot avatar, else the sender snapshot
+          lastActivityAt,
+          lastSpeakAt,
+          lastWorkingAt,
+          workStatus: 'unknown' as const, // No local worker session for guests
+          inviteStatus: 'none' as const, // Guests joined via external invite
+        };
+      });
+
+      return { success: true, members };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to get group members' };
     }
   });
 
@@ -16090,6 +16791,63 @@ if (!gotTheLock) {
       const errMsg = error instanceof Error ? error.message : String(error);
       console.error('[UserIdentity] userIdentity:revealMnemonic failed:', errMsg);
       return { success: false, error: errMsg };
+    }
+  });
+
+  // ── S3 payment receiving-info (owner-device only, encrypted at rest, never on-chain) ──
+  // get returns the decrypted form to the owner's own settings view (the
+  // device holds the mnemonic, per design doc 02 §4); save validates then
+  // re-encrypts the whole payload; clear wipes the row. Logs carry error
+  // codes only — plaintext receiving data never enters a log line.
+  registerIpcHandler('paymentInfo:get', async () => {
+    try {
+      const identity = getUserIdentityStore().get();
+      if (!identity?.mnemonic || !identity.globalmetaid?.trim()) {
+        return { success: false, error: 'USER_IDENTITY_MISSING', info: null, updatedAt: null };
+      }
+      const row = getPaymentInfoStore().get();
+      if (!row) {
+        return { success: true, info: null, updatedAt: null };
+      }
+      const key = derivePaymentInfoKey(identity.mnemonic, identity.globalmetaid.trim());
+      const info = decryptPaymentInfo(key, row.cipher);
+      return { success: true, info, updatedAt: row.updatedAt };
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      console.error('[PaymentInfo] paymentInfo:get failed:', errMsg);
+      return { success: false, error: 'PAYMENT_INFO_READ_FAILED', info: null, updatedAt: null };
+    }
+  });
+
+  registerIpcHandler('paymentInfo:save', async (_event, input: { info: unknown }) => {
+    try {
+      const identity = getUserIdentityStore().get();
+      if (!identity?.mnemonic || !identity.globalmetaid?.trim()) {
+        return { success: false, error: 'USER_IDENTITY_MISSING', updatedAt: null };
+      }
+      const validated = validatePaymentReceivingInfo(input?.info);
+      if (!validated.ok || !validated.value) {
+        return { success: false, error: validated.errors[0] ?? 'INVALID_PAYMENT_INFO', updatedAt: null };
+      }
+      const key = derivePaymentInfoKey(identity.mnemonic, identity.globalmetaid.trim());
+      const cipher = encryptPaymentInfo(key, validated.value as PaymentReceivingInfo);
+      const updatedAt = getPaymentInfoStore().save(cipher);
+      return { success: true, updatedAt };
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      console.error('[PaymentInfo] paymentInfo:save failed:', errMsg);
+      return { success: false, error: 'PAYMENT_INFO_WRITE_FAILED', updatedAt: null };
+    }
+  });
+
+  registerIpcHandler('paymentInfo:clear', async () => {
+    try {
+      getPaymentInfoStore().clear();
+      return { success: true };
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      console.error('[PaymentInfo] paymentInfo:clear failed:', errMsg);
+      return { success: false, error: 'PAYMENT_INFO_CLEAR_FAILED' };
     }
   });
 
@@ -17633,6 +18391,24 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     executeTokenTransfer: executeTokenTransferService,
   });
 
+  registerMetabotNftIpcHandlers({
+    registerIpcHandler,
+    getMetabotStore,
+    getMetabotNftItems: (store, input) => getMetabotNftItems(store, input),
+    transferMetabotMvcNft: (store, input) => transferMetabotMvcNft(store, input),
+    transferMetabotMrc721: (store, input) => transferMetabotMrc721(store, input),
+  });
+
+  // Chat NftCard heal channel: renderer-side fallback lookups for missing
+  // artwork / metacontract issuer (read-only indexer queries, cached, silent).
+  registerIpcHandler('idbots:healNftCard', async (_event, input: unknown) => {
+    try {
+      return { success: true, result: await healNftCard(input as never) };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
   // Traffic-ized gas fee (Phase D): account/binding/balance/usage APIs plus the
   // local spend journal. The service stays inert (self-pay defaults) until
   // traffic.mode is switched on in settings.
@@ -17780,6 +18556,22 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
   // bracket future stalls with an explicit WARN instead of a silent log gap.
   startEventLoopLagMonitor();
 
+  // Renderer-hang watchdog (2026-10-30): render-process-gone only fires when
+  // the renderer CRASHED. A renderer that stays alive at 100% CPU in a page
+  // loop freezes the window silently — that ran for 34 hours before the owner
+  // noticed. Sample the 'Tab' process CPU and raise ONE WARN per sustained
+  // episode; notify-only, nothing is reloaded or killed.
+  startRendererHangMonitor(() => app.getAppMetrics(), {
+    log: coworkLog,
+    onHang: ({ cpuPercent, sustainedMs, at }) => {
+      coworkLog('WARN', 'renderer:hang', 'Renderer process sustained at high CPU — the window may be spinning while the app still looks alive; notify-only, nothing was reloaded or killed', {
+        cpuPercent,
+        sustainedMs,
+        at: new Date(at).toISOString(),
+      });
+    },
+  });
+
   registerIpcHandler('metabot:setEnabled', async (_event, id: number, enabled: boolean) => {
     try {
       const store = getMetabotStore();
@@ -17897,6 +18689,183 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to test gateway connectivity',
+      };
+    }
+  });
+
+  // Weixin QR authorization (the only supported login path for this channel).
+  registerIpcHandler('im:weixin:login:start', async () => {
+    try {
+      const result = await getIMGatewayManager().startWeixinLogin();
+      return { success: true, qrcode: result.qrcode, content: result.content };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to start Weixin QR login',
+      };
+    }
+  });
+
+  registerIpcHandler('im:weixin:login:cancel', async () => {
+    try {
+      await getIMGatewayManager().cancelWeixinLogin();
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to cancel Weixin QR login',
+      };
+    }
+  });
+
+  registerIpcHandler('im:weixin:credentials:check', async () => {
+    try {
+      return { success: true, hasCredentials: getIMGatewayManager().hasWeixinCredentials() };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to read Weixin credential state',
+      };
+    }
+  });
+
+  // QQ Open Platform: QR bind + manual AppID/AppSecret. The AppSecret travels
+  // only renderer -> main and is written to the 0600 QQ store; no read path
+  // exposes it again.
+  registerIpcHandler('im:qq:login:start', async () => {
+    try {
+      const result = await getIMGatewayManager().startQQLogin();
+      return { success: true, content: result.content };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to start QQ QR login',
+      };
+    }
+  });
+
+  registerIpcHandler('im:qq:login:cancel', async () => {
+    try {
+      await getIMGatewayManager().cancelQQLogin();
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to cancel QQ QR login',
+      };
+    }
+  });
+
+  registerIpcHandler('im:qq:credentials:check', async () => {
+    try {
+      const summary = getIMGatewayManager().getQQCredentialSummary();
+      return { success: true, hasCredentials: summary.hasCredentials, appId: summary.appId, source: summary.source };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to read QQ credential state',
+      };
+    }
+  });
+
+  registerIpcHandler('im:qq:credentials:set', async (
+    _event,
+    params: { appId?: string; appSecret?: string; botId?: string | null; ownerUserOpenid?: string | null }
+  ) => {
+    try {
+      if (!params || typeof params.appId !== 'string' || typeof params.appSecret !== 'string') {
+        return { success: false, error: 'appId and appSecret are required' };
+      }
+      const stored = getIMGatewayManager().saveQQCredentials({
+        appId: params.appId,
+        appSecret: params.appSecret,
+        botId: params.botId ?? null,
+        ownerUserOpenid: params.ownerUserOpenid ?? null,
+      });
+      return { success: true, appId: stored.appId };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to save QQ credentials',
+      };
+    }
+  });
+
+  // QQ group authorisation, without the 32-hex id.
+  //
+  // The allowlist can only hold the platform's group OpenID, and the only place
+  // that id exists is an inbound message payload — the owner can never type it.
+  // The gateway therefore REMEMBERS groups that messaged the bot while not
+  // allowlisted (silently: no reply, no model, no tool, no memory). These IPC
+  // handlers expose that local list so the settings page can offer "allow" and
+  // "ignore" buttons instead of a paste box. Recording is never authorisation:
+  // `groupAllowlist` still decides, and only the existing config path writes it.
+  registerIpcHandler('im:qq:groups:candidates:list', async () => {
+    try {
+      const report = getIMGatewayManager().getQQGroupCandidates();
+      return { success: true, pending: report.pending, all: report.all };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to read QQ group candidates',
+      };
+    }
+  });
+
+  registerIpcHandler('im:qq:groups:candidates:dismiss', async (_event, params: { groupId?: string }) => {
+    try {
+      const groupId = typeof params?.groupId === 'string' ? params.groupId : '';
+      if (!groupId.trim()) {
+        return { success: false, error: 'groupId is required' };
+      }
+      const report = getIMGatewayManager().dismissQQGroupCandidate(groupId);
+      return { success: true, pending: report.pending, all: report.all };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to dismiss the QQ group candidate',
+      };
+    }
+  });
+
+  registerIpcHandler('im:qq:groups:candidates:restore', async (_event, params: { groupId?: string }) => {
+    try {
+      const groupId = typeof params?.groupId === 'string' ? params.groupId : '';
+      if (!groupId.trim()) {
+        return { success: false, error: 'groupId is required' };
+      }
+      const report = getIMGatewayManager().restoreQQGroupCandidate(groupId);
+      return { success: true, pending: report.pending, all: report.all };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to restore the QQ group candidate',
+      };
+    }
+  });
+
+  registerIpcHandler('im:qq:groups:candidates:name', async (_event, params: { groupId?: string }) => {
+    try {
+      const groupId = typeof params?.groupId === 'string' ? params.groupId : '';
+      if (!groupId.trim()) {
+        return { success: false, error: 'groupId is required' };
+      }
+      // Optional platform lookup. `nameStatus` is the honest answer:
+      // 'ok' has a name, 'forbidden' means the endpoint is whitelist-only (11253).
+      const candidate = await getIMGatewayManager().refreshQQGroupCandidateName(groupId);
+      if (!candidate) {
+        return { success: false, error: 'That group is not in the candidate list' };
+      }
+      return {
+        success: true,
+        candidate,
+        nameStatus: candidate.nameStatus,
+        name: candidate.name,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to resolve the QQ group name',
       };
     }
   });
@@ -18492,9 +19461,15 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     return false;
   });
 
-  registerIpcHandler('metaid:getUserInfo', async (_e: Electron.IpcMainInvokeEvent, params: { globalMetaId: string }) => {
+  registerIpcHandler('metaid:getUserInfo', async (_e: Electron.IpcMainInvokeEvent, params: { globalMetaId?: string; address?: string }) => {
     try {
-      return await fetchMetaidUserInfoByGlobalMetaId(params.globalMetaId);
+      const globalMetaId = toSafeString(params?.globalMetaId).trim();
+      const address = toSafeString(params?.address).trim();
+      // Exactly one lookup key: both-or-neither degrades to an empty payload.
+      if (!!globalMetaId === !!address) return {};
+      return address
+        ? await fetchMetaidUserInfoByAddress(address)
+        : await fetchMetaidUserInfoByGlobalMetaId(globalMetaId);
     } catch (error) {
       // Local-first read: a lookup failure (e.g. the local node is down and the
       // remote indexer is unreachable) degrades to an empty payload instead of
@@ -19159,6 +20134,9 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
   let isCleanupInProgress = false;
 
   const runAppCleanup = async (): Promise<void> => {
+    // Refresh the data-guard fingerprint with the latest counters while the
+    // store is still open, so the "last known contents" stays current.
+    writeDataGuardSnapshot('shutdown');
     // Cancel any startup tier that has not fired yet: cleanup is running, and
     // a tier firing now would start a daemon with no stopper left behind.
     cancelDeferredStartupWork();
@@ -19338,7 +20316,7 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     await app.whenReady();
     startupLog('app.whenReady resolved');
 
-    migrateLegacyUserData();
+    legacyUserDataCopiedThisBoot = migrateLegacyUserData();
 
     // Sweep stale app-update download artifacts from previous sessions
     // (best effort; partial files younger than the TTL are kept for resume).
@@ -19356,8 +20334,90 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
       console.log('Created default project directory:', defaultProjectDir);
     }
 
+    // feat/legacy-data-recovery ③: snapshot the sqlite trio into
+    // userData/backups/ rotating slots whenever the app version changes —
+    // BEFORE the store opens, so the snapshot captures the on-disk database
+    // before SqliteStore.create runs schema migrations against it (a
+    // post-open snapshot could never rescue a bad migration).
+    try {
+      const backupOutcome = runVersionChangeBackup({
+        currentVersion: app.getVersion(),
+        userDataPath: app.getPath('userData'),
+        hasExistingData: hasExistingSqliteDataFile(app.getPath('userData')),
+        log: (line) => console.log(line),
+      });
+      if (backupOutcome !== 'no-version-change') {
+        startupLog(`sqlite version backup: ${backupOutcome}`);
+      }
+    } catch (backupError) {
+      console.warn('[Main] version-change backup failed (boot continues):', backupError);
+    }
+
     store = await initStore();
     startupLog('store ready');
+    // Refresh the data-guard fingerprint so a vanished database stays
+    // detectable across junction swaps / data-directory migrations.
+    writeDataGuardSnapshot('startup');
+
+    // feat/legacy-data-recovery: count of REAL bots in the freshly opened
+    // store, used by the recovery guard. The seeded 'welcome' system bot
+    // does NOT make a library non-empty — a welcome-only library (the exact
+    // state the 2026-11-01 Windows incident left behind) is still an empty
+    // library and must get the recovery offer. A missing metabots table
+    // (brand-new database) reads as 0.
+    const countCurrentMetabots = (): number => {
+      try {
+        const result = store.getDatabase().exec("SELECT COUNT(*) FROM metabots WHERE metabot_type != 'welcome'");
+        return Number(result[0]?.values?.[0]?.[0] ?? 0);
+      } catch {
+        return 0;
+      }
+    };
+
+    // feat/legacy-data-recovery ①: turn a silent empty-library boot (Windows
+    // reinstall / data-directory drift) into an active recovery offer:
+    // scan candidate locations for a database that still has bots, then
+    // Import data / Switch data directory / Skip (persisted). Server mode
+    // has no dialog surface, so the guard is desktop-only.
+    if (!isServerMode() && process.env.NODE_ENV !== 'test') {
+      try {
+        const recoveryAction = await runStartupDataRecoveryGuard({
+          discovery: {
+            appDataPath: app.getPath('appData'),
+            currentUserDataPath: app.getPath('userData'),
+            localAppDataPath: resolveLocalAppDataRoot(app.getPath('appData')),
+            windowsOldUsersPath: resolveWindowsOldUsersRoot(),
+          },
+          getCurrentMetabotsCount: countCurrentMetabots,
+          getSkippedCandidateDbPaths: () => {
+            const skipped = store.get<Record<string, number>>(SKIPPED_CANDIDATES_KV_KEY);
+            return Object.keys(skipped ?? {});
+          },
+          persistSkippedCandidate: (dbPath) => {
+            const skipped = store.get<Record<string, number>>(SKIPPED_CANDIDATES_KV_KEY) ?? {};
+            store.set(SKIPPED_CANDIDATES_KV_KEY, { ...skipped, [dbPath]: Date.now() });
+          },
+          showMessageBox: (options) => dialog.showMessageBox(options),
+          closeCurrentStore: () => {
+            store.close();
+          },
+          relaunchApp: () => {
+            app.relaunch();
+          },
+          exitApp: (code) => {
+            app.exit(code);
+          },
+          log: (line) => console.log(line),
+        });
+        if (recoveryAction === 'import-executed' || recoveryAction === 'switch-executed') {
+          startupLog(`data recovery ${recoveryAction}; relaunching`);
+          return; // process is exiting via relaunch; stop booting
+        }
+        startupLog(`data recovery guard: ${recoveryAction}`);
+      } catch (recoveryError) {
+        console.warn('[Main] legacy data recovery guard failed (boot continues):', recoveryError);
+      }
+    }
 
     // REQ-A-8: start the tenant bootstrap state machine BEFORE the gateway so
     // the readiness provider is live from the gateway's first answer

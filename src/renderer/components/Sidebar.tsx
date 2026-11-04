@@ -7,16 +7,14 @@ import { i18nService } from '../services/i18n';
 import CoworkSessionList from './cowork/CoworkSessionList';
 import CoworkSearchModal from './cowork/CoworkSearchModal';
 import SessionViewOptionsMenu from './cowork/SessionViewOptionsMenu';
-import GroupTaskSidebarList from './groupTasks/GroupTaskSidebarList';
-import {
-  OPEN_TEAM_COLLAB_POLL_INTERVAL_MS,
-  OpenTeamCollabSidebarRow,
-} from './groupTasks/OpenTeamCollabsSection';
+import { UnifiedTaskList } from './groupTasks/UnifiedTaskList';
+import type { GroupTaskTypeVariant } from './groupTasks/GroupTaskSidebarList';
+import { OPEN_TEAM_COLLAB_POLL_INTERVAL_MS } from './groupTasks/OpenTeamCollabsSection';
 import { openTeamCollabService } from '../services/openTeamCollabService';
-import { splitGroupTasksByOpenTeam } from './groupTasks/groupTaskUtils.js';
 import { selectCollab, selectTask as selectGroupTask } from '../store/slices/groupTasksSlice';
 import { clearCurrentSession, setNewTaskMetabotId } from '../store/slices/coworkSlice';
 import type { OpenTeamCollabSummary } from '../types/openTeamCollab';
+import { buildUnifiedTaskList } from '../utils/unifiedTaskList';
 import { MagnifyingGlassIcon, ClockIcon, CpuChipIcon, ShoppingBagIcon, UserGroupIcon, GlobeAltIcon, ArchiveBoxIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import Tooltip from './ui/Tooltip';
 import ComposeIcon from './icons/ComposeIcon';
@@ -159,6 +157,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   const unreadSessionIds = useSelector((state: RootState) => state.cowork.unreadSessionIds);
   const groupTasks = useSelector((state: RootState) => state.groupTasks.tasks);
   const selectedGroupTaskId = useSelector((state: RootState) => state.groupTasks.selectedTaskId);
+  const selectedCollabId = useSelector((state: RootState) => state.groupTasks.selectedCollabId);
   const scheduledTasks = useSelector((state: RootState) => state.scheduledTask.tasks);
   // Joined OpenTeam collabs for the records "Group Tasks" tab (remote-hosted
   // tasks this machine's bots participate in; loaded/polled only while that
@@ -210,11 +209,17 @@ const Sidebar: React.FC<SidebarProps> = ({
   // are matched by their own session type, so browser sessions can never leak
   // into them.
   const sessionGroups = useMemo(() => {
+    // IM rows belong to the LOCAL list even when an older row is still stored
+    // as 'a2a' (direct IM chats used to be created that way). The mapping
+    // channel is the display source of truth, so this is a render-time
+    // reclassification — no data migration.
+    const isImSession = (session: CoworkSessionSummary) => Boolean(session.imChannel);
     const isLocal = (session: CoworkSessionSummary) =>
-      session.sessionType !== 'a2a' && session.sessionType !== 'group_task';
+      session.sessionType !== 'group_task'
+      && (session.sessionType !== 'a2a' || isImSession(session));
     return {
       local: homeSessions.filter(isLocal),
-      a2a: homeSessions.filter((session) => session.sessionType === 'a2a'),
+      a2a: homeSessions.filter((session) => session.sessionType === 'a2a' && !isImSession(session)),
       group: homeSessions.filter((session) => session.sessionType === 'group_task'),
     };
   }, [homeSessions]);
@@ -245,12 +250,25 @@ const Sidebar: React.FC<SidebarProps> = ({
   // bucket (folded auto sessions included), so a hidden background run is still
   // findable by name.
   const tabbedSessions = sessionGroups[taskRecordTab];
-  // Locally-stored tasks with at least one remote (OpenTeam invitee) seat —
-  // their records rows carry the Open Team type badge instead of the local one.
-  const openTeamTaskIds = useMemo(
-    () => new Set<number>(splitGroupTasksByOpenTeam(groupTasks).openTeam.map((task) => task.id)),
-    [groupTasks],
+
+  // Unified task list: merge local group tasks with OpenTeam collabs, sorted
+  // newest first. Each item carries its type badge variant (local / host / guest).
+  const unifiedTaskList = useMemo(
+    () => buildUnifiedTaskList(groupTasks, openTeamCollabs),
+    [groupTasks, openTeamCollabs],
   );
+
+  // Type lookup for each task id (used by UnifiedTaskList).
+  const taskTypeById = useMemo(() => {
+    const map = new Map<number, GroupTaskTypeVariant>();
+    for (const item of unifiedTaskList) {
+      if (item.kind !== 'openteam-guest') {
+        map.set(item.task.id, item.kind);
+      }
+    }
+    return map;
+  }, [unifiedTaskList]);
+
   // Per-tab totals and unread counts, shown on the tab buttons. The local tab
   // counts the main list PLUS the Follow-Up section — pending decisions are the
   // point of the feature and must light the tab badge (user decision #5),
@@ -436,11 +454,16 @@ const Sidebar: React.FC<SidebarProps> = ({
    *  - to Follow-Up: the override must stop fighting the marker (both 'in'
    *    and 'out' outrank it in the placement precedence), so it resets to
    *    null, and the marker persists 'pending' with source 'manual';
-   *  - to the normal list: an auto-created run (the fold's own policy put it
-   *    there) needs an explicit 'out' to survive the policy, a row with no
-   *    policy pull only has to drop its override back to null; the follow-up
-   *    marker is cleared either way (clearSessionFollowUp clears ANY pending
-   *    source main-side — the same manual move-out the old menu performed).
+   *  - to the normal list: an explicit 'out' is written whenever ANY lane
+   *    would pull the row back out of the normal list — the auto-origin fold
+   *    policy, or a live board decision owed on the session
+   *    (decisionSessionIds: waiting_owner sub-projects bound to it) — because
+   *    foldOverride outranks both in the placement precedence; without the
+   *    'out', a decision-owed row dropped its marker, wrote null, and stayed
+   *    in Follow-Up — a silent no-op (the reported bug). A row with no pull
+   *    at all only drops its override back to null; the follow-up marker is
+   *    cleared either way (clearSessionFollowUp clears ANY pending source
+   *    main-side — the same manual move-out the old menu performed).
    */
   const handleMoveSessionToSection = async (sessionId: string, target: SessionSidebarSection) => {
     const session = sessions.find((item) => item.id === sessionId);
@@ -453,9 +476,11 @@ const Sidebar: React.FC<SidebarProps> = ({
       await coworkService.setSessionFollowUp(sessionId, true);
     } else {
       await coworkService.setSessionFollowUp(sessionId, false);
+      const needsExplicitOut =
+        shouldFoldIntoAutonomousTasks(session) || decisionSessionIds.has(sessionId);
       await coworkService.setSessionFoldOverride(
         sessionId,
-        shouldFoldIntoAutonomousTasks(session) ? 'out' : null,
+        needsExplicitOut ? 'out' : null,
       );
     }
   };
@@ -829,34 +854,25 @@ const Sidebar: React.FC<SidebarProps> = ({
           {/* Scrollable list area */}
           <div className="flex-1 min-h-0 overflow-y-auto pb-4">
             {taskRecordTab === 'group' ? (
-              groupTasks.length === 0 && openTeamCollabs.length === 0 ? (
+              unifiedTaskList.length === 0 ? (
                 <div className="text-center py-8">
                   <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
                     {i18nService.t(activeTaskRecordTab.emptyKey)}
                   </p>
                 </div>
               ) : (
-                <div className="space-y-1">
-                  {groupTasks.length > 0 && (
-                    <GroupTaskSidebarList
-                      tasks={groupTasks}
-                      selectedTaskId={selectedGroupTaskId}
-                      onSelectTask={handleSelectGroupTask}
-                      onTogglePin={handleToggleGroupTaskPin}
-                      onRename={handleRenameGroupTask}
-                      onArchive={handleArchiveGroupTask}
-                      emptyText={i18nService.t(activeTaskRecordTab.emptyKey)}
-                      openTeamTaskIds={openTeamTaskIds}
-                    />
-                  )}
-                  {openTeamCollabs.map((collab) => (
-                    <OpenTeamCollabSidebarRow
-                      key={collab.id}
-                      collab={collab}
-                      onSelect={() => handleSelectOpenTeamCollab(collab.id)}
-                    />
-                  ))}
-                </div>
+                <UnifiedTaskList
+                  items={unifiedTaskList}
+                  selectedTaskId={selectedGroupTaskId}
+                  selectedCollabId={selectedCollabId}
+                  onSelectTask={handleSelectGroupTask}
+                  onSelectCollab={handleSelectOpenTeamCollab}
+                  onTogglePin={handleToggleGroupTaskPin}
+                  onRename={handleRenameGroupTask}
+                  onArchive={handleArchiveGroupTask}
+                  getTaskType={(task) => taskTypeById.get(task.id) ?? 'local'}
+                  emptyText={i18nService.t(activeTaskRecordTab.emptyKey)}
+                />
               )
             ) : (
               <CoworkSessionList

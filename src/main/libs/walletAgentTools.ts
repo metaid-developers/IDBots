@@ -11,6 +11,8 @@ import type {
   WalletQueryChain,
 } from '../services/walletQueryService';
 import type { MvcNftBalance, MvcNftSellOrders, MvcNftSellOrder } from '../services/mvcNftService';
+import { appendNftCardBlock, findNftCardDetail, type NftCardEmitFields } from './nftCardMarkdown';
+import { withNftCardHostStamp } from './tradeActivityStamp';
 
 /**
  * Host control surface for the wallet tools, wired in main.ts: UTXO-sum
@@ -74,7 +76,7 @@ export type WalletToolsControl = {
     orders?: MvcNftSellOrders;
     error?: string;
   }>>;
-  // ----- FT TokenSell (LIST / take / cancel=self-take; mirrors the NFT block) -----
+  // ----- FT TokenSell (transfer / LIST / take / cancel=self-take; mirrors the NFT block) -----
   listMvcFtTokens(input: {
     metabotIds?: number[];
     address?: string;
@@ -84,6 +86,14 @@ export type WalletToolsControl = {
     balance?: import('../services/mvcTokenSellService').MvcFtTokenBalance;
     error?: string;
   }>>;
+  transferToken(params: {
+    metabotId: number;
+    genesis: string;
+    codehash: string;
+    tokenTxid?: string;
+    tokenVout?: number;
+    receiverAddress: string;
+  }): Promise<{ txId: string; fundingTxIds: string[] }>;
   verifyMvcTokenSellListing(listing: import('../services/walletRawTxService').MvcTokenSellListingRef): Promise<import('../services/mvcTokenSellService').MvcTokenSellOrderVerify>;
   sellToken(params: {
     metabotId: number;
@@ -179,6 +189,29 @@ function formatMvcNftBalance(balance: MvcNftBalance): string {
   }
   return lines.join('\n');
 }
+
+/**
+ * S3 chat NFT cards: best-effort artwork/series facts for one token from a
+ * wallet-api balance snapshot of `address`. Called by the NFT action tools
+ * to enrich the nft-card fence they append to success results; never throws
+ * — on any failure the card emits with identity fields only (the renderer
+ * shows the placeholder artwork).
+ */
+const fetchNftCardFacts = async (
+  control: WalletToolsControl,
+  address: string | null,
+  genesis: string,
+  tokenIndex: string,
+): Promise<Partial<NftCardEmitFields>> => {
+  if (!address) return {};
+  try {
+    const entries = await control.listMvcNfts({ address });
+    const entry = entries.find((candidate) => candidate.address === address && candidate.balance);
+    return { ...(findNftCardDetail(entry?.balance, genesis, tokenIndex) ?? {}) };
+  } catch {
+    return {};
+  }
+};
 
 /**
  * wallet_balance (R1) and wallet_transfer (R2) inline MCP tools for every
@@ -489,6 +522,7 @@ export function buildWalletAgentTools(deps: {
       }
       let toAddress = '';
       let toMetabotId: number | null = null;
+      let toName: string | undefined;
       if (/^\d+$/.test(toRaw)) {
         const id = Number(toRaw);
         const address = control.getMetabotMvcAddress(id);
@@ -507,6 +541,7 @@ export function buildWalletAgentTools(deps: {
           );
         }
         toMetabotId = id;
+        toName = toRaw;
         toAddress = control.getMetabotMvcAddress(id) ?? '';
         if (!toAddress) {
           return textResult(`wallet_nft_transfer: MetaBot ${toRaw} has no mvc address.`, true);
@@ -526,6 +561,11 @@ export function buildWalletAgentTools(deps: {
       }
 
       try {
+        // Pre-action snapshot: the token sits in the session bot's wallet
+        // right now, so its artwork facts are guaranteed present; the card
+        // then records the RECIPIENT as the post-transfer owner.
+        const senderAddress = control.getMetabotMvcAddress(metabotId);
+        const facts = await fetchNftCardFacts(control, senderAddress, genesis, tokenIndex);
         const result = await control.transferNft({
           metabotId,
           genesis,
@@ -540,7 +580,17 @@ export function buildWalletAgentTools(deps: {
           `- to: ${toAddress}${toMetabotId != null ? ` (metabot_id ${toMetabotId})` : ''}`,
           '- Verify with wallet_nft_balance after the tx confirms.',
         ];
-        return textResult(lines.join('\n'));
+        const cardFields: NftCardEmitFields = {
+          format: 'metacontract',
+          genesis,
+          codehash,
+          tokenIndex,
+          ...facts,
+          owner: toAddress || undefined,
+          ownerLabel: toName,
+          action: 'transferred',
+        };
+        return textResult(appendNftCardBlock(lines.join('\n'), withNftCardHostStamp(cardFields, sessionId)));
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         return textResult(`wallet_nft_transfer failed: ${msg}`, true);
@@ -658,6 +708,11 @@ export function buildWalletAgentTools(deps: {
         return textResult('wallet_nft_sell: price_sats must be at least 22000 (the NftManager sell floor; 0.001 SPACE = 100000).', true);
       }
       try {
+        // Pre-action snapshot: the token still sits in the bot's wallet, so
+        // the artwork facts are guaranteed present even if the indexer lags
+        // behind the just-broadcast listing.
+        const sellerAddress = control.getMetabotMvcAddress(metabotId);
+        const facts = await fetchNftCardFacts(control, sellerAddress, genesis, tokenIndex);
         const result = await control.sellNft({ metabotId, genesis, codehash, tokenIndex, priceSats });
         const lines = [
           'NFT listed for sale on-chain.',
@@ -667,7 +722,17 @@ export function buildWalletAgentTools(deps: {
           `- ask price: ${priceSats} sats (${(priceSats / 100000000).toFixed(8)} SPACE)`,
           '- Verify with wallet_nft_sell_orders; cancel with wallet_nft_cancel_sell.',
         ];
-        return textResult(lines.join('\n'));
+        const cardFields: NftCardEmitFields = {
+          format: 'metacontract',
+          genesis,
+          codehash,
+          tokenIndex,
+          ...facts,
+          owner: sellerAddress ?? undefined,
+          priceSats,
+          action: 'listed',
+        };
+        return textResult(appendNftCardBlock(lines.join('\n'), withNftCardHostStamp(cardFields, sessionId)));
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         return textResult(`wallet_nft_sell failed: ${msg}`, true);
@@ -739,6 +804,8 @@ export function buildWalletAgentTools(deps: {
       }
       try {
         const result = await control.cancelNftSell({ metabotId, genesis, codehash, tokenIndex, sellUtxo });
+        const ownerAddress = control.getMetabotMvcAddress(metabotId);
+        const facts = await fetchNftCardFacts(control, ownerAddress, genesis, tokenIndex);
         const lines = [
           'NFT sell order cancelled on-chain.',
           `- cancel txid: ${result.txId}`,
@@ -746,7 +813,16 @@ export function buildWalletAgentTools(deps: {
           `- token: #${tokenIndex} (genesis ${genesis})`,
           '- Verify the order is gone with wallet_nft_sell_orders.',
         ];
-        return textResult(lines.join('\n'));
+        const cardFields: NftCardEmitFields = {
+          format: 'metacontract',
+          genesis,
+          codehash,
+          tokenIndex,
+          ...facts,
+          owner: ownerAddress ?? undefined,
+          action: 'delisted',
+        };
+        return textResult(appendNftCardBlock(lines.join('\n'), withNftCardHostStamp(cardFields, sessionId)));
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         return textResult(`wallet_nft_cancel_sell failed: ${msg}`, true);
@@ -799,6 +875,10 @@ export function buildWalletAgentTools(deps: {
       }
       try {
         const result = await control.buyNft({ metabotId, genesis, codehash, tokenIndex, sellUtxo });
+        // Post-action snapshot from the buyer's own wallet doubles as the
+        // ownership-change check; indexer lag degrades to identity-only.
+        const buyerAddress = control.getMetabotMvcAddress(metabotId);
+        const facts = await fetchNftCardFacts(control, buyerAddress, genesis, tokenIndex);
         const lines = [
           'NFT purchase broadcast on-chain.',
           `- purchase txid: ${result.txId}`,
@@ -806,7 +886,17 @@ export function buildWalletAgentTools(deps: {
           `- token: #${tokenIndex} (genesis ${genesis})`,
           '- Verify ownership with wallet_nft_balance and the order closure with wallet_nft_sell_orders after the txs confirm.',
         ];
-        return textResult(lines.join('\n'));
+        const cardFields: NftCardEmitFields = {
+          format: 'metacontract',
+          genesis,
+          codehash,
+          tokenIndex,
+          ...facts,
+          owner: buyerAddress ?? undefined,
+          priceSats: sellUtxo?.price,
+          action: 'bought',
+        };
+        return textResult(appendNftCardBlock(lines.join('\n'), withNftCardHostStamp(cardFields, sessionId)));
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         return textResult(`wallet_nft_buy failed: ${msg}`, true);
@@ -894,6 +984,70 @@ export function buildWalletAgentTools(deps: {
     }
   );
 
+  const walletTokenTransfer = tool(
+    'wallet_token_transfer',
+    [
+      'Transfer ONE MVC FT (MetaContract fungible token) utxo from THIS session MetaBot\'s own wallet to a receiver address — non-trade op=1 TRANSFER, full-utxo semantics: the entire token utxo amount moves, no partial quantities.',
+      'Use when the owner asks to send/move FT tokens without listing them for sale. The token is identified by genesis + codehash (see wallet_token_balance); when the address holds several utxos of that genesis, pass token_txid (+ token_vout) to pick one.',
+      'receiver_address must be a RAW MVC address (tokens only transfer to addresses, not local bots — resolve a bot\'s address first). The receiver gets a standard token utxo they can re-transfer or list.',
+      'Signing runs in a subprocess worker; ordered txs broadcast (checker mint → transfer). Returns the txids; verify with wallet_token_balance afterwards.',
+      'Token moves are irreversible on-chain — confirm the token and receiver with the owner before calling when ambiguous.',
+    ].join(' '),
+    {
+      genesis: z.string().min(1).describe('FT genesis id (64 hex).'),
+      codehash: z.string().min(1).describe('FT codehash (40 hex).'),
+      token_txid: z.string().optional().describe('Token utxo txid (64 hex) — required when the address holds several utxos of this genesis.'),
+      token_vout: z.number().int().nonnegative().optional().describe('Token utxo output index.'),
+      receiver_address: z.string().min(1).describe('Raw MVC address receiving the full token utxo.'),
+    },
+    async (args: {
+      genesis: string;
+      codehash: string;
+      token_txid?: string;
+      token_vout?: number;
+      receiver_address: string;
+    }) => {
+      const metabotId = resolveMetabotId(sessionId);
+      if (metabotId == null) {
+        return textResult('wallet_token_transfer could not determine which MetaBot owns this session; transfers must spend the session bot\'s own wallet.', true);
+      }
+      const genesis = asString(args.genesis).toLowerCase();
+      const codehash = asString(args.codehash).toLowerCase();
+      if (!/^[0-9a-f]{64}$/.test(genesis) || !/^[0-9a-f]{40}$/.test(codehash)) {
+        return textResult('wallet_token_transfer requires genesis (64 hex) and codehash (40 hex). Use wallet_token_balance to look them up.', true);
+      }
+      const receiverAddress = asString(args.receiver_address).trim();
+      if (!receiverAddress || !looksLikeMvcAddress(receiverAddress)) {
+        return textResult('wallet_token_transfer: receiver_address must be a raw MVC address (tokens only transfer to addresses, not local bots).', true);
+      }
+      const tokenTxid = asString(args.token_txid).toLowerCase();
+      if (tokenTxid && !/^[0-9a-f]{64}$/.test(tokenTxid)) {
+        return textResult('wallet_token_transfer: token_txid must be 64 hex.', true);
+      }
+      try {
+        const result = await control.transferToken({
+          metabotId,
+          genesis,
+          codehash,
+          tokenTxid: tokenTxid || undefined,
+          tokenVout: args.token_vout,
+          receiverAddress,
+        });
+        const lines = [
+          'Token TRANSFER broadcast on-chain.',
+          `- transfer txid: ${result.txId}`,
+          `- funding txids: ${result.fundingTxIds.join(', ')}`,
+          `- to: ${receiverAddress}`,
+          '- Full-utxo semantics — the entire token utxo amount moved. Verify with wallet_token_balance after the txs confirm.',
+        ];
+        return textResult(lines.join('\n'));
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return textResult(`wallet_token_transfer failed: ${msg}`, true);
+      }
+    }
+  );
+
   const buildTokenListingArg = (args: {
     sell_txid?: string;
     sell_output_index?: number;
@@ -929,9 +1083,9 @@ export function buildWalletAgentTools(deps: {
   const walletTokenSellOrders = tool(
     'wallet_token_sell_orders',
     [
-      'Verify a TokenSell listing tuple you were given — NOT order discovery: TokenSell has NO chain-wide order index, so the listing {sell_txid, sell_output_index, sell_price_sats, seller_address} travels off-chain between counterparties.',
+      'Verify an MVC FT TokenSell listing against its listing tuple — this is tuple VERIFICATION, not order discovery: TokenSell has NO chain-wide order index, the listing {sell_txid, sell_output_index, sell_price_sats, seller_address} travels off-chain between counterparties.',
       'Given a tuple, this fetches the LIST tx, recomputes its v10 consensus txid, decodes the TokenSell seed lock back into (seller, price) and cross-checks the claims — a counterparty cannot misquote a listing.',
-      'Use before wallet_token_take to validate what you are about to buy; use the wallet_token_sell output to obtain your own listing tuple.',
+      'Use before wallet_token_buy to validate what you are about to buy; use the wallet_token_sell output to obtain your own listing tuple.',
       'Read-only public chain data. No arguments = explanation of the discovery model.',
     ].join(' '),
     {
@@ -971,7 +1125,8 @@ export function buildWalletAgentTools(deps: {
           verified.verified ? 'Listing VERIFIED against the chain.' : 'Listing FAILED verification:',
           `- LIST txid: ${verified.txid} (v10 consensus recomputation)`,
           `- on-chain price: ${verified.decoded.priceSats} sats (${(Number(verified.decoded.priceSats) / SATOSHI_PER_UNIT).toFixed(8)} SPACE)`,
-          `- seller address (decoded from seed lock): ${verified.decoded.sellerAddress || verified.decoded.sellerHash160Hex + ' (hash160; base58 decode unavailable)'}`,
+          `- seller hash160 (from seed lock): ${verified.decoded.sellerHash160Hex}`,
+          `- seller address (base58): ${verified.decoded.sellerAddressBase58 ?? "(decode unavailable)"}`,
           `- token amount listed: ${verified.tokenAmount || 'unknown'}`,
           `- sale output: ${verified.sellSats} sats at out${listing.sell_output_index}`,
         ];
@@ -988,7 +1143,7 @@ export function buildWalletAgentTools(deps: {
     'wallet_token_sell',
     [
       'List ONE FT token utxo (MetaContract FT, full-utxo listing) owned by THIS session MetaBot for sale on-chain via the TokenSell contract.',
-      'Identify the token with genesis + codehash (see wallet_token_balance); when the address holds several utxos of that genesis also pass token_txid/token_vout. price_sats is the ask price in satoshis (1 SPACE = 1e8 sats; pass price_space to convert).',
+      'Identify the token with genesis + codehash (see wallet_token_balance); when the address holds several utxos of that genesis also pass token_txid/token_vout. price_sats is the ask price in satoshis (1 SPACE = 1e8 sats; pass price_space to convert). Minimum 22000 sats — mirrors the wallet_nft_sell floor.',
       'Partial-quantity listings are REJECTED at construction (they break the checker conservation) — the whole token utxo is listed; split the token first if you need less.',
       'Signing runs in a subprocess worker; ordered txs broadcast (checker mint → seed → listing). Returns the listing tuple to share with takers. Confirm the price with the owner when ambiguous.',
     ].join(' '),
@@ -1030,7 +1185,7 @@ export function buildWalletAgentTools(deps: {
         priceSats = Math.round(space * SATOSHI_PER_UNIT);
       }
       if (priceSats < 22000) {
-        return textResult('wallet_token_sell: ask price below the 22000 sats floor (mirrors wallet_nft_sell) — raise the ask price.', true);
+        return textResult('wallet_token_sell: price below the 22000 sats floor (mirrors wallet_nft_sell; avoids dust-level asks).', true);
       }
       const tokenTxid = asString(args.token_txid).toLowerCase();
       if (tokenTxid && !/^[0-9a-f]{64}$/.test(tokenTxid)) {
@@ -1064,14 +1219,14 @@ export function buildWalletAgentTools(deps: {
     }
   );
 
-  const tokenTakeDescription = [
-      'Take (buy) an MVC FT TokenSell listing (op=2 UNLOCK_FROM_CONTRACT) with THIS session MetaBot\'s own wallet: pays the ask price to the seller and receives the tokens at the receiver address.',
-      'Verb-aligned with wallet_nft_buy so an agent switching between the NFT and FT lines keeps one verb; wallet_token_take stays registered as an alias with identical behavior (docs map take↔buy).',
+  const tokenBuyDescription = [
+      'wallet_token_buy — take (buy) an MVC FT TokenSell listing (op=2 UNLOCK_FROM_CONTRACT) with THIS session MetaBot\'s own wallet: pays the ask price to the seller and receives the tokens at the receiver address. Verb-aligned with wallet_nft_buy; TokenSell papers call this operation "take" — same thing.',
       'Pass the listing tuple (sell_txid + sell_output_index + sell_price_sats + seller_address; the price/seller are cross-checked against the on-chain seed lock before signing). Verify the listing first with wallet_token_sell_orders.',
       'Signing runs in a subprocess worker; ordered txs broadcast (checker mint → taker tx). Returns the txids.',
       'The ask price + fees leave the bot\'s wallet irreversibly — confirm the listing with the owner before calling when ambiguous.',
+      'wallet_token_take remains registered as a deprecated alias with identical arguments and behavior (the TokenSell papers call this verb \'take\').',
     ].join(' ');
-  const tokenTakeSchema = {
+  const tokenBuySchema = {
       sell_txid: z.string().min(1).describe('LIST txid (64 hex) from the listing tuple.'),
       sell_output_index: z.number().int().nonnegative().describe('Token output index in the LIST tx.'),
       sell_price_sats: z.number().int().positive().describe('Ask price in sats from the listing tuple (cross-checked on-chain).'),
@@ -1080,7 +1235,7 @@ export function buildWalletAgentTools(deps: {
       seed_vout: z.number().int().nonnegative().optional().describe('Seed output index (optional, default 0).'),
       receiver_address: z.string().optional().describe('Address receiving the tokens — defaults to this session bot\'s own address.'),
     };
-  const tokenTakeHandler = async (args: {
+  const tokenBuyHandler = async (args: {
       sell_txid: string;
       sell_output_index: number;
       sell_price_sats: number;
@@ -1091,7 +1246,7 @@ export function buildWalletAgentTools(deps: {
     }) => {
       const metabotId = resolveMetabotId(sessionId);
       if (metabotId == null) {
-        return textResult('wallet_token_buy could not determine which MetaBot owns this session; buys must spend the session bot\'s own wallet.', true);
+        return textResult('wallet_token_buy could not determine which MetaBot owns this session; takes must spend the session bot\'s own wallet.', true);
       }
       const listing = buildTokenListingArg(args);
       if (!listing) {
@@ -1108,7 +1263,7 @@ export function buildWalletAgentTools(deps: {
           receiverAddress: receiverAddress || (control.getMetabotMvcAddress(metabotId) ?? ''),
         });
         const lines = [
-          'TokenSell TAKE broadcast on-chain (wallet_token_buy).',
+          'TokenSell TAKE broadcast on-chain.',
           `- take txid: ${result.txId}`,
           `- funding txids: ${result.fundingTxIds.join(', ')}`,
           '- Verify the tokens arrived with wallet_token_balance after the txs confirm.',
@@ -1116,15 +1271,16 @@ export function buildWalletAgentTools(deps: {
         return textResult(lines.join('\n'));
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
-        return textResult('wallet_token_buy failed: ${msg}', true);
+        return textResult(`wallet_token_buy failed: ${msg}`, true);
       }
     };
-  const walletTokenBuy = tool('wallet_token_buy', tokenTakeDescription, tokenTakeSchema, tokenTakeHandler);
+  const walletTokenBuy = tool('wallet_token_buy', tokenBuyDescription, tokenBuySchema, tokenBuyHandler);
+  // Alias kept for compatibility with the merged surface: same schema object, same handler.
   const walletTokenTakeAlias = tool(
     'wallet_token_take',
     'Alias of wallet_token_buy (verb alignment with the NFT line) — identical arguments and behavior; see wallet_token_buy.',
-    tokenTakeSchema,
-    tokenTakeHandler
+    tokenBuySchema,
+    tokenBuyHandler
   );
 
   const walletTokenCancelSell = tool(
@@ -1185,6 +1341,7 @@ export function buildWalletAgentTools(deps: {
     walletNftCancelSell,
     walletNftBuy,
     walletTokenBalance,
+    walletTokenTransfer,
     walletTokenSellOrders,
     walletTokenSell,
     walletTokenBuy,

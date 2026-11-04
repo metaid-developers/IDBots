@@ -45,6 +45,13 @@ export function isRenderableAssistantOrSystemMessage(message: Pick<CoworkMessage
   if (hasText(message.content) || hasText(message.metadata?.error)) {
     return true;
   }
+  // An outbound-IM echo (im_send_message) is delivery evidence, and an
+  // attachment-only send carries an intentionally EMPTY body — its bubbles are
+  // the images/files. Without this branch the row would be filtered out before
+  // the receipt renderer ever sees it.
+  if (message.metadata?.imOutboundSend === true) {
+    return true;
+  }
   if (isDiagnosticSystemMetadata(message.metadata)) {
     return true;
   }

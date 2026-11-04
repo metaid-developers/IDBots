@@ -1,5 +1,16 @@
 import { formatBotWorkspaceDate } from './botWorkspace';
 import { stripLoneSurrogates, truncateUtf16Units } from './llmSafeText';
+import { describeWeixinOutboundCapabilities } from '../im/weixinMedia';
+import {
+  formatOutboundByteLimit,
+  renderOutboundChannelForPrompt,
+  type IMOutboundChannelView,
+} from '../im/imOutbound';
+import {
+  WEIXIN_GROUP_MESSAGING_SUPPORTED,
+  WEIXIN_INBOUND_VOICE_AUDIO_SUPPORTED,
+} from '../im/weixinProtocol';
+import { describeImPermissionMode } from '../im/imPermissionPolicy';
 
 /**
  * Experience prompt blocks — the hot layer of the tiered experience system.
@@ -280,6 +291,165 @@ export function buildMinimalSelfCognitionBlocks(input: {
     if (block.length <= cap) return block;
   }
   return lastBlock;
+}
+
+// ---------------------------------------------------------------------------
+// Channel capability manifest (通道能力清单)
+// ---------------------------------------------------------------------------
+
+/** Byte ceiling rendered for a prompt: derived from the constant, never typed. */
+export function formatChannelCapabilityByteLimit(bytes: number): string {
+  return formatOutboundByteLimit(bytes);
+}
+
+const formatExtensionList = (extensions: string[]): string =>
+  extensions.length > 0 ? extensions.map((extension) => `.${extension}`).join(' ') : '(none)';
+
+export interface ChannelCapabilityBlockOptions {
+  /**
+   * The cowork permission mode this turn actually runs under (read from the
+   * live session, so it is the same value the runner enforces). Defaults to
+   * 'default' when unknown.
+   */
+  permissionMode?: 'default' | 'plan' | 'acceptEdits' | 'bypassPermissions';
+  /**
+   * `cowork_ui` only: the live channel inventory from
+   * `IMGatewayManager.listOutboundChannels()`. `undefined` (test/minimal
+   * embedders with no IM manager) and `[]` both render the explicit
+   * "当前没有可用通道" block — the desktop prompt must never stay silent about
+   * this, because silence is what sent the model off to drive the WeChat
+   * client window. Connected channels are listed with their capabilities;
+   * unconnected ones are named as 未连接 rather than described as unsupported.
+   */
+  connectedChannels?: IMOutboundChannelView[];
+}
+
+/**
+ * Desktop (cowork_ui) capability manifest.
+ *
+ * Two facts matter more than the lists: (1) the machine can send through the
+ * channel API, and (2) the agent must NOT try to drive the WeChat/QQ/Feishu
+ * desktop client. A real desktop session was asked to "给微信发消息" and went
+ * looking for the client process — this block exists to make that route
+ * unreachable-by-instruction.
+ *
+ * Every extension list and byte ceiling comes from the channel gateway's own
+ * tables (passed in as `channels`, produced by
+ * `IMGatewayManager.listOutboundChannels()`); nothing here is hand-copied.
+ */
+function buildCoworkUiChannelCapabilitiesBlock(
+  channel: string,
+  channels: IMOutboundChannelView[]
+): string {
+  const sendable = channels.filter((entry) => entry.connected && entry.sendable);
+  // Connected but not yet addressable (usually: no private chat seen yet).
+  const connectedButBlocked = channels.filter((entry) => entry.connected && !entry.sendable);
+  const offline = channels.filter((entry) => !entry.connected);
+  const offlineLine = offline.length > 0
+    ? `- 未连接：${offline.map((entry) => `${entry.label}（${entry.platform}）`).join('、')}`
+    : '';
+  const lines: string[] = [
+    `<channel_capabilities channel="${escapeXml(channel)}" source="imGatewayManager">`,
+  ];
+  if (sendable.length === 0) {
+    lines.push(
+      '当前没有可用通道：本机此刻没有「已连接且可主动发送」的 IM 通道（若应用刚启动，通道可能仍在连接中）。不要假装已经发出任何内容，也不要模拟操作任何 IM 客户端窗口；请明确告诉用户需要先在设置里连接通道。'
+    );
+    for (const entry of connectedButBlocked) lines.push(renderOutboundChannelForPrompt(entry));
+    if (offlineLine) lines.push(offlineLine);
+  } else {
+    lines.push(
+      '当前是电脑端（cowork_ui）会话。下列已连接的 IM 通道可以主动发消息与文件——用 im_send_message 工具发送，不要模拟操作微信/QQ/飞书客户端窗口，也不要检查客户端进程是否在运行。'
+    );
+    for (const entry of sendable) lines.push(renderOutboundChannelForPrompt(entry));
+    if (connectedButBlocked.length > 0) {
+      lines.push('尚不能发送：');
+      for (const entry of connectedButBlocked) lines.push(renderOutboundChannelForPrompt(entry));
+    }
+    if (offlineLine) lines.push(offlineLine);
+    lines.push(
+      `发送规则：默认且只允许发往该通道上最近一次与你的私聊会话（target 留空即为默认）；任何其他会话 id 都会被拒绝。附件必须写本地绝对路径并放进 attachments 参数（不要写进正文，避免部分通道重复发送），单文件上限见上表。`
+    );
+  }
+  lines.push('</channel_capabilities>');
+  lines.push('<instruction>');
+  lines.push(
+    'The &lt;channel_capabilities&gt; block is the machine\'s live IM inventory, read from the gateway'
+  );
+  lines.push(
+    'implementations at prompt time. Send through the im_send_message tool; if a channel is not listed'
+  );
+  lines.push(
+    'as sendable, do not claim it can send and do not fall back to UI automation of an IM client.'
+  );
+  lines.push('</instruction>');
+  return lines.join('\n');
+}
+
+/**
+ * What THIS chat channel can actually send, in the agent's own prompt.
+ *
+ * Same-source guarantee: every extension and the size ceiling are read from
+ * `weixinMedia`'s own tables (`MIME_BY_EXTENSION` → `uploadKindForFile` and
+ * `WEIXIN_OUTBOUND_MAX_BYTES`) through `describeWeixinOutboundCapabilities()`,
+ * and the two "cannot do" facts come from `weixinProtocol` constants. Adding an
+ * audio extension or changing the ceiling therefore changes the advertised
+ * manifest in the same edit — no hand-copied numbers to drift.
+ *
+ * Scope: `im:` channels keep their per-channel manifest; `cowork_ui` gets the
+ * desktop inventory (see buildCoworkUiChannelCapabilitiesBlock). Any other
+ * channel returns '' — advertising capabilities nobody verified would be worse
+ * than saying nothing.
+ */
+export function buildChannelCapabilitiesBlock(
+  channel: string | null | undefined,
+  options: ChannelCapabilityBlockOptions = {}
+): string {
+  const normalized = typeof channel === 'string' ? channel.trim().toLowerCase() : '';
+  if (normalized === 'cowork_ui') {
+    return buildCoworkUiChannelCapabilitiesBlock(normalized, options.connectedChannels ?? []);
+  }
+  if (!normalized.startsWith('im:')) return '';
+  const [platform] = normalized.split(':').slice(1);
+  if (platform !== 'weixin') return '';
+  const isGroup = normalized.endsWith(':group');
+
+  if (isGroup && !WEIXIN_GROUP_MESSAGING_SUPPORTED) {
+    return [
+      `<channel_capabilities channel="${escapeXml(normalized)}">`,
+      '当前会话是微信「群聊」通道，但该微信账号的群聊消息能力在平台侧被禁用（代码常量 WEIXIN_GROUP_MESSAGING_SUPPORTED = false）。',
+      '因此：不要尝试在此会话发送任何微信消息或附件；如需交付文件，请说明原因并改用私聊通道。',
+      '</channel_capabilities>',
+    ].join('\n');
+  }
+
+  const capabilities = describeWeixinOutboundCapabilities();
+  const directions = capabilities.extensionsByKind;
+  // Audio is a FILE attachment on this channel, so list it separately from the
+  // other documents instead of advertising a voice item that is never produced.
+  const audioExtensions = new Set(capabilities.audioExtensions);
+  const documentExtensions = directions.file.filter((extension) => !audioExtensions.has(extension));
+  const inboundVoiceRule = WEIXIN_INBOUND_VOICE_AUDIO_SUPPORTED
+    ? '入站语音会下载音频。'
+    : '入站语音不下载音频，只使用服务端转写文字（voice_item.text）。';
+  const permissionLine = `- 权限模式：${describeImPermissionMode(options.permissionMode ?? 'default')}`;
+  return [
+    `<channel_capabilities channel="${escapeXml(normalized)}" source="weixinMedia.ts">`,
+    '当前是微信私聊通道。把本地绝对路径写进回复正文即可发送附件（系统自动识别并转成对应消息类型）；只接受本地绝对路径，不接受公网 URL。',
+    `- 图片：${formatExtensionList(directions.image)}`,
+    `- 视频：${formatExtensionList(directions.video)}`,
+    `- 音频：${formatExtensionList(capabilities.audioExtensions)}；按普通文件发送（file_item，media_type 3），客户端显示为音频文件附件，不生成语音条`,
+    `- 普通文件：${formatExtensionList(documentExtensions)}；未列出的扩展名同样按普通文件发送`,
+    `- 单文件上限：${formatChannelCapabilityByteLimit(capabilities.maxOutboundBytes)}（WEIXIN_OUTBOUND_MAX_BYTES = ${capabilities.maxOutboundBytes} bytes）`,
+    `- 不能做：微信群聊发送（${WEIXIN_GROUP_MESSAGING_SUPPORTED ? '可用' : '平台侧禁用，仅私聊可用'}）；${inboundVoiceRule}`,
+    permissionLine,
+    '</channel_capabilities>',
+    '<instruction>',
+    'The &lt;channel_capabilities&gt; block is derived from the channel implementation itself. When it',
+    'disagrees with any generic media instruction elsewhere in this prompt, THIS block wins: it is what',
+    'the running code will actually do with a path you write.',
+    '</instruction>',
+  ].join('\n');
 }
 
 export type ExperienceRecallGranularity = 'day' | 'week' | 'month';

@@ -12,8 +12,15 @@ export default class FetchBuzzCommentsCommand {
       return { list: [], total: 0, pinId: '' };
     }
 
-    var endpoint = '/social/buzz/comments?pinId=' + encodeURIComponent(pinId);
-    var response = await delegate('metaid_man', endpoint, { method: 'GET' });
+    var size = Number(payload.size);
+    var query = new URLSearchParams();
+    if (Number.isFinite(size) && size > 0) query.set('size', String(Math.floor(size)));
+    if (payload.cursor) query.set('cursor', String(payload.cursor));
+    var qs = query.toString();
+    // Aggregation layer (metaso-p2p): the retired show.now
+    // /social/buzz/comments route went offline 2026-11-01.
+    var endpoint = '/api/social/post/' + encodeURIComponent(pinId) + '/comments' + (qs ? '?' + qs : '');
+    var response = await delegate('social_agg', endpoint, { method: 'GET' });
     var list = this._normalizeCommentList(response);
 
     return {
@@ -51,6 +58,8 @@ export default class FetchBuzzCommentsCommand {
     var source = [];
     if (Array.isArray(payload)) {
       source = payload;
+    } else if (Array.isArray(payload && payload.items)) {
+      source = payload.items;
     } else if (Array.isArray(payload && payload.comments)) {
       source = payload.comments;
     } else if (Array.isArray(payload && payload.list)) {
@@ -74,8 +83,8 @@ export default class FetchBuzzCommentsCommand {
       content: content,
       timestamp: timestamp,
       chainName: String(item.chainName || item.chain || '').trim(),
-      createAddress: String(item.createAddress || item.address || item.creatorAddress || '').trim(),
-      createMetaid: String(item.CreateMetaid || item.createMetaid || item.metaid || item.metaId || '').trim(),
+      createAddress: String(item.createAddress || item.address || item.authorAddress || item.creatorAddress || '').trim(),
+      createMetaid: String(item.CreateMetaid || item.createMetaid || item.metaid || item.metaId || item.authorMetaId || item.authorGlobalMetaId || '').trim(),
       likeNum: Number(item.likeNum || item.likeCount || 0) || 0,
       commentNum: Number(item.commentNum || item.commentCount || 0) || 0,
       forwardNum: Number(item.forwardNum || item.forwardCount || 0) || 0,

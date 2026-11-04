@@ -35,8 +35,40 @@ function asString(value: unknown): string {
 // Indexer base URLs (see the skill references).
 const MANAPI_BASE = 'https://manapi.metaid.io';
 const METAFILE_INDEXER_BASE = 'https://file.metaid.io/metafile-indexer';
-const SHOWNOW_BASE = 'https://show.now/man';
-const MAN_BASE = 'https://man.metaid.io';
+
+// Social reads were single-pointed at the retired man/show.now service layer
+// (offline 2026-11-01, verified from two machines: man.metaid.io whole-site
+// 502, show.now 301 → www.show.now 504 upstream-unreachable). They now use an
+// ordered base LIST with level-by-level fallback (BOT-009 supplement #7:
+// repairing "single point on show.now" into "single point on so.metaid.io"
+// is the same bug with a new address):
+//
+//   level 1  metaso-p2p aggregation layer (so.metaid.io by default) — the
+//            live backend behind search_social_posts, same-day data
+//   level 2  chain-sourced direct read via the manapi pin control plane —
+//            only for read shapes a raw pin list can serve (buzz_newest →
+//            pins_by_path /protocols/simplebuzz; buzz_info → raw pin);
+//            engagement counts there read the string "unavailable"
+//   level 3  explicit isError naming every failed endpoint — never a blank
+//            or fabricated-empty page ("no data" ≠ "cannot read")
+//
+// Repoint or extend the level-1 list via IDBOTS_SOCIAL_AGG_BASES
+// (comma-separated, in order). See docs/social-read-resilience.md.
+function resolveSocialAggBases(): string[] {
+  const fromEnv = typeof process !== 'undefined' && process.env ? process.env.IDBOTS_SOCIAL_AGG_BASES : '';
+  const parsed = String(fromEnv || '')
+    .split(',')
+    .map((entry) => entry.trim().replace(/\/+$/, ''))
+    .filter(Boolean);
+  return parsed.length > 0 ? parsed : ['https://so.metaid.io'];
+}
+const SOCIAL_AGG_BASES = resolveSocialAggBases();
+
+/** Machine-checkable unknown for engagement counts (BOT-009 supplement #9):
+ *  the string "unavailable" — never null (null is silently swallowed by
+ *  `|| 0` downstream). value === 'unavailable' ⇔ unknown; null/0/missing do
+ *  not qualify. */
+export const ENGAGEMENT_UNKNOWN = 'unavailable';
 
 /** Keep large indexer payloads from flooding the conversation. */
 const MAX_RESULT_CHARS = 20000;
@@ -50,10 +82,10 @@ const TRUNCATION_NOTE_RESERVE = 256;
 
 /**
  * The pagination token echoed by the indexer, if any. manapi paged responses
- * carry cursor/nextCursor at the top level or under `data`; show.now buzz
- * lists echo lastId. A truncated page is only recoverable if the note names
- * the token and its value — the old note pointed at a field it had just cut
- * out of the JSON.
+ * carry cursor/nextCursor at the top level or under `data`; the aggregation
+ * layer's social pages echo nextCursor under `data`. A truncated page is only
+ * recoverable if the note names the token and its value — the old note
+ * pointed at a field it had just cut out of the JSON.
  */
 function responseCursor(data: unknown): { key: string; value: string } | null {
   if (data === null || typeof data !== 'object') return null;
@@ -74,6 +106,21 @@ function truncationNote(kept: number, total: number, cursor: { key: string; valu
     return `[omni_read: first ${kept} of ${total} chars — ${cursor.key} "${cursor.value}" present; re-run with ${cursor.key}="${cursor.value}" for the next page]`;
   }
   return `[omni_read: first ${kept} of ${total} chars — no pagination cursor in the response; narrow the query (page/size) to reach the rest]`;
+}
+
+/**
+ * Tag a response served by a substitute read path so a caller cannot mistake
+ * it for the retired backend's native semantics (e.g. the personalized
+ * recommended feed served as sort=hot, the notification list served as the
+ * aggregation layer's interactions inbox). Adds a `_degraded` field to the
+ * envelope — the only mutation omni_read performs on indexer JSON besides
+ * list-page truncation.
+ */
+function markDegraded(json: unknown, note: string): unknown {
+  if (json !== null && typeof json === 'object' && !Array.isArray(json)) {
+    return { ...(json as Record<string, unknown>), _degraded: note };
+  }
+  return json;
 }
 
 /**
@@ -550,6 +597,50 @@ export function buildOmniReaderAgentTools(deps: {
 }): unknown[] {
   const { tool, control, sessionId, resolveMetabotId } = deps;
 
+  /**
+   * Level-1 read: try every aggregation base in order. First base that
+   * answers wins; each failure is collected so a total outage can be
+   * reported explicitly instead of as a blank.
+   */
+  async function fetchSocialAgg(
+    path: string,
+    query?: Record<string, string | number | undefined>,
+  ): Promise<{ json: unknown; url: string }> {
+    const errors: string[] = [];
+    for (const base of SOCIAL_AGG_BASES) {
+      const url = buildUrl(base, path, query);
+      try {
+        return { json: await control.fetchJson(url), url };
+      } catch (error) {
+        errors.push(`${base}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    throw new Error(`social aggregation layer unreachable (${errors.join('; ')})`);
+  }
+
+  /**
+   * Level-2 wrapper for chain-sourced direct reads: the raw pin payload has
+   * no engagement counts, so every count field is explicitly the string
+   * "unavailable" (machine-checkable unknown — never null, never 0) and the
+   * envelope is marked `_degraded` naming the substitute read path.
+   */
+  function markChainDirectCounts(json: unknown, note: string): unknown {
+    const unknowns = {
+      likeCount: ENGAGEMENT_UNKNOWN,
+      commentCount: ENGAGEMENT_UNKNOWN,
+      donateCount: ENGAGEMENT_UNKNOWN,
+      quoteCount: ENGAGEMENT_UNKNOWN,
+    };
+    if (json !== null && typeof json === 'object' && !Array.isArray(json)) {
+      const envelope = json as Record<string, unknown>;
+      const data = envelope.data && typeof envelope.data === 'object' && !Array.isArray(envelope.data)
+        ? { ...(envelope.data as Record<string, unknown>), ...unknowns }
+        : undefined;
+      return { ...envelope, ...(data ? { data } : unknowns), _degraded: note };
+    }
+    return json;
+  }
+
   // Per-session witness of how many rows each cursor walk has actually
   // returned; read by withPaginationIntegrity (see its note on why a total
   // alone cannot distinguish an exhausted walk from a silent empty page).
@@ -560,9 +651,10 @@ export function buildOmniReaderAgentTools(deps: {
     [
       'Read-only raw MetaID/MetaWeb indexer queries — the low-level fallback returning raw indexer JSON; never writes on-chain.',
       'Actions: user_info, search_users, buzz_newest | buzz_recommended | buzz_hot | buzz_search | buzz_info, notifications, followers | following, pin, pin_version, pin_list, metaid_list, block_list, mempool_list, pins_by_path | pins_by_metaid | pins_by_address, pin_content, file_info, file_latest, files_by_creator | files_by_metaid | files_by_extension, indexer_status | indexer_stats, global_counts.',
+      'Social reads (buzz_*, notifications, followers/following) run on an ordered base list with fallback (docs/social-read-resilience.md): level 1 metaso-p2p aggregation (so.metaid.io, extend via IDBOTS_SOCIAL_AGG_BASES), level 2 chain-sourced direct pin reads via manapi where the read shape allows (buzz_newest/buzz_info — their payloads carry _degraded and counts "unavailable"), level 3 explicit error naming every failed base — never a blank. Engagement counts are TRI-STATE: a number (including 0) is a real count; a pin the buzz-only index does not cover has NO counts (buzz_info answers code 40400 "social post not found", level-2 rows carry the string "unavailable") — unknown, NEVER 0 (unknown ≠ 0; only value === "unavailable" is unknown).',
       'List pages that exceed the result budget come back as VALID JSON holding whole rows only, with `truncated: true` and `returned` telling you how much of the page you got; the server\'s own `total`/`nextCursor` are preserved, so when `truncated` is true the page is PARTIAL — page with cursor/size instead of treating it as the full list. When not even one whole row fits, the result falls back to a declared `[omni_read: first N of M chars — …]` cut instead (still page with cursor/size); either way an over-budget result is never a silently torn document.',
       'When a continuation page (a cursor was supplied) comes back with no rows while its own envelope says rows exist beyond that cursor, the result carries a `pagination` block with `complete: false` and the cursor that was tried — that page is an INCOMPLETE read, not the end of the list; do not conclude the remaining rows do not exist.',
-      'Parameters per action are documented on the fields below; paged actions echo lastId/cursor — pass it back for the next page (notifications lastId returns entries NEWER than that id and excludes answers to your questions; poll get_question_answers for those). Prefer search_metaids / metaid_profile for identity discovery and search_social_posts for full-text social search when those fit.',
+      'Parameters per action are documented on the fields below; paged actions echo cursor/nextCursor — pass it back for the next page (buzz feeds and followers/following page with cursor; notifications-lastId-style paging retired with the old backend). Prefer search_metaids / metaid_profile for identity discovery and search_social_posts for full-text social search when those fit.',
     ].join(' '),
     {
       action: z.enum(ACTIONS).describe('Which indexer query to run.'),
@@ -572,16 +664,16 @@ export function buildOmniReaderAgentTools(deps: {
       keyword: z.string().optional().describe('Search keyword for search_users.'),
       keytype: z.enum(['metaid', 'name']).optional().describe('search_users key type; omit to search both.'),
       limit: z.number().int().optional().describe('search_users result limit (default 10).'),
-      lastId: z.string().optional().describe('Paging cursor echoed by buzz/notification list responses.'),
+      lastId: z.string().optional().describe('Legacy paging cursor from the retired show.now feeds; buzz actions still accept it and forward it as cursor. Prefer cursor.'),
       size: z.number().int().optional().describe('Page size. buzz_hot caps at 50; pins_by_path allows 1-100.'),
-      followed: z.number().int().min(0).max(1).optional().describe('buzz_newest filter: 1 = followed users only, 0 = all.'),
-      userAddress: z.string().optional().describe('Wallet address for buzz_recommended personalization.'),
+      followed: z.number().int().min(0).max(1).optional().describe('buzz_newest filter: 1 = posts by authors the given metaid follows (requires metaid), 0/omitted = all posts.'),
+      userAddress: z.string().optional().describe('buzz_recommended: accepted for compatibility only — personalization retired with the old backend; the feed degrades to sort=hot (response carries _degraded).'),
       key: z.string().optional().describe('Search keyword for buzz_search.'),
       pinId: z.string().optional().describe('Pin id (txid+iN) for pin, pin_version, buzz_info, pin_content, file_info.'),
       ver: z.number().int().optional().describe('pin_version version number; 0 = initial version, >= 1 = history.'),
       page: z.number().int().optional().describe('Page number for pin_list, metaid_list, block_list, mempool_list.'),
       path: z.string().optional().describe('MetaID protocol path, e.g. /protocols/simplebuzz. Required for pins_by_path and pins_by_address.'),
-      cursor: z.string().optional().describe('Cursor-based paging token (string). followers/following default to 0.'),
+      cursor: z.string().optional().describe('Cursor-based paging token (string). Used by buzz feeds, notifications (interactions inbox) and followers/following on the aggregation layer.'),
       firstPinId: z.string().optional().describe('First pin id of a file chain for file_latest.'),
       extension: z.string().optional().describe('File extension like .jpg for files_by_extension.'),
       timestamp: z.string().optional().describe('Optional timestamp filter for files_by_extension.'),
@@ -631,51 +723,126 @@ export function buildOmniReaderAgentTools(deps: {
           }
 
           case 'buzz_newest': {
-            const url = buildUrl(SHOWNOW_BASE, 'social/buzz/newest', {
-              lastId: asString(args.lastId) || undefined,
+            // Aggregation feed (metaso-p2p /api/social/feed): newest first,
+            // cursor-paged (echoes nextCursor). Engagement counts in each row
+            // are tri-state: a number (including a real 0) is a count the
+            // buzz-only index covers; for pins it does not cover the detail
+            // read answers 40400 instead — unknown, NEVER 0.
+            const followed = args.followed === 1;
+            const subject = asString(args.metaid);
+            if (followed && !subject) {
+              return textResult(
+                'omni_read buzz_newest followed=1 requires metaid (the subject whose followed-authors feed is requested).',
+                true,
+              );
+            }
+            const query: Record<string, string | number | undefined> = {
               size: args.size,
-              metaid: asString(args.metaid) || undefined,
-              followed: args.followed,
-            });
-            return textResult(formatData(await control.fetchJson(url)));
+              cursor: asString(args.cursor) || asString(args.lastId) || undefined,
+              publisher: !followed && subject ? subject : undefined,
+              scope: followed ? 'following' : undefined,
+              user: followed ? subject : undefined,
+            };
+            try {
+              const { json } = await fetchSocialAgg('api/social/feed', query);
+              return textResult(formatData(json));
+            } catch (aggError) {
+              // Level 2 — chain-sourced direct read. A followed-authors feed
+              // cannot be reconstructed from raw pins (the follow graph is
+              // not resolved here), so the fallback applies only to the
+              // unfiltered/publisher feeds. A level-2 failure names BOTH
+              // levels explicitly (never a blank).
+              if (followed) throw aggError;
+              const chainQuery: Record<string, string | number | undefined> = {
+                path: '/protocols/simplebuzz',
+                size: args.size,
+                cursor: asString(args.cursor) || asString(args.lastId) || undefined,
+              };
+              const chainUrl = subject
+                ? buildUrl(MANAPI_BASE, `api/metaid/pin/list/${encodeURIComponent(subject)}`, chainQuery)
+                : buildUrl(MANAPI_BASE, 'api/pin/path/list', chainQuery);
+              const chainSource = subject ? 'manapi pins_by_metaid' : 'manapi pins_by_path';
+              let json: unknown;
+              try {
+                json = await control.fetchJson(chainUrl);
+              } catch (chainError) {
+                throw new Error(
+                  `aggregation layer (${SOCIAL_AGG_BASES.join(', ')}) unreachable: ${aggError instanceof Error ? aggError.message : String(aggError)}; chain fallback ${chainSource} also failed: ${chainError instanceof Error ? chainError.message : String(chainError)}`,
+                );
+              }
+              return textResult(formatData(markChainDirectCounts(
+                json,
+                `buzz_newest: aggregation layer unreachable; serving the chain-sourced pin list (${chainSource}, /protocols/simplebuzz). Rows are raw pins — engagement counts are "unavailable" (buzz-only index not consulted); the aggregation cursor does not carry over.`,
+              )));
+            }
           }
 
           case 'buzz_recommended': {
-            const url = buildUrl(SHOWNOW_BASE, 'social/buzz/recommended', {
-              lastId: asString(args.lastId) || undefined,
-              size: args.size,
-              userAddress: asString(args.userAddress) || undefined,
-            });
-            return textResult(formatData(await control.fetchJson(url)));
+            // The personalized recommended feed retired with show.now; the
+            // aggregation layer has no per-user ranking, so this action
+            // degrades to sort=hot (top engagement within the last 48h) and
+            // the payload says so via _degraded. No level-2: a ranking is
+            // not reconstructible from raw chain pins.
+            const { json } = await fetchSocialAgg('api/social/feed', { sort: 'hot', size: args.size });
+            return textResult(formatData(markDegraded(
+              json,
+              'buzz_recommended: personalized ranking retired with show.now; serving sort=hot (top engagement, last 48h) from the metaso-p2p aggregation layer. userAddress is not used for ranking.',
+            )));
           }
 
           case 'buzz_hot': {
             if (args.size !== undefined && args.size > 50) {
               return textResult('omni_read buzz_hot size must be <= 50.', true);
             }
-            const url = buildUrl(SHOWNOW_BASE, 'social/buzz/hot', {
-              lastId: asString(args.lastId) || undefined,
-              size: args.size,
-            });
-            return textResult(formatData(await control.fetchJson(url)));
+            // sort=hot is a single page (top engagement within the last 48h);
+            // the aggregation layer does not paginate it. No level-2: an
+            // engagement ranking needs the buzz-only index.
+            const { json } = await fetchSocialAgg('api/social/feed', { sort: 'hot', size: args.size });
+            return textResult(formatData(json));
           }
 
           case 'buzz_search': {
             const key = asString(args.key);
             if (!key) return textResult('omni_read buzz_search requires key.', true);
-            const url = buildUrl(SHOWNOW_BASE, 'social/buzz/search', {
-              lastId: asString(args.lastId) || undefined,
+            // Single case-insensitive substring term (aggregation-layer
+            // semantics); multiple terms are OR-joined only by the higher
+            // level search_social_posts tool. No level-2: manapi has no
+            // content keyword search.
+            const { json } = await fetchSocialAgg('api/social/feed', {
+              keyword: key,
               size: args.size,
-              key,
+              cursor: asString(args.cursor) || asString(args.lastId) || undefined,
             });
-            return textResult(formatData(await control.fetchJson(url)));
+            return textResult(formatData(json));
           }
 
           case 'buzz_info': {
             const pinId = asString(args.pinId);
             if (!pinId) return textResult('omni_read buzz_info requires pinId.', true);
-            const url = buildUrl(SHOWNOW_BASE, 'social/buzz/info', { pinId });
-            const json = await control.fetchJson(url);
+            // Aggregated post detail. code 40400 "social post not found" is
+            // the buzz-only index saying it does not COVER the pin (metaTask
+            // roots, metaapp pins, witness submissions...) — an explicit
+            // unknown, never zero counts; read the raw pin with `pin` /
+            // `pin_content` instead.
+            let json: unknown;
+            try {
+              ({ json } = await fetchSocialAgg(`api/social/post/${encodeURIComponent(pinId)}`));
+            } catch (aggError) {
+              // Level 2 — chain-sourced direct read of the raw pin. No
+              // engagement counts on this path: they read "unavailable". A
+              // level-2 failure names BOTH levels explicitly.
+              const url = buildUrl(MANAPI_BASE, `api/pin/${encodeURIComponent(pinId)}`);
+              try {
+                json = markChainDirectCounts(
+                  await control.fetchJson(url),
+                  'buzz_info: aggregation layer unreachable; serving the raw chain pin (manapi /api/pin). Engagement counts are "unavailable" (buzz-only index not consulted).',
+                );
+              } catch (chainError) {
+                throw new Error(
+                  `aggregation layer (${SOCIAL_AGG_BASES.join(', ')}) unreachable: ${aggError instanceof Error ? aggError.message : String(aggError)}; chain fallback manapi /api/pin also failed: ${chainError instanceof Error ? chainError.message : String(chainError)}`,
+                );
+              }
+            }
             // Fire-and-forget chain-read ledger entry; the raw indexer JSON
             // is not normalized, so extraction is best-effort.
             recordChainReadSafe(readInputFromOmniJson(args.action, json, pinId, resolveMetabotId?.(sessionId ?? '')));
@@ -685,29 +852,44 @@ export function buildOmniReaderAgentTools(deps: {
           case 'notifications': {
             const address = asString(args.address);
             if (!address) return textResult('omni_read notifications requires address.', true);
-            // The "notifcation" spelling is the backend's; keep it verbatim.
-            // Served by the MAN indexer: manapi answers this route with a
-            // perpetual empty list for every address, while man.metaid.io
-            // returns real notifications with the identical shape.
-            const url = buildUrl(MAN_BASE, 'api/notifcation/list', {
-              address,
+            // The native notification backend (man.metaid.io
+            // /api/notifcation/list) went offline 2026-11-01 (whole-site
+            // 502), and manapi's same route answers a perpetual empty list —
+            // indistinguishable from "no notifications", i.e. a fabricated
+            // blank. Degrade to the aggregation layer's deterministic inbox
+            // instead (likes/comments on the owner's pins + answers to their
+            // questions) and mark the payload _degraded so the semantic
+            // change is machine-checkable. No level-2: an inbox is an
+            // aggregation-layer construct.
+            const { json } = await fetchSocialAgg('api/metaweb/interactions', {
+              owner: address,
               size: args.size,
-              lastId: asString(args.lastId) || undefined,
+              cursor: asString(args.cursor) || asString(args.lastId) || undefined,
             });
-            return textResult(formatData(await control.fetchJson(url)));
+            return textResult(formatData(markDegraded(
+              json,
+              'notifications: the man.metaid.io notification list is offline; serving the metaso-p2p interactions inbox (likes/comments on your pins + answers to your questions) instead.',
+            )));
           }
 
           case 'followers':
           case 'following': {
             const metaid = asString(args.metaid);
             if (!metaid) return textResult(`omni_read ${args.action} requires metaid.`, true);
-            const endpoint = args.action === 'followers' ? 'followerList' : 'followingList';
-            const url = buildUrl(MAN_BASE, `api/metaid/${endpoint}/${encodeURIComponent(metaid)}`, {
-              cursor: asString(args.cursor) || '0',
-              size: args.size,
-              followDetail: 'true',
-            });
-            return textResult(formatData(await control.fetchJson(url)));
+            // man.metaid.io's follow-list routes are offline (whole-site 502
+            // since 2026-11-01); the aggregation layer serves the same lists
+            // (globalMetaId OR legacy hex metaId both key the route),
+            // cursor-paged, block-filtered. No level-2: the follow graph is
+            // not served by the pin control plane.
+            const endpoint = args.action === 'followers' ? 'followers' : 'following';
+            const { json } = await fetchSocialAgg(
+              `api/social/globalmetaid/${encodeURIComponent(metaid)}/${endpoint}`,
+              {
+                cursor: asString(args.cursor) || undefined,
+                size: args.size,
+              },
+            );
+            return textResult(formatData(json));
           }
 
           case 'pin': {

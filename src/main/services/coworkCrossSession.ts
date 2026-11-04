@@ -15,7 +15,8 @@ export type CoworkCrossSessionErrorCode =
   | 'WRITE_NOT_ALLOWED_FOR_A2A'
   | 'SOURCE_TARGET_SAME_SESSION'
   | 'EMPTY_MESSAGE'
-  | 'MESSAGE_TOO_LONG';
+  | 'MESSAGE_TOO_LONG'
+  | 'DELIVERY_CONFLICT';
 
 export interface CoworkCrossSessionError {
   ok: false;
@@ -71,6 +72,7 @@ export interface CoworkCrossSessionInsertSuccess {
   sourceSessionId: string;
   targetSessionId: string;
   message: CoworkCrossSessionMessage;
+  reused?: boolean;
 }
 
 export type CoworkCrossSessionReadAllResult =
@@ -90,7 +92,9 @@ export interface CoworkCrossSessionStore {
   getSessionMetadata(sessionId: string): CoworkStoreSessionMetadata | null;
   getSessionLatestMessage(sessionId: string): CoworkMessage | null;
   getSessionLatestVisibleMessage(sessionId: string): CoworkMessage | null;
+  getMessageById?(sessionId: string, messageId: string): CoworkMessage | null;
   addMessage(sessionId: string, message: Omit<CoworkMessage, 'id' | 'timestamp'>): CoworkMessage;
+  addMessageWithId?(sessionId: string, id: string, message: Omit<CoworkMessage, 'id' | 'timestamp'>): CoworkMessage;
 }
 
 const IDBOTS_SESSION_SCHEME = /^idbots:\/\//i;
@@ -202,6 +206,7 @@ export class CoworkCrossSessionService {
     sourceSessionId: string;
     targetSessionId: string;
     message: string;
+    deliveryId?: string;
   }): CoworkCrossSessionInsertResult {
     // P4 (v1.2): the host pseudo-source `group-task:<id>` (group-task
     // acceptance/review relay attribution, "哪里发起哪里结束") contains a
@@ -251,20 +256,43 @@ export class CoworkCrossSessionService {
       return error('MESSAGE_TOO_LONG', `Message must be ${CROSS_SESSION_INSERT_MAX_CHARS} characters or fewer.`);
     }
 
-    const message = this.store.addMessage(targetId.sessionId, {
-      type: 'user',
-      content: wrapCrossSessionMessage(sourceId.sessionId, trimmedMessage),
+    const content = wrapCrossSessionMessage(sourceId.sessionId, trimmedMessage);
+    const deliveryId = input.deliveryId?.trim() || null;
+    const existing = deliveryId
+      ? this.store.getMessageById?.(targetId.sessionId, deliveryId) ?? null
+      : null;
+    if (existing && existing.content !== content) {
+      return error('DELIVERY_CONFLICT', `Delivery ${deliveryId} already names a different message.`);
+    }
+    if (existing) {
+      return {
+        ok: true,
+        sourceSessionId: sourceId.sessionId,
+        targetSessionId: targetId.sessionId,
+        message: toMessage(existing),
+        reused: true,
+      };
+    }
+
+    const messageInput = {
+      type: 'user' as const,
+      content,
       metadata: {
         sourceChannel: 'idbots_cross_session',
         sourceSessionId: sourceId.sessionId,
+        ...(deliveryId ? { crossSessionDeliveryId: deliveryId } : {}),
       },
-    });
+    };
+    const message = deliveryId && this.store.addMessageWithId
+      ? this.store.addMessageWithId(targetId.sessionId, deliveryId, messageInput)
+      : this.store.addMessage(targetId.sessionId, messageInput);
 
     return {
       ok: true,
       sourceSessionId: sourceId.sessionId,
       targetSessionId: targetId.sessionId,
       message: toMessage(message),
+      reused: false,
     };
   }
 

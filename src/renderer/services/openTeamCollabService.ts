@@ -1,5 +1,5 @@
 import type { GroupChatTranscriptMessage } from '../types/groupTask';
-import type { OpenTeamCollabSummary, OpenTeamGuestInvite } from '../types/openTeamCollab';
+import type { OpenTeamCollabSummary, OpenTeamGuestInvite, OpenTeamCollabMember } from '../types/openTeamCollab';
 
 /**
  * Renderer-side wrapper for the openTeamCollab:* IPC surface (invitee-side
@@ -40,6 +40,16 @@ class OpenTeamCollabService {
       throw new Error(result.error ?? 'Failed to load received OpenTeam invites');
     }
     return (result.items ?? []) as OpenTeamGuestInvite[];
+  }
+
+  async getMembers(groupId: string): Promise<OpenTeamCollabMember[]> {
+    const api = window.electron?.openTeamCollab;
+    if (!api) throw new Error('OpenTeam collab API unavailable');
+    const result = await api.getMembers({ groupId });
+    if (!result.success) {
+      throw new Error(result.error ?? 'Failed to load members');
+    }
+    return (result.members ?? []) as OpenTeamCollabMember[];
   }
 }
 

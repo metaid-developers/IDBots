@@ -254,17 +254,37 @@ class IdBuzzActions extends HTMLElement {
     return false;
   }
 
+  // Tri-state engagement counts: the string 'unavailable' = the index
+  // offered no count for this pin (unknown — never fabricate a 0; null is
+  // never used as the unknown marker because `|| 0` swallows it silently);
+  // a number (including 0) is real.
+  _baseCount(item, key) {
+    var raw = item ? item[key] : undefined;
+    if (raw === null || raw === undefined || raw === '') return 'unavailable';
+    if (typeof raw === 'string' && raw.trim().toLowerCase() === 'unavailable') return 'unavailable';
+    var parsed = typeof raw === 'number' ? raw : Number(String(raw).trim());
+    return Number.isFinite(parsed) ? parsed : 'unavailable';
+  }
+
+  // Apply a local delta on top of a possibly-unknown base: unknown stays the
+  // delta itself once the user acts; a known base shifts normally.
+  _countWithDelta(base, delta) {
+    if (base === 'unavailable') return delta > 0 ? delta : 'unavailable';
+    return Math.max(0, base + delta);
+  }
+
+  // Render a tri-state count: unknown renders as "—", a real 0 as "0".
+  _formatCount(value) {
+    return value === 'unavailable' ? '—' : String(value);
+  }
+
   _makeSnapshot() {
     var pinId = this._getPinId();
     var item = this._findBuzzItem(pinId);
 
-    var baseLikeCount = Number(item && item.likeCount || 0);
-    var baseCommentCount = Number(item && item.commentCount || 0);
-    var baseForwardCount = Number(item && item.forwardCount || 0);
-
-    if (!Number.isFinite(baseLikeCount)) baseLikeCount = 0;
-    if (!Number.isFinite(baseCommentCount)) baseCommentCount = 0;
-    if (!Number.isFinite(baseForwardCount)) baseForwardCount = 0;
+    var baseLikeCount = this._baseCount(item, 'likeCount');
+    var baseCommentCount = this._baseCount(item, 'commentCount');
+    var baseForwardCount = this._baseCount(item, 'forwardCount');
 
     var user = this._getCurrentUser();
     var liked = this._likedOverride === null
@@ -275,9 +295,9 @@ class IdBuzzActions extends HTMLElement {
       pinId: pinId,
       item: item,
       liked: liked,
-      likeCount: Math.max(0, baseLikeCount + this._likeDelta),
-      commentCount: Math.max(0, baseCommentCount + this._commentDelta),
-      forwardCount: Math.max(0, baseForwardCount + this._forwardDelta),
+      likeCount: this._countWithDelta(baseLikeCount, this._likeDelta),
+      commentCount: this._countWithDelta(baseCommentCount, this._commentDelta),
+      forwardCount: this._countWithDelta(baseForwardCount, this._forwardDelta),
       user: user,
       commentModalOpen: this._commentModalOpen,
       quoteModalOpen: this._quoteModalOpen,
@@ -495,7 +515,7 @@ class IdBuzzActions extends HTMLElement {
     }
     if (text[0] === '/') {
       var serviceLocator = (typeof window !== 'undefined' && window.ServiceLocator) ? window.ServiceLocator : {};
-      var manBase = String(serviceLocator.metaid_man || 'https://www.show.now/man').replace(/\/+$/, '');
+      var manBase = String(serviceLocator.metaid_man || 'https://manapi.metaid.io').replace(/\/+$/, '');
       return manBase + text;
     }
     return text;
@@ -1087,17 +1107,17 @@ class IdBuzzActions extends HTMLElement {
       <div class="actions">
         <button class="action-btn" data-action="open-comment" ${snapshot.commentSubmitLoading || snapshot.commentListLoading ? 'disabled' : ''}>
           <span>${this._escapeHtml(this._t('buzz.actions.comment', 'Comment'))}</span>
-          <span class="count">${this._escapeHtml(String(snapshot.commentCount))}</span>
+          <span class="count">${this._escapeHtml(this._formatCount(snapshot.commentCount))}</span>
         </button>
 
         <button class="action-btn ${snapshot.liked ? 'is-liked' : ''}" data-action="like" ${snapshot.likeLoading || snapshot.liked ? 'disabled' : ''}>
           <span>${this._escapeHtml(snapshot.likeLoading ? this._t('buzz.actions.liking', 'Liking...') : (snapshot.liked ? this._t('buzz.actions.liked', 'Liked') : this._t('buzz.actions.like', 'Like')))}</span>
-          <span class="count">${this._escapeHtml(String(snapshot.likeCount))}</span>
+          <span class="count">${this._escapeHtml(this._formatCount(snapshot.likeCount))}</span>
         </button>
 
         <button class="action-btn" data-action="repost" ${snapshot.repostLoading ? 'disabled' : ''}>
           <span>${this._escapeHtml(snapshot.repostLoading ? this._t('buzz.actions.reposting', 'Reposting...') : this._t('buzz.actions.repost', 'Repost'))}</span>
-          <span class="count">${this._escapeHtml(String(snapshot.forwardCount))}</span>
+          <span class="count">${this._escapeHtml(this._formatCount(snapshot.forwardCount))}</span>
         </button>
 
         <button class="action-btn" data-action="open-quote">

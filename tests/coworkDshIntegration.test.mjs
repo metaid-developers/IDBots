@@ -215,6 +215,22 @@ test('CoworkRunner DSH integration', { skip: runtimeReady ? false : 'dsh-runtime
       seen.some((r) => (r.body?.tools ?? []).some((tool) => (tool.function?.name ?? tool.name) === 'owner_update')),
       'the normalized owner_update schema reached the real runtime',
     )
+
+    const beforeFinalization = store.messages.length
+    await runner.runDshSessionLocal(activeSession, 'CALL_FINALIZATION', process.cwd(), 'You are Alice.')
+    assert.ok(!failure, `finalization turn should not fail: ${failure}`)
+    const finalizationMessages = store.messages.slice(beforeFinalization)
+    const integratedReply = finalizationMessages.find((m) => m.type === 'assistant'
+      && m.metadata?.isThinking !== true
+      && m.content === '找到了，本机已有可复用文件。验证已完成，下一步只需要你提供编号。')
+    assert.ok(integratedReply, `finalization produced the integrated owner reply: ${JSON.stringify(finalizationMessages.map((m) => ({ type: m.type, content: m.content, metadata: m.metadata })))}`)
+    assert.equal(finalizationMessages.some((m) => m.type === 'assistant'
+      && m.metadata?.isThinking !== true
+      && m.content === '权限已收紧。接下来还需要你提供编号。'), false, 'the short addendum never displaces the full answer')
+    assert.equal(activeSession.finalizationAttempted, true)
+    const finalizationRequest = seen.findLast((r) => (r.body?.messages ?? []).some((m) => String(m.content ?? '').includes('The execution phase has stopped')))
+    assert.ok(finalizationRequest, 'the real runtime received the finalization continuation')
+    assert.equal((finalizationRequest.body.tools ?? []).some((tool) => (tool.function?.name ?? tool.name) === 'owner_update'), false, 'host tools are physically absent during finalization')
     store.sourceChannel = null
     activeSession.skipInitialUserMessage = false
 

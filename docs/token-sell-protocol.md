@@ -15,8 +15,17 @@ can list and take FT orders the same way they already trade NFTs:
 | `wallet_token_balance` | read | FT holdings per address (open-api-mvc `contract/ft`) |
 | `wallet_token_sell` | LIST | op=1 TRANSFER into a TokenSell seed lock |
 | `wallet_token_sell_orders` | read | verify a listing tuple against the chain |
-| `wallet_token_take` | TAKE | op=2 UNLOCK_FROM_CONTRACT |
+| `wallet_token_buy` | TAKE (buy/take are synonyms; verb aligned with the NFT line) | op=2 UNLOCK_FROM_CONTRACT |
+| `wallet_token_take` | TAKE (**deprecated alias, still registered**) | exactly equivalent to `wallet_token_buy`: same schema object, same handler |
 | `wallet_token_cancel_sell` | CANCEL | self-take (seller==taker; price circles back, fees spent) |
+
+**Rename and compatibility (take → buy)**: `wallet_token_buy` is the canonical
+name of this capability; `wallet_token_take` remains registered as a **kept
+alias** (same schema object, same handler, byte-identical behavior). The alias
+is not removed: callers already written against `wallet_token_take` keep
+working unchanged; new code should use `wallet_token_buy`. Removing the alias
+in the future must ship as a separate breaking change and update this section
+plus the alias assertions in `tests/mvcTokenSell.test.mjs`.
 
 All signing runs in the subprocess worker
 (`src/main/libs/buildMvcTokenSellRawTxWorker.ts`, `ELECTRON_RUN_AS_NODE`, same
@@ -123,8 +132,42 @@ therefore VERIFIES a tuple against the chain (raw LIST tx, v10 txid
 recomputation, seed-lock decode → seller/price cross-check, dataPart amount)
 instead of listing orders; misquotes and non-TokenSell outputs fail closed.
 
+## Non-trade op=1 TRANSFER (wallet_token_transfer)
+
+Verb-aligned with `wallet_nft_transfer`. Moves ONE FT token utxo **in full**
+from the session wallet to a raw MVC receiver address — no seed lock, no
+price output, no listing tuple. Construction = the LIST shape trimmed of its
+trade coupling (`mvcTokenSellAssembly.buildTransferTxB`):
+
+- in0 token utxo — op=1 TRANSFER 18-param unlock, verbatim SDK input0 proof
+  + backtrace lineage (identical to LIST);
+- in1 checker — auto-minted TransferCheck (op=1 family) whose receiver is the
+  **raw receiver hash160** and whose amount is the full utxo amount
+  (conservation pairs it with the token output);
+- in2 funding P2PKH — fees + change;
+- out0 token locked to the receiver (`getNewTokenScript` — the taker.mjs
+  out0 shape: the receiver gets a standard, re-transferable/listable token
+  utxo), out1 change.
+
+Gates: `checkTokenTransferAmountGates/assertTokenTransferAmountGates` in
+`mvcTokenSellCore` — full-utxo only (partial moves rejected; splitting needs
+the listing/precise-split path), checker denomination ≥ dust. There is no
+price in a transfer. The worker action is `transfer` (never broadcasts);
+broadcast order is `checker mint → transfer`, staged by the service exactly
+like sell/take. Token-utxo discovery mirrors sell: unique utxo of the genesis
+or explicit `token_txid`/`token_vout` when several are held.
+
 ## Test vectors
 
 `tests/fixtures/tokenSell/` — public chain data only, zero key material:
 `f518099d` raw + 112B header, prev-token raw, live checker cast, live seed
-TxA, live LIST TxB, and the anchor constants in `meta.json`.
+TxA, live LIST TxB, and the anchor constants in `meta.json`. The TRANSFER
+tests reuse these fixtures with a deterministic dry signer, a dry receiver
+and an offline-minted checker cast (no new fixtures).
+
+
+## Read-path family and endpoint conventions (wallet_token_balance implementation notes)
+
+- FT (token) read paths use the **open-api-mvc** family: `https://api.microvisionchain.com/open-api-mvc/contract/ft/address/{address}/balance` and `.../utxo?codeHash=...&genesis=...`. The full `/open-api-mvc/...` path prefix is REQUIRED — the bare host (api.microvisionchain.com/) answers with an nginx placeholder page, not an error code: HTTP 200 + placeholder HTML, easy to misread as success.
+- Endpoints in this family take NO `net` parameter (mainnet is the single-network convention); only the NFT-side wallet-api v4 endpoints use `?net=mainnet`.
+- The two sides return different shapes: FT balance returns an ARRAY (one row per genesis: decimal / base-unit balance / genesis / codehash); the NFT endpoint wraps in `{code, data:{list:[...]}}`. Do not share a response parser between them.

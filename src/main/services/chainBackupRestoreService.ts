@@ -1,6 +1,7 @@
+import { gunzipSync } from 'node:zlib';
 import { DEFAULT_MANAPI_BASE_URL } from './manapiPinService';
 import { restoreMetabotFromMnemonicCore, type MetaidRestoreProfile } from './metabotRestoreService';
-import { chainBackupObjectId, decryptJson, deriveBackupKey, objectId } from './chainBackupCrypto';
+import { chainBackupObjectId, decryptBytes, deriveBackupKey, objectId } from './chainBackupCrypto';
 import { materializeBackupObjects } from './chainBackupSegments';
 import {
   importBackupObjects,
@@ -10,8 +11,10 @@ import {
 } from './chainBackupData';
 import {
   CHAIN_BACKUP_CIPHER,
+  CHAIN_BACKUP_ENCODING_GZIP,
   CHAIN_BACKUP_KDF,
   CHAIN_BACKUP_MANIFEST_PATH,
+  CHAIN_BACKUP_SEGMENT_STORAGE_METAFILE,
   type ChainBackupSegmentRef,
 } from './chainBackupService';
 import type { SqliteDatabase } from '../sqliteTypes';
@@ -22,6 +25,7 @@ import type { Metabot, MetabotUpdate } from '../types/metabot';
 const USER_BOTS_PATH = '/info/bots';
 const DEFAULT_TIMEOUT_MS = 15_000;
 const MAX_INDEXER_PAGES = 50;
+const DEFAULT_METAFILE_INDEXER_BASE_URL = 'https://file.metaid.io/metafile-indexer';
 
 export interface ChainBackupRestoreProgress {
   phase: 'discover' | 'manifest' | 'segments' | 'skeleton' | 'import' | 'done' | 'error';
@@ -81,6 +85,7 @@ interface SegmentEnvelope {
   segment: string;
   cipher: string;
   kdf: string;
+  encoding?: string;
   payload: string;
 }
 
@@ -128,6 +133,39 @@ export async function fetchPinContentText(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Download a metafile-stored backup segment: raw ciphertext bytes from the
+ * metafile indexer (accelerate first, preview as fallback).
+ */
+export async function fetchMetafileSegmentBytes(
+  pinId: string,
+  options?: { metafileIndexerBaseUrl?: string; timeoutMs?: number },
+): Promise<Buffer> {
+  const baseUrl = (options?.metafileIndexerBaseUrl || DEFAULT_METAFILE_INDEXER_BASE_URL).replace(/\/+$/, '');
+  const urls = [
+    `${baseUrl}/api/v1/files/accelerate/content/${encodeURIComponent(pinId)}`,
+    `${baseUrl}/api/v1/files/content/${encodeURIComponent(pinId)}`,
+  ];
+  let lastError = 'unreachable';
+  for (const url of urls) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), options?.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      if (!response.ok) {
+        lastError = `HTTP ${response.status}`;
+        continue;
+      }
+      return Buffer.from(await response.arrayBuffer());
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw new Error(`metafile segment fetch failed: ${lastError}`);
 }
 
 function text(value: unknown): string {
@@ -486,6 +524,7 @@ export interface RunChainBackupRestoreDeps {
   onProgress?: (progress: ChainBackupRestoreProgress) => void;
   applyAssignedSkills?: (metabotId: number, skills: string[]) => void;
   baseUrl?: string;
+  metafileIndexerBaseUrl?: string;
 }
 
 export async function runChainBackupRestore(deps: RunChainBackupRestoreDeps): Promise<ChainBackupRestoreResult> {
@@ -537,15 +576,28 @@ export async function runChainBackupRestore(deps: RunChainBackupRestoreDeps): Pr
       for (let s = 0; s < manifestHit.manifest.segments.length; s += 1) {
         const ref = manifestHit.manifest.segments[s];
         try {
-          const envelope = JSON.parse(await fetchPinContentText(ref.pinId, fetchOptions)) as SegmentEnvelope;
-          if (envelope.cipher !== CHAIN_BACKUP_CIPHER || envelope.kdf !== CHAIN_BACKUP_KDF) {
-            throw new Error(`unsupported backup envelope (cipher=${envelope.cipher}, kdf=${envelope.kdf})`);
+          let plaintext: unknown;
+          if (ref.storage === CHAIN_BACKUP_SEGMENT_STORAGE_METAFILE) {
+            const decrypted = decryptBytes(
+              backupKey,
+              await fetchMetafileSegmentBytes(ref.pinId, { metafileIndexerBaseUrl: deps.metafileIndexerBaseUrl }),
+            );
+            plaintext = JSON.parse(gunzipSync(decrypted).toString('utf8'));
+          } else {
+            const envelope = JSON.parse(await fetchPinContentText(ref.pinId, fetchOptions)) as SegmentEnvelope;
+            if (envelope.cipher !== CHAIN_BACKUP_CIPHER || envelope.kdf !== CHAIN_BACKUP_KDF) {
+              throw new Error(`unsupported backup envelope (cipher=${envelope.cipher}, kdf=${envelope.kdf})`);
+            }
+            if (text(envelope.bot) !== entry.globalMetaId) throw new Error('SEGMENT_BOT_MISMATCH');
+            const decrypted = decryptBytes(backupKey, Buffer.from(envelope.payload, 'base64'));
+            const encoding = text(envelope.encoding);
+            if (encoding && encoding !== CHAIN_BACKUP_ENCODING_GZIP) {
+              throw new Error(`unsupported backup encoding: ${encoding}`);
+            }
+            plaintext = JSON.parse(
+              (encoding === CHAIN_BACKUP_ENCODING_GZIP ? gunzipSync(decrypted) : decrypted).toString('utf8'),
+            );
           }
-          if (text(envelope.bot) !== entry.globalMetaId) throw new Error('SEGMENT_BOT_MISMATCH');
-          if (text(envelope.segment) && envelope.segment !== ref.segment) {
-            throw new Error(`segment reference mismatch for pin ${ref.pinId}`);
-          }
-          const plaintext = decryptJson(backupKey, Buffer.from(envelope.payload, 'base64'));
           if (objectId(plaintext) !== ref.segment) {
             throw new Error(`segment hash mismatch for pin ${ref.pinId}`);
           }
@@ -598,6 +650,42 @@ export async function runChainBackupRestore(deps: RunChainBackupRestoreDeps): Pr
     } catch (error) {
       botResult.error = error instanceof Error ? error.message : String(error);
       emit({ phase: 'error', botName: entry.name, botIndex: i, botCount: entries.length, message: botResult.error });
+    }
+  }
+
+  // Name-conflict pre-pass. A device that ran the welcome flow already holds a
+  // placeholder Twin (random pool name), and the user may have created other
+  // bots before importing their mnemonic. `restoreMetabotFromMnemonicCore`
+  // refuses duplicate names, so a restored Bot whose name collides with a
+  // purely-local bot would otherwise fail its whole skeleton (and with it the
+  // data import). The incoming name is the user's real on-chain data and wins:
+  // the local placeholder is renamed with a " (local)" suffix instead. Bots
+  // that belong to the backup set (same globalmetaid) are matched later by id
+  // and never renamed here.
+  const backupGids = new Set(pending.map((candidate) => candidate.entry.globalMetaId));
+  for (const item of pending) {
+    try {
+      const profile = profileOf(item.objects);
+      const incomingName = (typeof profile?.name === 'string' && profile.name.trim())
+        || item.entry.name.trim();
+      if (!incomingName) continue;
+      const lowerIncoming = incomingName.toLowerCase();
+      for (const local of metabotStore.listMetabots()) {
+        if (backupGids.has((local.globalmetaid ?? '').trim())) continue;
+        if (local.name.trim().toLowerCase() !== lowerIncoming) continue;
+        let suffix = 2;
+        let renamed = `${incomingName} (local)`;
+        while (metabotStore.listMetabots().some((m) => m.name.trim().toLowerCase() === renamed.toLowerCase())) {
+          renamed = `${incomingName} (local ${suffix})`;
+          suffix += 1;
+        }
+        metabotStore.updateMetabot(local.id, { name: renamed });
+        deps.saveDb?.();
+      }
+    } catch (error) {
+      // Best-effort: the skeleton restore below still reports NAME_DUPLICATE
+      // plainly if the rename could not go through.
+      console.warn('[ChainBackup] restore name-conflict rename failed:', error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -662,11 +750,30 @@ export async function runChainBackupRestore(deps: RunChainBackupRestoreDeps): Pr
     }
   }
 
-  const twinTarget = pending.find((item) => item.metabot && !item.botResult.error && isTwinTarget(item));
-  if (twinTarget?.metabot) {
-    twinTarget.metabot = metabotStore.updateMetabot(twinTarget.metabot.id, { metabot_type: 'twin' }) ?? twinTarget.metabot;
-  } else {
-    metabotStore.ensureTwinExists();
+  // Twin finalization. Every restore-capable device already holds a Twin —
+  // the welcome flow creates one before the user can import a mnemonic, and
+  // with no Twin at all `ensureTwinExists` inside the skeleton restore
+  // promotes the first restored bot. Promoting the backup's Twin onto either
+  // of those throws TWIN_ALREADY_EXISTS and used to abort the whole restore.
+  // The backup's Twin carries the user's real persona and memories, so it
+  // wins: demote the local placeholder Twin(s) and retry the promotion.
+  try {
+    const twinTarget = pending.find((item) => item.metabot && !item.botResult.error && isTwinTarget(item));
+    if (twinTarget?.metabot) {
+      try {
+        twinTarget.metabot = metabotStore.updateMetabot(twinTarget.metabot.id, { metabot_type: 'twin' }) ?? twinTarget.metabot;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message !== 'TWIN_ALREADY_EXISTS') throw error;
+        metabotStore.demoteOtherTwins(twinTarget.metabot.id);
+        twinTarget.metabot = metabotStore.updateMetabot(twinTarget.metabot.id, { metabot_type: 'twin' }) ?? twinTarget.metabot;
+      }
+    } else {
+      metabotStore.ensureTwinExists();
+    }
+    deps.saveDb?.();
+  } catch (error) {
+    result.error = error instanceof Error ? error.message : String(error);
   }
 
   for (const item of pending) {

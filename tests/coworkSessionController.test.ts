@@ -165,6 +165,18 @@ describe('cowork session controller', () => {
     assert.equal(controller.getSnapshot().currentSessionId, 'started');
   });
 
+  it('preserves the original start error through automatic reconciliation', async (t) => {
+    const { electron } = makeHarness();
+    electron.cowork.startSession = async () => { throw new Error('WP0_START_FAILED'); };
+    const controller = controllerFor(electron);
+    t.after(() => controller.destroy());
+
+    const result = await controller.send('start work', { metabotId: 1, title: 'Start work' });
+    assert.equal(result.status, 'uncertain');
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.equal(controller.getSnapshot().actionErrors.new, 'WP0_START_FAILED');
+  });
+
   it('keeps background messages, completion, and permissions out of the open session', async (t) => {
     const { harness, electron } = makeHarness();
     const controller = controllerFor(electron);

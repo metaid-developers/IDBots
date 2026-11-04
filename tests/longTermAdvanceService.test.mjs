@@ -10,7 +10,7 @@ const { SqliteStore } = require('../dist-electron/main/sqliteStore.js');
 const { LongTermTaskStore } = require('../dist-electron/main/longTermTaskStore.js');
 const { OrchestrationStore } = require('../dist-electron/main/orchestrationStore.js');
 const { CoworkStore } = require('../dist-electron/main/coworkStore.js');
-const { LongTermAdvanceService, DEFAULT_SESSION_ROTATION_MESSAGES } = require('../dist-electron/main/services/longTermAdvanceService.js');
+const { LongTermAdvanceService, DEFAULT_SESSION_ROTATION_MESSAGES, MAX_ATTENTION_ESCALATIONS_PER_SUBTASK } = require('../dist-electron/main/services/longTermAdvanceService.js');
 
 /**
  * LongTermAdvanceService (P1): the longterm.advance heartbeat handler. Real
@@ -593,6 +593,230 @@ test('routine (non-supervision) turns carry no supervision block', async () => {
   assert.doesNotMatch(runner.starts[0].prompt, /SUPERVISION check on delegated work/i);
 });
 
+test('attention: Twin recovery escalates once per attempt and re-arms only for a new attempt', async () => {
+  const { store, runner, deps } = await openWorld();
+  const taskId = await createActive(store);
+  const subtask = store.getTask(taskId).subtasks[0];
+  assert.ok(store.beginSubtask(subtask.id, 'twin').ok);
+  let attemptId = 'restart-a1';
+  deps.listOrchestrationAttention = () => [{
+    orchestrationTaskId: 'orch-restart',
+    attention: { waitingOn: 'twin', reason: 'RECOVERED_AFTER_RESTART', stepId: 'step-1', attemptId },
+  }];
+  const supervisor = new LongTermAdvanceService(deps);
+  const now = Date.now();
+
+  const first = await supervisor.run(now);
+  assert.equal(first.escalated.length, 1, JSON.stringify(first));
+  assert.match(first.escalated[0].reasons[0], /attention: twin/);
+  assert.match(runner.starts[0].prompt, /RECOVERED_AFTER_RESTART/);
+  assert.match(runner.starts[0].prompt, /SUPERVISION check on delegated work/i);
+
+  const second = await supervisor.run(now + 5 * 60_000);
+  assert.equal(second.escalated.length, 0, JSON.stringify(second));
+  assert.equal(runner.starts.length, 1, 'the same attention cannot create a duplicate turn');
+
+  attemptId = 'restart-a2';
+  const third = await supervisor.run(now + 10 * 60_000);
+  assert.equal(third.escalated.length, 1, JSON.stringify(third));
+  assert.equal(runner.starts.length, 2, 'a new attempt bypasses the ordinary nudge throttle exactly once');
+});
+
+test('attention: a subtask that keeps failing is parked for the owner after the retry cap, not escalated forever', async () => {
+  const { store, runner, deps } = await openWorld();
+  const taskId = await createActive(store);
+  const subtask = store.getTask(taskId).subtasks[0];
+  assert.ok(store.beginSubtask(subtask.id, 'twin').ok);
+  let attemptSeq = 0;
+  // Every run reports a NEW failed attempt — a fresh attention key each time,
+  // exactly the runaway shape the review flagged (twin re-dispatch → new
+  // attempt → new key → throttle bypassed).
+  deps.listOrchestrationAttention = () => [{
+    orchestrationTaskId: 'orch-cap',
+    attention: { waitingOn: 'twin', reason: 'RECOVERED_AFTER_RESTART', stepId: 'step-1', attemptId: `cap-a${++attemptSeq}` },
+  }];
+  const supervisor = new LongTermAdvanceService(deps);
+  const now = Date.now();
+
+  for (let i = 0; i < MAX_ATTENTION_ESCALATIONS_PER_SUBTASK; i += 1) {
+    const report = await supervisor.run(now + i * 5 * 60_000);
+    assert.equal(report.escalated.length, 1, `run ${i + 1} should escalate: ${JSON.stringify(report)}`);
+  }
+  assert.equal(runner.starts.length, MAX_ATTENTION_ESCALATIONS_PER_SUBTASK);
+
+  // The next fresh attempt no longer buys a turn: the subtask is parked.
+  const capped = await supervisor.run(now + MAX_ATTENTION_ESCALATIONS_PER_SUBTASK * 5 * 60_000);
+  assert.equal(capped.escalated.length, 0, JSON.stringify(capped));
+  assert.equal(runner.starts.length, MAX_ATTENTION_ESCALATIONS_PER_SUBTASK, 'the cap stops further attention turns');
+  assert.match(capped.skipped[0].reason, /attention retry cap reached/);
+  assert.equal(store.getTask(taskId).subtasks[0].status, 'waiting_owner');
+  assert.match(store.getTask(taskId).subtasks[0].waitNote ?? '', /owner review needed/);
+});
+
+test('attention: Owner question is journaled once and delivered with the concrete human action', async () => {
+  const { store, runner, deps } = await openWorld();
+  const taskId = await createActive(store);
+  const subtask = store.getTask(taskId).subtasks[0];
+  assert.ok(store.beginSubtask(subtask.id, 'twin').ok);
+  deps.listOrchestrationAttention = () => [{
+    orchestrationTaskId: 'orch-owner',
+    attention: { waitingOn: 'owner', reason: 'Worker requested a human decision', humanAction: 'Approve production deploy?', attemptId: 'owner-a1' },
+  }];
+  const supervisor = new LongTermAdvanceService(deps);
+  const now = Date.now();
+
+  const first = await supervisor.run(now);
+  assert.equal(first.escalated.length, 1, JSON.stringify(first));
+  assert.equal(store.getTask(taskId).subtasks[0].status, 'waiting_owner');
+  assert.match(runner.starts[0].prompt, /Approve production deploy\?/);
+  assert.match(store.getTask(taskId).subtasks[0].waitNote, /Approve production deploy\?/);
+
+  const second = await supervisor.run(now + 5 * 60_000);
+  assert.equal(second.escalated.length, 0, JSON.stringify(second));
+  assert.equal(runner.starts.length, 1, 'the same owner question is not re-asked');
+});
+
+test('attention: External wait is recorded without an LLM turn and without duplicate journal entries', async () => {
+  const { store, runner, deps } = await openWorld();
+  const taskId = await createActive(store);
+  const subtask = store.getTask(taskId).subtasks[0];
+  assert.ok(store.beginSubtask(subtask.id, 'twin').ok);
+  deps.listOrchestrationAttention = () => [{
+    orchestrationTaskId: 'orch-external',
+    attention: { waitingOn: 'external', reason: 'CI still running', attemptId: 'external-a1' },
+  }];
+  const supervisor = new LongTermAdvanceService(deps);
+  const now = Date.now();
+
+  const first = await supervisor.run(now);
+  assert.equal(first.escalated.length, 0, JSON.stringify(first));
+  assert.equal(runner.starts.length, 0);
+  assert.equal(store.getTask(taskId).subtasks[0].status, 'waiting_external');
+  assert.match(store.getTask(taskId).subtasks[0].waitNote, /CI still running/);
+  const waitingEvents = store.getTask(taskId).events.filter((event) => event.kind === 'waiting' && event.detail.includes('CI still running'));
+  assert.equal(waitingEvents.length, 1);
+
+  const second = await supervisor.run(now + 5 * 60_000);
+  assert.equal(second.escalated.length, 0, JSON.stringify(second));
+  assert.equal(runner.starts.length, 0);
+  assert.equal(store.getTask(taskId).events.filter((event) => event.kind === 'waiting' && event.detail.includes('CI still running')).length, 1);
+});
+
+test('attention: Worker execution suppresses a duplicate quiet push', async () => {
+  const { store, runner, deps } = await openWorld();
+  const taskId = await createActive(store);
+  const subtask = store.getTask(taskId).subtasks[0];
+  assert.ok(store.beginSubtask(subtask.id, 'twin').ok);
+  deps.listOrchestrationAttention = () => [{
+    orchestrationTaskId: 'orch-worker',
+    attention: { waitingOn: 'worker', reason: 'Worker attempt is running', attemptId: 'worker-a1' },
+  }];
+  const supervisor = new LongTermAdvanceService(deps);
+  const report = await supervisor.run(Date.now());
+  assert.equal(report.escalated.length, 0, JSON.stringify(report));
+  assert.equal(runner.starts.length, 0);
+  assert.match(report.skipped[0].reason, /waiting for the Worker/);
+});
+
+test('action outcome: an unchanged attention retries with backoff and escalates to Owner after bounded attempts', async () => {
+  const { store, runner, deps } = await openWorld();
+  const taskId = await createActive(store);
+  const subtask = store.getTask(taskId).subtasks[0];
+  assert.ok(store.beginSubtask(subtask.id, 'twin').ok);
+  deps.attentionRetryMs = 1_000;
+  deps.attentionMaxAttempts = 2;
+  deps.listOrchestrationAttention = () => [{
+    orchestrationTaskId: 'orch-noop',
+    attention: { waitingOn: 'twin', reason: 'still unresolved', attemptId: 'a1' },
+  }];
+  const supervisor = new LongTermAdvanceService(deps);
+  const now = Date.now();
+
+  await supervisor.run(now);
+  assert.equal(runner.starts.length, 1);
+  let state = store.getSuperviseState(taskId);
+  assert.equal(state.lastAttentionResolution, 'actioned');
+  assert.equal(state.attentionActionCount, 1);
+  assert.equal(state.nextAttentionRetryAtMs, now + 1_000);
+
+  await supervisor.run(now + 500);
+  assert.equal(runner.starts.length, 1, 'backoff suppresses an immediate duplicate action');
+
+  await supervisor.run(now + 1_000);
+  assert.equal(runner.starts.length, 2);
+  state = store.getSuperviseState(taskId);
+  assert.equal(state.lastAttentionResolution, 'actioned');
+  assert.equal(state.attentionActionCount, 2);
+
+  await supervisor.run(now + 2_000);
+  assert.equal(runner.starts.length, 3);
+  state = store.getSuperviseState(taskId);
+  assert.equal(state.lastAttentionResolution, 'escalated');
+  assert.equal(store.getTask(taskId).subtasks[0].status, 'waiting_owner');
+  assert.match(runner.starts[2].prompt, /could not resolve/);
+
+  await supervisor.run(now + 3_000);
+  assert.equal(runner.starts.length, 3, 'Owner escalation does not create another unresolved retry');
+});
+
+test('action outcome: a changed attention is resolved and the new state gets its own action', async () => {
+  const { store, runner, deps } = await openWorld();
+  const taskId = await createActive(store);
+  const subtask = store.getTask(taskId).subtasks[0];
+  assert.ok(store.beginSubtask(subtask.id, 'twin').ok);
+  let waitingOn = 'twin';
+  deps.listOrchestrationAttention = () => [{
+    orchestrationTaskId: 'orch-resolved',
+    attention: { waitingOn, reason: 'worker state changed', attemptId: 'a1' },
+  }];
+  runner.startSession = async (sessionId, prompt) => {
+    runner.starts.push({ sessionId, prompt });
+    waitingOn = 'worker';
+  };
+  const supervisor = new LongTermAdvanceService(deps);
+  const now = Date.now();
+
+  await supervisor.run(now);
+  const state = store.getSuperviseState(taskId);
+  assert.equal(state.lastAttentionResolution, 'resolved');
+  assert.equal(state.nextAttentionRetryAtMs, 0);
+  assert.equal(state.attentionActionCount, 0);
+
+  const second = await supervisor.run(now + 1_000);
+  assert.equal(second.escalated.length, 0, JSON.stringify(second));
+  assert.equal(runner.starts.length, 1, 'resolved attention cannot be replayed');
+});
+
+test('action outcome: a legacy action key without resolution gets one result review instead of being swallowed', async () => {
+  const { store, runner, deps } = await openWorld();
+  const taskId = await createActive(store);
+  const subtask = store.getTask(taskId).subtasks[0];
+  assert.ok(store.beginSubtask(subtask.id, 'twin').ok);
+  const selection = {
+    orchestrationTaskId: 'legacy-orch',
+    attention: { waitingOn: 'twin', reason: 'legacy failure', attemptId: 'legacy-a1' },
+  };
+  const { longTermAttentionKey } = await import('../dist-electron/main/services/longTermAttentionAction.js');
+  store.setSuperviseState(taskId, {
+    lastSuperviseAtMs: 0,
+    lastAttentionKey: longTermAttentionKey(selection),
+  });
+  deps.attentionRetryMs = 1_000;
+  deps.attentionMaxAttempts = 2;
+  deps.listOrchestrationAttention = () => [selection];
+  const supervisor = new LongTermAdvanceService(deps);
+  const now = Date.now();
+
+  await supervisor.run(now);
+  assert.equal(runner.starts.length, 1, 'legacy actioned state is eligible for result review');
+  assert.equal(store.getSuperviseState(taskId).lastAttentionResolution, 'actioned');
+  assert.equal(store.getSuperviseState(taskId).attentionActionCount, 2);
+
+  await supervisor.run(now + 1_000);
+  assert.equal(store.getSuperviseState(taskId).lastAttentionResolution, 'escalated');
+  assert.equal(store.getTask(taskId).subtasks[0].status, 'waiting_owner');
+});
+
 test('telemetry wiring: real OrchestrationStore attempts sourced from the bound session drive the failure streak', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-lt-telemetry-'));
   const sqliteStore = await SqliteStore.create(dir);
@@ -1162,6 +1386,178 @@ test('a heartbeat-owned session still rotates on budget once the owner is gone, 
   assert.equal(report.escalated.length, 1, JSON.stringify(report));
   assert.equal(report.escalated[0].reusedSession, false, 'heartbeat-owned session rotated on budget');
   assert.notEqual(report.escalated[0].sessionId, boundId);
+});
+
+// ── P3 venue rules: owner-facing turns never fork the human conversation ──
+
+test('2026-11-02 incident: a waiting-owner turn never rotates — the fat heartbeat session holding the owner\'s latest word is kept', async () => {
+  // Production incident: the acceptance ticket sat on a 401-message
+  // heartbeat-owned session; the owner's last word (2h before dawn) was in
+  // that same session. A stale-wait convergence turn fired while the owner
+  // slept, the reason classified as a WORK turn, so the venue guards did not
+  // apply and the session rotated into a fresh one — the re-pushed ticket
+  // surfaced the new session as the decision venue, and the owner's morning
+  // ruling landed in a forked conversation. A turn whose prompt carries the
+  // owner-wait block (ANY turn on a waiting_owner sub-project) is
+  // owner-facing in effect: it stays where the owner last spoke, budget or
+  // not.
+  const { store, cowork, runner, deps } = await openWorld();
+  const taskId = await createActive(store);
+  const now = Date.now();
+  await new LongTermAdvanceService(deps).run(now); // opens + binds session 1
+  const boundId = store.getTask(taskId).subtasks[0].sessionId;
+  const subtask = store.getTask(taskId).subtasks[0];
+  assert.ok(store.beginSubtask(subtask.id, 'twin').ok);
+  assert.ok(store.waitSubtask(subtask.id, { kind: 'owner', note: 'acceptance proposed' }, 'twin').ok);
+  assert.ok(store.addNote(taskId, subtask.id, 'worked past the wait (v1.0.2 shipped)', 'twin').ok);
+  cowork.counts.set(boundId, DEFAULT_SESSION_ROTATION_MESSAGES);
+  // The owner's newest message is IN the bound session, two hours ago — past
+  // the engagement window (asleep), but still their latest word.
+  const t2 = now + 3 * HOUR;
+  cowork.engagement.set(boundId, { lastOwnerMessageAtMs: t2 - 2 * HOUR, lastAssistantMessageAtMs: t2 - 2 * HOUR });
+
+  const report = await new LongTermAdvanceService(deps).run(t2);
+  assert.equal(report.escalated.length, 1, JSON.stringify(report));
+  assert.match(report.escalated[0].reasons[0], /stale owner wait/);
+  assert.equal(report.escalated[0].sessionId, boundId, 'the turn stays in the session holding the owner\'s latest word');
+  assert.equal(report.escalated[0].reusedSession, true, 'no rotation');
+  assert.equal(cowork.calls.create.length, 1, 'no fresh session was opened');
+  const prompt = runner.starts[runner.starts.length - 1].prompt;
+  assert.match(prompt, /full re-presentation/, 'the decision re-push still happens — in the right session');
+  assert.doesNotMatch(prompt, /SESSION ROTATION/);
+});
+
+test('an owner-facing turn targets the owner\'s latest conversation even when the bound work session is over budget', async () => {
+  const { store, cowork, runner, deps } = await openWorld();
+  const taskId = await createActive(store);
+  const now = Date.now();
+  await new LongTermAdvanceService(deps).run(now); // opens + binds the work session
+  const boundId = store.getTask(taskId).subtasks[0].sessionId;
+  const subtask = store.getTask(taskId).subtasks[0];
+  assert.ok(store.beginSubtask(subtask.id, 'twin').ok);
+  assert.ok(store.waitSubtask(subtask.id, { kind: 'owner', note: 'pick A or B' }, 'twin').ok);
+  assert.ok(store.addNote(taskId, subtask.id, 'worked past the wait', 'twin').ok);
+  cowork.counts.set(boundId, DEFAULT_SESSION_ROTATION_MESSAGES);
+  // The owner's newest word is in a DIFFERENT related conversation (their own
+  // chat), two hours ago — not live, so no engaged-rebind happens; only the
+  // venue rules move the decision line there.
+  cowork.registerSession('owner-chat', 7);
+  assert.ok(store.bindSession(subtask.id, 'owner-chat', 'system').ok); // make it related
+  assert.ok(store.bindSession(subtask.id, boundId, 'system').ok);
+  const t2 = now + 3 * HOUR;
+  cowork.engagement.set('owner-chat', { lastOwnerMessageAtMs: t2 - 2 * HOUR, lastAssistantMessageAtMs: null });
+
+  const report = await new LongTermAdvanceService(deps).run(t2);
+  assert.equal(report.escalated.length, 1, JSON.stringify(report));
+  assert.equal(report.escalated[0].sessionId, 'owner-chat', 'the decision re-push lands in the owner\'s conversation');
+  assert.equal(report.escalated[0].reusedSession, true, 'no fresh session');
+  assert.equal(cowork.calls.create.length, 1, 'the over-budget work session was not rotated either');
+  assert.equal(store.getTask(taskId).subtasks[0].sessionId, 'owner-chat', 'the binding converged');
+  assert.doesNotMatch(runner.starts[runner.starts.length - 1].prompt, /SESSION ROTATION/);
+});
+
+test('with no owner message anywhere, an owner-facing turn falls back to the task\'s definition session', async () => {
+  const { store, cowork, deps } = await openWorld();
+  const created = store.createTask({ ...SPEC, definitionSessionId: 'def-sess' }, 'owner');
+  assert.ok(created.ok, JSON.stringify(created));
+  assert.ok(store.activateTask(created.value.id, 'owner').ok);
+  const taskId = created.value.id;
+  cowork.registerSession('def-sess', 7);
+  const now = Date.now();
+  await new LongTermAdvanceService(deps).run(now); // pending → opens + binds the work session
+  const boundId = store.getTask(taskId).subtasks[0].sessionId;
+  const subtask = store.getTask(taskId).subtasks[0];
+  assert.ok(store.beginSubtask(subtask.id, 'twin').ok);
+  assert.ok(store.waitSubtask(subtask.id, { kind: 'owner', note: 'pick A or B' }, 'twin').ok);
+  assert.ok(store.addNote(taskId, subtask.id, 'worked past the wait', 'twin').ok);
+  cowork.counts.set(boundId, DEFAULT_SESSION_ROTATION_MESSAGES);
+
+  const report = await new LongTermAdvanceService(deps).run(now + 3 * HOUR);
+  assert.equal(report.escalated.length, 1, JSON.stringify(report));
+  assert.equal(report.escalated[0].sessionId, 'def-sess', 'fell back to the definition session');
+  assert.equal(report.escalated[0].reusedSession, true);
+  assert.equal(store.getTask(taskId).subtasks[0].sessionId, 'def-sess');
+});
+
+test('per-sweep convergence: every waiting-owner decision line follows the owner\'s venue across sub-projects', async () => {
+  // The 2026-11-02 fork shape: sub-project #2's ticket lived in a day-old
+  // rotation session while #6 ran in the owner's chat — two live lines for
+  // one task. The sweep converges ALL waiting_owner bindings onto the
+  // owner's venue (so the decision surface points at the conversation the
+  // owner reads) without firing any turn.
+  const { store, cowork, runner, deps } = await openWorld();
+  const created = store.createTask(
+    { title: 'Fork shape', goal: 'Two live lines, one task.', subtasks: [{ title: 'Runs in the owner chat' }, { title: 'Ticket parked in a work session' }] },
+    'owner',
+  );
+  assert.ok(created.ok, JSON.stringify(created));
+  assert.ok(store.activateTask(created.value.id, 'owner').ok);
+  const taskId = created.value.id;
+  const detail = store.getTask(taskId);
+  const [first, second] = detail.subtasks;
+  assert.ok(store.beginSubtask(first.id, 'twin').ok);
+  assert.ok(store.beginSubtask(second.id, 'twin').ok);
+  assert.ok(store.waitSubtask(second.id, { kind: 'owner', note: 'ticket parked from a work session' }, 'twin').ok);
+  cowork.registerSession('work-sess', 7, 'longterm');
+  assert.ok(store.bindSession(second.id, 'work-sess', 'system').ok);
+  cowork.registerSession('owner-chat', 7);
+  assert.ok(store.bindSession(first.id, 'owner-chat', 'system').ok); // makes the owner's chat a related session
+  // The owner is live in their chat, and #1 just began (no quiet push due).
+  const t2 = Date.now();
+  cowork.engagement.set('owner-chat', { lastOwnerMessageAtMs: t2 - 5 * 60_000, lastAssistantMessageAtMs: null });
+
+  const report = await new LongTermAdvanceService(deps).run(t2);
+  assert.equal(report.escalated.length, 0, JSON.stringify(report));
+  assert.equal(runner.starts.length, 0, 'convergence is silent — no turn fired');
+  assert.equal(store.getTask(taskId).subtasks.find((s) => s.id === second.id).sessionId, 'owner-chat');
+  const events = store.getTask(taskId).events;
+  assert.ok(events.some((event) => event.kind === 'note' && event.actor === 'system' && /session bound: owner-chat/.test(event.detail)));
+  // Idempotent: a second sweep binds nothing new.
+  const noteCount = events.filter((event) => /session bound/.test(event.detail)).length;
+  await new LongTermAdvanceService(deps).run(t2 + 60_000);
+  const after = store.getTask(taskId).events.filter((event) => /session bound/.test(event.detail)).length;
+  assert.equal(after, noteCount, 'no repeated convergence notes');
+});
+
+test('a cold work turn in a heartbeat-owned session parks owner decisions instead of asking in-session', async () => {
+  // Rule 4: the owner is not in a bot work session — a question asked there
+  // becomes a second conversation line the owner must discover. Decisions
+  // discovered mid-work are journaled (longterm_subtask_wait) and delivered
+  // to the owner's conversation by the next owner-facing turn.
+  const { store, cowork, runner, deps } = await openWorld();
+  const taskId = await createActive(store);
+  await new LongTermAdvanceService(deps).run(Date.now()); // pending → cold work turn in a fresh longterm session
+  const prompt = runner.starts[0].prompt;
+  assert.match(prompt, /Record the decision request with longterm_subtask_wait/);
+  assert.doesNotMatch(prompt, /exactly ONE question, multiple choice/);
+});
+
+test('a cold work turn in the owner\'s own conversation still asks directly', async () => {
+  const { store, cowork, runner, deps } = await openWorld();
+  const taskId = await createActive(store);
+  const now = Date.now();
+  // First run binds #1 to a heartbeat session, then the owner drives the
+  // task from their own chat (engaged rebind), goes away, and a work push
+  // is due — cold, but in the owner's conversation.
+  await new LongTermAdvanceService(deps).run(now);
+  const heartbeatSessionId = store.getTask(taskId).subtasks[0].sessionId;
+  const subtask = store.getTask(taskId).subtasks[0];
+  assert.ok(store.beginSubtask(subtask.id, 'twin').ok);
+  cowork.registerSession('owner-chat', 7);
+  assert.ok(store.bindSession(subtask.id, 'owner-chat', 'system').ok);
+  assert.ok(store.bindSession(subtask.id, heartbeatSessionId, 'system').ok);
+  const tEngaged = now + 1 * HOUR;
+  cowork.engagement.set('owner-chat', { lastOwnerMessageAtMs: tEngaged - 5 * 60_000, lastAssistantMessageAtMs: null });
+  await new LongTermAdvanceService(deps).run(tEngaged);
+  const boundId = store.getTask(taskId).subtasks[0].sessionId;
+  assert.equal(boundId, 'owner-chat', 'binding followed the owner');
+  cowork.counts.set('owner-chat', 12);
+  const report = await new LongTermAdvanceService(deps).run(tEngaged + 90 * 60_000);
+  assert.equal(report.escalated.length, 1, JSON.stringify(report));
+  assert.equal(report.escalated[0].sessionId, 'owner-chat');
+  const prompt = runner.starts[runner.starts.length - 1].prompt;
+  assert.match(prompt, /exactly ONE question, multiple choice/);
+  assert.doesNotMatch(prompt, /Record the decision request with longterm_subtask_wait/);
 });
 
 test('getSessionEngagement: heartbeat prompts and cross-session bot relays are not the owner', async () => {

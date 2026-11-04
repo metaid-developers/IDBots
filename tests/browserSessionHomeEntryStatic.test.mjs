@@ -61,13 +61,18 @@ test('Sidebar routes a browser row back to the Bot Browser surface', () => {
 test('a2a and group_task grouping is unchanged', () => {
   const source = read('src/renderer/components/Sidebar.tsx');
 
-  // local excludes exactly a2a + group_task (so browser lands in local),
+  // local holds everything except the two dedicated groups, so browser lands in
+  // local. The one deliberate exception: an a2a row that arrived over an IM
+  // channel (a QQ / WeChat bot-to-bot conversation) is promoted into local so
+  // the owner can reach it from Bot Home — the behaviour pinned by
+  // qqSessionClassification.test.ts (CLS-09b).
   assert.match(
     source,
-    /session\.sessionType\s*!==\s*'a2a'\s*&&\s*session\.sessionType\s*!==\s*'group_task'/,
+    /const isLocal = \(session: CoworkSessionSummary\) =>\s*session\.sessionType !== 'group_task'\s*&&\s*\(session\.sessionType !== 'a2a' \|\| isImSession\(session\)\)/,
   );
-  // and the two dedicated groups still match their own type only.
-  assert.match(source, /a2a:\s*homeSessions\.filter\(\(session\)\s*=>\s*session\.sessionType\s*===\s*'a2a'\)/);
+  // and the two dedicated groups match their own type only — the a2a tab keeps
+  // the IM rows out of itself, since they now live in local.
+  assert.match(source, /a2a:\s*homeSessions\.filter\(\(session\)\s*=>\s*session\.sessionType\s*===\s*'a2a'\s*&&\s*!isImSession\(session\)\)/);
   assert.match(source, /group:\s*homeSessions\.filter\(\(session\)\s*=>\s*session\.sessionType\s*===\s*'group_task'\)/);
 });
 
@@ -77,8 +82,10 @@ test('browser rows carry a visible type badge', () => {
   assert.match(source, /const isBrowser = session\.sessionType === 'browser';/);
   assert.match(source, /\{isBrowser && \(/);
   assert.match(source, /i18nService\.t\('coworkSessionTypeBrowser'\)/);
-  // The title/a2a presentation must stay driven by session type only.
-  assert.match(source, /const isA2A = session\.sessionType === 'a2a';/);
+  // The title/a2a presentation must stay driven by session type only — with the
+  // same IM exception: an IM-backed a2a row is a direct-message chat, not a
+  // bot-to-bot session, so it must not pick up a2a styling.
+  assert.match(source, /const isA2A = session\.sessionType === 'a2a' && !session\.imChannel;/);
 });
 
 test('App wires the browser-session route and passes it to the Sidebar', () => {

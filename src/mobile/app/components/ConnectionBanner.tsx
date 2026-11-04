@@ -11,11 +11,11 @@ const STATE_LABEL_KEY: Record<ConnectionState, string> = {
 };
 
 const STATE_CLASS: Record<ConnectionState, string> = {
-  connecting: 'bg-amber-100 text-amber-800',
+  connecting: 'twin-notice-warning',
   online: 'hidden',
-  reconnecting: 'bg-amber-100 text-amber-800',
-  offline: 'bg-red-100 text-red-700',
-  upgrading: 'bg-sky-100 text-sky-800',
+  reconnecting: 'twin-notice-warning',
+  offline: 'twin-notice-error',
+  upgrading: 'twin-notice',
 };
 
 /** Connection banner (REQ-E-11): hidden while online, visible otherwise. */

@@ -103,8 +103,8 @@ function TaskRow({
   const lastStatus = task.state.lastStatus;
 
   return (
-    <div className="border-b border-[var(--border-color)] py-3 last:border-b-0" data-testid={`task-row-${task.id}`}>
-      <div className="flex items-center gap-1">
+    <div className="twin-task-row" data-testid={`task-row-${task.id}`}>
+      <div className="twin-task-main">
         <button
           type="button"
           onClick={() => {
@@ -113,59 +113,63 @@ function TaskRow({
             if (next) void screen.loadRuns(task.id);
           }}
           aria-expanded={expanded}
-          className="flex min-h-[44px] min-w-[40px] items-center justify-center text-[var(--text-secondary)]"
+          className="twin-icon-button"
           aria-label={`${t(expanded ? 'mobile.tasks.hideHistory' : 'mobile.tasks.showHistory')} · ${task.name}`}
         >
           {expanded ? <ChevronDownIcon className="h-5 w-5" aria-hidden /> : <ChevronRightIcon className="h-5 w-5" aria-hidden />}
         </button>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-[15px] font-medium text-[var(--text-primary)]">{task.name}</p>
-          <p className="text-xs text-[var(--text-secondary)]">
+        <div className="twin-list-copy">
+          <p className="twin-list-title truncate">{task.name}</p>
+          <p className="twin-list-subtitle">
             {nextRun ? t('mobile.tasks.nextRun', { time: nextRun }) : t('mobile.tasks.noNextRun')}
             {lastRun ? ` · ${t('mobile.tasks.lastRun', { time: lastRun })}` : ''}
           </p>
-          <p className="text-xs text-[var(--text-secondary)]">
+          <p className="twin-list-subtitle">
             {lastStatus
               ? t('mobile.tasks.lastStatus', { status: t(LAST_STATUS_KEY[lastStatus]) })
               : t('mobile.tasks.neverRun')}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={onEdit}
-          disabled={pending !== null}
-          aria-label={`${t('mobile.tasks.edit')} · ${task.name}`}
-          className="flex min-h-[44px] min-w-[40px] items-center justify-center rounded-xl text-[var(--text-primary)] active:bg-[var(--bg-hover)] disabled:opacity-40"
-        >
-          <PencilSquareIcon className="h-5 w-5" aria-hidden />
-        </button>
-        <button
-          type="button"
-          onClick={() => void (running ? screen.stopTask(task.id) : screen.runTask(task.id))}
-          disabled={pending !== null}
-          aria-label={`${t(running ? 'mobile.tasks.stop' : 'mobile.tasks.runNow')} · ${task.name}`}
-          className="flex min-h-[44px] min-w-[40px] items-center justify-center rounded-xl text-[var(--text-primary)] active:bg-[var(--bg-hover)] disabled:opacity-40"
-        >
-          {running ? <StopIcon className="h-5 w-5" aria-hidden /> : <PlayIcon className="h-5 w-5" aria-hidden />}
-        </button>
         <Switch
           checked={task.enabled}
           disabled={pending !== null}
           onChange={(checked) => void screen.toggleTask(task.id, checked)}
           label={`${t('mobile.tasks.enabled')} · ${task.name}`}
         />
+      </div>
+      <div className="twin-task-actions">
+        <button
+          type="button"
+          onClick={onEdit}
+          disabled={pending !== null}
+          aria-label={`${t('mobile.tasks.edit')} · ${task.name}`}
+          className="twin-button twin-button-secondary twin-button-small"
+        >
+          <PencilSquareIcon className="h-4 w-4" aria-hidden />
+          {t('mobile.tasks.edit')}
+        </button>
+        <button
+          type="button"
+          onClick={() => void (running ? screen.stopTask(task.id) : screen.runTask(task.id))}
+          disabled={pending !== null}
+          aria-label={`${t(running ? 'mobile.tasks.stop' : 'mobile.tasks.runNow')} · ${task.name}`}
+          className="twin-button twin-button-secondary twin-button-small"
+        >
+          {running ? <StopIcon className="h-4 w-4" aria-hidden /> : <PlayIcon className="h-4 w-4" aria-hidden />}
+          {t(running ? 'mobile.tasks.stop' : 'mobile.tasks.runNow')}
+        </button>
         <button
           type="button"
           onClick={onDelete}
           disabled={pending !== null}
           aria-label={`${t('mobile.tasks.deleteConfirm')} · ${task.name}`}
-          className="flex min-h-[44px] min-w-[40px] items-center justify-center rounded-xl text-red-600 active:bg-[var(--bg-hover)] disabled:opacity-40"
+          className="twin-icon-button twin-icon-button-danger"
         >
           <TrashIcon className="h-5 w-5" aria-hidden />
         </button>
       </div>
-      {running ? <p className="mt-1 text-xs text-amber-600">{t('mobile.tasks.running')}</p> : null}
-      {error ? <p role="alert" className="mt-1 text-sm text-red-600">{error}</p> : null}
+      {running ? <p className="twin-help text-[var(--twin-warning)]">{t('mobile.tasks.running')}</p> : null}
+      {error ? <p role="alert" className="twin-notice twin-notice-error mt-2">{error}</p> : null}
       {expanded ? <TaskRuns taskId={task.id} runs={runs} screen={screen} /> : null}
     </div>
   );
@@ -259,16 +263,13 @@ function TaskFormSheet({
     if (saved) onClose();
   };
 
-  const inputClass = 'min-h-[44px] w-full rounded-xl border border-[var(--border-color)] bg-[var(--bg-main)] px-3 py-2.5 text-[15px] text-[var(--text-primary)] outline-none';
+  const inputClass = 'twin-input';
   const segmented = (kind: ScheduleKind, labelKey: string) => (
     <button
       type="button"
       onClick={() => setScheduleKind(kind)}
-      className={`min-h-[44px] flex-1 rounded-xl border px-2 text-sm ${
-        scheduleKind === kind
-          ? 'border-[var(--color-primary)] bg-[var(--color-primary)] text-black'
-          : 'border-[var(--border-color)] text-[var(--text-secondary)]'
-      }`}
+      aria-pressed={scheduleKind === kind}
+      className="twin-segment"
     >
       {t(labelKey)}
     </button>
@@ -284,8 +285,8 @@ function TaskFormSheet({
             {twinAvailable ? t('mobile.tasks.twinBinding', { name: twinName }) : t('mobile.tasks.twinUnavailable')}
           </p>
         ) : null}
-        <p className="text-xs font-medium uppercase text-[var(--text-secondary)]">{t('mobile.tasks.scheduleLabel')}</p>
-        <div className="flex gap-2">
+        <p className="twin-section-label">{t('mobile.tasks.scheduleLabel')}</p>
+        <div className="twin-segmented">
           {segmented('interval', 'mobile.tasks.scheduleInterval')}
           {segmented('daily', 'mobile.tasks.scheduleDaily')}
           {scheduleKind === 'cron' ? segmented('cron', 'mobile.tasks.scheduleCron') : null}
@@ -300,15 +301,15 @@ function TaskFormSheet({
         ) : (
           <input aria-label={t('mobile.tasks.scheduleCron')} value={cronExpression} onChange={(event) => setCronExpression(event.target.value)} placeholder={t('mobile.tasks.cronPlaceholder')} className={inputClass} />
         )}
-        {validation ? <p role="alert" className="text-sm text-red-600">{validation}</p> : null}
+        {validation ? <p role="alert" className="twin-notice twin-notice-error">{validation}</p> : null}
         {(task ? screen.errorFor(task.id) : screen.createError) ? (
-          <p role="alert" className="text-sm text-red-600">{task ? screen.errorFor(task.id) : screen.createError}</p>
+          <p role="alert" className="twin-notice twin-notice-error">{task ? screen.errorFor(task.id) : screen.createError}</p>
         ) : null}
         <div className="flex gap-3">
-          <button type="button" onClick={onClose} className="min-h-[44px] flex-1 rounded-xl border border-[var(--border-color)] py-2 text-[var(--text-primary)] active:bg-[var(--bg-hover)]">
+          <button type="button" onClick={onClose} className="twin-button twin-button-secondary flex-1">
             {t('mobile.tasks.cancel')}
           </button>
-          <button type="button" onClick={() => void submit()} disabled={saving} className="min-h-[44px] flex-1 rounded-xl bg-[var(--color-primary)] py-2 font-medium text-black active:opacity-80 disabled:opacity-40">
+          <button type="button" onClick={() => void submit()} disabled={saving} className="twin-button twin-button-primary flex-1">
             {t('mobile.tasks.save')}
           </button>
         </div>
@@ -341,15 +342,15 @@ export default function TasksScreen({
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center justify-between border-b border-[var(--border-color)] bg-[var(--bg-panel)] px-4 py-2">
-        <h1 className="text-base font-semibold text-[var(--text-primary)]">{t('mobile.tasks.title')}</h1>
-        <button type="button" onClick={() => { setEditTask(null); setFormOpen(true); }} className="flex min-h-[44px] items-center gap-1 px-2 text-sm text-[var(--text-primary)] active:bg-[var(--bg-hover)]">
+    <div className="twin-page">
+      <div className="twin-topbar twin-topbar-simple">
+        <h1 className="twin-title">{t('mobile.tasks.title')}</h1>
+        <button type="button" onClick={() => { setEditTask(null); setFormOpen(true); }} className="twin-button twin-button-ghost">
           <PlusIcon className="h-5 w-5" aria-hidden />
           {t('mobile.tasks.create')}
         </button>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+      <div className="twin-scroll p-3">
         <ActivitySection resyncCounter={resyncCounter + activityRevision} onOpenSession={onOpenSession} />
         <Section title={t('mobile.tasks.title')}>
           {screen.loadError ? (
@@ -383,8 +384,8 @@ export default function TasksScreen({
           <p className="text-sm text-[var(--text-primary)]">{t('mobile.tasks.deleteBody', { name: deleteTarget.name })}</p>
           {screen.errorFor(deleteTarget.id) ? <p role="alert" className="mt-2 text-sm text-red-600">{screen.errorFor(deleteTarget.id)}</p> : null}
           <div className="mt-4 flex gap-3">
-            <button type="button" onClick={() => setDeleteTarget(null)} className="min-h-[44px] flex-1 rounded-xl border border-[var(--border-color)] text-[var(--text-primary)]">{t('mobile.tasks.cancel')}</button>
-            <button type="button" disabled={screen.pendingFor(deleteTarget.id) !== null} onClick={() => void deleteTask()} className="min-h-[44px] flex-1 rounded-xl bg-red-600 px-3 font-medium text-white disabled:opacity-40">
+            <button type="button" onClick={() => setDeleteTarget(null)} className="twin-button twin-button-secondary flex-1">{t('mobile.tasks.cancel')}</button>
+            <button type="button" disabled={screen.pendingFor(deleteTarget.id) !== null} onClick={() => void deleteTask()} className="twin-button twin-button-danger flex-1">
               {t('mobile.tasks.deleteConfirm')}
             </button>
           </div>
