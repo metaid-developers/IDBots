@@ -13,6 +13,12 @@
 // showed up as text. Every branch now renders its remaining body through
 // UserMessageBody.
 //
+// Second regression this pins: the pipeline now lives in ONE shared module
+// (UserAttachmentBody) because the Bot Internet sidebar panel kept leaking the
+// raw path — a fix that lives inside one surface cannot reach the other. The
+// marker regex, the splitter and the strip are read from the shared module; the
+// transcript is only allowed to wire them up.
+//
 // Harness note: this repo's renderer tests are server-rendered (no DOM/jsdom),
 // so the wiring is pinned by reading the component source, and the marker
 // splitting itself is exercised by extracting the REAL regex from that source
@@ -29,6 +35,7 @@ const read = (...parts: string[]): string =>
   fs.readFileSync(path.join(projectRoot, ...parts), 'utf8');
 
 const detailSource = read('src', 'renderer', 'components', 'cowork', 'CoworkSessionDetail.tsx');
+const attachmentBodySource = read('src', 'renderer', 'components', 'cowork', 'UserAttachmentBody.tsx');
 const lightboxSource = read('src', 'renderer', 'components', 'cowork', 'CoworkImageLightbox.tsx');
 const composerPromptSource = read('src', 'renderer', 'components', 'cowork', 'coworkQuotedSelections.ts');
 
@@ -45,16 +52,20 @@ const REAL_MESSAGE = [
 ].join('\n');
 
 const extractMarkerRegex = (): RegExp => {
-  // The marker regex as it literally appears in the component source.
-  const line = detailSource
+  // The marker regex as it literally appears in the shared module source.
+  const line = attachmentBodySource
     .split('\n')
     .find((l) => l.includes('附件路径|附件文件|输入文件'));
-  assert.ok(line, 'the attachment marker regex must exist in the component source');
+  assert.ok(line, 'the attachment marker regex must exist in the shared module source');
   const literal = line.slice(line.indexOf('/^'), line.lastIndexOf('/i') + 2);
   return new RegExp(literal.slice(1, literal.lastIndexOf('/')), 'i');
 };
 
-test('every user-message branch renders its body through the attachment-aware body', () => {
+test('every user-message branch renders its body through the shared attachment-aware body', () => {
+  assert.ok(
+    /import \{ ImagePreviewStrip, UserMessageBody \} from '\.\/UserAttachmentBody';/.test(detailSource),
+    'the transcript must import the shared body + strip instead of defining its own',
+  );
   const bodyUses = detailSource.match(/<UserMessageBody/g) ?? [];
   assert.equal(
     bodyUses.length,
@@ -69,9 +80,13 @@ test('every user-message branch renders its body through the attachment-aware bo
     /resolveLocalFilePath=\{resolveLocalFilePath\}/.test(detailSource),
     'the resolver must be handed down so attachment paths can be read',
   );
+  // The fourth strip call site is the one inside UserMessageBody: the strip is
+  // only invoked from the shared module's body, not copied per surface.
+  const stripUses = detailSource.match(/<ImagePreviewStrip/g) ?? [];
+  assert.equal(stripUses.length, 3, 'the transcript keeps its three direct strip call sites');
   assert.ok(
-    /imagePaths\.length > 0 && <ImagePreviewStrip imagePaths=\{imagePaths\} inline \/>/.test(detailSource),
-    'the split images must render as an inline strip inside the bubble',
+    /imagePaths\.length > 0 && <ImagePreviewStrip imagePaths=\{imagePaths\} inline \/>/.test(attachmentBodySource),
+    'the split images must render as an inline strip inside the bubble (shared body)',
   );
 });
 
@@ -104,25 +119,33 @@ test('a marker whose path is not an image stays in the body as text', () => {
   const marker = regex.exec('附件路径: /tmp/notes/report.pdf');
   assert.ok(marker, 'the marker still matches a non-image attachment');
   assert.equal(marker[1].trim(), '/tmp/notes/report.pdf');
-  // The component gates on the image extension before moving the line out, so a
+  // The body gates on the image extension before moving the line out, so a
   // non-image marker is kept; the extension check is what decides.
   assert.ok(
-    /hasSupportedImageExtension\(/.test(detailSource),
+    /hasSupportedImageExtension\(/.test(attachmentBodySource),
     'the split must be gated on a supported image extension',
+  );
+  assert.ok(
+    !/hasSupportedImageExtension\s*\(\s*pathText/.test(detailSource),
+    'the transcript must not re-gate attachment markers itself',
+  );
+  assert.ok(
+    !/附件路径\|附件文件\|输入文件/.test(detailSource),
+    'the marker regex lives in the shared module only',
   );
 });
 
 test('a transcript thumbnail opens in-app, and the payload path is untouched', () => {
   assert.ok(
-    /import CoworkImageLightbox from '\.\/CoworkImageLightbox';/.test(detailSource),
-    'the transcript must import the in-app lightbox',
+    /import CoworkImageLightbox from '\.\/CoworkImageLightbox';/.test(attachmentBodySource),
+    'the shared body must import the in-app lightbox',
   );
   assert.ok(
-    /setLightboxSrc\(previewData\[imagePath\]\)/.test(detailSource),
+    /setLightboxSrc\(previewData\[imagePath\]\)/.test(attachmentBodySource),
     'clicking a thumbnail must open the lightbox',
   );
   assert.ok(
-    !/handleOpenPath/.test(detailSource),
+    !/handleOpenPath/.test(attachmentBodySource),
     'the image strip must not hand the picture to the OS viewer any more',
   );
   assert.ok(
@@ -134,10 +157,16 @@ test('a transcript thumbnail opens in-app, and the payload path is untouched', (
     !composerPromptSource.includes('splitUserAttachmentLines'),
     'the submitted prompt body must never go through the display-side splitter',
   );
-  const splitUses = detailSource.match(/splitUserAttachmentLines/g) ?? [];
+  const sharedSplitUses = attachmentBodySource.match(/splitUserAttachmentLines/g) ?? [];
   assert.equal(
-    splitUses.length,
+    sharedSplitUses.length,
     2,
     'the splitter is defined once and used once (inside UserMessageBody) — nowhere near the submit path',
+  );
+  const detailSplitUses = detailSource.match(/splitUserAttachmentLines/g) ?? [];
+  assert.equal(
+    detailSplitUses.length,
+    0,
+    'the transcript must not carry a local copy of the splitter (that is the drift this move kills)',
   );
 });

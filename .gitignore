@@ -285,6 +285,7 @@ tests/*
 !tests/humanIdentityPinWriter.test.mjs
 !tests/pinPathResolver.test.mjs
 !tests/botBrowserHostService.test.mjs
+!tests/botBrowserPanelImageAttachment.test.tsx
 !tests/abcActorIntegrationSmoke.mjs
 !tests/privateChatOrderCoworkTimeout.test.mjs
 !tests/a2aGuidanceRestart.test.ts

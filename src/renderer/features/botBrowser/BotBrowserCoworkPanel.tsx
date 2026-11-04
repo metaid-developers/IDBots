@@ -3,8 +3,9 @@ import { useDispatch, useSelector } from 'react-redux';
 import { ClockIcon, XMarkIcon, TrashIcon, FolderIcon } from '@heroicons/react/24/outline';
 import ComposeIcon from '../../components/icons/ComposeIcon';
 import MarkdownContent from '../../components/MarkdownContent';
-import TwemojiText from '../../components/chat/TwemojiText';
 import CoworkPromptInput, { type CoworkPromptInputRef } from '../../components/cowork/CoworkPromptInput';
+import { UserMessageBody } from '../../components/cowork/UserAttachmentBody';
+import { resolveLocalPathAgainstCwd, type LocalFilePathResolver } from '../../utils/localPath';
 import { buildSessionComposerCommands } from '../../components/cowork/composerCommandCatalog';
 import FolderSelectorPopover from '../../components/cowork/FolderSelectorPopover';
 import MetaBotSelector, { type MetaBotForSelector } from '../../components/cowork/MetaBotSelector';
@@ -49,19 +50,21 @@ export function filterVisiblePanelMessages(messages: CoworkMessage[]): CoworkMes
   });
 }
 
-const PanelMessage: React.FC<{
+export const PanelMessage: React.FC<{
   message: CoworkMessage;
   onOpenUri: (uri: string) => void;
   isAssistantMode?: boolean;
-}> = ({ message, onOpenUri, isAssistantMode = false }) => {
+  resolveLocalFilePath?: LocalFilePathResolver;
+}> = ({ message, onOpenUri, isAssistantMode = false, resolveLocalFilePath }) => {
   if (message.type === 'user') {
     return (
       <div className="flex justify-end">
-        {/* TwemojiText: plain-text bubble face (no markdown pass here) — catalog
-            emoji render through the same bundled pipeline as every other bubble;
-            stored/sent text is untouched. */}
+        {/* Same display-side body pipeline as the main cowork transcript: the
+            attachment marker lines split out at render time, image files render
+            as the shared thumbnail strip with the in-app lightbox, and the rest
+            renders as markdown. The panel keeps its own bubble chrome. */}
         <div className="max-w-[90%] min-w-0 whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-[13px] dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text shadow-subtle">
-          <TwemojiText text={message.content} />
+          <UserMessageBody content={message.content} resolveLocalFilePath={resolveLocalFilePath} />
         </div>
       </div>
     );
@@ -310,8 +313,25 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSki
     window.dispatchEvent(new CustomEvent('botBrowser:openUri', { detail: { uri } }));
   }, []);
 
+  // Attachment paths in the panel resolve exactly like the main transcript's:
+  // against the session cwd, with sandbox guest paths mapped back to it. No
+  // session cwd = no resolver — the splitter's own absolute-path fallback still
+  // renders temp-file images, and nothing relative is guessed.
+  const resolveLocalFilePath = useMemo<LocalFilePathResolver | undefined>(() => {
+    const cwd = currentSession?.cwd?.trim();
+    if (!cwd) return undefined;
+    const executionMode = currentSession?.executionMode;
+    return (href: string, text: string) => resolveLocalPathAgainstCwd(href, text, { cwd, executionMode });
+  }, [currentSession?.cwd, currentSession?.executionMode]);
+
   const renderMessage = (message: CoworkMessage) => (
-    <PanelMessage key={message.id} message={message} onOpenUri={handleOpenUri} isAssistantMode={isAssistantMode} />
+    <PanelMessage
+      key={message.id}
+      message={message}
+      onOpenUri={handleOpenUri}
+      isAssistantMode={isAssistantMode}
+      resolveLocalFilePath={resolveLocalFilePath}
+    />
   );
 
   const workspaceLabel = workspaceSelection
