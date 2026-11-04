@@ -5,6 +5,8 @@ import {
   claimManagedOrchestratorSession,
   resolveOrchestratorPermissionReply,
   buildOrchestratorPermissionPrompt,
+  isManagedOrchestratorSession,
+  isStructuredOwnerQuestion,
 } from '../src/main/services/orchestratorPermissionRelay';
 
 /**
@@ -184,4 +186,65 @@ test('prompt builder surfaces the safety-context tool name for AskUserQuestion g
     toolInput: { reason: 'needs confirmation' },
   }, 'en');
   assert.ok(en.includes('A safety confirmation is required'), 'english prompt for en sessions');
+});
+
+
+/**
+ * A2A / OpenTeam bridge turns: a STRUCTURED ask_user_question (the model asking
+ * the owner a real question, no safety context) must never be turned into a
+ * transcript yes/no prompt + 60s auto-deny — the A2A view hides system
+ * messages, so that path fabricated "the user declined" with the owner never
+ * asked (the same defect class as the 2026-10-30 friend-invite auto-deny).
+ */
+test('structured owner questions are left to the modal, never relayed or auto-denied', async () => {
+  const runner = new StubRunner();
+  const store = makeStore();
+  runner.pending.set('ask-structured', true);
+  claimManagedOrchestratorSession(runner as never, SESSION, store as never, { timeoutMs: 15 });
+
+  const ask = {
+    requestId: 'ask-structured',
+    toolName: 'AskUserQuestion',
+    toolInput: { questions: [{ question: 'Deploy the build to production?' }] },
+  };
+  assert.equal(isStructuredOwnerQuestion(ask), true, 'no safety context = owner question');
+  runner.emit('permissionRequest', SESSION, ask);
+
+  await sleep(50);
+  assert.equal(store.transcript.length, 0, 'no invisible 60s confirmation prompt');
+  assert.equal(runner.responded.length, 0, 'no fabricated decline after the relay window');
+  assert.equal(runner.isPermissionPending('ask-structured'), true);
+});
+
+test('safety gates riding AskUserQuestion keep the text relay and its timeout', async () => {
+  const runner = new StubRunner();
+  const store = makeStore();
+  runner.pending.set('ask-safety', true);
+  claimManagedOrchestratorSession(runner as never, SESSION, store as never, { timeoutMs: 15 });
+
+  const ask = {
+    requestId: 'ask-safety',
+    toolName: 'AskUserQuestion',
+    toolInput: {
+      context: { requestedToolName: 'Bash', requestedToolInput: { command: 'rm -rf build' } },
+      questions: [{ question: '允许删除任务目录外的路径吗？', options: [{ label: '允许' }, { label: '拒绝' }] }],
+    },
+  };
+  assert.equal(isStructuredOwnerQuestion(ask), false, 'safety context keeps yes/no semantics');
+  runner.emit('permissionRequest', SESSION, ask);
+
+  assert.equal(store.transcript.length, 1, 'safety confirmation is posted into the transcript');
+  await sleep(50);
+  assert.equal(runner.responded.length, 1);
+  assert.equal(runner.responded[0]!.result.behavior, 'deny');
+  assert.match(runner.responded[0]!.result.message, /timed out/);
+});
+
+test('managed-session registry drives the bridge push predicate', () => {
+  const runner = new StubRunner();
+  const store = makeStore();
+  assert.equal(isManagedOrchestratorSession(runner as never, SESSION), false, 'unclaimed = cowork_ui');
+  claimManagedOrchestratorSession(runner as never, SESSION, store as never);
+  assert.equal(isManagedOrchestratorSession(runner as never, SESSION), true, 'bridge turn = managed');
+  assert.equal(isManagedOrchestratorSession(runner as never, 'other-session'), false);
 });

@@ -16,6 +16,7 @@ import { resolveCoworkExecutionMode } from './coworkExecutionMode';
 import { buildGoalPromptSection, type CoworkSessionGoal } from './coworkSessionGoal';
 import { DshTurnHub, dshSessionRootFor, isNativeDeepSeekChatRoute, DSH_RUNTIME_IDLE_TTL_MS, type DshTurnProviderRoute } from './coworkDshTurn';
 import { getDshWebToolsProxyDescriptor } from '../services/dshWebToolsProxy';
+import { noteOwnerAskCancelled } from '../services/pendingOwnerAskBridge';
 import { filterServerModeAgentTools, resolveDshRuntimeIdleTtlMs } from '../server/serverMode';
 import { isDshShutdownError } from './dshShutdownError';
 import { truncateUtf16Units } from './llmSafeText';
@@ -11221,6 +11222,14 @@ export class CoworkRunner extends EventEmitter {
             }
             if (activeSession.pendingPermission?.requestId === askId) {
               activeSession.pendingPermission = null;
+            }
+            // Unattended bridge turns: an owner question that ends without an
+            // answer is reported honestly (transcript notice + desktop push)
+            // instead of silently looking like a refusal. No-op for
+            // cowork_ui/IM asks and for already-answered asks; a deliberate
+            // turn abort skips it (the owner stopped on purpose).
+            if (pending && !activeSession.abortController.signal.aborted) {
+              noteOwnerAskCancelled(this, sessionId, askId, this.store);
             }
           },
           // Live subagent rows: the runtime's lineage notifications map onto

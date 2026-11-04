@@ -61,6 +61,7 @@ docs/*
 !docs/tickets/
 !docs/tickets/**
 tests/*
+!tests/a2aPendingAskBridge.test.mjs
 !tests/friendAgentTools.test.mjs
 !tests/friendRelationshipService.test.mjs
 !tests/friendWiringIntegration.test.mjs
