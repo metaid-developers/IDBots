@@ -478,28 +478,17 @@ export async function fetchMrc721ItemVerify(params: {
 }
 
 /**
- * Shared read for sibling MRC-721 domain modules (sell intents): one indexer
- * read through the standard remote-first path. Errors propagate with the
- * structured mrc721Status/mrc721Code markers so callers can degrade honestly
- * when the endpoint is not served yet.
+ * MetaSo-P2P production base (owner indexing architecture, 2026-11-05): all
+ * NFT business indexes — sell-intent queries, collection search, issuer
+ * views — are served by MetaSo, which builds on man-p2p's raw pin index.
+ * The production base is BUILT IN (same posture as MANAPI_BASE); the
+ * `IDBOTS_METASO_API_BASE` env only overrides it for staging/local testing.
  */
-export function fetchMrc721IndexerJson(
-  localPath: string,
-  query: Record<string, string | number | undefined>,
-): Promise<unknown> {
-  return fetchMrc721Json(localPath, query);
-}
+export const METASO_API_BASE_DEFAULT = 'https://so.metaid.io';
 
-/**
- * MetaSo-P2P base (owner indexing architecture, 2026-11-05): all NFT business
- * indexes — sell-intent queries, collection search, issuer views — are served
- * by MetaSo, which builds on man-p2p's raw pin index. Configured via env
- * `IDBOTS_METASO_API_BASE` (e.g. http://127.0.0.1:8080); null = not
- * configured, callers keep the manapi interim behavior (honest degradation).
- */
-export function getMetasoApiBase(): string | null {
-  const base = (process.env.IDBOTS_METASO_API_BASE ?? '').trim().replace(/\/+$/, '');
-  return base || null;
+export function getMetasoApiBase(): string {
+  const override = (process.env.IDBOTS_METASO_API_BASE ?? '').trim().replace(/\/+$/, '');
+  return override || METASO_API_BASE_DEFAULT;
 }
 
 /**
@@ -512,7 +501,6 @@ export async function fetchMetasoJson(
   query: Record<string, string | number | undefined>,
 ): Promise<unknown> {
   const base = getMetasoApiBase();
-  if (!base) throw new Error('MetaSo API base is not configured (IDBOTS_METASO_API_BASE)');
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) {
     if (value == null || value === '') continue;
@@ -539,11 +527,6 @@ export async function fetchMetasoJson(
     });
   }
   return json.data;
-}
-
-/** True when a MetaSo base is configured (server-side search available). */
-export function hasMetasoApiBase(): boolean {
-  return getMetasoApiBase() != null;
 }
 
 // ---------------------------------------------------------------------------
@@ -632,7 +615,7 @@ export async function searchMrc721Collections(params: {
   // MetaSo fast path (indexer requirements R-A): when a MetaSo base is
   // configured the server filters for us; on any transport/envelope error we
   // reset the accumulators and degrade to the client-side pageList scan.
-  let serverSearch = hasMetasoApiBase();
+  let serverSearch = true;
   for (let page = 0; page < maxPages; page++) {
     if (serverSearch) {
       try {

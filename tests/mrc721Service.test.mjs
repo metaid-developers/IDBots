@@ -480,3 +480,22 @@ test('fetchMrc721ItemInfo surfaces a teaching error for unindexed items on trans
     assert.equal(await fetchMrc721ItemInfo({ pinId: `${NFT_TXID}i0` }), null);
   });
 });
+
+// ---------------------------------------------------------------------------
+// MetaSo base resolution: production default built in, env override only
+// ---------------------------------------------------------------------------
+
+test('getMetasoApiBase defaults to the production base and honors the staging override', async () => {
+  const previous = process.env.IDBOTS_METASO_API_BASE;
+  delete process.env.IDBOTS_METASO_API_BASE;
+  try {
+    const mod = await import('../dist-electron/main/services/mrc721Service.js');
+    assert.equal(mod.METASO_API_BASE_DEFAULT, 'https://so.metaid.io');
+    assert.equal(mod.getMetasoApiBase(), 'https://so.metaid.io');
+    process.env.IDBOTS_METASO_API_BASE = 'http://127.0.0.1:8080/';
+    assert.equal(mod.getMetasoApiBase(), 'http://127.0.0.1:8080');
+  } finally {
+    if (previous == null) delete process.env.IDBOTS_METASO_API_BASE;
+    else process.env.IDBOTS_METASO_API_BASE = previous;
+  }
+});

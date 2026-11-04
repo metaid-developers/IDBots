@@ -925,8 +925,8 @@ test('mrc721_market_intents degrades honestly when the indexer lacks the endpoin
     () => byName.mrc721_market_intents.handler({ collection_name: 'pixel-cats' }),
   );
   assert.equal(result.isError, true);
-  assert.match(result.content[0].text, /no reachable MetaSo sell-intent index/);
-  assert.match(result.content[0].text, /IDBOTS_METASO_API_BASE/);
+  assert.match(result.content[0].text, /the MetaSo indexer does not serve sell-intent queries/);
+  assert.match(result.content[0].text, /check the MetaSo deployment/);
 });
 
 // ---------------------------------------------------------------------------
