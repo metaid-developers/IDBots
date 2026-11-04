@@ -25,7 +25,15 @@
 /** Stable machine code the runner stamps on cowork:stream:error metadata (REQ-A-25). */
 export const LLM_QUOTA_EXHAUSTED_CODE = 'LLM_QUOTA_EXHAUSTED';
 
-export type QuotaExhaustedKind = 'free' | 'purchased';
+/**
+ * S9 ME credits: the metering/burn gateway will reject a turn with this code
+ * when the weekly allowance + persistent balance cannot cover it. The client
+ * already routes it to the plan/top-up path; until the backend emits it the
+ * card simply never appears.
+ */
+export const INSUFFICIENT_ME_CODE = 'INSUFFICIENT_ME';
+
+export type QuotaExhaustedKind = 'free' | 'purchased' | 'me';
 
 /**
  * STRING FALLBACK — the only free-text quota matcher in the mobile app.
@@ -37,6 +45,17 @@ export type QuotaExhaustedKind = 'free' | 'purchased';
  * pins the more specific code first.)
  */
 export const RELAY_QUOTA_TEXT_FALLBACK = /(free_quota_exhausted|quota_exhausted)/i;
+
+/**
+ * ME-balance death marker for payloads that carry no structured code (the
+ * persisted terminal Error row after a restore). The structured path reads
+ * `streamError.code === INSUFFICIENT_ME` instead.
+ */
+export const INSUFFICIENT_ME_TEXT_FALLBACK = /INSUFFICIENT_ME/i;
+
+export function insufficientMeFromErrorText(text: unknown): boolean {
+  return INSUFFICIENT_ME_TEXT_FALLBACK.test(String(text ?? ''));
+}
 
 /**
  * Quota card copy kind ('free' vs 'purchased') from the relay code inside an

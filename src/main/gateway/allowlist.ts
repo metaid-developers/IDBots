@@ -355,6 +355,19 @@ const WS_A_NEW_INVOKE: Record<string, AllowlistEntry> = {
   'bundle:createOrder': { tier: 'P1' },
   'bundle:getOrder': { tier: 'P1' },
   'bundle:getMeters': { tier: 'P1' },
+  // S9 ME points (mobile): /v1/me/* runs in the main process behind the local
+  // identity signature; the mobile app only receives the envelopes. The
+  // voucher path on mobile is a photo upload + remark (no native dialog), so
+  // `me:pickVoucher` is deliberately NOT exposed here.
+  'me:getPlans': { tier: 'P1' },
+  'me:getRates': { tier: 'P1' },
+  'me:getTopupPackages': { tier: 'P1' },
+  'me:getBalance': { tier: 'P1' },
+  'me:getSubscription': { tier: 'P1' },
+  'me:getHistory': { tier: 'P1' },
+  'me:submitTopupOrder': { tier: 'P1' },
+  'me:getTopupOrders': { tier: 'P1' },
+  'me:getPaymentInfo': { tier: 'P1' },
 };
 
 // ---------------------------------------------------------------------------

@@ -185,6 +185,8 @@ export interface MobileMockControl {
   /** URLs passed to shell:openExternal while http(s) (for test assertions). */
   getOpenedUrls: () => string[];
   emitCoworkStream: (channel: MobileMockCoworkStreamChannel, payload: unknown) => void;
+  /** S9 ME points demo: flip the mock subscription between free and active. */
+  setMeSubscribed?: (value: boolean) => void;
 }
 
 /** Timer/scenario knobs; tests shrink these to keep the suite fast. */

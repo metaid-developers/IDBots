@@ -22,6 +22,8 @@ import { projectChatMessages } from '../chatProjection';
 import {
   LLM_QUOTA_EXHAUSTED_CODE,
   quotaKindFromErrorText,
+  INSUFFICIENT_ME_CODE,
+  insufficientMeFromErrorText,
   type QuotaExhaustedKind,
 } from '../quotaCodes';
 import { useChatAttachments } from './useChatAttachments';
@@ -98,6 +100,7 @@ export function deriveQuotaExhaustedFromDetail(
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const message = messages[i];
     if (isTerminalErrorRow(message)) {
+      if (insufficientMeFromErrorText(message.content)) return { exhausted: true, kind: 'me' };
       const kind = quotaKindFromErrorText(message.content);
       return { exhausted: kind !== null, kind };
     }
@@ -121,6 +124,9 @@ export function deriveLiveQuotaExhausted(
   streamError: { code: string | null; text: string } | null | undefined,
   persisted: QuotaExhaustedState,
 ): QuotaExhaustedState {
+  if (state?.status === 'error' && streamError?.code === INSUFFICIENT_ME_CODE) {
+    return { exhausted: true, kind: 'me' };
+  }
   if (state?.status === 'error' && streamError?.code === LLM_QUOTA_EXHAUSTED_CODE) {
     return {
       exhausted: true,

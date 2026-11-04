@@ -91,6 +91,8 @@ export interface MeRate {
 /** GET /v1/me/topup/packages entry. */
 export interface MeTopupPackage {
   packageId: string;
+  /** Display name from the server (e.g. 充值包 A); clients fall back to packageId. */
+  name?: string;
   meMilli?: number;
   priceCny?: number;
   saleStatus?: number;
@@ -449,6 +451,7 @@ export async function getMeTopupPackages(): Promise<MeTopupPackage[]> {
     if (!packageId) continue;
     packages.push({
       packageId,
+      name: pickText(record, 'name') || undefined,
       meMilli: pickNumber(record, 'meMilli', 'me_milli') || undefined,
       priceCny: pickNumber(record, 'priceCny', 'price_cny') || undefined,
       saleStatus: pickNumber(record, 'saleStatus', 'sale_status') || undefined,

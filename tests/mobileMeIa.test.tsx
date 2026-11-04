@@ -11,7 +11,7 @@ import {
   meEntriesForGroup,
 } from '../src/mobile/app/screens/me/registry.ts';
 import { ProfilePage } from '../src/mobile/app/screens/me/ProfilePage.tsx';
-import { TrafficPage } from '../src/mobile/app/screens/me/TrafficPage.tsx';
+import { UsageCreditsPage } from '../src/mobile/app/screens/me/UsageCreditsPage.tsx';
 import { BotsPage } from '../src/mobile/app/screens/me/BotsPage.tsx';
 import { BotEditPage } from '../src/mobile/app/screens/me/BotEditPage.tsx';
 import { SkillsPage } from '../src/mobile/app/screens/me/SkillsPage.tsx';
@@ -29,17 +29,18 @@ import type { MobileUserIdentity } from '../src/mobile/app/hooks/useIdentity.ts'
  * (e2e/mobile/me-ia.spec.ts) — renderToStaticMarkup never runs effects.
  */
 
-test('registry: six list entries in three groups, profile/traffic ride the cards', () => {
+test('registry: seven list entries in three groups, profile rides the card', () => {
   assert.deepEqual(
     ME_ENTRIES.map((entry) => entry.id),
-    ['bots', 'skills', 'memory', 'general', 'account', 'about'],
+    ['bots', 'usage', 'skills', 'memory', 'general', 'account', 'about'],
   );
   assert.deepEqual(ME_ENTRY_GROUPS.map((group) => group.group), ['bots', 'general', 'account']);
   // The bots group renders without a heading (single row on top).
   assert.equal(ME_ENTRY_GROUPS[0].titleKey, null);
-  assert.deepEqual(meEntriesForGroup('general').map((entry) => entry.id), ['skills', 'memory', 'general']);
+  assert.deepEqual(meEntriesForGroup('general').map((entry) => entry.id), ['usage', 'skills', 'memory', 'general']);
   assert.deepEqual(meEntriesForGroup('account').map((entry) => entry.id), ['account', 'about']);
-  // profile/traffic are NOT registry rows (card entries, IA-PLAN §2.1).
+  // profile is NOT a registry row (card entry, IA-PLAN §2.1); the retired
+  // traffic route is gone from the navigation surface (S9 §3 下线清单).
   assert.equal(ME_ENTRIES.some((entry) => entry.id === 'profile'), false);
   assert.equal(ME_ENTRIES.some((entry) => entry.id === 'traffic'), false);
   // Every entry carries a unique testid + title key; danger is reserved and unused.
@@ -51,10 +52,17 @@ test('registry: six list entries in three groups, profile/traffic ride the cards
   }
 });
 
-test('primary page renders user card, balance card and the registry rows', () => {
-  const html = renderToStaticMarkup(React.createElement(MeScreen, { onOpenRecharge: () => undefined }));
+test('primary page renders user card, ME points hero and the registry rows', () => {
+  const html = renderToStaticMarkup(React.createElement(MeScreen, {
+    canPurchase: true,
+    onOpenPurchase: () => undefined,
+  }));
   assert.match(html, /data-testid="user-card"/);
-  assert.match(html, /data-testid="balance-card"/);
+  assert.match(html, /data-testid="me-points-hero"/);
+  assert.match(html, /data-testid="me-balance-chip"/);
+  assert.match(html, /data-testid="me-topup-locked"/);
+  // The old traffic/quota balance card is retired (S9 §3).
+  assert.doesNotMatch(html, /data-testid="balance-card"/);
   for (const entry of ME_ENTRIES) {
     assert.match(html, new RegExp(`data-testid="${entry.testId}"`), entry.testId);
   }
@@ -119,16 +127,18 @@ test('profile page: abnormal sync renders retry actions and the error text', () 
   assert.match(html, /mock sync error/);
 });
 
-test('traffic page: pending-order strip absent without a stored order; sections present', () => {
+test('usage & credits page: balance, ledger, orders, rates and compliance sections', () => {
   const html = renderToStaticMarkup(
-    React.createElement(TrafficPage, { onBack: () => undefined, onOpenRecharge: () => undefined }),
+    React.createElement(UsageCreditsPage, { onBack: () => undefined }),
   );
-  assert.match(html, /data-testid="me-page-traffic"/);
-  assert.match(html, /data-testid="traffic-free-grant"/);
-  assert.match(html, /data-testid="traffic-usage-toggle"/);
-  assert.match(html, /data-testid="traffic-tariff-toggle"/);
-  assert.match(html, /data-testid="traffic-ledger-empty"/);
-  assert.doesNotMatch(html, /data-testid="traffic-pending-order"/);
+  assert.match(html, /data-testid="me-page-usage"/);
+  assert.match(html, /data-testid="usage-history"/);
+  assert.match(html, /data-testid="usage-orders"/);
+  assert.match(html, /data-testid="usage-rates"/);
+  assert.match(html, /data-testid="usage-compliance"/);
+  // The retired traffic surface must not reappear anywhere on this page.
+  assert.doesNotMatch(html, /data-testid="me-page-traffic"/);
+  assert.doesNotMatch(html, /data-testid="traffic-ledger-empty"/);
 });
 
 test('bots page renders the create action and list shell; bot edit page shells', () => {

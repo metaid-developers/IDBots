@@ -1,18 +1,28 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronRightIcon } from '@heroicons/react/24/outline';
 import { t } from '../../i18n';
 import { getMobileElectron } from '../appBridge';
 import { useIdentity } from '../hooks/useIdentity';
-import { useMeters } from '../hooks/useMeters';
 import { useSettings } from '../hooks/useSettings';
 import { useMemorySettings } from '../hooks/useMemorySettings';
 import { useSkills } from '../hooks/useSkills';
 import { useMetabots } from '../hooks/useMetabots';
-import { formatBytes, formatCount } from '../format';
 import { BotAvatar } from '../components/BotAvatar';
-import { RedeemButton } from '../components/RedeemButton';
 import { BottomSheet } from '../components/BottomSheet';
-import { Section } from '../components/Section';
+import { MeBalanceChip } from '../components/MeBalanceChip';
+import { MePointsHero } from '../components/MePointsHero';
+import { MeTierCards } from '../components/MeTierCards';
+import {
+  ensureMeOverview,
+  isMeSubscribed,
+  meActivePlanId,
+  meCurrentPlan,
+  meFromMilli,
+  refreshMeBalance,
+  refreshMeCatalog,
+  refreshMeSubscription,
+  useMeStore,
+} from '../me/mePointsStore';
 import {
   ME_ENTRY_GROUPS,
   meEntriesForGroup,
@@ -20,7 +30,7 @@ import {
   type MeRoute,
 } from './me/registry';
 import { ProfilePage } from './me/ProfilePage';
-import { TrafficPage } from './me/TrafficPage';
+import { UsageCreditsPage } from './me/UsageCreditsPage';
 import { BotsPage } from './me/BotsPage';
 import { BotEditPage } from './me/BotEditPage';
 import { SkillsPage } from './me/SkillsPage';
@@ -30,11 +40,17 @@ import { AccountPage } from './me/AccountPage';
 import { AboutPage } from './me/AboutPage';
 
 /**
- * Me tab (REQ-E-14), A6 settings IA rework (IA-PLAN v1):
- * primary page = user card + balance card + registry-rendered entry list;
- * every entry pushes a secondary page on a local stack. No router
- * dependency — the stack rides on history entries so Android system back /
- * browser back and the top-bar back button pop the same way (§2.4/§2.5).
+ * Me tab (REQ-E-14), A6 settings IA rework (IA-PLAN v1) + S9 ME points home.
+ *
+ * The primary page is now the points home: a merged ME balance hero with the
+ * four-bucket ledger, the current plan / weekly progress line, the three-tier
+ * sales cards and the upgrade/renew path — followed by the registry-rendered
+ * settings rows. The old traffic page is gone; `usage` is the merged
+ * Usage & credits page (S9 §3).
+ *
+ * Navigation: every entry pushes a secondary page on a local stack riding on
+ * history entries, so Android system back / browser back and the top-bar back
+ * button pop the same way (§2.4/§2.5).
  */
 
 /** 'botEdit' is the only third-level entry, pushed only on top of 'bots'. */
@@ -73,92 +89,38 @@ function UserCard(props: {
 }
 
 /**
- * Balance card: the whole card opens the traffic page while the recharge
- * button keeps its one-tap path into the cashier overlay (IA-PLAN §2.2 —
- * the conversion path stays one jump; hard gate 2 depends on it).
- * rechargeAllowed=false (native shell, NS1 policy) hides the web cashier
- * entry while the card itself stays tappable into the traffic page.
+ * iOS note: the capacitor iOS shell shows the catalog and guidance only —
+ * no cashier, no voucher flow (Apple IAP policy, S9 §5). This sheet is the
+ * one place that explains where the purchase can be completed.
  */
-function BalanceCard(props: {
-  resyncCounter?: number;
-  onOpenRecharge: () => void;
-  onOpenTraffic: () => void;
-  rechargeAllowed?: boolean;
-}): JSX.Element {
-  const { meters, loading, error, reload } = useMeters(props.resyncCounter);
-  // Desktop parity threshold (TrafficSettings TRAFFIC_LOW_BALANCE_BYTES).
-  const lowBalance = Boolean(meters?.traffic && meters.traffic.balanceBytes < 5_000_000);
+function IosGuidanceSheet(props: { onClose: () => void }): JSX.Element {
   return (
-    <Section title={t('mobile.me.balanceTitle')}>
-      <div
-        role="button"
-        tabIndex={0}
-        data-testid="balance-card"
-        onClick={props.onOpenTraffic}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' || event.key === ' ') props.onOpenTraffic();
-        }}
-        className="mb-3 cursor-pointer rounded-xl"
-      >
-        <div className="flex gap-3">
-          <div className="twin-panel-flat flex-1 rounded-xl bg-[var(--bg-main)] p-3">
-            <p className="text-xs text-[var(--text-secondary)]">{t('mobile.me.trafficLabel')}</p>
-            <p className="twin-card-value">
-              {meters?.traffic ? formatBytes(meters.traffic.balanceBytes) : '—'}
-            </p>
-          </div>
-          <div className="twin-panel-flat flex-1 rounded-xl bg-[var(--bg-main)] p-3">
-            <p className="text-xs text-[var(--text-secondary)]">{t('mobile.me.llmLabel')}</p>
-            <p className="twin-card-value">
-              {meters ? `${formatCount(meters.llm.quotaRemaining)} ${meters.llm.unit}` : '—'}
-            </p>
-          </div>
-        </div>
-        {lowBalance ? (
-          <p className="twin-help text-[var(--twin-warning)]" data-testid="balance-low-warning">
-            {t('mobile.me.traffic.lowBalance')}
-          </p>
-        ) : null}
-      </div>
-      {loading ? <p className="mb-2 text-xs text-[var(--text-secondary)]">{t('mobile.common.loading')}</p> : null}
-      {error ? (
-        <div className="mb-2 flex items-center justify-between gap-2" data-testid="balance-load-error">
-          <p className="text-xs text-red-600">{t('mobile.me.balanceLoadFailed')}</p>
-          <button type="button" onClick={() => void reload()} className="twin-button twin-button-ghost twin-button-small">
-            {t('mobile.common.retry')}
-          </button>
-        </div>
-      ) : null}
-      <div className="flex gap-2">
-        {props.rechargeAllowed !== false ? (
-          <button
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation();
-              props.onOpenRecharge();
-            }}
-            className="twin-button twin-button-primary flex-1"
-          >
-            {t('mobile.me.rechargeEntry')}
-          </button>
-        ) : null}
-        <RedeemButton />
-      </div>
-    </Section>
+    <BottomSheet title={t('mobile.me.points.iosTitle')} onClose={props.onClose}>
+      <p className="mb-4 text-sm text-[var(--text-secondary)]" data-testid="me-ios-guidance-body">
+        {t('mobile.me.points.iosBody')}
+      </p>
+      <button type="button" className="twin-button twin-button-primary twin-button-full" onClick={props.onClose}>
+        {t('mobile.me.points.iosAck')}
+      </button>
+    </BottomSheet>
   );
 }
 
 export default function MeScreen(props: {
   resyncCounter?: number;
-  onOpenRecharge: () => void;
-  rechargeAllowed?: boolean;
+  canPurchase: boolean;
+  onOpenPurchase: (section: 'subscribe' | 'topup', planId?: string) => void;
+  /** Bumped by the shell when a submitted order should open Usage & credits. */
+  usageSignal?: number;
 }): JSX.Element {
   const identity = useIdentity(props.resyncCounter);
   const [stack, setStack] = useState<MeStackEntry[]>([]);
   const [editingBotId, setEditingBotId] = useState<number | null>(null);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [iosOpen, setIosOpen] = useState(false);
   const dirtyRef = useRef(false);
   const pushedRef = useRef(0);
+  const me = useMeStore();
 
   // Registry summaries (IA-PLAN §4.1): count/enabled/combo/version.
   const settings = useSettings();
@@ -172,6 +134,29 @@ export default function MeScreen(props: {
       .then((version) => setAppVersion(version))
       .catch(() => setAppVersion(null));
   }, []);
+
+  const refreshPoints = useCallback(() => {
+    void refreshMeBalance({ forceRefresh: true });
+    void refreshMeSubscription();
+    void refreshMeCatalog();
+  }, []);
+
+  useEffect(() => {
+    ensureMeOverview();
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') refreshPoints();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [refreshPoints, props.resyncCounter]);
+
+  const subscribed = isMeSubscribed(me.subscription);
+  const activePlanId = meActivePlanId(me.subscription);
+  const currentPlan = useMemo(
+    () => meCurrentPlan(me.plans, me.subscription),
+    [me.plans, me.subscription],
+  );
+  const meTotal = me.balance ? meFromMilli(me.balance.totalAvailable) : null;
 
   const top: MeStackEntry | null = stack.length > 0 ? stack[stack.length - 1] : null;
 
@@ -194,6 +179,13 @@ export default function MeScreen(props: {
     setStack((current) => [...current, route]);
     pushHistoryEntry();
   }, [pushHistoryEntry]);
+
+  const lastUsageSignal = useRef(0);
+  useEffect(() => {
+    if (!props.usageSignal || props.usageSignal === lastUsageSignal.current) return;
+    lastUsageSignal.current = props.usageSignal;
+    pushRoute('usage');
+  }, [props.usageSignal, pushRoute]);
 
   const popRoute = useCallback(() => {
     if (top === 'botEdit') setEditingBotId(null);
@@ -264,7 +256,24 @@ export default function MeScreen(props: {
           : 'mobile.me.themeSystem',
     ),
     appVersion,
+    meTotal,
   };
+
+  const openUpgrade = useCallback((planId?: string) => {
+    if (!props.canPurchase) {
+      setIosOpen(true);
+      return;
+    }
+    props.onOpenPurchase('subscribe', planId);
+  }, [props]);
+
+  const openRecharge = useCallback(() => {
+    if (!props.canPurchase) {
+      setIosOpen(true);
+      return;
+    }
+    props.onOpenPurchase('topup');
+  }, [props]);
 
   if (top) {
     switch (top) {
@@ -282,15 +291,8 @@ export default function MeScreen(props: {
             {confirmDiscard ? <DiscardConfirmSheet onCancel={() => setConfirmDiscard(false)} onDiscard={discardAndBack} /> : null}
           </>
         );
-      case 'traffic':
-        return (
-          <TrafficPage
-            onBack={requestBack}
-            onOpenRecharge={props.onOpenRecharge}
-            rechargeAllowed={props.rechargeAllowed}
-            resyncCounter={props.resyncCounter}
-          />
-        );
+      case 'usage':
+        return <UsageCreditsPage onBack={requestBack} />;
       case 'bots':
         return <BotsPage onBack={requestBack} onOpenEdit={(botId) => pushRoute('botEdit', botId)} />;
       case 'botEdit':
@@ -327,14 +329,31 @@ export default function MeScreen(props: {
           <h1 className="twin-title">{t('mobile.me.title')}</h1>
           <p className="twin-subtitle">{t('mobile.me.subtitle')}</p>
         </div>
+        <MeBalanceChip balance={me.balance} loading={me.balanceLoading} onOpen={() => pushRoute('usage')} />
       </div>
       <div className="twin-scroll space-y-3 p-3" data-testid="me-primary-page">
         <UserCard identity={identity.identity} onOpen={() => pushRoute('profile')} />
-        <BalanceCard
-          resyncCounter={props.resyncCounter}
-          onOpenRecharge={props.onOpenRecharge}
-          onOpenTraffic={() => pushRoute('traffic')}
-          rechargeAllowed={props.rechargeAllowed}
+        <MePointsHero
+          balance={me.balance}
+          loading={me.balanceLoading}
+          error={me.balanceError}
+          featureUnavailable={me.balanceFeatureUnavailable}
+          plan={currentPlan}
+          subscribed={subscribed}
+          canPurchase={props.canPurchase}
+          onUpgrade={() => openUpgrade(activePlanId || undefined)}
+          onRecharge={openRecharge}
+          onOpenUsage={() => pushRoute('usage')}
+          onRetry={refreshPoints}
+        />
+        <MeTierCards
+          plans={me.plans}
+          loading={me.plansLoading}
+          error={me.plansError}
+          activePlanId={activePlanId}
+          selectedPlanId=""
+          onChoose={(planId) => openUpgrade(planId)}
+          onRetry={() => void refreshMeCatalog()}
         />
         {ME_ENTRY_GROUPS.map((group) => (
           <div key={group.group}>
@@ -368,6 +387,7 @@ export default function MeScreen(props: {
           </div>
         ))}
       </div>
+      {iosOpen ? <IosGuidanceSheet onClose={() => setIosOpen(false)} /> : null}
     </div>
   );
 }

@@ -1496,6 +1496,119 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
   ];
   let redeemSeq = 0;
 
+  // ------------------------------------------------------------ ME points (S9)
+  // Contract-shaped fixtures for the points home / purchase flow / usage page.
+  // Prices and weekly amounts mirror /v1/me/* (mobile priceCny) so the mock
+  // still proves "everything renders from the API shape".
+  let mockMeSubscribed = false;
+  let mockTopupSeq = 0;
+  const mockMeNow = () => Math.floor(Date.now() / 1000);
+  const mockMePlans = [
+    { planId: 'me_free', tier: 'free', name: 'Free', priceCny: 0, desktopPriceCny: 0, annualPriceCny: 0, quarterlyDiscountPct: 0, periodDays: 30, weeklyAmountMilli: 2_000_000, saleStatus: 1 },
+    { planId: 'me_standard', tier: 'standard', name: 'ID.Pupil', priceCny: 99, desktopPriceCny: 49, annualPriceCny: 899, quarterlyDiscountPct: 90, periodDays: 30, weeklyAmountMilli: 10_000_000, saleStatus: 1 },
+    { planId: 'me_pro', tier: 'pro', name: 'ID.Student', priceCny: 199, desktopPriceCny: 149, annualPriceCny: 1799, quarterlyDiscountPct: 90, periodDays: 30, weeklyAmountMilli: 35_000_000, saleStatus: 1 },
+    { planId: 'me_max', tier: 'max', name: 'ID.Scholar', priceCny: 499, desktopPriceCny: 449, annualPriceCny: 4499, quarterlyDiscountPct: 90, periodDays: 30, weeklyAmountMilli: 125_000_000, saleStatus: 1 },
+  ];
+  const mockMeTopupPackages = [
+    { packageId: 'me_topup_a', name: 'Top-up Pack A', meMilli: 30_000_000, priceCny: 90, saleStatus: 1 },
+    { packageId: 'me_topup_b', name: 'Top-up Pack B', meMilli: 100_000_000, priceCny: 249, saleStatus: 1 },
+  ];
+  const mockMeRates = [
+    { key: 'deepseek-chat', multiplier: 1 },
+    { key: 'glm-5.3', multiplier: 3 },
+    { key: 'mvc-traffic', multiplier: 1 },
+  ];
+  const mockMeOrders: Array<Record<string, unknown>> = [
+    { orderId: 'me_topup_demo_0001', packageId: 'me_topup_a', status: 'confirmed', createdAt: mockMeNow() - 86_400, confirmedAt: mockMeNow() - 82_800, meMilli: 30_000_000, priceCny: 90 },
+    { orderId: 'me_topup_demo_0002', packageId: 'me_topup_b', status: 'submitted', createdAt: mockMeNow() - 3_600, meMilli: 100_000_000, priceCny: 249 },
+  ];
+  const mockMeHistory = (() => {
+    const rows = [
+      { type: 'grant', amountMilli: 10_000_000, reason: 'weekly grant', refType: 'weekly' },
+      { type: 'spend', amountMilli: -420_000, reason: 'deepseek-chat · 1x', refType: 'llm' },
+      { type: 'topup', amountMilli: 30_000_000, reason: 'me_topup_a', refType: 'topup' },
+      { type: 'earned', amountMilli: 1_250_000, reason: 'skill service sale', refType: 'earned' },
+      { type: 'bonus', amountMilli: 2_000_000, reason: 'welcome bonus', refType: 'bonus' },
+      { type: 'spend', amountMilli: -1_260_000, reason: 'glm-5.3 · 3x', refType: 'llm' },
+      { type: 'spend', amountMilli: -80_000, reason: 'mvc traffic · 1x', refType: 'traffic' },
+    ];
+    return rows.map((row, index) => ({
+      id: `mock_me_h_${index + 1}`,
+      ...row,
+      balanceAfterMilli: 40_000_000 - index * 250_000,
+      createdAt: mockMeNow() - index * 5_400,
+      raw: {},
+    }));
+  })();
+  const mockMeBalance = () => {
+    const weeklyAmount = mockMeSubscribed ? 10_000_000 : 2_000_000;
+    const weeklyRemaining = mockMeSubscribed ? 6_240_000 : 1_480_000;
+    const topup = 30_000_000;
+    const bonus = 2_000_000;
+    const earned = 1_250_000;
+    return {
+      identityAddress: 'mock-mvc-address',
+      weeklyGrant: {
+        amountMilli: weeklyAmount,
+        remainingMilli: weeklyRemaining,
+        cycleStart: mockMeNow() - 3 * 86_400,
+        cycleEnd: mockMeNow() + 4 * 86_400,
+        isResidual: false,
+        nextResetAt: (mockMeNow() + 3 * 86_400 + 5_400) * 1000,
+      },
+      persistent: { topupMilli: topup, earnedMilli: earned, bonusMilli: bonus },
+      frozenMilli: 0,
+      totalAvailable: weeklyRemaining + topup + bonus + earned,
+    };
+  };
+  const mePointsImpl = {
+    getPlans: () => guardOnline(async () => ({ success: true, plans: mockMePlans })),
+    getRates: () => guardOnline(async () => ({ success: true, rates: mockMeRates })),
+    getTopupPackages: () => guardOnline(async () => ({ success: true, topupPackages: mockMeTopupPackages })),
+    getBalance: () => guardOnline(async () => ({ success: true, balance: mockMeBalance() })),
+    getSubscription: () =>
+      guardOnline(async () => ({
+        success: true,
+        subscription: {
+          statusText: mockMeSubscribed ? 'active' : 'free',
+          raw: mockMeSubscribed ? { planId: 'me_standard', planName: 'ID.Pupil' } : { planId: 'me_free' },
+        },
+      })),
+    getHistory: (input?: { type?: string }) =>
+      guardOnline(async () => {
+        const rows = input?.type ? mockMeHistory.filter((row) => row.type === input.type) : mockMeHistory;
+        return { success: true, history: { entries: rows, nextCursor: '' } };
+      }),
+    submitTopupOrder: (input: { packageId?: string }) =>
+      guardOnline(async () => {
+        const isTopup = String(input?.packageId ?? '').startsWith('me_topup_');
+        // PRD 2.2: top-up requires an active paid plan; subscription orders are
+        // exactly how a free account becomes paid, so they pass.
+        if (isTopup && !mockMeSubscribed) {
+          return { success: false, error: 'an active paid plan is required before top-up', errorCode: 'SUBSCRIPTION_REQUIRED', featureUnavailable: false };
+        }
+        const pkg = isTopup
+          ? mockMeTopupPackages.find((entry) => entry.packageId === input?.packageId)
+          : mockMePlans.find((entry) => entry.planId === input?.packageId);
+        if (!pkg) return { success: false, error: 'package not found' };
+        mockTopupSeq += 1;
+        const order = {
+          orderId: `me_topup_demo_${String(1000 + mockTopupSeq)}`,
+          packageId: 'packageId' in pkg ? pkg.packageId : pkg.planId,
+          status: 'submitted',
+          createdAt: mockMeNow(),
+          meMilli: 'meMilli' in pkg ? pkg.meMilli : pkg.weeklyAmountMilli,
+          priceCny: pkg.priceCny,
+          raw: {},
+        };
+        mockMeOrders.unshift(order);
+        return { success: true, submission: { order, applied: false } };
+      }),
+    getTopupOrders: () => guardOnline(async () => ({ success: true, orders: mockMeOrders })),
+    getPaymentInfo: () => ({ success: true, payment: { qrContent: 'https://example.com/me-pay/demo', payeeHint: 'Demo payee · ME top-up' } }),
+    pickVoucher: () => Promise.resolve({ success: false }),
+  };
+
   const electron: Record<string, unknown> = {
     // REQ-E-3: the server is linux/x64; keep the same values so desktop
     // renderer services that branch on platform never take a desktop path.
@@ -1556,6 +1669,7 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
     scheduledTasks: scheduledTasksImpl,
     longtermTask: longtermTaskImpl,
     bundle: bundleImpl,
+    mePoints: mePointsImpl,
     mobile: {
       // Channel names aligned with the generated IPC contract / real preload
       // (mobile.listPendingPermissions, mobile.getBootstrapStatus) so screens
@@ -1829,6 +1943,9 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
     },
     getConnectionState: () => connectionState,
     getOpenedUrls: () => [...openedUrls],
+    setMeSubscribed: (value: boolean) => {
+      mockMeSubscribed = value;
+    },
     emitCoworkStream: (channel: MobileMockCoworkStreamChannel, payload: unknown) => {
       if (channel === 'permission') {
         const event = payload as {

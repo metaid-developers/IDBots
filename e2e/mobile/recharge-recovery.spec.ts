@@ -83,7 +83,10 @@ async function createCalls(page: Page): Promise<number> {
   return page.evaluate(() => Number(window.localStorage.getItem('idbots.fixture.rechargeCreateCalls') ?? 0));
 }
 
-test.describe('recharge recovery', () => {
+// S9 (ME credits): the bundle/Alipay order-recovery flow is retired. These
+// cases stay skipped (not deleted) until the owner confirms removing the old
+// cashier specs; the live recharge path is covered by recharge.spec.ts.
+test.describe.skip('recharge recovery [retired by S9]', () => {
   test('leaving and reloading restores the same order without creating another', async ({ page }, testInfo) => {
     await page.goto('/app/');
     await installOrderHarness(page);
