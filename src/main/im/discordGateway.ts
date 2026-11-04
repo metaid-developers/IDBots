@@ -22,6 +22,14 @@ import {
   DEFAULT_DISCORD_STATUS,
 } from './types';
 import { parseMediaMarkers, stripMediaMarkers } from './dingtalkMediaParser';
+import type { IMOutboundCapabilities } from './imOutbound';
+
+/**
+ * Conservative client-side upload ceiling. Discord's per-guild boost tier
+ * decides the real limit (8–100 MB); 8 MB is the floor every guild allows, so
+ * the manifest never promises more than the worst case will accept.
+ */
+export const DISCORD_OUTBOUND_MAX_BYTES = 8 * 1024 * 1024;
 import { tApp } from '../libs/appLanguage';
 
 export class DiscordGateway extends EventEmitter {
@@ -30,6 +38,8 @@ export class DiscordGateway extends EventEmitter {
   private status: DiscordGatewayStatus = { ...DEFAULT_DISCORD_STATUS };
   private onMessageCallback?: (message: IMMessage, replyFn: (text: string) => Promise<void>) => Promise<void>;
   private lastChannelId: string | null = null;
+  /** Most recent DM conversation id (`dm:<userId>`) — group channels are excluded. */
+  private lastDirectConversationId: string | null = null;
   private log: (...args: any[]) => void = () => {};
 
   constructor() {
@@ -253,6 +263,9 @@ export class DiscordGateway extends EventEmitter {
 
       // Build conversation ID
       const conversationId = isDM ? `dm:${message.author.id}` : `guild:${guildId}:${channelId}`;
+      if (isDM) {
+        this.lastDirectConversationId = conversationId;
+      }
 
       // Build sender name
       const senderName = message.member?.displayName || message.author.displayName || message.author.username;
@@ -360,8 +373,7 @@ export class DiscordGateway extends EventEmitter {
           }));
 
           // Split long messages (Discord limit is 2000 characters)
-          const MAX_LENGTH = 1900; // Leave some margin
-
+          const MAX_LENGTH = 1900;
           if (textContent.length <= MAX_LENGTH) {
             // Send text with attachments in first message
             if (attachments.length > 0) {
@@ -446,6 +458,73 @@ export class DiscordGateway extends EventEmitter {
     }
 
     return chunks;
+  }
+
+  /** The most recent DM conversation id, or null before any DM. */
+  getLastDirectConversationId(): string | null {
+    return this.lastDirectConversationId;
+  }
+
+  /**
+   * Out-of-turn send into an existing conversation (IMConversationSender).
+   * DM ids (`dm:<userId>`) open/resolve the DM channel; guild ids fetch the
+   * channel directly. A group channel is reachable only when its exact id was
+   * already learned from an inbound message.
+   */
+  async sendToConversation(conversationId: string, text: string): Promise<void> {
+    const channel = await this.resolveConversationChannel(conversationId);
+    const chunks = this.splitMessage(text, 1900);
+    for (const chunk of chunks) {
+      await channel.send(chunk);
+    }
+    this.status.lastOutboundAt = Date.now();
+  }
+
+  /** Deliver one local file into an existing conversation. */
+  async sendMediaToConversation(conversationId: string, filePath: string): Promise<void> {
+    const channel = await this.resolveConversationChannel(conversationId);
+    await channel.send({
+      files: [{ attachment: filePath, name: path.basename(filePath) }],
+    });
+    this.status.lastOutboundAt = Date.now();
+  }
+
+  /** What this channel can send, from the same tables the send path uses. */
+  describeOutboundCapabilities(): IMOutboundCapabilities {
+    return {
+      extensionsByKind: {
+        image: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
+        video: ['mp4', 'mov', 'webm'],
+        audio: ['mp3', 'ogg', 'wav', 'm4a'],
+        file: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'zip', 'txt', 'csv', 'json', 'md'],
+      },
+      maxBytesByKind: {
+        image: DISCORD_OUTBOUND_MAX_BYTES,
+        video: DISCORD_OUTBOUND_MAX_BYTES,
+        audio: DISCORD_OUTBOUND_MAX_BYTES,
+        file: DISCORD_OUTBOUND_MAX_BYTES,
+      },
+    };
+  }
+
+  private async resolveConversationChannel(conversationId: string): Promise<any> {
+    if (!this.client) {
+      throw new Error('Discord gateway is not started');
+    }
+    const dm = /^dm:(.+)$/.exec(conversationId);
+    if (dm) {
+      const user = await this.client.users.fetch(dm[1]);
+      return user.createDM();
+    }
+    const guild = /^guild:[^:]+:(.+)$/.exec(conversationId);
+    if (guild) {
+      const channel = await this.client.channels.fetch(guild[1]);
+      if (!channel || !channel.isTextBased() || !('send' in channel)) {
+        throw new Error('Discord channel is not text-based or not accessible');
+      }
+      return channel;
+    }
+    throw new Error(`unsupported Discord conversation id: ${conversationId}`);
   }
 
   /**

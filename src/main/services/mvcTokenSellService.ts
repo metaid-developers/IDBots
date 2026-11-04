@@ -58,7 +58,7 @@ export interface MvcTokenSellOrderVerify {
   verified: boolean;
   problems: string[];
   /** Decoded from the on-chain seed lock — do not trust the counterparty. */
-  decoded: { sellerHash160Hex: string; priceSats: string; sellerAddress: string };
+  decoded: { sellerHash160Hex: string; priceSats: string; sellerAddressBase58?: string };
   tokenAmount: string;
   sellSats: number;
   txid: string;
@@ -118,7 +118,6 @@ const defaultDeps: MvcTokenSellServiceDeps = {
   },
 };
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const tokenSellDesc = require('meta-contract/dist/mcp02/contract-desc/tokenSell_desc.json');
 
 /** FT holdings for one address (open-api-mvc; base-unit string balances). */
@@ -199,20 +198,14 @@ export async function verifyMvcTokenSellListing(
   const seedParsed = parseRawTx(seedRaw);
   const seedVout = Number.isInteger(Number(listing.seed_vout)) ? Number(listing.seed_vout) : 0;
   const seedLock = seedParsed.outputs[seedVout].scriptPubKey;
-  let decoded: { sellerHash160Hex: string; priceSats: string; sellerAddress: string } = { sellerHash160Hex: '', priceSats: '0', sellerAddress: '' };
+  let decoded: { sellerHash160Hex: string; priceSats: string; sellerAddressBase58?: string } = { sellerHash160Hex: '', priceSats: '0' };
   try {
     const result = decodeTokenSellSeedLock(seedLock, tokenSellDesc);
-    let sellerAddress = '';
-    try {
-      // takers think in addresses, not hash160 — decode to base58 for display
-      // (best-effort; the raw hash160 stays authoritative for the cross-check).
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const mvc = require('meta-contract/dist/mvc');
-      sellerAddress = mvc.Address.fromPublicKeyHash(Buffer.from(result.sellerHash160Hex, 'hex'), 'livenet').toString();
-    } catch {
-      sellerAddress = '';
-    }
-    decoded = { sellerHash160Hex: result.sellerHash160Hex, priceSats: result.priceSats.toString(), sellerAddress };
+    decoded = {
+      sellerHash160Hex: result.sellerHash160Hex,
+      priceSats: result.priceSats.toString(),
+      sellerAddressBase58: result.sellerHash160Hex ? new mvc.Address(Buffer.from(result.sellerHash160Hex, 'hex'), 'livenet').toString() : undefined,
+    };
   } catch (err) {
     problems.push(`seed output is not a TokenSell lock: ${getErrorMessage(err)}`);
   }
@@ -225,7 +218,6 @@ export async function verifyMvcTokenSellListing(
   // meta-contract is available; otherwise report the sats only).
   let tokenAmount = '';
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const ftProto = require('meta-contract/dist/mcp02/contract-proto/token.proto.js');
     const dp = ftProto.parseDataPart(parsed.outputs[outIndex].scriptPubKey);
     tokenAmount = String(dp.tokenAmount);
@@ -245,16 +237,17 @@ export async function verifyMvcTokenSellListing(
 }
 
 /**
- * Execute a TokenSell trade (sell / take / cancel=self-take): build via the
- * subprocess worker (never broadcasts), then broadcast funding txs in order
- * and the final tx — the NFT-trade two-stage posture generalized to N txs.
- * Retryable broadcast failures rebuild with the spent outpoints excluded.
+ * Execute a TokenSell trade (sell / take / cancel=self-take) or a non-trade
+ * op=1 TRANSFER: build via the subprocess worker (never broadcasts), then
+ * broadcast funding txs in order and the final tx — the NFT-trade two-stage
+ * posture generalized to N txs. Retryable broadcast failures rebuild with
+ * the spent outpoints excluded.
  */
 export async function executeMvcTokenSellTrade(
   store: MetabotStore,
   input: {
     metabotId: number;
-    action: 'sell' | 'take' | 'cancel';
+    action: 'sell' | 'take' | 'cancel' | 'transfer';
     genesis?: string;
     codehash?: string;
     tokenTxid?: string;

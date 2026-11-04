@@ -5,6 +5,7 @@
  */
 
 import type { SqliteDatabase as Database } from '../sqliteTypes';
+import { reconcilePrivateChatDisplayGaps } from './privateChatDisplayReconcile';
 import { isSqliteWasmBoundsError } from '../sqliteRecovery';
 import { getPrivateKeyBufferForEcdh } from './metabotWalletService';
 import { stripLoneSurrogates, truncateUtf16Units, truncateUtf16UnitsFromEnd } from '../libs/llmSafeText';
@@ -60,6 +61,7 @@ import {
   executeFriendUnfollowWrite,
   extractFriendActionTags,
   FRIEND_FOLLOW_PIN_METADATA_KEY,
+  isValidGlobalMetaIdRef,
   readFriendFollowRecord,
   type FriendActionKind,
   type FriendCreatePinFn,
@@ -491,6 +493,14 @@ async function runPendingFriendAction(params: {
         ));
         return;
       }
+      if (pair) {
+        // Directional visibility (S6 defect #4 diagnosis): make the trigger's
+        // view of the three pre-friend states observable in the daemon log.
+        emitLog(
+          `[PrivateChat] Friend invite toward ${peerLabel} proceeding to owner authorization: ` +
+          `status=${pair.status} followsMe=${pair.followsMe ?? 'unknown'} followedByMe=${pair.followedByMe ?? 'unknown'}.`
+        );
+      }
     } else {
       followRecord = readFriendFollowRecord(readMappingMeta());
       if (!followRecord) {
@@ -567,6 +577,66 @@ async function runPendingFriendAction(params: {
   } finally {
     pendingFriendActionApprovals.delete(dedupeKey);
   }
+}
+
+/**
+ * Deterministic owner-instruction entry into the S5 friend-authorization
+ * chain (S6 final-verification defect #4). When the owner's A2A guidance
+ * carries an explicit mutual-friend instruction (「请完成互相关注」), NEITHER
+ * guidance delivery path could pop the authorization card on its own: the
+ * queued path only applies inside the daemon's next INBOUND peer-message
+ * turn (in the followsMe=true endgame the peer has just followed and goes
+ * silent, so no turn ever runs), and the restart path is a one-shot composer
+ * whose prompt has no friend-tag protocol at all. This trigger drives the
+ * SAME runPendingFriendAction flow (same pendingFriendActionApprovals
+ * dedupe, same confirmed/blocked gates, same suspended owner approval, same
+ * /follow write) regardless of the peer's follow state — the three
+ * pre-friend states (neither follows / peer follows me / I follow the peer)
+ * all reach the owner's card; only an already-confirmed friendship or an
+ * active block skips with a transcript notice.
+ *
+ * Also the routing target for a friend-action tag extracted from a guidance
+ * RESTART message (defense in depth against tag leakage). Fire-and-forget
+ * by design: the caller still delivers the conversational guidance; the
+ * authorization suspends for the owner's overlay click independent of that.
+ */
+export function triggerFriendActionFromGuidance(params: {
+  coworkStore: CoworkStore;
+  sessionId: string;
+  externalConversationId: string;
+  metabot: { id: number; name: string; globalmetaid: string };
+  peerGlobalMetaId: string;
+  peerName?: string | null;
+  action: FriendActionKind;
+  createPin: (metabotStore: MetabotStore, metabot_id: number, payload: MetaidDataPayload, options?: { origin?: string }) => Promise<{ txids: string[]; pinId?: string }>;
+  metabotStore: MetabotStore;
+  requestFriendActionApproval?: RequestFriendActionApprovalFn;
+  resolveFriendPairState?: ResolveFriendPairStateFn;
+  emitLog: (msg: string) => void;
+  emitToRenderer?: RendererEmitter;
+}): boolean {
+  if (!params.requestFriendActionApproval) {
+    params.emitLog('[PrivateChat] Owner friend-action guidance skipped: no approval bridge is wired.');
+    return false;
+  }
+  const peerGlobalMetaId = params.peerGlobalMetaId?.trim() ?? '';
+  if (!peerGlobalMetaId || !isValidGlobalMetaIdRef(peerGlobalMetaId)) {
+    params.emitLog('[PrivateChat] Owner friend-action guidance skipped: peer GlobalMetaID is missing or invalid.');
+    return false;
+  }
+  if (!params.metabot?.globalmetaid?.trim() || typeof params.metabot?.id !== 'number') {
+    params.emitLog('[PrivateChat] Owner friend-action guidance skipped: local MetaBot identity is incomplete.');
+    return false;
+  }
+  params.emitLog(
+    `[PrivateChat] Owner friend instruction detected — launching friend ${params.action} authorization toward ${peerGlobalMetaId.slice(0, 12)}…`
+  );
+  void runPendingFriendAction({ ...params, peerGlobalMetaId }).catch((error) => {
+    params.emitLog(
+      `[PrivateChat] Owner friend-action guidance flow failed: ${error instanceof Error ? error.message : String(error)}`
+    );
+  });
+  return true;
 }
 
 /**
@@ -7023,6 +7093,25 @@ export function startPrivateChatDaemon(
       );
     }
   };
+  if (typeof metabotStore.listMetabots === 'function') {
+    try {
+      const identities = metabotStore.listMetabots()
+        .filter((metabot) => metabot.enabled !== false && String(metabot.globalmetaid || '').trim())
+        .map((metabot) => ({
+          metabotId: metabot.id,
+          globalMetaId: String(metabot.globalmetaid).trim(),
+        }));
+      const repaired = reconcilePrivateChatDisplayGaps({
+        db,
+        coworkStore,
+        identities,
+        emitLog,
+      });
+      if (repaired.inserted > 0) saveDb();
+    } catch (error) {
+      emitLog(`[PrivateChat] Display reconcile failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   pollTimer = setInterval(() => {
     runPollTick();
   }, POLL_INTERVAL_MS);

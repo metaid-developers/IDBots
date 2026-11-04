@@ -28,6 +28,25 @@ test('empty system messages without a diagnostic flag stay hidden', () => {
   assert.equal(isRenderableAssistantOrSystemMessage(msg({ content: '   ' })), false);
 });
 
+test('outbound-IM echoes stay renderable even with an empty body (attachment-only send)', () => {
+  // im_send_message writes delivery evidence into the target chat. An
+  // attachment-only send has an intentionally empty body — its image/file
+  // bubbles ARE the message, so the filter must not drop the row.
+  assert.equal(
+    isRenderableAssistantOrSystemMessage(msg({
+      content: '',
+      metadata: {
+        imOutboundSend: true,
+        imOutboundOk: true,
+        imOutboundRecordVersion: 2,
+        imOutboundAttachmentItems: [{ name: 'photo.png', path: '/tmp/photo.png', kind: 'image', bytes: 512 }],
+      },
+    })),
+    true,
+  );
+  assert.equal(isDiagnosticSystemMetadata({ imOutboundSend: true }), false, 'not a diagnostic — its own rule');
+});
+
 test('DSH compaction checkpoints (empty body, metadata-only) stay renderable', () => {
   // The mapper stores compaction/summary stubs as content:'' plus
   // { compaction: true, compactedItems, compactedTokens }; the one-line

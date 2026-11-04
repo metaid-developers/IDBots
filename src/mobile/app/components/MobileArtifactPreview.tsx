@@ -43,7 +43,7 @@ export default function MobileArtifactPreview({ path, onClose }: { path: string;
             onClick={(event) => { if (!download.url) event.preventDefault(); }}
             aria-disabled={!download.url}
             data-testid="artifact-download"
-            className={`flex min-h-[44px] items-center rounded-xl bg-[var(--color-primary)] px-3 text-sm text-black ${download.url ? '' : 'opacity-40'}`}
+            className={`twin-button twin-button-primary ${download.url ? '' : 'opacity-40'}`}
           >
             {t('mobile.artifact.download')}
           </a>
@@ -52,7 +52,7 @@ export default function MobileArtifactPreview({ path, onClose }: { path: string;
             onClick={() => void share()}
             disabled={!download.url}
             data-testid="artifact-share"
-            className="min-h-[44px] rounded-xl border border-[var(--border-color)] px-3 text-sm text-[var(--text-primary)] disabled:opacity-40"
+            className="twin-button twin-button-secondary"
           >
             {t('mobile.artifact.share')}
           </button>
@@ -64,7 +64,7 @@ export default function MobileArtifactPreview({ path, onClose }: { path: string;
               onClick={(event) => { if (!inline.url) event.preventDefault(); }}
               aria-disabled={!inline.url}
               data-testid="artifact-open-new-tab"
-              className={`flex min-h-[44px] items-center rounded-xl border border-[var(--border-color)] px-3 text-sm text-[var(--text-primary)] ${inline.url ? '' : 'opacity-40'}`}
+              className={`twin-button twin-button-secondary ${inline.url ? '' : 'opacity-40'}`}
             >
               {t('mobile.artifact.openNewTab')}
             </a>
@@ -77,7 +77,7 @@ export default function MobileArtifactPreview({ path, onClose }: { path: string;
         ) : null}
         {loading ? <p className="py-6 text-center text-sm text-[var(--text-secondary)]">{t('mobile.artifact.loading')}</p> : null}
         {!loading && failed ? (
-          <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">{t('mobile.artifact.previewFailed')}</p>
+          <p className="twin-notice twin-notice-error" role="alert">{t('mobile.artifact.previewFailed')}</p>
         ) : null}
         {!loading && !failed && kind === 'image' && inline.url ? (
           <img

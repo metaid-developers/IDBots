@@ -102,6 +102,12 @@
       "channel": "app:openSettings"
     },
     {
+      "path": "appInfo.getDataDirectory",
+      "kind": "invoke",
+      "channel": "app:getDataDirectory",
+      "args": []
+    },
+    {
       "path": "appInfo.getSystemLocale",
       "kind": "invoke",
       "channel": "app:getSystemLocale",
@@ -172,6 +178,22 @@
       "channel": "app:setAutoLaunch",
       "args": [
         "enabled"
+      ]
+    },
+    {
+      "path": "botBrowser.buyMrc721",
+      "kind": "invoke",
+      "channel": "botBrowser:mrc721Buy",
+      "args": [
+        "input"
+      ]
+    },
+    {
+      "path": "botBrowser.buyNft",
+      "kind": "invoke",
+      "channel": "botBrowser:buyNft",
+      "args": [
+        "input"
       ]
     },
     {
@@ -1702,6 +1724,14 @@
       "args": []
     },
     {
+      "path": "idbots.getMetabotNfts",
+      "kind": "invoke",
+      "channel": "idbots:getMetabotNfts",
+      "args": [
+        "input"
+      ]
+    },
+    {
       "path": "idbots.getMetabotWalletAssets",
       "kind": "invoke",
       "channel": "idbots:getMetabotWalletAssets",
@@ -1729,6 +1759,14 @@
       "channel": "idbots:getTransferFeeSummary",
       "args": [
         "chain"
+      ]
+    },
+    {
+      "path": "idbots.healNftCard",
+      "kind": "invoke",
+      "channel": "idbots:healNftCard",
+      "args": [
+        "input"
       ]
     },
     {
@@ -1778,6 +1816,22 @@
       ]
     },
     {
+      "path": "idbots.transferMetabotMrc721",
+      "kind": "invoke",
+      "channel": "idbots:transferMetabotMrc721",
+      "args": [
+        "params"
+      ]
+    },
+    {
+      "path": "idbots.transferMetabotMvcNft",
+      "kind": "invoke",
+      "channel": "idbots:transferMetabotMvcNft",
+      "args": [
+        "params"
+      ]
+    },
+    {
       "path": "idbots.uploadMetabotHomepageFile",
       "kind": "invoke",
       "channel": "idbots:uploadMetabotHomepageFile",
@@ -1806,6 +1860,62 @@
       "path": "im.onStatusChange",
       "kind": "on",
       "channel": "im:status:change"
+    },
+    {
+      "path": "im.qqCheckCredentials",
+      "kind": "invoke",
+      "channel": "im:qq:credentials:check",
+      "args": []
+    },
+    {
+      "path": "im.qqDismissGroupCandidate",
+      "kind": "invoke",
+      "channel": "im:qq:groups:candidates:dismiss",
+      "args": [
+        "groupId"
+      ]
+    },
+    {
+      "path": "im.qqListGroupCandidates",
+      "kind": "invoke",
+      "channel": "im:qq:groups:candidates:list",
+      "args": []
+    },
+    {
+      "path": "im.qqLoginCancel",
+      "kind": "invoke",
+      "channel": "im:qq:login:cancel",
+      "args": []
+    },
+    {
+      "path": "im.qqLoginStart",
+      "kind": "invoke",
+      "channel": "im:qq:login:start",
+      "args": []
+    },
+    {
+      "path": "im.qqResolveGroupName",
+      "kind": "invoke",
+      "channel": "im:qq:groups:candidates:name",
+      "args": [
+        "groupId"
+      ]
+    },
+    {
+      "path": "im.qqRestoreGroupCandidate",
+      "kind": "invoke",
+      "channel": "im:qq:groups:candidates:restore",
+      "args": [
+        "groupId"
+      ]
+    },
+    {
+      "path": "im.qqSetCredentials",
+      "kind": "invoke",
+      "channel": "im:qq:credentials:set",
+      "args": [
+        "params"
+      ]
     },
     {
       "path": "im.setConfig",
@@ -1839,6 +1949,24 @@
         "platform",
         "configOverride"
       ]
+    },
+    {
+      "path": "im.weixinCheckCredentials",
+      "kind": "invoke",
+      "channel": "im:weixin:credentials:check",
+      "args": []
+    },
+    {
+      "path": "im.weixinLoginCancel",
+      "kind": "invoke",
+      "channel": "im:weixin:login:cancel",
+      "args": []
+    },
+    {
+      "path": "im.weixinLoginStart",
+      "kind": "invoke",
+      "channel": "im:weixin:login:start",
+      "args": []
     },
     {
       "path": "jevRelay.resolveCredentials",
@@ -2372,6 +2500,14 @@
       ]
     },
     {
+      "path": "openTeamCollab.getMembers",
+      "kind": "invoke",
+      "channel": "openTeamCollab:getMembers",
+      "args": [
+        "input"
+      ]
+    },
+    {
       "path": "openTeamCollab.list",
       "kind": "invoke",
       "channel": "openTeamCollab:list",
@@ -2421,6 +2557,26 @@
       "channel": "metaid:resolveAvatarSource",
       "args": [
         "params"
+      ]
+    },
+    {
+      "path": "paymentInfo.clear",
+      "kind": "invoke",
+      "channel": "paymentInfo:clear",
+      "args": []
+    },
+    {
+      "path": "paymentInfo.get",
+      "kind": "invoke",
+      "channel": "paymentInfo:get",
+      "args": []
+    },
+    {
+      "path": "paymentInfo.save",
+      "kind": "invoke",
+      "channel": "paymentInfo:save",
+      "args": [
+        "input"
       ]
     },
     {

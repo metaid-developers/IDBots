@@ -132,10 +132,10 @@ export function EmojiPickerPanel(props: {
       data-testid="emoji-panel"
       role="dialog"
       aria-label={t('mobile.chat.emojiPicker')}
-      className="shrink-0 border-t border-[var(--border-color)] bg-[var(--bg-panel)]"
+      className="twin-panel m-2 shrink-0 overflow-hidden"
     >
       <div className="flex items-center gap-2 px-3 pt-2">
-        <div className="flex min-h-[40px] flex-1 items-center gap-2 rounded-xl border border-[var(--border-color)] bg-[var(--bg-main)] px-3">
+        <div className="twin-input flex min-h-[40px] flex-1 items-center gap-2">
           <MagnifyingGlassIcon className="h-4 w-4 shrink-0 text-[var(--text-secondary)]" aria-hidden />
           <input
             type="text"
@@ -150,7 +150,7 @@ export function EmojiPickerPanel(props: {
           type="button"
           onClick={props.onClose}
           aria-label={t('mobile.common.close')}
-          className="flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-xl text-[var(--text-secondary)] active:bg-[var(--bg-hover)]"
+          className="twin-icon-button shrink-0"
         >
           <XMarkIcon className="h-5 w-5" aria-hidden />
         </button>

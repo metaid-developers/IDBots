@@ -10,18 +10,15 @@ function Segmented<T extends string>(props: {
   disabled?: boolean;
 }): JSX.Element {
   return (
-    <div className="flex gap-2">
+    <div className="twin-segmented">
       {props.options.map((option) => (
         <button
           key={option.value}
           type="button"
           disabled={props.disabled}
+          aria-pressed={props.value === option.value}
           onClick={() => props.onChange(option.value)}
-          className={`min-h-[44px] flex-1 rounded-xl border px-2 text-sm disabled:opacity-40 ${
-            props.value === option.value
-              ? 'border-[var(--color-primary)] bg-[var(--color-primary)] text-black'
-              : 'border-[var(--border-color)] text-[var(--text-secondary)]'
-          }`}
+          className="twin-segment"
         >
           {t(option.labelKey)}
         </button>
@@ -40,7 +37,7 @@ export function GeneralPage(props: { onBack: () => void }): JSX.Element {
   const { language, theme, saveState, changeLanguage, changeTheme } = useSettings();
   return (
     <SecondaryPageShell title={t('mobile.me.entry.general')} onBack={props.onBack} testId="me-page-general">
-      <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] p-4">
+      <div className="twin-panel twin-panel-padded">
         <p className="mb-2 text-xs font-medium uppercase text-[var(--text-secondary)]">{t('mobile.me.languageLabel')}</p>
         <Segmented<MobileLanguage>
           value={language}

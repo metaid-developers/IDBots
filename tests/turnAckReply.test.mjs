@@ -5,8 +5,11 @@ import path from 'node:path';
 
 import {
   TURN_ACK_REPLY_MAX_CHARS,
+  buildDeterministicTurnAckOpening,
+  buildOwnerWaitUpdateMessages,
   buildTurnAckReplyMessages,
   containsCjk,
+  resolveTurnAckActivity,
   sanitizeTurnAckReply,
   sanitizeTurnAckReplyForInput,
 } from '../src/main/libs/turnAckReply.ts';
@@ -26,7 +29,7 @@ test('buildTurnAckReplyMessages: system+user roles, title line optional, user te
   assert.equal(withTitle.length, 2);
   assert.equal(withTitle[0].role, 'system');
   assert.equal(withTitle[1].role, 'user');
-  assert.ok(withTitle[0].content.includes('acknowledgment'));
+  assert.ok(withTitle[0].content.includes('FIRST response'));
   assert.ok(withTitle[1].content.includes('Session title: 定时任务排查'));
   assert.ok(withTitle[1].content.includes('帮我看下定时任务'));
 
@@ -37,6 +40,48 @@ test('buildTurnAckReplyMessages: system+user roles, title line optional, user te
   // Long input is truncated to the bounded slice, not forwarded wholesale.
   const long = buildTurnAckReplyMessages({ userText: 'x'.repeat(5000) });
   assert.ok(long[1].content.length < 1500, 'user text slice stays bounded');
+});
+
+// 2026-11-03 owner decision (session 2c70849f: "好的，这就处理。" three times
+// in eight minutes): a rotating canned line is worse than no line. The
+// deterministic opening is reserved for worker delivery notices — text that
+// carries real information (WHO delivered, what happens next) and cannot be
+// mistaken for the bot making conversation. Everything else returns '' and
+// waits for the LLM first sentence.
+test('buildDeterministicTurnAckOpening: empty for generic turns — no canned lines, ever', () => {
+  assert.equal(buildDeterministicTurnAckOpening('依然不能一键购买，点‘一键购买’报错：“购买未完成。请重试。”'), '');
+  assert.equal(buildDeterministicTurnAckOpening('帮我把这个修一下'), '');
+  assert.equal(buildDeterministicTurnAckOpening('Fix the purchase flow'), '');
+  assert.equal(buildDeterministicTurnAckOpening(''), '');
+  assert.equal(buildDeterministicTurnAckOpening(`Fix ${'x'.repeat(500)}`), '');
+});
+
+test('buildDeterministicTurnAckOpening: search_local also waits for the LLM', () => {
+  const prompt = '这个文件好像之前申请过的，你要不搜一下本机看有没有？如果不是一个 APP 一个独立文件，而是跟账号走的，我猜大概率本机上已经有了。';
+  assert.equal(resolveTurnAckActivity(prompt), 'search_local');
+  assert.equal(buildDeterministicTurnAckOpening(prompt), '',
+    'the old search template was the same canned line every time — gone with the pool');
+});
+
+test('buildDeterministicTurnAckOpening: names the worker delivery without leaking cross-session markup or ids', () => {
+  const prompt = '来自af3365c8-dfb6-4348-b350-0a0db4edbcc4 的信息：<cross_session_message trust="untrusted">[ORCH-NOTIFY] worker Builder阿码 已完成 task 46828477-0719-4984-8391-3148bec1a3fc → review，请验收；验收后向 owner 交付完整成果</cross_session_message>';
+  assert.equal(resolveTurnAckActivity(prompt), 'verify_delivery');
+  const opening = buildDeterministicTurnAckOpening(prompt);
+  assert.match(opening, /^Builder阿码已交付一个子任务/);
+  assert.match(opening, /验收结果/);
+  assert.ok(!opening.includes('cross_session'));
+  assert.ok(!opening.includes('46828477'));
+});
+
+test('turnAckReply: no phrase pool survives anywhere in the module', () => {
+  const source = read('src/main/libs/turnAckReply.ts');
+  assert.ok(!source.includes('INSTANT_OPENING_POOL'), 'the canned pools are deleted');
+  assert.ok(!source.includes('pickFromPool'), 'no pool picker remains');
+  // The LLM prompt now owns the human tone.
+  assert.ok(source.includes('never a canned service template'),
+    'the LLM ack prompt pins the human, non-boilerplate voice');
+  assert.ok(source.includes('a greeting gets a greeting back'),
+    'greetings are answered like a person would');
 });
 
 test('sanitizeTurnAckReply: passes clean text through, strips wrapping noise', () => {
@@ -116,18 +161,30 @@ test('buildTurnAckReplyMessages: prompt forbids describing/analyzing/quoting the
 // Source contracts (emission wiring + gates)
 // ---------------------------------------------------------------------------
 
-test('runner: the LLM ack bubble fires at the early-ack site, gated to cowork_ui, fire-and-forget', () => {
+test('runner: the deterministic opening is same-tick and information-only; the LLM first sentence kicks fire-and-forget', () => {
   const source = read('src/main/libs/coworkRunner.ts');
 
-  const templateAck = source.indexOf('this.emitTurnAck(sessionId, earlyAckTier)');
-  const llmAckCall = source.indexOf('void this.emitTurnAckReplyBubble(sessionId, prompt,');
+  const templateAck = source.indexOf('this.emitTurnAck(sessionId, earlyAckTier, prompt)');
+  const deterministicBuild = source.indexOf('const deterministicOpening = buildDeterministicTurnAckOpening(prompt);');
+  const openingEmit = source.indexOf('this.emitTurnAckOpeningBubble(');
+  const llmCall = source.indexOf('void this.emitTurnAckReplyBubble(sessionId, prompt,');
   const envSyncSite = source.indexOf('await this.syncDshSkillSessionEnv(');
   assert.ok(templateAck > 0, 'the template ack still fires first (instant indicator cover)');
-  assert.ok(llmAckCall > templateAck, 'the LLM ack fires right after the template ack');
-  assert.ok(envSyncSite > llmAckCall, 'both acks precede every pre-flight await on the turn path');
-  const gateWindow = source.slice(templateAck - 400, llmAckCall + 200);
+  assert.ok(deterministicBuild > templateAck, 'the deterministic text is built after the template ack');
+  assert.ok(openingEmit > deterministicBuild, 'the opening bubble emission follows the build');
+  assert.ok(source.includes('if (deterministicOpening) {'),
+    'generic turns emit NO deterministic bubble — only information-bearing ones');
+  assert.ok(llmCall > openingEmit, 'the LLM first-sentence call kicks after the deterministic branch');
+  assert.ok(envSyncSite > llmCall, 'the whole ack block precedes every pre-flight await on the turn path');
+  // 2026-11-03 (session acb5961b): the old 250ms setTimeout lost to a 22s
+  // eventloop:lag stall — the opening must be same-tick, timer-free.
+  assert.ok(!source.includes('TURN_ACK_OPENING_FALLBACK_MS'), 'the fallback-timer constant is gone');
+  assert.ok(!source.includes('armTurnAckOpeningFallback'), 'no opening fallback timer is armed anywhere');
+  const gateWindow = source.slice(templateAck - 800, openingEmit + 200);
   assert.ok(gateWindow.includes("ackSourceChannel === 'cowork_ui'"),
     'external-facing surfaces keep their established posture (cowork_ui only)');
+  assert.ok(gateWindow.includes('assistantOwnerChatForTurn'),
+    'the first-sentence bubble is assistant-mode only (owner requirement 2026-11-03)');
 });
 
 // 2026-10-23 first-run greeting incident (session a6194072): the greeting turn
@@ -138,54 +195,102 @@ test('runner: the LLM ack bubble fires at the early-ack site, gated to cowork_ui
 // the ack bubble — the first sentence a fresh user ever saw. A turn with no
 // user message has nothing to acknowledge: both the template phrase and the
 // LLM bubble must be gated off.
-test('runner: host-initiated turns (skipInitialUserMessage) emit no turn acknowledgment at all', () => {
+test('runner: pure host turns stay ack-free while UI starts and persisted deliveries get an opening', () => {
   const source = read('src/main/libs/coworkRunner.ts');
+  const mainSource = read('src/main/main.ts');
 
-  const gate = source.indexOf("ackSourceChannel === 'cowork_ui' && !activeSession.skipInitialUserMessage");
-  assert.ok(gate > 0, 'the ack emission (template + LLM bubble) must be gated off for host-initiated turns');
-  const templateAck = source.indexOf('this.emitTurnAck(sessionId, earlyAckTier)');
-  const llmAckCall = source.indexOf('void this.emitTurnAckReplyBubble(sessionId, prompt,');
-  assert.ok(gate < templateAck && gate < llmAckCall,
-    'the gate condition must wrap both the template ack and the LLM bubble call');
-  // The flag is captured per turn from the runner options at ActiveSession
-  // construction, so it reflects THIS turn, not a cached session state.
+  const gate = source.indexOf("ackSourceChannel === 'cowork_ui' && assistantOwnerChatForTurn");
+  assert.ok(gate > 0, 'the ack gate keeps pure host prompts off and admits owner-initiated starts and cross-session deliveries');
+  assert.ok(source.includes('const crossSessionDelivery = /<cross_session_message\\b|\\[ORCH-NOTIFY\\]/i.test(prompt);'),
+    'only an already-persisted cross-session delivery overrides skipInitialUserMessage');
+  assert.ok(source.includes('assistantOwnerChatForTurn = getPersistedChatExperienceMode() === \'assistant\''),
+    'the first-sentence experience is gated on the assistant chat-experience mode');
+  assert.ok(source.includes('acknowledgeOwner: options.acknowledgeOwner === true'),
+    'the runner carries the explicit owner-initiated flag independently of message persistence');
+  assert.ok(mainSource.includes('skipInitialUserMessage: true,\n        acknowledgeOwner: true,'),
+    'the UI start path marks the already-persisted human turn as owner-initiated');
+  const templateAck = source.indexOf('this.emitTurnAck(sessionId, earlyAckTier, prompt)');
+  const refineCall = source.indexOf('void this.emitTurnAckReplyBubble(sessionId, prompt,');
+  assert.ok(gate < templateAck && gate < refineCall,
+    'the gate condition wraps both the template ack and the refine call');
   assert.ok(
     source.includes('skipInitialUserMessage: Boolean(options.skipInitialUserMessage)'),
-    'the ActiveSession must carry the per-turn skipInitialUserMessage flag',
+    'the ActiveSession still carries the per-turn skipInitialUserMessage flag',
   );
 });
 
-test('runner: the ack bubble is dropped once the turn delivered visible text or moved on', () => {
+test('runner: the LLM first sentence CREATES the bubble once, gated on identity/serial/visible-text', () => {
   const source = read('src/main/libs/coworkRunner.ts');
 
-  const emitter = source.indexOf('private async emitTurnAckReplyBubble(');
-  assert.ok(emitter > 0, 'emitTurnAckReplyBubble exists');
-  const body = source.slice(emitter, source.indexOf('private emitSdkRuntimeStatus(', emitter));
+  const emitter = source.indexOf('private emitTurnAckOpeningBubble(');
+  assert.ok(emitter > 0, 'the deterministic opening emitter exists');
+  const llm = source.indexOf('private async emitTurnAckReplyBubble(');
+  assert.ok(llm > emitter, 'the LLM creator follows the deterministic emitter');
+  const body = source.slice(llm, source.indexOf('private emitSdkRuntimeStatus(', llm));
   assert.ok(body.includes('this.activeSessions.get(sessionId) !== turn'),
-    'an ack whose turn object is no longer the registry current is dropped (identity)');
+    'a first sentence whose turn object is no longer the registry current is dropped (identity)');
   assert.ok(body.includes('turn.dshTurnAckSerial !== turnSerial'),
-    'a stale ack superseded by a re-kick on the same object is dropped');
+    'a stale first sentence superseded by a re-kick on the same object is dropped');
   assert.ok(body.includes('turn.dshTurnAckVisibleTextSeen'),
-    'an ack landing after real visible text is dropped');
+    'a first sentence landing after real visible text (model, owner_update or an earlier opening) is dropped');
+  assert.ok(body.includes('turn.dshTurnAckOpeningEmitted'),
+    'at most one opening bubble per turn');
+  assert.ok(body.includes('generateTurnAckReply(userPrompt, sessionTitle, ackAbort.signal)'),
+    'the first sentence rides the one-shot cognitive path with session-title context, abortable by the ack gate');
   assert.ok(body.includes("metadata: { turnAckReply: true, isFinal: true }"),
     'the bubble is a final assistant message tagged turnAckReply');
-  assert.ok(body.includes('generateTurnAckReply(userPrompt, sessionTitle)'),
-    'the reply rides the one-shot cognitive path with session-title context');
-  // The flags are read off the CAPTURED turn object, so a next turn's fresh
-  // state can never vouch for an older turn's ack.
+  assert.ok(body.includes("this.store.addMessage(sessionId, {"),
+    'the LLM first sentence CREATES the bubble — no placeholder to refine');
+  assert.ok(!body.includes('updateMessageMerged') && !body.includes("emit('messageUpdate'"),
+    'no in-place refine machinery remains in the ack path (2026-11-03 second pass)');
+  assert.ok(body.includes('turn.assistantOwnerUpdateCount = Math.max(1,'),
+    'the host opening and model updates share one per-turn budget');
   assert.ok(!body.includes('activeSession.dshTurnAckSerial !== turnSerial'),
     'the gate must not re-read the registry object for the serial');
-  // The kick site captures the object and the serial at kick time.
+  assert.ok(!source.includes('dshTurnAckOpeningMessageId')
+    && !source.includes('dshTurnAckOpeningRefined')
+    && !source.includes('dshTurnAckModelTextSeen'),
+    'the refine-era ActiveSession fields are gone');
+
   const kick = source.indexOf('void this.emitTurnAckReplyBubble(sessionId, prompt, activeSession, turnAckSerial)');
   assert.ok(kick > 0, 'the kick passes the turn object and the kick-time serial');
+  assert.ok(source.includes('activeSession.dshTurnAckOpeningEmitted = false;'),
+    'a reused ActiveSession gets a fresh opening budget for each new submission');
 
-  // The gate flag is armed by a visible text bubble opening in the DSH
-  // onMessage path (anchor on the assignment, not the comment above it).
   const onMessageSite = source.indexOf('activeSession.dshTurnAckVisibleTextSeen = true');
   assert.ok(onMessageSite > 0, 'the onMessage callback arms the visible-text gate');
   const gateSnippet = source.slice(onMessageSite - 700, onMessageSite + 100);
   assert.ok(gateSnippet.includes("type === 'assistant'"));
   assert.ok(gateSnippet.includes('isThinking'));
+  assert.ok(gateSnippet.includes('messageMeta?.isStreaming !== true'),
+    'a speculative streaming placeholder cannot suppress the opening');
+});
+
+test('runner: the opening text is injected into the turn prompt so the model never repeats it', () => {
+  const source = read('src/main/libs/coworkRunner.ts');
+  assert.ok(source.includes('<instant_ack>'), 'the anti-echo block exists');
+  assert.ok(source.includes('activeSession.dshTurnAckOpeningText'),
+    'the block carries the exact text the owner already received');
+  assert.ok(source.includes('assistantOwnerChatForTurn && activeSession.dshTurnAckOpeningText'),
+    'the injection rides the same assistant-mode gate as the bubble');
+  assert.ok(source.includes('Do not repeat, rephrase, or open your reply with another acknowledgment'),
+    'the block bans repeating the acknowledgment');
+});
+
+// 2026-11-03 live test (session fd23405b turn 2): the owner's follow-up went
+// through continueSession with skipUserMessage: true (the submission persists
+// the text first); with the ActiveSession torn down after the previous turn,
+// the startSession fallback carried no acknowledgeOwner and the whole
+// first-sentence pipeline was skipped — turn 2+ had no bubble at all.
+test('runner: owner follow-ups keep the first-sentence promise across continueSession', () => {
+  const source = read('src/main/libs/coworkRunner.ts');
+  const submission = read('src/main/services/coworkTurnSubmission.ts');
+  assert.ok(submission.includes('acknowledgeOwner: true,'),
+    'the owner submission marks its turns owner-initiated');
+  assert.ok(source.includes('activeSession.acknowledgeOwner = options.acknowledgeOwner === true;'),
+    'the same-object continue resets the per-turn owner flag (machine flows stay ack-free)');
+  assert.ok(source.includes('...(options.acknowledgeOwner ? { acknowledgeOwner: true } : {})'),
+    'the startSession fallback carries the owner flag');
 });
 
 test('runner: a fresh ActiveSession restarts the ack serial at 1, so identity — not serial equality — is the cross-turn gate', () => {
@@ -206,7 +311,7 @@ test('runner: a fresh ActiveSession restarts the ack serial at 1, so identity �
     'the kick bumps from undefined, i.e. every turn serial starts at 1');
 });
 
-test('coworkUtil: generateTurnAckReply is a title-class call — no thinking, no web search, tight budget', () => {
+test('coworkUtil: generateTurnAckReply is a title-class call — no thinking, no web search, tight budget, fallback brain', () => {
   const source = read('src/main/libs/coworkUtil.ts');
   const start = source.indexOf('export async function generateTurnAckReply(');
   const body = source.slice(start, source.indexOf('\n}', start) + 2);
@@ -215,8 +320,12 @@ test('coworkUtil: generateTurnAckReply is a title-class call — no thinking, no
   assert.ok(body.includes("effort: 'off'"), 'effort off — an ack never waits on reasoning');
   assert.ok(body.includes('webSearch: false'), 'no server-side web_search detour');
   assert.ok(body.includes('attemptTimeoutMs: 4_000'), 'per-attempt timeout bounds the ack latency');
+  assert.ok(body.includes('        signal,'), 'the caller abort signal rides the call (an ack-gate skip aborts the in-flight attempt)');
   assert.ok(body.includes('sanitizeTurnAckReplyForInput(result.content'), 'output goes through the input-aware sanitizer');
-  assert.ok(!body.includes('fallbackLlm'), 'single attempt: latency over robustness');
+  // 2026-11-03 (session acb5961b): the primary relay hung and the ack died
+  // with it — the refine must get the same primary+fallback pair as titles.
+  assert.ok(body.includes('fallbackLlmId'), 'the fallback brain is wired like generateSessionTitle');
+  assert.ok(body.includes('fallbackLlmProvider'), 'the fallback provider rides along');
 });
 
 test('coworkUtil: generateTurnAckReply drops reasoning-promoted / length-truncated acks and sizes the budget by thinking mode', () => {
@@ -254,4 +363,186 @@ test('renderer: the turnAckReply origin tag is part of the message metadata cont
   const types = read('src/renderer/types/cowork.ts');
   assert.ok(types.includes('turnAckReply?: boolean'),
     'the metadata type documents the host-side ack bubble');
+});
+
+// ---------------------------------------------------------------------------
+// 2026-11-03 third pass (session 3ecd2a2f): content-free acks + cerebellum gate
+// ---------------------------------------------------------------------------
+
+// The ack call sees only the user text and the session title — no local time,
+// no memory. The old "for a simple question, respond naturally" line invited
+// it to answer "你知道明天是几月几号吗" with "我没法确定今天的日期", while the
+// main answer (riding the local-time prompt) named the date — two bubbles in
+// open contradiction. The ack now acknowledges only; only pure greetings get
+// content (a greeting back carries nothing to contradict).
+test('buildTurnAckReplyMessages: the ack never answers content; greetings stay natural', () => {
+  const messages = buildTurnAckReplyMessages({ userText: '你知道明天是几月几号吗？' });
+  const system = messages[0].content;
+  assert.ok(system.includes("NEVER answer the user's question"),
+    'the no-answering rule is part of the system prompt');
+  assert.ok(system.includes('can contradict the real reply'),
+    'the rule carries its rationale (the contradiction incident)');
+  assert.ok(system.includes('a greeting gets a greeting back'),
+    'pure greetings still get a natural greeting — that IS the ack');
+  assert.ok(!system.includes('For a simple question or a greeting, respond naturally'),
+    'the old answer-simple-questions line is gone');
+});
+
+test('runner: the cerebellum ack gate races the ack call in parallel; a skip verdict aborts it', () => {
+  const source = read('src/main/libs/coworkRunner.ts');
+  const start = source.indexOf('private async emitTurnAckReplyBubble(');
+  const body = source.slice(start, source.indexOf('private emitSdkRuntimeStatus(', start));
+  const gateKick = body.indexOf('this.cerebellumTurnAckGate({ currentUserText: userPrompt })');
+  const ackCall = body.indexOf('generateTurnAckReply(userPrompt, sessionTitle, ackAbort.signal)');
+  assert.ok(gateKick > 0, 'the gate is consulted inside the ack path');
+  assert.ok(ackCall > 0, 'the ack call carries the abort signal');
+  assert.ok(gateKick < ackCall, 'the gate is KICKED before the ack call — both run in parallel');
+  // 2026-11-03 session e2f359d7: the serial wiring stacked the gate budget
+  // ahead of every ack emit and nearly doubled the wait under a main-process
+  // stall — the gate must not be awaited before generation starts.
+  const gateAwait = body.indexOf('const needsAck = await gatePromise');
+  assert.ok(gateAwait > ackCall, 'the verdict is awaited only at emission time, after generation');
+  assert.ok(body.includes('new AbortController()'), 'the ack attempt is abortable');
+  assert.ok(body.includes('ackAbort.abort()'), 'a skip verdict aborts the in-flight ack attempt');
+  assert.ok(body.includes('if (needsAck === false)'),
+    'only an explicit false verdict skips; true and null both emit (fail-open)');
+  assert.ok(body.includes('.catch(() => null)'),
+    'a throwing gate callback degrades to null, never breaks the ack path');
+});
+
+test('runner + main.ts: the ack gate is a runner option wired to the cerebellum factory', () => {
+  const source = read('src/main/libs/coworkRunner.ts');
+  const mainSource = read('src/main/main.ts');
+  assert.ok(source.includes("cerebellumTurnAckGate?: (input: {"),
+    'CoworkRunnerOptions declares the gate callback');
+  assert.ok(source.includes("this.cerebellumTurnAckGate = options?.cerebellumTurnAckGate;"),
+    'the constructor stores it');
+  assert.ok(mainSource.includes("import { classifyTurnAckNeedWithCerebellum } from './cerebellum/ackGate';"),
+    'main.ts imports the gate classifier');
+  assert.ok(mainSource.includes('cerebellumTurnAckGate: createCerebellumTurnAckGate(),'),
+    'the runner option rides the lazy cerebellum-context factory');
+  const factory = mainSource.indexOf('const createCerebellumTurnAckGate =');
+  const factoryBody = mainSource.slice(factory, factory + 1200);
+  assert.ok(factoryBody.includes('resolveCerebellumCallContext()'),
+    'the factory resolves the cerebellum context lazily per call');
+  const logCall = factoryBody.slice(factoryBody.indexOf("coworkLog('INFO', 'turn:ackGate'"));
+  assert.ok(!logCall.includes('currentUserText'),
+    'the gate log never carries user text');
+});
+
+test('main.ts: the JEV relay credential warm rides the idle startup tier', () => {
+  const source = read('src/main/main.ts');
+  assert.ok(source.includes("{ label: 'jev relay credential warm', run: warmJevRelayCredentials }"),
+    'the warm is an idle-tier step (runs after service registration, off the startup path)');
+  const warm = source.indexOf('const warmJevRelayCredentials =');
+  assert.ok(warm > 0 && source.slice(warm, warm + 400).includes('resolveJevRelayCredentials()'),
+    'the warm resolves the relay credentials (persisted hit is a pure local read)');
+  assert.ok(source.slice(warm, warm + 500).includes('} catch {'),
+    'the warm is fail-silent — a failed warm leaves the on-demand bootstrap as the fallback');
+});
+
+// ---------------------------------------------------------------------------
+// 2026-11-03 session 32a29372: stall-killed ack, bounced opening narration
+// ---------------------------------------------------------------------------
+
+test('runner: owner_update opening suppression keys on a real delivered opening, not any visible text', () => {
+  const source = read('src/main/libs/coworkRunner.ts');
+  assert.ok(source.includes("if (kind === 'opening' && activeSession.dshTurnAckOpeningEmitted)"),
+    'only a delivered opening bubble suppresses another opening (session 32a29372)');
+  assert.ok(!source.includes("if (kind === 'opening' && activeSession.dshTurnAckVisibleTextSeen)"),
+    'the broad visible-text flag no longer suppresses openings');
+  assert.ok(source.includes("if (kind === 'opening') activeSession.dshTurnAckOpeningEmitted = true"),
+    'a delivered owner_update opening marks the slot (second opening still rejected)');
+});
+
+test('runner: an empty first ack attempt gets exactly one retry, gates re-applied across the wait', () => {
+  const source = read('src/main/libs/coworkRunner.ts');
+  const start = source.indexOf('private async emitTurnAckReplyBubble(');
+  const body = source.slice(start, source.indexOf('private emitSdkRuntimeStatus(', start));
+  // A stall kills both attempts in one tick (their 4s timeout timers fire late
+  // together); one retry on the recovered loop completes the fail-open posture.
+  assert.ok(body.includes('if (!generatedReply) {'), 'the retry branch keys on an empty first attempt');
+  assert.ok(body.includes("coworkLog('INFO', 'turn:ack', 'retrying first sentence after an empty first attempt'"),
+    'the retry logs itself');
+  assert.ok(body.includes('setTimeout(resolve, 1500)'), 'the retry waits 1.5s for the loop to recover');
+  assert.ok(body.includes('generatedReply = await generateTurnAckReply(userPrompt, sessionTitle)'),
+    'the retry is a fresh call without the gate abort signal');
+  assert.equal(body.split('generateTurnAckReply(userPrompt').length - 1, 2,
+    'at most two ack calls per turn (first attempt + one retry)');
+  // A gate skip never retries (the abort was intentional).
+  const skipIdx = body.indexOf("first sentence skipped: cerebellum judged the message directly answerable");
+  const retryIdx = body.indexOf('retrying first sentence after an empty first attempt');
+  assert.ok(skipIdx > 0 && skipIdx < retryIdx, 'the skip return precedes the retry branch');
+});
+
+test('runner: the owner wait heartbeat logs due-but-suppressed outcomes', () => {
+  const source = read('src/main/libs/coworkRunner.ts');
+  assert.ok(source.includes("'owner wait heartbeat suppressed'"), 'a suppressed heartbeat is logged with its reason');
+  assert.ok(source.includes("'owner wait heartbeat deferred: permission prompt pending'"), 'permission deferrals are logged');
+  assert.ok(source.includes("'owner wait heartbeat dropped: turn no longer active'"), 'stale-turn drops are logged');
+  assert.ok(source.includes("'owner wait heartbeat not armed for this turn'"),
+    'an entry-arm early-exit is logged (the session-32a29372 silent-stretch diagnostic)');
+});
+
+// ---------------------------------------------------------------------------
+// 2026-11-04 owner decision: no canned text in ANY bubble — the wait heartbeat
+// ---------------------------------------------------------------------------
+
+test('buildOwnerWaitUpdateMessages: system+user roles, wait context carried, anti-template rule pinned', () => {
+  const messages = buildOwnerWaitUpdateMessages({
+    userText: '帮我把这个 bug 修一下',
+    sessionTitle: '修复构建',
+    waitedMs: 5 * 60_000,
+    waitingForTool: true,
+    priorCount: 0,
+  });
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0].role, 'system');
+  assert.ok(messages[0].content.includes('waiting about 5 minute(s)'), 'wait duration carried');
+  assert.ok(messages[0].content.includes('never a canned status template'), 'the no-canned rule is in the prompt');
+  assert.ok(messages[0].content.includes('Same language as the user message'), 'language rule pinned');
+  assert.ok(messages[0].content.includes("never mention what language it is in"), 'no-meta rule pinned');
+  assert.ok(!messages[0].content.includes('say something NEW'), 'first fire carries no repeat warning');
+  assert.ok(messages[1].content.includes('Session title: 修复构建'));
+  assert.ok(messages[1].content.includes('an execution step (a tool/command) is still running'), 'tool-waiting context');
+  assert.ok(messages[1].content.includes('帮我把这个 bug 修一下'), 'user text carried');
+
+  const again = buildOwnerWaitUpdateMessages({ userText: 'hello', waitedMs: 11 * 60_000, waitingForTool: false, priorCount: 2 });
+  assert.ok(again[0].content.includes('waiting about 11 minute(s)'));
+  assert.ok(again[1].content.includes('say something NEW'), 'repeat fires demand fresh wording');
+  assert.ok(again[1].content.includes('2 such note(s)'), 'the prior count is carried');
+  assert.ok(again[1].content.includes('still thinking, organizing, or checking results'), 'non-tool context');
+
+  const long = buildOwnerWaitUpdateMessages({ userText: 'x'.repeat(5000), waitedMs: 60_000, waitingForTool: false, priorCount: 0 });
+  assert.ok(long[1].content.length < 1600, 'user text slice stays bounded');
+});
+
+test('runner: the wait heartbeat text is LLM-generated per fire — no canned strings remain', () => {
+  const source = read('src/main/libs/coworkRunner.ts');
+  assert.ok(!source.includes('有一个执行步骤还在运行'), 'the fixed tool-waiting string is deleted');
+  assert.ok(!source.includes('这一轮仍在处理和核对中'), 'the fixed generic-waiting string is deleted');
+  assert.ok(!source.includes('One execution step is still running'), 'the English fixed string is deleted too');
+  assert.ok(!source.includes('still being processed and checked'), 'the English generic string is deleted too');
+  const emitter = source.indexOf('private async emitOwnerWaitHeartbeat(');
+  assert.ok(emitter > 0, 'the heartbeat emitter exists');
+  const body = source.slice(emitter, emitter + 2400);
+  assert.ok(body.includes('this.ownerWaitUpdateGenerator ?? generateOwnerWaitUpdate'),
+    'the seam defaults to the coworkUtil LLM generator');
+  assert.ok(body.includes("reason: 'generator returned empty'"),
+    'an empty generation emits NO bubble and backs off (no canned fallback)');
+  assert.ok(body.includes("kind: 'waiting'"), 'the bubble keeps the waiting kind for the renderer');
+  assert.ok(source.includes('activeSession.assistantOwnerTurnUserText = prompt;'),
+    'the turn user text is captured at entry for heartbeat language/topic context');
+});
+
+test('coworkUtil: generateOwnerWaitUpdate mirrors the ack call class', () => {
+  const source = read('src/main/libs/coworkUtil.ts');
+  const start = source.indexOf('export async function generateOwnerWaitUpdate(');
+  assert.ok(start > 0, 'generateOwnerWaitUpdate exists');
+  const body = source.slice(start, source.indexOf('\n}', start) + 2);
+  assert.ok(body.includes('buildOwnerWaitUpdateMessages(input)'), 'rides the pure prompt builder');
+  assert.ok(body.includes("thinking: 'disabled'") && body.includes("effort: 'off'"), 'no reasoning wait');
+  assert.ok(body.includes('attemptTimeoutMs: 4_000'), 'bounded per-attempt latency');
+  assert.ok(body.includes('fallbackLlmId'), 'fallback brain wired like titles/ack');
+  assert.ok(body.includes('sanitizeTurnAckReplyForInput(result.content'), 'shared input-aware sanitize');
 });

@@ -98,6 +98,7 @@ test('getMetabotWalletAssets returns native, mrc20, and mvc ft sections with dis
         unconfirmed: '0.25000000',
       },
     }],
+    listMvcNftAssets: async () => [],
   });
 
   assert.equal(result.metabotId, 1);
@@ -123,6 +124,48 @@ test('getMetabotWalletAssets returns native, mrc20, and mvc ft sections with dis
   assert.equal(result.mvcFtAssets[0].balance.display, '9.75000000');
 });
 
+test('getMetabotWalletAssets keeps item icon and imgUrl through the mvc nft bundle mapping', async () => {
+  const store = createMetabotStoreStub({
+    id: 1,
+    name: 'Collector',
+    mvc_address: 'mvc-1',
+    btc_address: 'btc-1',
+    doge_address: 'doge-1',
+    public_key: 'pub',
+  });
+
+  const result = await assetService.getMetabotWalletAssets(store, { metabotId: 1 }, {
+    getNativeBalances: async () => ({
+      btc: { address: 'btc-1', value: 0, unit: 'BTC' },
+      doge: { address: 'doge-1', value: 0, unit: 'DOGE' },
+      mvc: { address: 'mvc-1', value: 1, unit: 'SPACE' },
+    }),
+    listMrc20Assets: async () => [],
+    listMvcFtAssets: async () => [],
+    listMvcNftAssets: async () => [{
+      genesis: 'g-1',
+      codeHash: 'ch-1',
+      seriesName: 'MetaBot Avatar',
+      tokenSupply: 10000,
+      address: 'mvc-1',
+      count: 1,
+      items: [{
+        tokenIndex: '2671',
+        name: 'MetaBot #2671',
+        satoshi: 1000,
+        icon: 'metafile://icon-pin',
+        imgUrl: 'https://metalet.space/art.png',
+      }],
+    }],
+  });
+
+  assert.equal(result.mvcNftAssets.length, 1);
+  const item = result.mvcNftAssets[0].items[0];
+  assert.equal(item.tokenIndex, '2671');
+  assert.equal(item.icon, 'metafile://icon-pin');
+  assert.equal(item.imgUrl, 'https://metalet.space/art.png', 'imgUrl must survive the bundle mapping so wallet tiles render https artwork first');
+});
+
 test('getMetabotWalletAssets treats token no-data responses as empty token sections instead of failing the modal', async () => {
   const store = createMetabotStoreStub({
     id: 1,
@@ -143,6 +186,9 @@ test('getMetabotWalletAssets treats token no-data responses as empty token secti
       throw new Error('rpc error: code = Unknown desc = msg:no data found.');
     },
     listMvcFtAssets: async () => {
+      throw new Error('rpc error: code = Unknown desc = msg:no data found.');
+    },
+    listMvcNftAssets: async () => {
       throw new Error('rpc error: code = Unknown desc = msg:no data found.');
     },
   });
@@ -172,6 +218,9 @@ test('getMetabotWalletAssets treats upstream token RPC failures as empty token s
       throw new Error('rpc error: code = Unknown desc = Higun request error');
     },
     listMvcFtAssets: async () => {
+      throw new Error('fetch failed');
+    },
+    listMvcNftAssets: async () => {
       throw new Error('fetch failed');
     },
   });

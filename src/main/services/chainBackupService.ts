@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { createPin } from './metaidCore';
 import { buildModifyMetaidPayload } from './metaidPinMutationService';
 import { getRate as getGlobalFeeRate } from './feeRateStore';
@@ -11,21 +14,22 @@ import {
 } from './chainBackupData';
 import {
   buildManifestContent,
-  buildObjectPinContent,
+  buildSegmentFileBytes,
   chainBackupSegmentRefKey,
   packSegments,
 } from './chainBackupSegments';
 import {
   CHAIN_BACKUP_MANIFEST_PATH,
-  CHAIN_BACKUP_OBJECT_PATH,
+  CHAIN_BACKUP_METAFILE_CONTENT_TYPE,
+  CHAIN_BACKUP_SEGMENT_STORAGE_METAFILE,
 } from './chainBackupProtocol';
 import {
   ChainBackupPausedError,
   computeBackupRetryDelayMs,
   fetchChainBackupManifestState,
-  findPublishedSegmentPin,
   isChainBackupNetworkError,
 } from './chainBackupPublication';
+import type { uploadMetaFile } from './metaFileUploadService';
 import {
   createChainBackupRun,
   ensureChainBackupRunSchema,
@@ -43,14 +47,17 @@ import type { Metabot } from '../types/metabot';
 
 export { listChainBackupStates, type ChainBackupStateRow } from './chainBackupData';
 export type { ChainBackupSegmentRef } from './chainBackupData';
-export { buildManifestContent, buildObjectPinContent } from './chainBackupSegments';
+export { buildManifestContent, buildObjectPinContent, buildSegmentFileBytes } from './chainBackupSegments';
 export {
   CHAIN_BACKUP_OBJECT_PATH,
   CHAIN_BACKUP_MANIFEST_PATH,
   CHAIN_BACKUP_VERSION,
   CHAIN_BACKUP_CIPHER,
   CHAIN_BACKUP_KDF,
+  CHAIN_BACKUP_ENCODING_GZIP,
   CHAIN_BACKUP_SEGMENT_PLAINTEXT_LIMIT,
+  CHAIN_BACKUP_SEGMENT_STORAGE_METAFILE,
+  CHAIN_BACKUP_METAFILE_CONTENT_TYPE,
 } from './chainBackupProtocol';
 
 const DEFAULT_NETWORK_ATTEMPTS = 4;
@@ -102,8 +109,8 @@ export interface RunChainBackupDeps {
   saveDb?: () => void;
   onProgress?: (progress: ChainBackupProgress) => void;
   createPinImpl?: typeof createPin;
+  uploadMetaFileImpl?: typeof uploadMetaFile;
   syncBotsManifestImpl?: typeof syncUserBotsToMobile;
-  findPublishedSegmentPinImpl?: typeof findPublishedSegmentPin;
   fetchManifestStateImpl?: typeof fetchChainBackupManifestState;
   maxNetworkAttempts?: number;
   sleep?: (ms: number) => Promise<void>;
@@ -135,6 +142,7 @@ function refFromUpload(row: ChainBackupSegmentUploadRow): ChainBackupSegmentRef 
     bytes: row.bytes,
     kinds: parseStringArray(row.kinds_json),
     objectIds: parseStringArray(row.object_ids_json),
+    storage: row.storage === CHAIN_BACKUP_SEGMENT_STORAGE_METAFILE ? CHAIN_BACKUP_SEGMENT_STORAGE_METAFILE : undefined,
   };
 }
 
@@ -191,8 +199,14 @@ async function syncDiscoveryWithRetry(
 export async function runChainBackup(deps: RunChainBackupDeps): Promise<ChainBackupResult> {
   const { db, metabotStore, userStore } = deps;
   const createPinFn = deps.createPinImpl ?? createPin;
+  const uploadMetaFileFn = deps.uploadMetaFileImpl
+    ?? (async (store: MetabotStore, params: Parameters<typeof uploadMetaFile>[1]) => {
+      // Lazy import: metaFileUploadService touches Electron's app at module
+      // load, which plain-node tests never provide (they stub the upload).
+      const mod = await import('./metaFileUploadService');
+      return mod.uploadMetaFile(store, params);
+    });
   const syncBotsManifest = deps.syncBotsManifestImpl ?? syncUserBotsToMobile;
-  const findSegmentPin = deps.findPublishedSegmentPinImpl ?? findPublishedSegmentPin;
   const fetchManifestState = deps.fetchManifestStateImpl ?? fetchChainBackupManifestState;
   const sleep = deps.sleep ?? defaultSleep;
   const maxAttempts = Math.max(1, Math.floor(deps.maxNetworkAttempts ?? DEFAULT_NETWORK_ATTEMPTS));
@@ -298,6 +312,7 @@ export async function runChainBackup(deps: RunChainBackupDeps): Promise<ChainBac
             segment_hash: segmentHash,
             pin_id: null,
             status: 'pending',
+            storage: CHAIN_BACKUP_SEGMENT_STORAGE_METAFILE,
             object_ids_json: JSON.stringify(packed.journalObjectIds),
             kinds_json: JSON.stringify([...new Set(packed.objects.map((obj) => obj.kind))]),
             plaintext_created_at: plaintextCreatedAt,
@@ -309,6 +324,7 @@ export async function runChainBackup(deps: RunChainBackupDeps): Promise<ChainBac
           };
           upload.run_id = run.run_id;
           upload.segment_hash = segmentHash;
+          upload.storage = CHAIN_BACKUP_SEGMENT_STORAGE_METAFILE;
           upload.object_ids_json = JSON.stringify(packed.journalObjectIds);
           upload.kinds_json = JSON.stringify([...new Set(packed.objects.map((obj) => obj.kind))]);
           upload.plaintext_created_at = plaintextCreatedAt;
@@ -316,69 +332,45 @@ export async function runChainBackup(deps: RunChainBackupDeps): Promise<ChainBac
           deps.saveDb?.();
 
           let retries = 0;
-          let reconcileMisses = 0;
           while (true) {
             try {
-              if (upload.attempt_count > 0) {
-                const existing = await findSegmentPin({
-                  mvcAddress: bot.mvc_address,
-                  botGlobalMetaId: botGid,
-                  segmentKey: packed.segmentKey,
-                  segmentHash,
-                });
-                if (existing) {
-                  upload.status = 'published';
-                  upload.pin_id = existing.pinId;
-                  upload.last_error = null;
-                  if (!upload.bytes) upload.bytes = Buffer.byteLength(buildObjectPinContent(backupKey, botGid, plaintext, packed.segmentKey), 'utf8');
-                  saveChainBackupSegmentUpload(db, upload);
-                  deps.saveDb?.();
-                  newSegmentRefs.push(refFromUpload(upload));
-                  botResult.resumedSegments += 1;
-                  break;
-                }
-                reconcileMisses += 1;
-                if (reconcileMisses < RECONCILE_MISS_CONFIRMATIONS) {
-                  const delay = computeBackupRetryDelayMs(reconcileMisses);
-                  emit({
-                    phase: 'publish',
-                    botName: bot.name,
-                    botIndex: i,
-                    botCount: bots.length,
-                    segmentsDone: s,
-                    segmentsTotal: segments.length,
-                    retryAttempt: reconcileMisses,
-                    retryDelayMs: delay,
-                  });
-                  await sleep(delay);
-                  continue;
-                }
-              }
-
+              // No chain-side reconcile here: unlike the legacy inline-JSON
+              // pins (which carried segmentKey in cleartext), a metafile is
+              // opaque ciphertext and cannot be matched by indexer listing.
+              // A response-lost upload is simply re-uploaded — post-gzip a
+              // duplicate segment costs a few hundred KB at worst.
               upload.status = 'uploading';
               upload.attempt_count += 1;
               upload.last_error = null;
               saveChainBackupSegmentUpload(db, upload);
               deps.saveDb?.();
-              const content = buildObjectPinContent(backupKey, botGid, plaintext, packed.segmentKey);
-              const pin = await createPinFn(metabotStore, bot.id, {
-                operation: 'create',
-                path: CHAIN_BACKUP_OBJECT_PATH,
-                encryption: '0',
-                version: '1.0.0',
-                contentType: 'application/json',
-                payload: content,
-              }, { feeRate, origin: 'internal:chain-backup' });
+              const fileBytes = buildSegmentFileBytes(backupKey, plaintext);
+              const segmentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-backup-segment-'));
+              const segmentFile = path.join(segmentDir, `backup-${packed.segmentKey}.bin`);
+              let published: Record<string, unknown>;
+              try {
+                fs.writeFileSync(segmentFile, fileBytes);
+                published = await uploadMetaFileFn(metabotStore, {
+                  metabotId: bot.id,
+                  filePath: segmentFile,
+                  contentType: CHAIN_BACKUP_METAFILE_CONTENT_TYPE,
+                  origin: 'internal:chain-backup',
+                });
+              } finally {
+                fs.rmSync(segmentDir, { recursive: true, force: true });
+              }
+              const pinId = String(published?.pinId || '').trim();
+              if (!pinId) throw new Error('METAFILE_UPLOAD_NO_PIN');
               upload.status = 'published';
-              upload.pin_id = pin.pinId;
-              upload.bytes = Buffer.byteLength(content, 'utf8');
+              upload.pin_id = pinId;
+              upload.bytes = fileBytes.length;
               upload.last_error = null;
               saveChainBackupSegmentUpload(db, upload);
               deps.saveDb?.();
               newSegmentRefs.push(refFromUpload(upload));
               botResult.segments += 1;
               botResult.bytes += upload.bytes;
-              botResult.costSats += pin.totalCost || 0;
+              botResult.costSats += Number(published.totalCost) || 0;
               break;
             } catch (error) {
               const message = errorMessage(error);

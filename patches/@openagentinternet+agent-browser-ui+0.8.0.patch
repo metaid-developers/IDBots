@@ -1,8 +1,8 @@
 diff --git a/dist/browser/app.js b/dist/browser/app.js
-index fbbe42f54e83c46015024996e973952330e47a3c..c735964b1f322d5c0506397404616218439070d2 100644
+index 4555c9943c7bbe91c0dd13d991a50a2c2d2da3e8..fa800196f71291b41d5851d3c2c178933feb8535 100644
 --- a/dist/browser/app.js
 +++ b/dist/browser/app.js
-@@ -8060,12 +8060,12 @@ function htmlFrameSandbox(url) {
+@@ -8380,12 +8380,12 @@ function htmlFrameSandbox(url) {
    // safe only because it is NOT the Browser page origin, so the app can never
    // script the UI or call its same-origin API — plus downloads. Frames served
    // same-origin with the page stay fully opaque (no allow-same-origin).
@@ -52,10 +52,10 @@ index 425639da3c5ef82b534e2dfee41d840016866bca..b231cfbbfdbdf99d9aa3e9024c0f9e1b
      const origin = text(pageOrigin);
      if (!origin)
 diff --git a/dist-cjs/browser/app.js b/dist-cjs/browser/app.js
-index 3882545ffe59e8fa12e5312ceae23f9da4789e75..4c6712cce4e0dca7a1877f128d0df4887813275f 100644
+index eac9bf347a72fe1a8e146c25403517b09513b77f..3e7d58a1e57979c63f99f6662978a10fb5b55298 100644
 --- a/dist-cjs/browser/app.js
 +++ b/dist-cjs/browser/app.js
-@@ -8063,12 +8063,12 @@ function htmlFrameSandbox(url) {
+@@ -8383,12 +8383,12 @@ function htmlFrameSandbox(url) {
    // safe only because it is NOT the Browser page origin, so the app can never
    // script the UI or call its same-origin API — plus downloads. Frames served
    // same-origin with the page stay fully opaque (no allow-same-origin).

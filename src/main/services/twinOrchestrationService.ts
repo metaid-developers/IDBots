@@ -13,7 +13,7 @@ import {
   type CoworkSessionActivityMessage,
 } from '../libs/coworkSessionActivity';
 import type { CoworkRunner } from '../libs/coworkRunner';
-import { buildOrchNotifyCompleted, buildOrchNotifyFailed } from '../libs/groupTaskCopy';
+import { buildOrchNotifyCompleted, buildOrchNotifyFailed, buildOrchNotifyHandoff } from '../libs/groupTaskCopy';
 import type { CoworkStore } from '../coworkStore';
 import {
   authorizeTwinSession,
@@ -30,6 +30,12 @@ import type { Metabot } from '../types/metabot';
 import type { LongTermTaskStore } from '../longTermTaskStore';
 import { buildDelegationAnchorBlock, LONGTERM_ANCHOR_MARKER } from '../libs/longTermDelegationAnchor';
 import { getPersistedAppLanguage } from '../libs/appLanguage';
+import {
+  deriveOrchestrationAttention,
+  parseWorkerHandoff,
+  type OrchestrationAttention,
+  type WorkerHandoff,
+} from './orchestrationProgress';
 
 /**
  * Round-4 r6: cross-session notify seam. Defaults to the host CoworkRunner's
@@ -40,6 +46,7 @@ export type TwinOrchestrationInsertCrossSessionMessageFn = (input: {
   sourceSessionId: string;
   targetSessionId: string;
   message: string;
+  deliveryId?: string;
 }) => CoworkCrossSessionInsertResult;
 
 /** Minimal kv surface for the terminal-state notify guard (SqliteStore in main.ts). */
@@ -71,6 +78,7 @@ export interface DelegateLocalWorkerResult {
 
 export interface TwinTaskStatusResult {
   task: OrchestrationTask;
+  attention: OrchestrationAttention;
   steps: Array<OrchestrationStep & { attempts: OrchestrationAttempt[] }>;
 }
 
@@ -174,7 +182,8 @@ function buildWorkerPrompt(input: DelegateLocalWorkerInput, task: OrchestrationT
     '  </permission_scope>',
     '  <handoff_contract>',
     'Return a concise structured handoff with summary, deliverables, verification evidence, and blockers. Do not claim an external action succeeded without evidence.',
-    'ALWAYS close the session with a plain-text handoff summary — what was done, evidence, and blockers — even when a step failed or the last tool call errored. Never end with an empty reply, a bare tool error, or a reasoning placeholder.',
+    'Close with exactly one <worker_handoff> JSON block after a short plain-text summary. Schema: {"state":"ready|progress|blocked|waiting_external|failed|dropped","summary":"...","deliverables":[],"verificationEvidence":[],"blockers":[],"humanAction":null}. Use humanAction only for one concrete decision the owner must make; otherwise keep it null. Use waiting_external only when an external event or condition is the actual blocker.',
+    'Even when a step failed or the last tool call errored, return state=failed with what was done, evidence, and blockers in that JSON block. Never end with an empty reply, a bare tool error, a reasoning placeholder, or an unclosed worker_handoff tag.',
     '  </handoff_contract>',
     '</twin_delegation>',
   ].filter((line): line is string => line != null).join('\n');
@@ -221,6 +230,7 @@ export class TwinOrchestrationService {
     workerName: string,
     outcome: 'completed' | 'failed',
     detail?: string | null,
+    messageOverride?: string,
   ): void {
     try {
       const targetSessionId = (task.sourceSessionId ?? '').trim();
@@ -231,7 +241,7 @@ export class TwinOrchestrationService {
       const guardKey = `orch_notify:${task.id}:${attempt.id}:${outcome}`;
       if (this.deps.kv?.get<string>(guardKey) === '1') return; // one notify per terminal state
       if (!workerSessionId) return; // no worker session identity to attribute the message to
-      const text = outcome === 'completed'
+      const text = messageOverride?.trim() || (outcome === 'completed'
         ? buildOrchNotifyCompleted(workerName, task.id)
         : buildOrchNotifyFailed(
           workerName,
@@ -242,11 +252,12 @@ export class TwinOrchestrationService {
           detail != null && detail.trim().startsWith('WORKER_SESSION_STOPPED')
             ? `${detail.trim()} — host-initiated stop, not a worker fault; once the cause clears, re-dispatching should succeed`
             : (detail ?? '').trim() || 'WORKER_ATTEMPT_FAILED',
-        );
+        ));
       const result = this.insertCrossSession({
         sourceSessionId: workerSessionId,
         targetSessionId,
         message: text,
+        deliveryId: guardKey,
       });
       if ('code' in result) {
         // CoworkCrossSessionError (insert failed: missing session, A2A target…)
@@ -267,6 +278,7 @@ export class TwinOrchestrationService {
           sourceSessionId: workerSessionId,
           targetSessionId: task.longtermReportSessionId,
           message: `📋 长期任务子项进展汇报\n\n${text}\n\n（此汇报来自编排任务 ${task.id}，对应长期任务 ${task.longtermTaskId} 的子项 ${task.longtermSubtaskId}）`,
+          deliveryId: `${guardKey}:longterm`,
         });
         if ('code' in ltResult) {
           console.warn(
@@ -290,6 +302,23 @@ export class TwinOrchestrationService {
 
   private workerNameOf(metabotId: number): string {
     return this.deps.getMetabotById(metabotId)?.name?.trim() || `bot-${metabotId}`;
+  }
+
+  notifyRestartRecoveredAttempts(attempts: OrchestrationAttempt[]): void {
+    for (const attempt of attempts) {
+      const task = this.deps.orchestrationStore.getTaskForStep(attempt.stepId);
+      if (!task) {
+        console.warn(`[TwinOrchestration] Restart recovery notification skipped: no task for attempt ${attempt.id}`);
+        continue;
+      }
+      this.notifyTwinTerminalState(
+        task,
+        attempt,
+        this.workerNameOf(attempt.workerMetabotId),
+        'failed',
+        'RECOVERED_AFTER_RESTART — host restart interrupted tracking, not a Worker-reported failure; inspect existing artifacts and retry or reassign this step instead of waiting for the old session.',
+      );
+    }
   }
 
   /**
@@ -388,6 +417,63 @@ export class TwinOrchestrationService {
     );
   }
 
+  private settleWorkerHandoff(
+    task: OrchestrationTask,
+    step: OrchestrationStep,
+    attempt: OrchestrationAttempt,
+    worker: Metabot,
+    replyText: string,
+  ): void {
+    const store = this.deps.orchestrationStore;
+    const handoff = parseWorkerHandoff(replyText);
+    const result = { replyText: replyText.trim(), verified: false, handoff };
+    const currentTask = store.getTask(task.id);
+    if (!currentTask || currentTask.status === 'completed' || currentTask.status === 'cancelled') return;
+
+    if (handoff.state === 'failed') {
+      const message = handoff.parseError || handoff.blockers[0] || handoff.summary || 'WORKER_ATTEMPT_FAILED';
+      store.updateAttempt(attempt.id, 'failed', { result, error: message });
+      store.updateStepStatus(step.id, 'failed');
+      if (currentTask.status !== 'failed') store.updateTaskStatus(currentTask.id, 'failed');
+      this.notifyTwinTerminalState(
+        currentTask,
+        store.getAttempt(attempt.id) ?? attempt,
+        worker.name,
+        'failed',
+        message,
+      );
+      return;
+    }
+
+    store.updateAttempt(attempt.id, 'completed', { result, error: null });
+    const waitingForFollowUp = Boolean(handoff.humanAction)
+      || handoff.state === 'waiting_external'
+      || handoff.state === 'blocked'
+      || handoff.state === 'progress';
+    store.updateStepStatus(step.id, waitingForFollowUp ? 'waiting_input' : 'completed', { acceptedResult: result });
+
+    const hasActiveAttempts = store.listSteps(task.id).some((candidate) =>
+      store.listAttempts(candidate.id).some((item) => ['queued', 'running', 'timed_out'].includes(item.status)),
+    );
+    const desiredStatus: OrchestrationTask['status'] = handoff.state === 'progress' || hasActiveAttempts ? 'running' : 'review';
+    if (currentTask.status !== desiredStatus) {
+      if (currentTask.status === 'failed' && desiredStatus === 'review') {
+        store.updateTaskStatus(currentTask.id, 'running');
+      }
+      store.updateTaskStatus(currentTask.id, desiredStatus);
+    }
+
+    const latestAttempt = store.getAttempt(attempt.id) ?? attempt;
+    this.notifyTwinTerminalState(
+      currentTask,
+      latestAttempt,
+      worker.name,
+      'completed',
+      null,
+      buildOrchNotifyHandoff(worker.name, currentTask.id, handoff),
+    );
+  }
+
   private async executeAttempt(
     task: OrchestrationTask,
     step: OrchestrationStep,
@@ -463,7 +549,6 @@ export class TwinOrchestrationService {
         // the produced work.
         throw new Error(await this.buildEmptyHandoffError(attempt, worker));
       }
-      const result = { replyText: replyText.trim(), verified: false };
       // Terminal-state guard (mirrors applyLateAttemptResult): a task
       // cancelled while this worker ran must stay cancelled — a late reply
       // never resurrects it, and the step/task must not move either.
@@ -474,16 +559,7 @@ export class TwinOrchestrationService {
         );
         return;
       }
-      this.deps.orchestrationStore.updateAttempt(attempt.id, 'completed', { result });
-      this.deps.orchestrationStore.updateStepStatus(step.id, 'completed', { acceptedResult: result });
-      this.deps.orchestrationStore.updateTaskStatus(task.id, 'review');
-      // Round-4 r6: normal-completion terminal state → notify the Twin.
-      this.notifyTwinTerminalState(
-        task,
-        this.deps.orchestrationStore.getAttempt(attempt.id) ?? attempt,
-        worker.name,
-        'completed',
-      );
+      this.settleWorkerHandoff(task, step, attempt, worker, replyText);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const isTimeout = isSkillTurnTimeoutError(error);
@@ -548,22 +624,12 @@ export class TwinOrchestrationService {
       this.settleTimedOutAttempt(attemptId, error);
       return;
     }
-    const result = { replyText: replyText.trim(), verified: false };
-    // Clear the parked timeout error: the attempt completed with a real result.
-    store.updateAttempt(attemptId, 'completed', { result, error: null });
-    store.updateStepStatus(step.id, 'completed', { acceptedResult: result });
-    const currentTask = store.getTask(task.id);
-    if (currentTask && ['planning', 'running', 'review'].includes(currentTask.status)) {
-      store.updateTaskStatus(task.id, 'review');
+    const worker = this.deps.getMetabotById(currentAttempt.workerMetabotId);
+    if (!worker) {
+      this.settleTimedOutAttempt(attemptId, 'WORKER_NOT_FOUND_OR_NOT_SPECIALIST');
+      return;
     }
-    // Round-4 r6: late-completion terminal state → notify the Twin (kv guard
-    // makes it idempotent even if the normal path already notified).
-    this.notifyTwinTerminalState(
-      currentTask ?? task,
-      store.getAttempt(attemptId) ?? currentAttempt,
-      this.workerNameOf(currentAttempt.workerMetabotId),
-      'completed',
-    );
+    this.settleWorkerHandoff(task, step, currentAttempt, worker, replyText);
   }
 
   /**
@@ -792,12 +858,14 @@ export class TwinOrchestrationService {
     if (task.twinMetabotId !== twin.id || task.ownerGlobalMetaId.toLowerCase() !== ownerGlobalMetaId.toLowerCase()) {
       throw new Error('ORCHESTRATION_TASK_OWNER_MISMATCH');
     }
+    const steps = this.deps.orchestrationStore.listSteps(task.id).map((step) => ({
+      ...step,
+      attempts: this.deps.orchestrationStore.listAttempts(step.id),
+    }));
     return {
       task,
-      steps: this.deps.orchestrationStore.listSteps(task.id).map((step) => ({
-        ...step,
-        attempts: this.deps.orchestrationStore.listAttempts(step.id),
-      })),
+      attention: deriveOrchestrationAttention(task, steps),
+      steps,
     };
   }
 

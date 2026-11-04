@@ -45,7 +45,7 @@ test.describe('gateway-backed smoke', () => {
     expect(facts.isMobile).toBe(true);
     expect(facts.hasMockControl).toBe(false);
 
-    await expect(page.getByRole('button', { name: 'Chat' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Chat', exact: true })).toBeVisible();
     await attachScreen(testInfo, page, 'gateway-app-shell');
 
     await startNewChat(page);

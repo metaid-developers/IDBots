@@ -15,16 +15,16 @@ function PlanCard(props: { plan: BundlePlan; disabled: boolean; onSelect: () => 
       type="button"
       onClick={props.onSelect}
       disabled={props.disabled}
-      className="flex min-h-[64px] w-full items-center justify-between gap-3 rounded-xl border border-[var(--border-color)] bg-[var(--bg-main)] px-4 py-3 text-left active:bg-[var(--bg-hover)] disabled:opacity-40"
+      className="twin-panel twin-panel-padded flex min-h-[64px] w-full items-center justify-between gap-3 text-left disabled:opacity-40"
     >
       <div className="min-w-0">
-        <p className="text-[15px] font-medium text-[var(--text-primary)]">{plan.nameEn || plan.name}</p>
-        <p className="text-xs text-[var(--text-secondary)]">
+        <p className="twin-list-title">{plan.nameEn || plan.name}</p>
+        <p className="twin-list-subtitle">
           {t('mobile.recharge.trafficAmount', { amount: formatBytes(plan.trafficBytes) })}
           {` · ${t('mobile.recharge.llmAmount', { amount: `${formatCount(plan.llmQuota)} ${plan.llmQuotaUnit}` })}`}
         </p>
       </div>
-      <span className="shrink-0 text-[15px] font-semibold text-[var(--text-primary)]">
+      <span className="twin-list-value twin-list-value-accent">
         {`${plan.payCurrency} ${plan.payAmount}`}
       </span>
     </button>
@@ -34,11 +34,11 @@ function PlanCard(props: { plan: BundlePlan; disabled: boolean; onSelect: () => 
 function StatusMessage(props: { degraded: boolean; timedOut: boolean; onCheck: () => void }): JSX.Element | null {
   if (!props.degraded && !props.timedOut) return null;
   return (
-    <div className="mt-3 rounded-xl border border-amber-300 bg-amber-50 p-3" data-testid="recharge-poll-degraded">
-      <p className="text-xs text-amber-800">
+    <div className="twin-notice twin-notice-warning mt-3" data-testid="recharge-poll-degraded">
+      <p className="text-xs">
         {t(props.timedOut ? 'mobile.recharge.pollTimedOut' : 'mobile.recharge.pollDegraded')}
       </p>
-      <button type="button" onClick={props.onCheck} className="mt-1 min-h-[44px] text-sm font-medium text-amber-900">
+      <button type="button" onClick={props.onCheck} className="twin-button twin-button-ghost twin-button-small mt-1">
         {t('mobile.recharge.checkStatus')}
       </button>
     </div>
@@ -55,25 +55,25 @@ export default function RechargeScreen(props: { onClose: () => void; onMetersUpd
   }, [stage, order?.orderId, order?.qrCode, recharge.openAlipayApp]);
 
   return (
-    <div className="flex h-full flex-col bg-[var(--bg-main)]">
+    <div className="twin-page h-full">
       <div
-        className="flex shrink-0 items-center justify-between border-b border-[var(--border-color)] bg-[var(--bg-panel)] px-2 py-1.5"
+        className="twin-topbar twin-topbar-simple shrink-0"
         style={{ paddingTop: 'calc(env(safe-area-inset-top) + 6px)' }}
       >
-        <h1 className="text-base font-semibold text-[var(--text-primary)]">{t('mobile.recharge.title')}</h1>
+        <h1 className="twin-title">{t('mobile.recharge.title')}</h1>
         <button
           type="button"
           onClick={props.onClose}
           aria-label={t('mobile.common.close')}
-          className="flex min-h-[44px] min-w-[44px] items-center justify-center text-[var(--text-primary)] active:bg-[var(--bg-hover)]"
+          className="twin-icon-button"
         >
           <XMarkIcon className="h-6 w-6" aria-hidden />
         </button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+      <div className="twin-scroll p-3">
         {recharge.metersError ? (
-          <p className="mb-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800" data-testid="recharge-meters-error">
+          <p className="mb-3 twin-notice twin-notice-warning text-xs text-[var(--twin-warning)]" data-testid="recharge-meters-error">
             {t('mobile.recharge.metersFailed')}
           </p>
         ) : null}
@@ -81,7 +81,7 @@ export default function RechargeScreen(props: { onClose: () => void; onMetersUpd
         {stage === 'plans' || stage === 'error' ? (
           <div className="space-y-3">
             {pendingOrder && order ? (
-              <div className="rounded-2xl border border-[var(--color-primary)] bg-[var(--bg-panel)] p-4" data-testid="recharge-pending-order">
+              <div className="twin-panel twin-panel-padded" data-testid="recharge-pending-order">
                 <p className="text-sm font-semibold text-[var(--text-primary)]">{t('mobile.recharge.pendingTitle')}</p>
                 <p className="mt-1 text-xs text-[var(--text-secondary)]">
                   {`${order.plan.payCurrency} ${order.plan.payAmount} · ${t('mobile.recharge.expiresAt', { time: new Date(order.expiresAt * 1000).toLocaleString() })}`}
@@ -89,22 +89,22 @@ export default function RechargeScreen(props: { onClose: () => void; onMetersUpd
                 <button
                   type="button"
                   onClick={recharge.resumeOrder}
-                  className="mt-3 min-h-[44px] w-full rounded-xl bg-[var(--color-primary)] py-2 text-sm font-medium text-black"
+                  className="twin-button twin-button-primary twin-button-full mt-3"
                 >
                   {t('mobile.recharge.resumeOrder')}
                 </button>
               </div>
             ) : null}
             {recharge.creationAttempt ? (
-              <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4" data-testid="recharge-uncertain-attempt">
-                <p className="text-sm font-semibold text-amber-800">{t('mobile.recharge.uncertainTitle')}</p>
-                <p className="mt-1 text-xs text-amber-800">
+              <div className="twin-notice twin-notice-warning" data-testid="recharge-uncertain-attempt">
+                <p className="text-sm font-semibold text-[var(--twin-warning)]">{t('mobile.recharge.uncertainTitle')}</p>
+                <p className="mt-1 text-xs text-[var(--twin-warning)]">
                   {t('mobile.recharge.uncertainCreateBody', { time: new Date(recharge.creationAttempt.retryAfterMs).toLocaleString() })}
                 </p>
                 <button
                   type="button"
                   onClick={() => void recharge.selectPlan(recharge.creationAttempt!.planId)}
-                  className="mt-2 min-h-[44px] text-sm font-medium text-amber-900"
+                  className="mt-2 min-h-[44px] text-sm font-medium text-[var(--twin-warning)]"
                 >
                   {t('mobile.recharge.reviewUncertain')}
                 </button>
@@ -126,21 +126,21 @@ export default function RechargeScreen(props: { onClose: () => void; onMetersUpd
               </div>
             </Section>
             {recharge.plansError ? (
-              <div className="rounded-xl border border-amber-300 bg-amber-50 p-3">
-                <p className="text-xs text-amber-800">{t('mobile.recharge.plansFailed')}</p>
-                <button type="button" onClick={recharge.checkStatus} className="min-h-[44px] text-sm font-medium text-amber-900">
+              <div className="twin-notice twin-notice-warning">
+                <p className="text-xs text-[var(--twin-warning)]">{t('mobile.recharge.plansFailed')}</p>
+                <button type="button" onClick={recharge.checkStatus} className="min-h-[44px] text-sm font-medium text-[var(--twin-warning)]">
                   {t('mobile.common.retry')}
                 </button>
               </div>
             ) : null}
             {stage === 'error' ? (
-              <div className="rounded-2xl border border-red-300 bg-red-50 p-3" data-testid="recharge-create-error">
+              <div className="twin-notice twin-notice-error" data-testid="recharge-create-error">
                 <p className="text-sm font-semibold text-red-700">{t('mobile.recharge.errorTitle')}</p>
                 {recharge.actionError ? <p className="mt-1 text-xs text-red-700">{recharge.actionError}</p> : null}
                 <button
                   type="button"
                   onClick={recharge.backToPlans}
-                  className="mt-2 min-h-[44px] w-full rounded-xl bg-[var(--color-primary)] py-2 text-sm font-medium text-black active:opacity-80"
+                  className="mt-2 twin-button twin-button-primary twin-button-full"
                 >
                   {t('mobile.common.retry')}
                 </button>
@@ -150,9 +150,9 @@ export default function RechargeScreen(props: { onClose: () => void; onMetersUpd
         ) : null}
 
         {stage === 'uncertain' ? (
-          <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4" data-testid="recharge-uncertain">
-            <p className="text-sm font-semibold text-amber-800">{t('mobile.recharge.uncertainTitle')}</p>
-            <p className="mt-2 text-sm text-amber-800">
+          <div className="twin-notice twin-notice-warning" data-testid="recharge-uncertain">
+            <p className="text-sm font-semibold text-[var(--twin-warning)]">{t('mobile.recharge.uncertainTitle')}</p>
+            <p className="mt-2 text-sm text-[var(--twin-warning)]">
               {recharge.invalidRecovery
                 ? t('mobile.recharge.invalidRecoveryBody')
                 : t(order ? 'mobile.recharge.uncertainOrderBody' : 'mobile.recharge.uncertainCreateBody', {
@@ -163,14 +163,14 @@ export default function RechargeScreen(props: { onClose: () => void; onMetersUpd
             <button
               type="button"
               onClick={order?.qrCode ? recharge.resumeOrder : recharge.checkStatus}
-              className="mt-3 min-h-[44px] w-full rounded-xl bg-amber-700 py-2 text-sm font-medium text-white"
+              className="twin-button twin-button-primary twin-button-full mt-3"
             >
               {t(order?.qrCode ? 'mobile.recharge.resumeOrder' : 'mobile.recharge.checkStatus')}
             </button>
             <button
               type="button"
               onClick={recharge.backToPlans}
-              className="mt-2 min-h-[44px] w-full rounded-xl border border-amber-400 py-2 text-sm text-amber-900"
+              className="twin-button twin-button-secondary twin-button-full mt-2"
             >
               {t('mobile.recharge.backToPlans')}
             </button>
@@ -179,7 +179,7 @@ export default function RechargeScreen(props: { onClose: () => void; onMetersUpd
 
         {stage === 'paying' && order ? (
           <div className="space-y-3">
-            <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] p-4" data-testid="recharge-paying" data-order-id={order.orderId}>
+            <div className="twin-panel twin-panel-padded" data-testid="recharge-paying" data-order-id={order.orderId}>
               <p className="mb-1 text-sm text-[var(--text-secondary)]">{t('mobile.recharge.orderCreated')}</p>
               <p className="mb-1 text-base font-semibold text-[var(--text-primary)]">
                 {`${order.plan.payCurrency} ${order.plan.payAmount}`}
@@ -202,14 +202,14 @@ export default function RechargeScreen(props: { onClose: () => void; onMetersUpd
                   <button
                     type="button"
                     onClick={recharge.openInBrowser}
-                    className="min-h-[44px] rounded-xl bg-[var(--color-primary)] py-2 text-sm font-medium text-black active:opacity-80"
+                    className="twin-button twin-button-primary"
                   >
                     {t('mobile.recharge.openBrowser')}
                   </button>
                   <button
                     type="button"
                     onClick={recharge.showQrFallback}
-                    className="min-h-[44px] rounded-xl border border-[var(--border-color)] py-2 text-sm text-[var(--text-primary)] active:bg-[var(--bg-hover)]"
+                    className="twin-button twin-button-secondary"
                   >
                     {t('mobile.recharge.showQr')}
                   </button>
@@ -229,7 +229,7 @@ export default function RechargeScreen(props: { onClose: () => void; onMetersUpd
             <button
               type="button"
               onClick={recharge.backToPlans}
-              className="min-h-[44px] w-full rounded-xl border border-[var(--border-color)] py-2 text-sm text-[var(--text-primary)] active:bg-[var(--bg-hover)]"
+              className="twin-button twin-button-secondary twin-button-full active:bg-[var(--bg-hover)]"
             >
               {t('mobile.recharge.backToPlans')}
             </button>
@@ -238,10 +238,10 @@ export default function RechargeScreen(props: { onClose: () => void; onMetersUpd
 
         {stage === 'success' ? (
           <div className="space-y-3" data-testid="recharge-success">
-            <div className="rounded-2xl border border-emerald-300 bg-emerald-50 p-4">
-              <p className="mb-1 text-base font-semibold text-emerald-800">{t('mobile.recharge.successTitle')}</p>
+            <div className="twin-notice twin-notice-success">
+              <p className="mb-1 text-base font-semibold">{t('mobile.recharge.successTitle')}</p>
               {order ? (
-                <p className="text-sm text-emerald-700">
+                <p className="text-sm">
                   {t('mobile.recharge.successBody', {
                     traffic: formatBytes(order.plan.trafficBytes),
                     llm: `${formatCount(order.plan.llmQuota)} ${order.plan.llmQuotaUnit}`,
@@ -268,14 +268,14 @@ export default function RechargeScreen(props: { onClose: () => void; onMetersUpd
             <button
               type="button"
               onClick={recharge.backToPlans}
-              className="min-h-[44px] w-full rounded-xl border border-[var(--border-color)] py-2 text-sm text-[var(--text-primary)]"
+              className="twin-button twin-button-secondary twin-button-full"
             >
               {t('mobile.recharge.backToPlans')}
             </button>
             <button
               type="button"
               onClick={props.onClose}
-              className="min-h-[44px] w-full rounded-xl bg-[var(--color-primary)] py-2 text-sm font-medium text-black active:opacity-80"
+              className="twin-button twin-button-primary twin-button-full"
             >
               {t('mobile.recharge.done')}
             </button>
@@ -283,14 +283,14 @@ export default function RechargeScreen(props: { onClose: () => void; onMetersUpd
         ) : null}
 
         {stage === 'expired' || stage === 'closed' ? (
-          <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4">
-            <p className="text-sm font-semibold text-amber-800">
+          <div className="twin-notice twin-notice-warning">
+            <p className="text-sm font-semibold text-[var(--twin-warning)]">
               {t(stage === 'expired' ? 'mobile.recharge.expired' : 'mobile.recharge.closed')}
             </p>
             <button
               type="button"
               onClick={recharge.backToPlans}
-              className="mt-3 min-h-[44px] w-full rounded-xl bg-[var(--color-primary)] py-2 text-sm font-medium text-black active:opacity-80"
+              className="mt-3 twin-button twin-button-primary twin-button-full"
             >
               {t('mobile.recharge.backToPlans')}
             </button>

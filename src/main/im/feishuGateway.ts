@@ -21,7 +21,11 @@ import {
   isFeishuImagePath,
   isFeishuAudioPath,
   resolveFeishuMediaPath,
+  FEISHU_MAX_UPLOAD_BYTES,
+  FEISHU_IMAGE_EXTENSIONS,
+  FEISHU_AUDIO_EXTENSIONS,
 } from './feishuMedia';
+import type { IMOutboundCapabilities } from './imOutbound';
 import { parseMediaMarkers } from './dingtalkMediaParser';
 import { stringifyAsciiJson } from './jsonEncoding';
 import { tApp } from '../libs/appLanguage';
@@ -63,6 +67,12 @@ export class FeishuGateway extends EventEmitter {
   private botOpenId: string | null = null;
   private onMessageCallback?: (message: IMMessage, replyFn: (text: string) => Promise<void>) => Promise<void>;
   private lastChatId: string | null = null;
+  /**
+   * The most recent DIRECT (p2p) chat id — deliberately separate from
+   * `lastChatId`, which also moves on group messages. Desktop-initiated sends
+   * (im_send_message) only ever target this one; a group chat is never eligible.
+   */
+  private lastDirectChatId: string | null = null;
   private log: (...args: any[]) => void = () => {};
 
   constructor() {
@@ -625,8 +635,9 @@ export class FeishuGateway extends EventEmitter {
     const absPath = resolveFeishuMediaPath(filePath);
 
     if (!fs.existsSync(absPath)) {
-      console.warn(`[Feishu Gateway] File not found: ${absPath}`);
-      return;
+      // Throw instead of returning silently: the desktop-initiated send path
+      // must be able to report a failed attachment, not believe it delivered.
+      throw new Error(`Feishu media file not found: ${absPath}`);
     }
 
     // 使用自定义文件名或从路径提取，保留原始扩展名
@@ -651,8 +662,7 @@ export class FeishuGateway extends EventEmitter {
       const result = await uploadImageToFeishu(this.restClient, absPath);
       this.log(`[Feishu Gateway] 图片上传结果:`, JSON.stringify(result));
       if (!result.success || !result.imageKey) {
-        console.warn(`[Feishu Gateway] Image upload failed: ${result.error}`);
-        return;
+        throw new Error(`Feishu image upload failed: ${result.error ?? 'no image_key'}`);
       }
       await this.sendImageMessage(to, result.imageKey, replyToMessageId);
     } else if (mediaType === 'audio' || isFeishuAudioPath(absPath)) {
@@ -661,8 +671,7 @@ export class FeishuGateway extends EventEmitter {
       const result = await uploadFileToFeishu(this.restClient, absPath, fileName, 'opus');
       this.log(`[Feishu Gateway] 音频上传结果:`, JSON.stringify(result));
       if (!result.success || !result.fileKey) {
-        console.warn(`[Feishu Gateway] Audio upload failed: ${result.error}`);
-        return;
+        throw new Error(`Feishu audio upload failed: ${result.error ?? 'no file_key'}`);
       }
       await this.sendAudioMessage(to, result.fileKey, undefined, replyToMessageId);
     } else {
@@ -673,8 +682,7 @@ export class FeishuGateway extends EventEmitter {
       const result = await uploadFileToFeishu(this.restClient, absPath, fileName, fileType);
       this.log(`[Feishu Gateway] 文件上传结果:`, JSON.stringify(result));
       if (!result.success || !result.fileKey) {
-        console.warn(`[Feishu Gateway] File upload failed: ${result.error}`);
-        return;
+        throw new Error(`Feishu file upload failed: ${result.error ?? 'no file_key'}`);
       }
       await this.sendFileMessage(to, result.fileKey, replyToMessageId);
     }
@@ -714,6 +722,56 @@ export class FeishuGateway extends EventEmitter {
 
     // Send the text message (keep full text for context)
     await this.sendMessage(to, text, replyToMessageId);
+  }
+
+  /**
+   * Out-of-turn send into an existing chat (IMConversationSender).
+   * `conversationId` is the inbound `ctx.chatId`, so the same media-marker
+   * pipeline used by the inbound reply path applies.
+   */
+  async sendToConversation(conversationId: string, text: string): Promise<void> {
+    await this.sendWithMedia(conversationId, text);
+    this.status.lastOutboundAt = Date.now();
+  }
+
+  /** The most recent DIRECT (p2p) chat id, or null before any p2p message. */
+  getLastDirectConversationId(): string | null {
+    return this.lastDirectChatId;
+  }
+
+  /**
+   * Deliver one local file into an existing conversation (desktop-initiated
+   * sends). Delegates to the same upload+send path the inbound reply uses, so
+   * images/audio/files keep their native message types.
+   */
+  async sendMediaToConversation(conversationId: string, filePath: string): Promise<void> {
+    await this.uploadAndSendMedia(conversationId, filePath, 'file');
+    this.status.lastOutboundAt = Date.now();
+  }
+
+  /**
+   * What this channel can send, read from the same tables the send path uses
+   * (`FEISHU_IMAGE_EXTENSIONS` / `isFeishuAudioPath` / `FEISHU_MAX_UPLOAD_BYTES`).
+   * Feishu has no inline-video message type here: videos are uploaded as files.
+   */
+  describeOutboundCapabilities(): IMOutboundCapabilities {
+    return {
+      extensionsByKind: {
+        image: [...FEISHU_IMAGE_EXTENSIONS],
+        video: [],
+        audio: [...FEISHU_AUDIO_EXTENSIONS],
+        file: [
+          'mp4', 'mov', 'avi',
+          'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
+        ],
+      },
+      maxBytesByKind: {
+        image: FEISHU_MAX_UPLOAD_BYTES,
+        video: FEISHU_MAX_UPLOAD_BYTES,
+        audio: FEISHU_MAX_UPLOAD_BYTES,
+        file: FEISHU_MAX_UPLOAD_BYTES,
+      },
+    };
   }
 
   /**
@@ -768,6 +826,11 @@ export class FeishuGateway extends EventEmitter {
 
     // Store last chat ID for notifications
     this.lastChatId = ctx.chatId;
+    // Track DIRECT chats separately: a desktop-initiated send must never
+    // inherit a group chat just because the last message came from one.
+    if (ctx.chatType === 'p2p') {
+      this.lastDirectChatId = ctx.chatId;
+    }
 
     // Emit message event
     this.emit('message', message);

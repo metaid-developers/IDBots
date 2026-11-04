@@ -221,6 +221,12 @@ export interface ChainBackupSegmentRef {
   bytes: number;
   kinds: string[];
   objectIds: string[];
+  /**
+   * Where the segment bytes live. Absent = legacy inline-JSON pin under
+   * /protocols/metabot-backup/object; 'metafile' = raw encrypted binary at a
+   * /file pin, fetched through the metafile indexer.
+   */
+  storage?: string;
 }
 
 export interface ChainBackupStateRow {

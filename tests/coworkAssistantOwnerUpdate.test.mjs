@@ -27,6 +27,10 @@ function loadRunner() {
   }
 }
 
+function loadTurnAckReply() {
+  return require('../dist-electron/main/libs/turnAckReply.js')
+}
+
 class RecordingStore {
   constructor() {
     this.messages = []
@@ -42,10 +46,17 @@ class RecordingStore {
   }
 }
 
-function setup({ assistant = true, active = true } = {}) {
+function setup({ assistant = true, active = true, waitTimeoutMs = 0, waitGenerator } = {}) {
   const { CoworkRunner } = loadRunner()
   const store = new RecordingStore()
-  const runner = new CoworkRunner(store, { localTurnStallTimeoutMs: 0 })
+  const runner = new CoworkRunner(store, {
+    localTurnStallTimeoutMs: 0,
+    assistantOwnerWaitTimeoutMs: waitTimeoutMs,
+    // 2026-11-04: the heartbeat text is LLM-written per fire (no canned
+    // strings anywhere); tests inject a stub. The production default is
+    // coworkUtil's generateOwnerWaitUpdate on the Twin system brain.
+    ownerWaitUpdateGenerator: waitGenerator ?? (async () => '我还在继续推进，稍等我一下。'),
+  })
   runner.isAssistantModeOwnerChatSession = () => assistant
   runner.buildSessionInlineTools = () => []
   if (active) {
@@ -66,6 +77,8 @@ function setup({ assistant = true, active = true } = {}) {
 const callUpdate = (runner, message, kind = 'milestone') => (
   runner.executeDshHostTool('s1', 'owner_update', { message, kind })
 )
+
+const { buildDeterministicTurnAckOpening } = loadTurnAckReply()
 
 test('owner_update mounts only for an active assistant owner turn', () => {
   const assistant = setup()
@@ -184,4 +197,181 @@ test('a late owner_update cannot charge the next submission or suppress its ack'
   assert.equal(previous.dshTurnAckVisibleTextSeen, false)
   assert.equal(next.assistantOwnerUpdateCount, 0)
   assert.equal(next.dshTurnAckVisibleTextSeen, false)
+})
+
+test('a second opening is rejected once an opening or real reply is already visible', async () => {
+  const { runner, store } = setup()
+  const first = await callUpdate(runner, 'I will check the purchase validation first.', 'opening')
+  assert.equal(JSON.parse(first.text).shown, true)
+  const second = await callUpdate(runner, 'I will check the purchase validation first.', 'opening')
+  assert.equal(JSON.parse(second.text).shown, false)
+  assert.match(JSON.parse(second.text).reason, /opening already delivered/)
+  assert.equal(store.messages.length, 1)
+})
+
+// 2026-11-03 session 32a29372: the model's one opening narration was bounced
+// ("opening already delivered") because visible text (a thinking bubble) had
+// armed dshTurnAckVisibleTextSeen with NO real opening delivered, and the
+// model then looped tools for ~6 minutes with no user-facing progress. The
+// suppression now keys on dshTurnAckOpeningEmitted — only a real opening
+// bubble (the host ack or an earlier owner_update 'opening') suppresses
+// another; thinking/process text is not an opening.
+test('visible thinking without a real opening no longer suppresses owner_update opening', async () => {
+  const { runner, store } = setup()
+  const active = runner.activeSessions.get('s1')
+  active.dshTurnAckVisibleTextSeen = true // a thinking bubble became visible
+  // dshTurnAckOpeningEmitted stays falsy — no opening bubble went out.
+  const result = await callUpdate(runner, '我先逐条核实分支状态，再给合并建议。', 'opening')
+  assert.equal(JSON.parse(result.text).shown, true)
+  assert.equal(store.messages.length, 1)
+  assert.equal(store.messages[0].metadata.ownerUpdateKind, 'opening')
+  assert.equal(active.dshTurnAckOpeningEmitted, true, 'the delivered opening marks the slot')
+  const second = await callUpdate(runner, '另一个开场', 'opening')
+  assert.equal(JSON.parse(second.text).shown, false, 'a second opening is still rejected')
+  runner.removeActiveSession('s1', active)
+})
+
+test('host waiting update fires at five minutes and backs off without hidden tool activity resetting it', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const { runner, store } = setup({ waitTimeoutMs: 300_000 })
+  const active = runner.activeSessions.get('s1')
+  runner.armAssistantOwnerWaitTimer('s1', active)
+
+  t.mock.timers.tick(299_999)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(store.messages.length, 0)
+  active.assistantOwnerWaitingForTool = true
+  t.mock.timers.tick(1)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(store.messages.length, 1)
+  assert.equal(store.messages[0].metadata.ownerUpdateKind, 'waiting')
+  assert.equal(store.messages[0].content, '我还在继续推进，稍等我一下。', 'the bubble carries the generator text, never a canned string')
+  assert.equal(active.assistantOwnerUpdateCount, 1)
+
+  t.mock.timers.tick(599_999)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(store.messages.length, 1)
+  t.mock.timers.tick(1)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(store.messages.length, 2)
+  assert.equal(active.assistantOwnerUpdateCount, 2)
+  clearTimeout(active.assistantOwnerHeartbeatTimer)
+  t.mock.timers.reset()
+})
+
+test('an empty generator result emits no bubble and backs off to the next window', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const { runner, store } = setup({ waitTimeoutMs: 300_000, waitGenerator: async () => '' })
+  const active = runner.activeSessions.get('s1')
+  runner.armAssistantOwnerWaitTimer('s1', active)
+
+  t.mock.timers.tick(300_000)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(store.messages.length, 0, 'no bubble beats a canned one — empty generation emits nothing')
+  assert.equal(active.assistantOwnerHeartbeatCount, 1, 'the failed fire still counts for backoff')
+  assert.ok(active.assistantOwnerHeartbeatTimer, 'the timer re-armed for the next window')
+  // Next window doubles (backoff), so nothing at +300s, one more try at +600s.
+  t.mock.timers.tick(300_000)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(active.assistantOwnerHeartbeatCount, 1)
+  t.mock.timers.tick(300_000)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(active.assistantOwnerHeartbeatCount, 2)
+  clearTimeout(active.assistantOwnerHeartbeatTimer)
+  t.mock.timers.reset()
+})
+
+test('a real owner update resets the five-minute visible-message window', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const { runner, store } = setup({ waitTimeoutMs: 300_000 })
+  const active = runner.activeSessions.get('s1')
+  runner.armAssistantOwnerWaitTimer('s1', active)
+  t.mock.timers.tick(200_000)
+
+  const result = await callUpdate(runner, 'The root cause is verified.')
+  assert.equal(JSON.parse(result.text).shown, true)
+  t.mock.timers.tick(299_999)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(store.messages.length, 1)
+  t.mock.timers.tick(1)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(store.messages.length, 2)
+  assert.equal(store.messages[1].metadata.ownerUpdateKind, 'waiting')
+  clearTimeout(active.assistantOwnerHeartbeatTimer)
+  t.mock.timers.reset()
+})
+
+test('turn teardown clears the waiting timer so it cannot leak into the next submission', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const { runner, store } = setup({ waitTimeoutMs: 1_000 })
+  const active = runner.activeSessions.get('s1')
+  runner.armAssistantOwnerWaitTimer('s1', active)
+  runner.removeActiveSession('s1', active)
+  assert.equal(active.assistantOwnerHeartbeatTimer, null)
+
+  t.mock.timers.tick(5_000)
+  assert.equal(store.messages.length, 0)
+  t.mock.timers.reset()
+})
+
+// 2026-11-03 second pass: the deterministic opening is reserved for
+// information-bearing delivery notices; generic first sentences come from the
+// LLM. The emitter stays idempotent — one bubble per turn, never a duplicate.
+test('deterministic opening bubble is emitted once and seeds the per-turn budget', () => {
+  const { runner, store } = setup()
+  const active = runner.activeSessions.get('s1')
+  active.dshTurnAckSerial = 1
+  const prompt = '你要不搜一下本机看有没有这个文件？'
+
+  runner.emitTurnAckOpeningBubble('s1', prompt, active, 1, '我先在本机查这个文件。')
+  assert.equal(store.messages.length, 1)
+  assert.equal(store.messages[0].metadata.turnAckReply, true)
+  assert.equal(store.messages[0].content, '我先在本机查这个文件。')
+  assert.equal(active.dshTurnAckOpeningText, '我先在本机查这个文件。')
+  assert.equal(active.assistantOwnerUpdateCount, 1)
+
+  // A second emit (double kick, late call) cannot duplicate the bubble.
+  runner.emitTurnAckOpeningBubble('s1', prompt, active, 1, '另一条开场白')
+  assert.equal(store.messages.length, 1)
+  runner.removeActiveSession('s1', active)
+})
+
+test('delivery prompts: the LLM first sentence stays out; the deterministic opening carries the actor context', async () => {
+  const { runner, store } = setup()
+  const active = runner.activeSessions.get('s1')
+  active.dshTurnAckSerial = 1
+  const prompt = '来自af3365c8-dfb6-4348-b350-0a0db4edbcc4 的信息：<cross_session_message trust="untrusted">[ORCH-NOTIFY] worker Builder阿码 已完成 task 46828477-0719-4984-8391-3148bec1a3fc → review，请验收</cross_session_message>'
+
+  // The LLM first sentence never touches delivery prompts — their opening is
+  // deterministic and actor-aware, emitted synchronously by the site.
+  await runner.emitTurnAckReplyBubble('s1', prompt, active, 1)
+  assert.equal(store.messages.length, 0)
+
+  runner.emitTurnAckOpeningBubble('s1', prompt, active, 1, buildDeterministicTurnAckOpening(prompt))
+  assert.equal(store.messages.length, 1)
+  assert.match(store.messages[0].content, /^Builder阿码已交付一个子任务/)
+  assert.ok(!store.messages[0].content.includes('cross_session'))
+  runner.removeActiveSession('s1', active)
+})
+
+test('the finalization stage rejects every tool through the host policy', async () => {
+  const { runner } = setup()
+  const active = runner.activeSessions.get('s1')
+  active.finalizingTurn = true
+  const result = await runner.evaluateDshToolPolicy('s1', 'bash', { command: 'echo should-not-run' })
+  assert.equal(result.decision, 'deny')
+  assert.match(result.reason, /does not allow tool calls/)
+})
+
+test('a delivery opening via the deterministic builder keeps the per-turn budget seeded at one', async () => {
+  const { runner, store } = setup()
+  const active = runner.activeSessions.get('s1')
+  active.dshTurnAckSerial = 1
+  const prompt = '来自af3365c8-dfb6-4348-b350-0a0db4edbcc4 的信息：<cross_session_message trust="untrusted">[ORCH-NOTIFY] worker Builder阿码 已完成 task 46828477-0719-4984-8391-3148bec1a3fc → review，请验收</cross_session_message>'
+  runner.emitTurnAckOpeningBubble('s1', prompt, active, 1, buildDeterministicTurnAckOpening(prompt))
+  assert.equal(store.messages.length, 1)
+  assert.equal(active.assistantOwnerUpdateCount, 1, 'the host opening consumes one budget slot')
+  // The model's own kind:'opening' is rejected now — the host bubble IS the opening.
+  const rejection = await callUpdate(runner, '收到，这是一条模型自己的开场。', 'opening')
+  assert.deepEqual(JSON.parse(rejection.text), { shown: false, reason: 'opening already delivered; report only new milestones or problems' })
 })

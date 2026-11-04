@@ -17,13 +17,10 @@
 //  - DeepSeek Responses (pi-ai) tags text items commentary/final_answer in
 //    the assembled replay state; commentary ("thinking out loud" around tool
 //    calls) is reclassified into the thinking slot at finalize
-//  - Official DeepSeek on dsh-llm-deepseek has no phase tags: text that
-//    accompanies tool calls is treated as commentary. A narration-fold
-//    family trait gates this — GLM puts its process text in the reasoning
-//    channel, so text riding a tool call is CONTENT and must stay visible
-//    (foldsToolRideTextIntoThinking; the 2026-09-25 gas-pool incident hid
-//    two full glm-5.3-flash reports behind the fold). Live reasoning tokens
-//    arrive as `reasoning-delta` on assistant/chunk (the pre-0.1.5
+//  - Official DeepSeek on dsh-llm-deepseek has no phase tags: professional
+//    mode treats text that accompanies tool calls as commentary, except on
+//    GLM, whose tool-ride text may be the deliverable itself. Live reasoning
+//    tokens arrive as `reasoning-delta` on assistant/chunk (the pre-0.1.5
 //    `reasoning-chunks` web-UI stream no longer exists). While a native
 //    reasoning block is live, or within POST_REASONING_TEXT_HOLD_UNITS of
 //    body text after it closes, the visible text slot stays closed: riding
@@ -39,11 +36,10 @@
 //    ever opens the thinking slot, and converts at `block-start tool-call`
 //    (textRidesThinking) instead of at assistant/message finalize.
 //  - Assistant chat-experience mode (DshEventMapperOptions.assistantMode):
-//    commentary folds into the thinking slot exactly as in professional mode;
-//    the assistant transcript hides it. Only explicit host `owner_update`
-//    calls become narration bubbles. The mode adds the post-reasoning hold to
-//    effort-off streams too, so short commentary never flashes a body bubble;
-//    final_answer stays plain text and long answers still stream past the hold.
+//    every model family and phase label gets the same tool-ride hold and fold,
+//    so ordinary process text cannot bypass owner_update. Substantial answers
+//    followed by more tools enter a bounded finalization step with the full
+//    candidate preserved as fallback instead of publishing a short addendum.
 //    The flag is a getter evaluated per decision, never cached: the mapper is
 //    a long-lived per-session instance and the mode can flip mid-session.
 //
@@ -249,6 +245,7 @@ export class DshEventMapper {
   /** Text streamed since the last assistant/message finalize — the defensive
    * "produced something" signal for streams that end without assembling. */
   private turnSawStreamedText = false
+  private deferredAssistantText: { content: string; allowTerminalPromotion: boolean } | null = null
 
   constructor(opts?: DshEventMapperOptions) {
     this.assistantMode = opts?.assistantMode ?? (() => false)
@@ -281,11 +278,9 @@ export class DshEventMapper {
           this.reasoningSeenThisStep = true
           this.openThinking(actions)
         } else if (chunk?.type === 'block-start' && chunk.blockType === 'tool-call') {
-          // Tool-call announced while text streams with no live thinking
-          // display: on narration-fold routes (DeepSeek dialect) this text is
-          // commentary, not the reply. GLM keeps process text in the reasoning
-          // channel — its riding text is content and must not convert.
-          if (this.toolRideTextFolds()) {
+          // Professional mode follows the model-family trait; assistant mode
+          // folds tool-ride text on every family into the hidden process row.
+          if (this.toolRideTextFolds() || this.assistantMode()) {
             if (this.textOpen && this.thinkingOpen) {
               // Wrong answer-bet on a reasoning route: text streamed past the
               // hold window and this tool call proves it commentary. Fold it
@@ -421,16 +416,26 @@ export class DshEventMapper {
           && !this.turnSawFinalText
           && !this.turnSawStreamedText
           && !this.turnSawToolCall
+        const finalizationRequired = this.assistantMode()
+          && (reason.kind === 'stop' || reason.kind === 'completed')
+          && this.turnSawToolCall
+          && !this.turnSawFinalText
+        const fallbackFinalText = finalizationRequired && this.deferredAssistantText?.allowTerminalPromotion
+          ? this.deferredAssistantText.content
+          : undefined
         this.closeOpenSlots(actions)
         actions.push({
           kind: 'turnEnd',
           turn: data.turn,
           reason,
           ...(emptyTerminal ? { emptyTerminal: true } : {}),
+          ...(finalizationRequired ? { finalizationRequired: true } : {}),
+          ...(fallbackFinalText ? { fallbackFinalText } : {}),
         })
         this.turnSawFinalText = false
         this.turnSawStreamedText = false
         this.turnSawToolCall = false
+        this.deferredAssistantText = null
         break
       }
 
@@ -489,6 +494,16 @@ export class DshEventMapper {
     return foldsToolRideTextIntoThinking(this.model)
   }
 
+  private deferToolRideText(content: string): void {
+    if (!this.assistantMode()) return
+    this.deferredAssistantText = content.length > 0
+      ? {
+        content,
+        allowTerminalPromotion: content.length >= POST_REASONING_TEXT_HOLD_UNITS,
+      }
+      : null
+  }
+
   private openThinking(actions: DshMapperAction[]): void {
     if (this.thinkingOpen) return
     this.thinkingOpen = true
@@ -519,23 +534,15 @@ export class DshEventMapper {
     actions.push({ kind: 'messageUpdate', slot: 'thinking', content: this.thinkingBuf })
   }
 
-  /**
-   * Whether body text may stream into the visible bubble on the current
-   * route. Non-folding families (GLM) always stream — their riding text is
-   * content. Folding families (DeepSeek dialect) stream when no reasoning
-   * block is in flight AND either none ever ran this step in professional
-   * mode (effort "off", where the riding-text conversion guards commentary),
-   * the bubble is already open (a bet was made and stays live), or the held
-   * text passed the POST_REASONING_TEXT_HOLD_UNITS window — the final answer
-   * taking over. Assistant mode always uses that window on folding routes:
-   * short effort-off commentary cannot flash before a tool call, while long
-   * final answers still stream. Otherwise text stays held to assistant/message.
-   */
+  /** Assistant mode applies the same bounded hold to every model family. */
   private postReasoningTextMayStream(text: string): boolean {
-    if (!this.toolRideTextFolds()) return true
     if (this.textOpen) return true
+    if (this.assistantMode()) {
+      if (this.reasoningBlockLive) return false
+      return text.length >= POST_REASONING_TEXT_HOLD_UNITS
+    }
+    if (!this.toolRideTextFolds()) return true
     if (this.reasoningBlockLive) return false
-    if (this.assistantMode()) return text.length >= POST_REASONING_TEXT_HOLD_UNITS
     if (!this.reasoningSeenThisStep) return true
     return text.length >= POST_REASONING_TEXT_HOLD_UNITS
   }
@@ -611,10 +618,14 @@ export class DshEventMapper {
     data: { message?: { content?: Array<{ type: string; text?: string }>; source?: { replayState?: { blocks?: Array<{ type: string; textSignature?: unknown }> } } } }
   ): void {
     const blocks = data.message?.content
+    const hasToolCall = hasToolCallIn(blocks)
     let reasoning = reasoningOf(blocks)
     let visibleText = textOf(blocks)
 
     if (this.textRidesThinking) {
+      const split = splitThinkTaggedContent(visibleText || this.rawTextBuf)
+      if (hasToolCall) this.deferToolRideText(split.text)
+      else if (split.text.length > 0) this.deferredAssistantText = null
       this.finalizeRidingText(actions, blocks, visibleText, reasoning)
       this.rawTextBuf = ''
       this.reasoningFromDeltas = false
@@ -625,14 +636,8 @@ export class DshEventMapper {
     }
 
     let commentary = ''
-    const hasToolCall = hasToolCallIn(blocks)
-
     const phases = replayTextPhasesOf(data.message)
     if (phases) {
-      // Phase-classified text (DeepSeek Responses): commentary segments are
-      // thinking-aloud around tool calls, only final_answer is the reply.
-      // Content text blocks and replay text blocks are two projections of the
-      // same stream, so walking both in order pairs every block with its tag.
       const commentaryParts: string[] = []
       const finalParts: string[] = []
       let index = 0
@@ -647,14 +652,15 @@ export class DshEventMapper {
       }
       commentary = commentaryParts.join('\n\n')
       visibleText = splitThinkTaggedContent(finalParts.join('\n\n')).text
-    } else if (hasToolCall && this.toolRideTextFolds()) {
-      // Native DeepSeek (dsh-llm-deepseek) has no commentary/final_answer
-      // tags. Text that rides alongside tool calls is thinking-aloud — the
-      // same class of content the Responses path folded into ThinkingBlock.
-      // Narration-fold only: on non-folding families (GLM) riding text is
-      // real content — folding it hid full deliverables next to bookkeeping
-      // tool calls (2026-09-25 gas-pool report incident), so it stays visible.
-      commentary = splitThinkTaggedContent(visibleText).text
+      if (hasToolCall && this.assistantMode() && visibleText.length > 0) {
+        this.deferToolRideText(visibleText)
+        commentary = joinThinking([commentary, visibleText])
+        visibleText = ''
+      }
+    } else if (hasToolCall && (this.toolRideTextFolds() || this.assistantMode())) {
+      const toolRideText = splitThinkTaggedContent(visibleText).text
+      this.deferToolRideText(toolRideText)
+      commentary = toolRideText
       visibleText = ''
     } else if (!reasoning) {
       const split = splitThinkTaggedContent(visibleText || this.rawTextBuf)
@@ -662,6 +668,15 @@ export class DshEventMapper {
       visibleText = split.text
     } else {
       visibleText = splitThinkTaggedContent(visibleText).text
+    }
+
+    const shorterAddendum = this.assistantMode()
+      && this.deferredAssistantText?.allowTerminalPromotion
+      && visibleText.length > 0
+      && visibleText.length < (this.deferredAssistantText?.content.length ?? 0)
+    if (shorterAddendum) {
+      commentary = joinThinking([commentary, visibleText])
+      visibleText = ''
     }
 
     // A commentary-only message whose text already streamed into the text slot
@@ -693,6 +708,7 @@ export class DshEventMapper {
     }
 
     if (visibleText.length > 0) {
+      this.deferredAssistantText = null
       this.openText(actions)
       this.textBuf = visibleText
       this.turnSawFinalText = true

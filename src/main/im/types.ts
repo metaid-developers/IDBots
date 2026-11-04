@@ -160,21 +160,225 @@ export interface XiaomifengGatewayStatus {
   lastOutboundAt: number | null;
 }
 
+// ==================== Weixin (WeChat) Types ====================
+
+/**
+ * Weixin personal-account bot channel.
+ *
+ * The token is obtained exclusively through QR authorization (`get_bot_qrcode` ->
+ * `get_qrcode_status` -> `confirmed`). There is no account/password login here by
+ * design: see the compliance note in weixinProtocol.ts.
+ */
+export interface WeixinConfig {
+  enabled: boolean;
+  /** Local account slot; also the credential file name under weixin/accounts. */
+  accountId: string;
+  /** Bot token from the QR authorization. Sensitive: never logged. */
+  token?: string;
+  /** Business API base returned by the login; falls back to the official host. */
+  baseUrl?: string;
+  metabotId?: number | null;
+  debug?: boolean;
+}
+
+export interface WeixinGatewayStatus {
+  connected: boolean;
+  startedAt: number | null;
+  lastError: string | null;
+  /** Account slot currently bound (never the token). */
+  accountId: string | null;
+  /** True while a QR login is being polled. */
+  loginPending: boolean;
+  /** Coarse QR login progress for the settings UI. */
+  loginState: 'idle' | 'wait' | 'scanned';
+  /** QR payload (usually a URL) to render for scanning; null when no login is pending. */
+  qrContent: string | null;
+  lastInboundAt: number | null;
+  lastOutboundAt: number | null;
+}
+
+// ==================== QQ (QQ Open Platform) Types ====================
+
+/**
+ * QQ official-bot channel (QQ Open Platform, official `@tencent-connect/qqbot-nodejs`).
+ *
+ * Credential split, on purpose:
+ *   - `appId` / `botId` / `ownerUserOpenid` are identifiers and may live in the
+ *     renderer-visible config;
+ *   - `appSecret` is a bearer credential. It is persisted by `qqStore.ts` in a
+ *     0600 file under `<userData>/qq/accounts` and is NEVER written to the
+ *     config table, a log line, a buzz, or a status object. The `appSecret`
+ *     field exists only so the settings page can hand a value to the dedicated
+ *     `im:qq:credentials:set` IPC; `imStore.getConfig()` strips it.
+ */
+export interface QQConfig {
+  enabled: boolean;
+  /** QQ Open Platform AppID (public identifier). */
+  appId: string;
+  /** Bot id / robot account label, when the platform returns one. */
+  botId?: string | null;
+  /** OpenID of the user who scanned the QR code (binding owner). */
+  ownerUserOpenid?: string | null;
+  /** Write-only field: accepted by setConfig, never read back. */
+  appSecret?: string;
+  metabotId?: number | null;
+  debug?: boolean;
+  /**
+   * Group policy. DEFAULT `allowlist` with an EMPTY list — i.e. no group is
+   * served until the owner adds one. `open` lets any group talk to the bot
+   * (layer-1 Q&A only, still no tools); `disabled` refuses every group.
+   */
+  groupPolicy?: QQGroupPolicy;
+  /** Group OpenIDs served when `groupPolicy === 'allowlist'`. */
+  groupAllowlist?: string[];
+  /**
+   * Layer 3 (local machine operations: files, shell, attachments, wallet,
+   * chain writes). DEFAULT OFF. Turning this on does NOT widen groups — their
+   * tool surface stays structurally empty.
+   */
+  localToolsEnabled?: boolean;
+  /** Stable ids (OpenIDs) allowed to use layer 3 after the switch is on. */
+  localToolsAllowFrom?: string[];
+  /**
+   * Daily budget for admitted GROUP messages (all groups combined).
+   *
+   * DEFAULT 500. The two per-minute limits (3 per sender per group, 10 per
+   * group) are deliberately NOT configurable — they are flood guards, not
+   * preferences. Invalid values degrade to the default, never to unlimited.
+   * DM is out of scope: direct messages are owner-only and already isolated.
+   */
+  dailyReplyLimit?: number;
+}
+
+export type QQGroupPolicy = 'open' | 'allowlist' | 'disabled';
+
+/**
+ * Trust level frozen at the IM message entry point (`qqTrust.ts`).
+ *
+ * Carried on the `IMMessage` and then on the runner's per-turn session marker.
+ * Downstream code may READ it; it must never recompute or widen it mid-turn.
+ */
+export type IMTrustLevel = 'group' | 'owner-dm' | 'stranger-dm' | 'bot-sender';
+
+export interface IMTrustContext {
+  level: IMTrustLevel;
+  /**
+   * `none` = the session's tool surface is EMPTY (no host tools registered and
+   * every built-in tool call is denied). `local` = layer 3 granted to the
+   * bound owner.
+   */
+  toolScope: 'none' | 'local';
+  /** Long-term memory + knowledge-base READS. */
+  memoryRead: boolean;
+  /** Long-term memory + knowledge-base WRITES (turn-end update included). */
+  memoryWrite: boolean;
+  /** Group messages never download inbound media. */
+  attachmentPolicy: 'allow' | 'reject';
+  groupId?: string | null;
+  decidedAt: number;
+  reason: string;
+}
+
+export interface QQGatewayStatus {
+  connected: boolean;
+  startedAt: number | null;
+  lastError: string | null;
+  /** AppID currently bound (an identifier, not a secret). */
+  appId: string | null;
+  /** True while a QR login is being polled. */
+  loginPending: boolean;
+  /** Coarse QR login progress for the settings UI. */
+  loginState: 'idle' | 'wait' | 'scanned' | 'confirmed' | 'expired' | 'error';
+  /** QR payload (a URL) to render for scanning; null when no login is pending. */
+  qrContent: string | null;
+  lastInboundAt: number | null;
+  lastOutboundAt: number | null;
+}
+
 // ==================== Common IM Types ====================
 
-export type IMPlatform = 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'nim' | 'xiaomifeng';
+export type IMPlatform = 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'nim' | 'xiaomifeng' | 'weixin' | 'qq';
+
+/**
+ * A gateway that can send into an existing conversation WITHOUT an inbound
+ * message closure to reply through.
+ *
+ * This is the capability seam behind out-of-turn delivery (a turn triggered by
+ * an [ORCH-NOTIFY] cross-session injection, a scheduled wake, ...): the
+ * handler only knows the conversation id it already holds, never a platform
+ * SDK object. Gateways whose outbound API needs a live message/channel handle
+ * (DingTalk session webhook, Discord channel object) simply do not implement
+ * this interface, and their out-of-turn replies degrade to desktop-only with
+ * an explicit log instead of throwing.
+ */
+export interface IMConversationSender {
+  sendToConversation(conversationId: string, text: string): Promise<void>;
+  /**
+   * Optional media counterpart, used by desktop-initiated sends
+   * (`im_send_message`). Gateways that can deliver a file into an existing
+   * conversation implement it by delegating to their own native media path;
+   * the desktop layer then reports an explicit error instead of dropping the
+   * attachment when it is absent.
+   */
+  sendMediaToConversation?(conversationId: string, filePath: string): Promise<void>;
+}
 
 export interface IMGatewayConfig {
   dingtalk: DingTalkConfig;
   feishu: FeishuConfig;
   telegram: TelegramConfig;
   discord: DiscordConfig;
+  weixin: WeixinConfig;
+  qq: QQConfig;
   settings: IMSettings;
 }
+
+/**
+ * Per-channel permission mode. The DEFAULT is `inherit`: an IM session uses the
+ * same persisted global permission mode as the desktop app (see
+ * getPersistedCoworkPermissionMode), so "完全信任 / bypassPermissions" chosen on
+ * the desktop is also in force in chat — no separate channel policy.
+ *
+ * A channel MAY override the mode (e.g. force `default` in a group chat, or
+ * `bypassPermissions` for one channel only). `inherit` / absent / unknown all
+ * fall back to the global value.
+ */
+export type IMChannelPermissionMode =
+  | 'inherit'
+  | 'default'
+  | 'plan'
+  | 'acceptEdits'
+  | 'bypassPermissions';
+
+export interface IMChannelPermissionSettings {
+  weixinPermissionMode?: IMChannelPermissionMode;
+}
+
+/**
+ * Bounds for one IM turn's wall-clock budget (`IMSettings.turnTimeoutMs`).
+ *
+ * A turn that runs past its budget is not thrown away: the handler answers with
+ * whatever the turn had already produced plus the limit it hit (see
+ * IMCoworkHandler.createAccumulatorPromise). The bounds exist so a bad config
+ * can neither abort every turn on arrival (0 / negative) nor park a chat for
+ * hours (MAX); DEFAULT applies whenever the stored value is missing or invalid.
+ */
+export const DEFAULT_IM_TURN_TIMEOUT_MS = 120_000;
+export const MIN_IM_TURN_TIMEOUT_MS = 10_000;
+export const MAX_IM_TURN_TIMEOUT_MS = 30 * 60_000;
 
 export interface IMSettings {
   systemPrompt?: string;
   skillsEnabled: boolean;
+  channelPermissions?: IMChannelPermissionSettings;
+  /**
+   * Per-turn wall-clock budget in milliseconds. Unset or invalid (NaN, 0,
+   * negative, non-number, unreadable settings) falls back to
+   * DEFAULT_IM_TURN_TIMEOUT_MS; a legal but extreme value is clamped into
+   * [MIN_IM_TURN_TIMEOUT_MS, MAX_IM_TURN_TIMEOUT_MS]. Re-read at the start of
+   * every turn, so a change applies to the next message without a restart.
+   */
+  turnTimeoutMs?: number;
 }
 
 export interface IMGatewayStatus {
@@ -182,6 +386,8 @@ export interface IMGatewayStatus {
   feishu: FeishuGatewayStatus;
   telegram: TelegramGatewayStatus;
   discord: DiscordGatewayStatus;
+  weixin: WeixinGatewayStatus;
+  qq: QQGatewayStatus;
 }
 
 // ==================== Media Attachment Types ====================
@@ -214,6 +420,12 @@ export interface IMMessage {
   // 媒体附件（Telegram 支持）
   attachments?: IMMediaAttachment[];
   mediaGroupId?: string;      // 媒体组 ID（用于合并多张图片）
+  /**
+   * Entry-point trust decision for channels that enforce one (currently QQ).
+   * Absent means "legacy channel, no trust gate"; a QQ message without this
+   * field is dropped by the manager (fail-closed).
+   */
+  trust?: IMTrustContext;
 }
 
 export interface IMReplyContext {
@@ -330,9 +542,35 @@ export const DEFAULT_DISCORD_CONFIG: DiscordConfig = {
   debug: true,
 };
 
+export const DEFAULT_WEIXIN_CONFIG: WeixinConfig = {
+  enabled: false,
+  accountId: 'default',
+  token: '',
+  baseUrl: 'https://ilinkai.weixin.qq.com',
+  metabotId: null,
+  debug: true,
+};
+
 export const DEFAULT_IM_SETTINGS: IMSettings = {
   systemPrompt: '',
   skillsEnabled: true,
+};
+
+export const DEFAULT_QQ_CONFIG: QQConfig = {
+  enabled: false,
+  appId: '',
+  botId: null,
+  ownerUserOpenid: null,
+  metabotId: null,
+  debug: true,
+  // Security defaults: no group is served until the owner adds one, and
+  // layer 3 (local machine operations) is off for everybody.
+  groupPolicy: 'allowlist',
+  groupAllowlist: [],
+  localToolsEnabled: false,
+  localToolsAllowFrom: [],
+  // Group model turns per local day, across all groups. See qqRateLimit.ts.
+  dailyReplyLimit: 500,
 };
 
 export const DEFAULT_IM_CONFIG: IMGatewayConfig = {
@@ -340,6 +578,8 @@ export const DEFAULT_IM_CONFIG: IMGatewayConfig = {
   feishu: DEFAULT_FEISHU_CONFIG,
   telegram: DEFAULT_TELEGRAM_CONFIG,
   discord: DEFAULT_DISCORD_CONFIG,
+  weixin: DEFAULT_WEIXIN_CONFIG,
+  qq: DEFAULT_QQ_CONFIG,
   settings: DEFAULT_IM_SETTINGS,
 };
 
@@ -397,11 +637,37 @@ export const DEFAULT_XIAOMIFENG_STATUS: XiaomifengGatewayStatus = {
   lastOutboundAt: null,
 };
 
+export const DEFAULT_WEIXIN_STATUS: WeixinGatewayStatus = {
+  connected: false,
+  startedAt: null,
+  lastError: null,
+  accountId: null,
+  loginPending: false,
+  loginState: 'idle',
+  qrContent: null,
+  lastInboundAt: null,
+  lastOutboundAt: null,
+};
+
+export const DEFAULT_QQ_STATUS: QQGatewayStatus = {
+  connected: false,
+  startedAt: null,
+  lastError: null,
+  appId: null,
+  loginPending: false,
+  loginState: 'idle',
+  qrContent: null,
+  lastInboundAt: null,
+  lastOutboundAt: null,
+};
+
 export const DEFAULT_IM_STATUS: IMGatewayStatus = {
   dingtalk: DEFAULT_DINGTALK_STATUS,
   feishu: DEFAULT_FEISHU_STATUS,
   telegram: DEFAULT_TELEGRAM_STATUS,
   discord: DEFAULT_DISCORD_STATUS,
+  weixin: DEFAULT_WEIXIN_STATUS,
+  qq: DEFAULT_QQ_STATUS,
 };
 
 // ==================== DingTalk Media Types ====================

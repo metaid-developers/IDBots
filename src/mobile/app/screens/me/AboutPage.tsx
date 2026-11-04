@@ -26,14 +26,12 @@ export function AboutPage(props: { onBack: () => void }): JSX.Element {
   }, []);
   return (
     <SecondaryPageShell title={t('mobile.me.entry.about')} onBack={props.onBack} testId="me-page-about">
-      <div className="flex flex-col items-center gap-2 rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] p-4">
-        {/* App glyph: initial disc, same visual family as bot avatars. */}
-        <span
-          aria-hidden
-          className="flex h-16 w-16 items-center justify-center rounded-2xl border border-[var(--border-color)] bg-[var(--bg-main)] text-xl font-semibold text-[var(--text-secondary)]"
-        >
-          ID
-        </span>
+      <div className="flex flex-col items-center gap-2 twin-panel twin-panel-padded">
+        <img
+          src="/app/icon-192.png"
+          alt="IDBots"
+          className="h-16 w-16 rounded-2xl border border-[var(--border-color)] object-cover"
+        />
         <p className="text-sm text-[var(--text-secondary)]" data-testid="about-app-version">
           {t('mobile.me.appVersion', { version: appVersion ?? '—' })}
         </p>
@@ -42,7 +40,7 @@ export function AboutPage(props: { onBack: () => void }): JSX.Element {
         </p>
       </div>
 
-      <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] p-4">
+      <div className="twin-panel twin-panel-padded">
         {LEGAL_LINKS.map((link) => (
           <a
             key={link.testId}
@@ -50,7 +48,7 @@ export function AboutPage(props: { onBack: () => void }): JSX.Element {
             target="_blank"
             rel="noreferrer"
             data-testid={link.testId}
-            className="flex min-h-[52px] items-center justify-between border-b border-[var(--border-color)] py-2 text-[15px] text-[var(--text-primary)] last:border-b-0"
+            className="twin-list-row"
           >
             {t(link.key)}
             <span aria-hidden className="text-[var(--text-secondary)]">›</span>

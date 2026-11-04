@@ -46,14 +46,14 @@ export function VoiceButton({ state, elapsedSec, onStart, onStop }: VoiceButtonP
         if (recording) onStop();
         else onStart();
       }}
-      className={`relative flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-xl border transition-colors ${
+      className={`twin-icon-button twin-composer-accessory relative shrink-0 ${
         errored
-          ? 'border-amber-300 bg-amber-50 text-amber-700'
+          ? 'text-[var(--twin-warning)]'
           : recording
-            ? 'animate-pulse border-red-300 bg-red-500 text-white'
+            ? 'twin-icon-button-danger animate-pulse'
             : stopping
-              ? 'border-[var(--border-color)] bg-[var(--bg-hover)] text-[var(--text-secondary)]'
-              : 'border-[var(--border-color)] bg-transparent text-[var(--text-primary)] active:bg-[var(--bg-hover)]'
+              ? 'bg-[var(--bg-hover)] text-[var(--text-secondary)]'
+              : ''
       } ${inFlight ? 'opacity-70' : ''}`}
     >
       {recording ? <StopIcon className="h-5 w-5" aria-hidden /> : <MicrophoneIcon className="h-5 w-5" aria-hidden />}
@@ -90,10 +90,10 @@ export function VoiceErrorBanner({ state, onDismiss }: { state: VoiceUiState; on
     <div
       role="alert"
       data-testid="voice-error"
-      className="mx-3 mb-2 flex items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2"
+      className="twin-notice twin-notice-warning mx-3 mb-2 flex items-center gap-2"
     >
-      <ExclamationTriangleIcon className="h-4 w-4 shrink-0 text-amber-600" aria-hidden />
-      <p className="min-w-0 flex-1 text-xs text-amber-800" data-testid="voice-error-text">
+      <ExclamationTriangleIcon className="h-4 w-4 shrink-0" aria-hidden />
+      <p className="min-w-0 flex-1 text-xs" data-testid="voice-error-text">
         {t(voiceErrorCopyKey(state.errorCode))}
       </p>
       <button
@@ -101,7 +101,7 @@ export function VoiceErrorBanner({ state, onDismiss }: { state: VoiceUiState; on
         onClick={onDismiss}
         aria-label={t('mobile.chat.voice.errorDismiss')}
         data-testid="voice-error-dismiss"
-        className="flex min-h-[32px] min-w-[32px] items-center justify-center text-amber-700 active:opacity-70"
+        className="twin-icon-button"
       >
         <XMarkIcon className="h-4 w-4" aria-hidden />
       </button>

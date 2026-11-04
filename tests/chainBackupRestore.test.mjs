@@ -121,7 +121,7 @@ function buildSegmentEnvelope(backupKey, botGid, objects) {
  * the requested metaid+path; the platform-global path feed returns an empty
  * page and records that it was touched.
  */
-function stubIndexer(pins, scopedListings) {
+function stubIndexer(pins, scopedListings, files) {
   const calls = { globalPathList: 0, addressList: 0, metaidList: 0 };
   const originalFetch = globalThis.fetch;
   const ownerByAddress = { 'mvc-user': USER_GID };
@@ -143,6 +143,10 @@ function stubIndexer(pins, scopedListings) {
       status,
       json: async () => body,
       text: async () => (typeof body === 'string' ? body : JSON.stringify(body)),
+      arrayBuffer: async () => {
+        const buf = Buffer.isBuffer(body) ? body : Buffer.from(typeof body === 'string' ? body : JSON.stringify(body));
+        return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+      },
       headers: { get: () => contentType },
     });
     if (href.includes('/api/metaid/pin/list/')) {
@@ -177,6 +181,13 @@ function stubIndexer(pins, scopedListings) {
     if (href.includes('/api/v1/info/address/')) {
       return respond(200, { code: 1, data: { name: 'restored-from-chain' } });
     }
+    const metafileContent = href.match(/\/api\/v1\/files\/(?:accelerate\/)?content\/([^/?]+)/);
+    if (metafileContent) {
+      const pinId = decodeURIComponent(metafileContent[1]);
+      const body = files instanceof Map ? files.get(pinId) : files?.[pinId];
+      if (body == null) return respond(404, { code: 0, message: 'not found' });
+      return respond(200, body, 'application/octet-stream');
+    }
     const content = href.match(/\/content\/([^/?]+)/);
     if (content) {
       const pinId = decodeURIComponent(content[1]);
@@ -208,6 +219,7 @@ async function seedSourceBot(source, gid, name, walletPath = "m/44'/10001'/0'/0/
 
 function createBackupHarness() {
   const pins = {};
+  const files = new Map(); // pinId -> Buffer (metafile segment ciphertext)
   const scopedListings = {};
   const modifyTargets = [];
   let sequence = 0;
@@ -233,12 +245,20 @@ function createBackupHarness() {
     return { pinId, txids: [`tx-live-${sequence}`], totalCost: 0 };
   };
 
+  const uploadMetaFileImpl = async (metabotStore, params) => {
+    sequence += 1;
+    const pinId = `file-live-${sequence}`;
+    files.set(pinId, fs.readFileSync(params.filePath));
+    return { pinId, metafileUri: `metafile://${pinId}`, totalCost: 0 };
+  };
+
   const runBackup = async (metabotStore, userStore, sqliteStore) => runChainBackup({
     db: sqliteStore.getDatabase(),
     metabotStore,
     userStore,
     saveDb: sqliteStore.getSaveFunction(),
     createPinImpl,
+    uploadMetaFileImpl,
     syncBotsManifestImpl: async (_users, store) => {
       const bots = store.listMetabots()
         .filter((bot) => bot.metabot_type !== 'welcome' && bot.globalmetaid)
@@ -256,7 +276,7 @@ function createBackupHarness() {
     sleep: async () => undefined,
   });
 
-  return { pins, scopedListings, modifyTargets, runBackup };
+  return { pins, files, scopedListings, modifyTargets, runBackup };
 }
 
 test('discovery rides the address-scoped listing; a dead segment degrades to a partial restore', async () => {
@@ -675,7 +695,7 @@ test('ten bots survive backup, modified-manifest restore, reopen, and the next i
   const manifestHeads = new Map(secondBackup.bots.map((bot) => [bot.globalMetaId, bot.manifestPinId]));
   const secondModifyCount = harness.modifyTargets.length;
 
-  const stub = stubIndexer(harness.pins, harness.scopedListings);
+  const stub = stubIndexer(harness.pins, harness.scopedListings, harness.files);
   let target;
   try {
     target = await openStore('idbots-full-target-');
@@ -798,6 +818,67 @@ test('a bot without a backup manifest fails the overall restore', async () => {
     assert.equal(result.success, false);
     assert.equal(result.bots[0].error, 'NO_BACKUP_MANIFEST');
     assert.equal(target.metabotStore.listMetabots().length, 0);
+  } finally {
+    stub.restore();
+  }
+});
+
+test('restore onto a device that already ran the welcome flow: the backup Twin wins and name collisions rename the local placeholder', async () => {
+  const source = await openStore('idbots-twin-src-');
+  const sourceUser = insertUserIdentity(source.db, source.sqliteStore.getSaveFunction());
+
+  // Two backup bots: a Twin whose name collides with the fresh device's
+  // welcome-flow placeholder, and an ordinary worker.
+  const twinWallet = await createMetaBotWallet({ path: "m/44'/10001'/0'/0/21" });
+  const workerWallet = await createMetaBotWallet({ path: "m/44'/10001'/0'/0/22" });
+  const twinSeed = await seedSourceBot(source, twinWallet.globalmetaid, 'Pixel', "m/44'/10001'/0'/0/21", {}, twinWallet.mnemonic);
+  await seedSourceBot(source, workerWallet.globalmetaid, 'worker-a', "m/44'/10001'/0'/0/22", {}, workerWallet.mnemonic);
+  source.metabotStore.updateMetabot(twinSeed.bot.id, { metabot_type: 'twin' });
+
+  const harness = createBackupHarness();
+  const backup = await harness.runBackup(source.metabotStore, sourceUser, source.sqliteStore);
+  assert.equal(backup.success, true, JSON.stringify(backup));
+
+  const stub = stubIndexer(harness.pins, harness.scopedListings, harness.files);
+  try {
+    const target = await openStore('idbots-twin-target-');
+    const targetUser = insertUserIdentity(target.db, target.sqliteStore.getSaveFunction());
+    // The welcome flow always leaves a Twin (random pool name) before the user
+    // can import a mnemonic. Here it happens to draw the same name as the
+    // backup's Twin.
+    const placeholder = await createBot(
+      target.metabotStore,
+      'Pixel',
+      'gid-local-placeholder',
+      (await createMetaBotWallet({ path: "m/44'/10001'/0'/0/23" })).mnemonic,
+      "m/44'/10001'/0'/0/23",
+    );
+    target.metabotStore.updateMetabot(placeholder.id, { metabot_type: 'twin' });
+
+    const restored = await runChainBackupRestore({
+      db: target.db,
+      metabotStore: target.metabotStore,
+      userStore: targetUser,
+      saveDb: target.sqliteStore.getSaveFunction(),
+      baseUrl: 'http://stub.test',
+    });
+    assert.equal(restored.success, true, JSON.stringify(restored));
+
+    const targetBots = target.metabotStore.listMetabots();
+    assert.equal(targetBots.length, 3, 'placeholder + two restored bots');
+    const twins = targetBots.filter((bot) => bot.metabot_type === 'twin');
+    assert.equal(twins.length, 1, 'exactly one Twin after restore');
+    assert.equal(twins[0].globalmetaid, twinWallet.globalmetaid, 'the backup Twin holds the role');
+    assert.equal(twins[0].name, 'Pixel', 'the backup Twin keeps its name');
+
+    const localPlaceholder = targetBots.find((bot) => bot.globalmetaid === 'gid-local-placeholder');
+    assert.ok(localPlaceholder, 'placeholder bot survives');
+    assert.equal(localPlaceholder.metabot_type, 'worker', 'local placeholder Twin is demoted, not deleted');
+    assert.equal(localPlaceholder.name, 'Pixel (local)', 'the local placeholder is renamed out of the way');
+
+    // The Twin's soul data was imported onto the restored Twin row.
+    const twinMemories = scalar(target.db, `SELECT COUNT(*) FROM user_memories WHERE metabot_id = ${twins[0].id}`);
+    assert.equal(twinMemories, 1, 'backup Twin memories land on the promoted Twin');
   } finally {
     stub.restore();
   }

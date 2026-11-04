@@ -8,7 +8,9 @@
  * locally known peers (stored messages + A2A session mappings). Newly stored
  * rows newer than a per-pair threshold are flagged is_processed = 0 so the
  * private chat daemon picks them up for display and auto-reply; older rows
- * are archived silently.
+ * are archived without a reply and reported as archivedPinIds so the host
+ * still renders the bubble. A late-indexed message must not vanish just
+ * because a newer one already landed.
  *
  * Issue #24: the fixed 15s cadence is now gated by a shared PollBackoffController —
  * consecutive total-failure ticks escalate the retry delay, and after a
@@ -44,6 +46,7 @@ export interface PrivateChatBackfillServiceDeps {
     identity: PrivateChatBackfillIdentity;
     peerGlobalMetaID: string;
     inserted: number;
+    archivedPinIds: string[];
   }) => void | Promise<void>;
   historySync?: Pick<PrivateChatHistorySyncService, 'fetchRecentConversationMessages'>;
   fetchDirectoryJson?: (url: string) => Promise<unknown>;
@@ -356,24 +359,25 @@ export function createPrivateChatBackfillLoop(
             catchUpWindowSec: deps.catchUpWindowSec,
             overlapSec: deps.overlapSec,
           });
-          const inserted = storePrivateChatHistoryMessages({
+          const stored = storePrivateChatHistoryMessages({
             db: deps.db,
             saveDb: deps.saveDb,
             messages,
             unprocessedAfterTimestampSec,
           });
-          result.inserted += inserted;
+          result.inserted += stored.inserted;
           try {
             await deps.onMessagesStored?.({
               identity,
               peerGlobalMetaID: peer,
-              inserted,
+              inserted: stored.inserted,
+              archivedPinIds: stored.archivedPinIds,
             });
           } catch (error) {
             emitLog(`[PrivateChatBackfill] Experience reconciliation failed for ${peer.slice(0, 12)}…: ${error instanceof Error ? error.message : String(error)}`);
           }
-          if (inserted > 0) {
-            emitLog(`[PrivateChatBackfill] Recovered ${inserted} private chat message(s) for ${identity.globalMetaId.slice(0, 12)}… ↔ ${peer.slice(0, 12)}…`);
+          if (stored.inserted > 0) {
+            emitLog(`[PrivateChatBackfill] Recovered ${stored.inserted} private chat message(s) for ${identity.globalMetaId.slice(0, 12)}… ↔ ${peer.slice(0, 12)}…`);
           }
         } catch (error) {
           result.failedPeers += 1;

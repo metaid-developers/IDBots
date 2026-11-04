@@ -28,6 +28,8 @@ export interface ChainBackupSegmentUploadRow {
   segment_hash: string;
   pin_id: string | null;
   status: ChainBackupSegmentUploadStatus;
+  /** 'inline' (legacy JSON pin) or 'metafile' (/file binary pin). */
+  storage: string;
   object_ids_json: string;
   kinds_json: string;
   plaintext_created_at: number;
@@ -64,6 +66,7 @@ export function ensureChainBackupRunSchema(db: SqliteDatabase): void {
       segment_hash TEXT NOT NULL,
       pin_id TEXT,
       status TEXT NOT NULL CHECK(status IN ('pending', 'uploading', 'published')),
+      storage TEXT NOT NULL DEFAULT 'inline',
       object_ids_json TEXT NOT NULL,
       kinds_json TEXT NOT NULL,
       plaintext_created_at INTEGER NOT NULL,
@@ -79,6 +82,12 @@ export function ensureChainBackupRunSchema(db: SqliteDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_chain_backup_segment_uploads_pin
       ON chain_backup_segment_uploads(pin_id);
   `);
+  // Idempotent upgrade for journals written before the metafile switch:
+  // pre-existing rows keep the default 'inline' and stay restorable.
+  const columns = queryRows(db, 'PRAGMA table_info(chain_backup_segment_uploads)');
+  if (columns.length > 0 && !columns.some((column) => column.name === 'storage')) {
+    db.run(`ALTER TABLE chain_backup_segment_uploads ADD COLUMN storage TEXT NOT NULL DEFAULT 'inline'`);
+  }
 }
 
 export function getActiveChainBackupRun(
@@ -196,15 +205,16 @@ export function listChainBackupSegmentUploads(
 export function saveChainBackupSegmentUpload(db: SqliteDatabase, row: ChainBackupSegmentUploadRow): void {
   db.run(
     `INSERT INTO chain_backup_segment_uploads (
-      bot_globalmetaid, segment_key, run_id, segment_hash, pin_id, status,
+      bot_globalmetaid, segment_key, run_id, segment_hash, pin_id, status, storage,
       object_ids_json, kinds_json, plaintext_created_at, bytes, attempt_count,
       last_error, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(bot_globalmetaid, segment_key) DO UPDATE SET
       run_id = excluded.run_id,
       segment_hash = excluded.segment_hash,
       pin_id = excluded.pin_id,
       status = excluded.status,
+      storage = excluded.storage,
       object_ids_json = excluded.object_ids_json,
       kinds_json = excluded.kinds_json,
       plaintext_created_at = excluded.plaintext_created_at,
@@ -219,6 +229,7 @@ export function saveChainBackupSegmentUpload(db: SqliteDatabase, row: ChainBacku
       row.segment_hash,
       row.pin_id,
       row.status,
+      row.storage,
       row.object_ids_json,
       row.kinds_json,
       row.plaintext_created_at,

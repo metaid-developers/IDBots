@@ -274,3 +274,57 @@ test('coworkRunner auto-continues a malformed-tool-call turn exactly once, befor
   assert.ok(firstTurnIdx > 0 && useIdx > firstTurnIdx, 'the continue runs after the initial turn');
   assert.ok(transientIdx > useIdx, 'the continue runs before the transient-resume ladder');
 });
+
+test('isTransientDshTurnError classifies the Zhipu gateway network-error template as transient', async () => {
+  const { isTransientDshTurnError } = await import('../dist-electron/main/libs/coworkAssistantReply.js');
+
+  // The 2026-11-01 session b07c64e9 death shape, verbatim: the Zhipu gateway
+  // answers a ~40s in-flight request with its fixed Chinese template riding a
+  // server-side error id (timestamp-prefixed). pi-ai cannot fingerprint it and
+  // lands it on the generic PI_AI_ERROR code — the host classifier must catch
+  // it so the transient-resume ladder (and the fallback-brain ladder behind
+  // it) engages instead of hard-failing the turn.
+  assert.equal(
+    isTransientDshTurnError({
+      kind: 'error',
+      error: {
+        code: 'PI_AI_ERROR',
+        message: 'server_error: 网络错误，错误id 202611012140098dbde9342b514386 ，请稍后重试。[202611012140098dbde9342b514386]',
+      },
+    }),
+    true,
+  );
+  // The 2026-11-01 21:12 occurrence, same template, different server id.
+  assert.equal(
+    isTransientDshTurnError({
+      kind: 'error',
+      error: {
+        code: 'PI_AI_ERROR',
+        message: 'server_error: 网络错误，错误id 202611012112323ac23a0a98b24b76 ，请稍后重试。[202611012112323ac23a0a98b24b76]',
+      },
+    }),
+    true,
+  );
+
+  // Other generic PI_AI_ERROR deaths (stream ended pending / deferred) must
+  // NOT classify — only the exact upstream template is transient.
+  assert.equal(
+    isTransientDshTurnError({ kind: 'error', error: { code: 'PI_AI_ERROR', message: 'pi-ai stream for model "glm-5.3-flash" ended pending' } }),
+    false,
+  );
+  assert.equal(
+    isTransientDshTurnError({ kind: 'error', error: { code: 'PI_AI_ERROR', message: 'pi-ai deferred response for model "glm-5.3-flash" is not supported' } }),
+    false,
+  );
+  assert.equal(
+    isTransientDshTurnError({ kind: 'error', error: { code: 'PI_AI_ERROR', message: '' } }),
+    false,
+  );
+
+  // Kernel-normalized transient codes keep classifying (regression guard).
+  assert.equal(isTransientDshTurnError({ kind: 'error', error: { code: 'TRANSPORT', message: 'other side closed' } }), true);
+  assert.equal(isTransientDshTurnError({ kind: 'error', error: { code: 'SERVER', message: 'OpenAI API error (500)' } }), true);
+  assert.equal(isTransientDshTurnError({ kind: 'error', error: { code: 'TIMEOUT', message: 'request timed out' } }), true);
+  assert.equal(isTransientDshTurnError({ kind: 'completed' }), false);
+  assert.equal(isTransientDshTurnError(null), false);
+});

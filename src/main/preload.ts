@@ -171,6 +171,10 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('botBrowser:completeLlm', input),
     requestPermissions: (input: { actorId?: string; resourceUri?: string; sessionId?: string; payload?: unknown }) =>
       ipcRenderer.invoke('botBrowser:requestPermissions', input),
+    buyNft: (input: { actorId?: string; resourceUri?: string; sessionId?: string; payload?: unknown }) =>
+      ipcRenderer.invoke('botBrowser:buyNft', input),
+    buyMrc721: (input: { actorId?: string; resourceUri?: string; sessionId?: string; payload?: unknown }) =>
+      ipcRenderer.invoke('botBrowser:mrc721Buy', input),
     sendPrivateChat: (input: {
       actorId?: string;
       peerGlobalMetaId?: string;
@@ -866,6 +870,11 @@ contextBridge.exposeInMainWorld('electron', {
   appInfo: {
     getVersion: () => ipcRenderer.invoke('app:getVersion'),
     getSystemLocale: () => ipcRenderer.invoke('app:getSystemLocale'),
+    getDataDirectory: () => ipcRenderer.invoke('app:getDataDirectory') as Promise<{
+      userDataPath: string;
+      backupsPath: string;
+      appVersion: string;
+    }>,
   },
   updateNotification: {
     shouldForceShow: () => ipcRenderer.invoke('updateNotification:shouldForceShow') as Promise<boolean>,
@@ -904,12 +913,36 @@ contextBridge.exposeInMainWorld('electron', {
     setConfig: (config: any) => ipcRenderer.invoke('im:config:set', config),
 
     // Gateway control
-    startGateway: (platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord') => ipcRenderer.invoke('im:gateway:start', platform),
-    stopGateway: (platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord') => ipcRenderer.invoke('im:gateway:stop', platform),
+    startGateway: (platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'weixin' | 'qq') => ipcRenderer.invoke('im:gateway:start', platform),
+    stopGateway: (platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'weixin' | 'qq') => ipcRenderer.invoke('im:gateway:stop', platform),
     testGateway: (
-      platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord',
+      platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'weixin' | 'qq',
       configOverride?: any
     ) => ipcRenderer.invoke('im:gateway:test', platform, configOverride),
+
+    // Weixin QR authorization (scan the QR with the phone; no password login).
+    weixinLoginStart: () => ipcRenderer.invoke('im:weixin:login:start'),
+    weixinLoginCancel: () => ipcRenderer.invoke('im:weixin:login:cancel'),
+    weixinCheckCredentials: () => ipcRenderer.invoke('im:weixin:credentials:check'),
+
+    // QQ official bot: QR bind (AppID + AppSecret) and manual credential entry.
+    qqLoginStart: () => ipcRenderer.invoke('im:qq:login:start'),
+    qqLoginCancel: () => ipcRenderer.invoke('im:qq:login:cancel'),
+    qqCheckCredentials: () => ipcRenderer.invoke('im:qq:credentials:check'),
+    qqSetCredentials: (params: { appId: string; appSecret: string; botId?: string | null; ownerUserOpenid?: string | null }) =>
+      ipcRenderer.invoke('im:qq:credentials:set', params),
+
+    // QQ group authorisation without the 32-hex group OpenID: the gateway
+    // remembers groups that messaged the bot while NOT allowlisted (silently:
+    // no reply, no model, no tool, no memory), and these calls let the settings
+    // page allow / ignore them. Recording is not authorisation.
+    qqListGroupCandidates: () => ipcRenderer.invoke('im:qq:groups:candidates:list'),
+    qqDismissGroupCandidate: (groupId: string) =>
+      ipcRenderer.invoke('im:qq:groups:candidates:dismiss', { groupId }),
+    qqRestoreGroupCandidate: (groupId: string) =>
+      ipcRenderer.invoke('im:qq:groups:candidates:restore', { groupId }),
+    qqResolveGroupName: (groupId: string) =>
+      ipcRenderer.invoke('im:qq:groups:candidates:name', { groupId }),
 
     // Status
     getStatus: () => ipcRenderer.invoke('im:status:get'),
@@ -1094,6 +1127,8 @@ contextBridge.exposeInMainWorld('electron', {
     // P0-1: every [OPENTEAM_INVITE] this machine's bots received (joined or
     // not), newest first — backs the "Received invites" block of the collab UI.
     listGuestInvites: () => ipcRenderer.invoke('openTeamCollab:listGuestInvites'),
+    getMembers: (input: { groupId: string }) =>
+      ipcRenderer.invoke('openTeamCollab:getMembers', input),
   },
   idbots: {
     getMetaBots: () => ipcRenderer.invoke('idbots:getMetaBots'),
@@ -1125,6 +1160,29 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('idbots:getAddressBalance', options),
     getMetabotWalletAssets: (input: { metabotId: number }) =>
       ipcRenderer.invoke('idbots:getMetabotWalletAssets', input),
+    getMetabotNfts: (input: { metabotId: number; kind: 'mrc721' | 'metacontract' }) =>
+      ipcRenderer.invoke('idbots:getMetabotNfts', input),
+    healNftCard: (input: {
+      format: 'mrc721' | 'metacontract';
+      genesis?: string;
+      tokenIndex?: string;
+      pinId?: string;
+      owner?: string;
+    }) => ipcRenderer.invoke('idbots:healNftCard', input),
+    transferMetabotMvcNft: (params: {
+      metabotId: number;
+      genesis: string;
+      codehash: string;
+      tokenIndex: string;
+      toAddress: string;
+      feeRate: number;
+    }) => ipcRenderer.invoke('idbots:transferMetabotMvcNft', params),
+    transferMetabotMrc721: (params: {
+      metabotId: number;
+      pinId: string;
+      toAddress: string;
+      feeRate: number;
+    }) => ipcRenderer.invoke('idbots:transferMetabotMrc721', params),
     getTransferFeeSummary: (chain: 'mvc' | 'doge' | 'btc') => ipcRenderer.invoke('idbots:getTransferFeeSummary', chain),
     getTokenTransferFeeSummary: (input: { kind: 'mrc20' | 'mvc-ft' }) =>
       ipcRenderer.invoke('idbots:getTokenTransferFeeSummary', input),
@@ -1219,6 +1277,11 @@ contextBridge.exposeInMainWorld('electron', {
     revealMnemonic: () => ipcRenderer.invoke('userIdentity:revealMnemonic'),
     retrySubsidy: () => ipcRenderer.invoke('userIdentity:retrySubsidy'),
     retryChainSync: () => ipcRenderer.invoke('userIdentity:retryChainSync'),
+  },
+  paymentInfo: {
+    get: () => ipcRenderer.invoke('paymentInfo:get'),
+    save: (input: { info: unknown }) => ipcRenderer.invoke('paymentInfo:save', input),
+    clear: () => ipcRenderer.invoke('paymentInfo:clear'),
   },
   social: {
     /** S5 friend badge data source: pair state via the S4 metaso provider (main-side TTL cache). */
@@ -1355,7 +1418,7 @@ contextBridge.exposeInMainWorld('electron', {
   // Namespace kept under its legacy `p2p` name for the renderer; it now only
   // bridges the metaid user-info/contacts IPC channels.
   p2p: {
-    getUserInfo: (params: { globalMetaId: string }) =>
+    getUserInfo: (params: { globalMetaId?: string; address?: string }) =>
       ipcRenderer.invoke('metaid:getUserInfo', params),
     resolveAvatarSource: (params: { reference: string }) =>
       ipcRenderer.invoke('metaid:resolveAvatarSource', params),

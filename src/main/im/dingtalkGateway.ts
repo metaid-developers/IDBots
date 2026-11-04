@@ -5,6 +5,7 @@
  */
 
 import { EventEmitter } from 'events';
+import * as path from 'path';
 import axios from 'axios';
 import {
   DingTalkConfig,
@@ -15,7 +16,13 @@ import {
   IMMessage,
   DEFAULT_DINGTALK_STATUS,
 } from './types';
-import { uploadMediaToDingTalk, detectMediaType, getOapiAccessToken } from './dingtalkMedia';
+import {
+  uploadMediaToDingTalk,
+  detectMediaType,
+  getOapiAccessToken,
+  DINGTALK_MAX_UPLOAD_BYTES,
+} from './dingtalkMedia';
+import type { IMOutboundCapabilities } from './imOutbound';
 import { parseMediaMarkers } from './dingtalkMediaParser';
 import { createUtf8JsonBody, JSON_UTF8_CONTENT_TYPE, stringifyAsciiJson } from './jsonEncoding';
 import { tApp } from '../libs/appLanguage';
@@ -733,6 +740,75 @@ export class DingTalkGateway extends EventEmitter {
         await replyFn(tApp(`❌ 处理消息时出错: ${error.message}`, `❌ Error while processing the message: ${error.message}`));
       }
     }
+  }
+
+  /** The most recent DIRECT (1:1) conversation id, or null. */
+  getLastDirectConversationId(): string | null {
+    const last = this.lastConversation;
+    if (!last || last.conversationType !== '1') return null;
+    return last.openConversationId ?? null;
+  }
+
+  /**
+   * Out-of-turn send into an existing DIRECT conversation
+   * (IMConversationSender). DingTalk's outbound is bound to the inbound
+   * sessionWebhook, so this only works for the conversation it was learned
+   * from — which is exactly the reply-target the platform allows.
+   */
+  async sendToConversation(conversationId: string, text: string): Promise<void> {
+    const target = this.requireDirectConversation(conversationId);
+    await this.sendBySession(target.sessionWebhook, text);
+    this.status.lastOutboundAt = Date.now();
+  }
+
+  /** Deliver one local file into an existing direct conversation. */
+  async sendMediaToConversation(conversationId: string, filePath: string): Promise<void> {
+    const target = this.requireDirectConversation(conversationId);
+    if (!this.config) {
+      throw new Error('DingTalk config not set');
+    }
+    const oapiToken = await getOapiAccessToken(this.config.clientId, this.config.clientSecret);
+    const mediaType = detectMediaType(filePath);
+    const fileName = path.basename(filePath);
+    const result = await uploadMediaToDingTalk(oapiToken, filePath, mediaType, fileName);
+    if (!result.success || !result.mediaId) {
+      throw new Error(`DingTalk media upload failed: ${result.error ?? 'no mediaId'}`);
+    }
+    await this.sendMediaViaNewApi(this.buildMediaMessage(mediaType, result.mediaId, fileName), {
+      conversationType: '1',
+      userId: target.userId,
+      openConversationId: target.openConversationId,
+    });
+    this.status.lastOutboundAt = Date.now();
+  }
+
+  /** What this channel can send, from its own media ceiling. */
+  describeOutboundCapabilities(): IMOutboundCapabilities {
+    return {
+      extensionsByKind: {
+        image: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'],
+        video: ['mp4', 'mov', 'avi', 'mkv', 'webm'],
+        audio: ['amr', 'mp3', 'wav', 'm4a'],
+        file: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'zip', 'txt', 'csv', 'json', 'md'],
+      },
+      maxBytesByKind: {
+        image: DINGTALK_MAX_UPLOAD_BYTES,
+        video: DINGTALK_MAX_UPLOAD_BYTES,
+        audio: DINGTALK_MAX_UPLOAD_BYTES,
+        file: DINGTALK_MAX_UPLOAD_BYTES,
+      },
+    };
+  }
+
+  private requireDirectConversation(conversationId: string) {
+    const last = this.lastConversation;
+    if (!last || last.conversationType !== '1' || !last.openConversationId) {
+      throw new Error('DingTalk has no direct conversation yet — send the bot a direct message first');
+    }
+    if (last.openConversationId !== conversationId) {
+      throw new Error('DingTalk outbound is bound to the most recent direct conversation only');
+    }
+    return last;
   }
 
   /**

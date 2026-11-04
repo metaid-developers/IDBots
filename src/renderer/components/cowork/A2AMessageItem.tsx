@@ -16,6 +16,8 @@ import {
   messengerRowClassName,
   messengerTxidRowClassName,
 } from '../chat/messengerBubble';
+import { detectTradeActivity } from '../chat/tradeActivity';
+import TradeActivityBadge from '../chat/TradeActivityBadge';
 import {
   formatA2ATxidPreview,
   normalizeTxidCandidate,
@@ -64,6 +66,12 @@ interface A2AMessageItemProps {
    * Renders a green chip beside the PEER's name only.
    */
   peerIsFriend?: boolean;
+  /**
+   * Session id of the A2A conversation — scope for the session-bound
+   * hostStamp structural check (source-signing slice): a trade chip on an
+   * A2A bubble requires the card's hostStamp to bind to THIS session.
+   */
+  sessionId?: string;
 }
 
 const formatTime = (timestamp: number): string => {
@@ -666,6 +674,7 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
   onResendDigitalDelivery,
   isAssistantMode = false,
   peerIsFriend = false,
+  sessionId = undefined,
 }) => {
   // tool_use / tool_result: compact collapsible block (collapsed by default)
   if (message.type === 'tool_use' || message.type === 'tool_result') {
@@ -787,6 +796,11 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
   const contentToRender = shouldRenderDeliveryResult
     ? deliveryResult
     : stripOrderProtocolTag(message.content);
+  // S4 chat trade marker: the message announces an NFT trade (nft-card
+  // fence with a trade action) → a trade chip rides the meta row, same
+  // family as the session-list trade icon. The p2p chip needs a hostStamp
+  // bound to THIS A2A session (source-signing slice).
+  const tradeActivity = detectTradeActivity(contentToRender, { sessionId });
   const metafileItems = extractMetafileItems(contentToRender);
   const markdownClassName = messengerMarkdownClassName(displayRight);
   const txidPreview = formatA2ATxidPreview(txid);
@@ -827,6 +841,7 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
           // Meta row: time and txid share one line (two-space gap via gap-1 +
           // ml-1); formats unchanged, copy button stays beside the txid.
           <div className={messengerTxidRowClassName(displayRight)}>
+            {tradeActivity && <TradeActivityBadge kind={tradeActivity.kind} variant="chip" />}
             <span>{formatTime(message.timestamp)}</span>
             <span className="ml-1 font-mono">txid: {txidPreview}</span>
             <button
@@ -841,6 +856,10 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
           </div>
         ) : (
           <span className={messengerMetaClassName}>
+            {tradeActivity && (
+              // Trade chip on the bare-time meta row (same slot, no txid).
+              <TradeActivityBadge kind={tradeActivity.kind} variant="chip" className="mr-1" />
+            )}
             {formatTime(message.timestamp)}
           </span>
         )}

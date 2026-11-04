@@ -1,5 +1,6 @@
 /**
- * Session-list grouping for the chat drawer (UE rework 2026-10-29, A4).
+ * Session-list grouping + filtering for the chat drawer (UE rework 2026-10-29,
+ * A4; search added 2026-11-02).
  *
  * Owner rule: the session list reads like the desktop one — sessions grouped
  * by time (Today / Yesterday / Earlier), each row showing the owning MetaBot.
@@ -68,6 +69,29 @@ export interface SessionBotView {
   metabotId: number | null;
   name: string | null;
   avatar: string | null;
+}
+
+/**
+ * Filters sessions by a title substring, case-insensitive (drawer search).
+ *
+ * The drawer composes this BEFORE `groupSessionsByDay`, so day grouping and
+ * ordering apply unchanged to the filtered result. The list is a small
+ * client-side summary array (controller snapshot), so a synchronous scan per
+ * keystroke is cheap by construction — no debounce needed.
+ *
+ * Pure, like the grouping: never mutates the input; an empty/whitespace-only
+ * query returns the input unchanged; a session with a missing/non-string
+ * title only survives an empty query (it matches nothing).
+ */
+export function filterSessionsByTitle(
+  sessions: ReadonlyArray<CoworkSessionSummary>,
+  query: string,
+): ReadonlyArray<CoworkSessionSummary> {
+  const needle = (typeof query === 'string' ? query : '').trim().toLowerCase();
+  if (needle === '') return sessions;
+  return sessions.filter((session) =>
+    typeof session.title === 'string' && session.title.toLowerCase().includes(needle),
+  );
 }
 
 /**
