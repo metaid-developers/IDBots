@@ -16,6 +16,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import QRCode from 'qrcode';
+import { buildAlipayVariantCUrl } from '../chat/paymentCardSyntax';
 import {
   XMarkIcon,
   DocumentArrowUpIcon,
@@ -219,6 +220,12 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
     };
   }, [payQr]);
 
+  // S9 v1.2: one merchant account serves every tier — launch Alipay directly
+  // (variant C, real-device tested in S3) instead of asking the user to scan.
+  // Desktop Electron without an Alipay handler silently no-ops, so the QR and
+  // the note stay on screen as the fallback rather than being hidden.
+  const payLaunchUrl = payQr?.qrContent ? buildAlipayVariantCUrl(payQr.qrContent) : null;
+
   useEffect(() => {
     const listener = (event: Event) => {
       const detail = (event as CustomEvent<{ section?: string }>).detail;
@@ -378,6 +385,24 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
           {/* 收款码 / 支付说明 */}
           {canShowPay && (
             <div className="rounded-xl border border-claude-border dark:border-claude-darkBorder bg-claude-surfaceInset/40 dark:bg-claude-darkSurfaceInset/30 px-3 py-3 space-y-1.5">
+              {payLaunchUrl ? (
+                <div className="space-y-1 pb-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // Variant C opens Alipay at the payee's receive page; the
+                      // amount is shown above and copied into the note field.
+                      window.location.href = payLaunchUrl;
+                    }}
+                    className="btn-idchat-primary-filled w-full rounded-lg px-3 py-2 text-[12px] font-medium"
+                  >
+                    {i18nService.t('mePurchasePayNow')}
+                  </button>
+                  <p className="text-[10px] leading-relaxed text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                    {i18nService.t('mePurchasePayFallback')}
+                  </p>
+                </div>
+              ) : null}
               {/* 收款码：平台下发的 QR 内容（ME_PAY_QR_CONTENT）；未下发时如实占位，不伪造可扫码图 */}
               <div className="flex items-start gap-3 pb-1">
                 <div className="flex h-[132px] w-[132px] shrink-0 items-center justify-center rounded-xl border border-dashed border-claude-border dark:border-claude-darkBorder bg-claude-surface dark:bg-claude-darkSurface">
