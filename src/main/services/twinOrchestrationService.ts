@@ -101,12 +101,14 @@ export interface TwinOrchestrationServiceDeps {
    */
   insertCrossSessionUserMessage?: TwinOrchestrationInsertCrossSessionMessageFn;
   /**
-   * Round-4 r6: persistent idempotency guard for terminal-state notifications
-   * (kv key `orch_notify:<taskId>:<attemptId>:<status>`). Without it a process
-   * restart between a notification and the guard write could double-notify.
-   * The key is per attempt — not per task — so a retried attempt that fails
-   * again still notifies the Twin (清单 #3: the old per-task key swallowed the
-   * ORCH-NOTIFY of every attempt after the first failure of the same task).
+   * Round-4 r6: secondary, fast-path terminal-notification marker (kv key
+   * `orch_notify:<taskId>:<attemptId>:<status>`). The durable arbiter is the
+   * `orchestration_notifications` row claimed by
+   * `orchestrationStore.claimNotification`; this kv marker is kept in sync so
+   * older code paths and operators see the same signal. The key is per
+   * attempt — not per task — so a retried attempt that fails again still
+   * notifies the Twin (清单 #3: the old per-task key swallowed the ORCH-NOTIFY
+   * of every attempt after the first failure of the same task).
    */
   kv?: TwinOrchestrationKvStore;
 }
@@ -201,12 +203,16 @@ export class TwinOrchestrationService {
 
   /**
    * Round-4 r6: one short [ORCH-NOTIFY] status message into the Twin session
-   * that delegated the task (task.sourceSessionId). Idempotent per terminal
-   * state per attempt via kv `orch_notify:<taskId>:<attemptId>:<completed|failed>`;
-   * the fixed prefix + taskId lets the Twin's own context recognize it as a
-   * status update. The attempt-scoped key (清单 #3) keeps retried attempts
-   * notifiable: with the old task-scoped key, the second failure of the same
-   * task was silently swallowed by the first failure's guard.
+   * that delegated the task (task.sourceSessionId). At most one notification
+   * per (attempt, terminal state): the DATABASE row written by
+   * `orchestrationStore.claimNotification` is the arbiter, and the kv key
+   * `orch_notify:<taskId>:<attemptId>:<completed|failed>` is kept as a
+   * secondary mirror. The old design made the kv write the guard, so a process
+   * death after the notification but before the kv set re-notified the same
+   * terminal state; the claim row lands before the insert and survives that
+   * crash. The attempt-scoped key (清单 #3) keeps retried attempts notifiable:
+   * with the old task-scoped key, the second failure of the same task was
+   * silently swallowed by the first failure's guard.
    * Never throws into the orchestration flow: any failure (missing session,
    * A2A target, kv absence) is logged and skipped.
    *
@@ -226,11 +232,29 @@ export class TwinOrchestrationService {
       const targetSessionId = (task.sourceSessionId ?? '').trim();
       const workerSessionId = (attempt.workerSessionId ?? '').trim();
       if (!targetSessionId) return; // no Twin session to notify
+      // Secondary check only — a fast path, never the arbiter.
       // One notify per attempt per terminal state. Per-attempt (not per-task)
       // so a reassigned attempt that fails again still reaches the Twin.
       const guardKey = `orch_notify:${task.id}:${attempt.id}:${outcome}`;
       if (this.deps.kv?.get<string>(guardKey) === '1') return; // one notify per terminal state
       if (!workerSessionId) return; // no worker session identity to attribute the message to
+      // PRIMARY arbiter: claim the (attempt, terminal state) row atomically
+      // BEFORE the cross-session insert. If the process dies after this claim
+      // but before the kv marker write, the row remains and the next caller
+      // (normal completion or the recovery path) is skipped instead of
+      // notifying the Twin a second time.
+      if (!this.deps.orchestrationStore.claimNotification({
+        taskId: task.id,
+        stepId: attempt.stepId,
+        attemptId: attempt.id,
+        outcome,
+      })) {
+        console.log(
+          `[TwinOrchestration] notify skipped (already notified): task ${task.id} ` +
+          `attempt ${attempt.id} outcome ${outcome}`,
+        );
+        return;
+      }
       const text = outcome === 'completed'
         ? buildOrchNotifyCompleted(workerName, task.id)
         : buildOrchNotifyFailed(
@@ -250,6 +274,9 @@ export class TwinOrchestrationService {
       });
       if ('code' in result) {
         // CoworkCrossSessionError (insert failed: missing session, A2A target…)
+        // The claim row is deliberately KEPT: this is at-most-once, so a
+        // definitively failed delivery is not retried by a duplicate terminal
+        // transition. The row is the audit trail of what was attempted.
         console.warn(
           `[TwinOrchestration] Twin notification skipped (${result.code}): ${result.message}`,
         );
@@ -556,8 +583,9 @@ export class TwinOrchestrationService {
     if (currentTask && ['planning', 'running', 'review'].includes(currentTask.status)) {
       store.updateTaskStatus(task.id, 'review');
     }
-    // Round-4 r6: late-completion terminal state → notify the Twin (kv guard
-    // makes it idempotent even if the normal path already notified).
+    // Round-4 r6: late-completion terminal state → notify the Twin (the DB
+    // claim, not the kv marker, makes it idempotent even if the normal path
+    // already notified).
     this.notifyTwinTerminalState(
       currentTask ?? task,
       store.getAttempt(attemptId) ?? currentAttempt,
