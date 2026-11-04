@@ -997,3 +997,29 @@ test('mrc721_search_collections uses the MetaSo server-side search when configur
     delete process.env.IDBOTS_METASO_API_BASE;
   }
 });
+
+test('mrc721_search_collections serves supply state from MetaSo rows without item paging', async () => {
+  process.env.IDBOTS_METASO_API_BASE = 'http://metaso.test:8080';
+  try {
+    const { byName } = makeHarness();
+    const seen = [];
+    const result = await withFetchStub(
+      async (url) => {
+        seen.push(String(url));
+        if (String(url).includes('/api/mrc721/collection/search')) {
+          return jsonResponse({
+            code: 1,
+            data: { list: [collectionRow({ totalnum: 10, mintedCount: 10 })], total: 1 },
+          });
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      },
+      () => byName.mrc721_search_collections.handler({ issuer: 'AI_Sunny', supply_state: true }),
+    );
+    assert.equal(result.isError, undefined);
+    assert.match(result.content[0].text, /minted: 10\/10 \(supply exhausted\)/);
+    assert.ok(!seen.some((url) => url.includes('items/pageList')), 'server rows must remove the need for per-collection item paging');
+  } finally {
+    delete process.env.IDBOTS_METASO_API_BASE;
+  }
+});

@@ -248,6 +248,8 @@ export interface Mrc721CollectionSummary {
   genesisChainName?: string;
   genesisHeight?: number;
   genesisTx?: string;
+  /** Authoritative minted count (MetaSo rows; falls back to totalnum). */
+  mintedCount?: number;
   totalnum?: number;
 }
 
@@ -674,6 +676,24 @@ export async function searchMrc721Collections(params: {
     const supplyState: Record<string, Mrc721CollectionSupplyState> = {};
     for (const row of items.slice(0, MRC721_SEARCH_SUPPLY_STATE_CAP)) {
       if (!row.pinid) continue;
+      // MetaSo fast path: the server rows already carry the authoritative
+      // minted count (mintedCount, falling back to totalnum) — no per-
+      // collection item paging needed.
+      const servedMinted = Number.isFinite(Number(row.mintedCount))
+        ? Number(row.mintedCount)
+        : Number.isFinite(Number(row.totalnum))
+          ? Number(row.totalnum)
+          : undefined;
+      if (serverSearch && servedMinted != null) {
+        supplyState[row.pinid] = {
+          totalSupply: row.totalSupply,
+          mintedCount: servedMinted,
+          complete: row.totalSupply != null && row.totalSupply >= 0
+            ? servedMinted >= row.totalSupply
+            : null,
+        };
+        continue;
+      }
       let mintedCount = 0;
       let exhausted = false;
       let itemCursor: string | number | undefined;

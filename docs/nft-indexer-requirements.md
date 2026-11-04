@@ -11,11 +11,12 @@ re-targeted 2026-11-05 per the owner's indexing-architecture decision:
 > on.
 
 Disposition of earlier work: the man-p2p branch
-`feat/mrc721-search-sellintents` (R-A/R-B/R-C implemented there first) is
-**parked/superseded, never merged** — kept as a reference for the MetaSo
-port. man-p2p main needs NO changes for the sell-intent protocol:
-`/protocols/mrc721sell` pins are ordinary pins in its raw index, which is
-exactly the purity this decision preserves.
+`feat/mrc721-search-sellintents` (R-A/R-B/R-C were implemented there first,
+superseded by the MetaSo port) was **deleted unmerged** on 2026-11-05 with
+the owner's blessing — man-p2p main never carried any of it. man-p2p needs
+NO changes for the sell-intent protocol: `/protocols/mrc721sell` pins are
+ordinary pins in its raw index, which is exactly the purity this decision
+preserves.
 
 The "conventions" below are now the CLIENT CONTRACT: whatever serves these
 endpoints (MetaSo today) must match them so the IDBots client keeps working.
