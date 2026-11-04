@@ -59,10 +59,14 @@ export interface PhoneUploadProgress {
   path?: string;
 }
 
+export type PhoneFileSelectionSource = 'camera' | 'photos' | 'files';
+export type PhoneFileSelectionErrorCode = UploadErrorCode | 'PERMISSION_DENIED' | 'UNAVAILABLE' | 'NATIVE_FAILED';
+
 export interface PhoneFileSelectionOptions {
   title?: string;
   filters?: { name: string; extensions: string[] }[];
   multi?: boolean;
+  source?: PhoneFileSelectionSource;
   onUploadProgress?: (progress: PhoneUploadProgress) => void;
 }
 
@@ -71,7 +75,7 @@ export interface PhoneFileSelectionResult {
   path: string | null;
   paths?: string[];
   error?: string;
-  errorCode?: UploadErrorCode;
+  errorCode?: PhoneFileSelectionErrorCode;
   failedIndex?: number;
 }
 
@@ -276,8 +280,14 @@ function uploadErrorCode(error: unknown): UploadErrorCode {
   return 'UPLOAD_FAILED';
 }
 
+function selectionErrorCode(error: unknown): PhoneFileSelectionErrorCode {
+  const code = (error as { code?: unknown } | null)?.code;
+  if (code === 'PERMISSION_DENIED' || code === 'UNAVAILABLE' || code === 'NATIVE_FAILED' || code === 'TOO_LARGE') return code;
+  return 'UPLOAD_FAILED';
+}
+
 export async function selectFileOnPhone(
-  deps: Pick<ShimDeps, 'uploadFile'>,
+  deps: Pick<ShimDeps, 'uploadFile' | 'nativeAdapter'>,
   options: unknown,
 ): Promise<PhoneFileSelectionResult> {
   const upload = deps.uploadFile;
@@ -291,7 +301,31 @@ export async function selectFileOnPhone(
     return { success: true, path: null, paths: [] };
   }
   const opts = (options ?? {}) as PhoneFileSelectionOptions;
-  const files = await pickFiles(doc, acceptFromFilters(opts.filters), opts.multi === true);
+  const source = opts.source ?? 'files';
+  const adapter = deps.nativeAdapter ?? (typeof window === 'undefined' ? null : getNativeAdapter());
+  const capabilities = adapter?.getCapabilities();
+  let files: File[] | null;
+  try {
+    if (adapter && source !== 'files' && capabilities?.[source] === true) {
+      const file = await adapter.pickPhoto(source);
+      files = file ? [file] : null;
+    } else if (adapter && source === 'files' && capabilities?.files === true) {
+      files = await adapter.pickFiles(opts.multi === true);
+    } else {
+      const accept = acceptFromFilters(opts.filters) || (source === 'files' ? '' : 'image/*');
+      files = await pickFiles(doc, accept, opts.multi === true);
+    }
+  } catch (error) {
+    if ((error as { code?: unknown } | null)?.code === 'CANCELLED') return { success: true, path: null, paths: [] };
+    return {
+      success: false,
+      path: null,
+      paths: [],
+      error: error instanceof Error ? error.message : 'File selection failed',
+      errorCode: selectionErrorCode(error),
+      failedIndex: 0,
+    };
+  }
   if (!files || files.length === 0) {
     // Cancelled shape matches the desktop dialog: success with null path.
     return { success: true, path: null, paths: [] };

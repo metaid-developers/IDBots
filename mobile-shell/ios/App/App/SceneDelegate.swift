@@ -21,4 +21,12 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     func scene(_ scene: UIScene, continue userActivity: NSUserActivity) {
         SceneDelegateProxy.shared.scene(scene, continue: userActivity)
     }
+
+    func sceneDidEnterBackground(_ scene: UIScene) {
+        NativeSecureScreen.didEnterBackground(in: window)
+    }
+
+    func sceneWillEnterForeground(_ scene: UIScene) {
+        NativeSecureScreen.willEnterForeground()
+    }
 }

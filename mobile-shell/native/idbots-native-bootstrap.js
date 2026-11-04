@@ -9,6 +9,29 @@
 
   const appPlugin = () => window.Capacitor?.Plugins?.App;
   const nativeBackPlugin = () => window.Capacitor?.Plugins?.NativeBack;
+  const nativeCapabilitiesPlugin = () => window.Capacitor?.Plugins?.NativeCapabilities;
+  const hasNativeMethod = (name) => typeof nativeCapabilitiesPlugin()?.[name] === 'function';
+  const nativeFailure = (message, code) => {
+    const error = new Error(message);
+    error.code = code;
+    return error;
+  };
+  const readNativeFile = async (descriptor) => {
+    if (!descriptor || typeof descriptor.uri !== 'string' || !hasNativeMethod('readFile')) {
+      throw nativeFailure('Native file reading is unavailable', 'UNAVAILABLE');
+    }
+    const payload = await nativeCapabilitiesPlugin().readFile({
+      uri: descriptor.uri,
+      temporary: descriptor.temporary === true,
+    });
+    const binary = atob(payload.data);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+    return new File([bytes], payload.name || descriptor.name || 'file', {
+      type: payload.mime || descriptor.mime || 'application/octet-stream',
+      lastModified: Date.now(),
+    });
+  };
   const hasAppListeners = () => typeof appPlugin()?.addListener === 'function';
   const exitAndroidApp = () => {
     const plugin = nativeBackPlugin();
@@ -49,15 +72,43 @@
     nativeBridgeVersion: 1,
     bootstrap: Object.freeze({ phase: 'document-start', origin: remoteOrigin, platform }),
     getCapabilities: () => ({
-      camera: false,
-      photos: false,
-      files: false,
-      share: false,
+      camera: hasNativeMethod('pickPhoto'),
+      photos: hasNativeMethod('pickPhoto'),
+      files: hasNativeMethod('pickFiles') && hasNativeMethod('readFile'),
+      share: hasNativeMethod('shareArtifact'),
       appState: hasAppListeners(),
       backButton: platform === 'android' && hasAppListeners(),
       externalUrls: true,
-      secureScreen: false,
+      secureScreen: hasNativeMethod('setSecureScreen'),
     }),
+    pickPhoto: async (source = 'photos') => {
+      if (!hasNativeMethod('pickPhoto')) throw nativeFailure('Native photo selection is unavailable', 'UNAVAILABLE');
+      const result = await nativeCapabilitiesPlugin().pickPhoto({ source });
+      return result?.file ? readNativeFile(result.file) : null;
+    },
+    pickFiles: async (multi = true) => {
+      if (!hasNativeMethod('pickFiles') || !hasNativeMethod('readFile')) {
+        throw nativeFailure('Native file selection is unavailable', 'UNAVAILABLE');
+      }
+      const result = await nativeCapabilitiesPlugin().pickFiles({ allowMultiple: multi === true });
+      const descriptors = Array.isArray(result?.files) ? result.files : [];
+      const files = [];
+      for (const descriptor of descriptors) files.push(await readNativeFile(descriptor));
+      return files;
+    },
+    shareArtifact: async ({ url, filename }) => {
+      if (!hasNativeMethod('shareArtifact')) throw nativeFailure('Native sharing is unavailable', 'UNAVAILABLE');
+      const parsed = new URL(String(url).trim());
+      if ((parsed.protocol !== 'https:' && parsed.protocol !== 'http:') || !parsed.host || parsed.username || parsed.password) {
+        throw nativeFailure('Only HTTP(S) artifact URLs can be shared', 'NATIVE_FAILED');
+      }
+      const result = await nativeCapabilitiesPlugin().shareArtifact({ url: parsed.toString(), filename });
+      return result?.result === 'cancelled' ? 'cancelled' : 'shared';
+    },
+    setSecureScreen: async (enabled) => {
+      if (!hasNativeMethod('setSecureScreen')) throw nativeFailure('Secure screen is unavailable', 'UNAVAILABLE');
+      await nativeCapabilitiesPlugin().setSecureScreen({ enabled: enabled === true });
+    },
     openExternal: async (value) => {
       const url = approvedExternalUrl(value);
       window.location.assign(url);
