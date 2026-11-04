@@ -299,6 +299,30 @@ export interface QQGatewayStatus {
 
 export type IMPlatform = 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'nim' | 'xiaomifeng' | 'weixin' | 'qq';
 
+/**
+ * A gateway that can send into an existing conversation WITHOUT an inbound
+ * message closure to reply through.
+ *
+ * This is the capability seam behind out-of-turn delivery (a turn triggered by
+ * an [ORCH-NOTIFY] cross-session injection, a scheduled wake, ...): the
+ * handler only knows the conversation id it already holds, never a platform
+ * SDK object. Gateways whose outbound API needs a live message/channel handle
+ * (DingTalk session webhook, Discord channel object) simply do not implement
+ * this interface, and their out-of-turn replies degrade to desktop-only with
+ * an explicit log instead of throwing.
+ */
+export interface IMConversationSender {
+  sendToConversation(conversationId: string, text: string): Promise<void>;
+  /**
+   * Optional media counterpart, used by desktop-initiated sends
+   * (`im_send_message`). Gateways that can deliver a file into an existing
+   * conversation implement it by delegating to their own native media path;
+   * the desktop layer then reports an explicit error instead of dropping the
+   * attachment when it is absent.
+   */
+  sendMediaToConversation?(conversationId: string, filePath: string): Promise<void>;
+}
+
 export interface IMGatewayConfig {
   dingtalk: DingTalkConfig;
   feishu: FeishuConfig;
@@ -309,9 +333,31 @@ export interface IMGatewayConfig {
   settings: IMSettings;
 }
 
+/**
+ * Per-channel permission mode. The DEFAULT is `inherit`: an IM session uses the
+ * same persisted global permission mode as the desktop app (see
+ * getPersistedCoworkPermissionMode), so "完全信任 / bypassPermissions" chosen on
+ * the desktop is also in force in chat — no separate channel policy.
+ *
+ * A channel MAY override the mode (e.g. force `default` in a group chat, or
+ * `bypassPermissions` for one channel only). `inherit` / absent / unknown all
+ * fall back to the global value.
+ */
+export type IMChannelPermissionMode =
+  | 'inherit'
+  | 'default'
+  | 'plan'
+  | 'acceptEdits'
+  | 'bypassPermissions';
+
+export interface IMChannelPermissionSettings {
+  weixinPermissionMode?: IMChannelPermissionMode;
+}
+
 export interface IMSettings {
   systemPrompt?: string;
   skillsEnabled: boolean;
+  channelPermissions?: IMChannelPermissionSettings;
 }
 
 export interface IMGatewayStatus {

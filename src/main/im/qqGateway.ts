@@ -37,6 +37,10 @@ import {
   QQ_DEFAULT_API_BASE_URL,
   QQ_DEFAULT_TOKEN_BASE_URL,
   QQ_INBOUND_MAX_ATTACHMENTS,
+  QQ_MEDIA_LIMITS_BYTES,
+  QQ_OUTBOUND_IMAGE_EXTENSIONS,
+  QQ_OUTBOUND_VIDEO_EXTENSIONS,
+  QQ_OUTBOUND_VOICE_EXTENSIONS,
   QQ_PASSIVE_REPLY_TTL_MS,
   QQ_TARGET_CACHE_MAX_ENTRIES,
   QQ_TOKEN_PATH,
@@ -61,6 +65,7 @@ import {
   checkQQOutboundFile,
   type QQMediaNetwork,
 } from './qqMedia';
+import type { IMOutboundCapabilities } from './imOutbound';
 import { QQStore, normalizeQQAccountId, type QQCredentialSource } from './qqStore';
 import {
   QQGroupCandidateStore,
@@ -1404,6 +1409,14 @@ export class QQGateway extends EventEmitter {
   private resolveTarget(conversationId: string): QQTarget {
     const cached = this.targets.get(conversationId);
     if (!cached) {
+      // Desktop-initiated sends may run before any inbound message established
+      // a passive-reply target. The ONLY id allowed to bypass the cache is the
+      // bound owner's own C2C conversation (ownerUserOpenid, written when the
+      // owner scanned the QR); it degrades to a platform active push.
+      const ownerOpenid = (this.config?.ownerUserOpenid || '').trim();
+      if (ownerOpenid && conversationId === qqConversationId('c2c', ownerOpenid)) {
+        return { scope: 'c2c', targetId: ownerOpenid };
+      }
       throw new QQProtocolError(`no QQ reply target for conversation ${conversationId}`);
     }
     const age = this.now() - cached.receivedAt;
@@ -1507,6 +1520,66 @@ export class QQGateway extends EventEmitter {
     this.lastConversationId = conversationId;
     this.status = { ...this.status, lastOutboundAt: this.now(), lastError: null };
     this.emitStatus();
+  }
+
+  /**
+   * Out-of-turn send into an existing conversation (IMConversationSender).
+   * Same chunking and target resolution as the inbound reply path, which also
+   * delivers text through `sendText`.
+   */
+  async sendToConversation(conversationId: string, text: string): Promise<void> {
+    await this.sendText(conversationId, text);
+  }
+
+  /** Deliver one local file into an existing conversation (desktop-initiated). */
+  async sendMediaToConversation(conversationId: string, filePath: string): Promise<void> {
+    await this.sendMedia(conversationId, filePath);
+  }
+
+  /**
+   * The owner's C2C conversation id. QQ HAS a QR-bound owner
+   * (`ownerUserOpenid`), so that id wins: it cannot be a stranger who happened
+   * to DM the bot after the owner did. Falls back to the last c2c chat seen.
+   */
+  getLastDirectConversationId(): string | null {
+    const ownerOpenid = (this.config?.ownerUserOpenid || '').trim();
+    if (ownerOpenid) return qqConversationId('c2c', ownerOpenid);
+    if (this.lastConversationId?.startsWith('qq:c2c:')) return this.lastConversationId;
+    return null;
+  }
+
+  /**
+   * Only the QR-bound `ownerUserOpenid` counts. Without it the id above falls
+   * back to the last c2c chat seen — anyone who DMs the bot first — so this
+   * reports `false` and the copy must not call that chat the owner's.
+   */
+  isOwnerIdentityBound(): boolean {
+    return Boolean((this.config?.ownerUserOpenid || '').trim());
+  }
+
+  /**
+   * What this channel can send, read from the same tables the send path uses
+   * (`classifyQQOutbound` + `QQ_MEDIA_LIMITS_BYTES`, copied from the SDK's
+   * `MEDIA_FILE_TYPE_INFO`). Voice means the SDK's SILK/AMR voice item; other
+   * audio (mp3/wav/…) travels as an ordinary file.
+   */
+  describeOutboundCapabilities(): IMOutboundCapabilities {
+    return {
+      extensionsByKind: {
+        image: [...QQ_OUTBOUND_IMAGE_EXTENSIONS],
+        video: [...QQ_OUTBOUND_VIDEO_EXTENSIONS],
+        audio: [...QQ_OUTBOUND_VOICE_EXTENSIONS],
+        // Everything else (mp3/wav/pdf/zip/…) goes through the SDK's file
+        // sender; listing a few common ones only decorates the prompt.
+        file: ['mp3', 'wav', 'm4a', 'ogg', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'zip'],
+      },
+      maxBytesByKind: {
+        image: QQ_MEDIA_LIMITS_BYTES.image,
+        video: QQ_MEDIA_LIMITS_BYTES.video,
+        audio: QQ_MEDIA_LIMITS_BYTES.voice,
+        file: QQ_MEDIA_LIMITS_BYTES.file,
+      },
+    };
   }
 
   /**

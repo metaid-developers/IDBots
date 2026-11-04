@@ -198,9 +198,21 @@ export interface IMGatewayConfig {
   settings: IMSettings;
 }
 
+export type IMChannelPermissionMode =
+  | 'inherit'
+  | 'default'
+  | 'plan'
+  | 'acceptEdits'
+  | 'bypassPermissions';
+
+export interface IMChannelPermissionSettings {
+  weixinPermissionMode?: IMChannelPermissionMode;
+}
+
 export interface IMSettings {
   systemPrompt?: string;
   skillsEnabled: boolean;
+  channelPermissions?: IMChannelPermissionSettings;
 }
 
 export interface IMGatewayStatus {

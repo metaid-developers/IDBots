@@ -22,6 +22,7 @@ import {
   buildWeixinCdnUploadUrl,
   buildWeixinMediaItem,
   decryptAesEcb,
+  describeWeixinOutboundCapabilities,
   downloadWeixinMedia,
   encryptAesEcb,
   extensionForMime,
@@ -40,6 +41,8 @@ import {
   WeixinMediaError,
   WEIXIN_INBOUND_MAX_IMAGE_BYTES,
   WEIXIN_INBOUND_MAX_VIDEO_BYTES,
+  WEIXIN_OUTBOUND_MAX_BYTES,
+  WEIXIN_UPLOAD_MEDIA_TYPE,
   WEIXIN_VIDEO_PLAY_LENGTH_UNIT,
   type WeixinMediaNetwork,
   type WeixinMediaRef,
@@ -47,13 +50,20 @@ import {
 import {
   describeWeixinAttachments,
   formatWeixinMediaSize,
+  WEIXIN_GROUP_MESSAGING_SUPPORTED,
+  WEIXIN_INBOUND_VOICE_AUDIO_SUPPORTED,
   WEIXIN_ITEM_TYPE_FILE,
   WEIXIN_ITEM_TYPE_IMAGE,
   WEIXIN_ITEM_TYPE_VIDEO,
 } from '../src/main/im/weixinProtocol';
+import {
+  buildChannelCapabilitiesBlock,
+  formatChannelCapabilityByteLimit,
+} from '../src/main/libs/experiencePromptBlocks';
 import { decideWeixinImageCompression } from '../src/main/im/weixinImage';
 import { WeixinGateway } from '../src/main/im/weixinGateway';
 import { WeixinStore } from '../src/main/im/weixinStore';
+import type { WeixinLedgerEntry, WeixinMessageLedger } from '../src/main/im/weixinLedger';
 import type { WeixinHttpRequest, WeixinHttpResponse, WeixinTransport } from '../src/main/im/weixinTransport';
 
 // ---------------------------------------------------------------------------
@@ -406,8 +416,11 @@ test('downloadWeixinMedia discards oversize bodies without writing a file', asyn
 
 test('downloadWeixinMedia fails closed on a bad key instead of writing garbage', async () => {
   const dir = tempDir('idbots-weixin-in-');
-  const key = crypto.randomBytes(16);
-  const wrongKey = crypto.randomBytes(16);
+  // FIXED keys, not random: with a random wrong key ~1/256 decryptions happen
+  // to end in valid PKCS#7 padding and do NOT throw (observed once in a full
+  // suite run on 2026-11-04). Fixed input makes the expectation deterministic.
+  const key = Buffer.alloc(16, 0x11);
+  const wrongKey = Buffer.alloc(16, 0x22);
   const network = new FakeMediaNetwork(() => encryptAesEcb(pngBytes(), key));
 
   await assert.rejects(
@@ -606,7 +619,98 @@ test('uploadKindForFile maps extensions onto upload media types', () => {
   assert.deepEqual(uploadKindForFile('clip.MP4'), { kind: 'video', mediaType: 2 });
   assert.deepEqual(uploadKindForFile('report.pdf'), { kind: 'file', mediaType: 3 });
   assert.deepEqual(uploadKindForFile('unknown.zzz'), { kind: 'file', mediaType: 3 });
+  // Audio is a FILE attachment: this channel has no voice-bubble path.
+  for (const extension of ['.mp3', '.wav', '.m4a', '.ogg']) {
+    assert.deepEqual(
+      uploadKindForFile(`recording${extension}`),
+      { kind: 'file', mediaType: WEIXIN_UPLOAD_MEDIA_TYPE.file },
+      `${extension} must be sent as a file`
+    );
+  }
+  // Extensions are matched case-insensitively, like every other kind.
+  assert.deepEqual(uploadKindForFile('RECORDING.MP3'), { kind: 'file', mediaType: 3 });
 });
+
+// ---------------------------------------------------------------------------
+// Channel capability manifest (constant-derived)
+// ---------------------------------------------------------------------------
+
+test('channel capability block lists exactly what the media tables actually support', () => {
+  const block = buildChannelCapabilitiesBlock('im:weixin:direct');
+  const capabilities = describeWeixinOutboundCapabilities();
+
+  assert.match(block, /^<channel_capabilities /);
+  for (const [kind, extensions] of Object.entries(capabilities.extensionsByKind)) {
+    for (const extension of extensions) {
+      assert.ok(block.includes(`.${extension}`), `${kind} extension .${extension} missing from the block`);
+    }
+  }
+  // The ceiling is the constant, formatted from it — not a hand-typed 100 MB.
+  assert.equal(capabilities.maxOutboundBytes, WEIXIN_OUTBOUND_MAX_BYTES);
+  assert.ok(block.includes(formatChannelCapabilityByteLimit(WEIXIN_OUTBOUND_MAX_BYTES)));
+  assert.ok(block.includes(String(WEIXIN_OUTBOUND_MAX_BYTES)));
+
+  // Same-source invariant: every audio extension really is a FILE attachment,
+  // and the block says so instead of advertising a voice bubble.
+  assert.ok(capabilities.audioExtensions.length > 0, 'the manifest must know its audio extensions');
+  for (const extension of capabilities.audioExtensions) {
+    assert.deepEqual(
+      uploadKindForFile(`sample.${extension}`),
+      { kind: 'file', mediaType: WEIXIN_UPLOAD_MEDIA_TYPE.file },
+      `.${extension} is audio and must be sent as a file`
+    );
+  }
+  assert.match(block, /- 音频：.*按普通文件发送/);
+  assert.match(block, /不生成语音条/);
+  assert.doesNotMatch(block, /语音条（voice item/);
+
+  // The "cannot do" facts come from the protocol constants, not from prose.
+  assert.equal(
+    block.includes('只使用服务端转写文字'),
+    !WEIXIN_INBOUND_VOICE_AUDIO_SUPPORTED
+  );
+});
+
+test('channel capability block is injected for weixin IM and the desktop inventory', () => {
+  assert.equal(buildChannelCapabilitiesBlock(null), '');
+  assert.equal(buildChannelCapabilitiesBlock(undefined), '');
+  // cowork_ui now always renders an explicit block: silence was what sent the
+  // desktop agent off to drive the WeChat client window. With no inventory it
+  // must SAY there is no usable channel, never return ''.
+  assert.match(buildChannelCapabilitiesBlock('cowork_ui'), /当前没有可用通道/);
+  assert.equal(buildChannelCapabilitiesBlock('im:qq:direct'), '');
+  assert.notEqual(buildChannelCapabilitiesBlock('im:weixin'), '');
+  assert.notEqual(buildChannelCapabilitiesBlock('IM:Weixin:Direct'), '');
+});
+
+test('weixin group chats are described as disabled while the constant says so', () => {
+  const block = buildChannelCapabilitiesBlock('im:weixin:group');
+  if (WEIXIN_GROUP_MESSAGING_SUPPORTED) {
+    assert.match(block, /群聊/);
+  } else {
+    assert.ok(block.includes('WEIXIN_GROUP_MESSAGING_SUPPORTED = false'));
+    assert.ok(block.includes('不要尝试在此会话发送任何微信消息或附件'));
+  }
+});
+
+test('wiring: the cowork volatile tail injects the capability block from the session channel', () => {
+  const source = fs.readFileSync(path.resolve('src/main/libs/coworkRunner.ts'), 'utf8');
+  assert.match(source, /key: 'channel-capabilities'/, 'the volatile tail must carry the block');
+  // The channel comes from the session row — never from a prompt argument.
+  assert.match(
+    source,
+    /const capabilitySourceChannel =\s*\n?\s*this\.store\.getConversationSourceContextBySession\(sessionId\)/,
+    'the block must be derived from the session sourceChannel'
+  );
+  // Desktop sessions additionally get the live IM inventory; im: sessions keep
+  // their own per-channel manifest.
+  assert.match(
+    source,
+    /connectedChannels: capabilitySourceChannel === 'cowork_ui'/,
+    'cowork_ui must receive the live outbound-channel inventory'
+  );
+});
+
 
 // ---------------------------------------------------------------------------
 // Outbound image policy
@@ -669,7 +773,10 @@ class FakeTransport implements WeixinTransport {
 function makeGateway(
   transport: FakeTransport,
   mediaNetwork: FakeMediaNetwork,
-  mediaRootDir: string
+  mediaRootDir: string,
+  extra: {
+    messageLedger?: WeixinMessageLedger;
+  } = {}
 ): WeixinGateway {
   const store = new WeixinStore(tempDir('idbots-weixin-media-store-'));
   store.saveCredentials(
@@ -690,6 +797,7 @@ function makeGateway(
     },
     pollBackoffMs: [1, 1, 1],
     pollTimeoutMs: 50,
+    ...extra,
   });
 }
 
@@ -721,6 +829,33 @@ function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
     };
     poll();
   });
+}
+
+/**
+ * Collect console.warn output as one searchable string. Used to prove that a
+ * degrade is LOGGED (the log line is part of the contract), and always restored
+ * in a finally so a failure cannot silence the suite.
+ */
+function captureWarn(): { text: () => string; restore: () => void } {
+  const lines: string[] = [];
+  const original = console.warn;
+  const stringify = (value: unknown): string => {
+    if (typeof value === 'string') return value;
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  };
+  console.warn = (...args: unknown[]) => {
+    lines.push(args.map(stringify).join(' '));
+  };
+  return {
+    text: () => lines.join('\n'),
+    restore: () => {
+      console.warn = original;
+    },
+  };
 }
 
 test('gateway downloads an inbound image and hands attachments to IMMessage', async () => {
@@ -892,6 +1027,91 @@ test('sendMedia uploads the encrypted bytes and sends an image item', async () =
   );
 });
 
+test('sendMedia records the outbound message id so a later quote names the media type', async () => {
+  const mediaRoot = tempDir('idbots-weixin-media-root-');
+  const mediaNetwork = new FakeMediaNetwork();
+  const rows = new Map<string, WeixinLedgerEntry>();
+  const messageLedger: WeixinMessageLedger = {
+    put: (entry) => {
+      rows.set(entry.msgId, entry);
+    },
+    get: (msgId) => rows.get(msgId) ?? null,
+  };
+  const transport = new FakeTransport((request) => {
+    if (request.path === 'ilink/bot/getuploadurl') {
+      return { status: 200, data: { ret: 0, upload_param: 'upload-token' } };
+    }
+    if (request.path === 'ilink/bot/sendmessage') {
+      return { status: 200, data: { ret: 0, message_id: '7523489994131519399' } };
+    }
+    return blockingLongPoll(request);
+  });
+
+  const gateway = makeGateway(transport, mediaNetwork, mediaRoot, { messageLedger });
+  const sourcePath = path.join(mediaRoot, 'quoted.png');
+  fs.writeFileSync(sourcePath, pngBytes('quoted-image'));
+
+  await gateway.start({ enabled: true, accountId: 'default' });
+  try {
+    await gateway.sendMedia('wx_user_quoted', sourcePath);
+  } finally {
+    await gateway.stop();
+  }
+
+  const row = rows.get('7523489994131519399');
+  assert.ok(row, 'the media sendmessage id must be in the ledger');
+  assert.equal(row?.direction, 'out');
+  assert.equal(row?.kind, 'image');
+  // No caption is stored for a bare media send: quoting it must say
+  // "引用了一张图片", never a guessed file name.
+  assert.equal(row?.text, null);
+  assert.equal(row?.conversationId, 'wx_user_quoted');
+});
+
+test('sendMedia sends an audio file as a FILE item, never a voice bubble', async () => {
+  const mediaRoot = tempDir('idbots-weixin-media-root-');
+  const mediaNetwork = new FakeMediaNetwork();
+  const transport = new FakeTransport((request) => {
+    if (request.path === 'ilink/bot/getuploadurl') {
+      return { status: 200, data: { ret: 0, upload_param: 'upload-token' } };
+    }
+    if (request.path === 'ilink/bot/sendmessage') {
+      return { status: 200, data: { ret: 0, message_id: 44 } };
+    }
+    return blockingLongPoll(request);
+  });
+
+  const gateway = makeGateway(transport, mediaNetwork, mediaRoot);
+  const sourcePath = path.join(mediaRoot, 'note.mp3');
+  const plaintext = Buffer.concat([Buffer.from('ID3\x04\x00\x00', 'binary'), Buffer.alloc(64, 0)]);
+  fs.writeFileSync(sourcePath, plaintext);
+
+  await gateway.start({ enabled: true, accountId: 'default' });
+  try {
+    await gateway.sendMedia('wx_user_audio', sourcePath);
+  } finally {
+    await gateway.stop();
+  }
+
+  const uploadBody = transport.callsTo('ilink/bot/getuploadurl')[0].body as Record<string, unknown>;
+  assert.equal(uploadBody.media_type, WEIXIN_UPLOAD_MEDIA_TYPE.file, 'audio must upload as media_type 3');
+  assert.equal(uploadBody.rawsize, plaintext.length, 'the original audio bytes are uploaded untouched');
+
+  const sendBody = transport.callsTo('ilink/bot/sendmessage')[0].body as {
+    msg: { item_list: Array<Record<string, any>> };
+  };
+  const item = sendBody.msg.item_list[0];
+  assert.equal(item.type, WEIXIN_ITEM_TYPE_FILE, 'item type 4 = file');
+  assert.equal(item.voice_item, undefined, 'no voice item is produced');
+  assert.equal(item.file_item.file_name, 'note.mp3');
+  assert.equal(item.file_item.len, String(plaintext.length));
+
+  // The CDN got exactly the source bytes — no transcode happened.
+  assert.deepEqual(mediaNetwork.uploadedBodies.length, 1);
+  const uploadBodyAes = Buffer.from(String(uploadBody.aeskey), 'hex');
+  assert.deepEqual(decryptAesEcb(mediaNetwork.uploadedBodies[0], uploadBodyAes), plaintext);
+});
+
 test('sendMedia refuses files above the client ceiling and empty files', async () => {
   const mediaRoot = tempDir('idbots-weixin-media-root-');
   const transport = new FakeTransport((request) => blockingLongPoll(request));
@@ -999,4 +1219,44 @@ test('replyFn reports a missing media file instead of staying silent', async () 
   });
   const texts = sends.map((send) => String(send.msg.item_list[0]?.text_item?.text || ''));
   assert.ok(texts.some((text) => text.includes('附件未找到')), `expected a failure notice, got ${JSON.stringify(texts)}`);
+});
+
+test('sendToConversation delivers text and media with no inbound reply closure', async () => {
+  // The out-of-turn seam: a turn triggered by an injected notification has no
+  // `replyFn`, so IMCoworkHandler calls this method with the conversation id it
+  // stored from an earlier inbound message. Media markers must resolve here too.
+  const mediaRoot = tempDir('idbots-weixin-media-root-');
+  const mediaNetwork = new FakeMediaNetwork();
+  const transport = new FakeTransport((request) => {
+    if (request.path === 'ilink/bot/getuploadurl') {
+      return { status: 200, data: { ret: 0, upload_full_url: 'https://novac2c.cdn.weixin.qq.com/c2c/upload?encrypted_query_param=x&filekey=y' } };
+    }
+    if (request.path === 'ilink/bot/sendmessage') {
+      return { status: 200, data: { ret: 0 } };
+    }
+    return blockingLongPoll(request);
+  });
+
+  const gateway = makeGateway(transport, mediaNetwork, mediaRoot);
+  const imagePath = path.join(mediaRoot, 'out-of-turn.png');
+  fs.writeFileSync(imagePath, pngBytes('out-of-turn-image'));
+
+  await gateway.start({ enabled: true, accountId: 'default' });
+  try {
+    // No inbound message was ever handled in this test: exactly the ORCH-NOTIFY
+    // shape, where only the conversation id is known.
+    await gateway.sendToConversation('user@im.wechat', `编排已回执：\n![截图](${imagePath})`);
+  } finally {
+    await gateway.stop();
+  }
+
+  const sends = transport.callsTo('ilink/bot/sendmessage').map((call) => call.body as {
+    msg: { to_user_id: string; item_list: Array<Record<string, any>> };
+  });
+  assert.equal(sends.length, 2, 'one text message + one media message');
+  assert.equal(sends[0].msg.to_user_id, 'user@im.wechat');
+  assert.equal(sends[0].msg.item_list[0].type, 1);
+  assert.equal(sends[0].msg.item_list[0].text_item.text, '编排已回执：');
+  assert.equal(sends[1].msg.item_list[0].type, WEIXIN_ITEM_TYPE_IMAGE);
+  assert.equal(sends[1].msg.item_list[0].image_item.media.encrypt_query_param, 'test-encrypted-param');
 });

@@ -26,6 +26,14 @@
  * remote-supplied filename goes through `sanitizeWeixinFileName` first. The
  * on-disk name is generated locally; the remote name is only kept as display
  * metadata (`IMMediaAttachment.fileName`).
+ *
+ * OUTBOUND AUDIO — an `audio/*` file is an ordinary FILE attachment: uploaded
+ * with `media_type: 3` and sent as a `file_item`, like any other document. The
+ * client shows an audio file, not a voice bubble. A SILK `voice_item` was tried
+ * and measured on-device on 2026-11-04: the bytes uploaded and the server
+ * accepted them, but the WeChat client did not render a bubble, so the transcode
+ * path was removed. Inbound voice policy is untouched: audio is not downloaded,
+ * only the server transcript (`voice_item.text`) is surfaced.
  */
 
 import * as crypto from 'crypto';
@@ -95,7 +103,6 @@ export const WEIXIN_UPLOAD_MEDIA_TYPE = {
   image: 1,
   video: 2,
   file: 3,
-  voice: 4,
 } as const;
 
 export type WeixinUploadMediaType = (typeof WEIXIN_UPLOAD_MEDIA_TYPE)[keyof typeof WEIXIN_UPLOAD_MEDIA_TYPE];
@@ -356,6 +363,55 @@ export function sniffImageMime(buffer: Buffer): string | null {
   }
   if (buffer.length >= 2 && buffer[0] === 0x42 && buffer[1] === 0x4d) return 'image/bmp';
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Outbound capability manifest (shared with the prompt layer)
+// ---------------------------------------------------------------------------
+
+/**
+ * Machine-readable description of what this channel can SEND, derived from the
+ * same tables the send path uses (`MIME_BY_EXTENSION` → `uploadKindForFile`) and
+ * the same byte ceiling (`WEIXIN_OUTBOUND_MAX_BYTES`). The prompt-side
+ * capability block is built from this object, so the manifest cannot drift from
+ * real behaviour: adding an extension to the MIME table changes both the sending
+ * decision and the advertised capability in one edit.
+ */
+export interface WeixinOutboundCapabilities {
+  /** Extensions (no leading dot) grouped by the item kind uploadKindForFile returns. */
+  extensionsByKind: Record<'image' | 'video' | 'file', string[]>;
+  /**
+   * Audio extensions. They classify as `file` (see `uploadKindForFile`): the
+   * channel sends them as ordinary audio-file attachments and produces NO voice
+   * bubble. Kept as its own list so the prompt can say that plainly instead of
+   * advertising a message type the send path never produces.
+   */
+  audioExtensions: string[];
+  /** Client-side per-file ceiling, in bytes. */
+  maxOutboundBytes: number;
+}
+
+export function describeWeixinOutboundCapabilities(): WeixinOutboundCapabilities {
+  const extensionsByKind: WeixinOutboundCapabilities['extensionsByKind'] = {
+    image: [],
+    video: [],
+    file: [],
+  };
+  const audioExtensions: string[] = [];
+  for (const extension of Object.keys(MIME_BY_EXTENSION)) {
+    const bare = extension.replace(/^\./, '');
+    if (MIME_BY_EXTENSION[extension].startsWith('audio/')) audioExtensions.push(bare);
+    // Ask the real classifier instead of duplicating the mime→kind rules.
+    const { kind } = uploadKindForFile(`sample${extension}`);
+    extensionsByKind[kind].push(bare);
+  }
+  for (const list of Object.values(extensionsByKind)) list.sort();
+  audioExtensions.sort();
+  return {
+    extensionsByKind,
+    audioExtensions,
+    maxOutboundBytes: WEIXIN_OUTBOUND_MAX_BYTES,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -821,7 +877,14 @@ export function buildWeixinMediaItem(params: {
   };
 }
 
-/** Which upload media_type a local file should use. */
+/**
+ * Which upload media_type a local file should use.
+ *
+ * `audio/*` is deliberately NOT special-cased: it is a FILE attachment
+ * (media_type 3). A SILK voice item was measured on-device on 2026-11-04 and
+ * the client did not render it as a bubble, so this channel has no voice path
+ * and the manifest must not claim one.
+ */
 export function uploadKindForFile(fileName: string): { kind: WeixinMediaRef['kind']; mediaType: WeixinUploadMediaType } {
   const mime = mimeFromFileName(fileName);
   if (mime.startsWith('image/')) return { kind: 'image', mediaType: WEIXIN_UPLOAD_MEDIA_TYPE.image };

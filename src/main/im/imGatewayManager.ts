@@ -25,8 +25,24 @@ import {
   IMConnectivityCheck,
   IMConnectivityTestResult,
   IMConnectivityVerdict,
+  IMConversationSender,
 } from './types';
+import {
+  buildImOutboundConversationRecord,
+  channelLabel,
+  describeImOutboundChannel,
+  normalizeImOutboundChannel,
+  outboundSendResultFromError,
+  sendImOutboundMessage,
+  type IMOutboundCapabilities,
+  type IMOutboundChannelView,
+  type IMOutboundSendRequest,
+  type IMOutboundSendResult,
+  type IMOutboundTransport,
+} from './imOutbound';
 import type { SqliteDatabase as Database } from '../sqliteTypes';
+import { getPersistedCoworkPermissionMode } from '../libs/claudeSettings';
+import { imPlatformFromSessionChannel } from './imPermissionPolicy';
 import type { CoworkRunner } from '../libs/coworkRunner';
 import type { CoworkStore } from '../coworkStore';
 import { tApp } from '../libs/appLanguage';
@@ -67,7 +83,16 @@ export class IMGatewayManager extends EventEmitter {
     this.feishuGateway = new FeishuGateway();
     this.telegramGateway = new TelegramGateway();
     this.discordGateway = new DiscordGateway();
-    this.weixinGateway = new WeixinGateway();
+    this.weixinGateway = new WeixinGateway({
+      // Quote replies: the platform sends only `ref_msg.message_item.msg_id`, so
+      // the quoted content has to come from our own ledger. `IMStore` owns the
+      // table (im_weixin_message_ledger) and its retention policy; the gateway
+      // treats every access as best-effort and falls back to the honest sentence.
+      messageLedger: {
+        put: (entry) => this.imStore.putWeixinLedgerEntry(entry),
+        get: (msgId) => this.imStore.getWeixinLedgerEntry(msgId),
+      },
+    });
     this.qqGateway = new QQGateway({
       // LIVE config: the settings page can change the group allowlist or the
       // layer-3 switch while the gateway is connected. A snapshot from
@@ -370,8 +395,311 @@ export class IMGatewayManager extends EventEmitter {
         coworkStore: this.coworkStore,
         imStore: this.imStore,
         getSkillsPrompt: this.getSkillsPrompt || undefined,
+        // Out-of-turn replies (cross-session injections, scheduled wakes) go
+        // through the same per-conversation capability check as any other
+        // platform: a gateway that implements IMConversationSender delivers
+        // them, every other platform degrades to desktop-only with a log.
+        sendToConversation: async (target, text) => {
+          const sender = this.resolveConversationSender(target.platform);
+          if (!sender) {
+            return false;
+          }
+          await sender.sendToConversation(target.conversationId, text);
+          return true;
+        },
+        // IM turns inherit the app-level permission mode the desktop uses
+        // (完全信任 on the desktop = zero popups in chat). Read lazily on every
+        // turn so a desktop switch applies to the next message.
+        getGlobalPermissionMode: () => getPersistedCoworkPermissionMode(),
       });
       console.log('[IMGatewayManager] Cowork handler created');
+    }
+  }
+
+  /**
+   * Resolve the gateway that can send into a conversation by id alone.
+   *
+   * Derived from the gateway object itself (does it implement
+   * `IMConversationSender`?), never from a platform allowlist: adding capable
+   * support to a gateway is the only change needed, and a gateway that cannot
+   * address a conversation without a live inbound handle keeps returning null
+   * (the handler then logs the desktop-only degradation).
+   */
+  private resolveConversationSender(platform: IMPlatform): IMConversationSender | null {
+    const gateway = this.getGatewayForPlatform(platform);
+    if (!gateway) return null;
+    const candidate = gateway as Partial<IMConversationSender>;
+    return typeof candidate.sendToConversation === 'function'
+      ? (candidate as IMConversationSender)
+      : null;
+  }
+
+  // ==================== Desktop-initiated outbound (im_send_message) ============
+
+  /**
+   * Machine-readable inventory of the IM channels this machine can send
+   * through proactively. The desktop prompt renders the same rows, and the
+   * tool's refusals quote the same `reason` — one source, so the prompt cannot
+   * promise a channel the send path would reject.
+   */
+  listOutboundChannels(): IMOutboundChannelView[] {
+    return MANAGED_IM_PLATFORMS.map((platform) =>
+      describeImOutboundChannel(this.buildOutboundTransport(platform))
+    );
+  }
+
+  /**
+   * Send one message (text and/or local attachments) to the owner's OWN direct
+   * conversation on a connected channel. Unknown / unsupported / disconnected
+   * channels return an explicit failure — never a silent no-op.
+   *
+   * Every attempt is also recorded in the DESTINATION conversation's own cowork
+   * session (the WeChat private chat's message stream), including failures:
+   * that is the chat the human opens to check what actually went out.
+   */
+  async sendImOutbound(request: IMOutboundSendRequest): Promise<IMOutboundSendResult> {
+    const platform = normalizeImOutboundChannel(request.channel);
+    const managed = (MANAGED_IM_PLATFORMS as readonly string[]).includes(platform);
+    // One wall-clock stamp for the whole attempt: the record's id is derived
+    // from it, so re-filing the SAME attempt can never produce a second row,
+    // while a genuinely repeated send (a new attempt) legitimately gets one.
+    const sentAt = Date.now();
+    let result: IMOutboundSendResult;
+    try {
+      const transport = managed
+        ? this.buildOutboundTransport(platform as ManagedIMPlatform)
+        : null;
+      result = await sendImOutboundMessage(transport, request);
+    } catch (error) {
+      // An unexpected throw (transport resolution included) is still a send the
+      // tool must report as a failure instead of an exception.
+      result = outboundSendResultFromError(request.channel, error);
+    }
+    const filingWarning = await this.recordOutboundConversationMessage(request, result, sentAt);
+    if (filingWarning) result.warnings.push(filingWarning);
+    return result;
+  }
+
+  /**
+   * Write one send attempt into the IM conversation's own session, so opening
+   * that chat shows the bubble next to the inbound/reply history.
+   *
+   * Destination: the private chat the send actually addressed; for a refusal
+   * that never resolved a target (channel disconnected / no direct chat), the
+   * channel's most recent known private chat, so the failure is visible where
+   * the human would look instead of only in the log.
+   *
+   * The record is created with a deterministic id and committed through
+   * `addMessageWithId`, so a repeated write (same attempt) updates nothing and
+   * duplicates nothing. A failure here must never downgrade a send that already
+   * happened — it is logged, reported back as a warning, and the channel's own
+   * result is otherwise unchanged.
+   *
+   * Returns a model-facing warning when the record could NOT be filed, or null.
+   */
+  private async recordOutboundConversationMessage(
+    request: IMOutboundSendRequest,
+    result: IMOutboundSendResult,
+    sentAt: number
+  ): Promise<string | null> {
+    const platform = normalizeImOutboundChannel(result.channel);
+    if (!(MANAGED_IM_PLATFORMS as readonly string[]).includes(platform)) {
+      // Unknown channel: there is no IM conversation anywhere on this machine
+      // to file the refusal in. The tool result already names the problem.
+      return null;
+    }
+    const conversationId = (result.target ?? '').trim()
+      || this.resolveLastDirectConversationId(platform as ManagedIMPlatform)
+      || '';
+    if (!conversationId) {
+      console.warn('[IMGatewayManager] No IM conversation to file the outbound attempt', {
+        platform,
+        channel: result.channel,
+      });
+      return `会话记录未写入：${channelLabel(platform)}还没有与你的私聊会话（先给它发一条消息即可建立）。`;
+    }
+    try {
+      // A send that resolved a target proves the channel was connected; a
+      // refusal before that point may only file into an EXISTING chat session —
+      // never invent one for an offline channel (owner ruling).
+      const mayCreateSession = Boolean((result.target ?? '').trim())
+        || this.isPlatformConnected(platform as IMPlatform);
+      const sessionId = await this.resolveOutboundSessionId(
+        platform as IMPlatform,
+        conversationId,
+        mayCreateSession
+      );
+      if (!sessionId) {
+        console.warn('[IMGatewayManager] No IM session for the outbound record', {
+          platform,
+          conversationId,
+        });
+        return '会话记录未写入：无法解析或创建该通道的私聊会话（详见应用日志）。';
+      }
+      const record = buildImOutboundConversationRecord({
+        request,
+        result,
+        timestamp: sentAt,
+        conversationId,
+      });
+      if (this.coworkRunner) {
+        this.coworkRunner.appendHostMessage(sessionId, record);
+        return null;
+      }
+      if (!this.coworkStore) {
+        return '会话记录未写入：本地会话库尚不可用（详见应用日志）。';
+      }
+      this.coworkStore.addMessageWithId(sessionId, record.id, {
+        type: record.type,
+        content: record.content,
+        metadata: record.metadata,
+      });
+      return null;
+    } catch (error) {
+      console.warn('[IMGatewayManager] Failed to record the outbound message in its IM session', {
+        platform,
+        conversationId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return `会话记录未写入：${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+
+  /**
+   * The cowork session that displays one direct IM conversation.
+   *
+   * Lookup is the canonical mapping key — `(channel = im:<platform>:direct,
+   * external_conversation_id = <that chat>, metabot_id)` — NOT the raw session
+   * id of whoever called the tool. A hit whose session still exists wins; a
+   * legacy per-platform binding pointing at a live session is the second
+   * source; otherwise — and only when the channel is connected — the shared IM
+   * session factory creates the chat's session (same title an inbound message
+   * would produce) and writes both mapping tables, so the record has a home and
+   * the next inbound message lands in it.
+   */
+  private async resolveOutboundSessionId(
+    platform: IMPlatform,
+    conversationId: string,
+    allowCreate = true
+  ): Promise<string | null> {
+    const channel = `im:${platform}:direct`;
+    // Prefer the bot the chat is already bound to: a channel route change is
+    // handled by the factory (which recreates), and this keeps an existing
+    // binding addressable when the channel config is momentarily empty.
+    const binding = this.imStore.getSessionMapping?.(conversationId, platform) ?? null;
+    const metabotId = binding?.metabotId ?? this.metabotIdForPlatform(platform);
+    const mapping = this.coworkStore?.getConversationMapping?.(channel, conversationId, metabotId ?? null);
+    if (mapping && this.coworkStore?.getSession(mapping.coworkSessionId)) {
+      return mapping.coworkSessionId;
+    }
+    // Legacy per-platform binding: still the same chat, just written before the
+    // canonical table existed. Never create a duplicate session for it.
+    if (binding?.coworkSessionId && this.coworkStore?.getSession(binding.coworkSessionId)) {
+      return binding.coworkSessionId;
+    }
+    // Owner ruling: only a CONNECTED channel may establish a new chat session.
+    if (!allowCreate || !this.coworkHandler) return null;
+    return this.coworkHandler.ensureDirectConversationSession(platform, conversationId, metabotId);
+  }
+
+  /** Live connection fact for a platform (used to gate session creation). */
+  private isPlatformConnected(platform: IMPlatform): boolean {
+    const gateway = this.getGatewayForPlatform(platform) as {
+      getStatus?: () => { connected?: boolean } | null;
+    } | null;
+    return gateway?.getStatus?.()?.connected === true;
+  }
+
+  /** The bot a channel is configured with (null when the channel has no binding). */
+  private metabotIdForPlatform(platform: IMPlatform): number | null {
+    try {
+      const config = this.imStore.getConfig();
+      const raw = (config as unknown as Record<string, { metabotId?: number | null }>)[platform]?.metabotId;
+      return typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private buildOutboundTransport(platform: ManagedIMPlatform): IMOutboundTransport {
+    const gateway = this.getGatewayForPlatform(platform) as {
+      getStatus?: () => { connected?: boolean } | null;
+      getLastDirectConversationId?: () => string | null;
+      describeOutboundCapabilities?: () => IMOutboundCapabilities;
+      /**
+       * Optional on purpose: the gateway answers for its own platform, and a
+       * gateway that does not implement it is read as "not owner-bound"
+       * (fail-closed). No platform list is hard-coded here, so a channel added
+       * later can never inherit an identity claim it did not earn.
+       */
+      isOwnerIdentityBound?: () => boolean;
+    } | null;
+    const connected = gateway?.getStatus?.()?.connected === true;
+    const sender = this.resolveConversationSender(platform);
+    const capabilities = gateway?.describeOutboundCapabilities?.() ?? null;
+    return {
+      platform,
+      label: channelLabel(platform),
+      connected,
+      conversationId: this.resolveLastDirectConversationId(platform),
+      ownerIdentityBound: gateway?.isOwnerIdentityBound?.() === true,
+      capabilities,
+      sender: sender as IMOutboundTransport['sender'],
+    };
+  }
+
+  /**
+   * The most recent DIRECT conversation this machine has had with the owner on
+   * one channel — the only destination `im_send_message` will ever use.
+   *
+   * Two sources, in order:
+   *   1. the persisted `im_session_mappings` rows, newest first, kept only when
+   *      the mapped session's channel is exactly `im:<platform>:direct`
+   *      (group chats and legacy `im:<platform>` rows without a chat type are
+   *      skipped — "cannot prove direct" never becomes "assume direct");
+   *   2. the gateway's own last-inbound memory, which each gateway updates only
+   *      for direct messages.
+   */
+  private resolveLastDirectConversationId(platform: ManagedIMPlatform): string | null {
+    const persisted = this.findPersistedDirectConversation(platform);
+    if (persisted) return persisted;
+    const gateway = this.getGatewayForPlatform(platform) as {
+      getLastDirectConversationId?: () => string | null;
+    } | null;
+    return gateway?.getLastDirectConversationId?.() ?? null;
+  }
+
+  private findPersistedDirectConversation(platform: ManagedIMPlatform): string | null {
+    const coworkStore = this.coworkStore;
+    if (!coworkStore) return null;
+    let mappings;
+    try {
+      // Newest-first; the first direct row wins. Cap the scan so a long history
+      // cannot turn one prompt build into hundreds of lookups.
+      mappings = this.imStore.listSessionMappings(platform as IMPlatform).slice(0, 20);
+    } catch {
+      return null;
+    }
+    for (const mapping of mappings) {
+      const context = coworkStore.getConversationSourceContextBySession?.(mapping.coworkSessionId);
+      const sourceChannel = (context?.sourceChannel ?? '').toLowerCase();
+      if (sourceChannel === `im:${platform}:direct`) {
+        return mapping.imConversationId;
+      }
+    }
+    return null;
+  }
+
+  private getGatewayForPlatform(platform: IMPlatform): unknown {
+    switch (platform) {
+      case 'dingtalk': return this.dingtalkGateway;
+      case 'feishu': return this.feishuGateway;
+      case 'telegram': return this.telegramGateway;
+      case 'discord': return this.discordGateway;
+      case 'weixin': return this.weixinGateway;
+      case 'qq': return this.qqGateway;
+      // NIM and Xiaomifeng are run by their own services, not this manager.
+      default: return null;
     }
   }
 
@@ -382,6 +710,21 @@ export class IMGatewayManager extends EventEmitter {
    */
   getConfig(): IMGatewayConfig {
     return this.imStore.getConfig();
+  }
+
+  /**
+   * Per-channel permission override for an IM session's channel marker.
+   *
+   * Read-only accessor used by the session-view path: the resolved mode is
+   * computed for DISPLAY and never written back to `cowork_sessions` (that row
+   * is shared with the desktop view of the same conversation). A channel with
+   * no override — or a non-Weixin platform — returns 'inherit', so the resolver
+   * falls through to the persisted global mode.
+   */
+  getImChannelPermissionOverride(imChannel: string | null | undefined): unknown {
+    const platform = imPlatformFromSessionChannel(imChannel);
+    if (platform !== 'weixin') return 'inherit';
+    return this.imStore.getIMSettings().channelPermissions?.weixinPermissionMode ?? 'inherit';
   }
 
   /**

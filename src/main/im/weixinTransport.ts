@@ -68,6 +68,49 @@ function linkAbortSignal(source: AbortSignal, controller: AbortController): void
 }
 
 /**
+ * Id fields carried by the iLink API as int64 values.
+ *
+ * `message_id` is the one a quote answers with: `sendmessage` returns it and
+ * `ref_msg.message_item.msg_id` echoes it back. `msg_id` is included because a
+ * per-item id may use the same encoding on some server version.
+ */
+const WEIXIN_INT64_ID_KEYS = new Set(['message_id', 'msg_id']);
+
+/**
+ * Parse a Weixin response body WITHOUT rounding int64 ids.
+ *
+ * MEASURED (2026-11-04): `{"message_id":7523489994131519368}` is 19 digits,
+ * far past Number.MAX_SAFE_INTEGER (9007199254740991). A plain `JSON.parse`
+ * turns it into 7523489994131520000 — the ledger would then key a message on
+ * digits the platform never used, and EVERY quote lookup would silently miss.
+ *
+ * V8 exposes the exact literal through the reviver's `context.source`
+ * (Node >= 21; this app ships Node 24 / Electron 41). On a runtime without it
+ * the number is returned untouched, so `parseSendMessageResponse` can refuse it
+ * explicitly instead of storing a rounded key.
+ */
+export function parseWeixinJsonBody(rawText: string): unknown {
+  const reviver = (key: string, value: unknown, context?: { source?: string }): unknown => {
+    if (!WEIXIN_INT64_ID_KEYS.has(key)) return value;
+    if (typeof value !== 'number' || Number.isSafeInteger(value)) return value;
+    const source = context && typeof context.source === 'string' ? context.source : '';
+    // `source` is the literal text; keep it only when it is plain digits.
+    return /^\d+$/.test(source) ? source : value;
+  };
+  const parseWithSource = JSON.parse as unknown as (
+    text: string,
+    parseReviver: typeof reviver
+  ) => unknown;
+  try {
+    return parseWithSource(rawText, reviver);
+  } catch {
+    // Any reviver-arity/parse failure: fall back to the plain parser. Ids that
+    // lose precision are rejected downstream, never silently stored.
+    return JSON.parse(rawText);
+  }
+}
+
+/**
  * Default transport. Sends JSON, parses JSON (tolerating empty bodies) and maps
  * an aborted request to WeixinRequestTimeoutError so the caller can distinguish
  * "server slow / nothing to say" from a real failure.
@@ -99,7 +142,7 @@ export const defaultWeixinTransport: WeixinTransport = {
       let data: unknown = null;
       if (rawText) {
         try {
-          data = JSON.parse(rawText);
+          data = parseWeixinJsonBody(rawText);
         } catch {
           // Non-JSON body: keep a short slice for diagnostics, never the token.
           data = { errmsg: rawText.slice(0, 200) };

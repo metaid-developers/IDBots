@@ -16,10 +16,13 @@
  *      AES-128-ECB decrypted and persisted under <userData>/weixin-inbound;
  *      outbound media goes getuploadurl → AES encrypt → CDN POST → sendmessage.
  *
- * SCOPE (v2): text + image/file in direct chats. Voice audio and group chats stay
+ * SCOPE (v2): text + image/file/video in direct chats. Audio is an ordinary
+ * FILE attachment — there is no voice-bubble path (a SILK `voice_item` was
+ * measured on-device on 2026-11-04 and the client did not render it). Inbound
+ * voice is text-only — the audio itself is never downloaded. Group chats stay
  * out (the platform disables group messaging for these accounts). Video is
- * uploaded only when a reply explicitly references a video path; inbound video is
- * stored like a file.
+ * uploaded only when a reply explicitly references a video path; inbound video
+ * is stored like a file.
  *
  * RISK: `ilinkai.weixin.qq.com` is a NON-PUBLIC interface. It can change or shut
  * down without notice; treat every failure as possible protocol drift.
@@ -47,8 +50,11 @@ import {
   buildSendItemsPayload,
   buildSendMessagePayload,
   createWeixinClientId,
+  formatWeixinRawInboundLogLine,
+  isWeixinRawLogEnabled,
   parseQrCodeResponse,
   parseQrStatusResponse,
+  parseSendMessageResponse,
   parseTypingTicket,
   parseUpdatesResponse,
   parseUploadUrlResponse,
@@ -63,7 +69,17 @@ import {
   type WeixinInboundMessage,
   type WeixinQrCode,
   type WeixinQrStatus,
+  type WeixinQuoteSummary,
 } from './weixinProtocol';
+import {
+  buildWeixinLedgerEntry,
+  isWeixinLedgerEnabledByEnv,
+  readWeixinLedgerContent,
+  weixinLedgerEntryToQuote,
+  type WeixinLedgerEntryInput,
+  type WeixinLedgerKind,
+  type WeixinMessageLedger,
+} from './weixinLedger';
 import {
   assertWeixinCdnUrl,
   buildWeixinCdnUploadUrl,
@@ -71,6 +87,7 @@ import {
   defaultWeixinMediaNetwork,
   downloadWeixinMedia,
   prepareWeixinUpload,
+  describeWeixinOutboundCapabilities,
   readWeixinMediaRefs,
   redactMediaSecrets,
   sanitizeWeixinFileName,
@@ -82,6 +99,7 @@ import {
   type WeixinMediaNetwork,
   type WeixinMediaRef,
 } from './weixinMedia';
+import type { IMOutboundCapabilities } from './imOutbound';
 import { compressWeixinImage, type CompressedWeixinImage } from './weixinImage';
 import { parseMediaMarkers, stripMediaMarkers } from './dingtalkMediaParser';
 import { defaultWeixinTransport, WeixinRequestTimeoutError, type WeixinTransport } from './weixinTransport';
@@ -94,6 +112,15 @@ const DEDUPE_TTL_MS = 5 * 60 * 1000;
 const DEDUPE_MAX_ENTRIES = 500;
 /** Delay between two QR status polls when the server answers immediately. */
 const QR_POLL_GAP_MS = 300;
+
+/**
+ * One inbound message whose preparation is complete and whose turn is about
+ * to run. Preparation is ordered; the turn is not.
+ */
+interface PreparedWeixinInbound {
+  message: IMMessage;
+  replyFn: (text: string) => Promise<void>;
+}
 
 /**
  * Resolve the default inbound-media directory lazily, so this module stays
@@ -131,6 +158,17 @@ export interface WeixinGatewayOptions {
   cdnBaseUrl?: string;
   /** Image re-encoder; defaults to Electron nativeImage (absent outside Electron). */
   imageCompressor?: (filePath: string) => CompressedWeixinImage | null;
+  /**
+   * Local `msg_id` → content ledger (production: `IMStore`). Absent = quotes
+   * always render the honest fallback sentence; nothing else changes.
+   */
+  messageLedger?: WeixinMessageLedger | null;
+  /**
+   * Kill switch for the ledger. `false` disables BOTH the writes and the quote
+   * lookup, so the channel behaves exactly as it did before the ledger existed.
+   * Failures are handled separately (per-call try/catch), never by flipping this.
+   */
+  messageLedgerEnabled?: boolean;
 }
 
 export class WeixinGateway extends EventEmitter {
@@ -145,6 +183,11 @@ export class WeixinGateway extends EventEmitter {
   private readonly mediaNetwork: WeixinMediaNetwork;
   private readonly cdnBaseUrl: string;
   private readonly imageCompressor: (filePath: string) => CompressedWeixinImage | null;
+  /** Opt-in raw inbound dump (`IDBOTS_WEIXIN_RAW_LOG=1`); fixed at construction. */
+  private readonly rawInboundLogEnabled: boolean;
+  /** Local quote ledger; null when the caller wired none (quotes fall back). */
+  private readonly messageLedger: WeixinMessageLedger | null;
+  private readonly messageLedgerEnabled: boolean;
 
   private config: WeixinConfig | null = null;
   private status: WeixinGatewayStatus = { ...DEFAULT_WEIXIN_STATUS };
@@ -170,6 +213,24 @@ export class WeixinGateway extends EventEmitter {
   private readonly typingTickets = new Map<string, string>();
   private readonly processedMessages = new Map<string, number>();
   private lastConversationId: string | null = null;
+  /**
+   * Per-conversation chain over the inbound PREPARATION phase only (owner
+   * gate → dedup → media download → ledger). It keeps arrival order without
+   * inheriting the agent turn's lifetime.
+   */
+  private readonly inboundIntakeChains = new Map<string, Promise<void>>();
+  /**
+   * Conversations with at least one inbound turn in flight. The typing
+   * indicator is switched off when this drops to zero, so a steered second
+   * message cannot blank it while the first turn is still running.
+   */
+  private readonly inboundTurnDepth = new Map<string, number>();
+  /**
+   * Per-conversation chain over the DISPATCH phase: it guarantees that
+   * message N+1's callback is invoked after message N's callback was invoked
+   * (never after N's turn finished — that would re-create the queue).
+   */
+  private readonly inboundDispatchChains = new Map<string, Promise<void>>();
 
   constructor(options: WeixinGatewayOptions = {}) {
     super();
@@ -188,6 +249,11 @@ export class WeixinGateway extends EventEmitter {
     this.mediaNetwork = options.mediaNetwork ?? defaultWeixinMediaNetwork;
     this.cdnBaseUrl = (options.cdnBaseUrl || WEIXIN_CDN_BASE_URL).replace(/\/+$/, '');
     this.imageCompressor = options.imageCompressor ?? ((filePath) => compressWeixinImage(filePath));
+    this.rawInboundLogEnabled = isWeixinRawLogEnabled();
+    this.messageLedger = options.messageLedger ?? null;
+    // Switch = constructor option AND the runtime env gate; either one off
+    // means the channel behaves exactly as it did before the ledger existed.
+    this.messageLedgerEnabled = options.messageLedgerEnabled !== false && isWeixinLedgerEnabledByEnv();
   }
 
   /** Directory inbound media is written to (exposed for diagnostics/tests). */
@@ -534,7 +600,22 @@ export class WeixinGateway extends EventEmitter {
 
         for (const raw of updates.messages) {
           if (!this.running || signal.aborted) break;
-          await this.handleInbound(raw);
+          // Opt-in, default OFF: one single-line dump of the RAW item_list for
+          // each msgs[] entry, so a live capture can settle which field carries
+          // a quoted message. Never dumps context_token/headers/token; secrets
+          // are redacted and the payload is capped (see weixinProtocol).
+          // A debug log must never be able to fail an inbound poll.
+          if (this.rawInboundLogEnabled) {
+            try {
+              console.log(formatWeixinRawInboundLogLine(raw, this.now()));
+            } catch (error) {
+              console.warn('[Weixin Gateway] raw inbound log failed:', this.describeError(error));
+            }
+          }
+          // Never await the agent turn here: message #2 has to reach the
+          // cowork handler while message #1's turn is still running, so it can
+          // be steered into that turn instead of waiting for it to finish.
+          this.enqueueInbound(raw);
         }
       } catch (error) {
         if (signal.aborted || !this.running) return;
@@ -561,9 +642,112 @@ export class WeixinGateway extends EventEmitter {
     }
   }
 
-  private async handleInbound(raw: WeixinInboundMessage): Promise<void> {
+  /**
+   * Hand one polled message to the handler without blocking the poll loop.
+   *
+   * The loop used to run `await this.handleInbound(raw)`, and handleInbound
+   * awaited the WHOLE agent turn — so a second message stayed queued at the
+   * gateway until the first turn finished (real-device 2026-11-04: an
+   * interjection sent during a turn waited it out). Only PREPARATION is
+   * serialized here (to keep arrival order for media/ledger); the turn runs
+   * concurrently, which is what lets the cowork handler steer message #2 into
+   * the live turn.
+   */
+  private enqueueInbound(raw: WeixinInboundMessage): void {
+    const key = this.inboundConversationKey(raw);
+    const previous = this.inboundIntakeChains.get(key) ?? Promise.resolve();
+    const prepared = previous.then(
+      () => this.prepareInbound(raw),
+      () => this.prepareInbound(raw),
+    );
+    const tail = prepared.then(() => undefined, () => undefined);
+    this.inboundIntakeChains.set(key, tail);
+    void tail.then(() => {
+      if (this.inboundIntakeChains.get(key) === tail) this.inboundIntakeChains.delete(key);
+    });
+    void prepared.then(
+      (entry) => {
+        if (entry) this.dispatchInbound(entry);
+      },
+      (error) => this.reportInboundFailure(error),
+    );
+  }
+
+  private inboundConversationKey(raw: WeixinInboundMessage): string {
+    const from = typeof raw?.from_user_id === 'string' ? raw.from_user_id : '';
+    const group = typeof raw?.group_id === 'string' ? raw.group_id : '';
+    return `${from}::${group}`;
+  }
+
+  private reportInboundFailure(error: unknown): void {
+    const message = this.describeError(error);
+    this.status = { ...this.status, lastError: message };
+    this.emitStatus();
+    this.emitError(error instanceof Error ? error : new Error(message));
+    console.warn('[Weixin Gateway] inbound handling failed:', message);
+  }
+
+  private dispatchInbound(entry: PreparedWeixinInbound): void {
+    const key = entry.message.conversationId;
+    const previous = this.inboundDispatchChains.get(key) ?? Promise.resolve();
+    const started = previous.then(
+      () => this.invokeInboundCallback(entry),
+      () => this.invokeInboundCallback(entry),
+    );
+    const tail = started.then(() => undefined, () => undefined);
+    this.inboundDispatchChains.set(key, tail);
+    void tail.then(() => {
+      if (this.inboundDispatchChains.get(key) === tail) this.inboundDispatchChains.delete(key);
+    });
+  }
+
+  /**
+   * Invoke the handler for one message IN ARRIVAL ORDER, but never hold the
+   * dispatch chain for the turn: the callback's promise is awaited by nobody
+   * here — only its typing bookkeeping is chained.
+   */
+  private async invokeInboundCallback(entry: PreparedWeixinInbound): Promise<void> {
+    const { message, replyFn } = entry;
+    await this.beginInboundTyping(message.conversationId);
+    const callback = this.onMessageCallback;
+    if (!callback) {
+      await this.endInboundTyping(message.conversationId);
+      return;
+    }
+    const turn = Promise.resolve()
+      .then(() => callback(message, replyFn))
+      .catch((error) => {
+        this.status = { ...this.status, lastError: this.describeError(error) };
+        this.emitStatus();
+        this.emitError(error instanceof Error ? error : new Error(this.describeError(error)));
+      })
+      .finally(() => this.endInboundTyping(message.conversationId));
+    void turn;
+  }
+
+  private async beginInboundTyping(conversationId: string): Promise<void> {
+    const depth = (this.inboundTurnDepth.get(conversationId) ?? 0) + 1;
+    this.inboundTurnDepth.set(conversationId, depth);
+    if (depth === 1) await this.sendTyping(conversationId, true);
+  }
+
+  private async endInboundTyping(conversationId: string): Promise<void> {
+    const depth = (this.inboundTurnDepth.get(conversationId) ?? 1) - 1;
+    if (depth > 0) {
+      this.inboundTurnDepth.set(conversationId, depth);
+      return;
+    }
+    this.inboundTurnDepth.delete(conversationId);
+    await this.sendTyping(conversationId, false);
+  }
+
+  /**
+   * Validate + materialize one raw polled message. Everything that must happen
+   * in arrival order lives here; the turn itself is dispatched afterwards.
+   */
+  private async prepareInbound(raw: WeixinInboundMessage): Promise<PreparedWeixinInbound | null> {
     // Our own outbound echo: never download its media or answer it.
-    if (raw?.message_type === WEIXIN_MESSAGE_TYPE_BOT) return;
+    if (raw?.message_type === WEIXIN_MESSAGE_TYPE_BOT) return null;
 
     // Owner gate (fail-closed). The Weixin channel is a private owner→bot
     // line: the only trusted sender is the account that scanned the QR code,
@@ -574,11 +758,11 @@ export class WeixinGateway extends EventEmitter {
     const senderId = typeof raw?.from_user_id === 'string' ? raw.from_user_id.trim() : '';
     if (!senderId || !this.ownerUserId || senderId !== this.ownerUserId) {
       console.warn('[Weixin Gateway] Dropping inbound message: sender is not the bound owner (owner gate)');
-      return;
+      return null;
     }
 
     const rawId = raw && raw.message_id != null ? String(raw.message_id) : null;
-    if (rawId && this.isDuplicate(rawId)) return;
+    if (rawId && this.isDuplicate(rawId)) return null;
     if (rawId) this.markProcessed(rawId);
 
     const contextToken = typeof raw?.context_token === 'string' ? raw.context_token : '';
@@ -586,8 +770,24 @@ export class WeixinGateway extends EventEmitter {
     const message = toIMMessage(raw, this.now(), {
       attachments: media.attachments,
       failed: media.failed,
+    }, {
+      // Quote: only an id arrives, so this is a LOCAL lookup in the ledger.
+      resolveQuote: (msgId) => this.resolveQuoteFromLedger(msgId),
     });
-    if (!message) return;
+    if (!message) return null;
+
+    // Record the inbound id so a later "quote my own message" resolves. The
+    // stored body is the message's OWN text — never the quote prefix we just
+    // rendered (that would chain prefixes into prefixes).
+    const ledgerContent = readWeixinLedgerContent(raw);
+    this.writeLedgerEntry({
+      msgId: raw.message_id,
+      conversationId: message.conversationId,
+      direction: 'in',
+      kind: ledgerContent.kind,
+      text: ledgerContent.text,
+      createdAt: this.now(),
+    });
 
     if (contextToken) {
       this.contextTokens.set(message.conversationId, contextToken);
@@ -598,22 +798,14 @@ export class WeixinGateway extends EventEmitter {
     this.emitStatus();
     this.emit('message', message);
 
-    if (!this.onMessageCallback) return;
+    if (!this.onMessageCallback) return null;
 
-    const replyFn = async (text: string): Promise<void> => {
-      await this.sendReplyWithMedia(message.conversationId, text);
+    return {
+      message,
+      replyFn: async (text: string): Promise<void> => {
+        await this.sendReplyWithMedia(message.conversationId, text);
+      },
     };
-
-    await this.sendTyping(message.conversationId, true);
-    try {
-      await this.onMessageCallback(message, replyFn);
-    } catch (error) {
-      this.status = { ...this.status, lastError: this.describeError(error) };
-      this.emitStatus();
-      this.emitError(error instanceof Error ? error : new Error(this.describeError(error)));
-    } finally {
-      await this.sendTyping(message.conversationId, false);
-    }
   }
 
   /**
@@ -718,17 +910,77 @@ export class WeixinGateway extends EventEmitter {
 
     const contextToken = this.contextTokens.get(conversationId) || null;
     for (const chunk of chunks) {
-      await this.post('ilink/bot/sendmessage', buildSendMessagePayload({
+      const sent = await this.post('ilink/bot/sendmessage', buildSendMessagePayload({
         toUserId: conversationId,
         text: chunk,
         contextToken,
         clientId: createWeixinClientId(this.now()),
       }));
+      this.recordOutboundMessage(conversationId, sent, 'text', chunk);
     }
 
     this.lastConversationId = conversationId;
     this.status = { ...this.status, lastOutboundAt: this.now(), lastError: null };
     this.emitStatus();
+  }
+
+  /**
+   * Out-of-turn send into an existing conversation (IMConversationSender).
+   *
+   * A turn triggered by an [ORCH-NOTIFY] cross-session injection or another
+   * host-side event has no inbound reply closure, so it cannot use the
+   * per-message `replyFn`; it still needs the SAME outbound semantics — text
+   * plus any media markers the agent embedded. Delegating to
+   * `sendReplyWithMedia` guarantees that instead of re-implementing marker
+   * parsing here.
+   */
+  async sendToConversation(conversationId: string, text: string): Promise<void> {
+    await this.sendReplyWithMedia(conversationId, text);
+  }
+
+  /** Deliver one local file into an existing conversation (desktop-initiated). */
+  async sendMediaToConversation(conversationId: string, filePath: string): Promise<void> {
+    await this.sendMedia(conversationId, filePath);
+  }
+
+  /**
+   * The most recent DIRECT conversation id — the ilink user id of the account
+   * captured when the QR authorization was persisted. Weixin's owner gate
+   * already guarantees inbound only ever comes from this id, so it IS the
+   * private chat with the owner.
+   */
+  getLastDirectConversationId(): string | null {
+    return this.ownerUserId;
+  }
+
+  /**
+   * The destination IS the QR-authorized owner: inbound is fail-closed on this
+   * same id (weixinGateway owner gate), so no stranger can ever occupy it.
+   * Reports `false` while unauthorized — the manager then calls the copy
+   * "unverified" instead of "owner", which is also when there is nothing to
+   * send to yet.
+   */
+  isOwnerIdentityBound(): boolean {
+    return Boolean(this.ownerUserId);
+  }
+
+  /**
+   * What this channel can send, read from the SAME tables the send path uses
+   * (`describeWeixinOutboundCapabilities` wraps `MIME_BY_EXTENSION` →
+   * `uploadKindForFile` and `WEIXIN_OUTBOUND_MAX_BYTES`).
+   */
+  describeOutboundCapabilities(): IMOutboundCapabilities {
+    const capabilities = describeWeixinOutboundCapabilities();
+    const max = capabilities.maxOutboundBytes;
+    return {
+      extensionsByKind: {
+        image: capabilities.extensionsByKind.image,
+        video: capabilities.extensionsByKind.video,
+        audio: capabilities.audioExtensions,
+        file: capabilities.extensionsByKind.file,
+      },
+      maxBytesByKind: { image: max, video: max, audio: max, file: max },
+    };
   }
 
   /**
@@ -742,6 +994,9 @@ export class WeixinGateway extends EventEmitter {
    *
    * Images above our own size/pixel guard are re-encoded first; when no encoder is
    * available (plain node) the original is sent unchanged.
+   *
+   * Audio is sent as an ordinary FILE item (media_type 3) — this channel has no
+   * voice-bubble path, so an mp3/wav/m4a arrives as an audio file attachment.
    *
    * `opts.text` is delivered as a separate text message BEFORE the media, matching
    * the official plugin's one-item-per-message behaviour.
@@ -822,12 +1077,15 @@ export class WeixinGateway extends EventEmitter {
         prepared,
         fileName: displayName,
       });
-      await this.post('ilink/bot/sendmessage', buildSendItemsPayload({
+      const sent = await this.post('ilink/bot/sendmessage', buildSendItemsPayload({
         toUserId: conversationId,
         items: [item],
         contextToken: this.contextTokens.get(conversationId) || null,
         clientId: createWeixinClientId(this.now()),
       }));
+      // One ledger row per media message: quoting it later says WHAT it was
+      // ("引用了一张图片"), never a guessed filename or a re-fetch.
+      this.recordOutboundMessage(conversationId, sent, kind, null);
 
       this.lastConversationId = conversationId;
       this.status = { ...this.status, lastOutboundAt: this.now(), lastError: null };
@@ -1041,6 +1299,83 @@ export class WeixinGateway extends EventEmitter {
       throw new Error(`Weixin ${path} failed (ret ${code})${typeof errmsg === 'string' ? `: ${errmsg}` : ''}`);
     }
     return response.data;
+  }
+
+  // ==================== Local quote ledger ====================
+
+  /**
+   * Record one message id → summary. Never throws: a ledger problem must not
+   * cost a message, so a failure is logged and the send/receive continues.
+   */
+  private writeLedgerEntry(input: WeixinLedgerEntryInput): void {
+    if (!this.messageLedgerEnabled || !this.messageLedger) return;
+    const entry = buildWeixinLedgerEntry(input);
+    if (!entry) return;
+    try {
+      this.messageLedger.put(entry);
+    } catch (error) {
+      console.warn(
+        '[Weixin Gateway] message ledger write failed (delivery unaffected):',
+        this.describeError(error)
+      );
+    }
+  }
+
+  /**
+   * Read the server id out of a `sendmessage` response and store it.
+   *
+   * The id is the ONLY thing that makes an outgoing message quotable later:
+   * `ref_msg.message_item.msg_id` echoes exactly this value. A response without
+   * one (older server, lossy number) is logged, not fabricated.
+   */
+  private recordOutboundMessage(
+    conversationId: string,
+    response: unknown,
+    kind: WeixinLedgerKind,
+    text: string | null
+  ): void {
+    const parsed = parseSendMessageResponse(response);
+    if (!parsed.messageId) {
+      if (parsed.rejection) {
+        console.warn(
+          `[Weixin Gateway] sendmessage id unusable (${parsed.rejection}); a later quote of this message will fall back`
+        );
+      }
+      return;
+    }
+    this.writeLedgerEntry({
+      msgId: parsed.messageId,
+      conversationId,
+      direction: 'out',
+      kind,
+      text,
+      createdAt: this.now(),
+    });
+  }
+
+  /** Local quote lookup. Any failure degrades to the honest fallback sentence. */
+  private resolveQuoteFromLedger(msgId: string): WeixinQuoteSummary | null {
+    if (!this.messageLedgerEnabled || !this.messageLedger) return null;
+    try {
+      const entry = this.messageLedger.get(msgId);
+      const quote = weixinLedgerEntryToQuote(entry);
+      // One line per quoted message, DEBUG only: the decisive fact for a live
+      // check is whether the id actually matched. Never logs the quoted body.
+      if (this.config?.debug) {
+        console.log('[Weixin Gateway] quote ledger lookup', {
+          msgId,
+          hit: Boolean(quote),
+          kind: entry?.kind ?? null,
+        });
+      }
+      return quote;
+    } catch (error) {
+      console.warn(
+        '[Weixin Gateway] message ledger read failed (quote falls back):',
+        this.describeError(error)
+      );
+      return null;
+    }
   }
 
   // ==================== Session handling ====================

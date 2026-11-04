@@ -18,6 +18,7 @@ import {
   IMMediaAttachment,
   DEFAULT_TELEGRAM_STATUS,
 } from './types';
+import type { IMOutboundCapabilities } from './imOutbound';
 import { tApp } from '../libs/appLanguage';
 import { extractMediaFromMessage, cleanupOldMediaFiles } from './telegramMedia';
 import { parseMediaMarkers } from './dingtalkMediaParser';
@@ -27,6 +28,13 @@ import { parseTelegramProxy } from './telegramProbe';
 const nodeFetch = require('node-fetch');
 
 const GATEWAY_REQUEST_TIMEOUT_MS = 60_000;
+/**
+ * Telegram Bot API upload ceilings (documented): photos up to 10 MB, other
+ * files up to 50 MB for bots. Kept here so the desktop capability manifest is
+ * derived from the same numbers the send path enforces.
+ */
+export const TELEGRAM_MAX_PHOTO_BYTES = 10 * 1024 * 1024;
+export const TELEGRAM_MAX_FILE_BYTES = 50 * 1024 * 1024;
 
 /**
  * Normalize optional RequestInit signal to native AbortSignal so node-fetch/axios accept it.
@@ -121,6 +129,8 @@ export class TelegramGateway extends EventEmitter {
   private status: TelegramGatewayStatus = { ...DEFAULT_TELEGRAM_STATUS };
   private onMessageCallback?: (message: IMMessage, replyFn: (text: string) => Promise<void>) => Promise<void>;
   private lastChatId: number | null = null;
+  /** Most recent PRIVATE chat id — the only direct-chat memory this gateway keeps. */
+  private lastDirectChatId: number | null = null;
 
   // 媒体组缓冲 Map (mediaGroupId -> buffer)
   private mediaGroupBuffers: Map<string, MediaGroupBuffer> = new Map();
@@ -345,6 +355,9 @@ export class TelegramGateway extends EventEmitter {
       const chatId = message.chat.id;
       const chatType = message.chat.type;
       const isGroup = chatType === 'group' || chatType === 'supergroup';
+      if (chatType === 'private') {
+        this.lastDirectChatId = chatId;
+      }
 
       // Build sender info
       const senderName = message.from
@@ -880,6 +893,78 @@ export class TelegramGateway extends EventEmitter {
   /**
    * Send a notification message to the last known chat.
    */
+  /** The most recent private chat id, or null before any private message. */
+  getLastDirectConversationId(): string | null {
+    return this.lastDirectChatId != null ? String(this.lastDirectChatId) : null;
+  }
+
+  /**
+   * Out-of-turn send into an existing chat (IMConversationSender): the desktop
+   * `im_send_message` path and any host-side notification use the same Bot API
+   * as an inbound reply, without needing the reply context.
+   */
+  async sendToConversation(conversationId: string, text: string): Promise<void> {
+    const bot = this.requireBot();
+    const chatId = this.parseChatId(conversationId);
+    const chunks = this.splitMessage(text, 4000);
+    for (const chunk of chunks) {
+      await bot.api.sendMessage(chatId, chunk);
+    }
+    this.status = { ...this.status, lastOutboundAt: Date.now() };
+  }
+
+  /** Deliver one local file into an existing chat via the Bot API. */
+  async sendMediaToConversation(conversationId: string, filePath: string): Promise<void> {
+    const bot = this.requireBot();
+    const chatId = this.parseChatId(conversationId);
+    const fileName = path.basename(filePath);
+    const input = new InputFile(fs.readFileSync(filePath), fileName);
+    const extension = path.extname(filePath).toLowerCase();
+    if (['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'].includes(extension)) {
+      await bot.api.sendPhoto(chatId, input);
+    } else if (['.mp4', '.mov', '.avi', '.webm', '.mkv'].includes(extension)) {
+      await bot.api.sendVideo(chatId, input);
+    } else if (['.mp3', '.ogg', '.wav', '.m4a', '.aac'].includes(extension)) {
+      await bot.api.sendAudio(chatId, input, { title: fileName });
+    } else {
+      await bot.api.sendDocument(chatId, input);
+    }
+    this.status = { ...this.status, lastOutboundAt: Date.now() };
+  }
+
+  /** What this channel can send, derived from the Bot API extension/limit set. */
+  describeOutboundCapabilities(): IMOutboundCapabilities {
+    return {
+      extensionsByKind: {
+        image: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'],
+        video: ['mp4', 'mov', 'avi', 'webm', 'mkv'],
+        audio: ['mp3', 'ogg', 'wav', 'm4a', 'aac'],
+        file: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'zip', 'txt', 'csv', 'json', 'md'],
+      },
+      maxBytesByKind: {
+        image: TELEGRAM_MAX_PHOTO_BYTES,
+        video: TELEGRAM_MAX_FILE_BYTES,
+        audio: TELEGRAM_MAX_FILE_BYTES,
+        file: TELEGRAM_MAX_FILE_BYTES,
+      },
+    };
+  }
+
+  private requireBot(): Bot {
+    if (!this.bot) {
+      throw new Error('Telegram gateway is not started');
+    }
+    return this.bot;
+  }
+
+  private parseChatId(conversationId: string): number {
+    const chatId = Number(String(conversationId).trim());
+    if (!Number.isFinite(chatId)) {
+      throw new Error(`invalid Telegram chat id: ${conversationId}`);
+    }
+    return chatId;
+  }
+
   async sendNotification(text: string): Promise<void> {
     if (!this.bot || !this.lastChatId) {
       throw new Error('No conversation available for notification');

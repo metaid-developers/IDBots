@@ -24,7 +24,13 @@ import { truncateUtf16Units } from './llmSafeText';
 import { DshStreamUiGate } from './dshStreamUiGate';
 import type { DshHostToolImagePayload, DshRuntimeConfigInput, DshUsageSnapshot } from './dshKernel/types';
 import type { IMTrustContext } from '../im/types';
+import {
+  formatImOutboundSendResult,
+  type CoworkImOutboundProvider,
+  type IMOutboundSendRequest,
+} from '../im/imOutbound';
 import { imTrustAllowsMemoryRead, imTrustAllowsMemoryWrite, imTrustAllowsTools } from '../im/qqTrust';
+import { shouldSkipToolApproval } from './toolApprovalPolicy';
 import { foldDshUsageProjection, dshPromptSideTokens, dshContextUsageFromPressure } from './dshUsageProjection';
 import type { DshUsageStatsRow } from './dshUsageProjection';
 import { buildSessionHistoryHandoff, dshApiFormatOf, dshSessionIdOf, isDshSessionHandle, makeDshSessionHandle, resolveKernelChoice } from './coworkKernelRouting';
@@ -80,6 +86,7 @@ import {
   formatStandingPagesList,
 } from '../standingPageStore';
 import {
+  buildChannelCapabilitiesBlock,
   buildExperiencePromptBlocksXml as composeExperiencePromptBlocks,
   formatExperienceRecallResults,
   formatExperienceTimelineFallback,
@@ -2262,6 +2269,15 @@ export interface CoworkRunnerOptions {
    */
   isIMSession?: (sessionId: string) => boolean;
   /**
+   * Desktop-initiated IM outbound (im_send_message): the live channel
+   * inventory and the send path, implemented by IMGatewayManager. Registered
+   * for `cowork_ui` sessions only — IM sessions already reply inline, and the
+   * tool's whole point is to stop the desktop agent from driving an IM client
+   * window. Absent in tests/minimal embedders: the capability block then says
+   * "当前没有可用通道" instead of leaving the model to guess.
+   */
+  imOutbound?: CoworkImOutboundProvider;
+  /**
    * When set, returns the Bot Browser context XML block (active tab, open tabs)
    * to inject into the system prompt. Implementations should return null for
    * non-browser sessions and degrade gracefully (never throw) when the browser
@@ -2795,6 +2811,7 @@ export class CoworkRunner extends EventEmitter {
   private metabotManage?: MetabotManageControl;
   private skillTools?: SkillToolControl;
   private metabotChainWrite?: CoworkRunnerOptions['metabotChainWrite'];
+  private imOutbound?: CoworkImOutboundProvider;
   private privateChat?: PrivateChatControl;
   private groupChat?: GroupChatControl;
   private omniReader?: OmniReaderControl;
@@ -3012,6 +3029,7 @@ export class CoworkRunner extends EventEmitter {
     this.metabotManage = options?.metabotManage;
     this.skillTools = options?.skillTools;
     this.metabotChainWrite = options?.metabotChainWrite;
+    this.imOutbound = options?.imOutbound;
     this.privateChat = options?.privateChat;
     this.groupChat = options?.groupChat;
     this.omniReader = options?.omniReader;
@@ -7460,6 +7478,38 @@ export class CoworkRunner extends EventEmitter {
       }
     }
 
+    // Channel capability manifest (通道能力清单): what THIS channel can actually
+    // send, derived from the channel's own constants (see
+    // buildChannelCapabilitiesBlock). `im:` sessions get their per-channel
+    // manifest; `cowork_ui` gets the machine's live IM inventory so the desktop
+    // agent knows it can send proactively through the channel API (and knows
+    // NOT to drive an IM client window). It is deliberately NOT gated on the
+    // memory switch: knowing that an audio file becomes a voice bubble is a
+    // capability fact, not a memory. Content dedup keeps it to one literal
+    // injection per SDK-session generation; the block stays visible in history
+    // afterwards.
+    const capabilitySourceChannel =
+      this.store.getConversationSourceContextBySession(sessionId)?.sourceChannel ?? null;
+    const channelCapabilitiesText = buildChannelCapabilitiesBlock(
+      capabilitySourceChannel,
+      {
+        // The mode the turn ACTUALLY runs under: IM sessions inherit the
+        // persisted global mode (or a per-channel override), and the handler
+        // passes it as `permissionMode` on start/continue. Reading it back from
+        // the live session keeps the prompt and the enforcement in one source.
+        permissionMode: this.activeSessions.get(sessionId)?.permissionMode ?? 'default',
+        // Desktop sessions get the machine's live IM inventory (which channels
+        // are connected AND can send proactively, with the gateway's own type
+        // and size tables). Any other channel keeps its own manifest.
+        connectedChannels: capabilitySourceChannel === 'cowork_ui'
+          ? (this.imOutbound?.listChannels() ?? [])
+          : undefined,
+      }
+    );
+    if (channelCapabilitiesText) {
+      sections.push({ key: 'channel-capabilities', text: channelCapabilitiesText });
+    }
+
     const activeForDedup = this.activeSessions.get(sessionId);
     const generation = activeForDedup?.claudeSessionId ?? null;
     let dedupState = this.volatileDedupBySessionId.get(sessionId);
@@ -9340,6 +9390,34 @@ export class CoworkRunner extends EventEmitter {
 
   registerTextPermissionRelay(sessionId: string): void {
     this.textPermissionRelaySessions.add(sessionId);
+  }
+
+  /**
+   * Append a HOST-authored record to a session and broadcast it, without going
+   * through a model turn.
+   *
+   * Callers own the content (an IM outbound send writes the bubble into the
+   * destination chat's session). The caller-supplied `id` makes the write
+   * idempotent: the store returns the existing row for a repeated id, so a
+   * retried write cannot duplicate the record. The broadcast only repaints an
+   * already-persisted row — a lost event costs nothing but the immediate update.
+   */
+  appendHostMessage(
+    sessionId: string,
+    message: {
+      id: string;
+      type: CoworkMessage['type'];
+      content: string;
+      metadata?: CoworkMessage['metadata'];
+    }
+  ): CoworkMessage {
+    const stored = this.store.addMessageWithId(sessionId, message.id, {
+      type: message.type,
+      content: message.content,
+      metadata: message.metadata,
+    });
+    this.emit('message', sessionId, stored);
+    return stored;
   }
 
   unregisterTextPermissionRelay(sessionId: string): void {
@@ -11519,10 +11597,16 @@ export class CoworkRunner extends EventEmitter {
           onApprovalRequest: (ask) => {
             const tool = String(ask.toolName ?? '').toLowerCase();
             const mode = activeSession.permissionMode;
-            const skipAsk = mode === 'acceptEdits'
-              || mode === 'bypassPermissions'
-              || activeSession.autoApprove === true
-              || activeSession.autoApproveTools?.has(tool);
+            // The gate that decides whether a permission request EXISTS. With
+            // bypassPermissions (完全信任) this returns true here, so no
+            // request is emitted and the chat turn is zero-popup — the same
+            // meaning the desktop gives that mode.
+            const skipAsk = shouldSkipToolApproval({
+              mode,
+              toolName: ask.toolName,
+              autoApprove: activeSession.autoApprove,
+              autoApproveTools: activeSession.autoApproveTools,
+            });
             if (skipAsk) {
               coworkLog('INFO', 'runDshSessionLocal', 'Auto-allowed native DSH approval', {
                 sessionId,
@@ -13748,6 +13832,57 @@ export class CoworkRunner extends EventEmitter {
           sessionId,
           resolveMetabotId: (sid) => this.getMemoryBackend().resolveMetabotIdForMemory(sid) ?? undefined,
         })
+      );
+    }
+    // Desktop-initiated IM outbound (im_send_message): the ONLY supported way
+    // to "send a WeChat message" from a desktop session. Deliberately
+    // cowork_ui-only — an IM session answers through its own reply closure,
+    // and automation/A2A sessions have no owner chat to address.
+    if (
+      this.imOutbound
+      && this.store.getConversationSourceContextBySession?.(sessionId)?.sourceChannel === 'cowork_ui'
+    ) {
+      const imOutbound = this.imOutbound;
+      memoryTools.push(
+        tool(
+          'im_send_message',
+          [
+            'Send a message (optionally with local file attachments) proactively through a connected IM channel on this machine — 微信 (weixin), 飞书 (feishu), QQ.',
+            'Use this whenever the owner asks you to "给微信/飞书/QQ 发…" from the desktop app.',
+            'It talks to the channel API directly: do NOT simulate the WeChat/QQ/Feishu desktop client, do NOT check whether the client is running, and do NOT try to click its window.',
+            '',
+            'Args:',
+            '- channel: weixin | feishu | qq | dingtalk | telegram | discord. Any CONNECTED channel that implements conversation sending delivers; the destination is the most recent private conversation on that channel. Only owner-bound channels (weixin, QQ) resolve that chat from a QR-verified owner identity; everywhere else it is simply whoever last DM’d the bot, and the tool result says 未经身份校验. A channel with no private conversation yet returns "send the bot a message first", and a disconnected channel returns 未连接 — never a silent success.',
+            '- target: optional; leave EMPTY to send to the resolved destination — the owner’s own private chat on weixin/QQ, or the most recent direct chat (identity not verified) on the other channels. Any other conversation id is refused.',
+            '- text: message body; may be empty only when attachments are provided.',
+            '- attachments: absolute local file paths, delivered through the native media path of the channel (image/video/audio/file). Put paths ONLY here — do not also paste them into text, or channels that auto-detect media paths would send the file twice.',
+            '',
+            'Returns what was actually sent, or an explicit error when the channel is not connected / cannot send proactively. Never claim delivery without this tool succeeding.',
+          ].join('\n'),
+          {
+            channel: z.string().min(1).describe('weixin | feishu | qq'),
+            target: z.string().optional().describe('Optional; omit for the resolved destination (owner private chat on weixin/QQ; most recent direct chat, identity unverified, elsewhere). Any other id is refused.'),
+            text: z.string().optional().describe('Message body. Required unless attachments are provided.'),
+            attachments: z.array(z.string()).optional().describe('Absolute local file paths.'),
+          },
+          async (args: IMOutboundSendRequest) => {
+            const result = await imOutbound.send({
+              channel: args.channel,
+              target: args.target ?? null,
+              text: args.text ?? null,
+              attachments: args.attachments ?? null,
+            });
+            // The visible record of this send belongs to the DESTINATION chat,
+            // not to this desktop session: IMGatewayManager.sendImOutbound
+            // writes it into that IM conversation's own session. Here only the
+            // tool result is reported (and nothing is inserted into this
+            // session, so one send never renders twice in two places).
+            return {
+              content: [{ type: 'text' as const, text: formatImOutboundSendResult(result) }],
+              isError: !result.ok,
+            } as any;
+          }
+        )
       );
     }
     if (this.privateChat) {

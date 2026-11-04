@@ -106,6 +106,7 @@ import { getGitBranch } from './libs/gitWorkspace';
 import { detectSystemChromium } from './libs/chromiumRuntime';
 import { CoworkStreamUiDeltaEncoder } from './libs/coworkStreamUiDelta';
 import { IMGatewayManager, IMPlatform, IMGatewayConfig } from './im';
+import { resolveSessionDisplayPermissionMode } from './im/imPermissionPolicy';
 import { APP_NAME, DB_FILENAME } from './appConstants';
 import {
   detectMissingDatabase,
@@ -7194,6 +7195,31 @@ const getCoworkRunner = () => {
       isIMSession: (sessionId: string): boolean => {
         return imGatewayManager?.isIMSession(sessionId) ?? false;
       },
+      // Desktop-initiated IM outbound (im_send_message). Lazy for the same
+      // reason as the two callbacks above: the IM manager singleton is created
+      // after this runner. `listChannels()` returns [] before it exists, which
+      // makes the cowork_ui capability block say "当前没有可用通道" instead of
+      // advertising something the send path could not deliver.
+      imOutbound: {
+        listChannels: () => imGatewayManager?.listOutboundChannels() ?? [],
+        send: async (request) => {
+          if (!imGatewayManager) {
+            return {
+              ok: false,
+              channel: request.channel,
+              label: request.channel,
+              target: null,
+              targetIsOwnerDirect: false,
+              targetIdentityBasis: 'last-direct' as const,
+              textChars: 0,
+              attachments: [],
+              warnings: [],
+              errors: ['IM 通道管理器尚未初始化：本次没有发出任何内容。'],
+            };
+          }
+          return imGatewayManager.sendImOutbound(request);
+        },
+      },
       controlBotBrowser: {
         openUri: (input) => sendBotBrowserOpenUri(input),
         execute: (command) => getBotBrowserTabBridge().execute(command),
@@ -13904,7 +13930,31 @@ if (!gotTheLock) {
         } catch {
           usageStats = null;
         }
-        return { success: true, session: { ...sessionWithLiveStream, contextUsage, usageStats } };
+        // IM sessions run under the channel override / persisted global mode,
+        // but their cowork_sessions row freezes the mode from creation. Show
+        // what is actually in force instead of that stale row value. Read-only:
+        // writing it back would leak a channel policy into the desktop view of
+        // the same conversation.
+        const sessionWithDisplayPermission = (() => {
+          const imManager = imGatewayManager;
+          if (!session.imChannel || !imManager) return sessionWithLiveStream;
+          try {
+            const displayMode = resolveSessionDisplayPermissionMode({
+              imChannel: session.imChannel,
+              sessionPermissionMode: session.permissionMode,
+              channelOverride: imManager.getImChannelPermissionOverride(session.imChannel),
+              globalMode: getPersistedCoworkPermissionMode(),
+            });
+            return { ...sessionWithLiveStream, permissionMode: displayMode };
+          } catch (error) {
+            console.warn(
+              '[Cowork] IM session permission display resolve failed:',
+              error instanceof Error ? error.message : String(error)
+            );
+            return sessionWithLiveStream;
+          }
+        })();
+        return { success: true, session: { ...sessionWithDisplayPermission, contextUsage, usageStats } };
       } catch (error) {
         if (isSqliteWasmBoundsError(error)) throw error;
         return {

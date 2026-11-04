@@ -24,6 +24,21 @@ import {
   DEFAULT_IM_SETTINGS,
 } from './types';
 import { normalizeQQDailyReplyLimit } from './qqRateLimit';
+import {
+  WEIXIN_LEDGER_MAX_ROWS_PER_CONVERSATION,
+  WEIXIN_LEDGER_TTL_MS,
+  type WeixinLedgerEntry,
+  type WeixinLedgerKind,
+} from './weixinLedger';
+
+/** Values the ledger's `kind` column is allowed to carry. */
+const WEIXIN_LEDGER_KINDS: WeixinLedgerKind[] = ['text', 'image', 'file', 'voice', 'video'];
+
+function normalizeWeixinLedgerKind(value: unknown): WeixinLedgerKind {
+  return WEIXIN_LEDGER_KINDS.includes(value as WeixinLedgerKind)
+    ? (value as WeixinLedgerKind)
+    : 'text';
+}
 
 /**
  * `appSecret` must never reach the renderer through `im:config:get`, so the
@@ -107,7 +122,37 @@ export class IMStore {
     `);
 
     this.ensureSessionMappingSchema();
+    this.initializeWeixinLedgerTable();
     this.saveDb();
+  }
+
+  /**
+   * Local Weixin message ledger: the ONLY place a quoted `msg_id` can be turned
+   * back into content, because the platform's quote payload carries an id and
+   * nothing else (see weixinLedger.ts).
+   *
+   * `created_at` is indexed for the TTL sweep; the composite index serves the
+   * per-conversation "newest N" trim.
+   */
+  private initializeWeixinLedgerTable(): void {
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS im_weixin_message_ledger (
+        msg_id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        direction TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        text TEXT NULL,
+        created_at INTEGER NOT NULL
+      );
+    `);
+    this.db.run(`
+      CREATE INDEX IF NOT EXISTS idx_im_weixin_message_ledger_created_at
+        ON im_weixin_message_ledger (created_at);
+    `);
+    this.db.run(`
+      CREATE INDEX IF NOT EXISTS idx_im_weixin_message_ledger_conversation
+        ON im_weixin_message_ledger (conversation_id, created_at);
+    `);
   }
 
   private ensureSessionMappingSchema(): void {
@@ -573,5 +618,96 @@ export class IMStore {
       createdAt: row[4] as number,
       lastActiveAt: row[5] as number,
     }));
+  }
+
+  // ==================== Weixin message ledger ====================
+
+  /**
+   * Record one message id → local summary.
+   *
+   * Called from the gateway's send AND receive paths, so the call must stay
+   * cheap and must never grow without bound: the insert is followed by a TTL
+   * sweep plus a per-conversation trim (newest `WEIXIN_LEDGER_MAX_ROWS_PER_CONVERSATION`
+   * rows survive). Throws only when SQLite itself fails — the gateway catches
+   * that and keeps delivering.
+   */
+  putWeixinLedgerEntry(entry: WeixinLedgerEntry): void {
+    this.db.run(
+      `INSERT INTO im_weixin_message_ledger
+         (msg_id, conversation_id, direction, kind, text, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(msg_id) DO UPDATE SET
+         conversation_id = excluded.conversation_id,
+         direction = excluded.direction,
+         kind = excluded.kind,
+         text = excluded.text,
+         created_at = excluded.created_at`,
+      [entry.msgId, entry.conversationId, entry.direction, entry.kind, entry.text, entry.createdAt]
+    );
+    this.pruneWeixinLedger(entry.conversationId, entry.createdAt);
+    this.saveDb();
+  }
+
+  /** Look one message up by server id. Returns null for an unknown id. */
+  getWeixinLedgerEntry(msgId: string): WeixinLedgerEntry | null {
+    if (!msgId) return null;
+    const result = this.db.exec(
+      `SELECT msg_id, conversation_id, direction, kind, text, created_at
+         FROM im_weixin_message_ledger
+        WHERE msg_id = ?`,
+      [msgId]
+    );
+    const row = result[0]?.values?.[0];
+    if (!row) return null;
+    return {
+      msgId: String(row[0]),
+      conversationId: typeof row[1] === 'string' ? row[1] : String(row[1] ?? ''),
+      direction: row[2] === 'out' ? 'out' : 'in',
+      kind: normalizeWeixinLedgerKind(row[3]),
+      text: typeof row[4] === 'string' ? row[4] : null,
+      createdAt: this.parseNumberOrNull(row[5]) ?? 0,
+    };
+  }
+
+  /**
+   * Drop expired rows and trim one conversation to its newest N entries.
+   * Returns how many rows were removed (diagnostics/tests).
+   */
+  pruneWeixinLedger(conversationId?: string, now: number = Date.now()): number {
+    let removed = 0;
+
+    this.db.run('DELETE FROM im_weixin_message_ledger WHERE created_at < ?', [
+      now - WEIXIN_LEDGER_TTL_MS,
+    ]);
+    removed += this.db.getRowsModified?.() ?? 0;
+
+    if (conversationId) {
+      this.db.run(
+        `DELETE FROM im_weixin_message_ledger
+          WHERE conversation_id = ?
+            AND msg_id NOT IN (
+              SELECT msg_id FROM im_weixin_message_ledger
+               WHERE conversation_id = ?
+               ORDER BY created_at DESC, rowid DESC
+               LIMIT ?
+            )`,
+        [conversationId, conversationId, WEIXIN_LEDGER_MAX_ROWS_PER_CONVERSATION]
+      );
+      removed += this.db.getRowsModified?.() ?? 0;
+    }
+
+    return removed;
+  }
+
+  /** Row count, optionally scoped to one conversation (tests + diagnostics). */
+  countWeixinLedgerEntries(conversationId?: string): number {
+    const result = conversationId
+      ? this.db.exec(
+        'SELECT COUNT(*) FROM im_weixin_message_ledger WHERE conversation_id = ?',
+        [conversationId]
+      )
+      : this.db.exec('SELECT COUNT(*) FROM im_weixin_message_ledger');
+    const value = result[0]?.values?.[0]?.[0];
+    return this.parseNumberOrNull(value) ?? 0;
   }
 }

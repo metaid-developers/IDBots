@@ -64,3 +64,24 @@ export const findDeliveryAssistantIndex = (visibleAssistantItems) => {
 export const shouldShowAssistantBubbleActions = ({ isAssistantMode, showCopyButton }) => (
   Boolean(isAssistantMode && showCopyButton)
 );
+
+/**
+ * Outbound-IM receipts (im_send_message) are `system` rows written into the
+ * chat the message went to. They are delivery evidence, not process chrome:
+ * the professional-mode "Worked for" collapse folds process items, and a
+ * receipt folded into it is a receipt the owner never sees without a click.
+ * So the turn's process list is split: receipts stay always-visible, the rest
+ * keeps collapsing exactly as before.
+ */
+export const isOutboundImReceiptItem = (item) => (
+  item?.type === 'system' && item.message?.metadata?.imOutboundSend === true
+);
+
+export const splitOutboundImReceipts = (items = []) => {
+  const receipts = [];
+  const rest = [];
+  for (const item of items) {
+    (isOutboundImReceiptItem(item) ? receipts : rest).push(item);
+  }
+  return { receipts, rest };
+};

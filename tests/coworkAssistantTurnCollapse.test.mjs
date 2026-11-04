@@ -14,7 +14,7 @@ const detailSourcePath = path.join(
   'CoworkSessionDetail.tsx'
 );
 
-const { isAssistantTurnComplete } = await import(
+const { isAssistantTurnComplete, splitOutboundImReceipts, isOutboundImReceiptItem } = await import(
   '../src/renderer/components/cowork/assistantTurnPresentation.js'
 );
 
@@ -67,4 +67,40 @@ test('CoworkSessionDetail routes turn completeness through the helper with an ac
   // can flip while this one is being viewed).
   assert.match(source, /isActiveTurn=\{currentSession\?\.status === 'running' && isLastTurn\}/);
   assert.match(source, /isActiveTurn=\{currentSession\?\.status === 'running'\}/);
+});
+
+test('outbound IM receipts never fold into the "Worked for" collapse', () => {
+  const receipt = {
+    type: 'system',
+    message: { id: 'r1', type: 'system', content: '下午好～测试消息', metadata: { imOutboundSend: true } },
+  };
+  const thinking = {
+    type: 'assistant',
+    message: { id: 'a1', type: 'assistant', content: '', metadata: { isThinking: true } },
+  };
+  const tool = { type: 'tool_group', group: { toolUse: { id: 't1' } } };
+
+  const { receipts, rest } = splitOutboundImReceipts([thinking, receipt, tool]);
+  assert.deepEqual(receipts, [receipt], 'the receipt is split out, in transcript order');
+  assert.deepEqual(rest, [thinking, tool], 'only real process chrome keeps collapsing');
+
+  assert.equal(isOutboundImReceiptItem(receipt), true);
+  assert.equal(
+    isOutboundImReceiptItem({ type: 'system', message: { metadata: {} } }),
+    false,
+    'other system rows keep the existing collapse behavior'
+  );
+  assert.equal(
+    isOutboundImReceiptItem({ type: 'assistant', message: { metadata: { imOutboundSend: true } } }),
+    false,
+    'only a system row can be a receipt — an assistant echo could be forwarded as a reply'
+  );
+
+  // The renderer must feed the split into the collapse decision, and render the
+  // receipts unconditionally (the source assertion catches a future refactor
+  // that drops the visibility guarantee).
+  const source = fs.readFileSync(detailSourcePath, 'utf8');
+  assert.match(source, /splitOutboundImReceipts\(processItems\)/);
+  assert.match(source, /collapsibleProcessItems\.length > 0/);
+  assert.match(source, /outboundReceiptItems\.map/);
 });
