@@ -60,6 +60,7 @@ import {
 } from './services/jevRelayService';
 import { rankMemoriesWithCerebellum } from './cerebellum/memoryRank';
 import { startEventLoopLagMonitor } from './libs/eventLoopLagMonitor';
+import { startRendererHangMonitor } from './libs/rendererHangMonitor';
 import { rankConversationsWithCerebellum } from './cerebellum/conversationSearchRank';
 import { decideGroupReplyWithCerebellum } from './cerebellum/groupReplyGate';
 import { classifySessionFollowUpWithCerebellum } from './cerebellum/sessionFollowUpGate';
@@ -18554,6 +18555,22 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
   // in-process timer late (the 2026-10-16 15.4s first-sentence stall), so
   // bracket future stalls with an explicit WARN instead of a silent log gap.
   startEventLoopLagMonitor();
+
+  // Renderer-hang watchdog (2026-10-30): render-process-gone only fires when
+  // the renderer CRASHED. A renderer that stays alive at 100% CPU in a page
+  // loop freezes the window silently — that ran for 34 hours before the owner
+  // noticed. Sample the 'Tab' process CPU and raise ONE WARN per sustained
+  // episode; notify-only, nothing is reloaded or killed.
+  startRendererHangMonitor(() => app.getAppMetrics(), {
+    log: coworkLog,
+    onHang: ({ cpuPercent, sustainedMs, at }) => {
+      coworkLog('WARN', 'renderer:hang', 'Renderer process sustained at high CPU — the window may be spinning while the app still looks alive; notify-only, nothing was reloaded or killed', {
+        cpuPercent,
+        sustainedMs,
+        at: new Date(at).toISOString(),
+      });
+    },
+  });
 
   registerIpcHandler('metabot:setEnabled', async (_event, id: number, enabled: boolean) => {
     try {

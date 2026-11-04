@@ -891,3 +891,6 @@ blob-report/
 !tests/desktopAxComputerUseGate.test.mjs
 !tests/desktopAxLocator.test.mjs
 !docs/two-layer-desktop-locate.md
+
+# Renderer-hang watchdog (notify-only): decision core + sampler episode tests
+!tests/rendererHangMonitor.test.mjs
