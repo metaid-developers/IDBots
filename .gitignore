@@ -70,6 +70,7 @@ docs/*
 !docs/qq-channel-pr.md
 tests/*
 !tests/dataGuard.test.mjs
+!tests/a2aPendingAskBridge.test.mjs
 !tests/friendAgentTools.test.mjs
 !tests/friendRelationshipService.test.mjs
 !tests/friendWiringIntegration.test.mjs

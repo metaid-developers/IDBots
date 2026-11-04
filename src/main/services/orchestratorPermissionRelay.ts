@@ -17,7 +17,7 @@
 import type { CoworkRunner } from '../libs/coworkRunner';
 import type { PermissionResult } from '../libs/coworkPermissionTypes';
 
-type RelayPermissionRequest = {
+export type RelayPermissionRequest = {
   requestId: string;
   toolName: string;
   toolInput: Record<string, unknown>;
@@ -60,6 +60,42 @@ const relayStates = new WeakMap<CoworkRunner, OrchestratorRelayState>();
 
 const ALLOW_RESPONSE_RE = /^(允许|同意|yes|y)$/i;
 const DENY_RESPONSE_RE = /^(拒绝|不同意|no|n)$/i;
+
+/**
+ * True for an owner question raised by ask_user_question itself (a structured
+ * question the model wants a human to answer) as opposed to a safety gate that
+ * merely rides the same AskUserQuestion tool. Safety gates always carry
+ * toolInput.context.requestedToolName (see buildSafetyQuestionInput in
+ * coworkRunner) and their fixed allow/deny options are the only thing a
+ * "允许/拒绝" text reply can answer. A structured question has no such context,
+ * and the text relay must keep its hands off it: the transcript prompt it posts
+ * is invisible in the A2A view, its 60s auto-deny fabricates a refusal the
+ * owner never gave, and the real answer seat is the AskUserQuestion modal /
+ * CoworkPermissionOverlay (plus the desktop notification nudge installed by
+ * pendingOwnerAskBridge for unattended bridge turns).
+ */
+export function isStructuredOwnerQuestion(request: RelayPermissionRequest): boolean {
+  if (request.toolName !== 'AskUserQuestion') return false;
+  const input = request.toolInput && typeof request.toolInput === 'object' ? request.toolInput : {};
+  const context = input.context && typeof input.context === 'object'
+    ? input.context as Record<string, unknown>
+    : null;
+  const requestedToolName = typeof context?.requestedToolName === 'string'
+    ? context.requestedToolName.trim()
+    : '';
+  return requestedToolName.length === 0;
+}
+
+/**
+ * True when this session's turns run through the orchestrator bridge
+ * (A2A private-chat replies, OpenTeam guest turns, group-task worker turns,
+ * Twin delegations). These are the unattended text-mode turns whose owner
+ * questions have no composer seat of their own — the global overlay plus the
+ * pendingOwnerAskBridge push must carry them.
+ */
+export function isManagedOrchestratorSession(runner: CoworkRunner, sessionId: string): boolean {
+  return relayStates.get(runner)?.managedSessions.has(sessionId) ?? false;
+}
 
 export function buildOrchestratorPermissionPrompt(
   request: RelayPermissionRequest,
@@ -204,6 +240,13 @@ function handlePermissionRequest(
   // the daemon logged "not authorized" with the owner never clicking. The
   // renderer's global CoworkPermissionOverlay is the one and only seat.
   if (runner.isPermissionSuspended?.(request.requestId)) return;
+  // Structured owner questions (AskUserQuestion with no safety context and no
+  // stamped timeoutDefault) DO stay on this relay, but as a wait-forever
+  // prompt: relayTimeoutResult arms no countdown for them, so the old
+  // 60s auto-deny can never resolve such an ask as a fabricated refusal.
+  // The answer seat is the global CoworkPermissionOverlay, and for bridge
+  // turns pendingOwnerAskBridge additionally pushes a desktop notification —
+  // the transcript post below remains the durable, reviewable record.
 
   // A newer request keeps the older cards. Each one keeps its own countdown
   // and default action; nothing is denied just because another prompt arrived.

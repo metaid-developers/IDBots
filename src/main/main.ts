@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, session, nativeTheme, dialog, shell, nativeImage, systemPreferences, Menu, powerSaveBlocker } from 'electron';
+import { app, BrowserWindow, ipcMain, session, nativeTheme, dialog, shell, nativeImage, systemPreferences, Menu, powerSaveBlocker, Notification } from 'electron';
 import type { FileFilter, MessageBoxOptions, OpenDialogOptions, Session, WebContents } from 'electron';
 import path from 'path';
 import fs from 'fs';
@@ -446,6 +446,8 @@ import { computeDreamRetryDelayMs } from './libs/dreamPrompt';
 import { DREAM_RETRY_MAX_ATTEMPTS } from './libs/dreamRetryPolicy';
 import { evaluateInstallAgeGate, pickInstallAnchorMs } from './libs/installAgeGate';
 import { runOrchestratorSkillTurn, runSkillTurnInExistingSession, SkillTurnTimeoutError } from './services/orchestratorCoworkBridge';
+import { installOwnerAskBridge } from './services/pendingOwnerAskBridge';
+import { createOwnerAskNotifier } from './services/ownerAskNotifier';
 import { withChainWriteBudget } from './libs/chainWriteBudget';
 import { buildTwinWorkerDirectory } from './services/twinWorkerDirectoryService';
 import { TwinOrchestrationService } from './services/twinOrchestrationService';
@@ -8462,6 +8464,31 @@ const getCoworkRunner = () => {
     coworkRunner.on('permissionResolved', (sessionId: string, requestId: string) => {
       broadcastToRenderers('cowork:stream:permissionResolved', { sessionId, requestId });
       resolvePendingPermission(sessionId, requestId);
+    });
+
+    // Owner-question delivery for unattended bridge turns (A2A private chat,
+    // OpenTeam guests, group-task workers, Twin delegations): the ask still
+    // renders through the SAME CoworkPermissionOverlay broadcast above — this
+    // only adds a desktop notification when the owner has switched away
+    // (foreground windows keep the single in-app card, no double popup), and
+    // the honest timeout/unanswered notices used by orchestratorCoworkBridge
+    // and the runner's ask-cancel path. See pendingOwnerAskBridge for the
+    // timeout semantics.
+    installOwnerAskBridge(coworkRunner, {
+      getAppLanguage: () => getCoworkStore().getAppLanguage(),
+      notify: createOwnerAskNotifier({
+        isSupported: () => Notification.isSupported(),
+        isWindowForeground: () =>
+          Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && mainWindow.isFocused()),
+        createNotification: ({ title, body }) => new Notification({ title, body }),
+        showWindow: () => {
+          if (!mainWindow || mainWindow.isDestroyed()) return;
+          if (mainWindow.isMinimized()) mainWindow.restore();
+          if (!mainWindow.isVisible()) mainWindow.show();
+          if (!mainWindow.isFocused()) mainWindow.focus();
+        },
+        log: (message, error) => console.warn(message, error),
+      }),
     });
 
     coworkRunner.on('complete', (sessionId: string, claudeSessionId: string | null) => {
