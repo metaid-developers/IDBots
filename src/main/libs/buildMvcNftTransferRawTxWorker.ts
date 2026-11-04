@@ -7,7 +7,7 @@
  */
 
 import { API_NET, API_TARGET, NftManager, mvc } from 'meta-contract';
-import { getMvcWallet, parseAddressIndexFromPath } from '../services/metabotWalletService';
+import { getMvcWalletFromPath } from '../services/metabotWalletService';
 import {
   attachMvcFundingSignatureContext,
   selectMvcFundingUtxos,
@@ -89,8 +89,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const addressIndex = parseAddressIndexFromPath(pathStr);
-  const mvcWallet = await getMvcWallet(mnemonic, addressIndex);
+  const mvcWallet = await getMvcWalletFromPath(mnemonic, pathStr);
   const senderWif = mvcWallet.getPrivateKey();
   const senderAddress = mvcWallet.getAddress();
 

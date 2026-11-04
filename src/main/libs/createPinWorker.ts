@@ -233,6 +233,19 @@ function parseAddressIndexFromPath(pathStr: string): number {
   return m ? parseInt(m[1], 10) : 0;
 }
 
+/**
+ * Coin segment of the BIP44 path. Legacy behavior hardcoded 10001 here; an
+ * explicit 236 path (restored legacy-NFT issuer identity) must derive the same
+ * key the restore flow (getMvcWalletFromPath) does — verified to produce the
+ * identical address via mvc-lib HD derivation. Any other shape stays 10001.
+ */
+export function resolveMvcDeriveCoinType(pathStr?: string | null): 236 | 10001 {
+  if (pathStr && typeof pathStr === 'string' && /^m\/44'\/236'\/0'\/0\/(\d+)$/.test(pathStr.trim())) {
+    return 236;
+  }
+  return 10001;
+}
+
 function logStep(message: string, details?: Record<string, unknown>): void {
   try {
     const suffix = details ? ` ${JSON.stringify(details)}` : '';
@@ -462,7 +475,7 @@ async function main(): Promise<void> {
   const network = mvc.Networks.livenet;
   const mneObj = mvc.Mnemonic.fromString(mnemonic);
   const hdpk = mneObj.toHDPrivateKey('', network as any);
-  const derivePath = `m/44'/10001'/0'/0/${addressIndex}`;
+  const derivePath = `m/44'/${resolveMvcDeriveCoinType(pathStr)}'/0'/0/${addressIndex}`;
   const childPk = hdpk.deriveChild(derivePath);
   const address = childPk.publicKey.toAddress(network as any).toString();
   const privateKey = childPk.privateKey;
