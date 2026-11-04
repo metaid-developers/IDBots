@@ -37,6 +37,7 @@ import { SkillsPage } from './me/SkillsPage';
 import { MemoryPage } from './me/MemoryPage';
 import { GeneralPage } from './me/GeneralPage';
 import { AccountPage } from './me/AccountPage';
+import { WeixinBindPage } from './me/WeixinBindPage';
 import { AboutPage } from './me/AboutPage';
 
 /**
@@ -295,6 +296,8 @@ export default function MeScreen(props: {
         return <UsageCreditsPage onBack={requestBack} />;
       case 'bots':
         return <BotsPage onBack={requestBack} onOpenEdit={(botId) => pushRoute('botEdit', botId)} />;
+      case 'weixinBind':
+        return <WeixinBindPage onBack={requestBack} />;
       case 'botEdit':
         return (
           <>
