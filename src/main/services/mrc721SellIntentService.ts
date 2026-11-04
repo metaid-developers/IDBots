@@ -2,9 +2,7 @@ import { randomBytes } from 'node:crypto';
 import {
   broadcastMrc721Pin,
   fetchMetasoJson,
-  fetchMrc721IndexerJson,
   fetchMrc721ItemInfo,
-  hasMetasoApiBase,
   isMvcAddress,
   isMrc721PinId,
   type Mrc721CreatePinFn,
@@ -454,9 +452,10 @@ export async function fetchMrc721SellIntents(params: {
   cursor?: string | number;
   size?: number;
 }): Promise<Mrc721SellIntentPage> {
-  // MetaSo-P2P owns the sell-intent index (indexing architecture 2026-11-05):
-  // when its base is configured it is the primary source; the manapi path
-  // stays as the interim (honest 404/envelope-miss degradation upstream).
+  // MetaSo-P2P owns the sell-intent index (indexing architecture 2026-11-05);
+  // the production base is built into getMetasoApiBase (env override for
+  // staging only). Transport/envelope errors propagate with the structured
+  // markers so the tool degrades honestly.
   const query = {
     collectionPinId: params.collectionPinId,
     collectionName: params.collectionName,
@@ -466,9 +465,7 @@ export async function fetchMrc721SellIntents(params: {
     cursor: params.cursor,
     size: params.size,
   };
-  const data = await (hasMetasoApiBase()
-    ? fetchMetasoJson('/api/mrc721/sell/intents', query)
-    : fetchMrc721IndexerJson('/api/mrc721/sell/intents', query)) as { list?: unknown; total?: unknown; cursor?: unknown } | null;
+  const data = await fetchMetasoJson('/api/mrc721/sell/intents', query) as { list?: unknown; total?: unknown; cursor?: unknown } | null;
   const items = Array.isArray(data?.list) ? data.list.map(sellIntentRowFrom) : [];
   return {
     items,
@@ -482,9 +479,7 @@ export async function fetchMrc721SellIntentInfo(params: {
   itemPinId: string;
 }): Promise<Mrc721SellIntentRow | null> {
   try {
-    const data = await (hasMetasoApiBase()
-      ? fetchMetasoJson('/api/mrc721/sell/intent/info', { itemPinId: params.itemPinId })
-      : fetchMrc721IndexerJson('/api/mrc721/sell/intent/info', { itemPinId: params.itemPinId }));
+    const data = await fetchMetasoJson('/api/mrc721/sell/intent/info', { itemPinId: params.itemPinId });
     return data ? sellIntentRowFrom(data) : null;
   } catch (error) {
     const status = (error as { mrc721Status?: number }).mrc721Status;
