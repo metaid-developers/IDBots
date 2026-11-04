@@ -81,6 +81,16 @@ export interface ControlPlaneConfig {
   loginBundleDir: string;
   /** ASR voice gateway (new capability; see docs/cloud-mobile/voice/asr-channel.md). */
   asr: AsrConfig;
+  /**
+   * Bearer token for the admin credit surface (CP_ADMIN_API_TOKEN, new
+   * capability; no C2/C3 contract change). When unset/empty the
+   * `/api/v1/admin/credit*` routes answer 404 — the surface is disabled and
+   * the credit CLI (`credit grant`) remains the operator path. Mirror of the
+   * tenant image's admin-console gate (admin.enabled/token): a configured
+   * token is required, missing/wrong tokens get 401, and no user session can
+   * reach the route.
+   */
+  adminApiToken: string | null;
 }
 
 const FAKE_SMS_ALLOWED_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
@@ -244,6 +254,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): ControlPlaneConfig {
     alertWebhook: env.CP_ALERT_WEBHOOK ?? null,
     loginBundleDir: env.CP_LOGIN_BUNDLE_DIR ?? defaultLoginBundleDir(),
     asr,
+    adminApiToken: env.CP_ADMIN_API_TOKEN ? env.CP_ADMIN_API_TOKEN : null,
   };
 }
 
