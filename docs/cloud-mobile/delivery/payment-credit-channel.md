@@ -2,7 +2,7 @@
 
 **Status:** implemented and unit-tested on this branch; real Alipay payment NOT RUN here (the ¥99.90 incident is what motivated this channel — operator-recorded credit closes the "收款到账但额度未核销" gap at the bookkeeping level while upstream order confirmation is being fixed separately).
 
-**Single commit on `feat/payment-credit-channel`** (base `4e419f76`); not merged to main. Run `git log --oneline feat/payment-credit-channel -1` for the exact hash.
+**Four commits on `feat/payment-credit-channel`** (base `4e419f76`), two workers pairing on one worktree: control-plane credit ledger (`42486526`), client order vouchers (`9cf44323`), payment-success trigger seam + tests (`03efd47e`), bundle test additions + this note (`8534ee8a`), then the balance-cache invalidation with its measured X→X+N reconciliation test. Not merged to main; run `git log --oneline feat/payment-credit-channel` for the exact hashes.
 
 ## Scope and Architecture
 
@@ -58,7 +58,7 @@ Maps one paid order → `grantCredit(source='bundle-order', reason="bundle order
 
 ### Client voucher (local order record, REQ-B/A-24 adjacent)
 
-`src/main/services/bundleService.ts`: every successful `createBundleOrder` (stub and real path) persists a `BundleOrderVoucher` under the local SqliteStore KV key `bundle.orderVouchers` — `{ orderId (verbatim upstream id), planId, payAmount, payCurrency, trafficBytes, llmQuota, gateway, createdAt }`. The first status poll that observes PAID/CREDITED stamps `paidAt`/`creditedAt` exactly once (`markVoucherPaid`); later observations are no-ops. Read surface: `getBundleOrderVoucher(orderId)`. Voucher absence never fails a live payment (store-configured instance with no voucher = order created before this build).
+`src/main/services/bundleService.ts`: every successful `createBundleOrder` (stub and real path) persists a `BundleOrderVoucher` under the local SqliteStore KV key `bundle.orderVouchers` — `{ orderId (verbatim upstream id), planId, payAmount, payCurrency, trafficBytes, llmQuota, gateway, createdAt }`. The first status poll that observes PAID/CREDITED stamps `paidAt`/`creditedAt` exactly once (`markVoucherPaid`) and drops the cached traffic balance (`invalidateTrafficBalanceCache`, payment credit channel addition) so the very next `getTrafficBalance` reads the credited value instead of a pre-payment TTL-cache answer; later observations are no-ops. Read surface: `getBundleOrderVoucher(orderId)`. Voucher absence never fails a live payment (store-configured instance with no voucher = order created before this build).
 
 ## Rollback
 
@@ -73,8 +73,10 @@ Everything here is additive; there is no schema rewrite of C2/C3 tables.
 
 ## Verification
 
-- `cloud/control-plane`: full suite + lint + build — see the run output pasted in the work journal (AC-1/AC-2 tests by the sibling instance; `bundle-order-credit.test.ts` from this slice).
-- Client: `npm run compile:electron && node --test tests/bundleService.test.mjs` — voucher tests added (create persists voucher; first-poll credit stamps once; repeated polls stay stamped-once; real-mode create persists the upstream orderId; uncertain create writes nothing).
+- `cloud/control-plane`: full suite + lint + build — see the run output pasted in the work journal (AC-1/AC-2 tests by the sibling instance; `bundle-order-credit.test.ts` from this slice). `test/credit.test.ts`: 13/13 pass.
+- Client: `npm run compile:electron && node --test tests/bundleService.test.mjs` — voucher tests added (create persists voucher; first-poll credit stamps once; repeated polls stay stamped-once; real-mode create persists the upstream orderId; uncertain create writes nothing). 19/19 pass together with the existing suite cases (20/20 combined).
+- Measured credit-path ↔ traffic-account reconciliation (acceptance criterion 2): `tests/bundleCreditBalance.test.mjs` drives the REAL client path against one fake upstream — pay before X = 9,961,472 balance bytes → order paid (upstream credits +104,857,600 per the frozen crediting rule) → direct (non-forced) `getTrafficBalance` returns 114,819,072 = X+N, delta equals the voucher's `trafficBytes`, upstream `orderId` verbatim in the voucher, repeated polls never re-stamp. RED control: with `invalidateTrafficBalanceCache()` removed the same test fails "balance must move X → X+N (observed +0, expected +104857600)" — the post-credit read returns the stale cache, proving the assertion is wired to the real invalidation, not a mock.
+- `node --test tests/trafficAccountService.test.mjs` — 39/39 pass (invalidation addition leaves the existing cache/spend behavior intact).
 
 ## NOT RUN / Not Accepted Here
 

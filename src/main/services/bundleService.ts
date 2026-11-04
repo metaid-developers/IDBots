@@ -32,7 +32,7 @@
 import { randomBytes } from 'node:crypto';
 import { signMvcAddressMessage } from './mvcSponsorClient';
 import { relayIdentityMatchesLocalIdentity } from './llmRelayService';
-import { getConfiguredTrafficApiBase, getTrafficBalance, type TrafficAccountRecord } from './trafficAccountService';
+import { invalidateTrafficBalanceCache, getConfiguredTrafficApiBase, getTrafficBalance, type TrafficAccountRecord } from './trafficAccountService';
 import { TRAFFIC_API_BASE_KEY } from './trafficSettings';
 import type { SqliteStore } from '../sqliteStore';
 import type { UserIdentityStore } from '../userIdentityStore';
@@ -746,6 +746,9 @@ export async function getBundleOrder(input: { orderId?: unknown }): Promise<Bund
   const status = normalizeBundleOrderStatus(data as Record<string, unknown>);
   if (status.status === BUNDLE_ORDER_STATUS.PAID || status.status === BUNDLE_ORDER_STATUS.CREDITED) {
     markVoucherPaid(status.orderId, status.paidAt ?? nowSeconds(), status.creditedAt);
+    // Upstream credited the traffic account at payment success; drop the
+    // stale cached balance so the very next read shows the credited value.
+    invalidateTrafficBalanceCache();
   }
   return status;
 }

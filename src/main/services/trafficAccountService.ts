@@ -723,6 +723,18 @@ export async function getTrafficBalance(options: { forceRefresh?: boolean } = {}
   return fresh;
 }
 
+/**
+ * Drop the cached balance so the next getTrafficBalance refetches (payment
+ * credit channel): the moment a bundle poll observes the order PAID/CREDITED
+ * the upstream has credited the traffic account, and any cached balance
+ * predating that observation reads out the pre-payment value for the rest of
+ * the TTL. Same invalidation the other credit paths (recharge, redeem) apply
+ * after crediting.
+ */
+export function invalidateTrafficBalanceCache(): void {
+  balanceCache = null;
+}
+
 export async function getTrafficLedger(input: {
   cursor?: number;
   limit?: number;
