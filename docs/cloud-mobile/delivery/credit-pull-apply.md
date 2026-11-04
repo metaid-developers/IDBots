@@ -62,6 +62,11 @@ balanceAfter as reported by the tenant), `apply_attempts`, `last_apply_error`,
   server-to-server and authenticated by an explicit bearer secret; no cookie is involved, so
   the CSRF reason for the gate does not apply. User-session routes are unchanged.
 - The code value never appears in a log line or in the admin list response.
+- **Edge exposure:** the pending response carries single-use codes, which are bearer values
+  (first redeemer wins). `deploy/hosts/Caddyfile` therefore answers `404` for
+  `/api/v1/tenant/*` on the public host: these routes exist only on the internal tenants
+  network (`tenant → http://<cp-ip>:8080`). Caddyfile validated with
+  `caddy validate --adapter caddyfile` (Valid configuration).
 
 ### Operator surfaces
 
@@ -138,8 +143,10 @@ a `bundle-order` row migrates to `not-required`.
    `control-plane` service). Startup runs migration 4.
 2. **Tell tenants where the control plane is.** In `/etc/idbots/cp-prod.env`:
    `CP_TENANT_ENV_IDBOTS_CONTROL_PLANE_URL=http://172.31.0.2:8080` (internal tenants
-   network; verified reachable from the tenant, and it keeps the gateway secret off the
-   public edge). Recreate the control plane once so the env reaches new/recreated tenants.
+   network; verified reachable from the tenant, and it keeps the gateway secret and the
+   redeem codes off the public edge). Recreate the control plane once so the env reaches
+   new/recreated tenants. Apply the same `/api/v1/tenant/* → 404` rule to the production
+   Caddyfile (deploy runbook: `deploy/hosts/Caddyfile`).
 3. **Mint the 50 GB code** on the traffic service (operator admin token):
    ```
    curl -s -X POST https://www.metaso.network/assist-open-api/v1/admin/traffic/codes/generate \
