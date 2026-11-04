@@ -837,7 +837,12 @@ test('Twin orchestration tools have a host-side gate and trusted sandbox registr
 });
 
 test('release packaging wires nested DSH runtime install, extraResources, and pack gates', () => {
-  const { extraResourceFilterExcludesNodeModules, RUNTIME_DEAD_FILE_FILTERS, RESOURCE_DOT_ENTRY_FILTERS } = require('../scripts/packagedRuntimes.cjs');
+  const {
+    extraResourceFilterExcludesNodeModules,
+    RUNTIME_DEAD_FILE_FILTERS,
+    RUNTIME_TEST_DIRECTORY_FILTERS,
+    RESOURCE_DOT_ENTRY_FILTERS,
+  } = require('../scripts/packagedRuntimes.cjs');
   const workflow = fs.readFileSync(path.join(process.cwd(), '.github/workflows/build.yml'), 'utf8');
   const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
   const builder = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'electron-builder.json'), 'utf8'));
@@ -872,6 +877,12 @@ test('release packaging wires nested DSH runtime install, extraResources, and pa
       `dsh-runtime extraResources filter must keep ${pattern}: declarations and source maps are roughly 43% of the files the Windows installer extracts`,
     );
   }
+  for (const pattern of RUNTIME_TEST_DIRECTORY_FILTERS) {
+    assert.ok(
+      (dshResource.filter || []).includes(pattern),
+      `dsh-runtime extraResources filter must keep ${pattern}: dependency test fixtures add thousands of files for NSIS and Defender to process`,
+    );
+  }
   const skillsResource = (builder.extraResources || []).find((entry) => entry && entry.from === 'SKILLs');
   assert.ok(skillsResource, 'electron-builder extraResources must copy SKILLs');
   for (const pattern of RESOURCE_DOT_ENTRY_FILTERS) {
@@ -884,6 +895,12 @@ test('release packaging wires nested DSH runtime install, extraResources, and pa
     assert.ok(
       (skillsResource.filter || []).includes(pattern),
       `SKILLs extraResources filter must keep ${pattern}: the web-search node_modules ships dead declarations and source maps otherwise`,
+    );
+  }
+  for (const pattern of RUNTIME_TEST_DIRECTORY_FILTERS) {
+    assert.ok(
+      (skillsResource.filter || []).includes(pattern),
+      `SKILLs extraResources filter must keep ${pattern}: web-search uses playwright-core, whose production files do not require dependency test fixtures`,
     );
   }
   const metaappsResource = (builder.extraResources || []).find((entry) => entry && entry.from === 'METAAPPs');
@@ -1064,10 +1081,16 @@ test('packaged runtime gates fail closed on missing source and packaged markers'
     fs.writeFileSync(path.join(pkgDir, 'README.md'), '# pkg');
     fs.writeFileSync(path.join(pkgDir, 'SKILL.md'), '---\nname: pkg\n---');
     fs.writeFileSync(path.join(pkgDir, 'node_modules', 'dep', 'types.d.mts'), 'export {}');
+    fs.mkdirSync(path.join(pkgDir, 'tests'), { recursive: true });
+    fs.writeFileSync(path.join(pkgDir, 'tests', 'fixture.js'), 'not runtime code');
+    const playwrightBackend = path.join(runtimeRoot, 'node_modules', 'playwright', 'lib', 'mcp', 'test', 'browserBackend.js');
+    fs.mkdirSync(path.dirname(playwrightBackend), { recursive: true });
+    fs.writeFileSync(playwrightBackend, 'required by playwright/lib/index.js at runtime');
     assert.deepEqual(findPackagedRuntimeDeadFiles(runtimeRoot), [
       'node_modules/pkg/index.d.ts',
       'node_modules/pkg/index.js.map',
       'node_modules/pkg/node_modules/dep/types.d.mts',
+      'node_modules/pkg/tests/fixture.js',
     ]);
     const packagedContext = {
       appOutDir: path.join(tmpRoot, 'mac-out'),
@@ -1076,16 +1099,21 @@ test('packaged runtime gates fail closed on missing source and packaged markers'
     };
     assert.throws(
       () => verifyPackagedRuntimes(packagedContext),
-      /3 file\(s\) nothing loads at run time[\s\S]*dsh-runtime\/node_modules\/pkg\/index\.d\.ts/,
+      /4 file\(s\) nothing loads at run time[\s\S]*dsh-runtime\/node_modules\/pkg\/index\.d\.ts/,
     );
     for (const rel of findPackagedRuntimeDeadFiles(runtimeRoot)) {
       fs.rmSync(path.join(runtimeRoot, rel));
     }
     assert.deepEqual(findPackagedRuntimeDeadFiles(runtimeRoot), []);
     assert.ok(fs.existsSync(path.join(pkgDir, 'SKILL.md')), 'run-time markdown survives the prune');
+    assert.ok(fs.existsSync(playwrightBackend), 'Playwright production code under lib/mcp/test must not be pruned as tests');
     assert.doesNotThrow(() => verifyPackagedRuntimes(packagedContext));
   } finally {
-    fs.rmSync(tmpRoot, { recursive: true, force: true });
+    try {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    } catch {
+      // Temp cleanup is best-effort, including on Windows CI.
+    }
   }
 });
 

@@ -74,7 +74,7 @@
     "test:bot-browser": "node --test tests/browserSessionHomeEntryStatic.test.mjs tests/botBrowserSurfaceStatic.test.mjs && npx tsx --test tests/browserCoworkSlice.test.ts tests/browserSessionHomeBadge.test.tsx tests/browserIframeBridge.test.mjs && npx tsx --test tests/botBrowserPreviewAct.test.ts tests/botBrowserMetaAppCacheService.test.mjs",
     "test:vision": "pnpm run compile:electron && node --test tests/visionRelayAgentTools.test.mjs tests/visionRelayService.test.mjs tests/visionVideoRelay.test.mjs tests/visionAudioRelay.test.mjs tests/coworkModelLimits.test.mjs tests/coworkReadImageGuard.test.mjs",
     "test:vision-relay-live": "pnpm run compile:electron && node scripts/vision-relay-regression.mjs",
-    "test:update": "npx rimraf dist-electron && pnpm run build && pnpm run compile:electron && node --test tests/appUpdateMountPoint.test.mjs tests/appUpdateResumableDownload.test.mjs tests/appUpdateSilentFlowStatic.test.mjs tests/appUpdateUi.test.mjs tests/appUpdateVersionCompare.test.mjs",
+    "test:update": "npx rimraf dist-electron && pnpm run build && pnpm run compile:electron && node --test tests/appUpdateMountPoint.test.mjs tests/appUpdateResumableDownload.test.mjs tests/appUpdateSilentFlowStatic.test.mjs tests/appUpdateUi.test.mjs tests/appUpdateVersionCompare.test.mjs tests/windowsInstallerReliability.test.mjs",
     "test:cognitive-phase2": "pnpm run compile:electron && node scripts/test_cognitive_phase2.mjs",
     "test:cognitive-hook": "pnpm run compile:electron && node scripts/test_cognitive_hook.mjs",
     "test:gig-square": "pnpm run compile:electron && node scripts/gig-square-self-test.mjs",

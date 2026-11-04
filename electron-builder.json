@@ -28,7 +28,9 @@
         "!**/node_modules/**/*.d.ts",
         "!**/node_modules/**/*.d.mts",
         "!**/node_modules/**/*.d.cts",
-        "!**/node_modules/**/*.map"
+        "!**/node_modules/**/*.map",
+        "!**/node_modules/**/__tests__/**",
+        "!**/node_modules/**/tests/**"
       ]
     },
     {
@@ -63,7 +65,9 @@
         "!**/node_modules/**/*.d.ts",
         "!**/node_modules/**/*.d.mts",
         "!**/node_modules/**/*.d.cts",
-        "!**/node_modules/**/*.map"
+        "!**/node_modules/**/*.map",
+        "!**/node_modules/**/__tests__/**",
+        "!**/node_modules/**/tests/**"
       ]
     }
   ],

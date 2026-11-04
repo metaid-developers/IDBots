@@ -888,78 +888,32 @@ export async function applyMacUpdateSilently(dmgPath: string): Promise<void> {
   }
 }
 
+export function launchWindowsNsisInstaller(
+  exePath: string,
+  spawnImpl: typeof spawn = spawn,
+): Promise<number | undefined> {
+  return new Promise((resolve, reject) => {
+    const installer = spawnImpl(exePath, [], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: false,
+    });
+    installer.once('error', (error) => {
+      reject(new Error(`Failed to launch the Windows installer: ${error.message}`));
+    });
+    installer.once('spawn', () => {
+      installer.unref();
+      resolve(installer.pid);
+    });
+  });
+}
+
 async function installWindowsNsis(exePath: string): Promise<void> {
   console.log(`[AppUpdate] Windows NSIS install (interactive mode)`);
   console.log(`[AppUpdate]   installer: ${exePath}`);
   console.log(`[AppUpdate]   appPid: ${process.pid}`);
 
-  // We must NOT spawn the installer directly as a child of the app, because
-  // the NSIS customInit macro runs `taskkill /IM "IDBots.exe" /F /T`
-  // which kills the entire process tree — including child processes.
-  //
-  // Strategy: use a tiny PowerShell script (launched via hidden VBS) that
-  // waits for the app to fully exit, then opens the installer with its
-  // normal UI (no /S silent flag). This lets NSIS handle everything:
-  // desktop shortcuts, start menu entries, "Run after finish", etc.
-  const ts = Date.now();
-  const tempDir = app.getPath('temp');
-  const logPath = path.join(tempDir, `idbots-update-${ts}.log`);
-  const scriptPath = path.join(tempDir, `idbots-update-${ts}.ps1`);
-  const vbsPath = path.join(tempDir, `idbots-update-${ts}.vbs`);
-
-  console.log(`[AppUpdate] Script log: ${logPath}`);
-
-  const psEscape = (s: string) => s.replace(/'/g, "''");
-
-  const psScript = [
-    `$logPath = '${psEscape(logPath)}'`,
-    `$appPid = ${process.pid}`,
-    `$installerPath = '${psEscape(exePath)}'`,
-    '',
-    'function Log($msg) {',
-    "    $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff'",
-    '    Add-Content -Path $logPath -Value "[$ts] $msg" -Encoding UTF8',
-    '}',
-    '',
-    'try {',
-    '    Log "Update script started (appPid=$appPid)"',
-    '',
-    '    # Wait for the app to fully exit (by PID, max 120s)',
-    '    $waited = 0',
-    '    while ($waited -lt 120) {',
-    '        try {',
-    '            Get-Process -Id $appPid -ErrorAction Stop | Out-Null',
-    '            Start-Sleep -Seconds 1',
-    '            $waited++',
-    '        } catch {',
-    '            break',
-    '        }',
-    '    }',
-    '    Log "App exited after $waited seconds"',
-    '',
-    '    # Launch installer with normal UI (NSIS handles shortcuts & relaunch)',
-    '    Log "Launching installer: $installerPath"',
-    '    Start-Process -FilePath $installerPath',
-    '    Log "Done"',
-    '} catch {',
-    '    Log "ERROR: $($_.Exception.Message)"',
-    '}',
-  ].join('\r\n');
-
-  await fs.promises.writeFile(scriptPath, '\ufeff' + psScript, 'utf-8');
-
-  const vbsScript = `CreateObject("WScript.Shell").Run "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File ""${scriptPath}""", 0, False`;
-  await fs.promises.writeFile(vbsPath, vbsScript, 'utf-8');
-
-  console.log('[AppUpdate] Launching installer via wscript.exe...');
-
-  const launcher = spawn('wscript.exe', [vbsPath], {
-    detached: true,
-    stdio: 'ignore',
-    windowsHide: true,
-  });
-  launcher.unref();
-
-  console.log(`[AppUpdate] Launcher PID: ${launcher.pid}, calling app.quit()`);
+  const installerPid = await launchWindowsNsisInstaller(exePath);
+  console.log(`[AppUpdate] Installer PID: ${installerPid}, calling app.quit()`);
   app.quit();
 }
