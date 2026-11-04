@@ -709,12 +709,72 @@ export class ScheduledTaskStore {
 
   // --- Task State Updates (called by Scheduler) ---
 
+  /**
+   * Unconditional variant, kept for compatibility. It is NOT the claim: it
+   * overwrites whatever marker is already there, so two callers racing on the
+   * same due task both "succeed". The scheduler's fire path uses
+   * `tryMarkTaskRunning` instead.
+   */
   markTaskRunning(id: string, runningAtMs: number): void {
     this.db.run(`
       UPDATE scheduled_tasks
       SET running_at_ms = ?, last_status = 'running', updated_at = ?
       WHERE id = ?
     `, [runningAtMs, new Date().toISOString(), id]);
+    this.saveDb();
+  }
+
+  /**
+   * Atomically claims the task for exactly one execution.
+   *
+   * The guarantee is entirely the `running_at_ms IS NULL` predicate inside the
+   * UPDATE: SQLite serializes writers, so when two host processes sharing this
+   * file both pass `getDueTasks` and both try to claim, exactly one UPDATE
+   * matches a row — the loser writes nothing and cannot overwrite the winner's
+   * marker. This is the claim; the in-process `activeTasks` map is only a fast
+   * guard and says nothing about other processes.
+   *
+   * Returns whether THIS call won. `getRowsModified` is the authoritative
+   * answer and both database wrappers expose it. Without a change counter the
+   * marker is read back: that proves the row carries the value this call
+   * intended, but it cannot separate a winner from a loser that computed the
+   * same millisecond timestamp (the write itself is still atomic — only the
+   * boolean is degraded, and only for wrappers without a counter).
+   */
+  tryMarkTaskRunning(id: string, runningAtMs: number): boolean {
+    this.db.run(`
+      UPDATE scheduled_tasks
+      SET running_at_ms = ?, last_status = 'running', updated_at = ?
+      WHERE id = ? AND running_at_ms IS NULL
+    `, [runningAtMs, new Date().toISOString(), id]);
+
+    // Read the counter before saveDb(): it describes the statement above, and
+    // persisting may execute statements of its own.
+    const modified = this.db.getRowsModified?.();
+    this.saveDb();
+
+    if (typeof modified === 'number') {
+      return modified > 0;
+    }
+
+    const row = this.getOne<{ running_at_ms: number | null }>(
+      'SELECT running_at_ms FROM scheduled_tasks WHERE id = ?',
+      [id]
+    );
+    return row?.running_at_ms === runningAtMs;
+  }
+
+  /**
+   * Refreshes the liveness clock of a run this process is executing. The
+   * `running_at_ms IS NOT NULL` predicate is deliberate: a heartbeat must never
+   * resurrect a marker that a sweep or the completion path already released.
+   */
+  touchTaskRunning(id: string, runningAtMs: number): void {
+    this.db.run(`
+      UPDATE scheduled_tasks
+      SET running_at_ms = ?
+      WHERE id = ? AND running_at_ms IS NOT NULL
+    `, [runningAtMs, id]);
     this.saveDb();
   }
 

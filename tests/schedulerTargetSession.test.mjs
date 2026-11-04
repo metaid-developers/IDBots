@@ -108,6 +108,8 @@ function createHarness({
         return run;
       },
       markTaskRunning: () => {},
+      tryMarkTaskRunning: () => true,
+      touchTaskRunning: () => {},
       recordSkippedRun: (taskId, reason, trigger) => {
         const now = new Date().toISOString();
         const run = {
@@ -439,6 +441,11 @@ test('Scheduler ledgers an expired skip for a due task whose expiry day has pass
 });
 
 test('Scheduler ledgers an orphaned running marker as stuck_running and releases it', async () => {
+  // This orphan carries NO running_at_ms timestamp (createTask's default), which is
+  // the strongest form of "no liveness evidence": the sweep releases it at once.
+  // A marker that DOES carry a fresh timestamp is deliberately treated as possibly
+  // live (another process may be behind it) and is covered by
+  // tests/scheduledTaskSingleRunner.test.mjs.
   const orphan = createTask({ id: 'orphan-task' });
   const { scheduler, recording } = createHarness({
     task: orphan,
