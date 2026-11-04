@@ -21,7 +21,9 @@ import {
 } from './twinWorkerDirectoryService';
 import {
   OrchestrationStore,
+  StepAcceptanceRefusal,
   type OrchestrationAttempt,
+  type OrchestrationStepAcceptance,
   type OrchestrationTask,
   type OrchestrationStep,
 } from '../orchestrationStore';
@@ -79,7 +81,28 @@ export interface DelegateLocalWorkerResult {
 export interface TwinTaskStatusResult {
   task: OrchestrationTask;
   attention: OrchestrationAttention;
-  steps: Array<OrchestrationStep & { attempts: OrchestrationAttempt[] }>;
+  /**
+   * Each step carries the Worker's claim (status / acceptedResult) AND the
+   * Twin's acceptance rows, so a reader sees both statements side by side.
+   */
+  steps: Array<OrchestrationStep & { attempts: OrchestrationAttempt[]; acceptances: OrchestrationStepAcceptance[] }>;
+}
+
+export interface TwinStepAcceptanceInput {
+  /** Optional; when present it must match the task the step belongs to. */
+  taskId?: string | null;
+  stepId: string;
+  evidence: unknown;
+  note?: string | null;
+}
+
+export interface TwinStepAcceptanceResult {
+  task: OrchestrationTask;
+  step: OrchestrationStep;
+  /** The row just written (the new event, never a replacement). */
+  acceptance: OrchestrationStepAcceptance;
+  /** All acceptance rows for the step, oldest first. */
+  acceptances: OrchestrationStepAcceptance[];
 }
 
 export interface TwinOrchestrationServiceDeps {
@@ -888,11 +911,53 @@ export class TwinOrchestrationService {
     const steps = this.deps.orchestrationStore.listSteps(task.id).map((step) => ({
       ...step,
       attempts: this.deps.orchestrationStore.listAttempts(step.id),
+      acceptances: this.deps.orchestrationStore.listStepAcceptances(step.id),
     }));
     return {
       task,
       attention: deriveOrchestrationAttention(task, steps),
       steps,
+    };
+  }
+
+  /**
+   * Twin-only acceptance of a delegated step. Writes ONE append-only row
+   * carrying { who, when, evidence[], note }: the step row (the Worker's
+   * claim) and any earlier acceptance are left untouched — accepting does not
+   * flip `acceptedResult.verified` or move the status.
+   *
+   * Every refusal happens before the store write and carries a code the tool
+   * layer can return verbatim: non-Twin caller (TWIN_TOOL_FORBIDDEN via
+   * authorizeTwinSession), unknown step/task, task owned by another Twin, and
+   * missing/invalid evidence.
+   */
+  acceptStep(sourceSessionId: string, input: TwinStepAcceptanceInput): TwinStepAcceptanceResult {
+    const { twin, ownerGlobalMetaId } = authorizeTwinSession(sourceSessionId, this.deps.directory);
+    const stepId = String(input.stepId ?? '').trim();
+    if (!stepId) throw new StepAcceptanceRefusal('ACCEPTANCE_STEP_REQUIRED', 'stepId is required.');
+    const step = this.deps.orchestrationStore.getStep(stepId);
+    if (!step) throw new StepAcceptanceRefusal('ACCEPTANCE_STEP_NOT_FOUND', `No orchestration step ${stepId}.`);
+    const task = this.deps.orchestrationStore.getTask(step.taskId);
+    if (!task) throw new StepAcceptanceRefusal('ACCEPTANCE_TASK_NOT_FOUND', `No orchestration task ${step.taskId} for step ${stepId}.`);
+    if (task.twinMetabotId !== twin.id || task.ownerGlobalMetaId.toLowerCase() !== ownerGlobalMetaId.toLowerCase()) {
+      throw new StepAcceptanceRefusal('ACCEPTANCE_TASK_OWNER_MISMATCH', 'Only the Twin that owns this task may accept its steps.');
+    }
+    const requestedTaskId = String(input.taskId ?? '').trim();
+    if (requestedTaskId && requestedTaskId !== task.id) {
+      throw new StepAcceptanceRefusal('ACCEPTANCE_TASK_MISMATCH', `Step ${stepId} belongs to task ${task.id}, not ${requestedTaskId}.`);
+    }
+    const acceptance = this.deps.orchestrationStore.recordStepAcceptance({
+      stepId: step.id,
+      taskId: task.id,
+      acceptedByMetabotId: twin.id,
+      evidence: input.evidence,
+      note: input.note ?? null,
+    });
+    return {
+      task: this.deps.orchestrationStore.getTask(task.id)!,
+      step: this.deps.orchestrationStore.getStep(step.id)!,
+      acceptance,
+      acceptances: this.deps.orchestrationStore.listStepAcceptances(step.id),
     };
   }
 

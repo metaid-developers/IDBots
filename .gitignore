@@ -504,6 +504,7 @@ man_base_data_pebble/
 !tests/crossSessionDeliveryRunner.test.mjs
 !tests/twinOrchestrationService.test.mjs
 !tests/twinNotifyOnce.test.mjs
+!tests/twinStepAcceptance.test.mjs
 !tests/twinOrchestrationPrompt.test.mjs
 !tests/skillTurnTimeoutRecovery.test.mjs
 !tests/groupTaskOrchestrationBridge.test.mjs

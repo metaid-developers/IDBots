@@ -7147,6 +7147,7 @@ const getCoworkRunner = () => {
       },
       delegateLocalWorker: (sessionId, input) => getTwinOrchestrationService().delegateLocalWorker(sessionId, input),
       twinTaskStatus: (sessionId, taskId) => getTwinOrchestrationService().getTaskStatus(sessionId, taskId),
+      twinTaskAccept: (sessionId, input) => getTwinOrchestrationService().acceptStep(sessionId, input),
       twinTaskCancel: (sessionId, taskId) => getTwinOrchestrationService().cancelTask(sessionId, taskId),
       twinTaskReassign: (sessionId, input) => getTwinOrchestrationService().reassignLocalWorker(sessionId, {
         stepId: String(input.stepId ?? ''),
