@@ -488,6 +488,62 @@ export function fetchMrc721IndexerJson(
   return fetchMrc721Json(localPath, query);
 }
 
+/**
+ * MetaSo-P2P base (owner indexing architecture, 2026-11-05): all NFT business
+ * indexes — sell-intent queries, collection search, issuer views — are served
+ * by MetaSo, which builds on man-p2p's raw pin index. Configured via env
+ * `IDBOTS_METASO_API_BASE` (e.g. http://127.0.0.1:8080); null = not
+ * configured, callers keep the manapi interim behavior (honest degradation).
+ */
+export function getMetasoApiBase(): string | null {
+  const base = (process.env.IDBOTS_METASO_API_BASE ?? '').trim().replace(/\/+$/, '');
+  return base || null;
+}
+
+/**
+ * One MetaSo read through the same envelope contract as the manapi reads
+ * (identical error markers so callers degrade uniformly: HTTP status →
+ * mrc721Status, envelope miss → mrc721Code).
+ */
+export async function fetchMetasoJson(
+  localPath: string,
+  query: Record<string, string | number | undefined>,
+): Promise<unknown> {
+  const base = getMetasoApiBase();
+  if (!base) throw new Error('MetaSo API base is not configured (IDBOTS_METASO_API_BASE)');
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value == null || value === '') continue;
+    params.set(key, String(value));
+  }
+  const qs = params.toString();
+  const response = await fetch(`${base}${localPath}${qs ? `?${qs}` : ''}`, {
+    signal: AbortSignal.timeout(10_000),
+  });
+  let json: ManapiEnvelope<unknown> | null = null;
+  try {
+    json = (await response.json()) as ManapiEnvelope<unknown>;
+  } catch {
+    json = null;
+  }
+  if (!response.ok) {
+    throw Object.assign(new Error(`metaso mrc721 read failed (HTTP ${response.status}): ${localPath}`), {
+      mrc721Status: response.status,
+    });
+  }
+  if (json?.code !== 1) {
+    throw Object.assign(new Error(`metaso mrc721 read failed: ${json?.message || `code ${json?.code}`}`), {
+      mrc721Code: json?.code,
+    });
+  }
+  return json.data;
+}
+
+/** True when a MetaSo base is configured (server-side search available). */
+export function hasMetasoApiBase(): boolean {
+  return getMetasoApiBase() != null;
+}
+
 // ---------------------------------------------------------------------------
 // Holder gate + collection search (P0: mrc721_verify_holding / search tools)
 // ---------------------------------------------------------------------------
@@ -571,7 +627,35 @@ export async function searchMrc721Collections(params: {
   let scanned = 0;
   let truncated = false;
   let cursor: string | number | undefined;
+  // MetaSo fast path (indexer requirements R-A): when a MetaSo base is
+  // configured the server filters for us; on any transport/envelope error we
+  // reset the accumulators and degrade to the client-side pageList scan.
+  let serverSearch = hasMetasoApiBase();
   for (let page = 0; page < maxPages; page++) {
+    if (serverSearch) {
+      try {
+        const data = await fetchMetasoJson('/api/mrc721/collection/search', {
+          keyword: keyword || undefined,
+          issuer: issuerAddress || undefined,
+          cursor,
+          size: pageSize,
+        }) as { list?: unknown; total?: unknown; cursor?: unknown } | null;
+        const rows = Array.isArray(data?.list) ? (data.list as Mrc721CollectionSummary[]) : [];
+        scanned = Number.isFinite(Number(data?.total)) ? Number(data?.total) : scanned + rows.length;
+        items.push(...rows);
+        const nextCursor = typeof data?.cursor === 'string' && data.cursor ? data.cursor : undefined;
+        if (!nextCursor) break;
+        cursor = nextCursor;
+        if (page === maxPages - 1) truncated = true;
+        continue;
+      } catch {
+        serverSearch = false;
+        cursor = undefined;
+        scanned = 0;
+        items.length = 0;
+        truncated = false;
+      }
+    }
     const result = await fetchMrc721CollectionPageList({ cursor, size: pageSize });
     const rows = result.items ?? [];
     scanned += rows.length;

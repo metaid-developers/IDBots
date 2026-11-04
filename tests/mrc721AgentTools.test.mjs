@@ -18,6 +18,7 @@ const {
 } = require('../dist-electron/main/libs/mrc721AgentTools.js');
 
 process.env.IDBOTS_MAN_P2P_LOCAL_BASE && delete process.env.IDBOTS_MAN_P2P_LOCAL_BASE;
+process.env.IDBOTS_METASO_API_BASE && delete process.env.IDBOTS_METASO_API_BASE;
 
 const PINID = `${'ab'.repeat(32)}i0`;
 const DESC_PINID = `${'cd'.repeat(32)}i0`;
@@ -924,5 +925,75 @@ test('mrc721_market_intents degrades honestly when the indexer lacks the endpoin
     () => byName.mrc721_market_intents.handler({ collection_name: 'pixel-cats' }),
   );
   assert.equal(result.isError, true);
-  assert.match(result.content[0].text, /does not serve sell-intent queries yet/);
+  assert.match(result.content[0].text, /no reachable MetaSo sell-intent index/);
+  assert.match(result.content[0].text, /IDBOTS_METASO_API_BASE/);
+});
+
+// ---------------------------------------------------------------------------
+// MetaSo base wiring (indexing architecture: MetaSo serves NFT business
+// indexes when IDBOTS_METASO_API_BASE is set)
+// ---------------------------------------------------------------------------
+
+test('mrc721_market_intents prefers the configured MetaSo base for sell-intent reads', async () => {
+  process.env.IDBOTS_METASO_API_BASE = 'http://metaso.test:8080/';
+  try {
+    const { byName } = makeHarness();
+    const seen = [];
+    const result = await withFetchStub(
+      async (url) => {
+        seen.push(String(url));
+        return jsonResponse({
+          code: 1,
+          data: { list: [{ itemPinId: PINID, sellPinId: SELL_PIN_ID, active: true, sellerAddress: OTHER_ADDRESS, priceHintSats: 30000, acceptedCurrencies: ['space'], settlement: ['atomic-swap', 'escrow'] }], total: 1 },
+        });
+      },
+      () => byName.mrc721_market_intents.handler({ collection_name: 'pixel-cats' }),
+    );
+    assert.equal(result.isError, undefined);
+    assert.ok(seen.length >= 1);
+    assert.ok(seen[0].startsWith('http://metaso.test:8080/api/mrc721/sell/intents'), `expected metaso base, got ${seen[0]}`);
+    assert.match(result.content[0].text, /ACTIVE/);
+  } finally {
+    delete process.env.IDBOTS_METASO_API_BASE;
+  }
+});
+
+test('mrc721_search_collections uses the MetaSo server-side search when configured and degrades on error', async () => {
+  process.env.IDBOTS_METASO_API_BASE = 'http://metaso.test:8080';
+  try {
+    const { byName } = makeHarness();
+    const seen = [];
+    const result = await withFetchStub(
+      async (url) => {
+        seen.push(String(url));
+        if (String(url).includes('/api/mrc721/collection/search')) {
+          return jsonResponse({ code: 1, data: { list: [collectionRow()], total: 1 } });
+        }
+        return jsonResponse({ code: 1, data: { list: [] } });
+      },
+      () => byName.mrc721_search_collections.handler({ keyword: 'pixel' }),
+    );
+    assert.equal(result.isError, undefined);
+    assert.ok(seen.some((url) => url.includes('/api/mrc721/collection/search')));
+    assert.match(result.content[0].text, /matched: 1/);
+    assert.match(result.content[0].text, /scanned 1 registered collection/);
+
+    // Transport error → degrade to the client-side pageList scan.
+    const seen2 = [];
+    const result2 = await withFetchStub(
+      async (url) => {
+        seen2.push(String(url));
+        if (String(url).includes('/api/mrc721/collection/search')) {
+          throw new Error('connection refused');
+        }
+        return jsonResponse({ code: 1, data: { list: [collectionRow()] } });
+      },
+      () => byName.mrc721_search_collections.handler({ keyword: 'pixel' }),
+    );
+    assert.equal(result2.isError, undefined);
+    assert.ok(seen2.some((url) => url.includes('/api/mrc721/collection/pageList')), 'must fall back to pageList');
+    assert.match(result2.content[0].text, /matched: 1/);
+  } finally {
+    delete process.env.IDBOTS_METASO_API_BASE;
+  }
 });

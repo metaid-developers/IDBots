@@ -1540,7 +1540,7 @@ export function buildMrc721AgentTools(deps: {
     [
       'Discover declared MRC-721 sell intents (the "NFT 售" on-chain declarations, docs/nft-sell-protocol-draft.md) from the indexer: what is up for sale in a collection, by an issuer, or for one item — with each seller\'s accepted currencies and settlement rails (atomic-swap for native SPACE, escrow for any currency).',
       'Read-only. These are INTENTS, not escrowed listings: before engaging, re-verify the seller still holds the item (mrc721_item_info or mrc721_verify_holding) and confirm the deal terms with the seller directly.',
-      'Requires an indexer that serves sell-intent queries (local man-p2p ships them; requirement R-C). Your own intents are better listed via mrc721_sell_intents.',
+      'Served by MetaSo-P2P (indexer requirement R-C) — point IDBOTS_METASO_API_BASE at a MetaSo instance; without it the tool degrades honestly. Your own intents are better listed via mrc721_sell_intents.',
     ].join(' '),
     {
       collection_name: z.string().optional().describe('Filter to one collection by namespace name.'),
@@ -1596,8 +1596,8 @@ export function buildMrc721AgentTools(deps: {
         // the house convention for "not served here").
         if (status === 404 || code !== undefined) {
           return textResult(
-            'mrc721_market_intents: the configured indexer does not serve sell-intent queries yet (indexer requirement R-C). '
-            + 'Local man-p2p ships them; until the endpoint is reachable, discovery of other bots\' intents runs through chat announcements.',
+            'mrc721_market_intents: no reachable MetaSo sell-intent index (indexer requirement R-C). '
+            + 'Set IDBOTS_METASO_API_BASE to a MetaSo-P2P instance serving /api/mrc721/*; until then, discovery of other bots\' intents runs through chat announcements.',
             true,
           );
         }
@@ -1690,7 +1690,7 @@ export function buildMrc721AgentTools(deps: {
     [
       'Search MRC-721 collections (pin-based MetaID NFT albums) by keyword and/or by issuer — keyword matches (case-insensitive) the display name, the collection namespace, the description, and the collectionid; issuer accepts a local MetaBot name, a 64-hex MetaID, or an MVC address.',
       'Returns matching collection summaries (display name, mint progress, royalty, issuer identity, collectionid) plus each description. supply_state=true also computes per-collection minted counts (minted vs totalSupply, first 20 matches) for issuer/creator flows like "which of my albums still has slots".',
-      'Read-only index data. Filtering runs client-side over the registered-collection page list (scanned count is reported); use max_pages for deeper scans.',
+      'Read-only index data. Server-side search via MetaSo when IDBOTS_METASO_API_BASE is set; otherwise filtering runs client-side over the registered-collection page list (scanned count is reported); use max_pages for deeper scans.',
     ].join(' '),
     {
       keyword: z.string().optional().describe('Search text matched (case-insensitive) against name, collection namespace, description, collectionid.'),
