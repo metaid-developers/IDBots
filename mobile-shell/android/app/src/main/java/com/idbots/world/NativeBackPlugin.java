@@ -1,4 +1,4 @@
-package world.idbots.app;
+package com.idbots.world;
 
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;

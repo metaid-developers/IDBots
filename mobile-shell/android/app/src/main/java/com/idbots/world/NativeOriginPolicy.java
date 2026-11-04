@@ -1,4 +1,4 @@
-package world.idbots.app;
+package com.idbots.world;
 
 import java.net.URI;
 

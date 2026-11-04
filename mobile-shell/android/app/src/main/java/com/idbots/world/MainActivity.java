@@ -1,4 +1,4 @@
-package world.idbots.app;
+package com.idbots.world;
 
 import android.net.Uri;
 import android.os.Bundle;
