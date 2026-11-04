@@ -28,6 +28,14 @@ import {
   resolveImPermissionMode,
   type ImPermissionMode,
 } from './imPermissionPolicy';
+import {
+  collectImAskOptions,
+  firstNumberPerQuestion,
+  optionQuestionIndexes,
+  parseImAskOptionReply,
+  type ImAskOptionRef,
+  type ImAskOptionReply,
+} from './imAskOptions';
 
 interface MessageAccumulator {
   messages: CoworkMessage[];
@@ -1329,6 +1337,16 @@ export class IMCoworkHandler extends EventEmitter {
     }
   }
 
+  /**
+   * The confirmation text sent into the chat.
+   *
+   * AskUserQuestion is the one request that carries ANSWERS, not just an
+   * approval. Collapsing it into 「允许/拒绝」 threw the owner's actual choice
+   * away, so its options are rendered as a numbered list (numbers are global
+   * across the request — see imAskOptions.ts) and the reply instruction asks
+   * for a number while keeping the legacy 允许/拒绝 vocabulary alive. A request
+   * with no options takes the byte-identical legacy prompt.
+   */
   private buildIMPermissionPrompt(
     request: PermissionRequest,
     workspaceRoot: string | null = null
@@ -1353,6 +1371,53 @@ export class IMCoworkHandler extends EventEmitter {
       workspaceRoot
     );
 
+    // Numbered options ride ALONGSIDE the disclosure lines above. The headings
+    // only appear for a multi-question ask: a single question was already
+    // disclosed on the 说明 line, and repeating it would just add noise.
+    const askOptions = request.toolName === 'AskUserQuestion'
+      ? collectImAskOptions(request.toolInput)
+      : [];
+    const askQuestionIndexes = optionQuestionIndexes(askOptions);
+    const optionLines: string[] = [];
+    let currentQuestionIndex = -1;
+    for (const option of askOptions) {
+      if (option.questionIndex !== currentQuestionIndex) {
+        currentQuestionIndex = option.questionIndex;
+        // Headings appear whenever the payload holds more than one question —
+        // even if only one of them has options — so a number can never look
+        // like it belongs to the question printed on the 说明 line.
+        if (questions.length > 1) {
+          const title = typeof questions[option.questionIndex]?.question === 'string'
+            ? String(questions[option.questionIndex].question)
+            : '';
+          optionLines.push(tApp(
+            `问题 ${option.questionIndex + 1}: ${title}`,
+            `Question ${option.questionIndex + 1}: ${title}`
+          ));
+        }
+      }
+      optionLines.push(`  ${option.number}. ${option.description
+        ? `${option.label} — ${option.description}`
+        : option.label}`);
+    }
+
+    const optionExample = firstNumberPerQuestion(askOptions).join(' ');
+    const seconds = Math.round(this.permissionConfirmTimeoutMs / 1000);
+    const waitsSuffix = waitsForHuman
+      ? tApp('该请求会一直等待，直到你回复。', 'This request waits until you answer.')
+      : tApp(`请在 ${seconds} 秒内回复。`, `Reply within ${seconds} seconds.`);
+    const optionInstruction = optionLines.length === 0
+      ? null
+      : askQuestionIndexes.length > 1
+        ? tApp(
+          `请为每个问题各回复一个序号（例如「${optionExample}」），或回复“允许”或“拒绝”。`,
+          `Reply one number per question (e.g. "${optionExample}"), or reply "yes" or "no".`
+        )
+        : tApp(
+          '请回复序号（如 1）选择对应选项，或回复“允许”或“拒绝”。',
+          'Reply with the option number (e.g. 1) to choose it, or reply "yes" or "no".'
+        );
+
     return [
       tApp(`检测到需要安全确认的操作（工具: ${request.toolName}）。`, `A safety confirmation is required (tool: ${request.toolName}).`),
       questionText
@@ -1364,16 +1429,29 @@ export class IMCoworkHandler extends EventEmitter {
           `Note: the target path is OUTSIDE the session workspace: ${outsideTarget}`
         )]
         : []),
-      waitsForHuman
-        ? tApp('请回复“允许”或“拒绝”。该请求会一直等待，直到你回复。', 'Reply with "yes" or "no". This request waits until you answer.')
-        : tApp(
-          `请在 ${Math.round(this.permissionConfirmTimeoutMs / 1000)} 秒内回复“允许”或“拒绝”。`,
-          `Reply with "yes" or "no" within ${Math.round(this.permissionConfirmTimeoutMs / 1000)} seconds.`
-        ),
+      ...optionLines,
+      optionInstruction
+        ? `${optionInstruction}${tApp('', ' ')}${waitsSuffix}`
+        : (waitsForHuman
+          ? tApp('请回复“允许”或“拒绝”。该请求会一直等待，直到你回复。', 'Reply with "yes" or "no". This request waits until you answer.')
+          : tApp(
+            `请在 ${seconds} 秒内回复“允许”或“拒绝”。`,
+            `Reply with "yes" or "no" within ${seconds} seconds.`
+          )),
     ].join('\n');
   }
 
-  private buildAllowPermissionResult(request: PermissionRequest): PermissionResult {
+  /**
+   * The allow payload for a request. `selectedOptions` carries the options the
+   * owner picked by number (questionIndex → option); questions it does not
+   * name keep the legacy preference (an option whose label carries
+   * 「允许本次操作」, else the first option) so approval-only answers behave
+   * exactly as before.
+   */
+  private buildAllowPermissionResult(
+    request: PermissionRequest,
+    selectedOptions?: ReadonlyMap<number, ImAskOptionRef>
+  ): PermissionResult {
     if (request.toolName !== 'AskUserQuestion') {
       return {
         behavior: 'allow',
@@ -1389,9 +1467,16 @@ export class IMCoworkHandler extends EventEmitter {
       : [];
 
     const answers: Record<string, string> = {};
-    rawQuestions.forEach((question) => {
+    rawQuestions.forEach((question, questionIndex) => {
       const questionTitle = typeof question?.question === 'string' ? question.question : '';
       if (!questionTitle) return;
+      const chosen = selectedOptions?.get(questionIndex);
+      if (chosen) {
+        // The owner's numbered pick wins outright: this is the label the tool
+        // must receive, not a guess derived from the payload.
+        answers[questionTitle] = chosen.label;
+        return;
+      }
       const options = Array.isArray(question?.options)
         ? (question.options as Array<Record<string, unknown>>)
         : [];
@@ -1432,6 +1517,10 @@ export class IMCoworkHandler extends EventEmitter {
    *     a 4-token full match that missed 「我允许了」「可以」.
    *  4. ACK: an accepted answer is acknowledged in the chat immediately, then
    *     the turn continues (allow) — never a silent resume.
+   *  5. OPTIONS: a live AskUserQuestion that carries options is also answered
+   *     by number (1..N, see imAskOptions). The number resolves only through
+   *     this same pending-request path; the owner's pick becomes the answer
+   *     label handed to the tool. Nothing else gained a numeric vocabulary.
    */
   private async handlePendingPermissionReply(message: IMMessage): Promise<string | null> {
     const key = this.createConversationKey(message.conversationId, message.platform);
@@ -1443,6 +1532,10 @@ export class IMCoworkHandler extends EventEmitter {
 
     const rawReply = String(message.content ?? '').trim();
     const decision = classifyImPermissionReply(rawReply);
+    // A numbered answer belongs to AskUserQuestion only: every other request
+    // keeps the explicit allow/deny vocabulary, so a bare "1" in an ordinary
+    // confirmation can never approve anything.
+    const optionReply = this.resolvePendingAskOptionReply(pending, rawReply);
     // Every inbound message that lands on a pending request is recorded: the
     // 2026-11-04 real-device report ("我给你发送消息你收不到") was a message that
     // was consumed here with no log line at all.
@@ -1454,6 +1547,9 @@ export class IMCoworkHandler extends EventEmitter {
       pendingAgeMs: Date.now() - pending.createdAt,
       replyLength: rawReply.length,
       decision: decision ?? 'not-an-answer',
+      askOptionReply: optionReply.kind === 'none'
+        ? null
+        : { kind: optionReply.kind, numbers: optionReply.numbers },
       replyPreview: rawReply.slice(0, 80),
     }));
 
@@ -1472,14 +1568,24 @@ export class IMCoworkHandler extends EventEmitter {
 
     // The request may be gone from the runner's own queue even though our
     // conversation bucket still lists it. Answering it would only log a silent
-    // "no pending permission" no-op.
-    if (decision !== null && !this.isPermissionStillLive(pending.request.requestId)) {
+    // "no pending permission" no-op. A numbered option answer is answer-shaped
+    // in exactly the same sense as 「允许」, so it takes the same gate.
+    if ((decision !== null || optionReply.kind !== 'none')
+      && !this.isPermissionStillLive(pending.request.requestId)) {
       this.removePendingPermission(key, pending.request.requestId);
       this.rememberResolvedPermission(key, pending, 'resolved-elsewhere');
       return tApp(
         `该确认请求（工具: ${pending.request.toolName}）已经结束：可能已在电脑端处理，或已超过等待时间。本次答复没有执行任何操作。需要重试请重新发送任务。`,
         `The confirmation request (tool: ${pending.request.toolName}) already ended — handled on the desktop or timed out. Nothing was executed; send the task again to retry.`
       );
+    }
+
+    // A numeric reply that cannot resolve the ask (out of range, two picks for
+    // one question, or questions left unanswered) is answered with what is
+    // still missing — the request stays pending. Guessing the rest would put
+    // choices in the owner's mouth.
+    if (optionReply.kind === 'invalid' || optionReply.kind === 'incomplete') {
+      return this.buildAskOptionHint(pending, optionReply);
     }
 
     if (decision === 'deny') {
@@ -1493,7 +1599,7 @@ export class IMCoworkHandler extends EventEmitter {
       return delivered ? '' : ack;
     }
 
-    if (decision === null) {
+    if (decision === null && optionReply.kind !== 'selected') {
       // Not an answer: keep waiting, and say so with what is actually waiting.
       // The message itself is preserved in the log line above.
       return this.buildPendingPermissionReminder(pending);
@@ -1503,12 +1609,17 @@ export class IMCoworkHandler extends EventEmitter {
     const responsePromise = this.createAccumulatorPromise(pending.sessionId, pending.platform);
     this.coworkRunner.respondToPermission(
       pending.request.requestId,
-      this.buildAllowPermissionResult(pending.request)
+      this.buildAllowPermissionResult(
+        pending.request,
+        optionReply.kind === 'selected' ? optionReply.byQuestion : undefined
+      )
     );
-    const allowAck = tApp(
-      `已允许本次操作（工具: ${pending.request.toolName}），继续执行。`,
-      `Allowed (tool: ${pending.request.toolName}); resuming the task.`
-    );
+    const allowAck = optionReply.kind === 'selected'
+      ? this.buildAskSelectionAck(optionReply.byQuestion)
+      : tApp(
+        `已允许本次操作（工具: ${pending.request.toolName}），继续执行。`,
+        `Allowed (tool: ${pending.request.toolName}); resuming the task.`
+      );
     const ackDelivered = await this.sendPermissionAck(pending.platform, pending.conversationId, allowAck);
     if (ackDelivered) {
       // Ack is already in the chat; the turn's own reply follows when it ends.
@@ -1564,12 +1675,94 @@ export class IMCoworkHandler extends EventEmitter {
       );
   }
 
+  /**
+   * Parse a chat reply against the numbered options of the pending ask. Always
+   * 'none' for every other tool (and for an ask without options), which is what
+   * keeps a bare "1" from ever approving a Bash request.
+   */
+  private resolvePendingAskOptionReply(
+    pending: PendingIMPermission,
+    rawReply: string
+  ): ImAskOptionReply {
+    if (pending.request.toolName !== 'AskUserQuestion') return { kind: 'none' };
+    const options = collectImAskOptions(pending.request.toolInput);
+    if (options.length === 0) return { kind: 'none' };
+    return parseImAskOptionReply(rawReply, options);
+  }
+
+  /** What is still wrong with a numeric reply — the request stays pending. */
+  private buildAskOptionHint(
+    pending: PendingIMPermission,
+    reply: Extract<ImAskOptionReply, { kind: 'invalid' | 'incomplete' }>
+  ): string {
+    const options = collectImAskOptions(pending.request.toolInput);
+    const example = firstNumberPerQuestion(options).join(' ');
+    if (reply.kind === 'invalid') {
+      if (reply.reason === 'duplicate-question') {
+        return tApp(
+          `同一个问题只能选择一个序号。请每个问题各回复一个序号，例如「${example}」。`,
+          `One number per question: the same question cannot be answered twice in one reply (e.g. "${example}").`
+        );
+      }
+      const first = options[0]?.number;
+      const last = options[options.length - 1]?.number;
+      return tApp(
+        `序号超出范围：当前可选序号为 ${first}–${last}（共 ${options.length} 个选项）。`,
+        `That number is out of range: the available numbers are ${first}–${last} (${options.length} options).`
+      );
+    }
+
+    const perQuestion = new Map<number, string>();
+    for (const questionIndex of optionQuestionIndexes(options)) {
+      const numbers = options
+        .filter((option) => option.questionIndex === questionIndex)
+        .map((option) => String(option.number));
+      perQuestion.set(questionIndex, tApp(
+        `问题 ${questionIndex + 1}（可选 ${numbers.join('、')}）`,
+        `question ${questionIndex + 1} (numbers ${numbers.join(', ')})`
+      ));
+    }
+    const missing = reply.missingQuestionIndexes
+      .map((questionIndex) => perQuestion.get(questionIndex))
+      .filter((entry): entry is string => typeof entry === 'string')
+      .join(tApp('；', '; '));
+    return tApp(
+      `还有问题没有选择：${missing}。请为每个问题各回复一个序号，例如「${example}」。`,
+      `Some questions are still unanswered: ${missing}. Reply one number per question, e.g. "${example}".`
+    );
+  }
+
+  /** Chat ack naming exactly the options that were handed to the tool. */
+  private buildAskSelectionAck(byQuestion: ReadonlyMap<number, ImAskOptionRef>): string {
+    const entries = [...byQuestion.entries()].sort((left, right) => left[0] - right[0]);
+    if (entries.length === 1) {
+      return tApp(
+        `已选择「${entries[0][1].label}」，继续执行。`,
+        `Selected "${entries[0][1].label}"; resuming the task.`
+      );
+    }
+    const summary = entries
+      .map(([questionIndex, option]) => tApp(
+        `问题 ${questionIndex + 1}：${option.label}`,
+        `question ${questionIndex + 1}: ${option.label}`
+      ))
+      .join(tApp('；', '; '));
+    return tApp(`已按你的选择继续执行（${summary}）。`, `Continuing with your selection (${summary}).`);
+  }
+
   private buildPendingPermissionReminder(pending: PendingIMPermission): string {
     const waitsForever = pending.timeoutId === undefined;
     const seconds = Math.round(this.permissionConfirmTimeoutMs / 1000);
     const window = waitsForever
       ? tApp('该请求会一直等待，直到你回复。', 'This request waits until you answer.')
       : tApp(`请在 ${seconds} 秒内回复。`, `Reply within ${seconds} seconds.`);
+    if (pending.request.toolName === 'AskUserQuestion'
+      && collectImAskOptions(pending.request.toolInput).length > 0) {
+      return tApp(
+        `当前有待确认操作（工具: ${pending.request.toolName}），请回复序号选择对应选项，或回复“允许”或“拒绝”。${window}`,
+        `A confirmation is pending (tool: ${pending.request.toolName}). Reply with an option number, or reply "yes" or "no". ${window}`
+      );
+    }
     return tApp(
       `当前有待确认操作（工具: ${pending.request.toolName}），请回复“允许”或“拒绝”。${window}`,
       `A confirmation is pending (tool: ${pending.request.toolName}). Reply "yes" or "no". ${window}`
