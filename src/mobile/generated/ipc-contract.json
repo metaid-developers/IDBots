@@ -2300,6 +2300,74 @@
       ]
     },
     {
+      "path": "mePoints.getBalance",
+      "kind": "invoke",
+      "channel": "me:getBalance",
+      "args": [
+        "input"
+      ]
+    },
+    {
+      "path": "mePoints.getHistory",
+      "kind": "invoke",
+      "channel": "me:getHistory",
+      "args": [
+        "input"
+      ]
+    },
+    {
+      "path": "mePoints.getPaymentInfo",
+      "kind": "invoke",
+      "channel": "me:getPaymentInfo",
+      "args": []
+    },
+    {
+      "path": "mePoints.getPlans",
+      "kind": "invoke",
+      "channel": "me:getPlans",
+      "args": []
+    },
+    {
+      "path": "mePoints.getRates",
+      "kind": "invoke",
+      "channel": "me:getRates",
+      "args": []
+    },
+    {
+      "path": "mePoints.getSubscription",
+      "kind": "invoke",
+      "channel": "me:getSubscription",
+      "args": []
+    },
+    {
+      "path": "mePoints.getTopupOrders",
+      "kind": "invoke",
+      "channel": "me:getTopupOrders",
+      "args": []
+    },
+    {
+      "path": "mePoints.getTopupPackages",
+      "kind": "invoke",
+      "channel": "me:getTopupPackages",
+      "args": []
+    },
+    {
+      "path": "mePoints.pickVoucher",
+      "kind": "invoke",
+      "channel": "me:pickVoucher",
+      "args": [
+        "input"
+      ]
+    },
+    {
+      "path": "mePoints.submitTopupOrder",
+      "kind": "invoke",
+      "channel": "me:submitTopupOrder",
+      "args": [
+        "input"
+      ]
+    },
+    {
       "path": "metaWebListener.assignGroupChatTask",
       "kind": "invoke",
       "channel": "idbots:assignGroupChatTask",

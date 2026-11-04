@@ -79,7 +79,10 @@ async function reconciliationCount(page: Page): Promise<number> {
   return page.evaluate(() => Number(window.localStorage.getItem('idbots.fixture.expiryReconciliationCount') ?? 0));
 }
 
-test.describe('recharge expiry reconciliation', () => {
+// S9 (ME credits): the bundle/Alipay order-expiry flow is retired. Skipped
+// (not deleted) pending owner confirmation; see recharge.spec.ts for the
+// replacement coverage.
+test.describe.skip('recharge expiry reconciliation [retired by S9]', () => {
   test('an order credited after local expiry reaches success without a duplicate', async ({ page }) => {
     const scenario = { expiresAt: Math.floor(Date.now() / 1000) - 60, serverStatus: 3 };
     await page.goto('/app/');

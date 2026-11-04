@@ -1,54 +1,66 @@
 import { test, expect, attachScreen } from './fixtures';
 
 /**
- * Recharge flow (REQ-E-15) against the mock bundle channel: buy a plan →
- * paying screen → deterministic credit after the mock order delay → success
- * screen with the meters raised.
+ * ME purchase / top-up flow (S9 §5) against the mock ME channel.
+ *
+ * The retired bundle channel (traffic bytes / LLM tokens / Alipay polling) is
+ * gone: a subscription order is the free tier's path in, a top-up order is
+ * reserved for paid subscribers, and order states live on the merged
+ * Usage & credits page.
  */
 
-test.describe('recharge', () => {
-  test('buy → waiting → credited with meters rising', async ({ page }, testInfo) => {
+test.describe('ME purchase & topup', () => {
+  test('free tier: plan order submitted → usage page shows the order', async ({ page }, testInfo) => {
     await page.goto('/app/');
     await page.getByRole('button', { name: 'Me' }).click();
-    await page.getByRole('button', { name: 'Recharge' }).click();
 
-    await expect(page.getByText('Choose a plan')).toBeVisible();
-    await attachScreen(testInfo, page, 'recharge-plans');
+    await page.getByTestId('me-tier-me_pro').click();
+    await expect(page.getByTestId('me-purchase-page')).toBeVisible();
+    await expect(page.getByTestId('me-purchase-page').getByRole('heading', { name: 'Choose a plan' })).toBeVisible();
+    await attachScreen(testInfo, page, 'me-purchase-subscribe');
 
-    await page.getByRole('button', { name: /CNY 129\.00/ }).click();
-    const paying = page.getByTestId('recharge-paying');
-    await expect(paying).toBeVisible();
-    await expect(paying).toContainText('Waiting for the payment result');
-    await attachScreen(testInfo, page, 'recharge-paying');
+    await page.getByTestId('me-purchase-submit').click();
+    await expect(page.getByTestId('me-purchase-submitted')).toBeVisible();
+    await attachScreen(testInfo, page, 'me-purchase-submitted');
 
-    // The mock order credits after orderCompleteDelayMs (10 s by default).
-    const success = page.getByTestId('recharge-success');
-    await expect(success).toBeVisible({ timeout: 45_000 });
-    await expect(success).toContainText('Bundle credited');
-    // New balance: 500 MiB + 10 GiB ≈ 10.5 GB traffic; 1.65M remaining +
-    // 50M purchased = 51,650,000 tokens LLM (meters rose from the buy).
-    await expect(success).toContainText('10.5 GB');
-    await expect(success).toContainText(/51,650,000 tokens/);
-    await attachScreen(testInfo, page, 'recharge-success');
-
-    await page.getByRole('button', { name: 'Done' }).click();
-    await expect(page.getByText('Balance')).toBeVisible();
+    await page.getByRole('button', { name: 'View order status' }).click();
+    await expect(page.getByTestId('me-page-usage')).toBeVisible();
+    await expect(page.getByTestId('usage-orders')).toContainText('me_topup_demo_');
+    await attachScreen(testInfo, page, 'me-usage-credits');
   });
 
-  test('quota exhaustion → credited order → next message works', async ({ page }, testInfo) => {
+  test('free tier has no cashier; the bridge answers SUBSCRIPTION_REQUIRED; a paid subscriber can top up', async ({ page }, testInfo) => {
     await page.goto('/app/');
-    await page.getByPlaceholder('Type a message…').fill('check my quota');
-    await page.getByRole('button', { name: 'Send' }).click();
-    const quotaCard = page.getByTestId('quota-card');
-    await expect(quotaCard).toBeVisible({ timeout: 30_000 });
-    await quotaCard.getByRole('button', { name: 'Recharge' }).click();
+    await page.getByRole('button', { name: 'Me' }).click();
 
-    await page.getByRole('button', { name: /CNY 129\.00/ }).click();
-    await expect(page.getByTestId('recharge-success')).toBeVisible({ timeout: 45_000 });
-    await page.getByRole('button', { name: 'Done' }).click();
-    await page.getByPlaceholder('Type a message…').fill('next message after recharge');
-    await page.getByRole('button', { name: 'Send' }).click();
-    await expect(page.getByText(/Every reply in this demo is streamed/)).toBeVisible({ timeout: 30_000 });
-    await attachScreen(testInfo, page, 'recharge-next-message-works');
+    // 1) Free tier: no top-up entry, only the "plan required" hint.
+    await expect(page.getByTestId('me-topup-locked')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Top up ME' })).toHaveCount(0);
+
+    // 2) The backend rule is enforced through the same channel the UI uses.
+    const rejected = await page.evaluate(async () => {
+      const api = (window as unknown as { electron: { mePoints: { submitTopupOrder: (input: { packageId: string }) => Promise<Record<string, unknown>> } } }).electron.mePoints;
+      return api.submitTopupOrder({ packageId: 'me_topup_a' });
+    });
+    expect(rejected.success).toBe(false);
+    expect(rejected.errorCode).toBe('SUBSCRIPTION_REQUIRED');
+
+    // 3) Flip the mock to an active subscription and refresh the ledger.
+    await page.evaluate(() => {
+      (window as unknown as { idbotsMobile: { mock?: { setMeSubscribed?: (value: boolean) => void } } })
+        .idbotsMobile.mock?.setMeSubscribed?.(true);
+    });
+    await page.locator('[data-testid="me-points-hero"] button[aria-label="Retry"]').click();
+    const topupButton = page.getByRole('button', { name: 'Top up ME' });
+    await expect(topupButton).toBeVisible();
+    await topupButton.click();
+
+    await expect(page.getByTestId('me-topup-packages')).toBeVisible();
+    await expect(page.getByTestId('me-topup-me_topup_a')).toBeVisible();
+    await expect(page.getByTestId('me-topup-me_topup_b')).toBeVisible();
+    await attachScreen(testInfo, page, 'me-topup-packages');
+
+    await page.getByTestId('me-purchase-submit').click();
+    await expect(page.getByTestId('me-purchase-submitted')).toBeVisible();
   });
 });

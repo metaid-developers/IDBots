@@ -5,7 +5,6 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { isRechargeAllowed } from '../src/mobile/native/rechargePolicy.ts';
 import ChatScreen from '../src/mobile/app/screens/ChatScreen.tsx';
 import MeScreen from '../src/mobile/app/screens/MeScreen.tsx';
-import { TrafficPage } from '../src/mobile/app/screens/me/TrafficPage.tsx';
 import { mobileI18n, t } from '../src/mobile/i18n.ts';
 import type { useChat } from '../src/mobile/app/hooks/useChat.ts';
 
@@ -64,41 +63,25 @@ test('ChatScreen hides only its recharge action when native iOS policy disallows
   assert.ok(visible.includes(rechargeButton));
 });
 
-test('MeScreen hides recharge but preserves redeem and the rest of the account screen', () => {
+test('MeScreen shows the S9 points home: free tier sees the top-up lock, no cashier button', () => {
   mobileI18n.setLanguage('en');
-  const hidden = renderToStaticMarkup(<MeScreen onOpenRecharge={() => undefined} rechargeAllowed={false} />);
-  assert.ok(!hidden.includes(t('mobile.me.rechargeEntry')));
-  assert.ok(hidden.includes(t('mobile.me.redeemEntry')));
-  assert.ok(hidden.includes(t('mobile.me.balanceTitle')));
-  assert.ok(hidden.includes(t('mobile.me.accountTitle')));
-
-  const visible = renderToStaticMarkup(<MeScreen onOpenRecharge={() => undefined} rechargeAllowed />);
-  assert.ok(visible.includes(t('mobile.me.rechargeEntry')));
-  assert.ok(visible.includes(t('mobile.me.redeemEntry')));
+  const html = renderToStaticMarkup(
+    <MeScreen canPurchase onOpenPurchase={() => undefined} />,
+  );
+  assert.match(html, /data-testid="me-points-hero"/);
+  assert.match(html, /data-testid="me-topup-locked"/);
+  assert.doesNotMatch(html, /data-testid="me-page-traffic"/);
+  assert.doesNotMatch(html, /data-testid="balance-card"/);
+  // The old traffic recharge/redeem entry pair is retired with the quota UI.
+  assert.ok(!html.includes(t('mobile.me.rechargeEntry')));
 });
 
-test('TrafficPage hides its recharge entry when native iOS policy disallows it, keeps redeem and the rest of the page', () => {
+test('iOS policy: the purchase surface is display-only in the capacitor iOS shell', () => {
   mobileI18n.setLanguage('en');
-  const rechargeButton = `>${t('mobile.me.rechargeEntry')}</button>`;
-  const hidden = renderToStaticMarkup(
-    <TrafficPage onBack={() => undefined} onOpenRecharge={() => undefined} rechargeAllowed={false} />,
-  );
-  assert.ok(hidden.includes('me-page-traffic'));
-  assert.ok(!hidden.includes(rechargeButton));
-  assert.ok(hidden.includes(t('mobile.me.redeemEntry')));
-  assert.ok(hidden.includes(t('mobile.me.traffic.freeGrantClaim')));
-  assert.ok(hidden.includes(t('mobile.me.traffic.ledgerTitle')));
-
-  // Legacy call shape (no rechargeAllowed prop) and explicit true keep the
-  // button — the non-iOS render is byte-for-byte unchanged.
-  const legacyVisible = renderToStaticMarkup(
-    <TrafficPage onBack={() => undefined} onOpenRecharge={() => undefined} />,
-  );
-  assert.ok(legacyVisible.includes(rechargeButton));
-
-  const visible = renderToStaticMarkup(
-    <TrafficPage onBack={() => undefined} onOpenRecharge={() => undefined} rechargeAllowed />,
-  );
-  assert.ok(visible.includes(rechargeButton));
-  assert.ok(visible.includes(t('mobile.me.redeemEntry')));
+  // Free tier: the hero never renders a cashier button (see test above).
+  // Purchasability itself is decided by the policy helper, used by the shell
+  // to keep both overlays closed on iOS.
+  assert.equal(isRechargeAllowed({ os: 'ios', shell: 'capacitor' }), false);
+  assert.equal(isRechargeAllowed({ os: 'android', shell: 'capacitor' }), true);
 });
+

@@ -1,5 +1,6 @@
 import type { ComponentType } from 'react';
 import {
+  ChartBarIcon,
   ChatBubbleLeftRightIcon,
   Cog6ToothIcon,
   CpuChipIcon,
@@ -12,20 +13,17 @@ import { t } from '../../../i18n';
 /**
  * Me-page entry registry (A6 settings IA rework, IA-PLAN v1 §2.4).
  *
- * The primary Me page renders its entry list FROM this table: adding a
- * setting means appending one row here plus one page component — the Me
- * layout itself never changes again (owner principle P4: keep the
- * architecture extensible).
+ * The primary Me page renders its entry list FROM this table. S9 replaced the
+ * old traffic page with the merged Usage & credits page (`usage`), which is now a
+ * registry row AND the hero card's bottom link.
  *
- * `profile` and `traffic` are NOT registry rows: they are reached through
- * the user card and the balance card respectively (IA-PLAN §2.1/§2.2), so
- * the cashier stays one tap away (hard gate 2). They still share the MeRoute
- * stack with the rows below.
+ * `profile` is NOT a registry row: it is reached through the user card
+ * (IA-PLAN §2.1). It still shares the MeRoute stack with the rows below.
  */
 
 export type MeRoute =
   | 'profile'
-  | 'traffic'
+  | 'usage'
   | 'bots'
   | 'skills'
   | 'memory'
@@ -43,6 +41,8 @@ export interface MeEntrySummaryInput {
   languageLabel: string | null;
   themeLabel: string | null;
   appVersion: string | null;
+  /** Merged ME balance in whole ME, or null while the ledger is unavailable. */
+  meTotal: number | null;
 }
 
 export interface MeEntry {
@@ -67,6 +67,17 @@ export const ME_ENTRIES: readonly MeEntry[] = [
     testId: 'me-entry-bots',
     summary: (input) =>
       input.botCount === null ? null : t('mobile.me.summary.botsCount', { count: input.botCount }),
+  },
+  {
+    id: 'usage',
+    group: 'general',
+    icon: ChartBarIcon,
+    titleKey: 'mobile.me.entry.usage',
+    testId: 'me-entry-usage',
+    summary: (input) =>
+      input.meTotal === null
+        ? null
+        : t('mobile.me.summary.meTotal', { me: new Intl.NumberFormat().format(input.meTotal) }),
   },
   {
     id: 'skills',

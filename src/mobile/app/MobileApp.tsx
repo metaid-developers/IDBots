@@ -6,6 +6,7 @@ import { useChat } from './hooks/useChat';
 import { useMetabots } from './hooks/useMetabots';
 import { useResync } from './hooks/useResync';
 import { useTerminalBridgeState } from './hooks/useTerminalBridgeState';
+import { getMeStore, isMeSubscribed } from './me/mePointsStore';
 import { BridgeUnavailable } from './components/BridgeUnavailable';
 import { ConnectionBanner } from './components/ConnectionBanner';
 import {
@@ -21,17 +22,24 @@ import { isRechargeAllowed } from '../native/rechargePolicy';
 
 /**
  * App shell (REQ-E-11): connection banner on top, three lazy-loaded tabs,
- * bottom tab bar with safe-area padding, and the recharge page pushed as a
- * full-screen overlay. No router dependency: simple state navigation.
+ * bottom tab bar with safe-area padding, and the ME purchase/recharge flow
+ * pushed as a full-screen overlay. No router dependency: state navigation.
+ *
+ * S9: `isRechargeAllowed` still means "this shell may show the cashier" — the
+ * iOS capacitor shell is display-only, so both the subscribe and topup
+ * overlays stay closed there and the Me screen shows guidance instead.
  */
 
 const ChatScreen = lazy(() => import('./screens/ChatScreen'));
 const TasksScreen = lazy(() => import('./screens/TasksScreen'));
 const MeScreen = lazy(() => import('./screens/MeScreen'));
+const MePurchaseScreen = lazy(() => import('./screens/MePurchaseScreen'));
 const RechargeScreen = lazy(() => import('./screens/RechargeScreen'));
 
 const ACTIVE_TAB_STORAGE_KEY = 'idbots.mobile.activeTab.v1';
 const MOBILE_TABS: readonly MobileTab[] = ['chat', 'tasks', 'me'];
+
+type PurchaseSection = 'subscribe' | 'topup';
 
 function readActiveTab(): MobileTab {
   try {
@@ -52,12 +60,25 @@ function TabFallback(): JSX.Element {
 
 export default function MobileApp(): JSX.Element {
   const [tab, setTab] = useState<MobileTab>(readActiveTab);
-  const [rechargeOpen, setRechargeOpen] = useState(false);
+  const [purchase, setPurchase] = useState<{ section: PurchaseSection; planId?: string } | null>(null);
   const [billingRevision, setBillingRevision] = useState(0);
-  const rechargeAllowed = isRechargeAllowed(window.idbotsMobile);
+  const [usageSignal, setUsageSignal] = useState(0);
+  const purchaseAllowed = isRechargeAllowed(window.idbotsMobile);
+  const openPurchase = useCallback((section: PurchaseSection, planId?: string) => {
+    if (!purchaseAllowed) return;
+    setPurchase({ section, planId });
+  }, [purchaseAllowed]);
+  // The chat quota card keeps one jump: free tier → upgrade path, paid → topup.
   const openRecharge = useCallback(() => {
-    if (rechargeAllowed) setRechargeOpen(true);
-  }, [rechargeAllowed]);
+    if (!purchaseAllowed) return;
+    const subscribed = isMeSubscribed(getMeStore().subscription);
+    setPurchase({ section: subscribed ? 'topup' : 'subscribe' });
+  }, [purchaseAllowed]);
+  const openUsage = useCallback(() => {
+    setPurchase(null);
+    setTab('me');
+    setUsageSignal((value) => value + 1);
+  }, []);
   useEffect(() => {
     try {
       window.localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, tab);
@@ -101,8 +122,10 @@ export default function MobileApp(): JSX.Element {
     chat.applyResync,
   );
   useNativeBackHandler(() => handleMobileRootBack(
-    { rechargeOpen, tab },
-    { closeRecharge: () => setRechargeOpen(false), showChat: () => setTab('chat') },
+    // `rechargeOpen` is the historical name of "a cashier overlay is open";
+    // the S9 overlay union (subscribe + topup) reuses the same back contract.
+    { rechargeOpen: purchase !== null, tab },
+    { closeRecharge: () => setPurchase(null), showChat: () => setTab('chat') },
   ));
 
   // 4001/4003 unauthorized: the session is no longer valid — sign in again.
@@ -145,7 +168,7 @@ export default function MobileApp(): JSX.Element {
               botsError={botsError}
               onReloadBots={() => void reloadBots()}
               onOpenRecharge={openRecharge}
-              rechargeAllowed={rechargeAllowed}
+              rechargeAllowed={purchaseAllowed}
             />
           </Suspense>
         ) : null}
@@ -163,17 +186,36 @@ export default function MobileApp(): JSX.Element {
           <Suspense fallback={<TabFallback />}>
             <MeScreen
               resyncCounter={resyncCounter + billingRevision}
-              onOpenRecharge={openRecharge}
-              rechargeAllowed={rechargeAllowed}
+              canPurchase={purchaseAllowed}
+              onOpenPurchase={openPurchase}
+              usageSignal={usageSignal}
             />
           </Suspense>
         ) : null}
       </div>
       <TabBar active={tab} onSelect={setTab} />
-      {rechargeAllowed && rechargeOpen ? (
+      {purchaseAllowed && purchase ? (
         <div className="fixed inset-0 z-50">
           <Suspense fallback={<TabFallback />}>
-            <RechargeScreen onClose={() => setRechargeOpen(false)} onMetersUpdated={() => setBillingRevision((value) => value + 1)} />
+            {purchase.section === 'subscribe' ? (
+              <MePurchaseScreen
+                section="subscribe"
+                initialPlanId={purchase.planId}
+                canPurchase={purchaseAllowed}
+                onClose={() => setPurchase(null)}
+                onSwitchSection={(section) => setPurchase({ section })}
+                onOpenUsage={openUsage}
+                onSubmitted={() => setBillingRevision((value) => value + 1)}
+              />
+            ) : (
+              <RechargeScreen
+                canPurchase={purchaseAllowed}
+                onClose={() => setPurchase(null)}
+                onOpenSubscribe={(planId) => setPurchase({ section: 'subscribe', planId })}
+                onOpenUsage={openUsage}
+                onSubmitted={() => setBillingRevision((value) => value + 1)}
+              />
+            )}
           </Suspense>
         </div>
       ) : null}

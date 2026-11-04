@@ -245,6 +245,8 @@ interface MeRateInfo {
 
 interface MeTopupPackageInfo {
   packageId: string;
+  /** Display name from the server (e.g. 充值包 A); fall back to packageId. */
+  name?: string;
   /** milliME */ meMilli?: number;
   priceCny?: number;
   saleStatus?: number;
