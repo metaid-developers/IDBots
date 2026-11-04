@@ -44,7 +44,7 @@ import {
 import { METAID_RPC_AUTHFILE_ENV, getMetaidRpcTokenFilePath } from '../services/metaidRpcEndpoint';
 import { mapDshReasoningEffort } from './dshReasoningEffort';
 import { shouldIncludeMetawebDeepSections, nextMetawebPromptTier, type MetawebPromptMode, type MetawebPromptTier } from './metawebPromptTier';
-import { dshModelReasoningDeclaration, undeclaredReasoningRouteWarning } from './dshModelReasoning';
+import { dshModelReasoningDeclaration, dshRouteReasoningEffort, undeclaredReasoningRouteWarning } from './dshModelReasoning';
 import { resolveOpenCodeGoApiFormat, openCodeGoWireRouteKey } from './opencodeGoProtocol';
 import { toLlmEffortLevel, type LlmEffortLevel } from './llmEffort';
 import {
@@ -10133,7 +10133,23 @@ export class CoworkRunner extends EventEmitter {
     // 'deepseek'-keyed provider with a custom proxy base URL stays on the
     // pi-ai route (see isNativeDeepSeekChatRoute for the 400 failure mode).
     const officialDeepSeekNative = isNativeDeepSeekChatRoute(route);
-    const reasoningEffort = extras?.reasoningEffort;
+    // Re-spell the effort for the wire this route actually rides. Efforts the
+    // wire can express pass through; "off" on an always-thinking GLM-5.x route
+    // does not exist as a wire shape (Ark 400s the disable control the other
+    // gateways merely tolerate), so it rides the per-wire spelling decided in
+    // dshModelReasoning.dshRouteReasoningEffort — never a semantics change to
+    // the auto/cerebellum ladder, only to how "off" is expressed.
+    const reasoningEffort = dshRouteReasoningEffort(route.model, apiFormat, route.baseUrl, extras?.reasoningEffort);
+    if (reasoningEffort !== extras?.reasoningEffort) {
+      coworkLog('INFO', 'dshTurnProviderFromRoute',
+        'effort "off" re-spelled for an always-thinking model on this wire',
+        {
+          provider: route.provider,
+          model: route.model,
+          apiFormat,
+          wireEffort: reasoningEffort ?? null,
+        });
+    }
     // Effort rides a route only when the model's thinking is actually
     // controllable on it: the native adapter (own off/low/high/max ladder) or
     // a family-declared pi-ai model (dshModelReasoningDeclaration — e.g.

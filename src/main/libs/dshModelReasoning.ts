@@ -16,6 +16,7 @@
 // see GLM_OPENCODE_GO_CHAT_COMPLETIONS_DECLARATION.)
 
 import { isOpenCodeGoBaseUrl } from './opencodeGatewayHeaders';
+import { modelAlwaysThinks } from './modelThinking';
 //
 // Scope: chat-completions and responses routes. Chat-completions carries the
 // family's own wire dialect (deepseek thinking, zai thinking). The Responses
@@ -102,14 +103,31 @@ const GLM_CHAT_COMPLETIONS_DECLARATION: DshModelReasoningDeclaration = {
 // openai-responses generator emits once the model declares reasoning — which
 // streams the deliberation as separate reasoning_text deltas and keeps the
 // message text clean (verified against api.z.ai 2026-09-07, streaming and
-// non-streaming, with tools and ~200KB payloads). `off` cannot disable
-// thinking on this wire (no disable parameter), so it keeps the send-nothing
-// shape: off → null → absent from the thinkingLevelMap → provider default.
-// Compat: only fields the RESPONSES_COMPAT_GATE offers are settable —
-// supportsStore and the chat-completions dialect knobs are completions-only
-// and fail plugin load on this wire.
+// non-streaming, with tools and ~200KB payloads). Compat: only fields the
+// RESPONSES_COMPAT_GATE offers are settable — supportsStore and the
+// chat-completions dialect knobs are completions-only and fail plugin load on
+// this wire.
+//
+// `off` is spelled per family generation. GLM-4.x honors `effort: 'none'`, so
+// it keeps the off:null shape (absent from the thinkingLevelMap → pi-ai's
+// responses writer sends reasoning:{effort:'none'}). GLM-5.x cannot disable —
+// zhipu's chat wire 400s 'none' outright and Volcengine Ark silently ignores
+// it while running UNBOUNDED default-effort thinking that consumed the whole
+// configured output budget (2026-11-05 glm-5.3-flash@ark session 1ed5daec,
+// "Response incomplete: length") — so it declares off:'low', the bounded
+// lowest rung. pi-ai then answers an off turn with the MINIMAL
+// reasoning:{effort:'low'} shape (no summary/include surface), the same
+// doctrine the OpenAI-compat proxy applies via
+// modelThinking.responsesEffortForThinkingOff.
 const GLM_RESPONSES_DECLARATION: DshModelReasoningDeclaration = {
   reasoningEfforts: { off: null, low: 'low', high: 'high', max: 'high' },
+  compat: {
+    supportsDeveloperRole: false,
+  },
+};
+
+const GLM5_RESPONSES_DECLARATION: DshModelReasoningDeclaration = {
+  reasoningEfforts: { off: 'low', low: 'low', high: 'high', max: 'high' },
   compat: {
     supportsDeveloperRole: false,
   },
@@ -142,15 +160,30 @@ const GLM_OPENCODE_GO_CHAT_COMPLETIONS_DECLARATION: DshModelReasoningDeclaration
 // `thinking: { type: 'adaptive', display: 'summarized' }` plus
 // `output_config: { effort }`. Ark's accepted effort vocabulary is exactly
 // low/medium/high/max — it 400s `xhigh` (cc-switch#2729, 2026-05-11) — which
-// this ladder never emits. `off` keeps the shared send-nothing declaration;
-// on this wire pi-ai's writer translates it into the explicit
-// `thinking: { type: 'disabled' }` (thinkingLevelMap.off stays absent, and
-// absent !== null). forceAdaptiveThinking is offered by the anthropic compat
-// gate; without it pi-ai falls back to budget_tokens thinking, which Ark's
-// GLM-serving endpoint does not document. Verified against pi-ai
+// this ladder never emits. forceAdaptiveThinking is offered by the anthropic
+// compat gate; without it pi-ai falls back to budget_tokens thinking, which
+// Ark's GLM-serving endpoint does not document. Verified against pi-ai
 // anthropic-messages streamSimple/buildParams (2026-09-17).
+//
+// `off` is spelled per family generation. GLM-4.x keeps off:null (the writer
+// emits the explicit thinking:{type:'disabled'}, honored by disable-capable
+// gateways). GLM-5.x OMITS off entirely: pi-ai pins thinkingLevelMap.off to
+// null (unsupported), so once the runner drops the off effort
+// (dshRouteReasoningEffort) the writer emits NO thinking control and the
+// provider default applies — the same tolerate-and-default treatment the
+// working GLM gateways give an off turn. Declaring any off value here would
+// make the writer emit `thinking:{type:'disabled'}`, which Ark rejects with
+// 400 InvalidParameter ("thinking.type `disabled` is not supported by this
+// model", 2026-11-05 session 1ed5daec).
 const GLM_ANTHROPIC_DECLARATION: DshModelReasoningDeclaration = {
   reasoningEfforts: { off: null, low: 'low', high: 'high', max: 'max' },
+  compat: {
+    forceAdaptiveThinking: true,
+  },
+};
+
+const GLM5_ANTHROPIC_DECLARATION: DshModelReasoningDeclaration = {
+  reasoningEfforts: { low: 'low', high: 'high', max: 'max' },
   compat: {
     forceAdaptiveThinking: true,
   },
@@ -186,15 +219,53 @@ export function dshModelReasoningDeclaration(
     return DEEPSEEK_V4_CHAT_COMPLETIONS_DECLARATION;
   }
   if (GLM_PATTERN.test(bare)) {
+    // GLM-5.x always thinks and cannot express off on any wire (zhipu 400
+    // code 1210; Volcengine Ark 400 InvalidParameter on thinking.type
+    // `disabled`) — its responses/anthropic declarations spell off
+    // differently from the disable-capable GLM-4.x ones (see the constant
+    // comments).
+    const alwaysThinks = modelAlwaysThinks(bare);
     if (apiFormat === 'openai') {
       return isOpenCodeGoBaseUrl(baseUrl)
         ? GLM_OPENCODE_GO_CHAT_COMPLETIONS_DECLARATION
         : GLM_CHAT_COMPLETIONS_DECLARATION;
     }
-    if (apiFormat === 'responses') return GLM_RESPONSES_DECLARATION;
-    return GLM_ANTHROPIC_DECLARATION;
+    if (apiFormat === 'responses') return alwaysThinks ? GLM5_RESPONSES_DECLARATION : GLM_RESPONSES_DECLARATION;
+    return alwaysThinks ? GLM5_ANTHROPIC_DECLARATION : GLM_ANTHROPIC_DECLARATION;
   }
   return null;
+}
+
+/**
+ * The effort value a turn may actually put on the wire for this route.
+ *
+ * Efforts other than "off" ride untouched, and so does "off" itself for every
+ * family that can express it. GLM-5.x-class always-thinking models are the
+ * exception: no wire offers a silent off once reasoning is declared. The zai
+ * chat dialect HARDCODES `thinking:{type:'disabled'}` whenever no effort
+ * rides (any declared rung produces the identical
+ * `thinking:{type:'enabled', clear_thinking:false}`), so an off turn must
+ * carry the lowest rung to avoid the kill switch Ark rejects with 400
+ * InvalidParameter (2026-11-05 session 1ed5daec). The reasoning_effort
+ * dialect (OpenCode Go) already sends nothing for off — keep it. On the
+ * responses and anthropic wires the effort is DROPPED and the declaration
+ * decides: glm-5+ responses maps off→'low' (minimal
+ * reasoning:{effort:'low'}), glm-5+ anthropic omits off entirely (no
+ * thinking control; provider default — the same tolerate-and-default
+ * treatment CommandCode/zhipu give an off turn).
+ */
+export function dshRouteReasoningEffort(
+  modelId: string,
+  apiFormat: 'openai' | 'responses' | 'anthropic',
+  baseUrl: string | null | undefined,
+  effort: string | null | undefined,
+): string | undefined {
+  if (effort !== 'off') return effort ?? undefined;
+  if (!modelAlwaysThinks(bareModelIdOf(modelId))) return effort;
+  if (apiFormat === 'openai') {
+    return isOpenCodeGoBaseUrl(baseUrl) ? effort : 'low';
+  }
+  return undefined;
 }
 
 /**
