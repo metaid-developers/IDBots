@@ -499,3 +499,39 @@ test('getMetasoApiBase defaults to the production base and honors the staging ov
     else process.env.IDBOTS_METASO_API_BASE = previous;
   }
 });
+
+// ---------------------------------------------------------------------------
+// MRC-721 read base: the /api/mrc721/* reads ride the MetaSo base too
+// (2026-11-05 cutover off manapi.metaid.io — byte-compatible surface, global
+// metaid values; IDBOTS_METASO_API_BASE doubles as the read rollback lever).
+// ---------------------------------------------------------------------------
+
+test('MRC-721 reads target the MetaSo base, overridable via IDBOTS_METASO_API_BASE', async () => {
+  const previous = process.env.IDBOTS_METASO_API_BASE;
+  delete process.env.IDBOTS_METASO_API_BASE;
+  const seen = [];
+  const stub = async (url) => {
+    seen.push(String(url));
+    return jsonResponse({ code: 1, data: { collectionName: 'pixel-cats' } });
+  };
+  try {
+    await withFetchStub(stub, async () => {
+      await fetchMrc721CollectionInfo({ name: 'pixel-cats' });
+      await fetchMrc721ItemInfo({ pinId: `${'ab'.repeat(32)}i0` });
+    });
+    assert.equal(seen.length, 2);
+    assert.ok(seen[0].startsWith('https://so.metaid.io/api/mrc721/collection/info?'), `expected MetaSo base, got ${seen[0]}`);
+    assert.ok(seen[1].startsWith('https://so.metaid.io/api/mrc721/item/info?'), `expected MetaSo base, got ${seen[1]}`);
+
+    // Rollback lever: the same env override retargets the read base.
+    process.env.IDBOTS_METASO_API_BASE = 'https://manapi.metaid.io';
+    seen.length = 0;
+    await withFetchStub(stub, async () => {
+      await fetchMrc721CollectionInfo({ name: 'pixel-cats' });
+    });
+    assert.ok(seen[0].startsWith('https://manapi.metaid.io/api/mrc721/collection/info?'), `expected rollback base, got ${seen[0]}`);
+  } finally {
+    if (previous == null) delete process.env.IDBOTS_METASO_API_BASE;
+    else process.env.IDBOTS_METASO_API_BASE = previous;
+  }
+});

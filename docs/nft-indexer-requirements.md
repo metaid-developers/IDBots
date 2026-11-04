@@ -35,6 +35,16 @@ endpoints (MetaSo today) must match them so the IDBots client keeps working.
   (`IDBOTS_MAN_P2P_LOCAL_BASE`). The MetaSo production base is BUILT INTO the
   client (`https://so.metaid.io`, 2026-11-05); `IDBOTS_METASO_API_BASE`
   overrides it for staging/local testing only.
+- **2026-11-05 cutover**: the FULL `/api/mrc721/*` read surface (collection/
+  item/address reads included, not just search) is served by MetaSo
+  (release `41eeebc`, manapi byte-compatible) and the client read base in
+  `mrc721Service.ts` points at `getMetasoApiBase()`. One deliberate value
+  divergence: `metaid`/`createMetaId`/`ownerMetaId` carry **global metaids**
+  (`id…` IDAddress format) instead of man-p2p's legacy sha256-hex — never
+  compare them across bases or against persisted legacy values; identities
+  key on address/pinId. Rollback = set `IDBOTS_METASO_API_BASE` (or the
+  built-in base) back to `https://manapi.metaid.io` (metaid values there
+  revert to legacy hex; man-p2p keeps serving its copy).
 
 ## R-A — Server-side collection search (P0, highest value)
 
@@ -54,7 +64,9 @@ MRC-721 read model over the manapi-compatible source):
 - The upstream `/api/mrc721/collection/pageList` stays owned by the
   manapi-compatible source until collection indexing itself moves to MetaSo
   (owner: long-term move); MetaSo's search layer must not require any change
-  to it.
+  to it. **Update 2026-11-05**: collection indexing HAS moved — MetaSo
+  natively indexes `/nft/mrc721` pins and serves `pageList` (and the whole
+  MRC-721 read surface) itself; the client read base points at MetaSo.
 
 ## R-B — Issuer view with supply state (P0→P1, backs the publish skill)
 

@@ -21,12 +21,21 @@ import type { MetabotStore } from '../metabotStore';
  *     item value to the recipient at output 0.
  *
  * Reads follow the standard remote-first path: fetchFromLocalOrFallback —
- * local sqlite/P2P override (IDBOTS_MAN_P2P_LOCAL_BASE) when set, then
- * https://manapi.metaid.io. The /api/mrc721/* endpoints go live with man-p2p
- * P2; until then every read surfaces a descriptive miss/error.
+ * local sqlite/P2P override (IDBOTS_MAN_P2P_LOCAL_BASE) when set, then the
+ * MetaSo-P2P base (getMetasoApiBase, production https://so.metaid.io).
+ * MetaSo has served the manapi byte-compatible /api/mrc721/* read surface
+ * since 2026-11-05 (release 41eeebc; see metaso-p2p
+ * docs/mrc721-nft-downstream-guide.md). Rollback = point the base back at
+ * https://manapi.metaid.io.
+ *
+ * metaid value convention (the ONE deliberate divergence from manapi):
+ * metaid/createMetaId/ownerMetaId carry GLOBAL metaids (IDAddress `id...`
+ * format), not man-p2p's legacy sha256-hex. Never compare these fields
+ * across the two bases or against persisted legacy values — key identities
+ * by address or pinId (both unchanged and authoritative); treat legacy
+ * metaids in old cached rows as display history only.
  */
 
-const MANAPI_BASE = 'https://manapi.metaid.io';
 export const MRC721_PATH_ROOT = '/nft/mrc721';
 const MRC721_RESERVED_SEGMENTS = new Set(['collection_desc', 'item_desc']);
 
@@ -314,7 +323,7 @@ function buildMrc721Url(localPath: string, query: Record<string, string | number
     params.set(key, String(value));
   }
   const qs = params.toString();
-  return `${MANAPI_BASE}${localPath}${qs ? `?${qs}` : ''}`;
+  return `${getMetasoApiBase()}${localPath}${qs ? `?${qs}` : ''}`;
 }
 
 /**
@@ -479,10 +488,13 @@ export async function fetchMrc721ItemVerify(params: {
 
 /**
  * MetaSo-P2P production base (owner indexing architecture, 2026-11-05): all
- * NFT business indexes — sell-intent queries, collection search, issuer
- * views — are served by MetaSo, which builds on man-p2p's raw pin index.
- * The production base is BUILT IN (same posture as MANAPI_BASE); the
- * `IDBOTS_METASO_API_BASE` env only overrides it for staging/local testing.
+ * NFT business indexes — the full manapi-compatible MRC-721 read surface
+ * (this file's reads), sell-intent queries, collection search, issuer views —
+ * are served by MetaSo, which builds on man-p2p's raw pin index. The
+ * production base is BUILT IN (same posture as the old MANAPI_BASE constant);
+ * the `IDBOTS_METASO_API_BASE` env only overrides it for staging/local
+ * testing, and it doubles as the rollback lever (point it back at
+ * https://manapi.metaid.io to revert reads without a rebuild).
  */
 export const METASO_API_BASE_DEFAULT = 'https://so.metaid.io';
 
