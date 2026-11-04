@@ -3987,9 +3987,11 @@ const createCerebellumEffortSelector = () =>
 /**
  * Cerebellum (小脑) turn-ack gate (owner decision 2026-11-03, session
  * 3ecd2a2f): one JEV Noul per assistant-mode owner-chat turn decides whether
- * the LLM first-sentence bubble is needed at all — conversational messages the
- * main reply covers directly get a single-bubble turn, tool-bound/multi-step
- * work keeps the interim ack. Same lazy shape as the factories above — config
+ * the LLM first-sentence bubble emits immediately or waits briefly for a direct
+ * main reply — conversational messages get a single bubble when that reply
+ * lands inside the grace window, while a slow reply releases the held ack.
+ * Tool-bound/multi-step work keeps the immediate interim ack. Same lazy shape
+ * as the factories above — config
  * re-resolved per call (Settings edits apply on the next turn), fetch on the
  * Electron net stack (system proxy). null on any failure keeps the historical
  * behavior (the ack fires — fail-open). Never logs user text — only whether
@@ -7060,9 +7062,9 @@ const getCoworkRunner = () => {
       // "auto" rung on unpicked sessions resolves from one JEV choice verdict
       // per turn (see createCerebellumEffortSelector).
       cerebellumEffortSelector: createCerebellumEffortSelector(),
-      // Cerebellum (小脑) turn-ack gate: conversational turns skip the LLM
-      // first-sentence bubble entirely (the main reply is the single bubble);
-      // tool-bound/multi-step turns keep it (see createCerebellumTurnAckGate).
+      // Cerebellum (小脑) turn-ack gate: conversational turns hold the LLM
+      // first sentence for a short direct-reply window before releasing it;
+      // tool-bound/multi-step turns emit it immediately (see createCerebellumTurnAckGate).
       cerebellumTurnAckGate: createCerebellumTurnAckGate(),
       // Cerebellum (小脑) session follow-up gate (Follow-Up Tasks / 待跟进任务):
       // re-judges every completed turn of an auto-origin session and moves the
