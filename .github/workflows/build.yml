@@ -430,12 +430,41 @@ jobs:
           APP_ZIP_PATH="$(node scripts/release-artifact-paths.cjs zip)"
           echo "Using APP_ZIP_PATH=$APP_ZIP_PATH"
           ditto -c -k --keepParent "release/${{ matrix.mac_dir }}/IDBots.app" "$APP_ZIP_PATH"
-          xcrun notarytool submit "$APP_ZIP_PATH" \
-            --apple-id "$APPLE_ID" \
-            --team-id "$APPLE_TEAM_ID" \
-            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-            --wait
-          xcrun stapler staple "release/${{ matrix.mac_dir }}/IDBots.app"
+          # notarytool submit and stapler staple both hit Apple services that
+          # intermittently drop connections on some hosted runner pools
+          # (NSURLError -1005 to api.apple-cloudkit.com). Retry both.
+          submit_ok=0
+          for submit_attempt in 1 2 3; do
+            if xcrun notarytool submit "$APP_ZIP_PATH" \
+              --apple-id "$APPLE_ID" \
+              --team-id "$APPLE_TEAM_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+              --wait; then
+              submit_ok=1
+              break
+            fi
+            if [ "$submit_attempt" = 3 ]; then
+              echo "notarytool submit failed after 3 attempts" >&2
+              exit 1
+            fi
+            echo "notarytool attempt $submit_attempt failed; retrying in 60s"
+            sleep 60
+          done
+          test "$submit_ok" = 1
+          staple_ok=0
+          for staple_attempt in 1 2 3 4 5; do
+            if xcrun stapler staple "release/${{ matrix.mac_dir }}/IDBots.app"; then
+              staple_ok=1
+              break
+            fi
+            if [ "$staple_attempt" = 5 ]; then
+              echo "stapler failed after 5 attempts" >&2
+              exit 1
+            fi
+            echo "stapler attempt $staple_attempt failed (transient Apple network flake); retrying in 30s"
+            sleep 30
+          done
+          test "$staple_ok" = 1
 
       - name: Build DMG from prepackaged app (macOS)
         if: runner.os == 'macOS'
@@ -476,7 +505,25 @@ jobs:
             --team-id "$APPLE_TEAM_ID" \
             --password "$APPLE_APP_SPECIFIC_PASSWORD" \
             --wait
-          xcrun stapler staple "$DMG_PATH"
+          # stapler validate does a CloudKit ticket-delivery lookup that
+          # intermittently dies with NSURLError -1005 on some hosted runner
+          # pools (v1.0.10 prep: 3/3 failures on macos-15-intel while
+          # macos-latest passed). Retry before giving up — stapling is
+          # idempotent, so a re-run over a half-stapled DMG is safe.
+          staple_ok=0
+          for staple_attempt in 1 2 3 4 5; do
+            if xcrun stapler staple "$DMG_PATH"; then
+              staple_ok=1
+              break
+            fi
+            if [ "$staple_attempt" = 5 ]; then
+              echo "stapler failed after 5 attempts" >&2
+              exit 1
+            fi
+            echo "stapler attempt $staple_attempt failed (transient Apple network flake); retrying in 30s"
+            sleep 30
+          done
+          test "$staple_ok" = 1
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4

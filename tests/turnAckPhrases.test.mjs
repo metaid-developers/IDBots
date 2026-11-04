@@ -141,7 +141,7 @@ test('runner: turnAck is emitted after the effort verdict, before the brain call
   // turn path (the volatile build, images, and skill-env sync now run kicked
   // and overlapped) — so cold-start windows (15s+ relay key bootstrap) still
   // get an instant "on it" instead of the old generic spinner copy.
-  const earlyEmission = source.indexOf('this.emitTurnAck(sessionId, earlyAckTier)');
+  const earlyEmission = source.indexOf('this.emitTurnAck(sessionId, earlyAckTier, prompt)');
   const envSyncSite = source.indexOf('await this.syncDshSkillSessionEnv(');
   assert.ok(earlyEmission > 0, 'the turn emits the early ack at entry');
   assert.ok(envSyncSite > earlyEmission,

@@ -36,6 +36,59 @@ function normalizeExcludeOutpoints(input: unknown): Set<string> {
   );
 }
 
+/**
+ * One forced-spend entry ("include_outpoints"): an outpoint the built tx MUST
+ * spend, with its value taken from the indexer (item/info output/outputValue)
+ * rather than the wallet-api utxo list — MRC-721 pin UTXOs are 1-sat outputs
+ * and never pass the >=600-sat funding filter. The entry becomes the FIRST
+ * input(s) of the tx, which is what the indexer's transfer detection keys on
+ * (first input -> output 0 address becomes the new owner).
+ */
+export interface MvcIncludeOutpoint {
+  txid: string;
+  vout: number;
+  satoshis: number;
+}
+
+/**
+ * Validate and normalize include entries: 64-hex txid, integer vout >= 0,
+ * integer satoshis > 0, deduped, and each must be disjoint from excludeOutpoints.
+ */
+export function normalizeMvcIncludeOutpoints(
+  input: unknown,
+  excludeOutpoints?: ReadonlySet<string>,
+): MvcIncludeOutpoint[] {
+  if (input == null) return [];
+  if (!Array.isArray(input)) {
+    throw new Error('include_outpoints must be an array of {txid, vout, satoshis}');
+  }
+  const seen = new Set<string>();
+  const result: MvcIncludeOutpoint[] = [];
+  for (const raw of input) {
+    const record = (raw ?? {}) as Record<string, unknown>;
+    const txid = String(record.txid ?? '').trim().toLowerCase();
+    const vout = Number(record.vout ?? record.outputIndex);
+    const satoshis = Number(record.satoshis ?? record.value);
+    if (!/^[0-9a-f]{64}$/.test(txid)) {
+      throw new Error('include_outpoints entries need a 64-hex txid');
+    }
+    if (!Number.isInteger(vout) || vout < 0) {
+      throw new Error(`include_outpoints entries need an integer vout >= 0 (${txid})`);
+    }
+    if (!Number.isInteger(satoshis) || satoshis <= 0) {
+      throw new Error(`include_outpoints entries need integer satoshis > 0 (${txid}:${vout})`);
+    }
+    const key = `${txid}:${vout}`;
+    if (seen.has(key)) continue;
+    if (excludeOutpoints?.has(key)) {
+      throw new Error(`include_outpoints conflicts with exclude_outpoints: ${key}`);
+    }
+    seen.add(key);
+    result.push({ txid, vout, satoshis });
+  }
+  return result;
+}
+
 export function normalizeMvcWalletUtxos(input: unknown, address: string): SpendableMvcUtxo[] {
   if (!Array.isArray(input)) return [];
   return input
@@ -80,6 +133,7 @@ export function buildMvcTransferRawTxLocally(params: {
   feeRate: number;
   utxos: SpendableMvcUtxo[];
   excludeOutpoints?: ReadonlySet<string>;
+  includeOutpoints?: ReadonlyArray<MvcIncludeOutpoint>;
 }): {
   txHex: string;
   txId: string;
@@ -97,12 +151,36 @@ export function buildMvcTransferRawTxLocally(params: {
     satoshis: params.amountSats,
   });
 
+  // Force-spend entries: injected at the head of the funding candidate list
+  // and passed as preferred outpoints, so pickUtxo always spends them first
+  // (the resulting input order is [include..., funding...], keeping a forced
+  // MRC-721 pin outpoint at input 0). Their satoshis count toward the funding
+  // requirement like any other input.
+  const includeEntries = normalizeMvcIncludeOutpoints(
+    params.includeOutpoints,
+    params.excludeOutpoints ?? new Set(),
+  );
+  const includeKeys = new Set(
+    includeEntries.map((entry) => `${entry.txid}:${entry.vout}`),
+  );
+  const injectedUtxos: SpendableMvcUtxo[] = [
+    ...includeEntries.map((entry) => ({
+      txId: entry.txid,
+      outputIndex: entry.vout,
+      satoshis: entry.satoshis,
+      address: params.senderAddress,
+      height: 0,
+    })),
+    ...params.utxos.filter((utxo) => !includeKeys.has(getUtxoOutpointKey(utxo))),
+  ];
+
   const picked = pickUtxo(
-    params.utxos,
+    injectedUtxos,
     params.amountSats,
     params.feeRate,
     ESTIMATED_TX_SIZE_WITHOUT_INPUTS,
     params.excludeOutpoints ?? new Set(),
+    includeKeys,
   );
 
   for (const utxo of picked) {
@@ -149,6 +227,7 @@ async function main(): Promise<void> {
     amountSats: number;
     feeRate: number;
     excludeOutpoints?: string[];
+    includeOutpoints?: Array<{ txid: string; vout: number; satoshis: number }>;
   };
   const { toAddress, amountSats, feeRate } = payload;
   if (!toAddress || !Number.isInteger(amountSats) || amountSats <= 0 || !Number.isFinite(feeRate) || feeRate <= 0) {
@@ -161,13 +240,21 @@ async function main(): Promise<void> {
   const senderWif = mvcWallet.getPrivateKey();
   const senderAddress = mvcWallet.getAddress();
   const excludeOutpoints = normalizeExcludeOutpoints(payload.excludeOutpoints);
+  let includeOutpoints: MvcIncludeOutpoint[];
+  try {
+    includeOutpoints = normalizeMvcIncludeOutpoints(payload.includeOutpoints, excludeOutpoints);
+  } catch (err) {
+    console.log(JSON.stringify({ success: false, error: getMessage(err) }));
+    process.exit(1);
+  }
   const utxos = normalizeMvcWalletUtxos(await fetchMVCUtxos(senderAddress), senderAddress);
   logStep('Fetched MVC raw-tx funding candidates', {
     candidateOutpoints: utxos.map((utxo) => getUtxoOutpointKey(utxo)),
     excludedOutpoints: Array.from(excludeOutpoints),
+    includedOutpoints: includeOutpoints.map((entry) => `${entry.txid}:${entry.vout}`),
   });
   const availableUtxos = utxos.filter((utxo) => !excludeOutpoints.has(getUtxoOutpointKey(utxo)));
-  if (availableUtxos.length === 0) {
+  if (availableUtxos.length === 0 && includeOutpoints.length === 0) {
     console.log(JSON.stringify({ success: false, error: 'No spendable MVC UTXOs after exclusions' }));
     process.exit(1);
   }
@@ -180,6 +267,7 @@ async function main(): Promise<void> {
     feeRate,
     utxos,
     excludeOutpoints,
+    includeOutpoints,
   });
   logStep('Built MVC raw-tx transfer locally', {
     pickedOutpoints: result.spentOutpoints,

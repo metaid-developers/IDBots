@@ -50,3 +50,51 @@ export function getAssistantSessionDisplayTitle(title, enabled) {
   const stripped = title.replace(/^(\[(?:编排任务|Orchestration Task)\])\s+/, '');
   return stripped || title;
 }
+
+/**
+ * IM session classification for the session list.
+ *
+ * `imChannel` comes from cowork_conversation_mappings (`im:qq:group` /
+ * `im:qq:direct`) via listSessions, so a row created BEFORE IM sessions were
+ * re-classified as 'standard' (they used to be 'a2a') is still identifiable
+ * without a destructive data migration.
+ *
+ * Returns null for non-IM sessions.
+ */
+export function getImSessionChannelInfo(input) {
+  const channel = typeof input === 'string' ? input : input?.imChannel;
+  const value = typeof channel === 'string' ? channel.trim() : '';
+  // `im:<platform>:<kind>` is the current shape; very old rows only carry
+  // `im:<platform>`, so the kind is recovered from the stored conversation id
+  // (`qq:group:…` / `qq:c2c:…`) instead of guessing.
+  const match = /^im:([a-z0-9_-]+)(?::(direct|group))?$/i.exec(value);
+  if (!match) return null;
+  const platform = match[1].toLowerCase();
+  const conversationId = (
+    typeof input === 'object' && input && typeof input.imConversationId === 'string'
+      ? input.imConversationId.trim()
+      : ''
+  );
+  let chatType = (match[2] || '').toLowerCase();
+  if (!chatType) {
+    if (/:group:/i.test(conversationId)) chatType = 'group';
+    else if (/:c2c:|:direct:/i.test(conversationId)) chatType = 'direct';
+  }
+  if (chatType !== 'direct' && chatType !== 'group') return null;
+  const lastSegment = conversationId.includes(':')
+    ? conversationId.slice(conversationId.lastIndexOf(':') + 1)
+    : conversationId;
+  const suffix = chatType === 'group'
+    ? lastSegment.replace(/[^A-Za-z0-9]/g, '').slice(-4)
+    : '';
+  return { platform, chatType, isGroup: chatType === 'group', suffix };
+}
+
+/**
+ * True when the stored title is the old generic `IM-<platform>-<digits>`
+ * placeholder. Those rows get an IM title rendered from the channel mapping
+ * instead; a user-renamed or model-generated title is preserved as-is.
+ */
+export function isLegacyImSessionTitle(title) {
+  return /^IM-[a-z0-9_-]+-\d+$/i.test(typeof title === 'string' ? title.trim() : '');
+}

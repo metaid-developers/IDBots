@@ -60,7 +60,11 @@ explanation (background, why asking, recommendation) in the same assistant
 message before the tool call, plus spelling out internal shorthand;
 (2) declares the optional `detail` string property so the model can attach that
 context to the panel itself; (3) threads `detail` through `execute()` into the
-`ctx.userQuestions.ask` payload so it actually reaches the modal.
+`ctx.userQuestions.ask` payload so it actually reaches the modal;
+(4) forces `timeout = -1` inside `execute()` (`IDBots patch (ask-waits-for-human)`)
+so a model-supplied timeout cannot close the question panel. The host mounts
+the tool with `timeout: -1` as well. An ask stays until a person answers or
+the turn is cancelled.
 
 ### `@deepseek-ai+dsh-subprocess-local+0.2.1-rc.2.patch`
 

@@ -269,6 +269,19 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     void loadMetaBots();
   }, [dispatch, loadSelectableMetaBots, applyLoadedMetaBots, setSelectedMetabotId]);
 
+  // Bots added behind this view's back (cross-device chain restore from the
+  // Settings overlay) announce themselves on this window event; without the
+  // reload the restored fleet stays invisible until an app restart.
+  useEffect(() => {
+    const reloadRoster = () => {
+      void loadSelectableMetaBots().then((loaded) => {
+        applyLoadedMetaBots(loaded);
+      });
+    };
+    window.addEventListener('app:metabots-changed', reloadRoster);
+    return () => window.removeEventListener('app:metabots-changed', reloadRoster);
+  }, [loadSelectableMetaBots, applyLoadedMetaBots]);
+
   // When user just restored a MetaBot (preferredMetabotId set), refetch list and select it so the new bot appears and is selected
   useEffect(() => {
     if (preferredMetabotId == null) return;

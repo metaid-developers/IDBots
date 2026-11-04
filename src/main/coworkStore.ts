@@ -16,6 +16,7 @@ import {
   type TurnMemoryExtractionChange,
 } from './libs/coworkMemoryJudge';
 import { evaluateConversationMemoryQuality } from './libs/coworkMemoryQuality';
+import { mergeTradeBadge, scanMessageTradeBadge } from './libs/tradeBadge';
 import { stripLoneSurrogates, truncateUtf16Units } from './libs/llmSafeText';
 import type { RecentSessionPulseEntry } from './libs/recentSessionsPrompt';
 import { recordChainBackupTombstones } from './libs/chainBackupTombstones';
@@ -806,6 +807,14 @@ export interface CoworkSession {
   executionMode: CoworkExecutionMode;
   activeSkillIds: string[];
   messages: CoworkMessage[];
+  /**
+   * IM channel that owns this session (`im:qq:group` / `im:qq:direct`). Read
+   * from the conversation mapping so legacy IM rows stored as 'a2a' are shown
+   * and rendered as IM rows without rewriting their session_type.
+   */
+  imChannel?: string | null;
+  /** External conversation id behind `imChannel` (e.g. `qq:group:<openid>`). */
+  imConversationId?: string | null;
   /** Renderer-only bounded history state. Absent for full internal session reads. */
   messageHistory?: CoworkMessageHistoryState;
   createdAt: number;
@@ -928,6 +937,15 @@ export interface CoworkSessionSummary {
   /** Per-session reasoning effort (off/low/high/max, or the 'default' sentinel; null = follow the model default chain). */
   effort?: string | null;
   hiddenFromSessionList?: boolean;
+  /**
+   * IM channel that owns this session (`im:qq:group` / `im:qq:direct`), read
+   * from cowork_conversation_mappings. Display-layer only: it lets the session
+   * list badge an IM row without a destructive `session_type` migration of
+   * rows created before IM sessions were classified as 'standard'.
+   */
+  imChannel?: string | null;
+  /** External conversation id behind `imChannel` (e.g. `qq:group:<openid>`). */
+  imConversationId?: string | null;
   /** Auto-origin marker (see CoworkSession.autoOrigin); null = human-initiated. */
   autoOrigin?: CoworkSessionAutoOrigin | null;
   /** Manual fold placement (see CoworkSession.foldOverride); null = follow the policy. */
@@ -3656,7 +3674,8 @@ export class CoworkStore implements MemoryBackend {
     const session = this.getSessionWithoutMessages(id);
     if (!session) return null;
     if (session.sessionType === 'a2a') {
-      const page = this.getSessionMessagesPage(id, { limit: messageLimit, displayWindow: true });
+      const limit = normalizeCoworkMessagePageRequest({ limit: messageLimit }).limit;
+      const page = this.getSessionMessagesPage(id, { limit, displayWindow: true });
       // Thread aggregation: "load earlier" must be offered not only while the
       // session's own window has more, but also when previous episodes of the
       // thread exist below it.
@@ -3671,14 +3690,43 @@ export class CoworkStore implements MemoryBackend {
           )
         LIMIT 1
       `, [id]) != null;
+      let messages = page.messages;
+      let hasMoreBefore = page.hasMoreBefore || hasEarlierEpisodes;
+      let beforeSequence = page.beforeSequence;
+      let beforeEpisodeIndex: number | null = null;
+      // A successor episode often holds only the tail of a long bot-to-bot
+      // thread. Opening it alone looks like the peer's unrolled session is
+      // missing days of messages. Fill the rest of this display page from
+      // the previous episodes so both perspectives open on the same span.
+      if (!page.hasMoreBefore && hasEarlierEpisodes && messages.length < limit) {
+        const earlier = this.getA2AConversationHistoryPage(id, {
+          beforeCursor: { episodeIndex: null, beforeSequence: null },
+          limit: limit - messages.length,
+        });
+        if (earlier && earlier.messages.length > 0) {
+          messages = [
+            ...earlier.messages.map((entry) => ({
+              ...entry.message,
+              metadata: {
+                ...(entry.message.metadata ?? {}),
+                a2aEpisodeIndex: entry.episodeIndex,
+              },
+            })),
+            ...messages,
+          ];
+          hasMoreBefore = earlier.hasMoreBefore;
+          beforeSequence = earlier.beforeCursor?.beforeSequence ?? null;
+          beforeEpisodeIndex = earlier.beforeCursor?.episodeIndex ?? null;
+        }
+      }
       return {
         ...session,
-        messages: page.messages,
+        messages,
         messageHistory: {
-          hasMoreBefore: page.hasMoreBefore || hasEarlierEpisodes,
-          beforeSequence: page.beforeSequence,
-          pageSize: normalizeCoworkMessagePageRequest({ limit: messageLimit }).limit,
-          beforeEpisodeIndex: null,
+          hasMoreBefore,
+          beforeSequence,
+          pageSize: limit,
+          beforeEpisodeIndex,
         },
       };
     }
@@ -3721,6 +3769,8 @@ export class CoworkStore implements MemoryBackend {
       browser_uri?: string | null;
       browser_title?: string | null;
       hidden_from_session_list?: number | null;
+      im_channel?: string | null;
+      im_conversation_id?: string | null;
       auto_origin?: string | null;
       fold_override?: string | null;
       follow_up_state?: string | null;
@@ -3740,7 +3790,20 @@ export class CoworkStore implements MemoryBackend {
 
     const row = this.getOne<SessionRow>(`
       SELECT id, title, claude_session_id, status, pinned, cwd, system_prompt, execution_mode, active_skill_ids, metabot_id,
-             session_type, peer_global_metaid, peer_name, peer_avatar, browser_uri, browser_title, hidden_from_session_list, auto_origin, fold_override, follow_up_state, follow_up_source, follow_up_at, permission_mode, parent_session_id, fork_point_message_id, model, model_provider, effort, project_id, goal, created_at, updated_at
+             session_type, peer_global_metaid, peer_name, peer_avatar, browser_uri, browser_title, hidden_from_session_list,
+             (
+               SELECT im.channel FROM cowork_conversation_mappings im
+               WHERE im.cowork_session_id = cowork_sessions.id AND im.channel LIKE 'im:%'
+               ORDER BY (im.channel LIKE 'im:%:group') DESC, im.last_active_at DESC
+               LIMIT 1
+             ) AS im_channel,
+             (
+               SELECT im.external_conversation_id FROM cowork_conversation_mappings im
+               WHERE im.cowork_session_id = cowork_sessions.id AND im.channel LIKE 'im:%'
+               ORDER BY (im.channel LIKE 'im:%:group') DESC, im.last_active_at DESC
+               LIMIT 1
+             ) AS im_conversation_id,
+             auto_origin, fold_override, follow_up_state, follow_up_source, follow_up_at, permission_mode, parent_session_id, fork_point_message_id, model, model_provider, effort, project_id, goal, created_at, updated_at
       FROM cowork_sessions
       WHERE id = ?
     `, [id]);
@@ -3787,6 +3850,8 @@ export class CoworkStore implements MemoryBackend {
       peerName: row.peer_name ?? null,
       peerAvatar: row.peer_avatar ?? null,
       hiddenFromSessionList: Boolean(row.hidden_from_session_list),
+      imChannel: row.im_channel ?? null,
+      imConversationId: row.im_conversation_id ?? null,
       autoOrigin: (row.auto_origin as CoworkSessionAutoOrigin | null) ?? null,
       foldOverride: (row.fold_override as CoworkSessionFoldOverride | null) ?? null,
       followUpState: (row.follow_up_state as 'pending' | null) ?? null,
@@ -4261,8 +4326,11 @@ export class CoworkStore implements MemoryBackend {
       browser_uri?: string | null;
       browser_title?: string | null;
       hidden_from_session_list?: number | null;
+      im_channel?: string | null;
+      im_conversation_id?: string | null;
       auto_origin?: string | null;
       fold_override?: string | null;
+      trade_badge?: string | null;
       follow_up_state?: string | null;
       follow_up_source?: string | null;
       follow_up_at?: string | null;
@@ -4293,8 +4361,28 @@ export class CoworkStore implements MemoryBackend {
         s.browser_uri,
         s.browser_title,
         s.hidden_from_session_list,
+        -- IM classification for the session row (badge + title fallback).
+        -- Read from the mapping table so rows created BEFORE IM sessions moved
+        -- from 'a2a' to 'standard' are classified identically without a
+        -- destructive data migration. The :group channel wins over the
+        -- legacy im:<platform> channel when both exist.
+        (
+          SELECT im.channel FROM cowork_conversation_mappings im
+          WHERE im.cowork_session_id = s.id AND im.channel LIKE 'im:%'
+          ORDER BY (im.channel LIKE 'im:%:group') DESC, im.last_active_at DESC
+          LIMIT 1
+        ) AS im_channel,
+        (
+          SELECT im.external_conversation_id FROM cowork_conversation_mappings im
+          WHERE im.cowork_session_id = s.id AND im.channel LIKE 'im:%'
+          ORDER BY (im.channel LIKE 'im:%:group') DESC, im.last_active_at DESC
+          LIMIT 1
+        ) AS im_conversation_id,
         s.auto_origin,
         s.fold_override,
+        -- S4 chat trade markers: 'p2p' | 'escrow' | NULL (write-path
+        -- maintained, migration backfilled once; see tradeBadge.ts).
+        s.trade_badge,
         s.follow_up_state,
         s.follow_up_source,
         s.follow_up_at,
@@ -4349,8 +4437,11 @@ export class CoworkStore implements MemoryBackend {
       browserUri: row.browser_uri ?? null,
       browserTitle: row.browser_title ?? null,
       hiddenFromSessionList: Boolean(row.hidden_from_session_list),
+      imChannel: row.im_channel ?? null,
+      imConversationId: row.im_conversation_id ?? null,
       autoOrigin: (row.auto_origin as CoworkSessionAutoOrigin | null) ?? null,
       foldOverride: (row.fold_override as CoworkSessionFoldOverride | null) ?? null,
+      tradeBadge: (row.trade_badge === 'p2p' || row.trade_badge === 'escrow' ? row.trade_badge : null),
       followUpState: (row.follow_up_state as 'pending' | null) ?? null,
       followUpSource: (row.follow_up_source as CoworkSessionFollowUpSource | null) ?? null,
       followUpAt: row.follow_up_at ?? null,
@@ -5478,6 +5569,95 @@ export class CoworkStore implements MemoryBackend {
   }
 
   /**
+   * Insert a private-chat bubble at a historical chain time without touching
+   * the session's list stamp. Sequence is spliced so the A2A display window
+   * (ordered by sequence) keeps chronological order. Does not flush the
+   * database; the caller saves once for a batch.
+   */
+  insertHistoricalCoworkMessage(
+    sessionId: string,
+    message: Omit<CoworkMessage, 'id' | 'timestamp' | 'sequence'> & { timestamp: number },
+  ): CoworkMessage | null {
+    const createdAt = Math.floor(Number(message.timestamp));
+    if (!Number.isFinite(createdAt) || createdAt <= 0) return null;
+    if (!String(message.content ?? '').trim()) return null;
+
+    const successor = this.getOne<{ sequence: number | string | null }>(`
+      SELECT sequence
+      FROM cowork_messages
+      WHERE session_id = ? AND created_at > ?
+      ORDER BY created_at ASC, sequence ASC, ROWID ASC
+      LIMIT 1
+    `, [sessionId, createdAt]);
+    const successorSequence = parseIdNumber(successor?.sequence);
+    let sequence: number;
+    if (successorSequence != null && successorSequence > 0) {
+      this.db.run(`
+        UPDATE cowork_messages
+        SET sequence = sequence + 1
+        WHERE session_id = ? AND sequence >= ?
+      `, [sessionId, successorSequence]);
+      sequence = successorSequence;
+    } else {
+      const sequenceRow = this.db.exec(`
+        SELECT COALESCE(MAX(sequence), 0) + 1 as next_seq
+        FROM cowork_messages
+        WHERE session_id = ?
+      `, [sessionId]);
+      sequence = sequenceRow[0]?.values[0]?.[0] as number || 1;
+    }
+
+    const id = uuidv4();
+    const metadataJson = message.metadata ? JSON.stringify(message.metadata) : null;
+    this.db.run(`
+      INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [
+      id,
+      sessionId,
+      message.type,
+      message.content,
+      metadataJson,
+      createdAt,
+      sequence,
+    ]);
+    this.bumpSessionTradeBadge(sessionId, message.content);
+
+    return {
+      id,
+      type: message.type,
+      content: message.content,
+      timestamp: createdAt,
+      sequence,
+      metadata: message.metadata,
+    };
+  }
+
+  /**
+   * S4 chat trade markers: upgrade the session's trade_badge from one
+   * message's text. Upgrade-only by design — a session that carried a trade
+   * keeps its marker even after later plain messages (trade history is a
+   * fact); escrow outranks p2p (mergeTradeBadge). The scan short-circuits on
+   * fence-less text, so plain messages pay one substring probe.
+   *
+   * Source-signing slice: the scan verifies host stamps against THIS session
+   * id — a signed card copy relayed from another session's emit fails the
+   * binding here, so the mislabel (a relay copy marking an orchestration
+   * session) cannot reproduce.
+   */
+  private bumpSessionTradeBadge(sessionId: string, content: string): void {
+    const kind = scanMessageTradeBadge(content, { sessionId });
+    if (!kind) return;
+    const current = this.getOne<{ trade_badge: string | null }>(
+      'SELECT trade_badge FROM cowork_sessions WHERE id = ?',
+      [sessionId],
+    )?.trade_badge ?? null;
+    const merged = mergeTradeBadge(current as 'p2p' | 'escrow' | null, kind);
+    if (merged === current) return;
+    this.db.run('UPDATE cowork_sessions SET trade_badge = ? WHERE id = ?', [merged, sessionId]);
+  }
+
+  /**
    * Bump a session's stored activity key for a message that may reorder the
    * session list (see coworkActivityMessageMatch). Monotonic: an insert whose
    * created_at is older than the stamp (a migrated/legacy copy) leaves it alone,
@@ -5560,6 +5740,7 @@ export class CoworkStore implements MemoryBackend {
 
     this.db.run('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?', [now, sessionId]);
     this.touchSessionActivityAt(sessionId, now, message.type, metadataJson);
+    this.bumpSessionTradeBadge(sessionId, message.content);
     this.db.run(`
       UPDATE a2a_conversation_threads
       SET updated_at = ?
@@ -10613,6 +10794,15 @@ export class CoworkStore implements MemoryBackend {
       `NOT EXISTS (
         SELECT 1 FROM a2a_conversation_episodes episode
         WHERE episode.session_id = s.id AND episode.next_session_id IS NOT NULL
+      )`,
+      // IM GROUP conversations are untrusted external content. They stay
+      // visible in the owner's local session list (by request), but they must
+      // never be quoted into ANOTHER session's prompt — that would let a group
+      // message enter a private-chat context.
+      `NOT EXISTS (
+        SELECT 1 FROM cowork_conversation_mappings group_map
+        WHERE group_map.cowork_session_id = s.id
+          AND group_map.channel LIKE 'im:%:group'
       )`,
     ];
     const params: Array<string | number> = [options.metabotId];

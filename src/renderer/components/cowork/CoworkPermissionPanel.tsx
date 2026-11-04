@@ -9,6 +9,7 @@ import {
   ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
+import { PermissionCountdownLabel, usePermissionCountdown } from './permissionCountdown';
 
 interface CoworkPermissionPanelProps {
   permission: CoworkPermissionRequest;
@@ -263,6 +264,11 @@ const CoworkPermissionPanel: React.FC<CoworkPermissionPanelProps> = ({
     }, timeoutMs);
     return () => window.clearTimeout(timer);
   }, [permission.requestId, currentStep, isQuestionRequest, responding, permission.perQuestionTimeoutMs]);
+
+  const countdownSeconds = usePermissionCountdown(permission.expiresAt);
+  const countdownFor = (action: 'allow' | 'deny'): number | null => (
+    permission.timeoutDefault === action ? countdownSeconds : null
+  );
 
   const currentQuestion = questions[currentStep];
   const totalSteps = questions.length;
@@ -588,16 +594,19 @@ const CoworkPermissionPanel: React.FC<CoworkPermissionPanelProps> = ({
 
       <div className="flex justify-end gap-2 border-t border-claude-border/70 dark:border-claude-darkBorder/70 px-4 py-3">
         <button type="button" onClick={handleDeny} disabled={responding} className="px-3 py-2 rounded-lg border border-claude-border dark:border-claude-darkBorder text-xs font-medium text-claude-textSecondary dark:text-claude-darkTextSecondary hover:bg-red-50 hover:text-red-600 hover:border-red-200 dark:hover:bg-red-900/20 dark:hover:text-red-300 disabled:opacity-60">
-          {i18nService.t('coworkDeny')}
+          <PermissionCountdownLabel label={i18nService.t('coworkDeny')} seconds={responding ? null : countdownFor('deny')} />
         </button>
         <button type="button" onClick={handleApprove} disabled={responding} className={isDestructive
           ? 'px-3 py-2 rounded-lg border-2 border-red-700 bg-red-600 text-white text-xs font-medium shadow-[2px_2px_0_#991b1b] hover:bg-red-700 active:translate-x-[1px] active:translate-y-[1px] active:shadow-none disabled:opacity-50 disabled:cursor-not-allowed'
           : 'btn-idchat-primary-filled px-3 py-2 text-xs disabled:opacity-50 disabled:cursor-not-allowed'}>
-          {responding
-            ? i18nService.t('processing')
-            : isDestructive
-              ? i18nService.t('coworkApprovalAllowDelete')
-              : i18nService.t('coworkApprovalAllowOnce')}
+          <PermissionCountdownLabel
+            label={responding
+              ? i18nService.t('processing')
+              : isDestructive
+                ? i18nService.t('coworkApprovalAllowDelete')
+                : i18nService.t('coworkApprovalAllowOnce')}
+            seconds={responding ? null : countdownFor('allow')}
+          />
         </button>
       </div>
     </section>

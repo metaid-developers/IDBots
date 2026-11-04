@@ -1,5 +1,6 @@
 import type { CoworkMessage } from '../coworkStore';
 import { appendA2AGuidanceToSystemPrompt } from './a2aGuidance';
+import { extractFriendActionTags } from './friendFollowService';
 import { stripLoneSurrogates, truncateUtf16Units } from '../libs/llmSafeText';
 
 export type A2APrivateChatControlState = 'active' | 'ended' | null;
@@ -93,6 +94,23 @@ export const buildA2AGuidanceRestartPrompt = (input: {
     systemPrompt: appendA2AGuidanceToSystemPrompt(baseSystemPrompt, input.guidance),
     userPrompt: 'Write the next outgoing private-chat message now.',
   };
+};
+
+/**
+ * Sanitize a generated restart message for delivery (S6 defect #4 hardening).
+ * The restart prompt intentionally carries no friend-tag protocol, so a
+ * well-behaved completion never contains one — but a model that picked the
+ * tag up from the embedded recent-message context must never leak it to the
+ * peer verbatim. Extract friend-action tags exactly like the daemon's reply
+ * chain does: strip them from the delivered text and surface the action so
+ * the caller can drive the owner-authorized chain write.
+ */
+export const composeA2AGuidanceRestartDelivery = (reply: string): {
+  text: string;
+  friendAction: 'invite' | 'remove' | null;
+} => {
+  const { text, action } = extractFriendActionTags(typeof reply === 'string' ? reply : '');
+  return { text, friendAction: action };
 };
 
 export const A2A_GUIDANCE_RESTART_LLM_TIMEOUT_MS = 60_000;

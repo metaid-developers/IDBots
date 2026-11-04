@@ -98,6 +98,10 @@ curl -s 'https://www.metalet.space/wallet-api/v4/mvc/address/contract/nft/count?
   NFT_BOUGHT / NFT_SOLD；吃单方 `sell_price_sats` 必须取播报值
   （卖单接口无价格字段）。
 - 每笔交易一条终态 simplelog 台账（taskkey=metabot-nft-trade，模板见手册 §10）。
+- **播报自动附卡**（手册 §3.0，2026-11-02 起）：一切携带 NFT 的播报消息
+  （上架/撤单/成交/转账/担保腿）在结构块之后追加一个 `nft-card` 围栏块，
+  IDBots 三处聊天界面（CoWork/私聊/群聊）会渲染成可点击的 NFT 卡片；
+  宿主钱包工具的结果已自动附带，CLI 用户按 §3.0 字段表自行拼装。
 
 ## 4. 已知坑清单（复现前必读，详见手册 §11 + §6.3 验证铁律）
 

@@ -15,6 +15,7 @@ import {
   claimManagedOrchestratorSession,
   resolveOrchestratorPermissionReply,
 } from './orchestratorPermissionRelay';
+import { noteOwnerAskTurnTimeout } from './pendingOwnerAskBridge';
 import {
   advanceWrapUpMachine,
   buildExtensionGrantedMessage,
@@ -533,12 +534,31 @@ export async function runOrchestratorSkillTurn(
       }, lateCompletionTimeoutMs);
     };
 
+    // Owner-question honesty (A2A / OpenTeam / worker turns): settling the
+    // bridge while an ask_user_question is still pending must not let the
+    // question disappear with the timeout. The ask is deliberately NOT denied
+    // here — it stays answerable in the existing permission card — and the
+    // owner receives an explicit transcript notice + desktop push instead (a
+    // late answer is recorded but never replays this turn). Semantics chosen
+    // for this task: honest timeout, not an unbounded parked promise.
+    const notePendingOwnerAskOnTimeout = () => {
+      try {
+        noteOwnerAskTurnTimeout(runner, sessionId, store, skillTurnTimeoutMs);
+      } catch (error) {
+        console.warn(
+          '[Orchestrator] [Bridge] owner-ask timeout notice failed:',
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    };
+
     // Legacy watchdog settlement, shared by the passive path and every
     // wrap-up expiry: park in recovery (listeners stay attached so a late
     // completion still flows to onLateCompletion) and reject with
     // SkillTurnTimeoutError so callers can distinguish a watchdog fire.
     const settleAsTimeout = () => {
       if (settled) return;
+      notePendingOwnerAskOnTimeout();
       settled = true;
       enterRecovery();
       reject(new SkillTurnTimeoutError(sessionId, skillTurnTimeoutMs));
@@ -689,7 +709,10 @@ export async function runOrchestratorSkillTurn(
       // The caller's promise gives up at the watchdog, but the session itself
       // is NOT stopped and keeps running. Park the turn in recovery mode
       // instead of failing the session: a late completion must still be able
-      // to correct the attempt state (see onLateCompletion).
+      // to correct the attempt state (see onLateCompletion). A pending owner
+      // question produces the explicit timeout notice first (same semantics
+      // as settleAsTimeout).
+      notePendingOwnerAskOnTimeout();
       settled = true;
       enterRecovery();
       reject(new SkillTurnTimeoutError(sessionId, skillTurnTimeoutMs));
@@ -883,6 +906,21 @@ export async function runSkillTurnInExistingSession(
         // SkillTurnTimeoutError (not a plain Error) so callers can distinguish
         // a watchdog fire — the session ran past its whole recovery budget —
         // from a real turn failure worth retrying.
+        //
+        // A2A / OpenTeam honesty: if this turn is still waiting on an owner
+        // question, tell the owner explicitly (transcript + desktop push) and
+        // leave the ask pending instead of letting the timeout turn it into a
+        // fabricated refusal. The turn still settles — a bridge promise must
+        // not park forever — but the question stays answerable and a late
+        // answer is recorded without replaying this turn.
+        try {
+          noteOwnerAskTurnTimeout(runner, sessionId, store, skillTurnTimeoutMs);
+        } catch (error) {
+          console.warn(
+            '[Orchestrator] [Bridge] owner-ask timeout notice failed:',
+            error instanceof Error ? error.message : String(error),
+          );
+        }
         fail(new SkillTurnTimeoutError(sessionId, skillTurnTimeoutMs));
       }, lateCompletionTimeoutMs);
     }, skillTurnTimeoutMs);

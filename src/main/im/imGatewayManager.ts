@@ -9,6 +9,9 @@ import { DingTalkGateway } from './dingtalkGateway';
 import { FeishuGateway } from './feishuGateway';
 import { TelegramGateway } from './telegramGateway';
 import { DiscordGateway } from './discordGateway';
+import { WeixinGateway } from './weixinGateway';
+import { QQGateway } from './qqGateway';
+import type { QQGroupCandidateReport, QQGroupCandidateView } from './qqGateway';
 import { IMChatHandler } from './imChatHandler';
 import { IMCoworkHandler } from './imCoworkHandler';
 import { IMStore } from './imStore';
@@ -22,15 +25,31 @@ import {
   IMConnectivityCheck,
   IMConnectivityTestResult,
   IMConnectivityVerdict,
+  IMConversationSender,
 } from './types';
+import {
+  buildImOutboundConversationRecord,
+  channelLabel,
+  describeImOutboundChannel,
+  normalizeImOutboundChannel,
+  outboundSendResultFromError,
+  sendImOutboundMessage,
+  type IMOutboundCapabilities,
+  type IMOutboundChannelView,
+  type IMOutboundSendRequest,
+  type IMOutboundSendResult,
+  type IMOutboundTransport,
+} from './imOutbound';
 import type { SqliteDatabase as Database } from '../sqliteTypes';
+import { getPersistedCoworkPermissionMode } from '../libs/claudeSettings';
+import { imPlatformFromSessionChannel } from './imPermissionPolicy';
 import type { CoworkRunner } from '../libs/coworkRunner';
 import type { CoworkStore } from '../coworkStore';
 import { tApp } from '../libs/appLanguage';
 
 const CONNECTIVITY_TIMEOUT_MS = 10_000;
 const INBOUND_ACTIVITY_WARN_AFTER_MS = 2 * 60 * 1000;
-const MANAGED_IM_PLATFORMS = ['dingtalk', 'feishu', 'telegram', 'discord'] as const;
+const MANAGED_IM_PLATFORMS = ['dingtalk', 'feishu', 'telegram', 'discord', 'weixin', 'qq'] as const;
 type ManagedIMPlatform = typeof MANAGED_IM_PLATFORMS[number];
 
 export interface IMGatewayManagerOptions {
@@ -43,6 +62,9 @@ export class IMGatewayManager extends EventEmitter {
   private feishuGateway: FeishuGateway;
   private telegramGateway: TelegramGateway;
   private discordGateway: DiscordGateway;
+  private weixinGateway: WeixinGateway;
+  private qqGateway: QQGateway;
+  private qqLoginListener: ((result: { state: string }) => void) | null = null;
   private imStore: IMStore;
   private chatHandler: IMChatHandler | null = null;
   private coworkHandler: IMCoworkHandler | null = null;
@@ -61,6 +83,31 @@ export class IMGatewayManager extends EventEmitter {
     this.feishuGateway = new FeishuGateway();
     this.telegramGateway = new TelegramGateway();
     this.discordGateway = new DiscordGateway();
+    this.weixinGateway = new WeixinGateway({
+      // Quote replies: the platform sends only `ref_msg.message_item.msg_id`, so
+      // the quoted content has to come from our own ledger. `IMStore` owns the
+      // table (im_weixin_message_ledger) and its retention policy; the gateway
+      // treats every access as best-effort and falls back to the honest sentence.
+      messageLedger: {
+        put: (entry) => this.imStore.putWeixinLedgerEntry(entry),
+        get: (msgId) => this.imStore.getWeixinLedgerEntry(msgId),
+      },
+    });
+    this.qqGateway = new QQGateway({
+      // LIVE config: the settings page can change the group allowlist or the
+      // layer-3 switch while the gateway is connected. A snapshot from
+      // `start()` would keep enforcing the old policy.
+      configProvider: () => this.imStore.getQQConfig(),
+      // The config table is only a MIRROR of the identifiers. Whenever the
+      // gateway resolves the durable 0600 credentials (including the
+      // "table empty, one account file" recovery), write appId / botId /
+      // ownerUserOpenid back so the next toggle and the trust gate agree.
+      onIdentity: (summary) => {
+        if (this.imStore.reconcileQQIdentity(summary)) {
+          this.emit('statusChange', this.getStatus());
+        }
+      },
+    });
 
     // Store Cowork dependencies if provided
     if (options?.coworkRunner && options?.coworkStore) {
@@ -138,6 +185,52 @@ export class IMGatewayManager extends EventEmitter {
     this.discordGateway.on('message', (message: IMMessage) => {
       this.emit('message', message);
     });
+
+    // Weixin events
+    this.weixinGateway.on('status', () => {
+      this.emit('statusChange', this.getStatus());
+    });
+    this.weixinGateway.on('connected', () => {
+      this.emit('statusChange', this.getStatus());
+    });
+    this.weixinGateway.on('disconnected', () => {
+      this.emit('statusChange', this.getStatus());
+    });
+    this.weixinGateway.on('error', (error) => {
+      this.emit('error', { platform: 'weixin', error });
+      this.emit('statusChange', this.getStatus());
+    });
+    this.weixinGateway.on('message', (message: IMMessage) => {
+      this.emit('message', message);
+    });
+    this.weixinGateway.on('login', (result: { state: string }) => {
+      // QR authorization reached a terminal state; surface it so the settings UI
+      // and any listener can react (a confirmed login is persisted by the gateway).
+      this.emit('statusChange', this.getStatus());
+      this.emit('weixinLogin', result);
+    });
+
+    // QQ events
+    this.qqGateway.on('status', () => {
+      this.emit('statusChange', this.getStatus());
+    });
+    this.qqGateway.on('connected', () => {
+      this.emit('statusChange', this.getStatus());
+    });
+    this.qqGateway.on('disconnected', () => {
+      this.emit('statusChange', this.getStatus());
+    });
+    this.qqGateway.on('error', (error) => {
+      this.emit('error', { platform: 'qq', error });
+      this.emit('statusChange', this.getStatus());
+    });
+    this.qqGateway.on('message', (message: IMMessage) => {
+      this.emit('message', message);
+    });
+    this.qqGateway.on('login', (result: { state: string }) => {
+      this.emit('statusChange', this.getStatus());
+      this.emit('qqLogin', result);
+    });
   }
 
   /**
@@ -166,6 +259,16 @@ export class IMGatewayManager extends EventEmitter {
       console.log('[IMGatewayManager] Reconnecting Discord...');
       this.discordGateway.reconnectIfNeeded();
     }
+
+    if (this.weixinGateway && !this.weixinGateway.isConnected()) {
+      console.log('[IMGatewayManager] Reconnecting Weixin...');
+      this.weixinGateway.reconnectIfNeeded();
+    }
+
+    if (this.qqGateway && !this.qqGateway.isConnected()) {
+      console.log('[IMGatewayManager] Reconnecting QQ...');
+      this.qqGateway.reconnectIfNeeded();
+    }
   }
 
   /**
@@ -191,6 +294,31 @@ export class IMGatewayManager extends EventEmitter {
       replyFn: (text: string) => Promise<void>
     ): Promise<void> => {
       try {
+        // QQ is the first channel with an entry-point trust gate. A QQ message
+        // without a frozen trust context is a contract violation -> fail
+        // closed (silence, no error text). Strangers/bots never get here at
+        // all (the gateway drops them), this is defence in depth.
+        if (message.platform === 'qq') {
+          const trust = message.trust;
+          if (!trust) {
+            console.warn('[IMGatewayManager] Dropping QQ message without a trust context (fail-closed)', {
+              conversationId: message.conversationId,
+              chatType: message.chatType,
+            });
+            return;
+          }
+          if (trust.level === 'stranger-dm' || trust.level === 'bot-sender') {
+            return;
+          }
+          if (message.chatType === 'group' && trust.toolScope !== 'none') {
+            // Structural invariant: a group turn can never carry local tools.
+            console.warn('[IMGatewayManager] Refusing a group turn with a non-empty tool scope', {
+              conversationId: message.conversationId,
+            });
+            return;
+          }
+        }
+
         let response: string;
         const targetMetabotId = this.getRouteMetabotIdForPlatform(message.platform);
 
@@ -211,6 +339,9 @@ export class IMGatewayManager extends EventEmitter {
           response = await this.chatHandler.processMessage(message);
         }
 
+        // Silent turns (e.g. a dropped or empty answer) must not push an empty
+        // bubble into the chat.
+        if (typeof response === 'string' && !response.trim()) return;
         await replyFn(response);
       } catch (error: any) {
         console.error(`[IMGatewayManager] Error processing message: ${error.message}`);
@@ -227,6 +358,8 @@ export class IMGatewayManager extends EventEmitter {
     this.feishuGateway.setMessageCallback(messageHandler);
     this.telegramGateway.setMessageCallback(messageHandler);
     this.discordGateway.setMessageCallback(messageHandler);
+    this.weixinGateway.setMessageCallback(messageHandler);
+    this.qqGateway.setMessageCallback(messageHandler);
   }
 
   /**
@@ -262,8 +395,311 @@ export class IMGatewayManager extends EventEmitter {
         coworkStore: this.coworkStore,
         imStore: this.imStore,
         getSkillsPrompt: this.getSkillsPrompt || undefined,
+        // Out-of-turn replies (cross-session injections, scheduled wakes) go
+        // through the same per-conversation capability check as any other
+        // platform: a gateway that implements IMConversationSender delivers
+        // them, every other platform degrades to desktop-only with a log.
+        sendToConversation: async (target, text) => {
+          const sender = this.resolveConversationSender(target.platform);
+          if (!sender) {
+            return false;
+          }
+          await sender.sendToConversation(target.conversationId, text);
+          return true;
+        },
+        // IM turns inherit the app-level permission mode the desktop uses
+        // (完全信任 on the desktop = zero popups in chat). Read lazily on every
+        // turn so a desktop switch applies to the next message.
+        getGlobalPermissionMode: () => getPersistedCoworkPermissionMode(),
       });
       console.log('[IMGatewayManager] Cowork handler created');
+    }
+  }
+
+  /**
+   * Resolve the gateway that can send into a conversation by id alone.
+   *
+   * Derived from the gateway object itself (does it implement
+   * `IMConversationSender`?), never from a platform allowlist: adding capable
+   * support to a gateway is the only change needed, and a gateway that cannot
+   * address a conversation without a live inbound handle keeps returning null
+   * (the handler then logs the desktop-only degradation).
+   */
+  private resolveConversationSender(platform: IMPlatform): IMConversationSender | null {
+    const gateway = this.getGatewayForPlatform(platform);
+    if (!gateway) return null;
+    const candidate = gateway as Partial<IMConversationSender>;
+    return typeof candidate.sendToConversation === 'function'
+      ? (candidate as IMConversationSender)
+      : null;
+  }
+
+  // ==================== Desktop-initiated outbound (im_send_message) ============
+
+  /**
+   * Machine-readable inventory of the IM channels this machine can send
+   * through proactively. The desktop prompt renders the same rows, and the
+   * tool's refusals quote the same `reason` — one source, so the prompt cannot
+   * promise a channel the send path would reject.
+   */
+  listOutboundChannels(): IMOutboundChannelView[] {
+    return MANAGED_IM_PLATFORMS.map((platform) =>
+      describeImOutboundChannel(this.buildOutboundTransport(platform))
+    );
+  }
+
+  /**
+   * Send one message (text and/or local attachments) to the owner's OWN direct
+   * conversation on a connected channel. Unknown / unsupported / disconnected
+   * channels return an explicit failure — never a silent no-op.
+   *
+   * Every attempt is also recorded in the DESTINATION conversation's own cowork
+   * session (the WeChat private chat's message stream), including failures:
+   * that is the chat the human opens to check what actually went out.
+   */
+  async sendImOutbound(request: IMOutboundSendRequest): Promise<IMOutboundSendResult> {
+    const platform = normalizeImOutboundChannel(request.channel);
+    const managed = (MANAGED_IM_PLATFORMS as readonly string[]).includes(platform);
+    // One wall-clock stamp for the whole attempt: the record's id is derived
+    // from it, so re-filing the SAME attempt can never produce a second row,
+    // while a genuinely repeated send (a new attempt) legitimately gets one.
+    const sentAt = Date.now();
+    let result: IMOutboundSendResult;
+    try {
+      const transport = managed
+        ? this.buildOutboundTransport(platform as ManagedIMPlatform)
+        : null;
+      result = await sendImOutboundMessage(transport, request);
+    } catch (error) {
+      // An unexpected throw (transport resolution included) is still a send the
+      // tool must report as a failure instead of an exception.
+      result = outboundSendResultFromError(request.channel, error);
+    }
+    const filingWarning = await this.recordOutboundConversationMessage(request, result, sentAt);
+    if (filingWarning) result.warnings.push(filingWarning);
+    return result;
+  }
+
+  /**
+   * Write one send attempt into the IM conversation's own session, so opening
+   * that chat shows the bubble next to the inbound/reply history.
+   *
+   * Destination: the private chat the send actually addressed; for a refusal
+   * that never resolved a target (channel disconnected / no direct chat), the
+   * channel's most recent known private chat, so the failure is visible where
+   * the human would look instead of only in the log.
+   *
+   * The record is created with a deterministic id and committed through
+   * `addMessageWithId`, so a repeated write (same attempt) updates nothing and
+   * duplicates nothing. A failure here must never downgrade a send that already
+   * happened — it is logged, reported back as a warning, and the channel's own
+   * result is otherwise unchanged.
+   *
+   * Returns a model-facing warning when the record could NOT be filed, or null.
+   */
+  private async recordOutboundConversationMessage(
+    request: IMOutboundSendRequest,
+    result: IMOutboundSendResult,
+    sentAt: number
+  ): Promise<string | null> {
+    const platform = normalizeImOutboundChannel(result.channel);
+    if (!(MANAGED_IM_PLATFORMS as readonly string[]).includes(platform)) {
+      // Unknown channel: there is no IM conversation anywhere on this machine
+      // to file the refusal in. The tool result already names the problem.
+      return null;
+    }
+    const conversationId = (result.target ?? '').trim()
+      || this.resolveLastDirectConversationId(platform as ManagedIMPlatform)
+      || '';
+    if (!conversationId) {
+      console.warn('[IMGatewayManager] No IM conversation to file the outbound attempt', {
+        platform,
+        channel: result.channel,
+      });
+      return `会话记录未写入：${channelLabel(platform)}还没有与你的私聊会话（先给它发一条消息即可建立）。`;
+    }
+    try {
+      // A send that resolved a target proves the channel was connected; a
+      // refusal before that point may only file into an EXISTING chat session —
+      // never invent one for an offline channel (owner ruling).
+      const mayCreateSession = Boolean((result.target ?? '').trim())
+        || this.isPlatformConnected(platform as IMPlatform);
+      const sessionId = await this.resolveOutboundSessionId(
+        platform as IMPlatform,
+        conversationId,
+        mayCreateSession
+      );
+      if (!sessionId) {
+        console.warn('[IMGatewayManager] No IM session for the outbound record', {
+          platform,
+          conversationId,
+        });
+        return '会话记录未写入：无法解析或创建该通道的私聊会话（详见应用日志）。';
+      }
+      const record = buildImOutboundConversationRecord({
+        request,
+        result,
+        timestamp: sentAt,
+        conversationId,
+      });
+      if (this.coworkRunner) {
+        this.coworkRunner.appendHostMessage(sessionId, record);
+        return null;
+      }
+      if (!this.coworkStore) {
+        return '会话记录未写入：本地会话库尚不可用（详见应用日志）。';
+      }
+      this.coworkStore.addMessageWithId(sessionId, record.id, {
+        type: record.type,
+        content: record.content,
+        metadata: record.metadata,
+      });
+      return null;
+    } catch (error) {
+      console.warn('[IMGatewayManager] Failed to record the outbound message in its IM session', {
+        platform,
+        conversationId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return `会话记录未写入：${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+
+  /**
+   * The cowork session that displays one direct IM conversation.
+   *
+   * Lookup is the canonical mapping key — `(channel = im:<platform>:direct,
+   * external_conversation_id = <that chat>, metabot_id)` — NOT the raw session
+   * id of whoever called the tool. A hit whose session still exists wins; a
+   * legacy per-platform binding pointing at a live session is the second
+   * source; otherwise — and only when the channel is connected — the shared IM
+   * session factory creates the chat's session (same title an inbound message
+   * would produce) and writes both mapping tables, so the record has a home and
+   * the next inbound message lands in it.
+   */
+  private async resolveOutboundSessionId(
+    platform: IMPlatform,
+    conversationId: string,
+    allowCreate = true
+  ): Promise<string | null> {
+    const channel = `im:${platform}:direct`;
+    // Prefer the bot the chat is already bound to: a channel route change is
+    // handled by the factory (which recreates), and this keeps an existing
+    // binding addressable when the channel config is momentarily empty.
+    const binding = this.imStore.getSessionMapping?.(conversationId, platform) ?? null;
+    const metabotId = binding?.metabotId ?? this.metabotIdForPlatform(platform);
+    const mapping = this.coworkStore?.getConversationMapping?.(channel, conversationId, metabotId ?? null);
+    if (mapping && this.coworkStore?.getSession(mapping.coworkSessionId)) {
+      return mapping.coworkSessionId;
+    }
+    // Legacy per-platform binding: still the same chat, just written before the
+    // canonical table existed. Never create a duplicate session for it.
+    if (binding?.coworkSessionId && this.coworkStore?.getSession(binding.coworkSessionId)) {
+      return binding.coworkSessionId;
+    }
+    // Owner ruling: only a CONNECTED channel may establish a new chat session.
+    if (!allowCreate || !this.coworkHandler) return null;
+    return this.coworkHandler.ensureDirectConversationSession(platform, conversationId, metabotId);
+  }
+
+  /** Live connection fact for a platform (used to gate session creation). */
+  private isPlatformConnected(platform: IMPlatform): boolean {
+    const gateway = this.getGatewayForPlatform(platform) as {
+      getStatus?: () => { connected?: boolean } | null;
+    } | null;
+    return gateway?.getStatus?.()?.connected === true;
+  }
+
+  /** The bot a channel is configured with (null when the channel has no binding). */
+  private metabotIdForPlatform(platform: IMPlatform): number | null {
+    try {
+      const config = this.imStore.getConfig();
+      const raw = (config as unknown as Record<string, { metabotId?: number | null }>)[platform]?.metabotId;
+      return typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private buildOutboundTransport(platform: ManagedIMPlatform): IMOutboundTransport {
+    const gateway = this.getGatewayForPlatform(platform) as {
+      getStatus?: () => { connected?: boolean } | null;
+      getLastDirectConversationId?: () => string | null;
+      describeOutboundCapabilities?: () => IMOutboundCapabilities;
+      /**
+       * Optional on purpose: the gateway answers for its own platform, and a
+       * gateway that does not implement it is read as "not owner-bound"
+       * (fail-closed). No platform list is hard-coded here, so a channel added
+       * later can never inherit an identity claim it did not earn.
+       */
+      isOwnerIdentityBound?: () => boolean;
+    } | null;
+    const connected = gateway?.getStatus?.()?.connected === true;
+    const sender = this.resolveConversationSender(platform);
+    const capabilities = gateway?.describeOutboundCapabilities?.() ?? null;
+    return {
+      platform,
+      label: channelLabel(platform),
+      connected,
+      conversationId: this.resolveLastDirectConversationId(platform),
+      ownerIdentityBound: gateway?.isOwnerIdentityBound?.() === true,
+      capabilities,
+      sender: sender as IMOutboundTransport['sender'],
+    };
+  }
+
+  /**
+   * The most recent DIRECT conversation this machine has had with the owner on
+   * one channel — the only destination `im_send_message` will ever use.
+   *
+   * Two sources, in order:
+   *   1. the persisted `im_session_mappings` rows, newest first, kept only when
+   *      the mapped session's channel is exactly `im:<platform>:direct`
+   *      (group chats and legacy `im:<platform>` rows without a chat type are
+   *      skipped — "cannot prove direct" never becomes "assume direct");
+   *   2. the gateway's own last-inbound memory, which each gateway updates only
+   *      for direct messages.
+   */
+  private resolveLastDirectConversationId(platform: ManagedIMPlatform): string | null {
+    const persisted = this.findPersistedDirectConversation(platform);
+    if (persisted) return persisted;
+    const gateway = this.getGatewayForPlatform(platform) as {
+      getLastDirectConversationId?: () => string | null;
+    } | null;
+    return gateway?.getLastDirectConversationId?.() ?? null;
+  }
+
+  private findPersistedDirectConversation(platform: ManagedIMPlatform): string | null {
+    const coworkStore = this.coworkStore;
+    if (!coworkStore) return null;
+    let mappings;
+    try {
+      // Newest-first; the first direct row wins. Cap the scan so a long history
+      // cannot turn one prompt build into hundreds of lookups.
+      mappings = this.imStore.listSessionMappings(platform as IMPlatform).slice(0, 20);
+    } catch {
+      return null;
+    }
+    for (const mapping of mappings) {
+      const context = coworkStore.getConversationSourceContextBySession?.(mapping.coworkSessionId);
+      const sourceChannel = (context?.sourceChannel ?? '').toLowerCase();
+      if (sourceChannel === `im:${platform}:direct`) {
+        return mapping.imConversationId;
+      }
+    }
+    return null;
+  }
+
+  private getGatewayForPlatform(platform: IMPlatform): unknown {
+    switch (platform) {
+      case 'dingtalk': return this.dingtalkGateway;
+      case 'feishu': return this.feishuGateway;
+      case 'telegram': return this.telegramGateway;
+      case 'discord': return this.discordGateway;
+      case 'weixin': return this.weixinGateway;
+      case 'qq': return this.qqGateway;
+      // NIM and Xiaomifeng are run by their own services, not this manager.
+      default: return null;
     }
   }
 
@@ -274,6 +710,21 @@ export class IMGatewayManager extends EventEmitter {
    */
   getConfig(): IMGatewayConfig {
     return this.imStore.getConfig();
+  }
+
+  /**
+   * Per-channel permission override for an IM session's channel marker.
+   *
+   * Read-only accessor used by the session-view path: the resolved mode is
+   * computed for DISPLAY and never written back to `cowork_sessions` (that row
+   * is shared with the desktop view of the same conversation). A channel with
+   * no override — or a non-Weixin platform — returns 'inherit', so the resolver
+   * falls through to the persisted global mode.
+   */
+  getImChannelPermissionOverride(imChannel: string | null | undefined): unknown {
+    const platform = imPlatformFromSessionChannel(imChannel);
+    if (platform !== 'weixin') return 'inherit';
+    return this.imStore.getIMSettings().channelPermissions?.weixinPermissionMode ?? 'inherit';
   }
 
   /**
@@ -302,6 +753,8 @@ export class IMGatewayManager extends EventEmitter {
       feishu: this.feishuGateway.getStatus(),
       telegram: this.telegramGateway.getStatus(),
       discord: this.discordGateway.getStatus(),
+      weixin: this.weixinGateway.getStatus(),
+      qq: this.qqGateway.getStatus(),
     };
   }
 
@@ -515,6 +968,10 @@ export class IMGatewayManager extends EventEmitter {
       await this.telegramGateway.start(config.telegram);
     } else if (platform === 'discord') {
       await this.discordGateway.start(config.discord);
+    } else if (platform === 'weixin') {
+      await this.weixinGateway.start(config.weixin);
+    } else if (platform === 'qq') {
+      await this.qqGateway.start(config.qq);
     }
   }
 
@@ -530,7 +987,158 @@ export class IMGatewayManager extends EventEmitter {
       await this.telegramGateway.stop();
     } else if (platform === 'discord') {
       await this.discordGateway.stop();
+    } else if (platform === 'weixin') {
+      await this.weixinGateway.stop();
+    } else if (platform === 'qq') {
+      await this.qqGateway.stop();
     }
+  }
+
+  // ==================== Weixin QR authorization ====================
+
+  /**
+   * Start a Weixin QR authorization: request a QR payload and keep polling in the
+   * background. The token returned by `confirmed` is written to the credential
+   * file (mode 0600) by the gateway — never into the renderer-visible config.
+   * On success the channel is enabled and started.
+   */
+  async startWeixinLogin(): Promise<{ qrcode: string; content: string }> {
+    this.updateChatHandler();
+
+    const onLogin = async (result: { state: string; error?: string | null }): Promise<void> => {
+      this.weixinGateway.off('login', onLogin);
+      if (result.state !== 'confirmed') {
+        this.emit('statusChange', this.getStatus());
+        return;
+      }
+      this.imStore.setWeixinConfig({ enabled: true });
+      try {
+        await this.startGateway('weixin');
+        console.log('[IMGatewayManager] Weixin channel authorized and started');
+      } catch (error: any) {
+        console.error(`[IMGatewayManager] Weixin authorized but failed to start: ${error.message}`);
+      }
+      this.emit('statusChange', this.getStatus());
+    };
+
+    const qr = await this.weixinGateway.beginLogin();
+    this.weixinGateway.on('login', onLogin);
+    return { qrcode: qr.qrcode, content: qr.content };
+  }
+
+  /** Abort a pending Weixin QR authorization. */
+  async cancelWeixinLogin(): Promise<void> {
+    await this.weixinGateway.cancelLogin();
+  }
+
+  /** Whether the Weixin channel has a stored token (drives the settings UI state). */
+  hasWeixinCredentials(): boolean {
+    return this.weixinGateway.hasCredentials(this.imStore.getWeixinConfig());
+  }
+
+  // ==================== QQ authorization ====================
+
+  /**
+   * Start a QQ QR bind: the connector resolves once the user confirms on the
+   * phone, then the gateway writes AppID + AppSecret into its 0600 store and
+   * starts itself. The AppSecret never reaches the renderer.
+   */
+  async startQQLogin(): Promise<{ content: string }> {
+    this.updateChatHandler();
+
+    const onLogin = (result: { state: string }): void => {
+      if (result.state !== 'confirmed') {
+        this.emit('statusChange', this.getStatus());
+        return;
+      }
+      // The gateway persists credentials (0600) and (re)starts itself. Mirror
+      // BOTH public identifiers into the config table: the AppID for the UI and
+      // the scanned owner OpenID, because the trust gate reads its live config
+      // from this table. Writing only the AppID left a freshly scanned channel
+      // with `ownerUserOpenid: null`, so the owner's first DM was dropped as
+      // `stranger-dm / no-owner-binding`.
+      const summary = this.qqGateway.credentialSummary();
+      if (summary.appId) {
+        this.imStore.setQQConfig({
+          enabled: true,
+          appId: summary.appId,
+          ownerUserOpenid: summary.ownerUserOpenid,
+          appSecret: undefined,
+        });
+      }
+      this.emit('statusChange', this.getStatus());
+    };
+
+    if (this.qqLoginListener) {
+      this.qqGateway.off('login', this.qqLoginListener);
+    }
+    this.qqLoginListener = onLogin;
+    this.qqGateway.on('login', onLogin);
+    return this.qqGateway.beginLogin();
+  }
+
+  async cancelQQLogin(): Promise<void> {
+    if (this.qqLoginListener) {
+      this.qqGateway.off('login', this.qqLoginListener);
+      this.qqLoginListener = null;
+    }
+    await this.qqGateway.cancelLogin();
+  }
+
+  /** Whether a QQ AppID + AppSecret are available (store or live config). */
+  hasQQCredentials(): boolean {
+    return this.qqGateway.hasCredentials(this.imStore.getQQConfig());
+  }
+
+  /** Persist manually entered credentials (0600 file, never the config table). */
+  saveQQCredentials(params: {
+    appId: string;
+    appSecret: string;
+    botId?: string | null;
+    ownerUserOpenid?: string | null;
+  }): { appId: string; botId: string | null } {
+    const stored = this.qqGateway.saveManualCredentials(params);
+    this.imStore.setQQConfig({
+      appId: stored.appId,
+      botId: stored.botId,
+      ownerUserOpenid: params.ownerUserOpenid ?? null,
+      appSecret: undefined,
+    });
+    return { appId: stored.appId, botId: stored.botId };
+  }
+
+  /** Credential-free summary for the settings page. */
+  getQQCredentialSummary(): { hasCredentials: boolean; appId: string | null; source: string | null } {
+    return this.qqGateway.credentialSummary();
+  }
+
+  // ==================== QQ group candidates ====================
+  //
+  // Groups that messaged the bot while not allowlisted. Exposed so the settings
+  // page can offer allow/ignore instead of asking the owner to paste a 32-hex
+  // group OpenID they have no way of knowing.
+
+  /** Remembered groups, split into "needs a decision" and "all". */
+  getQQGroupCandidates(): QQGroupCandidateReport {
+    return this.qqGateway.getGroupCandidates();
+  }
+
+  /** Owner pressed 拒绝: hide the group from the pending list (still refused). */
+  dismissQQGroupCandidate(groupId: string): QQGroupCandidateReport {
+    return this.qqGateway.dismissGroupCandidate(groupId);
+  }
+
+  /** Undo a 拒绝. */
+  restoreQQGroupCandidate(groupId: string): QQGroupCandidateReport {
+    return this.qqGateway.restoreGroupCandidate(groupId);
+  }
+
+  /**
+   * Optional platform name lookup. The endpoint is whitelist-gated (11253), so
+   * `nameStatus` is the answer the UI must render — never a fabricated name.
+   */
+  refreshQQGroupCandidateName(groupId: string): Promise<QQGroupCandidateView | null> {
+    return this.qqGateway.refreshGroupCandidateName(groupId);
   }
 
   /**
@@ -570,6 +1178,22 @@ export class IMGatewayManager extends EventEmitter {
         console.error(`[IMGatewayManager] Failed to start Discord: ${error.message}`);
       }
     }
+
+    if (config.weixin.enabled && this.weixinGateway.hasCredentials(config.weixin)) {
+      try {
+        await this.startGateway('weixin');
+      } catch (error: any) {
+        console.error(`[IMGatewayManager] Failed to start Weixin: ${error.message}`);
+      }
+    }
+
+    if (config.qq.enabled && this.qqGateway.hasCredentials(config.qq)) {
+      try {
+        await this.startGateway('qq');
+      } catch (error: any) {
+        console.error(`[IMGatewayManager] Failed to start QQ: ${error.message}`);
+      }
+    }
   }
 
   /**
@@ -581,6 +1205,8 @@ export class IMGatewayManager extends EventEmitter {
       this.feishuGateway.stop(),
       this.telegramGateway.stop(),
       this.discordGateway.stop(),
+      this.weixinGateway.stop(),
+      this.qqGateway.stop(),
     ]);
   }
 
@@ -588,7 +1214,7 @@ export class IMGatewayManager extends EventEmitter {
    * Check if any gateway is connected
    */
   isAnyConnected(): boolean {
-    return this.dingtalkGateway.isConnected() || this.feishuGateway.isConnected() || this.telegramGateway.isConnected() || this.discordGateway.isConnected();
+    return this.dingtalkGateway.isConnected() || this.feishuGateway.isConnected() || this.telegramGateway.isConnected() || this.discordGateway.isConnected() || this.weixinGateway.isConnected() || this.qqGateway.isConnected();
   }
 
   /**
@@ -603,6 +1229,12 @@ export class IMGatewayManager extends EventEmitter {
     }
     if (platform === 'discord') {
       return this.discordGateway.isConnected();
+    }
+    if (platform === 'weixin') {
+      return this.weixinGateway.isConnected();
+    }
+    if (platform === 'qq') {
+      return this.qqGateway.isConnected();
     }
     return this.feishuGateway.isConnected();
   }
@@ -627,6 +1259,10 @@ export class IMGatewayManager extends EventEmitter {
         await this.telegramGateway.sendNotification(text);
       } else if (platform === 'discord') {
         await this.discordGateway.sendNotification(text);
+      } else if (platform === 'weixin') {
+        await this.weixinGateway.sendNotification(text);
+      } else if (platform === 'qq') {
+        await this.qqGateway.sendNotification(text);
       }
       return true;
     } catch (error: any) {
@@ -647,6 +1283,8 @@ export class IMGatewayManager extends EventEmitter {
       feishu: { ...current.feishu, ...(configOverride.feishu || {}) },
       telegram: { ...current.telegram, ...(configOverride.telegram || {}) },
       discord: { ...current.discord, ...(configOverride.discord || {}) },
+      weixin: { ...current.weixin, ...(configOverride.weixin || {}) },
+      qq: { ...current.qq, ...(configOverride.qq || {}) },
       settings: { ...current.settings, ...(configOverride.settings || {}) },
     };
   }
@@ -666,6 +1304,16 @@ export class IMGatewayManager extends EventEmitter {
     }
     if (platform === 'telegram') {
       return (config.telegram.botToken || '').trim() ? [] : ['botToken'];
+    }
+    if (platform === 'weixin') {
+      return this.weixinGateway.hasCredentials(config.weixin)
+        ? []
+        : ['WeChat authorization (scan the QR code first)'];
+    }
+    if (platform === 'qq') {
+      return this.qqGateway.hasCredentials(config.qq)
+        ? []
+        : ['QQ AppID + AppSecret (scan the QR code or enter them manually)'];
     }
     return (config.discord.botToken || '').trim() ? [] : ['botToken'];
   }
@@ -705,6 +1353,14 @@ export class IMGatewayManager extends EventEmitter {
       });
     }
 
+    if (platform === 'weixin') {
+      return this.weixinGateway.probeAuth(CONNECTIVITY_TIMEOUT_MS);
+    }
+
+    if (platform === 'qq') {
+      return this.qqGateway.probeAuth(CONNECTIVITY_TIMEOUT_MS, config.qq);
+    }
+
     const discordToken = (config.discord.botToken || '').trim();
     const response = await axios.get('https://discord.com/api/v10/users/@me', {
       timeout: CONNECTIVITY_TIMEOUT_MS,
@@ -740,6 +1396,7 @@ export class IMGatewayManager extends EventEmitter {
     }
     if (platform === 'dingtalk') return status.dingtalk.startedAt;
     if (platform === 'telegram') return status.telegram.startedAt;
+    if (platform === 'weixin') return status.weixin.startedAt;
     return status.discord.startedAt;
   }
 
@@ -747,6 +1404,7 @@ export class IMGatewayManager extends EventEmitter {
     if (platform === 'dingtalk') return status.dingtalk.lastInboundAt;
     if (platform === 'feishu') return status.feishu.lastInboundAt;
     if (platform === 'telegram') return status.telegram.lastInboundAt;
+    if (platform === 'weixin') return status.weixin.lastInboundAt;
     return status.discord.lastInboundAt;
   }
 
@@ -754,6 +1412,7 @@ export class IMGatewayManager extends EventEmitter {
     if (platform === 'dingtalk') return status.dingtalk.lastOutboundAt;
     if (platform === 'feishu') return status.feishu.lastOutboundAt;
     if (platform === 'telegram') return status.telegram.lastOutboundAt;
+    if (platform === 'weixin') return status.weixin.lastOutboundAt;
     return status.discord.lastOutboundAt;
   }
 
@@ -761,6 +1420,7 @@ export class IMGatewayManager extends EventEmitter {
     if (platform === 'dingtalk') return status.dingtalk.lastError;
     if (platform === 'feishu') return status.feishu.error;
     if (platform === 'telegram') return status.telegram.lastError;
+    if (platform === 'weixin') return status.weixin.lastError;
     return status.discord.lastError;
   }
 

@@ -719,6 +719,44 @@ export function buildOrchNotifyFailed(
     : `[ORCH-NOTIFY] worker ${workerName} 未完成 task ${taskId}：${safeDetail}（failed）`;
 }
 
+export interface OrchHandoffNotice {
+  state: 'progress' | 'ready' | 'blocked' | 'waiting_external' | 'failed' | 'dropped';
+  summary: string;
+  blockers: string[];
+  humanAction: string | null;
+}
+
+export function buildOrchNotifyHandoff(
+  workerName: string,
+  taskId: string | number,
+  handoff: OrchHandoffNotice,
+  language: AppLanguage = groupTaskLanguage(),
+): string {
+  const detail = handoff.humanAction || handoff.blockers[0] || handoff.summary || handoff.state;
+  const safeDetail = `<worker_report trust="untrusted">${defuseUntrustedTag(detail, 'worker_report')}</worker_report>`;
+  if (handoff.humanAction) {
+    return language === 'en'
+      ? `[ORCH-NOTIFY] worker ${workerName} requested owner input on task ${taskId}: ${safeDetail} (owner action required)`
+      : `[ORCH-NOTIFY] worker ${workerName} 在 task ${taskId} 中请求 owner 决策：${safeDetail}（需要 owner 处理）`;
+  }
+  if (handoff.state === 'waiting_external') {
+    return language === 'en'
+      ? `[ORCH-NOTIFY] worker ${workerName} is waiting for an external condition on task ${taskId}: ${safeDetail} (external wait; Twin should track it, not mark complete or blindly retry)`
+      : `[ORCH-NOTIFY] worker ${workerName} 在 task ${taskId} 中等待外部条件：${safeDetail}（等待外部；Twin 应持续跟踪，不要验收或盲目重试）`;
+  }
+  if (handoff.state === 'blocked' || handoff.state === 'failed') {
+    return language === 'en'
+      ? `[ORCH-NOTIFY] worker ${workerName} is blocked on task ${taskId}: ${safeDetail} (Twin must inspect, correct, or reassign)`
+      : `[ORCH-NOTIFY] worker ${workerName} 在 task ${taskId} 中受阻：${safeDetail}（Twin 必须检查、纠偏或重派）`;
+  }
+  if (handoff.state === 'progress') {
+    return language === 'en'
+      ? `[ORCH-NOTIFY] worker ${workerName} reported progress on task ${taskId}: ${safeDetail} (Twin follow-up required; not ready for acceptance)`
+      : `[ORCH-NOTIFY] worker ${workerName} 汇报了 task ${taskId} 的进展：${safeDetail}（需要 Twin 跟进，尚不能验收）`;
+  }
+  return buildOrchNotifyCompleted(workerName, taskId, language);
+}
+
 export function wrapCrossSessionMessage(
   sourceSessionId: string,
   message: string,

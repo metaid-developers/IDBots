@@ -9,7 +9,8 @@
  * reporter injected next to the <base href> the MarkdownViewerPanel already
  * uses for relative assets. The injected script double-jobs as a link
  * bridge: clicks on idbots:// anchors are forwarded to the parent, which
- * routes session deep links (idbots://session/<id>) through the same
+ * routes session deep links (idbots://session/<id> and the bare
+ * IDBots://<id> form) through the same
  * 'cowork:viewSession' event Markdown links use, so report links jump to
  * the referenced conversation exactly like their markdown counterparts.
  * A toolbar carrying the title plus the

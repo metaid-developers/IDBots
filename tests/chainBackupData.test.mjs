@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
@@ -10,7 +11,7 @@ const { SqliteStore } = require('../dist-electron/main/sqliteStore.js');
 const { MetabotStore } = require('../dist-electron/main/metabotStore.js');
 const { MetaIDKnowledgeStore } = require('../dist-electron/main/metaidKnowledgeStore.js');
 const { DreamStore } = require('../dist-electron/main/dreamStore.js');
-const { deriveBackupKey, encryptJson, decryptJson, objectId } = require('../dist-electron/main/services/chainBackupCrypto.js');
+const { deriveBackupKey, encryptJson, decryptJson, decryptBytes, objectId } = require('../dist-electron/main/services/chainBackupCrypto.js');
 const { extractBackupObjects, importBackupObjects, selectLatestBackupObjects } = require('../dist-electron/main/services/chainBackupData.js');
 const { recordChainBackupTombstones, listChainBackupTombstones } = require('../dist-electron/main/libs/chainBackupTombstones.js');
 
@@ -99,7 +100,7 @@ test('extract → encrypt → decrypt → import round-trip with metabot_id rema
   const objects = extractBackupObjects(db, bot.id, wallet);
 
   const kinds = objects.map((o) => o.kind).sort();
-  assert.deepEqual(kinds, ['dream_daily', 'key_envelope', 'knowledge', 'memory', 'memory', 'memory_tombstone']);
+  assert.deepEqual(kinds, ['bot_profile', 'dream_daily', 'key_envelope', 'knowledge', 'memory', 'memory', 'memory_tombstone']);
   // The deleted row never ships as a live object — only as a minimal tombstone.
   assert.ok(!objects.some((o) => o.data.text === 'forgotten'));
   const tombstone = objects.find((o) => o.kind === 'memory_tombstone');
@@ -131,7 +132,7 @@ test('extract → encrypt → decrypt → import round-trip with metabot_id rema
   );
   const first = importBackupObjects(target.db, restoredBot.id, importedObjects);
   assert.equal(first.imported, 5); // 2 memories + 1 source + 1 daily + 1 knowledge
-  assert.equal(first.skipped, 1); // key_envelope is never imported as a row
+  assert.equal(first.skipped, 2); // key_envelope + bot_profile are never imported as rows
 
   const memories = target.db.exec(`SELECT * FROM user_memories WHERE metabot_id = ?`, [restoredBot.id]);
   assert.equal(memories[0].values.length, 2);
@@ -183,7 +184,7 @@ test('journal rebuild from manifest: post-restore backup diffs to zero', async (
 
   // Fresh device: restore imports the rows, then rebuilds the journal.
   const target = await openStore('idbots-journal-dst-');
-  const restoredBot = createBot(target.metabotStore, 'journal-bot-re', TEST_GID);
+  const restoredBot = createBot(target.metabotStore, 'journal-bot', TEST_GID);
   importBackupObjects(target.db, restoredBot.id, objects);
   rebuildChainBackupStateFromManifest(target.db, {
     botGlobalMetaId: TEST_GID,
@@ -207,7 +208,7 @@ test('journal rebuild from manifest: post-restore backup diffs to zero', async (
 });
 
 test('runChainBackup: publishes encrypted segments + manifest, incremental second run', async () => {
-  const { runChainBackup, CHAIN_BACKUP_OBJECT_PATH, CHAIN_BACKUP_MANIFEST_PATH } =
+  const { runChainBackup, CHAIN_BACKUP_MANIFEST_PATH } =
     require('../dist-electron/main/services/chainBackupService.js');
   const { readChainBackupState } = require('../dist-electron/main/services/chainBackupData.js');
 
@@ -220,13 +221,20 @@ test('runChainBackup: publishes encrypted segments + manifest, incremental secon
   );
 
   const userStore = { get: () => ({ mnemonic: TEST_MNEMONIC, globalmetaid: TEST_GID }) };
-  const published = []; // {metaidData, pinId}
+  const published = []; // {metaidData, pinId} — manifest pins only; segments ride the metafile channel
+  const files = new Map(); // pinId -> Buffer (uploaded segment ciphertext)
   let pinCounter = 0;
   const createPinImpl = async (_store, _botId, metaidData) => {
     pinCounter += 1;
     const pinId = `pin${String(pinCounter).padStart(4, '0')}` + '0'.repeat(55) + 'i0';
     published.push({ metaidData, pinId });
     return { txids: ['tx' + pinCounter], pinId, totalCost: 100 };
+  };
+  const uploadMetaFileImpl = async (_store, params) => {
+    pinCounter += 1;
+    const pinId = `file${String(pinCounter).padStart(4, '0')}` + '0'.repeat(55) + 'i0';
+    files.set(pinId, fs.readFileSync(params.filePath));
+    return { pinId, metafileUri: `metafile://${pinId}`, totalCost: 42 };
   };
   let manifestSyncs = 0;
   const syncBotsManifestImpl = async () => {
@@ -239,6 +247,7 @@ test('runChainBackup: publishes encrypted segments + manifest, incremental secon
     metabotStore: source.metabotStore,
     userStore,
     createPinImpl,
+    uploadMetaFileImpl,
     syncBotsManifestImpl,
     sleep: async () => {},
   };
@@ -248,37 +257,39 @@ test('runChainBackup: publishes encrypted segments + manifest, incremental secon
   assert.equal(first.botsManifestSynced, true);
   assert.equal(manifestSyncs, 1);
   assert.equal(first.bots.length, 1);
-  assert.equal(first.bots[0].uploadedObjects, 2); // memory + key_envelope
+  assert.equal(first.bots[0].uploadedObjects, 3); // memory + key_envelope + bot_profile
   assert.equal(first.bots[0].segments, 1);
 
-  // One object pin (create) + one manifest pin (create).
-  const objectPins = published.filter((p) => p.metaidData.path === CHAIN_BACKUP_OBJECT_PATH);
+  // One segment metafile + one manifest pin (create).
   const manifestPins = published.filter((p) => p.metaidData.path === CHAIN_BACKUP_MANIFEST_PATH);
-  assert.equal(objectPins.length, 1);
+  assert.equal(files.size, 1);
   assert.equal(manifestPins.length, 1);
   assert.equal(manifestPins[0].metaidData.operation, 'create');
 
-  // The object pin decrypts with the mnemonic-derived key and hashes correctly.
-  const envelope = JSON.parse(objectPins[0].metaidData.payload);
-  assert.equal(envelope.cipher, 'aes-256-gcm');
+  // The segment metafile decrypts with the mnemonic-derived key, is gzipped,
+  // and hashes correctly.
   const key = deriveBackupKey(TEST_MNEMONIC, TEST_GID);
-  const segment = decryptJson(key, Buffer.from(envelope.payload, 'base64'));
-  assert.equal(objectId(segment), envelope.segment);
-  assert.equal(segment.objects.length, 2);
+  const segmentBytes = [...files.values()][0];
+  const segment = JSON.parse(zlib.gunzipSync(decryptBytes(key, segmentBytes)).toString('utf8'));
+  const manifest = JSON.parse(manifestPins[0].metaidData.payload);
+  assert.equal(manifest.segments.length, 1);
+  assert.equal(manifest.segments[0].storage, 'metafile');
+  assert.equal(manifest.segments[0].bytes, segmentBytes.length);
+  assert.equal(objectId(segment), manifest.segments[0].segment);
+  assert.equal(segment.objects.length, 3);
 
   // State journal written.
   const state = readChainBackupState(source.db, TEST_GID);
   assert.ok(state);
   assert.equal(state.manifest_pinid, manifestPins[0].pinId);
 
-  // Second run: nothing new → no object pin; manifest refreshed via modify.
+  // Second run: nothing new → no new segment file; manifest refreshed via modify.
   const second = await runChainBackup(deps);
   assert.equal(second.success, true);
   assert.equal(second.bots[0].uploadedObjects, 0);
-  assert.equal(second.bots[0].skippedObjects, 2);
+  assert.equal(second.bots[0].skippedObjects, 3);
   assert.equal(manifestSyncs, 2);
-  const secondObjectPins = published.slice(objectPins.length).filter((p) => p.metaidData.path === CHAIN_BACKUP_OBJECT_PATH);
-  assert.equal(secondObjectPins.length, 0);
+  assert.equal(files.size, 1, 'no new segment file is uploaded');
   const modifyPins = published.filter((p) => p.metaidData.operation === 'modify');
   assert.equal(modifyPins.length, 1);
   assert.equal(modifyPins[0].metaidData.path, `@${manifestPins[0].pinId}`);

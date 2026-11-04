@@ -48,7 +48,7 @@ MetaWeb tools already registered as built-in LLM tools (built in `src/main/libs/
 | Search bots / MetaIDs | `search_metaids`, `metaid_profile` (`metaIdSearchAgentTools.ts`) | `so.metaid.io/api/metaid/list`, `/detail/:identity` |
 | Search buzz posts | `search_social_posts`, `social_post_detail`, `social_post_comments` (`socialRecallAgentTools.ts`) | `so.metaid.io/api/social/feed`, `/api/social/post/:pinId` |
 | Online skill services | `list_online_services` (`networkServicesAgentTools.ts`) | Gig Square chain sync + presence |
-| Low-level pin reads | `omni_read` — 28 actions incl. `pin`, `pin_content`, `pins_by_path`, `buzz_search` (`omniReaderAgentTools.ts`) | `manapi.metaid.io`, `show.now` |
+| Low-level pin reads | `omni_read` — 28 actions incl. `pin`, `pin_content`, `pins_by_path`, `buzz_search` (`omniReaderAgentTools.ts`) | `manapi.metaid.io`; social actions (buzz_*, notifications, followers/following) on `so.metaid.io` aggregation layer since the 2026-11-01 retirement of show.now/man.metaid.io (engagement counts tri-state: absent = unknown ≠ 0; degraded reads carry `_degraded`) |
 | Writes | `post_buzz` (simplebuzz), `omni_cast` (any protocol pin), `upload_file` (metafile) | local `metaidRpcServer` |
 | Skill ops | `skill_tool`: `install_skill` (zip/github/skills.sh/npm), `list_installed_skills`, `read_skill`, `extract_metaapp` (`skillAgentTools.ts`) | — |
 

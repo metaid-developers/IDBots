@@ -467,9 +467,13 @@ test('the sidebar owns the three-way move writes, and the search modal offers th
   assert.match(sidebar, /target === 'autonomous'[\s\S]{0,200}setSessionFollowUp\(sessionId, false\)[\s\S]{0,200}setSessionFoldOverride\(sessionId, 'in'\)/);
   // To Follow-Up: neutralize the override (it outranks the marker), mark pending.
   assert.match(sidebar, /target === 'follow-up'[\s\S]{0,200}setSessionFoldOverride\(sessionId, null\)[\s\S]{0,200}setSessionFollowUp\(sessionId, true\)/);
-  // To the normal list: clear the marker, and 'out' only where the auto-origin
-  // policy would otherwise fold the row back.
-  assert.match(sidebar, /shouldFoldIntoAutonomousTasks\(session\) \? 'out' : null/);
+  // To the normal list: clear the marker, and 'out' wherever ANY lane would
+  // pull the row back — the auto-origin fold policy OR a live board decision
+  // owed on the session (decisionSessionIds). Without the explicit 'out' the
+  // live decision set keeps a decision-owed row in Follow-Up and the move is
+  // a silent no-op; foldOverride outranks the live set in the precedence.
+  assert.match(sidebar, /shouldFoldIntoAutonomousTasks\(session\) \|\| decisionSessionIds\.has\(sessionId\)/);
+  assert.match(sidebar, /needsExplicitOut \? 'out' : null/);
   // Only the local tab offers the move; the search modal (same rows) offers it too.
   assert.match(sidebar, /const listOnMoveSessionToSection = useStableCallback\(handleMoveSessionToSection\)/);
   assert.match(sidebar, /onMoveSessionToSection=\{taskRecordTab === 'local' \? listOnMoveSessionToSection : undefined\}/);

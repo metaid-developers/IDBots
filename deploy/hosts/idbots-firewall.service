@@ -14,6 +14,11 @@ StartLimitIntervalSec=0
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+# Dual-stack hosts (staging + production tenant networks on one Docker daemon)
+# list parallel subnet/CP entries — see firewall.sh header. Values with spaces
+# must be quoted. Single-stack hosts need nothing (defaults apply).
+#Environment="IDBOTS_TENANT_SUBNET=172.30.0.0/16 172.31.0.0/16"
+#Environment="IDBOTS_CP_IP=172.30.0.2 172.31.0.2"
 ExecStartPre=/bin/sleep 3
 ExecStart=/opt/idbots/firewall.sh
 

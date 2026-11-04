@@ -2,10 +2,13 @@
 # default): koffi and node-pty build the native addons the DSH runtime needs
 # for terminal/process handling, @deepseek-ai/dsh-subprocess-local and
 # protobufjs generate runtime shims, @google/genai ships a postinstall.
-# Same set the npm install executed.
+# Same set the npm install executed. agent-desktop ships prebuilt CLI binaries
+# fetched by its postinstall (no JS entry point, no addon), so its build script
+# must run for the desktop-AX layer to find the binary inside dsh-runtime.
 allowBuilds:
   '@deepseek-ai/dsh-subprocess-local': true
   '@google/genai': true
+  agent-desktop: true
   koffi: true
   node-pty: true
   protobufjs: true
@@ -329,6 +332,7 @@ minimumReleaseAgeExclude:
   - '@deepseek-ai/dsh-tool-working-directory@0.2.1-rc.2'
   - '@deepseek-ai/dsh-web-deepseek-api@0.2.1-rc.2'
   - '@deepseek-ai/dsh-working-directory@0.2.1-rc.2'
+  - agent-desktop@1.1.0
 
 # pnpm 11 reads pnpm-specific settings only from this file. This package is
 # intentionally its own workspace root (no `packages` key): dsh-runtime keeps

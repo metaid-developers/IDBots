@@ -1,13 +1,17 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { i18nService } from '../../services/i18n';
 import { openTeamCollabService } from '../../services/openTeamCollabService';
 import type { GroupChatTranscriptMessage } from '../../types/groupTask';
-import type { OpenTeamCollabSummary } from '../../types/openTeamCollab';
+import type { OpenTeamCollabSummary, OpenTeamCollabMember } from '../../types/openTeamCollab';
 import GroupTaskMessageItem from './GroupTaskMessageItem';
 import {
   formatGroupTaskTime,
+  formatGroupTaskRelativeTime,
   mergeTranscriptMessages,
   shouldStickToBottom,
+  dedupeDeliverablesByPinid,
+  deliverableKindBadge,
+  isDigitalDeliverable,
 } from './groupTaskUtils';
 import {
   openTeamCollabStatusBadgeClass,
@@ -15,6 +19,8 @@ import {
   openTeamCollabTitle,
   shortGlobalMetaId,
 } from './OpenTeamCollabsSection';
+import { GroupTaskTinyAvatar, GroupTaskDeliverableUri } from './GroupTaskListMeta';
+import { GroupTaskTypeBadge } from './GroupTaskSidebarList';
 import { ArrowLeftIcon, ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import ComposeIcon from '../icons/ComposeIcon';
@@ -49,6 +55,8 @@ const OpenTeamCollabDetailView: React.FC<OpenTeamCollabDetailViewProps> = ({
   const [messages, setMessages] = useState<GroupChatTranscriptMessage[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(true);
   const [messagesError, setMessagesError] = useState<string | null>(null);
+  const [members, setMembers] = useState<OpenTeamCollabMember[]>([]);
+  const [loadingMembers, setLoadingMembers] = useState(true);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
@@ -60,6 +68,16 @@ const OpenTeamCollabDetailView: React.FC<OpenTeamCollabDetailViewProps> = ({
       setMessagesError(null);
     } catch (err) {
       setMessagesError(err instanceof Error ? err.message : String(err));
+    }
+  }, [collab.groupId]);
+
+  const loadMembers = useCallback(async () => {
+    try {
+      const membersList = await openTeamCollabService.getMembers(collab.groupId);
+      setMembers(membersList);
+    } catch (err) {
+      console.warn('Failed to load OpenTeam collab members:', err);
+      // Members list is optional — transcript should still render if it fails.
     }
   }, [collab.groupId]);
 
@@ -78,6 +96,22 @@ const OpenTeamCollabDetailView: React.FC<OpenTeamCollabDetailViewProps> = ({
       window.clearInterval(timer);
     };
   }, [loadMessages]);
+
+  // Members: initial load + 15s poll while mounted.
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingMembers(true);
+    void loadMembers().finally(() => {
+      if (!cancelled) setLoadingMembers(false);
+    });
+    const timer = window.setInterval(() => {
+      void loadMembers();
+    }, 15000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [loadMembers]);
 
   // Auto-scroll to bottom on new messages unless the user scrolled up.
   useEffect(() => {
@@ -98,91 +132,273 @@ const OpenTeamCollabDetailView: React.FC<OpenTeamCollabDetailViewProps> = ({
   const botLabel = collab.botName?.trim() || `bot-${collab.metabotId}`;
   const ownBotGlobalMetaId = collab.globalmetaid?.trim() || null;
 
+  // Compute deliverables from messages (similar to GroupTaskDetailView). The
+  // URI/text split mirrors the local rail: only real URIs become link cards;
+  // plain process text is not a deliverable.
+  const deliverables = useMemo(
+    () => {
+      const extracted = messages
+        .filter((msg) => msg.content?.includes('[DELIVERABLE]'))
+        .map((msg) => {
+          // Extract deliverable info from message content
+          const match = msg.content?.match(/\[DELIVERABLE\]\s*(.+)/);
+          if (!match) return null;
+          const uriOrText = match[1]?.trim();
+          if (!uriOrText) return null;
+          // Same kind buckets as the local rail's badge helper
+          const kind = /^metafile:\/\//i.test(uriOrText)
+            ? 'metafile'
+            : /^metaapp:\/\//i.test(uriOrText)
+              ? 'metaapp'
+              : /^https?:\/\//i.test(uriOrText)
+                ? 'url'
+                : /[0-9a-f]{64}i0/i.test(uriOrText)
+                  ? 'pinid'
+                  : 'text';
+          return {
+            id: msg.id,
+            pinId: msg.pinId,
+            kind,
+            uri: kind === 'text' ? null : uriOrText,
+            text: uriOrText,
+            authorGlobalMetaId: msg.senderGlobalMetaId,
+            status: 'delivered' as const,
+            createdAt: msg.chainTimestamp,
+          };
+        })
+        .filter((d): d is NonNullable<typeof d> => d != null && isDigitalDeliverable(d));
+      return dedupeDeliverablesByPinid(extracted);
+    },
+    [messages],
+  );
+
+  const memberDisplayName = (member: OpenTeamCollabMember): string =>
+    member.name ?? (member.metabotId != null
+      ? `bot-${member.metabotId}`
+      : member.globalmetaid
+        ? `${member.globalmetaid.slice(0, 10)}…`
+        : 'remote bot');
+
+  const deliverableAuthorName = (authorGlobalMetaId: string | null): string => {
+    if (!authorGlobalMetaId) return '—';
+    const member = members.find((candidate) => candidate.globalmetaid === authorGlobalMetaId);
+    if (member?.name) return member.name;
+    return `${authorGlobalMetaId.slice(0, 10)}…`;
+  };
+
   return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="draggable flex h-12 items-center justify-between px-4 border-b dark:border-claude-darkBorder border-claude-border shrink-0">
-        <div className="flex items-center space-x-3 h-8 min-w-0">
-          {isSidebarCollapsed && (
-            <div className={`non-draggable flex items-center gap-1 ${isMac ? 'pl-[68px]' : ''}`}>
-              <button
-                type="button"
-                onClick={onToggleSidebar}
-                className="h-8 w-8 inline-flex items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
-              >
-                <SidebarToggleIcon className="h-4 w-4" isCollapsed={true} />
-              </button>
-              <button
-                type="button"
-                onClick={onNewChat}
-                className="h-8 w-8 inline-flex items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
-              >
-                <ComposeIcon className="h-4 w-4" />
-              </button>
-              {updateBadge}
+    <div className="flex h-full">
+      {/* Main content area */}
+      <div className="flex flex-col flex-1 min-w-0">
+        {/* Header */}
+        <div className="draggable flex h-12 items-center justify-between px-4 border-b dark:border-claude-darkBorder border-claude-border shrink-0">
+          <div className="flex items-center space-x-3 h-8 min-w-0">
+            {isSidebarCollapsed && (
+              <div className={`non-draggable flex items-center gap-1 ${isMac ? 'pl-[68px]' : ''}`}>
+                <button
+                  type="button"
+                  onClick={onToggleSidebar}
+                  className="h-8 w-8 inline-flex items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                >
+                  <SidebarToggleIcon className="h-4 w-4" isCollapsed={true} />
+                </button>
+                <button
+                  type="button"
+                  onClick={onNewChat}
+                  className="h-8 w-8 inline-flex items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                >
+                  <ComposeIcon className="h-4 w-4" />
+                </button>
+                {updateBadge}
+              </div>
+            )}
+            <button
+              onClick={onBack}
+              className="non-draggable p-2 rounded-lg dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary text-claude-textSecondary transition-colors"
+              aria-label={i18nService.t('back')}
+            >
+              <ArrowLeftIcon className="h-5 w-5" />
+            </button>
+            <h1 className="text-lg font-semibold dark:text-claude-darkText text-claude-text truncate">
+              {title}
+            </h1>
+            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${openTeamCollabStatusBadgeClass(collab)}`}>
+              {openTeamCollabStatusLabel(collab)}
+            </span>
+            <GroupTaskTypeBadge type="openteam-guest" />
+          </div>
+          <WindowTitleBar inline />
+        </div>
+
+        {/* Meta strip: who invited us, which bot joined, when */}
+        <div className="px-4 py-3 border-b dark:border-claude-darkBorder/50 border-claude-border/50 shrink-0">
+          <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+            {i18nService.t('openTeamCollabYourBot')}: {botLabel}
+            {inviter ? ` · ${i18nService.t('openTeamCollabInvitedBy')} ${inviter}` : ''}
+            {collab.createdAt ? ` · ${i18nService.t('openTeamCollabJoined')} ${formatGroupTaskTime(collab.createdAt)}` : ''}
+          </p>
+          <p className="mt-1 text-xs dark:text-claude-darkTextSecondary/70 text-claude-textSecondary/70">
+            {i18nService.t('openTeamCollabReadOnlyHint')}
+          </p>
+        </div>
+
+        {/* Transcript */}
+        <div
+          ref={scrollRef}
+          onScroll={handleTranscriptScroll}
+          className="flex-1 overflow-y-auto pt-3"
+        >
+          {loadingMessages && messages.length === 0 ? (
+            <div className="flex items-center justify-center py-16">
+              <div className="dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                {i18nService.t('loading')}
+              </div>
+            </div>
+          ) : messages.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 px-6">
+              <ChatBubbleLeftRightIcon className="h-10 w-10 dark:text-claude-darkTextSecondary/40 text-claude-textSecondary/40 mb-3" />
+              <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                {messagesError ?? i18nService.t('groupTasksTranscriptEmpty')}
+              </p>
+            </div>
+          ) : (
+            messages.map((message) => (
+              <GroupTaskMessageItem
+                key={message.id}
+                message={message}
+                isChairSender={false}
+                isOwnerSender={false}
+                isOwnBotSender={Boolean(
+                  ownBotGlobalMetaId && message.senderGlobalMetaId === ownBotGlobalMetaId,
+                )}
+              />
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* Right sidebar */}
+      <div className="w-80 border-l dark:border-claude-darkBorder border-claude-border overflow-y-auto shrink-0">
+        {/* Members section */}
+        <div className="px-4 py-3 border-b dark:border-claude-darkBorder/50 border-claude-border/50">
+          <h3 className="text-xs font-semibold uppercase tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-2">
+            {i18nService.t('groupTasksMembers')}
+          </h3>
+          {loadingMembers && members.length === 0 ? (
+            <p className="text-xs dark:text-claude-darkTextSecondary/70 text-claude-textSecondary/70">
+              {i18nService.t('loading')}
+            </p>
+          ) : members.length === 0 ? (
+            <p className="text-xs dark:text-claude-darkTextSecondary/70 text-claude-textSecondary/70">
+              {i18nService.t('groupTasksNoMembers')}
+            </p>
+          ) : (
+            <div className="space-y-1.5">
+              {members.map((member, index) => (
+                <React.Fragment key={member.globalmetaid || `member-${index}`}>
+                  <div className="group flex items-center gap-2">
+                    <GroupTaskTinyAvatar
+                      src={member.avatar}
+                      name={memberDisplayName(member)}
+                      size="hover"
+                      browserGlobalMetaId={member.globalmetaid ?? null}
+                    />
+                    <span className="text-sm dark:text-claude-darkText text-claude-text truncate">
+                      {memberDisplayName(member)}
+                    </span>
+                    {member.role === 'chair' && (
+                      <span className="shrink-0 rounded px-1 py-px text-[10px] font-medium leading-tight bg-claude-accent/15 text-claude-accent">
+                        {i18nService.t('groupTasksChairBadge')}
+                      </span>
+                    )}
+                    {member.metabotId == null ? (
+                      <span className="shrink-0 rounded px-1 py-px text-[10px] font-medium leading-tight bg-green-500/15 text-green-600 dark:text-green-400">
+                        {i18nService.t('groupTasksRemoteBadge')}
+                      </span>
+                    ) : (
+                      <span className="shrink-0 rounded px-1 py-px text-[10px] font-medium leading-tight bg-sky-500/15 text-sky-600 dark:text-sky-400">
+                        {i18nService.t('groupTasksLocalBadge')}
+                      </span>
+                    )}
+                  </div>
+                  {(member.lastActivityAt != null || member.lastSpeakAt != null) && (
+                    <div
+                      className="text-[10px] leading-tight dark:text-claude-darkTextSecondary/60 text-claude-textSecondary/60 pl-0.5"
+                      title={formatGroupTaskTime(member.lastActivityAt ?? member.lastSpeakAt)}
+                    >
+                      {i18nService.t('groupTasksLastActive').replace(
+                        '{time}',
+                        formatGroupTaskRelativeTime(member.lastActivityAt ?? member.lastSpeakAt).compact,
+                      )}
+                    </div>
+                  )}
+                </React.Fragment>
+              ))}
             </div>
           )}
-          <button
-            onClick={onBack}
-            className="non-draggable p-2 rounded-lg dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary text-claude-textSecondary transition-colors"
-            aria-label={i18nService.t('back')}
-          >
-            <ArrowLeftIcon className="h-5 w-5" />
-          </button>
-          <h1 className="text-lg font-semibold dark:text-claude-darkText text-claude-text truncate">
-            {title}
-          </h1>
-          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${openTeamCollabStatusBadgeClass(collab)}`}>
-            {openTeamCollabStatusLabel(collab)}
-          </span>
         </div>
-        <WindowTitleBar inline />
-      </div>
 
-      {/* Meta strip: who invited us, which bot joined, when */}
-      <div className="px-4 py-3 border-b dark:border-claude-darkBorder/50 border-claude-border/50 shrink-0">
-        <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
-          {i18nService.t('openTeamCollabYourBot')}: {botLabel}
-          {inviter ? ` · ${i18nService.t('openTeamCollabInvitedBy')} ${inviter}` : ''}
-          {collab.createdAt ? ` · ${i18nService.t('openTeamCollabJoined')} ${formatGroupTaskTime(collab.createdAt)}` : ''}
-        </p>
-        <p className="mt-1 text-xs dark:text-claude-darkTextSecondary/70 text-claude-textSecondary/70">
-          {i18nService.t('openTeamCollabReadOnlyHint')}
-        </p>
-      </div>
-
-      {/* Transcript */}
-      <div
-        ref={scrollRef}
-        onScroll={handleTranscriptScroll}
-        className="flex-1 overflow-y-auto pt-3"
-      >
-        {loadingMessages && messages.length === 0 ? (
-          <div className="flex items-center justify-center py-16">
-            <div className="dark:text-claude-darkTextSecondary text-claude-textSecondary">
-              {i18nService.t('loading')}
-            </div>
-          </div>
-        ) : messages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 px-6">
-            <ChatBubbleLeftRightIcon className="h-10 w-10 dark:text-claude-darkTextSecondary/40 text-claude-textSecondary/40 mb-3" />
-            <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
-              {messagesError ?? i18nService.t('groupTasksTranscriptEmpty')}
+        {/* Deliverables section */}
+        <div className="px-4 py-3">
+          <h3 className="text-xs font-semibold uppercase tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-2">
+            {i18nService.t('groupTasksDeliverables')}
+          </h3>
+          {deliverables.length === 0 ? (
+            <p className="text-xs dark:text-claude-darkTextSecondary/70 text-claude-textSecondary/70">
+              {i18nService.t('groupTasksNoDeliverables')}
             </p>
-          </div>
-        ) : (
-          messages.map((message) => (
-            <GroupTaskMessageItem
-              key={message.id}
-              message={message}
-              isChairSender={false}
-              isOwnerSender={false}
-              isOwnBotSender={Boolean(
-                ownBotGlobalMetaId && message.senderGlobalMetaId === ownBotGlobalMetaId,
-              )}
-            />
-          ))
-        )}
+          ) : (
+            <div className="space-y-2">
+              {deliverables.map((deliverable) => {
+                const kindBadge = deliverableKindBadge(deliverable.kind);
+                const statusKey = deliverable.status === 'accepted'
+                  ? 'groupTasksDeliverableStatusAccepted'
+                  : deliverable.status === 'rejected'
+                    ? 'groupTasksDeliverableStatusRejected'
+                    : deliverable.status === 'delivered'
+                      ? 'groupTasksDeliverableStatusDelivered'
+                      : 'groupTasksDeliverableStatusPending';
+                const statusHintKey = deliverable.status === 'accepted'
+                  ? 'groupTasksDeliverableStatusAcceptedHint'
+                  : deliverable.status === 'rejected'
+                    ? 'groupTasksDeliverableStatusRejectedHint'
+                    : deliverable.status === 'delivered'
+                      ? 'groupTasksDeliverableStatusDeliveredHint'
+                      : 'groupTasksDeliverableStatusPendingHint';
+
+                return (
+                  <div
+                    key={deliverable.pinId || deliverable.id}
+                    className="rounded-lg border dark:border-claude-darkBorder/60 border-claude-border/60 px-2.5 py-2"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className={`shrink-0 rounded px-1 py-px text-[10px] font-medium leading-tight ${kindBadge.className}`}>
+                        {i18nService.t(kindBadge.labelKey)}
+                      </span>
+                      <span
+                        className="text-[11px] dark:text-claude-darkTextSecondary/70 text-claude-textSecondary/70"
+                        title={i18nService.t(statusHintKey)}
+                      >
+                        {i18nService.t(statusKey)}
+                      </span>
+                    </div>
+                    {deliverable.uri ? (
+                      <GroupTaskDeliverableUri uri={deliverable.uri} />
+                    ) : (
+                      <p className="mt-1 text-[11px] leading-snug dark:text-claude-darkText text-claude-text break-all line-clamp-2">
+                        {deliverable.text ?? '—'}
+                      </p>
+                    )}
+                    <div className="mt-1 flex items-center justify-between text-[10px] dark:text-claude-darkTextSecondary/70 text-claude-textSecondary/70">
+                      <span>{deliverableAuthorName(deliverable.authorGlobalMetaId)}</span>
+                      <span>{formatGroupTaskTime(deliverable.createdAt)}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

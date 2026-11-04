@@ -117,6 +117,16 @@ export interface CreateOrchestrationAttemptInput {
   prompt: string;
 }
 
+/** The two terminal states a Twin [ORCH-NOTIFY] can announce. */
+export type OrchestrationNotificationOutcome = 'completed' | 'failed';
+
+export interface ClaimOrchestrationNotificationInput {
+  taskId: string;
+  stepId: string;
+  attemptId: string;
+  outcome: OrchestrationNotificationOutcome;
+}
+
 /**
  * v1.4 closure semantics (owner ruling A): the closure columns on the ledger
  * row have EXACTLY ONE writer — `OrchestrationStore.recordClosure`. The board's
@@ -447,6 +457,17 @@ export class OrchestrationStore {
       );
       CREATE INDEX IF NOT EXISTS idx_orchestration_attempts_step_status
         ON orchestration_attempts(step_id, status, queued_at DESC);
+      CREATE TABLE IF NOT EXISTS orchestration_notifications (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        step_id TEXT NOT NULL,
+        attempt_id TEXT NOT NULL,
+        outcome TEXT NOT NULL CHECK(outcome IN ('completed','failed')),
+        created_at TEXT NOT NULL,
+        UNIQUE(attempt_id, outcome)
+      );
+      CREATE INDEX IF NOT EXISTS idx_orchestration_notifications_task
+        ON orchestration_notifications(task_id, created_at DESC);
       -- Twin acceptance records: APPEND-ONLY. One row per accept; the step row
       -- and earlier acceptance rows are never rewritten (the UPDATE trigger
       -- below makes that a database fact, not a convention).
@@ -515,6 +536,13 @@ export class OrchestrationStore {
       ? this.getAll<Row>(`SELECT * FROM orchestration_tasks WHERE owner_global_meta_id = ? AND status NOT IN ('completed','cancelled') ORDER BY updated_at DESC`, [ownerGlobalMetaId])
       : this.getAll<Row>(`SELECT * FROM orchestration_tasks WHERE status NOT IN ('completed','cancelled') ORDER BY updated_at DESC`);
     return rows.map(taskFromRow);
+  }
+
+  listTasksForLongTermSubtask(taskId: string, subtaskId: string): OrchestrationTask[] {
+    return this.getAll<Row>(
+      `SELECT * FROM orchestration_tasks WHERE longterm_task_id = ? AND longterm_subtask_id = ? ORDER BY created_at ASC, id ASC`,
+      [taskId, subtaskId],
+    ).map(taskFromRow);
   }
 
   getTaskBySourceSessionId(sourceSessionId: string): OrchestrationTask | null {
@@ -753,6 +781,73 @@ export class OrchestrationStore {
   }
 
   /**
+   * At-most-once arbiter for Twin terminal-state notifications.
+   *
+   * The row IS the decision: a single INSERT ... OR IGNORE against
+   * UNIQUE(attempt_id, outcome) either wins the (attempt, terminal state) slot
+   * or observes that it was already claimed. This replaces "check a kv key,
+   * notify, then set the key" — where a process death between the notification
+   * and the marker write re-notified the same terminal state — with one atomic
+   * write that lands BEFORE the cross-session insert.
+   *
+   * Returns true only for the caller that actually inserted the row. Rows are
+   * never deleted: the table is the audit trail of every notification a task
+   * attempt was entitled to AND the durable guard itself.
+   *
+   * INSERT OR IGNORE is safe here because every bound value is a non-null
+   * string and the only CHECK is the two typed outcomes — in practice the one
+   * ignorable violation is the (attempt_id, outcome) uniqueness this method
+   * exists to arbitrate.
+   */
+  claimNotification(input: ClaimOrchestrationNotificationInput): boolean {
+    const id = uuidv4();
+    this.db.run(
+      `INSERT OR IGNORE INTO orchestration_notifications
+        (id, task_id, step_id, attempt_id, outcome, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [id, input.taskId, input.stepId, input.attemptId, input.outcome, new Date().toISOString()],
+    );
+    const modified = this.db.getRowsModified?.();
+    let claimed: boolean;
+    if (typeof modified === 'number') {
+      claimed = modified > 0;
+    } else {
+      // Backend without change accounting: the INSERT is still atomic, so the
+      // read-back names the winner; we claimed the slot iff the row carries
+      // the id we just generated.
+      const row = this.getOne<{ id: unknown }>(
+        'SELECT id FROM orchestration_notifications WHERE attempt_id = ? AND outcome = ?',
+        [input.attemptId, input.outcome],
+      );
+      claimed = String(row?.id ?? '') === id;
+    }
+    if (claimed) this.saveDb();
+    return claimed;
+  }
+
+  /** Read-back for tests/audit: every notification claim a task has taken. */
+  listNotifications(taskId: string): Array<{
+    id: string;
+    taskId: string;
+    stepId: string;
+    attemptId: string;
+    outcome: OrchestrationNotificationOutcome;
+    createdAt: string;
+  }> {
+    return this.getAll<Row>(
+      'SELECT * FROM orchestration_notifications WHERE task_id = ? ORDER BY created_at ASC, rowid ASC',
+      [taskId],
+    ).map((row) => ({
+      id: String(row.id),
+      taskId: String(row.task_id),
+      stepId: String(row.step_id),
+      attemptId: String(row.attempt_id),
+      outcome: row.outcome === 'failed' ? 'failed' : 'completed',
+      createdAt: String(row.created_at),
+    }));
+  }
+
+  /**
    * Long-term supervision telemetry (P1): attempts whose step's task was
    * sourced from any of these sessions — i.e. every worker dispatch the Twin
    * made from those sessions — newest first.
@@ -817,6 +912,11 @@ export class OrchestrationStore {
   }
 
   recoverAfterRestart(): { attempts: number; steps: number } {
+    const { recoveredAttempts, ...summary } = this.recoverAfterRestartWithDetails();
+    return summary;
+  }
+
+  recoverAfterRestartWithDetails(): { attempts: number; steps: number; recoveredAttempts: OrchestrationAttempt[] } {
     const now = new Date().toISOString();
     // 'timed_out' attempts are also unrecoverable after a restart: the worker
     // session lives inside the runner process and dies with it, so no late
@@ -827,6 +927,7 @@ export class OrchestrationStore {
       this.db.run(`UPDATE orchestration_steps SET status = 'ready', active_attempt_id = NULL, updated_at = ? WHERE id = ? AND status IN ('running','queued')`, [now, attempt.step_id]);
     }
     if (running.length > 0) this.saveDb();
-    return { attempts: running.length, steps: running.length };
+    const recoveredAttempts = running.map((attempt) => this.getAttempt(attempt.id)!);
+    return { attempts: running.length, steps: running.length, recoveredAttempts };
   }
 }

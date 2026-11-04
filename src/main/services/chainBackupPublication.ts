@@ -1,12 +1,7 @@
 import { DEFAULT_MANAPI_BASE_URL } from './manapiPinService';
-import { CHAIN_BACKUP_MANIFEST_PATH, CHAIN_BACKUP_OBJECT_PATH } from './chainBackupProtocol';
+import { CHAIN_BACKUP_MANIFEST_PATH } from './chainBackupProtocol';
 
 const DEFAULT_TIMEOUT_MS = 15_000;
-const SEGMENT_RECONCILE_CANDIDATES = 100;
-
-export interface ChainBackupPublishedPin {
-  pinId: string;
-}
 
 export interface ChainBackupManifestState {
   pinId: string;
@@ -96,28 +91,6 @@ async function listAddressPins(
       : [];
     return { id, modifyHistory: history.length > 0 ? history : [id] };
   }).filter((pin) => pin.id);
-}
-
-export async function findPublishedSegmentPin(input: {
-  mvcAddress: string;
-  botGlobalMetaId: string;
-  segmentKey: string;
-  segmentHash: string;
-  baseUrl?: string;
-  fetchImpl?: typeof fetch;
-}): Promise<ChainBackupPublishedPin | null> {
-  const options = { baseUrl: input.baseUrl, fetchImpl: input.fetchImpl };
-  const candidates = await listAddressPins(input.mvcAddress, CHAIN_BACKUP_OBJECT_PATH, SEGMENT_RECONCILE_CANDIDATES, options);
-  const baseUrl = (input.baseUrl || DEFAULT_MANAPI_BASE_URL).replace(/\/+$/, '');
-  for (const candidate of candidates) {
-    const text = await fetchText(`${baseUrl}/content/${encodeURIComponent(candidate.id)}`, options);
-    const envelope = JSON.parse(text) as { bot?: unknown; segment?: unknown; segmentKey?: unknown };
-    if (envelope.bot !== input.botGlobalMetaId) continue;
-    if (envelope.segmentKey === input.segmentKey || envelope.segment === input.segmentHash) {
-      return { pinId: candidate.id };
-    }
-  }
-  return null;
 }
 
 export async function fetchChainBackupManifestState(input: {

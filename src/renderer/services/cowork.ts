@@ -312,6 +312,10 @@ class CoworkService {
         requestId: request.requestId,
         toolUseId: request.toolUseId ?? null,
         perQuestionTimeoutMs: request.perQuestionTimeoutMs ?? null,
+        expiresAt: typeof request.expiresAt === 'number' ? request.expiresAt : null,
+        timeoutDefault: request.timeoutDefault === 'allow' || request.timeoutDefault === 'deny'
+          ? request.timeoutDefault
+          : null,
       }));
     });
     this.streamListenerCleanups.push(permissionCleanup);
@@ -340,6 +344,10 @@ class CoworkService {
           requestId: entry.requestId,
           toolUseId: entry.toolUseId ?? null,
           perQuestionTimeoutMs: entry.perQuestionTimeoutMs ?? null,
+          expiresAt: typeof entry.expiresAt === 'number' ? entry.expiresAt : null,
+          timeoutDefault: entry.timeoutDefault === 'allow' || entry.timeoutDefault === 'deny'
+            ? entry.timeoutDefault
+            : null,
         } as never));
       }
     }).catch(() => undefined);
@@ -907,6 +915,19 @@ class CoworkService {
     }
     console.error('Failed to set permission mode:', result.error);
     return false;
+  }
+
+  /**
+   * Re-read the on-screen session after an out-of-band IM permission change.
+   *
+   * `cowork:session:get` resolves the effective mode for IM sessions (their
+   * stored row is frozen at creation), so pulling the session again is enough
+   * to replace a stale label. Display-only: nothing is written back to the row.
+   */
+  async refreshImSessionPermissionMode(): Promise<void> {
+    const current = store.getState().cowork.currentSession;
+    if (!current?.imChannel || !current.imChannel.startsWith('im:')) return;
+    await this.loadSession(current.id, { onlyIfCurrent: true });
   }
 
   /**

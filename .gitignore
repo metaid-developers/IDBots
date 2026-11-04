@@ -35,6 +35,7 @@ CLAUDE.md
 localdocs/
 docs/*
 !docs/twin-bot-orchestration.md
+!docs/social-read-resilience.md
 !docs/nft-trade-protocol-draft.md
 !docs/cloud-mobile/
 !docs/metaid_protocols/
@@ -60,12 +61,34 @@ docs/*
 !docs/analysis/**
 !docs/tickets/
 !docs/tickets/**
+!docs/weixin-channel.md
+!docs/assets/
+!docs/assets/**
+!docs/weixin-channel-verification.md
+!docs/qq-channel.md
+!docs/qq-channel-verification.md
+!docs/qq-channel-pr.md
 tests/*
+!tests/dataGuard.test.mjs
+!tests/a2aPendingAskBridge.test.mjs
 !tests/friendAgentTools.test.mjs
 !tests/friendRelationshipService.test.mjs
 !tests/friendWiringIntegration.test.mjs
 !tests/friendInviteFlow.test.mjs
 !tests/friendInviteOverlayChain.test.mjs
+!tests/friendGuidanceIntent.test.ts
+!tests/qqGateway.test.ts
+!tests/tradeBadge.test.mjs
+!tests/escrowOrderStateMachine.test.ts
+!tests/escrowCardMarkdown.test.tsx
+!tests/tradeActivityUi.test.tsx
+!tests/qqSecurity.test.ts
+!tests/qqSessionClassification.test.ts
+!tests/qqGroupCandidates.test.ts
+!tests/qqRateLimit.test.ts
+!tests/imPlatformConfigActions.test.ts
+!tests/friendGuidanceTrigger.test.mjs
+!tests/friendGuidanceOverlayChain.test.mjs
 !tests/socialTrustPrompt.test.mjs
 !tests/gatewayCore.test.mjs
 !tests/startupTiers.test.mjs
@@ -109,6 +132,7 @@ tests/*
 !tests/longTermTaskAgentTools.test.mjs
 !tests/heartbeatService.test.mjs
 !tests/longTermAdvanceService.test.mjs
+!tests/longTermAttentionAction.test.mjs
 !tests/metataskEngine.test.mjs
 !tests/metataskProjectionStore.test.mjs
 !tests/metataskAgentTools.test.mjs
@@ -248,6 +272,8 @@ tests/*
 !tests/botBrowserModeSwitch.test.tsx
 !tests/sidebarNavigation.test.mjs
 !tests/botBrowserBridgeService.test.mjs
+!tests/botBrowserNftBuy.test.mjs
+!tests/botBrowserMrc721Buy.test.mjs
 !tests/botBrowserHumanPinWrite.test.mjs
 !tests/humanIdentityPinWriter.test.mjs
 !tests/pinPathResolver.test.mjs
@@ -277,6 +303,7 @@ tests/*
 !tests/coworkPrePipelineTurnFailure.test.mjs
 !tests/coworkMessageVisibility.test.ts
 !tests/chainBackupRestore.test.mjs
+!tests/chainBackupSlimming.test.mjs
 !tests/coworkAbandonedStreamingHeal.test.mjs
 !tests/dshStreamUiGate.test.mjs
 !tests/coworkFormatTransform.test.mjs
@@ -440,6 +467,8 @@ man_base_data_pebble/
 !tests/metaidRpcWalletToolsRoutes.test.mjs
 !tests/groupChatAgentTools.test.mjs
 !tests/omniReaderAgentTools.test.mjs
+!tests/buzzAppSocialSources.test.mjs
+!tests/omniReadPaginationIntegrity.test.mjs
 !tests/browserOpenAgentTools.test.mjs
 !tests/screenshotAgentTools.test.mjs
 !tests/hostLocationService.test.mjs
@@ -452,6 +481,7 @@ man_base_data_pebble/
 !tests/metafileRouteAgentTools.test.mjs
 !tests/metaAppManagerBundledSync.test.mjs
 !tests/markdownContentBotBrowserUri.test.tsx
+!tests/markdownContentTwemoji.test.tsx
 !tests/browserIframeBridgeScript.test.ts
 !tests/browserNavButtonSync.test.ts
 !tests/botBrowserSurfaceStatic.test.mjs
@@ -470,7 +500,10 @@ man_base_data_pebble/
 !tests/dreamPrompt.test.mjs
 !tests/twinWorkerDirectoryService.test.mjs
 !tests/orchestrationStore.test.mjs
+!tests/orchestrationProgress.test.mjs
+!tests/crossSessionDeliveryRunner.test.mjs
 !tests/twinOrchestrationService.test.mjs
+!tests/twinNotifyOnce.test.mjs
 !tests/twinStepAcceptance.test.mjs
 !tests/twinOrchestrationPrompt.test.mjs
 !tests/skillTurnTimeoutRecovery.test.mjs
@@ -559,6 +592,12 @@ man_base_data_pebble/
 # dev DSH instance user-data/app-data dirs ("npm run electron:dev:dsh")
 .dev-userdata-dsh/
 .dev-appdata-dsh/
+
+# Data-guard fingerprints live NEXT TO the data dir, not inside it. For a dev
+# instance whose userData is <repo>/.dev-userdata-*, "next to" is the repo root
+# (src/main/libs/dataGuard.ts:49). Anchored to the root on purpose, so a nested
+# directory that happens to share the name is never ignored by accident.
+/IDBots-dataguard/
 !tests/metabotLlmBrainMigration.test.mjs
 !tests/sqliteStoreMetabotsRebuildExtras.test.mjs
 !tests/knowledgeBaseText.test.mjs
@@ -580,6 +619,7 @@ man_base_data_pebble/
 !tests/coworkPermissionForwarding.test.mjs
 !tests/coworkPermissionOverlay.test.tsx
 !tests/orchestratorPermissionRelay.test.ts
+!tests/permissionPromptLayout.test.ts
 !tests/opencodeGatewayHeaders.test.mjs
 !tests/agentpediaReplayVectors.test.mjs
 !tests/agentpediaAgentTools.test.mjs
@@ -604,6 +644,7 @@ man_base_data_pebble/
 !tests/privateChatEmptyReplyRetry.test.mjs
 !tests/privateChatNoReplyWake.test.mjs
 !tests/privateChatInboundVisibility.test.mjs
+!tests/privateChatDisplayReconcile.test.mjs
 !tests/privateChatInboundNoReplyTextVisibility.test.mjs
 !tests/privateChatSendGate.test.mjs
 !tests/privateChatRowScheduler.test.mjs
@@ -676,6 +717,7 @@ man_base_data_pebble/
 !tests/scheduledTaskCreateDefaultBinding.test.mjs
 !tests/schedulerTargetSession.test.mjs
 !tests/scheduledTaskSkipLedger.test.mjs
+!tests/scheduledTaskSingleRunner.test.mjs
 !tests/scheduledTaskLifecycleStore.test.mjs
 !tests/scheduledTaskLifecycleUi.test.mjs
 !tests/scheduledTaskLifecycleSeams.test.mjs
@@ -704,6 +746,7 @@ man_base_data_pebble/
 !tests/cerebellumConversationRank.test.mjs
 !tests/cerebellumTurnDecisionBundle.test.mjs
 !tests/cerebellumSessionFollowUpGate.test.mjs
+!tests/cerebellumAckGate.test.mjs
 !tests/coworkSessionFollowUp.test.mjs
 !tests/coworkFollowUpStartupSweep.test.mjs
 !tests/followUpTurnEndExtract.test.mjs
@@ -718,6 +761,13 @@ man_base_data_pebble/
 !tests/inlineHtmlReportBlock.test.tsx
 !tests/inlineMetaAppBlock.test.tsx
 !tests/markdownContentSingleTilde.test.tsx
+!tests/nftCardMarkdown.test.tsx
+!tests/nftCardHealService.test.mjs
+!tests/walletNftCardAttach.test.mjs
+!tests/harness/
+!tests/harness/nft-card-evidence.html
+!tests/harness/nft-card-evidence.tsx
+!tests/harness/capture-nft-card-evidence.mjs
 !tests/groupTaskWorkingState.test.mjs
 !tests/groupTaskSkillTurnMemoryReadOnly.test.mjs
 !tests/coworkAssistantModeSessionGate.test.ts
@@ -821,3 +871,30 @@ blob-report/
 !tests/mobileVoiceBackfill.test.ts
 !tests/mobileVoiceProtocol.test.ts
 !tests/mobileVoiceWireup.test.tsx
+!tests/mrc721Service.test.mjs
+!tests/mrc721AgentTools.test.mjs
+!tests/mrc721AtomicSwap.test.mjs
+!tests/weixinGateway.test.ts
+!tests/weixinMedia.test.ts
+!tests/outboundImReceiptBubble.test.mjs
+# A timed-out IM turn must return its partial result instead of restarting from zero
+!tests/imCoworkTurnTimeout.test.mjs
+!docs/weixin-media.md
+!docs/weixin-media-delegated-verification.md
+!docs/weixin-media-verification.md
+!tests/metabotNftService.test.mjs
+!tests/metabotNftIpc.test.mjs
+!tests/metabotNftPresentation.test.mjs
+!tests/paymentInfoCrypto.test.mjs
+!tests/paymentCardSyntax.test.ts
+!tests/paymentLaunchWatchdog.test.ts
+!tests/paymentPendingRecords.test.ts
+
+# AX-first desktop locate (feat/agent-desktop-ax)
+!tests/desktopAxLiveHarness.mjs
+!tests/desktopAxComputerUseGate.test.mjs
+!tests/desktopAxLocator.test.mjs
+!docs/two-layer-desktop-locate.md
+
+# Renderer-hang watchdog (notify-only): decision core + sampler episode tests
+!tests/rendererHangMonitor.test.mjs

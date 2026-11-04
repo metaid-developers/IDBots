@@ -680,6 +680,28 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
       .catch(() => setAppVersion(''));
   }, []);
 
+  // feat/legacy-data-recovery ②: data-directory visibility (path + open).
+  const [dataDirectoryPath, setDataDirectoryPath] = useState<string>('');
+
+  useEffect(() => {
+    window.electron.appInfo
+      .getDataDirectory()
+      .then((info) => setDataDirectoryPath(typeof info?.userDataPath === 'string' ? info.userDataPath : ''))
+      .catch(() => setDataDirectoryPath(''));
+  }, []);
+
+  const handleOpenDataDirectory = useCallback(async (): Promise<void> => {
+    if (!dataDirectoryPath) return;
+    try {
+      const result = await window.electron.shell.openPath(dataDirectoryPath);
+      if (result && result.success === false) {
+        setError(i18nService.t('settingsDataDirectoryOpenFailed'));
+      }
+    } catch (openError) {
+      setError(i18nService.t('settingsDataDirectoryOpenFailed'));
+    }
+  }, [dataDirectoryPath]);
+
   useEffect(() => {
     setCoworkExecutionMode('local');
   }, [coworkConfig.executionMode]);
@@ -2670,6 +2692,32 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                     </button>
                   );
                 })}
+              </div>
+            </div>
+
+            {/* feat/legacy-data-recovery ②: data-directory visibility */}
+            <div>
+              <h4 className="text-sm font-medium dark:text-claude-darkText text-claude-text mb-1">
+                {i18nService.t('settingsDataDirectory')}
+              </h4>
+              <p className="text-xs dark:text-claude-darkSecondaryText text-claude-secondaryText mb-3">
+                {i18nService.t('settingsDataDirectoryDesc')}
+              </p>
+              <div className="flex items-center gap-3">
+                <code
+                  className="flex-1 min-w-0 break-all select-text text-xs px-3 py-2 rounded-lg dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border"
+                  title={dataDirectoryPath}
+                >
+                  {dataDirectoryPath || '—'}
+                </code>
+                <button
+                  type="button"
+                  onClick={handleOpenDataDirectory}
+                  disabled={!dataDirectoryPath}
+                  className="shrink-0 px-4 py-2 text-sm font-medium rounded-xl transition-colors border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none"
+                >
+                  {i18nService.t('settingsDataDirectoryOpen')}
+                </button>
               </div>
             </div>
           </div>

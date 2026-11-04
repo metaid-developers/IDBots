@@ -369,7 +369,7 @@ export default class FetchProfileHeaderCommand {
 
   _resolveMetaidManBase() {
     var serviceLocator = (typeof window !== 'undefined' && window.ServiceLocator) ? window.ServiceLocator : {};
-    var base = this._pickFirstString([serviceLocator.metaid_man, 'https://www.show.now/man']);
+    var base = this._pickFirstString([serviceLocator.metaid_man, 'https://manapi.metaid.io']);
     return base.replace(/\/+$/, '');
   }
 

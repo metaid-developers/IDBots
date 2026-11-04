@@ -2,8 +2,12 @@
  * FetchBuzzCommand
  *
  * Supports two modes:
- * 1) Timeline mode (new/hot/following/recommend/profile) via /social/buzz/*
- * 2) Legacy path mode via /pin/path/list (kept for compatibility)
+ * 1) Timeline mode (new/hot/following/recommend/profile) via the metaso-p2p
+ *    aggregation layer (social_agg, /api/social/feed) — the retired show.now
+ *    /social/buzz/* routes went offline 2026-11-01 and are never requested.
+ *    'recommend' degrades to sort=hot (no per-user ranking exists upstream)
+ *    and flags the result `degraded` so the UI can declare it.
+ * 2) Legacy path mode via manapi /api/pin/path/list (kept for compatibility)
  */
 export default class FetchBuzzCommand {
   async execute({ payload = {}, stores, delegate }) {
@@ -78,8 +82,29 @@ export default class FetchBuzzCommand {
       };
     }
 
-    var rawResponse = await delegate('metaid_man', endpoint, { method: 'GET' });
-    var normalized = this._normalizeSocialBuzzResponse(rawResponse);
+    // Ordered read path (BOT-009 supplement #7): level 1 aggregation feed,
+    // level 2 chain-sourced direct pin read via manapi (new → pins_by_path,
+    // profile → pins_by_metaid; following/hot/recommend have no chain
+    // equivalent — a follow graph and an engagement ranking are aggregation
+    // constructs), level 3 throw → the UI's explicit fetch-failed state.
+    var rawResponse;
+    var chainFallback = false;
+    try {
+      rawResponse = await delegate('social_agg', endpoint, { method: 'GET' });
+    } catch (aggError) {
+      var chainEndpoint = this._buildChainFallbackEndpoint({ tab: tab, size: size, cursor: lastId, metaid: metaid });
+      if (!chainEndpoint) throw aggError;
+      rawResponse = await delegate('metaid_man', chainEndpoint, { method: 'GET' });
+      chainFallback = true;
+    }
+
+    var normalized = chainFallback
+      ? this._normalizePinListResponse(rawResponse)
+      : this._normalizeSocialBuzzResponse(rawResponse);
+    if (chainFallback) {
+      normalized.hasMore = !!(normalized.nextCursor && normalized.list.length > 0);
+    }
+    // Chain-direct rows carry no engagement counts: 'unavailable' per row.
     var enrichedList = await this._enrichBuzzList(normalized.list, delegate);
 
     var result = {
@@ -87,15 +112,50 @@ export default class FetchBuzzCommand {
       total: normalized.total,
       nextCursor: normalized.nextCursor,
       hasMore: normalized.hasMore,
+      degraded: tab === 'recommend',
+      chainFallback: chainFallback,
     };
 
     if (stores && stores.buzz) {
       stores.buzz.total = result.total;
       stores.buzz.nextCursor = result.nextCursor;
       stores.buzz.lastUpdatedAt = Date.now();
+      if (stores.buzz.tabs && stores.buzz.tabs[tab]) {
+        // Declared degradation: recommend is served as hot; a chain fallback
+        // serves raw pins without counts. The UI must be able to say so
+        // instead of silently passing either off as the native feed.
+        stores.buzz.tabs[tab].degraded = result.degraded === true;
+        stores.buzz.tabs[tab].chainFallback = result.chainFallback === true;
+      }
     }
 
     return result;
+  }
+
+  /**
+   * Level-2 endpoint on the manapi pin control plane (chain-sourced direct
+   * read). Returns '' when the tab's read shape has no chain equivalent.
+   */
+  _buildChainFallbackEndpoint(params) {
+    var tab = params.tab;
+    var size = params.size;
+    var cursor = this._normalizeCursor(params.cursor);
+    var metaid = params.metaid;
+
+    var query = new URLSearchParams({
+      path: '/protocols/simplebuzz',
+      size: String(Number.isFinite(size) && size > 0 ? size : 10),
+    });
+    if (cursor) query.set('cursor', cursor);
+
+    if (tab === 'new') {
+      return '/api/pin/path/list?' + query.toString();
+    }
+    if (tab === 'profile') {
+      if (!metaid) return '';
+      return '/api/metaid/pin/list/' + encodeURIComponent(metaid) + '?' + query.toString();
+    }
+    return '';
   }
 
   _buildTimelineEndpoint(params) {
@@ -103,37 +163,40 @@ export default class FetchBuzzCommand {
     var size = params.size;
     var lastId = params.lastId;
     var metaid = params.metaid;
-    var userAddress = params.userAddress;
 
+    // Aggregation-layer feed (metaso-p2p /api/social/feed): cursor-paged,
+    // newest by default; sort=hot is a single page (top engagement, last 48h).
     var query = new URLSearchParams({
       size: String(size),
-      lastId: String(lastId || ''),
     });
+    if (lastId && tab !== 'hot') query.set('cursor', String(lastId));
 
     if (tab === 'new') {
-      return '/social/buzz/newest?' + query.toString();
+      return '/api/social/feed?' + query.toString();
     }
     if (tab === 'hot') {
-      return '/social/buzz/hot?' + query.toString();
+      query.set('sort', 'hot');
+      return '/api/social/feed?' + query.toString();
     }
     if (tab === 'following') {
       if (!metaid) return '';
-      query.set('metaid', metaid);
-      query.set('followed', '1');
-      return '/social/buzz/newest?' + query.toString();
+      query.set('scope', 'following');
+      query.set('user', metaid);
+      return '/api/social/feed?' + query.toString();
     }
     if (tab === 'recommend') {
-      if (!userAddress) return '';
-      query.set('userAddress', userAddress);
-      return '/social/buzz/recommended?' + query.toString();
+      // Personalized ranking retired with show.now; degrade to hot and let
+      // the caller flag it (result.degraded) so the UI declares the caliber.
+      query.set('sort', 'hot');
+      return '/api/social/feed?' + query.toString();
     }
     if (tab === 'profile') {
       if (!metaid) return '';
-      query.set('metaid', metaid);
-      return '/social/buzz/newest?' + query.toString();
+      query.set('publisher', metaid);
+      return '/api/social/feed?' + query.toString();
     }
 
-    return '/social/buzz/newest?' + query.toString();
+    return '/api/social/feed?' + query.toString();
   }
 
   async _executeLegacyPathMode(context) {
@@ -153,7 +216,7 @@ export default class FetchBuzzCommand {
       path: path,
     }).toString();
 
-    var rawResponse = await delegate('metaid_man', '/pin/path/list?' + query, { method: 'GET' });
+    var rawResponse = await delegate('metaid_man', '/api/pin/path/list?' + query, { method: 'GET' });
     var normalized = this._normalizePinListResponse(rawResponse);
     var enrichedList = await this._enrichBuzzList(normalized.list, delegate);
 
@@ -216,7 +279,14 @@ export default class FetchBuzzCommand {
       payload = response.data;
     }
 
-    var list = Array.isArray(payload && payload.list) ? payload.list : [];
+    // Aggregation-layer pages carry `items` + nextCursor/hasMore; the retired
+    // show.now shape used `list` + lastId. Both are accepted.
+    var list = [];
+    if (Array.isArray(payload && payload.items)) {
+      list = payload.items;
+    } else if (Array.isArray(payload && payload.list)) {
+      list = payload.list;
+    }
     var total = Number((payload && payload.total) ?? list.length);
     if (!Number.isFinite(total)) total = list.length;
 
@@ -227,11 +297,16 @@ export default class FetchBuzzCommand {
       nextCursor = normalizedLastId;
     }
 
+    var hasMore = !!(nextCursor && list.length > 0);
+    if (payload && payload.hasMore !== undefined) {
+      hasMore = payload.hasMore === true;
+    }
+
     return {
       list: list,
       total: total,
       nextCursor: nextCursor,
-      hasMore: !!(nextCursor && list.length > 0),
+      hasMore: hasMore,
     };
   }
 
@@ -291,6 +366,17 @@ export default class FetchBuzzCommand {
   }
 
   _extractInlineUserInfo(pin, address) {
+    // Aggregation-layer rows carry the author inline (`pin.author`); the
+    // retired show.now rows used `pin.userInfo`.
+    var author = pin && pin.author && typeof pin.author === 'object' ? pin.author : null;
+    if (author) {
+      return {
+        metaId: String(author.globalMetaId || author.metaId || author.metaid || '').trim(),
+        name: String(author.name || author.nickName || author.nickname || '').trim(),
+        avatar: String(author.avatar || author.avatarUrl || '').trim(),
+        address: String(author.address || address || '').trim(),
+      };
+    }
     var userInfo = pin && pin.userInfo && typeof pin.userInfo === 'object' ? pin.userInfo : null;
     if (!userInfo) return null;
 
@@ -307,19 +393,25 @@ export default class FetchBuzzCommand {
     var modifyHistory = Array.isArray(pin && pin.modify_history) ? pin.modify_history : [];
 
     var id = String((pin && (pin.id || pin.pinId || pin.pinid)) || '').trim();
-    var address = String((pin && (pin.address || pin.createAddress || pin.creatorAddress)) || '').trim();
+    var author = pin && pin.author && typeof pin.author === 'object' ? pin.author : null;
+    var address = String((pin && (pin.address || pin.createAddress || pin.creatorAddress || (author && author.address))) || '').trim();
     var timestamp = this._normalizeTimestamp(pin && (pin.timestamp || pin.time || pin.createdAt));
-    var path = String((pin && pin.path) || '').trim();
-    var metaid = String((pin && (pin.metaid || pin.metaId || pin.globalMetaId)) || '').trim();
+    var path = String((pin && (pin.path || pin.protocolPath)) || '').trim();
+    var metaid = String((pin && (pin.metaid || pin.metaId || pin.globalMetaId || (author && (author.metaId || author.metaid || author.globalMetaId)))) || '').trim();
     var chainName = String((pin && (pin.chainName || pin.chain || pin.network)) || '').trim();
 
     var content = this._extractBuzzContent(pin, payload);
     var attachments = this._extractBuzzAttachments(pin, payload);
     var quotePin = this._extractBuzzQuotePin(pin, payload);
 
-    var likeCount = Number((pin && (pin.likeCount || pin.likeNum)) || 0);
-    var commentCount = Number((pin && (pin.commentCount || pin.commentNum)) || 0);
-    var forwardCount = Number((pin && (pin.forwardCount || pin.forwardNum || pin.repostCount)) || 0);
+    // Tri-state engagement counts: a finite number (including a real 0) is a
+    // count; absent/null/"unavailable" means the index offered NO count for
+    // this pin (outside the buzz-only coverage) and becomes the STRING
+    // "unavailable" — machine-checkable unknown. Never null (null gets
+    // silently swallowed by `|| 0` downstream) and never 0 (unknown ≠ 0).
+    var likeCount = this._pickCount(pin, ['likeCount', 'likeNum']);
+    var commentCount = this._pickCount(pin, ['commentCount', 'commentNum']);
+    var forwardCount = this._pickCount(pin, ['forwardCount', 'forwardNum', 'repostCount', 'quoteCount']);
 
     return {
       id: id,
@@ -332,14 +424,37 @@ export default class FetchBuzzCommand {
       attachments: attachments,
       quotePin: quotePin,
       lastId: modifyHistory.length ? modifyHistory[modifyHistory.length - 1] : id,
-      likeCount: Number.isFinite(likeCount) ? likeCount : 0,
-      commentCount: Number.isFinite(commentCount) ? commentCount : 0,
-      forwardCount: Number.isFinite(forwardCount) ? forwardCount : 0,
+      likeCount: likeCount,
+      commentCount: commentCount,
+      forwardCount: forwardCount,
     };
+  }
+
+  /**
+   * Engagement count, or the string 'unavailable' when the source offered
+   * none. A present finite number — including an explicit 0 — is a real
+   * count; an absent/null/'unavailable'/non-numeric field is unreadable and
+   * becomes 'unavailable' (NOT null: null is silently coerced to 0 by
+   * `|| 0` patterns; value === 'unavailable' is the machine-checkable
+   * unknown of the tri-state contract).
+   */
+  _pickCount(pin, keys) {
+    for (var i = 0; i < keys.length; i += 1) {
+      var raw = pin ? pin[keys[i]] : undefined;
+      if (raw === null || raw === undefined || raw === '') continue;
+      if (typeof raw === 'number') return Number.isFinite(raw) ? raw : 'unavailable';
+      var text = String(raw).trim();
+      if (!text || text.toLowerCase() === 'unavailable' || text.toLowerCase() === 'null') continue;
+      var parsed = Number(text);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return 'unavailable';
   }
 
   _pickBuzzPayload(pin) {
     var candidates = [
+      // Aggregation-layer rows expose the payload as a ready object.
+      this._tryParseJsonObject(pin && pin.payload),
       this._tryParseJsonObject(pin && pin.content),
       this._tryParseJsonObject(pin && pin.contentSummary),
       this._tryParseJsonObject(pin && pin.contentBody),

@@ -680,22 +680,16 @@ export function generateRuntimeConfig(input) {
     // The provider (UI side) is registered by idbots-sdk-server and bridges
     // each ask to the Electron host's AskUserQuestion permission modal.
     { id: 'user-questions', name: '@deepseek-ai/dsh-user-questions' },
-    // Timed mode (kernel 0.2.0-rc.2): an unanswered ask stops blocking the
-    // turn at the deadline — the tool returns { pending: true, callId } and
-    // the model continues independent work instead of the host auto-picking
-    // the recommended option (the old 120s backstop silently decided FOR the
-    // user; pending never fabricates an answer). Bots run unattended for
-    // hours (scheduled/group tasks), so a wedged ask meant a dead turn; the
-    // user answers whenever they see it, by an ordinary chat message. The
-    // 300s row default is the per-call ceiling the model can override with
-    // the timeout parameter (-1 = block forever, the old semantics).
-    // Plan-mode reviews are unaffected: dsh-plan-mode calls
-    // ctx.userQuestions.ask() directly with intent 'plan-review', bypassing
-    // this tool definition entirely.
+    // Questions wait for a person. timeout -1 blocks until an answer (or a
+    // turn cancel). The kernel patch on dsh-tool-ask-user ignores a
+    // model-supplied timeout, so the 300s ceiling and any shorter override
+    // no longer close the panel. Plan-mode reviews are unaffected:
+    // dsh-plan-mode calls ctx.userQuestions.ask() directly with intent
+    // 'plan-review', bypassing this tool definition entirely.
     {
       id: 'tool-ask-user',
       name: '@deepseek-ai/dsh-tool-ask-user',
-      config: { mode: 'timed', timeout: 300 },
+      config: { mode: 'timed', timeout: -1 },
     },
     // Durable image storage: read_image and host-bridged image tool results
     // commit bytes here before any image block enters session history.
@@ -916,6 +910,12 @@ export function generateRuntimeConfig(input) {
       { id: 'computer-use', name: '@deepseek-ai/dsh-computer-use' },
       { id: 'computer-use-cua-native', name: '@deepseek-ai/dsh-experimental-computer-use-cua-driver-native' },
       { id: 'idbots-cu-route-guard', name: plugin('idbots-cu-route-guard.mjs') },
+      // AX-first locate layer for the SAME capability — no new toggle, no new
+      // config key: it rides this existing computerUse gate, appears only when
+      // desktop control is already on, and disappears when it is off. A targeted
+      // find resolves the element semantically (two CLI calls for read → act →
+      // verify) and only falls back to a screenshot for surfaces AX cannot see.
+      { id: 'idbots-desktop-ax', name: plugin('idbots-desktop-ax.mjs') },
     ] : []),
     ...(input.extraEntries ?? []),
   ]

@@ -14,6 +14,8 @@ import {
   messengerTxidRowClassName,
 } from '../chat/messengerBubble';
 import { mapWechatBracketCodesForDisplay } from '../chat/wechatEmojiDisplay';
+import { detectTradeActivity } from '../chat/tradeActivity';
+import TradeActivityBadge from '../chat/TradeActivityBadge';
 import type { GroupChatTranscriptMessage } from '../../types/groupTask';
 import { formatGroupTaskMessengerTime } from './groupTaskUtils';
 import { openBotPageInBotBrowser } from './GroupTaskListMeta';
@@ -184,6 +186,10 @@ const GroupTaskMessageItem = React.memo(({
   const txId = resolveTxId(message);
   const txidPreview = txId ? formatTxidPreview(txId) : '';
   const rawContent = message.content ?? '';
+  // S4 chat trade marker: the message announces an NFT trade (nft-card fence
+  // with a trade action) → a trade chip rides the sender badge row (escrow
+  // activity concentrates in group transcripts).
+  const tradeActivity = detectTradeActivity(rawContent);
   const longDeliverable = hasLongDeliverableLine(rawContent);
   const acceptanceSummaryFold = isAcceptanceSummaryMessage(rawContent);
   const [deliverableExpanded, setDeliverableExpanded] = useState(false);
@@ -269,6 +275,9 @@ const GroupTaskMessageItem = React.memo(({
             <RoleBadge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
               {i18nService.t('openTeamCollabOwnBotBadge')}
             </RoleBadge>
+          )}
+          {tradeActivity && (
+            <TradeActivityBadge kind={tradeActivity.kind} variant="chip" />
           )}
         </div>
 

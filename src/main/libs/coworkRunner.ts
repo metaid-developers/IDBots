@@ -9,18 +9,29 @@ import type { Readable } from 'stream';
 import { StringDecoder } from 'string_decoder';
 import { v4 as uuidv4 } from 'uuid';
 import type { PermissionResult } from './coworkPermissionTypes';
+import { stampPermissionDeadline, timeoutDefaultForToolApproval, type PermissionTimeoutDefault } from './permissionTimeoutDefault';
 import { isServerMode } from '../server/serverMode';
 import type { CoworkStore, CoworkMessage, CoworkExecutionMode, CoworkSessionStatus, CoworkPermissionMode } from '../coworkStore';
+import type { CrossSessionDeliveryStore, CrossSessionDeliveryReliabilitySnapshot } from '../crossSessionDeliveryStore';
 import { getCurrentApiConfig, resolveCurrentModelLimits, resolveModelOptions, getPersistedAutoApproveTools, getPersistedCoworkEffortLevel, getPersistedChatExperienceMode, resolveDshProviderRoute, resolveSystemRescueBrain, isFreeQuotaProvider, ModelProviderSelectionError, type DshProviderRouteInfo } from './claudeSettings';
 import { resolveCoworkExecutionMode } from './coworkExecutionMode';
 import { buildGoalPromptSection, type CoworkSessionGoal } from './coworkSessionGoal';
 import { DshTurnHub, dshSessionRootFor, isNativeDeepSeekChatRoute, DSH_RUNTIME_IDLE_TTL_MS, type DshTurnProviderRoute } from './coworkDshTurn';
 import { getDshWebToolsProxyDescriptor } from '../services/dshWebToolsProxy';
+import { noteOwnerAskCancelled } from '../services/pendingOwnerAskBridge';
 import { filterServerModeAgentTools, resolveDshRuntimeIdleTtlMs } from '../server/serverMode';
 import { isDshShutdownError } from './dshShutdownError';
 import { truncateUtf16Units } from './llmSafeText';
 import { DshStreamUiGate } from './dshStreamUiGate';
 import type { DshHostToolImagePayload, DshRuntimeConfigInput, DshUsageSnapshot } from './dshKernel/types';
+import type { IMTrustContext } from '../im/types';
+import {
+  formatImOutboundSendResult,
+  type CoworkImOutboundProvider,
+  type IMOutboundSendRequest,
+} from '../im/imOutbound';
+import { imTrustAllowsMemoryRead, imTrustAllowsMemoryWrite, imTrustAllowsTools } from '../im/qqTrust';
+import { shouldSkipToolApproval } from './toolApprovalPolicy';
 import { foldDshUsageProjection, dshPromptSideTokens, dshContextUsageFromPressure } from './dshUsageProjection';
 import type { DshUsageStatsRow } from './dshUsageProjection';
 import { buildSessionHistoryHandoff, dshApiFormatOf, dshSessionIdOf, isDshSessionHandle, makeDshSessionHandle, resolveKernelChoice } from './coworkKernelRouting';
@@ -42,7 +53,9 @@ import {
   buildCoworkSteerSdkMessage,
   buildCoworkSteerText,
 } from './coworkSteerChannel';
-import { getEnhancedEnv, getSkillHostEnv, getSkillsRoot, ensureCoworkTempDir, generateSessionTitle, generateTurnAckReply } from './coworkUtil';
+import { getEnhancedEnv, getSkillHostEnv, getSkillsRoot, ensureCoworkTempDir, generateSessionTitle, generateTurnAckReply, generateOwnerWaitUpdate } from './coworkUtil';
+import type { OwnerWaitUpdateInput } from './turnAckReply';
+import { buildDeterministicTurnAckOpening, resolveTurnAckActivity } from './turnAckReply';
 import { rewriteWin32McpStdioServer } from './win32StdioCommand';
 import { ensurePythonRuntimeReady } from './pythonRuntime';
 import { resolveBundledSkillsRoot } from './skillRoots';
@@ -53,7 +66,7 @@ import {
   parseFollowUpDeclaration,
   resolveFollowUpAction,
 } from '../cerebellum/sessionFollowUpGate';
-import { CONFIG_HARD_FALLBACK_RESUME_PROMPT, CONTINUE_TURN_REASONING_EFFORT, DEEPSEEK_RESPONSES_REASONING_PLACEHOLDER, EMPTY_TERMINAL_TURN_CONTINUE_PROMPT, isEmptyTerminalSdkResult, isAuthDshTurnError, isBodyLimitDshTurnError, isConfigModelMissingDshTurnError, isMalformedToolCallDshTurnError, isOverflowDshTurnError, isQuotaDshTurnError, isTransientDshTurnError, isWontHealDshTurnError, MALFORMED_TOOL_CALL_TURN_CONTINUE_PROMPT, OVERFLOW_TURN_RESUME_PROMPT, relayQuotaErrorMetadata, extractRelayQuotaExhaustedCode, TRANSIENT_TURN_RESUME_PROMPT, TRUNCATED_TURN_CONTINUE_PROMPT, buildFreeRelayQuotaNotice } from './coworkAssistantReply';
+import { CONFIG_HARD_FALLBACK_RESUME_PROMPT, CONTINUE_TURN_REASONING_EFFORT, DEEPSEEK_RESPONSES_REASONING_PLACEHOLDER, EMPTY_TERMINAL_TURN_CONTINUE_PROMPT, FINALIZATION_TURN_CONTINUE_PROMPT, isEmptyTerminalSdkResult, isAuthDshTurnError, isBodyLimitDshTurnError, isConfigModelMissingDshTurnError, isMalformedToolCallDshTurnError, isOverflowDshTurnError, isQuotaDshTurnError, isTransientDshTurnError, isWontHealDshTurnError, MALFORMED_TOOL_CALL_TURN_CONTINUE_PROMPT, OVERFLOW_TURN_RESUME_PROMPT, relayQuotaErrorMetadata, extractRelayQuotaExhaustedCode, TRANSIENT_TURN_RESUME_PROMPT, TRUNCATED_TURN_CONTINUE_PROMPT, buildFreeRelayQuotaNotice } from './coworkAssistantReply';
 import {
   filterSdkInternalDiagnostics,
   isSdkInternalDiagnostic,
@@ -74,6 +87,7 @@ import {
   formatStandingPagesList,
 } from '../standingPageStore';
 import {
+  buildChannelCapabilitiesBlock,
   buildExperiencePromptBlocksXml as composeExperiencePromptBlocks,
   formatExperienceRecallResults,
   formatExperienceTimelineFallback,
@@ -290,6 +304,10 @@ import {
   buildWalletAgentTools,
   type WalletToolsControl,
 } from './walletAgentTools';
+import {
+  buildMrc721AgentTools,
+  type Mrc721ToolsControl,
+} from './mrc721AgentTools';
 import type { ExternalTransferInfo } from '../services/walletTransferService';
 import {
   buildPrivateChatAgentTools,
@@ -515,6 +533,8 @@ const DELETE_TOOL_NAMES = new Set(['delete', 'remove', 'unlink', 'rmdir']);
 // per task_id, so the subagent panel updates don't flood the message stream.
 const SUBAGENT_PROGRESS_THROTTLE_MS = 1_000;
 const ASSISTANT_OWNER_UPDATE_PER_TURN_CAP = 6;
+export const ASSISTANT_OWNER_WAIT_INITIAL_MS = 3 * 60_000;
+export const ASSISTANT_OWNER_WAIT_MAX_MS = 30 * 60_000;
 // Tools that never mutate the workspace or external state. Used by 'plan'
 // permission mode to enforce read-only behavior; owner_update only writes the
 // session's own UI transcript. Bash is intentionally excluded (it can do
@@ -1480,8 +1500,13 @@ export interface PermissionRequest {
   toolInput: Record<string, unknown>;
   // AskUserQuestion only: per-question countdown the renderer wizard applies
   // to each displayed step. null/undefined = no timeout (plan reviews,
-  // long-term-task defining sessions).
+  // long-term-task defining sessions, and every DSH ask — those wait).
   perQuestionTimeoutMs?: number | null;
+  // Epoch ms when the watchdog presses timeoutDefault. Null/absent = the
+  // card stays until a person answers.
+  expiresAt?: number | null;
+  // Which button the watchdog presses, and which button shows the countdown.
+  timeoutDefault?: PermissionTimeoutDefault | null;
 }
 
 export type LocalBufferedSteer = {
@@ -1526,18 +1551,37 @@ interface ActiveSession {
    */
   dshTurnAckSerial?: number;
   dshTurnAckVisibleTextSeen?: boolean;
-  assistantOwnerUpdateCount: number;
+  dshTurnAckOpeningEmitted?: boolean;
   /**
-   * True when this turn was kicked with skipInitialUserMessage — the prompt is
-   * host-authored (first-run greeting, machine flows) and no user message
-   * entered the transcript. Turn acknowledgments exist to acknowledge a USER
-   * message, so this flag gates the whole ack emission (template phrase and
-   * LLM bubble): on the first-run greeting the ack rules ("acknowledge only,
-   * never greet, never answer") contradict the greeting instruction, and the
-   * free-relay flash model resolved the conflict by leaking its deliberation
-   * in English as the ack bubble — the very first sentence a fresh user saw.
+   * 2026-11-03 rework (second pass, owner decision after session 2c70849f):
+   * the first sentence must be the bot's OWN words about this message — a
+   * rotating canned line is worse than no line. Generic turns get their first
+   * bubble from the LLM ack (emitTurnAckReplyBubble creates it, ~1-3s);
+   * deterministic text is reserved for information-bearing delivery notices
+   * (buildDeterministicTurnAckOpening, emitted same-tick at the early-ack
+   * site). When neither lands (dead brain, stall, model beat it), the turn
+   * shows only the activity indicator — never a canned bubble.
    */
+  /** The opening text shown so far this turn; injected into the turn prompt. */
+  dshTurnAckOpeningText?: string;
+  finalizingTurn?: boolean;
+  finalizationAttempted?: boolean;
+  finalizationFallbackText?: string;
+  assistantOwnerUpdateCount: number;
+  assistantOwnerHeartbeatTimer?: NodeJS.Timeout | null;
+  assistantOwnerLastVisibleAt?: number;
+  assistantOwnerHeartbeatCount?: number;
+  assistantOwnerWaitingForTool?: boolean;
+  /**
+   * The current turn's user message, captured at turn entry — the wait
+   * heartbeat's LLM line (emitOwnerWaitHeartbeat) reads it for language and
+   * topic context. Re-captured per turn at the entry arm site.
+   */
+  assistantOwnerTurnUserText?: string;
+  /** Persistence-only flag; it does not identify whether the owner initiated the turn. */
   skipInitialUserMessage: boolean;
+  /** Explicit owner-initiated turn, including UI starts whose user message is already persisted. */
+  acknowledgeOwner?: boolean;
   delegationRequestEmitted: boolean;
   staleResumeDetected: boolean;
   staleResumeRetryAllowed: boolean;
@@ -1656,6 +1700,15 @@ interface ActiveSession {
    * this marker object, same reason as metawebSurfSession.
    */
   practiceSession?: PracticeSessionState;
+  /**
+   * IM entry-point trust decision (qqTrust.resolveQQMessageGate), frozen on the
+   * message and re-asserted on every turn. `toolScope: 'none'` means the host
+   * tool surface is EMPTY and every built-in tool call is denied by the policy
+   * hook — a group turn physically cannot reach files/shell/wallet/chain.
+   * Immutable for the lifetime of the turn: downstream code may read it, never
+   * widen it.
+   */
+  imTrust?: IMTrustContext;
   /** Permission mode controlling tool gating (default/plan/acceptEdits/bypassPermissions). */
   permissionMode: CoworkPermissionMode;
   /** Runtime effort override from the UI picker; a canonical rung, the 'default' sentinel (model default, skipping brain/global), or null = tiered defaults (brain → global → per-model). */
@@ -2165,6 +2218,7 @@ export interface CoworkRunnerOptions {
   twinTaskAccept?: (sessionId: string, input: TwinStepAcceptanceInput) => TwinStepAcceptanceResult;
   twinTaskCancel?: (sessionId: string, taskId: string) => Promise<unknown> | unknown;
   twinTaskReassign?: (sessionId: string, input: Record<string, unknown>) => Promise<DelegateLocalWorkerResult>;
+  crossSessionDeliveryStore?: CrossSessionDeliveryStore;
   /** When set, returns enabled user-configured MCP servers for local execution. */
   mcpServerProvider?: (coworkSessionId: string) => UserConfiguredMcpServerDefinition[];
   /** Per-bot opt-in for the 0.1.7 experimental browser automation backend
@@ -2222,6 +2276,15 @@ export interface CoworkRunnerOptions {
    * see a tool that can only no-op for them.
    */
   isIMSession?: (sessionId: string) => boolean;
+  /**
+   * Desktop-initiated IM outbound (im_send_message): the live channel
+   * inventory and the send path, implemented by IMGatewayManager. Registered
+   * for `cowork_ui` sessions only — IM sessions already reply inline, and the
+   * tool's whole point is to stop the desktop agent from driving an IM client
+   * window. Absent in tests/minimal embedders: the capability block then says
+   * "当前没有可用通道" instead of leaving the model to guess.
+   */
+  imOutbound?: CoworkImOutboundProvider;
   /**
    * When set, returns the Bot Browser context XML block (active tab, open tabs)
    * to inject into the system prompt. Implementations should return null for
@@ -2385,6 +2448,13 @@ export interface CoworkRunnerOptions {
    */
   walletTools?: WalletToolsControl;
   /**
+   * When set, every cowork session gets the mrc721_* tools (MRC-721 pin-based
+   * MetaID NFTs): collection issue/mint/transfer from the session bot's own
+   * wallet plus index reads (holdings, collections, item/collection detail).
+   * Separate lineage from the MetaContract wallet_nft_* tools.
+   */
+  mrc721Tools?: Mrc721ToolsControl;
+  /**
    * When set, every cowork session gets the describe_image tool backed by
    * recognizeImageViaRelay() (services/visionRelayService.ts). The relay's
    * VLM reads a local image and returns a text description + OCR, so sessions
@@ -2544,6 +2614,31 @@ export interface CoworkRunnerOptions {
     currentUserText: string;
   }) => Promise<Record<'off' | 'low' | 'high' | 'max', number> | null>;
   /**
+   * Optional cerebellum (小脑) gate for the LLM first-sentence bubble
+   * (owner decision 2026-11-03, session 3ecd2a2f): one Noul over the
+   * just-arrived user message decides whether the turn needs an interim
+   * acknowledgment at all. false = the message is conversational enough that
+   * the main reply arrives as the SINGLE bubble (no redundant ack on greetings
+   * and simple questions); true or null (unconfigured, timeout, error) = emit
+   * the ack exactly as before — fail-open, because a redundant bubble beats a
+   * silent wait on a heavy turn. Consulted on every assistant-mode owner-chat
+   * turn regardless of the effort pick. The callback must never throw; main.ts
+   * resolves the cerebellum call context lazily inside the callback so
+   * Settings edits apply on the next turn without a restart.
+   */
+  cerebellumTurnAckGate?: (input: {
+    currentUserText: string;
+  }) => Promise<boolean | null>;
+  /**
+   * The wait heartbeat's text generator (owner decision 2026-11-04: no canned
+   * text in any bubble — the old fixed heartbeat strings are gone).
+   * Called per heartbeat fire with the live wait context; must return a short
+   * bot-voiced line or '' (an empty result emits NO bubble and backs off to
+   * the next window). Default when unset: the coworkUtil one-shot LLM
+   * generator on the Twin system brain. Tests inject a stub.
+   */
+  ownerWaitUpdateGenerator?: (input: OwnerWaitUpdateInput) => Promise<string>;
+  /**
    * Optional cerebellum (小脑) turn-end classifier behind the "Follow-Up
    * Tasks" (待跟进任务) bucket: one Noul over the session title + the turn's
    * final assistant message decides whether a completed turn on an
@@ -2593,6 +2688,7 @@ export interface CoworkRunnerOptions {
    * cap (legacy behavior).
    */
   dshToolCallHardCapMs?: number;
+  assistantOwnerWaitTimeoutMs?: number;
 }
 
 /**
@@ -2718,11 +2814,13 @@ export class CoworkRunner extends EventEmitter {
   private predictionTools?: PredictionAgentControl;
   private metaFileUpload?: MetaFileUploadControl;
   private walletTools?: WalletToolsControl;
+  private mrc721Tools?: Mrc721ToolsControl;
   private visionRelay?: VisionRelayControl;
   private mediaTools?: MediaToolsControl;
   private metabotManage?: MetabotManageControl;
   private skillTools?: SkillToolControl;
   private metabotChainWrite?: CoworkRunnerOptions['metabotChainWrite'];
+  private imOutbound?: CoworkImOutboundProvider;
   private privateChat?: PrivateChatControl;
   private groupChat?: GroupChatControl;
   private omniReader?: OmniReaderControl;
@@ -2733,6 +2831,8 @@ export class CoworkRunner extends EventEmitter {
   private cerebellumIntuitionAvailable?: CoworkRunnerOptions['cerebellumIntuitionAvailable'];
   private cerebellumIntuition?: CoworkRunnerOptions['cerebellumIntuition'];
   private cerebellumEffortSelector?: CoworkRunnerOptions['cerebellumEffortSelector'];
+  private cerebellumTurnAckGate?: CoworkRunnerOptions['cerebellumTurnAckGate'];
+  private ownerWaitUpdateGenerator?: CoworkRunnerOptions['ownerWaitUpdateGenerator'];
   private cerebellumSessionFollowUpGate?: CoworkRunnerOptions['cerebellumSessionFollowUpGate'];
   /**
    * Per-session sticky state for the auto effort rung: the last escalated
@@ -2752,6 +2852,7 @@ export class CoworkRunner extends EventEmitter {
   private readonly dshTurnStallTimeoutMs: number;
   private readonly dshStallExtensionScale: number;
   private readonly dshToolCallHardCapMs: number;
+  private readonly assistantOwnerWaitTimeoutMs: number;
   /**
    * Consecutive stall-watchdog cancellations per cowork session, feeding the
    * strike extension of the adaptive DSH stall deadline. Lives on the runner
@@ -2847,7 +2948,33 @@ export class CoworkRunner extends EventEmitter {
   private crossSessionContinuationQueues: Map<string, QueuedCrossSessionContinuation[]> = new Map();
   private crossSessionContinuationDraining: Set<string> = new Set();
   private crossSessionRunningTurns: Set<string> = new Set();
+  private crossSessionDeliveryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private crossSessionService: CoworkCrossSessionService | null = null;
+  private crossSessionDeliveryStore?: CrossSessionDeliveryStore;
+  /** Per-local-day replay budget counter (see DURABLE_CROSS_SESSION_REPLAY_DAILY_BUDGET). */
+  private crossSessionReplayBudget: { dayKey: string; used: number } = { dayKey: '', used: 0 };
+
+  /**
+   * Continuation turns one durable-outbox drain pass may run before yielding
+   * (pre-release review P1): a deep post-downtime backlog otherwise replays
+   * as one back-to-back LLM burst. The finally block re-schedules the rest.
+   */
+  static readonly DURABLE_CROSS_SESSION_MAX_CONTINUATIONS_PER_DRAIN = 3;
+  /** Pause between drain passes once a backlog exceeds one pass. */
+  static readonly DURABLE_CROSS_SESSION_REPLAY_PACE_MS = 60_000;
+  /**
+   * Hard per-local-day budget on REPLAYED deliveries (pre-release review P1,
+   * user decision 2026-11-03): rows enqueued by a PREVIOUS app session cost
+   * LLM turns the moment the app comes back, and pacing alone still spends
+   * the whole backlog eventually. Past this many replayed continuations in
+   * one local day, the rest of the backlog is deferred to the next local
+   * midnight (no attempt consumed, nothing dropped). Deliveries enqueued by
+   * the CURRENT session never count — live cross-session traffic must not
+   * starve behind a stale backlog.
+   */
+  static readonly DURABLE_CROSS_SESSION_REPLAY_DAILY_BUDGET = 100;
+  /** Process-start marker separating replays (older) from live deliveries. */
+  static DURABLE_CROSS_SESSION_APP_START_MS = Date.now();
 
   constructor(store: CoworkStore, options?: CoworkRunnerOptions) {
     super();
@@ -2906,11 +3033,13 @@ export class CoworkRunner extends EventEmitter {
     this.predictionTools = options?.predictionTools;
     this.metaFileUpload = options?.metaFileUpload;
     this.walletTools = options?.walletTools;
+    this.mrc721Tools = options?.mrc721Tools;
     this.visionRelay = options?.visionRelay;
     this.mediaTools = options?.mediaTools;
     this.metabotManage = options?.metabotManage;
     this.skillTools = options?.skillTools;
     this.metabotChainWrite = options?.metabotChainWrite;
+    this.imOutbound = options?.imOutbound;
     this.privateChat = options?.privateChat;
     this.groupChat = options?.groupChat;
     this.omniReader = options?.omniReader;
@@ -2921,6 +3050,8 @@ export class CoworkRunner extends EventEmitter {
     this.cerebellumIntuitionAvailable = options?.cerebellumIntuitionAvailable;
     this.cerebellumIntuition = options?.cerebellumIntuition;
     this.cerebellumEffortSelector = options?.cerebellumEffortSelector;
+    this.cerebellumTurnAckGate = options?.cerebellumTurnAckGate;
+    this.ownerWaitUpdateGenerator = options?.ownerWaitUpdateGenerator;
     this.cerebellumSessionFollowUpGate = options?.cerebellumSessionFollowUpGate;
     this.localTurnStallTimeoutMs = Math.max(
       0,
@@ -2938,6 +3069,15 @@ export class CoworkRunner extends EventEmitter {
       0,
       options?.dshToolCallHardCapMs ?? DSH_TOOL_CALL_HARD_CAP_MS
     );
+    this.assistantOwnerWaitTimeoutMs = Math.max(
+      0,
+      options?.assistantOwnerWaitTimeoutMs ?? ASSISTANT_OWNER_WAIT_INITIAL_MS
+    );
+    this.crossSessionDeliveryStore = options?.crossSessionDeliveryStore;
+    if (this.crossSessionDeliveryStore) {
+      const recoveryTimer = setTimeout(() => this.recoverCrossSessionDeliveriesAfterRestart(), 0);
+      recoveryTimer.unref?.();
+    }
   }
 
 
@@ -2982,6 +3122,10 @@ export class CoworkRunner extends EventEmitter {
   private removeActiveSession(sessionId: string, activeSession: ActiveSession): void {
     if (this.activeSessions.get(sessionId) !== activeSession) return;
     activeSession.localTurnState = 'closing';
+    if (activeSession.assistantOwnerHeartbeatTimer) {
+      clearTimeout(activeSession.assistantOwnerHeartbeatTimer);
+      activeSession.assistantOwnerHeartbeatTimer = null;
+    }
     activeSession.localInputChannel?.close();
     this.rejectBufferedSteers(
       activeSession,
@@ -3751,6 +3895,39 @@ export class CoworkRunner extends EventEmitter {
   }
 
   /**
+   * Merge two entry-point trust contexts, NARROWING only.
+   *
+   * A session can be continued with a fresh message; the effective grant is
+   * the intersection of what the earlier turn had and what this turn asks for.
+   * No path ever upgrades `toolScope`, memory or attachment policy.
+   */
+  private mergeImTrust(
+    existing: IMTrustContext | undefined,
+    next: IMTrustContext | undefined
+  ): IMTrustContext | undefined {
+    if (!existing) return next ? (Object.freeze({ ...next }) as IMTrustContext) : undefined;
+    if (!next) return existing;
+    const rank: Record<IMTrustContext['level'], number> = {
+      'bot-sender': 4,
+      'stranger-dm': 3,
+      group: 2,
+      'owner-dm': 1,
+    };
+    const level = rank[next.level] >= rank[existing.level] ? next.level : existing.level;
+    return Object.freeze({
+      level,
+      toolScope: existing.toolScope === 'local' && next.toolScope === 'local' ? 'local' : 'none',
+      memoryRead: existing.memoryRead === true && next.memoryRead === true,
+      memoryWrite: existing.memoryWrite === true && next.memoryWrite === true,
+      attachmentPolicy:
+        existing.attachmentPolicy === 'allow' && next.attachmentPolicy === 'allow' ? 'allow' : 'reject',
+      groupId: next.groupId ?? existing.groupId ?? null,
+      decidedAt: next.decidedAt,
+      reason: `merged:${existing.reason}|${next.reason}`,
+    }) as IMTrustContext;
+  }
+
+  /**
    * READ gate for the session memory surface: volatile injection (scoped
    * memory blocks, self-identity + experience) and the read-only recall
    * tools. disableMemoryUpdates blocks reads too (orchestrator blackout);
@@ -3759,6 +3936,8 @@ export class CoworkRunner extends EventEmitter {
   private isSessionMemoryReadEnabled(sessionId: string, activeSession?: ActiveSession | null): boolean {
     const target = activeSession ?? this.activeSessions.get(sessionId);
     if (target?.disableMemoryUpdates) return false;
+    // IM trust gate: a group turn never reads long-term memory / knowledge.
+    if (!imTrustAllowsMemoryRead(target?.imTrust)) return false;
     return this.getSessionMemoryPolicy(sessionId).memoryEnabled;
   }
 
@@ -3771,6 +3950,8 @@ export class CoworkRunner extends EventEmitter {
   private isSessionMemoryWriteEnabled(sessionId: string, activeSession?: ActiveSession | null): boolean {
     const target = activeSession ?? this.activeSessions.get(sessionId);
     if (target?.disableMemoryUpdates || target?.memoryReadOnly) return false;
+    // IM trust gate: a group turn never writes long-term memory / knowledge.
+    if (!imTrustAllowsMemoryWrite(target?.imTrust)) return false;
     return this.getSessionMemoryPolicy(sessionId).memoryEnabled;
   }
 
@@ -6945,6 +7126,11 @@ export class CoworkRunner extends EventEmitter {
     activeSession: ActiveSession,
     baseSystemPrompt: string
   ): { skillsSection: string | null; skillsCatalogMode: 'volatile' | 'inline' | 'legacy' } {
+    // IM trust gate: a no-tools conversation gets no skills rules and no
+    // catalog. 'legacy' is the mode that suppresses the volatile tail too.
+    if (activeSession.imTrust && !imTrustAllowsTools(activeSession.imTrust)) {
+      return { skillsSection: null, skillsCatalogMode: 'legacy' };
+    }
     // Only an actually-EMBEDDED catalog counts as legacy — a prose mention
     // (e.g. the default system prompt's web-search rule referencing the
     // skills catalog) must not suppress the split, or every default session
@@ -7039,6 +7225,11 @@ export class CoworkRunner extends EventEmitter {
     disableRemoteServicesPrompt: boolean
   ): Promise<string> {
     const sections: VolatileSection[] = [];
+    // IM trust gate: a no-tools conversation (QQ group) must not receive the
+    // owner's live browser tabs, an active goal, or any skills catalog — those
+    // are host context, not group context.
+    const sessionTrust = this.activeSessions.get(sessionId)?.imTrust;
+    const trustSuppressed = Boolean(sessionTrust) && !imTrustAllowsTools(sessionTrust);
     // Cerebellum (小脑) per-turn decision bundle (2026-10-16 merge): the
     // memory re-rank, skill shortlist, remote-service shortlist, volatile
     // block gate, and knowledge hot rank used to fire FIVE parallel
@@ -7225,7 +7416,7 @@ export class CoworkRunner extends EventEmitter {
         });
       }
     }
-    if (this.getBrowserContextPrompt) {
+    if (this.getBrowserContextPrompt && !trustSuppressed) {
       // Browser tab state is live; fetch async and degrade silently on failure.
       sections.push({
         key: 'browser',
@@ -7236,7 +7427,7 @@ export class CoworkRunner extends EventEmitter {
     // other volatile blocks; a stable goal text costs nothing after its first
     // injection thanks to content-hash dedup.
     const goal = this.store.getSessionWithoutMessages(sessionId)?.goal ?? null;
-    if (goal && goal.status === 'active') {
+    if (goal && goal.status === 'active' && !trustSuppressed) {
       sections.push({
         key: 'goal',
         text: buildGoalPromptSection(goal),
@@ -7276,7 +7467,7 @@ export class CoworkRunner extends EventEmitter {
     // re-injects the changed block — the cacheable system-prompt head never
     // moves. Sessions in 'inline' (sandbox) or 'legacy' mode already carry
     // their catalog in the system prompt and skip this entirely.
-    if (this.activeSessions.get(sessionId)?.skillsCatalogMode === 'volatile') {
+    if (this.activeSessions.get(sessionId)?.skillsCatalogMode === 'volatile' && !trustSuppressed) {
       sections.push({
         key: 'skills-catalog',
         text: this.coworkSkillPromptsProvider?.(this.store.getMetabotIdForSession(sessionId))?.catalog ?? '',
@@ -7296,6 +7487,38 @@ export class CoworkRunner extends EventEmitter {
           text: buildSkillShortlistBlock(shortlistEntries),
         });
       }
+    }
+
+    // Channel capability manifest (通道能力清单): what THIS channel can actually
+    // send, derived from the channel's own constants (see
+    // buildChannelCapabilitiesBlock). `im:` sessions get their per-channel
+    // manifest; `cowork_ui` gets the machine's live IM inventory so the desktop
+    // agent knows it can send proactively through the channel API (and knows
+    // NOT to drive an IM client window). It is deliberately NOT gated on the
+    // memory switch: knowing that an audio file becomes a voice bubble is a
+    // capability fact, not a memory. Content dedup keeps it to one literal
+    // injection per SDK-session generation; the block stays visible in history
+    // afterwards.
+    const capabilitySourceChannel =
+      this.store.getConversationSourceContextBySession(sessionId)?.sourceChannel ?? null;
+    const channelCapabilitiesText = buildChannelCapabilitiesBlock(
+      capabilitySourceChannel,
+      {
+        // The mode the turn ACTUALLY runs under: IM sessions inherit the
+        // persisted global mode (or a per-channel override), and the handler
+        // passes it as `permissionMode` on start/continue. Reading it back from
+        // the live session keeps the prompt and the enforcement in one source.
+        permissionMode: this.activeSessions.get(sessionId)?.permissionMode ?? 'default',
+        // Desktop sessions get the machine's live IM inventory (which channels
+        // are connected AND can send proactively, with the gateway's own type
+        // and size tables). Any other channel keeps its own manifest.
+        connectedChannels: capabilitySourceChannel === 'cowork_ui'
+          ? (this.imOutbound?.listChannels() ?? [])
+          : undefined,
+      }
+    );
+    if (channelCapabilitiesText) {
+      sections.push({ key: 'channel-capabilities', text: channelCapabilitiesText });
     }
 
     const activeForDedup = this.activeSessions.get(sessionId);
@@ -7693,10 +7916,13 @@ export class CoworkRunner extends EventEmitter {
       toolInput: this.buildSafetyQuestionInput(question, requestedToolName, requestedToolInput),
     };
 
+    stampPermissionDeadline(request, 'deny');
     activeSession.pendingPermission = request;
     this.emit('permissionRequest', sessionId, request);
 
-    const result = await this.waitForPermissionResponse(sessionId, request.requestId, signal);
+    const result = await this.waitForPermissionResponse(sessionId, request.requestId, signal, {
+      timeoutBehavior: 'deny',
+    });
     if (activeSession.abortController.signal.aborted || signal.aborted) {
       return 'aborted';
     }
@@ -8023,6 +8249,10 @@ export class CoworkRunner extends EventEmitter {
   }
 
   private scheduleCrossSessionContinuationDrain(sessionId: string): void {
+    if (this.crossSessionDeliveryStore) {
+      this.scheduleDurableCrossSessionDrain(sessionId);
+      return;
+    }
     if (this.stoppedSessions.has(sessionId)) {
       this.crossSessionContinuationQueues.delete(sessionId);
       return;
@@ -8130,29 +8360,236 @@ export class CoworkRunner extends EventEmitter {
     return true;
   }
 
+  private isDurableCrossSessionTargetStopped(sessionId: string): boolean {
+    return this.stoppedSessions.has(sessionId) || this.store.getSession(sessionId)?.status === 'stopped';
+  }
+
+  private recoverCrossSessionDeliveriesAfterRestart(): void {
+    if (!this.crossSessionDeliveryStore) return;
+    try {
+      for (const targetSessionId of this.crossSessionDeliveryStore.recoverAfterRestart()) {
+        this.scheduleDurableCrossSessionDrain(targetSessionId);
+      }
+    } catch (error) {
+      coworkLog('WARN', 'crossSession:deliveryRecovery', 'Failed to recover durable deliveries', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  getCrossSessionDeliveryReliabilitySnapshot(): CrossSessionDeliveryReliabilitySnapshot | null {
+    return this.crossSessionDeliveryStore?.reliabilitySnapshot() ?? null;
+  }
+
+  private scheduleDurableCrossSessionDrain(targetSessionId: string, minDelayMs?: number): void {
+    const store = this.crossSessionDeliveryStore;
+    if (!store) return;
+    if (this.isDurableCrossSessionTargetStopped(targetSessionId)) {
+      store.cancelTarget(targetSessionId, 'TARGET_SESSION_STOPPED');
+      return;
+    }
+    if (this.isCrossSessionTurnRunning(targetSessionId) || this.crossSessionContinuationDraining.has(targetSessionId)) return;
+    const next = store.nextPending(targetSessionId);
+    if (!next) return;
+
+    const previousTimer = this.crossSessionDeliveryTimers.get(targetSessionId);
+    if (previousTimer) clearTimeout(previousTimer);
+    const delay = Math.max(minDelayMs ?? 0, next.nextAttemptAt - Date.now());
+    const timer = setTimeout(() => {
+      this.crossSessionDeliveryTimers.delete(targetSessionId);
+      void this.drainDurableCrossSessionDeliveries(targetSessionId);
+    }, delay);
+    timer.unref?.();
+    this.crossSessionDeliveryTimers.set(targetSessionId, timer);
+  }
+
+  private async drainDurableCrossSessionDeliveries(targetSessionId: string): Promise<void> {
+    const store = this.crossSessionDeliveryStore;
+    if (!store || this.crossSessionContinuationDraining.has(targetSessionId)) return;
+    this.crossSessionContinuationDraining.add(targetSessionId);
+    let continuationsThisPass = 0;
+    let pacedStop = false;
+    let budgetDeferred = 0;
+    try {
+      while (!this.isCrossSessionTurnRunning(targetSessionId)) {
+        if (this.isDurableCrossSessionTargetStopped(targetSessionId)) {
+          store.cancelTarget(targetSessionId, 'TARGET_SESSION_STOPPED');
+          return;
+        }
+        if (continuationsThisPass >= CoworkRunner.DURABLE_CROSS_SESSION_MAX_CONTINUATIONS_PER_DRAIN) {
+          // Yield the pass: the finally block re-schedules the remaining
+          // backlog with a pacing delay instead of replaying it as one burst.
+          pacedStop = true;
+          return;
+        }
+        const next = store.nextDue(targetSessionId);
+        if (!next) return;
+
+        // Daily replay budget: a row enqueued by a previous app session only
+        // runs while today's replay budget lasts; past the cap it is pushed
+        // to the next local midnight (no attempt consumed, nothing dropped)
+        // so live deliveries enqueued today keep flowing.
+        if (next.createdAt < CoworkRunner.DURABLE_CROSS_SESSION_APP_START_MS) {
+          const nowMs = Date.now();
+          if (this.crossSessionReplayBudgetUsed(nowMs) >= CoworkRunner.DURABLE_CROSS_SESSION_REPLAY_DAILY_BUDGET) {
+            store.deferDeliveryTo(next.id, CoworkRunner.nextLocalMidnightMs(nowMs), 'REPLAY_DAILY_BUDGET_DEFERRED');
+            budgetDeferred += 1;
+            if (budgetDeferred === 1) {
+              coworkLog('WARN', 'crossSession:replayBudget', 'Daily replay budget exhausted; deferring the rest of the pre-start backlog to the next local day', {
+                sessionId: targetSessionId,
+                budget: CoworkRunner.DURABLE_CROSS_SESSION_REPLAY_DAILY_BUDGET,
+              });
+            }
+            continue;
+          }
+        }
+
+        let renderedMessage = next.renderedMessage;
+        if (!next.messageId || !renderedMessage) {
+          const inserted = this.getCrossSessionService().insertUserMessage({
+            sourceSessionId: next.sourceSessionId,
+            targetSessionId: next.targetSessionId,
+            message: next.message,
+            deliveryId: next.id,
+          });
+          if (!inserted.ok) {
+            store.markCancelled(next.id, String(inserted.message));
+            continue;
+          }
+          store.attachMessage(next.id, inserted.message.id, inserted.message.content);
+          renderedMessage = inserted.message.content;
+          if (!inserted.reused) {
+            this.emit('message', targetSessionId, {
+              ...inserted.message,
+              metadata: inserted.message.metadata ?? undefined,
+            } as CoworkMessage);
+          }
+        }
+
+        const running = store.markRunning(next.id);
+        if (running.state !== 'running') continue;
+        continuationsThisPass += 1;
+        if (next.createdAt < CoworkRunner.DURABLE_CROSS_SESSION_APP_START_MS) {
+          this.bumpCrossSessionReplayBudget(Date.now());
+        }
+        try {
+          await this.continueSession(targetSessionId, renderedMessage, { skipUserMessage: true });
+          store.markCompleted(next.id);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (this.isDurableCrossSessionTargetStopped(targetSessionId)) {
+            store.markCancelled(next.id, 'TARGET_SESSION_STOPPED');
+          } else {
+            store.markAttemptFailed(next.id, message);
+          }
+          coworkLog('WARN', 'crossSession:deliveryAttempt', 'Durable continuation failed', {
+            sessionId: targetSessionId,
+            deliveryId: next.id,
+            error: message,
+          });
+        }
+      }
+    } finally {
+      this.crossSessionContinuationDraining.delete(targetSessionId);
+      if (budgetDeferred > 0) store.persist();
+      if (!this.isCrossSessionTurnRunning(targetSessionId) && store.nextPending(targetSessionId)) {
+        this.scheduleDurableCrossSessionDrain(
+          targetSessionId,
+          pacedStop ? CoworkRunner.DURABLE_CROSS_SESSION_REPLAY_PACE_MS : undefined,
+        );
+      }
+    }
+  }
+
+  /** Today's used replay budget, rolling the counter at the local day boundary. */
+  private crossSessionReplayBudgetUsed(nowMs: number): number {
+    const dayKey = CoworkRunner.localDayKey(nowMs);
+    if (this.crossSessionReplayBudget.dayKey !== dayKey) {
+      this.crossSessionReplayBudget = { dayKey, used: 0 };
+    }
+    return this.crossSessionReplayBudget.used;
+  }
+
+  private bumpCrossSessionReplayBudget(nowMs: number): void {
+    this.crossSessionReplayBudgetUsed(nowMs);
+    this.crossSessionReplayBudget.used += 1;
+  }
+
+  private static localDayKey(nowMs: number): string {
+    const date = new Date(nowMs);
+    return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
+  }
+
+  private static nextLocalMidnightMs(nowMs: number): number {
+    const date = new Date(nowMs);
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1, 0, 0, 0, 0).getTime();
+  }
+
+  private insertDurableCrossSessionMessageAndQueue(input: {
+    sourceSessionId: string;
+    targetSessionId: string;
+    message: string;
+    deliveryId?: string;
+  }): CoworkCrossSessionInsertAndQueueResult {
+    const store = this.crossSessionDeliveryStore!;
+    const delivery = store.enqueue(input);
+    const result = this.getCrossSessionService().insertUserMessage({
+      ...input,
+      deliveryId: delivery.id,
+    });
+    if (!result.ok) {
+      if (delivery.state === 'pending') store.markCancelled(delivery.id, String(result.message));
+      return { insert: result, runQueued: false };
+    }
+
+    if (delivery.state === 'pending') {
+      store.attachMessage(delivery.id, result.message.id, result.message.content);
+      if (!result.reused) {
+        this.emit('message', result.targetSessionId, {
+          ...result.message,
+          metadata: result.message.metadata ?? undefined,
+        } as CoworkMessage);
+      }
+    }
+
+    if (delivery.state !== 'pending' && delivery.state !== 'running') {
+      return { insert: result, runQueued: false, reason: `DELIVERY_${delivery.state.toUpperCase()}` };
+    }
+    if (this.isDurableCrossSessionTargetStopped(result.targetSessionId)) {
+      store.markCancelled(delivery.id, 'TARGET_SESSION_STOPPED');
+      return {
+        insert: result,
+        runQueued: false,
+        warning: 'MESSAGE_INSERTED_BUT_RUN_NOT_QUEUED',
+        reason: 'TARGET_SESSION_STOPPED',
+        error: `TARGET_SESSION_STOPPED: target session ${result.targetSessionId} is stopped.`,
+      };
+    }
+
+    this.scheduleDurableCrossSessionDrain(result.targetSessionId);
+    return {
+      insert: result,
+      runQueued: true,
+      queueDepth: store.countPending(result.targetSessionId),
+    };
+  }
+
   /**
    * Host cross-session insert + queue-to-continue, the single shared seam for
    * the MCP idbots_session_insert_user_message tool and internal consumers
-   * such as TwinOrchestrationService's ORCH-NOTIFY terminal-state notification:
-   * insert the message into the target session, emit it to session listeners
-   * (UI), then queue a continuation run on the target session — the drain loop
-   * resumes it via continueSession(skipUserMessage) once the target is not
-   * mid-turn, which is exactly the "queue that session to continue" behavior
-   * of the MCP channel.
-   *
-   * Insert and queue are decoupled: an unqueueable target (stopped session,
-   * queue acceptance failure) still keeps the inserted message and reports
-   * runQueued:false with the reason, mirroring the MCP tool's partial-success
-   * contract. Consumers that only care about the insert result use `.insert`.
+   * such as TwinOrchestrationService's ORCH-NOTIFY terminal-state notification.
    */
   insertCrossSessionMessageAndQueue(input: {
     sourceSessionId: string;
     targetSessionId: string;
     message: string;
+    deliveryId?: string;
   }): CoworkCrossSessionInsertAndQueueResult {
+    if (this.crossSessionDeliveryStore) {
+      return this.insertDurableCrossSessionMessageAndQueue(input);
+    }
     const result = this.getCrossSessionService().insertUserMessage(input);
     if (!result.ok) {
-      // Insert failure (missing session, A2A target, …): nothing to queue.
       return { insert: result, runQueued: false };
     }
 
@@ -8183,6 +8620,7 @@ export class CoworkRunner extends EventEmitter {
     prompt: string,
     options: {
       skipInitialUserMessage?: boolean;
+      acknowledgeOwner?: boolean;
       skillIds?: string[];
       systemPrompt?: string;
       autoApprove?: boolean;
@@ -8214,6 +8652,8 @@ export class CoworkRunner extends EventEmitter {
        * tool surface by risk class + the practice interaction guard on every
        * tool call. Materialized by the scheduler from a dream practice proposal. */
       practiceSession?: PracticeSessionState;
+      /** IM entry-point trust decision (see ActiveSession.imTrust). */
+      imTrust?: IMTrustContext;
       disableRemoteServicesPrompt?: boolean;
       workspaceRoot?: string;
       confirmationMode?: 'modal' | 'text';
@@ -8305,6 +8745,10 @@ export class CoworkRunner extends EventEmitter {
       hasAssistantTextOutput: false,
       hasAssistantThinkingOutput: false,
       assistantOwnerUpdateCount: 0,
+      assistantOwnerHeartbeatTimer: null,
+      assistantOwnerLastVisibleAt: Date.now(),
+      assistantOwnerHeartbeatCount: 0,
+      assistantOwnerWaitingForTool: false,
       delegationRequestEmitted: false,
       staleResumeDetected: false,
       staleResumeRetryAllowed: true,
@@ -8326,12 +8770,14 @@ export class CoworkRunner extends EventEmitter {
       turnSettlementResolved: false,
       disableRemoteServicesPrompt: Boolean(options.disableRemoteServicesPrompt),
       skipInitialUserMessage: Boolean(options.skipInitialUserMessage),
+      acknowledgeOwner: options.acknowledgeOwner === true,
       autoApprove: options.autoApprove ?? false,
       disableMemoryUpdates: Boolean(options.disableMemoryUpdates),
       memoryReadOnly: Boolean(options.memoryReadOnly),
       metawebStudySession: options.metawebStudySession,
       metawebSurfSession: options.metawebSurfSession,
       practiceSession: options.practiceSession,
+      imTrust: this.mergeImTrust(undefined, options.imTrust),
       permissionMode: options.permissionMode ?? session.permissionMode ?? 'default',
       // Caller-provided seed (picker pick / global default) wins; otherwise
       // hydrate the session's persisted effort so restarts keep the choice.
@@ -8406,7 +8852,7 @@ export class CoworkRunner extends EventEmitter {
     }
   }
 
-  async continueSession(sessionId: string, prompt: string, options: { systemPrompt?: string; skillIds?: string[]; skipUserMessage?: boolean; permissionMode?: CoworkPermissionMode } = {}): Promise<void> {
+  async continueSession(sessionId: string, prompt: string, options: { systemPrompt?: string; skillIds?: string[]; skipUserMessage?: boolean; permissionMode?: CoworkPermissionMode; imTrust?: IMTrustContext; acknowledgeOwner?: boolean } = {}): Promise<void> {
     this.stoppedSessions.delete(sessionId);
 
     // Apply mid-session permission mode change if requested.
@@ -8422,15 +8868,28 @@ export class CoworkRunner extends EventEmitter {
     if (!activeSession) {
       // If not active, start a new run. Auto-approve rules default to the
       // persisted app-level list so continuing a session still honors them.
+      // acknowledgeOwner must ride along (2026-11-03 live test, session
+      // fd23405b turn 2): the submission persists the owner's text and calls
+      // with skipUserMessage: true, so without this flag the startSession
+      // fallback silently dropped EVERY follow-up turn's first sentence.
       await this.startSession(sessionId, prompt, {
         skillIds: options.skillIds,
         systemPrompt: options.systemPrompt,
         skipInitialUserMessage: options.skipUserMessage,
+        ...(options.acknowledgeOwner ? { acknowledgeOwner: true } : {}),
         permissionMode: options.permissionMode,
+        ...(options.imTrust ? { imTrust: options.imTrust } : {}),
         autoApproveTools: getPersistedAutoApproveTools(),
       });
       return;
     }
+    // Per-turn owner flag: owner submissions mark it true; machine flows
+    // (scheduler, IM relay, cross-session) leave it false so a live session
+    // object never inherits the previous turn's owner acknowledgment.
+    activeSession.acknowledgeOwner = options.acknowledgeOwner === true;
+    // Trust can only be NARROWED across turns, never widened (a group turn
+    // must not inherit a better grant from an earlier turn of the same id).
+    activeSession.imTrust = this.mergeImTrust(activeSession.imTrust, options.imTrust);
     if (
       activeSession.localTurnState === 'starting'
       || (
@@ -8942,6 +9401,34 @@ export class CoworkRunner extends EventEmitter {
 
   registerTextPermissionRelay(sessionId: string): void {
     this.textPermissionRelaySessions.add(sessionId);
+  }
+
+  /**
+   * Append a HOST-authored record to a session and broadcast it, without going
+   * through a model turn.
+   *
+   * Callers own the content (an IM outbound send writes the bubble into the
+   * destination chat's session). The caller-supplied `id` makes the write
+   * idempotent: the store returns the existing row for a repeated id, so a
+   * retried write cannot duplicate the record. The broadcast only repaints an
+   * already-persisted row — a lost event costs nothing but the immediate update.
+   */
+  appendHostMessage(
+    sessionId: string,
+    message: {
+      id: string;
+      type: CoworkMessage['type'];
+      content: string;
+      metadata?: CoworkMessage['metadata'];
+    }
+  ): CoworkMessage {
+    const stored = this.store.addMessageWithId(sessionId, message.id, {
+      type: message.type,
+      content: message.content,
+      metadata: message.metadata,
+    });
+    this.emit('message', sessionId, stored);
+    return stored;
   }
 
   unregisterTextPermissionRelay(sessionId: string): void {
@@ -10530,6 +11017,18 @@ export class CoworkRunner extends EventEmitter {
       // picked) for the no-verdict fallback below.
       const { rung: effectiveEffortRung, sentinelDefault: effortSentinelDefault } =
         resolveEffectiveEffort(activeSession.effortOverride)
+      activeSession.finalizationAttempted = false;
+      activeSession.finalizationFallbackText = undefined;
+      // Reset the ack state unconditionally so a gated-out turn (professional
+      // mode, host-authored) can never leak the previous turn's opening text
+      // into its prompt injection below. dshTurnAckSerial is deliberately NOT
+      // reset: it stays monotonic per ActiveSession object so an in-flight
+      // refine from turn N can never pass turn N+1's gate (the 2026-10-20
+      // double-ack incident).
+      let assistantOwnerChatForTurn = false;
+      activeSession.dshTurnAckVisibleTextSeen = false;
+      activeSession.dshTurnAckOpeningEmitted = false;
+      activeSession.dshTurnAckOpeningText = undefined;
       // Turn acknowledgment fires EARLY with the best tier known without any
       // round-trip: the explicit pick's tier when set, else generic. This
       // covers cold-start windows (the free relay's first key bootstrap has
@@ -10538,32 +11037,60 @@ export class CoworkRunner extends EventEmitter {
       // newer turnAck message wins the renderer's tail scan by construction).
       try {
         const ackSourceChannel = this.store.getConversationSourceContextBySession(sessionId)?.sourceChannel
-        // Host-initiated turns (skipInitialUserMessage: first-run greeting,
-        // machine flows) carry no user message, so there is nothing to
-        // acknowledge — and on the greeting the ack rules directly contradict
-        // the greeting instruction, which the free-relay flash model resolved
-        // by emitting its English deliberation as the ack bubble (session
-        // a6194072). Both the template phrase ("收到…") and the LLM bubble
-        // would acknowledge a message the user never sent.
-        if (ackSourceChannel === 'cowork_ui' && !activeSession.skipInitialUserMessage) {
+        // First-sentence bubbles are an assistant-mode promise (the owner's
+        // 2026-11-03 requirement); professional mode streams the model's own
+        // text directly and needs no host opening. Pure host-authored turns
+        // carry no user message. Already-persisted cross-session deliveries
+        // are different: the owner still needs an immediate, contextual
+        // opening even though insertion is not repeated.
+        assistantOwnerChatForTurn = getPersistedChatExperienceMode() === 'assistant'
+          && this.isAssistantModeOwnerChatSession(sessionId);
+        const crossSessionDelivery = /<cross_session_message\b|\[ORCH-NOTIFY\]/i.test(prompt);
+        if (ackSourceChannel === 'cowork_ui' && assistantOwnerChatForTurn
+          && (activeSession.acknowledgeOwner || !activeSession.skipInitialUserMessage || crossSessionDelivery)) {
           const earlyAckTier = effectiveEffortRung != null
             ? mapCerebellumEffortRungToTurnAckTier(effectiveEffortRung)
             : 'generic'
-          this.emitTurnAck(sessionId, earlyAckTier)
+          this.emitTurnAck(sessionId, earlyAckTier, prompt)
           coworkLog('INFO', 'turn:ack', 'turn acknowledgment emitted', { sessionId, tier: earlyAckTier })
-          // LLM ack bubble: the phrase above is a template in the activity
-          // indicator; this fires a one-shot cognitive call (title-class
-          // latency) in parallel with everything below, so a real
-          // LLM-written bubble can land while the turn is still pre-flight
-          // or mid-reasoning. Fully fire-and-forget — the gates inside drop
-          // it when the turn beats it to visible text. The turn's
-          // ActiveSession object and the serial AT KICK TIME are both
-          // captured: the resolve-time gate requires object identity, which
-          // serial equality alone cannot provide (a fresh object per turn
-          // restarts the serial at 1).
+          // A deterministic bubble is emitted SYNCHRONOUSLY here — same tick
+          // as the phrase above — but ONLY when it carries real information
+          // (worker delivery notices). Generic turns get NO canned line
+          // (owner decision 2026-11-03, session 2c70849f: "好的，这就处理。"
+          // three times in eight minutes reads as a bot playing a recording);
+          // their first sentence is the LLM-written one below. The serial AT
+          // KICK TIME and the ActiveSession object are captured for the
+          // emission gate (object identity, which serial equality alone
+          // cannot provide — a fresh object per turn restarts the serial at 1).
           const turnAckSerial = (activeSession.dshTurnAckSerial ?? 0) + 1;
           activeSession.dshTurnAckSerial = turnAckSerial;
-          activeSession.dshTurnAckVisibleTextSeen = false;
+          const deterministicOpening = buildDeterministicTurnAckOpening(prompt);
+          if (deterministicOpening) {
+            this.emitTurnAckOpeningBubble(
+              sessionId,
+              prompt,
+              activeSession,
+              turnAckSerial,
+              deterministicOpening,
+            );
+          }
+          activeSession.assistantOwnerTurnUserText = prompt;
+          this.armAssistantOwnerWaitTimer(sessionId, activeSession);
+          if (!activeSession.assistantOwnerHeartbeatTimer) {
+            // The heartbeat is the last-resort "still working" bubble (session
+            // 32a29372: a 6-minute tool loop with no text and no heartbeat —
+            // if it never even arms, say so in the log).
+            coworkLog('DEBUG', 'turn:ack', 'owner wait heartbeat not armed for this turn', { sessionId });
+          }
+          // The LLM first sentence (fire-and-forget): the bot's own words
+          // about THIS message, emitted as the first bubble when the one-shot
+          // call lands — but ONLY when the cerebellum ack gate inside says the
+          // turn needs an interim acknowledgment (tool-bound / multi-step /
+          // long-form work); conversational messages skip it and the main
+          // reply arrives as the single bubble (owner decision 2026-11-03,
+          // session 3ecd2a2f). Dropped when the model's own visible text beat
+          // it, a newer turn started, or the output was unusable — no bubble
+          // beats a canned or wrong one.
           void this.emitTurnAckReplyBubble(sessionId, prompt, activeSession, turnAckSerial);
         }
       } catch { /* best-effort: the ack must never break a turn */ }
@@ -10633,7 +11160,20 @@ export class CoworkRunner extends EventEmitter {
       // env sync, the host-tool build, and the agent pre-warm above; collect
       // it now (the first heavy await on the turn path).
       const volatileBlocks = await volatileContextPromise
-      const volatileHead = [localTimePrompt, volatileBlocks]
+      // Assistant-mode anti-echo: tell the model verbatim what first response
+      // the owner already received, so it continues with substance instead of
+      // repeating the acknowledgment (owner requirement 2026-11-03). The text
+      // is read at assembly time, so a refine that already landed rides along.
+      const instantAckNotice = assistantOwnerChatForTurn && activeSession.dshTurnAckOpeningText
+        ? [
+          '<instant_ack>',
+          'An instant first response has ALREADY been sent to the user for this message:',
+          `"${activeSession.dshTurnAckOpeningText}"`,
+          'Treat it as already said. Do not repeat, rephrase, or open your reply with another acknowledgment — continue directly with substance.',
+          '</instant_ack>',
+        ].join('\n')
+        : ''
+      const volatileHead = [localTimePrompt, volatileBlocks, instantAckNotice]
         .filter((section) => section?.trim())
         .join('\n\n')
       // Kernel-owned session titles derive from the FIRST human message in
@@ -10791,7 +11331,7 @@ export class CoworkRunner extends EventEmitter {
             ? mapCerebellumEffortRungToTurnAckTier(autoEffortRung)
             : null;
           if (turnAckTier) {
-            this.emitTurnAck(sessionId, turnAckTier);
+            this.emitTurnAck(sessionId, turnAckTier, prompt);
             coworkLog('INFO', 'turn:ack', 'turn acknowledgment tier upgraded', { sessionId, tier: turnAckTier });
           }
         }
@@ -10915,7 +11455,7 @@ export class CoworkRunner extends EventEmitter {
         turnPrompt: string,
         images?: DshHostToolImagePayload[],
         routeOverride?: DshProviderRouteInfo,
-        turnOpts?: { reasoningEffort?: LlmEffortLevel },
+        turnOpts?: { reasoningEffort?: LlmEffortLevel; finalizing?: boolean },
       ) => {
         // Route this attempt runs on: the session's primary route, or — once
         // the primary burned its transient-resume budget on a provider outage
@@ -10992,7 +11532,7 @@ export class CoworkRunner extends EventEmitter {
         dshSessionId,
         prompt: turnPrompt,
         promptImages: images,
-        hostTools,
+        hostTools: turnOpts?.finalizing ? [] : hostTools,
         workspace: { cwd },
         sections: [
           // interpolate:false — see the prewarm site above: the base prompt
@@ -11021,6 +11561,7 @@ export class CoworkRunner extends EventEmitter {
             // the in-flight ledger that extends the watchdog while a tool
             // executes (long bash renders emit nothing until they finish).
             trackDshToolActivity(message);
+            activeSession.assistantOwnerWaitingForTool = dshInFlightToolCallCount() > 0;
             armDshStallWatchdog();
             // Compaction-failure marker for the overflow gate below: a bodyless
             // `400 (no body)` turn death only classifies as context overflow
@@ -11028,23 +11569,17 @@ export class CoworkRunner extends EventEmitter {
             // compaction-deadlock incident).
             const messageMeta = (message as { metadata?: Record<string, unknown> } | null)?.metadata;
             if (messageMeta?.compaction === true && messageMeta?.isError === true) compactionFailedThisTurn = true;
-            // LLM ack gate: a visible text bubble opening (the empty
-            // isStreaming open counts — streaming starts before content
-            // lands) or real visible text (narration included) closes the
-            // turn's acknowledgment window — no ack may land after the
-            // answer it acknowledges.
+            // Only settled visible text closes the opening window. A speculative
+            // streaming placeholder may still fold into hidden process text.
             if (
               (message as { type?: string } | null)?.type === 'assistant'
               && messageMeta?.isThinking !== true
-              && (
-                messageMeta?.isStreaming === true
-                || (
-                  typeof (message as { content?: string }).content === 'string'
-                  && ((message as { content?: string }).content ?? '').trim().length > 0
-                )
-              )
+              && messageMeta?.isStreaming !== true
+              && typeof (message as { content?: string }).content === 'string'
+              && ((message as { content?: string }).content ?? '').trim().length > 0
             ) {
               activeSession.dshTurnAckVisibleTextSeen = true
+              this.noteAssistantOwnerVisible(sessionId, activeSession)
             }
             const stored = this.store.addMessage(sessionId, message as Omit<CoworkMessage, 'id' | 'timestamp'>);
             this.emit('message', sessionId, stored);
@@ -11063,6 +11598,10 @@ export class CoworkRunner extends EventEmitter {
           },
           onMessageFinalize: (messageId, content, metadata) => {
             armDshStallWatchdog();
+            if (metadata?.isThinking !== true && content.trim().length > 0) {
+              activeSession.dshTurnAckVisibleTextSeen = true;
+              this.noteAssistantOwnerVisible(sessionId, activeSession);
+            }
             this.dshStreamUi.onFinalize(sessionId, messageId, content, metadata);
           },
           onUsage: (usage) => {
@@ -11104,10 +11643,16 @@ export class CoworkRunner extends EventEmitter {
           onApprovalRequest: (ask) => {
             const tool = String(ask.toolName ?? '').toLowerCase();
             const mode = activeSession.permissionMode;
-            const skipAsk = mode === 'acceptEdits'
-              || mode === 'bypassPermissions'
-              || activeSession.autoApprove === true
-              || activeSession.autoApproveTools?.has(tool);
+            // The gate that decides whether a permission request EXISTS. With
+            // bypassPermissions (完全信任) this returns true here, so no
+            // request is emitted and the chat turn is zero-popup — the same
+            // meaning the desktop gives that mode.
+            const skipAsk = shouldSkipToolApproval({
+              mode,
+              toolName: ask.toolName,
+              autoApprove: activeSession.autoApprove,
+              autoApproveTools: activeSession.autoApproveTools,
+            });
             if (skipAsk) {
               coworkLog('INFO', 'runDshSessionLocal', 'Auto-allowed native DSH approval', {
                 sessionId,
@@ -11123,16 +11668,18 @@ export class CoworkRunner extends EventEmitter {
               toolName: ask.toolName,
               toolInput: { reason: ask.reason ?? '' },
             };
+            const timeoutDefault = timeoutDefaultForToolApproval(ask.reason);
+            stampPermissionDeadline(request, timeoutDefault);
             activeSession.pendingPermission = request;
             this.emit('permissionRequest', sessionId, request);
-            // Route through the shared 60s permission timeout (abort-wired):
-            // an approval nobody answers — a background worker session or one
-            // switched away in the UI — auto-rejects so the blocked tool call
-            // returns instead of wedging the turn in "running" forever. The
-            // bare pendingPermissions.set this replaces had no timeout at
-            // all, and the stall watchdog extends through pendingPermission,
-            // making the hang permanent.
-            void this.waitForPermissionResponse(sessionId, ask.id, activeSession.abortController.signal)
+            // Shared 60s watchdog (abort-wired). Every unanswered tool
+            // approval auto-denies (fail-closed, 2026-11-03 review — the
+            // ordinary-approvals auto-allow default was reverted). Either way
+            // the blocked tool call returns instead of wedging the turn. The
+            // countdown on the default button reads request.expiresAt.
+            void this.waitForPermissionResponse(sessionId, ask.id, activeSession.abortController.signal, {
+              timeoutBehavior: timeoutDefault,
+            })
               .then((result) => {
                 if (activeSession.pendingPermission?.requestId === ask.id) {
                   activeSession.pendingPermission = null;
@@ -11202,18 +11749,14 @@ export class CoworkRunner extends EventEmitter {
                 return;
               }
             }
-            // Timeout ownership (kernel 0.2.0-rc.2 timed ask mode): the
-            // kernel's own deadline unwinds unanswered asks — the tool returns
-            // { pending: true, callId }, the model continues independent work,
-            // and the bridge's abort closes this modal through onAskCancelled.
-            // The host no longer auto-picks the recommended option (the
-            // retired 120s backstop silently decided FOR the user; pending
-            // never fabricates an answer) and no renderer per-question timer
-            // arms (perQuestionTimeoutMs stays null). Late answers arrive as
-            // ordinary chat messages. Plan-mode exit reviews are unaffected:
-            // dsh-plan-mode asks through ctx.userQuestions.ask() directly with
-            // intent 'plan-review', bypassing the timed tool schema, so they
-            // still block until the user decides or the turn cancels.
+            // Questions wait for a person. The tool is mounted with timeout -1
+            // and the kernel patch ignores a model-supplied timeout, so an
+            // unanswered ask does not become { pending: true } and does not
+            // close this card. perQuestionTimeoutMs stays null: the wizard
+            // does not auto-pick a recommended option. Plan-mode exit reviews
+            // are unaffected: dsh-plan-mode asks through ctx.userQuestions.ask()
+            // directly with intent 'plan-review'. A turn cancel still closes
+            // the card through onAskCancelled.
             const request: PermissionRequest = {
               requestId: ask.id,
               toolName: 'AskUserQuestion',
@@ -11266,6 +11809,14 @@ export class CoworkRunner extends EventEmitter {
             }
             if (activeSession.pendingPermission?.requestId === askId) {
               activeSession.pendingPermission = null;
+            }
+            // Unattended bridge turns: an owner question that ends without an
+            // answer is reported honestly (transcript notice + desktop push)
+            // instead of silently looking like a refusal. No-op for
+            // cowork_ui/IM asks and for already-answered asks; a deliberate
+            // turn abort skips it (the owner stopped on purpose).
+            if (pending && !activeSession.abortController.signal.aborted) {
+              noteOwnerAskCancelled(this, sessionId, askId, this.store);
             }
           },
           // Live subagent rows: the runtime's lineage notifications map onto
@@ -11335,6 +11886,28 @@ export class CoworkRunner extends EventEmitter {
           undefined,
           { reasoningEffort: CONTINUE_TURN_REASONING_EFFORT },
         );
+      }
+
+      if (
+        outcome.finalizationRequired
+        && assistantMode
+        && !activeSession.finalizationAttempted
+        && !activeSession.abortController.signal.aborted
+      ) {
+        activeSession.finalizationAttempted = true;
+        activeSession.finalizationFallbackText = outcome.fallbackFinalText;
+        activeSession.finalizingTurn = true;
+        coworkLog('INFO', 'runDshSessionLocal', 'Owner-facing finalization required; continuing once without tools', { sessionId });
+        try {
+          outcome = await runGuardedTurn(
+            FINALIZATION_TURN_CONTINUE_PROMPT,
+            undefined,
+            undefined,
+            { reasoningEffort: CONTINUE_TURN_REASONING_EFFORT, finalizing: true },
+          );
+        } finally {
+          activeSession.finalizingTurn = false;
+        }
       }
 
       // Output-ceiling truncation (turn/end reason `max-tokens`): the turn
@@ -11781,6 +12354,21 @@ export class CoworkRunner extends EventEmitter {
         return;
       }
 
+      if (outcome.finalizationRequired && activeSession.finalizationAttempted) {
+        const fallbackText = activeSession.finalizationFallbackText?.trim();
+        if (fallbackText) {
+          const fallbackMessage = this.store.addMessage(sessionId, {
+            type: 'assistant',
+            content: fallbackText,
+            metadata: { finalizationFallback: true, isFinal: true },
+          });
+          this.emit('message', sessionId, fallbackMessage);
+          outcome = { ...outcome, finalizationRequired: false };
+        } else {
+          outcome = { ...outcome, emptyTerminal: true };
+        }
+      }
+
       // Empty terminal turn fallback: reached only when the auto-continue
       // above already ran and the resumed turn was again empty. Do NOT falsely
       // report `completed` — surface the same diagnostic the Claude path uses
@@ -11911,8 +12499,13 @@ export class CoworkRunner extends EventEmitter {
       parameters: Record<string, unknown>,
       execute: (args: any) => Promise<unknown>
     ) => ({ name, description, parameters: normalizeToolSchema(parameters), execute })
-    const tools = this.buildSessionInlineTools(sessionId, passthrough, undefined)
     const activeSession = this.activeSessions.get(sessionId)
+    // IM trust: toolScope 'none' => EMPTY tool surface. Not a deny rule the
+    // model could argue with — the tools are not registered at all.
+    if (activeSession?.imTrust && !imTrustAllowsTools(activeSession.imTrust)) {
+      return []
+    }
+    const tools = this.buildSessionInlineTools(sessionId, passthrough, undefined)
     if (!activeSession || !this.isAssistantModeOwnerChatSession(sessionId)) {
       return tools
     }
@@ -11945,7 +12538,21 @@ export class CoworkRunner extends EventEmitter {
   ): Promise<{ decision: 'allow' | 'deny' | 'ask'; reason?: string }> {
     const activeSession = this.activeSessions.get(sessionId)
     const normalized = String(toolName ?? '').toLowerCase()
+    if (activeSession?.finalizingTurn) {
+      return { decision: 'deny', reason: 'The final response stage does not allow tool calls.' }
+    }
     try {
+      // IM trust gate, FIRST and unconditional: when the entry point decided
+      // this conversation has no tool surface (group chat), every tool call —
+      // host or built-in (Read/Write/Bash/WebFetch/...) — is denied. Absence
+      // above is the primary control; this is the backstop for built-ins that
+      // the runtime always mounts.
+      if (activeSession?.imTrust && !imTrustAllowsTools(activeSession.imTrust)) {
+        return {
+          decision: 'deny',
+          reason: 'IM trust gate: this conversation has no tool surface (group chat is Q&A only).',
+        }
+      }
       if (this.isBlockedBuiltinWebTool(normalized)) {
         return { decision: 'deny', reason: 'Tool blocked by app policy: WebSearch/WebFetch are disabled in this environment.' }
       }
@@ -12176,6 +12783,93 @@ export class CoworkRunner extends EventEmitter {
     return images
   }
 
+  private noteAssistantOwnerVisible(sessionId: string, activeSession: ActiveSession, waiting = false): void {
+    if (this.activeSessions.get(sessionId) !== activeSession || !this.isAssistantModeOwnerChatSession(sessionId)) return
+    activeSession.assistantOwnerLastVisibleAt = Date.now()
+    activeSession.assistantOwnerHeartbeatCount = waiting
+      ? (activeSession.assistantOwnerHeartbeatCount ?? 0) + 1
+      : 0
+    this.armAssistantOwnerWaitTimer(sessionId, activeSession)
+  }
+
+  private armAssistantOwnerWaitTimer(sessionId: string, activeSession: ActiveSession): void {
+    if (activeSession.assistantOwnerHeartbeatTimer) {
+      clearTimeout(activeSession.assistantOwnerHeartbeatTimer)
+      activeSession.assistantOwnerHeartbeatTimer = null
+    }
+    if (
+      this.assistantOwnerWaitTimeoutMs <= 0
+      || this.activeSessions.get(sessionId) !== activeSession
+      || !this.isAssistantModeOwnerChatSession(sessionId)
+      || (activeSession.assistantOwnerUpdateCount ?? 0) >= ASSISTANT_OWNER_UPDATE_PER_TURN_CAP
+    ) return
+    const heartbeatCount = activeSession.assistantOwnerHeartbeatCount ?? 0
+    const waitWindowMs = Math.min(
+      ASSISTANT_OWNER_WAIT_MAX_MS,
+      this.assistantOwnerWaitTimeoutMs * (2 ** heartbeatCount),
+    )
+    const lastVisibleAt = activeSession.assistantOwnerLastVisibleAt ?? Date.now()
+    activeSession.assistantOwnerLastVisibleAt = lastVisibleAt
+    const delayMs = Math.max(1, waitWindowMs - (Date.now() - lastVisibleAt))
+    activeSession.assistantOwnerHeartbeatTimer = setTimeout(() => {
+      activeSession.assistantOwnerHeartbeatTimer = null
+      // 2026-11-03 session 32a29372: a turn looped tools for ~6 minutes with
+      // no user-facing text and the wait heartbeat never appeared in the
+      // transcript — the guards below used to skip silently. Log every
+      // due-but-suppressed heartbeat so the next occurrence self-explains.
+      if (this.activeSessions.get(sessionId) !== activeSession || activeSession.abortController.signal.aborted) {
+        coworkLog('DEBUG', 'turn:ack', 'owner wait heartbeat dropped: turn no longer active', { sessionId })
+        return
+      }
+      if (activeSession.pendingPermission) {
+        coworkLog('DEBUG', 'turn:ack', 'owner wait heartbeat deferred: permission prompt pending', { sessionId })
+        activeSession.assistantOwnerLastVisibleAt = Date.now()
+        this.armAssistantOwnerWaitTimer(sessionId, activeSession)
+        return
+      }
+      void this.emitOwnerWaitHeartbeat(sessionId, activeSession)
+    }, delayMs)
+    activeSession.assistantOwnerHeartbeatTimer.unref?.()
+  }
+
+  /**
+   * The wait heartbeat's bubble text is written by the LLM per fire — the
+   * bot's own words about the live wait context (owner decision 2026-11-04:
+   * NO canned text in any bubble; the old fixed heartbeat strings are
+   * deleted). An empty/failed generation emits NOTHING (no bubble beats a
+   * canned one) and the timer backs off to the next window so a later stretch
+   * can try again.
+   */
+  private async emitOwnerWaitHeartbeat(sessionId: string, activeSession: ActiveSession): Promise<void> {
+    try {
+      const waitedMs = Date.now() - (activeSession.assistantOwnerLastVisibleAt ?? Date.now())
+      const generator = this.ownerWaitUpdateGenerator ?? generateOwnerWaitUpdate
+      const text = await generator({
+        userText: activeSession.assistantOwnerTurnUserText ?? '',
+        sessionTitle: this.store.getSession(sessionId)?.title ?? null,
+        waitedMs,
+        waitingForTool: activeSession.assistantOwnerWaitingForTool === true,
+        priorCount: activeSession.assistantOwnerHeartbeatCount ?? 0,
+      }).catch(() => '')
+      if (!text) {
+        coworkLog('DEBUG', 'turn:ack', 'owner wait heartbeat suppressed', { sessionId, reason: 'generator returned empty' })
+        activeSession.assistantOwnerHeartbeatCount = (activeSession.assistantOwnerHeartbeatCount ?? 0) + 1
+        activeSession.assistantOwnerLastVisibleAt = Date.now()
+        this.armAssistantOwnerWaitTimer(sessionId, activeSession)
+        return
+      }
+      const outcome = this.emitAssistantOwnerUpdate(sessionId, { message: text, kind: 'waiting' }, activeSession)
+      if (!outcome.shown) {
+        coworkLog('DEBUG', 'turn:ack', 'owner wait heartbeat suppressed', { sessionId, reason: outcome.reason ?? 'unknown' })
+      }
+    } catch (error) {
+      coworkLog('WARN', 'turn:ack', 'owner wait heartbeat failed; backing off to the next window', {
+        sessionId,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+
   private emitAssistantOwnerUpdate(
     sessionId: string,
     args: { message?: unknown; kind?: unknown },
@@ -12189,8 +12883,19 @@ export class CoworkRunner extends EventEmitter {
       return { shown: false, reason: 'message must contain 1-280 characters' }
     }
     const kind = args.kind ?? 'milestone'
-    if (kind !== 'opening' && kind !== 'milestone' && kind !== 'problem') {
-      return { shown: false, reason: 'kind must be opening, milestone or problem' }
+    if (kind !== 'opening' && kind !== 'milestone' && kind !== 'problem' && kind !== 'waiting') {
+      return { shown: false, reason: 'kind must be opening, milestone, problem or waiting' }
+    }
+    // Suppress a second OPENING only when an opening bubble actually went out:
+    // the host ack (emitTurnAckOpeningBubble/emitTurnAckReplyBubble) or an
+    // earlier owner_update 'opening' — both set dshTurnAckOpeningEmitted. This
+    // used to read dshTurnAckVisibleTextSeen, which ANY visible assistant event
+    // arms; in session 32a29372 a thinking bubble armed it with no real opening
+    // delivered, the model's one opening narration was bounced, and it then
+    // looped tools for minutes with no user-facing progress text. Thinking is
+    // process, not an opening.
+    if (kind === 'opening' && activeSession.dshTurnAckOpeningEmitted) {
+      return { shown: false, reason: 'opening already delivered; report only new milestones or problems' }
     }
     const count = activeSession.assistantOwnerUpdateCount ?? 0
     if (count >= ASSISTANT_OWNER_UPDATE_PER_TURN_CAP) {
@@ -12205,7 +12910,9 @@ export class CoworkRunner extends EventEmitter {
       metadata: { narration: true, ownerUpdateKind: kind },
     })
     activeSession.assistantOwnerUpdateCount = count + 1
+    if (kind === 'opening') activeSession.dshTurnAckOpeningEmitted = true
     activeSession.dshTurnAckVisibleTextSeen = true
+    this.noteAssistantOwnerVisible(sessionId, activeSession, kind === 'waiting')
     this.emit('message', sessionId, stored)
     return {
       shown: true,
@@ -12251,6 +12958,10 @@ export class CoworkRunner extends EventEmitter {
         toolName: name,
         toolInput: { reason: policy.reason ?? '' },
       }
+      // This branch only runs for host-policy `ask`: delete confirmation and
+      // external-agent CLI. Both stay deny-by-default. Ordinary tool
+      // approvals go through onApprovalRequest and default to allow.
+      stampPermissionDeadline(request, 'deny')
       if (activeSession) activeSession.pendingPermission = request
       // waitForPermissionResponse registers requestId synchronously in its
       // executor — construct it before emitting so an instant reply cannot
@@ -12258,7 +12969,8 @@ export class CoworkRunner extends EventEmitter {
       const resultPromise = this.waitForPermissionResponse(
         coworkSessionId,
         request.requestId,
-        activeSession?.abortController.signal
+        activeSession?.abortController.signal,
+        { timeoutBehavior: 'deny' }
       )
       this.emit('permissionRequest', coworkSessionId, request)
       const result = await resultPromise
@@ -13178,6 +13890,71 @@ export class CoworkRunner extends EventEmitter {
           resolveMetabotId: (sid) => this.getMemoryBackend().resolveMetabotIdForMemory(sid) ?? undefined,
           confirmExternalTransfer: (info) => this.confirmExternalTransfer(sessionId, info),
         })
+      );
+    }
+    // MRC-721 tools (pin-based MetaID NFTs): issue/mint/transfer from the
+    // session bot's OWN wallet plus index reads. Separate lineage from the
+    // MetaContract wallet_nft_* tools above — the mrc721_ prefix is the
+    // protocol naming boundary.
+    if (this.mrc721Tools) {
+      memoryTools.push(
+        ...buildMrc721AgentTools({
+          tool,
+          control: this.mrc721Tools,
+          sessionId,
+          resolveMetabotId: (sid) => this.getMemoryBackend().resolveMetabotIdForMemory(sid) ?? undefined,
+        })
+      );
+    }
+    // Desktop-initiated IM outbound (im_send_message): the ONLY supported way
+    // to "send a WeChat message" from a desktop session. Deliberately
+    // cowork_ui-only — an IM session answers through its own reply closure,
+    // and automation/A2A sessions have no owner chat to address.
+    if (
+      this.imOutbound
+      && this.store.getConversationSourceContextBySession?.(sessionId)?.sourceChannel === 'cowork_ui'
+    ) {
+      const imOutbound = this.imOutbound;
+      memoryTools.push(
+        tool(
+          'im_send_message',
+          [
+            'Send a message (optionally with local file attachments) proactively through a connected IM channel on this machine — 微信 (weixin), 飞书 (feishu), QQ.',
+            'Use this whenever the owner asks you to "给微信/飞书/QQ 发…" from the desktop app.',
+            'It talks to the channel API directly: do NOT simulate the WeChat/QQ/Feishu desktop client, do NOT check whether the client is running, and do NOT try to click its window.',
+            '',
+            'Args:',
+            '- channel: weixin | feishu | qq | dingtalk | telegram | discord. Any CONNECTED channel that implements conversation sending delivers; the destination is the most recent private conversation on that channel. Only owner-bound channels (weixin, QQ) resolve that chat from a QR-verified owner identity; everywhere else it is simply whoever last DM’d the bot, and the tool result says 未经身份校验. A channel with no private conversation yet returns "send the bot a message first", and a disconnected channel returns 未连接 — never a silent success.',
+            '- target: optional; leave EMPTY to send to the resolved destination — the owner’s own private chat on weixin/QQ, or the most recent direct chat (identity not verified) on the other channels. Any other conversation id is refused.',
+            '- text: message body; may be empty only when attachments are provided.',
+            '- attachments: absolute local file paths, delivered through the native media path of the channel (image/video/audio/file). Put paths ONLY here — do not also paste them into text, or channels that auto-detect media paths would send the file twice.',
+            '',
+            'Returns what was actually sent, or an explicit error when the channel is not connected / cannot send proactively. Never claim delivery without this tool succeeding.',
+          ].join('\n'),
+          {
+            channel: z.string().min(1).describe('weixin | feishu | qq'),
+            target: z.string().optional().describe('Optional; omit for the resolved destination (owner private chat on weixin/QQ; most recent direct chat, identity unverified, elsewhere). Any other id is refused.'),
+            text: z.string().optional().describe('Message body. Required unless attachments are provided.'),
+            attachments: z.array(z.string()).optional().describe('Absolute local file paths.'),
+          },
+          async (args: IMOutboundSendRequest) => {
+            const result = await imOutbound.send({
+              channel: args.channel,
+              target: args.target ?? null,
+              text: args.text ?? null,
+              attachments: args.attachments ?? null,
+            });
+            // The visible record of this send belongs to the DESTINATION chat,
+            // not to this desktop session: IMGatewayManager.sendImOutbound
+            // writes it into that IM conversation's own session. Here only the
+            // tool result is reported (and nothing is inserted into this
+            // session, so one send never renders twice in two places).
+            return {
+              content: [{ type: 'text' as const, text: formatImOutboundSendResult(result) }],
+              isError: !result.ok,
+            } as any;
+          }
+        )
       );
     }
     if (this.privateChat) {
@@ -15964,12 +16741,17 @@ export class CoworkRunner extends EventEmitter {
     sessionId: string,
     requestId: string,
     signal?: AbortSignal,
-    options?: { timeoutMs?: number | null; emitRequest?: PermissionRequest }
+    options?: {
+      timeoutMs?: number | null;
+      emitRequest?: PermissionRequest;
+      timeoutBehavior?: PermissionTimeoutDefault;
+    }
   ): Promise<PermissionResult> {
     // timeoutMs: null suspends the request INDEFINITELY (no watchdog) — for
     // owner-gated actions that must wait for a human click whenever it comes
     // (A2A friend invites), not burn the 60s default into an auto-deny.
     const timeoutMs = options?.timeoutMs === undefined ? PERMISSION_RESPONSE_TIMEOUT_MS : options.timeoutMs;
+    const timeoutBehavior: PermissionTimeoutDefault = options?.timeoutBehavior === 'allow' ? 'allow' : 'deny';
     return new Promise(resolve => {
       let settled = false;
       let timeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -16011,10 +16793,12 @@ export class CoworkRunner extends EventEmitter {
       timeoutId = timeoutMs === null
         ? null
         : setTimeout(() => {
-          finalize({
-            behavior: 'deny',
-            message: 'Permission request timed out after 60s',
-          });
+          finalize(timeoutBehavior === 'allow'
+            ? { behavior: 'allow' }
+            : {
+              behavior: 'deny',
+              message: 'Permission request timed out after 60s',
+            });
         }, timeoutMs);
 
       if (signal) {
@@ -16171,27 +16955,65 @@ export class CoworkRunner extends EventEmitter {
   private emitTurnAck(
     sessionId: string,
     tier: 'fast' | 'moderate' | 'heavy' | 'generic',
+    userPrompt: string,
   ): void {
     const message = this.store.addMessage(sessionId, {
       type: 'system',
       content: '',
-      metadata: { sdkRuntimeStatus: 'turnAck', turnAckTier: tier },
+      metadata: {
+        sdkRuntimeStatus: 'turnAck',
+        turnAckTier: tier,
+        turnAckActivity: resolveTurnAckActivity(userPrompt),
+      },
     });
     this.emit('message', sessionId, message);
   }
 
+  private emitTurnAckOpeningBubble(
+    sessionId: string,
+    userPrompt: string,
+    turn: ActiveSession,
+    turnSerial: number,
+    deterministicReply: string,
+  ): void {
+    if (this.activeSessions.get(sessionId) !== turn
+      || turn.dshTurnAckSerial !== turnSerial
+      || turn.dshTurnAckVisibleTextSeen
+      || turn.dshTurnAckOpeningEmitted) return;
+    const reply = deterministicReply.trim();
+    if (!reply) return;
+    const message = this.store.addMessage(sessionId, {
+      type: 'assistant',
+      content: reply,
+      metadata: { turnAckReply: true, isFinal: true },
+    });
+    turn.dshTurnAckOpeningEmitted = true;
+    turn.dshTurnAckVisibleTextSeen = true;
+    turn.dshTurnAckOpeningText = reply;
+    turn.assistantOwnerUpdateCount = Math.max(1, turn.assistantOwnerUpdateCount ?? 0);
+    this.noteAssistantOwnerVisible(sessionId, turn);
+    this.emit('message', sessionId, message);
+    coworkLog('INFO', 'turn:ack', 'opening bubble emitted', { sessionId, deterministic: true });
+  }
+
   /**
-   * LLM-generated turn-acknowledgment bubble (first-response latency). The
-   * template phrase in the activity indicators covers the first second; this
-   * call produces the real thing the owner asked for — an assistant bubble,
-   * written by the LLM about THIS message, landing while the kernel turn is
-   * still pre-flight or reasoning. It rides the title-class one-shot
-   * cognitive path (no kernel spawn), fully parallel to the turn. The
-   * identity/serial/visible-text gates drop it when the turn already
-   * delivered real text or moved on to a newer turn, so an acknowledgment can
-   * never appear after the answer it acknowledges. The bubble is host-side
-   * only: it lives in the UI transcript and never enters the kernel session
-   * log, so the model's own context is untouched.
+   * The LLM-written first sentence — the first bubble for generic turns that
+   * need an interim acknowledgment (owner decision 2026-11-03, session
+   * 2c70849f: a rotating canned line is worse than no line, so the phrase pool
+   * is gone and this call CREATES the bubble instead of refining a
+   * placeholder). The cerebellum ack gate (session 3ecd2a2f) races the ack
+   * call IN PARALLEL — verdict and generation are both kicked at turn entry
+   * and the verdict is only awaited at emission time: stacking the gate ahead
+   * of generation (the first wiring) added its latency to every emit, and
+   * under the session-e2f359d7 main-process stall the serial chain nearly
+   * doubled the wait. A skip verdict aborts the in-flight ack attempt (an
+   * abort is non-terminal: no fallback retry, no rescue) and no bubble is
+   * created — conversational messages get a single-bubble turn; a null
+   * verdict (unconfigured/timeout/malformed) fails open to emitting — a
+   * redundant bubble beats a silent wait. Dropped entirely when the model's
+   * own visible text beat it, a newer turn started, or the output was
+   * unusable — the activity indicator covers the wait, and no bubble beats a
+   * canned or wrong one.
    */
   private async emitTurnAckReplyBubble(
     sessionId: string,
@@ -16199,37 +17021,69 @@ export class CoworkRunner extends EventEmitter {
     turn: ActiveSession,
     turnSerial: number,
   ): Promise<void> {
+    if (resolveTurnAckActivity(userPrompt) === 'verify_delivery') return;
     try {
-      const startedAt = Date.now();
+      const ackAbort = new AbortController();
+      // Gate and ack call kick together; a skip verdict aborts the in-flight
+      // ack attempt the moment it lands instead of waiting out the call.
+      const gatePromise = this.cerebellumTurnAckGate
+        ? this.cerebellumTurnAckGate({ currentUserText: userPrompt }).catch(() => null)
+        : null;
+      if (gatePromise) {
+        void gatePromise.then((needsAck) => {
+          if (needsAck === false) ackAbort.abort();
+        });
+      }
       const sessionTitle = this.store.getSession(sessionId)?.title ?? null;
-      const reply = await generateTurnAckReply(userPrompt, sessionTitle);
-      if (!reply) return;
-      // Identity first: a fresh ActiveSession is created per submitted
-      // message and dshTurnAckSerial restarts at 1 on each, so serial
-      // equality alone let turn N's ack (still ≤4s in flight) land inside
-      // turn N+1's window after turn N settled quickly — an ack about the
-      // wrong message, then a second ack from turn N+1 itself. Requiring the
-      // registry's current entry to BE this turn's object drops every ack
-      // from a settled or superseded turn (removeActiveSession deletes the
-      // entry at every terminal path); the serial then still drops acks a
-      // re-kick on the SAME object superseded, and the flag drops acks the
-      // turn's own visible text beat. Flags read off the captured object.
-      if (
-        this.activeSessions.get(sessionId) !== turn
+      let generatedReply = await generateTurnAckReply(userPrompt, sessionTitle, ackAbort.signal);
+      if (gatePromise) {
+        // Emission latency is max(ack call, gate budget) — the gate settles
+        // within its own 1.5s abort window, long before the ack's 4s attempt
+        // timeout, so a healthy turn pays nothing for the gate.
+        const needsAck = await gatePromise;
+        if (needsAck === false) {
+          coworkLog('INFO', 'turn:ack', 'first sentence skipped: cerebellum judged the message directly answerable', { sessionId });
+          return;
+        }
+      }
+      if (!generatedReply) {
+        // 2026-11-03 session 32a29372: a main-process stall kills BOTH attempts
+        // in one tick — their 4s timeout timers fire late and simultaneously —
+        // leaving the turn with no first sentence even though the gate failed
+        // open. One retry on the recovered loop completes the fail-open
+        // posture; the identity/visible-text drop gates re-apply across the
+        // wait, so a retry never lands on a settled or superseded turn.
+        if (this.activeSessions.get(sessionId) !== turn
+          || turn.dshTurnAckSerial !== turnSerial
+          || turn.dshTurnAckVisibleTextSeen
+          || turn.dshTurnAckOpeningEmitted) return;
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        if (this.activeSessions.get(sessionId) !== turn
+          || turn.dshTurnAckSerial !== turnSerial
+          || turn.dshTurnAckVisibleTextSeen
+          || turn.dshTurnAckOpeningEmitted) return;
+        coworkLog('INFO', 'turn:ack', 'retrying first sentence after an empty first attempt', { sessionId });
+        generatedReply = await generateTurnAckReply(userPrompt, sessionTitle);
+        if (!generatedReply) return;
+      }
+      if (this.activeSessions.get(sessionId) !== turn
         || turn.dshTurnAckSerial !== turnSerial
         || turn.dshTurnAckVisibleTextSeen
-      ) {
-        return;
-      }
+        || turn.dshTurnAckOpeningEmitted) return;
       const message = this.store.addMessage(sessionId, {
         type: 'assistant',
-        content: reply,
+        content: generatedReply,
         metadata: { turnAckReply: true, isFinal: true },
       });
+      turn.dshTurnAckOpeningEmitted = true;
+      turn.dshTurnAckVisibleTextSeen = true;
+      turn.dshTurnAckOpeningText = generatedReply;
+      turn.assistantOwnerUpdateCount = Math.max(1, turn.assistantOwnerUpdateCount ?? 0);
+      this.noteAssistantOwnerVisible(sessionId, turn);
       this.emit('message', sessionId, message);
-      coworkLog('INFO', 'turn:ack', 'llm ack bubble emitted', { sessionId, elapsedMs: Date.now() - startedAt });
+      coworkLog('INFO', 'turn:ack', 'opening bubble emitted', { sessionId, llm: true });
     } catch (error) {
-      coworkLog('WARN', 'turn:ack', 'llm ack bubble skipped', {
+      coworkLog('WARN', 'turn:ack', 'llm first sentence skipped; activity indicator covers the wait', {
         sessionId,
         message: error instanceof Error ? error.message : String(error),
       });
