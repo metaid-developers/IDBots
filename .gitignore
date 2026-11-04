@@ -575,6 +575,7 @@ man_base_data_pebble/
 !tests/appUpdateResumableDownload.test.mjs
 !tests/appUpdateUi.test.mjs
 !tests/appUpdateVersionCompare.test.mjs
+!tests/windowsInstallerReliability.test.mjs
 !tests/deepseekResponses.test.mjs
 !tests/deepseekReasoningRoundtrip.test.mjs
 !tests/llmEffort.test.mjs

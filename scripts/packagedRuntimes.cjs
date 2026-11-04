@@ -42,6 +42,14 @@ const RUNTIME_DEAD_FILE_FILTERS = RUNTIME_DEAD_FILE_SUFFIXES.map(
   (suffix) => `!**/node_modules/**/*${suffix}`,
 );
 
+// Keep singular `test` directories: Playwright loads lib/mcp/test/browserBackend
+// as production code. The current dependency tree has no production imports
+// into __tests__/tests; afterPack enforces the same boundary.
+const RUNTIME_TEST_DIRECTORY_NAMES = ['__tests__', 'tests'];
+const RUNTIME_TEST_DIRECTORY_FILTERS = RUNTIME_TEST_DIRECTORY_NAMES.map(
+  (directory) => `!**/node_modules/**/${directory}/**`,
+);
+
 /**
  * Content extraResources (SKILLs, METAAPPs) copy from the developer's working
  * tree, so git-ignored local scratch dirs (SKILLs/.tmp_*, .cowork-temp, ...)
@@ -185,7 +193,14 @@ function findPackagedRuntimeDeadFiles(runtimeRoot) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
         pending.push(full);
-      } else if (entry.isFile() && isRuntimeDeadFile(entry.name)) {
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const relativeSegments = path.relative(nodeModulesRoot, full).split(path.sep);
+      const isTestFile = relativeSegments
+        .slice(0, -1)
+        .some((segment) => RUNTIME_TEST_DIRECTORY_NAMES.includes(segment));
+      if (isRuntimeDeadFile(entry.name) || isTestFile) {
         found.push(path.relative(runtimeRoot, full).split(path.sep).join('/'));
       }
     }
@@ -215,8 +230,8 @@ function verifyPackagedRuntimes(context) {
   if (deadFiles.length > 0) {
     throw new Error(
       `Packaged runtime node_modules still contain ${deadFiles.length} file(s) nothing loads at run time `
-      + `(${RUNTIME_DEAD_FILE_SUFFIXES.join(', ')}), e.g. ${deadFiles.slice(0, 5).join(', ')}. `
-      + 'Keep the RUNTIME_DEAD_FILE_FILTERS exclusions in the dsh-runtime extraResources filter of electron-builder.json.',
+      + `(declarations, source maps, or dependency tests), e.g. ${deadFiles.slice(0, 5).join(', ')}. `
+      + 'Keep the RUNTIME_DEAD_FILE_FILTERS and RUNTIME_TEST_DIRECTORY_FILTERS exclusions in the dsh-runtime extraResources filter of electron-builder.json.',
     );
   }
 }
@@ -346,6 +361,8 @@ module.exports = {
   PACKAGED_CONTENT_RESOURCES,
   RUNTIME_DEAD_FILE_SUFFIXES,
   RUNTIME_DEAD_FILE_FILTERS,
+  RUNTIME_TEST_DIRECTORY_NAMES,
+  RUNTIME_TEST_DIRECTORY_FILTERS,
   RESOURCE_DOT_ENTRY_FILTERS,
   isRuntimeDeadFile,
   findPackagedRuntimeDeadFiles,

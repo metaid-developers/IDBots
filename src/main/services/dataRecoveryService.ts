@@ -10,10 +10,10 @@
 //      for an idbots.sqlite that still has bots, and offer Import data /
 //      Switch data directory / Skip this time (skip is persisted per
 //      candidate database).
-//   2. Version-change backup (runVersionChangeBackup): when the app version
-//      changes, snapshot the sqlite trio (idbots.sqlite / -wal / -shm) into
-//      userData/backups/ rotating slot directories — wired BEFORE the store
-//      opens so the snapshot captures the pre-migration database.
+//   2. Version-change backup (runVersionChangeBackup[Async]): when the app
+//      version changes, snapshot the sqlite trio (idbots.sqlite / -wal / -shm)
+//      into userData/backups/ rotating slot directories — wired BEFORE the
+//      store opens so the snapshot captures the pre-migration database.
 //
 // HARD CONSTRAINT (delegation): copy & create only — this module must never
 // delete files or directories. "Keep the latest 5" is therefore implemented
@@ -21,8 +21,8 @@
 // fresh copies (fs.rmSync / unlink never appear here). The kv-table
 // rotation in sqliteStore.ts (DELETE-based, KV_ROTATING_BACKUP_SLOTS) is
 // the precedent for the retention COUNT; the file layer uses overwrite
-// rotation because of the no-delete constraint. The only two "replace"
-// primitives used are renameSync over a same-directory temp copy (atomic
+// rotation because of the no-delete constraint. Replacement is limited to
+// synchronous/asynchronous rename over a same-directory temp copy (atomic
 // file replace) and a zero-length overwrite of stale sqlite sidecars.
 //
 // This module must stay importable from plain Node (unit tests run under
@@ -586,6 +586,65 @@ export function hasExistingSqliteDataFile(userDataPath: string): boolean {
   }
 }
 
+async function copyFileAtomicAsync(source: string, dest: string): Promise<void> {
+  await fs.promises.mkdir(path.dirname(dest), { recursive: true });
+  const tmp = `${dest}.recovery-tmp`;
+  await fs.promises.copyFile(source, tmp);
+  await fs.promises.rename(tmp, dest);
+}
+
+export async function copySqliteTrioAsync(
+  sourceDir: string,
+  destDir: string,
+  log: (line: string) => void = () => {},
+): Promise<string[]> {
+  const copied: string[] = [];
+  for (const suffix of SQLITE_TRIO_SUFFIXES) {
+    const source = path.join(sourceDir, DB_FILENAME + suffix);
+    if (!fs.existsSync(source)) {
+      continue;
+    }
+    try {
+      await copyFileAtomicAsync(source, path.join(destDir, DB_FILENAME + suffix));
+      copied.push(DB_FILENAME + suffix);
+    } catch (error) {
+      log(`[data-recovery] WARN failed to copy ${source}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return copied;
+}
+
+async function backupDbTrioIntoRotatingSlotAsync(options: {
+  userDataPath: string;
+  sourceDir: string;
+  prefix: 'version' | 'action';
+  label: string;
+  fromVersion?: string;
+  toVersion?: string;
+  now?: number;
+  log?: (line: string) => void;
+}): Promise<{ slotDir: string; copied: string[] }> {
+  const backupsDir = backupsDirFor(options.userDataPath);
+  await fs.promises.mkdir(backupsDir, { recursive: true });
+  const { slotDir } = pickBackupSlotDir(backupsDir, options.prefix);
+  await fs.promises.mkdir(slotDir, { recursive: true });
+  const copied = await copySqliteTrioAsync(options.sourceDir, slotDir, options.log ?? (() => {}));
+  const meta: BackupSlotMeta = {
+    createdAt: options.now ?? Date.now(),
+    label: options.label,
+    ...(options.fromVersion !== undefined ? { fromVersion: options.fromVersion } : {}),
+    ...(options.toVersion !== undefined ? { toVersion: options.toVersion } : {}),
+    files: copied,
+  };
+  await fs.promises.writeFile(path.join(slotDir, 'slot-meta.json'), JSON.stringify(meta, null, 2), 'utf8');
+  appendBackupLog(
+    backupsDir,
+    `backup prefix=${options.prefix} slot=${path.basename(slotDir)} label=${options.label} files=[${copied.join(', ')}]`,
+    options.now,
+  );
+  return { slotDir, copied };
+}
+
 /**
  * Pre-upgrade sqlite snapshot: run once per boot BEFORE the store opens.
  * SqliteStore.create runs schema migrations at open, so a snapshot taken
@@ -615,6 +674,39 @@ export function runVersionChangeBackup(options: {
   if (isUpgrade) {
     const previousVersion = marker?.version;
     backupDbTrioIntoRotatingSlot({
+      userDataPath: options.userDataPath,
+      sourceDir: options.userDataPath,
+      prefix: 'version',
+      label: marker
+        ? `upgrade ${previousVersion} -> ${options.currentVersion}`
+        : `pre-first-marker (existing data) -> ${options.currentVersion}`,
+      ...(previousVersion !== undefined ? { fromVersion: previousVersion } : {}),
+      toVersion: options.currentVersion,
+      now: options.now,
+      log: options.log,
+    });
+    writeVersionMarker(options.userDataPath, options.currentVersion, options.now);
+    return 'backup-created';
+  }
+  writeVersionMarker(options.userDataPath, options.currentVersion, options.now);
+  return 'marker-initialized';
+}
+
+export async function runVersionChangeBackupAsync(options: {
+  currentVersion: string;
+  userDataPath: string;
+  hasExistingData: boolean;
+  now?: number;
+  log?: (line: string) => void;
+}): Promise<VersionBackupOutcome> {
+  const marker = readVersionMarker(options.userDataPath);
+  if (marker && marker.version === options.currentVersion) {
+    return 'no-version-change';
+  }
+  const isUpgrade = marker !== null || options.hasExistingData;
+  if (isUpgrade) {
+    const previousVersion = marker?.version;
+    await backupDbTrioIntoRotatingSlotAsync({
       userDataPath: options.userDataPath,
       sourceDir: options.userDataPath,
       prefix: 'version',

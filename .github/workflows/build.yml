@@ -144,6 +144,9 @@ jobs:
       - name: Compile Electron main process
         run: pnpm run compile:electron
 
+      - name: Run Windows installer reliability tests
+        run: node --test tests/windowsInstallerReliability.test.mjs
+
       - name: Run LLM-safe text tests
         run: node --test tests/llmSafeText.test.mjs
 

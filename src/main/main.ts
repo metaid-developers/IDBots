@@ -146,7 +146,7 @@ import {
 } from './libs/runtimeDataPaths';
 import {
   runStartupDataRecoveryGuard,
-  runVersionChangeBackup,
+  runVersionChangeBackupAsync,
   hasExistingSqliteDataFile,
   readDataDirectoryOverrideMarker,
   resolveLocalAppDataRoot,
@@ -154,6 +154,7 @@ import {
   backupsDirFor,
   SKIPPED_CANDIDATES_KV_KEY,
 } from './services/dataRecoveryService';
+import { scheduleStartupBackupProgress } from './libs/startupBackupProgress';
 import { shouldAcquireSingleInstanceLock, shouldRefuseSharedUserData } from './libs/singleInstanceLock';
 import { mockCreateWalletAndFund, mockPushConfigToChain } from './services/chainActionMock';
 import { createMetaBotWallet, getPrivateKeyBufferForEcdh } from './services/metabotWalletService';
@@ -20479,13 +20480,14 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
       console.log('Created default project directory:', defaultProjectDir);
     }
 
-    // feat/legacy-data-recovery ③: snapshot the sqlite trio into
-    // userData/backups/ rotating slots whenever the app version changes —
-    // BEFORE the store opens, so the snapshot captures the on-disk database
-    // before SqliteStore.create runs schema migrations against it (a
-    // post-open snapshot could never rescue a bad migration).
+    // Snapshot before SqliteStore.create can migrate the database. File I/O
+    // stays asynchronous so a large upgraded database cannot freeze desktop
+    // startup; slow copies get a visible progress window instead of no UI.
+    const backupProgress = !isServerMode() && !isAutoLaunched()
+      ? scheduleStartupBackupProgress()
+      : null;
     try {
-      const backupOutcome = runVersionChangeBackup({
+      const backupOutcome = await runVersionChangeBackupAsync({
         currentVersion: app.getVersion(),
         userDataPath: app.getPath('userData'),
         hasExistingData: hasExistingSqliteDataFile(app.getPath('userData')),
@@ -20496,6 +20498,8 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
       }
     } catch (backupError) {
       console.warn('[Main] version-change backup failed (boot continues):', backupError);
+    } finally {
+      backupProgress?.close();
     }
 
     store = await initStore();
