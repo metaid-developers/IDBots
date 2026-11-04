@@ -2630,15 +2630,15 @@ export interface CoworkRunnerOptions {
   /**
    * Optional cerebellum (小脑) gate for the LLM first-sentence bubble
    * (owner decision 2026-11-03, session 3ecd2a2f): one Noul over the
-   * just-arrived user message decides whether the turn needs an interim
-   * acknowledgment at all. false = the message is conversational enough that
-   * the main reply arrives as the SINGLE bubble (no redundant ack on greetings
-   * and simple questions); true or null (unconfigured, timeout, error) = emit
-   * the ack exactly as before — fail-open, because a redundant bubble beats a
-   * silent wait on a heavy turn. Consulted on every assistant-mode owner-chat
-   * turn regardless of the effort pick. The callback must never throw; main.ts
-   * resolves the cerebellum call context lazily inside the callback so
-   * Settings edits apply on the next turn without a restart.
+   * just-arrived user message decides whether to emit the interim acknowledgment
+   * immediately or hold it for a direct main reply. false = give the main reply
+   * a short grace window, then release the held ack if no visible text landed;
+   * true or null (unconfigured, timeout, error) = emit immediately — fail-open,
+   * because a redundant bubble beats a silent wait on a heavy turn. Consulted
+   * on every assistant-mode owner-chat turn regardless of the effort pick. The
+   * callback must never throw; main.ts resolves the cerebellum call context
+   * lazily inside the callback so Settings edits apply on the next turn without
+   * a restart.
    */
   cerebellumTurnAckGate?: (input: {
     currentUserText: string;
@@ -17028,6 +17028,8 @@ export class CoworkRunner extends EventEmitter {
     coworkLog('INFO', 'turn:ack', 'opening bubble emitted', { sessionId, deterministic: true });
   }
 
+  private static readonly TURN_ACK_DIRECT_REPLY_GRACE_MS = 3_000;
+
   /**
    * The LLM-written first sentence — the first bubble for generic turns that
    * need an interim acknowledgment (owner decision 2026-11-03, session
@@ -17038,14 +17040,16 @@ export class CoworkRunner extends EventEmitter {
    * and the verdict is only awaited at emission time: stacking the gate ahead
    * of generation (the first wiring) added its latency to every emit, and
    * under the session-e2f359d7 main-process stall the serial chain nearly
-   * doubled the wait. A skip verdict aborts the in-flight ack attempt (an
-   * abort is non-terminal: no fallback retry, no rescue) and no bubble is
-   * created — conversational messages get a single-bubble turn; a null
-   * verdict (unconfigured/timeout/malformed) fails open to emitting — a
-   * redundant bubble beats a silent wait. Dropped entirely when the model's
-   * own visible text beat it, a newer turn started, or the output was
-   * unusable — the activity indicator covers the wait, and no bubble beats a
-   * canned or wrong one.
+   * doubled the wait. A directly-answerable verdict now means "give the main
+   * reply a short grace window", not "cancel the ack": if no visible reply or
+   * opening lands in time, the already-generated sentence is released. Quick
+   * conversational replies still produce one bubble, while a misclassified
+   * composed answer or tool-bound turn cannot leave the owner watching only
+   * status phrases (session fb70ac99, 83s without visible text). A null
+   * verdict (unconfigured/timeout/malformed) fails open to immediate emitting.
+   * Dropped entirely when the model's own visible text beat it, a newer turn
+   * started, or the output was unusable — no bubble beats a canned or wrong
+   * one.
    */
   private async emitTurnAckReplyBubble(
     sessionId: string,
@@ -17055,27 +17059,35 @@ export class CoworkRunner extends EventEmitter {
   ): Promise<void> {
     if (resolveTurnAckActivity(userPrompt) === 'verify_delivery') return;
     try {
-      const ackAbort = new AbortController();
-      // Gate and ack call kick together; a skip verdict aborts the in-flight
-      // ack attempt the moment it lands instead of waiting out the call.
+      const startedAt = Date.now();
       const gatePromise = this.cerebellumTurnAckGate
         ? this.cerebellumTurnAckGate({ currentUserText: userPrompt }).catch(() => null)
         : null;
-      if (gatePromise) {
-        void gatePromise.then((needsAck) => {
-          if (needsAck === false) ackAbort.abort();
-        });
-      }
       const sessionTitle = this.store.getSession(sessionId)?.title ?? null;
-      let generatedReply = await generateTurnAckReply(userPrompt, sessionTitle, ackAbort.signal);
+      let generatedReply = await generateTurnAckReply(userPrompt, sessionTitle);
+      let deferredForDirectReply = false;
       if (gatePromise) {
         // Emission latency is max(ack call, gate budget) — the gate settles
         // within its own 1.5s abort window, long before the ack's 4s attempt
         // timeout, so a healthy turn pays nothing for the gate.
         const needsAck = await gatePromise;
         if (needsAck === false) {
-          coworkLog('INFO', 'turn:ack', 'first sentence skipped: cerebellum judged the message directly answerable', { sessionId });
-          return;
+          deferredForDirectReply = true;
+          const graceMs = Math.max(
+            0,
+            CoworkRunner.TURN_ACK_DIRECT_REPLY_GRACE_MS - (Date.now() - startedAt),
+          );
+          coworkLog('INFO', 'turn:ack', 'direct reply expected; first sentence held for the visible-reply grace window', {
+            sessionId,
+            graceMs,
+          });
+          if (graceMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, graceMs));
+          }
+          if (this.activeSessions.get(sessionId) !== turn
+            || turn.dshTurnAckSerial !== turnSerial
+            || turn.dshTurnAckVisibleTextSeen
+            || turn.dshTurnAckOpeningEmitted) return;
         }
       }
       if (!generatedReply) {
@@ -17113,7 +17125,11 @@ export class CoworkRunner extends EventEmitter {
       turn.assistantOwnerUpdateCount = Math.max(1, turn.assistantOwnerUpdateCount ?? 0);
       this.noteAssistantOwnerVisible(sessionId, turn);
       this.emit('message', sessionId, message);
-      coworkLog('INFO', 'turn:ack', 'opening bubble emitted', { sessionId, llm: true });
+      coworkLog('INFO', 'turn:ack', 'opening bubble emitted', {
+        sessionId,
+        llm: true,
+        deferredForDirectReply,
+      });
     } catch (error) {
       coworkLog('WARN', 'turn:ack', 'llm first sentence skipped; activity indicator covers the wait', {
         sessionId,

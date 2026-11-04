@@ -235,8 +235,8 @@ test('runner: the LLM first sentence CREATES the bubble once, gated on identity/
     'a first sentence landing after real visible text (model, owner_update or an earlier opening) is dropped');
   assert.ok(body.includes('turn.dshTurnAckOpeningEmitted'),
     'at most one opening bubble per turn');
-  assert.ok(body.includes('generateTurnAckReply(userPrompt, sessionTitle, ackAbort.signal)'),
-    'the first sentence rides the one-shot cognitive path with session-title context, abortable by the ack gate');
+  assert.ok(body.includes('generateTurnAckReply(userPrompt, sessionTitle)'),
+    'the first sentence rides the one-shot cognitive path with session-title context');
   assert.ok(body.includes("metadata: { turnAckReply: true, isFinal: true }"),
     'the bubble is a final assistant message tagged turnAckReply');
   assert.ok(body.includes("this.store.addMessage(sessionId, {"),
@@ -320,7 +320,7 @@ test('coworkUtil: generateTurnAckReply is a title-class call — no thinking, no
   assert.ok(body.includes("effort: 'off'"), 'effort off — an ack never waits on reasoning');
   assert.ok(body.includes('webSearch: false'), 'no server-side web_search detour');
   assert.ok(body.includes('attemptTimeoutMs: 4_000'), 'per-attempt timeout bounds the ack latency');
-  assert.ok(body.includes('        signal,'), 'the caller abort signal rides the call (an ack-gate skip aborts the in-flight attempt)');
+  assert.ok(body.includes('        signal,'), 'the utility retains caller-controlled cancellation for other call sites');
   assert.ok(body.includes('sanitizeTurnAckReplyForInput(result.content'), 'output goes through the input-aware sanitizer');
   // 2026-11-03 (session acb5961b): the primary relay hung and the ack died
   // with it — the refine must get the same primary+fallback pair as titles.
@@ -388,24 +388,28 @@ test('buildTurnAckReplyMessages: the ack never answers content; greetings stay n
     'the old answer-simple-questions line is gone');
 });
 
-test('runner: the cerebellum ack gate races the ack call in parallel; a skip verdict aborts it', () => {
+test('runner: the cerebellum ack gate races the ack call; a direct-reply verdict defers instead of cancelling', () => {
   const source = read('src/main/libs/coworkRunner.ts');
   const start = source.indexOf('private async emitTurnAckReplyBubble(');
   const body = source.slice(start, source.indexOf('private emitSdkRuntimeStatus(', start));
   const gateKick = body.indexOf('this.cerebellumTurnAckGate({ currentUserText: userPrompt })');
-  const ackCall = body.indexOf('generateTurnAckReply(userPrompt, sessionTitle, ackAbort.signal)');
+  const ackCall = body.indexOf('generateTurnAckReply(userPrompt, sessionTitle)');
   assert.ok(gateKick > 0, 'the gate is consulted inside the ack path');
-  assert.ok(ackCall > 0, 'the ack call carries the abort signal');
+  assert.ok(ackCall > 0, 'the ack generation still starts immediately');
   assert.ok(gateKick < ackCall, 'the gate is KICKED before the ack call — both run in parallel');
   // 2026-11-03 session e2f359d7: the serial wiring stacked the gate budget
   // ahead of every ack emit and nearly doubled the wait under a main-process
   // stall — the gate must not be awaited before generation starts.
   const gateAwait = body.indexOf('const needsAck = await gatePromise');
   assert.ok(gateAwait > ackCall, 'the verdict is awaited only at emission time, after generation');
-  assert.ok(body.includes('new AbortController()'), 'the ack attempt is abortable');
-  assert.ok(body.includes('ackAbort.abort()'), 'a skip verdict aborts the in-flight ack attempt');
+  assert.ok(!body.includes('ackAbort.abort()'),
+    'a direct-reply verdict no longer cancels the ack that may be needed as the rescue');
   assert.ok(body.includes('if (needsAck === false)'),
-    'only an explicit false verdict skips; true and null both emit (fail-open)');
+    'only an explicit false verdict defers; true and null both emit immediately (fail-open)');
+  assert.ok(body.includes('TURN_ACK_DIRECT_REPLY_GRACE_MS'),
+    'the direct-reply grace window is bounded');
+  assert.ok(body.includes('deferredForDirectReply'),
+    'the emitted-bubble log records whether the grace path released it');
   assert.ok(body.includes('.catch(() => null)'),
     'a throwing gate callback degrades to null, never breaks the ack path');
 });
@@ -469,10 +473,11 @@ test('runner: an empty first ack attempt gets exactly one retry, gates re-applie
     'the retry is a fresh call without the gate abort signal');
   assert.equal(body.split('generateTurnAckReply(userPrompt').length - 1, 2,
     'at most two ack calls per turn (first attempt + one retry)');
-  // A gate skip never retries (the abort was intentional).
-  const skipIdx = body.indexOf("first sentence skipped: cerebellum judged the message directly answerable");
+  // A direct-reply verdict can still need this retry when its held generation
+  // came back empty; the grace wait does not bypass the empty-output rescue.
+  const graceIdx = body.indexOf('direct reply expected; first sentence held for the visible-reply grace window');
   const retryIdx = body.indexOf('retrying first sentence after an empty first attempt');
-  assert.ok(skipIdx > 0 && skipIdx < retryIdx, 'the skip return precedes the retry branch');
+  assert.ok(graceIdx > 0 && graceIdx < retryIdx, 'the direct-reply grace path precedes the retry branch');
 });
 
 test('runner: the owner wait heartbeat logs due-but-suppressed outcomes', () => {

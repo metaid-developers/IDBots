@@ -1407,8 +1407,8 @@ export async function generateTurnAckReply(userText: string, sessionTitle?: stri
         // search detour would defeat the whole point of a fast ack.
         webSearch: false,
         attemptTimeoutMs: 4_000,
-        // Caller abort (the ack gate's skip verdict) — linked into each
-        // per-attempt timeout signal by withPerAttemptSignal.
+        // Optional caller abort — linked into each per-attempt timeout signal
+        // by withPerAttemptSignal.
         signal,
       }
     );
@@ -1417,7 +1417,7 @@ export async function generateTurnAckReply(userText: string, sessionTitle?: stri
     // empty, and the openai-compat resolver PROMOTED reasoning_content into
     // content — a mid-thought English analysis fragment then leaked out as
     // the ack bubble. Reject reasoning-promoted content and length-truncated
-    // completions outright; the runner uses its deterministic opening instead.
+    // completions outright; the runner retries once instead of showing them.
     const metadata = result.responseMetadata;
     const promotedFromReasoning = metadata?.contentBlockTypes?.includes('reasoning') ?? false;
     if (promotedFromReasoning || metadata?.stopReason === 'length') {

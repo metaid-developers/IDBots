@@ -2,12 +2,13 @@
 // first-sentence bubble gate.
 //
 // One Noul (turn_ack_needed) reads the just-arrived user message and decides
-// whether the turn keeps its LLM first-sentence bubble: true → the ack is
-// written and emitted as before; false → the turn is conversational enough
-// that the main reply arrives as the SINGLE bubble (owner decision
-// 2026-11-03, session 3ecd2a2f — simple and complex messages alike used to
-// get two bubbles); null (disabled/timeout/quota/blank/malformed) → fail-open,
-// the ack is emitted exactly as before the gate existed.
+// whether the turn emits its LLM first-sentence bubble immediately: true → the
+// ack is written and emitted as before; false → the caller holds it briefly so
+// a fast main reply can be the SINGLE bubble, then releases it if no visible
+// reply lands (owner decision 2026-11-03, session 3ecd2a2f — simple and complex
+// messages alike used to get two bubbles); null
+// (disabled/timeout/quota/blank/malformed) → fail-open, the ack is emitted
+// exactly as before the gate existed.
 //
 // Contract under test:
 //   a. request shape — one noul question, English instructions, the user
@@ -137,7 +138,7 @@ test('turnAckNeededFromNoul: threshold is inclusive at 0.5', () => {
 // classifyTurnAckNeedWithCerebellum — verdict semantics and fail-open
 // ---------------------------------------------------------------------------
 
-test('classify: noul at/above threshold → keep the ack, below → skip it', async () => {
+test('classify: noul at/above threshold → emit now, below → defer briefly', async () => {
   assert.equal(
     await classifyTurnAckNeedWithCerebellum({ ...GATE_INPUT, fetchImpl: okFetch(classifyPayload(0.9)) }),
     true,

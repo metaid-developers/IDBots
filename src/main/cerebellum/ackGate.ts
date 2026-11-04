@@ -1,6 +1,7 @@
 /**
- * Cerebellum (小脑) turn-ack gate — decides whether an interactive turn gets
- * the LLM-written first-sentence bubble AT ALL.
+ * Cerebellum (小脑) turn-ack gate — decides whether an interactive turn emits
+ * the LLM-written first-sentence bubble immediately or optimistically gives
+ * the main reply a short grace window.
  *
  * Owner decision 2026-11-03 (session 3ecd2a2f): every generic turn used to get
  * two bubbles — the ack and the real answer — whether the message was "在吗" or
@@ -8,11 +9,12 @@
  * contradict the real answer on simple questions. This gate reads the user
  * message at turn entry and judges the work it implies: messages the main reply
  * covers in one short conversational answer (greetings, small talk, simple
- * questions answerable from context) get NO ack bubble — the activity
- * indicator's tier phrase covers the brief wait and the answer arrives as the
- * single bubble. Messages whose answer needs tools (local-machine search, web2,
- * the on-chain AI internet/MetaWeb, files, shell, browser), recall of past
- * conversations, multi-step work, or a long composed answer keep the ack.
+ * questions answerable from context) hold the ack briefly so a fast main answer
+ * arrives as the single bubble. If that answer misses the grace window, the
+ * caller releases the held ack instead of leaving a status-only wait. Messages
+ * whose answer needs tools (local-machine search, web2, the on-chain AI
+ * internet/MetaWeb, files, shell, browser), recall of past conversations,
+ * multi-step work, or a long composed answer keep the immediate ack.
  *
  * The boundary is judged by the cerebellum from intent, never hardcoded text
  * rules (owner requirement: no regex over "需要翻一下"-style wording).
@@ -21,8 +23,9 @@
  * decision bundle: the verdict is needed within the ack window (~1.5s), ahead
  * of the volatile-context build the bundle rides. Fail-open like every other
  * cerebellum decision: a null verdict (disabled, timeout, quota, malformed,
- * blank input) keeps the historical behavior — the ack is emitted, because a
- * redundant bubble on a quick turn beats a silent 30s wait on a heavy one.
+ * blank input) keeps the historical behavior — the ack is emitted immediately,
+ * because a redundant bubble on a quick turn beats a silent 30s wait on a heavy
+ * one.
  *
  * Pure and Electron-free: the caller injects the fetch implementation, which in
  * the app MUST come from resolveCerebellumCallContext() — bare Node fetch is
@@ -154,7 +157,7 @@ export function parseTurnAckGateAnswer(payload: unknown): number | null {
   return Math.max(0, Math.min(1, noul));
 }
 
-/** true when the noul says the turn keeps its first-sentence bubble. */
+/** true when the noul says the turn emits its first-sentence bubble immediately. */
 export function turnAckNeededFromNoul(
   noul: number,
   threshold: number = CEREBELLUM_TURN_ACK_GATE_THRESHOLD,
@@ -163,11 +166,11 @@ export function turnAckNeededFromNoul(
 }
 
 /**
- * Ask the cerebellum whether this turn needs its LLM first-sentence bubble.
- * Returns true (emit the ack), false (skip it — the main reply is the single
- * bubble), or null (no verdict — blank text, HTTP/network error, abort/
- * timeout, malformed payload); the caller treats null as true (fail-open).
- * Never throws.
+ * Ask the cerebellum whether this turn needs its LLM first-sentence bubble
+ * immediately. Returns true (emit now), false (hold briefly for the main reply,
+ * then release if no visible text landed), or null (no verdict — blank text,
+ * HTTP/network error, abort/timeout, malformed payload); the caller treats null
+ * as true (fail-open). Never throws.
  */
 export async function classifyTurnAckNeedWithCerebellum(input: {
   config: ResolvedCerebellumConfig;

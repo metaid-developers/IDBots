@@ -31,6 +31,10 @@ function loadTurnAckReply() {
   return require('../dist-electron/main/libs/turnAckReply.js')
 }
 
+function loadCoworkUtil() {
+  return require('../dist-electron/main/libs/coworkUtil.js')
+}
+
 class RecordingStore {
   constructor() {
     this.messages = []
@@ -46,12 +50,13 @@ class RecordingStore {
   }
 }
 
-function setup({ assistant = true, active = true, waitTimeoutMs = 0, waitGenerator } = {}) {
+function setup({ assistant = true, active = true, waitTimeoutMs = 0, waitGenerator, ackGate } = {}) {
   const { CoworkRunner } = loadRunner()
   const store = new RecordingStore()
   const runner = new CoworkRunner(store, {
     localTurnStallTimeoutMs: 0,
     assistantOwnerWaitTimeoutMs: waitTimeoutMs,
+    cerebellumTurnAckGate: ackGate,
     // 2026-11-04: the heartbeat text is LLM-written per fire (no canned
     // strings anywhere); tests inject a stub. The production default is
     // coworkUtil's generateOwnerWaitUpdate on the Twin system brain.
@@ -351,6 +356,65 @@ test('delivery prompts: the LLM first sentence stays out; the deterministic open
   assert.equal(store.messages.length, 1)
   assert.match(store.messages[0].content, /^Builder阿码已交付一个子任务/)
   assert.ok(!store.messages[0].content.includes('cross_session'))
+  runner.removeActiveSession('s1', active)
+})
+
+test('a direct-reply verdict releases the held first sentence when no visible reply meets the grace window', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+  const { runner, store } = setup({ ackGate: async () => false })
+  const active = runner.activeSessions.get('s1')
+  active.dshTurnAckSerial = 1
+  const coworkUtil = loadCoworkUtil()
+  t.mock.method(coworkUtil, 'generateTurnAckReply', async () => '我先把这个方向展开成几种不同表达，再给你筛选建议。')
+
+  const pending = runner.emitTurnAckReplyBubble('s1', '帮我想几个新的文案方向', active, 1)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(store.messages.length, 0, 'the direct-reply verdict holds the generated opening initially')
+
+  t.mock.timers.tick(2_999)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(store.messages.length, 0, 'the grace window is not cut short')
+
+  t.mock.timers.tick(1)
+  await pending
+  assert.equal(store.messages.length, 1, 'a status-only turn gets its first sentence after the grace window')
+  assert.equal(store.messages[0].content, '我先把这个方向展开成几种不同表达，再给你筛选建议。')
+  assert.equal(store.messages[0].metadata.turnAckReply, true)
+  assert.equal(active.dshTurnAckOpeningEmitted, true)
+  runner.removeActiveSession('s1', active)
+  t.mock.timers.reset()
+})
+
+test('a visible main reply inside the grace window suppresses the held first sentence', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+  const { runner, store } = setup({ ackGate: async () => false })
+  const active = runner.activeSessions.get('s1')
+  active.dshTurnAckSerial = 1
+  const coworkUtil = loadCoworkUtil()
+  t.mock.method(coworkUtil, 'generateTurnAckReply', async () => '这条首句不应该再出现。')
+
+  const pending = runner.emitTurnAckReplyBubble('s1', '你好', active, 1)
+  await new Promise((resolve) => setImmediate(resolve))
+  active.dshTurnAckVisibleTextSeen = true
+  t.mock.timers.tick(3_000)
+  await pending
+
+  assert.equal(store.messages.length, 0, 'a fast direct answer remains a single-bubble turn')
+  assert.ok(!active.dshTurnAckOpeningEmitted, 'no opening was emitted or marked as delivered')
+  runner.removeActiveSession('s1', active)
+  t.mock.timers.reset()
+})
+
+test('a non-direct verdict still emits the first sentence without waiting for the grace window', async (t) => {
+  const { runner, store } = setup({ ackGate: async () => true })
+  const active = runner.activeSessions.get('s1')
+  active.dshTurnAckSerial = 1
+  const coworkUtil = loadCoworkUtil()
+  t.mock.method(coworkUtil, 'generateTurnAckReply', async () => '我先检查相关文件，再告诉你结果。')
+
+  await runner.emitTurnAckReplyBubble('s1', '帮我检查这个项目的构建问题', active, 1)
+  assert.equal(store.messages.length, 1)
+  assert.equal(store.messages[0].content, '我先检查相关文件，再告诉你结果。')
   runner.removeActiveSession('s1', active)
 })
 
