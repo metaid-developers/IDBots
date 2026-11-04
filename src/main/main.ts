@@ -243,6 +243,7 @@ import { healNftCard } from './services/nftCardHealService';
 import { getNftCaRegistry } from './services/nftCaService';
 import { parseNftAvatarReference, resolveNftAvatar } from './services/nftAvatarService';
 import { initTrafficAccountService, registerTrafficAccountIpcHandlers } from './services/trafficAccountService';
+import { initMePointsService, registerMePointsIpcHandlers } from './services/mePointsService';
 import { initBundleService, registerBundleIpcHandlers } from './services/bundleService';
 import { initLlmRelayService, registerLlmRelayIpcHandlers, getLlmRelayQuota } from './services/llmRelayService';
 import { createRelayCatalogRefresh, RELAY_CATALOG_REFRESH_INTERVAL_MS } from './services/relayCatalogFreshness';
@@ -18558,6 +18559,12 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     getUserIdentityStore,
   });
   registerTrafficAccountIpcHandlers({ registerIpcHandler });
+
+  // ME points (S9 积分 UI): /v1/me/* client. Identity-signed endpoints are
+  // optional — a missing local identity only fails the signed calls; public
+  // endpoints (plans/rates/packages) still work signed-out.
+  initMePointsService({ getUserIdentityStore });
+  registerMePointsIpcHandlers({ registerIpcHandler });
 
   // Free LLM quota relay: identity-signed bootstrap issues the relay key for
   // the built-in `metaid-free` provider (first-run welcome experience).

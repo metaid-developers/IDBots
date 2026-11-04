@@ -40,10 +40,12 @@ import MemorySettings from './settings/MemorySettings';
 import SkillMcpManager from './skills/SkillMcpManager';
 import ProjectsManager from './projects/ProjectsManager';
 import UserSettings from './user/UserSettings';
-import TrafficSettings from './traffic/TrafficSettings';
+import IdbotsPlanCard from './me/IdbotsPlanCard';
+import MeUsageAndCredits from './me/MeUsageAndCredits';
+import { findMeRateForModel } from './me/meRates';
+import { ensureMeSnapshot, getMeSnapshot, subscribeMeSnapshot } from './me/mePointsStore';
 import { defaultConfig, type AppConfig, type ChatExperienceMode, getVisibleProviders } from '../config';
 import { LLM_FREE_PROVIDER_KEY, FREE_PROVIDER_DISPLAY_NAME, getFreeProviderModelDisplayName } from '../services/llmFreeQuotaGate.js';
-import { formatQuotaResetSuffix } from '../services/quotaResetCountdown';
 
 type TabType = 'user' | 'general' | 'model' | 'skills' | 'projects' | 'coworkSandbox' | 'coworkMemory' | 'archivedChats' | 'shortcuts' | 'im' | 'email' | 'paramsConfig' | 'traffic';
 
@@ -545,6 +547,13 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
 
   // Model tab sub-section: 'brain' = existing LLM provider UI, 'cerebellum' = decision model.
   const [modelSubTab, setModelSubTab] = useState<'brain' | 'cerebellum'>('brain');
+  // S9 ME points: shared server-data snapshot (plans / balance / rates).
+  const meSnapshot = React.useSyncExternalStore(subscribeMeSnapshot, getMeSnapshot, getMeSnapshot);
+  useEffect(() => {
+    // The model tab needs plans + weekly grant + rates; the traffic tab
+    // (用量 & 积分) pulls its own pages. Cheap: TTL-cached + best-effort.
+    ensureMeSnapshot();
+  }, []);
   // Cerebellum edits are local until the shared Save button persists them.
   const [cerebellum, setCerebellum] = useState<CerebellumConfig>(() => ({
     ...DEFAULT_CEREBELLUM_CONFIG,
@@ -555,7 +564,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
   // Free provider quota snapshot for the CEREBELLUM side; null = unavailable.
   // Binds the JEV pool numbers; quotaCycleResetAt feeds the same weekly
   // countdown the free-quota card shows (both pools share one cycle).
-  const [cerebellumFreeQuota, setCerebellumFreeQuota] = useState<{ loading: boolean; remaining: number | null; quotaCycleResetAt: number }>({ loading: false, remaining: null, quotaCycleResetAt: 0 });
+  // S9: 小脑免费额度状态已随显示一起下线（token 口径不再出现在桌面端）。
   
   // 创建引用来确保内容区域的滚动
   const contentRef = useRef<HTMLDivElement>(null);
@@ -1898,38 +1907,8 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
     }
   };
 
-  const loadCerebellumFreeQuota = useCallback(async (apiKey: string) => {
-    if (!apiKey) {
-      setCerebellumFreeQuota({ loading: false, remaining: null, quotaCycleResetAt: 0 });
-      return;
-    }
-    setCerebellumFreeQuota({ loading: true, remaining: null, quotaCycleResetAt: 0 });
-    try {
-      const response = await window.electron.llmRelay.getQuota({ apiKey });
-      const quota = response?.success ? response.quota : undefined;
-      setCerebellumFreeQuota({
-        loading: false,
-        // The cerebellum burns the JEV pool; fall back to the shared chat
-        // number only when the backend reports no separate pool (legacy mode).
-        remaining: quota
-          ? (quota.jevQuotaTotal > 0 ? quota.jevQuotaRemaining : quota.quotaRemaining)
-          : null,
-        quotaCycleResetAt: quota ? quota.quotaCycleResetAt : 0,
-      });
-    } catch {
-      setCerebellumFreeQuota({ loading: false, remaining: null, quotaCycleResetAt: 0 });
-    }
-  }, []);
-
-  // Free provider selected with a resolved key: keep the JEV-pool number
-  // fresh (same snapshot the free-quota card reads, each pool its own line).
-  useEffect(() => {
-    if (cerebellum.provider === CEREBELLUM_FREE_PROVIDER && cerebellum.apiKey.trim()) {
-      void loadCerebellumFreeQuota(cerebellum.apiKey.trim());
-    } else if (cerebellum.provider !== CEREBELLUM_FREE_PROVIDER) {
-      setCerebellumFreeQuota({ loading: false, remaining: null, quotaCycleResetAt: 0 });
-    }
-  }, [cerebellum.provider, cerebellum.apiKey, loadCerebellumFreeQuota]);
+  // S9 下线清单：原「小脑额度」（JEV/token 口径）显示与拉取已下线；
+  // 统一口径展示走「用量 & 积分」页（me_balance / me_history）。
 
   // Free provider without a key yet (panel open, default selection): resolve
   // it once in the background so the shared-quota line can render without
@@ -2322,7 +2301,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
     { key: 'general',        label: i18nService.t('general'),        icon: <Cog6ToothIcon className="h-5 w-5" /> },
     { key: 'model',          label: i18nService.t('model'),          icon: <CubeIcon className="h-5 w-5" /> },
     { key: 'coworkMemory',   label: i18nService.t('coworkMemoryTitle'), icon: <BrainIcon className="h-5 w-5" /> },
-    { key: 'traffic',        label: i18nService.t('trafficTab'),     icon: <BoltIcon className="h-5 w-5" /> },
+    { key: 'traffic',        label: i18nService.t('usageCreditsTab'), icon: <BoltIcon className="h-5 w-5" /> },
     { key: 'skills',         label: i18nService.t('skills'),         icon: <PuzzlePieceIcon className="h-5 w-5" /> },
     { key: 'projects',       label: i18nService.t('projectsTab'),    icon: <BriefcaseIcon className="h-5 w-5" /> },
     { key: 'im',             label: i18nService.t('imBot'),          icon: <ChatBubbleLeftIcon className="h-5 w-5" /> },
@@ -3188,6 +3167,9 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
             </div>
 
             {modelSubTab === 'brain' ? (
+            <div className="flex flex-col flex-1 min-h-0">
+            {/* IDBots Plan 供应商卡片（S9 §4 区块1）：列表顶部固定 */}
+            <IdbotsPlanCard />
             <div className="flex flex-1 min-h-0">
             {/* Provider List - Left Side */}
             <div className="w-2/5 border-r dark:border-claude-darkBorder border-claude-border pr-3 space-y-1.5 overflow-y-auto">
@@ -3529,6 +3511,18 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                           <span className="dark:text-claude-darkText text-claude-text font-medium text-[11px]">{model.name}</span>
                         </div>
                         <div className="flex items-center space-x-1">
+                          {(() => {
+                            // S9 §4 区块3：价签改倍率展示；仅当服务器 rates 含该模型时显示
+                            const rate = findMeRateForModel(meSnapshot.rates ?? [], model.id);
+                            return rate ? (
+                              <span
+                                title={i18nService.t('meRatesFooterNote')}
+                                className="text-[10px] tabular-nums px-1.5 py-0.5 rounded-md bg-claude-accent/10 text-claude-accent dark:text-claude-darkAccent font-medium"
+                              >
+                                {rate.multiplier}x
+                              </span>
+                            ) : null;
+                          })()}
                           <span className="text-[10px] px-1.5 py-0.5 bg-claude-surfaceHover dark:bg-claude-darkSurfaceHover rounded-md dark:text-claude-darkTextSecondary text-claude-textSecondary">
                             {isBuiltInFreeProvider(activeProvider) ? getFreeProviderModelDisplayName(model.id) : model.id}
                           </span>
@@ -3575,7 +3569,12 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                     </div>
                   )}
                 </div>
+                {/* S9 §4 区块3：价签换算说明（页脚固定一行；倍率来自 /v1/me/rates 实时返回） */}
+                <p className="mt-2 text-[10px] leading-relaxed text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                  {i18nService.t('meRatesFooterNote')}
+                </p>
               </div>
+            </div>
             </div>
             </div>
             ) : (
@@ -3633,13 +3632,10 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                   <p className="text-[11px] leading-relaxed text-amber-700 dark:text-amber-400">
                     {i18nService.t('cerebellumFreeProviderHint')}
                   </p>
-                  {cerebellum.apiKey.trim() && !cerebellumFreeQuota.loading && (
-                    <p className="mt-1 text-[11px] leading-relaxed text-amber-700 dark:text-amber-400">
-                      {cerebellumFreeQuota.remaining !== null
-                        ? `${i18nService.t('cerebellumFreeQuota').replace('{n}', new Intl.NumberFormat().format(cerebellumFreeQuota.remaining))}${formatQuotaResetSuffix(cerebellumFreeQuota.quotaCycleResetAt, (key) => i18nService.t(key))}`
-                        : i18nService.t('cerebellumFreeQuotaUnavailable')}
-                    </p>
-                  )}
+                  {/* S9 下线清单：原「小脑额度」token 显示下线；统一走用量 & 积分页 */}
+                  <p className="mt-1 text-[11px] leading-relaxed text-amber-700 dark:text-amber-400">
+                    {i18nService.t('cerebellumFreeQuotaMeNote')}
+                  </p>
                 </div>
               )}
 
@@ -3852,7 +3848,9 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
         return <IMSettings />;
 
       case 'traffic':
-        return <TrafficSettings />;
+        // S9: the traffic quota page retires on desktop; the merged
+        // 「用量 & 积分」 page (me_history + topup orders) owns this tab.
+        return <MeUsageAndCredits />;
 
       default:
         return null;

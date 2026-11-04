@@ -1,9 +1,27 @@
+/**
+ * Free LLM provider card for the Model settings tab — ME 口径 (S9 §4 区块2).
+ *
+ * The built-in IDBots-free provider is the free-tier carrier; its numbers
+ * are the ME weekly grant from /v1/me/balance (「免费档 · {amount} ME/周」
+ * with remaining progress + reset countdown). NO token counts appear here
+ * anymore (the old relay token quota display is retired with S9; the relay
+ * quota call remains ONLY to silently keep the provider's model catalog in
+ * sync with the server directory).
+ */
+
 import React, { useCallback, useEffect, useState } from 'react';
 import { i18nService } from '../services/i18n';
 import { enableFreeQuotaManually, syncFreeProviderCatalogFromQuota } from '../services/llmFreeQuotaBootstrap';
 import { isFreeProviderConfigured, LLM_FREE_PROVIDER_KEY } from '../services/llmFreeQuotaGate.js';
-import { formatQuotaResetSuffix, quotaResetDaysLeft } from '../services/quotaResetCountdown';
 import type { AppConfig } from '../config';
+import {
+  ensureMeSnapshot,
+  formatMe,
+  getMeSnapshot,
+  meFromMilli,
+  meResetCountdownHours,
+  subscribeMeSnapshot,
+} from './me/mePointsStore';
 
 interface FreeQuotaCardProps {
   providers: NonNullable<AppConfig['providers']>;
@@ -16,74 +34,38 @@ interface FreeQuotaCardProps {
   onProvisioned: () => void;
 }
 
-interface QuotaState {
-  loading: boolean;
-  quotaTotal: number;
-  quotaUsed: number;
-  quotaRemaining: number;
-  /** Weekly cycle end (ms epoch); 0 = backend runs lifetime quotas (no countdown). */
-  quotaCycleResetAt: number;
-  unavailable: boolean;
-}
-
-const INITIAL_QUOTA: QuotaState = {
-  loading: true,
-  quotaTotal: 0,
-  quotaUsed: 0,
-  quotaRemaining: 0,
-  quotaCycleResetAt: 0,
-  unavailable: false,
-};
-
-const formatTokenCount = (value: number): string => new Intl.NumberFormat().format(Math.max(0, Math.floor(value)));
-
-/**
- * Free LLM quota card for the Model settings tab. Shows the remaining free
- * quota of the built-in `metaid-free` provider when provisioned, or an
- * enable button (manual opt-in) when it is not.
- */
 const FreeQuotaCard: React.FC<FreeQuotaCardProps> = ({ providers, onProvisioned }) => {
   const provider = providers[LLM_FREE_PROVIDER_KEY];
   const configured = isFreeProviderConfigured(provider);
-  const [quota, setQuota] = useState<QuotaState>(INITIAL_QUOTA);
+  const snapshot = React.useSyncExternalStore(subscribeMeSnapshot, getMeSnapshot, getMeSnapshot);
   const [enabling, setEnabling] = useState(false);
   const [enableError, setEnableError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const loadQuota = useCallback(async (apiKey: string, forceRefresh: boolean) => {
-    setQuota((prev) => ({ ...prev, loading: true }));
+  useEffect(() => {
+    ensureMeSnapshot();
+  }, []);
+
+  // Catalog-only refresh: keeps provider.models aligned with the relay's
+  // server directory. Silent on failure and never re-bootstraps (that would
+  // reissue the key). Never renders any token number (S9 口径).
+  const syncCatalog = useCallback(async (apiKey: string) => {
+    if (!apiKey) return;
     try {
-      const response = await window.electron.llmRelay.getQuota({ apiKey, forceRefresh });
+      const response = await window.electron.llmRelay.getQuota({ apiKey, forceRefresh: false });
       if (response?.success && response.quota) {
-        setQuota({
-          loading: false,
-          quotaTotal: response.quota.quotaTotal,
-          quotaUsed: response.quota.quotaUsed,
-          quotaRemaining: response.quota.quotaRemaining,
-          quotaCycleResetAt: response.quota.quotaCycleResetAt,
-          unavailable: false,
-        });
-        // Quota responses carry the relay's full current model directory
-        // (2026-10-16 server catalog expansion); provisioned installs whose
-        // provider.models froze at their bootstrap-era list pick up additions
-        // and removals here. Silent on failure — the quota display above is
-        // unaffected — and never re-bootstraps (that would reissue the key).
-        // The main-process quota cache (30s TTL) keeps repeated opens cheap.
         if (await syncFreeProviderCatalogFromQuota(response.quota)) {
           onProvisioned();
         }
-      } else {
-        setQuota({ ...INITIAL_QUOTA, loading: false, unavailable: true });
       }
     } catch {
-      setQuota({ ...INITIAL_QUOTA, loading: false, unavailable: true });
+      // silent by design
     }
   }, [onProvisioned]);
 
   useEffect(() => {
-    if (configured && provider.apiKey) {
-      void loadQuota(provider.apiKey, false);
-    }
-  }, [configured, provider.apiKey, loadQuota]);
+    if (configured && provider.apiKey) void syncCatalog(provider.apiKey);
+  }, [configured, provider.apiKey, syncCatalog]);
 
   const handleEnable = useCallback(async () => {
     setEnabling(true);
@@ -97,18 +79,29 @@ const FreeQuotaCard: React.FC<FreeQuotaCardProps> = ({ providers, onProvisioned 
     }
   }, [onProvisioned]);
 
-  const remainingRatio = quota.quotaTotal > 0 ? quota.quotaRemaining / quota.quotaTotal : 0;
-  const exhausted = configured && !quota.loading && !quota.unavailable && quota.quotaRemaining <= 0;
-  const runningLow = configured && !quota.loading && !quota.unavailable && !exhausted && remainingRatio < 0.1;
-  const weeklyCycle = quota.quotaCycleResetAt > 0;
-  const resetDaysLeft = quotaResetDaysLeft(quota.quotaCycleResetAt);
-  const exhaustedLine = exhausted
-    ? (weeklyCycle
-        ? (resetDaysLeft > 0
-            ? i18nService.t('freeQuotaExhaustedWeekly').replace('{n}', String(resetDaysLeft))
-            : i18nService.t('freeQuotaExhaustedWeeklySoon'))
-        : i18nService.t('freeQuotaExhausted'))
-    : '';
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await window.electron.mePoints.getBalance({ forceRefresh: true });
+    } finally {
+      setRefreshing(false);
+    }
+    if (provider.apiKey) void syncCatalog(provider.apiKey);
+  }, [provider.apiKey, syncCatalog]);
+
+  const weekly = snapshot.balance?.weeklyGrant;
+  const grantMe = meFromMilli(weekly?.amountMilli);
+  const remainingMe = meFromMilli(weekly?.remainingMilli);
+  const resetHours = weekly ? meResetCountdownHours(weekly.nextResetAt) : null;
+  const resetLine = resetHours === null
+    ? ''
+    : resetHours === 0
+      ? i18nService.t('mePanelResetSoon')
+      : resetHours <= 24
+        ? i18nService.t('freeQuotaResetCountdownHours').replace('{n}', String(resetHours))
+        : i18nService.t('freeQuotaResetCountdown').replace('{n}', String(Math.ceil(resetHours / 24)));
+  const grantRatio = grantMe > 0 ? Math.max(0, Math.min(100, (remainingMe / grantMe) * 100)) : 0;
+  const runningLow = grantMe > 0 && remainingMe / grantMe < 0.1;
 
   return (
     <div className="mb-2 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface p-2.5">
@@ -119,8 +112,8 @@ const FreeQuotaCard: React.FC<FreeQuotaCardProps> = ({ providers, onProvisioned 
         {configured && (
           <button
             type="button"
-            onClick={() => void loadQuota(provider.apiKey, true)}
-            disabled={quota.loading}
+            onClick={() => void handleRefresh()}
+            disabled={refreshing}
             className="text-[11px] text-claude-accent hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {i18nService.t('freeQuotaRefresh')}
@@ -130,29 +123,28 @@ const FreeQuotaCard: React.FC<FreeQuotaCardProps> = ({ providers, onProvisioned 
 
       {configured ? (
         <div className="mt-2 space-y-1.5">
-          {quota.unavailable ? (
-            <p className="text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
-              {i18nService.t('freeQuotaUnavailable')}
-            </p>
-          ) : (
+          {snapshot.balance ? (
             <>
               <div className="h-1.5 w-full rounded-full dark:bg-claude-darkBorder bg-claude-border overflow-hidden">
                 <div
-                  className={`h-full rounded-full transition-all ${exhausted ? 'bg-red-500' : runningLow ? 'bg-amber-500' : 'bg-claude-accent'}`}
-                  style={{ width: `${Math.max(0, Math.min(100, remainingRatio * 100))}%` }}
+                  className={`h-full rounded-full transition-all ${runningLow ? 'bg-amber-500' : 'bg-claude-accent'}`}
+                  style={{ width: `${grantRatio}%` }}
                 />
               </div>
-              <p className="text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                {i18nService.t('freeQuotaRemaining').replace('{n}', formatTokenCount(quota.quotaRemaining))}
-                {formatQuotaResetSuffix(quota.quotaCycleResetAt, (key) => i18nService.t(key))}
+              <p className="text-[12px] tabular-nums dark:text-claude-darkText text-claude-text">
+                {i18nService.t('freeQuotaMeWeekly').replace('{remaining}', formatMe(remainingMe)).replace('{total}', formatMe(grantMe))}
+                {resetLine ? (
+                  <span className="ml-1 text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">{resetLine}</span>
+                ) : null}
               </p>
-              {exhausted && (
-                <p className="text-[11px] text-red-500">{exhaustedLine}</p>
-              )}
               {runningLow && (
-                <p className="text-[11px] text-amber-500">{i18nService.t('freeQuotaLowWarning')}</p>
+                <p className="text-[11px] text-amber-500">{i18nService.t('freeQuotaMeLowWarning')}</p>
               )}
             </>
+          ) : (
+            <p className="text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              {i18nService.t('freeQuotaMeUnavailable')}
+            </p>
           )}
         </div>
       ) : (
