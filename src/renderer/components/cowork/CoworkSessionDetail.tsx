@@ -26,7 +26,6 @@ import CoworkQuoteActionBar, {
 } from './CoworkQuoteActionBar';
 import CoworkMessageActionsMenu from './CoworkMessageActionsMenu';
 import CoworkSentQuoteBlock from './CoworkSentQuoteBlock';
-import CoworkImageLightbox from './CoworkImageLightbox';
 import {
   buildTranscriptMessageIdsByOrdinal,
   buildTranscriptMessagePositions,
@@ -76,7 +75,6 @@ import {
 import MarkdownContent from '../MarkdownContent';
 import { detectTradeActivity } from '../chat/tradeActivity';
 import TradeActivityBadge from '../chat/TradeActivityBadge';
-import { mapWechatBracketCodesForDisplay } from '../chat/wechatEmojiDisplay';
 import MarkdownViewerPanel from './MarkdownViewerPanel';
 import {
   CheckIcon,
@@ -110,9 +108,15 @@ import { isQuotaExhaustedErrorLive } from './quotaErrorBanner';
 import { isRenderableAvatarSource as isSharedRenderableAvatarSource } from '../../utils/avatarSource';
 import {
   hasSupportedImageExtension,
-  LOCAL_IMAGE_PREVIEW_MAX_BYTES,
   stripHashAndQuery,
 } from '../../utils/localImage';
+import {
+  mapSandboxGuestPathsInText,
+  normalizeLocalPath,
+  resolveLocalPathAgainstCwd,
+  stripFileProtocol,
+} from '../../utils/localPath';
+import { ImagePreviewStrip, UserMessageBody } from './UserAttachmentBody';
 import { scrollEventMovesAnchor, placePopoverAbove, useAnchorMoveWatcher, type PopoverPlacement } from '../../utils/anchoredPopover';
 import {
   buildPrivateA2ASessionDisplayId,
@@ -702,148 +706,8 @@ const formatToolInput = (
 const hasText = (value: unknown): value is string =>
   typeof value === 'string' && value.trim().length > 0;
 
-const safeDecodeURIComponent = (value: string): string => {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
-};
-
-const stripFileProtocol = (value: string): string => {
-  let cleaned = value.replace(/^file:\/\//i, '');
-  if (/^\/[A-Za-z]:/.test(cleaned)) {
-    cleaned = cleaned.slice(1);
-  }
-  return cleaned;
-};
-
-const hasScheme = (value: string): boolean => /^[a-z][a-z0-9+.-]*:/i.test(value);
-
-const isAbsolutePath = (value: string): boolean => (
-  value.startsWith('/') || /^[A-Za-z]:[\\/]/.test(value)
-);
-
-const isRelativePath = (value: string): boolean => !isAbsolutePath(value) && !hasScheme(value);
-const SANDBOX_WORKSPACE_GUEST_ROOT = '/workspace/project';
-const SANDBOX_WORKSPACE_LEGACY_ROOT = '/workspace';
-const SANDBOX_WORKSPACE_RESERVED_DIRS = new Set(['skills', 'ipc', 'tmp']);
-const SANDBOX_WORKSPACE_PATH_PATTERN = /\/workspace(?:\/project)?(?:\/[^\s'"`)\]}>,;:!?]*)?/g;
-
-const isReservedSandboxSegment = (relativePath: string): boolean => {
-  const [firstSegment] = relativePath.split('/');
-  return Boolean(firstSegment && SANDBOX_WORKSPACE_RESERVED_DIRS.has(firstSegment.toLowerCase()));
-};
-
-const mapSandboxGuestPathToCwd = (filePath: string, cwd?: string): string | null => {
-  if (!cwd) return null;
-
-  const normalizedPath = filePath.replace(/\\/g, '/');
-  const normalizedCwd = cwd.replace(/[\\/]+$/, '');
-
-  if (
-    normalizedPath === SANDBOX_WORKSPACE_GUEST_ROOT
-    || normalizedPath.startsWith(`${SANDBOX_WORKSPACE_GUEST_ROOT}/`)
-  ) {
-    const relativePath = normalizedPath
-      .slice(SANDBOX_WORKSPACE_GUEST_ROOT.length)
-      .replace(/^\/+/, '');
-    if (relativePath && isReservedSandboxSegment(relativePath)) {
-      return null;
-    }
-    return relativePath ? `${normalizedCwd}/${relativePath}` : normalizedCwd;
-  }
-
-  if (
-    normalizedPath !== SANDBOX_WORKSPACE_LEGACY_ROOT
-    && !normalizedPath.startsWith(`${SANDBOX_WORKSPACE_LEGACY_ROOT}/`)
-  ) {
-    return null;
-  }
-
-  const legacyRelativePath = normalizedPath
-    .slice(SANDBOX_WORKSPACE_LEGACY_ROOT.length)
-    .replace(/^\/+/, '');
-  if (!legacyRelativePath) {
-    return normalizedCwd;
-  }
-
-  if (isReservedSandboxSegment(legacyRelativePath)) {
-    return null;
-  }
-
-  return `${normalizedCwd}/${legacyRelativePath}`;
-};
-
-const mapSandboxGuestPathsInText = (value: string, cwd?: string): string => {
-  if (!value || !cwd || !value.includes('/workspace')) {
-    return value;
-  }
-
-  return value.replace(SANDBOX_WORKSPACE_PATH_PATTERN, (candidatePath) =>
-    mapSandboxGuestPathToCwd(candidatePath, cwd) ?? candidatePath);
-};
-
-const parseRootRelativePath = (value: string): string | null => {
-  const trimmed = value.trim();
-  if (!/^file:\/\//i.test(trimmed)) return null;
-  const separatorIndex = trimmed.indexOf('::');
-  if (separatorIndex < 0) return null;
-
-  const rootPart = trimmed.slice(0, separatorIndex);
-  const relativePart = trimmed.slice(separatorIndex + 2);
-  if (!relativePart.trim()) return null;
-
-  const rootPath = safeDecodeURIComponent(stripFileProtocol(stripHashAndQuery(rootPart)));
-  const relativePath = safeDecodeURIComponent(stripHashAndQuery(relativePart));
-  if (!rootPath || !relativePath) return null;
-
-  const normalizedRoot = rootPath.replace(/[\\/]+$/, '');
-  const normalizedRelative = relativePath.replace(/^[\\/]+/, '');
-  if (!normalizedRelative) return null;
-
-  return `${normalizedRoot}/${normalizedRelative}`;
-};
-
-const normalizeLocalPath = (
-  value: string
-): { path: string; isRelative: boolean; isAbsolute: boolean } | null => {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-
-  const fileScheme = /^file:\/\//i.test(trimmed);
-  const schemePresent = hasScheme(trimmed);
-  if (schemePresent && !fileScheme && !isAbsolutePath(trimmed)) return null;
-
-  let raw = trimmed;
-  if (fileScheme) {
-    raw = stripFileProtocol(raw);
-  }
-  raw = stripHashAndQuery(raw);
-  const decoded = safeDecodeURIComponent(raw);
-  const path = decoded || raw;
-  if (!path) return null;
-
-  const isAbsolute = isAbsolutePath(path);
-  const isRelative = isRelativePath(path);
-  return { path, isRelative, isAbsolute };
-};
-
-const toAbsolutePathFromCwd = (filePath: string, cwd: string): string => {
-  if (isAbsolutePath(filePath)) {
-    return filePath;
-  }
-  return `${cwd.replace(/\/$/, '')}/${filePath.replace(/^\.\//, '')}`;
-};
-
 const IMAGE_LINK_DESTINATION_PATTERN = /\[[^\]]*]\(([^)\r\n]+)\)/g;
 const IMAGE_CANDIDATE_PATTERN = /(?:^|[\s"'`([{<:：])((?:file:\/\/[^\s"'`)\]}>]+|[A-Za-z]:\\[^\s"'`<>|]+|\/[^\s"'`<>|]+|\.{1,2}[\\/][^\s"'`<>|]+|[^\s"'`<>|]+)\.(?:png|jpe?g|gif|webp|bmp))(?=$|[\s"'`)\]}>，。,；;:：!?])/gi;
-
-type LocalImagePreviewCacheEntry =
-  | { status: 'ready'; dataUrl: string }
-  | { status: 'error' };
-
-const localImagePreviewCache = new Map<string, LocalImagePreviewCacheEntry>();
 
 const trimImageCandidateToken = (value: string): string => {
   let token = value.trim();
@@ -873,12 +737,6 @@ const normalizeImageCandidatePath = (value: string): string | null => {
   if (!trimmed) return null;
   if (!isLocalImagePathCandidate(trimmed)) return null;
   return trimmed;
-};
-
-const getPathBaseName = (value: string): string => {
-  const normalized = value.replace(/\\/g, '/').replace(/\/+$/, '');
-  const lastSlashIndex = normalized.lastIndexOf('/');
-  return lastSlashIndex >= 0 ? normalized.slice(lastSlashIndex + 1) : normalized;
 };
 
 const extractImagePaths = (
@@ -935,88 +793,6 @@ const extractImagePaths = (
 
   return dedupedPaths;
 };
-
-/**
- * Split the attachment marker lines out of a user message body so the image
- * files they name can render as pictures instead of as raw paths.
- *
- * The composer writes each attachment as its own `附件路径: <path>` line; the
- * same text is what reaches the model, so this is a DISPLAY-side split only —
- * `body` keeps every line that is not an attachment marker, and `imagePaths`
- * carries the image files those markers named, for ImagePreviewStrip. A marker
- * whose path is not a readable image stays in `body` as text, so nothing is
- * silently swallowed.
- */
-const splitUserAttachmentLines = (
-  content: string,
-  resolveLocalFilePath?: (href: string, text: string) => string | null,
-): { body: string; imagePaths: string[] } => {
-  if (!content) return { body: content, imagePaths: [] };
-  const lines = content.replace(/\r\n?/g, '\n').split('\n');
-  const kept: string[] = [];
-  const imagePaths: string[] = [];
-  for (const line of lines) {
-    const marker = /^\s*(?:[-*]\s*)?(?:附件路径|附件文件|输入文件|input\s*file|attachment\s*(?:path|file))\s*[:：]\s*(.+?)\s*$/i.exec(line);
-    if (!marker) {
-      kept.push(line);
-      continue;
-    }
-    const pathText = marker[1].trim();
-    const normalized = normalizeLocalPath(pathText);
-    const isImage = hasSupportedImageExtension(stripHashAndQuery(pathText))
-      || (normalized !== null && hasSupportedImageExtension(normalized.path));
-    if (!isImage) {
-      kept.push(line);
-      continue;
-    }
-    const resolved = resolveLocalFilePath
-      ? resolveLocalFilePath(pathText, pathText)
-      : null;
-    const absolute = (resolved ?? (normalized?.isAbsolute ? normalized.path : null))?.trim();
-    if (!absolute) {
-      kept.push(line);
-      continue;
-    }
-    imagePaths.push(stripFileProtocol(stripHashAndQuery(absolute)));
-  }
-  // Collapse the blank line that separated the marker block from the rest.
-  return { body: kept.join('\n').replace(/\n{3,}/g, '\n\n').trim(), imagePaths };
-};
-
-/**
- * A user message body, with any attachment marker lines rendered as pictures.
- *
- * Every user-message branch (plain, reply-quote, selection-quote) renders its
- * remaining body through this, so an image attachment shows as a thumbnail no
- * matter which branch the message takes. Display-only: the submitted prompt
- * text is untouched.
- */
-const UserMessageBody: React.FC<{
-  content: string;
-  resolveLocalFilePath?: (href: string, text: string) => string | null;
-}> = ({ content, resolveLocalFilePath }) => {
-  const { body, imagePaths } = useMemo(
-    () => splitUserAttachmentLines(content, resolveLocalFilePath),
-    [content, resolveLocalFilePath],
-  );
-  return (
-    <>
-      {body ? (
-        // Display-time WeChat bracket-code mapping (user bubbles only — the
-        // same display-only contract as the messenger surfaces); the stored
-        // transcript text stays verbatim. emojiImages: catalog emoji render
-        // as bundled Twemoji artwork (display-only swap).
-        <MarkdownContent
-          content={mapWechatBracketCodesForDisplay(body)}
-          className="max-w-none whitespace-pre-wrap [overflow-wrap:anywhere]"
-          emojiImages
-        />
-      ) : null}
-      {imagePaths.length > 0 && <ImagePreviewStrip imagePaths={imagePaths} inline />}
-    </>
-  );
-};
-
 
 export const normalizeOrderFocusTxid = (value: unknown): string | null => {
   const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
@@ -1164,98 +940,6 @@ const TodoWriteInputView: React.FC<{ items: TodoListItem[] }> = ({ items }) => {
         </div>
       ))}
     </div>
-  );
-};
-
-const ImagePreviewStrip: React.FC<{ imagePaths: string[]; inline?: boolean }> = ({ imagePaths, inline = false }) => {
-  const [previewData, setPreviewData] = useState<Record<string, string>>({});
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const cachedPreviews: Record<string, string> = {};
-    for (const imagePath of imagePaths) {
-      const cached = localImagePreviewCache.get(imagePath);
-      if (cached?.status === 'ready') {
-        cachedPreviews[imagePath] = cached.dataUrl;
-      }
-    }
-    setPreviewData(cachedPreviews);
-
-    const pendingPaths = imagePaths.filter((imagePath) => !localImagePreviewCache.has(imagePath));
-    if (pendingPaths.length === 0) {
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    pendingPaths.forEach((imagePath) => {
-      void window.electron.cowork.readLocalImage({
-        path: imagePath,
-        maxBytes: LOCAL_IMAGE_PREVIEW_MAX_BYTES,
-      }).then((result) => {
-        if (cancelled) return;
-        if (result?.success && typeof result.dataUrl === 'string' && result.dataUrl) {
-          localImagePreviewCache.set(imagePath, { status: 'ready', dataUrl: result.dataUrl });
-          setPreviewData((prev) => (
-            prev[imagePath]
-              ? prev
-              : { ...prev, [imagePath]: result.dataUrl }
-          ));
-          return;
-        }
-        localImagePreviewCache.set(imagePath, { status: 'error' });
-      }).catch(() => {
-        if (!cancelled) {
-          localImagePreviewCache.set(imagePath, { status: 'error' });
-        }
-      });
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [imagePaths]);
-
-  const visiblePaths = imagePaths.filter((imagePath) => typeof previewData[imagePath] === 'string');
-
-  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
-  const [lightboxCaption, setLightboxCaption] = useState<string | undefined>(undefined);
-
-  if (visiblePaths.length === 0) return null;
-
-  return (
-    <>
-      <div className={inline ? 'mt-2 flex flex-wrap gap-2' : 'ml-4 mt-2 flex flex-wrap gap-2'}>
-        {visiblePaths.map((imagePath) => (
-          <button
-            key={imagePath}
-            type="button"
-            title={getPathBaseName(imagePath)}
-            onClick={() => {
-              setLightboxCaption(getPathBaseName(imagePath));
-              setLightboxSrc(previewData[imagePath]);
-            }}
-            className="group rounded-lg border dark:border-claude-darkBorder border-claude-border overflow-hidden dark:bg-claude-darkSurface bg-claude-surface hover:border-claude-accent transition-colors cursor-zoom-in"
-          >
-            <img
-              src={previewData[imagePath]}
-              alt={getPathBaseName(imagePath)}
-              className="h-24 w-24 object-cover"
-              loading="lazy"
-            />
-            <div className="px-1.5 py-1 text-[10px] leading-4 dark:text-claude-darkTextSecondary text-claude-textSecondary max-w-24 truncate text-left">
-              {getPathBaseName(imagePath)}
-            </div>
-          </button>
-        ))}
-      </div>
-      <CoworkImageLightbox
-        src={lightboxSrc}
-        caption={lightboxCaption}
-        onClose={() => setLightboxSrc(null)}
-      />
-    </>
   );
 };
 
@@ -4365,55 +4049,13 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
 
   const autoScrollFollowSignal = buildAutoScrollFollowSignal(currentSession?.messages, isStreaming);
 
-  const resolveLocalFilePath = useCallback((href: string, text: string) => {
-    const hrefValue = typeof href === 'string' ? href.trim() : '';
-    const textValue = typeof text === 'string' ? text.trim() : '';
-    if (!hrefValue && !textValue) return null;
-
-    // In sandbox mode, translate VM guest paths to host paths.
-    const mapSandboxPath = (filePath: string): string => {
-      if (
-        currentSession?.executionMode !== 'sandbox' ||
-        !currentSession?.cwd
-      ) {
-        return filePath;
-      }
-      const mapped = mapSandboxGuestPathToCwd(filePath, currentSession.cwd);
-      return mapped ?? filePath;
-    };
-
-    const hrefRootRelative = hrefValue ? parseRootRelativePath(hrefValue) : null;
-    if (hrefRootRelative) {
-      return mapSandboxPath(hrefRootRelative);
-    }
-
-    const hrefPath = hrefValue ? normalizeLocalPath(hrefValue) : null;
-    if (hrefPath) {
-      if (hrefPath.isRelative && currentSession?.cwd) {
-        return mapSandboxPath(toAbsolutePathFromCwd(hrefPath.path, currentSession.cwd));
-      }
-      if (hrefPath.isAbsolute) {
-        return mapSandboxPath(hrefPath.path);
-      }
-    }
-
-    const textRootRelative = textValue ? parseRootRelativePath(textValue) : null;
-    if (textRootRelative) {
-      return mapSandboxPath(textRootRelative);
-    }
-
-    const textPath = textValue ? normalizeLocalPath(textValue) : null;
-    if (textPath) {
-      if (textPath.isRelative && currentSession?.cwd) {
-        return mapSandboxPath(toAbsolutePathFromCwd(textPath.path, currentSession.cwd));
-      }
-      if (textPath.isAbsolute) {
-        return mapSandboxPath(textPath.path);
-      }
-    }
-
-    return null;
-  }, [currentSession?.cwd, currentSession?.executionMode]);
+  const resolveLocalFilePath = useCallback(
+    (href: string, text: string) => resolveLocalPathAgainstCwd(href, text, {
+      cwd: currentSession?.cwd,
+      executionMode: currentSession?.executionMode,
+    }),
+    [currentSession?.cwd, currentSession?.executionMode],
+  );
 
   const mapDisplayText = useCallback((value: string): string => {
     if (currentSession?.executionMode !== 'sandbox') {

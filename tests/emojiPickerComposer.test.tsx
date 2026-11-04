@@ -181,13 +181,19 @@ test('A2A private-chat bubbles render WeChat bracket codes as Twemoji images', (
 });
 
 test('cowork user bubbles route their body through the display mapping', () => {
-  // UserMessageBody is not exported; pin the wiring in the transcript source
-  // (the module the render lives in), same convention as the composer test.
-  const source = readSource('../src/renderer/components/cowork/CoworkSessionDetail.tsx');
+  // UserMessageBody now lives in the shared attachment module (both the
+  // transcript and the Bot Internet panel render through it), so the display
+  // mapping is pinned there and the transcript may not keep a copy.
+  const source = readSource('../src/renderer/components/cowork/UserAttachmentBody.tsx');
   assert.match(
     source,
     /content=\{mapWechatBracketCodesForDisplay\(body\)\}[\s\S]{0,120}?emojiImages/,
     'UserMessageBody must pass its body through the display-only mapping and opt into Twemoji rendering',
+  );
+  const detailSource = readSource('../src/renderer/components/cowork/CoworkSessionDetail.tsx');
+  assert.ok(
+    !detailSource.includes('mapWechatBracketCodesForDisplay'),
+    'the transcript must not keep its own copy of the user-body display mapping',
   );
 });
 
@@ -218,20 +224,28 @@ test('cowork sent-quote blocks render Twemoji like the bubble body around them',
   assert.doesNotMatch(markup, /src="https?:\/\//, 'assets must be bundled, never fetched from a CDN');
 });
 
-test('bot-browser panel bubbles join the Twemoji pipeline (user = TwemojiText, assistant = emojiImages)', () => {
-  // PanelMessage is not exported; pin the three render branches in the panel
-  // source. The user bubble is a PLAIN-TEXT face (no markdown pass), so it
-  // must go through TwemojiText rather than the emojiImages remark prop.
+test('bot-browser panel bubbles join the Twemoji pipeline (user = shared body, assistant = emojiImages)', () => {
+  // PanelMessage renders its user branch through the SAME shared body as the
+  // main transcript (UserAttachmentBody): markdown + bracket-code mapping +
+  // the emojiImages remark prop. The panel used to be a plain-text TwemojiText
+  // face; that changed with the image-attachment port, and a plain-text copy
+  // would now silently fork the bubble face from the transcript.
   const source = readSource('../src/renderer/features/botBrowser/BotBrowserCoworkPanel.tsx');
+  const bodySource = readSource('../src/renderer/components/cowork/UserAttachmentBody.tsx');
   assert.match(
     source,
-    /import TwemojiText from '\.\.\/\.\.\/components\/chat\/TwemojiText';/,
-    'panel must import the plain-text Twemoji renderer',
+    /import \{ UserMessageBody \} from '\.\.\/\.\.\/components\/cowork\/UserAttachmentBody';/,
+    'panel must import the shared user-message body',
   );
   assert.match(
     source,
-    /<TwemojiText text=\{message\.content\} \/>/,
-    'bot-browser user bubble must render through TwemojiText',
+    /<UserMessageBody content=\{message\.content\} resolveLocalFilePath=\{resolveLocalFilePath\} \/>/,
+    'bot-browser user bubble must render through the shared body',
+  );
+  assert.match(
+    bodySource,
+    /<MarkdownContent[\s\S]{0,200}?emojiImages/,
+    'the shared user body must pass emojiImages (bundled Twemoji, not system glyphs)',
   );
   const wired = (source.match(/<MarkdownContent content=\{message\.content\} compact onOpenBotBrowserUri=\{onOpenUri\} emojiImages \/>/g) ?? []).length;
   assert.equal(wired, 2, 'both bot-browser assistant branches (bubble + bare) must pass emojiImages');
