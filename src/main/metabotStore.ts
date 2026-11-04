@@ -790,16 +790,22 @@ export class MetabotStore {
     // deleted bot's metabot_id as the historical record of which bot produced
     // them (experience data survives the bot itself). But the native database
     // opens with foreign_keys = ON, and user_memories.metabot_id /
-    // metaid_knowledge_entries.metabot_id / metaid_knowledge_procedures.metabot_id
+    // metaid_knowledge_entries.metabot_id / metaid_knowledge_procedures.metabot_id /
+    // metabot_standing_pages.metabot_id / metabot_directives.metabot_id
     // reference metabots(id) with NO ACTION, so a bare DELETE fails with
     // FOREIGN KEY constraint failed whenever the bot has any memory / knowledge
-    // rows (the UI then shows no reaction). Detach those rows first —
-    // user_memories keeps its content with metabot_id nulled, the knowledge
-    // tables are deleted (their metabot_id is NOT NULL) — so deletion always
-    // succeeds and leaves no orphaned references.
+    // / standing-page / directive rows (the UI then shows no reaction). Detach
+    // those rows first — user_memories keeps its content with metabot_id
+    // nulled, the other tables are deleted (their metabot_id is NOT NULL) — so
+    // deletion always succeeds and leaves no orphaned references. Keep this
+    // list in sync with every new metabot_id FK: the standing-pages omission
+    // (tables added by the memory-evolution line without touching this method)
+    // blocked deletion for any bot the hygiene pass had seeded pages for.
     this.db.run('UPDATE user_memories SET metabot_id = NULL WHERE metabot_id = ?', [id]);
-    // The knowledge tables are SDK-managed and may not exist on every install;
-    // keep each cleanup best-effort so a missing table cannot break bot deletion.
+    // The knowledge / standing-page / directives tables may not exist on every
+    // install (SDK-managed, lazily created, or left over from a retired
+    // feature); keep each cleanup best-effort so a missing table cannot break
+    // bot deletion.
     try {
       this.db.run('DELETE FROM metaid_knowledge_entries WHERE metabot_id = ?', [id]);
     } catch (error) {
@@ -807,6 +813,16 @@ export class MetabotStore {
     }
     try {
       this.db.run('DELETE FROM metaid_knowledge_procedures WHERE metabot_id = ?', [id]);
+    } catch (error) {
+      if (!(error instanceof Error) || !/no such table/i.test(error.message)) throw error;
+    }
+    try {
+      this.db.run('DELETE FROM metabot_standing_pages WHERE metabot_id = ?', [id]);
+    } catch (error) {
+      if (!(error instanceof Error) || !/no such table/i.test(error.message)) throw error;
+    }
+    try {
+      this.db.run('DELETE FROM metabot_directives WHERE metabot_id = ?', [id]);
     } catch (error) {
       if (!(error instanceof Error) || !/no such table/i.test(error.message)) throw error;
     }

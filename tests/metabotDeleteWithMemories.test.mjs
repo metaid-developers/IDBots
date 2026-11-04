@@ -9,6 +9,7 @@ const require = createRequire(import.meta.url);
 
 const { SqliteStore } = require('../dist-electron/main/sqliteStore.js');
 const { MetabotStore } = require('../dist-electron/main/metabotStore.js');
+const { ensureStandingPageSchema } = require('../dist-electron/main/standingPageStore.js');
 
 const makeTempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-delete-metabot-fk-'));
 
@@ -101,6 +102,53 @@ const insertProcedure = (db, { id, metabotId, title }) => {
       (id, metabot_id, title, title_fingerprint, trigger_text, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
     [id, metabotId, title, `fp-${id}`, `trigger-${id}`, 1700000000000, 1700000000000]
+  );
+};
+
+// metabot_directives is a retired-feature table: the per-bot directives
+// feature was reshaped into built-in code-owned defaults and its store was
+// removed from the tree, but installs that ran the interim build keep the
+// table (NOT NULL metabot_id, FK NO ACTION on metabots). Mirrored from the
+// shipped schema so the delete path can be exercised against it.
+const ensureDirectivesTable = (db) => {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS metabot_directives (
+      id TEXT PRIMARY KEY,
+      metabot_id INTEGER NOT NULL REFERENCES metabots(id),
+      text TEXT NOT NULL CHECK (trim(text) <> ''),
+      scope TEXT NOT NULL DEFAULT 'external' CHECK (scope IN ('external', 'all')),
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+  `);
+};
+
+const insertDirective = (db, { id, metabotId, text }) => {
+  db.run(
+    `INSERT INTO metabot_directives (id, metabot_id, text, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?)`,
+    [id, metabotId, text, 1700000000000, 1700000000000]
+  );
+};
+
+// metabot_standing_pages is created lazily by the StandingPageStore
+// constructor; tests create it via the real runtime ensureStandingPageSchema.
+const insertStandingPage = (db, { id, metabotId, pageKey, spec }) => {
+  db.run(
+    `INSERT INTO metabot_standing_pages (
+       id, metabot_id, page_key, spec, name, question, sections_json, content,
+       status, is_default, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, '[]', '', 'active', 1, ?, ?)`,
+    [id, metabotId, pageKey, spec, `${spec} page`, `${spec} question?`, 1700000000000, 1700000000000]
+  );
+};
+
+const insertStandingPageRevision = (db, { id, pageId }) => {
+  db.run(
+    `INSERT INTO metabot_standing_page_revisions (id, page_id, reason, previous_sections_json, created_at)
+     VALUES (?, ?, ?, '[]', ?)`,
+    [id, pageId, 'test', 1700000000000]
   );
 };
 
@@ -220,6 +268,86 @@ test('deleteMetabot also removes the bot metaid_knowledge_procedures rows (NOT N
     assert.equal(metabotStore.getMetabotById(7), null);
     const after = db.exec('SELECT COUNT(*) FROM metaid_knowledge_procedures WHERE metabot_id = 7');
     assert.equal(Number(after[0].values[0][0]), 0);
+  } finally {
+    store.close();
+  }
+});
+
+test('deleteMetabot also removes the bot metabot_standing_pages rows and their revisions (NOT NULL metabot_id)', async () => {
+  const tempDir = makeTempDir();
+  const { store, metabotStore, db } = await openStores(tempDir);
+  try {
+    assert.equal(foreignKeysEnabled(db), 1);
+
+    ensureStandingPageSchema(db);
+    insertWallet(db, 1);
+    insertMetabot(db, { id: 7, walletId: 1, name: 'Briefed Bot', createdAt: 1000 });
+    // The three default pages the memory hygiene pass seeds per bot.
+    insertStandingPage(db, { id: 'page-1', metabotId: 7, pageKey: 'owner_profile', spec: 'owner_profile' });
+    insertStandingPage(db, { id: 'page-2', metabotId: 7, pageKey: 'work_threads', spec: 'work_threads' });
+    insertStandingPageRevision(db, { id: 'rev-1', pageId: 'page-1' });
+
+    // Without the cleanup this delete is refused by the NO ACTION constraint
+    // (the 2026-11 standing-pages regression: deletion of any bot the hygiene
+    // pass had seeded failed with FOREIGN KEY constraint failed).
+    assert.throws(() => db.run('DELETE FROM metabots WHERE id = ?', [7]), /FOREIGN KEY constraint failed/);
+    assert.equal(metabotStore.getMetabotById(7) !== null, true);
+
+    assert.equal(metabotStore.deleteMetabot(7), true);
+    assert.equal(metabotStore.getMetabotById(7), null);
+    const pages = db.exec('SELECT COUNT(*) FROM metabot_standing_pages WHERE metabot_id = 7');
+    assert.equal(Number(pages[0].values[0][0]), 0);
+    // Revisions follow their page via ON DELETE CASCADE.
+    const revisions = db.exec("SELECT COUNT(*) FROM metabot_standing_page_revisions WHERE id = 'rev-1'");
+    assert.equal(Number(revisions[0].values[0][0]), 0);
+    const orphans = db.exec("SELECT COUNT(*) FROM pragma_foreign_key_check WHERE parent = 'metabots'");
+    assert.equal(Number(orphans[0].values[0][0]), 0);
+  } finally {
+    store.close();
+  }
+});
+
+test('deleteMetabot also removes the bot metabot_directives rows (retired-feature table, NOT NULL metabot_id)', async () => {
+  const tempDir = makeTempDir();
+  const { store, metabotStore, db } = await openStores(tempDir);
+  try {
+    assert.equal(foreignKeysEnabled(db), 1);
+
+    ensureDirectivesTable(db);
+    insertWallet(db, 1);
+    insertMetabot(db, { id: 7, walletId: 1, name: 'Directed Bot', createdAt: 1000 });
+    insertDirective(db, { id: 'dir-1', metabotId: 7, text: 'never quote prices' });
+
+    assert.throws(() => db.run('DELETE FROM metabots WHERE id = ?', [7]), /FOREIGN KEY constraint failed/);
+
+    assert.equal(metabotStore.deleteMetabot(7), true);
+    assert.equal(metabotStore.getMetabotById(7), null);
+    const after = db.exec('SELECT COUNT(*) FROM metabot_directives WHERE metabot_id = 7');
+    assert.equal(Number(after[0].values[0][0]), 0);
+  } finally {
+    store.close();
+  }
+});
+
+test('deleteMetabot succeeds when the lazily-created reference tables were never created', async () => {
+  const tempDir = makeTempDir();
+  const { store, metabotStore, db } = await openStores(tempDir);
+  try {
+    assert.equal(foreignKeysEnabled(db), 1);
+
+    // Sanity: this fresh store never touched the standing-page or directives
+    // features, so their tables do not exist — the best-effort cleanups must
+    // tolerate that instead of failing the delete.
+    const absent = db.exec(
+      "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('metabot_standing_pages', 'metabot_directives')"
+    );
+    assert.equal(Number(absent[0].values[0][0]), 0);
+
+    insertWallet(db, 1);
+    insertMetabot(db, { id: 9, walletId: 1, name: 'Fresh Bot', createdAt: 1000 });
+
+    assert.equal(metabotStore.deleteMetabot(9), true);
+    assert.equal(metabotStore.getMetabotById(9), null);
   } finally {
     store.close();
   }
