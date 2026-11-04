@@ -10,8 +10,9 @@
  *
  * What this file pins down:
  *  1. the budget is configurable (IMSettings.turnTimeoutMs) and re-read on every
- *     turn, with invalid values falling back to the 120 s default instead of
- *     collapsing to 0;
+ *     turn, with invalid values falling back to the CHANNEL default instead of
+ *     collapsing to 0: 600 s on WeChat (this file's channel), 120 s on every
+ *     other channel (pinned in tests/imWeixinChannelTurnTimeout.test.mjs);
  *  2. a timed-out turn RESOLVES with whatever it had already produced, and that
  *     text travels the gateway's normal reply path (no "处理消息时出错" branch);
  *  3. a timed-out turn with no output still names the seconds limit and tells
@@ -35,7 +36,8 @@ const { IMCoworkHandler } = await import('../dist-electron/main/im/imCoworkHandl
 // The public contract under test, spelled as literals on purpose: the test must
 // fail against an implementation that ignores the setting, not follow whatever
 // constants that implementation happens to export.
-const DEFAULT_TURN_TIMEOUT_MS = 120_000;
+const DEFAULT_TURN_TIMEOUT_MS = 120_000;            // every non-WeChat channel
+const WEIXIN_DEFAULT_TURN_TIMEOUT_MS = 600_000;     // this file's channel
 const MIN_TURN_TIMEOUT_MS = 10_000;
 const MAX_TURN_TIMEOUT_MS = 30 * 60_000;
 
@@ -356,8 +358,16 @@ test('a timed-out turn sends the part it already produced instead of an error', 
     await flushMicrotasks();
     assert.equal(outcome.settled, false, 'the turn must stay open while work is being produced');
 
-    // Nothing may fire before the whole 120 s default budget is spent.
-    t.mock.timers.tick(DEFAULT_TURN_TIMEOUT_MS - 1);
+    // Nothing may fire before the whole WeChat channel budget (600 s) is spent
+    // — and in particular not at the old generic 120 s default.
+    t.mock.timers.tick(DEFAULT_TURN_TIMEOUT_MS);
+    await flushMicrotasks();
+    assert.equal(
+      outcome.settled,
+      false,
+      'the WeChat channel default must outlast the generic 120 s budget',
+    );
+    t.mock.timers.tick(WEIXIN_DEFAULT_TURN_TIMEOUT_MS - DEFAULT_TURN_TIMEOUT_MS - 1);
     await flushMicrotasks();
     assert.equal(outcome.settled, false, 'the turn must stay open until its budget is spent');
 
@@ -371,7 +381,7 @@ test('a timed-out turn sends the part it already produced instead of an error', 
     const reply = delivery.delivered[0];
     assert.match(reply, /timed out|已超时/i);
     assert.match(reply, /第一件事：PR #132/, 'partial assistant content must survive');
-    assert.match(reply, /120/, 'the reply must name the seconds limit');
+    assert.match(reply, /600/, 'the reply must name the WeChat default seconds limit');
     assert.doesNotMatch(reply, /^处理消息时出错:/);
 
     assert.deepEqual(
@@ -395,14 +405,14 @@ test('a timed-out turn with no output names the seconds limit and the next step'
     const pending = runThroughGatewayContract(handler, makeMessage('版本号是多少'));
     await waitFor(() => coworkRunner.startedCalls.length === 1, 'turn start');
 
-    t.mock.timers.tick(DEFAULT_TURN_TIMEOUT_MS);
+    t.mock.timers.tick(WEIXIN_DEFAULT_TURN_TIMEOUT_MS);
     const delivery = await pending;
 
     assert.equal(delivery.error, null);
     assert.equal(delivery.delivered.length, 1);
     const reply = delivery.delivered[0];
     assert.match(reply, /Request timed out/);
-    assert.match(reply, /120/, 'the reply must name the seconds limit');
+    assert.match(reply, /600/, 'the reply must name the WeChat default seconds limit');
     assert.match(
       reply,
       /单独问一件事|one thing at a time/i,
@@ -425,7 +435,7 @@ test('after a timeout the session is stopped and the next message starts a clean
     const sessionId = coworkRunner.startedCalls[0].sessionId;
     coworkRunner.emitAssistant(sessionId, '盘点到一半……');
 
-    t.mock.timers.tick(DEFAULT_TURN_TIMEOUT_MS);
+    t.mock.timers.tick(WEIXIN_DEFAULT_TURN_TIMEOUT_MS);
     const firstDelivery = await firstPending;
     assert.equal(firstDelivery.error, null);
     assert.match(firstDelivery.delivered[0], /盘点到一半/);
@@ -452,14 +462,17 @@ test('turnTimeoutMs is re-read every turn: default first, MIN applies to the nex
   try {
     const { handler, coworkRunner, imStore } = makeHandler(workspace, { autoComplete: false });
 
-    // Turn 1: nothing configured → the 120 s default. Almost the whole budget
-    // must pass without an abort.
+    // Turn 1: nothing configured → the WeChat channel default (600 s). The turn
+    // must outlive the old generic 120 s budget and stay open to 600 s.
     const first = observe(handler.processMessage(makeMessage('第一轮'), null));
     await waitFor(() => coworkRunner.startedCalls.length === 1, 'first turn start');
     const firstSessionId = coworkRunner.startedCalls[0].sessionId;
-    t.mock.timers.tick(DEFAULT_TURN_TIMEOUT_MS - 1);
+    t.mock.timers.tick(DEFAULT_TURN_TIMEOUT_MS);
     await flushMicrotasks();
-    assert.equal(first.settled, false, 'the default budget must not be shorter than 120 s');
+    assert.equal(first.settled, false, 'the WeChat default must outlast the generic 120 s budget');
+    t.mock.timers.tick(WEIXIN_DEFAULT_TURN_TIMEOUT_MS - DEFAULT_TURN_TIMEOUT_MS - 1);
+    await flushMicrotasks();
+    assert.equal(first.settled, false, 'the default budget must not be shorter than 600 s');
 
     coworkRunner.emitAssistant(firstSessionId, '第一轮的答案');
     coworkRunner.emitComplete(firstSessionId);
@@ -512,7 +525,8 @@ test('invalid turnTimeoutMs values fall back to the default instead of collapsin
       await waitFor(() => coworkRunner.startedCalls.length === before + 1, 'turn start');
 
       // If the value were clamped down to MIN (or to 0), the turn would already
-      // be dead after 10 s. It must still be alive — the default 120 s applies.
+      // be dead after 10 s. It must still be alive past the generic 120 s mark
+      // and only end at the WeChat channel default (600 s).
       t.mock.timers.tick(MIN_TURN_TIMEOUT_MS);
       await flushMicrotasks();
       assert.equal(
@@ -522,23 +536,31 @@ test('invalid turnTimeoutMs values fall back to the default instead of collapsin
       );
 
       t.mock.timers.tick(DEFAULT_TURN_TIMEOUT_MS - MIN_TURN_TIMEOUT_MS);
+      await flushMicrotasks();
+      assert.equal(
+        outcome.settled,
+        false,
+        `turnTimeoutMs=${String(invalid)} must fall back to the WeChat channel default, not 120 s`,
+      );
+
+      t.mock.timers.tick(WEIXIN_DEFAULT_TURN_TIMEOUT_MS - DEFAULT_TURN_TIMEOUT_MS);
       await waitFor(() => outcome.settled, `timeout for invalid value ${String(invalid)}`);
       assert.equal(outcome.error, undefined, 'invalid config must still resolve, never reject');
-      assert.match(outcome.value, /120/, 'the fallback must be the documented 120 s default');
+      assert.match(outcome.value, /600/, 'the fallback must be the WeChat channel default (600 s)');
     }
 
-    // A settings read that throws is the same contract: default, no crash.
+    // A settings read that throws is the same contract: channel default, no crash.
     imStore.state.throwOnTurnTimeoutRead = true;
     const beforeThrow = coworkRunner.startedCalls.length;
     const thrown = observe(handler.processMessage(makeMessage('读配置抛异常'), null));
     await waitFor(() => coworkRunner.startedCalls.length === beforeThrow + 1, 'turn start after throw');
     t.mock.timers.tick(MIN_TURN_TIMEOUT_MS);
     await flushMicrotasks();
-    assert.equal(thrown.settled, false, 'a failing settings read must fall back to the default budget');
-    t.mock.timers.tick(DEFAULT_TURN_TIMEOUT_MS - MIN_TURN_TIMEOUT_MS);
+    assert.equal(thrown.settled, false, 'a failing settings read must fall back to the channel default budget');
+    t.mock.timers.tick(WEIXIN_DEFAULT_TURN_TIMEOUT_MS - MIN_TURN_TIMEOUT_MS);
     await waitFor(() => thrown.settled, 'timeout after failing settings read');
     assert.equal(thrown.error, undefined);
-    assert.match(thrown.value, /120/);
+    assert.match(thrown.value, /600/);
   } finally {
     t.mock.timers.reset();
     fs.rmSync(workspace, { recursive: true, force: true });

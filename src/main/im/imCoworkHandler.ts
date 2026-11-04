@@ -15,9 +15,9 @@ import { resolveSessionWorkingDirectory } from '../libs/botWorkspace';
 import { isDshShutdownError } from '../libs/dshShutdownError';
 import type { IMMessage, IMPlatform, IMMediaAttachment, IMTrustContext } from './types';
 import {
-  DEFAULT_IM_TURN_TIMEOUT_MS,
   MIN_IM_TURN_TIMEOUT_MS,
   MAX_IM_TURN_TIMEOUT_MS,
+  defaultImTurnTimeoutMs,
 } from './types';
 import { imTrustAllowsTools, resolveQQGroupWorkspace } from './qqTrust';
 import { tApp } from '../libs/appLanguage';
@@ -418,7 +418,7 @@ export class IMCoworkHandler extends EventEmitter {
     // The accumulator belongs to the turn this message OPENS. A steered
     // message never reaches this point: creating one would reject the running
     // turn's accumulator and orphan its reply.
-    const responsePromise = this.createAccumulatorPromise(coworkSessionId);
+    const responsePromise = this.createAccumulatorPromise(coworkSessionId, message.platform);
 
     if (isActive) {
       this.coworkRunner.continueSession(coworkSessionId, formattedContent, {
@@ -1188,29 +1188,41 @@ export class IMCoworkHandler extends EventEmitter {
    * the start of every turn (a settings edit applies to the next message; no
    * gateway restart needed).
    *
-   * Invalid input — unset, NaN, non-finite, 0, negative, non-number, or a
-   * settings read that throws — always falls back to
-   * DEFAULT_IM_TURN_TIMEOUT_MS. A legal but extreme value is clamped into
-   * [MIN_IM_TURN_TIMEOUT_MS, MAX_IM_TURN_TIMEOUT_MS], so a bad config can
-   * neither abort a turn on arrival nor park the chat for hours.
+   * Precedence, highest first:
+   *   1. an explicit `IMSettings.turnTimeoutMs` — a legal but extreme value is
+   *      clamped into [MIN_IM_TURN_TIMEOUT_MS, MAX_IM_TURN_TIMEOUT_MS], so a
+   *      bad config can neither abort a turn on arrival nor park the chat for
+   *      hours;
+   *   2. the channel default (see defaultImTurnTimeoutMs): 600 s on WeChat,
+   *      120 s on every other channel — used whenever the setting is unset,
+   *      invalid (NaN, non-finite, 0, negative, non-number) or unreadable.
+   *
+   * Pure read: it consults the settings store and returns a number; it never
+   * writes, arms a timer, or touches handler state.
    */
-  private resolveTurnTimeout(): number {
+  private resolveTurnTimeout(platform?: IMPlatform | null): number {
+    const channelDefault = Math.min(
+      MAX_IM_TURN_TIMEOUT_MS,
+      Math.max(MIN_IM_TURN_TIMEOUT_MS, defaultImTurnTimeoutMs(platform)),
+    );
     let configured: unknown;
     try {
       configured = this.imStore.getIMSettings()?.turnTimeoutMs;
     } catch (error) {
-      console.warn('[IMCoworkHandler] Could not read turnTimeoutMs; using the default budget', JSON.stringify({
+      console.warn('[IMCoworkHandler] Could not read turnTimeoutMs; using the channel default budget', JSON.stringify({
+        platform: platform ?? null,
+        fallbackMs: channelDefault,
         error: error instanceof Error ? error.message : String(error),
       }));
-      return DEFAULT_IM_TURN_TIMEOUT_MS;
+      return channelDefault;
     }
     if (typeof configured !== 'number' || !Number.isFinite(configured) || configured <= 0) {
-      return DEFAULT_IM_TURN_TIMEOUT_MS;
+      return channelDefault;
     }
     return Math.min(MAX_IM_TURN_TIMEOUT_MS, Math.max(MIN_IM_TURN_TIMEOUT_MS, Math.round(configured)));
   }
 
-  private createAccumulatorPromise(sessionId: string): Promise<string> {
+  private createAccumulatorPromise(sessionId: string, platform?: IMPlatform | null): Promise<string> {
     return new Promise((resolve, reject) => {
       const existingAccumulator = this.messageAccumulators.get(sessionId);
       if (existingAccumulator) {
@@ -1228,7 +1240,7 @@ export class IMCoworkHandler extends EventEmitter {
       // answer is lost and the retry restarts from zero into the same wall
       // (real-device 2026-11-04 — two consecutive timeouts, then 「继续」 timed
       // out again for exactly that reason).
-      const timeoutMs = this.resolveTurnTimeout();
+      const timeoutMs = this.resolveTurnTimeout(platform);
       const timeoutSeconds = Math.round(timeoutMs / 1000);
       const timeoutId = setTimeout(() => {
         const accumulator = this.messageAccumulators.get(sessionId);
@@ -1488,7 +1500,7 @@ export class IMCoworkHandler extends EventEmitter {
     }
 
     this.removePendingPermission(key, pending.request.requestId);
-    const responsePromise = this.createAccumulatorPromise(pending.sessionId);
+    const responsePromise = this.createAccumulatorPromise(pending.sessionId, pending.platform);
     this.coworkRunner.respondToPermission(
       pending.request.requestId,
       this.buildAllowPermissionResult(pending.request)
