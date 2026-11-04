@@ -885,3 +885,9 @@ blob-report/
 !tests/paymentCardSyntax.test.ts
 !tests/paymentLaunchWatchdog.test.ts
 !tests/paymentPendingRecords.test.ts
+
+# AX-first desktop locate (feat/agent-desktop-ax)
+!tests/desktopAxLiveHarness.mjs
+!tests/desktopAxComputerUseGate.test.mjs
+!tests/desktopAxLocator.test.mjs
+!docs/two-layer-desktop-locate.md
