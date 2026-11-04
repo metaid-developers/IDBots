@@ -161,6 +161,7 @@ after that date so it gets a tier here.
 |---------|------|-------|
 | `app:getVersion`, `app:getSystemLocale` | P1 | |
 | `store:get`, `store:set`, `store:remove` | P1-R | R-store. |
+| `paymentInfo:get`, `paymentInfo:save`, `paymentInfo:clear` | P1 | Encrypted payment receiving-info blob (S3 slice 1) — local read/save/clear. |
 | `get-api-config`, `check-api-config` | P1 | Read and connection test only. |
 | `save-api-config` | N | Provider management is not on the phone in v1. |
 | `generate-session-title` | P1 | |

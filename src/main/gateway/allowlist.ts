@@ -307,6 +307,12 @@ const FEATURES_UTIL_INVOKE: Record<string, AllowlistEntry> = {
   'store:get': { tier: 'P1', restrictions: ['R-store'], note: '`02`: P1-R, R-store (only key `app_config`, apiKey redacted).' },
   'store:set': { tier: 'P1', restrictions: ['R-store'], note: '`02`: P1-R, R-store (only key `app_config`, provider entries frozen).' },
   'store:remove': { tier: 'P1', restrictions: ['R-store'], note: '`02`: P1-R, R-store (`remove` is rejected by R-store).' },
+  // Payment receiving info — encrypted local blob (S3 slice 1), single-row
+  // read/save/clear; same trust domain as local settings (`02`: App, Config,
+  // and Utilities).
+  'paymentInfo:get': { tier: 'P1' },
+  'paymentInfo:save': { tier: 'P1' },
+  'paymentInfo:clear': { tier: 'P1' },
   'get-api-config': { tier: 'P1', note: '`02`: read and connection test only.' },
   'check-api-config': { tier: 'P1', note: '`02`: read and connection test only.' },
   'save-api-config': { tier: 'N', note: '`02`: provider management is not on the phone in v1.' },
