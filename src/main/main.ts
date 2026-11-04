@@ -9267,9 +9267,11 @@ const getTwinOrchestrationService = () => new TwinOrchestrationService({
     fs.mkdirSync(workspace, { recursive: true });
     return workspace;
   },
-  // Round-4 r6: persistent idempotency guard for [ORCH-NOTIFY] terminal-state
+  // Round-4 r6: secondary fast-path marker for [ORCH-NOTIFY] terminal-state
   // messages to the Twin session (kv key orch_notify:<taskId>:<attemptId>:<status>,
-  // per attempt so retried failures still notify — 清单 #3).
+  // per attempt so retried failures still notify — 清单 #3). The durable
+  // at-most-once arbiter is the orchestration_notifications row claimed inside
+  // TwinOrchestrationService before the cross-session insert.
   kv: getStore(),
 });
 

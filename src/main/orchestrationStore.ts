@@ -117,6 +117,16 @@ export interface CreateOrchestrationAttemptInput {
   prompt: string;
 }
 
+/** The two terminal states a Twin [ORCH-NOTIFY] can announce. */
+export type OrchestrationNotificationOutcome = 'completed' | 'failed';
+
+export interface ClaimOrchestrationNotificationInput {
+  taskId: string;
+  stepId: string;
+  attemptId: string;
+  outcome: OrchestrationNotificationOutcome;
+}
+
 /**
  * v1.4 closure semantics (owner ruling A): the closure columns on the ledger
  * row have EXACTLY ONE writer — `OrchestrationStore.recordClosure`. The board's
@@ -342,6 +352,17 @@ export class OrchestrationStore {
       );
       CREATE INDEX IF NOT EXISTS idx_orchestration_attempts_step_status
         ON orchestration_attempts(step_id, status, queued_at DESC);
+      CREATE TABLE IF NOT EXISTS orchestration_notifications (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        step_id TEXT NOT NULL,
+        attempt_id TEXT NOT NULL,
+        outcome TEXT NOT NULL CHECK(outcome IN ('completed','failed')),
+        created_at TEXT NOT NULL,
+        UNIQUE(attempt_id, outcome)
+      );
+      CREATE INDEX IF NOT EXISTS idx_orchestration_notifications_task
+        ON orchestration_notifications(task_id, created_at DESC);
     `);
 
     // 方案 A: additive migration for long-term task linkage columns (idempotent).
@@ -565,6 +586,73 @@ export class OrchestrationStore {
 
   listAttempts(stepId: string): OrchestrationAttempt[] {
     return this.getAll<Row>('SELECT * FROM orchestration_attempts WHERE step_id = ? ORDER BY queued_at ASC', [stepId]).map(attemptFromRow);
+  }
+
+  /**
+   * At-most-once arbiter for Twin terminal-state notifications.
+   *
+   * The row IS the decision: a single INSERT ... OR IGNORE against
+   * UNIQUE(attempt_id, outcome) either wins the (attempt, terminal state) slot
+   * or observes that it was already claimed. This replaces "check a kv key,
+   * notify, then set the key" — where a process death between the notification
+   * and the marker write re-notified the same terminal state — with one atomic
+   * write that lands BEFORE the cross-session insert.
+   *
+   * Returns true only for the caller that actually inserted the row. Rows are
+   * never deleted: the table is the audit trail of every notification a task
+   * attempt was entitled to AND the durable guard itself.
+   *
+   * INSERT OR IGNORE is safe here because every bound value is a non-null
+   * string and the only CHECK is the two typed outcomes — in practice the one
+   * ignorable violation is the (attempt_id, outcome) uniqueness this method
+   * exists to arbitrate.
+   */
+  claimNotification(input: ClaimOrchestrationNotificationInput): boolean {
+    const id = uuidv4();
+    this.db.run(
+      `INSERT OR IGNORE INTO orchestration_notifications
+        (id, task_id, step_id, attempt_id, outcome, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [id, input.taskId, input.stepId, input.attemptId, input.outcome, new Date().toISOString()],
+    );
+    const modified = this.db.getRowsModified?.();
+    let claimed: boolean;
+    if (typeof modified === 'number') {
+      claimed = modified > 0;
+    } else {
+      // Backend without change accounting: the INSERT is still atomic, so the
+      // read-back names the winner; we claimed the slot iff the row carries
+      // the id we just generated.
+      const row = this.getOne<{ id: unknown }>(
+        'SELECT id FROM orchestration_notifications WHERE attempt_id = ? AND outcome = ?',
+        [input.attemptId, input.outcome],
+      );
+      claimed = String(row?.id ?? '') === id;
+    }
+    if (claimed) this.saveDb();
+    return claimed;
+  }
+
+  /** Read-back for tests/audit: every notification claim a task has taken. */
+  listNotifications(taskId: string): Array<{
+    id: string;
+    taskId: string;
+    stepId: string;
+    attemptId: string;
+    outcome: OrchestrationNotificationOutcome;
+    createdAt: string;
+  }> {
+    return this.getAll<Row>(
+      'SELECT * FROM orchestration_notifications WHERE task_id = ? ORDER BY created_at ASC, rowid ASC',
+      [taskId],
+    ).map((row) => ({
+      id: String(row.id),
+      taskId: String(row.task_id),
+      stepId: String(row.step_id),
+      attemptId: String(row.attempt_id),
+      outcome: row.outcome === 'failed' ? 'failed' : 'completed',
+      createdAt: String(row.created_at),
+    }));
   }
 
   /**
