@@ -174,6 +174,15 @@ export function grantCredit(
   // bundle-order rows are already credited upstream by the payment webhook;
   // applying them again would double-credit, so they are born not-required.
   const applyState: CreditApplyState = input.source === 'bundle-order' ? 'not-required' : 'pending';
+  if (applyState === 'not-required' && input.applyCode) {
+    // The upstream already credited these bytes (payment webhook). A code here
+    // could only ever be redeemed twice or never — refuse it outright.
+    throw new HttpError(
+      400,
+      'APPLY_CODE_NOT_APPLICABLE',
+      'bundle-order grants are already credited upstream; they take no application code',
+    );
+  }
   const applyCodeEnc =
     input.applyCode === undefined || input.applyCode === null || input.applyCode === ''
       ? null

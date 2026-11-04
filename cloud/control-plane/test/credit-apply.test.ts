@@ -118,7 +118,6 @@ before(async () => {
     source: 'bundle-order',
     actor: 'admin:test',
     referenceKey: 'bo_already_credited',
-    applyCode: 'IDB-TEST-0002-BBBB',
   });
 
   // B: one applicable grant, to prove isolation.
@@ -190,6 +189,26 @@ describe('pending pull is scoped to the calling tenant', () => {
       .prepare("SELECT apply_state FROM credit_ledger WHERE reference_key = 'bo_already_credited'")
       .get() as { apply_state: string };
     assert.equal(row.apply_state, 'not-required');
+  });
+
+  test('a bundle-order grant refuses an application code outright', () => {
+    assert.throws(
+      () =>
+        grantCredit(t.app, {
+          userId: TENANT_A.userId,
+          bytes: 104857600,
+          reason: 'paid order',
+          source: 'bundle-order',
+          actor: 'admin:test',
+          referenceKey: 'bo_with_code',
+          applyCode: 'IDB-TEST-0006-FFFF',
+        }),
+      /already credited upstream/,
+    );
+    const row = db
+      .prepare("SELECT COUNT(*) AS n FROM credit_ledger WHERE reference_key = 'bo_with_code'")
+      .get() as { n: number };
+    assert.equal(row.n, 0, 'nothing is written when the code is refused');
   });
 });
 

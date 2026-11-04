@@ -97,7 +97,7 @@ balanceAfter as reported by the tenant), `apply_attempts`, `last_apply_error`,
 | Check | Command | Result |
 |---|---|---|
 | CP unit + integration (incl. this slice) | `cd cloud/control-plane && npx tsx --test test/**/*.test.ts` | **232/232 pass** (one timing flake on the first run — `status-machine` integration — passed on re-run and in isolation) |
-| This slice's CP suite | `npx tsx --test test/credit-apply.test.ts` | **16/16 pass** |
+| This slice's CP suite | `npx tsx --test test/credit-apply.test.ts` | **17/17 pass** |
 | Existing credit/bundle suites | `npx tsx --test test/credit.test.ts test/bundle-order-credit.test.ts` | **17/17 pass** |
 | CP lint | `npx eslint src test` | clean |
 | Tenant credit suite | `node --test tests/creditPullService.test.mjs` | **8/8 pass** |
