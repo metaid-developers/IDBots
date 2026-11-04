@@ -5,27 +5,23 @@
  * relay owner: their permission prompts went nowhere and burned the runner's
  * 60s watchdog into an automatic denial. Mirroring imCoworkHandler, the
  * confirmation question is posted into the session transcript as a chat
- * message and the next incoming user message (允许/拒绝) is routed back to
- * respondToPermission. Unanswered prompts still auto-deny after 60s, aligned
- * with the runner watchdog. Owner-gated SUSPENDED approvals
- * (requestSuspendedApproval) are exempt: they have no watchdog, and this
- * relay must not arm one for them (see handlePermissionRequest).
+ * message and the next incoming user message (允许/拒绝) answers the oldest
+ * still-pending prompt. A newer prompt does not deny the older one; each
+ * card keeps its own timer. Tool approvals time out as allow, safety
+ * confirms time out as deny, and questions with no default wait. Owner-gated
+ * SUSPENDED approvals (requestSuspendedApproval) are exempt.
  *
  * Dependency-light by design (type-only runner import): unit tests import
  * this module directly with stub runner/store objects.
  */
 import type { CoworkRunner } from '../libs/coworkRunner';
+import type { PermissionResult } from '../libs/coworkPermissionTypes';
 
 export type RelayPermissionRequest = {
   requestId: string;
   toolName: string;
   toolInput: Record<string, unknown>;
-};
-
-type RelayPermissionResult = {
-  behavior: 'allow' | 'deny';
-  updatedInput?: Record<string, unknown>;
-  message?: string;
+  timeoutDefault?: 'allow' | 'deny' | null;
 };
 
 type RelayStore = {
@@ -44,7 +40,7 @@ export interface OrchestratorRelayReply {
 interface OrchestratorRelayState {
   store: RelayStore;
   managedSessions: Set<string>;
-  pendingBySession: Map<string, PendingOrchestratorPermission>;
+  pendingBySession: Map<string, PendingOrchestratorPermission[]>;
   timeoutMs: number;
   subscribed: boolean;
 }
@@ -52,7 +48,7 @@ interface OrchestratorRelayState {
 interface PendingOrchestratorPermission {
   sessionId: string;
   request: RelayPermissionRequest;
-  timeoutId: ReturnType<typeof setTimeout>;
+  timeoutId: ReturnType<typeof setTimeout> | null;
 }
 
 interface OrchestratorRelayOptions {
@@ -119,15 +115,22 @@ export function buildOrchestratorPermissionPrompt(
   const reasonText = typeof input.reason === 'string' ? input.reason.trim() : '';
   const detail = questionText || reasonText;
 
+  const waitsForHuman = request.toolName === 'AskUserQuestion'
+    && request.timeoutDefault !== 'allow'
+    && request.timeoutDefault !== 'deny';
   const zh = [
     `检测到需要安全确认的操作（工具: ${requestedToolName}）。`,
     detail ? `说明: ${detail}` : '说明: 当前操作需要用户确认。',
-    '请在 60 秒内回复“允许”或“拒绝”。',
+    waitsForHuman
+      ? '请回复“允许”或“拒绝”。该请求会一直等待，直到你回复。'
+      : '请在 60 秒内回复“允许”或“拒绝”。',
   ].join('\n');
   const en = [
     `A safety confirmation is required (tool: ${requestedToolName}).`,
     detail ? `Details: ${detail}` : 'Details: this operation needs user confirmation.',
-    'Reply with "yes" or "no" within 60 seconds.',
+    waitsForHuman
+      ? 'Reply with "yes" or "no". This request waits until you answer.'
+      : 'Reply with "yes" or "no" within 60 seconds.',
   ].join('\n');
   return language === 'en' ? en : zh;
 }
@@ -176,9 +179,11 @@ function ensureState(
       handlePermissionRequest(runner, state!, sessionId, request);
     });
     const dropPending = (sid: string) => {
-      const pending = state!.pendingBySession.get(sid);
-      if (!pending) return;
-      clearTimeout(pending.timeoutId);
+      const list = state!.pendingBySession.get(sid);
+      if (!list) return;
+      for (const pending of list) {
+        if (pending.timeoutId) clearTimeout(pending.timeoutId);
+      }
       state!.pendingBySession.delete(sid);
     };
     runner.on('complete', dropPending);
@@ -186,6 +191,34 @@ function ensureState(
     runner.on('stopped', dropPending);
   }
   return state;
+}
+
+function relayTimeoutResult(request: RelayPermissionRequest): PermissionResult | null {
+  // Questions with no default stay until a person answers. Every tool
+  // approval carries timeoutDefault 'deny' (fail-closed since the
+  // 2026-11-03 pre-release review — the auto-allow default was reverted).
+  if (request.toolName === 'AskUserQuestion' && request.timeoutDefault !== 'allow' && request.timeoutDefault !== 'deny') {
+    return null;
+  }
+  if (request.timeoutDefault === 'allow') {
+    const input = request.toolInput && typeof request.toolInput === 'object' ? request.toolInput : {};
+    return { behavior: 'allow', updatedInput: input };
+  }
+  return { behavior: 'deny', message: 'Permission request timed out after 60s' };
+}
+
+function dropRelayEntry(
+  state: OrchestratorRelayState,
+  sessionId: string,
+  requestId: string,
+): void {
+  const list = state.pendingBySession.get(sessionId);
+  if (!list) return;
+  const index = list.findIndex((entry) => entry.request.requestId === requestId);
+  if (index < 0) return;
+  const [removed] = list.splice(index, 1);
+  if (removed?.timeoutId) clearTimeout(removed.timeoutId);
+  if (list.length === 0) state.pendingBySession.delete(sessionId);
 }
 
 function handlePermissionRequest(
@@ -207,45 +240,31 @@ function handlePermissionRequest(
   // the daemon logged "not authorized" with the owner never clicking. The
   // renderer's global CoworkPermissionOverlay is the one and only seat.
   if (runner.isPermissionSuspended?.(request.requestId)) return;
-  // A structured owner question is NOT a turn-scoped yes/no confirmation:
-  // answering it from this transcript channel is impossible (the A2A view
-  // hides system messages), and the 60s auto-deny below would resolve the
-  // ask as "the user declined" with the owner never asked (the same defect
-  // class as the 2026-10-30 friend-invite auto-deny). Leave it to the modal
-  // seat — the main process broadcasts it to CoworkPermissionOverlay and
-  // pendingOwnerAskBridge pushes a desktop notification for bridge turns.
-  if (isStructuredOwnerQuestion(request)) return;
+  // Structured owner questions (AskUserQuestion with no safety context and no
+  // stamped timeoutDefault) DO stay on this relay, but as a wait-forever
+  // prompt: relayTimeoutResult arms no countdown for them, so the old
+  // 60s auto-deny can never resolve such an ask as a fabricated refusal.
+  // The answer seat is the global CoworkPermissionOverlay, and for bridge
+  // turns pendingOwnerAskBridge additionally pushes a desktop notification —
+  // the transcript post below remains the durable, reviewable record.
 
-  const existing = state.pendingBySession.get(sessionId);
-  if (existing && existing.request.requestId !== request.requestId) {
-    // A suspended approval is never superseded either: replacing it would
-    // resolve the owner-gated wait without an owner answer.
-    if (!runner.isPermissionSuspended?.(existing.request.requestId)) {
-      clearTimeout(existing.timeoutId);
-      state.pendingBySession.delete(sessionId);
-      runner.respondToPermission(existing.request.requestId, {
-        behavior: 'deny',
-        message: 'Superseded by a newer permission request.',
-      });
-    }
-  }
+  // A newer request keeps the older cards. Each one keeps its own countdown
+  // and default action; nothing is denied just because another prompt arrived.
+  const list = state.pendingBySession.get(sessionId) ?? [];
+  const timeoutResult = relayTimeoutResult(request);
+  const timeoutId = timeoutResult === null
+    ? null
+    : setTimeout(() => {
+      const current = state.pendingBySession.get(sessionId)?.find((entry) => entry.request.requestId === request.requestId);
+      if (!current) return;
+      dropRelayEntry(state, sessionId, request.requestId);
+      runner.respondToPermission(request.requestId, timeoutResult);
+    }, state.timeoutMs);
 
-  const timeoutId = setTimeout(() => {
-    const current = state.pendingBySession.get(sessionId);
-    if (!current || current.request.requestId !== request.requestId) return;
-    clearTimeout(current.timeoutId);
-    state.pendingBySession.delete(sessionId);
-    runner.respondToPermission(request.requestId, {
-      behavior: 'deny',
-      message: 'Permission request timed out after 60s',
-    });
-  }, state.timeoutMs);
+  if (timeoutId && typeof timeoutId.unref === 'function') timeoutId.unref();
 
-  // unref: the Electron main process always keeps other handles alive, and an
-  // unref'd timer must not pin a test process for the full window.
-  if (typeof timeoutId.unref === 'function') timeoutId.unref();
-
-  state.pendingBySession.set(sessionId, { sessionId, request, timeoutId });
+  list.push({ sessionId, request, timeoutId });
+  state.pendingBySession.set(sessionId, list);
 
   try {
     const record = state.store.addMessage(sessionId, {
@@ -267,6 +286,22 @@ function handlePermissionRequest(
   }
 }
 
+function oldestLiveRelayEntry(
+  runner: CoworkRunner,
+  state: OrchestratorRelayState | undefined,
+  sessionId: string,
+): PendingOrchestratorPermission | null {
+  if (!state) return null;
+  const list = state.pendingBySession.get(sessionId);
+  if (!list) return null;
+  while (list.length > 0) {
+    const head = list[0];
+    if (runner.isPermissionPending(head.request.requestId)) return head;
+    dropRelayEntry(state, sessionId, head.request.requestId);
+  }
+  return null;
+}
+
 /**
  * Entry hook for the next turn arriving at an orchestrator-managed session:
  * when a text confirmation is pending, the user message is matched against
@@ -280,29 +315,27 @@ export async function resolveOrchestratorPermissionReply(
   userMessage: string,
 ): Promise<OrchestratorRelayReply | null> {
   const state = relayStates.get(runner);
-  const pending = state?.pendingBySession.get(sessionId);
+  const pending = oldestLiveRelayEntry(runner, state, sessionId);
   if (!state || !pending) return null;
 
-  // The prompt may have been answered elsewhere (renderer overlay, watcher
-  // timeout). If the runner no longer holds it, drop our local record and let
-  // the message flow into a normal turn.
-  if (!runner.isPermissionPending(pending.request.requestId)) {
-    clearTimeout(pending.timeoutId);
-    state.pendingBySession.delete(sessionId);
-    return null;
-  }
-
   const normalizedReply = userMessage.trim().replace(/[。！!,.，\s]+$/g, '');
-  const stillPendingText = state.store.getAppLanguage?.() === 'en'
-    ? 'A confirmation is pending. Reply with "yes" or "no" (within 60 seconds).'
-    : '当前有待确认操作，请回复“允许”或“拒绝”（60 秒内）。';
+  const waitsForHuman = pending.request.toolName === 'AskUserQuestion'
+    && pending.request.timeoutDefault !== 'allow'
+    && pending.request.timeoutDefault !== 'deny';
+  const english = state.store.getAppLanguage?.() === 'en';
+  const stillPendingText = waitsForHuman
+    ? (english
+      ? 'A confirmation is pending. Reply with "yes" or "no".'
+      : '当前有待确认操作，请回复“允许”或“拒绝”。')
+    : (english
+      ? 'A confirmation is pending. Reply with "yes" or "no" (within 60 seconds).'
+      : '当前有待确认操作，请回复“允许”或“拒绝”（60 秒内）。');
   if (!normalizedReply) {
     return { replyText: stillPendingText, assistantMessageId: null };
   }
 
   if (DENY_RESPONSE_RE.test(normalizedReply)) {
-    clearTimeout(pending.timeoutId);
-    state.pendingBySession.delete(sessionId);
+    dropRelayEntry(state, sessionId, pending.request.requestId);
     runner.respondToPermission(pending.request.requestId, {
       behavior: 'deny',
       message: 'Operation denied by user text confirmation.',
@@ -320,7 +353,7 @@ export async function resolveOrchestratorPermissionReply(
   }
 
   clearTimeout(pending.timeoutId);
-  state.pendingBySession.delete(sessionId);
+  dropRelayEntry(state, sessionId, pending.request.requestId);
   const input = pending.request.toolInput && typeof pending.request.toolInput === 'object'
     ? pending.request.toolInput
     : {};

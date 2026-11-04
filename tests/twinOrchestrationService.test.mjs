@@ -55,6 +55,19 @@ function makeKv() {
   };
 }
 
+function handoffReply(state, overrides = {}) {
+  const payload = {
+    state,
+    summary: `Worker ${state} summary`,
+    deliverables: [],
+    verificationEvidence: ['file exists'],
+    blockers: [],
+    humanAction: null,
+    ...overrides,
+  };
+  return `Worker summary\n<worker_handoff>${JSON.stringify(payload)}</worker_handoff>`;
+}
+
 // Recording fake for the host CoworkRunner seam (P1-5b default path):
 // insertCrossSessionMessageAndQueue returns a success insert + queued run.
 function makeRecordingRunner() {
@@ -154,6 +167,9 @@ test('delegation creates durable records, launches a dedicated Worker identity, 
     assert.equal(calls[0].disableMemoryUpdates, false);
     assert.match(calls[0].userMessage, /<twin_delegation>/);
     assert.match(calls[0].userMessage, /index.html exists/);
+    assert.match(calls[0].userMessage, /<worker_handoff>/);
+    assert.match(calls[0].userMessage, /humanAction/);
+    assert.equal(service.getTaskStatus('twin-session', result.task.id).attention.waitingOn, 'twin', 'legacy text stays ready and waits for Twin verification');
 
     const reused = await service.delegateLocalWorker('twin-session', {
       workerMetabotId: 2,
@@ -164,6 +180,93 @@ test('delegation creates durable records, launches a dedicated Worker identity, 
     assert.equal(calls.length, 1);
     assert.equal(reused.attempt.id, result.attempt.id);
     assert.equal(orchestrationStore.getActiveWorkload(2), 0);
+  } finally {
+    sqliteStore.close();
+  }
+});
+
+test('structured ready persists the handoff and derives Twin attention', async () => {
+  const { sqliteStore, orchestrationStore, service } = await makeService(async (params) => {
+    await params.onSessionCreated('worker-session-2');
+    return handoffReply('ready');
+  });
+  try {
+    const result = await service.delegateLocalWorker('twin-session', {
+      workerMetabotId: 2, objective: 'Build with structured handoff', idempotencyKey: 'structured-ready',
+    });
+    await waitFor(() => assert.equal(orchestrationStore.getTask(result.task.id).status, 'review'));
+    const status = service.getTaskStatus('twin-session', result.task.id);
+    assert.equal(status.attention.waitingOn, 'twin');
+    assert.equal(status.steps[0].status, 'completed');
+    assert.equal(status.steps[0].attempts[0].result.handoff.structured, true);
+    assert.equal(status.steps[0].attempts[0].result.handoff.state, 'ready');
+  } finally {
+    sqliteStore.close();
+  }
+});
+
+test('humanAction moves the step to waiting_input and notifies the owner-facing Twin with the concrete question', async () => {
+  const cross = makeCrossSessionHarness();
+  const { sqliteStore, orchestrationStore, service } = await makeService(async (params) => {
+    await params.onSessionCreated('worker-session-2');
+    return handoffReply('blocked', {
+      summary: 'Implementation is ready; deployment needs approval',
+      blockers: ['production deploy not approved'],
+      humanAction: 'Approve production deploy?',
+    });
+  }, { insertCrossSessionUserMessage: (input) => cross.service.insertUserMessage(input) });
+  try {
+    const result = await service.delegateLocalWorker('twin-session', {
+      workerMetabotId: 2, objective: 'Prepare deployment', idempotencyKey: 'structured-owner-question',
+    });
+    await waitFor(() => assert.equal(orchestrationStore.getTask(result.task.id).status, 'review'));
+    const status = service.getTaskStatus('twin-session', result.task.id);
+    assert.equal(status.attention.waitingOn, 'owner');
+    assert.equal(status.attention.humanAction, 'Approve production deploy?');
+    assert.equal(status.steps[0].status, 'waiting_input');
+    assert.equal(status.steps[0].attempts[0].status, 'completed');
+    assert.match(cross.inserted[0].message.content, /Approve production deploy\?/);
+    assert.match(cross.inserted[0].message.content, /owner/);
+  } finally {
+    sqliteStore.close();
+  }
+});
+
+test('waiting_external is persisted and derived distinctly from a Worker or Twin wait', async () => {
+  const cross = makeCrossSessionHarness();
+  const { sqliteStore, orchestrationStore, service } = await makeService(async (params) => {
+    await params.onSessionCreated('worker-session-2');
+    return handoffReply('waiting_external', { blockers: ['CI still running'] });
+  }, { insertCrossSessionUserMessage: (input) => cross.service.insertUserMessage(input) });
+  try {
+    const result = await service.delegateLocalWorker('twin-session', {
+      workerMetabotId: 2, objective: 'Wait for CI', idempotencyKey: 'structured-external-wait',
+    });
+    await waitFor(() => assert.equal(orchestrationStore.getTask(result.task.id).status, 'review'));
+    const status = service.getTaskStatus('twin-session', result.task.id);
+    assert.equal(status.attention.waitingOn, 'external');
+    assert.match(status.attention.reason, /CI still running/);
+    assert.equal(status.steps[0].status, 'waiting_input');
+    assert.match(cross.inserted[0].message.content, /CI still running/);
+  } finally {
+    sqliteStore.close();
+  }
+});
+
+test('malformed structured handoff fails closed and derives Twin recovery attention', async () => {
+  const { sqliteStore, orchestrationStore, service } = await makeService(async (params) => {
+    await params.onSessionCreated('worker-session-2');
+    return '<worker_handoff>{not json}</worker_handoff>';
+  });
+  try {
+    const result = await service.delegateLocalWorker('twin-session', {
+      workerMetabotId: 2, objective: 'Return malformed handoff', idempotencyKey: 'structured-malformed',
+    });
+    await waitFor(() => assert.equal(orchestrationStore.getTask(result.task.id).status, 'failed'));
+    const status = service.getTaskStatus('twin-session', result.task.id);
+    assert.equal(status.attention.waitingOn, 'twin');
+    assert.equal(status.steps[0].attempts[0].error, 'WORKER_HANDOFF_INVALID');
+    assert.equal(status.steps[0].attempts[0].result.handoff.parseError, 'WORKER_HANDOFF_INVALID');
   } finally {
     sqliteStore.close();
   }
@@ -687,6 +790,56 @@ test('P1-5b: default path preserves message + kv guard when the queue-to-continu
   }
 });
 
+test('restart recovery notifies the Twin once without relaunching the interrupted attempt', async () => {
+  const cross = makeCrossSessionHarness();
+  const kv = makeKv();
+  let releaseWorker;
+  const workerCalls = [];
+  const { sqliteStore, orchestrationStore, service } = await makeService(async (params) => {
+    workerCalls.push(params);
+    await params.onSessionCreated('worker-session-2');
+    return new Promise((resolve) => { releaseWorker = resolve; });
+  }, {
+    insertCrossSessionUserMessage: (input) => cross.service.insertUserMessage(input),
+    kv,
+  });
+  try {
+    const result = await service.delegateLocalWorker('twin-session', {
+      workerMetabotId: 2,
+      objective: 'Work that is interrupted by an app restart',
+      idempotencyKey: 'restart-recovery-notify',
+    });
+    await waitFor(() => assert.equal(orchestrationStore.getAttempt(result.attempt.id).status, 'running'));
+
+    const recovered = orchestrationStore.recoverAfterRestartWithDetails();
+    assert.equal(recovered.attempts, 1);
+    assert.equal(recovered.recoveredAttempts[0].status, 'failed');
+    assert.equal(recovered.recoveredAttempts[0].error, 'RECOVERED_AFTER_RESTART');
+    assert.equal(orchestrationStore.getStep(result.step.id).status, 'ready');
+    assert.equal(orchestrationStore.getTask(result.task.id).status, 'running');
+    assert.equal(cross.inserted.length, 0, 'baseline: store recovery alone never notifies the Twin');
+
+    service.notifyRestartRecoveredAttempts(recovered.recoveredAttempts);
+    assert.equal(cross.inserted.length, 1);
+    assert.equal(cross.inserted[0].targetSessionId, 'twin-session');
+    assert.match(cross.inserted[0].message.content, /RECOVERED_AFTER_RESTART/);
+    assert.match(cross.inserted[0].message.content, /host restart interrupted tracking/);
+    assert.match(cross.inserted[0].message.content, /retry or reassign/);
+    assert.equal(kv.get(`orch_notify:${result.task.id}:${result.attempt.id}:failed`), '1');
+
+    service.notifyRestartRecoveredAttempts(recovered.recoveredAttempts);
+    assert.equal(cross.inserted.length, 1, 'recovery notification is idempotent');
+    assert.equal(workerCalls.length, 1, 'notification never relaunches external work');
+
+    releaseWorker('late result from the old session');
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(cross.inserted.length, 1, 'a late result cannot resurrect or duplicate the recovered attempt');
+  } finally {
+    releaseWorker?.('test cleanup');
+    sqliteStore.close();
+  }
+});
+
 test('P1-5b: default path insert failure leaves the kv guard unset and never throws', async () => {
   const kv = makeKv();
   const runner = {
@@ -806,13 +959,13 @@ test('P-A: empty final reply + bare session → plain WORKER_EMPTY_HANDOFF (unch
 
 test('P-A: workspace git evidence is merged into the summary (commit=[...])', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-worker-git-'));
-  const run = (args) => execFileSync('git', args, { cwd: dir, stdio: 'pipe' });
+  const run = (args, env = {}) => execFileSync('git', args, { cwd: dir, stdio: 'pipe', env: { ...process.env, ...env } });
   run(['init', '-q']);
   run(['config', 'user.email', 'worker@test']);
   run(['config', 'user.name', 'Worker']);
   fs.writeFileSync(path.join(dir, 'a.txt'), 'v1');
   run(['add', '-A']);
-  run(['commit', '-q', '-m', 'feat: worker deliverable']);
+  run(['commit', '-q', '-m', 'feat: worker deliverable'], { GIT_COMMITTER_DATE: '2035-01-01T00:00:00Z' });
   const short = run(['rev-parse', '--short=7', 'HEAD']).toString().trim();
   const { sqliteStore, orchestrationStore, service } = await makeService(async (params) => {
     await params.onSessionCreated('worker-session-2');
@@ -830,7 +983,7 @@ test('P-A: workspace git evidence is merged into the summary (commit=[...])', as
     assert.match(error, new RegExp(`commit=\\[${short}\\]`));
   } finally {
     sqliteStore.close();
-    fs.rmSync(dir, { recursive: true, force: true });
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* Windows best effort */ }
   }
 });
 

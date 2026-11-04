@@ -83,6 +83,30 @@ test('task, step, and attempt lifecycle is durable and idempotent', async () => 
   }
 });
 
+test('long-term subtask lookup returns every delegation for that exact subtask only', async () => {
+  const { sqliteStore, orchestration } = await openStore();
+  try {
+    const first = orchestration.createTask({
+      ownerIntent: 'first slice', twinMetabotId: 1, ownerGlobalMetaId: 'owner',
+      longtermTaskId: 'ltt-1', longtermSubtaskId: 'lts-1',
+    });
+    const second = orchestration.createTask({
+      ownerIntent: 'retry slice', twinMetabotId: 1, ownerGlobalMetaId: 'owner',
+      longtermTaskId: 'ltt-1', longtermSubtaskId: 'lts-1',
+    });
+    orchestration.createTask({
+      ownerIntent: 'other subtask', twinMetabotId: 1, ownerGlobalMetaId: 'owner',
+      longtermTaskId: 'ltt-1', longtermSubtaskId: 'lts-2',
+    });
+    assert.deepEqual(
+      orchestration.listTasksForLongTermSubtask('ltt-1', 'lts-1').map((task) => task.id),
+      [first.id, second.id],
+    );
+  } finally {
+    sqliteStore.close();
+  }
+});
+
 test('restart recovery fails in-flight attempts and returns steps to ready without touching completed evidence', async () => {
   const { sqliteStore, orchestration } = await openStore();
   try {

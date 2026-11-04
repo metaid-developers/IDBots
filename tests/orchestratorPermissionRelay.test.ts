@@ -155,6 +155,58 @@ test('unmanaged and IM-owned sessions are not relayed', () => {
   assert.equal(store.transcript.length, 0, 'relay-owned session skipped');
 });
 
+test('a second permission request keeps the first card instead of denying it', async () => {
+  const runner = new StubRunner();
+  const store = makeStore();
+  runner.pending.set('dsh-policy-1', true);
+  runner.pending.set('dsh-policy-2', true);
+  claimManagedOrchestratorSession(runner as never, SESSION, store as never, { timeoutMs: 5000 });
+  runner.emit('permissionRequest', SESSION, installGateRequest('dsh-policy-1'));
+  runner.emit('permissionRequest', SESSION, installGateRequest('dsh-policy-2'));
+
+  assert.equal(runner.responded.length, 0, 'the older request is not superseded');
+  assert.equal(store.transcript.length, 2, 'both prompts are posted');
+
+  const reply = await resolveOrchestratorPermissionReply(runner as never, SESSION, '允许');
+  assert.ok(reply);
+  assert.equal(runner.responded.length, 1);
+  assert.equal(runner.responded[0]!.requestId, 'dsh-policy-1', 'text reply answers the oldest card');
+  assert.equal(runner.pending.has('dsh-policy-2'), true);
+});
+
+test('an ordinary tool approval times out as deny (fail-closed, 2026-11-03 review)', async () => {
+  const runner = new StubRunner();
+  const store = makeStore();
+  runner.pending.set('appr-1', true);
+  claimManagedOrchestratorSession(runner as never, SESSION, store as never, { timeoutMs: 15 });
+  runner.emit('permissionRequest', SESSION, {
+    requestId: 'appr-1',
+    toolName: 'Bash',
+    toolInput: { reason: 'run a command' },
+    timeoutDefault: 'deny',
+  });
+
+  await sleep(50);
+  assert.equal(runner.responded.length, 1);
+  assert.equal(runner.responded[0]!.result.behavior, 'deny');
+});
+
+test('a question with no default is not auto-answered', async () => {
+  const runner = new StubRunner();
+  const store = makeStore();
+  runner.pending.set('ask-1', true);
+  claimManagedOrchestratorSession(runner as never, SESSION, store as never, { timeoutMs: 15 });
+  runner.emit('permissionRequest', SESSION, {
+    requestId: 'ask-1',
+    toolName: 'AskUserQuestion',
+    toolInput: { questions: [{ question: 'Which color?' }] },
+  });
+
+  await sleep(50);
+  assert.equal(runner.responded.length, 0, 'questions wait for a person');
+  assert.ok(store.transcript[0]!.message.content.includes('一直等待'));
+});
+
 test('unanswered confirmations auto-deny after the configured window', async () => {
   const runner = new StubRunner();
   const store = makeStore();
@@ -196,7 +248,7 @@ test('prompt builder surfaces the safety-context tool name for AskUserQuestion g
  * messages, so that path fabricated "the user declined" with the owner never
  * asked (the same defect class as the 2026-10-30 friend-invite auto-deny).
  */
-test('structured owner questions are left to the modal, never relayed or auto-denied', async () => {
+test('structured owner questions wait for a person and are never auto-denied', async () => {
   const runner = new StubRunner();
   const store = makeStore();
   runner.pending.set('ask-structured', true);
@@ -211,8 +263,12 @@ test('structured owner questions are left to the modal, never relayed or auto-de
   runner.emit('permissionRequest', SESSION, ask);
 
   await sleep(50);
-  assert.equal(store.transcript.length, 0, 'no invisible 60s confirmation prompt');
+  // Merge composition (2026-11-04): main's relay keeps the question as a
+  // wait-forever transcript record; the bridge's desktop push
+  // (tests/a2aPendingAskBridge.test.mjs) is the proactive surface. What both
+  // sides agree on is pinned here: nothing may fabricate an answer.
   assert.equal(runner.responded.length, 0, 'no fabricated decline after the relay window');
+  assert.equal(store.transcript.length, 1, 'the question stays on the record');
   assert.equal(runner.isPermissionPending('ask-structured'), true);
 });
 
@@ -225,6 +281,10 @@ test('safety gates riding AskUserQuestion keep the text relay and its timeout', 
   const ask = {
     requestId: 'ask-safety',
     toolName: 'AskUserQuestion',
+    // Since the 2026-11-03 fail-closed review, every tool-approval-derived ask
+    // is stamped timeoutDefault 'deny' by the runner (stampPermissionDeadline);
+    // the relay arms its countdown from that stamp.
+    timeoutDefault: 'deny',
     toolInput: {
       context: { requestedToolName: 'Bash', requestedToolInput: { command: 'rm -rf build' } },
       questions: [{ question: '允许删除任务目录外的路径吗？', options: [{ label: '允许' }, { label: '拒绝' }] }],

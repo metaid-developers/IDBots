@@ -298,10 +298,17 @@ export class PrivateChatHistorySyncService {
   }
 }
 
+export interface StorePrivateChatHistoryMessagesResult {
+  inserted: number;
+  /** Pins stored already-processed. They must be rendered without a reply turn. */
+  archivedPinIds: string[];
+}
+
 export function storePrivateChatHistoryMessages(
   params: StorePrivateChatHistoryMessagesParams,
-): number {
+): StorePrivateChatHistoryMessagesResult {
   let insertedCount = 0;
+  const archivedPinIds: string[] = [];
 
   for (const message of params.messages) {
     const isProcessed = (
@@ -341,12 +348,16 @@ export function storePrivateChatHistoryMessages(
       ],
     );
 
-    insertedCount += (params.db as { getRowsModified?: () => number }).getRowsModified?.() ?? 0;
+    const modified = (params.db as { getRowsModified?: () => number }).getRowsModified?.() ?? 0;
+    insertedCount += modified;
+    if (modified > 0 && isProcessed === 1 && message.pinId) {
+      archivedPinIds.push(message.pinId);
+    }
   }
 
   if (insertedCount > 0) {
     params.saveDb();
   }
 
-  return insertedCount;
+  return { inserted: insertedCount, archivedPinIds };
 }

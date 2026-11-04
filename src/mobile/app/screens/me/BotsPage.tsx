@@ -57,7 +57,7 @@ export function BotsPage(props: {
         <button
           type="button"
           onClick={() => setCreateState({ busy: false, outcome: null })}
-          className="flex min-h-[36px] items-center gap-1 rounded-lg border border-[var(--border-color)] px-3 text-sm text-[var(--text-primary)] active:bg-[var(--bg-hover)]"
+          className="twin-button twin-button-secondary twin-button-small"
           data-testid="bot-create"
         >
           <PlusIcon className="h-4 w-4" aria-hidden />
@@ -76,7 +76,7 @@ export function BotsPage(props: {
         </div>
       ) : null}
 
-      <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] p-2">
+      <div className="twin-list">
         {sortedBots.length === 0 && !manager.loading ? (
           <p className="py-4 text-center text-sm text-[var(--text-secondary)]" data-testid="bots-empty">
             {t('mobile.me.botsEmpty')}
@@ -88,13 +88,13 @@ export function BotsPage(props: {
             type="button"
             data-testid={`bot-row-${bot.id}`}
             onClick={() => props.onOpenEdit(bot.id)}
-            className="flex min-h-[52px] w-full items-center gap-3 border-b border-[var(--border-color)] px-2 py-2 text-left last:border-b-0 active:bg-[var(--bg-hover)]"
+            className="twin-list-row"
           >
             <BotAvatar name={bot.name} avatar={bot.avatar} testId={`bot-avatar-${bot.id}`} />
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-[15px] text-[var(--text-primary)]">{bot.name}</p>
+            <div className="twin-list-copy">
+              <p className="twin-list-title truncate">{bot.name}</p>
               {bot.role ? (
-                <p className="truncate text-xs text-[var(--text-secondary)]" data-testid={`bot-role-${bot.id}`}>
+                <p className="twin-list-subtitle truncate" data-testid={`bot-role-${bot.id}`}>
                   {bot.role}
                 </p>
               ) : null}

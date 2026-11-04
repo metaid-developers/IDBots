@@ -66,6 +66,16 @@ export interface TurnAckReplyInput {
  * Prompt messages for the one-shot ack call (pure). The system prompt is
  * English per the repo's prompt convention; the ack itself must come back in
  * the user's own language, which the prompt demands.
+ *
+ * Content contract (owner decision 2026-11-03, session 3ecd2a2f): the ack
+ * NEVER answers the message — this call sees only the user text and the
+ * session title (no local time, no memory, no conversation context), so any
+ * substantive claim risks contradicting the real reply that follows (the ack
+ * said "I can't determine today's date" while the main answer, riding the
+ * local-time prompt, named the date). The ack acknowledges and sets
+ * expectations (how it will be approached, roughly how long); only a pure
+ * greeting gets a greeting back — that greeting carries no content to
+ * contradict.
  */
 export function buildTurnAckReplyMessages(
   input: TurnAckReplyInput
@@ -77,9 +87,12 @@ export function buildTurnAckReplyMessages(
     {
       role: 'system',
       content: [
-        'You write the opening acknowledgment of a chat assistant. The user just sent a message; the full reply is being prepared separately and will appear after yours.',
-        'Write ONE short acknowledgment that confirms you received and understood the request and says in plain words what you are about to do for it.',
-        'Rules: 1-2 sentences, under 40 words. Same language as the user message. Do not answer, solve, or start the task. Do not promise results or time limits, and do not ask questions. No markdown, lists, quotes, emoji, or greetings. Output only the finished acknowledgment text — never your thinking, deliberation, or reasoning about these rules or the message.',
+        'You write the FIRST response a chat assistant sends to the user\'s just-arrived message; the full work or answer follows later.',
+        'This line must sound like a real person replying in chat — the bot\'s own words about THIS message, never a canned service template. Vary your wording naturally; never produce boilerplate like "收到，我马上看" unless that is genuinely what you mean.',
+        '- For a pure greeting or check-in ("在吗", "hi"), respond naturally as a person would — a greeting gets a greeting back; that greeting IS the whole first response.',
+        '- For anything else, ONLY acknowledge and set expectations: say in plain words how you will approach it, and roughly whether it is quick or will take a while with progress updates.',
+        '- NEVER answer the user\'s question or state any fact, opinion, guess, or conclusion about its content — not even when the question looks simple. You write without the conversation context, memory, or the current date/time, so any substantive claim can contradict the real reply that follows.',
+        'Rules: 1-2 sentences, under 40 words. Same language as the user message. Do not solve the task or promise deadlines. No markdown, lists, quotes, emoji. Output only the finished text — never your thinking or reasoning about these rules.',
         "Never describe, analyze, translate, or quote the user's message; never mention what language it is in.",
       ].join('\n'),
     },
@@ -117,10 +130,110 @@ export function sanitizeTurnAckReply(raw: string): string {
   return capped.slice(0, cut).trimEnd();
 }
 
+export type TurnAckActivity = 'search_local' | 'verify_delivery' | 'working';
+
+export function resolveTurnAckActivity(userText: string): TurnAckActivity {
+  const text = userText ?? '';
+  if (/\[ORCH-NOTIFY\]/i.test(text)) return 'verify_delivery';
+  if (/本机|本地|local/i.test(text) && /搜|查找|search|find/i.test(text)) return 'search_local';
+  return 'working';
+}
+
+/** Input cap for the user-text slice sent to the wait-update model. */
+const OWNER_WAIT_USER_TEXT_MAX_CHARS = 1200;
+
+/** Input cap for the session-title context line on the wait update. */
+const OWNER_WAIT_TITLE_MAX_CHARS = 120;
+
+export interface OwnerWaitUpdateInput {
+  /** The turn's user message — language cue and topic context. */
+  userText: string;
+  sessionTitle?: string | null;
+  /** How long the owner has been waiting without a visible message. */
+  waitedMs: number;
+  /** True while a tool/execution step is still running. */
+  waitingForTool: boolean;
+  /** How many wait updates this turn already sent (0 = first). */
+  priorCount: number;
+}
+
+/**
+ * Prompt messages for the one-shot owner wait update — the "still working"
+ * heartbeat bubble (pure). Owner decision 2026-11-04: NO canned text anywhere
+ * in bubbles — the old fixed heartbeat strings ("有一个执行步骤还在运行…") read
+ * as a recording, so the wait line is written by the LLM in the bot's own
+ * words, per fire, from the live wait context. Same output contract as the
+ * turn ack: one short line, the user's language, sanitized through the shared
+ * input-aware guard.
+ */
+export function buildOwnerWaitUpdateMessages(
+  input: OwnerWaitUpdateInput
+): Array<{ role: 'system' | 'user'; content: string }> {
+  const userText = (input.userText ?? '').trim();
+  const title = (input.sessionTitle ?? '').trim();
+  const waitedMinutes = Math.max(1, Math.round(input.waitedMs / 60_000));
+  const titleLine = title ? `Session title: ${truncateUtf16UnitsSafe(title, OWNER_WAIT_TITLE_MAX_CHARS)}\n` : '';
+  const activityLine = input.waitingForTool
+    ? 'Current activity: an execution step (a tool/command) is still running.'
+    : 'Current activity: still thinking, organizing, or checking results — no step is visibly stuck.';
+  const repeatLine = input.priorCount > 0
+    ? `You have already sent ${input.priorCount} such note(s) this turn — say something NEW; do not repeat your earlier wording or structure.`
+    : '';
+  return [
+    {
+      role: 'system',
+      content: [
+        `You are a chat assistant still working on the user's request; the user has been waiting about ${waitedMinutes} minute(s) with no new visible message from you. Write ONE short chat line — your own words — telling them plainly what is happening right now and that work continues.`,
+        'This line must sound like a real person replying in chat, never a canned status template. Vary your wording naturally; never produce stock phrases like "仍在处理中" or "still processing" unless that is genuinely what you mean in your own voice.',
+        '- If a step is still executing, say so plainly; otherwise say you are still thinking or organizing.',
+        '- A brief natural acknowledgment of the wait is fine when it is genuinely meant; no apologies theater.',
+        'Rules: 1 sentence, under 30 words. Same language as the user message. No markdown, lists, quotes, or emoji. No promises, no ETAs, no deadlines. Output only the finished text — never your thinking or reasoning about these rules.',
+        "Never describe, analyze, translate, or quote the user's message; never mention what language it is in.",
+      ].join('\n'),
+    },
+    {
+      role: 'user',
+      content: [
+        titleLine,
+        `Minutes waited: ${waitedMinutes}`,
+        activityLine,
+        repeatLine,
+        '',
+        `User message:\n${truncateUtf16UnitsSafe(userText, OWNER_WAIT_USER_TEXT_MAX_CHARS)}`,
+      ].filter((line) => line !== '').join('\n'),
+    },
+  ];
+}
+
+/**
+ * Deterministic opening, emitted synchronously at the early-ack site. Reserved
+ * for openings that CARRY INFORMATION a template genuinely cannot get wrong —
+ * a worker delivery notice names the actor and the pending review, which is
+ * status, not conversation.
+ *
+ * Everything else returns ''. Owner decision 2026-11-03 (session 2c70849f:
+ * "好的，这就处理。" three times in eight minutes): a rotating canned line is
+ * worse than no line — the first sentence must be the bot's own words about
+ * THIS message, so the generic case waits for the LLM ack (emitTurnAckReplyBubble)
+ * and shows nothing but the activity indicator until it lands. Never bring
+ * back a phrase pool here.
+ */
+export function buildDeterministicTurnAckOpening(userText: string): string {
+  const normalized = (userText ?? '').replace(/\s+/g, ' ').trim();
+  const cjk = containsCjk(normalized);
+  if (resolveTurnAckActivity(normalized) !== 'verify_delivery') return '';
+  const worker = normalized.match(/\[ORCH-NOTIFY\]\s+worker\s+(.+?)\s+已完成\s+task\s+\S+/i)?.[1]?.trim();
+  const actor = worker || (cjk ? '协作 Bot' : 'The worker bot');
+  return sanitizeTurnAckReply(cjk
+    ? `${actor}已交付一个子任务，我先核对交付物和当前状态，再向你汇报验收结果；如果需要后续发版或你操作，我会一并说明。`
+    : `${actor} has delivered a subtask. I’ll check the deliverables and current state, then report the review outcome and any release or action needed next.`);
+}
+
 /**
  * Input-aware sanitize for the LLM ack (2026-10-23 thinking-leak fix).
  * Two deterministic rejections return '' BEFORE the length cap so the caller
- * keeps the template phrase instead of emitting leaked reasoning:
+ * shows NO first sentence rather than a bad one (the activity indicator keeps
+ * covering the wait; a leaked-reasoning or wrong-language bubble is worse):
  *  - genre guard: the ack reads as meta-analysis about the message (starts
  *    with "The user" or contains one of TURN_ACK_GENRE_MARKERS);
  *  - language guard: the user wrote CJK but the ack contains no CJK at all.

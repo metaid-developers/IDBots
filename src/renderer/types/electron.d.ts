@@ -1,6 +1,6 @@
 import type { McpServerConfig, McpServerFormData } from './mcp';
 import type { ProjectFormData, ProjectRecord } from './project';
-import type { GroupChatTranscriptMessage } from './groupTask';
+import type { GroupChatTranscriptMessage, GroupTaskMemberSummary } from './groupTask';
 import type {
   LongTermBoard,
   LongTermEvidence,
@@ -401,6 +401,8 @@ interface CoworkSession {
   followUpSource?: 'cerebellum' | 'ask_user' | 'manual' | null;
   /** ISO timestamp of the last follow-up transition; null = never transitioned. */
   followUpAt?: string | null;
+  /** S4 chat trade marker: 'p2p' = contract sale/transfer, 'escrow' = escrow activity, null = none. */
+  tradeBadge?: 'p2p' | 'escrow' | null;
   serviceOrderSummary?: CoworkServiceOrderSummary | null;
 }
 
@@ -522,6 +524,8 @@ interface CoworkSessionSummary {
   followUpSource?: 'cerebellum' | 'ask_user' | 'manual' | null;
   /** ISO timestamp of the last follow-up transition; null = never transitioned. */
   followUpAt?: string | null;
+  /** S4 chat trade marker: 'p2p' = contract sale/transfer, 'escrow' = escrow activity, null = none. */
+  tradeBadge?: 'p2p' | 'escrow' | null;
   serviceOrderSummary?: CoworkServiceOrderSummary | null;
 }
 
@@ -692,6 +696,8 @@ interface CoworkPermissionRequest {
   toolUseId?: string | null;
   // AskUserQuestion only: per-question countdown for the wizard; null/undefined = no timeout.
   perQuestionTimeoutMs?: number | null;
+  expiresAt?: number | null;
+  timeoutDefault?: 'allow' | 'deny' | null;
 }
 
 interface CoworkApiConfig {
@@ -1077,6 +1083,18 @@ interface IElectronAPI {
       sessionId?: string;
       payload?: unknown;
     }) => Promise<HostBrowserCommandResult<unknown>>;
+    buyNft: (input: {
+      actorId?: string;
+      resourceUri?: string;
+      sessionId?: string;
+      payload?: unknown;
+    }) => Promise<HostBrowserCommandResult<unknown>>;
+    buyMrc721: (input: {
+      actorId?: string;
+      resourceUri?: string;
+      sessionId?: string;
+      payload?: unknown;
+    }) => Promise<HostBrowserCommandResult<unknown>>;
     sendPrivateChat: (input: {
       actorId?: string;
       peerGlobalMetaId?: string;
@@ -1323,6 +1341,8 @@ interface IElectronAPI {
         toolInput: Record<string, unknown>;
         toolUseId?: string | null;
         perQuestionTimeoutMs?: number | null;
+        expiresAt?: number | null;
+        timeoutDefault?: 'allow' | 'deny' | null;
       }>;
       error?: string;
     }>;
@@ -1629,6 +1649,11 @@ interface IElectronAPI {
   appInfo: {
     getVersion: () => Promise<string>;
     getSystemLocale: () => Promise<string>;
+    getDataDirectory: () => Promise<{
+      userDataPath: string;
+      backupsPath: string;
+      appVersion: string;
+    }>;
   };
   updateNotification: {
     shouldForceShow: () => Promise<boolean>;
@@ -1656,12 +1681,54 @@ interface IElectronAPI {
   im: {
     getConfig: () => Promise<{ success: boolean; config?: IMGatewayConfig; error?: string }>;
     setConfig: (config: Partial<IMGatewayConfig>) => Promise<{ success: boolean; error?: string }>;
-    startGateway: (platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord') => Promise<{ success: boolean; error?: string }>;
-    stopGateway: (platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord') => Promise<{ success: boolean; error?: string }>;
+    startGateway: (platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'weixin' | 'qq') => Promise<{ success: boolean; error?: string }>;
+    stopGateway: (platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'weixin' | 'qq') => Promise<{ success: boolean; error?: string }>;
     testGateway: (
-      platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord',
+      platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'weixin' | 'qq',
       configOverride?: Partial<IMGatewayConfig>
     ) => Promise<{ success: boolean; result?: IMConnectivityTestResult; error?: string }>;
+    /** Weixin QR authorization: returns the QR payload to render for scanning. */
+    weixinLoginStart: () => Promise<{ success: boolean; qrcode?: string; content?: string; error?: string }>;
+    weixinLoginCancel: () => Promise<{ success: boolean; error?: string }>;
+    weixinCheckCredentials: () => Promise<{ success: boolean; hasCredentials?: boolean; error?: string }>;
+    /** QQ: QR bind returns the QR payload; credentials are stored 0600 in main. */
+    qqLoginStart: () => Promise<{ success: boolean; content?: string; error?: string }>;
+    qqLoginCancel: () => Promise<{ success: boolean; error?: string }>;
+    qqCheckCredentials: () => Promise<{ success: boolean; hasCredentials?: boolean; appId?: string | null; source?: string | null; error?: string }>;
+    qqSetCredentials: (params: { appId: string; appSecret: string; botId?: string | null; ownerUserOpenid?: string | null }) => Promise<{ success: boolean; appId?: string; error?: string }>;
+    /**
+     * QQ group authorisation without the 32-hex group OpenID.
+     *
+     * The gateway remembers groups that messaged the bot while NOT allowlisted
+     * — silently (no reply, no model, no tool, no memory). `pending` holds the
+     * ones that still need an owner decision; `groupId` is always present,
+     * `name` only when the platform's whitelist-gated endpoint answered.
+     */
+    qqListGroupCandidates: () => Promise<{
+      success: boolean;
+      pending?: QQGroupCandidateView[];
+      all?: QQGroupCandidateView[];
+      error?: string;
+    }>;
+    qqDismissGroupCandidate: (groupId: string) => Promise<{
+      success: boolean;
+      pending?: QQGroupCandidateView[];
+      all?: QQGroupCandidateView[];
+      error?: string;
+    }>;
+    qqRestoreGroupCandidate: (groupId: string) => Promise<{
+      success: boolean;
+      pending?: QQGroupCandidateView[];
+      all?: QQGroupCandidateView[];
+      error?: string;
+    }>;
+    qqResolveGroupName: (groupId: string) => Promise<{
+      success: boolean;
+      candidate?: QQGroupCandidateView;
+      nameStatus?: 'ok' | 'forbidden' | 'unavailable' | 'error';
+      name?: string | null;
+      error?: string;
+    }>;
     getStatus: () => Promise<{ success: boolean; status?: IMGatewayStatus; error?: string }>;
     onStatusChange: (callback: (status: IMGatewayStatus) => void) => () => void;
     onMessageReceived: (callback: (message: IMMessage) => void) => () => void;
@@ -1784,6 +1851,8 @@ interface IElectronAPI {
       Promise<{ success: boolean; messages?: GroupChatTranscriptMessage[]; error?: string }>;
     // P0-1: received-invite history (joined or not), newest first.
     listGuestInvites: () => Promise<{ success: boolean; items?: OpenTeamGuestInvite[]; error?: string }>;
+    getMembers: (input: { groupId: string }) =>
+      Promise<{ success: boolean; members?: GroupTaskMemberSummary[]; error?: string }>;
   };
   idbots: {
     getMetaBots: () => Promise<{ success: boolean; list?: Array<{ id: number; name: string; avatar: string | null; metabot_type: string; created_at: number }>; error?: string }>;
@@ -1824,6 +1893,40 @@ interface IElectronAPI {
     getMetabotWalletAssets: (input: { metabotId: number }) => Promise<{
       success: boolean;
       assets?: ElectronMetabotWalletAssets;
+      error?: string;
+    }>;
+    getMetabotNfts: (input: { metabotId: number; kind: 'mrc721' | 'metacontract' }) => Promise<{
+      success: boolean;
+      items?: ElectronMetabotNftListItem[];
+      error?: string;
+    }>;
+    healNftCard: (input: {
+      format: 'mrc721' | 'metacontract';
+      genesis?: string;
+      tokenIndex?: string;
+      pinId?: string;
+      owner?: string;
+    }) => Promise<{
+      success: boolean;
+      result?: { imgUrl?: string; icon?: string; issuer?: string };
+      error?: string;
+    }>;
+    transferMetabotMvcNft: (params: {
+      metabotId: number;
+      genesis: string;
+      codehash: string;
+      tokenIndex: string;
+      toAddress: string;
+      feeRate: number;
+    }) => Promise<{ success: boolean; result?: { txId: string; rawTx: string }; error?: string }>;
+    transferMetabotMrc721: (params: {
+      metabotId: number;
+      pinId: string;
+      toAddress: string;
+      feeRate: number;
+    }) => Promise<{
+      success: boolean;
+      result?: { txId: string; pinId: string; toAddress: string; spentOutpoint: string; outputValue: number };
       error?: string;
     }>;
     getTransferFeeSummary: (chain: 'mvc' | 'doge' | 'btc') => Promise<{
@@ -2033,6 +2136,22 @@ interface IElectronAPI {
     revealMnemonic: () => Promise<{ success: boolean; mnemonic?: string; error?: string }>;
     retrySubsidy: () => Promise<{ success: boolean; identity?: PublicUserIdentity | null; subsidy?: UserIdentitySubsidyResult; error?: string }>;
     retryChainSync: () => Promise<{ success: boolean; identity?: PublicUserIdentity | null; subsidy?: UserIdentitySubsidyResult; chainSync?: UserIdentityChainSyncResult; error?: string }>;
+  };
+  /** S3 fiat receiving info — encrypted at rest, owner device only, never on-chain. */
+  paymentInfo: {
+    get: () => Promise<{
+      success: boolean;
+      info?: {
+        payeeDisplayName?: string;
+        alipayPid?: string;
+        qrContent?: string;
+        qrImageDataUrl?: string;
+      } | null;
+      updatedAt?: number | null;
+      error?: string;
+    }>;
+    save: (input: { info: unknown }) => Promise<{ success: boolean; updatedAt?: number | null; error?: string }>;
+    clear: () => Promise<{ success: boolean; error?: string }>;
   };
   social: {
     /** S5 friend badge data source: pair state via the S4 metaso provider. */
@@ -2303,7 +2422,8 @@ interface IElectronAPI {
   // Namespace kept under its legacy `p2p` name; it only bridges the metaid
   // user-info/contacts IPC channels.
   p2p: {
-    getUserInfo: (params: { globalMetaId: string }) => Promise<unknown>;
+    /** Lookup by globalMetaId, or by MVC address (chat NFT card owner/issuer identity). */
+    getUserInfo: (params: { globalMetaId?: string; address?: string }) => Promise<unknown>;
     resolveAvatarSource: (params: { reference: string }) => Promise<unknown>;
     listContacts: (params: { observerGlobalMetaId: string }) => Promise<{ success: boolean; contacts?: CoworkMetaIDContactSummary[]; error?: string }>;
     getContactDetail: (params: { observerGlobalMetaId: string; subjectGlobalMetaId: string }) => Promise<{ success: boolean; detail?: CoworkMetaIDContactDetail; error?: string }>;
@@ -2317,11 +2437,77 @@ interface IElectronAPI {
 }
 
 // IM Gateway types
+interface WeixinConfig {
+  enabled: boolean;
+  accountId: string;
+  /** Bot token from QR authorization; kept in the main-process credential file. */
+  token?: string;
+  baseUrl?: string;
+  metabotId?: number | null;
+  debug?: boolean;
+}
+
+interface WeixinGatewayStatus {
+  connected: boolean;
+  startedAt: number | null;
+  lastError: string | null;
+  accountId: string | null;
+  loginPending: boolean;
+  loginState: 'idle' | 'wait' | 'scanned';
+  qrContent: string | null;
+  lastInboundAt: number | null;
+  lastOutboundAt: number | null;
+}
+
+interface QQConfig {
+  enabled: boolean;
+  appId: string;
+  botId?: string | null;
+  ownerUserOpenid?: string | null;
+  /** Write-only: never returned by `im:config:get`. */
+  appSecret?: string;
+  metabotId?: number | null;
+  debug?: boolean;
+}
+
+interface QQGatewayStatus {
+  connected: boolean;
+  startedAt: number | null;
+  lastError: string | null;
+  appId: string | null;
+  loginPending: boolean;
+  loginState: 'idle' | 'wait' | 'scanned' | 'confirmed' | 'expired' | 'error';
+  qrContent: string | null;
+  lastInboundAt: number | null;
+  lastOutboundAt: number | null;
+}
+
+/**
+ * A QQ group that messaged the bot while NOT allowlisted.
+ *
+ * `groupId` (the platform's 32-hex group OpenID) is the only identifier the
+ * platform guarantees, so it is always shown. `name` is optional and exists
+ * only when the whitelist-gated group-info endpoint answered (`nameStatus`).
+ */
+interface QQGroupCandidateView {
+  groupId: string;
+  name: string | null;
+  nameStatus: 'ok' | 'forbidden' | 'unavailable' | 'error';
+  nameCheckedAt: number | null;
+  firstSeenAt: number;
+  lastSeenAt: number;
+  messageCount: number;
+  ignored: boolean;
+  allowed: boolean;
+}
+
 interface IMGatewayConfig {
   dingtalk: DingTalkConfig;
   feishu: FeishuConfig;
   telegram: TelegramConfig;
   discord: DiscordConfig;
+  weixin: WeixinConfig;
+  qq: QQConfig;
   settings: IMSettings;
 }
 
@@ -2367,6 +2553,8 @@ interface DiscordConfig {
 interface IMSettings {
   systemPrompt?: string;
   skillsEnabled: boolean;
+  /** Per-turn wall-clock budget in ms; unset/invalid → 120 s, clamped to [10 s, 30 min]. Mirrors src/main/im/types.ts. */
+  turnTimeoutMs?: number;
 }
 
 interface ElectronMrc20Asset {
@@ -2431,6 +2619,7 @@ interface ElectronMvcNftAsset {
     name: string;
     satoshi: number;
     icon?: string;
+    imgUrl?: string;
   }>;
 }
 
@@ -2444,11 +2633,72 @@ interface ElectronMetabotWalletAssets {
 
 type ElectronTokenTransferAsset = ElectronMrc20Asset | ElectronMvcFtAsset;
 
+/** MetaContract NFT raw record riding on a wallet list item (detail view). */
+interface ElectronMetabotMetaContractNftRaw {
+  tokenIndex: string;
+  name: string;
+  satoshi: number;
+  txId: string;
+  outputIndex: number;
+  height: number;
+  icon?: string;
+  imgUrl?: string;
+  metaTxId?: string;
+  seriesName: string;
+  genesis: string;
+  codeHash: string;
+  sensibleId?: string;
+  tokenSupply?: number;
+}
+
+/** MRC721 item summary riding on a wallet list item (detail view). */
+interface ElectronMetabotMrc721Raw {
+  itemPinId: string;
+  collectionName?: string;
+  collectionPinId?: string;
+  number?: number;
+  name?: string;
+  desc?: string;
+  cover?: string;
+  metadata?: string;
+  ownerAddress?: string;
+  ownerMetaId?: string;
+  creatorMinted?: boolean;
+  burned?: boolean;
+  contentType?: string;
+  contentSummary?: string;
+  genesisChainName?: string;
+  genesisHeight?: number;
+  genesisTx?: string;
+  genesisFee?: number;
+  output?: string;
+  outputValue?: number;
+  createTime?: number;
+  transferCount?: number;
+}
+
+/** One normalized NFT in the NFT Wallet modal list. */
+interface ElectronMetabotNftListItem {
+  kind: 'mrc721' | 'metacontract';
+  key: string;
+  name: string;
+  collectionName: string;
+  imageRef?: string;
+  imageUrl?: string;
+  number?: number;
+  tokenIndex?: string;
+  createTime?: number;
+  height?: number;
+  raw: ElectronMetabotMrc721Raw | ElectronMetabotMetaContractNftRaw;
+}
+
 interface IMGatewayStatus {
   dingtalk: DingTalkGatewayStatus;
   feishu: FeishuGatewayStatus;
   telegram: TelegramGatewayStatus;
   discord: DiscordGatewayStatus;
+  weixin: WeixinGatewayStatus;
+  qq: QQGatewayStatus;
 }
 
 type IMConnectivityVerdict = 'pass' | 'warn' | 'fail';
@@ -2476,7 +2726,7 @@ interface IMConnectivityCheck {
 }
 
 interface IMConnectivityTestResult {
-  platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord';
+  platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'weixin';
   testedAt: number;
   verdict: IMConnectivityVerdict;
   checks: IMConnectivityCheck[];
@@ -2519,7 +2769,7 @@ interface DiscordGatewayStatus {
 }
 
 interface IMMessage {
-  platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord';
+  platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'weixin';
   messageId: string;
   conversationId: string;
   senderId: string;

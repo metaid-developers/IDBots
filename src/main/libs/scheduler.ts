@@ -149,12 +149,30 @@ export class Scheduler {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
   private activeTasks: Map<string, AbortController> = new Map();
+  // Per-run liveness timers, keyed like activeTasks. A live run keeps its own
+  // `running_at_ms` marker fresh so other schedulers can tell it from an orphan.
+  private runHeartbeats: Map<string, ReturnType<typeof setInterval>> = new Map();
   // Track cowork session IDs for running tasks so we can stop them
   private taskSessionIds: Map<string, string> = new Map();
   private stopGeneration = 0;
 
   private static readonly MAX_TIMER_INTERVAL_MS = 60_000;
   private static readonly MAX_CONSECUTIVE_ERRORS = 5;
+  /**
+   * How often a live run refreshes its `running_at_ms` marker. Deliberately a
+   * per-run timer and not part of the tick loop: tick() awaits
+   * Promise.all(executions), so a long run blocks later ticks and a
+   * tick-driven heartbeat would go silent exactly when the run needs it most.
+   */
+  private static readonly RUN_HEARTBEAT_INTERVAL_MS = 2 * 60_000;
+  /**
+   * How stale a `running_at_ms` marker must be before this scheduler may treat
+   * it as abandoned. 5× the heartbeat interval, so a live run survives four
+   * consecutive missed heartbeats before its marker becomes eligible for
+   * release — a foreign marker younger than this is presumed live and left
+   * alone.
+   */
+  private static readonly RUN_LIVENESS_LEASE_MS = 10 * 60_000;
 
   constructor(deps: SchedulerDeps) {
     this.store = deps.scheduledTaskStore;
@@ -188,6 +206,10 @@ export class Scheduler {
       controller.abort();
     }
     this.activeTasks.clear();
+    for (const [, heartbeat] of this.runHeartbeats) {
+      clearInterval(heartbeat);
+    }
+    this.runHeartbeats.clear();
     console.log('[Scheduler] Stopped');
   }
 
@@ -294,16 +316,33 @@ export class Scheduler {
    * Ledger orphaned runs as `stuck_running` skips. `getDueTasks` filters on
    * `running_at_ms IS NULL`, so a marker left behind by a run that no longer
    * has a live execution (scheduler stopped mid-run, lost run) silently wedges
-   * the task out of the due set — nothing in the store can tell a slow-but-live
-   * run from an abandoned one (there is no heartbeat), so `activeTasks` is the
-   * authoritative liveness signal and an orphan is detected as soon as it
-   * exists, not after a fixed timeout. Recording the skip puts the dropped
-   * execution in the ledger; releasing the marker lets the task fire again.
-   * Errors propagate so the tick's recovery path still sees them.
+   * the task out of the due set.
+   *
+   * Liveness has two sources, and a marker must fail BOTH before it is
+   * released. `activeTasks` proves liveness for runs owned by this process.
+   * For every other marker the only evidence is the marker itself: a live run
+   * refreshes `running_at_ms` through its heartbeat, so a marker younger than
+   * RUN_LIVENESS_LEASE_MS is presumed to belong to a live run in another
+   * process and is left alone — releasing it would hand the task back to the
+   * due set and fire it a second time. Only a marker that is both locally
+   * inactive and older than the lease is an orphan.
+   *
+   * Recording the skip puts the dropped execution in the ledger; releasing the
+   * marker lets the task fire again. Errors propagate so the tick's recovery
+   * path still sees them.
    */
   private ledgerStuckRunningTasks(): void {
+    const now = Date.now();
     for (const task of this.store.getRunningTasks()) {
       if (this.activeTasks.has(task.id)) continue;
+
+      // A marker with no usable timestamp carries no liveness evidence at all;
+      // only a number can prove a run is recent enough to be alive.
+      const runningAtMs = task.state.runningAtMs;
+      const markerAgeMs = typeof runningAtMs === 'number' && Number.isFinite(runningAtMs)
+        ? now - runningAtMs
+        : Number.POSITIVE_INFINITY;
+      if (markerAgeMs < Scheduler.RUN_LIVENESS_LEASE_MS) continue;
 
       const run = this.store.recordSkippedRun(task.id, 'stuck_running', 'scheduled');
       this.store.releaseStuckRunningTask(task.id);
@@ -398,14 +437,49 @@ export class Scheduler {
     }
 
     const startTime = Date.now();
-    const run = this.store.createRun(task.id, trigger);
 
-    this.store.markTaskRunning(task.id, startTime);
+    // Claim the task in the store. The activeTasks check above only proves that
+    // THIS process is not already running it; the store predicate is what
+    // excludes another process that saw the same due entry. Losing the claim
+    // means someone else owns this execution, so this fire is a duplicate: it
+    // is ledgered and dropped without touching the run/session bookkeeping.
+    if (!this.store.tryMarkTaskRunning(task.id, startTime)) {
+      console.log(`[Scheduler] Task ${task.id} is claimed by another run, skipping`);
+      this.emitRunUpdate(this.store.recordSkippedRun(task.id, 'already_running', trigger));
+      return;
+    }
+
+    let run: ScheduledTaskRun;
+    try {
+      run = this.store.createRun(task.id, trigger);
+    } catch (err) {
+      // Release the claim we just took: leaving the marker set would wedge the
+      // task out of the due set until the liveness lease expires.
+      this.store.releaseStuckRunningTask(task.id);
+      throw err;
+    }
+
     this.emitTaskStatusUpdate(task.id);
     this.emitRunUpdate(run);
 
     const abortController = new AbortController();
     this.activeTasks.set(task.id, abortController);
+
+    // Keep the claim fresh for as long as the run lives. Started only after the
+    // claim landed, so a process that lost the race never advertises liveness
+    // for a run it does not own.
+    const heartbeat = setInterval(() => {
+      try {
+        this.store.touchTaskRunning(task.id, Date.now());
+      } catch (err) {
+        // A failed refresh must not kill the run; the run itself is still
+        // recorded through the normal path.
+        console.warn(`[Scheduler] Task ${task.id} heartbeat failed:`, err);
+      }
+    }, Scheduler.RUN_HEARTBEAT_INTERVAL_MS);
+    // Never hold the event loop open just for a liveness tick.
+    heartbeat.unref?.();
+    this.runHeartbeats.set(task.id, heartbeat);
 
     let sessionId: string | null = null;
     let success = false;
@@ -421,6 +495,8 @@ export class Scheduler {
       }
     } finally {
       const durationMs = Date.now() - startTime;
+      clearInterval(heartbeat);
+      this.runHeartbeats.delete(task.id);
       this.activeTasks.delete(task.id);
       this.taskSessionIds.delete(task.id);
 

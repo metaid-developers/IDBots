@@ -41,12 +41,16 @@ describe('mobile chat projection', () => {
     assert.deepEqual(views.map((entry) => [entry.id, entry.text]), [['a1', 'Visible answer']]);
   });
 
-  it('keeps terminal errors and owner progress visible', () => {
+  it('keeps terminal errors and owner progress visible — unknown ones as the localized one-liner', () => {
     const views = projectChatMessages([
       message('progress', 'assistant', 'A problem needs attention', { narration: true, ownerUpdateKind: 'problem' }),
+      // No diagnostic metadata, no relay-quota code: an unknown terminal error
+      // collapses into the localized turnFailed one-liner (ChatScreen renders
+      // mobile.chat.diagnostic.turnFailed), never the raw upstream copy.
       message('error', 'system', 'Error: turn failed'),
     ]);
     assert.deepEqual(views.map((entry) => entry.role), ['assistant', 'error']);
-    assert.equal(views[1]?.text, 'Error: turn failed');
+    assert.equal(views[1]?.diagnostic, 'turnFailed');
+    assert.equal(views[1]?.text, '');
   });
 });

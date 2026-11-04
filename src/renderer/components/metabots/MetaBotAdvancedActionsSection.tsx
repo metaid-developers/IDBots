@@ -12,12 +12,14 @@ import React, { useState } from 'react';
 import {
   ArrowDownTrayIcon,
   ExclamationTriangleIcon,
+  PhotoIcon,
   TrashIcon,
   WalletIcon,
 } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import type { Metabot } from '../../types/metabot';
 import MetaBotBackupMnemonicModal from './MetaBotBackupMnemonicModal';
+import MetaBotNftWalletModal from './MetaBotNftWalletModal';
 import MetaBotWalletBalanceModal from './MetaBotWalletBalanceModal';
 
 interface MetaBotAdvancedActionsSectionProps {
@@ -31,6 +33,7 @@ const MetaBotAdvancedActionsSection: React.FC<MetaBotAdvancedActionsSectionProps
   onDelete,
 }) => {
   const [showWalletModal, setShowWalletModal] = useState(false);
+  const [showNftWalletModal, setShowNftWalletModal] = useState(false);
   const [showBackupModal, setShowBackupModal] = useState(false);
 
   const cardBase =
@@ -59,6 +62,15 @@ const MetaBotAdvancedActionsSection: React.FC<MetaBotAdvancedActionsSectionProps
           >
             <WalletIcon className="h-4 w-4" aria-hidden />
             {i18nService.t('metabotWallet')}
+          </button>
+          <button
+            type="button"
+            data-slot="metabot-advanced-open-nft-wallet"
+            onClick={() => setShowNftWalletModal(true)}
+            className={actionBtn}
+          >
+            <PhotoIcon className="h-4 w-4" aria-hidden />
+            {i18nService.t('metabotNftWallet')}
           </button>
           <button
             type="button"
@@ -103,6 +115,12 @@ const MetaBotAdvancedActionsSection: React.FC<MetaBotAdvancedActionsSectionProps
           isOpen={showWalletModal}
           metabot={metabot}
           onClose={() => setShowWalletModal(false)}
+        />
+      )}
+      {showNftWalletModal && (
+        <MetaBotNftWalletModal
+          metabot={metabot}
+          onClose={() => setShowNftWalletModal(false)}
         />
       )}
       {showBackupModal && (

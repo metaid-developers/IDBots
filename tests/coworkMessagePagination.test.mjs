@@ -114,7 +114,12 @@ test('split A2A episodes persist as generations (no startup consolidation) and a
     store.addMessage(split.id, {
       type: 'assistant',
       content: 'split history',
-      metadata: { sourceChannel: 'metaweb_private', direction: 'outgoing' },
+      metadata: {
+        sourceChannel: 'metaweb_private',
+        direction: 'outgoing',
+        pinId: `${'ab'.repeat(32)}i0`,
+        txid: 'ab'.repeat(32),
+      },
     });
 
     const firstEpisode = store.registerA2AEpisode({
@@ -183,12 +188,13 @@ test('split A2A episodes persist as generations (no startup consolidation) and a
     assert.ok(listedIds.includes(split.id));
     assert.ok(!listedIds.includes(original.id));
 
-    // getSessionView of the successor advertises earlier episodes even when
-    // its own in-session window is exhausted.
+    // Opening the successor fills the display page from the previous episode,
+    // so a short new episode does not hide the rest of the thread.
     const view = migrated.getSessionView(split.id, 10);
-    assert.deepEqual(view?.messages.map((message) => message.content), ['split history']);
-    assert.equal(view?.messageHistory?.hasMoreBefore, true);
+    assert.deepEqual(view?.messages.map((message) => message.content), ['original history', 'split history']);
+    assert.equal(view?.messageHistory?.hasMoreBefore, false);
     assert.equal(view?.messageHistory?.beforeSequence, null);
+    assert.equal(view?.messages[0]?.metadata?.a2aEpisodeIndex, 1);
 
     // Cross-episode paging: the null-null cursor returns the first page
     // strictly below the successor episode, oldest-first, with a real cursor.
@@ -432,7 +438,10 @@ test('A2A display window skips a hidden error flood and keeps visible conversati
     store.addMessage(session.id, {
       type: 'assistant',
       content: 'wait a moment',
-      metadata: { sourceChannel: 'metaweb_private', direction: 'outgoing' },
+      // A chain-backed A2A reply that was actually delivered carries a txid —
+      // without one the shipped filter classifies it as undelivered monologue
+      // and hides it (shouldHideA2AInternalMessage, chainBackedConversation).
+      metadata: { sourceChannel: 'metaweb_private', direction: 'outgoing', txid: 'ab'.repeat(32) },
     });
     store.addMessage(session.id, {
       type: 'assistant',

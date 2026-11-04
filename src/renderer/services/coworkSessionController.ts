@@ -735,6 +735,8 @@ export class CoworkSessionController {
     status: 'failed' | 'uncertain',
     error: string,
   ): CoworkActionResult {
+    const errorKey = attempt.sessionId ?? 'new';
+    this.actionErrors = { ...this.actionErrors, [errorKey]: this.actionErrors[errorKey] ?? error };
     this.updateAttempt({ ...attempt, status, error });
     if (status === 'uncertain') this.scheduleAutoReconcile(attempt);
     return { status, error, submissionId: attempt.submissionId, sessionId: attempt.sessionId };

@@ -76,6 +76,11 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 - `dsh-runtime/package.json`, `dsh-runtime/pnpm-workspace.yaml`, and `dsh-runtime/pnpm-lock.yaml` must be committed together in the SAME commit; never commit one without the others.
 - Before committing a dsh-runtime version change, `pnpm run check:dsh-deps` must pass (it also validates the lockfile sync, so an inconsistent bump cannot land silently).
 
+## Test Discipline: temp-dir cleanup must survive Windows CI
+
+- New or changed tests that create temp directories (`mkdtempSync`) around `SqliteStore` — or anything that writes files before `rmSync` — must release the handles first (close the store) and then remove the directory best-effort: close → tolerant rm. A lingering sql.js/Defender handle turns `rmSync` into EPERM on Windows CI while macOS POSIX semantics silently succeed, so the suite stays green locally and dies only in the tag run (v1.0.9 tag run failed twice on exactly this; see `tests/metabotAutoReplyDefault.test.mjs` `disposeStore` for the house pattern and the release SOP §11.2b).
+- Never let cleanup failures fail a test: leftover temp dirs are harmless and OS-swept.
+
 ## Database Upgrade Safety
 
 - Treat user-directory SQLite databases as persistent upgrade state. Auto-update does not replace or reset them.

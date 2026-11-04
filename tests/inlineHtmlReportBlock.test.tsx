@@ -201,7 +201,16 @@ test('session deep links parse strictly; other idbots:// or foreign shapes stay 
     parseIdbotsSessionUri('IDBOTS://session/89125bf0-1e4b-45b0-b432-c93f5bea2e40'),
     '89125bf0-1e4b-45b0-b432-c93f5bea2e40',
   );
+  // The bare IDBots://<id> form the app itself emits (copy-session-link menu,
+  // cross-session refs, bot instructions telling bots to link conversations
+  // to the owner this way) parses too — this is the shape that regressed into
+  // the "Unsupported idbots:// link" console warning.
+  assert.equal(
+    parseIdbotsSessionUri('IDBots://2799a548-f81c-4cf0-a664-eaebe5236c1b'),
+    '2799a548-f81c-4cf0-a664-eaebe5236c1b',
+  );
   assert.equal(parseIdbotsSessionUri('idbots://other/abc'), null);
+  assert.equal(parseIdbotsSessionUri('idbots://session'), null, 'bare "session" authority is the path keyword, not an id');
   assert.equal(parseIdbotsSessionUri('idbots://session/'), null);
   assert.equal(parseIdbotsSessionUri('idbots://session/abc/def'), null);
   assert.equal(parseIdbotsSessionUri('https://example.com/session/abc'), null);

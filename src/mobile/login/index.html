@@ -3,8 +3,38 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#F5F7F9" />
     <title>IDBots</title>
+    <script>
+      // Pre-paint theme resolution — must stay in sync with src/mobile/login/theme.ts
+      // and src/mobile/themeMirror.ts. The app settings service mirrors the confirmed
+      // app_config.theme into localStorage; the login bundle (served before any bridge
+      // exists) reads that same-origin mirror synchronously during HTML parsing so the
+      // first paint is already in the right scheme (no white flash in dark mode).
+      // Falls back to the OS scheme, matching the app default (`system`).
+      (function () {
+        var mode = 'system';
+        try {
+          var stored = window.localStorage.getItem('idbots.mobile.app_config.theme.v1');
+          if (stored === 'light' || stored === 'dark') mode = stored;
+        } catch (error) {
+          // Storage can throw in private modes; fall through to the OS scheme.
+        }
+        var prefersDark =
+          typeof window.matchMedia === 'function' &&
+          window.matchMedia('(prefers-color-scheme: dark)').matches;
+        var dark = mode === 'dark' || (mode === 'system' && prefersDark);
+        var background = dark ? '#111112' : '#F2F3F5';
+        var root = document.documentElement;
+        root.classList.toggle('dark', dark);
+        // color-scheme also flips native form controls (inputs, checkbox).
+        root.style.colorScheme = dark ? 'dark' : 'light';
+        root.style.backgroundColor = background;
+        var meta = document.createElement('meta');
+        meta.setAttribute('name', 'theme-color');
+        meta.setAttribute('content', background);
+        document.head.appendChild(meta);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

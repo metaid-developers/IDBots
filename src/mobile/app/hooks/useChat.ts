@@ -19,6 +19,11 @@ import {
 import { getMobileElectron, hasAppBridge } from '../appBridge';
 import type { MockMetabot } from '../../bridge/types';
 import { projectChatMessages } from '../chatProjection';
+import {
+  LLM_QUOTA_EXHAUSTED_CODE,
+  quotaKindFromErrorText,
+  type QuotaExhaustedKind,
+} from '../quotaCodes';
 import { useChatAttachments } from './useChatAttachments';
 import type { MobileChatAttachment } from '@/services/coworkSessionDrafts';
 import { t } from '../../i18n';
@@ -66,33 +71,25 @@ const EMPTY_SNAPSHOT: CoworkSessionControllerSnapshot = {
   epoch: 0,
 };
 
-const QUOTA_ERROR_CODE = 'LLM_QUOTA_EXHAUSTED';
-
-export type QuotaExhaustedKind = 'free' | 'purchased';
+// Structured-first quota detection lives in ../quotaCodes (the single home of
+// the machine code and of the one confined string fallback). Re-exported here
+// so existing consumers keep their import path.
+export { LLM_QUOTA_EXHAUSTED_CODE, quotaKindFromErrorText } from '../quotaCodes';
+export type { QuotaExhaustedKind } from '../quotaCodes';
 
 export interface QuotaExhaustedState {
   exhausted: boolean;
   kind: QuotaExhaustedKind | null;
 }
 
-const RELAY_QUOTA_CODE_PATTERN = /(free_quota_exhausted|quota_exhausted)/i;
-
-export function quotaKindFromErrorText(text: unknown): QuotaExhaustedKind | null {
-  const match = RELAY_QUOTA_CODE_PATTERN.exec(String(text ?? ''));
-  if (!match) return null;
-  return match[1].toLowerCase() === 'quota_exhausted' ? 'purchased' : 'free';
-}
-
-function isTerminalErrorRow(message: { type?: unknown; content?: unknown } | null | undefined): message is { type: 'system'; content: string } {
-  return (
-    message !== null
-    && typeof message === 'object'
-    && message.type === 'system'
-    && typeof message.content === 'string'
-    && message.content.startsWith('Error:')
-  );
-}
-
+/**
+ * STRING-FALLBACK pathway (restore/resync only): re-derive the quota card
+ * from a session detail whose payloads provably carry no structured code —
+ * the persisted terminal `Error:` system row stores `metadata: { error }`
+ * text only (coworkRunner.handleError), so the relay-code text match in
+ * ../quotaCodes is all a reopened session has. The live path never routes
+ * through here for detection; see deriveLiveQuotaExhausted.
+ */
 export function deriveQuotaExhaustedFromDetail(
   session: Pick<CoworkSession, 'status' | 'messages'> | null | undefined,
 ): QuotaExhaustedState {
@@ -106,6 +103,41 @@ export function deriveQuotaExhaustedFromDetail(
     }
   }
   return { exhausted: false, kind: null };
+}
+
+/**
+ * STRUCTURED-FIRST live detection: a quota death is declared from the
+ * machine code the runner stamped on the cowork:stream:error frame
+ * (streamError.code === LLM_QUOTA_EXHAUSTED). The error TEXT is read only to
+ * refine the free-vs-purchased card copy, because the frame metadata
+ * collapses both relay codes into the one LLM_QUOTA_EXHAUSTED code; when the
+ * text carries neither code the kind falls back to the persisted derivation
+ * and finally to 'free' (the starter-allowance death every fresh install
+ * hits). Payloads without the structured code (code null) take the
+ * string-fallback result unchanged — never a live text match.
+ */
+export function deriveLiveQuotaExhausted(
+  state: Pick<CoworkSession, 'status'> | null | undefined,
+  streamError: { code: string | null; text: string } | null | undefined,
+  persisted: QuotaExhaustedState,
+): QuotaExhaustedState {
+  if (state?.status === 'error' && streamError?.code === LLM_QUOTA_EXHAUSTED_CODE) {
+    return {
+      exhausted: true,
+      kind: quotaKindFromErrorText(streamError.text) ?? persisted.kind ?? 'free',
+    };
+  }
+  return persisted;
+}
+
+function isTerminalErrorRow(message: { type?: unknown; content?: unknown } | null | undefined): message is { type: 'system'; content: string } {
+  return (
+    message !== null
+    && typeof message === 'object'
+    && message.type === 'system'
+    && typeof message.content === 'string'
+    && message.content.startsWith('Error:')
+  );
 }
 
 function createController(): CoworkSessionController | null {
@@ -212,9 +244,7 @@ export function useChat(bots: MockMetabot[] = []) {
 
   const streamError = sessionId ? snapshot.streamErrors[sessionId] : undefined;
   const persistedQuota = deriveQuotaExhaustedFromDetail(state);
-  const liveQuota: QuotaExhaustedState = state?.status === 'error' && streamError?.code === QUOTA_ERROR_CODE
-    ? { exhausted: true, kind: quotaKindFromErrorText(streamError.text) ?? persistedQuota.kind ?? 'free' }
-    : persistedQuota;
+  const liveQuota = deriveLiveQuotaExhausted(state, streamError, persistedQuota);
   const quotaExhausted = liveQuota.exhausted && quotaDismissedSession !== sessionId;
   const quotaKind = liveQuota.kind;
 
@@ -249,6 +279,53 @@ export function useChat(bots: MockMetabot[] = []) {
   const openSession = useCallback(async (id: string): Promise<boolean> => (
     controller?.openSession(id) ?? false
   ), [controller]);
+
+  // -------------------------------------------------------------------------
+  // Session management (drawer rename/delete, 2026-11-02).
+  //
+  // Both go through the allowlisted cowork channels (ipc-contract.json):
+  //   - rename  -> cowork.renameSession({ sessionId, title }) — real,
+  //     server-side title change, same channel the desktop sidebar uses;
+  //   - "delete" -> cowork.archiveSession(sessionId) — there is NO hard-delete
+  //     channel in the allowlist (desktop cowork.ts: "Hard delete is
+  //     intentionally not exposed to users"), so the drawer's delete ARCHIVES:
+  //     the row leaves the list, the record survives (dream/experience still
+  //     see it) and Settings -> Archived Chats can restore it. Documented in
+  //     the drawer UI and the tests.
+  // The real gateway shim exposes both generically from the contract; the
+  // mock bridge implements them with the same semantics.
+  // -------------------------------------------------------------------------
+  const renameSession = useCallback(async (id: string, title: string): Promise<boolean> => {
+    const normalized = title.trim();
+    if (!normalized) return false;
+    const cowork = hasAppBridge() ? getMobileElectron().cowork : undefined;
+    if (!cowork?.renameSession) return false;
+    try {
+      const result = await cowork.renameSession({ sessionId: id, title: normalized });
+      if (!result?.success) return false;
+    } catch {
+      return false;
+    }
+    await controller?.reloadSessions();
+    if (id === sessionId) await controller?.refreshSession(id);
+    return true;
+  }, [controller, sessionId]);
+
+  const archiveSession = useCallback(async (id: string): Promise<boolean> => {
+    const cowork = hasAppBridge() ? getMobileElectron().cowork : undefined;
+    if (!cowork?.archiveSession) return false;
+    try {
+      const result = await cowork.archiveSession(id);
+      if (!result?.success) return false;
+    } catch {
+      return false;
+    }
+    // Archiving the open session leaves the chat surface — the mobile
+    // equivalent of the desktop "navigate home" after archive.
+    if (id === sessionId) controller?.newChat();
+    await controller?.reloadSessions();
+    return true;
+  }, [controller, sessionId]);
 
   const applyResync = useCallback((resync: CoworkResyncSnapshot): void => {
     controller?.applyResync(resync);
@@ -295,6 +372,8 @@ export function useChat(bots: MockMetabot[] = []) {
     setDraft: (text: string) => controller?.setDraft(text),
     reloadSessions: async (): Promise<void> => { await controller?.reloadSessions(); },
     openSession,
+    renameSession,
+    archiveSession,
     newChat: () => controller?.newChat(),
     send,
     stop: async (): Promise<CoworkActionResult> => (

@@ -8,12 +8,56 @@ import { getMainWorkerCandidatePaths, resolveMainWorkerPath } from './workerPath
 
 const DEFAULT_PATH = "m/44'/10001'/0'/0/0";
 
+/**
+ * One forced-spend entry for buildMvcTransferRawTx ("include_outpoints"): the
+ * outpoint is unconditionally spent as the FIRST input(s) of the built tx.
+ * Value must come from the indexer (MRC-721 item/info output/outputValue) —
+ * 1-sat pin UTXOs never pass the wallet-api funding filter. Consumed by the
+ * MRC-721 transfer/trade flows (R3/R4 of docs/…/IDBOTS_MRC721_REQUIREMENTS.md).
+ */
+export interface MvcIncludeOutpoint {
+  txid: string;
+  vout: number;
+  satoshis: number;
+}
+
+/** Validate + normalize include entries; empty/null returns []. */
+export function validateIncludeOutpoints(input: unknown): MvcIncludeOutpoint[] {
+  if (input == null) return [];
+  if (!Array.isArray(input)) {
+    throw new Error('include_outpoints must be an array of {txid, vout, satoshis}');
+  }
+  const seen = new Set<string>();
+  const result: MvcIncludeOutpoint[] = [];
+  for (const raw of input) {
+    const record = (raw ?? {}) as Record<string, unknown>;
+    const txid = String(record.txid ?? '').trim().toLowerCase();
+    const vout = Number(record.vout);
+    const satoshis = Number(record.satoshis);
+    if (!/^[0-9a-fA-F]{64}$/.test(txid)) {
+      throw new Error('include_outpoints entries need a 64-hex txid');
+    }
+    if (!Number.isInteger(vout) || vout < 0) {
+      throw new Error(`include_outpoints entries need an integer vout >= 0 (${txid})`);
+    }
+    if (!Number.isInteger(satoshis) || satoshis <= 0) {
+      throw new Error(`include_outpoints entries need integer satoshis > 0 (${txid}:${vout})`);
+    }
+    const key = `${txid}:${vout}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push({ txid, vout, satoshis });
+  }
+  return result;
+}
+
 export interface BuildMvcTransferRawTxParams {
   metabotId: number;
   toAddress: string;
   amountSats: number;
   feeRate: number;
   excludeOutpoints?: string[];
+  includeOutpoints?: MvcIncludeOutpoint[];
 }
 
 export interface BuildMvcFtToken {
@@ -91,6 +135,7 @@ interface WalletRawTxServiceDeps {
     amountSats: number;
     feeRate: number;
     excludeOutpoints: string[];
+    includeOutpoints: MvcIncludeOutpoint[];
   }) => Promise<WorkerTransferResult>;
   runMvcFtTransferRawTxWorker?: (params: {
     mnemonic: string;
@@ -158,10 +203,10 @@ export interface MvcTokenSellListingRef {
 
 export interface BuildMvcTokenSellTradeParams {
   metabotId: number;
-  action: 'sell' | 'take' | 'cancel';
+  action: 'sell' | 'take' | 'cancel' | 'transfer';
   feeRate: number;
   excludeOutpoints?: string[];
-  /** sell only */
+  /** sell / transfer */
   genesis?: string;
   codehash?: string;
   tokenTxid?: string;
@@ -173,6 +218,7 @@ export interface BuildMvcTokenSellTradeParams {
   checkerSats?: number;
   /** take / cancel only */
   listing?: MvcTokenSellListingRef;
+  /** take / transfer only */
   receiverAddress?: string;
   prevTokenInputIndex?: number;
 }
@@ -449,7 +495,12 @@ export function summarizeMvcTransferTx(params: {
   };
 }
 
-async function runWorker<T extends WorkerTransferResult = WorkerTransferResult>(workerBasename: string, payload: unknown, env: NodeJS.ProcessEnv): Promise<T> {
+async function runWorker<T extends WorkerTransferResult = WorkerTransferResult>(
+  workerBasename: string,
+  payload: unknown,
+  env: NodeJS.ProcessEnv,
+  options?: { requireTxHex?: boolean },
+): Promise<T> {
   const appPath = app.getAppPath();
   const candidatePaths = getMainWorkerCandidatePaths({
     moduleDir: __dirname,
@@ -515,7 +566,7 @@ async function runWorker<T extends WorkerTransferResult = WorkerTransferResult>(
           reject(new Error(parsed.error || 'Worker failed'));
           return;
         }
-        if (!parsed.txHex || typeof parsed.txHex !== 'string') {
+        if (options?.requireTxHex !== false && (!parsed.txHex || typeof parsed.txHex !== 'string')) {
           reject(new Error('Worker did not return txHex'));
           return;
         }
@@ -538,6 +589,7 @@ async function runMvcTransferRawTxWorker(params: {
   amountSats: number;
   feeRate: number;
   excludeOutpoints: string[];
+  includeOutpoints: MvcIncludeOutpoint[];
 }): Promise<WorkerTransferResult> {
   return await runWorker(
     'buildMvcTransferRawTxWorker.js',
@@ -546,6 +598,7 @@ async function runMvcTransferRawTxWorker(params: {
       amountSats: params.amountSats,
       feeRate: params.feeRate,
       excludeOutpoints: params.excludeOutpoints,
+      includeOutpoints: params.includeOutpoints,
     },
     {
       IDBOTS_METABOT_MNEMONIC: params.mnemonic,
@@ -616,6 +669,12 @@ export async function buildMvcTransferRawTx(
   deps: WalletRawTxServiceDeps = {},
 ): Promise<BuildMvcTransferRawTxResult> {
   const excludeOutpoints = validateCommonTransferFields(params);
+  const includeOutpoints = validateIncludeOutpoints(params.includeOutpoints);
+  for (const entry of includeOutpoints) {
+    if (excludeOutpoints.includes(`${entry.txid}:${entry.vout}`)) {
+      throw new Error(`include_outpoints conflicts with exclude_outpoints: ${entry.txid}:${entry.vout}`);
+    }
+  }
   if (!Number.isInteger(params.amountSats) || params.amountSats <= 0) {
     throw new Error('amount_sats must be a positive integer');
   }
@@ -633,6 +692,7 @@ export async function buildMvcTransferRawTx(
     amountSats: params.amountSats,
     feeRate: params.feeRate,
     excludeOutpoints,
+    includeOutpoints,
   });
   const summary = summarizeMvcTransferTx({
     txHex: workerResult.txHex,
@@ -1011,8 +1071,14 @@ export async function buildMvcTokenSellRawTx(
     if (params.action === 'take' && !String(params.receiverAddress || '').trim()) {
       throw new Error('receiverAddress is required for take');
     }
+  } else if (params.action === 'transfer') {
+    if (!/^[0-9a-fA-F]{64}$/.test(String(params.genesis || '').trim())) throw new Error('genesis (64 hex) is required for transfer');
+    if (!/^[0-9a-fA-F]{40}$/.test(String(params.codehash || '').trim())) throw new Error('codehash (40 hex) is required for transfer');
+    if (!String(params.receiverAddress || '').trim()) {
+      throw new Error('receiverAddress is required for transfer (raw MVC address)');
+    }
   } else {
-    throw new Error('action must be sell, take, or cancel');
+    throw new Error('action must be sell, take, cancel, or transfer');
   }
 
   const wallet = store.getMetabotWalletByMetabotId(params.metabotId);
@@ -1124,4 +1190,81 @@ export async function buildMvcOrderedRawTxBundle(
   }
 
   return { steps };
+}
+
+export async function buildMvc721SellPartialTx(
+  store: MetabotStore,
+  params: {
+    metabotId: number;
+    buyerAddress: string;
+    priceSats: number;
+    outpoint: { txid: string; vout: number; satoshis: number };
+  },
+): Promise<{ partialTx: string; sigtype: number }> {
+  const wallet = store.getMetabotWalletByMetabotId(params.metabotId);
+  if (!wallet?.mnemonic?.trim()) {
+    throw new Error('MetaBot wallet not found');
+  }
+  const result = await runWorker<WorkerTransferResult & { partialTx?: string; sigtype?: number }>(
+    'buildMvc721SellPartialTxWorker.js',
+    {
+      buyerAddress: params.buyerAddress,
+      priceSats: params.priceSats,
+      outpoint: params.outpoint,
+    },
+    {
+      IDBOTS_METABOT_MNEMONIC: wallet.mnemonic,
+      IDBOTS_METABOT_PATH: wallet.path || DEFAULT_PATH,
+    },
+    { requireTxHex: false },
+  );
+  if (!result.partialTx || typeof result.sigtype !== 'number') {
+    throw new Error('Sell worker did not return a partial tx');
+  }
+  return { partialTx: result.partialTx, sigtype: result.sigtype };
+}
+
+export async function completeMvc721BuyTx(
+  store: MetabotStore,
+  params: {
+    metabotId: number;
+    listing: unknown;
+    feeRate: number;
+    excludeOutpoints: string[];
+  },
+): Promise<{
+  txId: string;
+  spentOutpoints: string[];
+  feeSats: number;
+  feeRateEffective: number;
+}> {
+  const wallet = store.getMetabotWalletByMetabotId(params.metabotId);
+  if (!wallet?.mnemonic?.trim()) {
+    throw new Error('MetaBot wallet not found');
+  }
+  const result = await runWorker<WorkerTransferResult & {
+    feeSats?: number;
+    feeRateEffective?: number;
+    spentOutpoints?: string[];
+  }>(
+    'completeMvc721BuyTxWorker.js',
+    {
+      listing: params.listing,
+      feeRate: params.feeRate,
+      excludeOutpoints: params.excludeOutpoints,
+    },
+    {
+      IDBOTS_METABOT_MNEMONIC: wallet.mnemonic,
+      IDBOTS_METABOT_PATH: wallet.path || DEFAULT_PATH,
+    },
+  );
+  if (!result.txid) {
+    throw new Error('Buy worker did not return a txid');
+  }
+  return {
+    txId: result.txid,
+    spentOutpoints: result.spentOutpoints ?? [],
+    feeSats: Number(result.feeSats ?? 0),
+    feeRateEffective: Number(result.feeRateEffective ?? 0),
+  };
 }

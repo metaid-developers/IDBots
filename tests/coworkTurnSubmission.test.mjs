@@ -162,6 +162,7 @@ test('inactive sessions continue once with the requested system prompt and skill
     text: buildOwnerTurnInputPrompt('next direction'),
     options: {
       skipUserMessage: true,
+      acknowledgeOwner: true,
       systemPrompt: 'ordinary continuation prompt',
       skillIds: ['skill-a'],
     },
@@ -279,6 +280,7 @@ test('pinned-skill backstop: sanitized ids flow into the continue turn, scoped t
     text: buildOwnerTurnInputPrompt('next direction'),
     options: {
       skipUserMessage: true,
+      acknowledgeOwner: true,
       systemPrompt: 'skills-carrying prompt',
       skillIds: ['skill-a'],
     },
@@ -853,6 +855,7 @@ test('open-dsh steer whose window closed degrades to the next turn instead of er
     text: buildOwnerTurnInputPrompt('next direction'),
     options: {
       skipUserMessage: true,
+      acknowledgeOwner: true,
       systemPrompt: undefined,
       skillIds: undefined,
     },

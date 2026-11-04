@@ -42,6 +42,8 @@ import {
   type SentSelectionQuoteLabelSet,
 } from './coworkQuotedSelections';
 import CoworkPermissionPanel from './CoworkPermissionPanel';
+import A2AFriendApprovalBar from './A2AFriendApprovalBar';
+import { friendActionOf } from './permissionPromptLayout';
 import { buildSessionComposerCommands } from './composerCommandCatalog';
 import PermissionModeSelector from './PermissionModeSelector';
 import SubagentPanel from './SubagentPanel';
@@ -72,6 +74,8 @@ import {
   type TodoStatus,
 } from './coworkTodoList';
 import MarkdownContent from '../MarkdownContent';
+import { detectTradeActivity } from '../chat/tradeActivity';
+import TradeActivityBadge from '../chat/TradeActivityBadge';
 import { mapWechatBracketCodesForDisplay } from '../chat/wechatEmojiDisplay';
 import MarkdownViewerPanel from './MarkdownViewerPanel';
 import {
@@ -115,10 +119,12 @@ import {
   getCoworkSessionTitleClassName,
   shouldShowA2AServiceSessionId,
 } from './coworkSessionPresentation.js';
-import { isAssistantTurnComplete, findDeliveryAssistantIndex, shouldShowAssistantBubbleActions } from './assistantTurnPresentation.js';
+import { isAssistantTurnComplete, findDeliveryAssistantIndex, shouldShowAssistantBubbleActions, splitOutboundImReceipts } from './assistantTurnPresentation.js';
 import { isAssistantModeOwnerChatSession } from './assistantModeSessionGate';
+import { readOutboundImReceiptBubble } from './outboundImReceiptBubble.js';
 import { reuseStableTurns } from './conversationTurnReuse.js';
 import TurnNavigator, { buildTurnNavigatorItems, type TurnNavigatorItem } from './TurnNavigator';
+import LocalFileLink from '../ui/LocalFileLink';
 import {
   buildRefundStatusDismissKey,
   getRefundCardVariant,
@@ -1253,6 +1259,85 @@ const ImagePreviewStrip: React.FC<{ imagePaths: string[]; inline?: boolean }> = 
   );
 };
 
+/**
+ * One delivered `im_send_message` (a proactive send), drawn the way the owner
+ * reads a chat: the sent body VERBATIM in a normal outgoing bubble, then one
+ * entry per attachment — an image thumbnail for pictures, a file entry for
+ * everything else. No direction/channel/time header, no target line, no
+ * 摘要/结果 fields, no 200-char cut: those live in the row's metadata now.
+ *
+ * Failures never reach this component — their audited card (reason visible) is
+ * the message.
+ */
+const OutboundImReceiptMessage: React.FC<{
+  view: {
+    body: string;
+    attachments: Array<{ path: string; name: string; kind: string }>;
+    fallbackNote: string | null;
+  };
+  onOpenLocalFile?: (filePath: string, event: React.MouseEvent) => boolean | void;
+}> = ({ view, onOpenLocalFile }) => {
+  const openFile = async (filePath: string, event: React.MouseEvent) => {
+    if (onOpenLocalFile?.(filePath, event) === true) {
+      return;
+    }
+    try {
+      await window.electron.shell.openPath(filePath);
+    } catch (error) {
+      console.error('Failed to open the sent attachment:', filePath, error);
+    }
+  };
+
+  return (
+    <div className="space-y-1 py-1">
+      {view.body ? (
+        <div className="w-fit max-w-[min(720px,82%)]">
+          <div
+            className="assistant-bubble rounded-[22px] px-[16px] py-[10px] dark:text-claude-darkText text-claude-text shadow-subtle"
+          >
+            {/* Same markdown pipeline as every other bubble; whitespace-pre-wrap
+                keeps the sent line breaks exactly as they went out. */}
+            <MarkdownContent
+              content={view.body}
+              emojiImages
+              className="prose dark:prose-invert max-w-none whitespace-pre-wrap [overflow-wrap:anywhere]"
+              onOpenLocalFile={onOpenLocalFile}
+              chatExperienceMode="assistant"
+            />
+          </div>
+        </div>
+      ) : null}
+      {view.attachments.map((attachment) => (
+        <div key={attachment.path} className="w-fit max-w-[min(720px,82%)]">
+          {attachment.kind === 'image' ? (
+            // Existing image-message display: the thumbnail strip, one picture.
+            <ImagePreviewStrip imagePaths={[attachment.path]} inline />
+          ) : (
+            // Existing file display: a file entry (name + type icon + open menu).
+            <div className="assistant-bubble rounded-[22px] px-[16px] py-[10px] text-sm dark:text-claude-darkText text-claude-text">
+              <LocalFileLink
+                filePath={attachment.path}
+                title={attachment.path}
+                className="inline-flex items-center gap-1 text-claude-accent hover:text-claude-accentHover underline decoration-claude-accent/50 hover:decoration-claude-accent"
+                onOpen={(_path, event) => openFile(attachment.path, event)}
+              >
+                {attachment.name}
+              </LocalFileLink>
+            </div>
+          )}
+        </div>
+      ))}
+      {view.fallbackNote ? (
+        <div className="w-fit max-w-[min(720px,82%)]">
+          <div className="assistant-bubble rounded-[22px] px-[16px] py-[10px] text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
+            {view.fallbackNote}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
 const ToolCallGroup: React.FC<{
   group: ToolGroupItem;
   isLastInSequence?: boolean;
@@ -1817,6 +1902,9 @@ const AssistantMessageItem: React.FC<{
    * the feedback thumbs render, so a turn's narration segments do not each
    * carry a near-duplicate clock. */
   isTurnEnd?: boolean;
+  /** Session id of the conversation this bubble renders — scope for the
+   * session-bound hostStamp structural check (source-signing slice). */
+  sessionId?: string;
 }> = ({
   message,
   resolveLocalFilePath,
@@ -1827,11 +1915,17 @@ const AssistantMessageItem: React.FC<{
   onQuoteReply,
   isAssistantMode = false,
   isTurnEnd = false,
+  sessionId = undefined,
 }) => {
   const [isHovered, setIsHovered] = useState(false);
   const displayContent = mapDisplayText ? mapDisplayText(message.content) : message.content;
   const gigSquareCard = renderGigSquareCard(message.content);
   const thinkSplit = splitThinkTaggedContent(displayContent);
+  // S4 chat trade marker: this message announces an NFT trade (nft-card
+  // fence with a trade action) → a trade chip rides the bubble footer /
+  // professional turn-end row, same family as the messenger chips. The p2p
+  // chip needs a hostStamp bound to THIS session (source-signing slice).
+  const tradeActivity = detectTradeActivity(displayContent, { sessionId });
   const renderExtension = React.useContext(MessageExtensionContext);
 
   if (gigSquareCard) {
@@ -1905,6 +1999,13 @@ const AssistantMessageItem: React.FC<{
                 chatExperienceMode={isAssistantMode ? 'assistant' : 'professional'}
               />
             </div>
+            {tradeActivity && (
+              // Trade chip right under the bubble: the message announced an
+              // NFT trade (same slot family as the A2A meta-row chip).
+              <div className="mt-0.5 px-1">
+                <TradeActivityBadge kind={tradeActivity.kind} variant="chip" />
+              </div>
+            )}
             {shouldShowAssistantBubbleActions({ isAssistantMode, showCopyButton }) && (
               // Hover design (owner, 2026-10-19): a single "⋯" beside the bubble
               // opens quote / copy / branch — the old inline strip is gone, so a
@@ -1939,6 +2040,12 @@ const AssistantMessageItem: React.FC<{
         ) : (
           // Professional mode: bare full-width text, actions in a flow row.
           <div className="dark:text-claude-darkText text-claude-text">
+            {tradeActivity && (
+              // Trade chip above the text: the message announced an NFT trade.
+              <div className="mb-1">
+                <TradeActivityBadge kind={tradeActivity.kind} variant="chip" />
+              </div>
+            )}
             {/* Professional mode shares the display-only Twemoji pipeline. */}
             <MarkdownContent
               content={replyContent}
@@ -2389,6 +2496,21 @@ const AssistantTurnBlock = React.memo(function AssistantTurnBlock({
   const renderSystemMessage = (message: CoworkMessage) => {
     const meta = message.metadata ?? {};
 
+    // A DELIVERED proactive send (im_send_message) is a normal outgoing chat
+    // bubble: the body verbatim, then one entry per attachment. Failed and
+    // partially delivered attempts keep the audited card below — there the
+    // visible reason is the message. Legacy rows (no record version) also keep
+    // the card: their `content` IS the card text.
+    const outboundReceipt = readOutboundImReceiptBubble(message);
+    if (outboundReceipt) {
+      return (
+        <OutboundImReceiptMessage
+          view={outboundReceipt}
+          onOpenLocalFile={onOpenLocalFile}
+        />
+      );
+    }
+
     // Structured SDK event messages (previously silently dropped events are
     // now surfaced here: notification / informational / compact_boundary /
     // permission_denied / rate_limit_event / conversation_reset).
@@ -2589,6 +2711,7 @@ const AssistantTurnBlock = React.memo(function AssistantTurnBlock({
           onQuoteReply={onQuoteReply}
           isAssistantMode={isAssistantMode}
           isTurnEnd={!isAssistantMode || index === visibleAssistantItems.length - 1}
+          sessionId={sessionId ?? undefined}
         />
       );
     }
@@ -2662,6 +2785,11 @@ const AssistantTurnBlock = React.memo(function AssistantTurnBlock({
   const processItems = deliveryMessage
     ? visibleAssistantItems.filter((_, index) => index !== deliveryIndex)
     : [];
+  // Outbound-IM receipts (im_send_message) never fold into "Worked for X":
+  // they are the proof of what went out to the phone, so they render below the
+  // delivery bubble in every state. Only the real process chrome collapses.
+  const { receipts: outboundReceiptItems, rest: collapsibleProcessItems } =
+    splitOutboundImReceipts(processItems);
   const workedForMs = deliveryMessage && turn.userMessage
     ? Math.max(0, deliveryMessage.timestamp - turn.userMessage.timestamp)
     : 0;
@@ -2672,7 +2800,7 @@ const AssistantTurnBlock = React.memo(function AssistantTurnBlock({
     !isAssistantMode
     && isTurnComplete
     && deliveryMessage
-    && processItems.length > 0
+    && collapsibleProcessItems.length > 0
     && turn.userMessage
     && workedForMs > 0
   );
@@ -2709,7 +2837,7 @@ const AssistantTurnBlock = React.memo(function AssistantTurnBlock({
                 </button>
                 {processExpanded && (
                   <div className="space-y-3">
-                    {processItems.map((processItem) => (
+                    {collapsibleProcessItems.map((processItem) => (
                       renderVisibleItem(processItem, visibleAssistantItems.indexOf(processItem), visibleAssistantItems)
                     ))}
                   </div>
@@ -2725,7 +2853,12 @@ const AssistantTurnBlock = React.memo(function AssistantTurnBlock({
                   onQuoteReply={onQuoteReply}
                   isAssistantMode={isAssistantMode}
                   isTurnEnd
+                  sessionId={sessionId ?? undefined}
                 />
+                {/* Outbound-IM receipts always visible: never behind the fold. */}
+                {outboundReceiptItems.map((item) => (
+                  renderVisibleItem(item, visibleAssistantItems.indexOf(item), visibleAssistantItems)
+                ))}
               </>
             ) : (
               visibleAssistantItems.map((item, index) => renderVisibleItem(item, index, visibleAssistantItems))
@@ -2858,7 +2991,16 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   // useChatExperienceMode for the cross-window reactivity contract.
   const chatExperienceMode = useChatExperienceMode();
   const isAssistantMode = isAssistantModeOwnerChatSession(chatExperienceMode, currentSession);
-  const isA2ASession = currentSession?.sessionType === 'a2a';
+  // Legacy IM direct rows can still be stored as 'a2a'. The conversation
+  // mapping is the display source of truth, so an IM row never renders the
+  // A2A panels (peer profile, episode history, A2A errors).
+  const isA2ASession = currentSession?.sessionType === 'a2a' && !currentSession?.imChannel;
+  const friendApprovalPermissions = useMemo(() => {
+    if (!isA2ASession || !currentSession) return [];
+    return pendingPermissions.filter((permission) => (
+      permission.sessionId === currentSession.id && friendActionOf(permission) !== null
+    ));
+  }, [isA2ASession, currentSession, pendingPermissions]);
   const isPrivateA2ASession = useMemo(() => (
     currentSession?.sessionType === 'a2a'
     && currentSession.messages.some((message) => message.metadata?.sourceChannel === 'metaweb_private')
@@ -3294,7 +3436,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     a2aThreadEpisodes.map((episode) => [episode.episodeIndex, episode]),
   ), [a2aThreadEpisodes]);
   const a2aPeerGlobalMetaId = useMemo(() => {
-    if (currentSession?.sessionType !== 'a2a') return null;
+    if (currentSession?.sessionType !== 'a2a' || currentSession?.imChannel) return null;
     const sessionPeerGlobalMetaId = typeof currentSession.peerGlobalMetaId === 'string'
       ? currentSession.peerGlobalMetaId.trim()
       : '';
@@ -3513,7 +3655,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   // Fetch peer avatar for A2A sessions when peerAvatar is missing or not directly renderable.
   // Falls back to senderGlobalMetaId from the first incoming message if peerGlobalMetaId is missing.
   useEffect(() => {
-    if (currentSession?.sessionType !== 'a2a') {
+    if (currentSession?.sessionType !== 'a2a' || currentSession?.imChannel) {
       setFetchedPeerAvatar(null);
       return;
     }
@@ -5153,6 +5295,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                   onResendDigitalDelivery={handleResendDigitalDelivery}
                   isAssistantMode={isAssistantMode}
                   peerIsFriend={a2aPeerIsFriend}
+                  sessionId={currentSession?.id ?? undefined}
                 />
               </div>
             );
@@ -5303,6 +5446,9 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       {isA2ASession ? (
         <div className="px-4 py-3 shrink-0 border-t dark:border-claude-darkBorder border-claude-border">
           <div className="mx-auto flex max-w-[clamp(680px,64%,920px)] flex-col items-stretch gap-2">
+            {friendApprovalPermissions.map((permission) => (
+              <A2AFriendApprovalBar key={permission.requestId} permission={permission} />
+            ))}
             {isA2APeerOwner ? (
               <A2AOwnerComposer
                 key={currentSession.id}
