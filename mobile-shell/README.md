@@ -108,6 +108,14 @@ pnpm run test:e2e:mobile
 pnpm run test:e2e:mobile:gateway
 ```
 
+## Android Staging CI
+
+`.github/workflows/android-staging.yml` builds the staging Debug APK on `ubuntu-latest` with Node 24, JDK 21, and the Android SDK. It installs the independent lockfiles, runs the root mobile tests and native-shell tests, verifies DSH dependencies and kernel patches, builds the production PWA bundles and Android APK, runs Android JVM tests, and uploads the APK with its SHA-256 and build provenance.
+
+After the workflow reaches the default branch, use **Actions → Android Staging → Run workflow**. A push to `ci/android-cloud-build` can exercise it before merge when the workflow or mobile code changes. The artifact is named `IDBots-android-staging-run-<run-number>` and is retained for 10 days.
+
+The workflow only builds and tests. It does not sign a release, deploy the PWA, update staging, push to a registry, or publish to a store. Download the artifact through the GitHub Actions run page and install it with `adb install -r app-staging-debug.apk`.
+
 ## Native Surface
 
 `nativeBridgeVersion` is `1`. `getCapabilities()` returns a fresh object with these values:

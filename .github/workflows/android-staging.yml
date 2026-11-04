@@ -1,0 +1,114 @@
+name: Android Staging
+
+# Manual run after this file reaches the default branch:
+# Actions -> Android Staging -> Run workflow.
+# The scoped push trigger exercises the workflow on ci/android-cloud-build before merge.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - ci/android-cloud-build
+    paths:
+      - '.github/workflows/android-staging.yml'
+      - 'mobile-shell/**'
+      - 'src/mobile/**'
+      - 'tests/mobile*'
+
+permissions:
+  contents: read
+
+jobs:
+  build-staging-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+      GRADLE_USER_HOME: ${{ github.workspace }}/mobile-shell/.tooling/gradle
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Activate pnpm 11.24.0
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.24.0 --activate
+          pnpm --version
+
+      - name: Cache Gradle and wrapper
+        uses: actions/cache@v4
+        with:
+          path: mobile-shell/.tooling/gradle
+          key: android-gradle-${{ hashFiles('mobile-shell/android/gradle/wrapper/gradle-wrapper.properties', 'mobile-shell/android/build.gradle', 'mobile-shell/android/app/build.gradle', 'mobile-shell/pnpm-lock.yaml') }}
+          restore-keys: android-gradle-
+
+      - name: Install root dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install native-shell dependencies
+        working-directory: mobile-shell
+        run: pnpm install --frozen-lockfile
+
+      - name: Run mobile tests
+        run: pnpm run test:mobile
+
+      - name: Run native-shell tests
+        working-directory: mobile-shell
+        run: pnpm test
+
+      - name: Verify DSH dependencies and kernel patches
+        run: |
+          pnpm run check:dsh-deps
+          node scripts/apply-dsh-kernel-patches.cjs --check
+
+      - name: Build mobile production bundles
+        run: pnpm run build:mobile
+
+      - name: Build Android staging APK
+        working-directory: mobile-shell
+        run: pnpm run build:android:staging
+
+      - name: Run Android JVM tests
+        working-directory: mobile-shell/android
+        run: ./gradlew --no-daemon testStagingDebugUnitTest
+
+      - name: Generate build metadata and SHA-256
+        run: |
+          APK="mobile-shell/android/app/build/outputs/apk/staging/debug/app-staging-debug.apk"
+          test -f "$APK"
+          {
+            echo "commit=${GITHUB_SHA}"
+            echo "run_id=${GITHUB_RUN_ID}"
+            echo "workflow=${GITHUB_WORKFLOW}"
+            echo "remote_origin=https://staging.idbots.world/"
+            echo "build_type=stagingDebug"
+          } > "$RUNNER_TEMP/BUILD-INFO.txt"
+          shasum -a 256 "$APK" | tee "$RUNNER_TEMP/SHA256SUMS.txt"
+
+      - name: Upload staging APK and provenance
+        uses: actions/upload-artifact@v4
+        with:
+          name: IDBots-android-staging-run-${{ github.run_number }}
+          path: |
+            mobile-shell/android/app/build/outputs/apk/staging/debug/app-staging-debug.apk
+            ${{ runner.temp }}/BUILD-INFO.txt
+            ${{ runner.temp }}/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 10
