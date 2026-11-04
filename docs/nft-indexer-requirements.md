@@ -48,11 +48,15 @@ and `totalnum` semantics are not documented. Add (or document):
 
 ## R-C — Sell-declaration indexing (P2, pending protocol approval)
 
-The "NFT 售" (sell-intent) MetaID protocol is being drafted separately and
-requires owner sign-off before it is proposed. Once approved, the indexer will
-need to index sell-intent pins so IDBots can answer "what is on sale in this
-collection" (requirement S2). Placeholder — do not implement before the
-protocol draft is approved.
+The "NFT 售" (sell-intent) MetaID protocol is drafted in
+`docs/nft-sell-protocol-draft.md` and requires owner sign-off before it is
+proposed as final. Shape (owner decisions 2026-11-04): an UNOFFICIAL fixed
+path `/protocols/mrc721sell` (never `/nft/*`), create-only append-only
+declaration log, itemPinId in the payload (no path suffix), no
+protocol/version fields in the payload (the pin 7-tuple carries them), and
+per-itemPinId latest-pin-wins. Once approved, the indexer will index these
+pins so IDBots can answer "what is on sale in this collection"
+(requirement S2).
 
 ## R-D — Holding verification fast path (P2, nice-to-have)
 

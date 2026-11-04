@@ -11,24 +11,31 @@ import type { MetabotStore } from '../metabotStore';
 
 /**
  * MRC-721 sell-intent protocol ("NFT 售", docs/nft-sell-protocol-draft.md):
- * an on-chain declaration pin under /nft/mrc721sell/{itemPinId} that says the
- * holder wants to sell an item, on discoverable, currency-agnostic terms. It
- * moves no funds and transfers nothing — settlement runs over the locked
- * atomic-swap rail (native SPACE) or the escrow/guarantor rail (any currency).
+ * an on-chain declaration pin at the FIXED path /protocols/mrc721sell that
+ * says the holder wants to sell an item, on discoverable, currency-agnostic
+ * terms. It moves no funds and transfers nothing — settlement runs over the
+ * locked atomic-swap rail (native SPACE) or the escrow/guarantor rail (any
+ * currency).
  *
- * The path root is deliberately OUTSIDE /nft/mrc721/: every create pin under
- * that root mints an item, so a sell pin living there would mint a phantom
- * item. Until the indexer ships sell-intent queries (R-C), discovery rides on
- * the local KV book here plus chat announcements.
+ * Protocol shape (owner decisions 2026-11-04):
+ *  - Path /protocols/mrc721sell, NOT /nft/*: /nft/ is the OFFICIAL protocol
+ *    namespace indexers must index; this protocol stays unofficial for now.
+ *    The fixed path also keeps it away from the /nft/mrc721/ item-mint rule
+ *    (a sell pin under that root would mint a phantom item).
+ *  - No per-item path suffix: itemPinId lives in the content; the protocol
+ *    carries no ambiguous duplicates.
+ *  - No protocol/version fields in the payload: the MetaID pin 7-tuple
+ *    already carries the protocol identity (path) and version (pin version).
+ *  - Append-only declaration log (buzz pattern): every declaration is a
+ *    CREATE pin on the fixed path; per itemPinId the LATEST pin wins
+ *    (cancel = a new declaration with active:false).
+ *  - contact.metabotId never goes on-chain: local ids are per-machine and
+ *    mutable; sellerMetaId is the only identity.
  */
 
-export const MRC721_SELL_INTENT_PATH_ROOT = '/nft/mrc721sell';
-export const MRC721_SELL_INTENT_PROTOCOL = 'mrc721-sell-intent';
-export const MRC721_SELL_INTENT_VERSION = 1;
+export const MRC721_SELL_INTENT_PATH = '/protocols/mrc721sell';
 
 export interface Mrc721SellIntentContent {
-  protocol: typeof MRC721_SELL_INTENT_PROTOCOL;
-  version: number;
   active: boolean;
   itemPinId: string;
   collectionName?: string;
@@ -40,7 +47,6 @@ export interface Mrc721SellIntentContent {
   acceptedCurrencies: string[];
   settlement: string[];
   note?: string;
-  contact?: { metaId?: string; metabotId?: number };
   /** Epoch SECONDS (doc schema §2.2 — the indexer keys on this unit). */
   createdAt: number;
   /** Epoch SECONDS; display-only expiry window. */
@@ -95,9 +101,6 @@ function asRecord(value: unknown): Record<string, unknown> {
 /** Validate + normalize a sell-intent content object (tolerant on optional fields). */
 export function parseMrc721SellIntent(input: unknown): Mrc721SellIntentContent {
   const record = asRecord(input);
-  if (record.protocol !== MRC721_SELL_INTENT_PROTOCOL || Number(record.version) !== MRC721_SELL_INTENT_VERSION) {
-    throw new Error(`expected protocol "${MRC721_SELL_INTENT_PROTOCOL}" version ${MRC721_SELL_INTENT_VERSION}`);
-  }
   const itemPinId = String(record.itemPinId ?? '').trim().toLowerCase();
   if (!isMrc721PinId(itemPinId)) {
     throw new Error('itemPinId must be a 64-hex txid plus "i" and an output index');
@@ -115,8 +118,6 @@ export function parseMrc721SellIntent(input: unknown): Mrc721SellIntentContent {
   const acceptedCurrencies = asStringArray(record.acceptedCurrencies);
   const settlement = asStringArray(record.settlement);
   return {
-    protocol: MRC721_SELL_INTENT_PROTOCOL,
-    version: MRC721_SELL_INTENT_VERSION,
     active: record.active !== false,
     itemPinId,
     collectionName: typeof record.collectionName === 'string' && record.collectionName.trim() ? record.collectionName.trim() : undefined,
@@ -134,17 +135,7 @@ export function parseMrc721SellIntent(input: unknown): Mrc721SellIntentContent {
     acceptedCurrencies: acceptedCurrencies.length ? acceptedCurrencies : ['space'],
     settlement: settlement.length ? settlement : ['atomic-swap', 'escrow'],
     note: typeof record.note === 'string' && record.note.trim() ? record.note.trim() : undefined,
-    contact: asRecord(record.contact).metaId || asRecord(record.contact).metabotId != null
-      ? {
-        metaId: typeof (record.contact as Record<string, unknown>).metaId === 'string'
-          ? (record.contact as Record<string, unknown>).metaId as string
-          : undefined,
-        metabotId: Number.isInteger((record.contact as Record<string, unknown>)?.metabotId)
-          ? (record.contact as Record<string, unknown>).metabotId as number
-          : undefined,
-      }
-      : undefined,
-    createdAt: Number(record.createdAt) || Date.now(),
+    createdAt: Number(record.createdAt) || Math.floor(Date.now() / 1000),
     expiresAt: Number(record.expiresAt) || undefined,
   };
 }
@@ -220,8 +211,6 @@ export async function declareMrc721SellIntent(
   // convention); the local book's updatedAt stays ms (local bookkeeping only).
   const nowSeconds = Math.floor(nowMs / 1000);
   const intent: Mrc721SellIntentContent = {
-    protocol: MRC721_SELL_INTENT_PROTOCOL,
-    version: MRC721_SELL_INTENT_VERSION,
     active: true,
     itemPinId,
     collectionName: item.collectionName,
@@ -243,21 +232,19 @@ export async function declareMrc721SellIntent(
       ? input.settlement.map((entry) => String(entry).trim()).filter(Boolean)
       : ['atomic-swap', 'escrow'],
     note: input.note?.trim() || undefined,
-    contact: { metaId: metabot.globalmetaid ?? undefined, metabotId: input.metabotId },
     createdAt: nowSeconds,
     expiresAt: input.expiresInHours && input.expiresInHours > 0 ? nowSeconds + input.expiresInHours * 3_600 : undefined,
   };
 
-  // One pin per item (doc §2.1): the first declaration creates the
-  // /nft/mrc721sell/{itemPinId} pin; a re-declare (including after a cancel)
-  // must MODIFY the same pin so the indexer keeps a single current record.
+  // Append-only declaration log (buzz pattern, doc §2.1): every declaration —
+  // first, re-declare, or post-cancel re-list — is a CREATE pin on the fixed
+  // /protocols/mrc721sell path; per itemPinId the LATEST pin wins.
   const records = readIntents(input.intents, input.metabotId);
   const existing = records.findIndex((record) => record.intent.itemPinId === itemPinId);
-  const operation: 'create' | 'modify' = existing >= 0 ? 'modify' : 'create';
 
   const broadcast = await broadcastMrc721Pin(deps.createPin, input.metabotId, {
-    operation,
-    path: `${MRC721_SELL_INTENT_PATH_ROOT}/${itemPinId}`,
+    operation: 'create',
+    path: MRC721_SELL_INTENT_PATH,
     encryption: '0',
     version: '1.0.0',
     contentType: 'application/json',
@@ -285,9 +272,10 @@ export async function declareMrc721SellIntent(
 }
 
 /**
- * Cancel a sell intent: modify the declaration pin with active=false and flip
- * the local record. The pin path stays reserved for the item (re-declaring
- * modifies the same pin), matching the protocol draft's one-pin-per-item rule.
+ * Cancel a sell intent: broadcast a closing declaration (active=false) on the
+ * fixed path — per the append-only log, that new pin becomes the item's
+ * latest declaration — and flip the local record. The item itself is
+ * untouched.
  */
 export async function cancelMrc721SellIntent(
   deps: { createPin: Mrc721CreatePinFn },
@@ -304,8 +292,8 @@ export async function cancelMrc721SellIntent(
   }
   const content: Mrc721SellIntentContent = { ...record.intent, active: false };
   const broadcast = await broadcastMrc721Pin(deps.createPin, input.metabotId, {
-    operation: 'modify',
-    path: `${MRC721_SELL_INTENT_PATH_ROOT}/${itemPinId}`,
+    operation: 'create',
+    path: MRC721_SELL_INTENT_PATH,
     encryption: '0',
     version: '1.0.0',
     contentType: 'application/json',

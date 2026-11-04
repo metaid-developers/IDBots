@@ -46,23 +46,32 @@ over one of two rails:
 ### 2.1 Pin path
 
 ```
-/nft/mrc721sell/{itemPinId}
+/protocols/mrc721sell
 ```
 
-- **Deliberately OUTSIDE `/nft/mrc721/`**: any create pin under
-  `/nft/mrc721/{collection}/{item}` mints an item, so sell pins must not live
-  under that root or every declaration would mint a phantom item.
-- One sell pin per item (the item pinId is the path key). Re-declaring =
-  `modify` on the same path (keeps the chain history tidy and gives the
-  indexer a single current record per item).
-- Cancellation = `modify` with `"active": false`. No delete operation.
+Owner decisions (2026-11-04), applied throughout:
 
-### 2.2 Content schema (the create/modify pin payload)
+- **`/protocols/`, not `/nft/`**: `/nft/*` is the OFFICIAL protocol namespace
+  that indexers must index; this protocol stays unofficial for now. The fixed
+  path also keeps sell pins away from the `/nft/mrc721/` item-mint rule (a
+  sell pin under that root would mint a phantom item).
+- **Fixed path, no per-item suffix**: `itemPinId` lives in the content. The
+  protocol principle is "no possible ambiguity anywhere" — nothing is
+  duplicated between path and payload.
+- **No `protocol`/`version` payload fields**: the MetaID pin 7-tuple already
+  carries the protocol identity (path) and the version (pin `version` field);
+  duplicating them in the content only creates future ambiguity.
+- **No local ids on-chain**: `metabotId` is per-machine and mutable — the
+  seller's `sellerMetaId` is the only identity.
+- **Append-only declaration log (buzz pattern)**: every declaration — first,
+  re-declare, or post-cancel re-list — is a CREATE pin on the fixed path.
+  Per `itemPinId`, the LATEST pin (by chain order) wins. No delete operation.
+- Cancellation = a new declaration with `"active": false`.
+
+### 2.2 Content schema (the pin payload)
 
 ```json
 {
-  "protocol": "mrc721-sell-intent",
-  "version": 1,
   "active": true,
   "itemPinId": "<64hex>i<n>",
   "collectionName": "pixel-cats",
@@ -73,7 +82,6 @@ over one of two rails:
   "priceHintSats": 30000,
   "acceptedCurrencies": ["space", "btc", "fiat:CNY", "points:metaapp-x"],
   "settlement": ["atomic-swap", "escrow"],
-  "contact": { "metaId": "<seller 64hex>", "metabotId": 3 },
   "note": "free text for buyers",
   "createdAt": 1793868000,
   "expiresAt": 1794472800
@@ -87,11 +95,14 @@ over one of two rails:
   `fiat:<code>`, `points:<scope>`, or any settlement token tag. The indexer
   indexes it verbatim; clients interpret the tags they know.
 - `expiresAt` is display-only (same stance as the atomic swap listing TTL).
-- All fields except `protocol`/`version`/`itemPinId`/`active` are advisory.
+- Timestamps are epoch SECONDS.
+- All fields except `itemPinId`/`sellerAddress`/`active` are advisory.
 
 ### 2.3 What the indexer does with it (R-C)
 
-- Index sell pins under `/nft/mrc721sell/` keyed by `itemPinId`.
+- Index pins whose path is exactly `/protocols/mrc721sell` (CREATE ops only —
+  the protocol is create-only; other ops on the path are ignored), keyed by
+  the payload `itemPinId`, **latest pin wins** per item.
 - Expose: sell-intents by collection (`collectionPinId`), by seller address,
   and by item — this is what makes "查看专辑在售情况" (S2) a real query.
 - Optional: join with the holder view so stale intents (item no longer owned)
@@ -108,9 +119,9 @@ present. The sell pin itself is linked as `pin://<sellPinId>`.
 
 - The intent pin authorizes nothing by itself: no wallet touch, no transfer.
   Anyone can read it; only the holder can settle via the rails above.
-- The `mrc721sell` path is a NEW namespace: the item-mint rule under
-  `/nft/mrc721/` does not apply to it, and man-p2p must not treat sell pins as
-  items (indexer change is exactly R-C).
+- `/protocols/mrc721sell` is an unofficial namespace outside `/nft/*`: the
+  item-mint rule under `/nft/mrc721/` cannot apply to it, and indexers that
+  implement R-C must still never treat sell pins as items.
 - Intent ≠ ownership: the holder view remains the only source of truth for
   "does the seller still have it". Clients should re-check
   `mrc721_verify_holding` / `item_info` before engaging on an intent.

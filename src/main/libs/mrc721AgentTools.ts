@@ -1412,7 +1412,7 @@ export function buildMrc721AgentTools(deps: {
     [
       'Declare the intent to sell one MRC-721 item (pin-based MetaID NFT) as an on-chain sell-intent pin (docs/nft-sell-protocol-draft.md) — the discoverable, currency-agnostic "I want to sell this" announcement.',
       'The pin moves no funds and transfers nothing: settlement later runs over the locked atomic-swap rail (mrc721_sell to the agreed buyer, native SPACE) or the escrow/guarantor rail (any currency). The item must currently be held by this bot; the declaration is refused otherwise.',
-      'price_hint_sats is a display reference only, NOT an on-chain ask. accepted_currencies is an open vocabulary (space, btc, fiat:CNY, points:<scope>, ...). Broadcasts a pin under /nft/mrc721sell/ and appends an ```nft-card fence with action "selling" — include it verbatim in your announcement.',
+      'price_hint_sats is a display reference only, NOT an on-chain ask. accepted_currencies is an open vocabulary (space, btc, fiat:CNY, points:<scope>, ...). Broadcasts a declaration pin on /protocols/mrc721sell (append-only log, latest declaration per item wins) and appends an ```nft-card fence with action "selling" — include it verbatim in your announcement.',
     ].join(' '),
     {
       item_pin_id: z.string().min(1).describe('Item pinId from mrc721_item_info (64-hex txid + "i" + index).'),
@@ -1473,8 +1473,8 @@ export function buildMrc721AgentTools(deps: {
   const mrc721SellIntentCancel = tool(
     'mrc721_sell_intent_cancel',
     [
-      'Cancel one of THIS bot\'s MRC-721 sell-intent declarations: modifies the /nft/mrc721sell/ pin with active=false and flips the local record. The item itself is untouched.',
-      'Read-only on funds; one modify pin. Use mrc721_sell_intents to see your declared intents first.',
+      'Cancel one of THIS bot\'s MRC-721 sell-intent declarations: broadcasts a closing declaration (active=false) on /protocols/mrc721sell — the item\'s latest declaration — and flips the local record. The item itself is untouched.',
+      'Read-only on funds; one declaration pin. Use mrc721_sell_intents to see your declared intents first.',
     ].join(' '),
     {
       item_pin_id: z.string().min(1).describe('Item pinId of the intent to cancel.'),
@@ -1502,7 +1502,7 @@ export function buildMrc721AgentTools(deps: {
   const mrc721SellIntents = tool(
     'mrc721_sell_intents',
     [
-      'List THIS bot\'s MRC-721 sell-intent declarations (the /nft/mrc721sell/ pins recorded locally). Each row is re-checked against the live holder view: active = still held and declared; stale = the item is no longer in this bot\'s hand (transferred away — declare nothing, sell nothing); cancelled = withdrawn.',
+      'List THIS bot\'s MRC-721 sell-intent declarations (the /protocols/mrc721sell pins recorded locally). Each row is re-checked against the live holder view: active = still held and declared; stale = the item is no longer in this bot\'s hand (transferred away — declare nothing, sell nothing); cancelled = withdrawn.',
       'Read-only, no wallet involvement. There is no indexer-side market yet (requirements R-C pending); discovery of OTHER bots\' intents runs through chat announcements.',
     ].join(' '),
     {

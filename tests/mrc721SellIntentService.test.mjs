@@ -13,7 +13,7 @@ const {
   declareMrc721SellIntent,
   cancelMrc721SellIntent,
   parseMrc721SellIntent,
-  MRC721_SELL_INTENT_PATH_ROOT,
+  MRC721_SELL_INTENT_PATH,
 } = require('../dist-electron/main/services/mrc721SellIntentService.js');
 
 process.env.IDBOTS_MAN_P2P_LOCAL_BASE && delete process.env.IDBOTS_MAN_P2P_LOCAL_BASE;
@@ -57,7 +57,7 @@ async function withItemInfo(item, run) {
   }
 }
 
-test('declare broadcasts a declaration pin OUTSIDE the item-mint namespace and gates on the live holder view', async () => {
+test('declare broadcasts a CREATE pin on the fixed unofficial path with a duplicate-free payload', async () => {
   const calls = { pins: [] };
   await withItemInfo({ itemPinId: PINID, collectionName: 'pixel-cats', ownerAddress: BOT_ADDRESS, output: `${'ab'.repeat(32)}:0`, outputValue: 1 }, async () => {
     const result = await declareMrc721SellIntent(
@@ -66,14 +66,17 @@ test('declare broadcasts a declaration pin OUTSIDE the item-mint namespace and g
     );
     assert.equal(calls.pins.length, 1);
     const pin = calls.pins[0];
-    assert.equal(pin.operation, 'create');
-    assert.equal(pin.path, `${MRC721_SELL_INTENT_PATH_ROOT}/${PINID}`);
-    assert.ok(pin.path.startsWith('/nft/mrc721sell/'), 'sell pins must live under the sell namespace');
-    assert.ok(!pin.path.startsWith('/nft/mrc721/'), 'sell pins must NOT mint items under /nft/mrc721/');
+    assert.equal(pin.operation, 'create', 'the protocol is create-only (append-only declaration log)');
+    assert.equal(pin.path, '/protocols/mrc721sell', 'fixed path — no per-item suffix');
+    assert.ok(!pin.path.startsWith('/nft/'), 'sell pins stay out of the OFFICIAL /nft/* namespace');
     const content = JSON.parse(pin.payload);
-    assert.equal(content.protocol, 'mrc721-sell-intent');
     assert.equal(content.active, true);
     assert.equal(content.sellerAddress, BOT_ADDRESS);
+    assert.equal(content.itemPinId, PINID);
+    assert.ok(!('protocol' in content), 'payload must not duplicate the pin 7-tuple protocol identity');
+    assert.ok(!('version' in content), 'payload must not duplicate the pin version');
+    assert.ok(!('contact' in content), 'no contact object — sellerMetaId is the only identity');
+    assert.ok(!('metabotId' in content), 'local per-machine ids never go on-chain');
     assert.ok(content.createdAt < 1e12, 'createdAt must be epoch SECONDS per the doc schema');
     assert.equal(result.intent.itemPinId, PINID);
   });
@@ -90,29 +93,32 @@ test('declare refuses an item the bot does not hold — the holder view is the o
   assert.equal(calls.pins.length, 0, 'no pin may be broadcast for an item the bot does not hold');
 });
 
-test('re-declare after a cancel MODIFIES the same pin (one pin per item) and re-activates it', async () => {
+test('declare → cancel → re-declare is an append-only log on the fixed path (latest pin wins)', async () => {
   const calls = { pins: [] };
   const kv = makeKv();
   await withItemInfo({ itemPinId: PINID, collectionName: 'pixel-cats', ownerAddress: BOT_ADDRESS }, async () => {
     await declareMrc721SellIntent(makeDeps(calls), { metabotId: 1, itemPinId: PINID, store, intents: kv });
     await cancelMrc721SellIntent(makeDeps(calls), { metabotId: 1, itemPinId: PINID, store, intents: kv });
-    await declareMrc721SellIntent(makeDeps(calls), { metabotId: 1, itemPinId: PINID, priceHintSats: 25000, store, intents: kv });
+    const relisted = await declareMrc721SellIntent(makeDeps(calls), { metabotId: 1, itemPinId: PINID, priceHintSats: 25000, store, intents: kv });
+    assert.equal(relisted.intent.active, true);
+    assert.equal(relisted.intent.priceHintSats, 25000);
   });
   assert.equal(calls.pins.length, 3);
-  assert.equal(calls.pins[0].operation, 'create');
-  assert.equal(calls.pins[1].operation, 'modify', 'cancel is a modify');
-  assert.equal(JSON.parse(calls.pins[1].payload).active, false);
-  assert.equal(calls.pins[2].operation, 'modify', 're-declare must modify the same pin, never chain a second create');
-  assert.equal(calls.pins[1].path, calls.pins[0].path, 'same path for the whole lifecycle');
-  assert.equal(calls.pins[2].path, calls.pins[0].path, 'same path for the whole lifecycle');
+  for (const pin of calls.pins) {
+    assert.equal(pin.operation, 'create', 'every declaration is a CREATE pin (buzz pattern)');
+    assert.equal(pin.path, '/protocols/mrc721sell', 'fixed path for the whole lifecycle');
+  }
+  assert.equal(JSON.parse(calls.pins[1].payload).active, false, 'cancel = a new declaration with active:false');
+  assert.equal(JSON.parse(calls.pins[2].payload).active, true, 're-declare = a new active declaration; per itemPinId the LATEST pin wins');
 });
 
-test('parseMrc721SellIntent validates protocol, pinId, and price-hint shape', () => {
-  assert.throws(() => parseMrc721SellIntent({ protocol: 'other', version: 1, itemPinId: PINID, sellerAddress: BOT_ADDRESS }), /expected protocol/);
-  assert.throws(() => parseMrc721SellIntent({ protocol: 'mrc721-sell-intent', version: 1, itemPinId: 'nope', sellerAddress: BOT_ADDRESS }), /itemPinId/);
-  assert.throws(() => parseMrc721SellIntent({ protocol: 'mrc721-sell-intent', version: 1, itemPinId: PINID, sellerAddress: BOT_ADDRESS, priceHintSats: -5 }), /priceHintSats/);
-  const parsed = parseMrc721SellIntent({ protocol: 'mrc721-sell-intent', version: 1, itemPinId: PINID, sellerAddress: BOT_ADDRESS });
+test('parseMrc721SellIntent validates pinId and price-hint shape without protocol/version fields', () => {
+  assert.throws(() => parseMrc721SellIntent({ itemPinId: 'nope', sellerAddress: BOT_ADDRESS }), /itemPinId/);
+  assert.throws(() => parseMrc721SellIntent({ itemPinId: PINID, sellerAddress: 'not-an-address' }), /sellerAddress/);
+  assert.throws(() => parseMrc721SellIntent({ itemPinId: PINID, sellerAddress: BOT_ADDRESS, priceHintSats: -5 }), /priceHintSats/);
+  const parsed = parseMrc721SellIntent({ itemPinId: PINID, sellerAddress: BOT_ADDRESS });
   assert.deepEqual(parsed.acceptedCurrencies, ['space']);
   assert.deepEqual(parsed.settlement, ['atomic-swap', 'escrow']);
   assert.equal(parsed.active, true);
+  assert.ok(!('protocol' in parsed) && !('version' in parsed) && !('contact' in parsed));
 });
