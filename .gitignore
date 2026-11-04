@@ -872,6 +872,8 @@ blob-report/
 !tests/weixinGateway.test.ts
 !tests/weixinMedia.test.ts
 !tests/outboundImReceiptBubble.test.mjs
+# A timed-out IM turn must return its partial result instead of restarting from zero
+!tests/imCoworkTurnTimeout.test.mjs
 !docs/weixin-media.md
 !docs/weixin-media-delegated-verification.md
 !docs/weixin-media-verification.md

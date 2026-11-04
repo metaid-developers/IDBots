@@ -14,6 +14,11 @@ import type { IMStore } from './imStore';
 import { resolveSessionWorkingDirectory } from '../libs/botWorkspace';
 import { isDshShutdownError } from '../libs/dshShutdownError';
 import type { IMMessage, IMPlatform, IMMediaAttachment, IMTrustContext } from './types';
+import {
+  DEFAULT_IM_TURN_TIMEOUT_MS,
+  MIN_IM_TURN_TIMEOUT_MS,
+  MAX_IM_TURN_TIMEOUT_MS,
+} from './types';
 import { imTrustAllowsTools, resolveQQGroupWorkspace } from './qqTrust';
 import { tApp } from '../libs/appLanguage';
 import {
@@ -100,7 +105,6 @@ export interface IMCoworkHandlerOptions {
   coworkStore: CoworkStore;
   imStore: IMStore;
   getSkillsPrompt?: () => Promise<string | null>;
-  timeout?: number; // Timeout in ms, default 120000 (2 minutes)
   /**
    * How long a chat confirmation may stay unanswered before the IM side
    * denies it. Defaults to PERMISSION_CONFIRM_TIMEOUT_MS (60 s); a shorter
@@ -132,7 +136,6 @@ export class IMCoworkHandler extends EventEmitter {
   private coworkStore: CoworkStore;
   private imStore: IMStore;
   private getSkillsPrompt?: () => Promise<string | null>;
-  private timeout: number;
   private permissionConfirmTimeoutMs: number;
   private getGlobalPermissionMode?: () => unknown;
   private sendToConversation?: IMCoworkConversationSender;
@@ -202,7 +205,6 @@ export class IMCoworkHandler extends EventEmitter {
     this.coworkStore = options.coworkStore;
     this.imStore = options.imStore;
     this.getSkillsPrompt = options.getSkillsPrompt;
-    this.timeout = options.timeout ?? 120000;
     this.permissionConfirmTimeoutMs = options.permissionConfirmTimeoutMs ?? PERMISSION_CONFIRM_TIMEOUT_MS;
     this.getGlobalPermissionMode = options.getGlobalPermissionMode;
     this.sendToConversation = options.sendToConversation;
@@ -1181,6 +1183,33 @@ export class IMCoworkHandler extends EventEmitter {
     return `${platform}:${conversationId}`;
   }
 
+  /**
+   * Wall-clock budget for ONE turn, re-read from the persisted IM settings at
+   * the start of every turn (a settings edit applies to the next message; no
+   * gateway restart needed).
+   *
+   * Invalid input — unset, NaN, non-finite, 0, negative, non-number, or a
+   * settings read that throws — always falls back to
+   * DEFAULT_IM_TURN_TIMEOUT_MS. A legal but extreme value is clamped into
+   * [MIN_IM_TURN_TIMEOUT_MS, MAX_IM_TURN_TIMEOUT_MS], so a bad config can
+   * neither abort a turn on arrival nor park the chat for hours.
+   */
+  private resolveTurnTimeout(): number {
+    let configured: unknown;
+    try {
+      configured = this.imStore.getIMSettings()?.turnTimeoutMs;
+    } catch (error) {
+      console.warn('[IMCoworkHandler] Could not read turnTimeoutMs; using the default budget', JSON.stringify({
+        error: error instanceof Error ? error.message : String(error),
+      }));
+      return DEFAULT_IM_TURN_TIMEOUT_MS;
+    }
+    if (typeof configured !== 'number' || !Number.isFinite(configured) || configured <= 0) {
+      return DEFAULT_IM_TURN_TIMEOUT_MS;
+    }
+    return Math.min(MAX_IM_TURN_TIMEOUT_MS, Math.max(MIN_IM_TURN_TIMEOUT_MS, Math.round(configured)));
+  }
+
   private createAccumulatorPromise(sessionId: string): Promise<string> {
     return new Promise((resolve, reject) => {
       const existingAccumulator = this.messageAccumulators.get(sessionId);
@@ -1192,15 +1221,37 @@ export class IMCoworkHandler extends EventEmitter {
         existingAccumulator.reject(new Error('Replaced by a newer IM request'));
       }
 
-      // Set up timeout
+      // Budget spent. This path RESOLVES with whatever the turn had already
+      // produced; it must never reject. A rejection travels to the caller of
+      // processMessage (IMGatewayManager's messageHandler catch), which replaces
+      // the answer with a bare "处理消息时出错: Request timed out": the partial
+      // answer is lost and the retry restarts from zero into the same wall
+      // (real-device 2026-11-04 — two consecutive timeouts, then 「继续」 timed
+      // out again for exactly that reason).
+      const timeoutMs = this.resolveTurnTimeout();
+      const timeoutSeconds = Math.round(timeoutMs / 1000);
       const timeoutId = setTimeout(() => {
         const accumulator = this.messageAccumulators.get(sessionId);
-        if (accumulator) {
-          this.messageAccumulators.delete(sessionId);
-          this.coworkRunner.stopSession(sessionId, { reason: 'IM message accumulation timed out' });
-          reject(new Error('Request timed out'));
-        }
-      }, this.timeout);
+        if (!accumulator) return;
+        // Same teardown as every other exit: drop the timer + map entry first,
+        // then stop the runner session so the next message starts clean instead
+        // of colliding with the abandoned turn.
+        this.cleanupAccumulator(sessionId);
+        this.coworkRunner.stopSession(sessionId, { reason: 'IM message accumulation timed out' });
+
+        const partial = this.formatReply(accumulator.messages, null);
+        accumulator.resolve(
+          partial
+            ? tApp(
+              `【本轮已超时（${timeoutSeconds} 秒上限），以下是已经跑出来的部分，可能不完整】\n\n${partial}`,
+              `[This turn timed out (limit ${timeoutSeconds} s). Below is what it had already produced; it may be incomplete.]\n\n${partial}`
+            )
+            : tApp(
+              `处理消息时出错: Request timed out（本轮超过 ${timeoutSeconds} 秒上限已中止；单独问一件事、或稍后重发，会重新开始）`,
+              `Error while processing the message: Request timed out (this turn exceeded its ${timeoutSeconds} s limit and was aborted; ask one thing at a time, or resend later, to start fresh)`
+            )
+        );
+      }, timeoutMs);
 
       // Set up message accumulator
       this.messageAccumulators.set(sessionId, {
@@ -1692,7 +1743,9 @@ export class IMCoworkHandler extends EventEmitter {
     const accumulator = this.messageAccumulators.get(sessionId);
     if (accumulator) {
       const replyMessage = this.pickReplyMessage(accumulator.messages);
-      const replyText = this.formatReply(accumulator.messages);
+      // `formatReply` may return null only when a caller asks for that (the
+      // timeout path does); the normal path keeps its human-facing fallback.
+      const replyText = this.formatReply(accumulator.messages) ?? '';
       if (replyMessage) {
         // Record the delivery so a duplicate `complete` for this same turn can
         // never double-send it through the out-of-turn path below.
@@ -1945,11 +1998,20 @@ export class IMCoworkHandler extends EventEmitter {
   }
 
   /**
-   * Format accumulated messages into a reply string
+   * Format accumulated messages into a reply string.
+   *
+   * `fallback` is the answer for a turn that produced no assistant row: the
+   * normal completion path keeps its original "处理完成，但没有生成回复。" line,
+   * while the timeout path passes `null` to learn whether anything was produced
+   * at all before choosing between the partial-result text and the "nothing
+   * came out" text.
    */
-  private formatReply(messages: CoworkMessage[]): string {
+  private formatReply(
+    messages: CoworkMessage[],
+    fallback: string | null = '处理完成，但没有生成回复。'
+  ): string | null {
     const reply = this.pickReplyMessage(messages);
-    return reply ? (reply.content || '').trim() : '处理完成，但没有生成回复。';
+    return reply ? (reply.content || '').trim() : fallback;
   }
 
   /**

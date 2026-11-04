@@ -354,10 +354,31 @@ export interface IMChannelPermissionSettings {
   weixinPermissionMode?: IMChannelPermissionMode;
 }
 
+/**
+ * Bounds for one IM turn's wall-clock budget (`IMSettings.turnTimeoutMs`).
+ *
+ * A turn that runs past its budget is not thrown away: the handler answers with
+ * whatever the turn had already produced plus the limit it hit (see
+ * IMCoworkHandler.createAccumulatorPromise). The bounds exist so a bad config
+ * can neither abort every turn on arrival (0 / negative) nor park a chat for
+ * hours (MAX); DEFAULT applies whenever the stored value is missing or invalid.
+ */
+export const DEFAULT_IM_TURN_TIMEOUT_MS = 120_000;
+export const MIN_IM_TURN_TIMEOUT_MS = 10_000;
+export const MAX_IM_TURN_TIMEOUT_MS = 30 * 60_000;
+
 export interface IMSettings {
   systemPrompt?: string;
   skillsEnabled: boolean;
   channelPermissions?: IMChannelPermissionSettings;
+  /**
+   * Per-turn wall-clock budget in milliseconds. Unset or invalid (NaN, 0,
+   * negative, non-number, unreadable settings) falls back to
+   * DEFAULT_IM_TURN_TIMEOUT_MS; a legal but extreme value is clamped into
+   * [MIN_IM_TURN_TIMEOUT_MS, MAX_IM_TURN_TIMEOUT_MS]. Re-read at the start of
+   * every turn, so a change applies to the next message without a restart.
+   */
+  turnTimeoutMs?: number;
 }
 
 export interface IMGatewayStatus {
