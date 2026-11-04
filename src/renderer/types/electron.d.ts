@@ -217,6 +217,95 @@ interface TrafficFreeGrantCampaignStatusInfo {
   nextClaimAt?: number;
 }
 
+// --- ME points (S9 积分 UI). All monetary/amount fields come from the
+// server hot-config; the client never hardcodes prices or quota amounts.
+
+interface MePlanInfo {
+  planId: string;
+  tier: string;
+  name: string;
+  nameEn?: string;
+  priceCny?: number;
+  periodDays?: number;
+  /** milliME */ weeklyAmountMilli?: number;
+  desktopPriceCny?: number;
+  annualPriceCny?: number;
+  quarterlyDiscountPct?: number;
+  residualFullWeek?: number;
+  applicableEnd?: string;
+  saleStatus?: number;
+}
+
+interface MeRateInfo {
+  /** Resource key, e.g. a model id or "mvc". */
+  key: string;
+  /** Display multiplier, e.g. 1 for 1x, 3 for 3x. */
+  multiplier: number;
+}
+
+interface MeTopupPackageInfo {
+  packageId: string;
+  /** milliME */ meMilli?: number;
+  priceCny?: number;
+  saleStatus?: number;
+}
+
+interface MeBalanceInfo {
+  identityAddress: string;
+  weeklyGrant: {
+    amountMilli: number;
+    remainingMilli: number;
+    cycleStart: number;
+    cycleEnd: number;
+    isResidual: boolean;
+    nextResetAt: number;
+  };
+  persistent: {
+    topupMilli: number;
+    earnedMilli: number;
+    bonusMilli: number;
+  };
+  frozenMilli: number;
+  totalAvailable: number;
+}
+
+interface MeSubscriptionInfo {
+  statusText: string;
+  raw: Record<string, unknown>;
+}
+
+interface MeHistoryEntryInfo {
+  id: string;
+  type: string;
+  amountMilli: number;
+  balanceAfterMilli?: number;
+  refType?: string;
+  refId?: string;
+  reason?: string;
+  createdAt?: number;
+}
+
+interface MeHistoryPageInfo {
+  entries: MeHistoryEntryInfo[];
+  nextCursor: string;
+}
+
+interface MeTopupOrderInfo {
+  orderId: string;
+  packageId: string;
+  status: string;
+  createdAt?: number;
+  confirmedAt?: number;
+  /** milliME */ meMilli?: number;
+  priceCny?: number;
+  rejectReason?: string;
+}
+
+interface MeSubmitTopupResultInfo {
+  order: MeTopupOrderInfo | null;
+  applied: boolean;
+}
+
 interface TrafficFreeGrantClaimInfo {
   grantId: number;
   grantBytes: number;
@@ -1643,6 +1732,19 @@ interface IElectronAPI {
   brainSwitch: {
     switchFreeBrainsTo: (input: { providerKey: string }) => Promise<{ success: boolean; result?: BrainSwitchResultInfo; error?: string }>;
   };
+  mePoints: {
+    getPlans: () => Promise<{ success: boolean; plans?: MePlanInfo[]; error?: string; featureUnavailable?: boolean }>;
+    getRates: () => Promise<{ success: boolean; rates?: MeRateInfo[]; error?: string; featureUnavailable?: boolean }>;
+    getTopupPackages: () => Promise<{ success: boolean; topupPackages?: MeTopupPackageInfo[]; error?: string; featureUnavailable?: boolean }>;
+    getBalance: (input?: { forceRefresh?: boolean }) => Promise<{ success: boolean; balance?: MeBalanceInfo; error?: string; errorCode?: string; featureUnavailable?: boolean }>;
+    getSubscription: () => Promise<{ success: boolean; subscription?: MeSubscriptionInfo; error?: string; featureUnavailable?: boolean }>;
+    getHistory: (input?: { type?: string; beforeId?: string; limit?: number }) => Promise<{ success: boolean; history?: MeHistoryPageInfo; error?: string; featureUnavailable?: boolean }>;
+    submitTopupOrder: (input: { packageId: string; periodDays?: number; voucherUrl?: string; voucherRemark?: string; idempotencyKey?: string }) => Promise<{ success: boolean; submission?: MeSubmitTopupResultInfo; error?: string; errorCode?: string; featureUnavailable?: boolean }>;
+    getTopupOrders: () => Promise<{ success: boolean; orders?: MeTopupOrderInfo[]; error?: string; featureUnavailable?: boolean }>;
+    /** Pick + stage a payment-voucher screenshot; voucherUrl is a signed gateway download URL when the gateway is running. */
+    pickVoucher: (input?: Record<string, never>) => Promise<{ success: boolean; fileLabel?: string; voucherUrl?: string; signedUrlError?: string; error?: string }>;
+    getPaymentInfo: () => Promise<{ success: boolean; payment?: { qrContent: string; payeeHint: string }; error?: string }>;
+  };
   jevRelay: {
     resolveCredentials: () => Promise<{ success: boolean; credentials?: JevRelayCredentials; error?: string }>;
   };
@@ -2879,4 +2981,16 @@ declare global {
   }
 }
 
-export {}; 
+export type {
+  MePlanInfo,
+  MeRateInfo,
+  MeTopupPackageInfo,
+  MeBalanceInfo,
+  MeSubscriptionInfo,
+  MeHistoryEntryInfo,
+  MeHistoryPageInfo,
+  MeTopupOrderInfo,
+  MeSubmitTopupResultInfo,
+};
+
+export {};

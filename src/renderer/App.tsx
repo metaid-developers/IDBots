@@ -4,7 +4,13 @@ import { RootState } from './store';
 import type { SettingsOpenOptions } from './components/Settings';
 import Sidebar from './components/Sidebar';
 import Toast from './components/Toast';
-import QuotaNudgeBanner from './components/QuotaNudgeBanner';
+import MeBalanceBadge from './components/me/MeBalanceBadge';
+import MePurchaseFlow from './components/me/MePurchaseFlow';
+import {
+  onRequestOpenMePurchase,
+  onRequestOpenUsagePage,
+  type MePurchaseSection,
+} from './components/me/mePointsStore';
 import WindowTitleBar from './components/window/WindowTitleBar';
 import { CoworkView } from './components/cowork';
 import CoworkPermissionOverlay from './components/cowork/CoworkPermissionOverlay';
@@ -143,6 +149,12 @@ const providerDisplayLabel = (providerKey: string): string => (
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsOptions, setSettingsOptions] = useState<SettingsOpenOptions>({});
+  // S9 ME points: the shared purchase flow (订阅/充值 人工凭证通道) is one
+  // modal mounted here; badge / plan card / settings page open it by event.
+  const [mePurchase, setMePurchase] = useState<{ open: boolean; section: MePurchaseSection }>({
+    open: false,
+    section: 'subscribe',
+  });
   // Restored from the persisted view state so a renderer reload (dev HMR,
   // crash recovery, auto-update) does not bounce the user back to the New Task
   // home; the boot effect restores this view's conversation too.
@@ -582,6 +594,23 @@ const App: React.FC = () => {
     });
     setShowSettings(true);
   }, []);
+
+  // S9 ME points ripples: badge / plan card open the shared purchase modal
+  // and the merged 「用量 & 积分」 page (the settings traffic tab).
+  useEffect(
+    () =>
+      onRequestOpenMePurchase((section) => {
+        setMePurchase({ open: true, section });
+      }),
+    [],
+  );
+  useEffect(
+    () =>
+      onRequestOpenUsagePage(() => {
+        handleShowSettings({ initialTab: 'traffic' });
+      }),
+    [handleShowSettings],
+  );
 
   const handleShowSkills = useCallback(() => {
     handleShowSettings({ initialTab: 'skills' });
@@ -1449,7 +1478,16 @@ const App: React.FC = () => {
       {toastMessage && (
         <Toast message={toastMessage} onClose={() => setToastMessage(null)} />
       )}
-      <QuotaNudgeBanner onOpenModelSettings={() => handleShowSettings({ initialTab: 'model' })} />
+      {/* S9: 免费额度 token 口径横幅下线；全局 ME 余额角标取而代之（顶栏右上，同源）。 */}
+      <div className="fixed right-4 top-3 z-[85] non-draggable">
+        <MeBalanceBadge />
+      </div>
+      <MePurchaseFlow
+        open={mePurchase.open}
+        section={mePurchase.section}
+        onSectionChange={(section) => setMePurchase((prev) => ({ ...prev, section }))}
+        onClose={() => setMePurchase((prev) => ({ ...prev, open: false }))}
+      />
       <CoworkPermissionOverlay
         inlineSessionId={mainView === 'cowork' && showHomeSurface ? currentSessionId : null}
       />

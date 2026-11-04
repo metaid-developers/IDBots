@@ -1,0 +1,803 @@
+/**
+ * ME (MetaID Energy) points client service (S9 积分 UI 桌面切片).
+ * Talks to the assist-base-service ME APIs (/v1/me/*) with identity-signed
+ * requests — the same BSMA identity layer as trafficAccountService, but the
+ * per-endpoint action contract comes from docs/me-points/客户端与宿主接入指南.md:
+ *
+ *   signed message: "me:<action>:<tsSeconds>"  (秒级时间戳 ±300s)
+ *   X-Identity-Address / X-Timestamp (ms) / X-Signature (BSMA compact base64)
+ *
+ * Unit: the API speaks **milliME integers** (1 ME = 1000 milliME); display
+ * layers divide by 1000. All price/amount values are server hot-config —
+ * this client never hardcodes prices or quota amounts (PRD S9 §1 原则).
+ *
+ * Defensive by design: public endpoints (plans / rates / topup packages)
+ * need no identity; a missing or incomplete local identity only fails the
+ * signed endpoints, and every UI consumer treats { success:false } as
+ * "ME 不可见 / 不可用" rather than throwing.
+ */
+
+import { signMvcAddressMessage } from './mvcSponsorClient';
+import type { UserIdentityStore } from '../userIdentityStore';
+
+export const DEFAULT_ME_API_BASE_URL = 'https://www.metaso.network/assist-open-api';
+const DEFAULT_WALLET_PATH = "m/44'/10001'/0'/0/0";
+const DEFAULT_REQUEST_TIMEOUT_MS = 8_000;
+const BALANCE_CACHE_TTL_MS = 30_000;
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export type MeApiStage =
+  | 'plans'
+  | 'rates'
+  | 'packages'
+  | 'balance'
+  | 'subscription'
+  | 'history'
+  | 'topup_submit'
+  | 'topup_orders';
+
+export class MePointsApiError extends Error {
+  readonly stage: MeApiStage;
+  readonly status?: number;
+  /** errorCode from the unified response envelope data (e.g. SUBSCRIPTION_REQUIRED). */
+  readonly errorCode: string;
+  /** True when the backend returned 404 for /v1/me/* (ME disabled / not deployed). */
+  readonly featureUnavailable: boolean;
+
+  constructor(input: {
+    stage: MeApiStage;
+    message: string;
+    status?: number;
+    errorCode?: string;
+    featureUnavailable?: boolean;
+  }) {
+    super(input.message);
+    this.name = 'MePointsApiError';
+    this.stage = input.stage;
+    this.status = input.status;
+    this.errorCode = input.errorCode ?? '';
+    this.featureUnavailable = input.featureUnavailable ?? false;
+  }
+}
+
+/** GET /v1/me/plans entry (sale page source of truth; fields per guide §5.1). */
+export interface MePlan {
+  planId: string;
+  tier: string;
+  name: string;
+  nameEn?: string;
+  priceCny?: number;
+  periodDays?: number;
+  weeklyAmountMilli?: number;
+  desktopPriceCny?: number;
+  annualPriceCny?: number;
+  quarterlyDiscountPct?: number;
+  residualFullWeek?: number;
+  applicableEnd?: string;
+  saleStatus?: number;
+}
+
+/** GET /v1/me/rates entry — display multiplier layer only (no baseRates). */
+export interface MeRate {
+  /** Resource key, e.g. a model id ("deepseek-chat") or "mvc"/"traffic". */
+  key: string;
+  /** Display multiplier; e.g. 1 for 1x, 3 for 3x. */
+  multiplier: number;
+}
+
+/** GET /v1/me/topup/packages entry. */
+export interface MeTopupPackage {
+  packageId: string;
+  meMilli?: number;
+  priceCny?: number;
+  saleStatus?: number;
+}
+
+/** GET /v1/me/balance response (double-pool ledger snapshot). */
+export interface MeBalance {
+  identityAddress: string;
+  weeklyGrant: {
+    amountMilli: number;
+    remainingMilli: number;
+    cycleStart: number;
+    cycleEnd: number;
+    isResidual: boolean;
+    nextResetAt: number;
+  };
+  persistent: {
+    topupMilli: number;
+    earnedMilli: number;
+    bonusMilli: number;
+  };
+  frozenMilli: number;
+  totalAvailable: number;
+}
+
+/** GET /v1/me/subscription response (tolerant: guide pins statusText only). */
+export interface MeSubscription {
+  statusText: string;
+  raw: Record<string, unknown>;
+}
+
+/** GET /v1/me/history entry (tolerant of snake/camel variants). */
+export interface MeHistoryEntry {
+  id: string;
+  type: string;
+  amountMilli: number;
+  balanceAfterMilli?: number;
+  refType?: string;
+  refId?: string;
+  reason?: string;
+  createdAt?: number;
+  raw: Record<string, unknown>;
+}
+
+export interface MeHistoryPage {
+  entries: MeHistoryEntry[];
+  nextCursor: string;
+}
+
+/** GET /v1/me/topup/orders entry (statusText: submitted → confirmed/rejected). */
+export interface MeTopupOrder {
+  orderId: string;
+  packageId: string;
+  status: string;
+  createdAt?: number;
+  confirmedAt?: number;
+  meMilli?: number;
+  priceCny?: number;
+  rejectReason?: string;
+  raw: Record<string, unknown>;
+}
+
+export interface MeRevenuePackage {
+  plans: MePlan[];
+  topupPackages: MeTopupPackage[];
+  rates: MeRate[];
+}
+
+// ---------------------------------------------------------------------------
+// Deps (injected from main.ts; optional-chained so node-only tests resolve to
+// undefined instead of hard-crashing — same pattern as trafficAccountService).
+// ---------------------------------------------------------------------------
+
+export interface MeDeps {
+  getUserIdentityStore?: () => UserIdentityStore | undefined;
+  fetchImpl?: typeof fetch;
+}
+
+interface MePointsServiceState {
+  deps: MeDeps;
+  balanceCache: { balance: MeBalance; fetchedAt: number } | null;
+}
+
+const state: MePointsServiceState = { deps: {}, balanceCache: null };
+
+export function initMePointsService(deps: MeDeps): void {
+  state.deps = { ...state.deps, ...deps };
+  state.balanceCache = null;
+}
+
+// ---------------------------------------------------------------------------
+// Small helpers
+// ---------------------------------------------------------------------------
+
+function normalizeText(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function toNumber(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
+}
+
+function pickText(record: Record<string, unknown>, ...keys: string[]): string {
+  for (const key of keys) {
+    const text = normalizeText(record[key]);
+    if (text) return text;
+  }
+  return '';
+}
+
+function pickNumber(record: Record<string, unknown>, ...keys: string[]): number {
+  for (const key of keys) {
+    const value = record[key];
+    if (value !== undefined && value !== null) {
+      const n = toNumber(value);
+      if (n !== 0) return n;
+      return n;
+    }
+  }
+  return 0;
+}
+
+function pickErrorCode(payload: unknown): string {
+  if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+    return pickText(payload as Record<string, unknown>, 'errorCode', 'error_code');
+  }
+  return '';
+}
+
+function resolveApiBaseUrl(): string {
+  return process.env.ME_API_BASE_URL?.trim() || DEFAULT_ME_API_BASE_URL;
+}
+
+function nowSeconds(): number {
+  return Math.floor(Date.now() / 1000);
+}
+
+function delayMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error && error.message ? error.message : String(error);
+}
+
+// ---------------------------------------------------------------------------
+// HTTP layer (unified {code, message, data} envelope; guide §4)
+// ---------------------------------------------------------------------------
+
+async function meRequestJson(input: {
+  stage: MeApiStage;
+  method: 'GET' | 'POST';
+  path: string;
+  query?: Record<string, string | number | undefined>;
+  body?: Record<string, unknown>;
+  identity?: { address: string; timestamp: number; signature: string };
+}): Promise<Record<string, unknown> | unknown[]> {
+  const deps = state.deps;
+  const fetchImpl = deps.fetchImpl ?? fetch;
+  const url = new URL(`${resolveApiBaseUrl()}${input.path}`);
+  for (const [key, value] of Object.entries(input.query ?? {})) {
+    if (value !== undefined && normalizeText(String(value)) !== '') {
+      url.searchParams.set(key, String(value));
+    }
+  }
+  const headers: Record<string, string> = { accept: 'application/json' };
+  if (input.body) {
+    headers['content-type'] = 'application/json';
+  }
+  if (input.identity) {
+    headers['X-Identity-Address'] = input.identity.address;
+    headers['X-Timestamp'] = String(input.identity.timestamp);
+    headers['X-Signature'] = input.identity.signature;
+  }
+
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => controller.abort(), DEFAULT_REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetchImpl(url.toString(), {
+      method: input.method,
+      headers,
+      body: input.body ? JSON.stringify(input.body) : undefined,
+      signal: controller.signal,
+    });
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      throw new MePointsApiError({
+        stage: input.stage,
+        message: `ME service returned invalid JSON (HTTP ${response.status}).`,
+        status: response.status,
+      });
+    }
+    if (!response.ok) {
+      const bodyRecord = (body && typeof body === 'object' && !Array.isArray(body))
+        ? (body as Record<string, unknown>)
+        : {};
+      throw new MePointsApiError({
+        stage: input.stage,
+        message: pickText(bodyRecord, 'message', 'msg', 'error')
+          || `ME service request failed with HTTP ${response.status}.`,
+        status: response.status,
+        featureUnavailable: response.status === 404,
+        errorCode: pickErrorCode((bodyRecord.data ?? bodyRecord)),
+      });
+    }
+    const record = (body && typeof body === 'object' && !Array.isArray(body))
+      ? (body as Record<string, unknown>)
+      : null;
+    if (!record) {
+      throw new MePointsApiError({ stage: input.stage, message: 'ME service returned a non-object response.' });
+    }
+    const code = Number(record.code);
+    if (Number.isFinite(code) && code === 0) {
+      const data = record.data;
+      if (Array.isArray(data)) return data;
+      if (data && typeof data === 'object') return data as Record<string, unknown>;
+      return {};
+    }
+    throw new MePointsApiError({
+      stage: input.stage,
+      message: pickText(record, 'message', 'msg', 'error')
+        || `ME service returned code ${normalizeText(record.code) || 'unknown'}.`,
+      errorCode: pickErrorCode(record.data),
+    });
+  } catch (error) {
+    if (error instanceof MePointsApiError) throw error;
+    if (controller.signal.aborted) {
+      throw new MePointsApiError({
+        stage: input.stage,
+        message: `ME service request timed out after ${DEFAULT_REQUEST_TIMEOUT_MS}ms.`,
+      });
+    }
+    throw new MePointsApiError({
+      stage: input.stage,
+      message: getErrorMessage(error),
+    });
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Identity signing
+// ---------------------------------------------------------------------------
+
+interface MeIdentity {
+  mnemonic: string;
+  path: string;
+  mvcAddress: string;
+}
+
+function requireIdentity(): MeIdentity {
+  const identity = state.deps.getUserIdentityStore?.()?.get();
+  const mnemonic = normalizeText(identity?.mnemonic);
+  const mvcAddress = normalizeText((identity as { mvc_address?: string } | undefined)?.mvc_address);
+  if (!identity || !mnemonic || !mvcAddress) {
+    throw new MePointsApiError({ stage: 'balance', message: 'local user identity is missing or incomplete' });
+  }
+  return { mnemonic, path: identity.path || DEFAULT_WALLET_PATH, mvcAddress };
+}
+
+async function signedAuth(stage: MeApiStage, action: string): Promise<{
+  identity: { address: string; timestamp: number; signature: string };
+}> {
+  const identity = requireIdentity();
+  // Guide §3.2: the signed message binds the action with the SECONDS
+  // timestamp; X-Timestamp carries milliseconds. Both MUST derive from the
+  // same clock read — a second boundary between two reads makes the server's
+  // recomputed message differ and the signature fail.
+  const seconds = nowSeconds();
+  const timestamp = seconds * 1000;
+  const message = `me:${action}:${seconds}`;
+  const { signature } = await signMvcAddressMessage({
+    mnemonic: identity.mnemonic,
+    path: identity.path,
+    message,
+  });
+  return { identity: { address: identity.mvcAddress, timestamp, signature } };
+}
+
+// ---------------------------------------------------------------------------
+// Public (unsigned) endpoints
+// ---------------------------------------------------------------------------
+
+export async function getMePlans(): Promise<MePlan[]> {
+  const data = await meRequestJson({ stage: 'plans', method: 'GET', path: '/v1/me/plans' });
+  const rows = Array.isArray(data) ? data : [];
+  const plans: MePlan[] = [];
+  for (const row of rows) {
+    const record = (row && typeof row === 'object' ? row : {}) as Record<string, unknown>;
+    const planId = pickText(record, 'planId', 'plan_id');
+    if (!planId) continue;
+    plans.push({
+      planId,
+      tier: pickText(record, 'tier') || planId,
+      name: pickText(record, 'name') || planId,
+      nameEn: pickText(record, 'nameEn', 'name_en') || undefined,
+      priceCny: pickNumber(record, 'priceCny', 'price_cny') || undefined,
+      periodDays: pickNumber(record, 'periodDays', 'period_days') || undefined,
+      weeklyAmountMilli: pickNumber(record, 'weeklyAmountMilli', 'weekly_amount_milli') || undefined,
+      desktopPriceCny: pickNumber(record, 'desktopPriceCny', 'desktop_price_cny') || undefined,
+      annualPriceCny: pickNumber(record, 'annualPriceCny', 'annual_price_cny') || undefined,
+      quarterlyDiscountPct: pickNumber(record, 'quarterlyDiscountPct', 'quarterly_discount_pct') || undefined,
+      residualFullWeek: pickNumber(record, 'residualFullWeek', 'residual_full_week') || undefined,
+      applicableEnd: pickText(record, 'applicableEnd', 'applicable_end') || undefined,
+      saleStatus: pickNumber(record, 'saleStatus', 'sale_status') || undefined,
+    });
+  }
+  return plans.filter((plan) => (plan.saleStatus ?? 1) === 1);
+}
+
+export async function getMeRates(): Promise<MeRate[]> {
+  const data = await meRequestJson({ stage: 'rates', method: 'GET', path: '/v1/me/rates' });
+  const rates: MeRate[] = [];
+  const collect = (source: Record<string, unknown>) => {
+    for (const [key, value] of Object.entries(source)) {
+      const n = toNumber(value);
+      if (Number.isFinite(n) && n > 0) {
+        rates.push({ key, multiplier: n });
+      }
+    }
+  };
+  if (Array.isArray(data)) {
+    for (const row of data) {
+      const record = (row && typeof row === 'object' ? row : {}) as Record<string, unknown>;
+      const key = pickText(record, 'key', 'modelId', 'model_id', 'resource', 'resourceKey', 'resource_key');
+      const value = toNumber(record.multiplier ?? record.value ?? record.rate);
+      if (key && Number.isFinite(value) && value > 0) rates.push({ key, multiplier: value });
+    }
+    return rates;
+  }
+  const record = data as Record<string, unknown>;
+  const models = record.models;
+  if (models && typeof models === 'object' && !Array.isArray(models)) {
+    collect(models as Record<string, unknown>);
+  } else {
+    collect(record);
+  }
+  return rates;
+}
+
+export async function getMeTopupPackages(): Promise<MeTopupPackage[]> {
+  const data = await meRequestJson({ stage: 'packages', method: 'GET', path: '/v1/me/topup/packages' });
+  const rows = Array.isArray(data) ? data : [];
+  const packages: MeTopupPackage[] = [];
+  for (const row of rows) {
+    const record = (row && typeof row === 'object' ? row : {}) as Record<string, unknown>;
+    const packageId = pickText(record, 'packageId', 'package_id');
+    if (!packageId) continue;
+    packages.push({
+      packageId,
+      meMilli: pickNumber(record, 'meMilli', 'me_milli') || undefined,
+      priceCny: pickNumber(record, 'priceCny', 'price_cny') || undefined,
+      saleStatus: pickNumber(record, 'saleStatus', 'sale_status') || undefined,
+    });
+  }
+  return packages.filter((pkg) => (pkg.saleStatus ?? 1) === 1);
+}
+
+// ---------------------------------------------------------------------------
+// Signed endpoints
+// ---------------------------------------------------------------------------
+
+export async function getMeBalance(input: { forceRefresh?: boolean } = {}): Promise<MeBalance> {
+  if (!input.forceRefresh && state.balanceCache && Date.now() - state.balanceCache.fetchedAt < BALANCE_CACHE_TTL_MS) {
+    return state.balanceCache.balance;
+  }
+  const { identity } = await signedAuth('balance', 'balance');
+  const data = (await meRequestJson({
+    stage: 'balance',
+    method: 'GET',
+    path: '/v1/me/balance',
+    identity,
+  })) as Record<string, unknown>;
+  const balance = normalizeMeBalance(data);
+  state.balanceCache = { balance, fetchedAt: Date.now() };
+  return balance;
+}
+
+function normalizeMeBalance(data: Record<string, unknown>): MeBalance {
+  const grant = (data.weeklyGrant && typeof data.weeklyGrant === 'object'
+    ? (data.weeklyGrant as Record<string, unknown>)
+    : {}) as Record<string, unknown>;
+  const persistent = (data.persistent && typeof data.persistent === 'object'
+    ? (data.persistent as Record<string, unknown>)
+    : {}) as Record<string, unknown>;
+  return {
+    identityAddress: pickText(data, 'identityAddress', 'identity_address'),
+    weeklyGrant: {
+      amountMilli: pickNumber(grant, 'amountMilli', 'amount_milli'),
+      remainingMilli: pickNumber(grant, 'remainingMilli', 'remaining_milli'),
+      cycleStart: pickNumber(grant, 'cycleStart', 'cycle_start'),
+      cycleEnd: pickNumber(grant, 'cycleEnd', 'cycle_end'),
+      isResidual: grant.isResidual === true || grant.is_residual === true,
+      nextResetAt: pickNumber(grant, 'nextResetAt', 'next_reset_at'),
+    },
+    persistent: {
+      topupMilli: pickNumber(persistent, 'topupMilli', 'topup_milli'),
+      earnedMilli: pickNumber(persistent, 'earnedMilli', 'earned_milli'),
+      bonusMilli: pickNumber(persistent, 'bonusMilli', 'bonus_milli'),
+    },
+    frozenMilli: pickNumber(data, 'frozenMilli', 'frozen_milli'),
+    totalAvailable: pickNumber(data, 'totalAvailable', 'total_available'),
+  };
+}
+
+export async function getMeSubscription(): Promise<MeSubscription> {
+  const { identity } = await signedAuth('subscription', 'subscription');
+  const data = (await meRequestJson({
+    stage: 'subscription',
+    method: 'GET',
+    path: '/v1/me/subscription',
+    identity,
+  })) as Record<string, unknown>;
+  return {
+    statusText: pickText(data, 'statusText', 'status_text', 'status', 'stage'),
+    raw: data,
+  };
+}
+
+export async function getMeHistory(input: { type?: string; beforeId?: string; limit?: number } = {}): Promise<MeHistoryPage> {
+  const { identity } = await signedAuth('history', 'history');
+  const data = (await meRequestJson({
+    stage: 'history',
+    method: 'GET',
+    path: '/v1/me/history',
+    query: {
+      type: input.type || undefined,
+      beforeId: input.beforeId || undefined,
+      limit: input.limit || undefined,
+    },
+    identity,
+  })) as Record<string, unknown>;
+  const rows = Array.isArray(data.entries)
+    ? data.entries
+    : Array.isArray(data.history)
+      ? data.history
+      : Array.isArray(data.items)
+        ? data.items
+        : Array.isArray(data) ? (data as unknown[]) : [];
+  const entries: MeHistoryEntry[] = [];
+  for (const row of rows) {
+    const record = (row && typeof row === 'object' ? row : {}) as Record<string, unknown>;
+    const id = pickText(record, 'id', 'entryId', 'entry_id');
+    if (!id) continue;
+    entries.push({
+      id,
+      type: pickText(record, 'type', 'entryType'),
+      amountMilli: pickNumber(record, 'amountMilli', 'amount_milli', 'amount'),
+      balanceAfterMilli: pickNumber(record, 'balanceAfterMilli', 'balance_after_milli') || undefined,
+      refType: pickText(record, 'refType', 'ref_type') || undefined,
+      refId: pickText(record, 'refId', 'ref_id') || undefined,
+      reason: pickText(record, 'reason') || undefined,
+      createdAt: pickNumber(record, 'createdAt', 'created_at', 'ts') || undefined,
+      raw: record,
+    });
+  }
+  const nextCursor = pickText(data, 'nextCursor', 'next_cursor');
+  return { entries, nextCursor };
+}
+
+export interface MeSubmitTopupResult {
+  order: MeTopupOrder | null;
+  applied: boolean;
+}
+
+export async function submitMeTopupOrder(input: {
+  packageId: string;
+  periodDays?: number;
+  voucherUrl?: string;
+  voucherRemark?: string;
+  idempotencyKey?: string;
+}): Promise<MeSubmitTopupResult> {
+  const { identity } = await signedAuth('topup_submit', 'topup_submit');
+  // Retry ladder: a transient network failure must not double-submit. Same as
+  // the traffic client: the POST itself is the retry point with the SAME key.
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const data = (await meRequestJson({
+        stage: 'topup_submit',
+        method: 'POST',
+        path: '/v1/me/topup/orders',
+        body: {
+          packageId: input.packageId,
+          ...(input.periodDays ? { periodDays: input.periodDays } : {}),
+          ...(input.voucherUrl ? { voucherUrl: input.voucherUrl } : {}),
+          ...(input.voucherRemark ? { voucherRemark: input.voucherRemark } : {}),
+          ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+        },
+        identity,
+      })) as Record<string, unknown>;
+      state.balanceCache = null;
+      return {
+        order: normalizeMeTopupOrder(data),
+        applied: data.applied === true,
+      };
+    } catch (error) {
+      if (error instanceof MePointsApiError && (error.featureUnavailable || error.errorCode || error.status === 400)) {
+        throw error;
+      }
+      lastError = error;
+      await delayMs(400);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+export async function getMeTopupOrders(): Promise<MeTopupOrder[]> {
+  const { identity } = await signedAuth('topup_orders', 'topup_orders');
+  const data = await meRequestJson({
+    stage: 'topup_orders',
+    method: 'GET',
+    path: '/v1/me/topup/orders',
+    identity,
+  });
+  const rows = Array.isArray(data) ? data : [];
+  const orders: MeTopupOrder[] = [];
+  for (const row of rows) {
+    const record = (row && typeof row === 'object' ? row : {}) as Record<string, unknown>;
+    const orderId = pickText(record, 'orderId', 'order_id', 'id');
+    if (!orderId) continue;
+    orders.push(normalizeMeTopupOrder(record, orderId));
+  }
+  return orders;
+}
+
+function normalizeMeTopupOrder(record: Record<string, unknown>, orderIdFallback?: string): MeTopupOrder {
+  return {
+    orderId: pickText(record, 'orderId', 'order_id') || orderIdFallback || '',
+    packageId: pickText(record, 'packageId', 'package_id'),
+    status: pickText(record, 'statusText', 'status_text', 'status'),
+    createdAt: pickNumber(record, 'createdAt', 'created_at') || undefined,
+    confirmedAt: pickNumber(record, 'confirmedAt', 'confirmed_at') || undefined,
+    meMilli: pickNumber(record, 'meMilli', 'me_milli') || undefined,
+    priceCny: pickNumber(record, 'priceCny', 'price_cny') || undefined,
+    rejectReason: pickText(record, 'rejectReason', 'reject_reason') || undefined,
+    raw: record,
+  };
+}
+
+/**
+ * Platform payment info for the manual voucher channel (S9 §5 展示收款码).
+ * The ME client contract (guide §5.3) does NOT define a payee-QR field, so
+ * this is an operational seam: ops can bake ME_PAY_QR_CONTENT (an Alipay
+ * QR payload such as https://qr.alipay.com/...) into the host environment.
+ * When unset the UI shows an honest "not issued yet" placeholder and keeps
+ * the remark+voucher path — it never fabricates a scannable QR.
+ */
+export function getMePaymentInfo(): { qrContent: string; payeeHint: string } {
+  return {
+    qrContent: normalizeText(process.env.ME_PAY_QR_CONTENT),
+    payeeHint: normalizeText(process.env.ME_PAY_PAYEE_HINT),
+  };
+}
+
+export function invalidateMeBalanceCache(): void {
+  state.balanceCache = null;
+}
+
+export function isMeErrorCode(error: unknown, code: string): boolean {
+  return error instanceof MePointsApiError && error.errorCode === code;
+}
+
+// ---------------------------------------------------------------------------
+// IPC surface
+// ---------------------------------------------------------------------------
+
+type RegisterIpcHandlerFn = (channel: string, handler: (...args: unknown[]) => unknown) => void;
+
+export function registerMePointsIpcHandlers(deps: { registerIpcHandler: RegisterIpcHandlerFn }): void {
+  const { registerIpcHandler } = deps;
+  const wrap = (
+    channel: string,
+    run: (input: Record<string, unknown>) => Promise<Record<string, unknown> | unknown[]>,
+  ) => {
+    registerIpcHandler(channel, async (_event, rawInput?: unknown) => {
+      const input = (rawInput && typeof rawInput === 'object' ? rawInput : {}) as Record<string, unknown>;
+      try {
+        void _event;
+        return { success: true, ...(await run(input)) };
+      } catch (error) {
+        const meError = error instanceof MePointsApiError ? error : null;
+        return {
+          success: false,
+          error: getErrorMessage(error),
+          errorCode: meError?.errorCode ?? '',
+          featureUnavailable: meError?.featureUnavailable ?? false,
+        };
+      }
+    });
+  };
+
+  wrap('me:getPlans', async () => ({ plans: await getMePlans() }));
+  wrap('me:getRates', async () => ({ rates: await getMeRates() }));
+  wrap('me:getTopupPackages', async () => ({ topupPackages: await getMeTopupPackages() }));
+  wrap('me:getBalance', async (input) => ({
+    balance: await getMeBalance({ forceRefresh: input.forceRefresh === true }),
+  }));
+  wrap('me:getSubscription', async () => ({ subscription: await getMeSubscription() }));
+  wrap('me:getHistory', async (input) => ({
+    history: await getMeHistory({
+      type: normalizeText(input.type) || undefined,
+      beforeId: normalizeText(input.beforeId) || undefined,
+      limit: toNumber(input.limit) || undefined,
+    }),
+  }));
+  wrap('me:submitTopupOrder', async (input) => ({
+    submission: await submitMeTopupOrder({
+      packageId: normalizeText(input.packageId),
+      periodDays: toNumber(input.periodDays) || undefined,
+      voucherUrl: normalizeText(input.voucherUrl) || undefined,
+      voucherRemark: normalizeText(input.voucherRemark) || undefined,
+      idempotencyKey: normalizeText(input.idempotencyKey) || undefined,
+    }),
+  }));
+  wrap('me:getTopupOrders', async () => ({ orders: await getMeTopupOrders() }));
+  wrap('me:getPaymentInfo', async () => ({ payment: getMePaymentInfo() }));
+  registerIpcHandler('me:pickVoucher', async (_event, rawInput?: unknown) => {
+    void rawInput;
+    try {
+      return await pickMeVoucher();
+    } catch (error) {
+      return { success: false, error: getErrorMessage(error) };
+    }
+  });
+}
+
+/**
+ * Voucher staging for the first-slice manual channel (S9 §5).
+ *
+ * Native file dialog → copy the picked screenshot into userData/me-vouchers/
+ * → mint a signed gateway download URL for it when the gateway is running.
+ * The remark textarea is always available as the minimum-viable credential
+ * (guide §5.3: voucherUrl and voucherRemark 二选一至少填一项) — the UI
+ * surfaces signedError honestly instead of pretending an upload happened.
+ */
+async function pickMeVoucher(): Promise<{
+  success: boolean;
+  fileLabel?: string;
+  voucherUrl?: string;
+  signedUrlError?: string;
+}> {
+  // Loaded lazily so plain-node test runs (require('electron') → path string)
+  // never crash at import time.
+  const electron = require('electron') as {
+    dialog?: { showOpenDialog: (options: unknown) => Promise<{ canceled: boolean; filePaths?: string[] }> };
+    app?: { getPath: (name: string) => string };
+  };
+  const dialog = electron.dialog;
+  const app = electron.app;
+  if (!dialog?.showOpenDialog || !app?.getPath) {
+    return { success: false };
+  }
+  const picked = await dialog.showOpenDialog({
+    title: '选择支付凭证截图',
+    properties: ['openFile'],
+    filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
+  });
+  if (picked.canceled || !picked.filePaths?.length) {
+    return { success: false };
+  }
+  const fs = await import('node:fs');
+  const nodePath = await import('node:path');
+  const sourcePath = picked.filePaths[0];
+  const voucherDir = nodePath.join(app.getPath('userData'), 'me-vouchers');
+  await fs.promises.mkdir(voucherDir, { recursive: true });
+  const stagedPath = nodePath.join(voucherDir, `${Date.now()}-${sanitizeFileName(nodePath.basename(sourcePath))}`);
+  await fs.promises.copyFile(sourcePath, stagedPath);
+
+  let voucherUrl: string | undefined;
+  let signedUrlError: string | undefined;
+  try {
+    const { getActiveGatewayContext } = await import('../gateway/wiring');
+    const { signFileDownload } = await import('../gateway/fileSign');
+    const context = getActiveGatewayContext();
+    if (context) {
+      const signed = signFileDownload(
+        { secret: context.secret, tenantId: context.tenantId, paths: context.paths, realpathSync: fs.realpathSync },
+        { path: stagedPath, disposition: 'inline' },
+      );
+      if ('url' in signed && typeof (signed as { url?: unknown }).url === 'string') {
+        voucherUrl = (signed as { url: string }).url;
+      } else {
+        signedUrlError = String((signed as { message?: string }).message ?? 'gateway signing failed');
+      }
+    } else {
+      signedUrlError = '凭证已保存本地，但网关未运行，暂生成下载链接';
+    }
+  } catch (error) {
+    signedUrlError = getErrorMessage(error);
+  }
+  return {
+    success: true,
+    fileLabel: nodePath.basename(sourcePath),
+    ...(voucherUrl ? { voucherUrl } : {}),
+    ...(signedUrlError ? { signedUrlError } : {}),
+  };
+}
+
+function sanitizeFileName(name: string): string {
+  return name.replace(/[^A-Za-z0-9._-]/g, '_').slice(-96) || 'voucher.png';
+}

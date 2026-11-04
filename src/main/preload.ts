@@ -826,6 +826,23 @@ contextBridge.exposeInMainWorld('electron', {
     getSettings: () => ipcRenderer.invoke('traffic:getSettings'),
     setSettings: (input: { mode?: string; fallbackPolicy?: string; apiBase?: string; rechargeGateway?: string }) => ipcRenderer.invoke('traffic:setSettings', input),
   },
+  // ME points (S9): all /v1/me/* calls run in the main process so the
+  // identity mnemonic never reaches the renderer. errorCode carries the
+  // unified envelope's data.errorCode (e.g. SUBSCRIPTION_REQUIRED).
+  mePoints: {
+    getPlans: () => ipcRenderer.invoke('me:getPlans'),
+    getRates: () => ipcRenderer.invoke('me:getRates'),
+    getTopupPackages: () => ipcRenderer.invoke('me:getTopupPackages'),
+    getBalance: (input?: { forceRefresh?: boolean }) => ipcRenderer.invoke('me:getBalance', input ?? {}),
+    getSubscription: () => ipcRenderer.invoke('me:getSubscription'),
+    getHistory: (input?: { type?: string; beforeId?: string; limit?: number }) =>
+      ipcRenderer.invoke('me:getHistory', input ?? {}),
+    submitTopupOrder: (input: { packageId: string; periodDays?: number; voucherUrl?: string; voucherRemark?: string; idempotencyKey?: string }) =>
+      ipcRenderer.invoke('me:submitTopupOrder', input ?? {}),
+    getTopupOrders: () => ipcRenderer.invoke('me:getTopupOrders'),
+    pickVoucher: (input?: Record<string, never>) => ipcRenderer.invoke('me:pickVoucher', input ?? {}),
+    getPaymentInfo: () => ipcRenderer.invoke('me:getPaymentInfo'),
+  },
   // Mobile gateway channels (REQ-A-24); desktop callers use the same
   // handlers the C2 gateway dispatches to.
   gateway: {
