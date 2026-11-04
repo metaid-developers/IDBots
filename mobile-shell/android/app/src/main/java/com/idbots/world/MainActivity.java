@@ -21,6 +21,7 @@ public class MainActivity extends BridgeActivity {
             .setBackgroundColor("#F5F7F9")
             .create();
         registerPlugin(NativeBackPlugin.class);
+        registerPlugin(NativeCapabilitiesPlugin.class);
         super.onCreate(savedInstanceState);
     }
 

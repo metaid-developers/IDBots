@@ -80,7 +80,7 @@ function assertBootstrap(proof) {
   assert.equal(proof.capabilities.backButton, true);
   assert.equal(proof.capabilities.externalUrls, true);
   for (const capability of ['camera', 'photos', 'files', 'share', 'secureScreen']) {
-    assert.equal(proof.capabilities[capability], false);
+    assert.equal(proof.capabilities[capability], true);
   }
 }
 
@@ -99,8 +99,14 @@ const bootstrap = await evaluate(proofExpression);
 assertBootstrap(bootstrap);
 
 if (mode === 'bootstrap') {
+  const secureScreenToggle = await evaluate(`(async () => {
+    await window.idbotsNative.setSecureScreen(true);
+    await window.idbotsNative.setSecureScreen(false);
+    return true;
+  })()`);
+  assert.equal(secureScreenToggle, true);
   await capture('android-staging-login.png');
-  record('android-bootstrap.json', { result: 'PASS', bootstrap });
+  record('android-bootstrap.json', { result: 'PASS', bootstrap, secureScreenToggle: 'PASS' });
 } else if (mode === 'external') {
   await evaluate(`window.location.assign('https://example.com/')`);
   await sleep(2500);

@@ -16,6 +16,7 @@ import type { useChat } from '../hooks/useChat';
 import type { ChatMessageView } from '../chatProjection';
 import { useKeyboardInset } from '../hooks/useKeyboardInset';
 import { useNativeBackHandler } from '../hooks/useNativeBackHandler';
+import { getNativeAdapter } from '../../native/nativeAdapter';
 import { BottomSheet } from '../components/BottomSheet';
 import { BotAvatar } from '../components/BotAvatar';
 import { filterSessionsByTitle, groupSessionsByDay, resolveSessionBot } from '../sessionList';
@@ -467,6 +468,7 @@ export default function ChatScreen(props: {
   const { chat, bots } = props;
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [attachmentSourceOpen, setAttachmentSourceOpen] = useState(false);
   const [emojiPanelOpen, setEmojiPanelOpen] = useState(false);
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   // Refs (caret notes: emojiTextInsert.ts).
@@ -482,6 +484,9 @@ export default function ChatScreen(props: {
   const headerBot = resolveSessionBot(chat.sessions, chat.sessionId, chat.metabotId, bots);
   const draft = chat.draft ?? '';
   const attachments = chat.attachments ?? [];
+  const nativeCapabilities = typeof window === 'undefined' ? null : getNativeAdapter().getCapabilities();
+  const hasNativeAttachmentPicker = nativeCapabilities !== null
+    && (nativeCapabilities.camera || nativeCapabilities.photos || nativeCapabilities.files);
   const openPreview = useCallback((filePath: string): boolean => {
     setPreviewPath(filePath);
     return true;
@@ -712,7 +717,13 @@ export default function ChatScreen(props: {
           </button>
           <button
             type="button"
-            onClick={() => void chat.pickAttachments()}
+            onClick={() => {
+              if (hasNativeAttachmentPicker) {
+                setAttachmentSourceOpen(true);
+              } else {
+                void chat.pickAttachments('files');
+              }
+            }}
             disabled={!canAttach}
             aria-label={t('mobile.chat.addAttachment')}
             className="twin-icon-button twin-composer-accessory"
@@ -768,6 +779,51 @@ export default function ChatScreen(props: {
         open={pickerOpen}
         onClose={() => setPickerOpen(false)}
       />
+      {attachmentSourceOpen ? (
+        <BottomSheet title={t('mobile.chat.attachmentSourceTitle')} onClose={() => setAttachmentSourceOpen(false)}>
+          <div className="flex flex-col" data-testid="attachment-source-sheet">
+            {nativeCapabilities?.camera ? (
+              <button
+                type="button"
+                data-testid="attachment-source-camera"
+                onClick={() => {
+                  setAttachmentSourceOpen(false);
+                  void chat.pickAttachments('camera');
+                }}
+                className="min-h-[52px] border-b border-[var(--border-color)] px-1 text-left text-[15px] text-[var(--text-primary)] active:bg-[var(--bg-hover)]"
+              >
+                {t('mobile.chat.attachmentSourceCamera')}
+              </button>
+            ) : null}
+            {nativeCapabilities?.photos ? (
+              <button
+                type="button"
+                data-testid="attachment-source-photos"
+                onClick={() => {
+                  setAttachmentSourceOpen(false);
+                  void chat.pickAttachments('photos');
+                }}
+                className="min-h-[52px] border-b border-[var(--border-color)] px-1 text-left text-[15px] text-[var(--text-primary)] active:bg-[var(--bg-hover)]"
+              >
+                {t('mobile.chat.attachmentSourcePhotos')}
+              </button>
+            ) : null}
+            {nativeCapabilities?.files ? (
+              <button
+                type="button"
+                data-testid="attachment-source-files"
+                onClick={() => {
+                  setAttachmentSourceOpen(false);
+                  void chat.pickAttachments('files');
+                }}
+                className="min-h-[52px] px-1 text-left text-[15px] text-[var(--text-primary)] active:bg-[var(--bg-hover)]"
+              >
+                {t('mobile.chat.attachmentSourceFiles')}
+              </button>
+            ) : null}
+          </div>
+        </BottomSheet>
+      ) : null}
       {previewPath ? (
         <MobileArtifactPreview key={previewPath} path={previewPath} onClose={() => setPreviewPath(null)} />
       ) : null}

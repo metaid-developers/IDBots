@@ -21,6 +21,7 @@ final class NativeBridgeViewController: CAPBridgeViewController {
               let webView else {
             return
         }
+        capacitorBridge.registerPluginInstance(NativeCapabilitiesPlugin())
         let delegate = NativeShellNavigationDelegate(
             remoteOrigin: shell.remoteOrigin,
             offlineURL: offlineURL,

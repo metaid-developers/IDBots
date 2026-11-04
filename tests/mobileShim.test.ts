@@ -562,6 +562,96 @@ test('dialog.selectFile falls back to the cancelled shape on cancel, without an 
   assert.equal(withoutUploader.fake.calls.length, 0);
 });
 
+test('dialog.selectFile uses native files in order without opening a browser picker', async (t) => {
+  const dom = makeFakeDom();
+  installGlobals(dom);
+  t.after(clearGlobals);
+  const selected = [
+    new File(['first'], 'first.txt', { type: 'text/plain' }),
+    new File(['second'], 'second.pdf', { type: 'application/pdf' }),
+  ];
+  const uploaded: string[] = [];
+  const nativeWindow = {
+    Capacitor: { isNativePlatform: () => true },
+    idbotsNative: {
+      nativeBridgeVersion: 1,
+      bootstrap: { phase: 'document-start', origin: 'https://staging.idbots.world', platform: 'android' },
+      getCapabilities: () => ({ camera: true, photos: true, files: true, share: true, appState: true, backButton: true, externalUrls: true, secureScreen: true }),
+      pickFiles: async (multi: boolean) => { assert.equal(multi, true); return selected; },
+    },
+  } as unknown as Window;
+  const { deps } = makeDeps({
+    nativeAdapter: createNativeAdapter(nativeWindow),
+    uploadFile: async (file) => {
+      uploaded.push(file.name);
+      return { path: `/data/workspace/uploads/${file.name}`, size: file.size, mime: file.type };
+    },
+  });
+  const electron = buildElectronFromContract(CONTRACT, deps);
+  const result = await electron.dialog.selectFile({ multi: true, source: 'files' });
+  assert.equal(result.success, true);
+  assert.deepEqual(uploaded, ['first.txt', 'second.pdf']);
+  assert.deepEqual(result.paths, ['/data/workspace/uploads/first.txt', '/data/workspace/uploads/second.pdf']);
+  assert.equal(dom.created.length, 0);
+});
+
+test('dialog.selectFile supports native camera and cancellation without duplicate effects', async (t) => {
+  const dom = makeFakeDom();
+  installGlobals(dom);
+  t.after(clearGlobals);
+  const photo = new File(['photo'], 'camera.jpg', { type: 'image/jpeg' });
+  let uploads = 0;
+  const nativeWindow = {
+    Capacitor: { isNativePlatform: () => true },
+    idbotsNative: {
+      nativeBridgeVersion: 1,
+      bootstrap: { phase: 'document-start', origin: 'https://staging.idbots.world', platform: 'ios' },
+      getCapabilities: () => ({ camera: true, photos: true, files: true, share: false, appState: true, backButton: false, externalUrls: true, secureScreen: true }),
+      pickPhoto: async (source: string) => source === 'camera' ? photo : null,
+    },
+  } as unknown as Window;
+  const { deps } = makeDeps({
+    nativeAdapter: createNativeAdapter(nativeWindow),
+    uploadFile: async (file) => { uploads += 1; return { path: `/data/workspace/uploads/${file.name}`, size: file.size, mime: file.type }; },
+  });
+  const electron = buildElectronFromContract(CONTRACT, deps);
+  const picked = await electron.dialog.selectFile({ source: 'camera' });
+  assert.equal(picked.success, true);
+  assert.equal(picked.path, '/data/workspace/uploads/camera.jpg');
+  const cancelled = await electron.dialog.selectFile({ source: 'photos' });
+  assert.deepEqual(cancelled, { success: true, path: null, paths: [] });
+  assert.equal(uploads, 1);
+  assert.equal(dom.created.length, 0);
+});
+
+test('dialog.selectFile returns native selection failures before upload', async (t) => {
+  const dom = makeFakeDom();
+  installGlobals(dom);
+  t.after(clearGlobals);
+  for (const code of ['PERMISSION_DENIED', 'TOO_LARGE', 'NATIVE_FAILED'] as const) {
+    const nativeWindow = {
+      Capacitor: { isNativePlatform: () => true },
+      idbotsNative: {
+        nativeBridgeVersion: 1,
+        bootstrap: { phase: 'document-start', origin: 'https://staging.idbots.world', platform: 'android' },
+        getCapabilities: () => ({ camera: false, photos: false, files: true, share: false, appState: true, backButton: true, externalUrls: true, secureScreen: false }),
+        pickFiles: async () => { throw Object.assign(new Error(code), { code }); },
+      },
+    } as unknown as Window;
+    const { deps } = makeDeps({
+      nativeAdapter: createNativeAdapter(nativeWindow),
+      uploadFile: async () => { assert.fail('a failed native selection must not upload'); },
+    });
+    const electron = buildElectronFromContract(CONTRACT, deps);
+    const result = await electron.dialog.selectFile({ source: 'files', multi: true });
+    assert.equal(result.success, false);
+    assert.equal(result.errorCode, code);
+    assert.equal(result.failedIndex, 0);
+    assert.equal(result.path, null);
+  }
+  assert.equal(dom.created.length, 0);
+});
+
 test('installShim installs window.electron and the window.idbotsMobile client facts', (t) => {
   const g = globalThis as Record<string, unknown>;
   const fakeWindow: Record<string, unknown> = {};

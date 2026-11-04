@@ -87,6 +87,31 @@ test('native dependencies stay outside the root package and Electron artifact', 
   }
 });
 
+test('NS2 native capabilities are registered with privacy and size boundaries', () => {
+  const activity = read('../android/app/src/main/java/com/idbots/world/MainActivity.java');
+  assert.match(activity, /registerPlugin\(NativeCapabilitiesPlugin\.class\)/);
+  const android = read('../android/app/src/main/java/com/idbots/world/NativeCapabilitiesPlugin.java');
+  assert.match(android, /25L \* 1024L \* 1024L/);
+  assert.match(android, /FLAG_SECURE/);
+  assert.match(android, /ACTION_OPEN_DOCUMENT/);
+  assert.doesNotMatch(android, /console\.|System\.out|Log\./);
+  const ios = read('../ios/App/App/NativeCapabilitiesPlugin.swift');
+  assert.match(ios, /UIDocumentPickerViewController/);
+  assert.match(ios, /UIActivityViewController/);
+  assert.match(ios, /startAccessingSecurityScopedResource/);
+  assert.match(ios, /25 \* 1024 \* 1024/);
+  const controller = read('../ios/App/App/NativeBridgeViewController.swift');
+  assert.match(controller, /registerPluginInstance\(NativeCapabilitiesPlugin\(\)\)/);
+  const scene = read('../ios/App/App/SceneDelegate.swift');
+  assert.match(scene, /NativeSecureScreen\.didEnterBackground/);
+  assert.match(scene, /NativeSecureScreen\.willEnterForeground/);
+  const project = read('../ios/App/App.xcodeproj/project.pbxproj');
+  assert.match(project, /NativeCapabilitiesPlugin\.swift in Sources/);
+  const plist = read('../ios/App/App/Info.plist');
+  assert.match(plist, /NSCameraUsageDescription/);
+  assert.match(plist, /NSPhotoLibraryUsageDescription/);
+});
+
 test('root package guidance remains synchronized', () => {
   const agents = read('../../AGENTS.md');
   const claude = read('../../CLAUDE.md');

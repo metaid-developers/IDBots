@@ -21,6 +21,8 @@ interface IdbotsNativeAppPlugin {
   exitApp?(): Promise<void>;
 }
 
+type MobileNativePhotoSource = 'camera' | 'photos';
+
 interface IdbotsNativeBridge {
   readonly nativeBridgeVersion: 1;
   readonly bootstrap: {
@@ -29,6 +31,10 @@ interface IdbotsNativeBridge {
     readonly platform: 'android' | 'ios';
   };
   getCapabilities(): MobileNativeCapabilities;
+  pickPhoto?(source: MobileNativePhotoSource): Promise<File | null>;
+  pickFiles?(multi: boolean): Promise<File[]>;
+  shareArtifact?(input: { url: string; filename: string }): Promise<'shared' | 'cancelled'>;
+  setSecureScreen?(enabled: boolean): Promise<void>;
   openExternal?(url: string): Promise<void>;
   onAppStateChange?(callback: (active: boolean) => void): () => void;
   onBackButton?(callback: () => boolean): () => void;
@@ -61,4 +67,5 @@ export type {
   IdbotsNativeListenerHandle,
   IdbotsNativeProof,
   MobileNativeCapabilities,
+  MobileNativePhotoSource,
 };
