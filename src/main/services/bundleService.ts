@@ -122,6 +122,28 @@ export interface BundleOrderStatus {
 }
 
 /**
+ * Local order voucher (payment-credit channel): what this client recorded
+ * when the order was placed, keyed by the upstream orderId verbatim so an
+ * operator can cross-check a control-plane credit grant (credit_ledger
+ * reference_key) against the order the user actually paid. The voucher never
+ * mints its own id.
+ */
+export interface BundleOrderVoucher {
+  orderId: string;
+  planId: string;
+  payAmount: string;
+  payCurrency: string;
+  trafficBytes: number;
+  llmQuota: number;
+  gateway: string;
+  /** Unix seconds: when the order was placed. */
+  createdAt: number;
+  /** Unix seconds: first observation of the payment-success path. */
+  paidAt?: number;
+  creditedAt?: number;
+}
+
+/**
  * C4 identity-bound quota shape (`GET /v2/assist/llm/quota`). Rebuilt
  * field-by-field from the backend payload so no relay credential field can
  * leak through.
@@ -172,6 +194,61 @@ function getDeps(): BundleServiceDeps {
     throw new BundleApiError({ stage: 'plans', message: 'bundle service not initialized' });
   }
   return depsRef;
+}
+
+// ---------------------------------------------------------------------------
+// Local order vouchers (payment-credit channel)
+// ---------------------------------------------------------------------------
+
+const BUNDLE_ORDER_VOUCHERS_KEY = 'bundle.orderVouchers';
+
+function readVouchers(store: SqliteStore): Record<string, BundleOrderVoucher> {
+  return (readObject(store.get(BUNDLE_ORDER_VOUCHERS_KEY)) as Record<string, BundleOrderVoucher> | null) ?? {};
+}
+
+/** Record the order voucher at create time (stub and real path share this). */
+function recordOrderVoucher(order: BundleOrder, gateway: string): void {
+  const store = getDeps().getStore();
+  if (!store) return;
+  const vouchers = readVouchers(store);
+  if (vouchers[order.orderId]) return;
+  vouchers[order.orderId] = {
+    orderId: order.orderId,
+    planId: order.planId,
+    payAmount: order.payAmount,
+    payCurrency: order.payCurrency,
+    trafficBytes: order.trafficBytes,
+    llmQuota: order.llmQuota,
+    gateway,
+    createdAt: nowSeconds(),
+  };
+  store.set(BUNDLE_ORDER_VOUCHERS_KEY, vouchers);
+}
+
+/**
+ * Stamp the payment-success path exactly once: the first poll that observes
+ * the order paid/credited updates the voucher; later observations are no-ops.
+ * A missing voucher (store lost, order created before this build) is skipped —
+ * the upstream credit stands on its own.
+ */
+function markVoucherPaid(orderId: string, paidAt: number, creditedAt?: number): void {
+  const store = getDeps().getStore();
+  if (!store) return;
+  const vouchers = readVouchers(store);
+  const voucher = vouchers[orderId];
+  if (!voucher || voucher.paidAt) return;
+  voucher.paidAt = paidAt;
+  if (creditedAt) voucher.creditedAt = creditedAt;
+  store.set(BUNDLE_ORDER_VOUCHERS_KEY, vouchers);
+}
+
+/** The locally recorded voucher for an upstream orderId (cross-check read). */
+export function getBundleOrderVoucher(orderId: string): BundleOrderVoucher | null {
+  const orderIdText = normalizeText(orderId);
+  if (!orderIdText) return null;
+  const store = getDeps().getStore();
+  if (!store) return null;
+  return readVouchers(store)[orderIdText] ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -589,6 +666,7 @@ function stubGetOrder(orderId: string): BundleOrderStatus {
     order.creditedAt = now;
     stubState.quota.quotaPurchased += order.llmQuota;
     syncStubQuotaDerived();
+    markVoucherPaid(orderId, now, now);
   }
   const { polls: _polls, ...status } = order;
   return { ...status };
@@ -624,7 +702,9 @@ export async function createBundleOrder(input: { planId?: unknown; gateway?: unk
   }
   const gateway = normalizeText(input?.gateway) || 'alipay';
   if (isBundleStubMode()) {
-    return stubCreateOrder(planId);
+    const order = stubCreateOrder(planId);
+    recordOrderVoucher(order, gateway);
+    return order;
   }
   const identity = requireIdentity();
   // The account id is the identity's GlobalMetaID, same convention the
@@ -644,7 +724,9 @@ export async function createBundleOrder(input: { planId?: unknown; gateway?: unk
     body: { planId, gateway },
     identity: { address: identity.mvcAddress, timestamp, signature },
   });
-  return normalizeBundleOrder(data as Record<string, unknown>);
+  const order = normalizeBundleOrder(data as Record<string, unknown>);
+  recordOrderVoucher(order, gateway);
+  return order;
 }
 
 /** Poll one bundle order (C4 `GET /v1/bundle/orders/{orderId}`, no signature). */
@@ -661,7 +743,11 @@ export async function getBundleOrder(input: { orderId?: unknown }): Promise<Bund
     method: 'GET',
     path: `/v1/bundle/orders/${encodeURIComponent(orderId)}`,
   });
-  return normalizeBundleOrderStatus(data as Record<string, unknown>);
+  const status = normalizeBundleOrderStatus(data as Record<string, unknown>);
+  if (status.status === BUNDLE_ORDER_STATUS.PAID || status.status === BUNDLE_ORDER_STATUS.CREDITED) {
+    markVoucherPaid(status.orderId, status.paidAt ?? nowSeconds(), status.creditedAt);
+  }
+  return status;
 }
 
 /**
