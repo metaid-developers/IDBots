@@ -32,9 +32,9 @@ endpoints (MetaSo today) must match them so the IDBots client keeps working.
   `totalSupply`, `totalnum`, `royaltyRate`, `pinid` (collectionid),
   `createAddress`, `createMetaId`, `createTime`, `cover`, `genesisChainName`.
 - Reads go remote-first with an optional local override
-  (`IDBOTS_MAN_P2P_LOCAL_BASE` today; a MetaSo base override will be added
-  when the MetaSo endpoints are the live source), so local parity with these
-  shapes is required.
+  (`IDBOTS_MAN_P2P_LOCAL_BASE`). The MetaSo production base is BUILT INTO the
+  client (`https://so.metaid.io`, 2026-11-05); `IDBOTS_METASO_API_BASE`
+  overrides it for staging/local testing only.
 
 ## R-A — Server-side collection search (P0, highest value)
 
@@ -95,12 +95,12 @@ payload optimization.
 
 ## Client-side interim behavior (for the backend team's awareness)
 
-Until R-A/R-B are served by a reachable MetaSo, IDBots scans `pageList`
-client-side (default 20 pages × 100 rows, reported honestly as
-`scanned`/`truncated` in tool output) and counts items per collection via
-`/api/mrc721/collection/items/pageList` when supply state is requested
-(first 20 matches, 50-page cap per collection). Sell-intent market reads
-degrade to a structured "R-C not served here" message until a MetaSo base
-is wired. MetaID → address resolution uses the metafile-indexer user-info
+With the built-in MetaSo base live, collection search runs server-side
+(client-side `pageList` scanning remains only as the error fallback,
+reported honestly as `scanned`/`truncated`) and supply state is served
+directly from the search rows. Sell-intent market reads go straight to
+MetaSo; a missing-endpoint miss surfaces a structured "check the MetaSo
+deployment" message. The supply-state item paging described above applies
+only to that fallback path. MetaID → address resolution uses the metafile-indexer user-info
 route (`/api/v1/users/info/metaid/{metaid}`, `data.address`), not the MRC-721
 API — no indexer change needed there.
