@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildNftArtworkSources,
+  buildNftAvatarImageRef,
   buildNftDetailRows,
   buildNftTileViewModel,
   buildNftTransferPayload,
@@ -192,4 +193,37 @@ test('mrc721SellOrderStatusKey maps every sell-order status onto an i18n key', (
   assert.equal(mrc721SellOrderStatusKey('invalid'), 'metabotNftListingStatusInvalid');
   assert.equal(mrc721SellOrderStatusKey('expired'), 'metabotNftListingStatusExpired');
   assert.equal(mrc721SellOrderStatusKey('nonsense'), 'metabotNftListingStatusInvalid');
+});
+
+test('buildNftAvatarImageRef picks the artwork reference the avatar IPC should resolve', () => {
+  const pinId = '14158a127fa1d7b66d821413abad64bc833cf145e7abd2b40838fde703609b45i0';
+
+  // mrc721: the cover metafile reference wins (that is what the chain knows).
+  assert.equal(
+    buildNftAvatarImageRef({ kind: 'mrc721', imageRef: `metafile://${pinId}.jpg` }),
+    `metafile://${pinId}.jpg`,
+  );
+  assert.equal(buildNftAvatarImageRef({ kind: 'mrc721', imageRef: pinId }), pinId);
+  // A bare pin on the item and an https fallback coexist → the pin wins.
+  assert.equal(
+    buildNftAvatarImageRef({ kind: 'mrc721', imageRef: pinId, imageUrl: 'https://cdn.example/a.png' }),
+    pinId,
+  );
+
+  // MetaContract: imgUrl (https) is the artwork the http branch can fetch.
+  assert.equal(
+    buildNftAvatarImageRef({ kind: 'metacontract', imageRef: 'metafile://x', imageUrl: 'https://cdn.example/nft.png' }),
+    'https://cdn.example/nft.png',
+  );
+  // No https imgUrl → fall back to whatever reference the item carries.
+  assert.equal(
+    buildNftAvatarImageRef({ kind: 'metacontract', imageRef: `metafile://${pinId}` }),
+    `metafile://${pinId}`,
+  );
+
+  // No artwork at all → empty string; the picker surfaces the structured
+  // `empty` failure from metabot:setNftAvatar instead of guessing a reference.
+  assert.equal(buildNftAvatarImageRef({ kind: 'mrc721' }), '');
+  assert.equal(buildNftAvatarImageRef({ kind: 'metacontract', imageUrl: 'not-a-url' }), 'not-a-url');
+  assert.equal(buildNftAvatarImageRef(null), '');
 });

@@ -106,6 +106,9 @@ test('avatar tool descriptions advertise exactly what is implemented', () => {
     assert.match(description, /data:image\/png\|jpeg\|webp\|gif;base64/, `${toolName}: data URL`);
     assert.match(description, /http\(s\) image URL/, `${toolName}: http(s) support`);
     assert.match(description, /absolute local image path/, `${toolName}: local path support`);
+    assert.match(description, /metafile:\/\/<pinId>/, `${toolName}: metafile reference support`);
+    assert.match(description, /bare pinId/, `${toolName}: bare pin id support`);
+    assert.match(description, /thumbnail variant is fetched first/, `${toolName}: thumbnail-first contract`);
     assert.match(description, /normalized to a data URL/, `${toolName}: normalization contract`);
   }
   // metabot_update must still document the clear semantics.
@@ -159,6 +162,76 @@ test('metabot_create: omitting the avatar still works unchanged', async () => {
   assert.equal(res.isError, undefined);
   assert.equal(calls.create[0].avatar, undefined);
   assert.doesNotMatch(textOf(res), /avatar was skipped/);
+});
+
+test('metabot_update: an oversized metafile cover degrades with a note and never aborts the update', async () => {
+  const originalFetch = globalThis.fetch;
+  const pinId = '6c45ca74504db05b0a2cf0378f76126c8ce7819c4bec0f60c593f772d600b542i0';
+  globalThis.fetch = async () => {
+    // A gateway that ignores `process=thumbnail` and serves the ~0.9 MB cover.
+    const buffer = Buffer.alloc(877_125);
+    buffer[0] = 0xff;
+    buffer[1] = 0xd8;
+    buffer[2] = 0xff;
+    return new Response(buffer, { status: 200, headers: { 'content-type': 'image/jpeg' } });
+  };
+  try {
+    const { byName, calls } = makeHarness();
+    const res = await byName.metabot_update.handler({
+      metabot_id: 1,
+      name: 'Renamed',
+      avatar: `metafile://${pinId}.jpg`,
+    });
+    assert.equal(res.isError, undefined, 'the rest of the update must not be blocked by an oversized cover');
+    assert.equal(calls.update.length, 1);
+    assert.equal(calls.update[0].input.name, 'Renamed');
+    assert.equal('avatar' in calls.update[0].input, false, 'avatar must be left unchanged');
+    assert.match(textOf(res), /avatar was NOT changed \(too-large/);
+    assert.match(textOf(res), /877125 bytes/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('metabot_create/update: a metafile:// NFT cover resolves through the thumbnail route', async () => {
+  // The metafile branch builds fixed public-gateway URLs, so the only seam the
+  // tool path exposes is the global fetch. Swap it for the duration of the test
+  // (restored in finally) — this keeps the agent-tool seam hermetic.
+  const originalFetch = globalThis.fetch;
+  const pinId = '14158a127fa1d7b66d821413abad64bc833cf145e7abd2b40838fde703609b45i0';
+  const requests = [];
+  globalThis.fetch = async (url) => {
+    requests.push(String(url));
+    if (!String(url).includes('process=thumbnail')) {
+      return new Response('missing', { status: 404 });
+    }
+    const buffer = Buffer.alloc(13_250);
+    buffer[0] = 0xff;
+    buffer[1] = 0xd8;
+    buffer[2] = 0xff;
+    return new Response(buffer, { status: 200, headers: { 'content-type': 'image/jpeg' } });
+  };
+  try {
+    const { byName, calls } = makeHarness();
+    const update = await byName.metabot_update.handler({ metabot_id: 1, avatar: `metafile://${pinId}.jpg` });
+    assert.equal(update.isError, undefined);
+    assert.equal(calls.update.length, 1);
+    assert.match(calls.update[0].input.avatar, /^data:image\/jpeg;base64,/);
+    assert.equal(
+      Buffer.from(calls.update[0].input.avatar.split(',')[1], 'base64').length,
+      13_250,
+      'the stored snapshot is the thumbnail rendering, not the 877 KB original',
+    );
+    assert.match(requests[0], /process=thumbnail/);
+
+    const create = await byName.metabot_create.handler({ name: 'Worker', llm_id: 'deepseek', avatar: pinId });
+    assert.equal(create.isError, undefined);
+    assert.equal(calls.create.length, 1);
+    assert.match(calls.create[0].avatar, /^data:image\/jpeg;base64,/);
+    assert.doesNotMatch(textOf(create), /avatar was skipped/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 // ---------------------------------------------------------------------------

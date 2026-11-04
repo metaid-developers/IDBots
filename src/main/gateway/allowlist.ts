@@ -126,6 +126,10 @@ const IDENTITY_INVOKE: Record<string, AllowlistEntry> = {
   'metabot:checkNameExists': { tier: 'P1' },
   'metabot:create': { tier: 'P1' },
   'metabot:update': { tier: 'P1' },
+  // Same write class as metabot:update (it reuses updateMetaBotCore): the
+  // avatar artwork is normalized off-chain and only the data-URL snapshot is
+  // published through the existing /info/avatar step.
+  'metabot:setNftAvatar': { tier: 'P1' },
   'metabot:setEnabled': { tier: 'P1' },
   'metabot:getSetting': { tier: 'P1' },
   'metabot:setSetting': { tier: 'P1' },

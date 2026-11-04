@@ -2468,6 +2468,14 @@
       ]
     },
     {
+      "path": "metabot.setNftAvatar",
+      "kind": "invoke",
+      "channel": "metabot:setNftAvatar",
+      "args": [
+        "input"
+      ]
+    },
+    {
       "path": "metabot.setSetting",
       "kind": "invoke",
       "channel": "metabot:setSetting",

@@ -1373,6 +1373,14 @@ contextBridge.exposeInMainWorld('electron', {
       homepage?: string | null;
     }) => ipcRenderer.invoke('metabot:update', id, input),
     setEnabled: (id: number, enabled: boolean) => ipcRenderer.invoke('metabot:setEnabled', id, enabled),
+    /**
+     * "Use this NFT as the avatar" (behind the single NFT-avatar picker entry):
+     * main normalizes the metafile/pin/https reference into a data-URL snapshot
+     * and rides the existing metabot-update path. Returns a structured
+     * success/failure (never throws for a structured normalization failure).
+     */
+    setNftAvatar: (input: { metabotId: number; imageRef: string }) =>
+      ipcRenderer.invoke('metabot:setNftAvatar', input),
     /** Per-metabot kv settings; key must be whitelisted in src/main/services/metabotSettingsService.ts. */
     getSetting: (id: number, key: string) => ipcRenderer.invoke('metabot:getSetting', id, key),
     setSetting: (id: number, key: string, value: string) => ipcRenderer.invoke('metabot:setSetting', id, key, value),

@@ -322,7 +322,7 @@ export function buildMetabotManageAgentTools(deps: {
       avatar: z
         .string()
         .optional()
-        .describe('Optional avatar: a supported image data URL (data:image/png|jpeg|webp|gif;base64,...), an http(s) image URL, or an absolute local image path. Non-data-URL sources are fetched/read (timeout 8s, size cap 200KB) and normalized to a data URL before saving; if that fails the avatar is skipped with a note and the bot is still created. Omit to use the default avatar.'),
+        .describe('Optional avatar: a supported image data URL (data:image/png|jpeg|webp|gif;base64,...), an http(s) image URL, a metafile://<pinId> NFT/metafile reference (a bare pinId is also accepted; the thumbnail variant is fetched first), or an absolute local image path. Non-data-URL sources are fetched/read (timeout 8s, size cap 200KB) and normalized to a data URL before saving; if that fails the avatar is skipped with a note and the bot is still created. Omit to use the default avatar.'),
     },
     async (args: {
       name: string;
@@ -360,7 +360,7 @@ export function buildMetabotManageAgentTools(deps: {
         const normalized = await normalizeAvatarToDataUrl(args.avatar);
         if (isAvatarNormalizeFailure(normalized)) {
           avatarForCreate = undefined;
-          avatarNotice = `\nNote: avatar was skipped (${describeAvatarFailure(normalized)}). The bot was created without an avatar; pass a valid image data URL, a reachable http(s) image URL, or an absolute local image path to set one.`;
+          avatarNotice = `\nNote: avatar was skipped (${describeAvatarFailure(normalized)}). The bot was created without an avatar; pass a valid image data URL, a reachable http(s) image URL, a metafile://<pinId> reference, or an absolute local image path to set one.`;
         } else {
           avatarForCreate = normalized.dataUrl;
         }
@@ -426,7 +426,7 @@ export function buildMetabotManageAgentTools(deps: {
     {
       metabot_id: z.number().int().positive().describe('id of the bot to update (from metabot_list, or the current bot\'s id).'),
       name: z.string().optional().describe('New display name.'),
-      avatar: z.string().optional().describe('New avatar: a supported image data URL (data:image/png|jpeg|webp|gif;base64,...), an http(s) image URL, or an absolute local image path (non-data-URL sources are fetched/read with an 8s timeout and a 200KB cap, then normalized to a data URL). Empty string clears the avatar. If normalization fails the avatar is left unchanged and the note reports why.'),
+      avatar: z.string().optional().describe('New avatar: a supported image data URL (data:image/png|jpeg|webp|gif;base64,...), an http(s) image URL, a metafile://<pinId> NFT/metafile reference (a bare pinId is also accepted; the thumbnail variant is fetched first), or an absolute local image path (non-data-URL sources are fetched/read with an 8s timeout and a 200KB cap, then normalized to a data URL). Empty string clears the avatar. If normalization fails the avatar is left unchanged and the note reports why.'),
       bio: z.string().optional().describe('New public bio.'),
       enabled: z.boolean().optional().describe('Enable or disable the bot.'),
       metabot_type: z
