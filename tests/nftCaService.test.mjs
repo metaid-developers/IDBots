@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 process.env.IDBOTS_MAN_P2P_LOCAL_BASE && delete process.env.IDBOTS_MAN_P2P_LOCAL_BASE;
 
 const {
+  DEFAULT_NFT_CA_PINID,
   OFFICIAL_IDBOTS_METAID,
   NFT_CA_CACHE_TTL_MS,
   buildEmptyNftCaRegistry,
@@ -75,10 +76,13 @@ test('parseNftCaPinContent accepts a well-formed payload and normalizes entries'
   assert.equal(collections[0].certifiedAt, 1793868000);
 });
 
-test('parseNftCaPinContent rejects wrong protocol, version, shape, and garbage', () => {
-  assert.equal(parseNftCaPinContent(JSON.stringify({ protocol: 'other', version: 1, collections: [] })), null);
-  assert.equal(parseNftCaPinContent(JSON.stringify({ protocol: 'idbots-nft-ca', version: 2, collections: [] })), null);
-  assert.equal(parseNftCaPinContent(JSON.stringify({ protocol: 'idbots-nft-ca', version: 1 })), null);
+test('parseNftCaPinContent validates shape only — stray protocol/version keys are ignored per the approved schema', () => {
+  // The pin 7-tuple carries protocol identity and version; the payload must
+  // not be rejected (or gated) on duplicate keys if any ever appear.
+  assert.deepEqual(parseNftCaPinContent(JSON.stringify({ protocol: 'other', version: 99, collections: [] })), []);
+  assert.deepEqual(parseNftCaPinContent(JSON.stringify({ collections: [] })), []);
+  assert.equal(parseNftCaPinContent(JSON.stringify({ protocol: 'idbots-nft-ca', version: 1 })), null, 'missing collections array');
+  assert.equal(parseNftCaPinContent(JSON.stringify({ collections: 'nope' })), null);
   assert.equal(parseNftCaPinContent('not json'), null);
   assert.equal(parseNftCaPinContent('[1,2,3]'), null);
   assert.equal(parseNftCaPinContent(''), null);
@@ -89,19 +93,9 @@ test('parseNftCaPinContent rejects wrong protocol, version, shape, and garbage',
 // Empty-registry degradation
 // ---------------------------------------------------------------------------
 
-test('unset CA pin env degrades to an empty registry without any fetch', async () => {
+test('unset CA pin env falls back to the official registry pin', () => {
   withCaPinEnv(null);
-  clearNftCaRegistryCache();
-  let fetchCalls = 0;
-  const registry = await withFetchStub(async () => {
-    fetchCalls += 1;
-    throw new Error('must not fetch');
-  }, () => getNftCaRegistry());
-  assert.equal(registry.status, 'empty-no-pin-configured');
-  assert.equal(registry.verified, false);
-  assert.deepEqual(registry.collections, []);
-  assert.equal(registry.pinId, null);
-  assert.equal(fetchCalls, 0);
+  assert.equal(getConfiguredNftCaPinId(), DEFAULT_NFT_CA_PINID);
 });
 
 test('unreachable or unparseable CA pin degrades to an empty unavailable registry', async () => {
@@ -126,12 +120,13 @@ test('unreachable or unparseable CA pin degrades to an empty unavailable registr
   assert.deepEqual(garbage.collections, []);
 });
 
-test('invalid env pin id is treated as no pin configured', () => {
+test('env overrides the official pin; an invalid env value falls back to it (override, not kill switch)', () => {
   withCaPinEnv('deadbeef');
-  assert.equal(getConfiguredNftCaPinId(), null);
+  assert.equal(getConfiguredNftCaPinId(), DEFAULT_NFT_CA_PINID);
   withCaPinEnv(CA_PIN_ID);
   assert.equal(getConfiguredNftCaPinId(), CA_PIN_ID);
   withCaPinEnv(null);
+  assert.equal(getConfiguredNftCaPinId(), DEFAULT_NFT_CA_PINID);
 });
 
 // ---------------------------------------------------------------------------

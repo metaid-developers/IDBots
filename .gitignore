@@ -39,6 +39,7 @@ docs/*
 !docs/nft-trade-protocol-draft.md
 !docs/nft-indexer-requirements.md
 !docs/nft-sell-protocol-draft.md
+!docs/idbots-nft-ca-protocol.md
 !docs/cloud-mobile/
 !docs/metaid_protocols/
 !docs/metaid_protocols/**

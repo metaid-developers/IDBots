@@ -1,10 +1,10 @@
 # MRC-721 Sell-Intent Protocol Draft ("NFT 售", v1 DRAFT)
 
-Status: **DRAFT — written autonomously per owner authorization ("全部按照你建议去推进");
-needs owner review before it is treated as a frozen protocol.** The host-side
-implementation in this branch is buildable and reversible; the pin path and
-content schema below are the parts that need sign-off, because the indexer
-will key on them.
+Status: **APPROVED by the owner (2026-11-05, v2).** The v2 shape below is the
+frozen protocol: fixed unofficial path `/protocols/mrc721sell`, duplicate-free
+payload (no protocol/version/contact fields), append-only declaration log
+with per-itemPinId latest-pin-wins. Implemented host-side (IDBots) and
+indexer-side (MetaSo-P2P `feat/mrc721-indexes`).
 
 Related: `docs/nft-indexer-requirements.md` (R-C), `docs/nft-trade-protocol-draft.md`
 (scenario A/B/C), `src/main/libs/mrc721AtomicSwapTx.ts` (atomic swap v1).

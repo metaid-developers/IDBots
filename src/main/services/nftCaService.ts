@@ -5,14 +5,20 @@ import { getPinData } from './metaidCore';
  * NFT "CA" registry reader — the trust root behind IDBots-certified MRC-721
  * collection badges on MetaBot NFT avatars.
  *
- * Trust model (owner decision): IDBots publishes an official certification
+ * Trust model (owner decision; protocol APPROVED 2026-11-05, see
+ * docs/idbots-nft-ca-protocol.md): IDBots publishes an official certification
  * pin on-chain via its official MetaID, and clients READ that pin as the
- * trust root. The pin content is JSON, schema mirroring the pin-content
- * style of docs/nft-sell-protocol-draft.md §2.2:
+ * trust root.
+ *
+ *   - Pin path: /protocols/idbots-nft-ca (unofficial namespace, single
+ *     registry pin; registry updates are MODIFY pins on the same path).
+ *   - Read rule: the LATEST pin on the path wins (same latest-wins
+ *     convention as the rest of the MetaID ecosystem) — no ambiguity even
+ *     though history keeps every create/modify pin.
+ *   - Content (the pin 7-tuple already carries protocol identity and
+ *     version, so the payload carries none of those):
  *
  *   {
- *     "protocol": "idbots-nft-ca",
- *     "version": 1,
  *     "collections": [
  *       {
  *         "collectionPinId": "<collection_desc pinid>",
@@ -23,27 +29,31 @@ import { getPinData } from './metaidCore';
  *     ]
  *   }
  *
- * The pin does not exist yet, so this reader is built to degrade honestly:
- *   - OFFICIAL_IDBOTS_METAID is a placeholder (TODO-owner) until the owner
- *     supplies the real official MetaID;
- *   - the CA pinId is taken from IDBOTS_NFT_CA_PINID (testing/staging
- *     override) until a pin-discovery convention is frozen; when it is unset
- *     the registry is EMPTY and no certification marks are rendered.
+ *   - Trust verification: the pin's on-chain creator must equal
+ *     OFFICIAL_IDBOTS_METAID (the official IDBots bot "Bob"). Badges render
+ *     only when verified === true AND the collection is listed.
  *
- * Every failure path (env unset, network error, non-JSON body, bad schema,
- * missing creator record) degrades to an EMPTY or `verified:false` registry —
- * this module never throws. Renderer contract: certification badges may only
- * be rendered when `verified === true` AND the collection is listed.
+ * Every failure path (network error, non-JSON body, bad schema, missing
+ * creator record, creator mismatch) degrades to an EMPTY or
+ * `verified:false` registry — this module never throws.
  */
 
 const METAID_CONTENT_BASE = 'https://file.metaid.io/metafile-indexer/content';
 
-// TODO-owner: replace with IDBots' real official MetaID (64-hex) once the
-// official identity is fixed. 64 zero bytes can never be a pin creator, so
-// with the placeholder in place every registry answers verified:false —
-// exactly the "no certification marks" posture the product wants until the
-// CA pin is live and the root is real.
-export const OFFICIAL_IDBOTS_METAID = '0000000000000000000000000000000000000000000000000000000000000000';
+/**
+ * The IDBots official identity (owner designation 2026-11-05): the local
+ * MetaBot "Bob". Its metaID is the trust root every CA pin creator is
+ * checked against. globalMetaId idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47,
+ * MVC address 1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv.
+ */
+export const OFFICIAL_IDBOTS_METAID = '2379692b225136b2b54e83aac52174f622b80181b17254bb7b5cf7b0aa323212';
+
+/**
+ * The official CA registry pin (owner-issued 2026-11-05 via Bob, initially
+ * empty — honest baseline until collections are certified). IDBOTS_NFT_CA_
+ * PINID overrides it for testing/staging.
+ */
+export const DEFAULT_NFT_CA_PINID = '77da77280b9b218cf1edd62f658ca2be561dd7e377f3980182e280487ec38c56i0';
 
 export const NFT_CA_PROTOCOL = 'idbots-nft-ca';
 export const NFT_CA_SCHEMA_VERSION = 1;
@@ -107,21 +117,29 @@ export function buildEmptyNftCaRegistry(status: NftCaRegistryStatus, detail?: st
   };
 }
 
-/** The configured CA pin id, or null when the override is unset/invalid. */
+/**
+ * The CA pin id to read: the official registry pin by default, overridden by
+ * IDBOTS_NFT_CA_PINID for testing/staging. An explicitly-set-but-invalid env
+ * value still falls back to the official default (the env is an override,
+ * not a kill switch — killing the trust root is a build change, not an env
+ * typo away).
+ */
 export function getConfiguredNftCaPinId(): string | null {
   const raw = String(process.env.IDBOTS_NFT_CA_PINID ?? '').trim();
-  if (!raw || !PIN_ID_PATTERN.test(raw)) {
-    return null;
+  if (raw && PIN_ID_PATTERN.test(raw)) {
+    return raw.toLowerCase();
   }
-  return raw.toLowerCase();
+  return DEFAULT_NFT_CA_PINID;
 }
 
 /**
  * Parse a CA pin content body. Returns the normalized collection list, or
- * null when the body is not a well-formed idbots-nft-ca payload (wrong
- * protocol, unsupported version, collections not an array). Entries without
- * a usable collectionPinId are dropped; a list emptied that way still counts
- * as a valid (if odd) pin — the protocol is versioned for a reason.
+ * null when the body is not a well-formed idbots-nft-ca payload (collections
+ * not an array). Per the approved protocol the payload carries NO
+ * protocol/version fields (the pin 7-tuple carries them); any legacy
+ * protocol/version keys that may appear are ignored, not validated. Entries
+ * without a usable collectionPinId are dropped; a list emptied that way
+ * still counts as a valid (if odd) pin.
  */
 export function parseNftCaPinContent(raw: string | null | undefined): NftCaCollectionEntry[] | null {
   if (!raw) {
@@ -137,12 +155,6 @@ export function parseNftCaPinContent(raw: string | null | undefined): NftCaColle
     return null;
   }
   const record = parsed as Record<string, unknown>;
-  if (String(record.protocol ?? '') !== NFT_CA_PROTOCOL) {
-    return null;
-  }
-  if (Number(record.version) !== NFT_CA_SCHEMA_VERSION) {
-    return null;
-  }
   if (!Array.isArray(record.collections)) {
     return null;
   }
@@ -259,9 +271,9 @@ async function fetchNftCaRegistryUncached(): Promise<NftCaRegistry> {
     verified,
     status: verified ? 'verified' : 'unverified',
     detail: verified
-      ? 'CA pin creator matches the configured official MetaID.'
+      ? 'CA pin creator matches the official IDBots MetaID.'
       : creatorMetaId
-        ? 'CA pin creator does not match the configured official MetaID (placeholder until the owner supplies the real one).'
+        ? 'CA pin creator does not match the official IDBots MetaID; collections are unverified.'
         : 'CA pin creator could not be resolved from the chain record; collections are unverified.',
     pinId,
     creatorMetaId,
