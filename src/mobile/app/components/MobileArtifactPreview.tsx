@@ -4,6 +4,7 @@ import { useLocalFileUrl } from '@/hooks/useLocalFileUrl';
 import { artifactFilename, artifactKind, shareArtifactUrl } from '../artifacts';
 import { useArtifactText } from '../hooks/useArtifactText';
 import { BottomSheet } from './BottomSheet';
+import { getNativeAdapter } from '../../native/nativeAdapter';
 import { t } from '../../i18n';
 
 export default function MobileArtifactPreview({ path, onClose }: { path: string; onClose: () => void }): JSX.Element {
@@ -22,7 +23,19 @@ export default function MobileArtifactPreview({ path, onClose }: { path: string;
     setShareState(null);
     try {
       const result = await shareArtifactUrl(download.url, filename, window.location.origin, {
-        share: typeof navigator.share === 'function' ? navigator.share.bind(navigator) : undefined,
+        share: async (data) => {
+          const adapter = getNativeAdapter();
+          if (adapter.getCapabilities().share) {
+            const outcome = await adapter.shareArtifact({ url: data.url, filename: data.title });
+            if (outcome === 'cancelled') throw Object.assign(new Error('Share cancelled'), { name: 'AbortError' });
+            return;
+          }
+          if (typeof navigator.share === 'function') {
+            await navigator.share(data);
+            return;
+          }
+          throw new Error('Sharing is unavailable');
+        },
         copy: navigator.clipboard?.writeText ? navigator.clipboard.writeText.bind(navigator.clipboard) : undefined,
       });
       if (result !== 'cancelled') setShareState(result);

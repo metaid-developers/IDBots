@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CoworkSessionController } from '@/services/coworkSessionController';
-import type { PhoneFileSelectionOptions, PhoneFileSelectionResult, PhoneUploadProgress } from '../../bridge/installShim';
-import type { UploadErrorCode } from '../../bridge/upload';
+import type {
+  PhoneFileSelectionErrorCode,
+  PhoneFileSelectionOptions,
+  PhoneFileSelectionResult,
+  PhoneFileSelectionSource,
+  PhoneUploadProgress,
+} from '../../bridge/installShim';
 import { getMobileElectron } from '../appBridge';
 import { t } from '../../i18n';
 
@@ -14,7 +19,7 @@ export interface ChatUploadItem {
   loaded: number;
   total: number;
   status: 'selecting' | 'uploading' | 'failed';
-  errorCode: UploadErrorCode | null;
+  errorCode: PhoneFileSelectionErrorCode | null;
 }
 
 export function uploadProgressPercent(item: Pick<ChatUploadItem, 'loaded' | 'total'>): number {
@@ -38,7 +43,7 @@ export function useChatAttachments(
     };
   }, []);
 
-  const pickAttachments = useCallback(async (): Promise<void> => {
+  const pickAttachments = useCallback(async (source: PhoneFileSelectionSource = 'files'): Promise<void> => {
     if (!controller) return;
     const owner = controller;
     const draftToken = owner.getDraftToken();
@@ -98,13 +103,22 @@ export function useChatAttachments(
       const result = await selectFile({
         title: t('mobile.chat.addAttachment'),
         multi: true,
+        source,
         onUploadProgress,
       });
       update(-1, () => null);
       if (!result.success && result.failedIndex !== undefined) {
-        update(result.failedIndex, (item) => item
-          ? { ...item, status: 'failed', errorCode: result.errorCode ?? 'UPLOAD_FAILED' }
-          : null);
+        update(result.failedIndex, (item) => ({
+          id: `${requestId}:${result.failedIndex}`,
+          requestId,
+          fileIndex: result.failedIndex!,
+          sessionId: originatingSessionId,
+          fileName: item?.fileName ?? '',
+          loaded: item?.loaded ?? 0,
+          total: item?.total ?? 0,
+          status: 'failed',
+          errorCode: result.errorCode ?? 'UPLOAD_FAILED',
+        }));
       }
     } catch {
       update(-1, (item) => item

@@ -99,9 +99,12 @@ test('upload progress is bounded and error messages have English and Chinese cop
     setLanguage('en');
     assert.match(translate('mobile.chat.uploadError.TOO_LARGE', { name: 'big.pdf' }), /25 MB/);
     assert.match(translate('mobile.chat.uploadError.QUOTA_EXCEEDED', { name: 'big.pdf' }), /Cloud storage is full/);
+    assert.match(translate('mobile.chat.uploadError.PERMISSION_DENIED'), /system settings/);
+    assert.match(translate('mobile.chat.uploadError.UNAVAILABLE'), /unavailable/);
     setLanguage('zh');
     assert.match(translate('mobile.chat.uploadError.TOO_LARGE', { name: 'big.pdf' }), /25 MB/);
     assert.match(translate('mobile.chat.uploadError.QUOTA_EXCEEDED', { name: 'big.pdf' }), /存储空间不足/);
+    assert.match(translate('mobile.chat.uploadError.PERMISSION_DENIED'), /系统设置/);
   } finally {
     setLanguage('en');
   }

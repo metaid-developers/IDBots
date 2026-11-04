@@ -64,5 +64,9 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Take photos to attach them to your conversation.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Choose photos to attach them to your conversation.</string>
 </dict>
 </plist>

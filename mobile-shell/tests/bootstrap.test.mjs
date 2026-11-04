@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { File } from 'node:buffer';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { createContext, runInContext } from 'node:vm';
@@ -34,7 +35,12 @@ function bootstrap(origin, platform = 'android', remoteOrigin = 'https://staging
     },
   };
   window.top = window;
-  runInContext(script, createContext({ window, URL }));
+  runInContext(script, createContext({
+    window,
+    URL,
+    File,
+    atob: (value) => Buffer.from(value, 'base64').toString('binary'),
+  }));
   return window;
 }
 
@@ -155,4 +161,55 @@ test('native external opening uses main-frame navigation only for approved URLs'
   await assert.rejects(async () => window.idbotsNative.openExternal('javascript:alert(1)'));
   await assert.rejects(async () => window.idbotsNative.openExternal('https://user@example.com/'));
   assert.equal(window.assigned.length, 2);
+});
+
+test('NS2 capabilities convert native files in order and preserve share and secure-screen behavior', async () => {
+  const window = bootstrap('https://staging.idbots.world');
+  const calls = [];
+  window.Capacitor.Plugins.NativeCapabilities = {
+    async pickFiles({ allowMultiple }) {
+      assert.equal(allowMultiple, true);
+      return {
+        files: [
+          { uri: 'content://first', name: 'first.txt', mime: 'text/plain', size: 5, temporary: false },
+          { uri: 'content://second', name: 'second.txt', mime: 'text/plain', size: 6, temporary: false },
+        ],
+      };
+    },
+    async pickPhoto() { return null; },
+    async readFile({ uri }) {
+      calls.push(uri);
+      const name = uri === 'content://first' ? 'first.txt' : 'second.txt';
+      const content = uri === 'content://first' ? 'first' : 'second';
+      return { name, mime: 'text/plain', size: content.length, data: Buffer.from(content).toString('base64') };
+    },
+    async shareArtifact(input) {
+      calls.push(input);
+      return { result: 'shared' };
+    },
+    async setSecureScreen(input) {
+      calls.push(input);
+    },
+  };
+  assert.deepEqual({ ...window.idbotsNative.getCapabilities() }, {
+    camera: true,
+    photos: true,
+    files: true,
+    share: true,
+    appState: true,
+    backButton: true,
+    externalUrls: true,
+    secureScreen: true,
+  });
+  const files = await window.idbotsNative.pickFiles(true);
+  assert.deepEqual(Array.from(files, (file) => file.name), ['first.txt', 'second.txt']);
+  assert.equal(await files[0].text(), 'first');
+  assert.equal(await files[1].text(), 'second');
+  assert.deepEqual(calls.slice(0, 2), ['content://first', 'content://second']);
+  assert.equal(await window.idbotsNative.pickPhoto('camera'), null);
+  assert.equal(await window.idbotsNative.shareArtifact({ url: 'https://app.example/files/signed', filename: 'report.pdf' }), 'shared');
+  await window.idbotsNative.setSecureScreen(true);
+  assert.deepEqual({ ...calls.at(-2) }, { url: 'https://app.example/files/signed', filename: 'report.pdf' });
+  assert.deepEqual({ ...calls.at(-1) }, { enabled: true });
+  await assert.rejects(window.idbotsNative.shareArtifact({ url: 'file:///private', filename: 'private' }));
 });

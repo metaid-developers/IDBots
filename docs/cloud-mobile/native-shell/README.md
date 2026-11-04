@@ -2,11 +2,14 @@
 
 - **Status:** NS0 (`mobile-shell/` foundation) and NS1 (native lifecycle and
   navigation) are implemented, reviewed, and merged to `main` — see
-  [`mobile-shell/DELIVERY-NOTE.md`](../../../mobile-shell/DELIVERY-NOTE.md).
-  NS2 (native capabilities) and NS3 (signed release) remain to be started.
-  The original handoff status ("ready for development handoff; native
-  implementation has not started") describes this document at writing time
-  (2026-10-28).
+  [`mobile-shell/DELIVERY-NOTE.md`](../../../mobile-shell/DELIVERY-NOTE.md) for NS1
+  and [`mobile-shell/NS2-DELIVERY-NOTE.md`](../../../mobile-shell/NS2-DELIVERY-NOTE.md)
+  for the current NS2 package.
+  NS2 native capabilities are implemented on `feat/mobile-native-capabilities`
+  with automated and Android WebView evidence; physical-device, iOS WebView,
+  and real-service acceptance remain pending. NS3 has not started. The original
+  handoff status ("ready for development handoff; native implementation has not
+  started") describes this document at writing time (2026-10-28).
 - **Repository decision:** implement in this IDBots repository under `mobile-shell/`, as a separate pnpm package; do not create a new repository
 - **Product decision:** retain the PWA as a fully supported client; Android and iOS use a Capacitor native shell around the remote PWA
 - **Current product stage:** the PWA is undergoing staging internal testing; native development may proceed in parallel, but native release acceptance remains gated on the core staging journeys

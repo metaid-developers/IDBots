@@ -1,8 +1,8 @@
-# IDBots Native Mobile Shell — NS1
+# IDBots Native Mobile Shell — NS2
 
 This package contains the Android and iOS Capacitor shells for the deployed IDBots PWA. It is an independent pnpm package: the repository root `postinstall` does not install it, and Electron does not package it.
 
-NS0 provides the native foundation, and NS1 adds lifecycle and navigation integration:
+NS0 provides the native foundation, NS1 adds lifecycle and navigation integration, and NS2 adds system media and sharing capabilities:
 
 - staging and production remote-PWA flavors;
 - exact-origin privileged navigation and system handoff for approved external links and Alipay;
@@ -11,10 +11,13 @@ NS0 provides the native foundation, and NS1 adds lifecycle and navigation integr
 - a typed local adapter with browser/PWA and per-capability fallbacks;
 - native app-state recovery through the existing reconnect/read-only-resync flow;
 - Android Back through current sheets, drawers, recharge state, and tabs without a second history;
+- camera, photo-library, and multi-document selection into the existing upload pipeline;
+- native system artifact sharing with current signed URLs and existing web fallbacks;
+- Android secure screenshots and iOS opaque background/app-switcher masking;
 - keyboard, safe-area, theme, and iOS-native recharge policy integration;
 - focused static, adapter, lifecycle, navigation, origin-policy, build, and WebView evidence.
 
-NS2 camera/photos/files/share, push notifications, signing, TestFlight, and release rollout are intentionally not implemented.
+Push notifications, signing, TestFlight, and release rollout are intentionally not implemented. Physical-device and real-service acceptance is a separate gate, not implied by debug builds.
 
 ## Architecture
 
@@ -105,19 +108,29 @@ pnpm run test:e2e:mobile
 pnpm run test:e2e:mobile:gateway
 ```
 
-## NS1 Native Surface
+## Native Surface
 
 `nativeBridgeVersion` is `1`. `getCapabilities()` returns a fresh object with these values:
 
-| Capability | NS1 value | Meaning |
+| Capability | Value | Meaning |
 |---|---|---|
-| `camera`, `photos`, `files`, `share` | `false` | NS2 is not implemented |
+| `camera`, `photos` | `true` when `NativeCapabilities.pickPhoto` exists | System camera/photo-library selection is available; hardware or permission failure is reported separately |
+| `files` | `true` when `pickFiles` and `readFile` exist | Ordered multi-document selection and bounded reads are available |
+| `share` | `true` when `shareArtifact` exists | Current signed HTTP(S) artifact URLs can enter the system share flow |
 | `appState` | `true` when the App listener exists | Native foreground/background events are available; otherwise the adapter falls back |
 | `backButton` | Android when the App listener exists | Current UI handlers run first; product roots exit rather than history-returning to login |
 | `externalUrls` | `true` | Native exact-origin policy and system handoff are implemented |
-| `secureScreen` | `false` | No secure-screen claim is made |
+| `secureScreen` | `true` when `setSecureScreen` exists | Android uses `FLAG_SECURE`; iOS uses an opaque background/app-switcher mask |
 
 The bootstrap also records `phase: 'document-start'`, the expected origin, and the platform. The PWA adds a separate `before-react` proof after validation. Browser and PWA execution do not require or synthesize `window.idbotsNative`; the local adapter supplies no-op lifecycle/back fallbacks and normal browser external opening. A native bootstrap that is missing, late, from the wrong origin/platform, or has an unsupported bridge version remains fail-closed before React.
+
+## NS2 Media, Sharing, and Privacy
+
+Native selection returns ordinary `File` objects to the existing picker → size/type checks → image re-encoding → ordered upload progress → per-session draft pipeline. Each file is read sequentially. Both native layers enforce the same 25 MiB limit before and during reads; they do not persist document URIs or selected content. Only app-created camera files are temporary and are removed after reads or cancellation.
+
+Picker cancellation resolves without an error. Permission denial, unsupported capability, oversize input, and native failure remain distinct result categories. A native failure does not open a second picker or replay an upload. Browser file selection, Web Share, clipboard, download, and open-new-tab behavior remain available when the corresponding native capability is absent.
+
+Android sharing reports that the system chooser was handed the signed URL; Android does not expose a reliable user-cancellation result. iOS reports the `UIActivityViewController` completed/cancelled result. Signed URLs are never logged or persisted by the shell. iOS secure screen is an opaque background mask, not a claim that screenshots can be prevented.
 
 ## Lifecycle and Navigation
 
