@@ -18,7 +18,17 @@ let origin: string;
 
 interface JsonRes {
   status: number;
-  body: any;
+  body: {
+    error?: { code: string };
+    duplicate?: boolean;
+    userId?: string;
+    bytes?: number;
+    source?: string;
+    actor?: string;
+    referenceKey?: string;
+    createdAt?: number;
+    creditId?: number;
+  };
 }
 
 async function postCredit(payload: unknown, headers: Record<string, string> = {}): Promise<JsonRes> {
@@ -85,7 +95,7 @@ describe('credit route auth (bearer token surface)', () => {
   test('missing bearer token → 401 (unauthorized call rejected)', async () => {
     const res = await postCredit({ userId: 'u_credit1', bytes: 1024, reason: 'no header at all' });
     assert.equal(res.status, 401);
-    assert.equal(res.body.error.code, 'ADMIN_UNAUTHORIZED');
+    assert.equal(res.body.error?.code, 'ADMIN_UNAUTHORIZED');
   });
 
   test('wrong bearer token → 401 (unauthorized call rejected)', async () => {
@@ -94,7 +104,7 @@ describe('credit route auth (bearer token surface)', () => {
       { authorization: `Bearer wrong-${TOKEN}` },
     );
     assert.equal(res.status, 401);
-    assert.equal(res.body.error.code, 'ADMIN_UNAUTHORIZED');
+    assert.equal(res.body.error?.code, 'ADMIN_UNAUTHORIZED');
   });
 
   test('a user session cannot grant: cookie auth is not honored here', async () => {
@@ -150,7 +160,7 @@ describe('credit route grant paths', () => {
 
     const ledger = db
       .prepare('SELECT user_id, bytes_total, source, reason, actor, created_at FROM credit_ledger WHERE id = ?')
-      .get(res.body.creditId) as any;
+      .get(res.body.creditId ?? -1) as { user_id: string; bytes_total: number; source: string; reason: string; actor: string; created_at: number };
     assert.ok(ledger);
     assert.equal(ledger.user_id, 'u_credit1'); // whom
     assert.equal(ledger.bytes_total, 1073741824); // amount — integer bytes
@@ -160,7 +170,7 @@ describe('credit route grant paths', () => {
 
     const audit = db
       .prepare("SELECT actor, action, target, detail_json FROM audit_log WHERE action = 'credit.grant' ORDER BY id DESC LIMIT 1")
-      .get() as any;
+      .get() as { actor: string; action: string; target: string; detail_json: string };
     assert.ok(audit);
     assert.equal(audit.actor, 'admin:alice');
     assert.equal(audit.target, 'u_credit1');
@@ -189,7 +199,7 @@ describe('credit route grant paths', () => {
         { authorization: `Bearer ${TOKEN}` },
       );
       assert.equal(res.status, 400);
-      assert.equal(res.body.error.code, 'INVALID_BYTES');
+      assert.equal(res.body.error?.code, 'INVALID_BYTES');
     }
   });
 
@@ -199,14 +209,14 @@ describe('credit route grant paths', () => {
       { authorization: `Bearer ${TOKEN}` },
     );
     assert.equal(resNoReason.status, 400);
-    assert.equal(resNoReason.body.error.code, 'MISSING_REASON');
+    assert.equal(resNoReason.body.error?.code, 'MISSING_REASON');
 
     const resNoUser = await postCredit(
       { userId: 'u_nothere', bytes: 1024, reason: 'ghost user' },
       { authorization: `Bearer ${TOKEN}` },
     );
     assert.equal(resNoUser.status, 404);
-    assert.equal(resNoUser.body.error.code, 'USER_NOT_FOUND');
+    assert.equal(resNoUser.body.error?.code, 'USER_NOT_FOUND');
   });
 
   test('list endpoint returns existing rows with the bearer token', async () => {
@@ -216,7 +226,7 @@ describe('credit route grant paths', () => {
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.ok(body.credits.length >= 1);
-    assert.ok(body.credits.every((c: any) => c.userId === 'u_credit1'));
+    assert.ok(body.credits.every((c: { userId?: string }) => c.userId === 'u_credit1'));
   });
 });
 
