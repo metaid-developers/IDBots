@@ -15,7 +15,7 @@ export async function attachScreen(testInfo: TestInfo, page: Page, name: string)
 
 /** Waits for the app shell's bottom tab bar and returns the chat tab. */
 export async function expectAppShell(page: Page): Promise<void> {
-  await expect(page.getByRole('button', { name: 'Chat' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Chat', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Sessions' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Tasks' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Me' })).toBeVisible();

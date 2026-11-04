@@ -1759,6 +1759,15 @@ export class DreamStore {
           SELECT 1 FROM cowork_messages m
           WHERE m.session_id = s.id AND m.created_at >= ? AND m.created_at < ?
         )
+        -- QQ/IM GROUP conversations are untrusted external content. They are
+        -- answered as pure Q&A and must never become the bot's memory: keep
+        -- them out of the nightly consolidation input entirely (not merely
+        -- out of the prompt). Private chats are unaffected.
+        AND NOT EXISTS(
+          SELECT 1 FROM cowork_conversation_mappings gm
+          WHERE gm.cowork_session_id = s.id
+            AND gm.channel LIKE 'im:%:group'
+        )
       ORDER BY s.updated_at ASC
     `, [metabotId, dayStartMs, dayEndMs]);
 

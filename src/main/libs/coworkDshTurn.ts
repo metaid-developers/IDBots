@@ -212,6 +212,8 @@ export interface DshTurnOutcome {
   /** True when the turn stopped cleanly having produced no text and no tool
    * calls (the DeepSeek reasoning-only truncation signature). */
   emptyTerminal?: boolean
+  finalizationRequired?: boolean
+  fallbackFinalText?: string
 }
 
 class DshTurnController {
@@ -242,8 +244,18 @@ class DshTurnController {
     return this.turnDone
   }
 
-  handleTurnEnd(reason: { kind: string; reason?: unknown }, emptyTerminal?: boolean): void {
-    const outcome = emptyTerminal === true ? { ...reason, emptyTerminal: true } : reason
+  handleTurnEnd(
+    reason: { kind: string; reason?: unknown },
+    emptyTerminal?: boolean,
+    finalizationRequired?: boolean,
+    fallbackFinalText?: string,
+  ): void {
+    const outcome = {
+      ...reason,
+      ...(emptyTerminal === true ? { emptyTerminal: true } : {}),
+      ...(finalizationRequired === true ? { finalizationRequired: true } : {}),
+      ...(fallbackFinalText ? { fallbackFinalText } : {}),
+    }
     // Fatal outcomes and non-steer aborts (user stop, stall watchdog) always
     // settle through — a pending steer never outranks them. The steer abort
     // reads as the pre-0.1.7 string cause 'steer' or, since the kernel's
@@ -1802,11 +1814,11 @@ export class DshTurnHub {
       onUsage: (sessionId, usage) => {
         controllerOf(sessionId)?.cb.onUsage(usage)
       },
-      onTurnEnd: (sessionId, reason, emptyTerminal) => {
+      onTurnEnd: (sessionId, reason, emptyTerminal, finalizationRequired, fallbackFinalText) => {
         // A turn boundary marks the session's pending abort as converged —
         // release a queued next turn waiting on it before dispatching.
         this.pendingAbortByDsh.get(sessionId)?.settle()
-        controllerOf(sessionId)?.handleTurnEnd(reason, emptyTerminal)
+        controllerOf(sessionId)?.handleTurnEnd(reason, emptyTerminal, finalizationRequired, fallbackFinalText)
       },
       onStatus: (sessionId, status) => {
         // Strictly-owned like onMessage's idle path: a continuable child's

@@ -18,7 +18,7 @@ test.describe('app shell', () => {
     await expect(page.getByText('Balance')).toBeVisible();
     await attachScreen(testInfo, page, 'shell-me-tab');
 
-    await page.getByRole('button', { name: 'Chat' }).click();
+    await page.getByRole('button', { name: 'Chat', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Welcome' })).toBeVisible();
     await attachScreen(testInfo, page, 'shell-chat-tab');
   });
@@ -47,7 +47,7 @@ test.describe('app shell', () => {
     await expect(page.getByText('Scheduled tasks').first()).toBeVisible();
     await page.reload();
     await expect(page.getByText('Scheduled tasks').first()).toBeVisible();
-    await page.getByRole('button', { name: 'Chat' }).click();
+    await page.getByRole('button', { name: 'Chat', exact: true }).click();
     await page.getByRole('button', { name: 'Sessions' }).click();
     // A3 rework: "New chat" opens the Bot picker first — a conversation
     // starts FOR a specific MetaBot (avatar visible in the picker).

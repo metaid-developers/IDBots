@@ -68,6 +68,8 @@ export interface MvcNftAsset {
     name: string;
     satoshi: number;
     icon?: string;
+    /** https direct artwork link (wallet-api v4 utxo-list `imgUrl`). */
+    imgUrl?: string;
   }>;
 }
 
@@ -138,6 +140,7 @@ interface MvcNftAssetInput {
     name: string;
     satoshi: number;
     icon?: string;
+    imgUrl?: string;
   }>;
 }
 
@@ -225,6 +228,7 @@ const defaultDeps: MetabotWalletAssetServiceDeps = {
         name: item.name,
         satoshi: item.satoshi,
         icon: item.icon,
+        imgUrl: item.imgUrl,
       })),
     }));
   },
@@ -378,6 +382,7 @@ function mapMvcNftAssets(rows: MvcNftAssetInput[]): MvcNftAsset[] {
       name: String(item.name || ''),
       satoshi: normalizeDecimal(item.satoshi),
       icon: item.icon,
+      imgUrl: item.imgUrl,
     })),
   }));
 }

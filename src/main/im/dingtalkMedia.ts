@@ -8,7 +8,8 @@ import * as path from 'path';
 import FormData from 'form-data';
 
 const DINGTALK_OAPI = 'https://oapi.dingtalk.com';
-const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
+export const DINGTALK_MAX_UPLOAD_BYTES = 20 * 1024 * 1024; // 20MB
+const MAX_FILE_SIZE = DINGTALK_MAX_UPLOAD_BYTES;
 
 // 旧版 oapi access_token 缓存
 let oapiAccessToken: string | null = null;

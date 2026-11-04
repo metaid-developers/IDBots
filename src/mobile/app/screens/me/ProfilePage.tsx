@@ -7,8 +7,7 @@ import { formatDateTime } from '../../format';
 import { BotAvatar } from '../../components/BotAvatar';
 import { SecondaryPageShell } from './SecondaryPageShell';
 
-const inputClass =
-  'min-h-[44px] w-full rounded-xl border border-[var(--border-color)] bg-[var(--bg-main)] px-3 py-2.5 text-[15px] text-[var(--text-primary)] outline-none';
+const inputClass = 'twin-input';
 
 /**
  * profile secondary page (IA-PLAN v1 §4.3): explicit-save name editing,
@@ -41,7 +40,6 @@ export function ProfilePage(props: {
   useEffect(() => {
     props.onDirtyChange?.(dirty);
     return () => props.onDirtyChange?.(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dirty]);
 
   useEffect(() => () => {
@@ -110,7 +108,7 @@ export function ProfilePage(props: {
   return (
     <SecondaryPageShell title={t('mobile.me.entry.profile')} onBack={props.onBack} testId="me-page-profile">
       {/* Avatar area: display-only this cycle (contract gap, IA-PLAN §5.1). */}
-      <div className="flex flex-col items-center gap-2 rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] p-4">
+      <div className="flex flex-col items-center gap-2 twin-panel twin-panel-padded">
         <BotAvatar name={props.identity?.name} avatar={props.identity?.avatar} size={80} testId="profile-avatar" />
         <button
           type="button"
@@ -124,7 +122,7 @@ export function ProfilePage(props: {
       </div>
 
       {/* Name: explicit save, dirty-gated (IA-PLAN §2.5 rule 1). */}
-      <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] p-4">
+      <div className="twin-panel twin-panel-padded">
         <label htmlFor="profile-name" className="mb-1.5 block text-xs font-medium text-[var(--text-secondary)]">
           {t('mobile.me.profile.nameLabel')}
         </label>
@@ -155,19 +153,19 @@ export function ProfilePage(props: {
           onClick={() => void save()}
           disabled={!dirty || busy}
           data-testid="profile-save"
-          className="mt-3 min-h-[44px] w-full rounded-xl bg-[var(--color-primary)] py-2 text-sm font-medium text-black active:opacity-80 disabled:opacity-40"
+          className="twin-button twin-button-primary twin-button-full mt-3 disabled:opacity-40"
         >
           {t('mobile.me.profile.save')}
         </button>
       </div>
 
       {/* Identity read-only card. */}
-      <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] p-4">
+      <div className="twin-panel twin-panel-padded">
         <p className="mb-2 text-xs font-medium text-[var(--text-secondary)]">{t('mobile.me.profile.identityTitle')}</p>
         {identityRows.map((row) => (
           <div
             key={row.key}
-            className="flex min-h-[44px] items-center justify-between gap-3 border-b border-[var(--border-color)] py-2 last:border-b-0"
+            className="twin-list-row"
           >
             <div className="min-w-0">
               <p className="text-xs text-[var(--text-secondary)]">{row.label}</p>
@@ -194,7 +192,7 @@ export function ProfilePage(props: {
       </div>
 
       {/* Sync status area: retries only render in an abnormal state. */}
-      <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] p-4" data-testid="profile-sync-area" data-sync-ok={syncAbnormal ? 'no' : 'yes'}>
+      <div className="twin-panel twin-panel-padded" data-testid="profile-sync-area" data-sync-ok={syncAbnormal ? 'no' : 'yes'}>
         <p className="mb-2 text-xs font-medium text-[var(--text-secondary)]">{t('mobile.me.profile.syncTitle')}</p>
         {syncAbnormal ? (
           <>

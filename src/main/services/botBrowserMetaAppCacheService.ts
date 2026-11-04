@@ -66,6 +66,10 @@ type BotBrowserMetaAppCacheServiceOptions = {
   // HTML. Defaults to core defaults resolved against process.env, matching the
   // host browser config resolution.
   resolveMetafileContentBaseUrl?: () => string | Promise<string>;
+  // Fixed loopback port candidates for the MetaApp preview origin, tried in
+  // order before falling back to an ephemeral port. Defaults to
+  // PREVIEW_PORT_CANDIDATES; primarily a test hook.
+  previewPortCandidates?: number[];
 };
 
 type ArtifactManifest = {
@@ -116,6 +120,12 @@ export type BotBrowserMetaAppCacheService = {
 const MANIFEST_VERSION = 1;
 const LOCAL_HOST = '127.0.0.1';
 const PREVIEW_PREFIX = '/browser-cache/metaapp-preview/';
+// Fixed candidate ports for the MetaApp preview origin. Browsers key storage
+// by scheme+host+port, so an ephemeral port mints a fresh origin on every app
+// launch and orphans all MetaApp localStorage. Candidates are tried in order;
+// only when every candidate is busy does this run fall back to an ephemeral
+// port (with a warning), matching the pre-fix behavior.
+const PREVIEW_PORT_CANDIDATES = [47613, 47614, 47615];
 const PREVIEW_SESSION_TTL_MS = 30 * 60 * 1000;
 const MAX_METAAPP_DOWNLOAD_REDIRECTS = 5;
 
@@ -691,6 +701,21 @@ export function createBotBrowserMetaAppCacheService(
     }
   };
 
+  const listenOnPort = (localServer: http.Server, port: number): Promise<void> =>
+    new Promise((resolve, reject) => {
+      const onListening = () => {
+        localServer.off('error', onError);
+        resolve();
+      };
+      const onError = (error: Error) => {
+        localServer.off('listening', onListening);
+        reject(error);
+      };
+      localServer.once('listening', onListening);
+      localServer.once('error', onError);
+      localServer.listen(port, LOCAL_HOST);
+    });
+
   const ensurePreviewServer = async (): Promise<string> => {
     if (server?.listening && baseUrl) {
       return baseUrl;
@@ -712,33 +737,48 @@ export function createBotBrowserMetaAppCacheService(
       });
     });
 
-    startingServer = new Promise<string>((resolve, reject) => {
+    startingServer = (async () => {
       const localServer = server;
       if (!localServer) {
-        reject(new Error('Preview server was not created.'));
-        return;
+        throw new Error('Preview server was not created.');
       }
-      const onListening = () => {
-        localServer.off('error', onError);
-        const address = localServer.address();
-        if (!address || typeof address === 'string') {
-          reject(new Error('Preview server did not bind to a TCP port.'));
-          return;
+      // Keep the preview origin stable across app restarts so MetaApp
+      // localStorage persists: try the fixed candidates in order and only fall
+      // back to an ephemeral port when all of them are busy. A failed candidate
+      // (EADDRINUSE) must not discard the server instance — the same server is
+      // rebound on the next port.
+      let bound = false;
+      for (const port of options.previewPortCandidates ?? PREVIEW_PORT_CANDIDATES) {
+        try {
+          await listenOnPort(localServer, port);
+          bound = true;
+          break;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'EADDRINUSE') {
+            throw error;
+          }
         }
-        baseUrl = `http://${LOCAL_HOST}:${address.port}`;
-        resolve(baseUrl);
-      };
-      const onError = (error: Error) => {
-        localServer.off('listening', onListening);
-        server = null;
-        baseUrl = null;
-        reject(error);
-      };
-      localServer.once('listening', onListening);
-      localServer.once('error', onError);
-      localServer.listen(0, LOCAL_HOST);
-    }).finally(() => {
+      }
+      if (!bound) {
+        console.warn(
+          '[bot-browser-metaapp-cache] All fixed preview ports are busy; '
+          + 'falling back to an ephemeral port for this run. MetaApp localStorage '
+          + 'will not survive app restarts until a fixed port is free.',
+        );
+        await listenOnPort(localServer, 0);
+      }
+      const address = localServer.address();
+      if (!address || typeof address === 'string') {
+        throw new Error('Preview server did not bind to a TCP port.');
+      }
+      baseUrl = `http://${LOCAL_HOST}:${address.port}`;
+      return baseUrl;
+    })().finally(() => {
       startingServer = null;
+    }).catch((error) => {
+      server = null;
+      baseUrl = null;
+      throw error;
     });
 
     return startingServer;

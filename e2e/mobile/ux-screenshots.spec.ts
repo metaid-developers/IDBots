@@ -93,7 +93,7 @@ test.describe('UX batch evidence screenshots (390x844 via iPhone 14 project)', (
 
   test('captures the chat UE rework screens (A2 header, A4 groups, A3 picker)', async ({ page }) => {
     await page.goto('/app/');
-    await page.getByRole('button', { name: 'Chat' }).click();
+    await page.getByRole('button', { name: 'Chat', exact: true }).click();
     await page.waitForTimeout(400);
     // A2: conversation header = bot avatar + title (switcher removed).
     await shot(page, 'a2-chat-header-avatar-title');

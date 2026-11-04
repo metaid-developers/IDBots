@@ -18,7 +18,7 @@ export default function ChatComposerAttachments({
           {attachments.map((attachment) => (
             <span
               key={attachment.path}
-              className="flex min-h-[44px] max-w-full items-center gap-1 rounded-lg border border-[var(--border-color)] bg-[var(--bg-main)] py-1 pl-2 text-xs text-[var(--text-primary)]"
+              className="twin-chip max-w-full gap-1 py-1 pl-2"
               data-testid="chat-attachment"
             >
               <span className="min-w-0 truncate">{attachment.name}</span>
@@ -39,7 +39,7 @@ export default function ChatComposerAttachments({
         return (
           <div
             key={item.id}
-            className="flex min-h-[44px] items-center gap-2 rounded-lg border border-[var(--border-color)] bg-[var(--bg-main)] px-2 py-1"
+            className="twin-notice flex min-h-[44px] items-center gap-2"
             data-testid="chat-upload"
             data-upload-status={item.status}
           >

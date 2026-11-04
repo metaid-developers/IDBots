@@ -12,7 +12,7 @@ import { resolveWritableSkillsRoot } from './skillRoots';
 import { getMetaidRpcBase, getMetaidRpcTokenFilePath, METAID_RPC_AUTHFILE_ENV } from '../services/metaidRpcEndpoint';
 import { chatCompletionWithTools } from '../services/cognitiveChatCompletion';
 import type { MetabotBrainOptions } from '../services/llmFallback';
-import { buildTurnAckReplyMessages, sanitizeTurnAckReplyForInput } from './turnAckReply';
+import { buildTurnAckReplyMessages, buildOwnerWaitUpdateMessages, sanitizeTurnAckReplyForInput, type OwnerWaitUpdateInput } from './turnAckReply';
 import { modelAlwaysThinks } from './modelThinking';
 import { isSqliteWasmBoundsError } from '../sqliteRecovery';
 import { assignPathValue, collapseWindowsPathKeys, pathValueOf } from './windowsPathEnv';
@@ -1356,11 +1356,21 @@ export function setTurnAckReplyBrainProvider(provider: (() => MetabotBrainOption
  * One-shot LLM acknowledgment for a turn (first-response latency). Mirrors
  * generateSessionTitle: a direct cognitive-layer call — no kernel spawn, no
  * agent loop — so it returns in seconds while the DSH turn is still warming
- * up. Returns '' when the call fails or the output is unusable; the caller
- * keeps the template phrase already showing in the activity indicator.
- * Single attempt, no fallback brain: an ack trades robustness for latency.
+ * up. Since 2026-11-03 (second pass, owner decision after session 2c70849f)
+ * this is THE first sentence for generic turns — the bot's own words about
+ * this message; canned phrase pools are gone. Since the same day's third pass
+ * (session 3ecd2a2f) the runner's cerebellum ack gate decides which turns get
+ * an interim acknowledgment at all, and the prompt never answers the
+ * message's content (this call sees no time/memory context, so a substantive
+ * ack can contradict the real reply). The optional signal lets the runner
+ * abort the in-flight attempt when the gate's skip verdict lands mid-call
+ * (an abort is non-terminal: no fallback retry, no system rescue — the call
+ * settles as '' and the turn simply shows no first sentence). Returns '' when
+ * the call fails or the output is unusable; the runner then shows no first
+ * sentence at all (the activity indicator covers the wait) rather than a
+ * canned line. Primary + fallback brain, like titles.
  */
-export async function generateTurnAckReply(userText: string, sessionTitle?: string | null): Promise<string> {
+export async function generateTurnAckReply(userText: string, sessionTitle?: string | null, signal?: AbortSignal): Promise<string> {
   try {
     const brain = turnAckReplyBrainProvider?.() ?? null;
     // Effective model for the thinking-aware budget below: the brain's llmId,
@@ -1382,6 +1392,11 @@ export async function generateTurnAckReply(userText: string, sessionTitle?: stri
       {
         llmId: brain?.llmId ?? undefined,
         llmProvider: brain?.llmProvider ?? undefined,
+        // Same brain pair the session title rides: a hung primary relay
+        // (2026-11-03 acb5961b — the primary ack call timed out with no
+        // retry) falls back once, so the refine keeps a chance to land.
+        fallbackLlmId: brain?.fallbackLlmId ?? undefined,
+        fallbackLlmProvider: brain?.fallbackLlmProvider ?? undefined,
         thinking: 'disabled',
         // An ack must never wait on reasoning (same rationale as titles).
         effort: 'off',
@@ -1392,6 +1407,9 @@ export async function generateTurnAckReply(userText: string, sessionTitle?: stri
         // search detour would defeat the whole point of a fast ack.
         webSearch: false,
         attemptTimeoutMs: 4_000,
+        // Caller abort (the ack gate's skip verdict) — linked into each
+        // per-attempt timeout signal by withPerAttemptSignal.
+        signal,
       }
     );
     // F1 (2026-10-23 thinking-leak fix): on the always-thinking GLM-5.x
@@ -1399,7 +1417,7 @@ export async function generateTurnAckReply(userText: string, sessionTitle?: stri
     // empty, and the openai-compat resolver PROMOTED reasoning_content into
     // content — a mid-thought English analysis fragment then leaked out as
     // the ack bubble. Reject reasoning-promoted content and length-truncated
-    // completions outright; the caller keeps the template phrase.
+    // completions outright; the runner uses its deterministic opening instead.
     const metadata = result.responseMetadata;
     const promotedFromReasoning = metadata?.contentBlockTypes?.includes('reasoning') ?? false;
     if (promotedFromReasoning || metadata?.stopReason === 'length') {
@@ -1417,6 +1435,62 @@ export async function generateTurnAckReply(userText: string, sessionTitle?: stri
       throw error;
     }
     console.error('Failed to generate turn ack reply:', error);
+    return '';
+  }
+}
+
+/**
+ * One-shot LLM owner wait update — the text of the "still working" heartbeat
+ * bubble. Owner decision 2026-11-04: no canned text in ANY bubble (the fixed
+ * heartbeat strings read as a recording), so each fire writes its own line
+ * from the live wait context. Same call class as generateTurnAckReply: Twin
+ * system brain pair, thinking off, tight budget, 4s per-attempt timeout,
+ * reasoning-promoted/length-truncated output rejected, input-aware sanitize.
+ * Returns '' on any failure — the runner then emits NO heartbeat bubble at
+ * all (the owner's rule: no bubble beats a canned one) and backs off to the
+ * next window.
+ */
+export async function generateOwnerWaitUpdate(input: OwnerWaitUpdateInput): Promise<string> {
+  try {
+    const brain = turnAckReplyBrainProvider?.() ?? null;
+    const effectiveModel =
+      brain?.llmId ??
+      resolveApiConfigForModel(null, 'local', null, brain?.llmProvider ?? null)?.config?.model ??
+      null;
+    const maxTokens = modelAlwaysThinks(effectiveModel) ? 2048 : 96;
+    const result = await chatCompletionWithTools(
+      buildOwnerWaitUpdateMessages(input),
+      {
+        llmId: brain?.llmId ?? undefined,
+        llmProvider: brain?.llmProvider ?? undefined,
+        fallbackLlmId: brain?.fallbackLlmId ?? undefined,
+        fallbackLlmProvider: brain?.fallbackLlmProvider ?? undefined,
+        thinking: 'disabled',
+        effort: 'off',
+        maxTokens,
+        temperature: 0.7,
+        throwOnEmptyContent: true,
+        webSearch: false,
+        attemptTimeoutMs: 4_000,
+      }
+    );
+    const metadata = result.responseMetadata;
+    const promotedFromReasoning = metadata?.contentBlockTypes?.includes('reasoning') ?? false;
+    if (promotedFromReasoning || metadata?.stopReason === 'length') {
+      console.info(
+        '[ownerWait] dropped LLM wait update:',
+        `promotedFromReasoning=${promotedFromReasoning}`,
+        `stopReason=${metadata?.stopReason ?? 'n/a'}`,
+        `blocks=${metadata?.contentBlockTypes?.join(',') ?? 'none'}`
+      );
+      return '';
+    }
+    return sanitizeTurnAckReplyForInput(result.content ?? '', input.userText);
+  } catch (error) {
+    if (isSqliteWasmBoundsError(error)) {
+      throw error;
+    }
+    console.error('Failed to generate owner wait update:', error);
     return '';
   }
 }

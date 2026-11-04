@@ -9,25 +9,36 @@ import { mobileI18n, t } from '../src/mobile/i18n.ts';
 import type { CoworkSessionDetail } from '../src/mobile/bridge/types.ts';
 import type { useChat } from '../src/mobile/app/hooks/useChat.ts';
 import {
+  deriveLiveQuotaExhausted,
   deriveQuotaExhaustedFromDetail,
   quotaKindFromErrorText,
 } from '../src/mobile/app/hooks/useChat.ts';
+import { LLM_QUOTA_EXHAUSTED_CODE } from '../src/mobile/app/quotaCodes.ts';
+import { projectChatMessages } from '../src/mobile/app/chatProjection.ts';
 
 /**
  * REQ-E-12 / F-8+F-9 quota-exhausted UX: when a tenant turn dies on the
  * relay's 429 free_quota_exhausted (or the C4 quota_exhausted), the phone
  * must NOT fail silently — it shows the recharge card. These tests pin the
- * three legs of the fix:
+ * legs of the fix:
  *
  *   1. error-code pass-through recognition — quotaKindFromErrorText reads
  *      the relay machine code, deriveQuotaExhaustedFromDetail re-derives the
  *      card from a reopened session detail (the runner persists the terminal
  *      `Error: …` system row and flips the session to status 'error');
- *   2. the mock bridge's quota scenario now mirrors the REAL contract
- *      (REQ-A-25: metadata.errorCode rides cowork:stream:error, never the
- *      completion frame) — an end-to-end mock assertion;
- *   3. ChatScreen renders the prompt card (with the recharge entry) and the
- *      inline error notice instead of a bare/silent failure.
+ *   2. structured-first live detection — deriveLiveQuotaExhausted declares a
+ *      quota death from the machine code on the cowork:stream:error frame
+ *      (REQ-A-25 metadata.errorCode) and reads the text only for the
+ *      free/purchased copy refinement; payloads without the code take the
+ *      string-fallback result unchanged;
+ *   3. the mock bridge's quota scenario mirrors the REAL contract (REQ-A-25:
+ *      metadata.errorCode rides cowork:stream:error, never the completion
+ *      frame) — an end-to-end mock assertion;
+ *   4. ChatScreen renders the prompt card (with the recharge entry) and the
+ *      inline error notice instead of a bare/silent failure;
+ *   5. a string-fallback MISS (unknown terminal error) never surfaces the
+ *      raw system error row: the projection collapses it into the localized
+ *      turnFailed diagnostics one-liner.
  */
 
 type Chat = ReturnType<typeof useChat>;
@@ -148,6 +159,108 @@ test('deriveQuotaExhaustedFromDetail follows the live-state rule', () => {
   // Degenerate shapes: no messages, no session.
   assert.deepEqual(deriveQuotaExhaustedFromDetail(fixture('error', [])), { exhausted: false, kind: null });
   assert.deepEqual(deriveQuotaExhaustedFromDetail(null), { exhausted: false, kind: null });
+});
+
+test('structured code drives live detection; the text only refines the card copy', () => {
+  const persistedNone = { exhausted: false, kind: null } as const;
+  // STRUCTURED: the frame code alone declares the quota death even when the
+  // upstream copy changed beyond any recognizable text — no regex needed.
+  assert.deepEqual(
+    deriveLiveQuotaExhausted(
+      { status: 'error' },
+      { code: LLM_QUOTA_EXHAUSTED_CODE, text: 'DSH turn failed: (upstream copy changed beyond recognition)' },
+      persistedNone,
+    ),
+    { exhausted: true, kind: 'free' },
+  );
+  // Structured + a recognizable relay code in the text → the code picks the copy.
+  assert.deepEqual(
+    deriveLiveQuotaExhausted(
+      { status: 'error' },
+      { code: LLM_QUOTA_EXHAUSTED_CODE, text: 'DSH turn failed: ... quota_exhausted ...' },
+      persistedNone,
+    ),
+    { exhausted: true, kind: 'purchased' },
+  );
+  // Structured declaration wins over a stale persisted result, but the
+  // persisted kind refinement survives when the text carries no relay code
+  // (the ?? chain: text code → persisted kind → 'free').
+  assert.deepEqual(
+    deriveLiveQuotaExhausted(
+      { status: 'error' },
+      { code: LLM_QUOTA_EXHAUSTED_CODE, text: 'no relay code here' },
+      { exhausted: true, kind: 'purchased' },
+    ),
+    { exhausted: true, kind: 'purchased' },
+  );
+  // NO structured code → the persisted string-fallback result passes through
+  // unchanged (restore/resync pathway); the live text is never regexed.
+  assert.deepEqual(
+    deriveLiveQuotaExhausted(
+      { status: 'error' },
+      { code: null, text: 'Error: DSH turn failed: free_quota_exhausted' },
+      { exhausted: true, kind: 'free' },
+    ),
+    { exhausted: true, kind: 'free' },
+  );
+  // No code + unknown text + nothing persisted → no card (the miss leaves
+  // the row to the localized diagnostics pathway, not a raw surface).
+  assert.deepEqual(
+    deriveLiveQuotaExhausted(
+      { status: 'error' },
+      { code: null, text: 'DSH turn failed: mystery' },
+      persistedNone,
+    ),
+    { exhausted: false, kind: null },
+  );
+  // Not an error session → no card even with the machine code present.
+  assert.deepEqual(
+    deriveLiveQuotaExhausted(
+      { status: 'running' },
+      { code: LLM_QUOTA_EXHAUSTED_CODE, text: 'free_quota_exhausted' },
+      persistedNone,
+    ),
+    { exhausted: false, kind: null },
+  );
+});
+
+test('a string-fallback miss renders the localized one-liner, not the raw error row', () => {
+  mobileI18n.setLanguage('zh');
+
+  // Unknown terminal error: no diagnostic metadata, no relay code anywhere.
+  const unknownViews = projectChatMessages([
+    {
+      id: 'e1',
+      type: 'system',
+      content: 'Error: DSH turn failed: (mystery upstream body with no machine code)',
+      timestamp: 1,
+    },
+  ] as never);
+  assert.equal(unknownViews.length, 1);
+  assert.equal(unknownViews[0]?.role, 'error');
+  assert.equal(unknownViews[0]?.diagnostic, 'turnFailed');
+  assert.equal(unknownViews[0]?.text, '', 'diagnostic views carry no raw copy');
+
+  const markup = renderToStaticMarkup(
+    <ChatScreen chat={chatFixture({ messages: unknownViews })} bots={[]} onOpenRecharge={() => undefined} />,
+  );
+  assert.ok(markup.includes('error-bubble'), 'the failure still surfaces as an error bubble');
+  assert.ok(markup.includes(t('mobile.chat.diagnostic.turnFailed')), 'the localized one-liner renders');
+  assert.ok(!markup.includes('mystery upstream body'), 'the raw upstream copy is not surfaced');
+
+  // The recognized quota row keeps its raw transcript record (code visible).
+  const quotaViews = projectChatMessages([
+    { id: 'e2', type: 'system', content: FREE_ERROR, timestamp: 1 },
+  ] as never);
+  assert.equal(quotaViews.length, 1);
+  assert.equal(quotaViews[0]?.diagnostic, null);
+  assert.ok(quotaViews[0]?.text.includes('free_quota_exhausted'), 'quota rows keep the machine code visible');
+
+  // Diagnostic-metadata errors still render their own localized one-liner.
+  const rateLimitViews = projectChatMessages([
+    { id: 'e3', type: 'system', content: 'Error: 429', timestamp: 1, metadata: { sdkRateLimit: { retryAfterMs: 1000 } } },
+  ] as never);
+  assert.equal(rateLimitViews[0]?.diagnostic, 'rateLimit');
 });
 
 test('mock end-to-end: quota turn → stream:error frame → reopened session re-derives the card', async (t) => {

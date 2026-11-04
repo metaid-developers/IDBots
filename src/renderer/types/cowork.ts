@@ -91,7 +91,7 @@ export interface CoworkMessageMetadata {
    * stays in the hidden thinking stream; rendering is the standard bubble.
    */
   narration?: boolean;
-  ownerUpdateKind?: 'opening' | 'milestone' | 'problem';
+  ownerUpdateKind?: 'opening' | 'milestone' | 'problem' | 'waiting';
   /**
    * LLM-generated turn-acknowledgment bubble (first-response latency): a
    * short host-side assistant reply emitted before the kernel turn's own
@@ -99,6 +99,8 @@ export interface CoworkMessageMetadata {
    * tag records the origin; rendering is the standard assistant bubble.
    */
   turnAckReply?: boolean;
+  turnAckActivity?: 'search_local' | 'verify_delivery' | 'working';
+  finalizationFallback?: boolean;
   isDelegationInternal?: boolean;
   skillIds?: string[];
   /**
@@ -418,6 +420,14 @@ export interface CoworkSession {
   executionMode: CoworkExecutionMode;
   activeSkillIds: string[];
   messages: CoworkMessage[];
+  /**
+   * IM channel that owns this session (`im:qq:group` / `im:qq:direct`), read
+   * from the conversation mapping. Legacy IM rows stored as 'a2a' are rendered
+   * as IM rows without a data migration.
+   */
+  imChannel?: string | null;
+  /** External conversation id behind `imChannel` (e.g. `qq:group:<openid>`). */
+  imConversationId?: string | null;
   /** Bounded A2A history state supplied by the renderer session endpoint. */
   messageHistory?: CoworkMessageHistoryState;
   createdAt: number;
@@ -826,6 +836,10 @@ export interface CoworkPermissionRequest {
   toolUseId?: string | null;
   // AskUserQuestion only: per-question countdown for the wizard; null/undefined = no timeout.
   perQuestionTimeoutMs?: number | null;
+  // Epoch ms when the default button fires. Null/absent = wait for a person.
+  expiresAt?: number | null;
+  // Which button shows the countdown and which action the watchdog takes.
+  timeoutDefault?: 'allow' | 'deny' | null;
 }
 
 export type CoworkPermissionResult =
@@ -862,6 +876,14 @@ export interface CoworkSessionSummary {
   archivedAt?: number | null;
   /** Session type: 'standard' = human↔MetaBot, 'a2a' = MetaBot↔MetaBot */
   sessionType?: CoworkSessionType;
+  /**
+   * IM channel behind this row (`im:qq:group` / `im:qq:direct`), read from the
+   * conversation mappings. Display-layer only, so legacy IM rows created as
+   * 'a2a' are badged correctly without a data migration.
+   */
+  imChannel?: string | null;
+  /** External conversation id behind `imChannel` (e.g. `qq:group:<openid>`). */
+  imConversationId?: string | null;
   /** Remote peer MetaBot's display name (A2A sessions only) */
   peerName?: string | null;
   /** Remote peer MetaBot's avatar (A2A sessions only) */
@@ -915,6 +937,14 @@ export interface CoworkSessionSummary {
   followUpSource?: CoworkSessionFollowUpSource | null;
   /** ISO timestamp of the last follow-up transition; null = never transitioned. */
   followUpAt?: string | null;
+  /**
+   * S4 chat trade marker: the NFT trade kind this session's conversation
+   * carries — 'p2p' = contract sale/listing or direct transfer (sell/buy/
+   * cancel/transfer tool announcements), 'escrow' = three-party escrow
+   * activity; null/undefined = no trade activity. Write-path maintained by
+   * the main store (upgrade-only), surfaced for the sidebar's trade icon.
+   */
+  tradeBadge?: 'p2p' | 'escrow' | null;
 }
 
 // The New Task composer's working-directory choice. `project` and `folder` both

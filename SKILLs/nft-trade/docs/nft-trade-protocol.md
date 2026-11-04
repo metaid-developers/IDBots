@@ -67,6 +67,40 @@ are the canonical price unit; `price_space` is informational. Txids are plain
 64-hex transaction ids. Emit exactly these keys, in this order, so downstream
 parsers can split on line starts.
 
+### 3.0 Chat card attachment (applies to every NFT-carrying announcement)
+
+Every announcement that carries an NFT (all §3 events, the scenario-A
+`NFT_SENT` leg, and the scenario-B `NFT_ESCROWED` / `ESCROW_RELEASED` legs)
+MUST append one `nft-card` fenced block after the structured block, so every
+IDBots chat surface (CoWork conversation, A2A private chat, group /
+group-task transcript) renders a visual card with detail overlay instead of
+bare text. The wallet host tools (`wallet_nft_sell` / `wallet_nft_transfer` /
+`wallet_nft_buy` / `wallet_nft_cancel_sell`) append this block to their
+success results automatically — broadcast it verbatim. CLI users build it
+from the fields they already have:
+
+    ```nft-card
+    {"genesis":"<40hex>","codehash":"<40hex>","tokenIndex":"<int>",
+     "name":"<item name>","series":"<series name>",
+     "imgUrl":"<https direct artwork from wallet-api v4 utxo-list>",
+     "icon":"metafile://<pin>",
+     "owner":"<mvc address holding the token after this action>",
+     "ownerLabel":"<bot name>",
+     "priceSats":<int>,"action":"listed"}
+    ```
+
+- One JSON object on one line; identity triple (genesis/codehash/tokenIndex)
+  is required, everything else optional (the card degrades to a placeholder
+  artwork but always shows the identity).
+- `action` mapping: `listed` / `delisted` (cancel) / `bought` / `sold` /
+  `transferred` (plain send, scenario-A NFT_SENT) / `escrow` (scenario-B
+  escrow legs).
+- `owner` is the post-action holder (recipient for transfers, buyer for
+  purchases, escrow bot for escrow legs).
+- Old clients without the card renderer show the JSON as a plain code block —
+  still fully machine-parseable, so the structured block above stays the
+  source of truth and the card block is display enrichment only.
+
 ### 3.1 NFT_LISTED (seller → market)
 
 ```

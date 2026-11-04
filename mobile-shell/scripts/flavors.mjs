@@ -13,7 +13,7 @@ export function createCapacitorConfig(flavorName) {
   const flavor = getFlavor(flavorName);
   const remoteUrl = `${flavor.remoteOrigin}/`;
   return {
-    appId: 'world.idbots.app',
+    appId: 'com.idbots.world',
     appName: 'IDBots',
     webDir: 'www',
     server: {

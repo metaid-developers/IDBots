@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Bars3Icon, PlusIcon, PaperAirplaneIcon, PaperClipIcon, FaceSmileIcon, StopIcon } from '@heroicons/react/24/outline';
+import { Bars3Icon, PlusIcon, PaperAirplaneIcon, PaperClipIcon, FaceSmileIcon, StopIcon, EllipsisHorizontalIcon, MagnifyingGlassIcon, PencilSquareIcon, TrashIcon, XMarkIcon, ArrowDownIcon } from '@heroicons/react/24/outline';
 import MarkdownContent from '@/components/MarkdownContent';
 import MobileArtifactPreview from '../components/MobileArtifactPreview';
 import CoworkPermissionPanel from '@/components/cowork/CoworkPermissionPanel';
@@ -7,6 +7,7 @@ import { coworkAttachmentAdmission } from '@/components/cowork/coworkComposerAtt
 import ChatComposerAttachments from '../components/ChatComposerAttachments';
 import { EmojiPickerPanel, rememberRecentEmoji } from '../components/EmojiPickerPanel';
 import { insertEmojiAtCaret } from '../chat/emojiTextInsert';
+import { isNearBottom } from '../chat/autoScroll';
 import { mapWechatBracketCodesForDisplay } from '../chat/wechatEmojiDisplay';
 import TwemojiText from '@/components/chat/TwemojiText';
 import { t } from '../../i18n';
@@ -17,7 +18,7 @@ import { useKeyboardInset } from '../hooks/useKeyboardInset';
 import { useNativeBackHandler } from '../hooks/useNativeBackHandler';
 import { BottomSheet } from '../components/BottomSheet';
 import { BotAvatar } from '../components/BotAvatar';
-import { groupSessionsByDay, resolveSessionBot } from '../sessionList';
+import { filterSessionsByTitle, groupSessionsByDay, resolveSessionBot } from '../sessionList';
 import { sortBotsForList } from '../botList';
 import { useVoiceInput } from '../voice/useVoiceInput';
 import { VoiceButton, VoiceErrorBanner } from '../voice/VoiceButton';
@@ -30,40 +31,111 @@ const GROUP_LABEL_KEYS = {
   earlier: 'mobile.chat.group.earlier',
 } as const;
 
-function SessionDrawer(props: { chat: Chat; bots: MockMetabot[]; open: boolean; onPickBot: () => void; onClose: () => void }): JSX.Element | null {
+/**
+ * Chat drawer (UE rework 2026-10-29, A4; search/rename/delete 2026-11-02).
+ *
+ * Rows keep their day-grouped, tap-to-open behavior unchanged. New affordances:
+ *   - a title search (sync filter — the session list is a small client-side
+ *     summary array, so per-keystroke filtering is cheap by construction);
+ *   - a per-row "…" actions button opening a bottom sheet with Rename/Delete;
+ *   - Delete is gated behind its own confirm sheet and calls the ARCHIVE
+ *     channel (cowork.archiveSession): the allowlist has no hard-delete
+ *     session channel by design (desktop cowork.ts: "Hard delete is
+ *     intentionally not exposed to users"), so the row leaves the list while
+ *     the record survives — restorable via the desktop Archived Chats UI.
+ * Closing the drawer resets the search query and any open sub-sheet.
+ */
+export function SessionDrawer(props: { chat: Chat; bots: MockMetabot[]; open: boolean; onPickBot: () => void; onClose: () => void }): JSX.Element | null {
   const { chat, bots } = props;
+  const [searchQuery, setSearchQuery] = useState('');
+  const [actionsFor, setActionsFor] = useState<{ id: string; title: string } | null>(null);
+  const [renameFor, setRenameFor] = useState<{ id: string; title: string } | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  const [deleteFor, setDeleteFor] = useState<{ id: string; title: string } | null>(null);
   useNativeBackHandler(() => {
     props.onClose();
     return true;
   }, props.open, 100);
+  // Reset transient drawer state on close so reopening starts clean (no
+  // stale search text, no orphaned sheets).
+  useEffect(() => {
+    if (props.open) return;
+    setSearchQuery('');
+    setActionsFor(null);
+    setRenameFor(null);
+    setRenameDraft('');
+    setDeleteFor(null);
+  }, [props.open]);
   if (!props.open) return null;
-  const groups = groupSessionsByDay(chat.sessions);
+  const visibleSessions = filterSessionsByTitle(chat.sessions, searchQuery);
+  const groups = groupSessionsByDay(visibleSessions);
+  const trimmedQuery = searchQuery.trim();
+  const submitRename = async (): Promise<void> => {
+    if (!renameFor) return;
+    const ok = await chat.renameSession(renameFor.id, renameDraft);
+    if (ok) setRenameFor(null);
+  };
+  const confirmDelete = async (): Promise<void> => {
+    if (!deleteFor) return;
+    const ok = await chat.archiveSession(deleteFor.id);
+    if (ok) setDeleteFor(null);
+  };
   return (
     <div className="fixed inset-0 z-30">
-      <button type="button" aria-label={t('mobile.common.close')} className="absolute inset-0 bg-black/40" onClick={props.onClose} tabIndex={-1} />
-      <div className="absolute bottom-0 left-0 top-0 flex w-[85%] max-w-[320px] flex-col bg-[var(--bg-panel)]">
+      <button type="button" aria-label={t('mobile.common.close')} className="twin-sheet-backdrop absolute inset-0" onClick={props.onClose} tabIndex={-1} />
+      <div className="twin-drawer absolute bottom-0 left-0 top-0 flex w-[85%] max-w-[320px] flex-col">
         <div className="flex items-center justify-between border-b border-[var(--border-color)] px-4 py-3">
-          <h2 className="text-base font-semibold text-[var(--text-primary)]">{t('mobile.chat.drawerTitle')}</h2>
+          <h2 className="twin-title-small">{t('mobile.chat.drawerTitle')}</h2>
           <button
             type="button"
             onClick={() => {
               props.onPickBot();
             }}
             data-testid="session-new-chat"
-            className="flex min-h-[44px] items-center gap-1 px-2 text-sm text-[var(--text-secondary)] active:text-[var(--text-primary)]"
+            className="twin-button twin-button-ghost"
           >
             <PlusIcon className="h-4 w-4" aria-hidden />
             {t('mobile.chat.newChat')}
           </button>
         </div>
+        <div className="border-b border-[var(--border-color)] px-4 py-2">
+          <div className="twin-input flex items-center gap-2">
+            <MagnifyingGlassIcon className="h-4 w-4 shrink-0 text-[var(--text-secondary)]" aria-hidden />
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder={t('mobile.chat.searchSessions')}
+              aria-label={t('mobile.chat.searchSessions')}
+              data-testid="session-search-input"
+              className="min-w-0 flex-1 bg-transparent text-sm text-[var(--text-primary)] outline-none placeholder:text-[var(--text-secondary)]"
+            />
+            {searchQuery !== '' ? (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                aria-label={t('mobile.chat.searchClear')}
+                data-testid="session-search-clear"
+                className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[var(--text-secondary)] active:text-[var(--text-primary)]"
+              >
+                <XMarkIcon className="h-4 w-4" aria-hidden />
+              </button>
+            ) : null}
+          </div>
+        </div>
         <div className="flex-1 overflow-y-auto" data-testid="session-drawer-list">
           {groups.length === 0 ? (
-            <p className="px-4 py-6 text-sm text-[var(--text-secondary)]">{t('mobile.chat.drawerEmpty')}</p>
+            <p
+              className="px-4 py-6 text-sm text-[var(--text-secondary)]"
+              data-testid={trimmedQuery !== '' ? 'session-search-empty' : undefined}
+            >
+              {trimmedQuery !== '' ? t('mobile.chat.searchEmpty') : t('mobile.chat.drawerEmpty')}
+            </p>
           ) : (
             groups.map((group) => (
               <section key={group.key}>
                 <p
-                  className="sticky top-0 bg-[var(--bg-panel)] px-4 py-1.5 text-xs font-medium text-[var(--text-secondary)]"
+                  className="twin-section-label sticky top-0 bg-[var(--bg-panel)]"
                   data-testid={`session-group-${group.key}`}
                 >
                   {t(GROUP_LABEL_KEYS[group.key])}
@@ -71,18 +143,20 @@ function SessionDrawer(props: { chat: Chat; bots: MockMetabot[]; open: boolean; 
                 {group.sessions.map((session) => {
                   const bot = resolveSessionBot(chat.sessions, session.id, null, bots);
                   return (
-                    <button
+                    <div
                       key={session.id}
-                      type="button"
-                      onClick={() => {
-                        void chat.openSession(session.id);
-                        props.onClose();
-                      }}
-                      className={`block w-full min-h-[52px] border-b border-[var(--border-color)] px-4 py-2 text-left text-sm active:bg-[var(--bg-hover)] ${
+                      className={`flex items-stretch border-b border-[var(--border-color)] ${
                         session.id === chat.sessionId ? 'bg-[var(--bg-hover)]' : ''
                       }`}
                     >
-                      <span className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void chat.openSession(session.id);
+                          props.onClose();
+                        }}
+                        className="twin-list-row min-w-0 flex-1"
+                      >
                         <BotAvatar name={bot.name} avatar={bot.avatar} size={32} testId={`session-bot-avatar-${session.id}`} />
                         <span className="min-w-0 flex-1">
                           <span className="flex items-center gap-2">
@@ -90,8 +164,17 @@ function SessionDrawer(props: { chat: Chat; bots: MockMetabot[]; open: boolean; 
                             <span className="truncate text-[var(--text-primary)]">{session.title}</span>
                           </span>
                         </span>
-                      </span>
-                    </button>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setActionsFor({ id: session.id, title: session.title })}
+                        aria-label={t('mobile.chat.sessionActions')}
+                        data-testid={`session-actions-${session.id}`}
+                        className="twin-icon-button shrink-0"
+                      >
+                        <EllipsisHorizontalIcon className="h-5 w-5" aria-hidden />
+                      </button>
+                    </div>
                   );
                 })}
               </section>
@@ -99,6 +182,98 @@ function SessionDrawer(props: { chat: Chat; bots: MockMetabot[]; open: boolean; 
           )}
         </div>
       </div>
+      {actionsFor ? (
+        <BottomSheet title={t('mobile.chat.sessionActionsTitle')} onClose={() => setActionsFor(null)}>
+          <div className="flex flex-col" data-testid="session-action-menu">
+            <button
+              type="button"
+              data-testid="session-action-rename"
+              onClick={() => {
+                setRenameFor(actionsFor);
+                setRenameDraft(actionsFor.title);
+                setActionsFor(null);
+              }}
+              className="flex min-h-[52px] items-center gap-3 border-b border-[var(--border-color)] px-1 py-2 text-left text-[15px] text-[var(--text-primary)] active:bg-[var(--bg-hover)]"
+            >
+              <PencilSquareIcon className="h-5 w-5 text-[var(--text-secondary)]" aria-hidden />
+              {t('mobile.chat.rename')}
+            </button>
+            <button
+              type="button"
+              data-testid="session-action-delete"
+              onClick={() => {
+                setDeleteFor(actionsFor);
+                setActionsFor(null);
+              }}
+              className="flex min-h-[52px] items-center gap-3 px-1 py-2 text-left text-[15px] text-red-600 active:bg-[var(--bg-hover)]"
+            >
+              <TrashIcon className="h-5 w-5" aria-hidden />
+              {t('mobile.chat.delete')}
+            </button>
+          </div>
+        </BottomSheet>
+      ) : null}
+      {renameFor ? (
+        <BottomSheet title={t('mobile.chat.renameTitle')} onClose={() => setRenameFor(null)}>
+          <input
+            type="text"
+            value={renameDraft}
+            onChange={(event) => setRenameDraft(event.target.value)}
+            placeholder={t('mobile.chat.renamePlaceholder')}
+            aria-label={t('mobile.chat.renamePlaceholder')}
+            data-testid="session-rename-input"
+            className="min-h-[44px] w-full rounded-xl border border-[var(--border-color)] bg-[var(--bg-main)] px-3 py-2.5 text-[15px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-secondary)]"
+          />
+          <div className="mt-3 flex justify-end gap-2">
+            <button
+              type="button"
+              data-testid="session-rename-cancel"
+              onClick={() => setRenameFor(null)}
+              className="flex min-h-[44px] items-center rounded-xl border border-[var(--border-color)] px-4 text-sm text-[var(--text-primary)] active:bg-[var(--bg-hover)]"
+            >
+              {t('mobile.common.cancel')}
+            </button>
+            <button
+              type="button"
+              data-testid="session-rename-confirm"
+              disabled={renameDraft.trim() === ''}
+              onClick={() => {
+                void submitRename();
+              }}
+              className="flex min-h-[44px] items-center rounded-xl bg-[var(--color-primary)] px-4 text-sm text-black active:opacity-80 disabled:opacity-40"
+            >
+              {t('mobile.chat.renameSave')}
+            </button>
+          </div>
+        </BottomSheet>
+      ) : null}
+      {deleteFor ? (
+        <BottomSheet title={t('mobile.chat.deleteTitle')} onClose={() => setDeleteFor(null)}>
+          <p data-testid="session-delete-body" className="text-sm leading-relaxed text-[var(--text-secondary)]">
+            {t('mobile.chat.deleteBody')}
+          </p>
+          <div className="mt-3 flex justify-end gap-2">
+            <button
+              type="button"
+              data-testid="session-delete-cancel"
+              onClick={() => setDeleteFor(null)}
+              className="flex min-h-[44px] items-center rounded-xl border border-[var(--border-color)] px-4 text-sm text-[var(--text-primary)] active:bg-[var(--bg-hover)]"
+            >
+              {t('mobile.common.cancel')}
+            </button>
+            <button
+              type="button"
+              data-testid="session-delete-confirm"
+              onClick={() => {
+                void confirmDelete();
+              }}
+              className="flex min-h-[44px] items-center rounded-xl bg-red-100 px-4 text-sm text-red-700 active:bg-red-200"
+            >
+              {t('mobile.chat.deleteConfirm')}
+            </button>
+          </div>
+        </BottomSheet>
+      ) : null}
     </div>
   );
 }
@@ -201,8 +376,8 @@ function messageText(message: ChatMessageView): string {
 function MessageRow({ message, onOpenFile }: { message: ChatMessageView; onOpenFile: (filePath: string) => boolean }): JSX.Element {
   if (message.role === 'user') {
     return (
-      <div className="mb-3 flex justify-end">
-        <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl bg-[var(--color-primary)] px-3.5 py-2.5 text-[15px] text-black" data-testid="chat-user-message">
+      <div className="twin-message flex justify-end">
+        <div className="twin-message-user whitespace-pre-wrap break-words" data-testid="chat-user-message">
           {/* Display-only mapping (wechatEmojiDisplay.ts); catalog emoji
               render as bundled Twemoji images (alt = codepoint). */}
           <TwemojiText text={mapWechatBracketCodesForDisplay(message.text)} />
@@ -212,8 +387,8 @@ function MessageRow({ message, onOpenFile }: { message: ChatMessageView; onOpenF
   }
   if (message.role === 'error') {
     return (
-      <div className="mb-3 flex justify-start">
-        <div className="w-full whitespace-pre-wrap break-words rounded-2xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-700" data-testid="error-bubble">
+      <div className="twin-message flex justify-start">
+        <div className="twin-message-error whitespace-pre-wrap break-words" data-testid="error-bubble">
           {/* Display-only mapping (wechatEmojiDisplay.ts); catalog emoji
               render as bundled Twemoji images (alt = codepoint). Same
               display convention as the user/assistant bubbles. */}
@@ -224,8 +399,8 @@ function MessageRow({ message, onOpenFile }: { message: ChatMessageView; onOpenF
   }
   if (message.role === 'system') {
     return (
-      <div className="mb-3 flex justify-start">
-        <div className="w-full whitespace-pre-wrap break-words rounded-xl border border-[var(--border-color)] bg-[var(--bg-panel)] px-3 py-2 text-xs leading-5 text-[var(--text-secondary)]" data-testid="system-notice">
+      <div className="twin-message flex justify-start">
+        <div className="twin-message-system whitespace-pre-wrap break-words" data-testid="system-notice">
           {/* Display-only mapping (wechatEmojiDisplay.ts); catalog emoji
               render as bundled Twemoji images (alt = codepoint). Same
               display convention as the user/assistant bubbles. */}
@@ -235,8 +410,8 @@ function MessageRow({ message, onOpenFile }: { message: ChatMessageView; onOpenF
     );
   }
   return (
-    <div className="mb-3 flex justify-start">
-      <div className="max-w-[90%] rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] px-3.5 py-2.5">
+    <div className="twin-message flex justify-start">
+      <div className="twin-message-assistant">
         {/* Display-only mapping (wechatEmojiDisplay.ts); emojiImages renders
             catalog emoji as bundled Twemoji artwork inside the markdown. */}
         <MarkdownContent content={mapWechatBracketCodesForDisplay(message.text)} chatExperienceMode="assistant" compact onOpenLocalFile={onOpenFile} emojiImages />
@@ -296,6 +471,11 @@ export default function ChatScreen(props: {
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   // Refs (caret notes: emojiTextInsert.ts).
   const listRef = useRef<HTMLDivElement | null>(null);
+  // Scroll guard (autoScroll.ts): follow new content only while the
+  // viewport hugs the transcript bottom; reading history keeps the scroll
+  // position frozen and shows the "new messages" pill instead.
+  const stickToBottomRef = useRef(true);
+  const [showNewMessages, setShowNewMessages] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const pendingCaretRef = useRef<number | null>(null);
   const keyboardInset = useKeyboardInset();
@@ -340,10 +520,38 @@ export default function ChatScreen(props: {
     },
   });
 
+  // Track stickiness on user scroll: leaving the near-bottom zone releases
+  // auto-follow; returning to it re-arms follow and dismisses the pill.
   useEffect(() => {
     const list = listRef.current;
-    if (list) list.scrollTop = list.scrollHeight;
+    if (!list) return;
+    const onScroll = () => {
+      const near = isNearBottom(list);
+      stickToBottomRef.current = near;
+      if (near) setShowNewMessages(false);
+    };
+    list.addEventListener('scroll', onScroll, { passive: true });
+    return () => list.removeEventListener('scroll', onScroll);
+  }, []);
+  // Auto-scroll on message/streaming updates, guarded by stickiness: near
+  // the bottom this preserves the original follow exactly; further up the
+  // position must not move at all — only flag the pill.
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    if (stickToBottomRef.current) {
+      list.scrollTop = list.scrollHeight;
+    } else {
+      setShowNewMessages(true);
+    }
   }, [chat.messages, chat.isStreaming]);
+  const scrollToLatest = () => {
+    const list = listRef.current;
+    if (!list) return;
+    stickToBottomRef.current = true;
+    setShowNewMessages(false);
+    list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' });
+  };
   useEffect(() => setPreviewPath(null), [chat.sessionId]);
 
   // Insertion point: DOM selection (focused) / pending caret / end.
@@ -384,19 +592,23 @@ export default function ChatScreen(props: {
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      {/* A2 (UE rework 2026-10-29): the in-conversation MetaBot switcher tab
-          strip is gone — a conversation belongs to exactly one Bot, so the
-          header is just that Bot's avatar next to the title. Bots are chosen
-          when STARTING a conversation (drawer → New chat → picker). */}
-      <div className="flex items-center gap-2 border-b border-[var(--border-color)] bg-[var(--bg-panel)] px-2 py-1.5">
-        <button type="button" onClick={() => setDrawerOpen(true)} aria-label={t('mobile.chat.drawerTitle')} className="flex min-h-[44px] min-w-[44px] items-center justify-center text-[var(--text-primary)] active:bg-[var(--bg-hover)]">
+    <div className="twin-page">
+      <div className="twin-topbar">
+        <button type="button" onClick={() => setDrawerOpen(true)} aria-label={t('mobile.chat.drawerTitle')} className="twin-icon-button">
           <Bars3Icon className="h-6 w-6" aria-hidden />
         </button>
-        <BotAvatar name={headerBot.name} avatar={headerBot.avatar} size={32} testId="chat-header-avatar" />
-        <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-[var(--text-primary)]" data-testid="chat-header-title">
-          {chat.sessionTitle ?? t('mobile.chat.title')}
-        </h1>
+        <div className="twin-chat-identity">
+          <BotAvatar name={headerBot.name} avatar={headerBot.avatar} size={34} testId="chat-header-avatar" />
+          <div className="twin-chat-identity-copy">
+            <span className="twin-chat-bot-name">{headerBot.name ?? t('mobile.chat.title')}</span>
+            <h1 className="twin-chat-session-name" data-testid="chat-header-title">
+              {chat.sessionTitle ?? t('mobile.chat.title')}
+            </h1>
+          </div>
+        </div>
+        <button type="button" onClick={() => setPickerOpen(true)} aria-label={t('mobile.chat.newChat')} className="twin-icon-button">
+          <PlusIcon className="h-6 w-6" aria-hidden />
+        </button>
       </div>
 
       {props.botsError ? (
@@ -410,31 +622,47 @@ export default function ChatScreen(props: {
         </div>
       ) : null}
 
-      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
-        {chat.hasMoreHistory ? (
-          <button type="button" onClick={() => void chat.loadEarlierMessages()} className="mb-3 min-h-[36px] w-full rounded-lg border border-[var(--border-color)] text-xs text-[var(--text-secondary)]">
-            {t('mobile.chat.loadEarlier')}
-          </button>
-        ) : null}
-        {chat.messages.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
-            <p className="text-base font-semibold text-[var(--text-primary)]">
-              {chat.restoring ? t('mobile.common.loading') : t('mobile.chat.emptyTitle')}
+      {/* Relative wrapper anchors the floating new-messages pill to the
+          transcript's bottom edge (just above the composer). */}
+      <div className="relative min-h-0 flex-1">
+        <div ref={listRef} className="twin-scroll h-full px-4 py-4">
+          {chat.hasMoreHistory ? (
+            <button type="button" onClick={() => void chat.loadEarlierMessages()} className="twin-button twin-button-secondary twin-button-full mb-3">
+              {t('mobile.chat.loadEarlier')}
+            </button>
+          ) : null}
+          {chat.messages.length === 0 ? (
+            <div className="twin-empty h-full">
+              <p className="twin-empty-title">
+                {chat.restoring ? t('mobile.common.loading') : t('mobile.chat.emptyTitle')}
+              </p>
+              {!chat.restoring ? <p className="twin-empty-copy">{t('mobile.chat.emptyBody')}</p> : null}
+            </div>
+          ) : (
+            chat.messages.map((message) => <MessageRow key={message.id} message={message} onOpenFile={openPreview} />)
+          )}
+          {turnPhase !== 'idle' && turnPhase !== 'completed' ? (
+            <p className="px-2 py-1 text-xs text-[var(--text-secondary)]" data-testid="turn-phase">
+              {t(`mobile.chat.phase.${turnPhase}`)}
             </p>
-            {!chat.restoring ? <p className="text-sm text-[var(--text-secondary)]">{t('mobile.chat.emptyBody')}</p> : null}
-          </div>
-        ) : (
-          chat.messages.map((message) => <MessageRow key={message.id} message={message} onOpenFile={openPreview} />)
-        )}
-        {turnPhase !== 'idle' && turnPhase !== 'completed' ? (
-          <p className="px-2 py-1 text-xs text-[var(--text-secondary)]" data-testid="turn-phase">
-            {t(`mobile.chat.phase.${turnPhase}`)}
-          </p>
+          ) : null}
+        </div>
+        {showNewMessages ? (
+          <button
+            type="button"
+            onClick={scrollToLatest}
+            aria-label={t('mobile.chat.newMessages')}
+            data-testid="chat-new-messages-pill"
+            className="twin-chip absolute bottom-3 left-1/2 z-10 -translate-x-1/2 gap-1.5 px-4 shadow-lg"
+          >
+            <ArrowDownIcon className="h-4 w-4" aria-hidden />
+            {t('mobile.chat.newMessages')}
+          </button>
         ) : null}
       </div>
 
       {chat.pendingPermissionCount > 0 && !chat.permission ? (
-        <button type="button" onClick={chat.reopenPermissions} className="mx-3 mb-2 min-h-[44px] rounded-xl border border-[var(--color-primary)] px-3 text-sm text-[var(--text-primary)]">
+        <button type="button" onClick={chat.reopenPermissions} className="twin-button twin-button-secondary mx-3 mb-2">
           {t('mobile.chat.actionRequired', { count: chat.pendingPermissionCount })}
         </button>
       ) : null}
@@ -442,20 +670,20 @@ export default function ChatScreen(props: {
       <ToolCallList chat={chat} />
 
       {chat.quotaExhausted ? (
-        <div className="mx-3 mb-2 rounded-2xl border border-amber-300 bg-amber-50 p-3" data-testid="quota-card">
-          <p className="text-sm font-semibold text-amber-800">
+        <div className="twin-notice twin-notice-warning mx-3 mb-2" data-testid="quota-card">
+          <p className="text-sm font-semibold">
             {t(chat.quotaKind === 'purchased' ? 'mobile.chat.quotaTitlePurchased' : 'mobile.chat.quotaTitleFree')}
           </p>
-          <p className="mb-2 text-sm text-amber-700">
+          <p className="mb-2 text-sm">
             {t(chat.quotaKind === 'purchased' ? 'mobile.chat.quotaBodyPurchased' : 'mobile.chat.quotaBodyFree')}
           </p>
           <div className="flex gap-2">
             {props.rechargeAllowed !== false ? (
-              <button type="button" onClick={props.onOpenRecharge} className="min-h-[44px] flex-1 rounded-xl bg-[var(--color-primary)] px-3 py-2 text-sm font-medium text-black active:opacity-80">
+              <button type="button" onClick={props.onOpenRecharge} className="twin-button twin-button-primary flex-1">
                 {t('mobile.chat.quotaRecharge')}
               </button>
             ) : null}
-            <button type="button" onClick={chat.dismissQuota} className="min-h-[44px] rounded-xl border border-amber-300 px-3 py-2 text-sm text-amber-800 active:bg-amber-100">
+            <button type="button" onClick={chat.dismissQuota} className="twin-button twin-button-secondary">
               {t('mobile.chat.quotaDismiss')}
             </button>
           </div>
@@ -464,13 +692,13 @@ export default function ChatScreen(props: {
 
       <SubmissionStatus chat={chat} />
 
-      <div className="shrink-0 border-t border-[var(--border-color)] bg-[var(--bg-panel)] px-3 pt-2" style={{ paddingBottom: `calc(max(env(safe-area-inset-bottom), ${keyboardInset}px) + 8px)` }}>
+      <div className="twin-composer-zone" style={{ paddingBottom: `calc(max(env(safe-area-inset-bottom), ${keyboardInset}px) + 8px)` }}>
         {emojiPanelOpen ? (
           <EmojiPickerPanel onSelect={insertEmoji} onClose={() => setEmojiPanelOpen(false)} />
         ) : null}
         <ChatComposerAttachments chat={chat} />
         <VoiceErrorBanner state={voice.state} onDismiss={voice.dismissError} />
-        <div className="flex items-end gap-2">
+        <div className="twin-composer">
           <button
             type="button"
             onClick={() => setEmojiPanelOpen((open) => !open)}
@@ -478,7 +706,7 @@ export default function ChatScreen(props: {
             aria-expanded={emojiPanelOpen}
             aria-haspopup="dialog"
             aria-controls="mobile-chat-emoji-panel"
-            className="flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-xl border border-[var(--border-color)] text-[var(--text-primary)] active:bg-[var(--bg-hover)]"
+            className="twin-icon-button twin-composer-accessory"
           >
             <FaceSmileIcon className="h-5 w-5" aria-hidden />
           </button>
@@ -487,7 +715,7 @@ export default function ChatScreen(props: {
             onClick={() => void chat.pickAttachments()}
             disabled={!canAttach}
             aria-label={t('mobile.chat.addAttachment')}
-            className="flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-xl border border-[var(--border-color)] text-[var(--text-primary)] active:bg-[var(--bg-hover)] disabled:opacity-40"
+            className="twin-icon-button twin-composer-accessory"
           >
             <PaperClipIcon className="h-5 w-5" aria-hidden />
           </button>
@@ -499,7 +727,7 @@ export default function ChatScreen(props: {
             onFocus={() => setEmojiPanelOpen(false)}
             placeholder={t('mobile.chat.composerPlaceholder')}
             rows={1}
-            className="max-h-32 min-h-[44px] flex-1 resize-none rounded-xl border border-[var(--border-color)] bg-[var(--bg-main)] px-3 py-2.5 text-[15px] text-[var(--text-primary)] outline-none"
+            className="twin-composer-input max-h-32 resize-none"
           />
           {chat.isStreaming ? (
             <button
@@ -507,7 +735,7 @@ export default function ChatScreen(props: {
               onClick={() => void chat.stop()}
               disabled={turnPhase === 'stopping'}
               aria-label={t('mobile.chat.stop')}
-              className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl bg-red-100 px-3 text-red-700 active:bg-red-200 disabled:opacity-40"
+              className="twin-icon-button twin-icon-button-danger"
             >
               <StopIcon className="h-5 w-5" aria-hidden />
             </button>
@@ -517,7 +745,7 @@ export default function ChatScreen(props: {
             onClick={submit}
             disabled={!canSubmit}
             aria-label={t('mobile.chat.send')}
-            className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl bg-[var(--color-primary)] px-3 text-black active:opacity-80 disabled:opacity-40"
+            className="twin-icon-button twin-icon-button-primary"
           >
             <PaperAirplaneIcon className="h-5 w-5" aria-hidden />
           </button>

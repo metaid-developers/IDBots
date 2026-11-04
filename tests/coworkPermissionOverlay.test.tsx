@@ -140,17 +140,37 @@ test('overlay renders the destructive allow label for safety approvals', () => {
   assert.ok(markup.includes(i18nService.t('coworkDeny')), 'deny action rendered');
 });
 
-test('overlay shows the first prompt that has no inline seat when several queue up', () => {
+test('overlay skips the open chat composer seat and still shows a later prompt for that chat', () => {
   const markup = renderOverlay(
     [
       permission({ sessionId: 'sess-open', requestId: 'req-open', toolName: 'Read' }),
-      permission({ sessionId: 'sess-hidden-1', requestId: 'req-hidden', toolName: 'Write' }),
+      permission({ sessionId: 'sess-open', requestId: 'req-open-2', toolName: 'Write', toolInput: { file_path: 'later-card.txt' } }),
     ],
     'sess-open',
+    [sessionSummary({ id: 'sess-open', sessionType: 'standard', title: 'Open chat' })],
   );
 
-  assert.ok(markup.includes('Write'), 'uncovered prompt rendered');
-  assert.ok(!markup.includes('Read'), 'inline-covered prompt not duplicated');
+  assert.ok(!markup.includes('>Read<') && !markup.includes('Read:'), 'composer seat is not duplicated');
+  assert.ok(!markup.includes('Read'), 'the first open-chat prompt stays in the composer');
+  assert.ok(markup.includes('later-card.txt'), 'a later prompt for the open chat still reaches the corner');
+});
+
+test('overlay shows every uncovered prompt, top to bottom, instead of keeping only the first', () => {
+  const markup = renderOverlay(
+    [
+      permission({ sessionId: 'sess-hidden-1', requestId: 'req-a', toolName: 'Write' }),
+      permission({ sessionId: 'sess-hidden-2', requestId: 'req-b', toolName: 'Bash', toolInput: { command: 'echo second-card' } }),
+    ],
+    'sess-open',
+    [
+      sessionSummary({ id: 'sess-hidden-1', title: 'First background' }),
+      sessionSummary({ id: 'sess-hidden-2', title: 'Second background' }),
+    ],
+  );
+
+  assert.ok(markup.includes('Write'), 'first uncovered prompt rendered');
+  assert.ok(markup.includes('echo second-card'), 'second uncovered prompt rendered beside it');
+  assert.ok(markup.includes('First background') && markup.includes('Second background'), 'each card keeps its session title');
 });
 
 /**
@@ -180,26 +200,36 @@ const friendInvitePermission = () => permission({
   },
 });
 
-test('A2A friend-invite approval renders in the overlay while that A2A chat is the open session', () => {
+test('A2A friend-invite approval leaves the overlay while that A2A chat is the open session', () => {
   const markup = renderOverlay(
     [friendInvitePermission()],
     'sess-a2a-invite',
     [sessionSummary({ id: 'sess-a2a-invite', sessionType: 'a2a', title: 'AI_Sunny' })],
   );
 
-  assert.ok(markup.includes('data-cowork-permission-overlay="true"'), 'invite overlay rendered for the open A2A session');
+  assert.equal(markup, '', 'the open A2A chat seats the invite at the bottom, not in the corner');
+});
+
+test('A2A friend-invite approval stays in the overlay when another chat is open', () => {
+  const markup = renderOverlay(
+    [friendInvitePermission()],
+    'sess-other',
+    [
+      sessionSummary({ id: 'sess-a2a-invite', sessionType: 'a2a', title: 'AI_Sunny' }),
+      sessionSummary({ id: 'sess-other', title: 'Other chat' }),
+    ],
+  );
+
+  assert.ok(markup.includes('data-cowork-permission-overlay="true"'), 'invite overlay rendered away from its conversation');
   assert.ok(markup.includes('互加好友'), 'invite question rendered as the summary');
-  // The invite context carries friend-action fields, not safety-tool fields
-  // (requestedToolName/requestedToolInput), so the plain allow-once label —
-  // not the destructive allow — is the correct render, matching production.
   assert.ok(markup.includes(i18nService.t('coworkApprovalAllowOnce')), 'plain allow-once action rendered');
   assert.ok(markup.includes(i18nService.t('coworkDeny')), 'deny action rendered');
 });
 
-test('A2A invite approval still renders when the sessions list has not loaded (currentSession fallback)', () => {
+test('A2A invite approval leaves the overlay when currentSession identifies the open A2A chat', () => {
   // List-reload gap: the open A2A chat is missing from state.cowork.sessions
-  // but is loaded as currentSession. Skipping the prompt here would leave it
-  // with no render seat anywhere — the invisible-dialog defect class.
+  // but is loaded as currentSession. The bottom bar is the seat, so the
+  // corner must not also render the same invite.
   const markup = renderOverlay(
     [friendInvitePermission()],
     'sess-a2a-invite',
@@ -207,6 +237,56 @@ test('A2A invite approval still renders when the sessions list has not loaded (c
     sessionSummary({ id: 'sess-a2a-invite', sessionType: 'a2a', title: 'AI_Sunny' }),
   );
 
-  assert.ok(markup.includes('data-cowork-permission-overlay="true"'), 'overlay rendered via the currentSession fallback');
-  assert.ok(markup.includes('互加好友'), 'invite question rendered');
+  assert.equal(markup, '', 'currentSession fallback still recognizes the in-conversation seat');
+});
+
+/**
+ * S6 final-verification defect #4 (deny-arm visibility): the real device
+ * found no CLEARLY visible deny entry on the friend authorization card,
+ * leaving the reject branch untestable. The friend card must render an
+ * unmistakable side-by-side 允许/拒绝 pair — its own header as the title and
+ * an explicitly red-styled deny — while generic prompts keep their original
+ * subtle styling byte-for-byte.
+ */
+test('friend-action card: clear side-by-side allow/deny pair, header title, explicit deny styling', () => {
+  const markup = renderOverlay(
+    [friendInvitePermission()],
+    'sess-other',
+    [sessionSummary({ id: 'sess-a2a-invite', sessionType: 'a2a', title: 'AI_Sunny' })],
+  );
+
+  assert.ok(markup.includes('data-friend-action-card="invite"'), 'friend card is marked for styling');
+  assert.ok(markup.includes('好友确认'), 'friend card title renders the question header, not the generic title');
+  assert.ok(!markup.includes(i18nService.t('coworkGlobalPermissionTitle')), 'generic title is replaced on the friend card');
+  // Both actions visible side by side in the same action row.
+  const denyLabel = i18nService.t('coworkDeny');
+  const allowLabel = i18nService.t('coworkApprovalAllowOnce');
+  assert.ok(markup.includes(denyLabel), 'deny action rendered');
+  assert.ok(markup.includes(allowLabel), 'allow action rendered');
+  const actionRowStart = markup.indexOf('data-friend-action-card="invite"');
+  const denyIndex = markup.indexOf(denyLabel, actionRowStart);
+  const allowIndex = markup.indexOf(allowLabel, actionRowStart);
+  assert.ok(denyIndex > actionRowStart && allowIndex > denyIndex, 'deny and allow sit side by side inside the friend action row');
+  // The deny arm must be visible WITHOUT hover: explicit red border+text.
+  const denyButtonStart = markup.lastIndexOf('<button', denyIndex);
+  const denyButtonMarkup = markup.slice(denyButtonStart, denyIndex);
+  assert.ok(denyButtonMarkup.includes('border-red-300'), 'deny carries a visible red border');
+  assert.ok(denyButtonMarkup.includes('text-red-600'), 'deny carries visible red text');
+  assert.ok(denyButtonMarkup.includes('font-semibold'), 'deny is bolded for prominence');
+});
+
+test('generic prompts keep the original subtle deny styling and generic title', () => {
+  const markup = renderOverlay(
+    [permission()],
+    'sess-current',
+    [sessionSummary()],
+  );
+
+  assert.ok(!markup.includes('data-friend-action-card='), 'generic prompt is not marked as a friend card');
+  assert.ok(markup.includes(i18nService.t('coworkGlobalPermissionTitle')), 'generic title kept');
+  const denyLabel = i18nService.t('coworkDeny');
+  const denyIndex = markup.indexOf(denyLabel);
+  const denyButtonMarkup = markup.slice(markup.lastIndexOf('<button', denyIndex), denyIndex);
+  assert.ok(denyButtonMarkup.includes('border-claude-border'), 'generic deny keeps the subtle outline');
+  assert.ok(!denyButtonMarkup.includes('border-red-300'), 'generic deny does not take the friend-card red styling');
 });

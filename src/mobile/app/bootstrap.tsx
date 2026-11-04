@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import '@/index.css';
+import './twin-ui.css';
 import MobileApp from './MobileApp';
 import { initSystemThemeListener, loadSettings } from './services/settings';
 

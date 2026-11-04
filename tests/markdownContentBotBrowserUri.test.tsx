@@ -155,6 +155,27 @@ test('session deep links (idbots://session/<id>) keep their href and render clic
   assert.match(markup, /href="idbots:\/\/session\//);
 });
 
+test('bare IDBots://<sessionId> markdown links keep their href and render clickable', () => {
+  // The canonical user-facing form (copy-session-link menu, cross-session
+  // refs, bot instructions) — the click must dispatch cowork:viewSession via
+  // the shared deep-link path, not land on the "Unsupported idbots:// link"
+  // console warning.
+  const markup = renderToStaticMarkup(
+    React.createElement(MarkdownContent, {
+      content: '[聊天 NFT 卡片会话](IDBots://2799a548-f81c-4cf0-a664-eaebe5236c1b)',
+    }),
+  );
+  assert.match(markup, /href="IDBots:\/\/2799a548-f81c-4cf0-a664-eaebe5236c1b"/);
+});
+
+test('bare IDBots://<sessionId> in plain text is linkified like agent internet URIs', () => {
+  const output = linkifyAgentInternetUris('see IDBots://2799a548-f81c-4cf0-a664-eaebe5236c1b for the NFT cards.');
+  assert.match(output, /\[IDBots:\/\/2799a548-f81c-4cf0-a664-eaebe5236c1b\]\(IDBots:\/\/2799a548-f81c-4cf0-a664-eaebe5236c1b\) for/);
+  // Already a markdown link destination — not double-wrapped.
+  const linked = linkifyAgentInternetUris('[jump](IDBots://2799a548-f81c-4cf0-a664-eaebe5236c1b)');
+  assert.equal((linked.match(/\[jump\]\(IDBots:\/\/2799a548-f81c-4cf0-a664-eaebe5236c1b\)/g) || []).length, 1);
+});
+
 test('bare session deep links are linkified like agent internet URIs', () => {
   const output = linkifyAgentInternetUris('see idbots://session/abc-123_456 for the full briefing.');
   assert.match(output, /\[idbots:\/\/session\/abc-123_456\]\(idbots:\/\/session\/abc-123_456\) for/);

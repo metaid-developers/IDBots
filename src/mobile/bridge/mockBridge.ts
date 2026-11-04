@@ -258,6 +258,10 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
 
   // ---------------------------------------------------------------- sessions
   const sessions = new Map<string, MockCoworkSession>();
+  // Archived rows (archiveSession): hidden from the active list, restorable
+  // via unarchiveSession — mirrors the main-process reversibility contract
+  // ("hard delete is intentionally not exposed").
+  const archivedSessions = new Map<string, MockCoworkSession>();
   const liveMessages = new Map<string, MockCoworkMessage>(); // key: sessionId + messageId
   let sessionSeq = 0;
   let messageSeq = 0;
@@ -575,6 +579,44 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
       guardOnline(async () => ({
         success: true,
         sessions: [...sessions.values()].map(summaryOf),
+      })),
+    // Session management (drawer rename/delete, 2026-11-02). These mirror
+    // the real allowlisted channels (cowork:session:rename / :archive /
+    // :unarchive / :listArchived) so the mobile drawer exercises the same
+    // semantics against the mock: rename trims and must be non-empty; the
+    // drawer's "delete" is ARCHIVE — the row leaves the active list but the
+    // record survives and unarchiveSession restores it.
+    renameSession: (options: { sessionId: string; title: string }) =>
+      guardOnline(async () => {
+        const session = sessions.get(options.sessionId);
+        if (!session) return { success: false, error: 'session not found' };
+        const normalized = options.title.trim();
+        if (!normalized) return { success: false, error: 'title must be non-empty' };
+        session.title = normalized;
+        session.updatedAt = now();
+        emitter.emit('cowork:stream:sessionTitle', { sessionId: session.id, title: normalized });
+        return { success: true };
+      }),
+    archiveSession: (sessionId: string) =>
+      guardOnline(async () => {
+        const session = sessions.get(sessionId);
+        if (!session) return { success: false, error: 'session not found' };
+        sessions.delete(sessionId);
+        archivedSessions.set(sessionId, session);
+        return { success: true };
+      }),
+    unarchiveSession: (sessionId: string) =>
+      guardOnline(async () => {
+        const session = archivedSessions.get(sessionId);
+        if (!session) return { success: false, error: 'session not found' };
+        archivedSessions.delete(sessionId);
+        sessions.set(sessionId, session);
+        return { success: true };
+      }),
+    listArchivedSessions: (_options?: unknown) =>
+      guardOnline(async () => ({
+        success: true,
+        sessions: [...archivedSessions.values()].map(summaryOf),
       })),
     stopSession: (sessionId: string) =>
       guardOnline(async () => {

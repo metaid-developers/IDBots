@@ -132,7 +132,7 @@ export default function MobileApp(): JSX.Element {
 
   return (
     <div
-      className="flex h-[100dvh] flex-col bg-[var(--bg-main)] text-[var(--text-primary)]"
+      className="twin-page h-[100dvh]"
       style={{ paddingTop: 'env(safe-area-inset-top)' }}
     >
       <ConnectionBanner />

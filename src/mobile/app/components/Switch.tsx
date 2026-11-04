@@ -8,15 +8,9 @@ export function Switch(props: { checked: boolean; onChange: (checked: boolean) =
       aria-label={props.label}
       disabled={props.disabled}
       onClick={() => props.onChange(!props.checked)}
-      className={`relative h-7 w-12 min-w-[48px] rounded-full transition-colors ${
-        props.checked ? 'bg-[var(--color-primary)]' : 'bg-[var(--border-color)]'
-      }`}
+      className={`twin-switch ${props.checked ? 'twin-switch-on' : ''}`}
     >
-      <span
-        className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition-all ${
-          props.checked ? 'left-[24px]' : 'left-0.5'
-        }`}
-      />
+      <span className="twin-switch-thumb" />
     </button>
   );
 }

@@ -138,6 +138,8 @@ const IDENTITY_INVOKE: Record<string, AllowlistEntry> = {
   'idbots:createMetaBotOnChain': { tier: 'P1', timeoutMs: 300_000, note: '`02`/C2 Limits: timeout 300 s.' },
   'idbots:getAddressBalance': { tier: 'P1' },
   'idbots:getMetabotWalletAssets': { tier: 'P1' },
+  'idbots:getMetabotNfts': { tier: 'P1' },
+  'idbots:healNftCard': { tier: 'P1', note: 're-resolves one NFT card artwork URL (read + local cache update, no funds).' },
   'idbots:getOfficialSkillsStatus': { tier: 'P1' },
   'idbots:getCommunitySkillsStatus': { tier: 'P1' },
   'idbots:installOfficialSkill': { tier: 'P1' },
@@ -154,6 +156,8 @@ const IDENTITY_INVOKE: Record<string, AllowlistEntry> = {
   'idbots:getTokenTransferFeeSummary': { tier: 'P2', note: '`02`: read-only preview.' },
   'idbots:executeTransfer': { tier: 'N', note: '`02`: moving funds out of custodial wallets needs SMS re-verification; later release.' },
   'idbots:executeTokenTransfer': { tier: 'N', note: '`02`: moving funds out of custodial wallets needs SMS re-verification; later release.' },
+  'idbots:transferMetabotMvcNft': { tier: 'N', note: '`02`: moving funds out of custodial wallets needs SMS re-verification; later release.' },
+  'idbots:transferMetabotMrc721': { tier: 'N', note: '`02`: moving funds out of custodial wallets needs SMS re-verification; later release.' },
   'idbots:getMetaBotMnemonic': { tier: 'H', note: '`02`: C2 sensitive route only, never over the WebSocket.' },
   'idbots:restoreMetaBotFromMnemonic': { tier: 'N', note: '`02`: mnemonic input over the socket; later release.' },
   'userIdentity:get': { tier: 'P1' },
@@ -250,6 +254,7 @@ const FEATURES_UTIL_INVOKE: Record<string, AllowlistEntry> = {
   'openTeamCollab:list': { tier: 'P2' },
   'openTeamCollab:listGuestInvites': { tier: 'P2' },
   'openTeamCollab:listMessages': { tier: 'P2' },
+  'openTeamCollab:getMembers': { tier: 'P2', note: 'read-only member roster for one collab (renderer sidebar).' },
   'metawebStudy:list': { tier: 'P2' },
   'dream:getStatus': { tier: 'P2' },
   'dream:listRuns': { tier: 'P2' },
@@ -275,6 +280,24 @@ const FEATURES_UTIL_INVOKE: Record<string, AllowlistEntry> = {
   'im:gateway:start': { tier: 'P2', note: '`02`: answer permission requests through Feishu/DingTalk while the phone is closed.' },
   'im:gateway:stop': { tier: 'P2', note: '`02`: answer permission requests through Feishu/DingTalk while the phone is closed.' },
   'im:gateway:test': { tier: 'P2', note: '`02`: answer permission requests through Feishu/DingTalk while the phone is closed.' },
+  'im:weixin:login:start': { tier: 'P2' },
+  'im:weixin:login:cancel': { tier: 'P2' },
+  'im:weixin:credentials:check': { tier: 'P2' },
+  // QQ: the QR payload and AppID are identifiers; the AppSecret is accepted only
+  // on the write path and is stored 0600, never readable back over IPC.
+  'im:qq:login:start': { tier: 'P2' },
+  'im:qq:login:cancel': { tier: 'P2' },
+  'im:qq:credentials:check': { tier: 'P2' },
+  'im:qq:credentials:set': { tier: 'P2', note: 'write-only AppSecret; no read-back channel exists.' },
+  // QQ group candidates: the ids of groups that messaged the bot while NOT
+  // allowlisted. These are channel state (ids, timestamps, an optional group
+  // name) — reading them grants nothing, and none of these channels can add a
+  // group to the allowlist: that still goes through the existing
+  // `im:config:set` path, which requires the full QQ config object.
+  'im:qq:groups:candidates:list': { tier: 'P2', note: 'read-only: recorded group ids + counters; no secret.' },
+  'im:qq:groups:candidates:dismiss': { tier: 'P2', note: 'marks a candidate ignored; never grants access.' },
+  'im:qq:groups:candidates:restore': { tier: 'P2', note: 'undoes an ignore; never grants access.' },
+  'im:qq:groups:candidates:name': { tier: 'P2', note: 'optional platform name lookup; returns nameStatus, never invents a name.' },
   'chainBackup:getState': { tier: 'P2' },
   'chainBackup:backup': { tier: 'P2', timeoutMs: 900_000, note: '`02`/C2 Limits: timeout 900 s.' },
   'chainBackup:restore': { tier: 'N', note: '`02`: needs mnemonic import; later release.' },
@@ -308,6 +331,7 @@ const FEATURES_UTIL_INVOKE: Record<string, AllowlistEntry> = {
   'app:setAutoLaunch': { tier: 'N', note: '`02`: desktop-only.' },
   'app:getExperimentalAutomation': { tier: 'N', note: '`02`: desktop-only.' },
   'app:setExperimentalAutomation': { tier: 'N', note: '`02`: desktop-only.' },
+  'app:getDataDirectory': { tier: 'N', note: 'feat/legacy-data-recovery ②: desktop Settings page data-directory visibility; desktop-only.' },
   'dailyReport:runNow': { tier: 'N', note: '`02`: desktop-only — spawns a local Twin report session.' },
 };
 

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -16,8 +17,9 @@ import { BotEditPage } from '../src/mobile/app/screens/me/BotEditPage.tsx';
 import { SkillsPage } from '../src/mobile/app/screens/me/SkillsPage.tsx';
 import { MemoryPage } from '../src/mobile/app/screens/me/MemoryPage.tsx';
 import { GeneralPage } from '../src/mobile/app/screens/me/GeneralPage.tsx';
-import { AccountPage } from '../src/mobile/app/screens/me/AccountPage.tsx';
+import { AccountDeleteSheet, AccountPage } from '../src/mobile/app/screens/me/AccountPage.tsx';
 import { AboutPage } from '../src/mobile/app/screens/me/AboutPage.tsx';
+import { mobileI18n } from '../src/mobile/i18n.ts';
 import type { MobileUserIdentity } from '../src/mobile/app/hooks/useIdentity.ts';
 
 /**
@@ -178,4 +180,103 @@ test('remaining secondary pages render their shells', () => {
   assert.match(about, /data-testid="about-link-terms"/);
   assert.match(about, /data-testid="about-link-privacy"/);
   assert.match(about, /data-testid="about-link-custody"/);
+});
+
+// --- account deletion typed-confirmation gate --------------------------------
+//
+// The delete sheet only renders after a tap, which SSR cannot produce, so the
+// sheet body is factored into the presentational AccountDeleteSheet and pinned
+// here directly (repo test stack is SSR-only, no jsdom). Language is set
+// explicitly per test and restored — mobileI18n is a process-wide singleton.
+
+type DeleteSheetProps = Parameters<typeof AccountDeleteSheet>[0];
+
+function renderDeleteSheet(confirmText: string, overrides: Partial<DeleteSheetProps> = {}): string {
+  return renderToStaticMarkup(
+    React.createElement(AccountDeleteSheet, {
+      busy: false,
+      done: false,
+      reason: '',
+      confirmText,
+      onReasonChange: () => undefined,
+      onConfirmTextChange: () => undefined,
+      onCancel: () => undefined,
+      onConfirm: () => undefined,
+      ...overrides,
+    }),
+  );
+}
+
+// The static-markup attribute form is ` disabled=""`; a bare /disabled/ would
+// vacuously match the tailwind class token `disabled:opacity-40` in class="…".
+const DISABLED_ATTR = /\sdisabled="/;
+
+function confirmButtonTag(html: string): string {
+  const match = html.match(/<button[^>]*data-testid="account-delete-confirm"[^>]*>/);
+  assert.ok(match, 'the delete confirm button must render');
+  return match[0];
+}
+
+test('delete sheet (zh): gate locked initially, prompt shows the exact phrase 「删除」', () => {
+  const previous = mobileI18n.getLanguage();
+  try {
+    mobileI18n.setLanguage('zh');
+    const closed = renderDeleteSheet('');
+    assert.match(confirmButtonTag(closed), DISABLED_ATTR);
+    assert.match(closed, /data-testid="account-delete-confirm-prompt"/);
+    assert.match(closed, /输入「删除」以确认删除。/);
+    assert.match(closed, /data-testid="account-delete-confirm-input"/);
+    assert.match(closed, /data-confirm-phrase="删除"/);
+    // The optional reason field still renders below the gate.
+    assert.match(closed, /删除原因（可选）/);
+  } finally {
+    mobileI18n.setLanguage(previous);
+  }
+});
+
+test('delete sheet (zh): only the exact phrase unlocks the confirm button', () => {
+  const previous = mobileI18n.getLanguage();
+  try {
+    mobileI18n.setLanguage('zh');
+    assert.doesNotMatch(confirmButtonTag(renderDeleteSheet('删除')), DISABLED_ATTR);
+    assert.match(confirmButtonTag(renderDeleteSheet('删除 ')), DISABLED_ATTR); // trailing space
+    assert.match(confirmButtonTag(renderDeleteSheet(' 删除')), DISABLED_ATTR); // leading space
+    assert.match(confirmButtonTag(renderDeleteSheet('删除删')), DISABLED_ATTR); // wrong text
+    // busy keeps the button locked even with a satisfied gate.
+    assert.match(confirmButtonTag(renderDeleteSheet('删除', { busy: true })), DISABLED_ATTR);
+  } finally {
+    mobileI18n.setLanguage(previous);
+  }
+});
+
+test('delete sheet (en): gate is exact and case-sensitive around "DELETE"', () => {
+  const previous = mobileI18n.getLanguage();
+  try {
+    mobileI18n.setLanguage('en');
+    const closed = renderDeleteSheet('');
+    assert.match(confirmButtonTag(closed), DISABLED_ATTR);
+    assert.match(closed, /data-testid="account-delete-confirm-prompt"/);
+    assert.match(closed, /Type .*DELETE.* to confirm deletion\./);
+    assert.match(closed, /data-confirm-phrase="DELETE"/);
+    assert.doesNotMatch(confirmButtonTag(renderDeleteSheet('DELETE')), DISABLED_ATTR);
+    assert.match(confirmButtonTag(renderDeleteSheet('Delete')), DISABLED_ATTR); // case mismatch
+    assert.match(confirmButtonTag(renderDeleteSheet('DELETE ')), DISABLED_ATTR); // trailing space
+  } finally {
+    mobileI18n.setLanguage(previous);
+  }
+});
+
+test('delete sheet wiring: gate resets on sheet open; deletion call sequence untouched', () => {
+  const source = readFileSync(
+    new URL('../src/mobile/app/screens/me/AccountPage.tsx', import.meta.url),
+    'utf8',
+  );
+  // Opening the delete sheet resets the typed confirmation (fail closed next time).
+  assert.match(source, /setConfirmText\(''\)/);
+  // The confirm button is gated on the typed phrase (in addition to busy).
+  assert.match(source, /disabled=\{props\.busy \|\| !gateSatisfied\}/);
+  // The deletion request call sequence is unchanged (reason still trimmed/optional).
+  assert.match(source, /requestAccountDeletion\(reason\.trim\(\) \|\| undefined\)/);
+  // Cancel still just closes the sheet — no deletion side effects on the cancel path.
+  assert.match(source, /onCancel=\{\(\) => setSheet\(null\)\}/);
 });

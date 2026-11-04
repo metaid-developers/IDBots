@@ -5,9 +5,11 @@
  * - following
  * - followers
  *
- * Data source is aligned with shownow production endpoints:
- * - /api/metaid/followingList/:metaid
- * - /api/metaid/followerList/:metaid
+ * Data source is the metaso-p2p aggregation layer (social_agg):
+ * - /api/social/globalmetaid/:id/followers
+ * - /api/social/globalmetaid/:id/following
+ * (the retired man.metaid.io /api/metaid/{follower,following}List routes went
+ * offline 2026-11-01)
  */
 export default class FetchUserListCommand {
   async execute({ payload = {}, delegate, userDelegate }) {
@@ -59,25 +61,23 @@ export default class FetchUserListCommand {
     var type = context.type;
     var cursor = context.cursor;
     var size = context.size;
-    var followDetail = context.followDetail;
     var delegate = context.delegate;
 
-    var endpointType = type === 'followers' ? 'follower' : 'following';
+    var endpointType = type === 'followers' ? 'followers' : 'following';
     var escapedMetaid = encodeURIComponent(metaid);
     var query = new URLSearchParams({
-      cursor: String(cursor),
+      cursor: String(cursor || ''),
       size: String(size),
-      followDetail: followDetail ? 'true' : 'false',
     }).toString();
 
+    // man.metaid.io's follow-list routes went offline 2026-11-01 (whole-site
+    // 502); the aggregation layer serves the same lists keyed by globalMetaId
+    // OR legacy hex metaId, cursor-paged, block-filtered. followDetail is not
+    // an aggregation-layer parameter and is dropped.
     var candidates = [
       {
-        service: 'metaid_man',
-        endpoint: '/api/metaid/' + endpointType + 'List/' + escapedMetaid + '?' + query,
-      },
-      {
-        service: 'man_api',
-        endpoint: '/metaid/' + endpointType + 'List/' + escapedMetaid + '?' + query,
+        service: 'social_agg',
+        endpoint: '/api/social/globalmetaid/' + escapedMetaid + '/' + endpointType + '?' + query,
       },
     ];
 
@@ -119,6 +119,19 @@ export default class FetchUserListCommand {
       data && data.cursor,
       data && data.lastId,
     ]);
+
+    // Opaque cursors (aggregation layer emits base64 strings, not numeric
+    // offsets): pass the token through and page while rows keep coming.
+    var opaqueCursor = nextCursorRaw && !/^\d+$/.test(nextCursorRaw) ? nextCursorRaw : '';
+    if (opaqueCursor) {
+      return {
+        list: list,
+        total: Math.max(total, list.length),
+        nextCursor: list.length > 0 ? opaqueCursor : '',
+        hasMore: list.length > 0,
+      };
+    }
+
     var nextCursor = this._normalizeCursor(nextCursorRaw, -1);
 
     var hasMore = false;
@@ -146,6 +159,8 @@ export default class FetchUserListCommand {
     var raw = item && typeof item === 'object' ? item : {};
 
     var metaid = this._pickFirstString([
+      // Aggregation-layer profile rows key on globalMetaId.
+      raw.globalMetaId,
       raw.metaid,
       raw.metaId,
       raw.metaID,
@@ -196,7 +211,7 @@ export default class FetchUserListCommand {
       raw.pinid,
     ]));
 
-    var followTime = Number(raw.followTime || raw.timestamp || raw.time || 0);
+    var followTime = Number(raw.followTime || raw.followedAt || raw.timestamp || raw.time || 0);
     if (!Number.isFinite(followTime) || followTime < 0) followTime = 0;
 
     var rowId = this._pickFirstString([
@@ -402,7 +417,7 @@ export default class FetchUserListCommand {
 
     if (text[0] === '/') {
       var serviceLocator = (typeof window !== 'undefined' && window.ServiceLocator) ? window.ServiceLocator : {};
-      var manBase = this._pickFirstString([serviceLocator.metaid_man, 'https://www.show.now/man']).replace(/\/+$/, '');
+      var manBase = this._pickFirstString([serviceLocator.metaid_man, 'https://manapi.metaid.io']).replace(/\/+$/, '');
       return manBase + text;
     }
     return text;

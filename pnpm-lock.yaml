@@ -21,7 +21,7 @@ overrides:
   rimraf: 2.7.1
 
 patchedDependencies:
-  '@openagentinternet/agent-browser-ui@0.7.1': 9bc86e4cfedb305cea89c05d308e58360829e31e549035fbf2e3d5e966b78816
+  '@openagentinternet/agent-browser-ui@0.9.0': 8c0bdf893d340bba98eadbe722b20b6ff45ccbe09e0da70e51c952dec1054780
 
 importers:
 
@@ -55,23 +55,29 @@ importers:
         specifier: ^4.1.1
         version: 4.1.1(typescript@5.9.3)
       '@openagentinternet/agent-browser-core':
-        specifier: 0.7.1
-        version: 0.7.1
+        specifier: 0.9.0
+        version: 0.9.0
       '@openagentinternet/agent-browser-host-contract':
-        specifier: 0.7.1
-        version: 0.7.1
+        specifier: 0.9.0
+        version: 0.9.0
       '@openagentinternet/agent-browser-name-resolvers':
-        specifier: 0.7.1
-        version: 0.7.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.3.6)
+        specifier: 0.9.0
+        version: 0.9.0(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.3.6)
       '@openagentinternet/agent-browser-ui':
-        specifier: 0.7.1
-        version: 0.7.1(patch_hash=9bc86e4cfedb305cea89c05d308e58360829e31e549035fbf2e3d5e966b78816)
+        specifier: 0.9.0
+        version: 0.9.0(patch_hash=8c0bdf893d340bba98eadbe722b20b6ff45ccbe09e0da70e51c952dec1054780)
       '@reduxjs/toolkit':
         specifier: ^2.2.1
         version: 2.11.2(react-redux@9.2.0(@types/react@18.3.28)(react@18.3.1)(redux@5.0.1))(react@18.3.1)
       '@scure/bip39':
         specifier: ^1.6.0
         version: 1.6.0
+      '@tencent-connect/qqbot-connector':
+        specifier: 1.2.0
+        version: 1.2.0
+      '@tencent-connect/qqbot-nodejs':
+        specifier: 1.0.5
+        version: 1.0.5(bufferutil@4.1.0)(utf-8-validate@6.0.6)
       '@types/uuid':
         specifier: ^10.0.0
         version: 10.0.0
@@ -114,6 +120,9 @@ importers:
       js-yaml:
         specifier: ^4.3.1
         version: 4.3.1
+      jsqr:
+        specifier: 1.4.0
+        version: 1.4.0
       katex:
         specifier: ^0.16.21
         version: 0.16.32
@@ -1018,20 +1027,20 @@ packages:
     resolution: {integrity: sha512-CcYQP6dfrF7mfzZyp1nFVkqs2viQeuWJEurlFpaIOOI/bWSTp0/SveB6yavZBhNHgZ8UwciKFzjBVJQXSwl6wg==}
     engines: {node: '>=20.0.0'}
 
-  '@openagentinternet/agent-browser-core@0.7.1':
-    resolution: {integrity: sha512-ep+15HVCMSSgfxTbj3vPWR+/N+hOczfOBK5RZ+bfp/bUQ1wzp1ccJMpvubLDjJG7/r5SHepffl3oll59nCRVOw==}
+  '@openagentinternet/agent-browser-core@0.9.0':
+    resolution: {integrity: sha512-yn2Nipf6GDA1npT/RSDKtJkjpZXz9K0kFu7UI2FafCBkxbs/dpzFx7jrEefsEZeB+bls5CTa0PQQcQgdbRYPtg==}
 
-  '@openagentinternet/agent-browser-host-contract@0.7.1':
-    resolution: {integrity: sha512-jLgVPG9/CKmXG966mTHlGKEMoSXC7heXu2u8WSDjh0CDHTu7uMkvCRkf/MJ7l86Luuktr8kAs71V+CaUxzA5Pw==}
+  '@openagentinternet/agent-browser-host-contract@0.9.0':
+    resolution: {integrity: sha512-R0R8IaT1LAQAl1YAwsaTGEffPqgXGtjWRipZLeHKKwFTpn7wQVzHtKtQPqWwzR5tuiO2bzbDoHk4rs8jCbWcuw==}
 
-  '@openagentinternet/agent-browser-name-resolvers@0.7.1':
-    resolution: {integrity: sha512-3U9Ez+Bfn7JDSbgd/ecCQx6fO7tq1/PZ94e+tChvVWQ485Hx0zxX0Rddjp7PsdGXIgRzszSZqoS6ZCbN4i0o9w==}
+  '@openagentinternet/agent-browser-name-resolvers@0.9.0':
+    resolution: {integrity: sha512-7lkrZz/W6UT5PBpbq0CV8YwGjvVIfAKFivJ+f5LAzUYf2UHNaVJT2/t098oA5SaqTGAwHI6pYWOqewyZ0tOy1A==}
 
-  '@openagentinternet/agent-browser-renderers@0.7.1':
-    resolution: {integrity: sha512-7kQxFB8gkiL9htNf/YUtll+dIkGWbmjI60+AyDQRDutttHlj5gKD1LRsxiZZuJ5MiH4PQVWTHTP9nehfW8iRDA==}
+  '@openagentinternet/agent-browser-renderers@0.9.0':
+    resolution: {integrity: sha512-Y/J62O434matBOruwkiH6GNMakH/+VDgR6ADd9em7QagRmnfiLHr0ojTC6a0f/bm9V7IGM70lTymQvfolMXalw==}
 
-  '@openagentinternet/agent-browser-ui@0.7.1':
-    resolution: {integrity: sha512-Jz+Ged+U9WdS+Z0+IaBcpP+j6iVpzEZvrcdbAiSxKoaF9D1THyygtbAW5mkE0H4vGrTRSfH2xMd1gbTEIasOLA==}
+  '@openagentinternet/agent-browser-ui@0.9.0':
+    resolution: {integrity: sha512-UuANFPgcikX6mFqPdyzqg7vWDdPWNQxwNbOnN05IhzbJYZCAIWh51gbEycHNr8PupA6o2bJ7XUt77TbCC2UhYQ==}
 
   '@pkgjs/parseargs@0.11.0':
     resolution: {integrity: sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg==}
@@ -1285,6 +1294,22 @@ packages:
 
   '@tanstack/virtual-core@3.13.18':
     resolution: {integrity: sha512-Mx86Hqu1k39icq2Zusq+Ey2J6dDWTjDvEv43PJtRCoEYTLyfaPnxIQ6iy7YAOK0NV/qOEmZQ/uCufrppZxTgcg==}
+
+  '@tencent-connect/qqbot-connector@1.2.0':
+    resolution: {integrity: sha512-FAOUCvgxP4M9UiYbHrtVgJ7BavSlh1CHJPjeEQuTAkP9MZ91lX4yATqv6I/lB9yp15nVq+G2DaGSSJwQTSoSsA==}
+    engines: {node: '>=18.0.0'}
+
+  '@tencent-connect/qqbot-nodejs@1.0.5':
+    resolution: {integrity: sha512-OAPGoZTtG3soI79lGNQ4YqdAe9xy+lYatUfzZyBPmjaRjH0uLjFeImffMlGVSmhfaM/wJQSIA2g1uZv3eorTRg==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      mpg123-decoder: ^1.0.3
+      silk-wasm: ^3.7.1
+    peerDependenciesMeta:
+      mpg123-decoder:
+        optional: true
+      silk-wasm:
+        optional: true
 
   '@tootallnate/once@2.0.0':
     resolution: {integrity: sha512-XCuKFP5PS55gnMVu3dty8KPatLqUoy/ZYzDzAGCQ8JNFCkLXzmI7vNHCR+XpbZaMWQK/vQubr7PkYq8g470J/A==}
@@ -3080,6 +3105,9 @@ packages:
   jsonfile@6.2.0:
     resolution: {integrity: sha512-FGuPw30AdOIUTRMC2OMRtQV+jkVj2cfPqSeWXv1NEAJ1qZ5zb1X6z1mFhbfOB/iy3ssJCD+3KuZ8r8C3uVFlAg==}
 
+  jsqr@1.4.0:
+    resolution: {integrity: sha512-dxLob7q65Xg2DvstYkRpkYtmKm2sPJ9oFhrhmudT1dZvNFFTlroai3AWSpLey/w5vMcLBXRgOJsbXpdN9HzU/A==}
+
   jszip@3.10.1:
     resolution: {integrity: sha512-xXDvecyTpGLrqFrvkrUSoxxfJI5AH7U8zxxtVclpsUtMCq4JQ290LY8AW5c7Ggnr/Y/oK+bQMbqK2qmtk3pN4g==}
 
@@ -3857,6 +3885,10 @@ packages:
   punycode@2.3.1:
     resolution: {integrity: sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==}
     engines: {node: '>=6'}
+
+  qrcode-terminal@0.12.0:
+    resolution: {integrity: sha512-EXtzRZmC+YGmGlDFbXKxQiMZNwCLEO6BANKXG4iCtSIM0yqc/pappSx3RIKr4r0uh5JsBckOXeKrB3Iz7mdQpQ==}
+    hasBin: true
 
   qrcode@1.5.4:
     resolution: {integrity: sha512-1ca71Zgiu6ORjHqFBDpnSMTR2ReToX4l1Au1VFLyVeBTFavzQnv5JxMFr3ukHVKpSrSA2MCk0lNJSykjUfz7Zg==}
@@ -5433,15 +5465,15 @@ snapshots:
       - encoding
       - typescript
 
-  '@openagentinternet/agent-browser-core@0.7.1':
+  '@openagentinternet/agent-browser-core@0.9.0':
     dependencies:
-      '@openagentinternet/agent-browser-host-contract': 0.7.1
+      '@openagentinternet/agent-browser-host-contract': 0.9.0
 
-  '@openagentinternet/agent-browser-host-contract@0.7.1': {}
+  '@openagentinternet/agent-browser-host-contract@0.9.0': {}
 
-  '@openagentinternet/agent-browser-name-resolvers@0.7.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.3.6)':
+  '@openagentinternet/agent-browser-name-resolvers@0.9.0(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.3.6)':
     dependencies:
-      '@openagentinternet/agent-browser-core': 0.7.1
+      '@openagentinternet/agent-browser-core': 0.9.0
       viem: 2.0.0(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.3.6)
     transitivePeerDependencies:
       - bufferutil
@@ -5449,16 +5481,16 @@ snapshots:
       - utf-8-validate
       - zod
 
-  '@openagentinternet/agent-browser-renderers@0.7.1':
+  '@openagentinternet/agent-browser-renderers@0.9.0':
     dependencies:
-      '@openagentinternet/agent-browser-host-contract': 0.7.1
+      '@openagentinternet/agent-browser-host-contract': 0.9.0
       marked: 18.0.13
 
-  '@openagentinternet/agent-browser-ui@0.7.1(patch_hash=9bc86e4cfedb305cea89c05d308e58360829e31e549035fbf2e3d5e966b78816)':
+  '@openagentinternet/agent-browser-ui@0.9.0(patch_hash=8c0bdf893d340bba98eadbe722b20b6ff45ccbe09e0da70e51c952dec1054780)':
     dependencies:
-      '@openagentinternet/agent-browser-core': 0.7.1
-      '@openagentinternet/agent-browser-host-contract': 0.7.1
-      '@openagentinternet/agent-browser-renderers': 0.7.1
+      '@openagentinternet/agent-browser-core': 0.9.0
+      '@openagentinternet/agent-browser-host-contract': 0.9.0
+      '@openagentinternet/agent-browser-renderers': 0.9.0
 
   '@pkgjs/parseargs@0.11.0':
     optional: true
@@ -5635,6 +5667,17 @@ snapshots:
       react-dom: 18.3.1(react@18.3.1)
 
   '@tanstack/virtual-core@3.13.18': {}
+
+  '@tencent-connect/qqbot-connector@1.2.0':
+    dependencies:
+      qrcode-terminal: 0.12.0
+
+  '@tencent-connect/qqbot-nodejs@1.0.5(bufferutil@4.1.0)(utf-8-validate@6.0.6)':
+    dependencies:
+      ws: 8.21.3(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
 
   '@tootallnate/once@2.0.0': {}
 
@@ -7776,6 +7819,8 @@ snapshots:
     optionalDependencies:
       graceful-fs: 4.2.11
 
+  jsqr@1.4.0: {}
+
   jszip@3.10.1:
     dependencies:
       lie: 3.3.0
@@ -8842,6 +8887,8 @@ snapshots:
       once: 1.4.0
 
   punycode@2.3.1: {}
+
+  qrcode-terminal@0.12.0: {}
 
   qrcode@1.5.4:
     dependencies:
