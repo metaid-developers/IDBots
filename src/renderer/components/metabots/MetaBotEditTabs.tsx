@@ -427,6 +427,21 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
     e.target.value = '';
   };
 
+  // The NFT picker already wrote the avatar (local row + on-chain sync through
+  // metabot:setNftAvatar) in the main process. Adopt the returned value into
+  // BOTH the live values and the baseline: the Basic tab must not look dirty
+  // after a change that already landed, and a later save must not re-publish
+  // the same avatar.
+  const adoptPersistedAvatar = (updated: unknown) => {
+    const avatar = typeof (updated as { avatar?: unknown } | null)?.avatar === 'string'
+      ? (updated as { avatar: string }).avatar
+      : '';
+    if (!avatar) return;
+    setValues((prev) => ({ ...prev, avatar }));
+    setBaseline((prev) => ({ ...prev, avatar }));
+    setTabError('basic', '');
+  };
+
   // Assignment model: bundled skills are implicitly available to every bot,
   // so only external (installed) skills are assignable here.
   const availableSkillOptions = useMemo(
@@ -1466,15 +1481,14 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
         </div>
       )}
 
-      {/* NFT avatar picker — display-only local decoration, sets an
-          nft://mrc721/<itemPinId> reference into the avatar field. */}
+      {/* NFT avatar picker — THE single NFT-avatar entry. Picking a tile saves
+          through metabot:setNftAvatar (main-process normalize → on-chain
+          publish via the metabot-update core), so the editor only adopts the
+          record that already landed. */}
       {nftAvatarPickerOpen && metabotId && (
         <MetaBotNftAvatarPickerModal
           metabotId={metabotId}
-          onPick={(reference) => {
-            handleChange('avatar', reference);
-            setNftAvatarPickerOpen(false);
-          }}
+          onApplied={(updated) => adoptPersistedAvatar(updated)}
           onClose={() => setNftAvatarPickerOpen(false)}
         />
       )}

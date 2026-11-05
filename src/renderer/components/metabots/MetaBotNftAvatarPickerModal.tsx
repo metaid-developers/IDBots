@@ -1,11 +1,20 @@
 /**
- * MetaBot NFT avatar picker modal.
+ * MetaBot NFT avatar picker modal — THE single NFT-avatar entry.
  *
  * Opened from the Basic tab's avatar row ("Set NFT Avatar"). Lists the bot's
  * own MRC-721 holdings via the same `idbots:getMetabotNfts` read the NFT
- * Wallet modal uses (kind 'mrc721'), and picking a tile hands the
- * `nft://mrc721/<itemPinId>` reference back to the edit form — nothing is
- * written on-chain from here (the avatar is a local display-only decoration).
+ * Wallet modal uses (kind 'mrc721').
+ *
+ * Picking a tile IS the save action: the tile's artwork reference
+ * (`buildNftAvatarImageRef`) is handed to `metabot:setNftAvatar`, which
+ * normalizes it in the main process — a `metafile://<pinId>` cover resolves
+ * THUMBNAIL-FIRST under the 200 KB avatar cap and an over-cap original fails
+ * as a structured `too-large` instead of being pinned — and then publishes the
+ * snapshot through the metabot-update path (local row, avatar_blob column and
+ * the on-chain `/info/avatar` info-pin all move together).
+ *
+ * A failed apply keeps the modal open and renders the structured reason; a
+ * successful one hands the updated record back to the editor and closes.
  * Artwork walks the same ordered content routes as the wallet tiles via
  * NftArtworkImage, so a tile never shows a broken image.
  */
@@ -13,7 +22,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ArrowPathIcon, PhotoIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
-import { buildNftTileViewModel } from './metabotNftPresentation.js';
+import { buildNftAvatarImageRef, buildNftTileViewModel } from './metabotNftPresentation.js';
 import { NftArtworkImage } from './NftArtworkImage';
 
 interface PickerItem {
@@ -35,12 +44,17 @@ interface PickerState {
 
 interface MetaBotNftAvatarPickerModalProps {
   metabotId: number;
-  onPick: (reference: string) => void;
+  /** Called with the updated MetaBot record after the avatar landed. */
+  onApplied?: (metabot: unknown) => void;
   onClose: () => void;
 }
 
-const MetaBotNftAvatarPickerModal: React.FC<MetaBotNftAvatarPickerModalProps> = ({ metabotId, onPick, onClose }) => {
+const MetaBotNftAvatarPickerModal: React.FC<MetaBotNftAvatarPickerModalProps> = ({ metabotId, onApplied, onClose }) => {
   const [state, setState] = useState<PickerState>({ loading: true, error: '', items: [] });
+  // Key of the tile whose apply is in flight (one at a time — the write is a
+  // chain publish, never a batch) and the structured failure of the last one.
+  const [applyingKey, setApplyingKey] = useState('');
+  const [applyError, setApplyError] = useState('');
 
   const load = useCallback(() => {
     setState((current) => ({ loading: true, error: '', items: current.items }));
@@ -73,6 +87,34 @@ const MetaBotNftAvatarPickerModal: React.FC<MetaBotNftAvatarPickerModalProps> = 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [onClose]);
+
+  /**
+   * The save action: normalize the artwork reference (metafile:// resolves
+   * thumbnail-first with a structured 200 KB cap) then publish it as the bot
+   * avatar through the metabot-update core. Never throws — a structured
+   * failure is rendered in place so the user can pick another NFT.
+   */
+  const applyAsAvatar = useCallback(async (item: PickerItem) => {
+    if (applyingKey) return;
+    setApplyingKey(item.key);
+    setApplyError('');
+    try {
+      const response = await window.electron.metabot.setNftAvatar({
+        metabotId,
+        imageRef: buildNftAvatarImageRef(item),
+      });
+      if (!response?.success) {
+        setApplyError(response?.error || i18nService.t('metabotSaveFailed'));
+        setApplyingKey('');
+        return;
+      }
+      onApplied?.(response.metabot);
+      onClose();
+    } catch (error) {
+      setApplyError(error instanceof Error ? error.message : i18nService.t('metabotSaveFailed'));
+      setApplyingKey('');
+    }
+  }, [applyingKey, metabotId, onApplied, onClose]);
 
   const tiles = state.items
     .filter((item) => item?.kind === 'mrc721' && item.key)
@@ -116,6 +158,16 @@ const MetaBotNftAvatarPickerModal: React.FC<MetaBotNftAvatarPickerModalProps> = 
           </div>
         </div>
 
+        {applyError && (
+          <div
+            data-slot="metabot-nft-avatar-picker-apply-error"
+            role="alert"
+            className="shrink-0 border-b dark:border-claude-darkBorder border-claude-border bg-red-500/10 px-4 py-2 text-xs text-red-600 dark:text-red-400"
+          >
+            {applyError}
+          </div>
+        )}
+
         <div className="min-h-0 flex-1 overflow-y-auto p-4">
           {state.loading && (
             <div className="flex h-32 items-center justify-center text-sm text-claude-textSecondary dark:text-claude-darkTextSecondary">
@@ -148,14 +200,16 @@ const MetaBotNftAvatarPickerModal: React.FC<MetaBotNftAvatarPickerModalProps> = 
                   key={tile.key}
                   type="button"
                   data-slot="metabot-nft-avatar-picker-tile"
-                  onClick={() => onPick(`nft://mrc721/${item.key}`)}
-                  className="overflow-hidden rounded-xl border text-left transition-shadow hover:shadow-md dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50"
+                  data-slot-state={applyingKey === item.key ? 'applying' : 'idle'}
+                  disabled={Boolean(applyingKey)}
+                  onClick={() => void applyAsAvatar(item)}
+                  className="overflow-hidden rounded-xl border text-left transition-shadow hover:shadow-md disabled:opacity-60 dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50"
                 >
                   <NftArtworkImage sources={tile.artworkSources} initials={tile.artworkInitials} alt={tile.title} />
                   <div className="space-y-0.5 px-2 py-1.5">
                     <div className="truncate text-xs font-semibold dark:text-claude-darkText text-claude-text">{tile.title}</div>
                     <div className="truncate text-[10px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                      {tile.subtitle || '—'}
+                      {applyingKey === item.key ? i18nService.t('saving') : (tile.subtitle || '—')}
                     </div>
                   </div>
                 </button>

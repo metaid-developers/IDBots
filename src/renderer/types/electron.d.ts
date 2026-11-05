@@ -2443,6 +2443,30 @@ interface IElectronAPI {
     getSetting: (id: number, key: string) => Promise<{ success: boolean; value?: string | null; error?: string }>;
     setSetting: (id: number, key: string, value: string) => Promise<{ success: boolean; value?: string; error?: string }>;
     checkNameExists: (options: { name: string; excludeId?: number }) => Promise<{ success: boolean; exists?: boolean; error?: string }>;
+    /**
+     * "Use this NFT as the avatar": the main process normalizes the
+     * metafile/pin/https artwork reference into a data-URL snapshot and reuses
+     * the metabot-update path (local row + on-chain /info/avatar info-pin).
+     */
+    setNftAvatar: (input: { metabotId: number; imageRef: string }) => Promise<{
+      success: boolean;
+      metabot?: Metabot | null;
+      avatar?: { mime: string; bytes: number; source: string };
+      sync?: {
+        skipped: boolean;
+        success: boolean;
+        canSkip?: boolean;
+        error?: string;
+        txids?: string[];
+        syncedSteps?: string[];
+        attemptedStepKeys?: Array<'name' | 'avatar' | 'bio' | 'persona' | 'llm' | 'chatSkills' | 'homepage' | 'owner'>;
+        remainingSyncInput?: Record<string, unknown>;
+      };
+      /** Structured normalization failure reason (e.g. too-large, non-image). */
+      reason?: string;
+      detail?: string;
+      error?: string;
+    }>;
   };
   dream: {
     getStatus: () => Promise<{ success: boolean; dreamingBotIds?: number[]; error?: string }>;

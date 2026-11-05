@@ -375,3 +375,119 @@ test('MRC-721 trade handlers refuse bad shapes and surface verifier checks as ok
   assert.equal(hiccup.result.check, 'unknown');
   assert.equal(hiccup.result.error, 'fetch failed');
 });
+
+// ---------------------------------------------------------------------------
+// metabot:setNftAvatar — "use this NFT as the avatar" (the backing mechanism
+// behind the single NFT-avatar picker entry)
+// ---------------------------------------------------------------------------
+
+function registerAvatarHarness(overrides = {}) {
+  const handlers = {};
+  const calls = { updates: [] };
+  nftIpc.registerMetabotNftIpcHandlers({
+    registerIpcHandler(name, fn) {
+      handlers[name] = fn;
+    },
+    getMetabotStore: () => ({ fake: true }),
+    getMetabotNftItems: async () => [],
+    transferMetabotMvcNft: async () => ({ txId: 'tx', rawTx: 'raw' }),
+    transferMetabotMrc721: async () => ({
+      txId: 'tx', pinId: 'pin', toAddress: 'addr', spentOutpoint: 'out', outputValue: 1,
+    }),
+    getNftCaRegistry: async () => ({}),
+    sellMrc721Listing: async () => { throw new Error('unused'); },
+    buyMrc721Listing: async () => { throw new Error('unused'); },
+    listMrc721SellOrders: async () => [],
+    verifyMrc721Listing: async () => { throw new Error('unused'); },
+    normalizeAvatar: async (source) => ({
+      ok: true,
+      dataUrl: `data:image/jpeg;base64,${Buffer.from(`snapshot:${source}`).toString('base64')}`,
+      mime: 'image/jpeg',
+      bytes: 13_250,
+      source: 'metafile',
+    }),
+    updateMetabotAvatar: async (metabotId, input) => {
+      calls.updates.push({ metabotId, input });
+      return {
+        success: true,
+        metabot: { id: metabotId, name: 'Bot', avatar: input.avatar },
+        sync: { skipped: false, success: true },
+      };
+    },
+    ...overrides,
+  });
+  return { handlers, calls };
+}
+
+test('metabot:setNftAvatar normalizes the NFT reference and reuses the metabot-update path', async () => {
+  const { handlers, calls } = registerAvatarHarness();
+  assert.equal(typeof handlers['metabot:setNftAvatar'], 'function');
+
+  const pinId = '14158a127fa1d7b66d821413abad64bc833cf145e7abd2b40838fde703609b45i0';
+  const result = await handlers['metabot:setNftAvatar']({}, { metabotId: 7, imageRef: `metafile://${pinId}.jpg` });
+
+  assert.equal(result.success, true);
+  assert.deepEqual(result.avatar, { mime: 'image/jpeg', bytes: 13_250, source: 'metafile' });
+  assert.equal(result.metabot.id, 7);
+  assert.equal(calls.updates.length, 1, 'exactly one metabot update is attempted');
+  assert.equal(calls.updates[0].metabotId, 7);
+  assert.match(calls.updates[0].input.avatar, /^data:image\/jpeg;base64,/, 'the stored avatar is a data-URL snapshot');
+  assert.equal(result.sync.success, true);
+});
+
+test('metabot:setNftAvatar returns the structured normalize failure and never touches the bot', async () => {
+  const { handlers, calls } = registerAvatarHarness({
+    normalizeAvatar: async () => ({
+      ok: false,
+      reason: 'too-large',
+      detail: 'Avatar is 877125 bytes, over the 204800 byte avatar cap.',
+    }),
+  });
+
+  const result = await handlers['metabot:setNftAvatar']({}, {
+    metabotId: 7,
+    imageRef: 'metafile://14158a127fa1d7b66d821413abad64bc833cf145e7abd2b40838fde703609b45i0.jpg',
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(result.reason, 'too-large');
+  assert.match(result.error, /too-large: Avatar is 877125 bytes/);
+  assert.equal(calls.updates.length, 0, 'a failed normalization must not mutate the bot');
+});
+
+test('metabot:setNftAvatar surfaces update failures and rejects bad input without throwing', async () => {
+  const { handlers } = registerAvatarHarness({
+    updateMetabotAvatar: async () => ({ success: false, error: 'chain publish refused' }),
+  });
+
+  const failed = await handlers['metabot:setNftAvatar']({}, { metabotId: 7, imageRef: 'https://example.com/art.png' });
+  assert.deepEqual(
+    { success: failed.success, reason: failed.reason, error: failed.error },
+    { success: false, reason: 'update-failed', error: 'chain publish refused' },
+  );
+
+  const empty = await handlers['metabot:setNftAvatar']({}, { metabotId: 7, imageRef: '   ' });
+  assert.equal(empty.success, false);
+  assert.equal(empty.reason, 'empty');
+
+  const badId = await handlers['metabot:setNftAvatar']({}, { metabotId: 0, imageRef: 'metafile://x' });
+  assert.equal(badId.success, false);
+  assert.match(badId.error, /metabotId/);
+
+  const throwing = registerAvatarHarness({
+    normalizeAvatar: async () => {
+      throw new Error('normalizer exploded');
+    },
+  });
+  const crashed = await throwing.handlers['metabot:setNftAvatar']({}, { metabotId: 7, imageRef: 'x' });
+  assert.deepEqual(crashed, { success: false, error: 'normalizer exploded' });
+});
+
+test('metabot:setNftAvatar reports update-unavailable when the edit path is not wired', async () => {
+  const { handlers, calls } = registerAvatarHarness({ updateMetabotAvatar: undefined });
+
+  const result = await handlers['metabot:setNftAvatar']({}, { metabotId: 7, imageRef: 'metafile://x' });
+  assert.equal(result.success, false);
+  assert.equal(result.reason, 'update-unavailable');
+  assert.equal(calls.updates.length, 0);
+});
