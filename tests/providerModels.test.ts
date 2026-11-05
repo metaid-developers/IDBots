@@ -3,13 +3,14 @@ import assert from 'node:assert/strict';
 
 import {
   buildProviderModelsUrl,
+  canonicalizeVolcengineModelList,
   mergeSyncedProviderModels,
   parseProviderModelListPayload,
   providerSupportsModelListSync,
 } from '../src/renderer/services/providerModels.ts';
 
 test('providerSupportsModelListSync gates the Fetch Models button to the known endpoints', () => {
-  for (const key of ['deepseek', 'opencode', 'commandcode', 'zhipu', 'DeepSeek', ' opencode ']) {
+  for (const key of ['deepseek', 'opencode', 'commandcode', 'zhipu', 'volcengine', 'DeepSeek', ' opencode ']) {
     assert.equal(providerSupportsModelListSync(key), true, key);
   }
   for (const key of ['metaid-free', 'openai', 'anthropic', 'ollama', 'custom-my-relay', '']) {
@@ -269,6 +270,174 @@ test('mergeSyncedProviderModels applies the Zhipu canonical preset and honors ca
       name: 'glm-5-turbo',
       supportsImage: false,
       contextWindow: 204_800,
+      maxOutputTokens: undefined,
+      options: undefined,
+    },
+  ]);
+});
+
+test('buildProviderModelsUrl: volcengine resolves every base to the canonical /api/v3 catalog', () => {
+  // Factory default base (ends with /api/v3).
+  assert.equal(
+    buildProviderModelsUrl('https://ark.cn-beijing.volces.com/api/v3', 'volcengine'),
+    'https://ark.cn-beijing.volces.com/api/v3/models',
+  );
+  // Legacy /v1-shaped base still lands on the live catalog.
+  assert.equal(
+    buildProviderModelsUrl('https://ark.cn-beijing.volces.com/api/v1', 'volcengine'),
+    'https://ark.cn-beijing.volces.com/api/v3/models',
+  );
+  // Bare host or other volces.com bases.
+  assert.equal(
+    buildProviderModelsUrl('https://ark.cn-beijing.volces.com', 'volcengine'),
+    'https://ark.cn-beijing.volces.com/api/v3/models',
+  );
+  assert.equal(
+    buildProviderModelsUrl('https://ark.cn-beijing.volces.com/', 'volcengine'),
+    'https://ark.cn-beijing.volces.com/api/v3/models',
+  );
+  // Trailing slashes on the default base.
+  assert.equal(
+    buildProviderModelsUrl('https://ark.cn-beijing.volces.com/api/v3/', 'volcengine'),
+    'https://ark.cn-beijing.volces.com/api/v3/models',
+  );
+});
+
+test('parseProviderModelListPayload reads modalities nested behind the Ark shape too', () => {
+  const payload = {
+    object: 'list',
+    data: [
+      {
+        id: 'kimi-k3-1-pro-261024',
+        name: 'kimi-k3-1-pro',
+        context_window: 1_048_576,
+        modalities: { input_modalities: ['text', 'image'], output_modalities: ['text'] },
+      },
+      {
+        id: 'deepseek-v4-pro-ga-260813',
+        name: 'deepseek-v4-pro-ga',
+        context_window: 1_048_576,
+        modalities: { input_modalities: ['text'], output_modalities: ['text'] },
+      },
+    ],
+  };
+  const parsed = parseProviderModelListPayload(payload);
+  assert.deepEqual(parsed, [
+    { id: 'kimi-k3-1-pro-261024', name: 'kimi-k3-1-pro', supportsImage: true, contextWindow: 1_048_576 },
+    { id: 'deepseek-v4-pro-ga-260813', name: 'deepseek-v4-pro-ga', supportsImage: false, contextWindow: 1_048_576 },
+  ]);
+});
+
+test('canonicalizeVolcengineModelList keeps only chat-capable Published rows, addressed by stable aliases', () => {
+  const payload = {
+    object: 'list',
+    data: [
+      // Two snapshots of the same alias — only the newest survives.
+      {
+        id: 'deepseek-v4-1-flash-260910',
+        name: 'deepseek-v4-1-flash',
+        status: 'Published',
+        created: 175_740,
+        context_window: 262_144,
+        api_supported: { 'chat/completions': true },
+        modalities: { input_modalities: ['text'], output_modalities: ['text'] },
+      },
+      {
+        id: 'deepseek-v4-1-flash-261017',
+        name: 'deepseek-v4-1-flash',
+        status: 'Published',
+        created: 175_900,
+        context_window: 1_048_576,
+        api_supported: { 'chat/completions': true },
+        modalities: { input_modalities: ['text', 'image'], output_modalities: ['text'] },
+      },
+      // Retiring snapshot of a chat model — excluded from the picker.
+      {
+        id: 'deepseek-v4-pro-260425',
+        name: 'deepseek-v4-pro',
+        status: 'Retiring',
+        created: 175_000,
+        context_window: 1_048_576,
+        api_supported: { 'chat/completions': true },
+        modalities: { input_modalities: ['text'], output_modalities: ['text'] },
+      },
+      // Chat-capable but a superseded codePreview snapshot (Retiring).
+      {
+        id: 'doubao-seed-2-0-code-preview-260215',
+        name: 'doubao-seed-2-0-code-preview',
+        status: 'Retiring',
+        created: 174_000,
+        context_window: 262_144,
+        api_supported: { 'chat/completions': true },
+        modalities: { input_modalities: ['text', 'image'], output_modalities: ['text'] },
+      },
+      // Published but NOT chat-capable — image generation keeps out of the
+      // model picker even when a text alias shares its family name.
+      {
+        id: 'doubao-seedream-5-0-pro-260628',
+        name: 'doubao-seedream-5-0-pro',
+        status: 'Published',
+        created: 175_700,
+        api_supported: {},
+      },
+      // Missing api_supported entirely — skipped.
+      {
+        id: 'doubao-seed-translation-250915',
+        name: 'doubao-seed-translation',
+        status: 'Published',
+        created: 175_100,
+        context_window: 4_096,
+      },
+      // Live alias kept in catalog order: kimi appears last but its position
+      // reflects the raw list order, not the dedupe pass order.
+      {
+        id: 'kimi-k3-1-pro-261024',
+        name: 'kimi-k3-1-pro',
+        status: 'Published',
+        created: 175_950,
+        context_window: 1_048_576,
+        api_supported: { 'chat/completions': true },
+        modalities: { input_modalities: ['text', 'image', 'video'], output_modalities: ['text'] },
+      },
+    ],
+  };
+  assert.deepEqual(canonicalizeVolcengineModelList(payload), [
+    { id: 'deepseek-v4-1-flash', name: 'deepseek-v4-1-flash', supportsImage: true, contextWindow: 1_048_576 },
+    { id: 'kimi-k3-1-pro', name: 'kimi-k3-1-pro', supportsImage: true, contextWindow: 1_048_576 },
+  ]);
+});
+
+test('canonicalizeVolcengineModelList returns an empty list for non-catalog payloads', () => {
+  assert.deepEqual(canonicalizeVolcengineModelList({ error: { message: 'unauthorized' } }), []);
+  assert.deepEqual(canonicalizeVolcengineModelList(null), []);
+  assert.deepEqual(canonicalizeVolcengineModelList({ data: [] }), []);
+});
+
+test('mergeSyncedProviderModels applies the Volcengine canonical preset over bare aliases', () => {
+  const merged = mergeSyncedProviderModels(
+    'volcengine',
+    [
+      // Fetched bare alias rows (as canonicalizeVolcengineModelList outputs).
+      { id: 'kimi-k3-1-pro', name: 'kimi-k3-1-pro', supportsImage: true, contextWindow: 1_048_576 },
+      // An alias no preset tracks keeps its gateway name.
+      { id: 'qwen3-32b', name: 'qwen3-32b', supportsImage: false, contextWindow: 131_072 },
+    ],
+    [],
+  );
+  assert.deepEqual(merged, [
+    {
+      id: 'kimi-k3-1-pro',
+      name: 'Kimi K3.1 Pro',
+      supportsImage: true,
+      contextWindow: 1_048_576,
+      maxOutputTokens: 1_048_576,
+      options: undefined,
+    },
+    {
+      id: 'qwen3-32b',
+      name: 'qwen3-32b',
+      supportsImage: false,
+      contextWindow: 131_072,
       maxOutputTokens: undefined,
       options: undefined,
     },

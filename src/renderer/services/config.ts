@@ -240,7 +240,7 @@ export const mergeProvidersConfig = (
 // 重要：deepseek 不参与迁移，已配置 DeepSeek 的老用户升级后保持完全不变。
 // ---------------------------------------------------------------------------
 
-export const PROVIDER_MODEL_MIGRATION_VERSION = 3;
+export const PROVIDER_MODEL_MIGRATION_VERSION = 4;
 
 type ProviderModelEntry = NonNullable<NonNullable<AppConfig['providers']>[string]['models']>[number];
 
@@ -364,6 +364,38 @@ const PROVIDER_MODEL_MIGRATIONS: Record<number, ProviderModelMigration> = {
     visionFlips: [
       { idPattern: '^glm-5\\.3-flash', supportsImage: true },
     ],
+  },
+  // v4: refresh the Volcengine Ark preset to the current official catalog
+  // (live /api/v3/models snapshot, 2026-11-06). The factory preset was pinned
+  // to the retired Seed 1.6 snapshot ids, which no longer accept calls and
+  // hide the whole current lineup. Old snapshot ids are dropped, the
+  // stable-alias chat set (mirroring getDefaultVolcengineModels) is injected,
+  // and a stale default selection remaps to the closest current SKU. Custom
+  // rows outside the removed set survive, matching the generic semantics.
+  4: {
+    removed: {
+      volcengine: ['doubao-seed-1-6-250615', 'doubao-seed-1-6-flash-250717'],
+    },
+    added: {
+      volcengine: [
+        { id: 'doubao-seed-evolving', name: 'Doubao Seed Evolving', supportsImage: true, contextWindow: 1_048_576, maxOutputTokens: 262_144 },
+        { id: 'doubao-seed-2-1-pro', name: 'Doubao Seed 2.1 Pro', supportsImage: true, contextWindow: 1_048_576, maxOutputTokens: 262_144 },
+        { id: 'doubao-seed-2-1-lite', name: 'Doubao Seed 2.1 Lite', supportsImage: true, contextWindow: 1_048_576, maxOutputTokens: 262_144 },
+        { id: 'doubao-seed-2-1-turbo', name: 'Doubao Seed 2.1 Turbo', supportsImage: true, contextWindow: 262_144, maxOutputTokens: 262_144 },
+        { id: 'doubao-seed-2-0-mini', name: 'Doubao Seed 2.0 Mini', supportsImage: true, contextWindow: 262_144, maxOutputTokens: 131_072 },
+        { id: 'kimi-k3-1-pro', name: 'Kimi K3.1 Pro', supportsImage: true, contextWindow: 1_048_576, maxOutputTokens: 1_048_576 },
+        { id: 'deepseek-v4-1-flash', name: 'DeepSeek V4.1 Flash', supportsImage: true, contextWindow: 1_048_576, maxOutputTokens: 393_216 },
+        { id: 'deepseek-v4-1-flash-economy', name: 'DeepSeek V4.1 Flash Economy', supportsImage: true, contextWindow: 1_048_576, maxOutputTokens: 393_216 },
+        { id: 'deepseek-v4-pro-ga', name: 'DeepSeek V4 Pro (GA)', supportsImage: false, contextWindow: 1_048_576, maxOutputTokens: 393_216 },
+        { id: 'deepseek-v4-flash-ga', name: 'DeepSeek V4 Flash (GA)', supportsImage: false, contextWindow: 1_048_576, maxOutputTokens: 393_216 },
+        { id: 'glm-5-3-flash', name: 'GLM 5.3 Flash', supportsImage: true, contextWindow: 1_048_576, maxOutputTokens: 131_072 },
+        { id: 'glm-5-2', name: 'GLM 5.2', supportsImage: false, contextWindow: 1_048_576, maxOutputTokens: 131_072 },
+      ],
+    },
+    defaultModelRemap: {
+      'doubao-seed-1-6-250615': 'doubao-seed-2-1-lite',
+      'doubao-seed-1-6-flash-250717': 'doubao-seed-2-0-mini',
+    },
   },
 };
 

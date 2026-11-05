@@ -298,3 +298,60 @@ test('v3-stamped configs run no migrations at all', () => {
   assert.equal(migrated.providers.opencode!.models![0].supportsImage, false);
   assert.equal(migrated.providerModelMigrationVersion, PROVIDER_MODEL_MIGRATION_VERSION);
 });
+
+test('model migration v4 replaces the retired Seed 1.6 volcengine preset with the current catalog', () => {
+  const migrated = applyProviderModelMigrations(asConfig({
+    model: { defaultModel: 'doubao-seed-1-6-250615' },
+    providerModelMigrationVersion: 3,
+    providerApiFormatMigrationVersion: 4,
+    providers: {
+      volcengine: {
+        enabled: true,
+        apiKey: 'ark-test',
+        baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+        apiFormat: 'openai',
+        models: [
+          { id: 'doubao-seed-1-6-250615', name: 'Doubao Seed 1.6', supportsImage: false, contextWindow: 256_000 },
+          { id: 'doubao-seed-1-6-flash-250717', name: 'Doubao Seed 1.6 Flash', supportsImage: false, contextWindow: 256_000 },
+          { id: 'my-custom-relay-sku', name: 'Custom SKU', supportsImage: false },
+        ],
+      },
+    },
+  }));
+
+  const models = migrated.providers.volcengine!.models!;
+  const ids = models.map((model) => model.id);
+  // Retired snapshot ids are gone; the current stable-alias chat set is here.
+  assert.equal(ids.includes('doubao-seed-1-6-250615'), false);
+  assert.equal(ids.includes('doubao-seed-1-6-flash-250717'), false);
+  for (const expected of ['doubao-seed-evolving', 'doubao-seed-2-1-pro', 'kimi-k3-1-pro', 'deepseek-v4-1-flash', 'glm-5-3-flash']) {
+    assert.equal(ids.includes(expected), true, expected);
+  }
+  // Custom rows outside the removed set survive.
+  assert.equal(ids.includes('my-custom-relay-sku'), true);
+  // A stale default selection remaps to the closest current SKU.
+  assert.equal(migrated.model.defaultModel, 'doubao-seed-2-1-lite');
+  assert.equal(migrated.providerModelMigrationVersion, PROVIDER_MODEL_MIGRATION_VERSION);
+});
+
+test('model migration v4 is idempotent', () => {
+  const once = applyProviderModelMigrations(asConfig({
+    model: { defaultModel: 'doubao-seed-1-6-250615' },
+    providerModelMigrationVersion: 3,
+    providerApiFormatMigrationVersion: 4,
+    providers: {
+      volcengine: {
+        enabled: true,
+        apiKey: 'ark-test',
+        baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+        apiFormat: 'openai',
+        models: [
+          { id: 'doubao-seed-1-6-250615', name: 'Doubao Seed 1.6', supportsImage: false, contextWindow: 256_000 },
+        ],
+      },
+    },
+  }));
+  const twice = applyProviderModelMigrations(once);
+  assert.deepEqual(twice.providers, once.providers);
+  assert.equal(twice.providerModelMigrationVersion, PROVIDER_MODEL_MIGRATION_VERSION);
+});

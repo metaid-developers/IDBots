@@ -352,6 +352,35 @@ export function getDefaultZhipuModels(): ModelDefinition[] {
   return ZHIPU_DEFAULT_MODELS.map((model) => ({ ...model }));
 }
 
+/**
+ * Volcengine Ark chat preset, addressed by the catalog's official stable
+ * aliases (the `name` field of GET /api/v3/models entries — the
+ * snapshot-dated `id` fields are never the callable target here). Catalog
+ * snapshot 2026-11-06: every entry with `api_supported['chat/completions']`
+ * true and status `Published`, flagship + open-weight chat set; multi-
+ * snapshot aliases collapse to their newest snapshot. `Settings > Models >
+ * Fetch Models` replaces this list with the live official catalog (see
+ * providerModels.ts).
+ */
+export function getDefaultVolcengineModels(): ModelDefinition[] {
+  return [
+    // Doubao flagship family.
+    { id: 'doubao-seed-evolving', name: 'Doubao Seed Evolving', supportsImage: true, contextWindow: 1_048_576, maxOutputTokens: 262_144 },
+    { id: 'doubao-seed-2-1-pro', name: 'Doubao Seed 2.1 Pro', supportsImage: true, contextWindow: 1_048_576, maxOutputTokens: 262_144 },
+    { id: 'doubao-seed-2-1-lite', name: 'Doubao Seed 2.1 Lite', supportsImage: true, contextWindow: 1_048_576, maxOutputTokens: 262_144 },
+    { id: 'doubao-seed-2-1-turbo', name: 'Doubao Seed 2.1 Turbo', supportsImage: true, contextWindow: 262_144, maxOutputTokens: 262_144 },
+    { id: 'doubao-seed-2-0-mini', name: 'Doubao Seed 2.0 Mini', supportsImage: true, contextWindow: 262_144, maxOutputTokens: 131_072 },
+    // Kimi / DeepSeek / GLM flagship family.
+    { id: 'kimi-k3-1-pro', name: 'Kimi K3.1 Pro', supportsImage: true, contextWindow: 1_048_576, maxOutputTokens: 1_048_576 },
+    { id: 'deepseek-v4-1-flash', name: 'DeepSeek V4.1 Flash', supportsImage: true, contextWindow: 1_048_576, maxOutputTokens: 393_216 },
+    { id: 'deepseek-v4-1-flash-economy', name: 'DeepSeek V4.1 Flash Economy', supportsImage: true, contextWindow: 1_048_576, maxOutputTokens: 393_216 },
+    { id: 'deepseek-v4-pro-ga', name: 'DeepSeek V4 Pro (GA)', supportsImage: false, contextWindow: 1_048_576, maxOutputTokens: 393_216 },
+    { id: 'deepseek-v4-flash-ga', name: 'DeepSeek V4 Flash (GA)', supportsImage: false, contextWindow: 1_048_576, maxOutputTokens: 393_216 },
+    { id: 'glm-5-3-flash', name: 'GLM 5.3 Flash', supportsImage: true, contextWindow: 1_048_576, maxOutputTokens: 131_072 },
+    { id: 'glm-5-2', name: 'GLM 5.2', supportsImage: false, contextWindow: 1_048_576, maxOutputTokens: 131_072 }
+  ];
+}
+
 function normalizeDeepSeekModel(model: ModelLike): ModelLike {
   const migrated = DEEPSEEK_LEGACY_MODEL_MIGRATION_MAP[model.id];
   const canonical = DEEPSEEK_DEFAULT_MODELS.find((entry) => entry.id === (migrated?.id ?? model.id));
@@ -754,15 +783,13 @@ export const defaultConfig: AppConfig = {
     },
     // 火山引擎方舟（Ark）：OpenAI 兼容端点 /api/v3；apiKey 同时作为内置
     // seedance/seedream 技能的 ARK_API_KEY 自动注入（skillImageProviderEnv.ts）。
+    // 版本后缀不下发同步（GET /api/v3/models 目录由 providerModels.ts 特判归一）。
     volcengine: {
       enabled: false,
       apiKey: '',
       baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
       apiFormat: 'openai',
-      models: [
-        { id: 'doubao-seed-1-6-250615', name: 'Doubao Seed 1.6', supportsImage: false, contextWindow: 256_000 },
-        { id: 'doubao-seed-1-6-flash-250717', name: 'Doubao Seed 1.6 Flash', supportsImage: false, contextWindow: 256_000 }
-      ]
+      models: getDefaultVolcengineModels()
     },
     openrouter: {
       enabled: false,

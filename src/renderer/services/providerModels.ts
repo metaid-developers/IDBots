@@ -15,7 +15,7 @@
  */
 
 import type { ModelOptions } from '../config';
-import { getDefaultDeepSeekModels, getDefaultZhipuModels } from '../config';
+import { getDefaultDeepSeekModels, getDefaultVolcengineModels, getDefaultZhipuModels } from '../config';
 import { buildOpenCodeGoSessionHeaders } from './opencodeGatewayHeaders';
 
 /** One entry of a provider's model catalog after an official-list sync. */
@@ -49,7 +49,7 @@ export interface FetchedProviderModel {
   contextWindow?: number;
 }
 
-const MODEL_LIST_SYNC_PROVIDERS = ['deepseek', 'opencode', 'commandcode', 'zhipu'] as const;
+const MODEL_LIST_SYNC_PROVIDERS = ['deepseek', 'opencode', 'commandcode', 'zhipu', 'volcengine'] as const;
 
 /** True when the provider exposes a known GET /models endpoint to sync from. */
 export function providerSupportsModelListSync(providerKey: string): boolean {
@@ -83,6 +83,16 @@ export function buildProviderModelsUrl(baseUrl: string, providerKey: string): st
     const origin = originMatch ? originMatch[1] : '';
     return origin ? `${origin}/api/v1/models` : '/api/v1/models';
   }
+  // Volcengine Ark serves the live catalog on GET /api/v3/models at the host
+  // root regardless of which version suffix the base URL carries (the default
+  // config ships /api/v3; older configs may have /v1), so any volces.com base
+  // resolves back to the canonical /api/v3 prefix.
+  const isVolcengineHost = providerKey.trim().toLowerCase() === 'volcengine'
+    || normalized.toLowerCase().includes('volces.com');
+  if (isVolcengineHost) {
+    const hostRoot = normalized.replace(/\/v[13]$/i, '').replace(/\/api$/i, '');
+    return hostRoot ? `${hostRoot}/api/v3/models` : '/api/v3/models';
+  }
   if (normalized.endsWith('/v1')) return `${normalized}/models`;
   return `${normalized}/v1/models`;
 }
@@ -109,7 +119,11 @@ export function parseProviderModelListPayload(payload: unknown): FetchedProvider
     seen.add(id);
     const rawName = record.name ?? record.display_name;
     const rawContext = record.contextWindow ?? record.context_window ?? record.context_length;
-    const rawModalities = record.input_modalities;
+    // Modalities may sit at the entry root (Zhipu's catalog) or behind a
+    // nested `modalities` object (Ark's /api/v3/models catalog reports
+    // `modalities: { input_modalities: [...] }`).
+    const rawModalities = record.input_modalities
+      ?? (record.modalities as { input_modalities?: unknown } | undefined)?.input_modalities;
     models.push({
       id,
       name: typeof rawName === 'string' && rawName.trim() ? rawName.trim() : undefined,
@@ -120,6 +134,67 @@ export function parseProviderModelListPayload(payload: unknown): FetchedProvider
         ? Math.floor(rawContext)
         : undefined,
     });
+  }
+  return models;
+}
+
+/**
+ * Canonicalize the Ark (Volcengine) /api/v3/models catalog into the chat UI's
+ * stable-id list. The raw catalog is usused directly: it mixes every
+ * capability domain (image / video / 3D / embedding / translation), lifecycle
+ * states (`Published` vs `Retiring`), and reports snapshot-dated ids
+ * (`doubao-seed-2-1-pro-260915`) whose official stable callable alias lives in
+ * the `name` field (`doubao-seed-2-1-pro`). Keeping everything would expose
+ * non-chat SKUs and dead snapshots in the model picker.
+ *
+ * Canonicalization rule: keep only entries that can actually serve chat
+ * (`api_supported['chat/completions']` true) AND are still `Published`;
+ * address them by their `name` alias; when an alias has several snapshots,
+ * keep the newest one (max `created`, ties resolved by later catalog
+ * position). Nested `modalities.input_modalities` becomes the vision flag.
+ * Entries missing any of these markers are skipped.
+ */
+export function canonicalizeVolcengineModelList(payload: unknown): FetchedProviderModel[] {
+  const container = payload as { data?: unknown } | null;
+  const rawList = Array.isArray(container?.data) ? container?.data : [];
+  const byAlias = new Map<string, { model: FetchedProviderModel; created: number }>();
+  for (const entry of rawList) {
+    const record = entry as Record<string, unknown>;
+    const alias = typeof record?.name === 'string' ? record.name.trim() : '';
+    if (!alias) continue;
+    if (record?.status !== 'Published') continue;
+    const apiSupported = record?.api_supported as Record<string, boolean> | undefined;
+    if (!apiSupported || apiSupported['chat/completions'] !== true) continue;
+    const rawContext = typeof record?.context_window === 'number' && record?.context_window > 0
+      ? record.context_window
+      : undefined;
+    const nestedModalities = (record?.modalities as { input_modalities?: unknown } | undefined)
+      ?.input_modalities;
+    const model: FetchedProviderModel = {
+      // The snapshot id stays unused; the alias IS the callable model name.
+      id: alias,
+      name: alias,
+      ...(Array.isArray(nestedModalities) ? { supportsImage: nestedModalities.includes('image') } : {}),
+      ...(rawContext !== undefined ? { contextWindow: rawContext } : {}),
+    };
+    const created = typeof record?.created === 'number' ? record.created : 0;
+    const previous = byAlias.get(alias);
+    // Later catalog position wins ties — the official list lists the current
+    // default snapshot first, so a tie means both are equally valid.
+    if (!previous || created > previous.created) {
+      byAlias.set(alias, { model, created });
+    }
+  }
+  // Preserve official catalog order: walk the raw list once more and emit
+  // each alias at the position of its FIRST appearance.
+  const emitted = new Set<string>();
+  const models: FetchedProviderModel[] = [];
+  for (const entry of rawList) {
+    const record = entry as Record<string, unknown>;
+    const alias = typeof record?.name === 'string' ? record.name.trim() : '';
+    if (!alias || emitted.has(alias) || !byAlias.has(alias)) continue;
+    emitted.add(alias);
+    models.push(byAlias.get(alias)!.model);
   }
   return models;
 }
@@ -145,7 +220,9 @@ export function mergeSyncedProviderModels(
     ? getDefaultDeepSeekModels()
     : normalizedProviderKey === 'zhipu'
       ? getDefaultZhipuModels()
-      : [];
+      : normalizedProviderKey === 'volcengine'
+        ? getDefaultVolcengineModels()
+        : [];
   const canonicalById = new Map<string, CanonicalModel>(
     canonicalModels.map((model) => [model.id, model]),
   );
@@ -194,7 +271,9 @@ export async function fetchProviderModelList(input: {
     const message = data.error?.message || data.message || `HTTP ${response.status}`;
     throw new Error(message);
   }
-  const fetched = parseProviderModelListPayload(response.data);
+  const fetched = input.providerKey.trim().toLowerCase() === 'volcengine'
+    ? canonicalizeVolcengineModelList(response.data)
+    : parseProviderModelListPayload(response.data);
   if (fetched.length === 0) {
     throw new Error('The provider returned an empty model list');
   }
