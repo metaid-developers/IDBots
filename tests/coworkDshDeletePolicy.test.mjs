@@ -83,8 +83,13 @@ test('evaluateDshToolPolicy asks for deletes only under default permission mode'
 
 // autoApprove (unattended: A2A conversations, orchestrator/worker turns) must
 // NEVER block on a human confirmation — deletes are auto-decided by workspace
-// scope instead: provably-inside targets are allowed, anything outside or not
-// statically verifiable is auto-denied so the agent routes around it.
+// scope: anything outside or not statically verifiable is auto-denied so the
+// agent routes around it. Since the 0.2.2 headless auto-review integration,
+// the calls the old path blind-allowed (provably-inside deletions and other
+// mutating work) now go to the session's own model for a pre-execution review
+// (decision "review") instead — the reviewer's risk tiers decide allow/deny,
+// and denial is final. The workspace boundary guard still fires FIRST, so
+// out-of-workspace deletes deny exactly as before.
 test('autoApprove sessions auto-decide deletes by workspace scope (never ask)', async () => {
   const { CoworkRunner } = loadRunner()
   const runner = new CoworkRunner(new MinimalStore(), { localTurnStallTimeoutMs: 0 })
@@ -95,7 +100,7 @@ test('autoApprove sessions auto-decide deletes by workspace scope (never ask)', 
     workspaceRoot: '/workspace',
   })
   const policy = (toolName, toolInput) => runner.evaluateDshToolPolicy('s1', toolName, toolInput)
-  const ALLOW = [
+  const REVIEW = [
     ['bash', { command: 'rm -rf ./dist' }],
     ['bash', { command: 'rm -rf sub/dir && echo done' }],
     ['bash', { command: 'cd sub && rm -rf x' }],
@@ -109,9 +114,9 @@ test('autoApprove sessions auto-decide deletes by workspace scope (never ask)', 
     ['delete', { path: 'sub/file.txt' }],
     ['delete', { path: './cache' }],
   ]
-  for (const [toolName, toolInput] of ALLOW) {
+  for (const [toolName, toolInput] of REVIEW) {
     const result = await policy(toolName, toolInput)
-    assert.equal(result.decision, 'allow', `autoApprove allows in-workspace: ${JSON.stringify(toolInput)}`)
+    assert.equal(result.decision, 'review', `autoApprove hands in-workspace work to the auto reviewer: ${JSON.stringify(toolInput)}`)
   }
   const DENY = [
     ['bash', { command: 'rm -rf /tmp/some-dir' }],

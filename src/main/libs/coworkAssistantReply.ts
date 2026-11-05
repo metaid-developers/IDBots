@@ -319,6 +319,48 @@ export function isBodyLimitDshTurnError(outcome: { kind?: string; error?: { code
   return BODY_LIMIT_ERROR_MESSAGE_FINGERPRINT.test(String(outcome.error?.message ?? ''));
 }
 
+/** 0.2.2 kernel code for a model switch that was aborted because compacting
+ *  the history with the PREVIOUS model failed before the smaller-window target
+ *  could serve. The kernel preserves the previous route; the session is
+ *  healthy on it — the operator just picked a target that cannot hold the
+ *  history yet. */
+export const MODEL_SWITCH_COMPACTION_FAILED_ERROR_CODE = 'MODEL_SWITCH_COMPACTION_FAILED';
+
+/** True when a DSH turn outcome failed because a mid-session model switch was
+ *  aborted by pre-switch compaction (0.2.2 kernel `agent/request` model-switch
+ *  pricing). Decisively NOT an overflow of the serving route: the old model is
+ *  preserved and works, so the fallback-brain ladder must not engage (the
+ *  message embeds the compaction cause, whose text can carry overflow
+ *  fingerprints — the code check must win). The fix is operator-side: pick a
+ *  larger-window target or compact first. */
+export function isModelSwitchCompactionFailedDshTurnError(outcome: { kind?: string; error?: { code?: string; message?: string } }): boolean {
+  if (outcome?.kind !== 'error') return false;
+  return String(outcome.error?.code ?? '').toUpperCase() === MODEL_SWITCH_COMPACTION_FAILED_ERROR_CODE;
+}
+
+/** Native tools the auto reviewer judges before execution: the mutating
+ * members of the runtime policy gate's set (read/read_image stay
+ * observation-only and are never reviewed). */
+export const AUTO_REVIEW_TOOL_NAMES: ReadonlySet<string> = new Set(['bash', 'write', 'edit', 'delete']);
+
+/** True when a passing policy check should be LLM-reviewed instead of
+ * blind-allowed (0.2.2 headless auto review). Only UNATTENDED sessions review:
+ * `autoApprove` (A2A, orchestrator/worker, scheduled tasks — nobody answers
+ * dialogs, so the session's own model is the only reviewer available).
+ * `bypassPermissions` stays a true bypass (the operator explicitly chose zero
+ * checks), attended modes keep their guard behavior, and per-tool
+ * `autoApproveTools` stays an owner's explicit no-check choice for that tool.
+ * The runtime's policy gate runs the session's own model as the reviewer and
+ * a denial is final. */
+export function shouldAutoReviewDshToolCall(input: {
+  toolName: string;
+  autoApprove?: boolean | null;
+  permissionMode?: string | null;
+}): boolean {
+  if (!AUTO_REVIEW_TOOL_NAMES.has(String(input.toolName ?? '').toLowerCase())) return false;
+  return input.autoApprove === true;
+}
+
 /** True when a DSH turn outcome failed because the request exceeded the
  *  model's context window — a kernel-normalized overflow code, or an upstream
  *  overflow fingerprint in the raw message. Retrying on the same route cannot
@@ -332,6 +374,13 @@ export function isOverflowDshTurnError(
 ): boolean {
   if (outcome?.kind !== 'error') return false;
   const code = String(outcome.error?.code ?? '').toUpperCase();
+  // A failed model switch (0.2.2 pre-switch compaction) is decisive
+  // NON-overflow of the serving route — the previous model is preserved and
+  // healthy, and the kernel message embeds the compaction cause whose text
+  // can carry overflow fingerprints. Must be checked before the code/finger
+  // print families so a switch failure never routes the session onto the
+  // fallback brain (the operator picked the target model deliberately).
+  if (code === MODEL_SWITCH_COMPACTION_FAILED_ERROR_CODE) return false;
   // CONTEXT_WINDOW_EXCEEDED is the code this incident actually shipped with
   // (2026-09-28 cowork.log: opencode zen deepseek-flash returned
   // `{ message: '400 status code (no body)', code: 'CONTEXT_WINDOW_EXCEEDED' }`

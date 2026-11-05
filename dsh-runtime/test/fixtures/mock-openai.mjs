@@ -131,6 +131,27 @@ export function startMockServer(port = 48787) {
       const frame = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`)
       const base = { id: 'chatcmpl-mock', object: 'chat.completion.chunk', created: Date.now() / 1000 | 0, model: 'mock-1' }
 
+      // IDBots auto review (0.2.2 headless integration): the reviewer one-shot
+      // arrives as its own chat request whose system prompt carries the fixed
+      // REVIEW_POLICY. Verdicts are scripted off the marker inside the
+      // PENDING_ACTION payload; the malformed probe returns prose so the
+      // parser's fail-closed path is exercised.
+      const reviewSystem = (parsed.messages ?? []).find((m) => m?.role === 'system' && String(m.content ?? '').includes('REVIEW_POLICY'))
+      if (reviewSystem) {
+        const reviewText = (parsed.messages ?? []).map((m) => `${m?.role}:${typeof m?.content === 'string' ? m.content : JSON.stringify(m?.content ?? '')}`).join('\n')
+        const verdict = reviewText.includes('AUTO_REVIEW_ALLOW')
+          ? '{"risk":"low","decision":"allow"}'
+          : reviewText.includes('AUTO_REVIEW_DENY')
+            ? '{"risk":"medium","decision":"deny","reason":"destructive deletion is not authorized by the user instruction"}'
+            : 'I think this looks fine, approved.'
+        frame({ ...base, choices: [{ index: 0, delta: { role: 'assistant', content: verdict }, finish_reason: null }] })
+        frame({ ...base, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })
+        frame({ ...base, choices: [], usage: { prompt_tokens: 64, completion_tokens: 8, total_tokens: 72 } })
+        res.write('data: [DONE]\n\n')
+        res.end()
+        return
+      }
+
       // Continuable-child orchestration (0.1.2-alpha.4): the kernel appends a
       // reporting instruction naming the parent agent id to the child's first
       // user message. A child request without a delivered send_message result
@@ -195,6 +216,9 @@ export function startMockServer(port = 48787) {
         : lastUserText.includes('CALL_GLOB') ? 'glob'
         : lastUserText.includes('CALL_EXIT_PLAN') ? 'exit_plan_mode'
         : lastUserText.includes('CALL_READ') ? 'read'
+        : lastUserText.includes('CALL_BASH_REVIEW_ALLOW') ? 'bash'
+        : lastUserText.includes('CALL_BASH_REVIEW_DENY') ? 'bash'
+        : lastUserText.includes('CALL_BASH_REVIEW_MALFORMED') ? 'bash'
         : lastUserText.includes('RUN_LONG_BASH') ? 'bash'
         : lastUserText.includes('RUN_BASH_WRITE') ? 'bash'
         : lastUserText.includes('RUN_BASH') ? 'bash'
@@ -235,7 +259,13 @@ export function startMockServer(port = 48787) {
           })()
           : toolCallFor === 'web_search' ? { queries: [lastUserText.includes('CALL_WEB_SEARCH_FAIL') ? 'fail please' : 'latest stable Node.js version'] }
           : toolCallFor === 'web_fetch' ? { url: 'https://example.com/article' }
-          : toolCallFor === 'read' ? { file_path: 'readable.txt' } : toolCallFor === 'glob' ? { pattern: '**/*.marker.txt' } : toolCallFor === 'grep' ? { pattern: 'NEEDLE_ALPHA' } : toolCallFor === 'exit_plan_mode' ? { plan: '# Test Plan\n\nDo the thing.' } : toolCallFor === 'bash' ? (lastUserText.includes('RUN_LONG_BASH')
+          : toolCallFor === 'read' ? { file_path: 'readable.txt' } : toolCallFor === 'glob' ? { pattern: '**/*.marker.txt' } : toolCallFor === 'grep' ? { pattern: 'NEEDLE_ALPHA' } : toolCallFor === 'exit_plan_mode' ? { plan: '# Test Plan\n\nDo the thing.' } : toolCallFor === 'bash' ? (lastUserText.includes('CALL_BASH_REVIEW_ALLOW')
+            ? { command: 'echo AUTO_REVIEW_ALLOW_OK', description: 'auto-review allow probe' }
+            : lastUserText.includes('CALL_BASH_REVIEW_DENY')
+              ? { command: 'rm -rf /tmp/AUTO_REVIEW_DENY_TARGET_MARKER', description: 'auto-review deny probe' }
+              : lastUserText.includes('CALL_BASH_REVIEW_MALFORMED')
+                ? { command: 'echo AUTO_REVIEW_MALFORMED_CALLED', description: 'auto-review malformed probe' }
+                : lastUserText.includes('RUN_LONG_BASH')
             ? { command: 'sleep 5 && echo LONG_BASH_DONE', description: 'long-running foreground command for the stall-watchdog test' }
             : writeMatch
               ? { command: `echo ${writeMatch[1]} > marker.txt`, description: 'write workspace marker' }

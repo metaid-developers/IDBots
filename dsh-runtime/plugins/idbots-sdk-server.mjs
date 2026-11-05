@@ -63,6 +63,7 @@ import { JsonRpcLineTransport } from '@deepseek-ai/dsh-sdk-protocol'
 import { HarnessSdkJsonRpcServer } from '@deepseek-ai/dsh-sdk-jsonrpc-server'
 import * as dshToolSubagent from '@deepseek-ai/dsh-tool-subagent'
 import * as dshToolSubagentControl from '@deepseek-ai/dsh-tool-subagent-control'
+import { reviewPendingAction } from './idbots-auto-review.mjs'
 
 const RESPOND_OUTCOMES = new Set(['allowed-once', 'rejected'])
 
@@ -104,7 +105,11 @@ function isSessionAlreadyOwnedError(error) {
 }
 
 export const name = 'idbots-sdk-server'
-export const inject = ['agents', 'tools']
+// 'llm' feeds the 0.2.2 auto reviewer (decision "review" on the policy gate
+// assesses the pending call with the session's own model). Every composition
+// mounts llm; the reviewer's remaining inputs come from session introspection,
+// so no other service dependency is added here.
+export const inject = ['agents', 'tools', 'llm']
 
 class IdbotsSdkServer extends HarnessSdkJsonRpcServer {
   constructor(ctx, transport, options) {
@@ -942,9 +947,13 @@ class IdbotsSdkServer extends HarnessSdkJsonRpcServer {
   //
   // Runtime-native tools (bash/write/edit…) route their pre-execute decision
   // through the host's permission chain: idbots/policy/request notification
-  // out, idbots/policy/respond back with allow | deny | ask. 'ask' returns to
-  // the tools pipeline as a normal ask, flowing through user-approval and the
-  // M2 approval bridge into the renderer permission dialog.
+  // out, idbots/policy/respond back with allow | deny | ask | review. 'ask'
+  // returns to the tools pipeline as a normal ask, flowing through
+  // user-approval and the M2 approval bridge into the renderer permission
+  // dialog. 'review' (0.2.2 headless auto review) hands the verdict to the
+  // session's own model before execution — the host answers it on unattended
+  // paths where it would otherwise blind-allow; denial is final and a
+  // reviewer failure fails closed (see plugins/idbots-auto-review.mjs).
 
   idbotsRegisterPolicyGate(policyTools) {
     // read/read_image ride the gate so the host can apply its Read guards
@@ -971,6 +980,14 @@ class IdbotsSdkServer extends HarnessSdkJsonRpcServer {
       }, { once: true })
       const decision = await pending
       if (decision.decision === 'allow') return next()
+      if (decision.decision === 'review') {
+        const verdict = await reviewPendingAction(this.ctx, exec)
+        if (verdict.kind === 'allow') {
+          this.ctx.logger?.info?.(`idbots-auto-review: allowed "${exec.name}" on session "${String(exec.agent?.id ?? '')}"`)
+          return next()
+        }
+        return { kind: 'deny', reason: verdict.reason }
+      }
       if (decision.decision === 'ask') return { kind: 'ask', reason: decision.reason }
       return { kind: 'deny', reason: decision.reason ?? 'denied by host policy' }
     }, { global: true })
@@ -1202,7 +1219,7 @@ class IdbotsSdkServer extends HarnessSdkJsonRpcServer {
       throw new Error(`idbots-sdk-server: no pending policy decision ${JSON.stringify(id)}`)
     }
     this.idbotsPolicyPending.delete(String(id))
-    entry.resolve({ decision: decision === 'allow' || decision === 'ask' ? decision : 'deny', reason })
+    entry.resolve({ decision: decision === 'allow' || decision === 'ask' || decision === 'review' ? decision : 'deny', reason })
     return { answered: true, id }
   }
 }
