@@ -45,6 +45,12 @@ endpoints (MetaSo today) must match them so the IDBots client keeps working.
   key on address/pinId. Rollback = set `IDBOTS_METASO_API_BASE` (or the
   built-in base) back to `https://manapi.metaid.io` (metaid values there
   revert to legacy hex; man-p2p keeps serving its copy).
+- `item/transfers` row `txId` carries the pin **location pointer**
+  `<ledger-txid>:0:0` — the ledger txid is its FIRST segment (the `:0:0`
+  suffix is the MetaID pin location convention, deliberate on both
+  man-p2p and MetaSo). Display-only in IDBots today; strip the suffix
+  before feeding it to `/api/tx/status` or an explorer link — the
+  endpoint answers `found:false` on the raw pointer.
 
 ## R-A — Server-side collection search (P0, highest value)
 
