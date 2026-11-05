@@ -138,7 +138,9 @@ const runControl = async () => {
   record('control: third image turn fails with IMAGE_OFFLOAD_REQUIRED (unmounted executor)',
     endReason(end3).kind === 'error' && endReason(end3).error?.code === 'IMAGE_OFFLOAD_REQUIRED', describeEnd(end3))
   record('control: the failure names the bound and the offload count',
-    /exceed the \d+-byte base64 bound; 1 more oldest occurrence/.test(String(endReason(end3).error?.message)),
+    // 0.2.2 / pi-ai 1.3.0 wording: the route image budget replaced the old
+    // per-request base64 byte bound; the offload count is still named.
+    /exceed the route image budget; 1 more oldest occurrence/.test(String(endReason(end3).error?.message)),
     String(endReason(end3).error?.message).slice(0, 120))
   const ended4 = rt.turnEnd(4)
   await rt.promptText('continue')

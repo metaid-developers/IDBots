@@ -532,6 +532,11 @@ export function generateRuntimeConfig(input) {
   return [
     { id: 'sessions', name: '@deepseek-ai/dsh-session' },
     { id: 'tools', name: '@deepseek-ai/dsh-tools' },
+    // 0.2.2 split tool execution into Agent-scoped executor plugins; the
+    // registry alone no longer executes batches ("The selected tool executor
+    // is unavailable"). The native executor has no config fields; an unscoped
+    // contribution is the deployment default for every agent scope.
+    { id: 'tool-executor', name: '@deepseek-ai/dsh-tool-executor-native' },
     { id: 'llm', name: '@deepseek-ai/dsh-llm' },
     {
       id: 'system-prompt',
