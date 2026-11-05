@@ -23,7 +23,7 @@ the script applies them with plain `git apply` from the repo root.
 
 ## Current patches
 
-### `@deepseek-ai+dsh-win32-process+0.2.1-rc.2.patch`
+### `@deepseek-ai+dsh-win32-process+0.2.2-rc.1.patch`
 
 On Windows the kernel's subprocess-local service launches every tool
 subprocess (bash.exe first of all) through a dedicated "Job runner" child,
@@ -42,7 +42,7 @@ The patch ORs `0x08000000` into all three creation-flag call sites
 — piped restricted spawns). `CREATE_NO_WINDOW` only suppresses console
 allocation; it does not affect GUI windows.
 
-### `@deepseek-ai+dsh-tool-ask-user+0.2.1-rc.2.patch`
+### `@deepseek-ai+dsh-tool-ask-user+0.2.2-rc.1.patch`
 
 Upstream's `ask_user_question` ships a one-line description ("Ask the user a
 concise question…") that actively pushes the model toward firing the question
@@ -66,7 +66,7 @@ so a model-supplied timeout cannot close the question panel. The host mounts
 the tool with `timeout: -1` as well. An ask stays until a person answers or
 the turn is cancelled.
 
-### `@deepseek-ai+dsh-subprocess-local+0.2.1-rc.2.patch`
+### `@deepseek-ai+dsh-subprocess-local+0.2.2-rc.1.patch`
 
 Incident (2026-09-24, ~1 in 50 sessions): an external tmp cleanup removed the
 shared DSH runtime's private `dsh-subprocess-*` spill directory
@@ -90,7 +90,7 @@ of silently degrading to the bounded in-memory tail. Regression test:
 healed file holds the complete output; case B asserts the degraded-but-alive
 path, which upstream now satisfies on its own).
 
-### `@deepseek-ai+dsh-session-persistence-jsonl+0.2.1-rc.2.patch`
+### `@deepseek-ai+dsh-session-persistence-jsonl+0.2.2-rc.1.patch`
 
 The 0.1.7 V4 session log publishes staged files with a hard `link()` on
 every POSIX path (`publishCurrentExclusive` for generation/migration
@@ -107,7 +107,7 @@ preserved, and the staged bytes were already fsynced. `copyFile` is added
 to the injectable `defaultFileSystem` seam so the internals contract
 stays intact.
 
-### `@deepseek-ai+dsh-attachment-local+0.2.1-rc.2.patch`
+### `@deepseek-ai+dsh-attachment-local+0.2.2-rc.1.patch`
 
 Same defect class as the persistence patch: `publishImmutableAlias` and
 `publishStagedObject` commit attachment objects with `link()` and treat
@@ -116,7 +116,7 @@ attachment write fails with ENOTSUP. The patch adds an ENOTSUP branch
 that publishes through an exclusive `copyFile`; an existing target races
 into the same sha256 digest verification as the EEXIST branch.
 
-### `@deepseek-ai+dsh-experimental-browser-use-runtime+0.2.1-rc.2.patch`
+### `@deepseek-ai+dsh-experimental-browser-use-runtime+0.2.2-rc.1.patch`
 
 TICKET-2026-09-04. The experimental browser-use provider executes every
 Playwright-MCP tool with zero approval — `browser_navigate`/`browser_click`/
@@ -154,7 +154,7 @@ of failing agent creation. Browser E2E
 (`dsh-runtime/test/browser-use.test.mjs`, which navigates on the first
 turn) passes unchanged, proving the execute-side wait works.
 
-### `@deepseek-ai+dsh-experimental-computer-use-cua-driver-native+0.2.1-rc.2.patch`
+### `@deepseek-ai+dsh-experimental-computer-use-cua-driver-native+0.2.2-rc.1.patch`
 
 Same ticket, same seam, higher stakes: cua-driver tools inject real input
 into the user's physical desktop, which cannot be rolled back. The patch
@@ -165,7 +165,7 @@ listener, fail-closed on any non-grant. The tool-name prefix is extracted
 to a `TOOL_PREFIX` constant so the gate's bare-name lookup cannot drift
 from the registration.
 
-### `@deepseek-ai+dsh-llm-deepseek+0.2.1-rc.2.patch`
+### `@deepseek-ai+dsh-llm-deepseek+0.2.2-rc.1.patch`
 
 Truncated tool-call input JSON no longer fails the whole agent turn. The
 Messages adapter settles each tool-call block's accumulated `input_json_delta`
@@ -191,7 +191,7 @@ optional `onToolInputRepaired` dependency (wired to `ctx.logger.warn` in
 adapter's public types declare the new optional dependency. Regression
 test: `tests/dshDeepseekToolInputRepair.test.mjs`.
 
-### `@deepseek-ai+dsh-compaction-basic+0.2.1-rc.2.patch`
+### `@deepseek-ai+dsh-compaction-basic+0.2.2-rc.1.patch`
 
 Context-overflow recovery can now succeed on the route that overflowed.
 Upstream's `agent/request-error` handler reacts to a `CONTEXT_WINDOW_EXCEEDED`

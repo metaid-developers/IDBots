@@ -171,7 +171,13 @@ class IdbotsSdkServer extends HarnessSdkJsonRpcServer {
         // which blocks nested delegation). Pin 3 explicitly to preserve the
         // 0.1.5 tool-level default IDBots shipped with.
         maxDepth: 3,
-        modelSelectionSettings: this.idbotsSubagentModelSelection,
+        // 0.2.2 renamed `modelSelectionSettings` to `modelSelection` and split
+        // model discovery (list_subagent_models) into its own flag. The
+        // allowlist itself still comes from the composition-level
+        // model-selection-settings entry, recorded durably as the
+        // subagent/model-selection-policy event.
+        modelSelection: this.idbotsSubagentModelSelection,
+        modelDiscovery: this.idbotsSubagentModelSelection,
       })).catch((error) => {
         this.ctx.logger.warn(`idbots-sdk-server: agent-scoped tool-subagent mount failed for ${String(agent.id)}: ${String(error?.message ?? error)}`)
       })
@@ -525,24 +531,42 @@ class IdbotsSdkServer extends HarnessSdkJsonRpcServer {
       ...Number.isFinite(route?.maxTokens) ? { maxTokens: route.maxTokens } : {},
       ...(effort.length > 0 ? { reasoningEffort: effort } : {}),
     })
+    // 0.2.2: provider/model/reasoningEffort move through the durable
+    // agent.model selection. The agent/request waterfall may no longer change
+    // the route — agent-loop fixes the step selection BEFORE the waterfall and
+    // throws "use agent.model.select() before step preparation" on a mismatch,
+    // and a cross-agent rewrite would also corrupt subagent children whose
+    // selection comes from their own delegation options. This mirrors the
+    // kernel's applyConfiguredRoute: keep the previous effort when the route
+    // is unchanged and the ensure carries none.
+    if (provider.length > 0 && model.length > 0 && agent.model && typeof agent.model.select === 'function') {
+      try {
+        const previous = agent.model.current()
+        const selection = { provider, model, ...(effort.length > 0 ? { reasoningEffort: effort } : {}) }
+        if (selection.reasoningEffort === undefined && previous !== undefined
+          && previous.provider === selection.provider && previous.model === selection.model
+          && previous.reasoningEffort !== undefined) {
+          selection.reasoningEffort = previous.reasoningEffort
+        }
+        agent.model.select(selection)
+      } catch (error) {
+        this.ctx.logger.warn(`idbots-sdk-server: agent.model.select failed for session "${id}": ${String(error?.message ?? error)}`)
+      }
+    }
     if (this.idbotsRouteBound.has(agent) || !agent.ctx?.on) return
     this.idbotsRouteBound.add(agent)
-    agent.ctx.on('agent/request', async (_payload, next) => {
+    agent.ctx.on('agent/request', async (payload, next) => {
       const resolved = await next()
-      const bound = this.idbotsRoute.get(String(agent.id))
+      // 0.2.2: the waterfall is shared, so never touch another agent's
+      // request (subagent children fix their own route). maxTokens stays a
+      // waterfall-legal override; the route fields are owned by the durable
+      // selection above.
+      if (payload?.agent !== undefined && String(payload.agent.id) !== id) return resolved
+      const bound = this.idbotsRoute.get(id)
       if (bound === undefined) return resolved
-      const {
-        reasoningEffort: _inheritedEffort,
-        provider: _inheritedProvider,
-        model: _inheritedModel,
-        ...rest
-      } = resolved ?? {}
       return {
-        ...rest,
-        provider: bound.provider || resolved?.provider,
-        model: bound.model || resolved?.model,
+        ...resolved,
         ...Number.isFinite(bound.maxTokens) ? { maxTokens: bound.maxTokens } : {},
-        ...(bound.reasoningEffort ? { reasoningEffort: bound.reasoningEffort } : {}),
       }
     })
   }
