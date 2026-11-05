@@ -443,3 +443,28 @@ test('mergeSyncedProviderModels applies the Volcengine canonical preset over bar
     },
   ]);
 });
+
+test('buildProviderModelsUrl: volcengine picks the catalog mount that matches the billing channel', () => {
+  // Coding Plan — Anthropic-form base → coding catalog.
+  assert.equal(
+    buildProviderModelsUrl('https://ark.cn-beijing.volces.com/api/coding', 'volcengine'),
+    'https://ark.cn-beijing.volces.com/api/coding/v3/models',
+  );
+  // Coding Plan — OpenAI-form base (…/coding/v3) → same coding catalog.
+  assert.equal(
+    buildProviderModelsUrl('https://ark.cn-beijing.volces.com/api/coding/v3', 'volcengine'),
+    'https://ark.cn-beijing.volces.com/api/coding/v3/models',
+  );
+  // Trailing slash on the coding base.
+  assert.equal(
+    buildProviderModelsUrl('https://ark.cn-beijing.volces.com/api/coding/v3/', 'volcengine'),
+    'https://ark.cn-beijing.volces.com/api/coding/v3/models',
+  );
+  // Agent Plan base — also a coding-channel mount? No: /api/plan is the OTHER
+  // subscription; it has its own catalog, not covered here — falls to default
+  // pay-as-you-go path and must NOT be silently rewritten to coding.
+  assert.equal(
+    buildProviderModelsUrl('https://ark.cn-beijing.volces.com/api/plan', 'volcengine'),
+    'https://ark.cn-beijing.volces.com/api/v3/models',
+  );
+});

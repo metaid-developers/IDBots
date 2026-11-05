@@ -83,15 +83,21 @@ export function buildProviderModelsUrl(baseUrl: string, providerKey: string): st
     const origin = originMatch ? originMatch[1] : '';
     return origin ? `${origin}/api/v1/models` : '/api/v1/models';
   }
-  // Volcengine Ark serves the live catalog on GET /api/v3/models at the host
-  // root regardless of which version suffix the base URL carries (the default
-  // config ships /api/v3; older configs may have /v1), so any volces.com base
-  // resolves back to the canonical /api/v3 prefix.
+  // Volcengine Ark serves a live catalog on both billing channels; pick the
+  // mount from the configured base URL's channel:
+  //   - Pay-as-you-go:      {origin}/api/v3/models
+  //   - Coding Plan (套餐): {origin}/api/coding/v3/models
+  // Coding-plan bases come in either Anthropic form (…/api/coding) or OpenAI
+  // form (…/api/coding/v3); both resolve to the same catalog mount. Any other
+  // volces.com base defaults to the pay-as-you-go path.
   const isVolcengineHost = providerKey.trim().toLowerCase() === 'volcengine'
     || normalized.toLowerCase().includes('volces.com');
   if (isVolcengineHost) {
-    const hostRoot = normalized.replace(/\/v[13]$/i, '').replace(/\/api$/i, '');
-    return hostRoot ? `${hostRoot}/api/v3/models` : '/api/v3/models';
+    const originMatch = /^([a-z][a-z0-9+.-]*:\/\/[^/]+)/i.exec(normalized);
+    const origin = originMatch ? originMatch[1] : '';
+    const isCodingPlanBase = /\/api\/coding(?:\/|$)/i.test(normalized);
+    const path = isCodingPlanBase ? '/api/coding/v3/models' : '/api/v3/models';
+    return origin ? `${origin}${path}` : path;
   }
   if (normalized.endsWith('/v1')) return `${normalized}/models`;
   return `${normalized}/v1/models`;
