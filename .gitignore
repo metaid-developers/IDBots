@@ -913,3 +913,5 @@ blob-report/
 
 # S9-A desktop subscription order client slice
 !tests/meSubscriptionOrder.test.mjs
+# S9-A mobile subscription order client slice
+!tests/mePurchaseMobileSubmit.test.ts
