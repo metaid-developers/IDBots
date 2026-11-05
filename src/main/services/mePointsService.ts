@@ -25,6 +25,14 @@ const DEFAULT_WALLET_PATH = "m/44'/10001'/0'/0/0";
 const DEFAULT_REQUEST_TIMEOUT_MS = 8_000;
 const BALANCE_CACHE_TTL_MS = 30_000;
 
+/**
+ * S9-A subscription order (S9-A-订阅订单端点规格.md §1). Path and signed
+ * action are each pinned to ONE constant: when the backend lands the endpoint
+ * under a different path or action, this pair is the only thing to change.
+ */
+export const ME_SUBSCRIPTION_ORDER_PATH = '/v1/me/subscription/order';
+export const ME_SUBSCRIPTION_ORDER_ACTION = 'subscription_order';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -37,7 +45,8 @@ export type MeApiStage =
   | 'subscription'
   | 'history'
   | 'topup_submit'
-  | 'topup_orders';
+  | 'topup_orders'
+  | 'subscription_order';
 
 export class MePointsApiError extends Error {
   readonly stage: MeApiStage;
@@ -151,6 +160,25 @@ export interface MeTopupOrder {
   confirmedAt?: number;
   meMilli?: number;
   priceCny?: number;
+  rejectReason?: string;
+  raw: Record<string, unknown>;
+}
+
+/** Subscription billing period (S9-A §1: month | quarter | year). */
+export type MeSubscriptionPeriod = 'month' | 'quarter' | 'year';
+
+/** Sales channel the order is priced for (S9-A §1: desktop | cloud | mobile). */
+export type MeSubscriptionChannel = 'desktop' | 'cloud' | 'mobile';
+
+/** POST /v1/me/subscription/order order view (S9-A §1.6). */
+export interface MeSubscriptionOrder {
+  orderId: string;
+  planId: string;
+  period: string;
+  channel: string;
+  status: string;
+  amountCny?: number;
+  createdAt?: number;
   rejectReason?: string;
   raw: Record<string, unknown>;
 }
@@ -609,6 +637,55 @@ export async function submitMeTopupOrder(input: {
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
+/**
+ * Submit a subscription order (S9-A §1). Unlike topup_submit this endpoint is
+ * NOT gated by SUBSCRIPTION_REQUIRED — it is the only path by which a free
+ * user can open a subscription at all. The server prices the order from
+ * plan + period + channel (spec §1.3), so the client never sends an amount.
+ *
+ * Same retry ladder as the topup submit: the POST is retried once with the
+ * SAME idempotency key, so a transient network failure cannot double-submit.
+ */
+export async function submitMeSubscriptionOrder(input: {
+  planId: string;
+  period: MeSubscriptionPeriod;
+  channel: MeSubscriptionChannel;
+  voucherUrl?: string;
+  voucherRemark?: string;
+  idempotencyKey?: string;
+}): Promise<MeSubscriptionOrder> {
+  const { identity } = await signedAuth('subscription_order', ME_SUBSCRIPTION_ORDER_ACTION);
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const data = (await meRequestJson({
+        stage: 'subscription_order',
+        method: 'POST',
+        path: ME_SUBSCRIPTION_ORDER_PATH,
+        body: {
+          planId: input.planId,
+          period: input.period,
+          channel: input.channel,
+          ...(input.voucherUrl ? { voucherUrl: input.voucherUrl } : {}),
+          ...(input.voucherRemark ? { voucherRemark: input.voucherRemark } : {}),
+          ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+        },
+        identity,
+      })) as Record<string, unknown>;
+      // A submitted order moves no ledger balance — only the admin confirm
+      // opens the subscription (spec §2) — so the cached balance stays valid.
+      return normalizeMeSubscriptionOrder(data);
+    } catch (error) {
+      if (error instanceof MePointsApiError && (error.featureUnavailable || error.errorCode || error.status === 400)) {
+        throw error;
+      }
+      lastError = error;
+      await delayMs(400);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
 export async function getMeTopupOrders(): Promise<MeTopupOrder[]> {
   const { identity } = await signedAuth('topup_orders', 'topup_orders');
   const data = await meRequestJson({
@@ -642,6 +719,20 @@ function normalizeMeTopupOrder(record: Record<string, unknown>, orderIdFallback?
   };
 }
 
+function normalizeMeSubscriptionOrder(record: Record<string, unknown>): MeSubscriptionOrder {
+  return {
+    orderId: pickText(record, 'orderId', 'order_id'),
+    planId: pickText(record, 'planId', 'plan_id'),
+    period: pickText(record, 'period'),
+    channel: pickText(record, 'channel'),
+    status: pickText(record, 'statusText', 'status_text', 'status'),
+    amountCny: pickNumber(record, 'amountCny', 'amount_cny', 'priceCny', 'price_cny') || undefined,
+    createdAt: pickNumber(record, 'createdAt', 'created_at') || undefined,
+    rejectReason: pickText(record, 'rejectReason', 'reject_reason') || undefined,
+    raw: record,
+  };
+}
+
 /**
  * Platform payment info for the manual voucher channel (S9 §5 展示收款码).
  * The ME client contract (guide §5.3) does NOT define a payee-QR field, so
@@ -669,6 +760,26 @@ export function invalidateMeBalanceCache(): void {
 
 export function isMeErrorCode(error: unknown, code: string): boolean {
   return error instanceof MePointsApiError && error.errorCode === code;
+}
+
+// IPC arguments are untyped: reject a malformed period/channel instead of
+// silently repricing the order as a monthly desktop one.
+function requireSubscriptionPeriod(value: unknown): MeSubscriptionPeriod {
+  const text = normalizeText(value);
+  if (text === 'month' || text === 'quarter' || text === 'year') return text;
+  throw new MePointsApiError({
+    stage: 'subscription_order',
+    message: `invalid subscription period: ${text || '(empty)'}`,
+  });
+}
+
+function requireSubscriptionChannel(value: unknown): MeSubscriptionChannel {
+  const text = normalizeText(value);
+  if (text === 'desktop' || text === 'cloud' || text === 'mobile') return text;
+  throw new MePointsApiError({
+    stage: 'subscription_order',
+    message: `invalid subscription channel: ${text || '(empty)'}`,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -722,6 +833,19 @@ export function registerMePointsIpcHandlers(deps: {
     submission: await submitMeTopupOrder({
       packageId: normalizeText(input.packageId),
       periodDays: toNumber(input.periodDays) || undefined,
+      voucherUrl: normalizeText(input.voucherUrl) || undefined,
+      voucherRemark: normalizeText(input.voucherRemark) || undefined,
+      idempotencyKey: normalizeText(input.idempotencyKey) || undefined,
+    }),
+  }));
+  // S9-A: the subscription branch never goes through topup_submit (the 充值
+  // package endpoint rejects a planId). Plan + period + channel are priced by
+  // the server; the renderer only forwards the owner's choice and voucher.
+  wrap('me:subscriptionOrder', async (input) => ({
+    subscriptionOrder: await submitMeSubscriptionOrder({
+      planId: normalizeText(input.planId),
+      period: requireSubscriptionPeriod(input.period),
+      channel: requireSubscriptionChannel(input.channel),
       voucherUrl: normalizeText(input.voucherUrl) || undefined,
       voucherRemark: normalizeText(input.voucherRemark) || undefined,
       idempotencyKey: normalizeText(input.idempotencyKey) || undefined,

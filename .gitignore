@@ -910,3 +910,6 @@ blob-report/
 
 # Renderer-hang watchdog (notify-only): decision core + sampler episode tests
 !tests/rendererHangMonitor.test.mjs
+
+# S9-A desktop subscription order client slice
+!tests/meSubscriptionOrder.test.mjs

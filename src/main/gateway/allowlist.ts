@@ -366,6 +366,8 @@ const WS_A_NEW_INVOKE: Record<string, AllowlistEntry> = {
   'me:getSubscription': { tier: 'P1' },
   'me:getHistory': { tier: 'P1' },
   'me:submitTopupOrder': { tier: 'P1' },
+  // S9-A: the subscription order endpoint (桌面切片先落；mobile 后续接同一通道).
+  'me:subscriptionOrder': { tier: 'P1' },
   'me:getTopupOrders': { tier: 'P1' },
   'me:getPaymentInfo': { tier: 'P1' },
 };

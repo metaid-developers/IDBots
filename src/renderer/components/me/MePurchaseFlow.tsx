@@ -136,13 +136,6 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
     return selectedPlan.annualPriceCny ?? Math.round(monthly * 12);
   }, [selectedPlan, period]);
 
-  const periodDays = useMemo(() => {
-    const base = selectedPlan?.periodDays ?? 30;
-    if (period === 'month') return base;
-    if (period === 'quarter') return base * 3;
-    return base * 12;
-  }, [selectedPlan, period]);
-
   const voucherRemarkFor = useCallback((): string => {
     if (section === 'subscribe' && selectedPlan) {
       return `订阅 ${selectedPlan.planId} / ${i18nService.t(`mePurchasePeriod_${period}`)}`;
@@ -168,8 +161,14 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
   }, []);
 
   const submit = useCallback(async () => {
-    const packageId = section === 'subscribe' ? selectedPlan?.planId : selectedTopup?.packageId;
-    if (!packageId) return;
+    // S9-A: the two sections post to different endpoints. 订阅 sends
+    // planId + period + channel to /v1/me/subscription/order (a planId is NOT
+    // a topup packageId — that mismatch is why a free user could never open a
+    // subscription); 充值 keeps the unchanged topup submit.
+    const planId = section === 'subscribe' ? selectedPlan?.planId : undefined;
+    const packageId = section === 'topup' ? selectedTopup?.packageId : undefined;
+    const subjectId = planId || packageId;
+    if (!subjectId) return;
     const voucherRemark = remark.trim() || voucherRemarkFor();
     if (!voucher.voucherUrl && !voucherRemark) {
       setPhase('error');
@@ -179,13 +178,22 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
     setPhase('submitting');
     setSubmitError('');
     setErrorCode('');
-    const res = await window.electron.mePoints.submitTopupOrder({
-      packageId,
-      periodDays: section === 'subscribe' ? periodDays : undefined,
+    const voucherFields = {
       voucherUrl: voucher.voucherUrl ?? undefined,
       voucherRemark,
-      idempotencyKey: `ui-${section}-${packageId}-${Date.now()}`,
-    });
+      idempotencyKey: `ui-${section}-${subjectId}-${Date.now()}`,
+    };
+    const res = section === 'subscribe'
+      ? await window.electron.mePoints.submitSubscriptionOrder({
+        planId,
+        period,
+        channel: 'desktop',
+        ...voucherFields,
+      })
+      : await window.electron.mePoints.submitTopupOrder({
+        packageId,
+        ...voucherFields,
+      });
     if (res.success) {
       setPhase('submitted');
       invalidateMeSnapshot();
@@ -194,7 +202,7 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
       setSubmitError(res.error || 'submit failed');
       setErrorCode(res.errorCode || '');
     }
-  }, [section, selectedPlan, selectedTopup, periodDays, remark, voucher, voucherRemarkFor]);
+  }, [section, selectedPlan, selectedTopup, period, remark, voucher, voucherRemarkFor]);
 
   useEffect(() => {
     // S9 v1.2: prefer the owner-uploaded payee QR image (收款设置 page); only
