@@ -1,11 +1,9 @@
 --- a/dsh-runtime/node_modules/@deepseek-ai/dsh-llm-deepseek/lib/index.js
 +++ b/dsh-runtime/node_modules/@deepseek-ai/dsh-llm-deepseek/lib/index.js
-@@ -1918,14 +1918,209 @@
- 		case "tool_use": return { kind: "tool-calls" };
- 		case "max_tokens": return { kind: "max-tokens" };
+@@ -1933,12 +1933,207 @@ function stopReason(raw) {
  		default: return malformed(`unsupported stop reason ${String(raw)}`);
-+	}
-+}
+ 	}
+ }
 +/** Best-effort structural repair for a truncated JSON text.
 +* Conservative on purpose: scanning keeps every fully-read value, drops the
 +* single member that owns the truncation, and closes only the containers still
@@ -198,8 +196,8 @@
 +			toolName: content.name
 +		});
 +		return JSON.stringify(parsed);
- 	}
- }
++	}
++}
  /** Translate decoded SSE data into the Harness stream protocol.
  * @param events - framed, decoded provider events in arrival order.
  * @param model - requested model id stored in durable replay state.
@@ -211,7 +209,7 @@
  	const blocks = /* @__PURE__ */ new Map();
  	const usage = {
  		inputTokens: 0,
-@@ -1979,7 +2174,7 @@
+@@ -1992,7 +2187,7 @@ async function* translate(events, model) {
  				if (chunk !== void 0) yield chunk;
  			} else {
  				block.closed = true;
@@ -220,7 +218,7 @@
  				yield {
  					type: "block-end",
  					index: block.index,
-@@ -2247,7 +2442,7 @@
+@@ -2261,7 +2456,7 @@ var DeepSeekAdapter = class extends LlmAdapter {
  				}
  				await extensions.accept();
  				if (response.body === null) throw new LlmError("DeepSeek Messages returned no response body", "EMPTY_RESPONSE");
@@ -229,7 +227,7 @@
  				return;
  			}
  		} catch (error) {
-@@ -2301,6 +2496,9 @@
+@@ -2725,6 +2920,9 @@ function registerDeepSeekProvider(ctx, provider, dependencies) {
  			unacceptedRoutes.add(route);
  			ctx.logger.warn(`llm-deepseek: route "${route}" request extension acceptance failed; contributors resend on a later request: %o`, error);
  		},
@@ -241,7 +239,7 @@
  		prepareExtensions: (request) => ctx.get("deepseekLlmApiExtensions")?.prepare(request) ?? Promise.resolve({
 --- a/dsh-runtime/node_modules/@deepseek-ai/dsh-llm-deepseek/lib/types/types.d.ts
 +++ b/dsh-runtime/node_modules/@deepseek-ai/dsh-llm-deepseek/lib/types/types.d.ts
-@@ -106,6 +106,12 @@
+@@ -106,6 +106,12 @@ export interface DeepSeekAdapterOptions<Connection extends DeepSeekConnectionOpt
          model: string;
          error: unknown;
      }) => void;

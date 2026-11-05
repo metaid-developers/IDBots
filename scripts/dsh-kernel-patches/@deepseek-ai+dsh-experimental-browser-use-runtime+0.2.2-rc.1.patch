@@ -1,6 +1,7 @@
+index 67a78a0b..6076363c 100644
 --- a/dsh-runtime/node_modules/@deepseek-ai/dsh-experimental-browser-use-runtime/lib/types/mcp.js
 +++ b/dsh-runtime/node_modules/@deepseek-ai/dsh-experimental-browser-use-runtime/lib/types/mcp.js
-@@ -48,6 +48,9 @@
+@@ -52,6 +52,9 @@ export function mountSessionMcp(ctx, options) {
      const clients = new Map();
      const toolPrefix = `mcp__${options.name}__`;
      const resourceTools = new Set(['list_mcp_resources', 'list_mcp_resource_templates', 'read_mcp_resource']);
@@ -10,7 +11,7 @@
      let stopping = false;
      let refreshingMasks = false;
      const refreshBlockedMasks = () => {
-@@ -126,9 +129,12 @@
+@@ -130,9 +133,12 @@ export function mountSessionMcp(ctx, options) {
              clients.clear();
          };
      }, `${options.name}.sessions`);
@@ -24,7 +25,7 @@
              clients.delete(agent);
              await state.mask?.dispose();
          }, `${options.name}.activation`);
-@@ -137,7 +143,31 @@
+@@ -141,7 +147,31 @@ export function mountSessionMcp(ctx, options) {
              refreshBlockedMasks();
              return;
          }
@@ -57,7 +58,7 @@
          clients.set(agent, state);
      }, { prepend: true });
      ctx.on('tools/change', refreshBlockedMasks);
-@@ -151,6 +181,23 @@
+@@ -155,6 +185,33 @@ export function mountSessionMcp(ctx, options) {
          if (agent === undefined || clients.get(agent)?.status !== 'ready') {
              throw new Error(`${options.name}: browser tool belongs to another Session`);
          }
@@ -78,6 +79,16 @@
 +            if (outcome !== 'allowed-once')
 +                throw new Error(`${options.name}: browser action "${exec.name}" was not approved (${outcome})`);
 +        }
++        // IDBots patch (lazy-browser-mount): 0.2.2 resolves each step's tool
++        // set BEFORE the request and dispatch/normalize resolve claimed calls
++        // against that frozen set. A browser tool mounted lazily mid-turn is
++        // absent from it (it was not registered when the step resolved), so
++        // both the body dispatch and the success normalize would throw
++        // ToolNotFoundError even though the registry has the tool by now.
++        // Drop the frozen set for this exec: resolution falls back to the
++        // live registry, which resources.run has just populated via the
++        // on-demand mount.
++        delete exec.toolSet;
          return resources.run(agent, exec.signal, async (_scope, combined) => {
              const original = exec.signal;
              exec.signal = combined;

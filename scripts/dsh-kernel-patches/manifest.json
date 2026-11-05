@@ -2,7 +2,7 @@
   "$comment": "Fingerprints proving each committed kernel patch really landed in an installed or PACKAGED dsh-runtime. scripts/verify-dsh-kernel-patches.cjs consumes this file: it fails when a patch file has no entry (adding a patch without a fingerprint is the silent-drop class of the v0.9.3 incident), when a listed patch file is gone, or when the marker count in the target file does not match. Keep `count` exact so a partially applied patch also fails. Paths are package-root relative, so the same entry works for a checkout and for an unpacked app's resources directory.",
   "patches": [
     {
-      "patch": "@deepseek-ai+dsh-win32-process+0.2.1-rc.2.patch",
+      "patch": "@deepseek-ai+dsh-win32-process+0.2.2-rc.1.patch",
       "why": "CREATE_NO_WINDOW on all three raw CreateProcess spawn sites — a dropped patch silently brings back the Windows bash.exe console flash",
       "platforms": [
         "win32"
@@ -11,12 +11,12 @@
         {
           "file": "dsh-runtime/node_modules/@deepseek-ai/dsh-win32-process/lib/index.js",
           "match": "0x08000000",
-          "count": 3
+          "count": 2
         }
       ]
     },
     {
-      "patch": "@deepseek-ai+dsh-tool-ask-user+0.2.1-rc.2.patch",
+      "patch": "@deepseek-ai+dsh-tool-ask-user+0.2.2-rc.1.patch",
       "why": "ask_user_question declares and forwards the per-question `detail` context (bare-question incident f3ec66dc) and ignores model timeouts so the panel waits for a person",
       "targets": [
         {
@@ -32,7 +32,7 @@
       ]
     },
     {
-      "patch": "@deepseek-ai+dsh-subprocess-local+0.2.1-rc.2.patch",
+      "patch": "@deepseek-ai+dsh-subprocess-local+0.2.2-rc.1.patch",
       "why": "spill self-heal: recreate an externally deleted private spill directory instead of degrading to the bounded tail — matters on every platform",
       "targets": [
         {
@@ -43,7 +43,7 @@
       ]
     },
     {
-      "patch": "@deepseek-ai+dsh-session-persistence-jsonl+0.2.1-rc.2.patch",
+      "patch": "@deepseek-ai+dsh-session-persistence-jsonl+0.2.2-rc.1.patch",
       "why": "ENOTSUP fallback for the V4 log's hard-link publish — invisible on APFS/NTFS, fatal on exFAT/FAT32/SMB userData and every dev loop on the SSD worktrees",
       "targets": [
         {
@@ -54,7 +54,7 @@
       ]
     },
     {
-      "patch": "@deepseek-ai+dsh-attachment-local+0.2.1-rc.2.patch",
+      "patch": "@deepseek-ai+dsh-attachment-local+0.2.2-rc.1.patch",
       "why": "same ENOTSUP fallback for the attachment store's hard-link publish",
       "targets": [
         {
@@ -65,7 +65,7 @@
       ]
     },
     {
-      "patch": "@deepseek-ai+dsh-experimental-browser-use-runtime+0.2.1-rc.2.patch",
+      "patch": "@deepseek-ai+dsh-experimental-browser-use-runtime+0.2.2-rc.1.patch",
       "why": "automation approval (TICKET-2026-09-04): mutating Playwright-MCP browser tools ask through ctx.approval, fail-closed; lazy-browser-mount v2 (2026-10-16): agent/created defers the Playwright MCP spawn + Chromium to 8s after creation (background, Session-owned) — the memory spike of the spawn used to swap-stall memory-exhausted hosts for ~15s inside every new session's first turn; tools/execute still acquires on demand via resources.run(entry.ready)",
       "targets": [
         {
@@ -76,12 +76,12 @@
         {
           "file": "dsh-runtime/node_modules/@deepseek-ai/dsh-experimental-browser-use-runtime/lib/types/mcp.js",
           "match": "IDBots patch (lazy-browser-mount)",
-          "count": 2
+          "count": 3
         }
       ]
     },
     {
-      "patch": "@deepseek-ai+dsh-experimental-computer-use-cua-driver-native+0.2.1-rc.2.patch",
+      "patch": "@deepseek-ai+dsh-experimental-computer-use-cua-driver-native+0.2.2-rc.1.patch",
       "why": "automation approval (TICKET-2026-09-04): mutating cua-driver desktop tools ask through ctx.approval, fail-closed — desktop input cannot be rolled back",
       "targets": [
         {
@@ -92,7 +92,7 @@
       ]
     },
     {
-      "patch": "@deepseek-ai+dsh-llm-deepseek+0.2.1-rc.2.patch",
+      "patch": "@deepseek-ai+dsh-llm-deepseek+0.2.2-rc.1.patch",
       "why": "truncated tool-call input JSON: conservative structural repair at tool-call settle (drop the incomplete tail member, close open containers, never complete a cut scalar) instead of a turn-fatal MALFORMED_RESPONSE; unrepairable input still throws so the host one-shot continue fallback applies, and every repair is reported through onToolInputRepaired",
       "targets": [
         {
@@ -103,7 +103,7 @@
       ]
     },
     {
-      "patch": "@deepseek-ai+dsh-compaction-basic+0.2.1-rc.2.patch",
+      "patch": "@deepseek-ai+dsh-compaction-basic+0.2.2-rc.1.patch",
       "why": "context-overflow recovery shrinks the summarized region (older half per rung) when the summarization request itself overflows the route's context window — without it a provider whose real prompt cap sits below the declared window (Command Code GLM, 2026-10-27 session 2c70849f) fails every turn with the same 400 and only a fallback brain on another provider can compact",
       "targets": [
         {
