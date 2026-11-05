@@ -12,7 +12,7 @@
   ; Windows environment at runtime instead.
   ReadEnvStr $1 "SystemDrive"
   IfFileExists "$1\Windows.old\Users" 0 _idbots_data_check_done
-  MessageBox MB_OK|MB_ICONINFORMATION "A previous Windows installation was found ($1\Windows.old).$\r$\n$\r$\nIf your IDBots data is inside it, finish installing IDBots and launch it once: when it starts with an empty library, it will offer to recover data from known locations (including Windows.old)." /SD OK
+  MessageBox MB_OK|MB_ICONINFORMATION "A previous Windows installation was found ($1\Windows.old).$\r$\n$\r$\nIf your IDBots data is inside it, finish installing IDBots and launch it once: when it starts with an empty library, it will offer to recover data from known locations (including Windows.old)." /SD IDOK
 
 _idbots_data_check_done:
 !macroend
