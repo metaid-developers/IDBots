@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   build-staging-apk:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
       LANG: en_US.UTF-8
@@ -43,8 +43,10 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Verify preinstalled Android SDK
+        run: |
+          test -f "$ANDROID_HOME/platforms/android-36/android.jar"
+          "$ANDROID_HOME/platform-tools/adb" --version
 
       - name: Activate pnpm 11.24.0
         run: |
