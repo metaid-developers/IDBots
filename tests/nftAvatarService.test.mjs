@@ -18,7 +18,7 @@ const { clearResolvedPinAssetCache } = await import('../dist-electron/main/servi
 const ITEM_PIN = `${'aa'.repeat(32)}i0`;
 const COVER_PIN = `${'bb'.repeat(32)}i3`;
 const COLLECTION_PIN = `${'cc'.repeat(32)}i0`;
-const ITEM_INFO_URL = `https://manapi.metaid.io/api/mrc721/item/info?pinId=${ITEM_PIN}`;
+const ITEM_INFO_URL = `https://so.metaid.io/api/mrc721/item/info?pinId=${ITEM_PIN}`;
 const COVER_CONTENT_URL = `https://file.metaid.io/metafile-indexer/content/${COVER_PIN}`;
 const PNG_BYTES = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
 
