@@ -4,7 +4,6 @@ import { RootState } from './store';
 import type { SettingsOpenOptions } from './components/Settings';
 import Sidebar from './components/Sidebar';
 import Toast from './components/Toast';
-import MeBalanceBadge from './components/me/MeBalanceBadge';
 import MePurchaseFlow from './components/me/MePurchaseFlow';
 import {
   onRequestOpenMePurchase,
@@ -149,8 +148,8 @@ const providerDisplayLabel = (providerKey: string): string => (
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsOptions, setSettingsOptions] = useState<SettingsOpenOptions>({});
-  // S9 ME points: the shared purchase flow (订阅/充值 人工凭证通道) is one
-  // modal mounted here; badge / plan card / settings page open it by event.
+  // S9 ME points: the shared gateway-checkout flow is one modal mounted
+  // here; badge / plan card / settings page open it by event.
   const [mePurchase, setMePurchase] = useState<{ open: boolean; section: MePurchaseSection }>({
     open: false,
     section: 'subscribe',
@@ -1478,10 +1477,6 @@ const App: React.FC = () => {
       {toastMessage && (
         <Toast message={toastMessage} onClose={() => setToastMessage(null)} />
       )}
-      {/* S9: 免费额度 token 口径横幅下线；全局 ME 余额角标取而代之（顶栏右上，同源）。 */}
-      <div className="fixed right-4 top-3 z-[85] non-draggable">
-        <MeBalanceBadge />
-      </div>
       <MePurchaseFlow
         open={mePurchase.open}
         section={mePurchase.section}

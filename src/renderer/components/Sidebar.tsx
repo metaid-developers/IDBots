@@ -37,6 +37,7 @@ import type { SessionSidebarSection } from '../utils/sessionAutoGrouping';
 import { useStableCallback } from '../utils/useStableCallback';
 import { selectTrackedTasksNeedingAttention } from '../utils/trackedTaskAttention';
 import type { SettingsOpenOptions } from './Settings';
+import MeBalanceBadge from './me/MeBalanceBadge';
 
 interface SidebarProps {
   onShowSettings: (options?: SettingsOpenOptions) => void;
@@ -946,8 +947,11 @@ const Sidebar: React.FC<SidebarProps> = ({
             </svg>
             {i18nService.t('settings')}
           </button>
-          <BackgroundTasksBadge onShowGroupTasks={onShowGroupTasks} />
-          <SleepGuardBadge />
+          <div className="ml-auto flex items-center gap-2">
+            <BackgroundTasksBadge onShowGroupTasks={onShowGroupTasks} />
+            <SleepGuardBadge />
+            <MeBalanceBadge />
+          </div>
         </div>
       </div>
     </aside>

@@ -837,12 +837,12 @@ contextBridge.exposeInMainWorld('electron', {
     getSubscription: () => ipcRenderer.invoke('me:getSubscription'),
     getHistory: (input?: { type?: string; beforeId?: string; limit?: number }) =>
       ipcRenderer.invoke('me:getHistory', input ?? {}),
-    submitTopupOrder: (input: { packageId: string; periodDays?: number; voucherUrl?: string; voucherRemark?: string; idempotencyKey?: string }) =>
+    submitTopupOrder: (input: { packageId: string; periodDays?: number; voucherUrl?: string; voucherRemark?: string; idempotencyKey?: string; gateway?: 'alipay' | 'paypal' }) =>
       ipcRenderer.invoke('me:submitTopupOrder', input ?? {}),
-    // S9-A: subscription orders have their own endpoint (a planId is not a
-    // topup packageId). Desktop vouchers use the same remark/URL channel.
-    submitSubscriptionOrder: (input: { planId: string; period: 'month' | 'quarter' | 'year'; channel: 'desktop' | 'cloud' | 'mobile'; voucherUrl?: string; voucherRemark?: string; idempotencyKey?: string }) =>
+    submitSubscriptionOrder: (input: { planId: string; period: 'month' | 'quarter' | 'year'; channel: 'desktop' | 'cloud' | 'mobile'; voucherUrl?: string; voucherRemark?: string; idempotencyKey?: string; gateway?: 'alipay' | 'paypal' }) =>
       ipcRenderer.invoke('me:subscriptionOrder', input ?? {}),
+    getSubscriptionOrder: (input: { orderId: string }) =>
+      ipcRenderer.invoke('me:subscriptionOrder', input),
     getTopupOrders: () => ipcRenderer.invoke('me:getTopupOrders'),
     pickVoucher: (input?: Record<string, never>) => ipcRenderer.invoke('me:pickVoucher', input ?? {}),
     getPaymentInfo: () => ipcRenderer.invoke('me:getPaymentInfo'),

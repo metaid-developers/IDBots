@@ -29,6 +29,7 @@ const {
   ME_SUBSCRIPTION_ORDER_ACTION,
   ME_SUBSCRIPTION_ORDER_PATH,
   MePointsApiError,
+  getMeSubscriptionOrder,
   initMePointsService,
   submitMeSubscriptionOrder,
 } = require('../dist-electron/main/services/mePointsService.js');
@@ -103,14 +104,18 @@ test('endpoint path and signed action are single constants with the pinned value
   assert.equal(ME_SUBSCRIPTION_ORDER_ACTION, 'subscription_order');
 });
 
-test('submit signs me:subscription_order:<ts>, posts planId/period/channel and no price', async () => {
+test('submit signs me:subscription_order:<ts>, posts planId/period/channel/gateway and no price', async () => {
+  const gatewayParams = { qrCode: 'https://qr.alipay.com/me-sub-1' };
   const fetchImpl = createFetchStub(() => ({
     orderId: 'me_sub_1',
     planId: 'me_standard',
     period: 'month',
     channel: 'desktop',
-    status: 'submitted',
+    status: 'created',
     amountCny: 49,
+    payAmount: 49,
+    payCurrency: 'CNY',
+    gatewayParams,
     createdAt: 1762300000,
   }));
   initService(fetchImpl);
@@ -119,36 +124,27 @@ test('submit signs me:subscription_order:<ts>, posts planId/period/channel and n
     planId: 'me_standard',
     period: 'month',
     channel: 'desktop',
-    voucherRemark: '订阅 me_standard / 月',
+    gateway: 'alipay',
     idempotencyKey: 'ui-subscribe-me_standard-1',
   });
 
   assert.equal(fetchImpl.calls.length, 1);
   const [call] = fetchImpl.calls;
   const url = new URL(call.url);
-  // The default base URL owns a path prefix (/assist-open-api); the endpoint
-  // path itself is the constant pinned above.
-  assert.ok(
-    url.pathname.endsWith('/v1/me/subscription/order'),
-    `must hit /v1/me/subscription/order, got ${url.pathname}`,
-  );
-  assert.equal(url.pathname.includes('/topup/'), false, 'the subscription order must not go through topup');
+  assert.ok(url.pathname.endsWith('/v1/me/subscription/order'));
+  assert.equal(url.pathname.includes('/topup/'), false);
   assert.equal(call.init.method, 'POST');
 
   assert.equal(call.init.headers['X-Identity-Address'], IDENTITY_ADDRESS);
   const seconds = secondsOf(call);
   const expectedMessage = `me:subscription_order:${seconds}`;
-  assert.match(expectedMessage, /^me:subscription_order:\d+$/);
-  assert.ok(
-    verifyMessage(IDENTITY_ADDRESS, expectedMessage, call.init.headers['X-Signature']),
-    'X-Signature must verify against me:subscription_order:<tsSeconds>',
-  );
+  assert.ok(verifyMessage(IDENTITY_ADDRESS, expectedMessage, call.init.headers['X-Signature']));
 
   const body = bodyOf(call);
   assert.equal(body.planId, 'me_standard');
   assert.equal(body.period, 'month');
   assert.equal(body.channel, 'desktop');
-  assert.equal(body.voucherRemark, '订阅 me_standard / 月');
+  assert.equal(body.gateway, 'alipay');
   assert.equal(body.idempotencyKey, 'ui-subscribe-me_standard-1');
   assert.equal('amountCny' in body, false, 'the server prices the order; the client must not send an amount');
   assert.equal('priceCny' in body, false);
@@ -158,8 +154,11 @@ test('submit signs me:subscription_order:<ts>, posts planId/period/channel and n
     planId: 'me_standard',
     period: 'month',
     channel: 'desktop',
-    status: 'submitted',
+    status: 'created',
     amountCny: 49,
+    payAmount: 49,
+    payCurrency: 'CNY',
+    gatewayParams,
     createdAt: 1762300000,
     rejectReason: undefined,
     raw: {
@@ -167,8 +166,11 @@ test('submit signs me:subscription_order:<ts>, posts planId/period/channel and n
       planId: 'me_standard',
       period: 'month',
       channel: 'desktop',
-      status: 'submitted',
+      status: 'created',
       amountCny: 49,
+      payAmount: 49,
+      payCurrency: 'CNY',
+      gatewayParams,
       createdAt: 1762300000,
     },
   });
@@ -221,10 +223,33 @@ test('a transient failure is retried once with the SAME idempotency key', async 
   assert.equal(order.orderId, 'me_sub_3');
 });
 
+test('subscription status polling reuses the signed action and reads the order id path', async () => {
+  const fetchImpl = createFetchStub(() => ({
+    orderId: 'me_sub_status',
+    planId: 'me_pro',
+    period: 'month',
+    channel: 'desktop',
+    status: 'credited',
+    gatewayParams: { qrCode: 'https://qr.alipay.com/me-sub-status' },
+  }));
+  initService(fetchImpl);
+
+  const order = await getMeSubscriptionOrder('me_sub_status');
+  assert.equal(fetchImpl.calls.length, 1);
+  const [call] = fetchImpl.calls;
+  assert.equal(call.init.method, 'GET');
+  assert.ok(new URL(call.url).pathname.endsWith('/v1/me/subscription/order/me_sub_status'));
+  const seconds = secondsOf(call);
+  assert.ok(verifyMessage(
+    IDENTITY_ADDRESS,
+    `me:subscription_order:${seconds}`,
+    call.init.headers['X-Signature'],
+  ));
+  assert.equal(order.status, 'credited');
+});
+
 // ---------------------------------------------------------------------------
-// MePurchaseFlow wiring (renderer has no DOM test harness in this repo, so the
-// branch shape is asserted against the source — the submit() body is sliced
-// out so unrelated code cannot satisfy the matches).
+// MePurchaseFlow wiring: automated gateway checkout only, never vouchers.
 // ---------------------------------------------------------------------------
 
 const flowSource = fs.readFileSync(
@@ -232,35 +257,33 @@ const flowSource = fs.readFileSync(
   'utf8',
 );
 
-function submitBody() {
-  const start = flowSource.indexOf('const submit = useCallback(');
-  assert.ok(start >= 0, 'MePurchaseFlow must keep a submit() callback');
-  const end = flowSource.indexOf('}, [section, selectedPlan, selectedTopup, period,', start);
-  assert.ok(end > start, 'submit() dependency list shape changed — update this slice');
+function createOrderBody() {
+  const start = flowSource.indexOf('const handleCreateOrder = useCallback(');
+  assert.ok(start >= 0, 'MePurchaseFlow must keep a handleCreateOrder callback');
+  const end = flowSource.indexOf('}, [section, selectedPlan, selectedTopup, phase, period, amountDue]);', start);
+  assert.ok(end > start, 'handleCreateOrder dependency list shape changed — update this slice');
   return flowSource.slice(start, end);
 }
 
-test('MePurchaseFlow: the 订阅 branch posts to the subscription endpoint with channel desktop', () => {
-  const body = submitBody();
+test('MePurchaseFlow: subscribe creates a desktop Alipay order and opens the returned checkout', () => {
+  const body = createOrderBody();
   const subscribeCall = body.indexOf('submitSubscriptionOrder({');
-  assert.ok(subscribeCall >= 0, '订阅 must call mePoints.submitSubscriptionOrder');
+  assert.ok(subscribeCall >= 0);
   const subscribeBlock = body.slice(subscribeCall, body.indexOf('})', subscribeCall));
-  assert.match(subscribeBlock, /planId/);
+  assert.match(subscribeBlock, /planId: subjectId/);
   assert.match(subscribeBlock, /period/);
   assert.match(subscribeBlock, /channel: 'desktop'/);
+  assert.match(subscribeBlock, /gateway: 'alipay'/);
+  assert.match(body, /window\.electron\.shell\.openExternal\(nextCheckout\.approvalUrl\)/);
 });
 
-test('MePurchaseFlow: the 充值 branch still calls topup_submit and never receives a planId', () => {
-  const body = submitBody();
+test('MePurchaseFlow: topup uses its package endpoint and the desktop flow has no voucher path', () => {
+  const body = createOrderBody();
   const topupCall = body.indexOf('submitTopupOrder({');
-  assert.ok(topupCall >= 0, '充值 must keep calling mePoints.submitTopupOrder');
-  const topupBlock = body.slice(topupCall);
-  assert.match(topupBlock, /packageId/);
-  assert.doesNotMatch(topupBlock, /planId/, 'a planId must never be submitted as a topup package');
-  assert.match(
-    body,
-    /section === 'subscribe' \? selectedPlan\?\.planId : undefined/,
-    'planId must be resolved only for the subscribe branch',
-  );
-  assert.doesNotMatch(body, /periodDays/, 'the subscription endpoint derives periodDays from period');
+  assert.ok(topupCall >= 0);
+  const topupBlock = body.slice(topupCall, body.indexOf('})', topupCall));
+  assert.match(topupBlock, /packageId: subjectId/);
+  assert.match(topupBlock, /gateway: 'alipay'/);
+  assert.doesNotMatch(topupBlock, /planId/);
+  assert.doesNotMatch(flowSource, /pickVoucher|voucherUrl|voucherRemark|DocumentArrowUpIcon|buildAlipayVariantCUrl/);
 });
