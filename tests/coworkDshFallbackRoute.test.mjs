@@ -239,6 +239,53 @@ test('primary route exhausting transient resumes switches to the bot fallback br
   await result.completed
 })
 
+test('a runtime boot failure switches to the fallback brain with the original prompt and completes', async () => {
+  const { DshRuntimeBootError } = require('../dist-electron/main/libs/dshRuntimeBootError.js')
+  const result = await driveTurn({
+    sessionId: 'gt02-runtime-boot-fallback',
+    metabot: BOT_WITH_FALLBACK,
+    script: (_input, callNo) => {
+      if (callNo === 1) {
+        throw new DshRuntimeBootError('DSH runtime for provider "gw-a.auto-bc" failed to boot: native module loader unavailable')
+      }
+      return { kind: 'completed' }
+    },
+  })
+
+  assert.equal(result.runTurnCalls.length, 2, 'one failed primary boot + one fallback attempt')
+  assert.equal(result.runTurnCalls[0].provider.key, 'gw-a')
+  assert.equal(result.runTurnCalls[1].provider.key, 'gw-b')
+  assert.equal(result.runTurnCalls[1].provider.model, 'mock-b1')
+  assert.equal(
+    result.runTurnCalls[1].prompt,
+    result.runTurnCalls[0].prompt,
+    'the pre-prompt boot failure retries the exact original task, not a context-free resume cue',
+  )
+  assert.match(result.runTurnCalls[1].prompt, /GT02_PROBE do the task/)
+  assert.notEqual(result.runTurnCalls[1].prompt, result.TRANSIENT_TURN_RESUME_PROMPT)
+  assert.equal(result.sessionRow?.status, 'completed')
+  assert.equal(result.errors.length, 0)
+  await result.completed
+})
+
+test('a runtime boot failure without any alternative keeps the boot diagnostic', async () => {
+  const { DshRuntimeBootError } = require('../dist-electron/main/libs/dshRuntimeBootError.js')
+  const result = await driveTurn({
+    sessionId: 'gt02-runtime-boot-no-alternative',
+    metabot: { id: 9, name: 'NoFallback Boot Bot', llm_id: 'mock-a1', llm_provider: 'gw-a' },
+    configOverrides: { providers: NO_RESCUE_PROVIDERS },
+    script: () => {
+      throw new DshRuntimeBootError('DSH runtime for provider "gw-a.auto-bc" failed to boot: native module loader unavailable')
+    },
+  })
+
+  assert.equal(result.runTurnCalls.length, 1)
+  assert.equal(result.sessionRow?.status, 'error')
+  assert.equal(result.errors.length, 1)
+  assert.match(result.errors[0].error, /native module loader unavailable/)
+  assert.doesNotMatch(result.errors[0].error, /未配置可用模型|No usable model configured/)
+})
+
 test('without a fallback brain the turn fails after the primary resume budget (behavior unchanged)', async () => {
   const result = await driveTurn({
     sessionId: 'gt02-no-fallback',

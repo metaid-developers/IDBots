@@ -24,6 +24,7 @@ import { pathToFileURL } from 'url'
 import { resolveElectronExecutablePath } from '../runtimePaths'
 import { mergeDshRuntimeProcessEnv } from '../windowsPathEnv'
 import { DshEventMapper } from './dshEventMapper'
+import { DshRuntimeBootError } from '../dshRuntimeBootError'
 import { currentClientTimeZone } from './clientTimeZone'
 import type {
   DshApprovalAsk,
@@ -268,14 +269,11 @@ export class DshKernel {
         model: first.models[0]?.id ?? 'default',
       })
     } catch (error) {
-      // Boot failures stay loud by design (the fallback brain covers provider
-      // outages mid-turn, not a runtime that cannot load its own plugin tree).
-      // Name the provider so the user knows which model configuration to
-      // inspect; the SDK error already carries the exit code and stderr tail,
-      // where a plugin-load rejection names the offending field.
+      // Keep the provider and SDK diagnostics intact; the typed error lets the
+      // turn runner retry the original prompt on its fallback brain.
       const runtimeKey = config.runtimeId ?? first?.key ?? 'unknown'
       const detail = error instanceof Error ? error.message : String(error)
-      throw new Error(
+      throw new DshRuntimeBootError(
         `DSH runtime for provider "${runtimeKey}" failed to boot. This is usually a provider/model configuration problem (a reasoning or compat setting this wire rejects) or broken runtime dependencies, not a transient network issue. Original error: ${detail}`,
       )
     }
