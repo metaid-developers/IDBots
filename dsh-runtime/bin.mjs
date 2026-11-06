@@ -11,6 +11,7 @@
 
 import path from 'node:path'
 import { installWin32SpawnShim } from './lib/win32-spawn-shim.mjs'
+import { installPortableModuleLoader } from './lib/portable-module-loader.mjs'
 import { boot } from '@deepseek-ai/dsh-app-boot'
 
 installWin32SpawnShim()
@@ -22,7 +23,13 @@ if (!configPath) {
 }
 
 const moduleBase = new URL('.', import.meta.url)
-const ctx = await boot('idbots-dsh-runtime', path.resolve(configPath), undefined, undefined, moduleBase)
+const ctx = await boot(
+  'idbots-dsh-runtime',
+  path.resolve(configPath),
+  undefined,
+  (ctx) => { installPortableModuleLoader(ctx) },
+  moduleBase.href,
+)
 process.stderr.write(`[idbots-dsh-runtime] booted ${path.resolve(configPath)}\n`)
 
 const keepalive = setInterval(() => {}, 1 << 30)
