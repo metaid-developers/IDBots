@@ -121,7 +121,7 @@ const MeBalanceBadge: React.FC = () => {
       {panelOpen && (
         <>
           <div className="fixed inset-0 z-[79]" onClick={() => setPanelOpen(false)} />
-          <div className="absolute right-0 top-[calc(100%+8px)] z-[80] w-[300px] rounded-2xl border border-claude-border dark:border-claude-darkBorder bg-claude-surface dark:bg-claude-darkSurface shadow-xl p-3.5">
+          <div className="absolute bottom-[calc(100%+8px)] right-0 z-[80] max-h-[70vh] w-[300px] overflow-y-auto rounded-2xl border border-claude-border dark:border-claude-darkBorder bg-claude-surface dark:bg-claude-darkSurface p-3.5 shadow-xl">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-claude-text dark:text-claude-darkText">
                 {i18nService.t('mePanelTitle')}

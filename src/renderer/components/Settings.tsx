@@ -45,7 +45,7 @@ import MeUsageAndCredits from './me/MeUsageAndCredits';
 import { findMeRateForModel } from './me/meRates';
 import { ensureMeSnapshot, getMeSnapshot, subscribeMeSnapshot } from './me/mePointsStore';
 import { defaultConfig, type AppConfig, type ChatExperienceMode, getVisibleProviders } from '../config';
-import { LLM_FREE_PROVIDER_KEY, FREE_PROVIDER_DISPLAY_NAME, getFreeProviderModelDisplayName } from '../services/llmFreeQuotaGate.js';
+import { LLM_FREE_PROVIDER_KEY, getFreeProviderModelDisplayName } from '../services/llmFreeQuotaGate.js';
 
 type TabType = 'user' | 'general' | 'model' | 'skills' | 'projects' | 'coworkSandbox' | 'coworkMemory' | 'archivedChats' | 'shortcuts' | 'im' | 'email' | 'paramsConfig' | 'traffic';
 
@@ -167,9 +167,9 @@ interface ProvidersImportPayload {
 
 const providerMeta: Record<ProviderType, { label: string; icon: React.ReactNode }> = {
   'metaid-free': {
-    label: FREE_PROVIDER_DISPLAY_NAME,
+    label: 'IDBots',
     icon: (
-      <svg height="24" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg" style={{flex: '0 0 auto', lineHeight: 1}}><title>IDBots-Free</title><path fill="currentColor" d="M12 1.5l2.1 6.4 6.4 2.1-6.4 2.1L12 18.5l-2.1-6.4-6.4-2.1 6.4-2.1L12 1.5zM19.2 14.8l.9 2.7 2.7.9-2.7.9-.9 2.7-.9-2.7-2.7-.9 2.7-.9.9-2.7z"></path></svg>
+      <svg height="24" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg" style={{flex: '0 0 auto', lineHeight: 1}}><title>IDBots</title><path fill="currentColor" d="M12 1.5l2.1 6.4 6.4 2.1-6.4 2.1L12 18.5l-2.1-6.4-6.4-2.1 6.4-2.1L12 1.5zM19.2 14.8l.9 2.7 2.7.9-2.7.9-.9 2.7-.9-2.7-2.7-.9 2.7-.9.9-2.7z"></path></svg>
     ),
   },
   openai: {
@@ -545,8 +545,9 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
   // Add state for providers configuration
   const [providers, setProviders] = useState<ProvidersConfig>(() => getInitialProviders());
 
-  // Model tab sub-section: 'brain' = existing LLM provider UI, 'cerebellum' = decision model.
-  const [modelSubTab, setModelSubTab] = useState<'brain' | 'cerebellum'>('brain');
+  // The decision-model configuration is a provider-like destination at the
+  // bottom of the same list rather than a second top-level tab.
+  const [showCerebellumSettings, setShowCerebellumSettings] = useState(false);
   // S9 ME points: shared server-data snapshot (plans / balance / rates).
   const meSnapshot = React.useSyncExternalStore(subscribeMeSnapshot, getMeSnapshot, getMeSnapshot);
   useEffect(() => {
@@ -994,6 +995,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
     setNewModelSupportsImage(false);
     setModelFormError(null);
     setActiveProvider(provider);
+    setShowCerebellumSettings(false);
     // 切换 provider 时清除测试结果
     setTestResult(null);
     setFetchModelsResult(null);
@@ -1757,6 +1759,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
     });
     setTestResult(null);
     if (activeProvider === providerKey) {
+      setShowCerebellumSettings(false);
       const remainingKeys = Object.keys(visibleProviders).filter(key => key !== providerKey);
       const firstEnabled = remainingKeys.find(key => visibleProviders[key]?.enabled);
       setActiveProvider((firstEnabled ?? remainingKeys[0]) as ProviderType);
@@ -3139,37 +3142,8 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
       }
 
       case 'model': {
-        // Sub-tab segmented control: Brain keeps the existing provider UI
-        // untouched; Cerebellum hosts the optional decision-model config.
-        const modelSubTabButtonClass = (active: boolean) =>
-          `rounded-lg border px-3 py-1.5 text-xs transition-colors ${
-            active
-              ? 'border-claude-accent bg-claude-accent/5 dark:bg-claude-accent/10 text-claude-accent dark:text-claude-darkAccent'
-              : 'dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
-          }`;
         return (
           <div className="flex flex-col h-full">
-            <div className="flex items-center gap-2 pb-3 shrink-0">
-              <button
-                type="button"
-                onClick={() => setModelSubTab('brain')}
-                className={modelSubTabButtonClass(modelSubTab === 'brain')}
-              >
-                {i18nService.t('modelBrainTab')}
-              </button>
-              <button
-                type="button"
-                onClick={() => setModelSubTab('cerebellum')}
-                className={modelSubTabButtonClass(modelSubTab === 'cerebellum')}
-              >
-                {i18nService.t('modelCerebellumTab')}
-              </button>
-            </div>
-
-            {modelSubTab === 'brain' ? (
-            <div className="flex flex-col flex-1 min-h-0">
-            {/* IDBots Plan 供应商卡片（S9 §4 区块1）：列表顶部固定 */}
-            <IdbotsPlanCard />
             <div className="flex flex-1 min-h-0">
             {/* Provider List - Left Side */}
             <div className="w-2/5 border-r dark:border-claude-darkBorder border-claude-border pr-3 space-y-1.5 overflow-y-auto">
@@ -3222,7 +3196,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                     key={provider}
                     onClick={() => handleProviderChange(providerKey)}
                     className={`flex items-center p-2 rounded-xl cursor-pointer transition-colors group ${
-                      activeProvider === provider
+                      activeProvider === provider && !showCerebellumSettings
                         ? 'bg-claude-accent/10 dark:bg-claude-accent/20 border border-claude-accent/30 shadow-subtle'
                         : 'dark:bg-claude-darkSurface/50 bg-claude-surface hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover border border-transparent'
                     }`}
@@ -3234,7 +3208,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                         </span>
                       </div>
                       <span className={`text-sm font-medium truncate ${
-                        activeProvider === provider
+                        activeProvider === provider && !showCerebellumSettings
                           ? 'text-claude-accent'
                           : 'dark:text-claude-darkText text-claude-text'
                       }`}>
@@ -3285,10 +3259,29 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                   </div>
                 );
               })}
+              <button
+                type="button"
+                onClick={() => setShowCerebellumSettings(true)}
+                className={`mt-3 flex w-full items-center rounded-xl border p-2 text-left transition-colors ${
+                  showCerebellumSettings
+                    ? 'border-claude-accent/30 bg-claude-accent/10 dark:bg-claude-accent/20 shadow-subtle'
+                    : 'border-transparent dark:bg-claude-darkSurface/50 bg-claude-surface hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
+                }`}
+              >
+                <span className="mr-2 flex h-7 w-7 items-center justify-center dark:text-claude-darkText text-claude-text">
+                  <BrainIcon className="h-5 w-5" />
+                </span>
+                <span className={`flex-1 text-sm font-medium ${showCerebellumSettings ? 'text-claude-accent' : 'dark:text-claude-darkText text-claude-text'}`}>
+                  TypeSafe JEV
+                </span>
+                <span className={`h-2 w-2 rounded-full ${cerebellum.enabled ? 'bg-green-500' : 'bg-claude-border dark:bg-claude-darkBorder'}`} aria-hidden />
+              </button>
             </div>
 
             {/* Provider Settings - Right Side */}
-            <div className="w-3/5 pl-4 space-y-4 overflow-y-auto">
+            <div className="w-3/5 pl-4 overflow-y-auto">
+              {!showCerebellumSettings ? (
+              <div className="space-y-4">
               <div className="flex items-center justify-between pb-2 border-b dark:border-claude-darkBorder border-claude-border">
                 <h3 className="text-base font-medium dark:text-claude-darkText text-claude-text">
                   {getProviderDisplayLabel(activeProvider, providers[activeProvider])} {i18nService.t('providerSettings')}
@@ -3305,11 +3298,9 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
               </div>
 
               {activeProvider === LLM_FREE_PROVIDER_KEY && (
-                <div>
+                <div className="space-y-3">
+                  <IdbotsPlanCard />
                   <FreeQuotaCard providers={providers} onProvisioned={handleFreeQuotaProvisioned} />
-                  <p className="text-[11px] leading-relaxed dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                    {i18nService.t('freeQuotaNotice')}
-                  </p>
                 </div>
               )}
 
@@ -3464,28 +3455,30 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                   <h3 className="text-xs font-medium dark:text-claude-darkText text-claude-text">
                     {i18nService.t('availableModels')}
                   </h3>
-                  <div className="flex items-center space-x-3">
-                    {providerSupportsModelListSync(activeProvider) && (
+                  {!isBuiltInFreeProvider(activeProvider) && (
+                    <div className="flex items-center space-x-3">
+                      {providerSupportsModelListSync(activeProvider) && (
+                        <button
+                          type="button"
+                          onClick={handleFetchProviderModels}
+                          disabled={isFetchingModels || (providerRequiresApiKey(activeProvider) && !providers[activeProvider].apiKey)}
+                          title={i18nService.t('fetchModelsHint')}
+                          className="inline-flex items-center text-xs text-claude-accent hover:text-claude-accentHover disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <ArrowPathIcon className={`h-3.5 w-3.5 mr-1 ${isFetchingModels ? 'animate-spin' : ''}`} />
+                          {isFetchingModels ? i18nService.t('fetchingModels') : i18nService.t('fetchModels')}
+                        </button>
+                      )}
                       <button
                         type="button"
-                        onClick={handleFetchProviderModels}
-                        disabled={isFetchingModels || (providerRequiresApiKey(activeProvider) && !providers[activeProvider].apiKey)}
-                        title={i18nService.t('fetchModelsHint')}
-                        className="inline-flex items-center text-xs text-claude-accent hover:text-claude-accentHover disabled:opacity-50 disabled:cursor-not-allowed"
+                        onClick={handleAddModel}
+                        className="inline-flex items-center text-xs text-claude-accent hover:text-claude-accentHover"
                       >
-                        <ArrowPathIcon className={`h-3.5 w-3.5 mr-1 ${isFetchingModels ? 'animate-spin' : ''}`} />
-                        {isFetchingModels ? i18nService.t('fetchingModels') : i18nService.t('fetchModels')}
+                        <PlusCircleIcon className="h-3.5 w-3.5 mr-1" />
+                        {i18nService.t('addModel')}
                       </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={handleAddModel}
-                      className="inline-flex items-center text-xs text-claude-accent hover:text-claude-accentHover"
-                    >
-                      <PlusCircleIcon className="h-3.5 w-3.5 mr-1" />
-                      {i18nService.t('addModel')}
-                    </button>
-                  </div>
+                    </div>
+                  )}
                 </div>
                 {fetchModelsResult && (
                   <div className={`flex items-center text-xs mb-1.5 ${fetchModelsResult.success ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
@@ -3536,20 +3529,24 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                               {i18nService.t('imageInput')}
                             </span>
                           )}
-                          <button
-                            type="button"
-                            onClick={() => handleEditModel(model.id, model.name, model.supportsImage, model.contextWindow)}
-                            className="p-0.5 dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-accent opacity-0 group-hover:opacity-100 transition-opacity"
-                          >
-                            <PencilIcon className="h-3 w-3" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteModel(model.id)}
-                            className="p-0.5 dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
-                          >
-                            <TrashIcon className="h-3 w-3" />
-                          </button>
+                          {!isBuiltInFreeProvider(activeProvider) && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleEditModel(model.id, model.name, model.supportsImage, model.contextWindow)}
+                                className="p-0.5 dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-accent opacity-0 group-hover:opacity-100 transition-opacity"
+                              >
+                                <PencilIcon className="h-3 w-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteModel(model.id)}
+                                className="p-0.5 dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                              >
+                                <TrashIcon className="h-3 w-3" />
+                              </button>
+                            </>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -3558,14 +3555,16 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                   {(!providers[activeProvider].models || providers[activeProvider].models.length === 0) && (
                     <div className="dark:bg-claude-darkSurface/20 bg-claude-surface/20 p-2.5 rounded-xl border dark:border-claude-darkBorder/50 border-claude-border/50 text-center">
                       <p className="text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">{i18nService.t('noModelsAvailable')}</p>
-                      <button
-                        type="button"
-                        onClick={handleAddModel}
-                        className="mt-1.5 inline-flex items-center text-[11px] font-medium text-claude-accent hover:text-claude-accentHover"
-                      >
-                        <PlusCircleIcon className="h-3 w-3 mr-1" />
-                        {i18nService.t('addFirstModel')}
-                      </button>
+                      {!isBuiltInFreeProvider(activeProvider) && (
+                        <button
+                          type="button"
+                          onClick={handleAddModel}
+                          className="mt-1.5 inline-flex items-center text-[11px] font-medium text-claude-accent hover:text-claude-accentHover"
+                        >
+                          <PlusCircleIcon className="h-3 w-3 mr-1" />
+                          {i18nService.t('addFirstModel')}
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -3574,11 +3573,9 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                   {i18nService.t('meRatesFooterNote')}
                 </p>
               </div>
-            </div>
-            </div>
-            </div>
+              </div>
             ) : (
-            <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pr-1">
+            <div className="space-y-4 pr-1">
               {/* Cerebellum panel: optional fast decision model config */}
               <p className="text-xs leading-relaxed dark:text-claude-darkTextSecondary text-claude-textSecondary">
                 {i18nService.t('cerebellumExplainer')}
@@ -3711,6 +3708,8 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
               </div>
             </div>
             )}
+            </div>
+            </div>
           </div>
         );
       }

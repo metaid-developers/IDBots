@@ -300,6 +300,9 @@ interface MeTopupOrderInfo {
   confirmedAt?: number;
   /** milliME */ meMilli?: number;
   priceCny?: number;
+  payAmount?: number;
+  payCurrency?: string;
+  gatewayParams?: unknown;
   rejectReason?: string;
 }
 
@@ -316,6 +319,9 @@ interface MeSubscriptionOrderInfo {
   channel: string;
   status: string;
   amountCny?: number;
+  payAmount?: number;
+  payCurrency?: string;
+  gatewayParams?: unknown;
   createdAt?: number;
   rejectReason?: string;
 }
@@ -1753,8 +1759,9 @@ interface IElectronAPI {
     getBalance: (input?: { forceRefresh?: boolean }) => Promise<{ success: boolean; balance?: MeBalanceInfo; error?: string; errorCode?: string; featureUnavailable?: boolean }>;
     getSubscription: () => Promise<{ success: boolean; subscription?: MeSubscriptionInfo; error?: string; featureUnavailable?: boolean }>;
     getHistory: (input?: { type?: string; beforeId?: string; limit?: number }) => Promise<{ success: boolean; history?: MeHistoryPageInfo; error?: string; featureUnavailable?: boolean }>;
-    submitTopupOrder: (input: { packageId: string; periodDays?: number; voucherUrl?: string; voucherRemark?: string; idempotencyKey?: string }) => Promise<{ success: boolean; submission?: MeSubmitTopupResultInfo; error?: string; errorCode?: string; featureUnavailable?: boolean }>;
-    submitSubscriptionOrder: (input: { planId: string; period: 'month' | 'quarter' | 'year'; channel: 'desktop' | 'cloud' | 'mobile'; voucherUrl?: string; voucherRemark?: string; idempotencyKey?: string }) => Promise<{ success: boolean; subscriptionOrder?: MeSubscriptionOrderInfo; error?: string; errorCode?: string; featureUnavailable?: boolean }>;
+    submitTopupOrder: (input: { packageId: string; periodDays?: number; voucherUrl?: string; voucherRemark?: string; idempotencyKey?: string; gateway?: 'alipay' | 'paypal' }) => Promise<{ success: boolean; submission?: MeSubmitTopupResultInfo; error?: string; errorCode?: string; featureUnavailable?: boolean }>;
+    submitSubscriptionOrder: (input: { planId: string; period: 'month' | 'quarter' | 'year'; channel: 'desktop' | 'cloud' | 'mobile'; voucherUrl?: string; voucherRemark?: string; idempotencyKey?: string; gateway?: 'alipay' | 'paypal' }) => Promise<{ success: boolean; subscriptionOrder?: MeSubscriptionOrderInfo; error?: string; errorCode?: string; featureUnavailable?: boolean }>;
+    getSubscriptionOrder: (input: { orderId: string }) => Promise<{ success: boolean; subscriptionOrder?: MeSubscriptionOrderInfo; error?: string; errorCode?: string; featureUnavailable?: boolean }>;
     getTopupOrders: () => Promise<{ success: boolean; orders?: MeTopupOrderInfo[]; error?: string; featureUnavailable?: boolean }>;
     /** Pick + stage a payment-voucher screenshot; voucherUrl is a signed gateway download URL when the gateway is running. */
     pickVoucher: (input?: Record<string, never>) => Promise<{ success: boolean; fileLabel?: string; voucherUrl?: string; signedUrlError?: string; error?: string }>;

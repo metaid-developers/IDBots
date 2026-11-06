@@ -160,6 +160,9 @@ export interface MeTopupOrder {
   confirmedAt?: number;
   meMilli?: number;
   priceCny?: number;
+  payAmount?: number;
+  payCurrency?: string;
+  gatewayParams?: unknown;
   rejectReason?: string;
   raw: Record<string, unknown>;
 }
@@ -169,6 +172,7 @@ export type MeSubscriptionPeriod = 'month' | 'quarter' | 'year';
 
 /** Sales channel the order is priced for (S9-A §1: desktop | cloud | mobile). */
 export type MeSubscriptionChannel = 'desktop' | 'cloud' | 'mobile';
+export type MePaymentGateway = 'alipay' | 'paypal';
 
 /** POST /v1/me/subscription/order order view (S9-A §1.6). */
 export interface MeSubscriptionOrder {
@@ -178,6 +182,9 @@ export interface MeSubscriptionOrder {
   channel: string;
   status: string;
   amountCny?: number;
+  payAmount?: number;
+  payCurrency?: string;
+  gatewayParams?: unknown;
   createdAt?: number;
   rejectReason?: string;
   raw: Record<string, unknown>;
@@ -216,7 +223,8 @@ export function initMePointsService(deps: MeDeps): void {
 // ---------------------------------------------------------------------------
 
 function normalizeText(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : '';
+  if (typeof value === 'string') return value.trim();
+  return typeof value === 'number' && Number.isFinite(value) ? String(value) : '';
 }
 
 function toNumber(value: unknown): number {
@@ -601,6 +609,7 @@ export async function submitMeTopupOrder(input: {
   voucherUrl?: string;
   voucherRemark?: string;
   idempotencyKey?: string;
+  gateway?: MePaymentGateway;
 }): Promise<MeSubmitTopupResult> {
   const { identity } = await signedAuth('topup_submit', 'topup_submit');
   // Retry ladder: a transient network failure must not double-submit. Same as
@@ -618,6 +627,7 @@ export async function submitMeTopupOrder(input: {
           ...(input.voucherUrl ? { voucherUrl: input.voucherUrl } : {}),
           ...(input.voucherRemark ? { voucherRemark: input.voucherRemark } : {}),
           ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+          ...(input.gateway ? { gateway: input.gateway } : {}),
         },
         identity,
       })) as Record<string, unknown>;
@@ -653,6 +663,7 @@ export async function submitMeSubscriptionOrder(input: {
   voucherUrl?: string;
   voucherRemark?: string;
   idempotencyKey?: string;
+  gateway?: MePaymentGateway;
 }): Promise<MeSubscriptionOrder> {
   const { identity } = await signedAuth('subscription_order', ME_SUBSCRIPTION_ORDER_ACTION);
   let lastError: unknown = null;
@@ -669,6 +680,7 @@ export async function submitMeSubscriptionOrder(input: {
           ...(input.voucherUrl ? { voucherUrl: input.voucherUrl } : {}),
           ...(input.voucherRemark ? { voucherRemark: input.voucherRemark } : {}),
           ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+          ...(input.gateway ? { gateway: input.gateway } : {}),
         },
         identity,
       })) as Record<string, unknown>;
@@ -684,6 +696,21 @@ export async function submitMeSubscriptionOrder(input: {
     }
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+export async function getMeSubscriptionOrder(orderId: string): Promise<MeSubscriptionOrder> {
+  const normalizedOrderId = normalizeText(orderId);
+  if (!normalizedOrderId) {
+    throw new MePointsApiError({ stage: 'subscription_order', message: 'orderId is required' });
+  }
+  const { identity } = await signedAuth('subscription_order', ME_SUBSCRIPTION_ORDER_ACTION);
+  const data = await meRequestJson({
+    stage: 'subscription_order',
+    method: 'GET',
+    path: `${ME_SUBSCRIPTION_ORDER_PATH}/${encodeURIComponent(normalizedOrderId)}`,
+    identity,
+  });
+  return normalizeMeSubscriptionOrder(data as Record<string, unknown>);
 }
 
 export async function getMeTopupOrders(): Promise<MeTopupOrder[]> {
@@ -714,6 +741,9 @@ function normalizeMeTopupOrder(record: Record<string, unknown>, orderIdFallback?
     confirmedAt: pickNumber(record, 'confirmedAt', 'confirmed_at') || undefined,
     meMilli: pickNumber(record, 'meMilli', 'me_milli') || undefined,
     priceCny: pickNumber(record, 'priceCny', 'price_cny') || undefined,
+    payAmount: pickNumber(record, 'payAmount', 'pay_amount', 'amountCny', 'amount_cny', 'priceCny', 'price_cny') || undefined,
+    payCurrency: pickText(record, 'payCurrency', 'pay_currency') || undefined,
+    gatewayParams: record.gatewayParams ?? record.gateway_params,
     rejectReason: pickText(record, 'rejectReason', 'reject_reason') || undefined,
     raw: record,
   };
@@ -727,6 +757,9 @@ function normalizeMeSubscriptionOrder(record: Record<string, unknown>): MeSubscr
     channel: pickText(record, 'channel'),
     status: pickText(record, 'statusText', 'status_text', 'status'),
     amountCny: pickNumber(record, 'amountCny', 'amount_cny', 'priceCny', 'price_cny') || undefined,
+    payAmount: pickNumber(record, 'payAmount', 'pay_amount', 'amountCny', 'amount_cny', 'priceCny', 'price_cny') || undefined,
+    payCurrency: pickText(record, 'payCurrency', 'pay_currency') || undefined,
+    gatewayParams: record.gatewayParams ?? record.gateway_params,
     createdAt: pickNumber(record, 'createdAt', 'created_at') || undefined,
     rejectReason: pickText(record, 'rejectReason', 'reject_reason') || undefined,
     raw: record,
@@ -780,6 +813,13 @@ function requireSubscriptionChannel(value: unknown): MeSubscriptionChannel {
     stage: 'subscription_order',
     message: `invalid subscription channel: ${text || '(empty)'}`,
   });
+}
+
+function optionalPaymentGateway(value: unknown, stage: 'topup_submit' | 'subscription_order'): MePaymentGateway | undefined {
+  const text = normalizeText(value);
+  if (!text) return undefined;
+  if (text === 'alipay' || text === 'paypal') return text;
+  throw new MePointsApiError({ stage, message: `invalid payment gateway: ${text}` });
 }
 
 // ---------------------------------------------------------------------------
@@ -836,21 +876,26 @@ export function registerMePointsIpcHandlers(deps: {
       voucherUrl: normalizeText(input.voucherUrl) || undefined,
       voucherRemark: normalizeText(input.voucherRemark) || undefined,
       idempotencyKey: normalizeText(input.idempotencyKey) || undefined,
+      gateway: optionalPaymentGateway(input.gateway, 'topup_submit'),
     }),
   }));
-  // S9-A: the subscription branch never goes through topup_submit (the 充值
-  // package endpoint rejects a planId). Plan + period + channel are priced by
-  // the server; the renderer only forwards the owner's choice and voucher.
-  wrap('me:subscriptionOrder', async (input) => ({
-    subscriptionOrder: await submitMeSubscriptionOrder({
-      planId: normalizeText(input.planId),
-      period: requireSubscriptionPeriod(input.period),
-      channel: requireSubscriptionChannel(input.channel),
-      voucherUrl: normalizeText(input.voucherUrl) || undefined,
-      voucherRemark: normalizeText(input.voucherRemark) || undefined,
-      idempotencyKey: normalizeText(input.idempotencyKey) || undefined,
-    }),
-  }));
+  wrap('me:subscriptionOrder', async (input) => {
+    const orderId = normalizeText(input.orderId);
+    if (orderId && !normalizeText(input.planId)) {
+      return { subscriptionOrder: await getMeSubscriptionOrder(orderId) };
+    }
+    return {
+      subscriptionOrder: await submitMeSubscriptionOrder({
+        planId: normalizeText(input.planId),
+        period: requireSubscriptionPeriod(input.period),
+        channel: requireSubscriptionChannel(input.channel),
+        voucherUrl: normalizeText(input.voucherUrl) || undefined,
+        voucherRemark: normalizeText(input.voucherRemark) || undefined,
+        idempotencyKey: normalizeText(input.idempotencyKey) || undefined,
+        gateway: optionalPaymentGateway(input.gateway, 'subscription_order'),
+      }),
+    };
+  });
   wrap('me:getTopupOrders', async () => ({ orders: await getMeTopupOrders() }));
   // S9 v1.2: the S3 「收款设置」 page lets ops paste a QR image/link on-device.
   // Prefer that (owner-editable, no rebuild) and fall back to the env seam.

@@ -4,7 +4,6 @@ import { RootState } from './store';
 import type { SettingsOpenOptions } from './components/Settings';
 import Sidebar from './components/Sidebar';
 import Toast from './components/Toast';
-import MeBalanceBadge from './components/me/MeBalanceBadge';
 import MePurchaseFlow from './components/me/MePurchaseFlow';
 import {
   onRequestOpenMePurchase,
@@ -1478,10 +1477,6 @@ const App: React.FC = () => {
       {toastMessage && (
         <Toast message={toastMessage} onClose={() => setToastMessage(null)} />
       )}
-      {/* S9: 免费额度 token 口径横幅下线；全局 ME 余额角标取而代之（顶栏右上，同源）。 */}
-      <div className="fixed right-4 top-3 z-[85] non-draggable">
-        <MeBalanceBadge />
-      </div>
       <MePurchaseFlow
         open={mePurchase.open}
         section={mePurchase.section}
