@@ -694,7 +694,10 @@ test('ordinary private-chat skill turns advertise generic owner approval without
   assert.match(prompt, /OWNER_APPROVED/);
   assert.match(prompt, /OWNER_DENIED/);
   assert.match(prompt, /payments? or transfers|payment\/transfer/i);
-  assert.match(prompt, /large-file publication/);
+  assert.match(prompt, /larger than 20 MiB/);
+  assert.match(prompt, /file_size_bytes/);
+  assert.match(prompt, /Ordinary chain writes and file uploads at or below 20 MiB proceed directly/);
+  assert.doesNotMatch(prompt, /paid or irreversible chain write/);
   assert.match(prompt, /keep using the dedicated friend tags/);
   assert.match(prompt, /must not be doubled/);
 

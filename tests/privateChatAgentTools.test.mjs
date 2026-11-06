@@ -183,6 +183,7 @@ test('request_user_permission returns denial as a clear tool result, not as appr
     title: 'Publish a 200 MB file',
     description: 'Upload the agreed archive publicly on-chain and pay the fee.',
     category: 'file_upload',
+    file_size_bytes: 200 * 1024 * 1024,
   });
   assert.equal(result.isError, undefined);
   assert.match(result.content[0].text, /OWNER_DENIED/);
@@ -210,5 +211,52 @@ test('request_user_permission rejects incomplete requests before opening an owne
   const missingDescription = await tool.handler({ title: 'Transfer', description: ' ' });
   assert.equal(missingTitle.isError, true);
   assert.equal(missingDescription.isError, true);
+  assert.equal(calls.length, 0);
+});
+
+
+const { PRIVATE_CHAT_FILE_APPROVAL_THRESHOLD_BYTES } = require('../dist-electron/main/libs/privateChatAgentTools.js');
+
+test('ordinary chain writes are explicitly outside the owner-approval tool scope', () => {
+  const { tool } = makeApprovalHarness();
+  assert.match(tool.description, /ordinary chain writes/i);
+  assert.match(tool.description, /at or below 20 MiB/);
+  assert.doesNotMatch(tool.description, /paid or irreversible chain writes/);
+});
+
+test('file uploads at or below 20 MiB never open an owner card, while above-threshold uploads do', async () => {
+  const { calls, tool } = makeApprovalHarness('approved');
+  for (const fileSizeBytes of [1, PRIVATE_CHAT_FILE_APPROVAL_THRESHOLD_BYTES]) {
+    const result = await tool.handler({
+      title: 'Upload a small file',
+      description: 'Publish an ordinary small file on-chain.',
+      category: 'file_upload',
+      file_size_bytes: fileSizeBytes,
+    });
+    assert.equal(result.isError, undefined);
+    assert.match(result.content[0].text, /OWNER_APPROVAL_NOT_REQUIRED/);
+    assert.match(result.content[0].text, /No owner card was shown/);
+  }
+  assert.equal(calls.length, 0);
+
+  const result = await tool.handler({
+    title: 'Upload a large file',
+    description: 'Publish a file larger than 20 MiB on-chain.',
+    category: 'file_upload',
+    file_size_bytes: PRIVATE_CHAT_FILE_APPROVAL_THRESHOLD_BYTES + 1,
+  });
+  assert.equal(calls.length, 1);
+  assert.match(result.content[0].text, /OWNER_APPROVED/);
+});
+
+test('file_upload requires an exact positive byte count before requesting approval', async () => {
+  const { calls, tool } = makeApprovalHarness();
+  const result = await tool.handler({
+    title: 'Upload a file',
+    description: 'Publish a file on-chain.',
+    category: 'file_upload',
+  });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /file_size_bytes/);
   assert.equal(calls.length, 0);
 });

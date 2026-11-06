@@ -18,10 +18,11 @@ export type PrivateChatControl = {
   }): Promise<{ txids: string[]; pinId: string; feeAssist?: unknown }>;
 };
 
+export const PRIVATE_CHAT_FILE_APPROVAL_THRESHOLD_BYTES = 20 * 1024 * 1024;
+
 export type PrivateChatApprovalCategory =
   | 'friendship'
   | 'payment'
-  | 'chain_write'
   | 'file_upload'
   | 'sensitive_data'
   | 'other';
@@ -156,17 +157,23 @@ export function buildPrivateChatApprovalAgentTools(deps: {
     'request_user_permission',
     [
       'Request the local owner\'s explicit, one-time permission before a sensitive action negotiated in an ordinary MetaBot private chat.',
-      'Use before payments or transfers, paid or irreversible chain writes, large-file publication, sharing sensitive data, or another action whose cost, publicity, or irreversibility deserves human approval.',
-      'Do NOT use for ordinary conversation, read-only work, or paid skill-service order execution.',
-      'Provide a concrete title and a complete description of the exact action, target, amount/file/fees where relevant, and consequences. This tool only collects permission; it performs no action.',
-      'Wait for the result. OWNER_APPROVED authorizes exactly the described action once; OWNER_DENIED forbids the action and any equivalent workaround. Never treat a missing, malformed, or failed result as approval.',
+      'Use before payments or transfers, file uploads larger than 20 MiB, sharing sensitive data, or another exceptional sensitive action negotiated with the peer.',
+      'Do NOT use for ordinary chain writes, including public, permanent, irreversible, or routinely fee-paid pins, or for file uploads at or below 20 MiB; those proceed without owner approval. Do NOT use for ordinary conversation, read-only work, or paid skill-service order execution.',
+      'Provide a concrete title and a complete description of the exact action, target, amount/file/fees where relevant, and consequences. file_upload calls must include file_size_bytes. This tool only collects permission; it performs no action.',
+      'Wait for the result. OWNER_APPROVED authorizes exactly the described action once; OWNER_DENIED forbids the action and any equivalent workaround. OWNER_APPROVAL_NOT_REQUIRED means the request is at or below the file-size threshold and may proceed without an owner card. Never treat a missing, malformed, or failed result as approval.',
     ].join(' '),
     {
       title: z.string().min(1).max(80).describe('Short human-readable name of the exact action, for example "Transfer 10 SPACE to Peer Bot".'),
       description: z.string().min(1).max(2000).describe('Exact action and its consequences, including target, amount, file size, fees, publicity, and irreversibility where relevant.'),
-      category: z.enum(['friendship', 'payment', 'chain_write', 'file_upload', 'sensitive_data', 'other']).optional().describe('Approval category; defaults to other.'),
+      category: z.enum(['friendship', 'payment', 'file_upload', 'sensitive_data', 'other']).optional().describe('Approval category; defaults to other. Ordinary chain writes do not need approval and have no category.'),
+      file_size_bytes: z.number().int().positive().optional().describe('Exact file size in bytes; required when category is file_upload. Approval is requested only above 20 MiB.'),
     },
-    async (args: { title: string; description: string; category?: PrivateChatApprovalCategory }) => {
+    async (args: {
+      title: string;
+      description: string;
+      category?: PrivateChatApprovalCategory;
+      file_size_bytes?: number;
+    }) => {
       const title = asString(args.title);
       const description = asString(args.description);
       if (!title) return textResult('request_user_permission requires a concrete `title`.', true);
@@ -178,6 +185,18 @@ export function buildPrivateChatApprovalAgentTools(deps: {
         );
       }
       const category = args.category ?? 'other';
+      if (category === 'file_upload') {
+        const fileSizeBytes = args.file_size_bytes;
+        if (!Number.isSafeInteger(fileSizeBytes) || (fileSizeBytes ?? 0) <= 0) {
+          return textResult('request_user_permission requires a positive integer `file_size_bytes` for file_upload.', true);
+        }
+        if ((fileSizeBytes ?? 0) <= PRIVATE_CHAT_FILE_APPROVAL_THRESHOLD_BYTES) {
+          return textResult([
+            'OWNER_APPROVAL_NOT_REQUIRED',
+            'Files at or below 20 MiB do not need owner approval. No owner card was shown; proceed with the ordinary upload.',
+          ].join('\n'));
+        }
+      }
       try {
         const outcome = await control.request({ title, description, category });
         if (outcome === 'approved') {
