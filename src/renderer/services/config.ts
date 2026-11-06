@@ -82,15 +82,13 @@ const buildProviderSignature = (
   })),
 );
 
-// The built-in free-quota provider is relay-provisioned (credentials hidden
-// in the UI), but its model rows ARE user-editable (Settings model editor),
-// so normalization must respect what a row stores instead of re-pinning the
-// canonical table over it — the unconditional rewrite reverted every manual
-// edit on load (the 2026-10-09 "manual 100K does not stick" incident). It
-// still: forces the canonical display name, fills canonical limits/options
-// only where the row stores none, and rewrites machine-pinned legacy values
-// (getFreeProviderModelLegacyLimitRewrites — eras that wrote 32768/4096
-// output pins or the 64000 window pin; an exact match identifies the
+// The built-in free-quota provider is relay-provisioned and its catalog is
+// read-only in Settings. Older installations may still contain user-edited
+// rows, so normalization preserves those stored values for runtime
+// compatibility instead of re-pinning the canonical table over them. It
+// forces the canonical display name, fills canonical limits/options only
+// where the row stores none, and rewrites machine-pinned legacy values
+// (getFreeProviderModelLegacyLimitRewrites — an exact match identifies the
 // writer, never the user).
 const normalizeFreeProviderModels = (
   models: NonNullable<NonNullable<AppConfig['providers']>[string]['models']> | undefined,

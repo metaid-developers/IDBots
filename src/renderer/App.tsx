@@ -148,8 +148,8 @@ const providerDisplayLabel = (providerKey: string): string => (
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsOptions, setSettingsOptions] = useState<SettingsOpenOptions>({});
-  // S9 ME points: the shared purchase flow (订阅/充值 人工凭证通道) is one
-  // modal mounted here; badge / plan card / settings page open it by event.
+  // S9 ME points: the shared gateway-checkout flow is one modal mounted
+  // here; badge / plan card / settings page open it by event.
   const [mePurchase, setMePurchase] = useState<{ open: boolean; section: MePurchaseSection }>({
     open: false,
     section: 'subscribe',
