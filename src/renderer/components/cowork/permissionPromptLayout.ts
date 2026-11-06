@@ -29,13 +29,35 @@ export function packPermissionColumns<T extends { requestId: string }>(
   return columns;
 }
 
+export type A2AApprovalDescriptor = {
+  category: string;
+  friendAction: 'invite' | 'remove' | null;
+};
+
+export function a2aApprovalOf(permission: {
+  toolName: string;
+  toolInput?: Record<string, unknown> | null;
+}): A2AApprovalDescriptor | null {
+  if (permission.toolName !== 'AskUserQuestion') return null;
+  const context = permission.toolInput?.context;
+  if (!context || typeof context !== 'object' || Array.isArray(context)) return null;
+  const record = context as Record<string, unknown>;
+  const action = record.action;
+  const friendAction = action === 'invite' || action === 'remove' ? action : null;
+  if (record.a2aApproval !== true && !friendAction) return null;
+  return {
+    category: friendAction
+      ? 'friendship'
+      : typeof record.category === 'string' && record.category.trim()
+        ? record.category.trim()
+        : 'other',
+    friendAction,
+  };
+}
+
 export function friendActionOf(permission: {
   toolName: string;
   toolInput?: Record<string, unknown> | null;
 }): 'invite' | 'remove' | null {
-  if (permission.toolName !== 'AskUserQuestion') return null;
-  const context = permission.toolInput?.context;
-  if (!context || typeof context !== 'object' || Array.isArray(context)) return null;
-  const action = (context as Record<string, unknown>).action;
-  return action === 'invite' || action === 'remove' ? action : null;
+  return a2aApprovalOf(permission)?.friendAction ?? null;
 }

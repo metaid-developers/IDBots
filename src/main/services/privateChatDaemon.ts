@@ -272,7 +272,7 @@ export type PrivateChatCerebellumMemoryRankerFn = (input: {
 /**
  * Owner-authorization bridge for A2A friend actions (invite/remove). Wired to
  * CoworkRunner.requestSuspendedApproval in main.ts: the request surfaces in the
- * renderer's CoworkPermissionOverlay and SUSPENDS until the owner clicks —
+ * shared A2A approval bar or global notification and SUSPENDS until the owner clicks —
  * no 60s auto-deny applies. Only an explicit allow resolves 'approved'.
  */
 export type RequestFriendActionApprovalFn = (params: {
@@ -406,7 +406,7 @@ function appendPrivateChatFriendNotice(params: {
 
 /**
  * In-flight friend-action approvals, keyed `${metabotId}:${peerGlobalMetaId}`.
- * The approval SUSPENDS waiting for the owner's overlay click, which can
+ * The approval SUSPENDS waiting for the owner's approval click, which can
  * outlive daemon restarts — the map intentionally survives stopPrivateChatDaemon
  * so a re-invite while an authorization is still pending is deduped instead of
  * stacking a second overlay card.
@@ -598,7 +598,7 @@ async function runPendingFriendAction(params: {
  * Also the routing target for a friend-action tag extracted from a guidance
  * RESTART message (defense in depth against tag leakage). Fire-and-forget
  * by design: the caller still delivers the conversational guidance; the
- * authorization suspends for the owner's overlay click independent of that.
+ * authorization suspends for the owner's approval click independent of that.
  */
 export function triggerFriendActionFromGuidance(params: {
   coworkStore: CoworkStore;
@@ -2015,6 +2015,12 @@ export function buildPrivateChatA2ASystemPrompt(params: {
       ? '- A brief wait notice has already been sent for this local-skill turn. Do not repeat it as the final answer; use the skill if needed and then answer with the result.'
       : '- If local skill execution actually starts, the host will send a brief wait notice to the peer at that moment. Do not preface normal replies with wait notices; answer directly when no skill is needed.'
     : '';
+  const ownerApprovalRule = allowedSkillsPrompt && !params.analysis.shouldForceBye
+    ? [
+        '- Owner authorization for sensitive actions: the `request_user_permission` tool is available in this ordinary private chat. Before a payment/transfer, a file upload larger than 20 MiB, sharing sensitive data, or another exceptional sensitive action negotiated with the peer, call it with a concrete title, full description, and category; file_upload calls must include the exact `file_size_bytes`. Ordinary chain writes and file uploads at or below 20 MiB proceed directly without this tool or owner approval. For actions that need approval, do not perform them until the tool returns `OWNER_APPROVED`; that result authorizes exactly the described action once. `OWNER_DENIED` means the owner explicitly refused: do not perform the action or an equivalent workaround, and acknowledge the refusal to the peer. An unavailable/error result never counts as permission.',
+        '- For follow/unfollow, keep using the dedicated friend tags below instead of calling `request_user_permission`; their host execution path opens the same owner approval bar and must not be doubled with a second request.',
+      ].join('\n')
+    : '';
   // Friend invite/remove capability (S5): the one-shot reply chain has no
   // tool surface, so the LLM signals chain-level friendship intent with an
   // inline tag the host strips before delivery. Only offered on real turns —
@@ -2046,6 +2052,7 @@ export function buildPrivateChatA2ASystemPrompt(params: {
     '- Peer relationship & trade trust: the <metaid_cognition_context> block (when present in the context) states the peer\'s friend current state and block current state — treat them as authoritative facts, not vibes. Friend means a MUTUAL on-chain /follow. With a NON-friend peer (not_confirmed, or no friend state at all), when an NFT/asset point-to-point transaction comes up, proactively suggest routing it through a trusted escrow/middleman before any transfer — the group-chat Scenario B convention is the reference flow: seller and buyer each transfer to the escrow first, the escrow verifies both arrivals, then releases both ways. With a confirmed friend, a direct point-to-point transfer is acceptable; do not push escrow unnecessarily. If the block state shows a block active in either direction, keep the exchange minimal and factual — no new transactions, no extended trust; end the topic politely once nothing is owed.',
     skillPolicyRule,
     skillWaitNoticeRule,
+    ownerApprovalRule,
     friendActionRule,
     forceByeRule,
     closingPhaseRule,
@@ -4344,7 +4351,7 @@ async function processOne(
   getKnowledgeStore?: () => CoworkKnowledgeStore | null,
   /**
    * Owner-authorization bridge for friend invite/remove tags in A2A replies
-   * (S5): suspended permission request surfaced in CoworkPermissionOverlay.
+   * (S5): suspended permission request surfaced in the shared A2A approval UI.
    * Absent (older harnesses) ⇒ tags are still stripped from the delivered
    * text but no authorization is asked and no chain write happens.
    */
@@ -6760,7 +6767,7 @@ async function processOne(
       // Friend invite/remove (S5): the peer already received the natural
       // reply; drive the owner-authorized /follow (or revoke) chain write
       // detached from this turn so the suspended authorization (which waits
-      // for the owner's overlay click, unbounded) never blocks the poll loop.
+      // for the owner's approval click, unbounded) never blocks the poll loop.
       if (friendAction) {
         trackPrivateChatDetachedWork(runPendingFriendAction({
           coworkStore,

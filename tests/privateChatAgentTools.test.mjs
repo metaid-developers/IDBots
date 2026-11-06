@@ -121,3 +121,142 @@ test('private chat success receipt surfaces the fee channel when the write ran s
   assert.match(result.content[0].text, /sponsor: skipped — circuit breaker open after repeated broadcast failures, paid by the bot's own wallet/);
   assert.match(result.content[0].text, /WARN sponsor_fallback: true \(reason=circuit_open stage=address_info\)/);
 });
+
+
+const {
+  buildPrivateChatApprovalAgentTools,
+  isOrdinaryPrivateChatApprovalSession,
+} = require('../dist-electron/main/libs/privateChatAgentTools.js');
+
+function makeApprovalHarness(outcome = 'approved', allowed = true) {
+  const calls = [];
+  const tools = buildPrivateChatApprovalAgentTools({
+    tool: (name, description, schema, handler) => ({ name, description, handler }),
+    control: {
+      isAllowed: () => allowed,
+      request: async (input) => {
+        calls.push(input);
+        if (outcome instanceof Error) throw outcome;
+        return outcome;
+      },
+    },
+  });
+  return { calls, tool: tools[0] };
+}
+
+test('owner approval tool mounts only in ordinary private chats, never order execution', () => {
+  const ordinary = {
+    sessionType: 'a2a',
+    sourceChannel: 'metaweb_private',
+    hiddenFromSessionList: false,
+    memoryReadOnly: false,
+  };
+  assert.equal(isOrdinaryPrivateChatApprovalSession(ordinary), true);
+  assert.equal(isOrdinaryPrivateChatApprovalSession({ ...ordinary, sessionType: 'standard' }), false);
+  assert.equal(isOrdinaryPrivateChatApprovalSession({ ...ordinary, sourceChannel: 'metaweb_order' }), false);
+  assert.equal(isOrdinaryPrivateChatApprovalSession({ ...ordinary, hiddenFromSessionList: true }), false);
+  assert.equal(isOrdinaryPrivateChatApprovalSession({ ...ordinary, memoryReadOnly: true }), false);
+});
+
+test('request_user_permission forwards the concrete request and returns an explicit one-shot approval', async () => {
+  const { calls, tool } = makeApprovalHarness('approved');
+  assert.equal(tool.name, 'request_user_permission');
+  const result = await tool.handler({
+    title: '  Transfer 10 SPACE to Peer Bot  ',
+    description: '  Send exactly 10 SPACE to idq1peer; the transaction is public and irreversible.  ',
+    category: 'payment',
+  });
+  assert.deepEqual(calls, [{
+    title: 'Transfer 10 SPACE to Peer Bot',
+    description: 'Send exactly 10 SPACE to idq1peer; the transaction is public and irreversible.',
+    category: 'payment',
+  }]);
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, /OWNER_APPROVED/);
+  assert.match(result.content[0].text, /exactly the described action/);
+  assert.match(result.content[0].text, /once/);
+});
+
+test('request_user_permission returns denial as a clear tool result, not as approval or a transport error', async () => {
+  const { tool } = makeApprovalHarness('denied');
+  const result = await tool.handler({
+    title: 'Publish a 200 MB file',
+    description: 'Upload the agreed archive publicly on-chain and pay the fee.',
+    category: 'file_upload',
+    file_size_bytes: 200 * 1024 * 1024,
+  });
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, /OWNER_DENIED/);
+  assert.match(result.content[0].text, /Do NOT perform/);
+  assert.doesNotMatch(result.content[0].text, /OWNER_APPROVED/);
+});
+
+test('request_user_permission is fail-closed in skill-service execution and on bridge errors', async () => {
+  const unavailable = makeApprovalHarness('approved', false);
+  const blocked = await unavailable.tool.handler({ title: 'Transfer', description: 'Send funds.' });
+  assert.equal(blocked.isError, true);
+  assert.match(blocked.content[0].text, /OWNER_APPROVAL_UNAVAILABLE/);
+  assert.equal(unavailable.calls.length, 0);
+
+  const failing = makeApprovalHarness(new Error('renderer disconnected'));
+  const failed = await failing.tool.handler({ title: 'Transfer', description: 'Send funds.' });
+  assert.equal(failed.isError, true);
+  assert.match(failed.content[0].text, /OWNER_APPROVAL_ERROR/);
+  assert.match(failed.content[0].text, /No action was authorized/);
+});
+
+test('request_user_permission rejects incomplete requests before opening an owner card', async () => {
+  const { calls, tool } = makeApprovalHarness();
+  const missingTitle = await tool.handler({ title: ' ', description: 'Send funds.' });
+  const missingDescription = await tool.handler({ title: 'Transfer', description: ' ' });
+  assert.equal(missingTitle.isError, true);
+  assert.equal(missingDescription.isError, true);
+  assert.equal(calls.length, 0);
+});
+
+
+const { PRIVATE_CHAT_FILE_APPROVAL_THRESHOLD_BYTES } = require('../dist-electron/main/libs/privateChatAgentTools.js');
+
+test('ordinary chain writes are explicitly outside the owner-approval tool scope', () => {
+  const { tool } = makeApprovalHarness();
+  assert.match(tool.description, /ordinary chain writes/i);
+  assert.match(tool.description, /at or below 20 MiB/);
+  assert.doesNotMatch(tool.description, /paid or irreversible chain writes/);
+});
+
+test('file uploads at or below 20 MiB never open an owner card, while above-threshold uploads do', async () => {
+  const { calls, tool } = makeApprovalHarness('approved');
+  for (const fileSizeBytes of [1, PRIVATE_CHAT_FILE_APPROVAL_THRESHOLD_BYTES]) {
+    const result = await tool.handler({
+      title: 'Upload a small file',
+      description: 'Publish an ordinary small file on-chain.',
+      category: 'file_upload',
+      file_size_bytes: fileSizeBytes,
+    });
+    assert.equal(result.isError, undefined);
+    assert.match(result.content[0].text, /OWNER_APPROVAL_NOT_REQUIRED/);
+    assert.match(result.content[0].text, /No owner card was shown/);
+  }
+  assert.equal(calls.length, 0);
+
+  const result = await tool.handler({
+    title: 'Upload a large file',
+    description: 'Publish a file larger than 20 MiB on-chain.',
+    category: 'file_upload',
+    file_size_bytes: PRIVATE_CHAT_FILE_APPROVAL_THRESHOLD_BYTES + 1,
+  });
+  assert.equal(calls.length, 1);
+  assert.match(result.content[0].text, /OWNER_APPROVED/);
+});
+
+test('file_upload requires an exact positive byte count before requesting approval', async () => {
+  const { calls, tool } = makeApprovalHarness();
+  const result = await tool.handler({
+    title: 'Upload a file',
+    description: 'Publish a file on-chain.',
+    category: 'file_upload',
+  });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /file_size_bytes/);
+  assert.equal(calls.length, 0);
+});

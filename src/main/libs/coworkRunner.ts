@@ -317,6 +317,8 @@ import type { EscrowOrderStore } from '../services/escrowOrderStore';
 import type { ExternalTransferInfo } from '../services/walletTransferService';
 import {
   buildPrivateChatAgentTools,
+  buildPrivateChatApprovalAgentTools,
+  isOrdinaryPrivateChatApprovalSession,
   type PrivateChatControl,
 } from './privateChatAgentTools';
 import {
@@ -1871,7 +1873,7 @@ interface PendingPermission {
   resolve: (result: PermissionResult) => void;
   /**
    * True for owner-gated SUSPENDED waits (waitForPermissionResponse with
-   * timeoutMs:null — the A2A friend invite/remove approvals): no watchdog,
+   * timeoutMs:null — A2A owner-gated sensitive approvals): no watchdog,
    * only an explicit owner click may resolve them. Auto-answering bridges
    * (orchestratorPermissionRelay) must check isPermissionSuspended and leave
    * these to the renderer overlay.
@@ -7955,20 +7957,16 @@ export class CoworkRunner extends EventEmitter {
   }
 
   /**
-   * Public bridge for out-of-turn permission requests raised by services that
-   * run OUTSIDE a cowork ActiveSession — currently the A2A private-chat
-   * daemon's friend invite/remove actions. Unlike requestSafetyApproval this
-   * request SUSPENDS INDEFINITELY (no 60s watchdog): the owner-gated chain
-   * write waits for the owner to actually click the overlay whenever they
-   * next see it, so the 60s auto-deny semantics must NOT apply. The renderer
-   * renders the prompt through the same CoworkPermissionOverlay queue
-   * (A2A sessions are always covered by the global overlay).
+   * Public bridge for owner-gated A2A approvals. Unlike requestSafetyApproval
+   * this request SUSPENDS INDEFINITELY (no 60s watchdog): the sensitive action
+   * waits for the owner to click whenever they next see it. The renderer seats
+   * the request in the conversation's approval bar or the global overlay.
    *
-   * There is no ActiveSession here, so the request also never touches
+   * Out-of-turn callers have no ActiveSession, so the request never touches
    * activeSession.pendingPermission (the cowork stall-watchdog integration).
    * Resolution paths: renderer allow (overlay one-click or option pick) →
    * 'approved'; renderer deny, dismissal, or any non-allow behavior →
-   * 'denied' (callers treat that as "do not write, do not retry").
+   * 'denied' (callers treat that as "do not act, do not retry").
    */
   async requestSuspendedApproval(params: {
     sessionId: string;
@@ -14010,6 +14008,44 @@ export class CoworkRunner extends EventEmitter {
         })
       );
     }
+    const isOrdinaryApprovalSession = (): boolean => {
+      const session = this.store.getSession(sessionId);
+      const sourceContext = this.store.getConversationSourceContextBySession(sessionId);
+      const currentTurn = this.activeSessions.get(sessionId) ?? activeSession;
+      return isOrdinaryPrivateChatApprovalSession({
+        sessionType: session?.sessionType,
+        sourceChannel: sourceContext.sourceChannel,
+        hiddenFromSessionList: session?.hiddenFromSessionList,
+        memoryReadOnly: currentTurn?.memoryReadOnly,
+      });
+    };
+    if (isOrdinaryApprovalSession()) {
+      const metabotId = this.getMemoryBackend().resolveMetabotIdForMemory(sessionId) ?? undefined;
+      const metabot = metabotId == null ? null : this.getMetabotById?.(metabotId);
+      const botLabel = metabot?.name?.trim() || (metabotId == null ? 'This MetaBot' : `MetaBot#${metabotId}`);
+      memoryTools.push(
+        ...buildPrivateChatApprovalAgentTools({
+          tool,
+          control: {
+            isAllowed: isOrdinaryApprovalSession,
+            request: async ({ title, description, category }) => this.requestSuspendedApproval({
+              sessionId,
+              header: title,
+              question: tApp(
+                `机器人「${botLabel}」请求执行敏感操作「${title}」：\n\n${description}\n\n该操作尚未执行。是否仅授权这一次？`,
+                `Bot "${botLabel}" requests permission for the sensitive action "${title}":\n\n${description}\n\nThe action has not been performed. Allow exactly this action once?`,
+              ),
+              context: {
+                a2aApproval: true,
+                category,
+                title,
+                metabotId: metabotId ?? null,
+              },
+            }),
+          },
+        })
+      );
+    }
     if (this.groupChat) {
       memoryTools.push(
         ...buildGroupChatAgentTools({
@@ -16792,7 +16828,7 @@ export class CoworkRunner extends EventEmitter {
   ): Promise<PermissionResult> {
     // timeoutMs: null suspends the request INDEFINITELY (no watchdog) — for
     // owner-gated actions that must wait for a human click whenever it comes
-    // (A2A friend invites), not burn the 60s default into an auto-deny.
+    // (A2A sensitive approvals), not burn the 60s default into an auto-deny.
     const timeoutMs = options?.timeoutMs === undefined ? PERMISSION_RESPONSE_TIMEOUT_MS : options.timeoutMs;
     const timeoutBehavior: PermissionTimeoutDefault = options?.timeoutBehavior === 'allow' ? 'allow' : 'deny';
     return new Promise(resolve => {

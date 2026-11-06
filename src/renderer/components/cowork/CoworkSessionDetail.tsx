@@ -42,8 +42,8 @@ import {
 } from './coworkQuotedSelections';
 import CoworkPermissionPanel from './CoworkPermissionPanel';
 import CoworkConversationSearch, { type CoworkConversationSearchHandle } from './CoworkConversationSearch';
-import A2AFriendApprovalBar from './A2AFriendApprovalBar';
-import { friendActionOf } from './permissionPromptLayout';
+import A2AApprovalBar from './A2AApprovalBar';
+import { a2aApprovalOf } from './permissionPromptLayout';
 import { buildSessionComposerCommands } from './composerCommandCatalog';
 import PermissionModeSelector from './PermissionModeSelector';
 import SubagentPanel from './SubagentPanel';
@@ -2682,10 +2682,10 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   // mapping is the display source of truth, so an IM row never renders the
   // A2A panels (peer profile, episode history, A2A errors).
   const isA2ASession = currentSession?.sessionType === 'a2a' && !currentSession?.imChannel;
-  const friendApprovalPermissions = useMemo(() => {
+  const a2aApprovalPermissions = useMemo(() => {
     if (!isA2ASession || !currentSession) return [];
     return pendingPermissions.filter((permission) => (
-      permission.sessionId === currentSession.id && friendActionOf(permission) !== null
+      permission.sessionId === currentSession.id && a2aApprovalOf(permission) !== null
     ));
   }, [isA2ASession, currentSession, pendingPermissions]);
   const isPrivateA2ASession = useMemo(() => (
@@ -5136,15 +5136,18 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       {isA2ASession ? (
         <div className="px-4 py-3 shrink-0 border-t dark:border-claude-darkBorder border-claude-border">
           <div className="mx-auto flex max-w-[clamp(680px,64%,920px)] flex-col items-stretch gap-2">
-            {friendApprovalPermissions.map((permission) => (
-              <A2AFriendApprovalBar key={permission.requestId} permission={permission} />
-            ))}
+            {a2aApprovalPermissions[0] && (
+              <A2AApprovalBar
+                key={a2aApprovalPermissions[0].requestId}
+                permission={a2aApprovalPermissions[0]}
+              />
+            )}
             {isA2APeerOwner ? (
               <A2AOwnerComposer
                 key={currentSession.id}
                 sessionId={currentSession.id}
               />
-            ) : isPrivateA2ASession && (
+            ) : isPrivateA2ASession && a2aApprovalPermissions.length === 0 && (
               <A2AGuidanceControls
                 key={currentSession.id}
                 sessionId={currentSession.id}

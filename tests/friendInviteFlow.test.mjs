@@ -682,3 +682,35 @@ test('bare invite tag with no prose still delivers a fallback sentence to the pe
   assert.ok(assistantBubble.content.length > 10, 'fallback sentence delivered');
   assert.equal(assistantBubble.content.includes('FRIEND_INVITE'), false);
 });
+
+
+test('ordinary private-chat skill turns advertise generic owner approval without double-requesting friend actions', () => {
+  const prompt = buildPrivateChatA2ASystemPrompt({
+    metabot: { name: 'Local' },
+    analysis: analysisBase,
+    skillsPrompt: '<available_skills>skill-a</available_skills>',
+  });
+  assert.match(prompt, /request_user_permission/);
+  assert.match(prompt, /OWNER_APPROVED/);
+  assert.match(prompt, /OWNER_DENIED/);
+  assert.match(prompt, /payments? or transfers|payment\/transfer/i);
+  assert.match(prompt, /larger than 20 MiB/);
+  assert.match(prompt, /file_size_bytes/);
+  assert.match(prompt, /Ordinary chain writes and file uploads at or below 20 MiB proceed directly/);
+  assert.doesNotMatch(prompt, /paid or irreversible chain write/);
+  assert.match(prompt, /keep using the dedicated friend tags/);
+  assert.match(prompt, /must not be doubled/);
+
+  const byePrompt = buildPrivateChatA2ASystemPrompt({
+    metabot: { name: 'Local' },
+    analysis: { ...analysisBase, shouldForceBye: true },
+    skillsPrompt: '<available_skills>skill-a</available_skills>',
+  });
+  assert.doesNotMatch(byePrompt, /request_user_permission/);
+
+  const noToolPrompt = buildPrivateChatA2ASystemPrompt({
+    metabot: { name: 'Local' },
+    analysis: analysisBase,
+  });
+  assert.doesNotMatch(noToolPrompt, /request_user_permission/);
+});

@@ -130,7 +130,9 @@ test('approval owns the active session composer slot instead of a viewport overl
   assert.match(panelSource, /data-cowork-composer-takeover/);
   assert.match(sessionDetailSource, /pendingPermissions\.find\(\(permission\) => permission\.sessionId === currentSession\.id\)/);
   assert.match(sessionDetailSource, /<CoworkPermissionPanel/);
-  assert.match(sessionDetailSource, /A2AFriendApprovalBar/);
+  assert.match(sessionDetailSource, /A2AApprovalBar/);
+  assert.match(sessionDetailSource, /a2aApprovalPermissions\[0\]/);
+  assert.match(sessionDetailSource, /isPrivateA2ASession && a2aApprovalPermissions\.length === 0/);
   assert.doesNotMatch(appSource, /\{permissionPanel\}/);
   assert.doesNotMatch(overlaySource, /<CoworkPermissionPanel/);
   assert.match(overlaySource, /cowork:viewSession/);
@@ -179,6 +181,9 @@ test('composer takeover copy exists in both locales', () => {
     'coworkApprovalAllowDelete',
     'a2aFriendApprovalInviteTitle',
     'a2aFriendApprovalRemoveTitle',
+    'a2aApprovalRequestTitle',
+    'a2aApprovalWaiting',
+    'a2aApprovalPending',
   ]) {
     const occurrences = i18nSource.split(`${key}:`).length - 1;
     assert.ok(occurrences >= 2, `${key} must be defined in both the zh and en locale tables (found ${occurrences})`);

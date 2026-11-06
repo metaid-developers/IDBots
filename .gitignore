@@ -78,6 +78,8 @@ tests/*
 !tests/friendRelationshipService.test.mjs
 !tests/friendWiringIntegration.test.mjs
 !tests/friendInviteFlow.test.mjs
+!tests/privateChatApprovalFlow.test.mjs
+!tests/a2aApprovalUi.test.tsx
 !tests/friendInviteOverlayChain.test.mjs
 !tests/friendGuidanceIntent.test.ts
 !tests/qqGateway.test.ts
