@@ -24,7 +24,7 @@ import {
   subscribeMeSnapshot,
 } from './mePointsStore';
 
-const HISTORY_TYPES = ['', 'mint', 'burn', 'transfer', 'reverse', 'adjust', 'expire'] as const;
+const HISTORY_TYPES = ['', 'mint', 'topup', 'bonus', 'burn', 'transfer', 'reverse', 'adjust', 'expire'] as const;
 
 const historyTypeLabel = (type: string): string => {
   switch ((type || '').toLowerCase()) {
@@ -40,18 +40,21 @@ const historyTypeLabel = (type: string): string => {
   }
 };
 
+const isOrderCredited = (status: string): boolean => /confirm|credit|active|complete|success/i.test(status);
+const isOrderClosed = (status: string): boolean => /reject|closed|expired|cancel|fail/i.test(status);
+
 const orderStatusLabel = (status: string): string => {
   const normalized = (status || '').toLowerCase();
-  if (normalized.includes('confirm')) return i18nService.t('meOrderStatusConfirmed');
-  if (normalized.includes('reject')) return i18nService.t('meOrderStatusRejected');
-  if (normalized.includes('submit')) return i18nService.t('meOrderStatusSubmitted');
+  if (isOrderCredited(normalized)) return i18nService.t('meOrderStatusConfirmed');
+  if (isOrderClosed(normalized)) return i18nService.t('meOrderStatusRejected');
+  if (/submit|created|pending|paid/i.test(normalized)) return i18nService.t('meOrderStatusSubmitted');
   return status || '—';
 };
 
 const orderStatusClass = (status: string): string => {
   const normalized = (status || '').toLowerCase();
-  if (normalized.includes('confirm')) return 'bg-green-500/15 text-green-600 dark:text-green-400';
-  if (normalized.includes('reject')) return 'bg-red-500/10 text-red-600 dark:text-red-400';
+  if (isOrderCredited(normalized)) return 'bg-green-500/15 text-green-600 dark:text-green-400';
+  if (isOrderClosed(normalized)) return 'bg-red-500/10 text-red-600 dark:text-red-400';
   return 'bg-amber-500/10 text-amber-600 dark:text-amber-400';
 };
 
@@ -98,14 +101,13 @@ const MeUsageAndCredits: React.FC = () => {
         setEntries((prev) => (reset ? res.history!.entries : [...prev, ...res.history!.entries]));
         setNextCursor(res.history.nextCursor || '');
       } else {
-        setHistoryError(res.error || '');
+        setHistoryError(res.error || i18nService.t('meUsageLoadFailed'));
       }
     } catch {
       setHistoryError(i18nService.t('meUsageLoadFailed'));
     } finally {
       setHistoryLoading(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [typeFilter, nextCursor]);
 
   const loadOrders = useCallback(async (withSpinner: boolean) => {
@@ -124,7 +126,6 @@ const MeUsageAndCredits: React.FC = () => {
     if (!snapshot.balance) ensureMeSnapshot();
     void loadHistory(true);
     void loadOrders(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [typeFilter]);
 
   // Status polling while any order is still submitted (refresh every 20s).

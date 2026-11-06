@@ -557,6 +557,14 @@ export async function getMeSubscription(): Promise<MeSubscription> {
   };
 }
 
+function listRows(data: Record<string, unknown> | unknown[], keys: string[]): unknown[] {
+  if (Array.isArray(data)) return data;
+  for (const key of keys) {
+    if (Array.isArray(data[key])) return data[key] as unknown[];
+  }
+  return [];
+}
+
 export async function getMeHistory(input: { type?: string; beforeId?: string; limit?: number } = {}): Promise<MeHistoryPage> {
   const { identity } = await signedAuth('history', 'history');
   const data = (await meRequestJson({
@@ -570,13 +578,7 @@ export async function getMeHistory(input: { type?: string; beforeId?: string; li
     },
     identity,
   })) as Record<string, unknown>;
-  const rows = Array.isArray(data.entries)
-    ? data.entries
-    : Array.isArray(data.history)
-      ? data.history
-      : Array.isArray(data.items)
-        ? data.items
-        : Array.isArray(data) ? (data as unknown[]) : [];
+  const rows = listRows(data, ['entries', 'history', 'items', 'list', 'records', 'rows']);
   const entries: MeHistoryEntry[] = [];
   for (const row of rows) {
     const record = (row && typeof row === 'object' ? row : {}) as Record<string, unknown>;
@@ -584,13 +586,13 @@ export async function getMeHistory(input: { type?: string; beforeId?: string; li
     if (!id) continue;
     entries.push({
       id,
-      type: pickText(record, 'type', 'entryType'),
+      type: pickText(record, 'type', 'entryType', 'entry_type'),
       amountMilli: pickNumber(record, 'amountMilli', 'amount_milli', 'amount'),
       balanceAfterMilli: pickNumber(record, 'balanceAfterMilli', 'balance_after_milli') || undefined,
       refType: pickText(record, 'refType', 'ref_type') || undefined,
       refId: pickText(record, 'refId', 'ref_id') || undefined,
-      reason: pickText(record, 'reason') || undefined,
-      createdAt: pickNumber(record, 'createdAt', 'created_at', 'ts') || undefined,
+      reason: pickText(record, 'reason', 'remark') || undefined,
+      createdAt: pickNumber(record, 'createdAt', 'created_at', 'createTime', 'create_time', 'timestamp', 'ts') || undefined,
       raw: record,
     });
   }
@@ -721,7 +723,7 @@ export async function getMeTopupOrders(): Promise<MeTopupOrder[]> {
     path: '/v1/me/topup/orders',
     identity,
   });
-  const rows = Array.isArray(data) ? data : [];
+  const rows = listRows(data, ['orders', 'entries', 'items', 'list', 'records', 'rows']);
   const orders: MeTopupOrder[] = [];
   for (const row of rows) {
     const record = (row && typeof row === 'object' ? row : {}) as Record<string, unknown>;
