@@ -41,6 +41,7 @@ import {
   type SentSelectionQuoteLabelSet,
 } from './coworkQuotedSelections';
 import CoworkPermissionPanel from './CoworkPermissionPanel';
+import CoworkConversationSearch, { type CoworkConversationSearchHandle } from './CoworkConversationSearch';
 import A2AFriendApprovalBar from './A2AFriendApprovalBar';
 import { friendActionOf } from './permissionPromptLayout';
 import { buildSessionComposerCommands } from './composerCommandCatalog';
@@ -81,6 +82,7 @@ import {
   InformationCircleIcon,
   PuzzlePieceIcon,
   EllipsisHorizontalIcon,
+  MagnifyingGlassIcon,
   PencilSquareIcon,
   DocumentDuplicateIcon,
   ShareIcon,
@@ -2986,6 +2988,12 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const conversationSearchRef = useRef<CoworkConversationSearchHandle>(null);
+  const [isConversationSearchOpen, setIsConversationSearchOpen] = useState(false);
+  const supportsConversationSearch = currentSession?.sessionType !== 'a2a';
+  const handleConversationSearchNavigate = useCallback(() => {
+    setShouldAutoScroll(false);
+  }, []);
   // Quoted-selection state: the pending selection (before it is added), the
   // element the floating bar hangs off, the live range it follows, and the
   // composer it is handed to.
@@ -3946,7 +3954,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       || !container
       || historyLoadInFlightRef.current
     ) {
-      return;
+      return 0;
     }
     historyLoadInFlightRef.current = true;
     setIsLoadingEarlierMessages(true);
@@ -3954,7 +3962,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     const previousScrollTop = container.scrollTop;
     try {
       const loadedCount = await coworkService.loadEarlierMessages(sessionId);
-      if (loadedCount <= 0) return;
+      if (loadedCount <= 0) return loadedCount;
       await new Promise<void>((resolve) => {
         window.requestAnimationFrame(() => {
           const activeContainer = scrollContainerRef.current;
@@ -3965,6 +3973,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
           resolve();
         });
       });
+      return loadedCount;
     } finally {
       historyLoadInFlightRef.current = false;
       setIsLoadingEarlierMessages(false);
@@ -4740,8 +4749,26 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
           )}
         </div>
 
-        {/* Right side: Folder + Menu */}
+        {/* Right side: Search + Folder + Menu */}
         <div className="non-draggable flex items-center gap-1">
+          {supportsConversationSearch && (
+            <button
+              type="button"
+              data-cowork-conversation-search-trigger
+              onClick={() => conversationSearchRef.current?.open()}
+              title={`${i18nService.t('coworkConversationSearch')} (${isMac ? '⌘F' : 'Ctrl+F'})`}
+              aria-label={i18nService.t('coworkConversationSearch')}
+              aria-expanded={isConversationSearchOpen}
+              aria-controls="cowork-conversation-search"
+              className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors active:scale-[0.96] ${
+                isConversationSearchOpen
+                  ? 'bg-claude-surfaceHover text-claude-text dark:bg-claude-darkSurfaceHover dark:text-claude-darkText'
+                  : 'text-claude-textSecondary hover:bg-claude-surfaceHover hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText'
+              }`}
+            >
+              <MagnifyingGlassIcon className="h-4 w-4" />
+            </button>
+          )}
           {/* Folder button */}
           <button
             type="button"
@@ -4777,6 +4804,22 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
           <WindowTitleBar inline className="ml-1" />
         </div>
       </div>
+
+      {supportsConversationSearch && (
+        <CoworkConversationSearch
+          ref={conversationSearchRef}
+          rootRef={detailRootRef}
+          containerRef={scrollContainerRef}
+          sessionId={currentSession.id}
+          enabled={supportsConversationSearch}
+          contentVersion={currentSession.messages}
+          hasMoreBefore={Boolean(currentSession.messageHistory?.hasMoreBefore)}
+          isLoadingEarlierMessages={isLoadingEarlierMessages}
+          loadEarlierMessages={loadEarlierMessages}
+          onBeforeNavigate={handleConversationSearchNavigate}
+          onOpenChange={setIsConversationSearchOpen}
+        />
+      )}
 
       {/* Floating Menu */}
       {menuPosition && (

@@ -716,6 +716,7 @@ man_base_data_pebble/
 !tests/coworkSessionStart.test.ts
 !tests/mobileChatProjection.test.ts
 !tests/coworkCompactedNotice.test.tsx
+!tests/coworkConversationSearch.test.tsx
 !tests/sessionListRenderBudget.test.mjs
 !tests/sessionListRevealBudget.test.ts
 !tests/sessionMenuScrollDismiss.test.mjs

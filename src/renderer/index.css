@@ -48,6 +48,15 @@
   --btn-primary-edge: #6b7280;
 }
 
+::highlight(cowork-conversation-search) {
+  background-color: rgba(250, 204, 21, 0.42);
+}
+
+::highlight(cowork-conversation-search-active) {
+  background-color: #f59e0b;
+  color: #18181b;
+}
+
 /* KaTeX styles */
 .katex-display {
   overflow-x: auto;
