@@ -154,6 +154,38 @@ const GLM_OPENCODE_GO_CHAT_COMPLETIONS_DECLARATION: DshModelReasoningDeclaration
   },
 };
 
+/**
+ * Volcengine Ark hosts (ark.{region}.volces.com) — the Coding Plan and
+ * pay-as-you-go coding gateway live here. GLM served from these hosts rejects
+ * the Z.AI thinking dialect outright on an off turn:
+ * `400 InvalidParameter "thinking.type `disabled` is not supported by this
+ * model"` (verified live 2026-11-06 on /api/coding/v3/chat/completions,
+ * glm-5-3-flash). What Ark DOES accept for GLM is the standard
+ * `reasoning_effort` field: bare `reasoning_effort:"low"` 200s, and
+ * `thinking:{type:'enabled'}` combined with it 200s — but the zai dialect
+ * always emits `thinking:{type:'disabled'}` on a no-effort turn, so the Z.AI
+ * declaration can never be made safe on this host. The declaration therefore
+ * switches GLM to pi-ai's plain reasoning_effort dialect: enabled rungs map
+ * to the ladder field, an off/undefined turn sends NO thinking control at all
+ * and the server default applies (same tolerate-and-default treatment the
+ * OpenCode Go gateway gets). Verified live 2026-11-06: no-thinking body 200;
+ * thinking enabled (+/- reasoning_effort) 200; thinking disabled 400.
+ * `off` maps to null (send nothing), mirroring the OpenCode Go ladder.
+ */
+const GLM_VOLCENGINE_CHAT_COMPLETIONS_DECLARATION: DshModelReasoningDeclaration = {
+  reasoningEfforts: { off: null, low: 'low', high: 'high', max: 'max' },
+  compat: {
+    supportsReasoningEffort: true,
+    supportsStore: false,
+    supportsDeveloperRole: false,
+    maxTokensField: 'max_tokens',
+  },
+};
+
+/** True for any Volcengine Ark host (ark.{region}.volces.com). */
+export const isVolcengineArkBaseUrl = (baseUrl: string | null | undefined): boolean =>
+  typeof baseUrl === 'string' && /volces\.com(?:\/|$)/i.test(baseUrl.trim());
+
 // GLM behind an Anthropic-Messages-compatible gateway (Volcengine Ark's
 // coding/agent plans serve the GLM line over /v1/messages). The wire dialect
 // is Claude's adaptive thinking: enabled rungs send
@@ -226,6 +258,7 @@ export function dshModelReasoningDeclaration(
     // comments).
     const alwaysThinks = modelAlwaysThinks(bare);
     if (apiFormat === 'openai') {
+      if (isVolcengineArkBaseUrl(baseUrl)) return GLM_VOLCENGINE_CHAT_COMPLETIONS_DECLARATION;
       return isOpenCodeGoBaseUrl(baseUrl)
         ? GLM_OPENCODE_GO_CHAT_COMPLETIONS_DECLARATION
         : GLM_CHAT_COMPLETIONS_DECLARATION;

@@ -177,3 +177,39 @@ test('undeclared-reasoning route warning fires once per route identity', async (
   assert.ok(changedEffort, 'a different effort is a new identity')
   assert.match(changedEffort, /"off"/)
 })
+
+test('GLM on Volcengine Ark chat-completions switches to the plain reasoning_effort dialect (thinking.type=disabled 400s there)', () => {
+  for (const base of [
+    'https://ark.cn-beijing.volces.com/api/coding/v3',
+    'https://ark.cn-beijing.volces.com/api/coding',
+    'https://ark.cn-beijing.volces.com/api/v3',
+    'https://ark.cn-beijing.volces.com',
+  ]) {
+    const declaration = dshModelReasoningDeclaration('glm-5.3-flash', 'openai', base);
+    assert.ok(declaration, base);
+    // No thinking object is ever emitted for GLM on this host: the zai
+    // dialect's off-turn `thinking:{type:'disabled'}` is what Ark 400s.
+    assert.equal(declaration.compat.thinkingFormat, undefined, base);
+    assert.equal(declaration.compat.supportsReasoningEffort, true, base);
+    // Effort rungs ride the plain ladder; an off turn sends nothing.
+    assert.equal(declaration.reasoningEfforts.off, null, base);
+    assert.equal(declaration.reasoningEfforts.low, 'low', base);
+  }
+  // The host guard is host-scoped, not provider-key-scoped: a volces.com URL
+  // anywhere in the base matches, and non-volces bases keep the Z.AI wire.
+  assert.equal(dshModelReasoningDeclaration('glm-5.3-flash', 'openai', 'https://open.bigmodel.cn/api/coding/paas/v4').compat.thinkingFormat, 'zai');
+  assert.equal(dshModelReasoningDeclaration('glm-5.3-flash', 'openai', 'https://opencode.ai/zen/go/v1').compat.thinkingFormat, undefined);
+  assert.equal(dshModelReasoningDeclaration('glm-5.3-flash', 'openai').compat.thinkingFormat, 'zai');
+});
+
+test('dshRouteReasoningEffort: off on a Volcengine GLM route re-spells to a supported rung', () => {
+  // glm-5.3-flash always thinks; on the Ark chat-completions wire "off" has
+  // no wire shape, so it re-spells to 'low' — which the plain
+  // reasoning_effort dialect accepts (verified live: bare
+  // reasoning_effort:"low" → 200).
+  assert.equal(dshRouteReasoningEffort('glm-5.3-flash', 'openai', 'https://ark.cn-beijing.volces.com/api/coding/v3', 'off'), 'low');
+  // A real effort passes through unchanged.
+  assert.equal(dshRouteReasoningEffort('glm-5.3-flash', 'openai', 'https://ark.cn-beijing.volces.com/api/coding/v3', 'high'), 'high');
+  // Same model on the Z.AI wire keeps its own off spelling.
+  assert.equal(dshRouteReasoningEffort('glm-5.3-flash', 'openai', 'https://open.bigmodel.cn/api/coding/paas/v4', 'off'), 'low');
+});
