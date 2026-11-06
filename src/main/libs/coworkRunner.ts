@@ -67,7 +67,7 @@ import {
   parseFollowUpDeclaration,
   resolveFollowUpAction,
 } from '../cerebellum/sessionFollowUpGate';
-import { CONFIG_HARD_FALLBACK_RESUME_PROMPT, CONTINUE_TURN_REASONING_EFFORT, DEEPSEEK_RESPONSES_REASONING_PLACEHOLDER, EMPTY_TERMINAL_TURN_CONTINUE_PROMPT, FINALIZATION_TURN_CONTINUE_PROMPT, isEmptyTerminalSdkResult, isAuthDshTurnError, isBodyLimitDshTurnError, isConfigModelMissingDshTurnError, isMalformedToolCallDshTurnError, isOverflowDshTurnError, isQuotaDshTurnError, isRuntimeBootDshTurnError, isTransientDshTurnError, isWontHealDshTurnError, MALFORMED_TOOL_CALL_TURN_CONTINUE_PROMPT, OVERFLOW_TURN_RESUME_PROMPT, relayQuotaErrorMetadata, extractRelayQuotaExhaustedCode, TRANSIENT_TURN_RESUME_PROMPT, TRUNCATED_TURN_CONTINUE_PROMPT, buildFreeRelayQuotaNotice } from './coworkAssistantReply';
+import { CONFIG_HARD_FALLBACK_RESUME_PROMPT, CONTINUE_TURN_REASONING_EFFORT, DEEPSEEK_RESPONSES_REASONING_PLACEHOLDER, EMPTY_TERMINAL_TURN_CONTINUE_PROMPT, FINALIZATION_TURN_CONTINUE_PROMPT, isEmptyTerminalSdkResult, isAuthDshTurnError, isBodyLimitDshTurnError, isConfigModelMissingDshTurnError, isMalformedToolCallDshTurnError, isModelSwitchCompactionFailedDshTurnError, isOverflowDshTurnError, isQuotaDshTurnError, isRuntimeBootDshTurnError, isTransientDshTurnError, isWontHealDshTurnError, shouldAutoReviewDshToolCall, MALFORMED_TOOL_CALL_TURN_CONTINUE_PROMPT, OVERFLOW_TURN_RESUME_PROMPT, relayQuotaErrorMetadata, extractRelayQuotaExhaustedCode, TRANSIENT_TURN_RESUME_PROMPT, TRUNCATED_TURN_CONTINUE_PROMPT, buildFreeRelayQuotaNotice } from './coworkAssistantReply';
 import {
   filterSdkInternalDiagnostics,
   isSdkInternalDiagnostic,
@@ -12302,6 +12302,20 @@ export class CoworkRunner extends EventEmitter {
               ` (The failing route: provider ${lastAttemptRoute.provider}, model ${lastAttemptRoute.model}; the API key actually sent ended with ****${String(lastAttemptRoute.apiKey ?? '').trim().slice(-4) || '????'}. Open that provider in Settings > Models and compare the key in plain text: a matching tail means this key itself is rejected — replace it; a different tail means the turn did not use the key you just saved — check whether another enabled provider serves the same model.)`
             )}`
           : '';
+        // Model-switch compaction failure (0.2.2 kernel): the switch to the
+        // operator's chosen target was aborted because compacting the history
+        // with the previous model failed first. The kernel preserves the
+        // previous route and the session is healthy on it — this settles as a
+        // terminal notice WITHOUT the fallback ladder (the serving route never
+        // overflowed; silently switching brains would override the operator's
+        // explicit model choice). The fix is to pick a larger-window target or
+        // compact first.
+        const modelSwitchNotice = isModelSwitchCompactionFailedDshTurnError(outcome)
+          ? ` ${tApp(
+              `（模型切换未生效：切换前压缩历史失败，会话已保留原模型继续。目标模型的上下文窗口装不下当前历史：请选择上下文更大的目标模型后重试，或先点击顶部压缩按钮手动压缩历史。）`,
+              ` (The model switch did not take effect: pre-switch history compaction failed and the session stays on the previous model. The target model's context window cannot hold the current history: pick a target with a larger window and retry, or run the manual compact button in the header first.)`
+            )}`
+          : '';
         // Ring-④ rewrites strip the native 429/limit body from the
         // user-visible detail (the raw outcome stays in the ERROR log line
         // above); the notices carry the semantics of the actual cause: an
@@ -12329,7 +12343,7 @@ export class CoworkRunner extends EventEmitter {
           : failureDetail;
         this.handleError(
           sessionId,
-          `DSH turn failed: ${ladderSemantics}${quotaNotice}${noModelConfiguredNotice}${freeRelayQuotaNotice}${bodyLimitNotice}${overflowNotice}${authNotice}`,
+          `DSH turn failed: ${ladderSemantics}${quotaNotice}${noModelConfiguredNotice}${freeRelayQuotaNotice}${bodyLimitNotice}${overflowNotice}${authNotice}${modelSwitchNotice}`,
           // REQ-A-25: stamp a stable machine code on the stream error for
           // both relay quota codes so the desktop banner and the mobile
           // recharge notice can key off it without parsing the text.
@@ -12560,7 +12574,7 @@ export class CoworkRunner extends EventEmitter {
     sessionId: string,
     toolName: string,
     toolInput: Record<string, unknown>
-  ): Promise<{ decision: 'allow' | 'deny' | 'ask'; reason?: string }> {
+  ): Promise<{ decision: 'allow' | 'deny' | 'ask' | 'review'; reason?: string }> {
     const activeSession = this.activeSessions.get(sessionId)
     const normalized = String(toolName ?? '').toLowerCase()
     if (activeSession?.finalizingTurn) {
@@ -12751,6 +12765,13 @@ export class CoworkRunner extends EventEmitter {
             `Tool "${toolName}" will delete files. Safety policy requires a human confirmation. Allow this operation?${deleteDetail}`
           ),
         }
+      }
+      // Auto review (0.2.2 headless): unattended sessions hand mutating
+      // native-tool verdicts to the session's own model instead of a blind
+      // allow. The runtime's policy gate runs the reviewer (fail-closed, final
+      // denial); attended modes keep the guard behavior above unchanged.
+      if (shouldAutoReviewDshToolCall({ toolName: normalized, autoApprove: activeSession?.autoApprove, permissionMode })) {
+        return { decision: 'review' }
       }
       if (activeSession?.autoApprove) {
         return { decision: 'allow' }

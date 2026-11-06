@@ -442,8 +442,9 @@ export class DshKernel {
     return this.client.request('idbots/ask/respond', { id, answers })
   }
 
-  /** Answer a runtime-native tool policy check. */
-  async respondPolicy(id: string, decision: 'allow' | 'deny' | 'ask', reason?: string): Promise<{ answered: boolean }> {
+  /** Answer a runtime-native tool policy check. 'review' hands the verdict to
+   * the session's own model (0.2.2 headless auto review) — denial is final. */
+  async respondPolicy(id: string, decision: 'allow' | 'deny' | 'ask' | 'review', reason?: string): Promise<{ answered: boolean }> {
     this.requireClient()
     return this.client.request('idbots/policy/respond', { id, decision, reason })
   }

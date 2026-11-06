@@ -310,7 +310,7 @@ export interface DshHubOptions {
   /** Execute a host-bridged tool call; resolves {ok,text,images?} or rejects. */
   executeTool?: (coworkSessionId: string, name: string, args: Record<string, unknown>) => Promise<{ ok: true; text: string; images?: DshHostToolImagePayload[] } | { ok: false; error: string }>
   /** Host permission chain for runtime-native tools (bash/write/edit…). */
-  evaluatePolicy?: (coworkSessionId: string, name: string, args: Record<string, unknown>) => Promise<{ decision: 'allow' | 'deny' | 'ask'; reason?: string }>
+  evaluatePolicy?: (coworkSessionId: string, name: string, args: Record<string, unknown>) => Promise<{ decision: 'allow' | 'deny' | 'ask' | 'review'; reason?: string }>
   /** User-configured MCP servers, read fresh each turn (additions mount on the
    * next turn; the config union never removes until restart, same as providers). */
   mcpServersProvider?: (coworkSessionId: string) => DshMcpServerDefinition[]
