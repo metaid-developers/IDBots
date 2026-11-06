@@ -21,6 +21,7 @@ import { getDshWebToolsProxyDescriptor } from '../services/dshWebToolsProxy';
 import { noteOwnerAskCancelled } from '../services/pendingOwnerAskBridge';
 import { filterServerModeAgentTools, resolveDshRuntimeIdleTtlMs } from '../server/serverMode';
 import { isDshShutdownError } from './dshShutdownError';
+import { DSH_RUNTIME_BOOT_ERROR_CODE, isDshRuntimeBootError } from './dshRuntimeBootError';
 import { truncateUtf16Units } from './llmSafeText';
 import { DshStreamUiGate } from './dshStreamUiGate';
 import type { DshHostToolImagePayload, DshRuntimeConfigInput, DshUsageSnapshot } from './dshKernel/types';
@@ -66,7 +67,7 @@ import {
   parseFollowUpDeclaration,
   resolveFollowUpAction,
 } from '../cerebellum/sessionFollowUpGate';
-import { CONFIG_HARD_FALLBACK_RESUME_PROMPT, CONTINUE_TURN_REASONING_EFFORT, DEEPSEEK_RESPONSES_REASONING_PLACEHOLDER, EMPTY_TERMINAL_TURN_CONTINUE_PROMPT, FINALIZATION_TURN_CONTINUE_PROMPT, isEmptyTerminalSdkResult, isAuthDshTurnError, isBodyLimitDshTurnError, isConfigModelMissingDshTurnError, isMalformedToolCallDshTurnError, isOverflowDshTurnError, isQuotaDshTurnError, isTransientDshTurnError, isWontHealDshTurnError, MALFORMED_TOOL_CALL_TURN_CONTINUE_PROMPT, OVERFLOW_TURN_RESUME_PROMPT, relayQuotaErrorMetadata, extractRelayQuotaExhaustedCode, TRANSIENT_TURN_RESUME_PROMPT, TRUNCATED_TURN_CONTINUE_PROMPT, buildFreeRelayQuotaNotice } from './coworkAssistantReply';
+import { CONFIG_HARD_FALLBACK_RESUME_PROMPT, CONTINUE_TURN_REASONING_EFFORT, DEEPSEEK_RESPONSES_REASONING_PLACEHOLDER, EMPTY_TERMINAL_TURN_CONTINUE_PROMPT, FINALIZATION_TURN_CONTINUE_PROMPT, isEmptyTerminalSdkResult, isAuthDshTurnError, isBodyLimitDshTurnError, isConfigModelMissingDshTurnError, isMalformedToolCallDshTurnError, isOverflowDshTurnError, isQuotaDshTurnError, isRuntimeBootDshTurnError, isTransientDshTurnError, isWontHealDshTurnError, MALFORMED_TOOL_CALL_TURN_CONTINUE_PROMPT, OVERFLOW_TURN_RESUME_PROMPT, relayQuotaErrorMetadata, extractRelayQuotaExhaustedCode, TRANSIENT_TURN_RESUME_PROMPT, TRUNCATED_TURN_CONTINUE_PROMPT, buildFreeRelayQuotaNotice } from './coworkAssistantReply';
 import {
   filterSdkInternalDiagnostics,
   isSdkInternalDiagnostic,
@@ -11889,6 +11890,15 @@ export class CoworkRunner extends EventEmitter {
           onError: (error) => coworkLog('ERROR', 'runDshSessionLocal', 'runtime stream error', { error: error.message }),
           },
         });
+      } catch (error) {
+        if (!isDshRuntimeBootError(error)) throw error;
+        return {
+          kind: 'error',
+          error: {
+            code: DSH_RUNTIME_BOOT_ERROR_CODE,
+            message: error instanceof Error ? error.message : String(error),
+          },
+        };
       } finally {
         clearDshStallWatchdog();
         activeSession.activeTurnModelId = null;
@@ -12034,35 +12044,15 @@ export class CoworkRunner extends EventEmitter {
       // route — exhausted credit does not heal mid-turn, so a resume ladder
       // there would only multiply dead attempts; the fallback ladder below
       // still only continues on TRANSIENT failures of the fallback route.
-      // Auth 401 / context overflow never enter this chain; without a usable
-      // fallback the behavior is exactly as before (error settlement below,
-      // whose quota notice names `lastAttemptRoute` — the fallback route when
-      // the switch happened, so "top up" points at the route that actually
-      // ran out).
+      // Quota, overflow, config-hard and runtime-boot failures skip the
+      // same-route ladder and take one direct attempt on the fallback route.
+      // A boot failure happens before prompt submission, so its retry below
+      // carries the original prompt rather than a continuation cue.
       const gateTransient = isTransientDshTurnError(outcome);
       const gateQuota = isQuotaDshTurnError(outcome);
-      // Context-overflow deaths join the switch (2026-09-28 compaction-deadlock
-      // incident: a five-day session crossed the model's context window; both
-      // the auto-compaction request and the turn itself died with `400 (no
-      // body)` on every subsequent message and the session wedged permanently).
-      // Like quota, overflow cannot heal on the same route — history cannot
-      // shrink mid-request — but the fallback brain may resolve to a model
-      // with a LARGER context window, so a single fallback attempt is the only
-      // self-heal available without forking the pinned compaction package. If
-      // the fallback route also overflows, the terminal notice below tells the
-      // operator what actually fixes it (compact / fresh session), ending the
-      // retry-the-same-400 dead loop.
       const gateOverflow = isOverflowDshTurnError(outcome, { compactionFailedThisTurn });
-      // Config-level hard errors join the DEGRADE (2026-10-08 Boss ruling
-      // corollary 3, error-type routing: "config-class hard error -> degrade
-      // + log"): an auth rejection
-      // (401/invalid key) or a model id the provider does not serve can never
-      // succeed on the same route, but the fallback brain / current default
-      // may point at a route whose key is valid / whose model id exists.
-      // Like quota these take a SINGLE attempt on the target (a wrong key or
-      // a missing model id does not heal mid-turn) and the switch WARN names
-      // the config error so the log distinguishes it from a rate limit.
-      const gateConfigHard = !gateTransient && !gateQuota && !gateOverflow
+      const gateRuntimeBoot = isRuntimeBootDshTurnError(outcome);
+      const gateConfigHard = !gateTransient && !gateQuota && !gateOverflow && !gateRuntimeBoot
         && (isAuthDshTurnError(outcome) || isConfigModelMissingDshTurnError(outcome));
       // Ring-4 terminal-semantics tracker (2026-10-08 Boss ruling): when the
       // degrade ladder had NOWHERE to go (no fallback brain, and no usable
@@ -12083,7 +12073,7 @@ export class CoworkRunner extends EventEmitter {
       if (
         outcome.kind === 'error'
         && !activeSession.abortController.signal.aborted
-        && (gateTransient || gateQuota || gateOverflow || gateConfigHard)
+        && (gateTransient || gateQuota || gateOverflow || gateConfigHard || gateRuntimeBoot)
       ) {
         const gateSourceRoute = route;
         // Brain fallback first (unchanged GT-02 behavior); when NO fallback
@@ -12091,14 +12081,14 @@ export class CoworkRunner extends EventEmitter {
         // stale-binding post-mortem rescue kicks in: re-resolve the CURRENT
         // default route so the owner's latest default carries the turn
         // instead of the turn dying (and every queued message re-dying
-        // behind it). Quota, exhausted-transient (incl. RATE_LIMIT) and
-        // config-hard deaths all take this; the failure only affects THIS
+        // behind it). Quota, exhausted-transient (incl. RATE_LIMIT),
+        // config-hard and boot deaths all take this; the failure only affects THIS
         // attempt — nothing is anchored: the next turn re-resolves from
         // scratch.
         let fallbackRoute = this.resolveSessionFallbackDshRoute(sessionId, gateSourceRoute);
         let fallbackIsCurrentDefault = false;
         let fallbackIsSystemRescue = false;
-        if (!fallbackRoute && (gateQuota || gateTransient || gateConfigHard)) {
+        if (!fallbackRoute && (gateQuota || gateTransient || gateConfigHard || gateRuntimeBoot)) {
           const rescue = this.resolveCurrentDefaultDshRoute(sessionId, gateSourceRoute);
           fallbackRoute = rescue.route;
           fallbackIsCurrentDefault = rescue.source === 'default';
@@ -12115,9 +12105,11 @@ export class CoworkRunner extends EventEmitter {
               ? 'Primary provider route is out of credit — switching to the bot fallback brain route'
               : gateOverflow
                 ? 'Primary provider route is out of context window — switching to the bot fallback brain route'
-                : gateConfigHard
-                  ? 'Primary provider route failed with a configuration-level hard error (auth / model not found) — degrading to the bot fallback brain route'
-              : 'Primary provider route still failing transiently after the resume budget — switching to the bot fallback brain route',
+                : gateRuntimeBoot
+                  ? 'Primary DSH runtime failed to boot before prompt submission — retrying the original prompt on the fallback brain route'
+                  : gateConfigHard
+                    ? 'Primary provider route failed with a configuration-level hard error (auth / model not found) — degrading to the bot fallback brain route'
+                    : 'Primary provider route still failing transiently after the resume budget — switching to the bot fallback brain route',
             {
               sessionId,
               code: outcome.error?.code,
@@ -12138,16 +12130,20 @@ export class CoworkRunner extends EventEmitter {
                 ? `主模型 ${route.model}（${route.provider}）额度不足，本轮已切换到${switchTargetZh} ${fallbackRoute.model}（${fallbackRoute.provider}）继续。`
                 : gateOverflow
                   ? `主模型 ${route.model}（${route.provider}）上下文超限，本轮已切换到该 Bot 的备用模型 ${fallbackRoute.model}（${fallbackRoute.provider}）继续。`
-                : gateConfigHard
-                  ? `主模型 ${route.model}（${route.provider}）配置类错误（鉴权被拒或模型不存在），本轮已降级到${switchTargetZh} ${fallbackRoute.model}（${fallbackRoute.provider}）继续；请检查原供应商的 API key 或模型配置。`
-                  : `主模型路由持续不可用，本轮已切换到${switchTargetZh} ${fallbackRoute.model}（${fallbackRoute.provider}）继续。`,
+                  : gateRuntimeBoot
+                    ? `主模型 ${route.model}（${route.provider}）运行时启动失败，本轮已切换到${switchTargetZh} ${fallbackRoute.model}（${fallbackRoute.provider}）重试原始任务。`
+                    : gateConfigHard
+                      ? `主模型 ${route.model}（${route.provider}）配置类错误（鉴权被拒或模型不存在），本轮已降级到${switchTargetZh} ${fallbackRoute.model}（${fallbackRoute.provider}）继续；请检查原供应商的 API key 或模型配置。`
+                      : `主模型路由持续不可用，本轮已切换到${switchTargetZh} ${fallbackRoute.model}（${fallbackRoute.provider}）继续。`,
               gateQuota
                 ? `The primary model ${route.model} (${route.provider}) ran out of credit; this turn switched to the ${switchTargetEn} model ${fallbackRoute.model} (${fallbackRoute.provider}).`
                 : gateOverflow
                   ? `The primary model ${route.model} (${route.provider}) exceeded its context window; this turn switched to the bot's fallback model ${fallbackRoute.model} (${fallbackRoute.provider}).`
-                : gateConfigHard
-                  ? `The primary model ${route.model} (${route.provider}) failed with a configuration-level error (auth rejected or model not found); this turn degraded to the ${switchTargetEn} model ${fallbackRoute.model} (${fallbackRoute.provider}). Check the original provider's API key or model configuration.`
-                  : `The primary model route kept failing; this turn switched to the ${switchTargetEn} model ${fallbackRoute.model} (${fallbackRoute.provider}).`
+                  : gateRuntimeBoot
+                    ? `The primary model ${route.model} (${route.provider}) runtime failed to boot; this turn switched to the ${switchTargetEn} model ${fallbackRoute.model} (${fallbackRoute.provider}) to retry the original task.`
+                    : gateConfigHard
+                      ? `The primary model ${route.model} (${route.provider}) failed with a configuration-level error (auth rejected or model not found); this turn degraded to the ${switchTargetEn} model ${fallbackRoute.model} (${fallbackRoute.provider}). Check the original provider's API key or model configuration.`
+                      : `The primary model route kept failing; this turn switched to the ${switchTargetEn} model ${fallbackRoute.model} (${fallbackRoute.provider}).`
             ),
             {
               dshRouteFallback: true,
@@ -12158,23 +12154,17 @@ export class CoworkRunner extends EventEmitter {
               ...(fallbackIsSystemRescue ? { systemRescue: true } : {}),
             }
           );
-          // Quota/overflow/config-hard unconditional first attempt: these
-          // entries skip the same-route ladder above by construction (retrying
-          // an out-of-credit, over-context, wrong-key or missing-model route
-          // cannot succeed), so without this the fallback route would never be
-          // tried at all. The TRANSIENT path must NOT take this — its first
-          // fallback attempt comes from the loop below, so the fallback resume
-          // budget stays exactly `DSH_FALLBACK_TURN_MAX_RESUMES` as on
-          // origin/main (independent verification 2026-09-28 caught a first
-          // draft where the unconditional attempt also applied to the
-          // transient path, silently raising the fallback cap 2→3).
-          if (gateQuota || gateOverflow || gateConfigHard) {
+          // Direct-entry failures get one fallback attempt. Only the transient
+          // entry uses the loop below, preserving its established resume cap.
+          if (gateQuota || gateOverflow || gateConfigHard || gateRuntimeBoot) {
             lastAttemptRoute = fallbackRoute;
             outcome = await runGuardedTurn(
-              gateConfigHard
-                ? CONFIG_HARD_FALLBACK_RESUME_PROMPT
-                : gateOverflow ? OVERFLOW_TURN_RESUME_PROMPT : TRANSIENT_TURN_RESUME_PROMPT,
-              undefined,
+              gateRuntimeBoot
+                ? effectiveDshPrompt
+                : gateConfigHard
+                  ? CONFIG_HARD_FALLBACK_RESUME_PROMPT
+                  : gateOverflow ? OVERFLOW_TURN_RESUME_PROMPT : TRANSIENT_TURN_RESUME_PROMPT,
+              gateRuntimeBoot ? promptImages : undefined,
               fallbackRoute,
             );
           }
@@ -12238,6 +12228,8 @@ export class CoworkRunner extends EventEmitter {
         const transportTerminalDeath = ladderNoTargetKind === 'no-alternative'
           && !quotaTerminalDeath
           && isTransientDshTurnError(outcome);
+        const runtimeBootTerminalDeath = ladderNoTargetKind === 'no-alternative'
+          && isRuntimeBootDshTurnError(outcome);
         // REQ-A-25: the relay signals an exhausted identity quota with TWO
         // machine codes — free_quota_exhausted (never had purchased quota)
         // and the new C4 quota_exhausted (purchased pool used up). Match
@@ -12247,7 +12239,8 @@ export class CoworkRunner extends EventEmitter {
         const relayQuotaExhausted = relayQuotaCode !== null;
         const freeRelayQuotaDeath = quotaTerminalDeath
           && (isFreeQuotaProvider(lastAttemptRoute.provider) || relayQuotaExhausted);
-        const noModelConfiguredNotice = ladderNoTargetKind === 'no-alternative' && !quotaTerminalDeath && !transportTerminalDeath
+        const noModelConfiguredNotice = ladderNoTargetKind === 'no-alternative'
+          && !quotaTerminalDeath && !transportTerminalDeath && !runtimeBootTerminalDeath
           ? ` ${tApp(
               `（未配置可用模型：会话绑定的模型已不可用，备用模型与当前默认降级链上没有任何有效目标——这是配置错误而非临时限流。请到 设置 > 模型 配置一个可用的默认模型，或为现有供应商充值。）`,
               ` (No usable model configured: the session's bound model is unavailable and neither the bot fallback nor the current-default ladder has a valid target — this is a configuration error, not a transient rate limit. Configure a usable default model in Settings > Models, or top up the provider.)`
@@ -12332,7 +12325,9 @@ export class CoworkRunner extends EventEmitter {
                     `模型请求因网络或供应商暂时不可达而终止（传输类失败；网络或供应商恢复后重发即可。最后错误码 ${outcome.error?.code ?? 'TRANSPORT'}）`,
                     `The model request was terminated because the network or provider was unreachable (transport-class failure; resend once the network or provider has recovered. Last error code ${outcome.error?.code ?? 'TRANSPORT'})`
                   )
-                : `未配置可用模型（配置错误：绑定模型与备用/默认降级链均无效；最后错误码 ${outcome.error?.code ?? 'UNKNOWN'}）`)
+                : runtimeBootTerminalDeath
+                  ? failureDetail
+                  : `未配置可用模型（配置错误：绑定模型与备用/默认降级链均无效；最后错误码 ${outcome.error?.code ?? 'UNKNOWN'}）`)
           : failureDetail;
         this.handleError(
           sessionId,

@@ -1,3 +1,5 @@
+import { DSH_RUNTIME_BOOT_ERROR_CODE } from './dshRuntimeBootError';
+
 /**
  * Shared helpers for deciding whether an assistant message is a *usable*
  * final reply/handoff.
@@ -266,6 +268,12 @@ export function isConfigModelMissingDshTurnError(outcome: { kind?: string; error
   const code = String(outcome.error?.code ?? '').toUpperCase();
   if (code === 'MODEL_NOT_FOUND' || code === 'MODEL_DOES_NOT_EXIST') return true;
   return MODEL_MISSING_ERROR_MESSAGE_FINGERPRINT.test(String(outcome.error?.message ?? ''));
+}
+
+/** Runtime boot failed before the prompt was submitted. This is eligible for
+ *  the fallback route, but the retry must carry the original user prompt. */
+export function isRuntimeBootDshTurnError(outcome: { kind?: string; error?: { code?: string } }): boolean {
+  return outcome?.kind === 'error' && outcome.error?.code === DSH_RUNTIME_BOOT_ERROR_CODE;
 }
 
 /** True when a DSH turn outcome failed in a way that retrying the SAME route

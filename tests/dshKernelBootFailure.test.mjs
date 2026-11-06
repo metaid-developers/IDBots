@@ -64,6 +64,8 @@ test('ensureRuntime names the provider when the runtime process dies at boot', {
       }],
     }),
     (error) => {
+      assert.equal(error.name, 'DshRuntimeBootError')
+      assert.equal(error.code, 'DSH_RUNTIME_BOOT_FAILED')
       assert.match(error.message, /DSH runtime for provider "custom-zai" failed to boot/)
       assert.match(error.message, /provider\/model configuration problem/)
       // The SDK transport detail (exit code + stderr tail) must survive the wrap.
