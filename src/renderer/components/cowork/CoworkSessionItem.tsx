@@ -28,6 +28,7 @@ function imPlatformLabel(platform: string): string {
 interface CoworkSessionItemProps {
   session: CoworkSessionSummary;
   hasUnread: boolean;
+  approvalPending?: boolean;
   isActive: boolean;
   /**
    * Row actions take the session id instead of being pre-bound closures. The
@@ -289,6 +290,7 @@ export const CoworkSessionAvatars: React.FC<{ session: CoworkSessionSummary }> =
 const CoworkSessionItemRow: React.FC<CoworkSessionItemProps> = ({
   session,
   hasUnread,
+  approvalPending = false,
   isActive,
   onSelect,
   onDelete,
@@ -562,9 +564,9 @@ const CoworkSessionItemRow: React.FC<CoworkSessionItemProps> = ({
     }
   };
   const relativeTime = formatRelativeTime(session.updatedAt, nowMs);
-  const showRunningIndicator = session.status === 'running';
-  const showUnreadIndicator = !showRunningIndicator && hasUnread;
-  const showStatusIndicator = showRunningIndicator || showUnreadIndicator;
+  const showRunningIndicator = !approvalPending && session.status === 'running';
+  const showUnreadIndicator = !approvalPending && !showRunningIndicator && hasUnread;
+  const showStatusIndicator = approvalPending || showRunningIndicator || showUnreadIndicator;
   // A legacy IM direct row may still carry session_type 'a2a'; it must not get
   // the A2A peer avatar/refresh affordances. The mapping channel wins.
   const isA2A = session.sessionType === 'a2a' && !session.imChannel;
@@ -572,7 +574,7 @@ const CoworkSessionItemRow: React.FC<CoworkSessionItemProps> = ({
   // chats; a small type badge keeps them identifiable at a glance (clicking
   // one returns to the Bot Browser surface).
   const isBrowser = session.sessionType === 'browser';
-  const showA2ADot = shouldShowCoworkA2ADot({ sessionType: session.sessionType, showStatusIndicator });
+  const showA2ADot = !approvalPending && shouldShowCoworkA2ADot({ sessionType: session.sessionType, showStatusIndicator });
   const storedTitle = session.title?.trim() ?? '';
   // A2A rows are stored with a `Private-<peerId prefix>` placeholder title when
   // the peer profile was still unknown (see main's coworkStore fallback). Once
@@ -671,10 +673,17 @@ const CoworkSessionItemRow: React.FC<CoworkSessionItemProps> = ({
             {/* Status indicator */}
             {showStatusIndicator && (
               <span
-                className={`block w-2 h-2 rounded-full bg-claude-accent flex-shrink-0 ${
-                  showRunningIndicator ? 'shadow-[0_0_6px_rgba(59,130,246,0.5)] animate-pulse' : ''
+                className={`block w-2 h-2 rounded-full flex-shrink-0 ${
+                  approvalPending
+                    ? 'bg-red-500 shadow-[0_0_0_3px_rgba(239,68,68,0.14)] animate-pulse'
+                    : `bg-claude-accent ${showRunningIndicator ? 'shadow-[0_0_6px_rgba(59,130,246,0.5)] animate-pulse' : ''}`
                 }`}
-                title={showRunningIndicator ? i18nService.t(statusLabels[session.status]) : undefined}
+                title={approvalPending
+                  ? i18nService.t('a2aApprovalPending')
+                  : showRunningIndicator
+                    ? i18nService.t(statusLabels[session.status])
+                    : undefined}
+                data-a2a-approval-pending={approvalPending || undefined}
               />
             )}
             {/* A2A blue dot (only when not already showing status indicator) */}

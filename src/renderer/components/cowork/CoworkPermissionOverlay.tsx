@@ -6,7 +6,7 @@ import { coworkService } from '../../services/cowork';
 import type { CoworkPermissionRequest, CoworkPermissionResult, CoworkSessionSummary } from '../../types/cowork';
 import { parseQuestions, parseSafetyContext, summarizeToolInput } from './CoworkPermissionPanel';
 import { PermissionCountdownLabel, usePermissionCountdown } from './permissionCountdown';
-import { friendActionOf, packPermissionColumns } from './permissionPromptLayout';
+import { a2aApprovalOf, packPermissionColumns } from './permissionPromptLayout';
 import { ArrowRightIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 
 interface CoworkPermissionOverlayProps {
@@ -14,8 +14,8 @@ interface CoworkPermissionOverlayProps {
    * Session whose permission prompt is already rendered inline by
    * CoworkSessionDetail (the open chat), or null when no inline seat is
    * mounted. Prompts for any OTHER session surface in this overlay. A2A
-   * friend invite/unfollow is seated at the bottom of that conversation, so
-   * it leaves the overlay while that chat is open. Other A2A prompts keep
+   * sensitive owner approvals are seated at the bottom of that conversation,
+   * so they leave the overlay while that chat is open. Other A2A prompts keep
    * surfacing here because the A2A view has no composer takeover.
    */
   inlineSessionId: string | null;
@@ -70,9 +70,8 @@ const sessionTypeOf = (
 /**
  * Prompts that already have a seat in the open view stay out of the corner.
  * The open non-A2A chat's composer takes the first prompt for that session.
- * An open A2A chat takes every friend invite/unfollow for that session at
- * the bottom of the transcript. Anything else stays here, including later
- * prompts for the open chat.
+ * An open A2A chat takes its sensitive owner approvals at the bottom of the
+ * transcript. Anything else stays here, including later prompts for the open chat.
  */
 export const permissionsForOverlay = (
   pendingPermissions: CoworkPermissionRequest[],
@@ -86,12 +85,11 @@ export const permissionsForOverlay = (
   let composerTaken = false;
   const visible: CoworkPermissionRequest[] = [];
   for (const entry of pendingPermissions) {
-    if (entry.sessionId === inlineSessionId && inlineType === 'a2a' && friendActionOf(entry)) {
+    if (entry.sessionId === inlineSessionId && inlineType === 'a2a' && a2aApprovalOf(entry)) {
       continue;
     }
     // Unknown session type is treated as a normal chat: the composer owns the
-    // first prompt. A2A is recognized from the session list or currentSession,
-    // and those prompts stay here except friend invite/unfollow.
+    // first prompt. A2A is recognized from the session list or currentSession.
     if (entry.sessionId === inlineSessionId && inlineType !== 'a2a' && !composerTaken) {
       composerTaken = true;
       continue;
@@ -122,11 +120,12 @@ const PermissionOverlayCard: React.FC<{
     () => parseSafetyContext(permission) !== null && parseQuestions(permission).length > 0,
     [permission],
   );
-  const friendAction = friendActionOf(permission);
-  const friendCardTitle = useMemo(() => {
-    if (!friendAction) return null;
-    return parseQuestions(permission)[0]?.header?.trim() || null;
-  }, [friendAction, permission]);
+  const a2aApproval = a2aApprovalOf(permission);
+  const friendAction = a2aApproval?.friendAction ?? null;
+  const a2aCardTitle = useMemo(() => {
+    if (!a2aApproval) return null;
+    return parseQuestions(permission)[0]?.header?.trim() || i18nService.t('a2aApprovalRequestTitle');
+  }, [a2aApproval, permission]);
 
   const handleOpenSession = useCallback(() => {
     window.dispatchEvent(new CustomEvent('cowork:viewSession', { detail: { sessionId: permission.sessionId } }));
@@ -156,7 +155,7 @@ const PermissionOverlayCard: React.FC<{
         </div>
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium text-claude-text dark:text-claude-darkText">
-            {friendCardTitle ?? i18nService.t('coworkGlobalPermissionTitle')}
+            {a2aCardTitle ?? i18nService.t('coworkGlobalPermissionTitle')}
           </p>
           {sessionTitle && <p className="mt-0.5 truncate text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">{sessionTitle}</p>}
           <p className="mt-1 line-clamp-2 text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">{summary}</p>
@@ -172,6 +171,7 @@ const PermissionOverlayCard: React.FC<{
       </div>
       <div
         className="flex items-center justify-end gap-2 border-t border-claude-border/70 px-3 py-2.5 dark:border-claude-darkBorder/70"
+        data-a2a-approval-card={a2aApproval?.category}
         data-friend-action-card={friendAction ?? undefined}
       >
         <button
@@ -179,7 +179,7 @@ const PermissionOverlayCard: React.FC<{
           disabled={responding}
           onClick={() => handleRespond({ behavior: 'deny', message: 'Permission denied' })}
           className={
-            friendAction
+            a2aApproval
               ? 'rounded-lg border border-red-300 bg-red-50 px-4 py-1.5 text-xs font-semibold text-red-600 transition-colors hover:border-red-400 hover:bg-red-100 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-60 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300 dark:hover:bg-red-900/40 dark:hover:text-red-200'
               : 'rounded-lg border border-claude-border px-3 py-1.5 text-xs font-medium text-claude-textSecondary transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-60 dark:border-claude-darkBorder dark:text-claude-darkTextSecondary dark:hover:bg-red-900/20 dark:hover:text-red-300'
           }
@@ -190,7 +190,7 @@ const PermissionOverlayCard: React.FC<{
           type="button"
           disabled={responding}
           onClick={() => handleRespond(buildAllowResult(permission))}
-          className={`rounded-lg ${friendAction ? 'px-4 py-1.5 text-xs font-semibold' : 'px-3 py-1.5 text-xs font-medium'} transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+          className={`rounded-lg ${a2aApproval ? 'px-4 py-1.5 text-xs font-semibold' : 'px-3 py-1.5 text-xs font-medium'} transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
             isSafetyApproval
               ? 'border border-red-700 bg-red-600 text-white hover:bg-red-700'
               : 'btn-idchat-primary-filled'

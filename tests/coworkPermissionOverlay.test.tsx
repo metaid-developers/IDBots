@@ -290,3 +290,49 @@ test('generic prompts keep the original subtle deny styling and generic title', 
   assert.ok(denyButtonMarkup.includes('border-claude-border'), 'generic deny keeps the subtle outline');
   assert.ok(!denyButtonMarkup.includes('border-red-300'), 'generic deny does not take the friend-card red styling');
 });
+
+
+const genericA2AApproval = () => permission({
+  sessionId: 'sess-a2a-payment',
+  requestId: 'req-payment-1',
+  toolName: 'AskUserQuestion',
+  toolInput: {
+    questions: [{
+      header: 'Transfer 10 SPACE',
+      question: 'Send exactly 10 SPACE to Peer Bot. The transaction is public and irreversible.',
+      options: [
+        { label: '允许本次操作', description: '仅允许当前这一次操作继续执行。' },
+        { label: '拒绝本次操作', description: '拒绝当前操作，保持安全边界。' },
+      ],
+    }],
+    answers: {},
+    context: { a2aApproval: true, category: 'payment', title: 'Transfer 10 SPACE' },
+  },
+});
+
+test('generic A2A approval uses the bottom seat while its chat is open', () => {
+  const markup = renderOverlay(
+    [genericA2AApproval()],
+    'sess-a2a-payment',
+    [sessionSummary({ id: 'sess-a2a-payment', sessionType: 'a2a', title: 'Peer Bot' })],
+  );
+  assert.equal(markup, '');
+});
+
+test('generic A2A approval keeps jump, allow and deny actions in the corner away from its chat', () => {
+  const markup = renderOverlay(
+    [genericA2AApproval()],
+    'sess-other',
+    [
+      sessionSummary({ id: 'sess-a2a-payment', sessionType: 'a2a', title: 'Peer Bot' }),
+      sessionSummary({ id: 'sess-other', title: 'Other chat' }),
+    ],
+  );
+  assert.ok(markup.includes('data-a2a-approval-card="payment"'));
+  assert.ok(markup.includes('Transfer 10 SPACE'));
+  assert.ok(markup.includes('public and irreversible'));
+  assert.ok(markup.includes(i18nService.t('coworkGlobalPermissionOpenSession')));
+  assert.ok(markup.includes(i18nService.t('coworkApprovalAllowOnce')));
+  assert.ok(markup.includes(i18nService.t('coworkDeny')));
+  assert.ok(markup.includes('border-red-300'));
+});

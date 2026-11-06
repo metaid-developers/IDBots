@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { packPermissionColumns } from '../src/renderer/components/cowork/permissionPromptLayout';
+import { a2aApprovalOf, packPermissionColumns } from '../src/renderer/components/cowork/permissionPromptLayout';
 import { timeoutDefaultForToolApproval } from '../src/main/libs/permissionTimeoutDefault';
 
 test('permission cards fill the right column top to bottom, then open a column to the left', () => {
@@ -31,4 +31,28 @@ test('every unanswered tool approval resolves deny after the window (fail-closed
   assert.equal(timeoutDefaultForToolApproval(null), 'deny');
   assert.equal(timeoutDefaultForToolApproval('工具 "bash" 将启动外部 Agent CLI "cursor-agent"。'), 'deny');
   assert.equal(timeoutDefaultForToolApproval('Tool "bash" will delete files. Safety policy requires a human confirmation.'), 'deny');
+});
+
+
+test('A2A approval classifier generalizes legacy friend cards and new sensitive requests', () => {
+  assert.deepEqual(a2aApprovalOf({
+    toolName: 'AskUserQuestion',
+    toolInput: { context: { action: 'invite' } },
+  }), { category: 'friendship', friendAction: 'invite' });
+  assert.deepEqual(a2aApprovalOf({
+    toolName: 'AskUserQuestion',
+    toolInput: { context: { a2aApproval: true, category: 'payment' } },
+  }), { category: 'payment', friendAction: null });
+  assert.deepEqual(a2aApprovalOf({
+    toolName: 'AskUserQuestion',
+    toolInput: { context: { a2aApproval: true } },
+  }), { category: 'other', friendAction: null });
+});
+
+test('A2A approval classifier ignores ordinary tool and question prompts', () => {
+  assert.equal(a2aApprovalOf({ toolName: 'Bash', toolInput: {} }), null);
+  assert.equal(a2aApprovalOf({
+    toolName: 'AskUserQuestion',
+    toolInput: { context: { requestedToolName: 'Bash' } },
+  }), null);
 });

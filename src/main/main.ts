@@ -4111,6 +4111,8 @@ const requestDaemonFriendActionApproval = async (params: {
       header: tApp('好友确认', 'Friend confirmation'),
       question,
       context: {
+        a2aApproval: true,
+        category: 'friendship',
         action: params.action,
         peerGlobalMetaId: params.peerGlobalMetaId,
         peerName: params.peerName ?? null,

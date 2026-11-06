@@ -32,6 +32,7 @@ import {
 } from '../../utils/sessionAutoGrouping';
 import type { SessionSidebarSection } from '../../utils/sessionAutoGrouping';
 import { ChevronDownIcon, Cog6ToothIcon, FolderIcon, HandRaisedIcon, PlusIcon } from '@heroicons/react/24/outline';
+import { a2aApprovalOf } from './permissionPromptLayout';
 
 interface CoworkSessionListProps {
   sessions: CoworkSessionSummary[];
@@ -276,7 +277,13 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
   const rootRef = useRef<HTMLDivElement>(null);
   const revealedRows = useProgressiveRowReveal(rootRef);
   const unreadSessionIds = useSelector((state: RootState) => state.cowork.unreadSessionIds);
+  const pendingPermissions = useSelector((state: RootState) => state.cowork.pendingPermissions);
   const unreadSessionIdSet = useMemo(() => new Set(unreadSessionIds), [unreadSessionIds]);
+  const approvalSessionIdSet = useMemo(() => new Set(
+    pendingPermissions
+      .filter((permission) => a2aApprovalOf(permission) !== null)
+      .map((permission) => permission.sessionId),
+  ), [pendingPermissions]);
   const selectedSessionIdSet = useMemo(() => new Set(selectedSessionIds ?? []), [selectedSessionIds]);
   // Project-group collapse state lives here (not in the parent) so the search
   // modal and A2A tab, which render flat, never see it. Defaults to expanded.
@@ -537,6 +544,7 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
         key={session.id}
         session={session}
         hasUnread={unreadSessionIdSet.has(session.id)}
+        approvalPending={approvalSessionIdSet.has(session.id)}
         isActive={session.id === currentSessionId}
         selectionMode={selectionMode}
         isSelected={selectedSessionIdSet.has(session.id)}
