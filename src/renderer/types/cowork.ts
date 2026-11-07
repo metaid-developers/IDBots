@@ -446,6 +446,12 @@ export interface CoworkSession {
   browserUri?: string | null;
   /** Bot Browser context: title of the tab this session is about (browser sessions only) */
   browserTitle?: string | null;
+  /**
+   * Bot Internet projector sessions (owner ruling 2026-11-07): set at creation
+   * from the Bot Internet co-work panel; the session runs assistant mode
+   * regardless of the global chatExperienceMode.
+   */
+  assistantMode?: boolean;
   /** Auto-origin marker (see CoworkSessionSummary.autoOrigin); null = human-initiated. */
   autoOrigin?: CoworkSessionAutoOrigin | null;
   /** Manual fold placement (see CoworkSessionSummary.foldOverride); null = policy. */
@@ -901,6 +907,12 @@ export interface CoworkSessionSummary {
   browserUri?: string | null;
   /** Bot Browser context: title of the tab this session is about (browser sessions only) */
   browserTitle?: string | null;
+  /**
+   * Bot Internet projector sessions (owner ruling 2026-11-07): set at creation
+   * from the Bot Internet co-work panel; the session runs assistant mode
+   * regardless of the global chatExperienceMode.
+   */
+  assistantMode?: boolean;
   /** Per-session model override (null = inherit the global default model). */
   model?: string | null;
   /** Provider key for the session model override. */
@@ -965,6 +977,8 @@ export interface CoworkStartOptions {
   metabotId?: number | null;
   /** Only 'standard' (default) and 'browser' sessions can be created from the renderer. */
   sessionType?: 'standard' | 'browser';
+  /** Bot Internet projector sessions: run assistant mode regardless of the global chatExperienceMode. */
+  assistantMode?: boolean;
   /** Permission mode for this session. Defaults to 'default'. */
   permissionMode?: CoworkPermissionMode;
   /** Pending model picked in the home composer; undefined = bot brain / defaults. */

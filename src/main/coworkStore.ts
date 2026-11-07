@@ -833,6 +833,13 @@ export interface CoworkSession {
   browserUri?: string | null;
   /** Bot Browser context: title of the tab this session is about (browser sessions only) */
   browserTitle?: string | null;
+  /**
+   * Bot Internet projector sessions (owner ruling 2026-11-07): set at
+   * creation from the Bot Internet co-work panel; the session runs assistant
+   * mode regardless of the global chatExperienceMode. Never flipped after
+   * creation.
+   */
+  assistantMode?: boolean;
   hiddenFromSessionList?: boolean;
   /**
    * Auto-origin marker for sessions the app created on its own (long-term task
@@ -1892,6 +1899,14 @@ export class CoworkStore implements MemoryBackend {
       }
       if (!sessionColumns.includes('browser_title')) {
         this.db.run('ALTER TABLE cowork_sessions ADD COLUMN browser_title TEXT;');
+        changed = true;
+      }
+      if (!sessionColumns.includes('assistant_mode')) {
+        // Bot Internet projector sessions (owner ruling 2026-11-07): a
+        // per-session assistant-mode marker stamped at creation by the Bot
+        // Internet co-work panel; marked sessions run assistant mode
+        // regardless of the global chatExperienceMode.
+        this.db.run('ALTER TABLE cowork_sessions ADD COLUMN assistant_mode INTEGER NOT NULL DEFAULT 0;');
         changed = true;
       }
       if (!sessionColumns.includes('permission_mode')) {
@@ -3609,15 +3624,16 @@ export class CoworkStore implements MemoryBackend {
     modelProvider: string | null = null,
     projectId: string | null = null,
     goal: CoworkSessionGoal | null = null,
-    parentSessionId: string | null = null
+    parentSessionId: string | null = null,
+    assistantMode: boolean = false
   ): CoworkSession {
     const id = uuidv4();
     const now = Date.now();
 
     this.db.run(`
-      INSERT INTO cowork_sessions (id, title, claude_session_id, status, cwd, system_prompt, execution_mode, active_skill_ids, metabot_id, pinned, session_type, peer_global_metaid, peer_name, peer_avatar, permission_mode, model, effort, model_provider, project_id, goal, parent_session_id, created_at, updated_at)
-      VALUES (?, ?, NULL, 'idle', ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [id, title, cwd, systemPrompt, resolveCoworkExecutionMode(executionMode), JSON.stringify(activeSkillIds), metabotId, sessionType, peerGlobalMetaId, peerName, peerAvatar, permissionMode, model, effort, modelProvider, projectId, goal ? serializeSessionGoal(goal) : null, parentSessionId, now, now]);
+      INSERT INTO cowork_sessions (id, title, claude_session_id, status, cwd, system_prompt, execution_mode, active_skill_ids, metabot_id, pinned, session_type, peer_global_metaid, peer_name, peer_avatar, permission_mode, model, effort, model_provider, project_id, goal, parent_session_id, assistant_mode, created_at, updated_at)
+      VALUES (?, ?, NULL, 'idle', ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [id, title, cwd, systemPrompt, resolveCoworkExecutionMode(executionMode), JSON.stringify(activeSkillIds), metabotId, sessionType, peerGlobalMetaId, peerName, peerAvatar, permissionMode, model, effort, modelProvider, projectId, goal ? serializeSessionGoal(goal) : null, parentSessionId, assistantMode ? 1 : 0, now, now]);
 
     this.upsertConversationMapping({
       channel: 'cowork_ui',
@@ -3661,6 +3677,7 @@ export class CoworkStore implements MemoryBackend {
       projectId,
       goal,
       parentSessionId: parentSessionId ?? undefined,
+      assistantMode,
     };
   }
 
@@ -3783,6 +3800,7 @@ export class CoworkStore implements MemoryBackend {
       peer_avatar?: string | null;
       browser_uri?: string | null;
       browser_title?: string | null;
+      assistant_mode?: number | null;
       hidden_from_session_list?: number | null;
       im_channel?: string | null;
       im_conversation_id?: string | null;
@@ -3805,7 +3823,7 @@ export class CoworkStore implements MemoryBackend {
 
     const row = this.getOne<SessionRow>(`
       SELECT id, title, claude_session_id, status, pinned, cwd, system_prompt, execution_mode, active_skill_ids, metabot_id,
-             session_type, peer_global_metaid, peer_name, peer_avatar, browser_uri, browser_title, hidden_from_session_list,
+             session_type, peer_global_metaid, peer_name, peer_avatar, browser_uri, browser_title, hidden_from_session_list, assistant_mode,
              (
                SELECT im.channel FROM cowork_conversation_mappings im
                WHERE im.cowork_session_id = cowork_sessions.id AND im.channel LIKE 'im:%'
@@ -3874,6 +3892,7 @@ export class CoworkStore implements MemoryBackend {
       followUpAt: row.follow_up_at ?? null,
       browserUri: row.browser_uri ?? null,
       browserTitle: row.browser_title ?? null,
+      assistantMode: Boolean(row.assistant_mode),
       permissionMode: (row.permission_mode as CoworkPermissionMode) || 'default',
       parentSessionId: row.parent_session_id ?? null,
       forkPointMessageId: row.fork_point_message_id ?? null,
@@ -4340,6 +4359,7 @@ export class CoworkStore implements MemoryBackend {
       metabot_updated_at?: number | null;
       browser_uri?: string | null;
       browser_title?: string | null;
+      assistant_mode?: number | null;
       hidden_from_session_list?: number | null;
       im_channel?: string | null;
       im_conversation_id?: string | null;
@@ -4375,6 +4395,7 @@ export class CoworkStore implements MemoryBackend {
         mb.updated_at AS metabot_updated_at,
         s.browser_uri,
         s.browser_title,
+        s.assistant_mode,
         s.hidden_from_session_list,
         -- IM classification for the session row (badge + title fallback).
         -- Read from the mapping table so rows created BEFORE IM sessions moved
@@ -4451,6 +4472,7 @@ export class CoworkStore implements MemoryBackend {
       metabotAvatarVersion: parseIdNumber(row.metabot_updated_at),
       browserUri: row.browser_uri ?? null,
       browserTitle: row.browser_title ?? null,
+      assistantMode: Boolean(row.assistant_mode),
       hiddenFromSessionList: Boolean(row.hidden_from_session_list),
       imChannel: row.im_channel ?? null,
       imConversationId: row.im_conversation_id ?? null,
@@ -4669,6 +4691,7 @@ export class CoworkStore implements MemoryBackend {
       peer_name?: string | null;
       browser_uri?: string | null;
       browser_title?: string | null;
+      assistant_mode?: number | null;
       hidden_from_session_list?: number | null;
       auto_origin?: string | null;
       fold_override?: string | null;
@@ -4691,7 +4714,7 @@ export class CoworkStore implements MemoryBackend {
     const rows = this.getAll<ArchivedSessionRow>(`
       SELECT
         s.id, s.title, s.status, s.pinned, s.metabot_id, s.session_type, s.peer_name,
-        s.browser_uri, s.browser_title, s.hidden_from_session_list, s.auto_origin, s.fold_override, s.follow_up_state, s.follow_up_source, s.follow_up_at, s.model, s.model_provider, s.effort, s.project_id,
+        s.browser_uri, s.browser_title, s.hidden_from_session_list, s.auto_origin, s.fold_override, s.follow_up_state, s.follow_up_source, s.follow_up_at, s.model, s.model_provider, s.effort, s.project_id, s.assistant_mode,
         s.archived_at, s.created_at, s.updated_at
       FROM cowork_sessions s
       WHERE ${clauses.join(' AND ')}
@@ -4712,6 +4735,7 @@ export class CoworkStore implements MemoryBackend {
       peerName: row.peer_name ?? null,
       browserUri: row.browser_uri ?? null,
       browserTitle: row.browser_title ?? null,
+      assistantMode: Boolean(row.assistant_mode),
       hiddenFromSessionList: Boolean(row.hidden_from_session_list),
       autoOrigin: (row.auto_origin as CoworkSessionAutoOrigin | null) ?? null,
       foldOverride: (row.fold_override as CoworkSessionFoldOverride | null) ?? null,

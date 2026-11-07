@@ -68,6 +68,23 @@ test('gate: non-standard session types (a2a / browser / group) never take assist
   }
 });
 
+test('gate: Bot Internet projector sessions carry their own assistant marker past the global mode', () => {
+  // Owner ruling 2026-11-07: the Bot Internet tab always chats assistant-side,
+  // locked to the Twin, whatever the Settings toggle says. Legacy browser
+  // sessions stay unmarked (assistant_mode = 0) and keep the professional
+  // treatment everywhere.
+  assert.equal(
+    isAssistantModeOwnerChatSession('professional', { sessionType: 'browser', autoOrigin: null, assistantMode: true }),
+    true,
+    'the per-session marker overrides the global professional mode',
+  );
+  assert.equal(
+    isAssistantModeOwnerChatSession('professional', { sessionType: 'browser', autoOrigin: 'orchestration', assistantMode: true }),
+    false,
+    'unattended runs forked from a projector session stay professional',
+  );
+});
+
 test('gate: professional mode is professional for every session shape', () => {
   for (const session of [
     { sessionType: 'standard', autoOrigin: null },
@@ -110,8 +127,8 @@ test('wiring: session-scoped consumers resolve assistant mode through the gate',
 
   const browserPanel = read(BROWSER_PANEL);
   assert.ok(
-    browserPanel.includes('isAssistantModeOwnerChatSession(chatExperienceMode, currentSession)'),
-    'the Bot Browser cowork panel must resolve the verdict from (mode, session)',
+    browserPanel.includes('isAssistantModeOwnerChatSession(chatExperienceMode, currentSession ?? PROJECTOR_DRAFT_SESSION_IDENTITY)'),
+    'the Bot Browser cowork panel must resolve the verdict from (mode, session), with the projector draft identity for the empty state',
   );
 });
 
@@ -141,9 +158,14 @@ test('wiring: the gate names its backend counterpart so the two rules cannot dri
   );
 });
 
-test('wiring: the composer-level mode consumption for the draft state stays professional in the browser panel', () => {
-  // The panel resolves with currentSession, which is null in the draft state;
-  // the gate returns false for a missing session, so a browser draft renders
-  // professional. Assert the null-passthrough contract the panel relies on.
+test('wiring: the draft state in the browser panel resolves assistant via the projector identity', () => {
+  // The next session from this panel is a Bot Internet projector session
+  // (assistantMode marker), so the panel passes the projector draft identity
+  // instead of a missing session; a genuinely missing session still degrades
+  // to professional.
+  assert.equal(
+    isAssistantModeOwnerChatSession('professional', { sessionType: 'browser', autoOrigin: null, assistantMode: true }),
+    true,
+  );
   assert.equal(isAssistantModeOwnerChatSession('assistant', null), false);
 });

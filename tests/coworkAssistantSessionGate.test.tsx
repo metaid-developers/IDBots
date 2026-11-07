@@ -226,11 +226,14 @@ test('session-level surfaces resolve the mode through the shared gate', () => {
     !listSource.includes('const isAssistantMode = useChatExperienceMode() === \'assistant\';'),
     'CoworkSessionList must not pass the global boolean into rows',
   );
-  // The Bot Browser panel is session-scoped too (browser sessions are
-  // non-standard, so the panel follows the professional posture).
+  // The Bot Browser panel is session-scoped too: live sessions gate on their
+  // own session; the draft state passes the projector draft identity (the
+  // next session from this panel is a Bot Internet projector session, owner
+  // ruling 2026-11-07), and legacy pre-marker browser sessions still resolve
+  // professional through the same gate.
   assert.ok(
-    panelSource.includes('const isAssistantMode = isAssistantModeOwnerChatSession(chatExperienceMode, currentSession);'),
-    'BotBrowserCoworkPanel must gate on its own session',
+    panelSource.includes('const isAssistantMode = isAssistantModeOwnerChatSession(chatExperienceMode, currentSession ?? PROJECTOR_DRAFT_SESSION_IDENTITY);'),
+    'BotBrowserCoworkPanel must gate on its own session, with the projector draft identity for the empty state',
   );
   // The mirror documents its backend counterpart — an unlabeled copy is the
   // drift path this gate exists to prevent.

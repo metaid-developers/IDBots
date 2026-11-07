@@ -8,6 +8,8 @@ import type { CoworkSessionAutoOrigin, CoworkSessionType } from '../../types/cow
 export interface AssistantModeSessionIdentity {
   sessionType?: CoworkSessionType | null;
   autoOrigin?: CoworkSessionAutoOrigin | null;
+  /** Bot Internet projector marker (owner ruling 2026-11-07). */
+  assistantMode?: boolean;
 }
 
 /**
@@ -41,8 +43,24 @@ export function isAssistantModeOwnerChatSession(
   mode: ChatExperienceMode,
   session: AssistantModeSessionIdentity | null | undefined,
 ): boolean {
-  if (mode !== 'assistant') return false;
   if (!session) return false;
+  // Bot Internet projector sessions carry a persisted per-session marker and
+  // run assistant mode regardless of the global chatExperienceMode — mirror
+  // of the backend branch in coworkRunner.isAssistantModeOwnerChatSession.
+  if (session.assistantMode && !session.autoOrigin) return true;
+  if (mode !== 'assistant') return false;
   if ((session.sessionType ?? 'standard') !== 'standard' || session.autoOrigin) return false;
   return true;
+}
+
+/**
+ * Bot Internet projector sessions: browser-type sessions carrying the
+ * per-session assistantMode marker. In this surface metaapp/HTML is never
+ * embedded inline in bubbles (owner ruling #7, 2026-11-07) — everything
+ * guides to the right-side projector pane.
+ */
+export function isProjectorModeSession(
+  session: AssistantModeSessionIdentity | null | undefined,
+): boolean {
+  return !!session?.assistantMode && (session.sessionType ?? 'standard') === 'browser';
 }

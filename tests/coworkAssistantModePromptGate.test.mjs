@@ -232,11 +232,42 @@ test('the section anchors the UI language for zero-user-input turns', () => {
     'the Chinese anchor must mandate Chinese output for the whole conversation until the owner writes otherwise',
   );
   assert.ok(
-    runnerSource.includes('text: buildAssistantModePrompt()'),
+    runnerSource.includes('text: buildAssistantModePrompt(projectorMode)'),
     'the composer must mount the built section, not a stale const',
   );
   assert.ok(
     mainSource.includes('Greet them in English now') && mainSource.includes('用中文向他问好'),
     'the greeting turn instruction must name the output language in both tApp branches — it is the only user-role text a first greeting has',
+  );
+});
+
+test('the projector section exists, mounts after assistant-mode, and swaps the inline clauses for projection', () => {
+  const promptSource = readFileSync(join(here, '../src/main/libs/assistantModePrompt.ts'), 'utf8');
+  const runnerSource = readFileSync(join(here, '../src/main/libs/coworkRunner.ts'), 'utf8');
+  const composerSource = readFileSync(join(here, '../src/main/libs/promptComposer.ts'), 'utf8');
+
+  assert.ok(
+    promptSource.includes('export function buildProjectorModePrompt'),
+    'the projector section must be a per-call builder (tApp language anchor contract)',
+  );
+  assert.ok(
+    promptSource.includes('首轮（硬规则）') && promptSource.includes('First turn (hard rule)'),
+    'the first-turn-must-project ruling must be stated in both languages',
+  );
+  assert.ok(
+    promptSource.includes('ASSISTANT_MODE_OPTIONAL_EMBED_CLAUSES') && promptSource.includes('...(projectorMode ? [] : ASSISTANT_MODE_OPTIONAL_EMBED_CLAUSES)'),
+    'projector sessions must drop the optional inline HTML/MetaApp clauses (ruling #7)',
+  );
+  assert.ok(
+    composerSource.includes('PROJECTOR_MODE: 56'),
+    'the projector section mounts right after assistant-mode (55)',
+  );
+  assert.ok(
+    runnerSource.includes('this.isProjectorModeSession(sessionId)'),
+    'the composer must gate the projector section on the per-session marker',
+  );
+  assert.ok(
+    runnerSource.includes("name: 'idbots:projector-mode'"),
+    'the composer must mount the projector section under its own name',
   );
 });

@@ -2,6 +2,7 @@ export type BotBrowserTabAction =
   | 'open-tab'
   | 'close-tab'
   | 'switch-tab'
+  | 'navigate-tab'
   | 'get-tabs'
   | 'get-active-tab'
   | 'get-content'
@@ -11,6 +12,8 @@ export type BotBrowserTabCommand = {
   action: BotBrowserTabAction;
   uri?: string;
   tabId?: number;
+  /** Display label for a newly opened tab (open-tab only). */
+  label?: string;
 };
 
 export type BotBrowserTabInfo = {
@@ -76,7 +79,7 @@ type PendingRequest = {
 };
 
 export type BotBrowserTabBridge = {
-  execute(command: BotBrowserTabCommand): Promise<BotBrowserTabCommandResult>;
+  execute(command: BotBrowserTabCommand, opts?: { focusWindow?: boolean }): Promise<BotBrowserTabCommandResult>;
   handleResponse(
     source: BrowserTabBridgeWebContents,
     response: BotBrowserTabCommandResponse,
@@ -93,7 +96,7 @@ export function createBotBrowserTabBridge(options: {
   let requestSequence = 0;
   let disposed = false;
 
-  const execute = (command: BotBrowserTabCommand): Promise<BotBrowserTabCommandResult> => {
+  const execute = (command: BotBrowserTabCommand, opts?: { focusWindow?: boolean }): Promise<BotBrowserTabCommandResult> => {
     if (disposed) {
       return Promise.reject(new Error('Bot Browser tab bridge is disposed'));
     }
@@ -122,9 +125,13 @@ export function createBotBrowserTabBridge(options: {
     try {
       // desktop-only: addressed to a specific window (not a broadcast)
       targetWindow.webContents.send('botBrowser:tab-command', { requestId, command });
-      if (targetWindow.isMinimized()) targetWindow.restore();
-      if (!targetWindow.isVisible()) targetWindow.show();
-      targetWindow.focus();
+      // Background writes (Bot Internet projections into a non-active tab)
+      // pass focusWindow: false so they never steal the OS focus.
+      if (opts?.focusWindow !== false) {
+        if (targetWindow.isMinimized()) targetWindow.restore();
+        if (!targetWindow.isVisible()) targetWindow.show();
+        targetWindow.focus();
+      }
     } catch (error) {
       const request = pending.get(requestId);
       if (request) {

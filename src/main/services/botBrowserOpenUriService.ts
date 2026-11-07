@@ -10,6 +10,9 @@ import { broadcastToRenderers } from '../ipc/broadcast';
 export type BotBrowserOpenUriInput = {
   uri: string;
   actorId?: string | null;
+  /** Display label for the newly created tab (newTab opens only). */
+  label?: string;
+  newTab?: boolean;
 };
 
 export function sendBotBrowserOpenUri(input: BotBrowserOpenUriInput): void {

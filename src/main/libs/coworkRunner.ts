@@ -120,7 +120,7 @@ import { isContextWindowExceededError } from './coworkContextBudget';
 import { tryAutoAnswerLowRiskQuestion } from './coworkPermissionRisk';
 import type { CoworkContextUsage, CoworkUsageStats } from './coworkContextUsage';
 import { composePromptSections, PROMPT_SECTION_ORDER } from './promptComposer';
-import { buildAssistantModePrompt } from './assistantModePrompt';
+import { buildAssistantModePrompt, buildProjectorModePrompt } from './assistantModePrompt';
 import { CHAIN_IDENTIFIER_VERBATIM_RULE } from './chainIdentifierPrompt';
 import { QA_BEHAVIOR_RULE } from './qaBehaviorPrompt';
 import { SOCIAL_TRUST_RULE } from './socialTrustPrompt';
@@ -6471,11 +6471,28 @@ export class CoworkRunner extends EventEmitter {
    * prompt.
    */
   private isAssistantModeOwnerChatSession(sessionId: string): boolean {
-    if (getPersistedChatExperienceMode() !== 'assistant') return false;
     const session = this.store.getSession(sessionId);
     if (!session) return false;
+    // Bot Internet projector sessions carry a persisted per-session marker
+    // and run assistant mode regardless of the global chatExperienceMode
+    // (owner ruling 2026-11-07: the Bot Internet tab is always assistant,
+    // locked to the Twin). Unattended runs forked FROM one are separate
+    // unmarked sessions, so the autoOrigin guard keeps them professional.
+    if (session.assistantMode && !session.autoOrigin) return true;
+    if (getPersistedChatExperienceMode() !== 'assistant') return false;
     if ((session.sessionType ?? 'standard') !== 'standard' || session.autoOrigin) return false;
     return this.store.getConversationSourceContextBySession(sessionId).sourceChannel === 'cowork_ui';
+  }
+
+  /**
+   * Bot Internet projector sessions: browser-type sessions carrying the
+   * per-session assistantMode marker stamped by the Bot Internet co-work
+   * panel (see isAssistantModeOwnerChatSession). Drives the projector prompt
+   * section; the renderer embed policy mirrors this from the session payload.
+   */
+  isProjectorModeSession(sessionId: string): boolean {
+    const session = this.store.getSession(sessionId);
+    return !!session?.assistantMode && (session.sessionType ?? 'standard') === 'browser';
   }
 
   /**
@@ -7007,7 +7024,8 @@ export class CoworkRunner extends EventEmitter {
     implicitMemoryUpdateEnabled = false,
     skillsSection?: string | null,
     metawebDeepSections = true,
-    assistantMode = false
+    assistantMode = false,
+    projectorMode = false
   ): string {
     return composePromptSections([
       { name: 'persona:metabot', order: PROMPT_SECTION_ORDER.PERSONA, text: personaBlock },
@@ -7077,7 +7095,14 @@ export class CoworkRunner extends EventEmitter {
       // prompt's User Update Protocol. Gated by the caller to regular
       // interactive owner chats (see isAssistantModeOwnerChatSession).
       ...(assistantMode
-        ? [{ name: 'idbots:assistant-mode', order: PROMPT_SECTION_ORDER.ASSISTANT_MODE, text: buildAssistantModePrompt() }]
+        ? [{ name: 'idbots:assistant-mode', order: PROMPT_SECTION_ORDER.ASSISTANT_MODE, text: buildAssistantModePrompt(projectorMode) }]
+        : []),
+      // Bot Internet projector mode (owner ruling 2026-11-07): mounted only
+      // for sessions carrying the per-session assistantMode marker from the
+      // Bot Internet co-work panel. Replaces the assistant prompt's optional
+      // inline HTML/MetaApp clauses with right-pane projection behavior.
+      ...(projectorMode
+        ? [{ name: 'idbots:projector-mode', order: PROMPT_SECTION_ORDER.PROJECTOR_MODE, text: buildProjectorModePrompt() }]
         : []),
     ]);
   }
@@ -8851,7 +8876,8 @@ export class CoworkRunner extends EventEmitter {
           systemPromptProfile.metawebMode,
           this.getMetawebPromptTier(sessionId, activeSession),
         ),
-        this.isAssistantModeOwnerChatSession(sessionId)
+        this.isAssistantModeOwnerChatSession(sessionId),
+        this.isProjectorModeSession(sessionId)
       );
       this.trackSystemPromptHash(activeSession, sessionId, effectiveSystemPrompt);
 
@@ -9001,7 +9027,8 @@ export class CoworkRunner extends EventEmitter {
           systemPromptProfile.metawebMode,
           this.getMetawebPromptTier(sessionId, activeSession),
         ),
-        this.isAssistantModeOwnerChatSession(sessionId)
+        this.isAssistantModeOwnerChatSession(sessionId),
+        this.isProjectorModeSession(sessionId)
       );
       this.trackSystemPromptHash(activeSession, sessionId, effectiveSystemPrompt);
 
@@ -11073,9 +11100,13 @@ export class CoworkRunner extends EventEmitter {
         // text directly and needs no host opening. Pure host-authored turns
         // carry no user message. Already-persisted cross-session deliveries
         // are different: the owner still needs an immediate, contextual
-        // opening even though insertion is not repeated.
-        assistantOwnerChatForTurn = getPersistedChatExperienceMode() === 'assistant'
-          && this.isAssistantModeOwnerChatSession(sessionId);
+        // opening even though insertion is not repeated. The GATE alone
+        // decides — it encodes global-assistant for regular owner chats AND
+        // the per-session marker (Bot Internet projector sessions stay
+        // assistant-mode whatever the Settings toggle says, owner ruling
+        // 2026-11-07), so an outer global-mode check here would silently
+        // strip the first-sentence promise from marker sessions.
+        assistantOwnerChatForTurn = this.isAssistantModeOwnerChatSession(sessionId);
         const crossSessionDelivery = /<cross_session_message\b|\[ORCH-NOTIFY\]/i.test(prompt);
         if (ackSourceChannel === 'cowork_ui' && assistantOwnerChatForTurn
           && (activeSession.acknowledgeOwner || !activeSession.skipInitialUserMessage || crossSessionDelivery)) {
@@ -11254,11 +11285,14 @@ export class CoworkRunner extends EventEmitter {
       // THIS session). Without an override, assistant mode skips the bot
       // brain effort, the persisted global, and the per-model default.
       // Professional mode keeps the full chain unchanged. The mode is an
-      // owner-chat experience decision (mirroring the prompt gate): group
-      // tasks, A2A/IM, long-term and scheduled automation sessions keep the
-      // professional chain even under the global assistant default.
-      const assistantMode = getPersistedChatExperienceMode() === 'assistant'
-        && this.isAssistantModeOwnerChatSession(sessionId);
+      // owner-chat experience decision — the GATE alone decides (it encodes
+      // global-assistant for regular owner chats AND the per-session marker
+      // from the Bot Internet co-work panel, owner ruling 2026-11-07; an
+      // outer global-mode check would strip marker sessions of the no-reasoning
+      // promise when the global toggle is professional). Group tasks, A2A/IM,
+      // long-term and scheduled automation sessions keep the professional
+      // chain even under the global assistant default.
+      const assistantMode = this.isAssistantModeOwnerChatSession(sessionId);
       const sessionEffortPicked = effectiveEffortRung != null;
       // "Auto" rung verdict: null (no selector, unconfigured cerebellum,
       // timeout, malformed verdict) keeps the existing default chain below

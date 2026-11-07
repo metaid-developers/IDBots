@@ -99,8 +99,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('metaappOwner:delete', input),
   },
   botBrowser: {
-    onOpenUri: (callback: (input: { uri: string; actorId?: string | null }) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, input: { uri: string; actorId?: string | null }) => callback(input);
+    onOpenUri: (callback: (input: { uri: string; actorId?: string | null; label?: string; newTab?: boolean }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, input: { uri: string; actorId?: string | null; label?: string; newTab?: boolean }) => callback(input);
       ipcRenderer.on('botBrowser:openUri', handler);
       return () => ipcRenderer.removeListener('botBrowser:openUri', handler);
     },
@@ -399,7 +399,7 @@ contextBridge.exposeInMainWorld('electron', {
     ipcRenderer.invoke('git:getBranch', cwd),
   cowork: {
     // Session management
-    startSession: (options: { prompt: string; cwd?: string; systemPrompt?: string; title?: string; activeSkillIds?: string[]; metabotId?: number | null; sessionType?: 'standard' | 'browser'; model?: string | null; modelProvider?: string | null; effort?: string | null; source?: 'quick_action'; projectId?: string | null; goal?: string }) =>
+    startSession: (options: { prompt: string; cwd?: string; systemPrompt?: string; title?: string; activeSkillIds?: string[]; metabotId?: number | null; sessionType?: 'standard' | 'browser'; assistantMode?: boolean; model?: string | null; modelProvider?: string | null; effort?: string | null; source?: 'quick_action'; projectId?: string | null; goal?: string }) =>
       ipcRenderer.invoke('cowork:session:start', options),
     /** Fire-and-forget runtime-slot prewarm on composer/session-open intent —
      *  the slot boot overlaps typing instead of stacking inside the first turn. */
