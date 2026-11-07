@@ -517,6 +517,7 @@ export function buildEscrowAgentTools(deps: {
       'The session bot\'s actor role (seller / buyer / escrow_agent) is resolved from the order parties; system-only actions (timeouts) belong to escrow_tick, not this tool.',
       'Proof rules: escrow_goods and release_goods need a 64-hex on-chain transfer txid for mrc721/metacontract orders (SELLER transfers to the agent address first, then records the escrow txid; AGENT transfers to the buyer address and records the release txid) — this tool never moves the item itself. upload_payment_evidence needs the payment evidence reference; confirm_received needs basis_amount_cents (exact to the cent) and basis_memo embedding the order id. dispute_open and rulings need a written basis.',
       'cancel_request only HANGS a cancel request (no state move); cancel_mutual requires mutual_confirmed=true from the confirming side.',
+      'Owner-level second ruling (04 branch 3): after an owner-review flag (T4 escalation, or an in-dispute appeal against the first ruling), the guarantor bot re-runs ruling_release / ruling_rollback with the basis prefixed "owner:" — the machine records it as an owner-level ruling.',
     ].join(' '),
     {
       order_id: z.string().min(1).describe('The escrow order id (esc-…).'),

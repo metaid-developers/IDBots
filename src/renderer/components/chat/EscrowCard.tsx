@@ -4,11 +4,13 @@
  * Rendered from an `escrow-card` fence in any markdown surface (CoWork
  * conversation, A2A private chat, group/group-task transcripts share the
  * MarkdownContent path — same contract as the nft-card cards). This slice is
- * a skeleton: it shows 当前状态 / 下一步该谁做什么 / 剩余时间 / 在押证明 and a
- * disabled 申诉 entry placeholder (仲裁入口占位). No funds buttons, ever —
- * the fiat rail moves money point-to-point outside the system (zero-funds-
- * flow red line, doc 03 §5.1); neither automatic release nor automatic
- * refund exists anywhere in this flow.
+ * a skeleton: it shows 当前状态 / 下一步该谁做什么 / 剩余时间 / 在押证明 and an
+ * active 申诉/复核 entry (04 分支三): expanding it shows the appeal rules and
+ * a copyable escrow_order_act dispute_open template for the session bot to
+ * execute — the entry instructs, it never moves anything itself. No funds
+ * buttons, ever — the fiat rail moves money point-to-point outside the system
+ * (zero-funds-flow red line, doc 03 §5.1); neither automatic release nor
+ * automatic refund exists anywhere in this flow.
  *
  * Styling deliberately shares the NftCard vocabulary (rounded-[16px] source
  * dark card, small chips) but lives under its own data marker so it never
@@ -16,16 +18,18 @@
  * slice) or `nft-card` (data-nft-card): each fence tag is disjoint.
  */
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   ExclamationTriangleIcon,
   ClockIcon,
   ShieldCheckIcon,
 } from '@heroicons/react/24/outline';
 import {
+  buildEscrowAppealTemplate,
   escrowCardStateLabel,
   escrowCardStateTone,
   escrowRemainingTimeText,
+  ESCROW_CARD_TERMINAL_STATES,
   ESCROW_GOODS_KIND_LABELS,
   formatEscrowYuan,
   type EscrowCardData,
@@ -40,6 +44,15 @@ const EscrowCard: React.FC<{ data: EscrowCardData; now?: number }> = ({ data, no
   const nowMs = useMemo(() => now ?? Date.now(), [now]);
   const remaining = escrowRemainingTimeText(data, nowMs);
   const stageBadge = data.timerHours ? `T${['CREATED', 'ITEM_ESCROWED', 'PAID_EVIDENCE_UPLOADED', 'SELLER_CONFIRMED'].indexOf(data.state) + 1}` : null;
+  const [appealOpen, setAppealOpen] = useState(false);
+  const [appealCopied, setAppealCopied] = useState(false);
+  const appealTemplate = useMemo(() => buildEscrowAppealTemplate(data.orderId), [data.orderId]);
+  const copyAppealTemplate = () => {
+    if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) return;
+    void navigator.clipboard.writeText(appealTemplate).catch(() => {});
+    setAppealCopied(true);
+    window.setTimeout(() => setAppealCopied(false), 1500);
+  };
 
   return (
     <div
@@ -105,24 +118,48 @@ const EscrowCard: React.FC<{ data: EscrowCardData; now?: number }> = ({ data, no
         </div>
       ) : null}
 
-      {/* 仲裁入口占位（04 分支三：一级担保人/二级 owner 落位前先有入口形态） */}
+      {/* 仲裁/申诉入口（04 分支三）：一级=担保人调证裁决；二级=owner 复核
+          （裁决 basis 加 owner: 前缀）。入口只展开规则与动作模板，无资金按钮。 */}
       {data.disputeOpen || data.state === 'DISPUTED' ? (
         <div className="mt-2 flex items-center gap-1 text-[11px] text-orange-300">
           <ExclamationTriangleIcon className="h-3 w-3" />
           <span>该单处于仲裁中：担保人调证裁决，可由 owner 复核</span>
         </div>
-      ) : (
+      ) : null}
+      {!ESCROW_CARD_TERMINAL_STATES.includes(data.state) ? (
         <div className="mt-2">
           <button
             type="button"
-            disabled
-            title="申诉入口（占位）：一级担保人调证裁决，二级 owner 复核；每方每单 ≤2 次"
-            className="cursor-not-allowed rounded px-1.5 py-px text-[10px] text-slate-600"
+            data-escrow-appeal="toggle"
+            onClick={() => setAppealOpen((open) => !open)}
+            className="rounded px-1.5 py-px text-[10px] text-slate-400 transition-colors hover:bg-white/5 hover:text-slate-200"
           >
-            申诉
+            申诉 / 复核
           </button>
+          {appealOpen ? (
+            <div
+              data-escrow-appeal-panel="true"
+              className="mt-1.5 rounded-lg bg-white/5 px-2.5 py-2 text-[11px] leading-5 text-slate-400"
+            >
+              <div>卖方/买方每单可申诉 ≤2 次，第二次须附新证据；仲裁中再次申诉=对一级裁决的复核请求（owner 复核）。</div>
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <code className="min-w-0 flex-1 truncate font-mono text-[10px] text-slate-300" title={appealTemplate}>
+                  {appealTemplate}
+                </code>
+                <button
+                  type="button"
+                  data-escrow-appeal-copy="true"
+                  onClick={copyAppealTemplate}
+                  className="shrink-0 rounded px-1.5 py-px text-[10px] text-slate-400 transition-colors hover:bg-white/5 hover:text-slate-200"
+                >
+                  {appealCopied ? '已复制' : '复制'}
+                </button>
+              </div>
+              <div className="mt-1 text-slate-500">把模板连同你的理由发给本单任一当事 bot 执行；担保人裁决需书面依据。</div>
+            </div>
+          ) : null}
         </div>
-      )}
+      ) : null}
     </div>
   );
 };

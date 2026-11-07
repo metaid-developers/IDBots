@@ -39,6 +39,17 @@ export const ESCROW_CARD_STATES = [
 ] as const;
 export type EscrowCardState = (typeof ESCROW_CARD_STATES)[number];
 
+/** Terminal states (mirrors main-side TERMINAL_STATES): no appeal entry. */
+export const ESCROW_CARD_TERMINAL_STATES: readonly EscrowCardState[] = ['RELEASED', 'REFUND_ROLLED_BACK', 'CANCELLED'];
+
+/**
+ * 申诉/复核动作模板（04 分支三入口形态）：复制进对应会话，由当事 bot 用
+ * escrow_order_act 执行。机器侧语义不变：dispute_open 需书面依据，每方每单
+ * ≤2 次；DISPUTED 内再次申诉=对一级裁决的复核请求（owner 复核）。
+ */
+export const buildEscrowAppealTemplate = (orderId: string): string =>
+  `escrow_order_act order_id=${orderId} action=dispute_open basis=<你的申诉理由>`;
+
 export type EscrowCardGoodsKind = 'mrc721' | 'metacontract' | 'digital' | 'service';
 const GOODS_KIND_RE = /^(mrc721|metacontract|digital|service)$/;
 
