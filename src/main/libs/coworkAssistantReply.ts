@@ -59,11 +59,16 @@ export const CONTINUE_TURN_REASONING_EFFORT = 'off' as const;
 /**
  * Provider failure codes that mean "the request never got answered for
  * environmental reasons" — network unreachable (TRANSPORT), request timed out
- * (TIMEOUT), provider 429/5xx (RATE_LIMIT/SERVER), or a stream that closed
- * without any content (EMPTY_RESPONSE). These carry no information about the
- * model's own behavior: the same prompt is perfectly answerable once the
- * environment recovers, so the turn is worth resuming instead of failing the
- * task behind it.
+ * (TIMEOUT), provider 429/5xx (RATE_LIMIT/SERVER), a stream that closed
+ * without any content (EMPTY_RESPONSE), or a stream that ended mid-flight
+ * before the kernel saw message_stop (STREAM_CLOSED — the provider or an
+ * intermediate gateway closed the SSE connection; same environmental class as
+ * EMPTY_RESPONSE, just with partial content already streamed). These carry no
+ * information about the model's own behavior: the same prompt is perfectly
+ * answerable once the environment recovers, so the turn is worth resuming
+ * instead of failing the task behind it. (2026-11-03 session cw-68650d7b: a
+ * turn riding "Service is too busy" retries all the way to step 5 died on the
+ * one request that got through with STREAM_CLOSED and was settled as failed.)
  */
 export const TRANSIENT_TURN_ERROR_CODES: ReadonlySet<string> = new Set([
   'TRANSPORT',
@@ -71,6 +76,7 @@ export const TRANSIENT_TURN_ERROR_CODES: ReadonlySet<string> = new Set([
   'RATE_LIMIT',
   'SERVER',
   'EMPTY_RESPONSE',
+  'STREAM_CLOSED',
 ]);
 
 /**

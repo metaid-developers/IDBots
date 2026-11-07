@@ -177,10 +177,29 @@ const NATIVE_DEEPSEEK_IMAGE_MAX_BYTES = 1_048_576
  *  blips — a Wi-Fi roam/DNS flap routinely takes 30–90s to settle, and each
  *  dead fetch costs ~5s of DNS/connect timeout on top. 8 retries with a 1s→30s
  *  ladder stretches the step-level retry window to ~3 minutes, long enough to
- *  ride out a blip without the turn (and the task behind it) dying. */
+ *  ride out a blip without the turn (and the task behind it) dying.
+ *
+ *  retryableCodes must be spelled out: omitting it selects the kernel default
+ *  (EMPTY_RESPONSE/RATE_LIMIT/SERVER/TIMEOUT/TRANSPORT), which does NOT cover
+ *  STREAM_CLOSED — a stream that ends before message_stop, i.e. the provider
+ *  (or an intermediate gateway) closing the SSE connection mid-flight. That is
+ *  the same environmental class as EMPTY_RESPONSE, just with partial content,
+ *  and under load the two interleave: 2026-11-03 session cw-68650d7b spent
+ *  step 3–5 riding "Service is too busy" retries, then the one request that
+ *  got through died at step 5 with `DeepSeek Messages stream ended before
+ *  message_stop` (STREAM_CLOSED) — unclassified, so the whole turn failed and
+ *  the owner's question was never answered. */
 const TRANSIENT_OUTAGE_RETRY_POLICY = Object.freeze({
   mode: 'normal',
   maxRetries: 8,
+  retryableCodes: Object.freeze([
+    'EMPTY_RESPONSE',
+    'RATE_LIMIT',
+    'SERVER',
+    'TIMEOUT',
+    'TRANSPORT',
+    'STREAM_CLOSED',
+  ]),
   backoff: Object.freeze({ initialDelayMs: 1_000, maxDelayMs: 30_000 }),
 })
 

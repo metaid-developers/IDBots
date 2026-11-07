@@ -12349,6 +12349,11 @@ export class CoworkRunner extends EventEmitter {
           // recharge notice can key off it without parsing the text.
           relayQuotaErrorMetadata(outcome.error?.message),
         );
+        // Turn-failure marker (2026-11-03 session 68650d7b): the owner's
+        // message died unanswered — without this the heartbeat reads the dead
+        // message as owner engagement that resets its reminder clock, and the
+        // task sits silent for the full waiting_owner re-present window.
+        this.store.recordSessionTurnFailure?.(sessionId, Date.now());
         // Route circuit breaker: count consecutive won't-heal settlements on
         // the current route identity; past the threshold the circuit opens
         // (entry check above) and further turns short-circuit until the probe.
@@ -12384,6 +12389,10 @@ export class CoworkRunner extends EventEmitter {
       // so the user can re-send; never report a hollow `completed`.
       if (outcome.kind === 'aborted') {
         this.addSystemMessage(sessionId, '', { dshTurnStalled: true });
+        // Same unanswered-settlement semantics as the error path above: the
+        // watchdog killed the turn, so whatever the owner (or a task) asked
+        // for went unanswered.
+        this.store.recordSessionTurnFailure?.(sessionId, Date.now());
         finish('idle');
         await this.settleDshUsageStats(sessionId, hub);
         this.emit('complete', sessionId, activeSession.claudeSessionId);
@@ -12417,6 +12426,9 @@ export class CoworkRunner extends EventEmitter {
       let turnCompletedSuccessfully = false;
       if (outcome.emptyTerminal) {
         this.reportEmptyTerminalTurn(sessionId);
+        // No visible content reached the owner — same unanswered settlement
+        // semantics as the error path above.
+        this.store.recordSessionTurnFailure?.(sessionId, Date.now());
         finish('idle');
       } else if (outcome.kind === 'max-tokens') {
         // Truncated past the auto-continue budget: the reply (or the
@@ -12425,10 +12437,12 @@ export class CoworkRunner extends EventEmitter {
         // tell the user the turn was truncated and leave the session `idle`
         // so re-sending / "继续" picks the preserved history back up.
         this.reportReplyTruncatedTurn(sessionId);
+        this.store.recordSessionTurnFailure?.(sessionId, Date.now());
         finish('idle');
       } else {
         finish('completed');
         turnCompletedSuccessfully = true;
+        this.store.recordSessionTurnCompletion?.(sessionId, Date.now());
       }
       // Any terminal outcome here (completed / empty terminal / truncated)
       // proves the provider path is live again — clear the consecutive-stall
@@ -12475,6 +12489,8 @@ export class CoworkRunner extends EventEmitter {
       }
       coworkLog('ERROR', 'runDshSessionLocal', 'turn crashed', { sessionId, error: String(error) });
       this.handleError(sessionId, error instanceof Error ? error.message : String(error));
+      // Turn crashed — the same unanswered settlement as the error path above.
+      this.store.recordSessionTurnFailure?.(sessionId, Date.now());
       this.clearPendingPermissions(sessionId);
       this.settleDshSteerSubmissions(activeSession, 'failed', error instanceof Error ? error.message : String(error));
       this.removeActiveSession(sessionId, activeSession);

@@ -74,6 +74,18 @@ import {
  * delivered to the owner's conversation by the next owner-facing turn; a
  * per-sweep convergence keeps every waiting_owner binding on the owner's
  * venue so the decision surface never points at a work session.
+ *
+ * Unanswered-reply self-heal: an owner message whose answering turn settled
+ * as failed is NOT engagement — the model never saw it — yet the quiet clock
+ * anchors on it and the waiting_owner re-present stays silent for the full
+ * 12h window (2026-11-03 session 68650d7b: the owner's reply died with
+ * STREAM_CLOSED at 17:47 and the next reminder was due 05:38 next day).
+ * The runner records per-session turn-outcome markers (CoworkStore
+ * recordSessionTurnFailure / recordSessionTurnCompletion); a sweep that
+ * finds the newest owner message of a related session answered by a FAILED
+ * turn — with no completing turn after it — re-drives the conversation after
+ * a short grace window, delivered to the owner's venue regardless of the
+ * engagement-window suppression.
  */
 
 export const LONGTERM_ADVANCE_INTERVAL_MS = 5 * 60_000;
@@ -115,6 +127,21 @@ const DEFAULT_ATTENTION_MAX_ATTEMPTS = 2;
  * so anything shorter would leak reminders into live conversations.
  */
 export const DEFAULT_OWNER_ENGAGEMENT_WINDOW_MS = 60 * 60_000;
+/**
+ * Quiet time after an owner message whose answering turn FAILED before the
+ * heartbeat re-drives the conversation (default 10 min). A failed turn leaves
+ * the owner's message unprocessed — the model never saw it — yet the plain
+ * quiet clock treats it as engagement and stays silent for the full
+ * waiting_owner re-present window (12h; 2026-11-03 session 68650d7b: the
+ * owner's reply died with STREAM_CLOSED at 17:47 and the task sat silent
+ * because the dead message anchored the clock to 05:38 next day). The marker
+ * comes from the runner's turn-outcome records (recordSessionTurnFailure /
+ * recordSessionTurnCompletion), not from message shapes — a failed turn still
+ * writes progress-narration and tool-call messages that a shape probe would
+ * misread as an answer. A live turn is protected anyway (twinSessionActive
+ * skip), and a successful later turn clears the condition by construction.
+ */
+export const DEFAULT_OWNER_REPLY_UNANSWERED_GRACE_MS = 10 * 60_000;
 /**
  * Bound-session budget before the heartbeat rotates to a fresh session.
  *
@@ -162,6 +189,10 @@ const OWNER_FACING_REASON_PREFIXES = [
   'owner decision still pending',
   'owner quiet window ended',
   'convergence churn',
+  // The self-heal re-drive exists to answer an owner message that died in a
+  // failed turn — owner-facing by construction (delivered to the owner's
+  // venue; exempt from the engagement-window suppression at the skip site).
+  'owner reply went unanswered',
 ];
 
 /** Worker-dispatch telemetry used by supervision (P1) — one row per orchestration attempt tied to the task. */
@@ -194,6 +225,14 @@ export interface LongTermTaskEngagement {
   lastTwinActivityAtMs: number | null;
   /** A turn is executing right now in one of the TWIN's related sessions. */
   twinSessionActive: boolean;
+  /**
+   * Newest owner message whose answering turn FAILED and after which no turn
+   * completed (per related session, from CoworkStore turn-outcome markers) —
+   * the self-heal anchor. An owner message that died in a failed turn is not
+   * engagement: without this the quiet clock anchors on a message nobody ever
+   * processed (2026-11-03 session 68650d7b).
+   */
+  unansweredOwnerAtMs: number | null;
 }
 
 /** Minimal session-store shape (satisfied by CoworkStore). */
@@ -220,6 +259,11 @@ export interface LongTermAdvanceSessionStore {
   getSessionEngagement?(id: string): LongTermSessionEngagement;
   /** The bot a session belongs to — twin-activity suppression is scoped to the twin's own sessions (optional). */
   getSessionMetabotId?(id: string): number | null;
+  /**
+   * Turn-outcome markers of a session — the unanswered-owner-reply self-heal
+   * signal (optional; absent = the self-heal never fires).
+   */
+  getSessionTurnOutcome?(id: string): { lastFailedAtMs: number | null; lastCompletedAtMs: number | null };
 }
 
 /** Minimal runner shape (satisfied by CoworkRunner). */
@@ -267,6 +311,8 @@ export interface LongTermAdvanceDeps {
   sessionRotationThreshold?: number;
   /** Recency window for owner engagement across related sessions (default 60 min — see DEFAULT_OWNER_ENGAGEMENT_WINDOW_MS). */
   ownerEngagementWindowMs?: number;
+  /** Quiet time after a failed owner-facing turn before the self-heal re-drives (see DEFAULT_OWNER_REPLY_UNANSWERED_GRACE_MS). */
+  ownerReplyUnansweredGraceMs?: number;
   /** Backoff before an unchanged actioned attention may be attempted again. */
   attentionRetryMs?: number;
   /** Maximum consecutive unresolved actions before Owner escalation. */
@@ -538,6 +584,7 @@ export class LongTermAdvanceService {
   private readonly defaultExpectedMinutes: number;
   private readonly sessionRotationThreshold: number;
   private readonly ownerEngagementWindowMs: number;
+  private readonly ownerReplyUnansweredGraceMs: number;
   private readonly attentionRetryMs: number;
   private readonly attentionMaxAttempts: number;
   private readonly emitLog: (line: string) => void;
@@ -552,6 +599,7 @@ export class LongTermAdvanceService {
     this.defaultExpectedMinutes = Math.max(1, Math.trunc(deps.defaultExpectedMinutes ?? DEFAULT_EXPECTED_MINUTES));
     this.sessionRotationThreshold = Math.max(10, Math.trunc(deps.sessionRotationThreshold ?? DEFAULT_SESSION_ROTATION_MESSAGES));
     this.ownerEngagementWindowMs = Math.max(60_000, Math.trunc(deps.ownerEngagementWindowMs ?? DEFAULT_OWNER_ENGAGEMENT_WINDOW_MS));
+    this.ownerReplyUnansweredGraceMs = Math.max(60_000, Math.trunc(deps.ownerReplyUnansweredGraceMs ?? DEFAULT_OWNER_REPLY_UNANSWERED_GRACE_MS));
     this.attentionRetryMs = Math.max(1_000, Math.trunc(deps.attentionRetryMs ?? DEFAULT_ATTENTION_RETRY_MS));
     this.attentionMaxAttempts = Math.max(1, Math.trunc(deps.attentionMaxAttempts ?? DEFAULT_ATTENTION_MAX_ATTEMPTS));
     this.emitLog = deps.emitLog ?? ((line: string) => console.log(line));
@@ -719,6 +767,19 @@ export class LongTermAdvanceService {
         }
         reasons.unshift(`attention: ${attentionForTurn.attention.waitingOn} — ${attentionForTurn.attention.humanAction || attentionForTurn.attention.reason}`);
       }
+      // Self-heal (2026-11-03 session 68650d7b): the owner replied but the
+      // turn answering them died (STREAM_CLOSED after a "Service is too
+      // busy" storm). The plain quiet clock reads that dead message as
+      // engagement and sits silent for the full waiting_owner re-present
+      // window — the owner is left staring at an error bubble. Re-drive the
+      // conversation instead: the owner's message is already in the session
+      // history, so the escalated turn answers it directly.
+      const ownerReplyUnanswered =
+        engagement.unansweredOwnerAtMs !== null &&
+        nowMs - engagement.unansweredOwnerAtMs >= this.ownerReplyUnansweredGraceMs;
+      if (ownerReplyUnanswered) {
+        reasons.unshift('owner reply went unanswered — the turn answering it failed; re-engage and answer it first');
+      }
       if (reasons.length === 0) {
         report.skipped.push({ taskId: card.id, reason: `current sub-project is ${current.status}, nothing due` });
         continue;
@@ -751,8 +812,14 @@ export class LongTermAdvanceService {
       // The owner is actively responding in a related session: every
       // owner-facing reminder is redundant — the conversation itself is
       // handling the decision. The secretary stops nagging once you reply.
-      // Their steering also re-opens a capped attention cycle.
-      if (engagement.ownerVenueSessionId && ownerFacing) {
+      // Their steering also re-opens a capped attention cycle. EXCEPT the
+      // unanswered-reply self-heal: the newest owner message produced a
+      // failed turn, so the conversation is NOT handling anything — waiting
+      // out the engagement window would just move the 12h-class silence
+      // (the live-conversation cases are already protected by the
+      // twinSessionActive skip above and by successful turns clearing the
+      // marker condition).
+      if (engagement.ownerVenueSessionId && ownerFacing && !ownerReplyUnanswered) {
         const capped = store.getSuperviseState(card.id)?.attentionEscalation;
         if (capped && capped.subtaskId === current.id && capped.count > 0) {
           store.setSuperviseState(card.id, {
@@ -995,6 +1062,7 @@ export class LongTermAdvanceService {
     let lastOwnerSessionId: string | null = null;
     let lastTwinActivityAtMs: number | null = null;
     let twinSessionActive = false;
+    let unansweredOwnerAtMs: number | null = null;
     for (const sessionId of this.deps.store().listRelatedSessionIds(taskId)) {
       if (!coworkStore.getSession(sessionId)) continue;
       const probe = coworkStore.getSessionEngagement?.(sessionId);
@@ -1002,6 +1070,22 @@ export class LongTermAdvanceService {
       if (ownerAtMs !== null && (lastOwnerAtMs === null || ownerAtMs > lastOwnerAtMs)) {
         lastOwnerAtMs = ownerAtMs;
         lastOwnerSessionId = sessionId;
+      }
+      // Unanswered-owner-reply self-heal anchor (see the turn-outcome marker
+      // records): the newest owner message of THIS session whose answering
+      // turn settled as failed with no completing turn after it. Per-session
+      // pairing — a work session completing a turn elsewhere must not mask a
+      // dead answer here, and a failure in an unrelated session must not
+      // fabricate one.
+      const turnOutcome = coworkStore.getSessionTurnOutcome?.(sessionId);
+      if (
+        ownerAtMs !== null &&
+        turnOutcome?.lastFailedAtMs != null &&
+        turnOutcome.lastFailedAtMs >= ownerAtMs &&
+        (turnOutcome.lastCompletedAtMs ?? 0) < ownerAtMs &&
+        (unansweredOwnerAtMs === null || ownerAtMs > unansweredOwnerAtMs)
+      ) {
+        unansweredOwnerAtMs = ownerAtMs;
       }
       const metabotId = coworkStore.getSessionMetabotId?.(sessionId) ?? null;
       const isTwinSession = metabotId === null || twinId === null || metabotId === twinId;
@@ -1016,7 +1100,7 @@ export class LongTermAdvanceService {
       lastOwnerSessionId !== null && lastOwnerAtMs !== null && nowMs - lastOwnerAtMs < this.ownerEngagementWindowMs
         ? lastOwnerSessionId
         : null;
-    return { lastOwnerAtMs, lastOwnerSessionId, ownerVenueSessionId, lastTwinActivityAtMs, twinSessionActive };
+    return { lastOwnerAtMs, lastOwnerSessionId, ownerVenueSessionId, lastTwinActivityAtMs, twinSessionActive, unansweredOwnerAtMs };
   }
 
   /** True when every reason is an owner-facing reminder family (attention, not work). */
@@ -1170,6 +1254,7 @@ export class LongTermAdvanceService {
       ownerVenueSessionId: null,
       lastTwinActivityAtMs: null,
       twinSessionActive: false,
+      unansweredOwnerAtMs: null,
     },
     attention: LongTermAttentionSelection | null = null,
   ): Promise<{ sessionId: string; reusedSession: boolean; journalAnchorEventId: number }> {

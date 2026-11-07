@@ -23,6 +23,7 @@ function makeStubCowork() {
   const sessions = new Map();
   const counts = new Map();
   const engagement = new Map();
+  const turnOutcomes = new Map();
   const metabots = new Map();
   // Mirrors CoworkStore: NULL until an auto-creating flow stamps it; a
   // human-opened session never gets one.
@@ -32,6 +33,7 @@ function makeStubCowork() {
     calls,
     counts,
     engagement,
+    turnOutcomes,
     metabots,
     autoOrigins,
     createSession(title, cwd, systemPrompt, mode, skills, metabotId, sessionType) {
@@ -52,6 +54,9 @@ function makeStubCowork() {
     getSessionAutoOrigin(id) { return autoOrigins.get(id) ?? null; },
     getSessionEngagement(id) {
       return engagement.get(id) ?? { lastOwnerMessageAtMs: null, lastAssistantMessageAtMs: null };
+    },
+    getSessionTurnOutcome(id) {
+      return turnOutcomes.get(id) ?? { lastFailedAtMs: null, lastCompletedAtMs: null };
     },
     getSessionMetabotId(id) { return metabots.has(id) ? metabots.get(id) : null; },
     /**
@@ -1588,4 +1593,128 @@ test('getSessionEngagement: heartbeat prompts and cross-session bot relays are n
   assert.equal(after.lastOwnerMessageAtMs, ownerAt);
   assert.ok(after.lastAssistantMessageAtMs !== null && after.lastAssistantMessageAtMs >= ownerAt);
   assert.equal(cowork.getSessionMetabotId(session.id), 7);
+});
+
+// ---------------------------------------------------------------------------
+// Unanswered-owner-reply self-heal (2026-11-03 session 68650d7b): the owner's
+// reply died with STREAM_CLOSED mid-turn; the plain quiet clock read the dead
+// message as engagement and the waiting_owner task sat silent for the full
+// 12h re-present window. The runner now records per-session turn-outcome
+// markers; a sweep that finds the newest owner message answered by a FAILED
+// turn (no completing turn after it) re-drives the conversation after a short
+// grace window, exempt from the engagement-window suppression.
+
+function makeUnansweredWorld(cowork, now) {
+  return {
+    ownerAtMs: now + 60_000,
+    failedAtMs: now + 180_000,
+    arm() {
+      cowork.engagement.set('def-sess', {
+        lastOwnerMessageAtMs: this.ownerAtMs,
+        lastAssistantMessageAtMs: this.failedAtMs,
+      });
+      cowork.turnOutcomes.set('def-sess', {
+        lastFailedAtMs: this.failedAtMs,
+        lastCompletedAtMs: null,
+      });
+    },
+  };
+}
+
+test('unanswered owner reply self-heal: a failed answering turn re-drives the conversation past the grace window', async () => {
+  const { store, cowork, runner, advance } = await openWorld();
+  const created = store.createTask({ ...SPEC, definitionSessionId: 'def-sess' }, 'owner');
+  assert.ok(created.ok, JSON.stringify(created));
+  const taskId = created.value.id;
+  assert.ok(store.activateTask(taskId, 'owner').ok);
+  cowork.registerSession('def-sess', 7);
+  const subtask = store.getTask(taskId).subtasks[0];
+  assert.ok(store.beginSubtask(subtask.id, 'twin').ok);
+  assert.ok(store.waitSubtask(subtask.id, { kind: 'owner', note: 'need a channel decision' }, 'twin').ok);
+
+  const now = Date.now();
+  const world = makeUnansweredWorld(cowork, now);
+  world.arm();
+
+  // 12min past the owner message: the 10min grace has passed, the 12h
+  // waiting_owner re-present is far away, and the owner-engagement window is
+  // still active (11min < 60min) — the self-heal must fire through BOTH.
+  const report = await advance.run(now + 12 * 60_000);
+  assert.equal(report.escalated.length, 1, JSON.stringify(report));
+  assert.match(report.escalated[0].reasons[0], /owner reply went unanswered/);
+  assert.equal(report.escalated[0].sessionId, 'def-sess', 'delivered to the owner venue (definition session)');
+  assert.equal(runner.starts.length, 1);
+  assert.equal(runner.starts[0].sessionId, 'def-sess');
+});
+
+test('unanswered owner reply self-heal: quiet inside the grace window, and when a later turn completed', async () => {
+  const { store, cowork, runner, advance } = await openWorld();
+  const created = store.createTask({ ...SPEC, definitionSessionId: 'def-sess' }, 'owner');
+  assert.ok(created.ok, JSON.stringify(created));
+  const taskId = created.value.id;
+  assert.ok(store.activateTask(taskId, 'owner').ok);
+  cowork.registerSession('def-sess', 7);
+  const subtask = store.getTask(taskId).subtasks[0];
+  assert.ok(store.beginSubtask(subtask.id, 'twin').ok);
+  assert.ok(store.waitSubtask(subtask.id, { kind: 'owner', note: 'need a channel decision' }, 'twin').ok);
+
+  const now = Date.now();
+  const world = makeUnansweredWorld(cowork, now);
+  world.arm();
+
+  // 8min past the owner message: inside the 10min grace — quiet.
+  const early = await advance.run(now + 8 * 60_000);
+  assert.equal(early.escalated.length, 0, JSON.stringify(early));
+  assert.ok(early.skipped.some((s) => /nothing due|owner is actively engaged/.test(s.reason)), JSON.stringify(early));
+
+  // A completing turn AFTER the owner message clears the condition even
+  // though a failure marker exists (a later turn already answered).
+  cowork.turnOutcomes.set('def-sess', { lastFailedAtMs: world.failedAtMs, lastCompletedAtMs: now + 5 * 60_000 });
+  const healed = await advance.run(now + 20 * 60_000);
+  assert.equal(healed.escalated.length, 0, JSON.stringify(healed));
+
+  // And with no markers at all (plain old store), nothing fires either.
+  cowork.turnOutcomes.delete('def-sess');
+  const plain = await advance.run(now + 30 * 60_000);
+  assert.equal(plain.escalated.length, 0, JSON.stringify(plain));
+  assert.equal(runner.starts.length, 0);
+});
+
+test('unanswered owner reply self-heal: never stacks onto a turn that is already running', async () => {
+  const { store, cowork, runner, advance } = await openWorld();
+  const created = store.createTask({ ...SPEC, definitionSessionId: 'def-sess' }, 'owner');
+  assert.ok(created.ok, JSON.stringify(created));
+  const taskId = created.value.id;
+  assert.ok(store.activateTask(taskId, 'owner').ok);
+  cowork.registerSession('def-sess', 7);
+  const subtask = store.getTask(taskId).subtasks[0];
+  assert.ok(store.beginSubtask(subtask.id, 'twin').ok);
+  assert.ok(store.waitSubtask(subtask.id, { kind: 'owner', note: 'need a channel decision' }, 'twin').ok);
+
+  const now = Date.now();
+  const world = makeUnansweredWorld(cowork, now);
+  world.arm();
+  runner.active.add('def-sess');
+
+  const report = await advance.run(now + 12 * 60_000);
+  assert.equal(report.escalated.length, 0, JSON.stringify(report));
+  assert.ok(report.skipped.some((s) => /a turn is already running/.test(s.reason)), JSON.stringify(report));
+  assert.equal(runner.starts.length, 0);
+});
+
+test('CoworkStore turn-outcome markers: record/roundtrip (the self-heal signal store)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-lt-turnout-'));
+  const sqliteStore = await SqliteStore.create(dir);
+  const cowork = new CoworkStore(sqliteStore.getDatabase(), sqliteStore.getSaveFunction());
+  const session = cowork.createSession('t', '/tmp', '', 'local', [], 7, 'longterm');
+  assert.deepEqual(cowork.getSessionTurnOutcome(session.id), { lastFailedAtMs: null, lastCompletedAtMs: null });
+
+  cowork.recordSessionTurnCompletion(session.id, 1000);
+  cowork.recordSessionTurnFailure(session.id, 2000);
+  assert.deepEqual(cowork.getSessionTurnOutcome(session.id), { lastFailedAtMs: 2000, lastCompletedAtMs: 1000 });
+
+  // Markers are independent timestamps: a later completing turn does not
+  // erase the failure (the pairing decides), it only moves its own stamp.
+  cowork.recordSessionTurnCompletion(session.id, 3000);
+  assert.deepEqual(cowork.getSessionTurnOutcome(session.id), { lastFailedAtMs: 2000, lastCompletedAtMs: 3000 });
 });
