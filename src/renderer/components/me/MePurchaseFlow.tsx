@@ -1,13 +1,17 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import QRCode from 'qrcode';
 import {
+  AcademicCapIcon,
   ArrowPathIcon,
+  BookOpenIcon,
   CheckCircleIcon,
   ExclamationTriangleIcon,
+  GiftIcon,
+  PencilIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
-import type { MeTopupPackageInfo } from '../../types/electron';
+import type { MePlanInfo, MeTopupPackageInfo } from '../../types/electron';
 import {
   ensureMeSnapshot,
   formatMe,
@@ -20,7 +24,14 @@ import {
   subscribeMeSnapshot,
   type MePurchaseSection,
 } from './mePointsStore';
-import { mePaymentPhase, normalizeMePaymentCheckout, type MePaymentCheckout } from './mePayment';
+import {
+  meDiscountParts,
+  mePaymentPhase,
+  mePeriodPricing,
+  normalizeMePaymentCheckout,
+  type MePaymentCheckout,
+  type MeSubscriptionPeriodOption,
+} from './mePayment';
 
 const COMPLIANCE_LINES = (): string[] => [
   i18nService.t('meComplianceWeekly'),
@@ -33,6 +44,34 @@ const POLL_INTERVAL_MS = 4_000;
 const POLL_WINDOW_MS = 10 * 60_000;
 
 type OrderPhase = 'pick' | 'creating' | 'paying' | 'credited' | 'closed';
+
+/**
+ * ID.Free is the built-in allowance tier: listed in the panel for
+ * comparison, never purchasable (no order exists for a free plan). The
+ * server's free-tier entry wins when /v1/me/plans carries one; otherwise
+ * this constant renders (weekly 2000 ME, price free).
+ */
+const LOCAL_FREE_PLAN: MePlanInfo = {
+  planId: 'me-id-free',
+  tier: 'free',
+  name: 'ID.Free',
+  nameEn: 'ID.Free',
+  priceCny: 0,
+  desktopPriceCny: 0,
+  weeklyAmountMilli: 2_000_000,
+};
+
+// Tier icons for the four plan cards (product-catalog style): gift for
+// the free allowance, pencil → book → academic cap following the
+// pupil → student → scholar ladder.
+const TIER_ICONS: Record<string, React.ReactNode> = {
+  free: <GiftIcon className="h-4 w-4" />,
+  standard: <PencilIcon className="h-4 w-4" />,
+  pro: <BookOpenIcon className="h-4 w-4" />,
+  max: <AcademicCapIcon className="h-4 w-4" />,
+};
+
+const tierIcon = (plan: MePlanInfo): React.ReactNode => TIER_ICONS[plan.tier] ?? TIER_ICONS.standard;
 
 interface MePurchaseFlowProps {
   open: boolean;
@@ -49,7 +88,8 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
   const snapshot = React.useSyncExternalStore(subscribeMeSnapshot, getMeSnapshot, getMeSnapshot);
   const [selectedPlanId, setSelectedPlanId] = useState('');
   const [selectedPackageId, setSelectedPackageId] = useState('');
-  const [period, setPeriod] = useState<'month' | 'quarter' | 'year'>('month');
+  const [period, setPeriod] = useState<MeSubscriptionPeriodOption>('month');
+  const [gateway, setGateway] = useState<'alipay' | 'paypal'>('alipay');
   const [topupPackages, setTopupPackages] = useState<MeTopupPackageInfo[]>([]);
   const [phase, setPhase] = useState<OrderPhase>('pick');
   const [orderError, setOrderError] = useState('');
@@ -58,7 +98,18 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
   const [checkout, setCheckout] = useState<MePaymentCheckout | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState('');
 
-  const plans = snapshot.plans.filter((plan) => plan.tier !== 'free');
+  const paidPlans = useMemo(
+    () => snapshot.plans.filter((plan) => plan.tier !== 'free'),
+    [snapshot.plans]
+  );
+  const serverFreePlan = useMemo(
+    () => snapshot.plans.find((plan) => plan.tier === 'free') ?? null,
+    [snapshot.plans]
+  );
+  const planCards = useMemo(
+    () => [serverFreePlan ?? LOCAL_FREE_PLAN, ...paidPlans],
+    [serverFreePlan, paidPlans]
+  );
   const subscribed = isMeEffectivelySubscribed(snapshot.subscription);
 
   useEffect(() => {
@@ -71,6 +122,7 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
     setQrDataUrl('');
     setChecking(false);
     setPeriod('month');
+    setGateway('alipay');
     setTopupPackages([]);
     if (section === 'topup') {
       void window.electron.mePoints.getTopupPackages().then((res) => {
@@ -85,8 +137,8 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
       });
     }
     setSelectedPlanId((current) => {
-      if (current && plans.some((plan) => plan.planId === current)) return current;
-      return plans[Math.min(1, Math.max(0, plans.length - 1))]?.planId ?? '';
+      if (current && paidPlans.some((plan) => plan.planId === current)) return current;
+      return paidPlans[Math.min(1, Math.max(0, paidPlans.length - 1))]?.planId ?? '';
     });
   }, [open, section]);
 
@@ -101,23 +153,30 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
     return () => window.removeEventListener('me:purchaseSwitchSection', listener);
   }, [onSectionChange]);
 
-  const effectivePlanId = selectedPlanId || plans[Math.min(1, Math.max(0, plans.length - 1))]?.planId || '';
-  const selectedPlan = plans.find((plan) => plan.planId === effectivePlanId) ?? null;
+  const effectivePlanId = selectedPlanId || paidPlans[Math.min(1, Math.max(0, paidPlans.length - 1))]?.planId || '';
+  const selectedPlan = planCards.find((plan) => plan.planId === effectivePlanId) ?? null;
   const selectedTopup = topupPackages.find((pkg) => pkg.packageId === selectedPackageId) ?? null;
+  // The free tier is display-only: it has no order, no period and no CTA.
+  const isFreeSelected = selectedPlan?.tier === 'free';
 
-  const periodPrice = useMemo(() => {
-    if (!selectedPlan) return null;
+  const periodPricing = useMemo(() => {
+    if (!selectedPlan || isFreeSelected) return null;
     const monthly = selectedPlan.desktopPriceCny ?? selectedPlan.priceCny ?? null;
     if (monthly == null) return null;
-    if (period === 'month') return monthly;
-    if (period === 'quarter') {
-      const discountPct = selectedPlan.quarterlyDiscountPct;
-      return Math.round(monthly * 3 * (discountPct && discountPct > 0 && discountPct < 100 ? discountPct / 100 : 1));
-    }
-    return selectedPlan.annualPriceCny ?? Math.round(monthly * 12);
-  }, [selectedPlan, period]);
+    return mePeriodPricing({
+      monthly,
+      period,
+      quarterlyDiscountPct: selectedPlan.quarterlyDiscountPct,
+      annualPriceCny: selectedPlan.annualPriceCny,
+    });
+  }, [selectedPlan, isFreeSelected, period]);
+  const discount = periodPricing?.original != null
+    ? meDiscountParts(periodPricing.price, periodPricing.original)
+    : null;
 
-  const amountDue = section === 'subscribe' ? periodPrice : selectedTopup?.priceCny ?? null;
+  const amountDue = section === 'subscribe'
+    ? (isFreeSelected ? 0 : periodPricing?.price ?? null)
+    : selectedTopup?.priceCny ?? null;
 
   useEffect(() => {
     if (!checkout?.qrCode) {
@@ -203,7 +262,7 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
             planId: subjectId,
             period,
             channel: 'desktop',
-            gateway: 'alipay',
+            gateway,
             idempotencyKey,
           })
         : await window.electron.mePoints.submitTopupOrder({
@@ -237,7 +296,7 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
       setPhase('pick');
       setOrderError(error instanceof Error && error.message ? error.message : i18nService.t('mePurchaseUnavailable'));
     }
-  }, [section, selectedPlan, selectedTopup, phase, period, amountDue]);
+  }, [section, selectedPlan, selectedTopup, phase, period, amountDue, gateway]);
 
   const backToPicker = () => {
     setPhase('pick');
@@ -249,7 +308,7 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
   if (!open) return null;
 
   const canCreate = section === 'subscribe'
-    ? Boolean(selectedPlan)
+    ? Boolean(selectedPlan) && !isFreeSelected
     : section === 'topup' && subscribed && Boolean(selectedTopup);
   const paymentUrl = checkout?.approvalUrl || (/^https?:\/\//i.test(checkout?.qrCode ?? '') ? checkout!.qrCode : '');
 
@@ -274,13 +333,13 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
         <div className="space-y-4 px-4 py-4">
           {(phase === 'pick' || phase === 'creating') && (
             <>
-              {snapshot.plansLoading && plans.length === 0 && (
+              {snapshot.plansLoading && paidPlans.length === 0 && (
                 <p className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">{i18nService.t('loading')}</p>
               )}
 
               {section === 'subscribe' && (
                 <div className="space-y-2">
-                  {plans.map((plan, index) => (
+                  {planCards.map((plan) => (
                     <button
                       key={plan.planId}
                       type="button"
@@ -293,16 +352,23 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
                       }`}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-semibold text-claude-text dark:text-claude-darkText">{plan.name}</span>
-                        <span className="tabular-nums text-xs text-claude-text dark:text-claude-darkText">
-                          {i18nService.t('mePlanPriceMonthly').replace('{price}', priceLabel(plan.desktopPriceCny ?? plan.priceCny))}
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-claude-accent/10 text-claude-accent dark:bg-claude-accent/15 dark:text-claude-darkAccent">
+                            {tierIcon(plan)}
+                          </span>
+                          <span className="truncate text-xs font-semibold text-claude-text dark:text-claude-darkText">{plan.name}</span>
+                        </span>
+                        <span className="shrink-0 tabular-nums text-xs text-claude-text dark:text-claude-darkText">
+                          {plan.tier === 'free'
+                            ? i18nService.t('mePurchaseFreePrice')
+                            : i18nService.t('mePlanPriceMonthly').replace('{price}', priceLabel(plan.desktopPriceCny ?? plan.priceCny))}
                         </span>
                       </div>
                       <div className="mt-0.5 flex items-center justify-between gap-2">
                         <span className="truncate text-[10px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
                           {i18nService.t('mePlanHighlightWeekly').replace('{me}', formatMe(meFromMilli(plan.weeklyAmountMilli)))}
                         </span>
-                        {index === 1 && (
+                        {plan.tier === 'pro' && (
                           <span className="shrink-0 text-[10px] text-claude-accent dark:text-claude-darkAccent">
                             {i18nService.t('mePlanPopularBadge')}
                           </span>
@@ -311,7 +377,7 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
                     </button>
                   ))}
 
-                  {selectedPlan && (
+                  {selectedPlan && !isFreeSelected && (
                     <div className="rounded-xl border border-claude-border dark:border-claude-darkBorder bg-claude-surfaceInset/40 dark:bg-claude-darkSurfaceInset/30 px-3 py-2.5">
                       <span className="text-[11px] font-medium text-claude-textSecondary dark:text-claude-darkTextSecondary">
                         {i18nService.t('mePurchasePeriod')}
@@ -330,6 +396,31 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
                             }`}
                           >
                             {i18nService.t(`mePurchasePeriod_${value}`)}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedPlan && !isFreeSelected && (
+                    <div className="rounded-xl border border-claude-border dark:border-claude-darkBorder bg-claude-surfaceInset/40 dark:bg-claude-darkSurfaceInset/30 px-3 py-2.5">
+                      <span className="text-[11px] font-medium text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                        {i18nService.t('mePurchaseGatewayLabel')}
+                      </span>
+                      <div className="mt-1.5 grid grid-cols-2 gap-2">
+                        {(['alipay', 'paypal'] as const).map((value) => (
+                          <button
+                            key={value}
+                            type="button"
+                            disabled={phase === 'creating'}
+                            onClick={() => setGateway(value)}
+                            className={`rounded-lg border px-2 py-1.5 text-[11px] transition-colors ${
+                              gateway === value
+                                ? 'border-claude-accent text-claude-accent dark:text-claude-darkAccent bg-claude-accent/5'
+                                : 'border-claude-border dark:border-claude-darkBorder text-claude-text dark:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
+                            }`}
+                          >
+                            {i18nService.t(value === 'alipay' ? 'mePurchaseGatewayAlipay' : 'mePurchaseGatewayPaypal')}
                           </button>
                         ))}
                       </div>
@@ -386,7 +477,56 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
                 )
               )}
 
-              {canCreate && (
+              {section === 'subscribe' && selectedPlan && (
+                isFreeSelected ? (
+                  <div className="flex items-baseline justify-between rounded-xl bg-claude-surfaceInset/40 dark:bg-claude-darkSurfaceInset/30 px-3 py-2.5">
+                    <span className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                      {i18nService.t('mePurchaseAmountDue')}
+                    </span>
+                    <span className="text-base font-semibold text-green-600 dark:text-green-400">
+                      {i18nService.t('mePurchaseFreePrice')}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="rounded-xl bg-claude-surfaceInset/40 dark:bg-claude-darkSurfaceInset/30 px-3 py-2.5">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                        {i18nService.t('mePurchaseAmountDue')}
+                      </span>
+                      <span className="flex items-baseline gap-1.5">
+                        <span className="tabular-nums text-lg font-semibold text-claude-text dark:text-claude-darkText">
+                          {priceLabel(periodPricing?.price ?? amountDue)}
+                          <span className="ml-0.5 text-[10px] font-normal">{i18nService.t('mePurchaseCny')}</span>
+                        </span>
+                        {periodPricing?.original != null && (
+                          <span className="tabular-nums text-[11px] text-claude-textSecondary line-through dark:text-claude-darkTextSecondary">
+                            {i18nService.t('mePurchaseOriginalPrice').replace('{price}', String(periodPricing.original))}
+                          </span>
+                        )}
+                        {discount && (
+                          <span className="rounded-md bg-red-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-red-500 dark:text-red-400">
+                            {i18nService.getLanguage() === 'zh'
+                              ? i18nService.t('mePurchaseDiscountZhe').replace('{zhe}', discount.zhe)
+                              : i18nService.t('mePurchaseDiscountPctOff').replace('{pct}', String(discount.pctOff))}
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 flex items-center justify-between gap-2 text-[10px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                      <span>
+                        {selectedPlan.name} · {i18nService.t(`mePurchasePeriod_${period}`)}
+                      </span>
+                      {period !== 'month' && periodPricing && (
+                        <span className="tabular-nums">
+                          {i18nService.t('mePurchasePerMonth').replace('{price}', String(Math.round(periodPricing.price / (period === 'quarter' ? 3 : 12))))}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )
+              )}
+
+              {section === 'topup' && canCreate && (
                 <div className="flex items-baseline justify-between rounded-xl bg-claude-surfaceInset/40 dark:bg-claude-darkSurfaceInset/30 px-3 py-2.5">
                   <span className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
                     {i18nService.t('mePurchaseAmountDue')}
@@ -540,6 +680,14 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
             >
               {phase === 'creating' ? i18nService.t('mePurchaseCreating') : i18nService.t('mePurchasePay')}
             </button>
+          </div>
+        )}
+
+        {(phase === 'pick' || phase === 'creating') && section === 'subscribe' && isFreeSelected && (
+          <div className="sticky bottom-0 border-t border-claude-border/60 dark:border-claude-darkBorder/60 bg-claude-surface/95 dark:bg-claude-darkSurface/95 px-4 py-3 backdrop-blur">
+            <p className="text-center text-[11px] leading-relaxed text-claude-textSecondary dark:text-claude-darkTextSecondary">
+              {i18nService.t('mePurchaseFreeNote')}
+            </p>
           </div>
         )}
       </div>
