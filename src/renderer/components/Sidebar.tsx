@@ -915,6 +915,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           <BotBrowserCoworkPanel
             onShowSkills={onShowSkills}
             onOpenNewProject={() => onShowSettings({ initialTab: 'projects', openNewProjectForm: true })}
+            onOpenBotHome={onSelectHome}
           />
         </div>
       )}

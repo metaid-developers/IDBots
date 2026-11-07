@@ -8,7 +8,8 @@ import { UserMessageBody } from '../../components/cowork/UserAttachmentBody';
 import { resolveLocalPathAgainstCwd, type LocalFilePathResolver } from '../../utils/localPath';
 import { buildSessionComposerCommands } from '../../components/cowork/composerCommandCatalog';
 import FolderSelectorPopover from '../../components/cowork/FolderSelectorPopover';
-import MetaBotSelector, { type MetaBotForSelector } from '../../components/cowork/MetaBotSelector';
+import type { MetaBotForSelector } from '../../components/cowork/MetaBotSelector';
+import TwinBadge from '../../components/metabots/TwinBadge';
 import ModelEffortPicker from '../../components/ModelEffortPicker';
 import { effortDisplayForPick, effortForSessionStart, type ComposerModelEffortPick } from '../../services/modelCatalog';
 import { ActiveSkillBadge } from '../../components/skills';
@@ -49,6 +50,18 @@ export function filterVisiblePanelMessages(messages: CoworkMessage[]): CoworkMes
     return false;
   });
 }
+
+/**
+ * Draft-state identity for the assistant-mode gate: the next session started
+ * from this panel is a Bot Internet projector session (browserCoworkService
+ * stamps the per-session assistantMode marker), so the empty chat already
+ * renders assistant-side before any session exists.
+ */
+const PROJECTOR_DRAFT_SESSION_IDENTITY = {
+  sessionType: 'browser' as const,
+  autoOrigin: null,
+  assistantMode: true,
+};
 
 export const PanelMessage: React.FC<{
   message: CoworkMessage;
@@ -93,6 +106,8 @@ interface BotBrowserCoworkPanelProps {
   onShowSkills?: () => void;
   /** Open Settings > Projects > New Project (from the workspace popover). */
   onOpenNewProject?: () => void;
+  /** Switch the sidebar back to Bot Home (no-Twin bootstrap guidance). */
+  onOpenBotHome?: () => void;
 }
 
 const WORKSPACE_SELECTION_STORAGE_KEY = 'idbots.botBrowser.workspaceSelection';
@@ -139,7 +154,7 @@ function loadPersistedWorkspaceSelection(): CoworkWorkspaceSelection | null {
  * History is a toggleable overlay; sessions remember the browser URI they
  * were about.
  */
-const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSkills, onOpenNewProject }) => {
+const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSkills, onOpenNewProject, onOpenBotHome }) => {
   const dispatch = useDispatch();
   const currentSession = useSelector((state: RootState) => state.browserCowork.currentSession);
   const isStreaming = useSelector((state: RootState) => state.browserCowork.isStreaming);
@@ -147,7 +162,7 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSki
   const activeSkillIds = useSelector((state: RootState) => state.skill.activeSkillIds);
   const [showHistory, setShowHistory] = useState(false);
   const [metabots, setMetabots] = useState<PanelMetabot[]>([]);
-  const [selectedMetabotId, setSelectedMetabotId] = useState<number | null>(null);
+  const [metabotsLoaded, setMetabotsLoaded] = useState(false);
   // Workspace choice for the next browser session, same selection model as the
   // cowork home composer (project / folder / bot workspace); the popover is
   // the shared project-mode FolderSelectorPopover. The last choice is
@@ -177,7 +192,9 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSki
     let cancelled = false;
     void (async () => {
       const result = await window.electron?.metabot?.list?.();
-      if (cancelled || !result?.success || !result.list) return;
+      if (cancelled) return;
+      setMetabotsLoaded(true);
+      if (!result?.success || !result.list) return;
       const selectable = result.list
         .filter(
           (metabot) => metabot.enabled && typeof metabot.llm_id === 'string' && metabot.llm_id.trim()
@@ -189,13 +206,6 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSki
       cancelled = true;
     };
   }, []);
-
-  // An existing session's MetaBot wins for display; otherwise fall back to the first available.
-  useEffect(() => {
-    if (currentSession?.metabotId != null) {
-      setSelectedMetabotId(currentSession.metabotId);
-    }
-  }, [currentSession?.metabotId]);
 
   // Remember the workspace choice across panel remounts / app restarts.
   useEffect(() => {
@@ -227,23 +237,33 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSki
     };
   }, [selectedProjectId]);
 
-  const effectiveMetabotId = selectedMetabotId ?? metabots[0]?.id ?? null;
-  const selectedMetabot = metabots.find((m) => m.id === effectiveMetabotId) ?? null;
+  // Bot Internet is locked to the owner's Twin (owner ruling #2, 2026-11-07):
+  // sessions started here always target the metabot_type === 'twin' bot, and
+  // machines without a Twin get bootstrap guidance instead of a composer.
+  // Legacy (pre-marker) sessions keep showing their own bot in the identity
+  // chip so old transcripts read the same as before.
+  const twinMetabot = metabots.find((m) => m.metabot_type === 'twin') ?? null;
+  const needsTwinBootstrap = metabotsLoaded && !twinMetabot && !currentSession;
+  const legacySessionMetabot = !currentSession?.assistantMode && currentSession?.metabotId != null
+    ? metabots.find((m) => m.id === currentSession.metabotId) ?? null
+    : null;
+  const chipMetabot = legacySessionMetabot ?? twinMetabot;
+  const effectiveMetabotId = twinMetabot?.id ?? null;
+  const selectedMetabot = twinMetabot;
   // Pending model+effort for the session about to start from this panel. The
   // whole state being null = follow the selected bot's brain (its model and
   // effort); inside a pick, effort null is an EXPLICIT "Default" choice.
   const [pendingModelEffort, setPendingModelEffort] = useState<ComposerModelEffortPick | null>(null);
-  // Chat experience mode (Settings > General), scoped per session through the
-  // shared gate (isAssistantModeOwnerChatSession — mirrors the backend rule in
-  // src/main/libs/coworkRunner.ts). Browser cowork sessions are non-standard,
-  // so the backend runs them with the professional prompt and the professional
-  // effort chain; the panel follows (professional effort-chip display, plain
-  // message text rather than assistant bubbles). In the draft state (no
-  // session yet) the verdict is likewise professional — the session about to
-  // start from this panel is a browser session. See useChatExperienceMode for
-  // the cross-window reactivity contract.
+  // Chat experience mode is overridden in this surface (owner ruling
+  // 2026-11-07): every session started here carries the per-session
+  // assistantMode marker, so the panel resolves assistant-side for live
+  // sessions through the shared gate (isAssistantModeOwnerChatSession —
+  // mirrors the backend rule in src/main/libs/coworkRunner.ts) and for the
+  // draft state through the projector draft identity. Legacy (pre-marker)
+  // browser sessions keep the professional presentation. See
+  // useChatExperienceMode for the cross-window reactivity contract.
   const chatExperienceMode = useChatExperienceMode();
-  const isAssistantMode = isAssistantModeOwnerChatSession(chatExperienceMode, currentSession);
+  const isAssistantMode = isAssistantModeOwnerChatSession(chatExperienceMode, currentSession ?? PROJECTOR_DRAFT_SESSION_IDENTITY);
 
   // Slash commands for the '+' menu: browser sessions are regular cowork
   // sessions, so once one is live the full session command set applies; in
@@ -263,6 +283,7 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSki
   }, [visibleMessages.length, isStreaming]);
 
   const handleSubmit = async (prompt: string, skillPrompt?: string) => {
+    if (!currentSession && !twinMetabot) return; // no-Twin machines never start sessions here
     setShowHistory(false);
     // Pinned-skill snapshot, same contract as the home composer: the ids ride
     // the submitted turn (persisted main-side for the session, driving
@@ -363,7 +384,6 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSki
           type="button"
           onClick={() => {
             setShowHistory(false);
-            setSelectedMetabotId(null);
             browserCoworkService.startNewDraft();
           }}
           className="h-6 w-6 inline-flex items-center justify-center rounded-md dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
@@ -389,9 +409,24 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSki
 
       <div ref={listRef} className="min-h-0 flex-1 space-y-2.5 overflow-y-auto overflow-x-hidden px-1 pb-2">
         {visibleMessages.length === 0 ? (
-          <div className="rounded-lg border border-dashed dark:border-claude-darkBorder border-claude-border px-3 py-4 text-xs leading-5 dark:text-claude-darkTextSecondary text-claude-textSecondary">
-            {i18nService.t('botBrowserCoworkEmpty')}
-          </div>
+          needsTwinBootstrap ? (
+            // No Twin on this machine: block the chat with bootstrap guidance
+            // instead of the ordinary empty state (owner ruling #2).
+            <div className="rounded-lg border border-dashed dark:border-claude-darkBorder border-claude-border px-3 py-4 text-xs leading-5 dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              <p>{i18nService.t('botInternetNeedsTwin')}</p>
+              <button
+                type="button"
+                onClick={onOpenBotHome}
+                className="mt-2 inline-flex items-center rounded-md px-2 py-1 -ml-1 text-xs font-medium dark:text-claude-accent text-claude-accent hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+              >
+                {i18nService.t('botInternetGoBotHome')}
+              </button>
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed dark:border-claude-darkBorder border-claude-border px-3 py-4 text-xs leading-5 dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              {i18nService.t('botBrowserCoworkEmpty')}
+            </div>
+          )
         ) : (
           visibleMessages.map(renderMessage)
         )}
@@ -418,17 +453,24 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSki
       </div>
 
       <div className="flex items-center justify-between gap-0.5 px-1 pb-1.5">
-        {metabots.length > 0 ? (
-          <div className="min-w-0 max-w-[60%]">
-            <MetaBotSelector
-              metabots={metabots}
-              selectedId={effectiveMetabotId}
-              onSelect={setSelectedMetabotId}
-              label={i18nService.t('coworkMetaBotLabel')}
-              placeholder={i18nService.t('coworkMetaBotPlaceholder')}
-              compact
-              dropdownDirection="up"
-            />
+        {chipMetabot ? (
+          // Bot Internet is locked to the Twin: a fixed identity chip instead
+          // of a bot selector (owner ruling 2026-11-07). Legacy sessions show
+          // their own bot so old transcripts keep reading correctly.
+          <div className="flex min-w-0 max-w-[60%] items-center gap-1.5" title={chipMetabot.name}>
+            {chipMetabot.avatar && (chipMetabot.avatar.startsWith('data:') || chipMetabot.avatar.startsWith('http')) ? (
+              <img src={chipMetabot.avatar} alt="" className="h-5 w-5 rounded-md object-cover flex-shrink-0" />
+            ) : (
+              <div className="h-5 w-5 rounded-md dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover flex items-center justify-center flex-shrink-0">
+                <span className="text-[8px] font-semibold dark:text-claude-darkText text-claude-text uppercase">
+                  {chipMetabot.name.slice(0, 2) || '?'}
+                </span>
+              </div>
+            )}
+            <span className="truncate text-xs font-medium dark:text-claude-darkText text-claude-text">
+              {chipMetabot.name}
+            </span>
+            {chipMetabot.metabot_type === 'twin' && <TwinBadge className="shrink-0" />}
           </div>
         ) : null}
         <div className="flex shrink-0 items-center gap-0.5">
@@ -494,22 +536,24 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSki
         </div>
       </div>
 
-      <CoworkPromptInput
-        ref={promptInputRef}
-        onSubmit={handleSubmit}
-        onStop={() => void browserCoworkService.stop()}
-        isStreaming={isStreaming}
-        placeholder={i18nService.t('botBrowserCoworkPlaceholder')}
-        size="normal"
-        scopeKey="botBrowser"
-        showFolderSelector={false}
-        showModelSelector={false}
-        onManageSkills={() => onShowSkills?.()}
-        commands={browserComposerCommands}
-        // Scope the skills picker to the session's bot (live session wins,
-        // draft follows the selector) so pins stay inside that bot's view.
-        sessionMetabotId={currentSession?.metabotId ?? effectiveMetabotId}
-      />
+      {needsTwinBootstrap ? null : (
+        <CoworkPromptInput
+          ref={promptInputRef}
+          onSubmit={handleSubmit}
+          onStop={() => void browserCoworkService.stop()}
+          isStreaming={isStreaming}
+          placeholder={i18nService.t('botBrowserCoworkPlaceholder')}
+          size="normal"
+          scopeKey="botBrowser"
+          showFolderSelector={false}
+          showModelSelector={false}
+          onManageSkills={() => onShowSkills?.()}
+          commands={browserComposerCommands}
+          // Scope the skills picker to the session's bot (live session wins,
+          // draft follows the Twin) so pins stay inside that bot's view.
+          sessionMetabotId={currentSession?.metabotId ?? effectiveMetabotId}
+        />
+      )}
 
       {showHistory ? (
         <div className="absolute inset-x-0 top-7 bottom-0 z-10 flex flex-col rounded-lg border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted shadow-lg">
