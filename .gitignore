@@ -926,3 +926,5 @@ blob-report/
 !tests/meDesktopPayment.test.ts
 # ME history and order payload compatibility
 !tests/mePointsHistory.test.mjs
+# Settings > Models provider template catalog (ZCode port) + layout anchors
+!tests/providerTemplateCatalog.test.ts
