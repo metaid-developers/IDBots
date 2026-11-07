@@ -141,6 +141,8 @@ export interface AppConfig {
       models?: ConfiguredModel[];
       // 自定义供应商显示名称（内置供应商无此字段，label 来自 providerMeta）
       name?: string;
+      // 自定义/模板供应商的取 key 控制台链接（设置页 API Key 下方展示）
+      apiKeyManagementUrl?: string;
     };
   };
   // 主题配置
@@ -833,15 +835,9 @@ export const CHINA_PROVIDERS = ['deepseek', 'moonshot', 'qwen', 'zhipu', 'minima
 export const GLOBAL_PROVIDERS = ['openai', 'gemini', 'anthropic', 'openrouter'] as const;
 export const EN_PRIORITY_PROVIDERS = ['openai', 'anthropic', 'gemini'] as const;
 
-/** All supported LLM provider keys for the Model settings page. No language filtering. */
+/** All built-in LLM provider keys known to the app. The Model settings page
+ * no longer lists them unconditionally (visibility is config-driven there),
+ * but the registry stays the source of truth for built-in keys. */
 export const ALL_PROVIDER_KEYS = [
   'metaid-free', 'deepseek', 'opencode', 'commandcode', 'zhipu', 'openai', 'gemini', 'anthropic', 'moonshot', 'minimax', 'qwen', 'xiaomi', 'openrouter', 'ollama',
 ] as const;
-
-/**
- * Returns all supported LLM provider keys for the Model settings page.
- * No language-based filtering; all providers are shown uniformly.
- */
-export const getVisibleProviders = (_language: 'zh' | 'en'): readonly string[] => {
-  return ALL_PROVIDER_KEYS;
-};
