@@ -929,3 +929,5 @@ blob-report/
 !tests/mePointsHistory.test.mjs
 # Settings > Models provider template catalog (ZCode port) + layout anchors
 !tests/providerTemplateCatalog.test.ts
+# ME subscription checkout backend requirements (assist-base-service)
+!docs/me-subscription-checkout-backend-requirements.md

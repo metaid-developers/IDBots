@@ -1,0 +1,140 @@
+# Backend Requirements — ME Subscription Checkout and Plan Catalog (assist-base-service)
+
+## Status
+
+Draft v0.1 for backend development, 2026-11-07. Requested by the IDBots desktop team as the blocking dependency of the Settings > Models > ID.Bots Subscription checkout. Target project: `assist-base-service` (the ME service behind `/v1/me/*`).
+
+This document is a requirements contract, not an implementation spec. The client side already ships against the S9-A contract (`src/main/services/mePointsService.ts`, `src/renderer/components/me/MePurchaseFlow.tsx`, pinned by `tests/meSubscriptionOrder.test.mjs`); what is missing is server-side deployment, not client work.
+
+## 1. Background and problem
+
+The desktop purchase panel (upgrade / renew) is fully wired: the user picks a plan and period, picks Alipay or PayPal, and the client POSTs a signed order, opens the returned approval URL or shows the QR, then polls order status until the payment is credited — exactly the flow already live for ME top-up (`/v1/me/topup/orders`).
+
+Today clicking "前往支付" fails with `支付订单处理失败：ME service returned invalid JSON (HTTP 404)`. Root cause: `POST /v1/me/subscription/order` is not implemented on the server, and the server answers with an HTML 404 page instead of the JSON envelope, which the client reports as "invalid JSON". The plan catalog likewise lacks the free tier and (in part) the discount fields the panel's price display reads.
+
+Goal: make subscription checkout work end to end, reusing the existing top-up payment-gateway integration, and complete the plan catalog.
+
+Non-goals: the manual voucher channel (S9 §5) is unchanged; no new auth model (signed identity headers as today); the client never sends prices and the server must continue to price every order itself.
+
+## 2. R1 — Plan catalog (`GET /v1/me/plans`)
+
+### R1.1 ID.Free tier entry
+
+Add the free tier to the catalog (or confirm it is intentionally client-side; the server entry is preferred as the single source of truth):
+
+| Field | Value |
+|---|---|
+| `tier` | `free` |
+| `name` | `ID.Free`（`nameEn: "ID.Free"`） |
+| `priceCny` | `0` |
+| `weeklyAmountMilli` | `2000000`（= 2000 ME/周） |
+| `saleStatus` | `1`（可见） |
+
+The client renders a local fallback with exactly these values when the entry is absent, so this is a data-completion requirement, not a display blocker. **A free-tier planId must never be orderable** — see R2.4.
+
+### R1.2 Discount fields for paid plans
+
+The panel renders a product-style price tag (current price + struck-through original + discount badge + per-month equivalent) from these per-plan fields:
+
+| Field | Meaning | Example |
+|---|---|---|
+| `desktopPriceCny` / `priceCny` | Monthly price in CNY (desktop price wins when both exist) | `100` |
+| `quarterlyDiscountPct` | Percent of the full quarterly price (monthly × 3) actually charged; `90` = pay 90%. Absent/`0`/`100` = no discount | `90` |
+| `annualPriceCny` | Absolute annual price in CNY; compared against monthly × 12 | `960` |
+| `weeklyAmountMilli` | Weekly ME grant in milliME | `5000000` |
+
+The client computes: quarter price = `round(monthly × 3 × pct / 100)` with original `monthly × 3`; year price = `annualPriceCny` with original `monthly × 12`; the original price is only shown when it is strictly greater. Server-side order pricing (R2) must use the same arithmetic so the amount the user saw matches the amount charged.
+
+## 3. R2 — Create subscription order (`POST /v1/me/subscription/order`)
+
+Contract already shipped by the client (S9-A §1.6); implement to match exactly.
+
+### Request
+
+Signed identity headers as today: `X-Identity-Address`, `X-Timestamp` (ms), `X-Signature` over `me:subscription_order:<timestamp>`.
+
+```json
+{
+  "planId": "me_standard",
+  "period": "month | quarter | year",
+  "channel": "desktop | cloud | mobile",
+  "gateway": "alipay | paypal",
+  "idempotencyKey": "desktop-subscribe-me_standard-month-1730…"
+}
+```
+
+The client sends **no amount**. The server prices the order from `planId` + `period` + `channel` (S9-A §1.3) using R1.2 arithmetic, and must reject any client-supplied amount field rather than trust it.
+
+### Response
+
+Standard `{code, message, data}` envelope; `code: 0` with:
+
+```json
+{
+  "orderId": "…",
+  "planId": "me_standard",
+  "period": "quarter",
+  "channel": "desktop",
+  "status": "created",
+  "amountCny": 270,
+  "payAmount": 270,
+  "payCurrency": "CNY",
+  "gatewayParams": { "…": "…" },
+  "createdAt": 1762500000000
+}
+```
+
+### gatewayParams (R2.1)
+
+The client checkout extracts, in this key order:
+
+- approval URL: `approvalUrl`, `approval_url`, `approveLink`, `approve_url`, `paymentUrl`, `payment_url`
+- QR content: `qrCode`, `qr_code`, `qrCodeContent`, `codeUrl`, `code_url`
+
+`gateway: "alipay"` → provide `qrCode`/`code_url` (native QR string or https URL; the client renders https URLs as both QR and a reopen link) and/or a `paymentUrl`. `gateway: "paypal"` → provide the PayPal `approvalUrl`. At least one of the two must be present or the client treats the order as unusable.
+
+### R2.2 Idempotency and retries
+
+The client retries the POST once on transient network failure **with the same `idempotencyKey`**. The server must deduplicate: the same `(identity, idempotencyKey)` returns the original order instead of creating a second one.
+
+### R2.3 Gateway integration
+
+Reuse the existing top-up / traffic-recharge Alipay + PayPal integration (same merchants, same async callback pipeline). CNY is the pricing currency for every plan; for PayPal, charge the CNY-equivalent and report the settled `payAmount`/`payCurrency` back on the order.
+
+### R2.4 Free tier is not orderable
+
+A POST whose `planId` resolves to a `tier: "free"` plan must be rejected with the standard error envelope (suggest `errorCode: "PLAN_NOT_PURCHASABLE"`). The client hides the CTA for the free tier, but the server must enforce this independently.
+
+## 4. R3 — Order status polling (`GET /v1/me/subscription/order/{orderId}`)
+
+Same signed auth. Returns the same order view as R2. The client maps `status` to a payment phase:
+
+| Client phase | Accepted statuses |
+|---|---|
+| credited (stop polling, refresh subscription) | `confirmed`, `credited`, `active`, `completed`, `3` |
+| closed (terminal) | `closed`, `rejected`, `expired`, `cancelled`, `canceled`, `failed`, `4` |
+| pending (keep polling) | anything else (`created`, `submitted`, `paid`, …) |
+
+Only the confirmed-payment path opens the subscription (spec §2) — a created/paid order must not grant quota early.
+
+## 5. R4 — Error semantics
+
+- Non-2xx responses must return the standard **JSON** envelope (`{code, message, data}`), never an HTML error page. HTML bodies surface to users as "ME service returned invalid JSON (HTTP 404)", which hides the real cause.
+- "Feature not deployed / not configured" should map to HTTP 404 **with** a JSON envelope carrying a machine-readable `data.errorCode`, matching the existing convention (e.g. `SUBSCRIPTION_REQUIRED`); the client already special-cases known codes and shows a generic localized message otherwise.
+- Order pricing/validation failures (unknown planId, inactive plan, bad period) → 400 + `errorCode`.
+
+## 6. Acceptance checklist
+
+1. `GET /v1/me/plans` returns ID.Free (tier `free`, weekly 2000 ME) plus paid plans carrying `quarterlyDiscountPct` / `annualPriceCny` where discounts apply.
+2. Desktop: upgrade panel → pick ID.Pupil → 季付 → the tag shows the discounted price, the struck-through original and the discount badge; 前往支付 with Alipay returns an order whose `gatewayParams.qrCode` renders a scannable QR; with PayPal returns an `approvalUrl` that opens the PayPal checkout.
+3. After paying, the 4s poller observes `status` transition to a credited value and the subscription activates without a second confirmation step for the user.
+4. Replaying the same `idempotencyKey` never creates a second order.
+5. POST with a free-tier `planId` is rejected with a JSON error envelope.
+6. `POST /v1/me/subscription/order` before gateway configuration exists returns a JSON 4xx/5xx (not an HTML page).
+
+## 7. Client reference (IDBots repo, for contract cross-checking)
+
+- `src/main/services/mePointsService.ts` — endpoint constants (`ME_SUBSCRIPTION_ORDER_PATH = '/v1/me/subscription/order'`), signing, normalization, "invalid JSON" error origin.
+- `src/renderer/components/me/MePurchaseFlow.tsx` — panel UX: plan cards (ID.Free + 3 paid tiers), period + gateway selectors, price tag with original/discount, QR/approval-URL checkout, 4s polling for 10 minutes.
+- `src/renderer/components/me/mePayment.ts` — `gatewayParams` extractors, status→phase mapping, period-pricing arithmetic (must stay in sync with server pricing).
+- `tests/meSubscriptionOrder.test.mjs`, `tests/meDesktopPayment.test.ts` — contract pins.
