@@ -22,6 +22,7 @@ process.env.IDBOTS_METASO_API_BASE && delete process.env.IDBOTS_METASO_API_BASE;
 
 const PINID = `${'ab'.repeat(32)}i0`;
 const DESC_PINID = `${'cd'.repeat(32)}i0`;
+const OTHER_DESC_PINID = `${'ef'.repeat(32)}i0`;
 const BOT_ADDRESS = '1SessionBotAddress1234';
 const OTHER_ADDRESS = '1OtherBotAddress5678';
 
@@ -189,21 +190,46 @@ test('registers the R6 mrc721_* tools, including atomic-swap trade', () => {
   }
 });
 
-test('mrc721_collection_create refuses a taken name before any write', async () => {
+test('mrc721_collection_create refuses the session bot\'s own duplicate registration before any write', async () => {
   const { calls, byName } = makeHarness();
   const result = await withFetchStub(
-    async () => jsonResponse({ code: 1, data: { collectionName: 'pixel-cats', pinid: DESC_PINID, createAddress: '1Issuer' } }),
+    manapiDispatch([
+      ['/api/mrc721/collection/search', () => jsonResponse({ code: 1, data: { list: [collectionRow()], total: 1 } })],
+    ]),
     () => byName.mrc721_collection_create.handler({ collection_name: 'pixel-cats', wait_ms: 0 }),
   );
   assert.equal(result.isError, true);
-  assert.match(result.content[0].text, /already registered/);
+  assert.match(result.content[0].text, /already issued by this MetaBot/);
+  assert.match(result.content[0].text, /registers once/);
+  assert.match(result.content[0].text, /mrc721_mint|mrc721_collection_update/);
   assert.equal(calls.collectionCreate.length, 0);
 });
 
-test('mrc721_collection_create broadcasts on a miss and renders the receipt', async () => {
+test('mrc721_collection_create proceeds against a foreign same-name album with a shared-name note', async () => {
+  const { calls, byName } = makeHarness();
+  const foreignRow = collectionRow({ pinid: OTHER_DESC_PINID, createAddress: OTHER_ADDRESS, createMetaId: 'idforeignbot' });
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/collection/search', (raw) => {
+        if (String(raw).includes('issuer=')) return jsonResponse({ code: 1, data: { list: [], total: 0 } });
+        return jsonResponse({ code: 1, data: { list: [foreignRow], total: 1 } });
+      }],
+    ]),
+    () => byName.mrc721_collection_create.handler({ collection_name: 'pixel-cats', wait_ms: 0 }),
+  );
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, /shared with an independent album/);
+  assert.match(result.content[0].text, /distinguished by collectionid/);
+  assert.match(result.content[0].text, new RegExp(OTHER_DESC_PINID));
+  assert.equal(calls.collectionCreate.length, 1);
+});
+
+test('mrc721_collection_create broadcasts on a free name and renders the receipt', async () => {
   const { calls, byName } = makeHarness();
   const result = await withFetchStub(
-    async () => jsonResponse({ code: 0, message: 'not found' }),
+    manapiDispatch([
+      ['/api/mrc721/collection/search', () => jsonResponse({ code: 1, data: { list: [], total: 0 } })],
+    ]),
     () => byName.mrc721_collection_create.handler({
       collection_name: 'pixel-cats',
       total_supply: 100,
@@ -214,6 +240,7 @@ test('mrc721_collection_create broadcasts on a miss and renders the receipt', as
   assert.equal(result.isError, undefined);
   assert.match(result.content[0].text, /collection_desc pin broadcast/);
   assert.match(result.content[0].text, new RegExp(DESC_PINID));
+  assert.doesNotMatch(result.content[0].text, /shared with an independent album/);
   assert.equal(calls.collectionCreate.length, 1);
   assert.deepEqual(
     { ...calls.collectionCreate[0], metadata: undefined },
@@ -230,6 +257,17 @@ test('mrc721_collection_create broadcasts on a miss and renders the receipt', as
       network: 'mvc',
     },
   );
+});
+
+test('mrc721_collection_create proceeds with a warning when the precheck search is unavailable', async () => {
+  const { calls, byName } = makeHarness();
+  const result = await withFetchStub(
+    async () => { throw new Error('connection refused'); },
+    () => byName.mrc721_collection_create.handler({ collection_name: 'pixel-cats', wait_ms: 0 }),
+  );
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, /precheck unavailable/);
+  assert.equal(calls.collectionCreate.length, 1);
 });
 
 test('mrc721_collection_create validates collection_name locally', async () => {
@@ -301,29 +339,77 @@ test('mrc721_collection_info shows the modify history when the indexer provides 
   assert.match(text, /modify history \(2\): modifypin1i0, modifypin2i0/);
 });
 
-test('mrc721_mint refuses an exhausted collection and warns on unregistered ones', async () => {
+test('mrc721_mint refuses a foreign-issued collection before spending fees', async () => {
+  const { calls, byName } = makeHarness();
+  const foreignRow = collectionRow({ pinid: OTHER_DESC_PINID, createAddress: OTHER_ADDRESS, createMetaId: 'idforeignbot' });
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/collection/search', (raw) => {
+        if (String(raw).includes('issuer=')) return jsonResponse({ code: 1, data: { list: [], total: 0 } });
+        return jsonResponse({ code: 1, data: { list: [foreignRow], total: 1 } });
+      }],
+    ]),
+    () => byName.mrc721_mint.handler({ collection_name: 'pixel-cats', wait_ms: 0 }),
+  );
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /issued by another issuer/);
+  assert.match(result.content[0].text, /never collected/);
+  assert.match(result.content[0].text, /mrc721_transfer/);
+  assert.equal(calls.mint.length, 0);
+});
+
+test('mrc721_mint reads the supply precheck from the session bot\'s own album row', async () => {
   const { calls, byName } = makeHarness();
   const exhausted = await withFetchStub(
-    async () => jsonResponse({ code: 1, data: { collectionName: 'pixel-cats', totalSupply: 10, totalnum: 10, pinid: DESC_PINID } }),
+    manapiDispatch([
+      ['/api/mrc721/collection/search', () => jsonResponse({
+        code: 1,
+        data: { list: [collectionRow({ totalnum: 10, mintedCount: 10, totalSupply: 10 })], total: 1 },
+      })],
+    ]),
     () => byName.mrc721_mint.handler({ collection_name: 'pixel-cats', wait_ms: 0 }),
   );
   assert.equal(exhausted.isError, true);
-  assert.match(exhausted.content[0].text, /exhausted/);
+  assert.match(exhausted.content[0].text, /exhausted \(10\/10 minted\)/);
   assert.equal(calls.mint.length, 0);
 
-  const unregistered = await withFetchStub(
-    async () => jsonResponse({ code: 0, message: 'not found' }),
+  const slotsLeft = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/collection/search', () => jsonResponse({
+        code: 1,
+        data: { list: [collectionRow({ totalnum: 3, mintedCount: 3, totalSupply: 10 })], total: 1 },
+      })],
+    ]),
     () => byName.mrc721_mint.handler({ collection_name: 'pixel-cats', wait_ms: 0 }),
   );
-  assert.equal(unregistered.isError, undefined);
-  assert.match(unregistered.content[0].text, /not indexed yet|confirmation wait skipped/);
+  assert.equal(slotsLeft.isError, undefined);
+  assert.equal(calls.mint.length, 1);
+});
+
+test('mrc721_mint warns with issuer-only wording when the name is not registered yet', async () => {
+  const { calls, byName } = makeHarness();
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/collection/search', () => jsonResponse({ code: 1, data: { list: [], total: 0 } })],
+    ]),
+    () => byName.mrc721_mint.handler({ collection_name: 'pixel-cats', wait_ms: 0 }),
+  );
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, /not indexed yet/);
+  assert.match(result.content[0].text, /once this MetaBot's collection under this name registers/);
+  assert.match(result.content[0].text, /never indexes/);
   assert.equal(calls.mint.length, 1);
 });
 
 test('mrc721_mint renders the item receipt with the item_desc pin', async () => {
   const { byName } = makeHarness();
   const result = await withFetchStub(
-    async () => jsonResponse({ code: 1, data: { collectionName: 'pixel-cats', totalSupply: -1, totalnum: 0, pinid: DESC_PINID } }),
+    manapiDispatch([
+      ['/api/mrc721/collection/search', () => jsonResponse({
+        code: 1,
+        data: { list: [collectionRow({ totalnum: 0, mintedCount: 0, totalSupply: -1 })], total: 1 },
+      })],
+    ]),
     () => byName.mrc721_mint.handler({
       collection_name: 'pixel-cats',
       item_path: 'nft-01',
@@ -484,8 +570,20 @@ test('formatMrc721* helpers render receipts and sheets', () => {
     confirmation: { hit: null },
     waitMs: 30000,
   });
-  assert.match(createReceipt, /first-registration-wins/);
   assert.match(createReceipt, /mrc721_collection_info/);
+  assert.match(createReceipt, /mrc721_search_collections/);
+  assert.doesNotMatch(createReceipt, /first-registration-wins/i);
+
+  const sharedReceipt = formatMrc721CollectionCreateResult({
+    collectionName: 'pixel-cats',
+    pinId: DESC_PINID,
+    txids: ['tx1'],
+    totalCost: 500,
+    confirmation: { hit: null },
+    waitMs: 30000,
+    sharedNameNote: 'the name "pixel-cats" is shared with an independent album (collectionid abc…i0, issuer 1Other)',
+  });
+  assert.match(sharedReceipt, /- note: the name "pixel-cats" is shared with an independent album/);
 
   const mintReceipt = formatMrc721MintResult({
     collectionName: 'pixel-cats',
@@ -512,7 +610,7 @@ test('formatMrc721* helpers render receipts and sheets', () => {
     verify: { collected: true, creatorMinted: false },
     transfers: [],
   });
-  assert.match(detail, /third-party mint/);
+  assert.match(detail, /not indexed under issuer-only rules/);
   assert.match(detail, /no transfers recorded yet/);
 
   const items = formatMrc721Items([
@@ -628,7 +726,7 @@ test('mrc721_verify_holding returns HOLDS with the item list for a live holding'
   const { byName } = makeHarness();
   const result = await withFetchStub(
     manapiDispatch([
-      ['/api/mrc721/collection/info', () => jsonResponse({ code: 1, data: collectionRow() })],
+      ['/api/mrc721/collection/search', () => jsonResponse({ code: 1, data: { list: [collectionRow()], total: 1 } })],
       ['/api/mrc721/address/item', () => jsonResponse({ code: 1, data: { list: [holderItem()] } })],
     ]),
     () => byName.mrc721_verify_holding.handler({ names: ['AI_Sunny'], collection_name: 'pixel-cats' }),
@@ -644,7 +742,7 @@ test('mrc721_verify_holding returns NOT_HOLDING for an empty live holder view', 
   const { byName } = makeHarness();
   const result = await withFetchStub(
     manapiDispatch([
-      ['/api/mrc721/collection/info', () => jsonResponse({ code: 1, data: collectionRow() })],
+      ['/api/mrc721/collection/search', () => jsonResponse({ code: 1, data: { list: [collectionRow()], total: 1 } })],
       ['/api/mrc721/address/item', () => jsonResponse({ code: 1, data: { list: [holderItem({ burned: true })] } })],
     ]),
     () => byName.mrc721_verify_holding.handler({ address: OTHER_ADDRESS, collection_name: 'pixel-cats' }),
@@ -653,10 +751,36 @@ test('mrc721_verify_holding returns NOT_HOLDING for an empty live holder view', 
   assert.match(result.content[0].text, /verdict: NOT_HOLDING/);
 });
 
+test('mrc721_verify_holding refuses an ambiguous name and lists the candidate collectionids', async () => {
+  const { calls, byName } = makeHarness();
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/collection/search', () => jsonResponse({
+        code: 1,
+        data: {
+          list: [collectionRow(), collectionRow({ pinid: OTHER_DESC_PINID, createAddress: OTHER_ADDRESS })],
+          total: 2,
+        },
+      })],
+    ]),
+    () => byName.mrc721_verify_holding.handler({ names: ['AI_Sunny'], collection_name: 'pixel-cats' }),
+  );
+  // Distinguishable from NOT_HOLDING on purpose: the gate must not read an
+  // ambiguous name as "no badge".
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, /lookup failed/);
+  assert.match(result.content[0].text, /ambiguous/);
+  assert.match(result.content[0].text, new RegExp(DESC_PINID));
+  assert.match(result.content[0].text, new RegExp(OTHER_DESC_PINID));
+  assert.match(result.content[0].text, /collectionPinId/);
+  assert.doesNotMatch(result.content[0].text, /NOT_HOLDING/);
+});
+
 test('mrc721_verify_holding reports an unindexed collection as a lookup failure, never as NOT_HOLDING', async () => {
   const { byName } = makeHarness();
   const result = await withFetchStub(
     manapiDispatch([
+      ['/api/mrc721/collection/search', () => jsonResponse({ code: 1, data: { list: [], total: 0 } })],
       ['/api/mrc721/collection/info', () => jsonResponse({ code: 0, message: 'not found' })],
     ]),
     () => byName.mrc721_verify_holding.handler({ names: ['AI_Sunny'], collection_name: 'ghost-cats' }),
@@ -1021,5 +1145,31 @@ test('mrc721_search_collections serves supply state from MetaSo rows without ite
     assert.ok(!seen.some((url) => url.includes('items/pageList')), 'server rows must remove the need for per-collection item paging');
   } finally {
     delete process.env.IDBOTS_METASO_API_BASE;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Issuer-only protocol revision (2026-11-07): acceptance §6.4 string audit —
+// no pre-revision minting semantics survive in the agent-facing surface.
+// ---------------------------------------------------------------------------
+
+test('no pre-revision minting semantics survive in the mrc721 surface copy', async () => {
+  const { readFileSync } = await import('node:fs');
+  const sources = [
+    new URL('../dist-electron/main/libs/mrc721AgentTools.js', import.meta.url),
+    new URL('../dist-electron/main/services/mrc721Service.js', import.meta.url),
+  ];
+  const banned = [
+    /first registration wins globally/i,
+    /first-registration-wins/i,
+    /open minting/i,
+    /any create pin under the collection mints/i,
+    /globally unique/i,
+  ];
+  for (const file of sources) {
+    const text = readFileSync(file, 'utf8');
+    for (const pattern of banned) {
+      assert.doesNotMatch(text, pattern, `${file.pathname} must not carry pre-revision wording (${pattern})`);
+    }
   }
 });

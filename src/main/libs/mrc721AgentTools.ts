@@ -15,6 +15,7 @@ import {
   fetchMrc721ItemVerify,
   isMvcAddress,
   MRC721_MIN_SELL_PRICE_SATS,
+  scanMrc721CollectionNameForIssuer,
   searchMrc721Collections,
   validateMrc721CollectionName,
   verifyMrc721Holding,
@@ -65,7 +66,7 @@ export type Mrc721ToolsControl = {
    */
   fetchItemInfo?(pinId: string): Promise<Mrc721ItemSummary | null>;
   fetchCollectionInfo?(input: { name?: string; pinId?: string }): Promise<Mrc721CollectionSummary | null>;
-  /** R1: broadcast the collection_desc pin (first registration wins). */
+  /** R1: broadcast the collection_desc pin (registers the (collection_name, issuer) album). */
   collectionCreate(input: {
     metabotId: number;
     collectionName: string;
@@ -333,14 +334,14 @@ export function formatMrc721ItemDetail(input: {
     const collected = verify.collected !== false;
     const official = verify.creatorMinted ?? item.creatorMinted;
     lines.push(`- authenticity: ${collected ? 'indexed (collected)' : 'NOT collected by the indexer'}`
-      + ` · ${official ? 'OFFICIAL mint (creator-minted)' : 'third-party mint (open minting)'}`);
+      + ` · ${official ? 'OFFICIAL mint (creator-minted)' : 'not indexed under issuer-only rules (pre-revision / upstream source)'}`);
     if (verify.collectionid || verify.collectionPinId) {
       lines.push(`  - collectionid: ${verify.collectionid || verify.collectionPinId}`);
     }
   } else if (input.verifyError) {
     lines.push(`- authenticity: unavailable (${input.verifyError})`);
   } else {
-    lines.push(`- authenticity: ${item.creatorMinted ? 'OFFICIAL mint (creator-minted)' : 'third-party mint (open minting)'} (from item/info)`);
+    lines.push(`- authenticity: ${item.creatorMinted ? 'OFFICIAL mint (creator-minted)' : 'not indexed under issuer-only rules (pre-revision / upstream source)'} (from item/info)`);
   }
 
   if (input.transfers) {
@@ -361,10 +362,13 @@ export function formatMrc721CollectionCreateResult(input: {
   confirmation: { hit: Mrc721CollectionSummary | null; lastError?: string };
   waitMs: number;
   precheckWarning?: string;
+  /** R1.2: the name is shared with an independent album — informational only. */
+  sharedNameNote?: string;
 }): string {
   const lines: string[] = [];
   lines.push(`Collection "${input.collectionName}" issued — collection_desc pin broadcast on-chain.`);
   if (input.precheckWarning) lines.push(`- precheck: ${input.precheckWarning}`);
+  if (input.sharedNameNote) lines.push(`- note: ${input.sharedNameNote}`);
   lines.push(`- collectionid (collection_desc pinId): ${input.pinId}`);
   if (input.txids.length) lines.push(`- txids: ${input.txids.join(', ')}`);
   lines.push(`- cost: ${input.totalCost} sats`);
@@ -379,8 +383,8 @@ export function formatMrc721CollectionCreateResult(input: {
       : 'confirmation wait skipped';
     lines.push(
       `- index confirmation: ${waited}${reason} — the pin may still be `
-      + 'confirming. Verify with mrc721_collection_info before minting; if it never appears, the name was likely '
-      + 'registered first (first-registration-wins).',
+      + 'confirming. Verify with mrc721_collection_info before minting; a registered album always appears '
+      + 'once its pin confirms — self-check with mrc721_search_collections (issuer = this bot) if it does not.',
     );
   }
   lines.push(`- view link: ${markdownSelfLink(`pin://${input.pinId}`)}`);
@@ -441,8 +445,9 @@ export function formatMrc721MintResult(input: {
       : 'confirmation wait skipped';
     lines.push(
       `- index confirmation: ${waited}${reason} — the pin may still be `
-      + 'confirming. Verify with mrc721_item_info; if the collection itself is not yet indexed, this mint stays '
-      + 'pending until the collection registers.',
+      + 'confirming. Verify with mrc721_item_info; if the collection is not yet indexed, this mint stays '
+      + 'pending until YOUR collection under this name registers (issuer-only minting) — '
+      + 'if that collection never registers, the mint never indexes.',
     );
   }
   lines.push(`- view link: ${markdownSelfLink(`pin://${input.pinId}`)}`);
@@ -602,11 +607,16 @@ async function loadMrc721CollectionForCard(
 /** Collection issuer address for the card's issuer chip — best-effort. */
 async function loadMrc721IssuerAddress(
   control: Mrc721ToolsControl,
-  collectionName: string | undefined,
+  collectionName?: string,
+  collectionPinId?: string,
 ): Promise<string | undefined> {
+  const pinId = asString(collectionPinId) || undefined;
   const name = asString(collectionName);
-  if (!name) return undefined;
-  const { collection } = await loadMrc721CollectionForCard(control, { name });
+  if (!pinId && !name) return undefined;
+  // Prefer the collectionid: names are not unique under the issuer-only
+  // revision, so a name resolve may hit the earliest — possibly foreign —
+  // album instead of the item's own album.
+  const { collection } = await loadMrc721CollectionForCard(control, pinId ? { pinId } : { name });
   return collection?.createAddress || undefined;
 }
 
@@ -638,12 +648,12 @@ export function buildMrc721AgentTools(deps: {
     'mrc721_collection_create',
     [
       'Issue (register) an MRC-721 collection (MetaID native, pin-based NFT) as THIS session MetaBot — NOT the MetaContract wallet_nft_* line.',
-      'Broadcasts the collection_desc pin at /nft/mrc721/{collection_name}/collection_desc; the FIRST registration of a collection_name wins globally (cross-chain namespace). Prechecks the indexer first: a taken name is refused.',
+      'Broadcasts the collection_desc pin at /nft/mrc721/{collection_name}/collection_desc. Album identity is the collectionid (= the collection_desc pinId); collection names are NOT unique — a (collection_name, issuer) pair registers once, and another issuer\'s same-name album is an independent album. Prechecks the indexer first: a duplicate registration by THIS MetaBot is refused; a foreign same-name album is allowed with a note.',
       'collection_name: lowercase [a-z0-9-] (no "/"); total_supply: -1 = unlimited (default); royalty_rate: 0-20% (default 0); cover: a metafile pinId (64-hex…i0) or metafile:// URI — upload the artwork first (metabot-upload-file) to get it.',
-      'Waits for indexer confirmation (indexing latency = pin confirmation latency) and returns the collectionid (= collection_desc pinId). On-chain write with fees.',
+      'Waits for indexer confirmation (indexing latency = pin confirmation latency) and returns the collectionid. On-chain write with fees.',
     ].join(' '),
     {
-      collection_name: z.string().min(1).describe('Collection namespace name: lowercase [a-z0-9-], no "/", globally unique — first registration wins.'),
+      collection_name: z.string().min(1).describe('Collection namespace name: lowercase [a-z0-9-], no "/". Names are not unique — an album is identified by its collectionid and owned by its issuer; the same issuer may register a given name once.'),
       name: z.string().optional().describe('Display name of the collection (defaults to collection_name).'),
       total_supply: z.number().int().optional().describe('Max items, integer in [-1, 1e12]; -1 or omitted = unlimited.'),
       royalty_rate: z.number().int().min(0).max(20).optional().describe('Royalty percentage [0, 20]; default 0.'),
@@ -678,20 +688,36 @@ export function buildMrc721AgentTools(deps: {
         return textResult('mrc721_collection_create: BTC-side writes are not supported in this version — use network mvc.', true);
       }
 
-      // Precheck: is the name already registered? (first-registration-wins)
+      // Issuer-only precheck: names are not unique — refuse only THIS
+      // MetaBot's own duplicate registration; foreign same-name albums are
+      // independent and allowed (the receipt carries a shared-name note).
       let precheckWarning: string | undefined;
-      try {
-        const existing = await fetchMrc721CollectionInfo({ name: collectionName });
-        if (existing) {
-          return textResult(
-            `mrc721_collection_create: collection_name "${collectionName}" is already registered `
-            + `(collectionid ${existing.pinid || '?'}, issuer ${existing.createMetaId || existing.createAddress || '?'}). `
-            + 'First registration wins globally — pick another collection_name, or mint into it with mrc721_mint.',
-            true,
-          );
+      let sharedNameNote: string | undefined;
+      const sessionAddress = control.getMetabotMvcAddress(owner) || '';
+      if (sessionAddress) {
+        try {
+          const scan = await scanMrc721CollectionNameForIssuer({ issuerAddress: sessionAddress, collectionName });
+          if (scan.own) {
+            return textResult(
+              `mrc721_collection_create: collection_name "${collectionName}" is already issued by this MetaBot `
+              + `(collectionid ${scan.own.pinid || '?'}) — a (collection_name, issuer) pair registers once. `
+              + 'Mint into it with mrc721_mint, or modify it with mrc721_collection_update.',
+              true,
+            );
+          }
+          if (scan.foreign.length) {
+            const row = scan.foreign[0];
+            sharedNameNote = `the name "${collectionName}" is shared with an independent album (collectionid `
+              + `${row.pinid || '?'}, issuer ${row.createMetaId || row.createAddress || '?'}) — albums are `
+              + 'distinguished by collectionid, and only this MetaBot\'s mints are collected into its own album.';
+          }
+        } catch (error) {
+          precheckWarning = `indexer precheck unavailable (${errorMessage(error)}) — proceeding; the pin is `
+            + 'authoritative — one album per (collection_name, issuer) pair, and a duplicate registration by the '
+            + 'same issuer is ignored by the indexer (the fee is still spent).';
         }
-      } catch (error) {
-        precheckWarning = `indexer precheck unavailable (${errorMessage(error)}) — proceeding; the pin is authoritative and first-registration-wins.`;
+      } else {
+        precheckWarning = 'indexer precheck skipped (the session MetaBot has no MVC address yet) — proceeding.';
       }
 
       try {
@@ -708,8 +734,11 @@ export function buildMrc721AgentTools(deps: {
           network: 'mvc',
         });
         const waitMs = args.wait_ms == null ? MRC721_POLL_DEFAULT_MS : clampPollWaitMs(args.wait_ms);
+        // Poll by collectionid, not by name: names are not unique, so a
+        // name-based poll could confirm against a foreign same-name album
+        // that registered earlier.
         const confirmation = waitMs > 0
-          ? await waitForMrc721CollectionInfo({ name: collectionName, timeoutMs: waitMs })
+          ? await waitForMrc721CollectionInfo({ pinId: result.pinId, timeoutMs: waitMs })
           : { hit: null };
         return textResult(formatMrc721CollectionCreateResult({
           collectionName: result.collectionName,
@@ -720,6 +749,7 @@ export function buildMrc721AgentTools(deps: {
           confirmation,
           waitMs,
           precheckWarning,
+          sharedNameNote,
         }));
       } catch (error) {
         return textResult(`mrc721_collection_create failed: ${errorMessage(error)}${chainWriteFailureDetail(error)}`, true);
@@ -809,12 +839,12 @@ export function buildMrc721AgentTools(deps: {
     'mrc721_mint',
     [
       'Mint ONE MRC-721 NFT item into a collection as THIS session MetaBot (pin-based MetaID NFT — NOT the MetaContract wallet_nft_* line).',
-      'Broadcasts an item create pin at /nft/mrc721/{collection_name}/{item_path} (any create pin under the collection mints); optional name/desc/cover/metadata ride a follow-up item_desc pin referencing the mint pinId (display info is derived from item_desc only).',
-      'Open minting: anyone may mint into any registered collection until total_supply is reached; items minted by the collection issuer show the OFFICIAL badge. The indexer precheck refuses mints into an exhausted collection.',
+      'Broadcasts an item create pin at /nft/mrc721/{collection_name}/{item_path} (issuer-only minting: only the collection issuer\'s create pins are collected); optional name/desc/cover/metadata ride a follow-up item_desc pin referencing the mint pinId (display info is derived from item_desc only).',
+      'The target collection must be issued by THIS session MetaBot (or not yet registered — mint-before-register is legitimate for the future issuer). Mints into another issuer\'s collection broadcast but are NEVER collected — the precheck refuses them to save the fees. The precheck also refuses mints into an exhausted collection.',
       'Returns the item pinId (the NFT identifier — transfers use it). On-chain write with fees.',
     ].join(' '),
     {
-      collection_name: z.string().min(1).describe('Target collection namespace (must be registered; see mrc721_collections / mrc721_collection_info).'),
+      collection_name: z.string().min(1).describe('Target collection namespace — must be issued by this session MetaBot under issuer-only minting (or not yet registered; see mrc721_collections / mrc721_collection_info).'),
       item_path: z.string().optional().describe('Item path segment, lowercase [a-z0-9._-], not collection_desc/item_desc; auto-generated when omitted.'),
       name: z.string().optional().describe('Item display name (rides the item_desc pin).'),
       desc: z.string().optional().describe('Item description (rides the item_desc pin).'),
@@ -845,25 +875,48 @@ export function buildMrc721AgentTools(deps: {
         return textResult('mrc721_mint: BTC-side writes are not supported in this version — use network mvc.', true);
       }
 
+      // Issuer-only precheck: resolve the session bot's OWN album under the
+      // name. Foreign same-name albums refuse (the pin would broadcast, spend
+      // fees, and never be collected); a free name proceeds as the future
+      // issuer's mint-before-register.
       let precheckWarning: string | undefined;
       let precheckIssuerAddress: string | undefined;
-      const precheck = await loadMrc721CollectionForCard(control, { name: collectionName });
-      if (precheck.error) {
-        precheckWarning = `indexer precheck unavailable (${precheck.error}) — proceeding; supply is enforced by the indexer at ingest.`;
-      } else if (!precheck.collection) {
-        precheckWarning = `collection "${collectionName}" is not indexed yet — the mint still lands on-chain, but it only gets collected `
-          + 'after the collection registers. If the collection was never issued, this mint will never index (fee wasted).';
-      } else {
-        precheckIssuerAddress = precheck.collection.createAddress || undefined;
-        const collection = precheck.collection;
-        if (collection.totalSupply != null && collection.totalSupply >= 0
-          && (collection.totalnum ?? 0) >= collection.totalSupply) {
-          return textResult(
-            `mrc721_mint: collection "${collectionName}" is exhausted (${collection.totalnum}/${collection.totalSupply} minted) — `
-            + 'the indexer rejects mints beyond total_supply.',
-            true,
-          );
+      const sessionAddress = control.getMetabotMvcAddress(owner) || '';
+      if (sessionAddress) {
+        try {
+          const scan = await scanMrc721CollectionNameForIssuer({ issuerAddress: sessionAddress, collectionName });
+          if (scan.own) {
+            // Supply precheck runs against the session bot's OWN album row —
+            // the earliest same-name album may belong to someone else and
+            // carry different numbers.
+            precheckIssuerAddress = scan.own.createAddress || sessionAddress;
+            const row = scan.own;
+            const minted = Number.isFinite(Number(row.mintedCount)) ? Number(row.mintedCount) : (row.totalnum ?? 0);
+            if (row.totalSupply != null && row.totalSupply >= 0 && minted >= row.totalSupply) {
+              return textResult(
+                `mrc721_mint: collection "${collectionName}" is exhausted (${minted}/${row.totalSupply} minted) — `
+                + 'the indexer rejects mints beyond total_supply.',
+                true,
+              );
+            }
+          } else if (scan.foreign.length) {
+            const row = scan.foreign[0];
+            return textResult(
+              `mrc721_mint: collection "${collectionName}" is issued by another issuer (${row.createMetaId || row.createAddress || '?'}) `
+              + '— under issuer-only minting, mints by other addresses are never collected. '
+              + 'Transfer an existing item instead (mrc721_transfer / marketplace), or issue your own album under a different name.',
+              true,
+            );
+          } else {
+            precheckWarning = `collection "${collectionName}" is not indexed yet — the mint still lands on-chain, and it is collected `
+              + 'once this MetaBot\'s collection under this name registers (issuer-only minting); '
+              + 'if that collection never registers, the mint never indexes.';
+          }
+        } catch (error) {
+          precheckWarning = `indexer precheck unavailable (${errorMessage(error)}) — proceeding; supply is enforced by the indexer at ingest.`;
         }
+      } else {
+        precheckWarning = 'indexer precheck skipped (the session MetaBot has no MVC address yet) — proceeding.';
       }
 
       try {
@@ -962,7 +1015,7 @@ export function buildMrc721AgentTools(deps: {
           pinId,
           facts: {
             item: snapshot,
-            issuerAddress: await loadMrc721IssuerAddress(control, snapshot?.collectionName),
+            issuerAddress: await loadMrc721IssuerAddress(control, snapshot?.collectionName, snapshot?.collectionPinId),
           },
           owner: target.address || undefined,
           ownerLabel: 'name' in target ? target.name : undefined,
@@ -993,7 +1046,7 @@ export function buildMrc721AgentTools(deps: {
       names: z.array(z.string()).optional().describe('Local MetaBot names to resolve and query, e.g. ["AI_Sunny"].'),
       address: z.string().optional().describe('Explicit address to query (MVC or BTC; used as-is).'),
       metaid: z.string().optional().describe('64-hex MetaID to query — resolved to its holder address via the user-info indexer (external users).'),
-      collection_name: z.string().optional().describe('Filter to one collection by name (resolved via the indexer).'),
+      collection_name: z.string().optional().describe('Filter to one collection by name (resolved via the indexer; names are not unique — prefer collection_pinid when albums may share the name).'),
       collection_pinid: z.string().optional().describe('Filter to one collection by collectionid (the collection_desc pinId).'),
     },
     async (args: {
@@ -1186,12 +1239,13 @@ export function buildMrc721AgentTools(deps: {
     'mrc721_collection_info',
     [
       'Detail sheet for ONE MRC-721 collection (by name or collectionid) with its first page of items: registration facts (issuer, genesis, royalty, supply), mint progress, and the item list.',
+      'Names are not unique under the issuer-only revision: when several albums share a name, `name` resolves to the earliest — pass pin_id (the collectionid) to target a specific album.',
       'Use to verify a collection_create landed, to inspect supply before minting, or to browse what a collection contains.',
       'Read-only index data.',
     ].join(' '),
     {
-      name: z.string().optional().describe('Collection namespace name.'),
-      pin_id: z.string().optional().describe('Collectionid (the collection_desc pinId) — use when the name is unknown.'),
+      name: z.string().optional().describe('Collection namespace name (resolves to the earliest album when names are shared).'),
+      pin_id: z.string().optional().describe('Collectionid (the collection_desc pinId) — preferred when names may be shared or unknown.'),
       include_items: z.boolean().optional().describe('Include the first page of items (default true).'),
       size: z.number().int().positive().max(100).optional().describe('Item page size.'),
     },
@@ -1298,7 +1352,7 @@ export function buildMrc721AgentTools(deps: {
           pinId: result.itemPinId,
           facts: {
             item: snapshot,
-            issuerAddress: await loadMrc721IssuerAddress(control, snapshot?.collectionName),
+            issuerAddress: await loadMrc721IssuerAddress(control, snapshot?.collectionName, snapshot?.collectionPinId),
           },
           owner: control.getMetabotMvcAddress(owner) || undefined,
           priceSats: result.priceSats,
@@ -1342,7 +1396,7 @@ export function buildMrc721AgentTools(deps: {
           pinId: result.itemPinId,
           facts: {
             item: snapshot,
-            issuerAddress: await loadMrc721IssuerAddress(control, snapshot?.collectionName),
+            issuerAddress: await loadMrc721IssuerAddress(control, snapshot?.collectionName, snapshot?.collectionPinId),
           },
           owner: control.getMetabotMvcAddress(owner) || undefined,
           priceSats: result.priceSats,
@@ -1451,7 +1505,7 @@ export function buildMrc721AgentTools(deps: {
         });
         const cardFields = buildMrc721CardFields({
           pinId: result.intent.itemPinId,
-          facts: { item: snapshot, issuerAddress: await loadMrc721IssuerAddress(control, result.intent.collectionName) },
+          facts: { item: snapshot, issuerAddress: await loadMrc721IssuerAddress(control, result.intent.collectionName, snapshot?.collectionPinId) },
           owner: control.getMetabotMvcAddress(owner) || undefined,
           priceSats: result.intent.priceHintSats,
           action: 'selling',

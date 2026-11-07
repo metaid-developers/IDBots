@@ -23,6 +23,8 @@ const {
   transferMrc721Item,
   fetchMrc721CollectionInfo,
   fetchMrc721ItemInfo,
+  scanMrc721CollectionNameForIssuer,
+  verifyMrc721Holding,
   waitForMrc721CollectionInfo,
 } = await import('../dist-electron/main/services/mrc721Service.js');
 
@@ -268,10 +270,20 @@ test('updateMrc721Collection broadcasts an issuer-verified full-content modify p
   });
 });
 
-test('updateMrc721Collection fetches the current collection from the indexer when not provided', async () => {
+test('updateMrc721Collection resolves the session issuer\'s own album via the issuer-scoped search', async () => {
   const { createPin, calls } = makeCreatePinSpy();
+  const seen = [];
   await withFetchStub(
-    async () => jsonResponse({ code: 1, data: { collectionName: 'pixel-cats', name: 'Pixel Cats', createAddress: BOT_ADDRESS } }),
+    async (url) => {
+      seen.push(String(url));
+      if (String(url).includes('/api/mrc721/collection/search')) {
+        return jsonResponse({
+          code: 1,
+          data: { list: [{ collectionName: 'pixel-cats', name: 'Pixel Cats', createAddress: BOT_ADDRESS, pinid: `${'cd'.repeat(32)}i0` }] },
+        });
+      }
+      return jsonResponse({ code: 1, data: { list: [] } });
+    },
     async () => {
       const result = await updateMrc721Collection(
         { createPin, store: makeStore() },
@@ -282,6 +294,36 @@ test('updateMrc721Collection fetches the current collection from the indexer whe
   );
   const content = JSON.parse(calls[0].metaidData.payload);
   assert.equal(content.name, 'Renamed Cats');
+  // The issuer-scoped search is the resolve path — no collection/info?name=.
+  assert.ok(seen.some((url) => url.includes('/api/mrc721/collection/search')), 'must resolve via the issuer-scoped search');
+});
+
+test('updateMrc721Collection refuses a name owned by another issuer (issuer-only modify)', async () => {
+  const { createPin, calls } = makeCreatePinSpy();
+  await withFetchStub(
+    async (url) => {
+      if (String(url).includes('/api/mrc721/collection/search')) {
+        if (String(url).includes('issuer=')) {
+          return jsonResponse({ code: 1, data: { list: [], total: 0 } });
+        }
+        return jsonResponse({
+          code: 1,
+          data: { list: [{ collectionName: 'pixel-cats', createAddress: '1SomeoneElse', pinid: `${'ab'.repeat(32)}i0` }] },
+        });
+      }
+      return jsonResponse({ code: 1, data: { list: [] } });
+    },
+    async () => {
+      await assert.rejects(
+        () => updateMrc721Collection(
+          { createPin, store: makeStore() },
+          { metabotId: 7, collectionName: 'pixel-cats', name: 'New' },
+        ),
+        /issued by another issuer/,
+      );
+    },
+  );
+  assert.equal(calls.length, 0);
 });
 
 test('updateMrc721Collection passes indexed metadata through and lets overrides win', async () => {
@@ -479,6 +521,89 @@ test('fetchMrc721ItemInfo surfaces a teaching error for unindexed items on trans
   await withFetchStub(async () => jsonResponse({ code: 0, message: 'not found' }), async () => {
     assert.equal(await fetchMrc721ItemInfo({ pinId: `${NFT_TXID}i0` }), null);
   });
+});
+
+// ---------------------------------------------------------------------------
+// Issuer-only protocol revision (2026-11-07): issuer-scoped same-name scan +
+// name-ambiguity guard on the holder gate
+// ---------------------------------------------------------------------------
+
+function searchRows(list, total = list.length) {
+  return jsonResponse({ code: 1, data: { list, total } });
+}
+
+test('scanMrc721CollectionNameForIssuer splits same-name albums by issuer', async () => {
+  const ownRow = { collectionName: 'pixel-cats', pinid: `${'cd'.repeat(32)}i0`, createAddress: BOT_ADDRESS };
+  const foreignRow = { collectionName: 'pixel-cats', pinid: `${'ef'.repeat(32)}i0`, createAddress: '1SomeoneElse' };
+  // Own album under the name: single conjunctive call, no foreign classification.
+  const own = await withFetchStub(
+    async () => searchRows([ownRow, foreignRow]),
+    () => scanMrc721CollectionNameForIssuer({ issuerAddress: BOT_ADDRESS, collectionName: 'pixel-cats' }),
+  );
+  assert.deepEqual(own.own, ownRow);
+  assert.deepEqual(own.foreign, []);
+
+  // No own album: the keyword-only pass surfaces the foreign same-name album.
+  const noOwn = await withFetchStub(
+    async (url) => {
+      if (String(url).includes('issuer=')) return searchRows([]);
+      return searchRows([foreignRow, { collectionName: 'dog-pics', pinid: `${'ab'.repeat(32)}i0`, createAddress: '1SomeoneElse' }]);
+    },
+    () => scanMrc721CollectionNameForIssuer({ issuerAddress: BOT_ADDRESS, collectionName: 'pixel-cats' }),
+  );
+  assert.equal(noOwn.own, null);
+  assert.deepEqual(noOwn.foreign, [foreignRow]);
+
+  // Rows whose collectionName merely contains the keyword are not matches.
+  const substring = await withFetchStub(
+    async () => searchRows([{ collectionName: 'pixel-cats-v2', pinid: `${'ab'.repeat(32)}i0`, createAddress: BOT_ADDRESS }]),
+    () => scanMrc721CollectionNameForIssuer({ issuerAddress: BOT_ADDRESS, collectionName: 'pixel-cats' }),
+  );
+  assert.equal(substring.own, null);
+  assert.deepEqual(substring.foreign, []);
+});
+
+test('verifyMrc721Holding resolves a single same-name album by its collectionid', async () => {
+  const seen = [];
+  await withFetchStub(
+    async (url) => {
+      seen.push(String(url));
+      if (String(url).includes('/api/mrc721/collection/search')) {
+        return searchRows([{ collectionName: 'pixel-cats', pinid: `${'cd'.repeat(32)}i0`, createAddress: BOT_ADDRESS }]);
+      }
+      if (String(url).includes('/api/mrc721/address/item')) {
+        return jsonResponse({ code: 1, data: { list: [] } });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    },
+    () => verifyMrc721Holding({ holderAddress: BOT_ADDRESS, collectionName: 'pixel-cats' }),
+  );
+  assert.ok(seen.some((url) => url.includes(`pinId=${'cd'.repeat(32)}i0`)), 'holder query must carry the resolved collectionid');
+});
+
+test('verifyMrc721Holding refuses an ambiguous name instead of verifying the earliest album', async () => {
+  const first = `${'cd'.repeat(32)}i0`;
+  const second = `${'ef'.repeat(32)}i0`;
+  await withFetchStub(
+    async (url) => {
+      if (String(url).includes('/api/mrc721/collection/search')) {
+        return searchRows([
+          { collectionName: 'pixel-cats', pinid: first, createAddress: BOT_ADDRESS },
+          { collectionName: 'pixel-cats', pinid: second, createAddress: '1SomeoneElse' },
+        ]);
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    },
+    () => verifyMrc721Holding({ holderAddress: BOT_ADDRESS, collectionName: 'pixel-cats' }),
+  ).then(
+    () => assert.fail('ambiguous name must throw'),
+    (error) => {
+      assert.match(error.message, /ambiguous/);
+      assert.match(error.message, new RegExp(first));
+      assert.match(error.message, new RegExp(second));
+      assert.match(error.message, /collectionPinId/);
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------
