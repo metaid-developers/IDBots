@@ -9,12 +9,19 @@ import type { MetabotStore } from '../metabotStore';
  * stack in mvcNftService.ts: MRC-721 items are identified by pinid paths under
  * /nft/mrc721/{collectionName}/..., not genesis/codehash/tokenIndex.
  *
- * Protocol semantics (man-p2p MRC721_INDEXING_DESIGN.md):
- *   - collection_desc pin registers a collection (FIRST one wins); its pinId
- *     is the collectionid.
- *   - Any other create pin under /nft/mrc721/{collectionName}/{itemPath} mints
- *     an item (open minting, supply-checked by the indexer).
- *   - item_desc pins backfill name/desc/cover/metadata per field (first wins).
+ * Protocol semantics (MetaSo MRC-721 issuer-only revision, 2026-11-07, see
+ * metaso-p2p docs/mrc721-protocol-revision-issuer-only.md):
+ *   - A collection_desc pin registers the album keyed by the
+ *     (collectionName, issuer address) pair; its pinId is the collectionid —
+ *     the album's identity. Collection names are NOT unique: two issuers'
+ *     same-name albums are independent (like two ERC-721 contracts sharing a
+ *     display name), and a duplicate desc by the same issuer is ignored.
+ *   - Minting is issuer-only: a create pin under
+ *     /nft/mrc721/{collectionName}/{itemPath} is indexed only into the
+ *     same-name album whose collection_desc author minted it (supply-checked
+ *     by the indexer); pins by anyone else are never collected.
+ *   - item_desc pins backfill name/desc/cover/metadata per field (first
+ *     write wins, issuer-gated to the item's album issuer).
  *   - Transfer is a PLAIN spend of the item pin's UTXO: the indexer keys new
  *     ownership on the FIRST tx input and takes the new owner from output 0 —
  *     so the transfer tx must spend the item outpoint as input 0 and pay the
@@ -300,7 +307,10 @@ export interface Mrc721ItemTransferRecord {
 
 /**
  * Verify facts (item/verify): index-inclusion status, collectionid, genesis,
- * creatorMinted, transferCount — the "official vs third-party mint" basis.
+ * creatorMinted, transferCount — the issuer-only minting basis. Under the
+ * revised protocol every indexed item is issuer-minted (creatorMinted true by
+ * construction; a false value means the row predates the revision or comes
+ * from an upstream source the indexer does not collect).
  * Keys stay permissive until man-p2p P2 freezes the response shape.
  */
 export interface Mrc721VerifyInfo {
@@ -714,6 +724,65 @@ export async function searchMrc721Collections(params: {
   return result;
 }
 
+export interface Mrc721IssuerNameScan {
+  /**
+   * The issuer's own album row under the exact collection name (null when
+   * the issuer has not registered one under that name).
+   */
+  own: Mrc721CollectionSummary | null;
+  /**
+   * Same-name albums issued by OTHER addresses — independent albums under the
+   * issuer-only revision (names are not unique; collectionid is the identity).
+   */
+  foreign: Mrc721CollectionSummary[];
+}
+
+/**
+ * Issuer-scoped same-name album resolution (issuer-only protocol revision,
+ * 2026-11-07): an album is identified by its collectionid, and the
+ * human-level key is the (collectionName, issuer address) pair — collection
+ * names are NOT unique and confer no ownership. Builds the R1/R2 prechecks
+ * for the agent tools:
+ *
+ * 1. A conjunctive `collection/search` (issuer + keyword) finds the issuer's
+ *    own row — a (collection_name, issuer) pair registers once, so an own row
+ *    means "already issued by this MetaBot".
+ * 2. When no own row exists, a keyword-only search surfaces foreign same-name
+ *    albums (minting into those never collects — fee-guard refusals).
+ *
+ * `keyword` is a case-insensitive substring on the server, so rows are
+ * exact-matched client-side on `collectionName`; `createAddress` is compared
+ * exactly (base58 is case-sensitive). Throws when the search surface is
+ * unavailable — callers own the proceed-with-warning posture.
+ */
+export async function scanMrc721CollectionNameForIssuer(params: {
+  issuerAddress: string;
+  collectionName: string;
+}): Promise<Mrc721IssuerNameScan> {
+  const issuerAddress = (params.issuerAddress ?? '').trim();
+  const collectionName = (params.collectionName ?? '').trim();
+  if (!issuerAddress) {
+    throw new Error('scanMrc721CollectionNameForIssuer requires issuerAddress');
+  }
+  if (!collectionName) {
+    throw new Error('scanMrc721CollectionNameForIssuer requires collectionName');
+  }
+  const exactName = (row: Mrc721CollectionSummary) => (row.collectionName ?? '') === collectionName;
+  const byOwnAddress = (row: Mrc721CollectionSummary) => (row.createAddress ?? '') === issuerAddress;
+
+  const scoped = await searchMrc721Collections({ keyword: collectionName, issuerAddress });
+  const own = scoped.items.filter((row) => exactName(row) && byOwnAddress(row))[0] ?? null;
+  if (own) return { own, foreign: [] };
+
+  // No own album under the name: a keyword-only search (no issuer filter) is
+  // the only way to see foreign same-name albums.
+  const all = await searchMrc721Collections({ keyword: collectionName });
+  return {
+    own: null,
+    foreign: all.items.filter((row) => exactName(row) && !byOwnAddress(row)),
+  };
+}
+
 export interface Mrc721HoldingVerdict {
   holderAddress: string;
   collectionName?: string;
@@ -744,10 +813,33 @@ export async function verifyMrc721Holding(params: {
     throw new Error('verifyMrc721Holding requires collectionName or collectionPinId');
   }
   if (!collectionPinId && collectionName) {
-    const collection = await fetchMrc721CollectionInfo({ name: collectionName });
-    collectionPinId = collection?.pinid || undefined;
-    if (!collectionPinId) {
-      throw new Error(`collection "${collectionName}" is not indexed (yet) — holdings cannot be verified against an unindexed collection`);
+    // Issuer-only revision: names are not unique, and a name resolve hits the
+    // earliest-created album under the name. When several albums share the
+    // exact name, refuse with the candidate collectionids instead of silently
+    // verifying against someone else's album; a single match (or an explicit
+    // collectionPinId) verifies exactly.
+    const scan = await searchMrc721Collections({ keyword: collectionName });
+    const candidates = scan.items
+      .filter((row) => (row.collectionName ?? '') === collectionName && row.pinid)
+      .map((row) => row.pinid as string);
+    const distinct = [...new Set(candidates)];
+    if (distinct.length > 1) {
+      throw new Error(
+        `collection name "${collectionName}" is ambiguous — ${distinct.length} distinct albums share it `
+        + `(${distinct.slice(0, 5).join(', ')}${distinct.length > 5 ? ' …' : ''}). `
+        + 'Pass collectionPinId (the collection_desc pinId) to verify against a specific album.',
+      );
+    }
+    if (distinct.length === 1) {
+      collectionPinId = distinct[0];
+    } else {
+      // No search row under the exact name: keep the deterministic
+      // collection/info resolve (and its "not indexed" teaching error).
+      const collection = await fetchMrc721CollectionInfo({ name: collectionName });
+      collectionPinId = collection?.pinid || undefined;
+      if (!collectionPinId) {
+        throw new Error(`collection "${collectionName}" is not indexed (yet) — holdings cannot be verified against an unindexed collection`);
+      }
     }
   }
   const items = await fetchMrc721AddressItems({ address: holderAddress, pinId: collectionPinId });
@@ -880,7 +972,9 @@ export interface Mrc721CollectionCreateInput {
 
 /**
  * R1 发行专辑:collection_desc create pin at
- * /nft/mrc721/{collectionName}/collection_desc — first registration wins.
+ * /nft/mrc721/{collectionName}/collection_desc — registers the
+ * (collectionName, issuer) album; a re-issue by the same issuer is ignored by
+ * the indexer (no duplicate album, but the fee is still spent).
  */
 export async function createMrc721Collection(
   deps: { createPin: Mrc721CreatePinFn },
@@ -961,9 +1055,33 @@ export async function updateMrc721Collection(
     throw new Error('nothing to update — pass at least one of name/desc/website/cover/metadata');
   }
 
-  const current = input.current !== undefined
-    ? input.current
-    : await fetchMrc721CollectionInfo({ name: collectionName });
+  let current = input.current;
+  if (current === undefined) {
+    // Issuer-only revision: names are not unique, so collection/info?name=
+    // may resolve to the earliest album under the name — possibly someone
+    // else's. Resolve the session issuer's OWN album through the issuer-
+    // scoped search (mirrors the indexer's issuer-only modify rule).
+    const issuerAddress = deps.store.getMetabotById(input.metabotId)?.mvc_address ?? '';
+    if (!issuerAddress) {
+      throw new Error('the session MetaBot has no MVC address');
+    }
+    const scan = await scanMrc721CollectionNameForIssuer({ issuerAddress, collectionName });
+    if (!scan.own) {
+      if (scan.foreign.length) {
+        const foreign = scan.foreign[0];
+        throw new Error(
+          `collection "${collectionName}" is issued by another issuer (${foreign.createMetaId || foreign.createAddress || '?'}) `
+          + '— under issuer-only modify rules you can only modify YOUR OWN album under this name, '
+          + `and this session bot (${issuerAddress}) has not registered one.`,
+        );
+      }
+      throw new Error(
+        `collection "${collectionName}" is not in the index — nothing to modify yet. `
+        + 'A collection can only be updated after it is registered and indexed (verify with mrc721_collection_info).',
+      );
+    }
+    current = scan.own;
+  }
   if (!current) {
     throw new Error(
       `collection "${collectionName}" is not in the index — nothing to modify yet. `
@@ -1035,7 +1153,10 @@ export interface Mrc721MintResult extends Mrc721PinWriteResult {
 }
 
 /**
- * R2 铸造:an item create pin at /nft/mrc721/{collectionName}/{itemPath};
+ * R2 铸造:an item create pin at /nft/mrc721/{collectionName}/{itemPath}
+ * (issuer-only attribution — the pin is collected into the same-name album
+ * whose collection_desc author is the minter, so callers must only mint into
+ * the session bot's own album, or before it registers as the future issuer);
  * display fields (name/desc/cover/metadata) ride a follow-up item_desc pin
  * referencing the mint pinId (the indexer derives display info ONLY from
  * item_desc, per-field first-write-wins).
