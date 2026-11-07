@@ -933,6 +933,33 @@ export const buildDailyReportBrainUserMessage = (input: {
   + 'Facts (JSON):\n'
   + JSON.stringify(input.facts);
 
+/**
+ * CoT hygiene for the brain prose (the 2026-11-07 commandcode incident): the
+ * relay serving glm-5.3-flash intermittently flattens the model's
+ * chain-of-thought INTO message.content, and the raw text then shipped
+ * verbatim as the briefing — including as the HTML headline. The briefing
+ * contract already requires the prose to START with the verbatim overview
+ * heading, so sanitize = strip inline <think>/<thinking> blocks (some relays
+ * tag them) and drop everything before the first fixed overview heading; the
+ * heading must carry the markdown ## prefix, exactly the shape
+ * parseDailyReportBrainProse recognizes. An empty result means the brain
+ * violated the contract and the caller falls back to the deterministic
+ * briefing — a leaked chain-of-thought never reaches the owner either way.
+ */
+export const sanitizeDailyReportBrainProse = (markdown: string): string => {
+  const withoutThinkBlocks = String(markdown ?? '')
+    .replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '')
+    .trim();
+  const lines = withoutThinkBlocks.replace(/\r\n/g, '\n').split('\n');
+  for (let i = 0; i < lines.length; i += 1) {
+    const heading = /^##+\s+(.*)$/.exec(lines[i].trim());
+    if (heading && HEADING_OVERVIEW.test(heading[1].trim())) {
+      return lines.slice(i).join('\n').trim();
+    }
+  }
+  return '';
+};
+
 // ── Orchestration ──────────────────────────────────────────────────────────
 
 export interface DailyReportGenerationResult {
@@ -992,10 +1019,17 @@ export const generateDailyReport = async (input: {
         },
       );
       const trimmed = prose?.trim();
-      if (trimmed) {
-        proseMarkdown = trimmed;
+      // Contract gate: only three-section prose that starts at the verbatim
+      // overview heading is adopted; relay-flattened CoT prefixes are cut and
+      // a fully non-conforming reply degrades to the deterministic briefing
+      // (same sink as a failing brain — the report always ships).
+      const sanitized = trimmed ? sanitizeDailyReportBrainProse(trimmed) : '';
+      if (sanitized) {
+        proseMarkdown = sanitized;
         usedFallback = false;
-        headlineText = extractDailyReportHeadlineLine(trimmed);
+        headlineText = extractDailyReportHeadlineLine(sanitized);
+      } else if (trimmed) {
+        console.warn('[DailyReportGenerator] brain prose failed the three-section contract (no overview heading after CoT strip); using deterministic briefing');
       }
     } catch (error) {
       console.warn('[DailyReportGenerator] brain prose failed; using deterministic briefing:', error);
