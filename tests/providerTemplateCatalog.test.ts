@@ -87,6 +87,28 @@ test('models settings page keeps the new layout and visibility anchors', () => {
   assert.match(settings, /handleCreateProviderFromTemplate/);
   assert.match(settings, /handleCreateCustomProviderInstant/);
   assert.equal(settings.includes('isAddingCustomProvider'), false);
+
+  // Template picks carry their vendor logo so the left list + detail header
+  // render the real icon (user-created customs keep the generic one).
+  assert.match(settings, /logoKey: template\.logo/);
+  assert.match(settings, /getProviderIconWithLogo\(providerKey, config, isDarkTheme\)/);
+  assert.match(settings, /getProviderIconWithLogo\(activeProvider, providers\[activeProvider\], isDarkTheme\)/);
+
+  // The third-party group label only renders when the group is non-empty.
+  assert.match(settings, /thirdPartyProviderEntries\.length > 0/);
+  assert.match(settings, /i18nService\.t\('thirdPartyProviders'\)/);
+
+  // The ME-rates footer note is subscription-only.
+  assert.match(
+    settings,
+    /activeProvider === LLM_FREE_PROVIDER_KEY && \(\s*<p className="mt-2 text-\[10px\] leading-relaxed[^>]*>\s*\{i18nService\.t\('meRatesFooterNote'\)\}/,
+  );
+
+  // Provider deletion goes through the in-app confirm dialog — window.confirm
+  // is a silent no-op in Electron and made the trash button dead.
+  assert.match(settings, /pendingDeleteProvider, setPendingDeleteProvider\] = useState/);
+  assert.match(settings, /onClick=\{\(\) => setPendingDeleteProvider\(activeProvider\)\}/);
+  assert.equal(/\bwindow\.confirm\(/.test(settings), false);
 });
 
 test('template catalog and default config stay disjoint from the free provider', () => {
