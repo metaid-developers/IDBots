@@ -292,7 +292,14 @@ export function buildBrowserIframeBridgeScript(): string {
       // it directly. selectUsingIdentity is only correct for the navigate-in-place
       // path — it writes the actor onto the currently active tab.
       if (newTab && typeof globalThis.AgentBrowserTabs.openTab === 'function') {
-        globalThis.AgentBrowserTabs.openTab(uri, actorId || undefined);
+        var openLabel = textValue(input && input.label);
+        if (openLabel || actorId) {
+          globalThis.AgentBrowserTabs.openTab(uri, openLabel
+            ? Object.assign({ label: openLabel }, actorId ? { actorId: actorId } : {})
+            : actorId);
+        } else {
+          globalThis.AgentBrowserTabs.openTab(uri);
+        }
         return;
       }
       if (actorId) {
@@ -336,7 +343,38 @@ export function buildBrowserIframeBridgeScript(): string {
       var extra;
 
       if (action === 'open-tab') {
-        openedTabId = globalThis.AgentBrowserTabs.openTab(textValue(input.uri) || undefined);
+        var openLabel = textValue(input.label);
+        openedTabId = openLabel
+          ? globalThis.AgentBrowserTabs.openTab(textValue(input.uri) || undefined, { label: openLabel })
+          : globalThis.AgentBrowserTabs.openTab(textValue(input.uri) || undefined);
+      } else if (action === 'navigate-tab') {
+        // Background projection navigation (Bot Internet projector): resolve
+        // into a SPECIFIC tab without leaving the user's current view. ABC's
+        // resolveUri snapshots the originating tab synchronously and lands the
+        // result on it even after the active tab switches away, so we activate
+        // the target just long enough to start the resolve, then restore the
+        // user's tab immediately — all inside one synchronous block, so the
+        // intermediate active state never paints.
+        var navTabId = Number(input.tabId);
+        var tabsNow = globalThis.AgentBrowserTabs.getTabs();
+        var targetExists = false;
+        for (var tabIndex = 0; tabIndex < tabsNow.length; tabIndex += 1) {
+          if (tabsNow[tabIndex] && tabsNow[tabIndex].id === navTabId) { targetExists = true; break; }
+        }
+        if (!targetExists) {
+          throw new Error('Bot Browser tab ' + navTabId + ' does not exist.');
+        }
+        var previousActive = globalThis.AgentBrowserTabs.getActiveTab();
+        globalThis.AgentBrowserTabs.switchTab(navTabId);
+        var navigation;
+        try {
+          navigation = globalThis.navigateTo(textValue(input.uri));
+        } finally {
+          if (previousActive && previousActive.id !== navTabId) {
+            globalThis.AgentBrowserTabs.switchTab(previousActive.id);
+          }
+        }
+        await navigation;
       } else if (action === 'close-tab') {
         globalThis.AgentBrowserTabs.closeTab(Number(input.tabId));
       } else if (action === 'switch-tab') {

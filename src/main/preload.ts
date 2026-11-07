@@ -99,8 +99,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('metaappOwner:delete', input),
   },
   botBrowser: {
-    onOpenUri: (callback: (input: { uri: string; actorId?: string | null }) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, input: { uri: string; actorId?: string | null }) => callback(input);
+    onOpenUri: (callback: (input: { uri: string; actorId?: string | null; label?: string; newTab?: boolean }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, input: { uri: string; actorId?: string | null; label?: string; newTab?: boolean }) => callback(input);
       ipcRenderer.on('botBrowser:openUri', handler);
       return () => ipcRenderer.removeListener('botBrowser:openUri', handler);
     },

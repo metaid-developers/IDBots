@@ -36,12 +36,15 @@ export interface BotBrowserOpenUriInput {
    * agent/RPC-initiated opens keep the navigate-in-place default.
    */
   newTab?: boolean;
+  /** Display label for the newly created tab (persisted until the user renames it). */
+  label?: string;
 }
 
 export type BotBrowserTabAction =
   | 'open-tab'
   | 'close-tab'
   | 'switch-tab'
+  | 'navigate-tab'
   | 'get-tabs'
   | 'get-active-tab'
   | 'get-content'
@@ -51,6 +54,8 @@ export interface BotBrowserTabCommand {
   action: BotBrowserTabAction;
   uri?: string;
   tabId?: number;
+  /** Display label for a newly opened tab (open-tab only). */
+  label?: string;
 }
 
 export interface BotBrowserTabInfo {

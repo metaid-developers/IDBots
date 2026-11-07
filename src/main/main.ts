@@ -551,6 +551,9 @@ import {
   type BotBrowserTabCommandResponse,
 } from './services/botBrowserTabBridge';
 import {
+  initBotBrowserProjectionService,
+} from './services/botBrowserProjectionService';
+import {
   executeBotBrowserPreviewAct,
   type BotBrowserPreviewActRequest,
 } from './services/botBrowserPreviewAct';
@@ -7258,6 +7261,7 @@ const getCoworkRunner = () => {
       controlBotBrowser: {
         openUri: (input) => sendBotBrowserOpenUri(input),
         execute: (command) => getBotBrowserTabBridge().execute(command),
+        projectReport: (input) => getBotBrowserProjection().project(input),
         screenshot: (input) => getBotBrowserCaptureBridge().capture(input ?? {}),
         act: (input) => executeBotBrowserAct(input),
         forkMetaApp: async ({ sessionId, uri }) => {
@@ -8816,6 +8820,11 @@ const getBotBrowserTabBridge = () => {
   }
   return botBrowserTabBridge;
 };
+
+// Bot Internet projector: first projection announces, later ones write the
+// session's projection tab silently (never stealing tab or OS focus).
+const getBotBrowserProjection = () =>
+  initBotBrowserProjectionService({ getTabBridge: getBotBrowserTabBridge });
 
 // Shared act executor for the agent tool and the RPC gateway route: resolves
 // the active tab's renderer envelope via the tab bridge, then reaches into the
