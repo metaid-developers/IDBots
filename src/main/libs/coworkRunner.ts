@@ -120,7 +120,7 @@ import { isContextWindowExceededError } from './coworkContextBudget';
 import { tryAutoAnswerLowRiskQuestion } from './coworkPermissionRisk';
 import type { CoworkContextUsage, CoworkUsageStats } from './coworkContextUsage';
 import { composePromptSections, PROMPT_SECTION_ORDER } from './promptComposer';
-import { buildAssistantModePrompt } from './assistantModePrompt';
+import { buildAssistantModePrompt, buildProjectorModePrompt } from './assistantModePrompt';
 import { CHAIN_IDENTIFIER_VERBATIM_RULE } from './chainIdentifierPrompt';
 import { QA_BEHAVIOR_RULE } from './qaBehaviorPrompt';
 import { SOCIAL_TRUST_RULE } from './socialTrustPrompt';
@@ -7024,7 +7024,8 @@ export class CoworkRunner extends EventEmitter {
     implicitMemoryUpdateEnabled = false,
     skillsSection?: string | null,
     metawebDeepSections = true,
-    assistantMode = false
+    assistantMode = false,
+    projectorMode = false
   ): string {
     return composePromptSections([
       { name: 'persona:metabot', order: PROMPT_SECTION_ORDER.PERSONA, text: personaBlock },
@@ -7094,7 +7095,14 @@ export class CoworkRunner extends EventEmitter {
       // prompt's User Update Protocol. Gated by the caller to regular
       // interactive owner chats (see isAssistantModeOwnerChatSession).
       ...(assistantMode
-        ? [{ name: 'idbots:assistant-mode', order: PROMPT_SECTION_ORDER.ASSISTANT_MODE, text: buildAssistantModePrompt() }]
+        ? [{ name: 'idbots:assistant-mode', order: PROMPT_SECTION_ORDER.ASSISTANT_MODE, text: buildAssistantModePrompt(projectorMode) }]
+        : []),
+      // Bot Internet projector mode (owner ruling 2026-11-07): mounted only
+      // for sessions carrying the per-session assistantMode marker from the
+      // Bot Internet co-work panel. Replaces the assistant prompt's optional
+      // inline HTML/MetaApp clauses with right-pane projection behavior.
+      ...(projectorMode
+        ? [{ name: 'idbots:projector-mode', order: PROMPT_SECTION_ORDER.PROJECTOR_MODE, text: buildProjectorModePrompt() }]
         : []),
     ]);
   }
@@ -8868,7 +8876,8 @@ export class CoworkRunner extends EventEmitter {
           systemPromptProfile.metawebMode,
           this.getMetawebPromptTier(sessionId, activeSession),
         ),
-        this.isAssistantModeOwnerChatSession(sessionId)
+        this.isAssistantModeOwnerChatSession(sessionId),
+        this.isProjectorModeSession(sessionId)
       );
       this.trackSystemPromptHash(activeSession, sessionId, effectiveSystemPrompt);
 
@@ -9018,7 +9027,8 @@ export class CoworkRunner extends EventEmitter {
           systemPromptProfile.metawebMode,
           this.getMetawebPromptTier(sessionId, activeSession),
         ),
-        this.isAssistantModeOwnerChatSession(sessionId)
+        this.isAssistantModeOwnerChatSession(sessionId),
+        this.isProjectorModeSession(sessionId)
       );
       this.trackSystemPromptHash(activeSession, sessionId, effectiveSystemPrompt);
 

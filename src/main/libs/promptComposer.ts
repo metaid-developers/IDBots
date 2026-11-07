@@ -104,6 +104,14 @@ export const PROMPT_SECTION_ORDER = {
    * coworkRunner).
    */
   ASSISTANT_MODE: 55,
+  /**
+   * Bot Internet projector section (buildProjectorModePrompt): right after
+   * assistant-mode, so its projection rules read as an override of the
+   * assistant prompt's optional inline-surface clauses. Only mounted for
+   * sessions carrying the per-session assistantMode marker from the Bot
+   * Internet co-work panel (isProjectorModeSession in coworkRunner).
+   */
+  PROJECTOR_MODE: 56,
   /** Tail guard rails that must stay last (e.g. cron user-priority guard). */
   TAIL_GUARD: 900,
 } as const;
