@@ -845,6 +845,11 @@ const CoworkView: React.FC<CoworkViewProps> = ({
                     onSelect={setSelectedMetabotId}
                     label={i18nService.t('coworkMetaBotLabel')}
                     placeholder={i18nService.t('coworkMetaBotPlaceholder')}
+                    // Float the dropdown fixed (z-50, viewport-anchored) so it
+                    // paints over the QuickActions + composer blocks below
+                    // instead of being clipped at this scroll container's
+                    // bottom edge — same escape hatch the sidebar selector uses.
+                    useFixedDropdown
                   />
                 </div>
               )}
