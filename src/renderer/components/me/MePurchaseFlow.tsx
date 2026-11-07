@@ -25,7 +25,7 @@ import {
   type MePurchaseSection,
 } from './mePointsStore';
 import {
-  meDiscountParts,
+  meDiscountFromPct,
   mePaymentPhase,
   mePeriodPricing,
   normalizeMePaymentCheckout,
@@ -163,19 +163,12 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
     if (!selectedPlan || isFreeSelected) return null;
     const monthly = selectedPlan.desktopPriceCny ?? selectedPlan.priceCny ?? null;
     if (monthly == null) return null;
-    return mePeriodPricing({
-      monthly,
-      period,
-      quarterlyDiscountPct: selectedPlan.quarterlyDiscountPct,
-      annualPriceCny: selectedPlan.annualPriceCny,
-    });
+    return mePeriodPricing({ monthly, period });
   }, [selectedPlan, isFreeSelected, period]);
-  const discount = periodPricing?.original != null
-    ? meDiscountParts(periodPricing.price, periodPricing.original)
-    : null;
+  const discount = periodPricing ? meDiscountFromPct(periodPricing.discountPct) : null;
 
   const amountDue = section === 'subscribe'
-    ? (isFreeSelected ? 0 : periodPricing?.price ?? null)
+    ? (isFreeSelected ? 0 : periodPricing?.total ?? null)
     : selectedTopup?.priceCny ?? null;
 
   useEffect(() => {
@@ -491,16 +484,15 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
                   <div className="rounded-xl bg-claude-surfaceInset/40 dark:bg-claude-darkSurfaceInset/30 px-3 py-2.5">
                     <div className="flex items-baseline justify-between gap-2">
                       <span className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                        {i18nService.t('mePurchaseAmountDue')}
+                        {i18nService.t('mePurchasePriceTagLabel')}
                       </span>
                       <span className="flex items-baseline gap-1.5">
                         <span className="tabular-nums text-lg font-semibold text-claude-text dark:text-claude-darkText">
-                          {priceLabel(periodPricing?.price ?? amountDue)}
-                          <span className="ml-0.5 text-[10px] font-normal">{i18nService.t('mePurchaseCny')}</span>
+                          {i18nService.t('mePlanPriceMonthly').replace('{price}', priceLabel(periodPricing?.monthlyRate ?? amountDue))}
                         </span>
-                        {periodPricing?.original != null && (
+                        {periodPricing?.originalMonthly != null && (
                           <span className="tabular-nums text-[11px] text-claude-textSecondary line-through dark:text-claude-darkTextSecondary">
-                            {i18nService.t('mePurchaseOriginalPrice').replace('{price}', String(periodPricing.original))}
+                            ¥{priceLabel(periodPricing.originalMonthly)}
                           </span>
                         )}
                         {discount && (
@@ -516,9 +508,11 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
                       <span>
                         {selectedPlan.name} · {i18nService.t(`mePurchasePeriod_${period}`)}
                       </span>
-                      {period !== 'month' && periodPricing && (
+                      {periodPricing && periodPricing.months > 1 && (
                         <span className="tabular-nums">
-                          {i18nService.t('mePurchasePerMonth').replace('{price}', String(Math.round(periodPricing.price / (period === 'quarter' ? 3 : 12))))}
+                          {i18nService.t('mePurchaseLumpSum')
+                            .replace('{months}', String(periodPricing.months))
+                            .replace('{total}', priceLabel(periodPricing.total))}
                         </span>
                       )}
                     </div>

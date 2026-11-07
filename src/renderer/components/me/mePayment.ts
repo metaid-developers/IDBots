@@ -80,40 +80,55 @@ export function mePaymentPhase(status: string | number): 'pending' | 'credited' 
 }
 
 // ---------------------------------------------------------------------------
-// Period pricing (product-style price tag: current price + original +
-// discount). Mirrors the order the server will price: monthly xN against
-// the plan's explicit discounts. original is null when the period carries
-// no discount (month) or the computed price is not actually cheaper.
+// Period pricing — uniform monthly-rate model (owner decision 2026-11-07):
+// the price tag always shows a per-month rate. Quarter bills 3 months at
+// 90% of the monthly price, year bills 12 months at 80%; the one-payment
+// total is monthly × months × pct. The server prices orders with the exact
+// same arithmetic (assist-base-service PriceSubscriptionOrderCny) so the
+// tag amount always equals the charged amount — keep both in sync.
+// plan.quarterlyDiscountPct / annualPriceCny are no longer read for pricing.
 // ---------------------------------------------------------------------------
 
 export type MeSubscriptionPeriodOption = 'month' | 'quarter' | 'year';
 
+/** Discount percent of the monthly price per period (100 = no discount). */
+export const ME_QUARTER_DISCOUNT_PCT = 90;
+export const ME_YEAR_DISCOUNT_PCT = 80;
+
+const round2 = (value: number): number => Math.round(value * 100) / 100;
+
 export interface MePeriodPricing {
-  price: number;
-  original: number | null;
+  /** Billed months in one payment (1 / 3 / 12). */
+  months: number;
+  /** Discount percent applied to the monthly price (100 = none). */
+  discountPct: number;
+  /** Effective monthly rate shown on the price tag (2dp), e.g. 44.1. */
+  monthlyRate: number;
+  /** The one-payment total actually charged (2dp) — authoritative amount. */
+  total: number;
+  /** Undiscounted monthly price for the strikethrough; null on month. */
+  originalMonthly: number | null;
 }
 
 export function mePeriodPricing(input: {
   monthly: number;
   period: MeSubscriptionPeriodOption;
-  quarterlyDiscountPct?: number;
-  annualPriceCny?: number;
 }): MePeriodPricing {
   const { monthly, period } = input;
   if (period === 'month') {
-    return { price: monthly, original: null };
+    return { months: 1, discountPct: 100, monthlyRate: monthly, total: monthly, originalMonthly: null };
   }
-  if (period === 'quarter') {
-    const original = Math.round(monthly * 3);
-    const pct = input.quarterlyDiscountPct;
-    const price = pct && pct > 0 && pct < 100 ? Math.round(monthly * 3 * (pct / 100)) : original;
-    return { price, original: price < original ? original : null };
-  }
-  const original = Math.round(monthly * 12);
-  const price = input.annualPriceCny != null && input.annualPriceCny > 0
-    ? Math.round(input.annualPriceCny)
-    : original;
-  return { price, original: price < original ? original : null };
+  const months = period === 'quarter' ? 3 : 12;
+  const discountPct = period === 'quarter' ? ME_QUARTER_DISCOUNT_PCT : ME_YEAR_DISCOUNT_PCT;
+  return {
+    months,
+    discountPct,
+    monthlyRate: round2(monthly * discountPct / 100),
+    // Round the lump sum once, from the undiscounted monthly price — the
+    // rate is display-only so the tag can never drift from the charge.
+    total: round2(monthly * months * discountPct / 100),
+    originalMonthly: monthly,
+  };
 }
 
 export interface MeDiscountParts {
@@ -123,17 +138,13 @@ export interface MeDiscountParts {
   pctOff: number;
 }
 
-/** null when the pair does not describe a real discount (original <= price). */
-export function meDiscountParts(price: number, original: number): MeDiscountParts | null {
-  if (!Number.isFinite(price) || !Number.isFinite(original) || original <= 0 || price <= 0) {
+/** Discount badge parts from the applied percent; null when there is none. */
+export function meDiscountFromPct(discountPct: number): MeDiscountParts | null {
+  if (!Number.isFinite(discountPct) || discountPct >= 100 || discountPct <= 0) {
     return null;
   }
-  if (price >= original) {
-    return null;
-  }
-  const ratio = price / original;
-  const zheValue = ratio * 10;
+  const zheValue = discountPct / 10;
   const zhe = (Math.round(zheValue * 10) / 10).toString();
-  const pctOff = Math.min(99, Math.max(1, Math.round((1 - ratio) * 100)));
+  const pctOff = Math.min(99, Math.max(1, Math.round(100 - discountPct)));
   return { zhe, pctOff };
 }

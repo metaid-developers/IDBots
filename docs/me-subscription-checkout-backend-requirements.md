@@ -138,3 +138,68 @@ Only the confirmed-payment path opens the subscription (spec §2) — a created/
 - `src/renderer/components/me/MePurchaseFlow.tsx` — panel UX: plan cards (ID.Free + 3 paid tiers), period + gateway selectors, price tag with original/discount, QR/approval-URL checkout, 4s polling for 10 minutes.
 - `src/renderer/components/me/mePayment.ts` — `gatewayParams` extractors, status→phase mapping, period-pricing arithmetic (must stay in sync with server pricing).
 - `tests/meSubscriptionOrder.test.mjs`, `tests/meDesktopPayment.test.ts` — contract pins.
+
+---
+
+## Amendment v0.2 — uniform monthly-rate pricing (2026-11-07, owner decision)
+
+**Supersedes the R1.2 pricing arithmetic and §6 item 2's "original price" reading.** The price tag now always shows a per-month rate, and every tier uses the same discount rule — the per-plan `quarterlyDiscountPct` / `annualPriceCny` fields are **no longer read for pricing** (they may stay in the catalog; harmless).
+
+### New pricing rule (owner: 2026-11-07)
+
+| Period | Billed months | Discount off monthly price | Formula (one-payment total) |
+|---|---|---|---|
+| month | 1 | none | `monthly` |
+| quarter | 3 | 10% off (9折) | `round2(monthly × 3 × 0.90)` |
+| year | 12 | 20% off (8折) | `round2(monthly × 12 × 0.80)` |
+
+`round2` = round half-up to 2 decimals (cents). The client displays `round2(monthly × pct)` as the monthly rate (e.g. ID.Pupil quarterly: **¥44.1/月**, struck-through `¥49`, badge `9折`, lump-sum line "一次性支付 3 个月，合计 ¥132.3"). The client `mePayment.ts` (`mePeriodPricing`, constants 90/80) already implements exactly this — the server must match to the cent.
+
+### Required server change (assist-base-service)
+
+Rewrite `service/me_service/subscription_order_service.go` `PriceSubscriptionOrderCny` (currently: quarter = `math.Round(monthly×3×pct/100)` from the plan's `quarterlyDiscountPct`, year = the plan's absolute `annualPriceCny`):
+
+```go
+// Owner pricing rule (2026-11-07): uniform monthly-rate model — the tag
+// shows a per-month rate; quarter bills 3 months at 90%, year 12 at 80%.
+const (
+	subscriptionQuarterDiscountPct = 90
+	subscriptionYearDiscountPct    = 80
+)
+
+func round2Cny(v float64) float64 { return math.Round(v*100) / 100 }
+
+func PriceSubscriptionOrderCny(plan *models.MePlanModel, period string) (float64, error) {
+	monthly := SubscriptionMonthlyCny(plan)
+	if monthly <= 0 {
+		return 0, ErrSubscriptionPriceBad
+	}
+	switch period {
+	case SubscriptionPeriodMonth:
+		return monthly, nil
+	case SubscriptionPeriodQuarter:
+		return round2Cny(monthly * 3 * subscriptionQuarterDiscountPct / 100), nil
+	case SubscriptionPeriodYear:
+		return round2Cny(monthly * 12 * subscriptionYearDiscountPct / 100), nil
+	default:
+		return 0, ErrInvalidPeriod
+	}
+}
+```
+
+Then update the pricing expectations in `service/me_service/subscription_order_test.go`, run the full `go test ./...`, rebuild and **redeploy** per the release SOP. Everything else (endpoints, auth, idempotency, gatewayParams, status semantics, free-tier rejection) is unchanged.
+
+### Amounts under the new rule (desktop monthly price 49 / 149 / 449)
+
+| Tier | 月付 | 季付 tag | 季付 charged | 年付 tag | 年付 charged |
+|---|---|---|---|---|---|
+| ID.Pupil | ¥49/月 | ¥44.1/月 (~~¥49~~ 9折) | **¥132.3** | ¥39.2/月 (~~¥49~~ 8折) | **¥470.4** |
+| ID.Student | ¥149/月 | ¥134.1/月 | **¥402.3** | ¥119.2/月 | **¥1430.4** |
+| ID.Scholar | ¥449/月 | ¥404.1/月 | **¥1212.3** | ¥359.2/月 | **¥4310.4** |
+
+Note the deltas vs the currently deployed build: quarter totals gain a `.3`/`.1` cent remainder (exact 90% instead of integer rounding: 132 → 132.3 etc.) and the annual totals change outright (899 → 470.4, 1799 → 1430.4, 4499 → 4310.4) — the old `annualPriceCny` values are retired. **Until the server ships this amendment, the client tag and the charged amount will disagree for quarter/year; deploy both sides together.**
+
+### Acceptance addendum
+
+7. Quarterly/yearly order amounts equal `round2(monthly × months × 0.90/0.80)` exactly (e.g. ID.Pupil quarter order `amountCny = 132.3`), matching the client price tag and lump-sum line.
+
