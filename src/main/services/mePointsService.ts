@@ -46,7 +46,8 @@ export type MeApiStage =
   | 'history'
   | 'topup_submit'
   | 'topup_orders'
-  | 'subscription_order';
+  | 'subscription_order'
+  | 'subscription_orders';
 
 export class MePointsApiError extends Error {
   readonly stage: MeApiStage;
@@ -734,6 +735,29 @@ export async function getMeTopupOrders(): Promise<MeTopupOrder[]> {
   return orders;
 }
 
+// GET /v1/me/subscription/orders — the owner-scoped subscription order list
+// (Amendment v0.3). The server ships this after v0.2; until then the 404
+// surfaces as featureUnavailable and the usage page degrades to topup-only.
+export const ME_SUBSCRIPTION_ORDERS_PATH = '/v1/me/subscription/orders';
+
+export async function getMeSubscriptionOrders(): Promise<MeSubscriptionOrder[]> {
+  const { identity } = await signedAuth('subscription_orders', ME_SUBSCRIPTION_ORDER_ACTION);
+  const data = await meRequestJson({
+    stage: 'subscription_orders',
+    method: 'GET',
+    path: ME_SUBSCRIPTION_ORDERS_PATH,
+    identity,
+  });
+  const rows = listRows(data, ['orders', 'entries', 'items', 'list', 'records', 'rows']);
+  const orders: MeSubscriptionOrder[] = [];
+  for (const row of rows) {
+    const record = (row && typeof row === 'object' ? row : {}) as Record<string, unknown>;
+    if (!pickText(record, 'orderId', 'order_id')) continue;
+    orders.push(normalizeMeSubscriptionOrder(record));
+  }
+  return orders;
+}
+
 function normalizeMeTopupOrder(record: Record<string, unknown>, orderIdFallback?: string): MeTopupOrder {
   return {
     orderId: pickText(record, 'orderId', 'order_id') || orderIdFallback || '',
@@ -899,6 +923,7 @@ export function registerMePointsIpcHandlers(deps: {
     };
   });
   wrap('me:getTopupOrders', async () => ({ orders: await getMeTopupOrders() }));
+  wrap('me:getSubscriptionOrders', async () => ({ orders: await getMeSubscriptionOrders() }));
   // S9 v1.2: the S3 「收款设置」 page lets ops paste a QR image/link on-device.
   // Prefer that (owner-editable, no rebuild) and fall back to the env seam.
   wrap('me:getPaymentInfo', async () => {

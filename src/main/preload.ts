@@ -843,6 +843,7 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('me:subscriptionOrder', input ?? {}),
     getSubscriptionOrder: (input: { orderId: string }) =>
       ipcRenderer.invoke('me:subscriptionOrder', input),
+    getSubscriptionOrders: () => ipcRenderer.invoke('me:getSubscriptionOrders'),
     getTopupOrders: () => ipcRenderer.invoke('me:getTopupOrders'),
     pickVoucher: (input?: Record<string, never>) => ipcRenderer.invoke('me:pickVoucher', input ?? {}),
     getPaymentInfo: () => ipcRenderer.invoke('me:getPaymentInfo'),

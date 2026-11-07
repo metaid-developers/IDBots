@@ -28,8 +28,10 @@ const { mvc } = require('meta-contract');
 const {
   ME_SUBSCRIPTION_ORDER_ACTION,
   ME_SUBSCRIPTION_ORDER_PATH,
+  ME_SUBSCRIPTION_ORDERS_PATH,
   MePointsApiError,
   getMeSubscriptionOrder,
+  getMeSubscriptionOrders,
   initMePointsService,
   submitMeSubscriptionOrder,
 } = require('../dist-electron/main/services/mePointsService.js');
@@ -290,4 +292,63 @@ test('MePurchaseFlow: topup uses its package endpoint and the desktop flow has n
   assert.match(topupBlock, /gateway: 'alipay'/);
   assert.doesNotMatch(topupBlock, /planId/);
   assert.doesNotMatch(flowSource, /pickVoucher|voucherUrl|voucherRemark|DocumentArrowUpIcon|buildAlipayVariantCUrl/);
+});
+
+// ---------------------------------------------------------------------------
+// Amendment v0.3 — subscription order list (用量&积分 payment records)
+// ---------------------------------------------------------------------------
+
+test('list endpoint constant pins /v1/me/subscription/orders on the checkout action', () => {
+  assert.equal(ME_SUBSCRIPTION_ORDERS_PATH, '/v1/me/subscription/orders');
+  assert.notEqual(ME_SUBSCRIPTION_ORDERS_PATH, ME_SUBSCRIPTION_ORDER_PATH);
+});
+
+test('getMeSubscriptionOrders signs the checkout action and parses the orders array', async () => {
+  const fetchImpl = createFetchStub(() => ({
+    orders: [
+      { orderId: 'mso_1', planId: 'me_standard', period: 'quarter', status: 'credited', amountCny: 132.3, createdAt: 1762500000000 },
+      { orderId: 'mso_2', planId: 'me_pro', period: 'year', status: 'created', amountCny: 1430.4, createdAt: 1762600000000 },
+    ],
+  }));
+  initService(fetchImpl);
+
+  const orders = await getMeSubscriptionOrders();
+
+  assert.equal(fetchImpl.calls.length, 1);
+  const [call] = fetchImpl.calls;
+  const url = new URL(call.url);
+  assert.ok(url.pathname.endsWith('/v1/me/subscription/orders'));
+  assert.equal(call.init.method, 'GET');
+  assert.equal(call.init.headers['X-Identity-Address'], IDENTITY_ADDRESS);
+  assert.ok(verifyMessage(IDENTITY_ADDRESS, `me:subscription_order:${secondsOf(call)}`, call.init.headers['X-Signature']));
+  assert.deepEqual(orders.map((order) => order.orderId), ['mso_1', 'mso_2']);
+  assert.equal(orders[0].amountCny, 132.3);
+  assert.equal(orders[1].status, 'created');
+});
+
+test('a 404 list endpoint surfaces as featureUnavailable (usage page degrades silently)', async () => {
+  const fetchImpl = createFetchStub(() => ({ __httpStatus: 404, __body: null }));
+  initService(fetchImpl);
+
+  await assert.rejects(
+    () => getMeSubscriptionOrders(),
+    (error) => error instanceof MePointsApiError && error.featureUnavailable === true,
+  );
+});
+
+test('MePurchaseFlow: current plan is highlighted but unselectable; paid users never see the free tier', () => {
+  // Current-plan resolution mirrors the plan card (subscription active → its
+  // tier; otherwise free).
+  assert.match(flowSource, /const isCurrentPlan = useCallback\(\(plan: MePlanInfo\) => \{/);
+  assert.match(flowSource, /if \(!subscribed\) return plan\.tier === 'free';/);
+  // Free tier is filtered out entirely for paying users (no downgrade path).
+  assert.match(flowSource, /return subscribed \? cards\.filter\(\(plan\) => plan\.tier !== 'free'\) : cards;/);
+  // The current row renders disabled with the 当前套餐 badge instead of the
+  // popular badge, and keeps the selected styling.
+  assert.match(flowSource, /disabled=\{phase === 'creating' \|\| currentPlan\}/);
+  assert.match(flowSource, /i18nService\.t\('meCurrentPlanBadge'\)/);
+  // The default/effective selection must skip the current plan.
+  assert.match(flowSource, /paidPlans\.find\(\(plan\) => !isCurrentPlan\(plan\)\)\?\.planId/);
+  // Success page: celebratory centered layout.
+  assert.match(flowSource, /mePurchaseSuccessTitle/);
 });
