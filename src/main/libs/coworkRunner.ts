@@ -6471,11 +6471,28 @@ export class CoworkRunner extends EventEmitter {
    * prompt.
    */
   private isAssistantModeOwnerChatSession(sessionId: string): boolean {
-    if (getPersistedChatExperienceMode() !== 'assistant') return false;
     const session = this.store.getSession(sessionId);
     if (!session) return false;
+    // Bot Internet projector sessions carry a persisted per-session marker
+    // and run assistant mode regardless of the global chatExperienceMode
+    // (owner ruling 2026-11-07: the Bot Internet tab is always assistant,
+    // locked to the Twin). Unattended runs forked FROM one are separate
+    // unmarked sessions, so the autoOrigin guard keeps them professional.
+    if (session.assistantMode && !session.autoOrigin) return true;
+    if (getPersistedChatExperienceMode() !== 'assistant') return false;
     if ((session.sessionType ?? 'standard') !== 'standard' || session.autoOrigin) return false;
     return this.store.getConversationSourceContextBySession(sessionId).sourceChannel === 'cowork_ui';
+  }
+
+  /**
+   * Bot Internet projector sessions: browser-type sessions carrying the
+   * per-session assistantMode marker stamped by the Bot Internet co-work
+   * panel (see isAssistantModeOwnerChatSession). Drives the projector prompt
+   * section; the renderer embed policy mirrors this from the session payload.
+   */
+  isProjectorModeSession(sessionId: string): boolean {
+    const session = this.store.getSession(sessionId);
+    return !!session?.assistantMode && (session.sessionType ?? 'standard') === 'browser';
   }
 
   /**

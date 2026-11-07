@@ -68,6 +68,23 @@ test('gate: non-standard session types (a2a / browser / group) never take assist
   }
 });
 
+test('gate: Bot Internet projector sessions carry their own assistant marker past the global mode', () => {
+  // Owner ruling 2026-11-07: the Bot Internet tab always chats assistant-side,
+  // locked to the Twin, whatever the Settings toggle says. Legacy browser
+  // sessions stay unmarked (assistant_mode = 0) and keep the professional
+  // treatment everywhere.
+  assert.equal(
+    isAssistantModeOwnerChatSession('professional', { sessionType: 'browser', autoOrigin: null, assistantMode: true }),
+    true,
+    'the per-session marker overrides the global professional mode',
+  );
+  assert.equal(
+    isAssistantModeOwnerChatSession('professional', { sessionType: 'browser', autoOrigin: 'orchestration', assistantMode: true }),
+    false,
+    'unattended runs forked from a projector session stay professional',
+  );
+});
+
 test('gate: professional mode is professional for every session shape', () => {
   for (const session of [
     { sessionType: 'standard', autoOrigin: null },

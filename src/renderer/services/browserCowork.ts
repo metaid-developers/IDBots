@@ -81,6 +81,10 @@ class BrowserCoworkService {
         title: generatedTitle?.trim() || fallbackTitle,
         systemPrompt,
         sessionType: 'browser',
+        // Bot Internet projector sessions (owner ruling 2026-11-07): stamped
+        // at creation so the session runs assistant mode regardless of the
+        // global chatExperienceMode. Legacy browser sessions stay unmarked.
+        assistantMode: true,
         ...(typeof metabotId === 'number' ? { metabotId } : {}),
         ...(skills?.activeSkillIds?.length ? { activeSkillIds: skills.activeSkillIds } : {}),
         ...(cwd?.trim() ? { cwd: cwd.trim() } : {}),

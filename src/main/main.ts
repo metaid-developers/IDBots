@@ -12222,6 +12222,8 @@ if (!gotTheLock) {
     activeSkillIds?: string[];
     metabotId?: number | null;
     sessionType?: 'standard' | 'browser';
+    /** Bot Internet projector sessions: run assistant mode regardless of the global chatExperienceMode. */
+    assistantMode?: boolean;
     permissionMode?: 'default' | 'plan' | 'acceptEdits' | 'bypassPermissions';
     /** Pending model+effort picked in the home composer; undefined = bot brain / defaults. */
     model?: string | null;
@@ -12319,7 +12321,9 @@ if (!gotTheLock) {
         options.effort === undefined ? null : (options.effort?.trim() || null),
         options.modelProvider?.trim() || null,
         options.projectId?.trim() || null,
-        sessionGoal
+        sessionGoal,
+        null,
+        options.assistantMode === true
       );
       const runner = getCoworkRunner();
 
