@@ -203,8 +203,17 @@ test('runner: pure host turns stay ack-free while UI starts and persisted delive
   assert.ok(gate > 0, 'the ack gate keeps pure host prompts off and admits owner-initiated starts and cross-session deliveries');
   assert.ok(source.includes('const crossSessionDelivery = /<cross_session_message\\b|\\[ORCH-NOTIFY\\]/i.test(prompt);'),
     'only an already-persisted cross-session delivery overrides skipInitialUserMessage');
-  assert.ok(source.includes('assistantOwnerChatForTurn = getPersistedChatExperienceMode() === \'assistant\''),
-    'the first-sentence experience is gated on the assistant chat-experience mode');
+  assert.ok(source.includes('assistantOwnerChatForTurn = this.isAssistantModeOwnerChatSession(sessionId)'),
+    'the first-sentence experience is decided by the session gate alone');
+  // Owner ruling 2026-11-07: Bot Internet projector sessions carry the
+  // per-session marker and keep the first-sentence promise even when the
+  // global toggle says professional — an outer global-mode check next to the
+  // gate would silently strip it (the gate itself already encodes the global
+  // assistant requirement for the regular owner-chat path).
+  assert.ok(
+    !/assistantOwnerChatForTurn = getPersistedChatExperienceMode\(\) === 'assistant'\s*\n?\s*&&\s*this\.isAssistantModeOwnerChatSession/.test(source),
+    'the ack must not re-check the global mode next to the gate (marker sessions are mode-independent)',
+  );
   assert.ok(source.includes('acknowledgeOwner: options.acknowledgeOwner === true'),
     'the runner carries the explicit owner-initiated flag independently of message persistence');
   assert.ok(mainSource.includes('skipInitialUserMessage: true,\n        acknowledgeOwner: true,'),

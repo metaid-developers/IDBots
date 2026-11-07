@@ -11100,9 +11100,13 @@ export class CoworkRunner extends EventEmitter {
         // text directly and needs no host opening. Pure host-authored turns
         // carry no user message. Already-persisted cross-session deliveries
         // are different: the owner still needs an immediate, contextual
-        // opening even though insertion is not repeated.
-        assistantOwnerChatForTurn = getPersistedChatExperienceMode() === 'assistant'
-          && this.isAssistantModeOwnerChatSession(sessionId);
+        // opening even though insertion is not repeated. The GATE alone
+        // decides — it encodes global-assistant for regular owner chats AND
+        // the per-session marker (Bot Internet projector sessions stay
+        // assistant-mode whatever the Settings toggle says, owner ruling
+        // 2026-11-07), so an outer global-mode check here would silently
+        // strip the first-sentence promise from marker sessions.
+        assistantOwnerChatForTurn = this.isAssistantModeOwnerChatSession(sessionId);
         const crossSessionDelivery = /<cross_session_message\b|\[ORCH-NOTIFY\]/i.test(prompt);
         if (ackSourceChannel === 'cowork_ui' && assistantOwnerChatForTurn
           && (activeSession.acknowledgeOwner || !activeSession.skipInitialUserMessage || crossSessionDelivery)) {
@@ -11281,11 +11285,14 @@ export class CoworkRunner extends EventEmitter {
       // THIS session). Without an override, assistant mode skips the bot
       // brain effort, the persisted global, and the per-model default.
       // Professional mode keeps the full chain unchanged. The mode is an
-      // owner-chat experience decision (mirroring the prompt gate): group
-      // tasks, A2A/IM, long-term and scheduled automation sessions keep the
-      // professional chain even under the global assistant default.
-      const assistantMode = getPersistedChatExperienceMode() === 'assistant'
-        && this.isAssistantModeOwnerChatSession(sessionId);
+      // owner-chat experience decision — the GATE alone decides (it encodes
+      // global-assistant for regular owner chats AND the per-session marker
+      // from the Bot Internet co-work panel, owner ruling 2026-11-07; an
+      // outer global-mode check would strip marker sessions of the no-reasoning
+      // promise when the global toggle is professional). Group tasks, A2A/IM,
+      // long-term and scheduled automation sessions keep the professional
+      // chain even under the global assistant default.
+      const assistantMode = this.isAssistantModeOwnerChatSession(sessionId);
       const sessionEffortPicked = effectiveEffortRung != null;
       // "Auto" rung verdict: null (no selector, unconfigured cerebellum,
       // timeout, malformed verdict) keeps the existing default chain below
