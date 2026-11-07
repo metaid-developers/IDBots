@@ -49,14 +49,16 @@ export function parseAddressIndexFromPath(path: string): number {
   return m ? parseInt(m[1], 10) : 0;
 }
 
-function getNet(): Net {
-  return 'livenet' as Net;
-}
-
-async function getV3AddressType(chain: 'mvc' | 'btc' | 'doge'): Promise<AddressType> {
-  if (chain === 'mvc') return AddressType.LegacyMvc;
-  if (chain === 'doge') return AddressType.DogeSameAsMvc;
-  return AddressType.SameAsMvc;
+/**
+ * Coin type carried by a BIP44 path. Legacy wallets only ever used 10001 and
+ * every derivation site ignored the coin segment; explicit 236 (BSV BIP44,
+ * used by restored legacy-NFT issuer identities) must be honored instead of
+ * silently re-deriving at 10001. Returns null for anything else (incl. legacy
+ * default paths), which keeps existing behavior byte-for-byte unchanged.
+ */
+export function parseMvcCoinTypeFromPath(path?: string | null): 236 | null {
+  if (!path || typeof path !== 'string') return null;
+  return /^m\/44'\/236'\/0'\/0\/(\d+)$/.test(path.trim()) ? 236 : null;
 }
 
 /** Get MVC wallet for given mnemonic and address index. Exported for transfer service. */
@@ -70,6 +72,34 @@ export async function getMvcWallet(mnemonic: string, addressIndex: number): Prom
     network,
     mnemonic,
   });
+}
+
+/**
+ * Coin-type-aware MVC wallet factory. Honors an explicit 236 coin segment in
+ * the path; every other path shape (incl. the 10001 default) resolves exactly
+ * like getMvcWallet did before. Exported for workers that receive a full path.
+ */
+export async function getMvcWalletFromPath(mnemonic: string, pathStr?: string | null): Promise<MvcWallet> {
+  const coinType = parseMvcCoinTypeFromPath(pathStr);
+  const network = getNet();
+  const addressType = await getV3AddressType('mvc');
+  return new MvcWallet({
+    coinType: coinType === 236 ? CoinType.BSV : CoinType.MVC,
+    addressType,
+    addressIndex: parseAddressIndexFromPath(pathStr || DEFAULT_PATH),
+    network,
+    mnemonic,
+  });
+}
+
+function getNet(): Net {
+  return 'livenet' as Net;
+}
+
+async function getV3AddressType(chain: 'mvc' | 'btc' | 'doge'): Promise<AddressType> {
+  if (chain === 'mvc') return AddressType.LegacyMvc;
+  if (chain === 'doge') return AddressType.DogeSameAsMvc;
+  return AddressType.SameAsMvc;
 }
 
 async function getBtcWallet(mnemonic: string, addressIndex: number): Promise<BtcWallet> {
@@ -99,8 +129,8 @@ export async function getDogeWallet(mnemonic: string, addressIndex: number): Pro
 }
 
 /** Derive chat_public_key via ECDH with MAN pubkey (same as chatpubkey.ts) */
-function deriveChatPublicKey(mnemonic: string, addressIndex: number): Promise<string> {
-  return getMvcWallet(mnemonic, addressIndex).then((wallet) => {
+function deriveChatPublicKey(mnemonic: string, pathStr?: string | null): Promise<string> {
+  return getMvcWalletFromPath(mnemonic, pathStr).then((wallet) => {
     const privateKeyBuffer = getPrivateKeyBufferFromWallet(wallet);
     const ecdh = crypto.createECDH('prime256v1');
     ecdh.setPrivateKey(privateKeyBuffer);
@@ -114,8 +144,7 @@ function deriveChatPublicKey(mnemonic: string, addressIndex: number): Promise<st
  * Same derivation as chat key: mnemonic + path -> MVC wallet -> raw private key.
  */
 export async function getPrivateKeyBufferForEcdh(mnemonic: string, pathStr: string): Promise<Buffer> {
-  const addressIndex = parseAddressIndexFromPath(pathStr || DEFAULT_PATH);
-  const wallet = await getMvcWallet(mnemonic, addressIndex);
+  const wallet = await getMvcWalletFromPath(mnemonic, pathStr || DEFAULT_PATH);
   return getPrivateKeyBufferFromWallet(wallet);
 }
 
@@ -150,10 +179,10 @@ export async function createMetaBotWallet(
   const addressIndex = parseAddressIndexFromPath(path);
 
   const [mvcWallet, btcWallet, dogeWallet, chatPublicKey] = await Promise.all([
-    getMvcWallet(mnemonic, addressIndex),
+    getMvcWalletFromPath(mnemonic, path),
     getBtcWallet(mnemonic, addressIndex),
     getDogeWallet(mnemonic, addressIndex),
-    deriveChatPublicKey(mnemonic, addressIndex),
+    deriveChatPublicKey(mnemonic, path),
   ]);
 
   const mvc_address = mvcWallet.getAddress();

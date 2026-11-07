@@ -242,6 +242,7 @@ tests/*
 !tests/groupTaskStore.test.mjs
 !tests/groupTasksI18nKeys.test.mjs
 !tests/metabotWalletService.test.mjs
+!tests/metabotWallet236CoinType.test.mjs
 !tests/mvcSubsidyService.test.mjs
 !tests/imGatewayConnectivity.test.mjs
 !tests/groupTaskService.test.mjs
