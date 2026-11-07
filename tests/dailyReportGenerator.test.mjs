@@ -49,6 +49,7 @@ import {
   generateDailyReport,
   parseDailyReportBrainProse,
   resolveDailyReportStrings,
+  sanitizeDailyReportBrainProse,
   DAILY_REPORT_STRINGS_EN,
   DAILY_REPORT_STRINGS_ZH,
 } from '../src/main/services/dailyReportGenerator.ts';
@@ -492,6 +493,106 @@ test('generateDailyReport: zh locale keeps the Chinese prompt and no needs-you w
   assert.doesNotMatch(result.briefingMarkdown, /需要你处理/, 'needs-you header absent when no follow-ups');
   assert.doesNotMatch(result.briefingMarkdown, /待跟进入口/, 'links block omitted when nothing is pending');
   assert.match(result.briefingMarkdown, /今日预告/, 'agenda still ships');
+  fs.rmSync(reportDir, { recursive: true, force: true });
+});
+
+// ── Brain prose CoT hygiene (2026-11-07 commandcode incident) ───────────────
+//
+// The relay serving glm-5.3-flash intermittently flattens the model's
+// chain-of-thought INTO message.content; the briefing contract requires the
+// prose to START with the verbatim overview heading, so the sanitize gate
+// cuts everything before it and degrades to the deterministic briefing when
+// nothing contract-valid remains.
+
+test('sanitizeDailyReportBrainProse: cuts relay-flattened CoT prefix up to the overview heading', () => {
+  // Real-world leak shape (2026-11-07): EN/CN mixed CoT with a plain-text
+  // "昨日总览: …" notes line (no ## prefix — must NOT cut there), then
+  // "Draft:", then the contract prose.
+  const leaked = [
+    'Let me digest the facts and write the daily brief in Chinese, GitHub markdown, no code blocks, no links/IDs, under 600 chars.',
+    'Key items:',
+    '昨日总览: Three long-term projects: NFT 80%, mobile 60%, commercial 22%.',
+    '需要你拍板: two red items.',
+    'Word budget: ~600 Chinese characters total. Need to be tight.',
+    'Draft:',
+    '## 昨日总览',
+    '三大主线均卡在等您拍板。',
+    '## 各 Bot 一句话',
+    '- **Twin**：推进主线验收。',
+  ].join('\n');
+  const clean = sanitizeDailyReportBrainProse(leaked);
+  assert.match(clean, /^## 昨日总览/, 'prose starts at the verbatim heading');
+  assert.doesNotMatch(clean, /Let me digest/, 'CoT prefix gone');
+  assert.doesNotMatch(clean, /Word budget/, 'mid-CoT notes gone');
+  assert.doesNotMatch(clean, /Draft:/, 'draft marker gone');
+  assert.match(clean, /三大主线均卡在等您拍板/, 'answer body kept');
+  assert.match(clean, /- \*\*Twin\*\*：推进主线验收。/, 'later sections kept');
+});
+
+test('sanitizeDailyReportBrainProse: strips <think>/<thinking> blocks and honors the EN heading', () => {
+  const tagged = '<think>Plan the sections first.</think>\nSome preamble the relay kept.\n## Yesterday at a glance\nA calm day.';
+  const clean = sanitizeDailyReportBrainProse(tagged);
+  assert.doesNotMatch(clean, /<think>/, 'think block stripped');
+  assert.match(clean, /^## Yesterday at a glance/, 'EN overview heading recognized');
+  assert.match(clean, /A calm day\./);
+});
+
+test('sanitizeDailyReportBrainProse: a drafted heading inside <think> never becomes the cut point', () => {
+  const trapped = [
+    '<think>Outline:',
+    '## 昨日总览 (draft only, not the answer)',
+    'Then compute the budget.</think>',
+    '## 昨日总览',
+    '正式内容。',
+  ].join('\n');
+  const clean = sanitizeDailyReportBrainProse(trapped);
+  assert.equal(clean, '## 昨日总览\n正式内容。');
+});
+
+test('sanitizeDailyReportBrainProse: contract-violating prose degrades to empty', () => {
+  assert.equal(sanitizeDailyReportBrainProse('Just some prose with no headings at all.'), '');
+  assert.equal(sanitizeDailyReportBrainProse('## 各 Bot 一句话\n- **Twin**：missing the overview section'), '');
+  assert.equal(sanitizeDailyReportBrainProse(''), '');
+  assert.equal(sanitizeDailyReportBrainProse(null), '');
+});
+
+test('sanitizeDailyReportBrainProse: clean contract prose passes through untouched', () => {
+  const clean = '## 昨日总览\n今天整体平稳。\n\n## 各 Bot 一句话\n- **Twin**：推进主线。';
+  assert.equal(sanitizeDailyReportBrainProse(clean), clean);
+});
+
+test('generateDailyReport: relay-flattened CoT prefix is cut, prose still adopted', async () => {
+  const reportDir = fs.mkdtempSync(path.join(os.tmpdir(), 'daily-report-test-'));
+  const result = await generateDailyReport({
+    facts: sampleFacts(),
+    strings: DAILY_REPORT_STRINGS_EN,
+    dateLabel: '2026-10-22',
+    reportDir,
+    brain: { llmId: 'glm-test' },
+    performChat: async () =>
+      'Let me plan the brief. Budget check: 600 chars.\nDraft:\n## Yesterday at a glance\nA calm day overall.\n## Bot one-liners\n- **Twin**: shipped the fix.',
+  });
+  assert.equal(result.usedFallback, false);
+  assert.doesNotMatch(result.briefingMarkdown, /Let me plan the brief/, 'CoT never reaches the owner');
+  assert.match(result.briefingMarkdown, /## Yesterday at a glance/, 'prose adopted after the cut');
+  const html = fs.readFileSync(result.htmlFilePath, 'utf8');
+  assert.doesNotMatch(html, /Let me plan the brief/, 'headline is no longer the leaked CoT');
+  fs.rmSync(reportDir, { recursive: true, force: true });
+});
+
+test('generateDailyReport: no overview heading at all → deterministic fallback (contract failure)', async () => {
+  const reportDir = fs.mkdtempSync(path.join(os.tmpdir(), 'daily-report-test-'));
+  const result = await generateDailyReport({
+    facts: sampleFacts(),
+    strings: DAILY_REPORT_STRINGS_EN,
+    dateLabel: '2026-10-22',
+    reportDir,
+    brain: { llmId: 'glm-test' },
+    performChat: async () => 'Truncated mid-thinking: the fleet looks busy today, lots of surf activity and',
+  });
+  assert.equal(result.usedFallback, true, 'non-conforming prose degrades like a failing brain');
+  assert.match(result.briefingMarkdown, /Here is your daily briefing\./);
+  assert.doesNotMatch(result.briefingMarkdown, /Truncated mid-thinking/);
   fs.rmSync(reportDir, { recursive: true, force: true });
 });
 

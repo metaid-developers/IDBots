@@ -30,7 +30,7 @@ function loadTestUtils() {
   }
 }
 
-const { resolveThinkingForModel, extractAnthropicThinkingText, resolveDeepSeekResponsesReasoning, resolveDefaultMaxOutputTokens, buildDeepSeekResponsesTools } = loadTestUtils();
+const { resolveThinkingForModel, extractAnthropicThinkingText, resolveDeepSeekResponsesReasoning, resolveDefaultMaxOutputTokens, buildDeepSeekResponsesTools, allowThinkingFallbackPromotion } = loadTestUtils();
 
 test('one-shot completion reads the Anthropic thinking field emitted by the proxy', () => {
   assert.equal(
@@ -138,6 +138,25 @@ test('webSearch:false strips the built-in search from the Responses tools', () =
   ]);
   // No caller tools + opt-out means the request body must omit tools entirely.
   assert.deepEqual(buildDeepSeekResponsesTools(undefined, false), []);
+});
+
+test('Anthropic thinking-only replies promote to content for every family EXCEPT GLM', () => {
+  // GLM reasoning is ALWAYS hidden thinking; a thinking-only reply means the
+  // output budget burned inside reasoning before any text was emitted, and
+  // promoting it leaks a mid-thought fragment as the answer (2026-10-23
+  // ack-bubble on the OpenAI path — closed in openAiCompatContent; 2026-11-07
+  // daily report on the Anthropic path — closed here). DeepSeek keeps the
+  // fallback: its dialect CAN park the final answer in thinking-only replies.
+  assert.equal(allowThinkingFallbackPromotion('z-ai/glm-5.3-flash'), false);
+  assert.equal(allowThinkingFallbackPromotion('glm-5.3-flash'), false);
+  assert.equal(allowThinkingFallbackPromotion('glm-4.7-flash'), false, 'whole GLM family, not just GLM-5.x');
+  assert.equal(allowThinkingFallbackPromotion('zai-org/GLM-5.3'), false);
+  assert.equal(allowThinkingFallbackPromotion('deepseek-v4-flash'), true);
+  assert.equal(allowThinkingFallbackPromotion('claude-sonnet-4-6'), true);
+  assert.equal(allowThinkingFallbackPromotion('gpt-5.6-sol'), true);
+  assert.equal(allowThinkingFallbackPromotion('some-brand-new-model'), true, 'unknown families keep the historical fallback');
+  assert.equal(allowThinkingFallbackPromotion(null), true);
+  assert.equal(allowThinkingFallbackPromotion(undefined), true);
 });
 
 test('one-shot attempts pin their upstream under a throwaway key and clear it after', async () => {

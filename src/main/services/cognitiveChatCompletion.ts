@@ -10,7 +10,7 @@ import { resolveApiConfigForModel, resolveSystemRescueBrain } from '../libs/clau
 import { clearCoworkSessionUpstream } from '../libs/coworkOpenAICompatProxy';
 import { buildOpenCodeGoHeaders } from '../libs/opencodeGatewayHeaders';
 import { effortForAnthropicWire, effortForOpenAiWire, type LlmEffortLevel } from '../libs/llmEffort';
-import { budgetAssumesThinking, modelAlwaysThinks } from '../libs/modelThinking';
+import { budgetAssumesThinking, modelAlwaysThinks, thinkingWireFamily } from '../libs/modelThinking';
 import { resolveOpenAiCompatContent } from '../libs/openAiCompatContent';
 import { runWithSystemRescue, type BrainRescueInfo } from './llmFallback';
 import { fetchLlmPost } from './llmFetch';
@@ -197,6 +197,23 @@ function remapAnthropicThinkingForModel(
 function extractAnthropicThinkingText(block: { type?: string; text?: string; thinking?: string }): string {
   if (block.type !== 'thinking' && block.type !== 'redacted_thinking') return '';
   return block.thinking || block.text || '';
+}
+
+/**
+ * Whether an empty-text Anthropic-wire reply may fall back to its thinking
+ * text as the answer content. For the GLM family it may not: GLM reasoning is
+ * ALWAYS hidden thinking (GLM-5.x cannot turn thinking off — see
+ * ./modelThinking), so a thinking-only reply means the output budget burned
+ * inside reasoning before any text was emitted (truncation) and promoting it
+ * can only ever leak a mid-thought fragment as the answer. This mirrors the
+ * family guard the OpenAI-compat path already has in
+ * libs/openAiCompatContent.ts (the 2026-10-23 ack-bubble leak); the Anthropic
+ * path kept the unconditional promote-if-empty until the 2026-11-07 daily
+ * report exposed the same leak class on this wire. DeepSeek keeps the
+ * fallback: its dialect CAN park the final answer in thinking-only replies.
+ */
+export function allowThinkingFallbackPromotion(model: string | null | undefined): boolean {
+  return thinkingWireFamily(model) !== 'glm';
 }
 
 /** Options for one chat completion request (with optional fallback LLM retry). */
@@ -610,9 +627,11 @@ async function callAnthropicStyleWithTools(
     }
   }
   if (out.content) out.content = out.content.trim();
-  if (!out.content && thinkingText.trim()) {
+  if (!out.content && thinkingText.trim() && allowThinkingFallbackPromotion(model)) {
     // 没有 text 块时回退到 thinking 文本，避免上层把「空 content」误判为 llm_unavailable。
     // （browser.llm.complete / 象棋走子：LLM 答案可能只在推理里，解析层能从中提取合法着法。）
+    // GLM 家族不回退（allowThinkingFallbackPromotion）：thinking-only 意味着预算耗在
+    // 隐藏推理里，提升只会把思维碎片当答案泄露（2026-10-23 ack 气泡 / 2026-11-07 日报）。
     out.content = thinkingText.trim();
     out.responseMetadata.contentBlockTypes = [
       ...(out.responseMetadata.contentBlockTypes ?? []),
@@ -633,6 +652,7 @@ export const __cognitiveChatCompletionTestUtils = {
   resolveDeepSeekResponsesReasoning,
   resolveDefaultMaxOutputTokens,
   remapAnthropicThinkingForModel,
+  allowThinkingFallbackPromotion,
 };
 
 /**
