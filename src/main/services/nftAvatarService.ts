@@ -60,8 +60,10 @@ interface NftItemFacts {
  * Process-lifetime cache of item facts per itemPinId. Artwork bytes ride the
  * separate resolvePinAssetSource promise cache (keyed by the cover
  * reference). Failed lookups are not cached so a transient indexer outage
- * can heal on the next render.
+ * can heal on the next render. Capped (FIFO eviction) so a long session
+ * browsing many avatars cannot grow it without bound.
  */
+const NFT_ITEM_FACTS_CACHE_MAX = 200;
 const nftItemFactsCache = new Map<string, NftItemFacts | null>();
 
 export function clearNftAvatarItemFactsCache(): void {
@@ -91,6 +93,10 @@ async function getNftItemFacts(itemPinId: string): Promise<NftItemFacts | null> 
   }
   if (facts) {
     nftItemFactsCache.set(itemPinId, facts);
+    if (nftItemFactsCache.size > NFT_ITEM_FACTS_CACHE_MAX) {
+      const oldest = nftItemFactsCache.keys().next().value;
+      if (oldest !== undefined) nftItemFactsCache.delete(oldest);
+    }
   }
   return facts;
 }

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   buildNftArtworkSources,
   buildNftDetailRows,
@@ -12,6 +13,16 @@ import {
   validateMrc721SellDraft,
   validateNftTransferDraft,
 } from '../src/renderer/components/metabots/metabotNftPresentation.js';
+
+test('MRC721_MIN_SELL_PRICE_SATS renderer mirror stays pinned to the main-side constant', () => {
+  // metabotNftPresentation.js cannot import the main-side module (the tx
+  // builder drags the meta-contract stack into the renderer bundle), so the
+  // value is a declared mirror — this string audit is what keeps it honest.
+  const mainSource = readFileSync(new URL('../src/main/libs/mrc721AtomicSwapTx.ts', import.meta.url), 'utf8');
+  const match = mainSource.match(/export const MRC721_MIN_SELL_PRICE_SATS = (\d+)/);
+  assert.ok(match, 'main-side MRC721_MIN_SELL_PRICE_SATS not found in mrc721AtomicSwapTx.ts');
+  assert.equal(MRC721_MIN_SELL_PRICE_SATS, Number(match[1]));
+});
 
 test('metafileToSourceUrls expands metafile URIs and bare pin ids to accelerate→content routes', () => {
   const withExtension = metafileToSourceUrls('metafile://aaaa…i0.png');
