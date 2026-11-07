@@ -46,7 +46,8 @@ import { findMeRateForModel } from './me/meRates';
 import { ensureMeSnapshot, getMeSnapshot, subscribeMeSnapshot } from './me/mePointsStore';
 import { defaultConfig, type AppConfig, type ChatExperienceMode } from '../config';
 import { LLM_FREE_PROVIDER_KEY, getFreeProviderModelDisplayName } from '../services/llmFreeQuotaGate.js';
-import type { ProviderTemplate } from '../services/providerTemplates';
+import { PROVIDER_TEMPLATES, type ProviderTemplate } from '../services/providerTemplates';
+import { resolveProviderTemplateLogo } from './settings/providerTemplateLogos';
 import ProviderTemplatePicker from './settings/ProviderTemplatePicker';
 
 type TabType = 'user' | 'general' | 'model' | 'skills' | 'projects' | 'coworkSandbox' | 'coworkMemory' | 'archivedChats' | 'shortcuts' | 'im' | 'email' | 'paramsConfig' | 'traffic';
@@ -132,6 +133,8 @@ interface ProviderExportEntry {
   name?: string;
   /** 自定义/模板供应商的取 key 控制台链接，内置供应商无此字段 */
   apiKeyManagementUrl?: string;
+  /** 模板供应商的 logo key，内置/用户自建供应商无此字段 */
+  logoKey?: string;
 }
 
 interface ProvidersExportPayload {
@@ -158,6 +161,8 @@ interface ProvidersImportEntry {
   name?: string;
   /** 自定义/模板供应商的取 key 控制台链接，内置供应商无此字段 */
   apiKeyManagementUrl?: string;
+  /** 模板供应商的 logo key，内置/用户自建供应商无此字段 */
+  logoKey?: string;
 }
 
 interface ProvidersImportPayload {
@@ -488,8 +493,37 @@ const getProviderDisplayLabel = (key: ProviderType, config?: ProviderConfig): st
   return providerMeta[key]?.label ?? key;
 };
 
-const getProviderIcon = (key: ProviderType): React.ReactNode => {
+/**
+ * Vendor logo key for a provider entry: template-created providers store
+ * their template's logo key; legacy template entries (created before the
+ * field existed) are recognized by their custom-<templateId>[-N] key shape.
+ * Returns null for user-created custom providers — they keep the generic icon.
+ */
+const getProviderTemplateLogoKey = (key: ProviderType, config?: ProviderConfig): string | null => {
+  if (config?.logoKey) {
+    return config.logoKey;
+  }
+  if (!isCustomProviderKey(key)) {
+    return null;
+  }
+  const slug = key.replace(/^custom-/, '');
+  const stripped = slug.replace(/-\d+$/, '');
+  const template = PROVIDER_TEMPLATES.find(entry => entry.templateId === stripped)
+    ?? PROVIDER_TEMPLATES.find(entry => entry.templateId === slug);
+  return template?.logo ?? null;
+};
+
+const getProviderIconWithLogo = (
+  key: ProviderType,
+  config: ProviderConfig | undefined,
+  dark: boolean
+): React.ReactNode => {
   if (isCustomProviderKey(key)) {
+    const logoKey = getProviderTemplateLogoKey(key, config);
+    const src = logoKey ? resolveProviderTemplateLogo(logoKey, dark) : null;
+    if (src) {
+      return <img src={src} alt="" aria-hidden className="h-6 w-6 object-contain" />;
+    }
     return <CustomProviderIcon />;
   }
   return providerMeta[key]?.icon;
@@ -661,6 +695,9 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
   // "Add Provider" template picker (ZCode-style): when open, the right detail
   // area is replaced by the third-party template list instead of a modal.
   const [showProviderTemplatePicker, setShowProviderTemplatePicker] = useState(false);
+  // Provider awaiting delete confirmation (in-app modal — window.confirm is
+  // a no-op in Electron, it resolves false without showing any dialog).
+  const [pendingDeleteProvider, setPendingDeleteProvider] = useState<ProviderType | null>(null);
 
   // Right-click cut/copy/paste menus for the Base URL inputs on this page
   // (API-key fields get theirs from SecretInput itself).
@@ -1000,6 +1037,16 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
     || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
   // Optional vendor key-console link carried by custom/template providers.
   const activeApiKeyManagementUrl = (providers[activeProvider] as ProviderConfig | undefined)?.apiKeyManagementUrl;
+  // Everything below the two pinned ID.Bots entries: configured built-ins +
+  // custom/template providers. The group label only renders when non-empty.
+  const thirdPartyProviderEntries = useMemo(
+    () => Object.entries(visibleProviders).filter(([provider]) => provider !== LLM_FREE_PROVIDER_KEY),
+    [visibleProviders]
+  );
+  // Display name shown in the delete-confirmation dialog.
+  const pendingDeleteProviderName = pendingDeleteProvider
+    ? getProviderDisplayLabel(pendingDeleteProvider, providers[pendingDeleteProvider])
+    : '';
 
   // Ensure activeProvider is always in visibleProviders when language changes
   useEffect(() => {
@@ -1704,6 +1751,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
         baseUrl: template.baseUrl,
         apiFormat: template.apiFormat,
         name: displayName,
+        logoKey: template.logo,
         ...(template.apiKeyManagementUrl ? { apiKeyManagementUrl: template.apiKeyManagementUrl } : {}),
         models: template.models.map(model => ({ ...model })),
       },
@@ -1744,16 +1792,13 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
   };
 
   const handleDeleteCustomProvider = (providerKey: string) => {
-    const displayName = providers[providerKey]?.name?.trim() || providerKey;
-    if (!window.confirm(i18nService.t('deleteCustomProviderConfirm').replace('{name}', displayName))) {
-      return;
-    }
     setProviders(prev => {
       const next = { ...prev };
       delete next[providerKey];
       return next;
     });
     setTestResult(null);
+    setPendingDeleteProvider(null);
     if (activeProvider === providerKey) {
       setShowCerebellumSettings(false);
       const remainingKeys = Object.keys(visibleProviders).filter(key => key !== providerKey);
@@ -1777,13 +1822,13 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
             : 'dark:bg-claude-darkSurface/50 bg-claude-surface hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover border border-transparent'
         }`}
       >
-        <div className="flex flex-1 items-center">
-          <div className="mr-2 flex h-7 w-7 items-center justify-center">
+        <div className="flex flex-1 items-center min-w-0">
+          <div className="mr-2 flex h-7 w-7 items-center justify-center shrink-0">
             <span className="dark:text-claude-darkText text-claude-text">
-              {getProviderIcon(providerKey)}
+              {getProviderIconWithLogo(providerKey, config, isDarkTheme)}
             </span>
           </div>
-          <span className={`text-sm font-medium truncate ${
+          <span className={`text-sm font-medium leading-snug ${
             activeProvider === providerKey && !showCerebellumSettings
               ? 'text-claude-accent'
               : 'dark:text-claude-darkText text-claude-text'
@@ -1798,7 +1843,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
               title={i18nService.t('deleteProvider')}
               onClick={(e) => {
                 e.stopPropagation();
-                handleDeleteCustomProvider(providerKey);
+                setPendingDeleteProvider(providerKey);
               }}
               className="p-1 mr-1 dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
             >
@@ -2120,6 +2165,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
             models: providerConfig.models,
             name: isCustomProviderKey(providerKey) ? (providerConfig as ProviderConfig).name : undefined,
             apiKeyManagementUrl: isCustomProviderKey(providerKey) ? (providerConfig as ProviderConfig).apiKeyManagementUrl : undefined,
+            logoKey: isCustomProviderKey(providerKey) ? (providerConfig as ProviderConfig).logoKey : undefined,
           },
         ] as const;
       })
@@ -2264,6 +2310,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
           models: models ?? existing?.models,
           name: typeof providerData.name === 'string' ? providerData.name : existing?.name,
           apiKeyManagementUrl: typeof providerData.apiKeyManagementUrl === 'string' ? providerData.apiKeyManagementUrl : existing?.apiKeyManagementUrl,
+          logoKey: typeof providerData.logoKey === 'string' ? providerData.logoKey : existing?.logoKey,
         };
       }
 
@@ -2348,6 +2395,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
           models: models ?? existing?.models,
           name: typeof providerData.name === 'string' ? providerData.name : existing?.name,
           apiKeyManagementUrl: typeof providerData.apiKeyManagementUrl === 'string' ? providerData.apiKeyManagementUrl : existing?.apiKeyManagementUrl,
+          logoKey: typeof providerData.logoKey === 'string' ? providerData.logoKey : existing?.logoKey,
         };
       }
 
@@ -3284,13 +3332,16 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                 onChange={handleImportProviders}
               />
               {/* ID.Bots entries pinned on top: subscription, then top-up.
-                  Everything else (configured built-ins + custom/template
-                  providers) follows in config order. */}
+                  Third-party entries follow under their own group label,
+                  which only appears once the group is non-empty. */}
               {providers[LLM_FREE_PROVIDER_KEY] && renderProviderRow(LLM_FREE_PROVIDER_KEY, providers[LLM_FREE_PROVIDER_KEY])}
               {renderRechargeRow()}
-              {Object.entries(visibleProviders)
-                .filter(([provider]) => provider !== LLM_FREE_PROVIDER_KEY)
-                .map(([provider, config]) => renderProviderRow(provider as ProviderType, config))}
+              {thirdPartyProviderEntries.length > 0 && (
+                <div className="px-1 pt-2 pb-0.5 text-[11px] font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  {i18nService.t('thirdPartyProviders')}
+                </div>
+              )}
+              {thirdPartyProviderEntries.map(([provider, config]) => renderProviderRow(provider as ProviderType, config))}
               <button
                 type="button"
                 onClick={() => {
@@ -3339,17 +3390,34 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
               ) : !showCerebellumSettings ? (
               <div className="space-y-4">
               <div className="flex items-center justify-between pb-2 border-b dark:border-claude-darkBorder border-claude-border">
-                <h3 className="text-base font-medium dark:text-claude-darkText text-claude-text">
-                  {getProviderDisplayLabel(activeProvider, providers[activeProvider])} {i18nService.t('providerSettings')}
+                <h3 className="text-base font-medium dark:text-claude-darkText text-claude-text flex items-center gap-2 min-w-0">
+                  <span className="flex h-6 w-6 items-center justify-center shrink-0 dark:text-claude-darkText text-claude-text">
+                    {getProviderIconWithLogo(activeProvider, providers[activeProvider], isDarkTheme)}
+                  </span>
+                  <span className="truncate">
+                    {getProviderDisplayLabel(activeProvider, providers[activeProvider])} {i18nService.t('providerSettings')}
+                  </span>
                 </h3>
-                <div
-                  className={`px-2 py-0.5 rounded-lg text-xs font-medium ${
-                    providers[activeProvider].enabled
-                      ? 'bg-green-500/20 text-green-600 dark:text-green-400'
-                      : 'bg-red-500/20 text-red-600 dark:text-red-400'
-                  }`}
-                >
-                  {providers[activeProvider].enabled ? i18nService.t('providerStatusOn') : i18nService.t('providerStatusOff')}
+                <div className="flex items-center space-x-1.5 shrink-0">
+                  <div
+                    className={`px-2 py-0.5 rounded-lg text-xs font-medium ${
+                      providers[activeProvider].enabled
+                        ? 'bg-green-500/20 text-green-600 dark:text-green-400'
+                        : 'bg-red-500/20 text-red-600 dark:text-red-400'
+                    }`}
+                  >
+                    {providers[activeProvider].enabled ? i18nService.t('providerStatusOn') : i18nService.t('providerStatusOff')}
+                  </div>
+                  {isCustomProviderKey(activeProvider) && (
+                    <button
+                      type="button"
+                      title={i18nService.t('deleteProvider')}
+                      onClick={() => setPendingDeleteProvider(activeProvider)}
+                      className="p-1.5 dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-red-500 rounded-lg dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+                    >
+                      <TrashIcon className="h-4 w-4" />
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -3662,10 +3730,13 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                     </div>
                   )}
                 </div>
-                {/* S9 §4 区块3：价签换算说明（页脚固定一行；倍率来自 /v1/me/rates 实时返回） */}
-                <p className="mt-2 text-[10px] leading-relaxed text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                  {i18nService.t('meRatesFooterNote')}
-                </p>
+                {/* S9 §4 区块3：价签换算说明（页脚固定一行；倍率来自 /v1/me/rates 实时返回）。
+                    ME 积分扣费只属于官方订阅通道，第三方供应商不显示该说明。 */}
+                {activeProvider === LLM_FREE_PROVIDER_KEY && (
+                  <p className="mt-2 text-[10px] leading-relaxed text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                    {i18nService.t('meRatesFooterNote')}
+                  </p>
+                )}
               </div>
               </div>
             ) : (
@@ -4171,6 +4242,50 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                     className="btn-idchat-primary-filled px-3 py-1.5 text-xs"
                   >
                     {i18nService.t('save')}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {pendingDeleteProvider && (
+            <div
+              className="absolute inset-0 z-20 flex items-center justify-center bg-black/35 px-4"
+              onClick={() => setPendingDeleteProvider(null)}
+            >
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-label={i18nService.t('deleteProvider')}
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    e.preventDefault();
+                    setPendingDeleteProvider(null);
+                  }
+                }}
+                className="w-full max-w-sm rounded-2xl dark:bg-claude-darkSurface bg-claude-bg dark:border-claude-darkBorder border-claude-border border shadow-modal p-4"
+              >
+                <h4 className="text-sm font-semibold dark:text-claude-darkText text-claude-text mb-1">
+                  {i18nService.t('deleteProvider')}
+                </h4>
+                <p className="mb-4 text-xs leading-relaxed dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  {i18nService.t('deleteCustomProviderConfirm').replace('{name}', pendingDeleteProviderName)}
+                </p>
+                <div className="flex justify-end space-x-2">
+                  <button
+                    type="button"
+                    onClick={() => setPendingDeleteProvider(null)}
+                    className="px-3 py-1.5 text-xs dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-xl border dark:border-claude-darkBorder border-claude-border"
+                  >
+                    {i18nService.t('cancel')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteCustomProvider(pendingDeleteProvider)}
+                    className="px-3 py-1.5 text-xs font-medium rounded-xl bg-red-500 text-white hover:bg-red-600 transition-colors active:scale-[0.98]"
+                  >
+                    {i18nService.t('confirm')}
                   </button>
                 </div>
               </div>

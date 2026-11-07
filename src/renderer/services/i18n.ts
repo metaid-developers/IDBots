@@ -125,10 +125,12 @@ const translations: Record<LanguageType, Record<string, string>> = {
     idbotsSubscriptionProvider: 'ID.Bots 订阅',
     idbotsRechargeProvider: 'ID.Bots 充值',
     idbotsRechargePlaceholder: '充值入口即将上线，敬请期待。',
+    thirdPartyProviders: '第三方供应商',
     createCustomProvider: '创建自定义供应商',
     templatePickerBack: '返回供应商详情',
     newProviderDefaultName: '新供应商',
     providerApiKeyUrlHint: '获取 API Key：',
+    confirm: '确认',
 
     // 小脑（Cerebellum）设置
     modelBrainTab: '大脑',
@@ -3723,10 +3725,12 @@ const translations: Record<LanguageType, Record<string, string>> = {
     idbotsSubscriptionProvider: 'ID.Bots Subscription',
     idbotsRechargeProvider: 'ID.Bots Top-up',
     idbotsRechargePlaceholder: 'The top-up entrance is coming soon.',
+    thirdPartyProviders: 'Third-party providers',
     createCustomProvider: 'Create custom provider',
     templatePickerBack: 'Back to provider details',
     newProviderDefaultName: 'New provider',
     providerApiKeyUrlHint: 'Get your API key: ',
+    confirm: 'Confirm',
 
     // Cerebellum settings
     modelBrainTab: 'Brain',

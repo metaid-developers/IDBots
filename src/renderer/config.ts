@@ -143,6 +143,8 @@ export interface AppConfig {
       name?: string;
       // 自定义/模板供应商的取 key 控制台链接（设置页 API Key 下方展示）
       apiKeyManagementUrl?: string;
+      // 模板供应商的 logo key（providerTemplates.ts），左侧列表与详情头渲染厂商图标
+      logoKey?: string;
     };
   };
   // 主题配置

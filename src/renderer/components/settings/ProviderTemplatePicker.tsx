@@ -57,7 +57,7 @@ const ProviderTemplatePicker: React.FC<ProviderTemplatePickerProps> = ({
             <span className="mr-2 flex h-7 w-7 items-center justify-center text-claude-accent">
               <PlusCircleIcon className="h-5 w-5" />
             </span>
-            <span className="flex-1 text-sm font-medium dark:text-claude-darkText text-claude-text truncate">
+            <span className="flex-1 text-sm font-medium leading-snug dark:text-claude-darkText text-claude-text">
               {i18nService.t('createCustomProvider')}
             </span>
           </button>
@@ -80,7 +80,7 @@ const ProviderTemplatePicker: React.FC<ProviderTemplatePickerProps> = ({
                     </span>
                   )}
                 </span>
-                <span className="flex-1 text-sm font-medium dark:text-claude-darkText text-claude-text truncate">
+                <span className="flex-1 text-sm font-medium leading-snug dark:text-claude-darkText text-claude-text">
                   {templateName(template)}
                 </span>
                 <ChevronRightIcon className="h-4 w-4 ml-1 shrink-0 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
