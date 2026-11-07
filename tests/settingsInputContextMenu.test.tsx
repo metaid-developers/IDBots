@@ -26,17 +26,17 @@ test('API-key and Base URL inputs on the models settings page carry the editing 
   const settings = readSource('src', 'renderer', 'components', 'Settings.tsx');
   const secretInput = readSource('src', 'renderer', 'components', 'ui', 'SecretInput.tsx');
 
-  // Every API-key field (provider / cerebellum / custom-provider form) gets the
+  // Every API-key field (provider / cerebellum form) gets the
   // menu through SecretInput itself.
   assert.match(secretInput, /useTextInputContextMenu\(\)/);
   assert.match(secretInput, /onContextMenu=\{contextMenu\.onContextMenu\}/);
 
-  // The three Base URL inputs each own a menu instance.
-  assert.equal((settings.match(/useTextInputContextMenu\(\)/g) ?? []).length, 3);
+  // The two Base URL inputs each own a menu instance (custom/template
+  // providers edit Base URL through the shared provider field).
+  assert.equal((settings.match(/useTextInputContextMenu\(\)/g) ?? []).length, 2);
   assert.match(settings, /onContextMenu=\{providerBaseUrlContextMenu\.onContextMenu\}/);
   assert.match(settings, /onContextMenu=\{cerebellumBaseUrlContextMenu\.onContextMenu\}/);
-  assert.match(settings, /onContextMenu=\{customProviderBaseUrlContextMenu\.onContextMenu\}/);
-  assert.equal((settings.match(/BaseUrlContextMenu\.menu\}/g) ?? []).length, 3);
+  assert.equal((settings.match(/BaseUrlContextMenu\.menu\}/g) ?? []).length, 2);
 });
 
 test('the menu offers localized cut/copy/paste/select-all in both languages', () => {

@@ -25,7 +25,7 @@ test('model settings uses one provider list with TypeSafe JEV as the decision-mo
   assert.equal(settingsSource.includes("i18nService.t('modelBrainTab')"), false);
   assert.equal(settingsSource.includes("i18nService.t('modelCerebellumTab')"), false);
   assert.match(settingsSource, /const \[showCerebellumSettings, setShowCerebellumSettings\] = useState\(false\)/);
-  assert.match(settingsSource, /onClick=\{\(\) => setShowCerebellumSettings\(true\)\}[\s\S]*TypeSafe JEV/);
+  assert.match(settingsSource, /setShowProviderTemplatePicker\(false\);\s*setShowCerebellumSettings\(true\);[\s\S]*TypeSafe JEV/);
   assert.match(settingsSource, /onClick=\{\(\) => handleProviderChange\(providerKey\)\}/);
   assert.match(settingsSource, /setShowCerebellumSettings\(false\)/);
 });
