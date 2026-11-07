@@ -203,3 +203,23 @@ Note the deltas vs the currently deployed build: quarter totals gain a `.3`/`.1`
 
 7. Quarterly/yearly order amounts equal `round2(monthly × months × 0.90/0.80)` exactly (e.g. ID.Pupil quarter order `amountCny = 132.3`), matching the client price tag and lump-sum line.
 
+
+---
+
+## Amendment v0.3 — subscription order list endpoint (2026-11-07)
+
+**Adds one read endpoint; nothing else changes.** The desktop 用量&积分 page now renders a merged payment-records list (subscription + topup orders). The client side is already shipped against this contract and degrades to topup-only until the endpoint exists (404 → silent degradation, no error shown).
+
+### R5 — `GET /v1/me/subscription/orders`
+
+Owner-scoped list of the caller's subscription orders, newest first.
+
+- Auth: same signed identity headers as every `/v1/me/*` endpoint, action **`subscription_order`** (reuse the checkout family action — the poll already proves it works; do NOT invent a new action).
+- Route: register as `me.GET("/subscription/orders", ...)` alongside the existing `me.GET("/subscription/order/:orderId", ...)` — static `orders` vs param `order/:orderId` do not conflict in Gin, but verify the router accepts both.
+- Optional query: `limit` (int, default 100, cap 500), `status` filter (optional; values as stored).
+- Response: standard envelope, `data = { "orders": [ <order view>... ] }` where each element is the exact R2/R3 order view (`orderId, planId, period, channel, status, amountCny, payAmount, payCurrency, gatewayParams, createdAt, ...`). `gatewayParams` should ride along (the client does not need it in the list, but replay symmetry is free). Sort by `createdAt` desc. Empty list = `{orders: []}` with `code: 0` (never an error).
+- The client reads `data.orders` (also tolerates `entries/items/list/records/rows` array keys) and normalizes with the same field aliases as R2.
+
+### Acceptance addendum
+
+8. `GET /v1/me/subscription/orders` signed with action `subscription_order` returns the caller's orders (and only theirs) sorted newest-first; an identity with no orders gets `{code: 0, data: {orders: []}}`; an unsigned request gets the standard JSON auth error.

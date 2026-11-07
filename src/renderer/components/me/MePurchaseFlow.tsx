@@ -18,6 +18,7 @@ import {
   getMeSnapshot,
   invalidateMeSnapshot,
   isMeEffectivelySubscribed,
+  meActivePlanId,
   meFromMilli,
   requestMeSubscription,
   requestOpenUsagePage,
@@ -106,11 +107,25 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
     () => snapshot.plans.find((plan) => plan.tier === 'free') ?? null,
     [snapshot.plans]
   );
-  const planCards = useMemo(
-    () => [serverFreePlan ?? LOCAL_FREE_PLAN, ...paidPlans],
-    [serverFreePlan, paidPlans]
-  );
   const subscribed = isMeEffectivelySubscribed(snapshot.subscription);
+  const activePlanId = meActivePlanId(snapshot.subscription);
+  const activeRawTier = typeof snapshot.subscription?.raw?.tier === 'string'
+    ? (snapshot.subscription.raw as Record<string, unknown>).tier
+    : '';
+  // The currently-active tier (free for un-subscribed users, the paid plan
+  // otherwise) renders as "current plan": highlighted but not selectable.
+  const isCurrentPlan = useCallback((plan: MePlanInfo) => {
+    if (!subscribed) return plan.tier === 'free';
+    return plan.planId === activePlanId
+      || plan.tier === activePlanId
+      || (!!activeRawTier && plan.tier === activeRawTier);
+  }, [subscribed, activePlanId, activeRawTier]);
+  // A paying user must not see the free tier at all: no downgrade option —
+  // the subscription falls back to free on its own when it expires.
+  const planCards = useMemo(() => {
+    const cards = [serverFreePlan ?? LOCAL_FREE_PLAN, ...paidPlans];
+    return subscribed ? cards.filter((plan) => plan.tier !== 'free') : cards;
+  }, [serverFreePlan, paidPlans, subscribed]);
 
   useEffect(() => {
     if (!open) return;
@@ -137,10 +152,14 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
       });
     }
     setSelectedPlanId((current) => {
-      if (current && paidPlans.some((plan) => plan.planId === current)) return current;
-      return paidPlans[Math.min(1, Math.max(0, paidPlans.length - 1))]?.planId ?? '';
+      const stillValid = current
+        && planCards.some((plan) => plan.planId === current && !isCurrentPlan(plan));
+      if (stillValid) return current;
+      const preferred = paidPlans[Math.min(1, Math.max(0, paidPlans.length - 1))];
+      if (preferred && !isCurrentPlan(preferred)) return preferred.planId;
+      return paidPlans.find((plan) => !isCurrentPlan(plan))?.planId ?? '';
     });
-  }, [open, section]);
+  }, [open, section, isCurrentPlan, planCards, paidPlans]);
 
   useEffect(() => {
     const listener = (event: Event) => {
@@ -153,7 +172,16 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
     return () => window.removeEventListener('me:purchaseSwitchSection', listener);
   }, [onSectionChange]);
 
-  const effectivePlanId = selectedPlanId || paidPlans[Math.min(1, Math.max(0, paidPlans.length - 1))]?.planId || '';
+  // Effective selection never lands on the current (non-selectable) plan.
+  const effectivePlanId = useMemo(() => {
+    if (selectedPlanId) {
+      const selected = planCards.find((plan) => plan.planId === selectedPlanId);
+      if (selected && !isCurrentPlan(selected)) return selectedPlanId;
+    }
+    const preferred = paidPlans[Math.min(1, Math.max(0, paidPlans.length - 1))];
+    if (preferred && !isCurrentPlan(preferred)) return preferred.planId;
+    return paidPlans.find((plan) => !isCurrentPlan(plan))?.planId ?? '';
+  }, [selectedPlanId, planCards, paidPlans, isCurrentPlan]);
   const selectedPlan = planCards.find((plan) => plan.planId === effectivePlanId) ?? null;
   const selectedTopup = topupPackages.find((pkg) => pkg.packageId === selectedPackageId) ?? null;
   // The free tier is display-only: it has no order, no period and no CTA.
@@ -301,7 +329,7 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
   if (!open) return null;
 
   const canCreate = section === 'subscribe'
-    ? Boolean(selectedPlan) && !isFreeSelected
+    ? Boolean(selectedPlan) && !isFreeSelected && !isCurrentPlan(selectedPlan)
     : section === 'topup' && subscribed && Boolean(selectedTopup);
   const paymentUrl = checkout?.approvalUrl || (/^https?:\/\//i.test(checkout?.qrCode ?? '') ? checkout!.qrCode : '');
 
@@ -332,43 +360,53 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
 
               {section === 'subscribe' && (
                 <div className="space-y-2">
-                  {planCards.map((plan) => (
-                    <button
-                      key={plan.planId}
-                      type="button"
-                      disabled={phase === 'creating'}
-                      onClick={() => setSelectedPlanId(plan.planId)}
-                      className={`w-full rounded-xl border px-3 py-2.5 text-left transition-colors ${
-                        effectivePlanId === plan.planId
-                          ? 'border-claude-accent bg-claude-accent/5 dark:bg-claude-accent/10'
-                          : 'border-claude-border dark:border-claude-darkBorder hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="flex min-w-0 items-center gap-2">
-                          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-claude-accent/10 text-claude-accent dark:bg-claude-accent/15 dark:text-claude-darkAccent">
-                            {tierIcon(plan)}
+                  {planCards.map((plan) => {
+                    const currentPlan = isCurrentPlan(plan);
+                    const highlighted = currentPlan || effectivePlanId === plan.planId;
+                    return (
+                      <button
+                        key={plan.planId}
+                        type="button"
+                        disabled={phase === 'creating' || currentPlan}
+                        onClick={() => {
+                          if (!currentPlan) setSelectedPlanId(plan.planId);
+                        }}
+                        className={`w-full rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                          highlighted
+                            ? 'border-claude-accent bg-claude-accent/5 dark:bg-claude-accent/10'
+                            : 'border-claude-border dark:border-claude-darkBorder hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
+                        } ${currentPlan ? 'cursor-default' : ''}`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="flex min-w-0 items-center gap-2">
+                            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-claude-accent/10 text-claude-accent dark:bg-claude-accent/15 dark:text-claude-darkAccent">
+                              {tierIcon(plan)}
+                            </span>
+                            <span className="truncate text-xs font-semibold text-claude-text dark:text-claude-darkText">{plan.name}</span>
                           </span>
-                          <span className="truncate text-xs font-semibold text-claude-text dark:text-claude-darkText">{plan.name}</span>
-                        </span>
-                        <span className="shrink-0 tabular-nums text-xs text-claude-text dark:text-claude-darkText">
-                          {plan.tier === 'free'
-                            ? i18nService.t('mePurchaseFreePrice')
-                            : i18nService.t('mePlanPriceMonthly').replace('{price}', priceLabel(plan.desktopPriceCny ?? plan.priceCny))}
-                        </span>
-                      </div>
-                      <div className="mt-0.5 flex items-center justify-between gap-2">
-                        <span className="truncate text-[10px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                          {i18nService.t('mePlanHighlightWeekly').replace('{me}', formatMe(meFromMilli(plan.weeklyAmountMilli)))}
-                        </span>
-                        {plan.tier === 'pro' && (
-                          <span className="shrink-0 text-[10px] text-claude-accent dark:text-claude-darkAccent">
-                            {i18nService.t('mePlanPopularBadge')}
+                          <span className="shrink-0 tabular-nums text-xs text-claude-text dark:text-claude-darkText">
+                            {plan.tier === 'free'
+                              ? i18nService.t('mePurchaseFreePrice')
+                              : i18nService.t('mePlanPriceMonthly').replace('{price}', priceLabel(plan.desktopPriceCny ?? plan.priceCny))}
                           </span>
-                        )}
-                      </div>
-                    </button>
-                  ))}
+                        </div>
+                        <div className="mt-0.5 flex items-center justify-between gap-2">
+                          <span className="truncate text-[10px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                            {i18nService.t('mePlanHighlightWeekly').replace('{me}', formatMe(meFromMilli(plan.weeklyAmountMilli)))}
+                          </span>
+                          {currentPlan ? (
+                            <span className="shrink-0 rounded-full bg-claude-accent/10 px-2 py-0.5 text-[10px] font-medium text-claude-accent dark:text-claude-darkAccent">
+                              {i18nService.t('meCurrentPlanBadge')}
+                            </span>
+                          ) : plan.tier === 'pro' ? (
+                            <span className="shrink-0 text-[10px] text-claude-accent dark:text-claude-darkAccent">
+                              {i18nService.t('mePlanPopularBadge')}
+                            </span>
+                          ) : null}
+                        </div>
+                      </button>
+                    );
+                  })}
 
                   {selectedPlan && !isFreeSelected && (
                     <div className="rounded-xl border border-claude-border dark:border-claude-darkBorder bg-claude-surfaceInset/40 dark:bg-claude-darkSurfaceInset/30 px-3 py-2.5">
@@ -601,9 +639,14 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
           )}
 
           {phase === 'credited' && (
-            <div className="rounded-xl border border-green-200 dark:border-green-800/70 bg-green-50/70 dark:bg-green-950/30 px-3 py-3">
-              <p className="text-[12px] leading-relaxed text-green-700 dark:text-green-300">
-                <CheckCircleIcon className="mr-1 inline h-4 w-4" />
+            <div className="rounded-2xl border border-green-200 dark:border-green-800/70 bg-green-50/70 dark:bg-green-950/30 px-4 py-6 text-center">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-green-500/15">
+                <CheckCircleIcon className="h-8 w-8 text-green-500" />
+              </div>
+              <p className="mt-3 text-base font-semibold text-green-700 dark:text-green-300">
+                {i18nService.t('mePurchaseSuccessTitle')}
+              </p>
+              <p className="mt-1.5 text-[11px] leading-relaxed text-green-700/80 dark:text-green-300/80">
                 {i18nService.t(section === 'subscribe' ? 'mePurchaseSubscribeCredited' : 'mePurchaseTopupCredited')}
               </p>
               <button
@@ -612,7 +655,7 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
                   onClose();
                   requestOpenUsagePage();
                 }}
-                className="mt-2 text-[11px] font-medium text-green-700 dark:text-green-300 hover:underline"
+                className="mt-4 text-[11px] font-medium text-green-700 dark:text-green-300 hover:underline"
               >
                 {i18nService.t('mePurchaseViewOrders')}
               </button>

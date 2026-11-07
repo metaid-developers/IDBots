@@ -10,19 +10,22 @@
  * All values render live from the API; nothing is hardcoded.
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ArrowPathIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
-import type { MeHistoryEntryInfo, MeTopupOrderInfo } from '../../types/electron';
+import type { MeHistoryEntryInfo, MeSubscriptionOrderInfo, MeTopupOrderInfo } from '../../types/electron';
 import {
   ensureMeSnapshot,
   formatMe,
   formatMeSigned,
   getMeSnapshot,
+  isMeEffectivelySubscribed,
+  meActivePlanId,
   meFromMilli,
   meResetParts,
   subscribeMeSnapshot,
 } from './mePointsStore';
+import { meTierDisplayName } from './IdbotsPlanCard';
 
 const HISTORY_TYPES = ['', 'mint', 'topup', 'bonus', 'burn', 'transfer', 'reverse', 'adjust', 'expire'] as const;
 
@@ -76,6 +79,24 @@ const formatOrderTime = (ts: number | undefined): string => {
   }
 };
 
+const orderEpochMs = (ts: number | undefined): number => (
+  ts && Number.isFinite(ts) ? (ts > 1e11 ? ts : ts * 1000) : 0
+);
+
+/** One row of the merged payment-records list (subscription + topup orders). */
+interface MePaymentRecordRow {
+  key: string;
+  kind: 'subscription' | 'topup';
+  orderId: string;
+  title: string;
+  createdAt?: number;
+  /** milliME granted (topup only). */
+  meMilli?: number;
+  amountCny?: number;
+  status: string;
+  rejectReason?: string;
+}
+
 const MeUsageAndCredits: React.FC = () => {
   const snapshot = React.useSyncExternalStore(subscribeMeSnapshot, getMeSnapshot, getMeSnapshot);
   const [entries, setEntries] = useState<MeHistoryEntryInfo[]>([]);
@@ -84,6 +105,8 @@ const MeUsageAndCredits: React.FC = () => {
   const [historyError, setHistoryError] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('');
   const [orders, setOrders] = useState<MeTopupOrderInfo[]>([]);
+  const [subOrders, setSubOrders] = useState<MeSubscriptionOrderInfo[]>([]);
+  const [subOrdersUnavailable, setSubOrdersUnavailable] = useState(false);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [ratesOpen, setRatesOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -113,8 +136,21 @@ const MeUsageAndCredits: React.FC = () => {
   const loadOrders = useCallback(async (withSpinner: boolean) => {
     if (withSpinner) setOrdersLoading(true);
     try {
-      const res = await window.electron.mePoints.getTopupOrders();
-      if (res.success && Array.isArray(res.orders)) setOrders(res.orders);
+      const [topupRes, subRes] = await Promise.all([
+        window.electron.mePoints.getTopupOrders(),
+        window.electron.mePoints.getSubscriptionOrders().catch(() => null),
+      ]);
+      if (topupRes.success && Array.isArray(topupRes.orders)) setOrders(topupRes.orders);
+      if (subRes && subRes.success && Array.isArray(subRes.orders)) {
+        setSubOrders(subRes.orders);
+        setSubOrdersUnavailable(false);
+      } else if (subRes && subRes.featureUnavailable) {
+        // List endpoint not deployed yet (pre-v0.3 servers) — degrade to
+        // topup-only records instead of surfacing an error.
+        setSubOrders([]);
+        setSubOrdersUnavailable(true);
+      }
+      // Other subscription-list failures keep the previous rows (transient).
     } catch {
       // Orders stay as-is on failure; the section shows its empty state.
     } finally {
@@ -128,12 +164,14 @@ const MeUsageAndCredits: React.FC = () => {
     void loadOrders(true);
   }, [typeFilter]);
 
-  // Status polling while any order is still submitted (refresh every 20s).
+  // Status polling while any order (topup or subscription) is still pending
+  // (refresh every 20s).
   useEffect(() => {
-    if (!orders.some((order) => /submit/i.test(order.status))) return;
+    const pending = [...orders, ...subOrders].some((order) => /submit|created|pending|paid/i.test(order.status));
+    if (!pending) return;
     const handle = setInterval(() => void loadOrders(false), 20_000);
     return () => clearInterval(handle);
-  }, [orders, loadOrders]);
+  }, [orders, subOrders, loadOrders]);
 
   const handleRefreshAll = useCallback(async () => {
     setRefreshing(true);
@@ -159,6 +197,52 @@ const MeUsageAndCredits: React.FC = () => {
 
   const rates = snapshot.rates ?? [];
 
+  // Current subscription tier for the weekly-grant badge (same resolution
+  // as the plan card): active paid tier, or ID.Free when not subscribed.
+  const subscribed = isMeEffectivelySubscribed(snapshot.subscription);
+  const activePlanId = meActivePlanId(snapshot.subscription);
+  const currentPlan = subscribed
+    ? snapshot.plans.find((plan) => plan.planId === activePlanId || plan.tier === activePlanId)
+      ?? snapshot.plans.find((plan) => plan.tier === snapshot.subscription?.raw?.tier)
+      ?? null
+    : snapshot.plans.find((plan) => plan.tier === 'free') ?? null;
+
+  // Merged payment records: subscription orders + topup orders, newest first.
+  const paymentRows = useMemo<MePaymentRecordRow[]>(() => {
+    const rows: MePaymentRecordRow[] = [];
+    for (const order of subOrders) {
+      const plan = snapshot.plans.find((item) => item.planId === order.planId);
+      const isPeriod = order.period === 'month' || order.period === 'quarter' || order.period === 'year';
+      const periodLabel = isPeriod
+        ? i18nService.t(`mePurchasePeriod_${order.period as 'month' | 'quarter' | 'year'}`)
+        : '';
+      rows.push({
+        key: `sub-${order.orderId}`,
+        kind: 'subscription',
+        orderId: order.orderId,
+        title: `${plan?.name ?? order.planId}${periodLabel ? ` · ${periodLabel}` : ''}`,
+        createdAt: order.createdAt,
+        amountCny: order.payAmount ?? order.amountCny,
+        status: order.status,
+        rejectReason: order.rejectReason,
+      });
+    }
+    for (const order of orders) {
+      rows.push({
+        key: `topup-${order.orderId}`,
+        kind: 'topup',
+        orderId: order.orderId,
+        title: order.packageId,
+        createdAt: order.createdAt,
+        meMilli: order.meMilli,
+        amountCny: order.priceCny,
+        status: order.status,
+        rejectReason: order.rejectReason,
+      });
+    }
+    return rows.sort((a, b) => orderEpochMs(b.createdAt) - orderEpochMs(a.createdAt));
+  }, [subOrders, orders, snapshot.plans]);
+
   return (
     <div className="h-full overflow-y-auto px-4 py-4 space-y-4 max-w-3xl">
       <div className="flex items-center justify-between">
@@ -180,7 +264,12 @@ const MeUsageAndCredits: React.FC = () => {
       <div className="rounded-2xl border border-claude-border dark:border-claude-darkBorder bg-claude-surface dark:bg-claude-darkSurface/60 p-3.5">
         <div className="grid grid-cols-2 gap-3">
           <div className="rounded-xl bg-claude-surfaceInset/50 dark:bg-claude-darkSurfaceInset/40 px-3 py-2.5">
-            <p className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">{i18nService.t('mePanelWeekly')}</p>
+            <p className="flex items-center gap-1.5 text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+              {i18nService.t('mePanelWeekly')}
+              <span className="rounded-full bg-claude-accent/10 px-2 py-0.5 text-[10px] font-medium text-claude-accent dark:text-claude-darkAccent">
+                {meTierDisplayName(currentPlan, activePlanId || 'free')}
+              </span>
+            </p>
             <p className="mt-1 text-lg font-semibold tabular-nums text-claude-text dark:text-claude-darkText">
               {balance ? `${formatMe(remainingMe)} / ${formatMe(grantMe)}` : '—'}
               <span className="ml-1 text-[10px] font-normal text-claude-textSecondary">ME</span>
@@ -201,41 +290,54 @@ const MeUsageAndCredits: React.FC = () => {
         </p>
       </div>
 
-      {/* 充值订单 */}
+      {/* 支付记录：订阅订单 + 充值订单合并展示 */}
       <div className="rounded-2xl border border-claude-border dark:border-claude-darkBorder bg-claude-surface dark:bg-claude-darkSurface/60 p-3.5">
         <h3 className="text-xs font-semibold text-claude-text dark:text-claude-darkText">{i18nService.t('meUsageOrders')}</h3>
-        {orders.length === 0 ? (
+        {paymentRows.length === 0 ? (
           <p className="mt-2 text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
             {ordersLoading ? i18nService.t('loading') : i18nService.t('meUsageOrdersEmpty')}
           </p>
         ) : (
           <div className="mt-2 divide-y divide-claude-border/50 dark:divide-claude-darkBorder/50">
-            {orders.map((order) => (
-              <div key={order.orderId} className="flex items-center justify-between py-2 text-[11px]">
+            {paymentRows.map((row) => (
+              <div key={row.key} className="flex items-center justify-between py-2 text-[11px]">
                 <div className="min-w-0">
                   <p className="truncate text-claude-text dark:text-claude-darkText">
-                    {order.packageId}
+                    <span className="mr-1.5 rounded-md bg-claude-surfaceHover px-1.5 py-0.5 text-[10px] text-claude-textSecondary dark:bg-claude-darkSurfaceHover dark:text-claude-darkTextSecondary">
+                      {i18nService.t(row.kind === 'subscription' ? 'meUsageOrderKindSubscription' : 'meUsageOrderKindTopup')}
+                    </span>
+                    {row.title}
                     <span className="ml-2 tabular-nums text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                      {formatOrderTime(order.createdAt)}
+                      {formatOrderTime(row.createdAt)}
                     </span>
                   </p>
-                  {order.rejectReason && (
-                    <p className="truncate text-[10px] text-red-500">{order.rejectReason}</p>
+                  {row.rejectReason && (
+                    <p className="truncate text-[10px] text-red-500">{row.rejectReason}</p>
                   )}
                 </div>
                 <div className="flex items-center gap-2">
-                  {order.meMilli != null && order.meMilli > 0 && (
+                  {row.kind === 'topup' && row.meMilli != null && row.meMilli > 0 && (
                     <span className="tabular-nums text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                      +{formatMe(meFromMilli(order.meMilli))} ME
+                      +{formatMe(meFromMilli(row.meMilli))} ME
                     </span>
                   )}
-                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${orderStatusClass(order.status)}`}>
-                    {orderStatusLabel(order.status)}
+                  {row.kind === 'subscription' && row.amountCny != null && row.amountCny > 0 && (
+                    <span className="tabular-nums text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                      ¥{row.amountCny}
+                    </span>
+                  )}
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${orderStatusClass(row.status)}`}>
+                    {orderStatusLabel(row.status)}
                   </span>
                 </div>
               </div>
             ))}
           </div>
+        )}
+        {subOrdersUnavailable && paymentRows.length > 0 && (
+          <p className="mt-2 text-[10px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+            {i18nService.t('meUsageSubOrdersPending')}
+          </p>
         )}
       </div>
 

@@ -27,6 +27,9 @@ const tierName = (plan: MePlanInfo | null, fallbackId: string): string => {
   return TIER_NAMES[key] || plan?.nameEn || plan?.name || fallbackId || TIER_NAMES.free;
 };
 
+// Shared with the usage page's current-tier badge (single naming source).
+export const meTierDisplayName = tierName;
+
 const IdbotsPlanCard: React.FC = () => {
   const snapshot = React.useSyncExternalStore(subscribeMeSnapshot, getMeSnapshot, getMeSnapshot);
   const [refreshing, setRefreshing] = useState(false);

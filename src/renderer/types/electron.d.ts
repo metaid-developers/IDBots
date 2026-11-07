@@ -1762,6 +1762,7 @@ interface IElectronAPI {
     submitTopupOrder: (input: { packageId: string; periodDays?: number; voucherUrl?: string; voucherRemark?: string; idempotencyKey?: string; gateway?: 'alipay' | 'paypal' }) => Promise<{ success: boolean; submission?: MeSubmitTopupResultInfo; error?: string; errorCode?: string; featureUnavailable?: boolean }>;
     submitSubscriptionOrder: (input: { planId: string; period: 'month' | 'quarter' | 'year'; channel: 'desktop' | 'cloud' | 'mobile'; voucherUrl?: string; voucherRemark?: string; idempotencyKey?: string; gateway?: 'alipay' | 'paypal' }) => Promise<{ success: boolean; subscriptionOrder?: MeSubscriptionOrderInfo; error?: string; errorCode?: string; featureUnavailable?: boolean }>;
     getSubscriptionOrder: (input: { orderId: string }) => Promise<{ success: boolean; subscriptionOrder?: MeSubscriptionOrderInfo; error?: string; errorCode?: string; featureUnavailable?: boolean }>;
+    getSubscriptionOrders: () => Promise<{ success: boolean; orders?: MeSubscriptionOrderInfo[]; error?: string; featureUnavailable?: boolean }>;
     getTopupOrders: () => Promise<{ success: boolean; orders?: MeTopupOrderInfo[]; error?: string; featureUnavailable?: boolean }>;
     /** Pick + stage a payment-voucher screenshot; voucherUrl is a signed gateway download URL when the gateway is running. */
     pickVoucher: (input?: Record<string, never>) => Promise<{ success: boolean; fileLabel?: string; voucherUrl?: string; signedUrlError?: string; error?: string }>;
