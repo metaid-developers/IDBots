@@ -260,12 +260,12 @@ const flowSource = fs.readFileSync(
 function createOrderBody() {
   const start = flowSource.indexOf('const handleCreateOrder = useCallback(');
   assert.ok(start >= 0, 'MePurchaseFlow must keep a handleCreateOrder callback');
-  const end = flowSource.indexOf('}, [section, selectedPlan, selectedTopup, phase, period, amountDue]);', start);
+  const end = flowSource.indexOf('}, [section, selectedPlan, selectedTopup, phase, period, amountDue, gateway]);', start);
   assert.ok(end > start, 'handleCreateOrder dependency list shape changed — update this slice');
   return flowSource.slice(start, end);
 }
 
-test('MePurchaseFlow: subscribe creates a desktop Alipay order and opens the returned checkout', () => {
+test('MePurchaseFlow: subscribe creates a desktop order with the selected gateway and opens the returned checkout', () => {
   const body = createOrderBody();
   const subscribeCall = body.indexOf('submitSubscriptionOrder({');
   assert.ok(subscribeCall >= 0);
@@ -273,8 +273,12 @@ test('MePurchaseFlow: subscribe creates a desktop Alipay order and opens the ret
   assert.match(subscribeBlock, /planId: subjectId/);
   assert.match(subscribeBlock, /period/);
   assert.match(subscribeBlock, /channel: 'desktop'/);
-  assert.match(subscribeBlock, /gateway: 'alipay'/);
+  assert.match(subscribeBlock, /gateway,/);
   assert.match(body, /window\.electron\.shell\.openExternal\(nextCheckout\.approvalUrl\)/);
+  // Gateway is user-selectable in the panel, defaulting to Alipay.
+  assert.match(flowSource, /useState<'alipay' \| 'paypal'>\('alipay'\)/);
+  assert.match(flowSource, /mePurchaseGatewayAlipay/);
+  assert.match(flowSource, /mePurchaseGatewayPaypal/);
 });
 
 test('MePurchaseFlow: topup uses its package endpoint and the desktop flow has no voucher path', () => {
