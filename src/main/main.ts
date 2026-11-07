@@ -7261,7 +7261,35 @@ const getCoworkRunner = () => {
       controlBotBrowser: {
         openUri: (input) => sendBotBrowserOpenUri(input),
         execute: (command) => getBotBrowserTabBridge().execute(command),
-        projectReport: (input) => getBotBrowserProjection().project(input),
+        projectReport: async (input) => {
+          const outcome = await getBotBrowserProjection().project(input);
+          // Projection receipt in the conversation (owner ruling #7 companion):
+          // a small host-injected bubble whose link re-opens the projection tab
+          // (openTab dedupes by URI, so the click focuses the existing tab).
+          // This is also the only persistent recovery entry after an app
+          // restart — ABC tab history is in-memory. Best-effort: a failed
+          // receipt must not fail the projection itself.
+          try {
+            const label = input.title?.trim() || tApp('本轮汇报', 'Turn report');
+            const content = outcome.announced
+              ? tApp(
+                  `📽️ [${label} 已投影到右侧投影屏](${outcome.uri})`,
+                  `📽️ [${label} projected to the projector](${outcome.uri})`,
+                )
+              : tApp(
+                  `📽️ [本轮汇报已更新到投影屏](${outcome.uri})`,
+                  `📽️ [Turn report updated on the projector](${outcome.uri})`,
+                );
+            getCoworkStore().addMessage(input.sessionId, {
+              type: 'assistant',
+              content,
+              metadata: { projectorReport: { uri: outcome.uri, announced: outcome.announced } },
+            });
+          } catch {
+            // Receipt is best-effort.
+          }
+          return outcome;
+        },
         screenshot: (input) => getBotBrowserCaptureBridge().capture(input ?? {}),
         act: (input) => executeBotBrowserAct(input),
         forkMetaApp: async ({ sessionId, uri }) => {
