@@ -1,6 +1,8 @@
 # 02 — IPC Allowlist v1 (Mobile API v1)
 
-Allowlist version: **1.0.0**, frozen by the owner on 2026-10-15 (M1); changes
+Allowlist version: **1.0.1** (CR-WSA-001 + CR-WSA-002, 2026-11-08: two
+read-only MRC-721 channels N → P1; the me:* family registered), originally
+frozen at **1.0.0** by the owner on 2026-10-15 (M1); changes
 follow the change-request process in `00`. This is the complete list
 of IPC channels a gateway client may invoke and the main-process events it
 receives. Everything not listed as allowed is denied
@@ -88,8 +90,8 @@ after that date so it gets a tier here.
 | `idbots:executeTransfer`, `idbots:executeTokenTransfer` | N | Moving funds out of custodial wallets needs SMS re-verification; later release. |
 | `idbots:sellMrc721Listing` | N | MRC-721 atomic-swap listing from the desktop MetaBot NFT wallet; moving funds out of custodial wallets needs SMS re-verification; later release. |
 | `idbots:buyMrc721Listing` | N | MRC-721 atomic-swap purchase from the desktop MetaBot NFT wallet; moving funds out of custodial wallets needs SMS re-verification; later release. |
-| `idbots:listMrc721SellOrders` | N | MRC-721 sell-order records of the desktop MetaBot NFT wallet (read + per-order re-verify); tiered with the trade channels. |
-| `idbots:verifyMrc721Listing` | N | Read-only pre-buy MRC-721 listing check (indexer/node reads, no funds); tiered with the trade channels. |
+| `idbots:listMrc721SellOrders` | P1 | MRC-721 sell-order records of the desktop MetaBot NFT wallet (read + per-order re-verify, no funds); split from the trade channels by CR-WSA-001. |
+| `idbots:verifyMrc721Listing` | P1 | Read-only pre-buy MRC-721 listing check (indexer/node reads, no funds); split from the trade channels by CR-WSA-001. |
 | `idbots:getMetaBotMnemonic` | H | C2 sensitive route. |
 | `idbots:restoreMetaBotFromMnemonic` | N | Mnemonic input over the socket; later release. |
 | `userIdentity:get`, `userIdentity:updateName`, `userIdentity:retryChainSync`, `userIdentity:retrySubsidy` | P1 | |
@@ -132,6 +134,8 @@ after that date so it gets a tier here.
 | `brainSwitch:switchFreeBrainsTo` | N | Server-side quota rescue owns brain routing; the channel rebinds the global default route and bot brains. |
 | `feeRates:getTiers`, `feeRates:getSelected`, `feeRates:select`, `feeRates:refresh` | P1 | |
 | `deepseek:getBalance` | N | Bring-your-own-key feature, later release. |
+| `me:getPlans`, `me:getRates`, `me:getTopupPackages`, `me:getBalance`, `me:getSubscription`, `me:getHistory`, `me:submitTopupOrder`, `me:subscriptionOrder`, `me:getTopupOrders`, `me:getPaymentInfo`, `me:getSubscriptionOrders` | P1 | ME points family behind the local identity signature; retroactively registered by CR-WSA-002 (the desktop slices already tiered them P1). |
+| `me:pickVoucher` | N | The mobile voucher path is a photo upload + remark; the native picker dialog is desktop-only (explicit deny, CR-WSA-002). |
 
 ### Gig Square and Discovery
 

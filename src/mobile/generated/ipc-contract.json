@@ -1,6 +1,6 @@
 {
   "contractVersion": "1.0.0",
-  "allowlistVersion": "1.0.0",
+  "allowlistVersion": "1.0.1",
   "source": "src/main/preload.ts",
   "methods": [
     {
@@ -2337,6 +2337,20 @@
       "path": "mePoints.getSubscription",
       "kind": "invoke",
       "channel": "me:getSubscription",
+      "args": []
+    },
+    {
+      "path": "mePoints.getSubscriptionOrder",
+      "kind": "invoke",
+      "channel": "me:subscriptionOrder",
+      "args": [
+        "input"
+      ]
+    },
+    {
+      "path": "mePoints.getSubscriptionOrders",
+      "kind": "invoke",
+      "channel": "me:getSubscriptionOrders",
       "args": []
     },
     {
