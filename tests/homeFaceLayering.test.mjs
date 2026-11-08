@@ -79,7 +79,9 @@ test('the Home face mounts the restored text sidebar and NO rail', () => {
   // column: text rows + switcher + records + footer.
   assert.match(homeSidebarSource, /data-slot="workspace-home-sidebar"/);
   assert.match(homeSidebarSource, /<BotBrowserModeSwitch/);
-  assert.match(homeSidebarSource, /<MeBalanceBadge \/>/);
+  // Owner ruling 2026-11-08 20:59: the full "My ME" panel is retired from the
+  // BotWorks face footer; the BotHub face keeps the compact rail badge.
+  assert.doesNotMatch(homeSidebarSource, /MeBalanceBadge/);
   assert.match(homeSidebarSource, /i18nService\.t\('coworkHistory'\)/);
 });
 

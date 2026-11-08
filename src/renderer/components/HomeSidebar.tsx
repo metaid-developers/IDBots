@@ -22,7 +22,6 @@ import PanelToggleIcon from './icons/PanelToggleIcon';
 import BackgroundTasksBadge from './cowork/BackgroundTasksBadge';
 import { SleepGuardBadge } from './SleepGuardBadge';
 import BotBrowserModeSwitch from '../features/botBrowser/BotBrowserModeSwitch';
-import MeBalanceBadge from './me/MeBalanceBadge';
 import { getSidebarPrimaryNavModel } from './sidebar/sidebarNavigation.js';
 import { selectTrackedTasksNeedingAttention } from '../utils/trackedTaskAttention';
 import { defaultSidebarWidth } from '../utils/sidebarWidth';
@@ -767,7 +766,6 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
           <div className="ml-auto flex items-center gap-2">
             <BackgroundTasksBadge onShowGroupTasks={onShowGroupTasks} />
             <SleepGuardBadge />
-            <MeBalanceBadge />
           </div>
         </div>
       </div>
