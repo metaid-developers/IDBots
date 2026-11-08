@@ -271,6 +271,12 @@ interface MeBalanceInfo {
   totalAvailable: number;
 }
 
+/** Local credit-pack settings (kvStore-backed; see mePointSettings.ts). */
+interface MePointsSettingsInfo {
+  /** Draw from the persistent buckets automatically once the weekly grant is exhausted. Default true. */
+  autoDeductFromPersistent: boolean;
+}
+
 interface MeSubscriptionInfo {
   statusText: string;
   raw: Record<string, unknown>;
@@ -1764,6 +1770,9 @@ interface IElectronAPI {
     getSubscriptionOrder: (input: { orderId: string }) => Promise<{ success: boolean; subscriptionOrder?: MeSubscriptionOrderInfo; error?: string; errorCode?: string; featureUnavailable?: boolean }>;
     getSubscriptionOrders: () => Promise<{ success: boolean; orders?: MeSubscriptionOrderInfo[]; error?: string; featureUnavailable?: boolean }>;
     getTopupOrders: () => Promise<{ success: boolean; orders?: MeTopupOrderInfo[]; error?: string; featureUnavailable?: boolean }>;
+    /** Credit-pack (persistent bucket) local settings; get/set run against the kvStore, not the network. */
+    getPointsSettings: () => Promise<{ success: boolean; settings?: MePointsSettingsInfo; error?: string }>;
+    setPointsSettings: (input: { autoDeductFromPersistent?: boolean }) => Promise<{ success: boolean; settings?: MePointsSettingsInfo; error?: string }>;
     /** Pick + stage a payment-voucher screenshot; voucherUrl is a signed gateway download URL when the gateway is running. */
     pickVoucher: (input?: Record<string, never>) => Promise<{ success: boolean; fileLabel?: string; voucherUrl?: string; signedUrlError?: string; error?: string }>;
     getPaymentInfo: () => Promise<{ success: boolean; payment?: { qrContent: string; payeeHint: string; qrImageDataUrl?: string }; error?: string }>;

@@ -121,10 +121,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     decryptProvidersFailed: '密钥解密失败，请确认文件由当前设备导出',
     decryptProvidersPartial: '部分密钥无法解密，已保留本地密钥或留空，请手动检查',
 
-    // 模型页：ID.Bots 两个固定入口 + 添加供应商模板选择
+    // 模型页：ID.Bots 固定入口 + 添加供应商模板选择
     idbotsSubscriptionProvider: 'ID.Bots 订阅',
-    idbotsRechargeProvider: 'ID.Bots 充值',
-    idbotsRechargePlaceholder: '充值入口即将上线，敬请期待。',
     thirdPartyProviders: '第三方供应商',
     createCustomProvider: '创建自定义供应商',
     templatePickerBack: '返回供应商详情',
@@ -3401,6 +3399,12 @@ const translations: Record<LanguageType, Record<string, string>> = {
     meCompliancePersistent: '充值与赚取的 ME 永不过期。',
     meComplianceNoCash: 'ME 不可回兑人民币、不可转出平台。',
     meComplianceFallback: '订阅到期自动回落免费档（免费档每周发放额度），账号不会被锁定。',
+    // ── 积分增量包（持久桶：充值 / 赠送 / 收入，永不重置）──────────────
+    meIncrementPackTitle: '积分增量包',
+    meIncrementPackBuy: '购买额度',
+    meIncrementPackDetails: '查看获得详情',
+    meIncrementPackAutoDeduct: '订阅额度用完后，自动从增量包扣除',
+    meIncrementPackNote: '增量包积分不会被每周清空，也不会重置，永久有效；来源为充值、赠送与交易收入。',
     mePurchaseTitle: '开通 / 升级套餐',
     mePurchaseTopupTitle: '充值 ME',
     mePurchasePeriod: '订阅周期',
@@ -3738,10 +3742,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     decryptProvidersFailed: 'Failed to decrypt API key. Make sure the file was exported on this device.',
     decryptProvidersPartial: 'Some keys could not be decrypted. Existing keys were kept or left blank.',
 
-    // Models page: the two pinned ID.Bots entries + the add-provider template picker
+    // Models page: the pinned ID.Bots entry + the add-provider template picker
     idbotsSubscriptionProvider: 'ID.Bots Subscription',
-    idbotsRechargeProvider: 'ID.Bots Top-up',
-    idbotsRechargePlaceholder: 'The top-up entrance is coming soon.',
     thirdPartyProviders: 'Third-party providers',
     createCustomProvider: 'Create custom provider',
     templatePickerBack: 'Back to provider details',
@@ -7003,6 +7005,12 @@ const translations: Record<LanguageType, Record<string, string>> = {
     meCompliancePersistent: 'Topped-up and earned ME never expire.',
     meComplianceNoCash: 'ME cannot be redeemed for CNY or transferred off the platform.',
     meComplianceFallback: 'When a subscription expires the account falls back to the free tier (weekly grant) and is never locked.',
+    // ── Credit pack (persistent bucket: top-up / gift / earnings, never reset)
+    meIncrementPackTitle: 'Credit Pack',
+    meIncrementPackBuy: 'Buy credits',
+    meIncrementPackDetails: 'View details',
+    meIncrementPackAutoDeduct: 'Draw from the Credit Pack automatically when the weekly quota runs out',
+    meIncrementPackNote: 'Credit Pack balance is never cleared with the weekly quota and never resets — it stays available permanently. It grows only through top-ups, gifts, and earnings.',
     mePurchaseTitle: 'Open / upgrade plan',
     mePurchaseTopupTitle: 'Top up ME',
     mePurchasePeriod: 'Billing period',

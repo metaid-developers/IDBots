@@ -11,7 +11,7 @@ import { imService } from '../services/im';
 import { APP_ID, EXPORT_FORMAT_TYPE, EXPORT_PASSWORD } from '../constants/app';
 import ErrorMessage from './ErrorMessage';
 import FreeQuotaCard from './FreeQuotaCard';
-import { XMarkIcon, Cog6ToothIcon, PlusCircleIcon, TrashIcon, PencilIcon, SignalIcon, CheckCircleIcon, XCircleIcon, CubeIcon, ChatBubbleLeftIcon, UserCircleIcon, ArchiveBoxIcon, PuzzlePieceIcon, BriefcaseIcon, BoltIcon, ArrowPathIcon, WrenchScrewdriverIcon, SparklesIcon, QuestionMarkCircleIcon, CreditCardIcon } from '@heroicons/react/24/outline';
+import { XMarkIcon, Cog6ToothIcon, PlusCircleIcon, TrashIcon, PencilIcon, SignalIcon, CheckCircleIcon, XCircleIcon, CubeIcon, ChatBubbleLeftIcon, UserCircleIcon, ArchiveBoxIcon, PuzzlePieceIcon, BriefcaseIcon, BoltIcon, ArrowPathIcon, WrenchScrewdriverIcon, SparklesIcon, QuestionMarkCircleIcon } from '@heroicons/react/24/outline';
 import BrainIcon from './icons/BrainIcon';
 import { CustomProviderIcon, CommandCodeIcon, OpenCodeIcon } from './icons/providers';
 import { fetchProviderModelList, providerSupportsModelListSync } from '../services/providerModels';
@@ -41,6 +41,7 @@ import SkillMcpManager from './skills/SkillMcpManager';
 import ProjectsManager from './projects/ProjectsManager';
 import UserSettings from './user/UserSettings';
 import IdbotsPlanCard from './me/IdbotsPlanCard';
+import MeIncrementPackCard from './me/MeIncrementPackCard';
 import MeUsageAndCredits from './me/MeUsageAndCredits';
 import { findMeRateForModel } from './me/meRates';
 import { ensureMeSnapshot, getMeSnapshot, subscribeMeSnapshot } from './me/mePointsStore';
@@ -312,13 +313,6 @@ const providerSwitchableDefaultBaseUrls: Partial<Record<ProviderType, { anthropi
 const providerRequiresApiKey = (provider: ProviderType) => provider !== 'ollama';
 /** The built-in free-quota provider is relay-managed: its credentials and API shape are hidden from the UI. */
 const isBuiltInFreeProvider = (provider: string): boolean => provider === LLM_FREE_PROVIDER_KEY;
-/**
- * Pseudo-entry in the provider list (not a providers-config key): the ID.Bots
- * top-up destination. Its detail pane is a placeholder until the billing
- * flow ships; it must never reach provider normalization/persistence.
- * Typed as ProviderType so it can ride the activeProvider state.
- */
-const IDBOTS_RECHARGE_PROVIDER_KEY = 'idbots-recharge' as ProviderType;
 /**
  * Providers whose Base URL / API format are managed by the app (relay endpoint
  * or the vendor's official fixed endpoint). Their API Key stays user-editable
@@ -1050,9 +1044,6 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
 
   // Ensure activeProvider is always in visibleProviders when language changes
   useEffect(() => {
-    if (activeProvider === IDBOTS_RECHARGE_PROVIDER_KEY) {
-      return;
-    }
     const visibleKeys = Object.keys(visibleProviders) as ProviderType[];
     if (visibleKeys.length > 0 && !visibleKeys.includes(activeProvider)) {
       // If current activeProvider is not visible, switch to first visible provider
@@ -1871,34 +1862,6 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
               }`}
             />
           </div>
-        </div>
-      </div>
-    );
-  };
-
-  // ID.Bots top-up pseudo-entry: list row only, detail pane is a placeholder.
-  const renderRechargeRow = () => {
-    const isActive = activeProvider === IDBOTS_RECHARGE_PROVIDER_KEY && !showCerebellumSettings;
-    return (
-      <div
-        onClick={() => handleProviderChange(IDBOTS_RECHARGE_PROVIDER_KEY as ProviderType)}
-        className={`flex items-center p-2 rounded-xl cursor-pointer transition-colors ${
-          isActive
-            ? 'bg-claude-accent/10 dark:bg-claude-accent/20 border border-claude-accent/30 shadow-subtle'
-            : 'dark:bg-claude-darkSurface/50 bg-claude-surface hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover border border-transparent'
-        }`}
-      >
-        <div className="flex flex-1 items-center">
-          <div className="mr-2 flex h-7 w-7 items-center justify-center">
-            <span className="dark:text-claude-darkText text-claude-text">
-              <CreditCardIcon className="h-5 w-5" />
-            </span>
-          </div>
-          <span className={`text-sm font-medium truncate ${
-            isActive ? 'text-claude-accent' : 'dark:text-claude-darkText text-claude-text'
-          }`}>
-            {i18nService.t('idbotsRechargeProvider')}
-          </span>
         </div>
       </div>
     );
@@ -3331,11 +3294,11 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                 className="hidden"
                 onChange={handleImportProviders}
               />
-              {/* ID.Bots entries pinned on top: subscription, then top-up.
+              {/* ID.Bots subscription entry pinned on top; the credits it
+                  spends live on the plan card (weekly pool + credit pack).
                   Third-party entries follow under their own group label,
                   which only appears once the group is non-empty. */}
               {providers[LLM_FREE_PROVIDER_KEY] && renderProviderRow(LLM_FREE_PROVIDER_KEY, providers[LLM_FREE_PROVIDER_KEY])}
-              {renderRechargeRow()}
               {thirdPartyProviderEntries.length > 0 && (
                 <div className="px-1 pt-2 pb-0.5 text-[11px] font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
                   {i18nService.t('thirdPartyProviders')}
@@ -3364,7 +3327,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
               </button>
             </div>
 
-            {/* Provider Settings - Right Side (or the template picker / top-up placeholder) */}
+            {/* Provider Settings - Right Side (or the template picker) */}
             <div className="flex-1 min-w-0 pl-4 overflow-y-auto">
               {showProviderTemplatePicker ? (
                 <ProviderTemplatePicker
@@ -3374,19 +3337,6 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                   onCreateCustom={handleCreateCustomProviderInstant}
                   onBack={handleCloseProviderTemplatePicker}
                 />
-              ) : activeProvider === IDBOTS_RECHARGE_PROVIDER_KEY ? (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between pb-2 border-b dark:border-claude-darkBorder border-claude-border">
-                    <h3 className="text-base font-medium dark:text-claude-darkText text-claude-text">
-                      {i18nService.t('idbotsRechargeProvider')}
-                    </h3>
-                  </div>
-                  <div className="dark:bg-claude-darkSurface/50 bg-claude-surface p-4 rounded-xl border dark:border-claude-darkBorder border-claude-border">
-                    <p className="text-xs leading-relaxed dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                      {i18nService.t('idbotsRechargePlaceholder')}
-                    </p>
-                  </div>
-                </div>
               ) : !showCerebellumSettings ? (
               <div className="space-y-4">
               <div className="flex items-center justify-between pb-2 border-b dark:border-claude-darkBorder border-claude-border">
@@ -3442,6 +3392,9 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                 <div className="space-y-3">
                   <IdbotsPlanCard />
                   <FreeQuotaCard providers={providers} onProvisioned={handleFreeQuotaProvisioned} />
+                  {/* 积分增量包 (persistent credit bucket), above the shared
+                      provider fields / 测试连接 button. */}
+                  <MeIncrementPackCard />
                 </div>
               )}
 
