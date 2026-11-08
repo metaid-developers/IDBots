@@ -4,6 +4,10 @@ import { RootState } from './store';
 import type { SettingsOpenOptions } from './components/Settings';
 import Sidebar from './components/Sidebar';
 import WorkspaceRail from './components/layout/WorkspaceRail';
+import {
+  resolveHomeViewRenderer,
+  resolveInternetPaneRenderer,
+} from './components/layout/workspaceDestinations.js';
 import Toast from './components/Toast';
 import MePurchaseFlow from './components/me/MePurchaseFlow';
 import {
@@ -652,6 +656,18 @@ const App: React.FC = () => {
 
   const handleToggleSidebar = useCallback(() => {
     setIsSidebarCollapsed((prev) => !prev);
+  }, []);
+
+  /**
+   * Self-rescue: any rail destination click re-opens the middle column.
+   *
+   * Collapsing hides the column that owns almost every control, so a collapsed
+   * workspace must be recoverable from the rail alone — a rail click is the
+   * cheapest, most obvious recovery gesture there is. (The rail also carries a
+   * dedicated toggle; this is the second, always-taken path.)
+   */
+  const revealMiddleColumn = useCallback(() => {
+    setIsSidebarCollapsed(false);
   }, []);
 
   useEffect(() => {
@@ -1447,22 +1463,14 @@ const App: React.FC = () => {
       ? 'groupTasks'
       : 'records';
 
-  const homeContent = mainView === 'scheduledTasks' ? (
-    <ScheduledTasksView
-      isSidebarCollapsed={isSidebarCollapsed}
-      onToggleSidebar={handleToggleSidebar}
-      onNewChat={handleBlankNewChat}
-      updateBadge={isSidebarCollapsed ? updateBadge : null}
-    />
-  ) : mainView === 'groupTasks' ? (
-    <GroupTasksView
-      isSidebarCollapsed={isSidebarCollapsed}
-      onToggleSidebar={handleToggleSidebar}
-      onNewChat={handleBlankNewChat}
-      onNewGroupTask={handleNewGroupTask}
-      updateBadge={isSidebarCollapsed ? updateBadge : null}
-    />
-  ) : mainView === 'metabots' ? (
+  // ---- Right column: exhaustive destination switches ----------------------
+  // The rail only names a destination; these two switches are the ONLY place
+  // that decides what the right column renders. Every branch is keyed by the
+  // destination table in components/layout/workspaceDestinations.js, and every
+  // chain ends on a real pane: `null` is not a destination. That is what makes
+  // "click a rail icon → blank pane" unreachable — unknown or stale values
+  // (HMR state, an old persisted view id) fall back to a rendered pane too.
+  const metabotsPane = (
     <MetabotsView
       isSidebarCollapsed={isSidebarCollapsed}
       onToggleSidebar={handleToggleSidebar}
@@ -1473,6 +1481,26 @@ const App: React.FC = () => {
       onPreviewMetaAppHomepage={botBrowserShell.openMetaAppByPin}
       onRequestMetaApps={handleShowMetaApps}
     />
+  );
+
+  const homePaneKey = resolveHomeViewRenderer(mainView);
+  const homeContent = homePaneKey === 'scheduledTasksView' ? (
+    <ScheduledTasksView
+      isSidebarCollapsed={isSidebarCollapsed}
+      onToggleSidebar={handleToggleSidebar}
+      onNewChat={handleBlankNewChat}
+      updateBadge={isSidebarCollapsed ? updateBadge : null}
+    />
+  ) : homePaneKey === 'groupTasksView' ? (
+    <GroupTasksView
+      isSidebarCollapsed={isSidebarCollapsed}
+      onToggleSidebar={handleToggleSidebar}
+      onNewChat={handleBlankNewChat}
+      onNewGroupTask={handleNewGroupTask}
+      updateBadge={isSidebarCollapsed ? updateBadge : null}
+    />
+  ) : homePaneKey === 'metabotsView' ? (
+    metabotsPane
   ) : (
     <CoworkView
       onRequestAppSettings={handleShowSettings}
@@ -1487,7 +1515,7 @@ const App: React.FC = () => {
     />
   );
 
-  const internetCatalogContent = botBrowserShell.internetPane === 'cowork' ? (
+  const coworkLandingCard = (
     <div className="flex h-full items-center justify-center px-8">
       <div className="max-w-sm rounded-2xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface p-5 text-center">
         <ChatBubbleLeftRightIcon className="mx-auto h-6 w-6 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
@@ -1511,9 +1539,12 @@ const App: React.FC = () => {
         </button>
       </div>
     </div>
-  ) : botBrowserShell.internetPane === 'gigSquare' ? (
+  );
+
+  const internetPaneKey = resolveInternetPaneRenderer(botBrowserShell.internetPane);
+  const internetCatalogContent = internetPaneKey === 'gigSquareView' ? (
     <GigSquareView onOpenRemoteBotInBrowser={botBrowserShell.openRemoteBot} />
-  ) : botBrowserShell.internetPane === 'metaapps' ? (
+  ) : internetPaneKey === 'metaAppsView' ? (
     <MetaAppsView
       isSidebarCollapsed={isSidebarCollapsed}
       onToggleSidebar={handleToggleSidebar}
@@ -1524,21 +1555,16 @@ const App: React.FC = () => {
       onOpenBotInBrowser={botBrowserShell.openRemoteBot}
       updateBadge={isSidebarCollapsed ? updateBadge : null}
     />
-  ) : botBrowserShell.internetPane === 'myBots' ? (
-    <MetabotsView
-      isSidebarCollapsed={isSidebarCollapsed}
-      onToggleSidebar={handleToggleSidebar}
-      onNewChat={handleNewChat}
-      updateBadge={isSidebarCollapsed ? updateBadge : null}
-      onRequestModelSettings={() => handleShowSettings({ initialTab: 'model' })}
-      onOpenMetabotInBrowser={botBrowserShell.openLocalMetabot}
-      onPreviewMetaAppHomepage={botBrowserShell.openMetaAppByPin}
-      onRequestMetaApps={handleShowMetaApps}
-    />
-  ) : null;
+  ) : internetPaneKey === 'metabotsView' ? (
+    metabotsPane
+  ) : (
+    coworkLandingCard
+  );
 
   const showHomeSurface = botBrowserShell.surfaceMode === 'home';
   const showInternetCatalog = botBrowserShell.surfaceMode === 'browser' && !botBrowserShell.isBrowserPaneVisible;
+  /** The one right-column renderer currently mounted (see `data-pane-view`). */
+  const rightPaneKey = showHomeSurface ? homePaneKey : internetPaneKey;
 
   return (
     <div className="relative h-screen overflow-hidden flex dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted">
@@ -1588,13 +1614,22 @@ const App: React.FC = () => {
               void botBrowserShell.openBrowserHome();
             }
           }}
-          onSelectInternetPane={botBrowserShell.selectInternetPane}
-          onSelectHomeSection={handleSelectHomeSection}
+          onSelectInternetPane={(pane) => {
+            revealMiddleColumn();
+            botBrowserShell.selectInternetPane(pane);
+          }}
+          onSelectHomeSection={(section) => {
+            revealMiddleColumn();
+            handleSelectHomeSection(section);
+          }}
           onNewChat={() => {
+            revealMiddleColumn();
             botBrowserShell.switchToHome();
             handleBlankNewChat();
           }}
           onShowSettings={() => handleShowSettings()}
+          isMiddleColumnCollapsed={isSidebarCollapsed}
+          onToggleMiddleColumn={handleToggleSidebar}
           updateBadge={updateBadge}
         />
         <Sidebar
@@ -1620,12 +1655,26 @@ const App: React.FC = () => {
             aria-orientation="vertical"
             onMouseDown={handleSidebarResizeStart}
             onDoubleClick={handleSidebarResizeReset}
+            style={{ gridColumn: 3 }}
             className="w-1 cursor-col-resize transition-colors hover:bg-claude-accent/40"
           />
         ) : null}
-      <div className="relative flex flex-1 min-w-0 min-h-0 overflow-hidden">
+      {/* The right column is pinned to track 4 on purpose: the resize handle
+          above is conditional, and under `gridTemplateColumns: '64px 0px 0px
+          minmax(0, 1fr)'` a missing third child used to pull this column into
+          the zero-width middle track — the whole workspace went blank while
+          the rail kept rendering. Explicit placement makes the collapsed state
+          behave like the expanded one. */}
+      <div
+        data-slot="app-right-column"
+        style={{ gridColumn: 4 }}
+        className="relative flex flex-1 min-w-0 min-h-0 overflow-hidden"
+      >
         {showHomeSurface || showInternetCatalog ? (
-          <div className={`flex-1 min-w-0 py-1.5 pr-1.5 ${isSidebarCollapsed ? 'pl-1.5' : ''}`}>
+          <div
+            data-pane-view={rightPaneKey}
+            className={`flex-1 min-w-0 py-1.5 pr-1.5 ${isSidebarCollapsed ? 'pl-1.5' : ''}`}
+          >
             <div className="h-full rounded-xl dark:bg-claude-darkBg bg-claude-bg overflow-hidden">
               <Suspense fallback={<AppLoadingIndicator />}>
                 {showHomeSurface ? homeContent : internetCatalogContent}
@@ -1634,7 +1683,10 @@ const App: React.FC = () => {
           </div>
         ) : null}
         {botBrowserShell.hasMountedBrowser ? (
-          <div className={botBrowserShell.isBrowserPaneVisible ? 'relative flex flex-1 min-w-0 flex-col' : 'hidden'}>
+          <div
+            data-pane-view={botBrowserShell.isBrowserPaneVisible ? 'botBrowserSurface' : undefined}
+            className={botBrowserShell.isBrowserPaneVisible ? 'relative flex flex-1 min-w-0 flex-col' : 'hidden'}
+          >
             {isWindows ? (
               <div className="draggable relative h-9 shrink-0 dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted">
                 <WindowTitleBar isOverlayActive={isOverlayActive} />

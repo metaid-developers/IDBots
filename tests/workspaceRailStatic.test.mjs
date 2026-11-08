@@ -88,5 +88,9 @@ test('the Co-Work destination is an internet pane, and it is not the browser pan
   const typesSource = read('src/renderer/features/botBrowser/types.ts');
   assert.match(typesSource, /export type BotInternetPane = 'browser' \| 'gigSquare' \| 'metaapps' \| 'myBots' \| 'cowork';/);
   assert.match(typesSource, /export type BotHomeSection = 'longTerm' \| 'groupTasks' \| 'records';/);
-  assert.match(appSource, /botBrowserShell\.internetPane === 'cowork'/);
+  // Slice-1 fix: the destination is resolved through the shared table instead
+  // of an inline pane literal, so the completeness guard can see every branch.
+  assert.match(appSource, /const internetPaneKey = resolveInternetPaneRenderer\(botBrowserShell\.internetPane\);/);
+  assert.match(appSource, /const coworkLandingCard = \(/);
+  assert.match(read('src/renderer/components/layout/workspaceDestinations.js'), /cowork: 'coworkLanding'/);
 });

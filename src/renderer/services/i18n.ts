@@ -177,6 +177,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
 
     // 三栏骨架（切片一）：左图标栏 / Codex 式工作台下拉 / 中栏列表
     workspaceRailLabel: '功能栏',
+    collapseMiddleColumn: '收起中栏',
+    expandMiddleColumn: '展开中栏',
     surfaceSwitcherLabel: '切换工作台',
     surfaceBotInternetSubtitle: '浏览器、元应用与你的 Bots',
     surfaceBotHomeSubtitle: '任务、长期任务与任务记录',
@@ -3810,6 +3812,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     // Three-column shell (slice 1): the icon rail, the Codex-style surface
     // menu, and the middle column's list sections.
     workspaceRailLabel: 'Workspace rail',
+    collapseMiddleColumn: 'Collapse the middle column',
+    expandMiddleColumn: 'Expand the middle column',
     surfaceSwitcherLabel: 'Switch workspace',
     surfaceBotInternetSubtitle: 'Browser, Meta Apps and your Bots',
     surfaceBotHomeSubtitle: 'Tasks, long-term work and records',
