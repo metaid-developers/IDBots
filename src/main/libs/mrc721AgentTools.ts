@@ -260,6 +260,8 @@ export type Mrc721ToolsControl = {
     totalCost: number;
     feeAssist?: unknown;
     offer: Mrc721OpenOfferContent;
+    revocation: 'revoked' | 'already-dead';
+    revokeTxId?: string;
   }>;
   listOffers(input: { metabotId: number }): Promise<Array<{
     id: string;
@@ -2192,8 +2194,8 @@ export function buildMrc721AgentTools(deps: {
   const mrc721OfferCancel = tool(
     'mrc721_offer_cancel',
     [
-      'Cancel one of THIS bot\'s MRC-721 open offers: broadcasts a closing declaration (active=false) on /protocols/mrc721offer — the item\'s latest offer pin — and flips the local record. The item itself is untouched.',
-      'Even without this call the offer is dead the moment the item UTXO moves. Read-only on funds; one declaration pin.',
+      'HARD-cancel one of THIS bot\'s MRC-721 open offers. The signed offer is public on-chain, so a declaration alone would only stop the advertising — anyone holding the original payload could still complete it. This tool first REVOKES on-chain: it self-transfers the item to a fresh outpoint of this bot (the old signature can never be completed again; the item stays yours), then broadcasts the closing declaration (active=false) so the market stops listing it.',
+      'If the item already left the offered outpoint (sold, transferred, earlier revoke) the self-transfer is skipped. Costs: one small self-transfer tx + one declaration pin; no funds leave the bot.',
     ].join(' '),
     {
       item_pin_id: z.string().min(1).describe('Item pinId of the offer to cancel.'),
@@ -2208,9 +2210,12 @@ export function buildMrc721AgentTools(deps: {
       try {
         const result = await control.offerCancel({ metabotId: owner, itemPinId: args.item_pin_id, network: args.network });
         return textResult([
-          'MRC-721 open offer cancelled on-chain.',
+          'MRC-721 open offer cancelled.',
           `- item pinId: ${result.offer.itemPinId}`,
-          `- offer pin: pin://${result.offerPinId} (closing declaration, active=false)`,
+          result.revocation === 'revoked'
+            ? `- on-chain revocation: self-transfer ${result.revokeTxId} moved the item to a fresh outpoint of this bot — the signed offer can never complete`
+            : '- on-chain revocation: not needed — the item had already left the offered outpoint, so the signed offer was already dead',
+          `- closing declaration: pin://${result.offerPinId} (active=false — the market stops listing it)`,
         ].join('\n'));
       } catch (error) {
         return textResult(`mrc721_offer_cancel failed: ${errorMessage(error)}${chainWriteFailureDetail(error)}`, true);
@@ -2276,6 +2281,9 @@ export function buildMrc721AgentTools(deps: {
           const row = await fetchMrc721OpenOfferInfo({ itemPinId: asString(args.item_pin_id) });
           if (!row?.offerTx || row.priceSats == null) {
             return textResult('mrc721_take_offer: no offer payload served for this item (the R-E indexer endpoint is not reachable, or the seller has not published an offer). Ask the seller for the offer payload, or use the directed mrc721_buy flow.', true);
+          }
+          if (row.active === false) {
+            return textResult('mrc721_take_offer refused: the latest offer for this item is a CANCELLATION (active=false) — the seller withdrew it. Nothing was signed.', true);
           }
           offer = { itemPinId: row.itemPinId, priceSats: row.priceSats, offerTx: row.offerTx };
         } else {

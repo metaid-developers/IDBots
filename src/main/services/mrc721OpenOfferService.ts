@@ -238,16 +238,46 @@ export async function publishMrc721OpenOffer(
   };
 }
 
+/** The item outpoint the signed offer spends (input0 of offerTx), or null when undecodable. */
+function offerInputOutpoint(offerTx: string): { txid: string; vout: number } | null {
+  try {
+    const input = decodeMrc721OpenOfferTx(offerTx).tx.inputs[0];
+    if (!input) return null;
+    return { txid: input.prevTxId.toString('hex').toLowerCase(), vout: Number(input.outputIndex) };
+  } catch {
+    return null;
+  }
+}
+
+export interface Mrc721OpenOfferCancelResult extends Mrc721OpenOfferWriteResult {
+  /** 'revoked' = this call moved the item so the signed offer can never complete;
+   *  'already-dead' = the item had already left the offered outpoint. */
+  revocation: 'revoked' | 'already-dead';
+  revokeTxId?: string;
+}
+
 /**
- * Cancel an open offer: broadcast a closing declaration (active=false, same
- * signed offerTx — a declaration, not a new offer) so the item's latest pin
- * is inactive, and flip the local record. The item UTXO is untouched; even
- * without this pin the offer dies the moment the item moves.
+ * HARD cancel an open offer. The signed offer tx is public on-chain inside the
+ * offer pin, so a closing declaration alone only stops ADVERTISING — anyone
+ * holding the original payload could still complete it while the item sits
+ * at the offered outpoint. The real revocation is a chain move: this bot
+ * self-transfers the item to a fresh outpoint (the old SINGLE signature can
+ * never be completed again), THEN broadcasts the active=false declaration so
+ * the indexer stops listing it. When the item already left the offered
+ * outpoint (sold, transferred, previously revoked) the offer is dead and the
+ * self-transfer is skipped. Idempotent: if the declaration fails after a
+ * successful revoke, re-running skips the revoke and retries the pin.
  */
 export async function cancelMrc721OpenOffer(
-  deps: { createPin: Mrc721CreatePinFn },
+  deps: {
+    createPin: Mrc721CreatePinFn;
+    /** Self-transfer of the item to this bot's own address (the on-chain revocation). */
+    revokeItem: (store: MetabotStore, params: { metabotId: number; itemPinId: string }) => Promise<{ txId: string }>;
+    fetchItemInfo?: typeof fetchMrc721ItemInfo;
+    settleDelayMs?: number;
+  },
   input: { metabotId: number; itemPinId: string; network?: 'mvc' | 'btc'; origin?: string; store: MetabotStore; offers: OfferKv },
-): Promise<Mrc721OpenOfferWriteResult> {
+): Promise<Mrc721OpenOfferCancelResult> {
   if (input.network === 'btc') {
     throw new Error('BTC-side writes are not supported in this version — use network mvc');
   }
@@ -260,27 +290,68 @@ export async function cancelMrc721OpenOffer(
   if (record.status === 'cancelled' && record.offer.active === false) {
     throw new Error(`open offer for item ${itemPinId} is already cancelled`);
   }
+  const metabot = input.store.getMetabotById(input.metabotId);
+  const ownAddress = String(metabot?.mvc_address ?? '').toLowerCase();
+  const fetchItemInfo = deps.fetchItemInfo ?? fetchMrc721ItemInfo;
+
+  // 1. On-chain revocation (only while the signed offer could still complete).
+  const item = await fetchItemInfo({ pinId: itemPinId });
+  const offered = offerInputOutpoint(record.offer.offerTx);
+  const current = item ? outpointOfItem(item) : null;
+  const stillTakeable = Boolean(
+    item && !item.burned && offered && current
+    && current.txid === offered.txid && current.vout === offered.vout,
+  );
+  let revocation: Mrc721OpenOfferCancelResult['revocation'] = 'already-dead';
+  let revokeTxId: string | undefined;
+  if (stillTakeable) {
+    if (String(item?.ownerAddress ?? '').toLowerCase() !== ownAddress) {
+      throw new Error(`item ${itemPinId} is held by ${item?.ownerAddress ?? 'someone else'}, not by this bot — it cannot revoke the offer`);
+    }
+    const revoked = await deps.revokeItem(input.store, { metabotId: input.metabotId, itemPinId });
+    revokeTxId = revoked.txId;
+    revocation = 'revoked';
+    // Let the wallet UTXO view settle before the declaration pin picks fee
+    // inputs (same race guard as mint → item_desc).
+    const settleMs = deps.settleDelayMs ?? 3000;
+    if (settleMs > 0) await new Promise((resolve) => setTimeout(resolve, settleMs));
+  }
+
+  // 2. Closing declaration — stops the indexer from advertising the offer.
   const content: Mrc721OpenOfferContent = { ...record.offer, active: false };
-  const broadcast = await broadcastMrc721Pin(deps.createPin, input.metabotId, {
-    operation: 'create',
-    path: MRC721_OPEN_OFFER_PATH,
-    encryption: '0',
-    version: '1.0.0',
-    contentType: 'application/json',
-    payload: JSON.stringify(content),
-  }, { network: input.network ?? 'mvc', origin: input.origin ?? 'tool:mrc721_offer_cancel' });
+  let broadcast: Awaited<ReturnType<typeof broadcastMrc721Pin>>;
+  try {
+    broadcast = await broadcastMrc721Pin(deps.createPin, input.metabotId, {
+      operation: 'create',
+      path: MRC721_OPEN_OFFER_PATH,
+      encryption: '0',
+      version: '1.0.0',
+      contentType: 'application/json',
+      payload: JSON.stringify(content),
+    }, { network: input.network ?? 'mvc', origin: input.origin ?? 'tool:mrc721_offer_cancel' });
+  } catch (error) {
+    if (revocation === 'revoked') {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `the offer IS revoked on-chain (self-transfer ${revokeTxId}: the signed offer can no longer complete), `
+        + `but the closing declaration pin failed (${message}). Re-run the cancel to publish the declaration — it will skip the revoke.`,
+      );
+    }
+    throw error;
+  }
   record.offer = content;
   record.status = 'cancelled';
   record.updatedAt = Date.now();
   writeOffers(input.offers, input.metabotId, records);
-  const outpoint = outpointOfItem(await fetchMrc721ItemInfo({ pinId: itemPinId }).catch(() => null)) ?? { txid: '0'.repeat(64), vout: 0, satoshis: 0 };
   return {
     offerPinId: broadcast.pinId,
     txids: broadcast.txids,
     totalCost: broadcast.totalCost,
     feeAssist: broadcast.feeAssist,
     offer: content,
-    outpoint,
+    outpoint: current ?? { txid: '0'.repeat(64), vout: 0, satoshis: 0 },
+    revocation,
+    ...(revokeTxId ? { revokeTxId } : {}),
   };
 }
 

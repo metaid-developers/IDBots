@@ -192,27 +192,40 @@ test('take gates: the real offer passes, a lying advertisement and a stale outpo
   } finally { restoreStale(); }
 });
 
-test('cancel flips the local record and broadcasts active:false; re-cancel is refused', async () => {
+test('hard cancel revokes on-chain FIRST (self-transfer), then declares active:false; re-cancel is refused', async () => {
   const seller = keypair();
   const restore = installFetch(itemFor(seller.address));
   try {
-    const calls = { pins: [] };
+    const calls = { pins: [], revokes: [], order: [] };
     const offers = makeKv();
     const deps = {
-      createPin: makePinDeps(calls).createPin,
+      createPin: async (metabotId, metaidData) => {
+        calls.order.push('pin');
+        return makePinDeps(calls).createPin(metabotId, metaidData);
+      },
       buildOfferTx: async (_store, params) => buildMrc721OpenOfferTx({
         sellerWif: seller.wif,
         sellerAddress: seller.address,
         outpoint: params.outpoint,
         priceSats: params.priceSats,
       }),
+      revokeItem: async (_store, params) => {
+        calls.order.push('revoke');
+        calls.revokes.push(params);
+        return { txId: 'r'.repeat(64) };
+      },
+      settleDelayMs: 0,
     };
     const storeStub = { getMetabotById: () => ({ mvc_address: seller.address }) };
     await publishMrc721OpenOffer(deps, { metabotId: 1, itemPinId: PINID, priceSats: 30_000, store: storeStub, offers });
+    calls.order.length = 0;
     const cancelled = await cancelMrc721OpenOffer(deps, { metabotId: 1, itemPinId: PINID, store: storeStub, offers });
+    assert.deepEqual(calls.order, ['revoke', 'pin'], 'the on-chain revocation lands before the declaration');
+    assert.equal(cancelled.revocation, 'revoked');
+    assert.equal(cancelled.revokeTxId, 'r'.repeat(64));
+    assert.equal(calls.revokes[0].itemPinId, PINID);
     assert.equal(cancelled.offer.active, false);
-    assert.equal(calls.pins.length, 2);
-    assert.equal(JSON.parse(calls.pins[1].payload).active, false);
+    assert.equal(JSON.parse(calls.pins.at(-1).payload).active, false);
     await assert.rejects(
       () => cancelMrc721OpenOffer(deps, { metabotId: 1, itemPinId: PINID, store: storeStub, offers }),
       /already cancelled/,
@@ -222,6 +235,60 @@ test('cancel flips the local record and broadcasts active:false; re-cancel is re
   } finally {
     restore();
   }
+});
+
+test('cancel skips the revoke when the item already left the offered outpoint, and is idempotent after a pin failure', async () => {
+  const seller = keypair();
+  const offers = makeKv();
+  const storeStub = { getMetabotById: () => ({ mvc_address: seller.address }) };
+  const buildOfferTx = async (_store, params) => buildMrc721OpenOfferTx({
+    sellerWif: seller.wif,
+    sellerAddress: seller.address,
+    outpoint: params.outpoint,
+    priceSats: params.priceSats,
+  });
+  const publishRestore = installFetch(itemFor(seller.address));
+  try {
+    await publishMrc721OpenOffer(
+      { createPin: makePinDeps({ pins: [] }).createPin, buildOfferTx },
+      { metabotId: 1, itemPinId: PINID, priceSats: 30_000, store: storeStub, offers },
+    );
+  } finally { publishRestore(); }
+
+  // A failing declaration after a successful revoke: the error says the offer IS revoked.
+  let revokes = 0;
+  const failingPin = installFetch(itemFor(seller.address));
+  try {
+    await assert.rejects(
+      () => cancelMrc721OpenOffer(
+        {
+          createPin: async () => { throw new Error('mempool rejected'); },
+          revokeItem: async () => { revokes += 1; return { txId: 'r'.repeat(64) }; },
+          settleDelayMs: 0,
+        },
+        { metabotId: 1, itemPinId: PINID, store: storeStub, offers },
+      ),
+      /IS revoked on-chain[\s\S]*Re-run the cancel/,
+    );
+  } finally { failingPin(); }
+  assert.equal(revokes, 1);
+
+  // Re-run: the item now sits at a NEW outpoint → the revoke is skipped, the pin goes out.
+  const moved = installFetch({ ...itemFor(seller.address), output: `${'9a'.repeat(32)}:0` });
+  try {
+    const pins = { pins: [] };
+    const retried = await cancelMrc721OpenOffer(
+      {
+        createPin: makePinDeps(pins).createPin,
+        revokeItem: async () => { revokes += 1; return { txId: 'x'.repeat(64) }; },
+        settleDelayMs: 0,
+      },
+      { metabotId: 1, itemPinId: PINID, store: storeStub, offers },
+    );
+    assert.equal(retried.revocation, 'already-dead');
+    assert.equal(revokes, 1, 'no second self-transfer');
+    assert.equal(pins.pins.length, 1);
+  } finally { moved(); }
 });
 
 test('parse refuses a sub-floor price, a malformed pinId, and a missing offerTx', () => {

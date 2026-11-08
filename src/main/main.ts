@@ -8134,7 +8134,28 @@ const getCoworkRunner = () => {
         offerCancel: (input) => withChainWriteBudget(
           'mrc721_offer_cancel',
           () => cancelMrc721OpenOffer(
-            { createPin: mrc721CreatePinBackend },
+            {
+              createPin: mrc721CreatePinBackend,
+              // Hard cancel: self-transfer the item to a fresh outpoint so the
+              // public signed offer can never complete (same backend as
+              // mrc721_transfer, destination = this bot's own address).
+              revokeItem: (revokeStore, params) => {
+                const ownAddress = revokeStore.getMetabotById(params.metabotId)?.mvc_address ?? '';
+                return transferMrc721Item(
+                  {
+                    buildRawTx: (store, rawParams) => buildMvcTransferRawTx(store, rawParams),
+                    broadcastTx: broadcastMvcTx,
+                  },
+                  {
+                    metabotId: params.metabotId,
+                    pinId: params.itemPinId,
+                    toAddress: ownAddress,
+                    store: revokeStore,
+                    feeRate: getGlobalFeeRate('mvc'),
+                  },
+                );
+              },
+            },
             { ...input, store: getMetabotStore(), offers: mrc721OpenOffersFromSqlite(getStore()) },
           ),
         ),
