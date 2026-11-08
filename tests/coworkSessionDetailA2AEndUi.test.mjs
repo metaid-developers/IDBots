@@ -210,7 +210,21 @@ test('CoworkSessionDetail replaces observer notice with guided dialogue controls
   assert.match(source, /sessionIdRef/);
   assert.match(source, /sessionIdRef\.current !== requestSessionId/);
   assert.match(source, /coworkService\.queueA2AGuidance/);
-  assert.match(source, /isPrivateA2ASession && \(\s*<A2AGuidanceControls/);
+  // Long-standing 1/13 red, root-caused 2026-11-08: this assertion used to pin
+  // the bare `isPrivateA2ASession && (` adjacency. Commit b7a7d30af
+  // ("generalize private chat owner approvals") interleaved an approval gate —
+  // the guidance composer and the owner-approval bar share one composer slot,
+  // and while an owner approval is pending the bar takes the slot. The product
+  // behaviour this test is named for (observer notice replaced by guided
+  // dialogue controls) is unchanged, so the assertion pins the composed
+  // condition — with tolerant whitespace, so reformatting cannot re-break it.
+  assert.match(
+    source,
+    /isPrivateA2ASession\s*&&\s*a2aApprovalPermissions\.length === 0\s*&&\s*\(\s*<A2AGuidanceControls/
+  );
+  // …and the other half of that shared slot: the gate is only coherent because
+  // the approval bar renders in the same place while an approval is pending.
+  assert.match(source, /a2aApprovalPermissions\[0\]\s*&&\s*\(\s*<A2AApprovalBar/);
   assert.match(source, /a2aGuidancePlaceholder/);
   assert.match(source, /aria-label=\{i18nService\.t\('a2aGuidancePlaceholder'\)\}/);
   assert.match(source, /a2aConversationRestarted/);
