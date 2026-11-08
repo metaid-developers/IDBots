@@ -12,9 +12,10 @@
  * — never hardcoded client-side.
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowPathIcon, ChevronUpIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
+import { placePopoverAbove, useAnchorMoveWatcher } from '../../utils/anchoredPopover';
 import {
   ensureMeSnapshot,
   formatMe,
@@ -38,11 +39,56 @@ const MeCoinIcon: React.FC<{ className?: string }> = ({ className }) => (
   </svg>
 );
 
+/** Intrinsic panel width; the fixed placement clamps it to the viewport. */
+const ME_PANEL_WIDTH = 300;
+
 const MeBalanceBadge: React.FC = () => {
   // useSyncExternalStore keeps this render in step with the shared store.
   const snapshot = React.useSyncExternalStore(subscribeMeSnapshot, getMeSnapshot, getMeSnapshot);
   const [panelOpen, setPanelOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  // The panel floats position:fixed anchored above the badge trigger (same
+  // pattern as ModelEffortPicker) so the sidebar's resizable, clipping
+  // ancestors can never cut it off: its right edge stays aligned with the
+  // badge and its left edge is clamped to the viewport, so a narrow sidebar
+  // simply lets it overhang into the main area.
+  const [fixedStyle, setFixedStyle] = useState<React.CSSProperties | null>(null);
+
+  const updatePlacement = useCallback(() => {
+    const anchorRect = triggerRef.current?.getBoundingClientRect() ?? null;
+    const panelRect = panelRef.current?.getBoundingClientRect();
+    const placement = placePopoverAbove(
+      anchorRect,
+      panelRect ? { width: panelRect.width, height: panelRect.height } : { width: ME_PANEL_WIDTH },
+      ME_PANEL_WIDTH,
+    );
+    setFixedStyle({ position: 'fixed', top: placement.top, left: placement.left, width: placement.width });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!panelOpen) {
+      setFixedStyle(null);
+      return;
+    }
+    updatePlacement();
+  }, [panelOpen, updatePlacement]);
+
+  useEffect(() => {
+    if (!panelOpen) return;
+    const handle = () => updatePlacement();
+    window.addEventListener('resize', handle);
+    window.addEventListener('scroll', handle, true);
+    return () => {
+      window.removeEventListener('resize', handle);
+      window.removeEventListener('scroll', handle, true);
+    };
+  }, [panelOpen, updatePlacement]);
+
+  // Re-place when the trigger MOVES without a window-level event (sidebar
+  // width drag).
+  useAnchorMoveWatcher(triggerRef, panelOpen, updatePlacement);
 
   useEffect(() => {
     ensureMeSnapshot();
@@ -106,6 +152,7 @@ const MeBalanceBadge: React.FC = () => {
     <div className="relative">
       <button
         type="button"
+        ref={triggerRef}
         onClick={() => setPanelOpen((open) => !open)}
         title={i18nService.t('mePanelTitle')}
         className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors bg-claude-surface/80 dark:bg-claude-darkSurface/80 hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover ${badgeClass}`}
@@ -121,7 +168,11 @@ const MeBalanceBadge: React.FC = () => {
       {panelOpen && (
         <>
           <div className="fixed inset-0 z-[79]" onClick={() => setPanelOpen(false)} />
-          <div className="absolute bottom-[calc(100%+8px)] right-0 z-[80] max-h-[70vh] w-[300px] overflow-y-auto rounded-2xl border border-claude-border dark:border-claude-darkBorder bg-claude-surface dark:bg-claude-darkSurface p-3.5 shadow-xl">
+          <div
+            ref={panelRef}
+            className="fixed z-[80] max-h-[70vh] w-[300px] overflow-y-auto rounded-2xl border border-claude-border dark:border-claude-darkBorder bg-claude-surface dark:bg-claude-darkSurface p-3.5 shadow-xl"
+            style={fixedStyle ?? { visibility: 'hidden' }}
+          >
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-claude-text dark:text-claude-darkText">
                 {i18nService.t('mePanelTitle')}

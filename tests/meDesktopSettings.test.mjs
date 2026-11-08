@@ -18,7 +18,9 @@ test('ME entry lives in the sidebar footer instead of the global top-right corne
   assert.equal(appSource.includes('fixed right-4 top-3'), false);
   assert.match(sidebarSource, /import MeBalanceBadge from '\.\/me\/MeBalanceBadge'/);
   assert.match(sidebarSource, /ml-auto flex items-center gap-2[\s\S]*<MeBalanceBadge \/>/);
-  assert.match(badgeSource, /absolute bottom-\[calc\(100%\+8px\)\] right-0/);
+  assert.match(badgeSource, /placePopoverAbove\(/);
+  assert.match(badgeSource, /className="fixed z-\[80\]/);
+  assert.equal(badgeSource.includes('absolute bottom-[calc(100%+8px)] right-0'), false);
 });
 
 test('model settings uses one provider list with TypeSafe JEV as the decision-model destination', () => {
