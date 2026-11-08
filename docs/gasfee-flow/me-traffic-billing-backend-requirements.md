@@ -1,6 +1,6 @@
 # Backend Requirements — Bill Sponsored On-Chain Traffic in ME Credits (assist-base-service)
 
-- Status: **Approved v1.0**, 2026-11-09. Owner confirmed D1–D4 per section 6 (all recommendations adopted).
+- Status: **Approved v1.1**, 2026-11-09. Owner confirmed D1–D4 per section 6 (all recommendations adopted). v1.1 pins the R4 field names and the `sponsor-orders` page envelope, the R5 request shape, and the R3 identity-address requirement; no semantic change from v1.0.
 - Client counterpart: IDBots branch `feat/credits-traffic-unify` (developed in parallel; see Appendix A).
 - Related contracts: `docs/gasfee-flow/backend-spec.md` (traffic account), `docs/gasfee-flow/me-payment-and-ledger-backend-requirements.md` (ME ledger), ABS `docs/me-points/客户端与宿主接入指南.md`.
 
@@ -81,24 +81,32 @@ Target client behavior:
   ```
   - `trafficBilling` = switch on AND rate configured AND identity allowed (R7).
   - `spendableMilli` = what a new ME spend can draw now: grant remaining + (`autoDeductFromPersistent` ? persistent pools : 0), excluding frozen amounts.
+  - The client also reads this block for the user identity address (bound to the account like the bots) to decide when the traffic tab switches from the byte-balance UI to the ME credits UI, so the block must be present for that address too.
 - `GET /v1/me/balance` adds `spendableMilli` with the same definition. `totalAvailable` (`service/me_service/subscription_service.go:288-290`) ignores the auto-deduct switch, so the client cannot use it as "can pay".
 - The client never computes ME cost itself. Its pre-flight is only `spendableMilli > 0`; `pre` stays authoritative.
 
 ### R4. Usage and history for ME-billed traffic
 
-- `GET /v1/traffic/accounts/:accountId/usage/daily` and `/usage/summary` aggregate `tb_traffic_ledger` spend rows today (`service/traffic_service/usage_service.go:45-121`), so ME-billed orders would disappear from them. They must include committed ME-billed sponsor orders and add `meMilli` next to the byte totals in every row and bucket.
-- **New:** `GET /v1/traffic/accounts/:accountId/sponsor-orders?cursor&limit&botAddress`, newest first, with the same auth as the existing `ledger` endpoint:
+- `GET /v1/traffic/accounts/:accountId/usage/daily` and `/usage/summary` aggregate `tb_traffic_ledger` spend rows today (`service/traffic_service/usage_service.go:45-121`), so ME-billed orders would disappear from them. They must include committed ME-billed sponsor orders and add ME totals (integer milliME) next to the byte totals:
+  - `usage/daily`: every row gains `meMilli`.
+  - `usage/summary`: gains `todayMeMilli`, `weekMeMilli`, `monthMeMilli` next to `todayBytes`, `weekBytes`, `monthBytes`.
+- **New:** `GET /v1/traffic/accounts/:accountId/sponsor-orders?cursor&limit&botAddress`, newest first, with the same auth as the existing `ledger` endpoint. `cursor` is the opaque `nextCursor` string of the previous page (absent on the first page); `limit` defaults to 20, max 100; `botAddress` filters to one bound address. Response `data`:
   ```json
-  { "orderId": "...", "botAddress": "...", "txId": "...", "txSize": 616,
-    "paySource": "me", "meAmountMilli": 12, "status": "committed",
-    "createdAt": 1762650000000, "committedAt": 1762650001000 }
+  {
+    "rows": [
+      { "orderId": "...", "botAddress": "...", "txId": "...", "txSize": 616,
+        "paySource": "me", "meAmountMilli": 12, "status": "committed",
+        "createdAt": 1762650000000, "committedAt": 1762650001000 }
+    ],
+    "nextCursor": "opaque-string, empty when there are no more rows"
+  }
   ```
   It covers both pay sources, so users keep their older byte-billed history.
 - ME burn rows for traffic: `refType = "metering:traffic"`, `refId` = `orderId`, and `reason` carries the bot address and `txSize` (public values only).
 
 ### R5. Existing byte balances — decided (D2): convert to ME
 
-**Recommended:** a one-time, per-account conversion of the remaining `balanceBytes` into ME at the R2 rate, minted into the `topup` bucket (never expires). The new client triggers it once when Credits payment is enabled, through a signed, idempotent endpoint:
+**Decided:** a one-time, per-account conversion of the remaining `balanceBytes` into ME at the R2 rate, minted into the `topup` bucket (never expires). The new client triggers it once when Credits payment is enabled, through a signed, idempotent endpoint (same `X-Identity-Address` / `X-Timestamp` / `X-Signature` headers as the other signed `/v1/traffic/*` calls; the client sends an empty JSON body `{}`):
 
 ```
 POST /v1/traffic/accounts/:accountId/convert-to-me
@@ -113,11 +121,11 @@ signature: traffic-convert-me:<accountId>:<timestamp>
 - The 500,000 ME persistent-pool cap must not reject a conversion (exempt it, or report the overflow).
 - Ledger: a traffic-ledger out entry with `sourceType = "me_conversion"`, and an ME `mint` with `refType = "traffic_conversion"`, `refId` = `accountId`.
 
-**Alternative:** ABS batch-converts every account at cutover. This is simpler, but every old client and every cloud tenant (which stay on byte billing in this phase, see [D4]) lose byte billing at the same moment.
+**Alternative (not chosen):** ABS batch-converts every account at cutover. This is simpler, but every old client and every cloud tenant (which stay on byte billing in this phase, see [D4]) lose byte billing at the same moment.
 
 ### R6. Traffic top-up surfaces
 
-- New desktop clients stop calling traffic pricing, recharge, redeem-code, and free-grant endpoints. The endpoints stay up for old clients and for server mode.
+- Once `me.trafficBilling` is true, new desktop clients stop calling traffic pricing, recharge, redeem-code, and free-grant endpoints (before that they keep the byte-balance UI they are billed against). The endpoints stay up for old clients and for server mode.
 - Free-grant campaign: retired for migrated accounts; the ID.Free weekly ME grant replaces it.
 - Unredeemed traffic redeem-code batches: redeeming into a migrated account mints ME per R5. ME-denominated codes are a follow-up, out of scope here.
 
@@ -159,7 +167,7 @@ R2 → R1 + R7 → R3 → R4 → R5 / R6. The client ships behind `me.trafficBil
 ## Appendix A — Client behavior (IDBots, for context)
 
 - **Switch.** Settings > Credits & Traffic > Traffic: the "Account quota / MetaBot self-pay" toggle becomes a single **Credits payment** switch (default ON). It reuses the KV key `traffic.mode`: `traffic` = ON, `selfpay` = OFF.
-- **Balance card.** The byte "Available quota" card (refresh, redeem code, recharge) is removed and replaced by the ME weekly-quota card, plus the persistent-pack balance while auto-deduct is ON.
+- **Balance card.** Once address/info reports `me.trafficBilling`, the byte "Available quota" card (refresh, redeem code, recharge) is removed and replaced by the ME weekly-quota card, plus the persistent-pack balance while auto-deduct is ON. Until then the client keeps the byte card, because it is still billed in bytes.
 - **Kept sections.** The usage section and the detailed usage history stay. The history reads `sponsor-orders` (R4); until that ships it falls back to `GET /v1/me/history?refType=metering:traffic` joined with the local spend journal.
 - **Sponsor path.** The client sends `billing: "me"` when `me.trafficBilling` is true, and pre-flights on `spendableMilli > 0`. `ME_INSUFFICIENT` / `ME_DAILY_LIMIT` / `ME_TRAFFIC_BILLING_DISABLED` → self-pay for that write (the existing fallback). It also latches briefly after an `ME_INSUFFICIENT` so it does not spend a challenge + pre round trip on every write while the user has no ME.
 - **User identity writes** (preferences, in-app browser pin writes, owner-to-bot private messages) are paid by the identity wallet today. They move onto the sponsor path; the identity address is already bound to the traffic account, so ABS needs no extra change.
