@@ -104,6 +104,8 @@ export interface TwinStepAcceptanceResult {
   acceptance: OrchestrationStepAcceptance;
   /** All acceptance rows for the step, oldest first. */
   acceptances: OrchestrationStepAcceptance[];
+  /** Present when this acceptance was the last one and the twin_delegate card auto-completed. */
+  taskAutoCompleted?: true;
 }
 
 export interface TwinOrchestrationServiceDeps {
@@ -982,12 +984,61 @@ export class TwinOrchestrationService {
       evidence: input.evidence,
       note: input.note ?? null,
     });
+    // v1.5 completion (owner ruling 「谁发起，谁验收」): a Twin-delegated card
+    // whose LAST step just got accepted is done — close it right here. The
+    // design made these cards twin-closable (origin='twin_delegate', never
+    // queued for the owner), but nothing ever performed the close, so every
+    // delegation accumulated as a permanent 'review' row (543 review vs 124
+    // completed in the 2026-11-09 store audit). The acceptance IS the
+    // verdict; closing the card is bookkeeping. Best-effort and gated:
+    // owner-origin cards keep their own closure ceremony.
+    let taskAutoCompleted = false;
+    try {
+      taskAutoCompleted = this.maybeAutoCompleteDelegationTask(task.id);
+    } catch (error) {
+      console.warn(
+        `[TwinOrchestration] Auto-complete after step acceptance failed (task ${task.id}): ` +
+        `${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     return {
       task: this.deps.orchestrationStore.getTask(task.id)!,
       step: this.deps.orchestrationStore.getStep(step.id)!,
       acceptance,
       acceptances: this.deps.orchestrationStore.listStepAcceptances(step.id),
+      ...(taskAutoCompleted ? { taskAutoCompleted: true } : {}),
     };
+  }
+
+  /**
+   * Close a twin_delegate task for which every step is now completed AND
+   * carries at least one acceptance row, transitioning review → completed
+   * with a conclusion-free self-processed closure (conclusion-free closures
+   * never enter the pending queue, so no extra processing pass is needed).
+   * Returns whether the close happened.
+   */
+  private maybeAutoCompleteDelegationTask(taskId: string): boolean {
+    const task = this.deps.orchestrationStore.getTask(taskId);
+    if (!task) return false;
+    if (task.origin !== 'twin_delegate') return false;
+    if (task.status !== 'review') return false;
+    const steps = this.deps.orchestrationStore.listSteps(taskId);
+    if (steps.length === 0) return false;
+    const allAccepted = steps.every((step) =>
+      step.status === 'completed'
+      && this.deps.orchestrationStore.listStepAcceptances(step.id).length > 0
+    );
+    if (!allAccepted) return false;
+    this.deps.orchestrationStore.updateTaskStatus(taskId, 'completed');
+    this.deps.orchestrationStore.recordClosure(taskId, {
+      conclusion: null,
+      by: 'twin',
+      selfProcessed: { by: 'twin', hash: null },
+    });
+    console.log(
+      `[TwinOrchestration] Task ${taskId} auto-completed: every step accepted by the Twin (谁发起，谁验收).`,
+    );
+    return true;
   }
 
   cancelTask(sourceSessionId: string, taskId: string): OrchestrationTask {

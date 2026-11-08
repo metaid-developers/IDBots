@@ -528,6 +528,7 @@ man_base_data_pebble/
 !tests/twinOrchestrationService.test.mjs
 !tests/twinNotifyOnce.test.mjs
 !tests/twinStepAcceptance.test.mjs
+!tests/twinDelegationAutoClosure.test.mjs
 !tests/twinOrchestrationPrompt.test.mjs
 !tests/skillTurnTimeoutRecovery.test.mjs
 !tests/groupTaskOrchestrationBridge.test.mjs
