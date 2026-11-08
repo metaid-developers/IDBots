@@ -24,15 +24,16 @@ const panelSource = readFileSync(
 );
 
 /**
- * Owner ruling 2026-11-08 22:19 (supersedes the 21:31 pill + menu form): the
- * surface switcher is the ORIGINAL IDBots segmented control, living inside the
- * shared 36 px header bar that sits directly below the traffic-light strip on
- * both faces. Two text cells, yellow fill on the current face, no mark / no
- * chevron / no menu; radiogroup + radio semantics and arrow-key movement.
+ * Owner ruling 2026-11-08 22:26 (supersedes the 22:19 "second row" reading):
+ * the surface switcher is the long two-cell segmented band on the window's TOP
+ * track, to the RIGHT of the traffic-light dots — the same geometry on both
+ * faces. Two text cells, yellow fill on the current face, no mark / no chevron
+ * / no menu; radiogroup + radio semantics and arrow-key movement. The header's
+ * light actions ride the row directly below the band.
  */
 function render(
   mode: BotBrowserSurfaceMode,
-  extra: { actions?: React.ReactNode } = {},
+  extra: { actions?: React.ReactNode; trafficLightInset?: boolean } = {},
 ) {
   return renderToStaticMarkup(
     <BotBrowserModeSwitch
@@ -44,11 +45,11 @@ function render(
   );
 }
 
-test('the bar is ONE shared 36 px row with a two-cell radiogroup at the left', () => {
+test('the band is ONE shared top-track row with a two-cell radiogroup', () => {
   const markup = render('home');
 
   assert.match(markup, /data-slot="surface-header-bar"/);
-  assert.match(markup, /data-slot="surface-header-bar"[^>]*h-9/);
+  assert.match(markup, /data-slot="surface-header-bar"[^>]*h-\[52px\]/);
   assert.match(markup, /role="radiogroup"/);
   // Exactly two radios — the two surfaces, in order, text only.
   assert.equal((markup.match(/<button/g) ?? []).length, 2);
@@ -74,6 +75,7 @@ test('the current face is the checked, yellow-filled radio', () => {
   const homeButton = home.slice(start, home.indexOf('</button>', start));
   assert.match(homeButton, /bg-claude-accent/);
   assert.match(homeButton, /text-claude-accentInk/);
+  assert.match(homeButton, /shadow-\[3px_3px_0_var\(--btn-primary-edge\)\]/);
   assert.match(home, /aria-checked="true" tabindex="0"/);
 
   const browserStart = home.indexOf('data-surface="browser"');
@@ -93,13 +95,26 @@ test('the tray keeps the baseline segmented grammar', () => {
   const markup = render('browser');
   const trayStart = markup.indexOf('data-slot="bot-browser-mode-segments"');
   const tray = markup.slice(trayStart, markup.indexOf('>', trayStart));
-  for (const token of ['grid-cols-2', 'rounded-lg', 'gap-1', 'p-0.5', 'border-claude-border/70']) {
+  for (const token of ['grid-cols-2', 'rounded-xl', 'gap-1', 'p-0.5', 'border-claude-border/70']) {
     assert.ok(tray.includes(token), `tray is missing ${token}`);
   }
   const buttonStart = markup.indexOf('data-slot="surface-switch-option"');
   const button = markup.slice(buttonStart, markup.indexOf('>', buttonStart));
-  for (const token of ['h-7', 'rounded-md', 'text-xs', 'font-medium']) {
+  for (const token of ['h-[34px]', 'rounded-[10px]', 'text-xs', 'font-medium']) {
     assert.ok(button.includes(token), `segment is missing ${token}`);
+  }
+});
+
+test('both faces land the band on the same absolute left edge', () => {
+  // BotHub: 64 px rail + 16 px inset = 80 px. BotWorks: 80 px traffic-light
+  // safe area. Same top (6 px inside the 52 px row) and same 40 px height.
+  const hub = render('browser');
+  const works = render('home', { trafficLightInset: true });
+  assert.match(hub, /data-slot="surface-header-bar"[^>]*pl-4/);
+  assert.match(works, /data-slot="surface-header-bar"[^>]*pl-20/);
+  for (const markup of [hub, works]) {
+    assert.match(markup, /data-slot="surface-header-bar"[^>]*h-\[52px\]/);
+    assert.match(markup, /data-slot="bot-browser-mode-segments"[^>]*h-10/);
   }
 });
 
@@ -127,27 +142,31 @@ test('arrow keys move focus and the checked face (radiogroup keyboard contract)'
   }
 });
 
-test('the bar keeps a right-hand action slot', () => {
+test('the actions ride the row directly below the band', () => {
   const markup = render('browser', {
     actions: <button type="button" aria-label="new session">✎</button>,
   });
   assert.match(markup, /data-slot="surface-header-actions"/);
   const bar = markup.slice(markup.indexOf('data-slot="surface-header-bar"'));
   assert.ok(bar.indexOf('surface-header-actions') > bar.indexOf('bot-browser-mode-segments'));
+  // The action row is its own row (after the 52 px band row), right-aligned.
+  const actionsStart = markup.indexOf('data-slot="surface-header-actions"');
+  const actionsRow = markup.slice(actionsStart, markup.indexOf('>', actionsStart));
+  assert.match(actionsRow, /justify-end/);
+  assert.match(actionsRow, /h-7/);
   assert.match(bar, /aria-label="new session"/);
 });
 
-test('both faces mount the SAME bar; the session actions ride its right end', () => {
+test('both faces mount the SAME band; the session actions ride the row below', () => {
   // One mount per face, none in App.
   assert.equal((sidebarSource.match(/<BotBrowserModeSwitch/g) ?? []).length, 1);
   assert.equal((homeSidebarSource.match(/<BotBrowserModeSwitch/g) ?? []).length, 1);
 
-  // Same position on both faces: below the traffic-light strip. BotWorks uses
-  // the baseline drag row + mt-3 slot; BotHub reserves the same 56 px above
-  // the bar.
-  assert.match(homeSidebarSource, /draggable sidebar-header-drag h-8 px-3/);
-  assert.match(homeSidebarSource, /className="mt-3"[\s\S]{0,160}<BotBrowserModeSwitch/);
-  assert.match(sidebarSource, /data-slot="mid-column-header"[\s\S]*?<BotBrowserModeSwitch/);
+  // Same geometry on both faces: the band rides the TOP track, to the right of
+  // the traffic lights on BotWorks and at the top of the mid column on BotHub.
+  assert.match(homeSidebarSource, /trafficLightInset={isMac}/);
+  assert.match(homeSidebarSource, /<BotBrowserModeSwitch[\s\S]{0,220}trafficLightInset={isMac}/);
+  assert.match(sidebarSource, /data-slot="mid-column-header"[\s\S]{0,320}<BotBrowserModeSwitch/);
   assert.match(sidebarSource, /actions={surfaceHeaderActions}/);
 
   // The 21:31 action slots stay in the bar: new session / records on BotHub,

@@ -159,6 +159,7 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
   isResizing = false,
   updateBadge,
 }) => {
+  const isMac = window.electron.platform === 'darwin';
   const sessions = useSelector((state: RootState) => state.cowork.sessions);
   const currentSessionId = useSelector((state: RootState) => state.cowork.currentSessionId);
   const unreadSessionIds = useSelector((state: RootState) => state.cowork.unreadSessionIds);
@@ -492,19 +493,17 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
       }`}
       style={{ width: isCollapsed ? 0 : width }}
     >
-      <div className="pt-3 pb-3">
-        {/* Traffic-light drag row. It reserves the same 56 px header stack the
-            BotHub column uses (12 px top inset + 32 px row + 12 px gap), so the
-            shared surface bar below starts at the SAME height on both faces —
-            directly under the traffic lights. The collapse control and the
-            update badge ride the bar's right-hand action slot, as before. */}
-        <div className="draggable sidebar-header-drag h-8 px-3" />
-        <div className="mt-3">
-          <BotBrowserModeSwitch
-            mode={mode}
-            onSelectHome={onSelectHome}
-            onSelectBrowser={() => onSelectSurface('browser')}
-            actions={
+      <div className="pb-3">
+        {/* The shared surface band rides the TOP track, to the right of the
+            macOS traffic lights (owner 22:26 spec image) — never a second row
+            below them. The collapse control + update badge sit on the action
+            row directly below the band. */}
+        <BotBrowserModeSwitch
+          mode={mode}
+          onSelectHome={onSelectHome}
+          onSelectBrowser={() => onSelectSurface('browser')}
+          trafficLightInset={isMac}
+          actions={
               <>
                 <button
                   type="button"
@@ -518,8 +517,7 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
               </>
             }
           />
-        </div>
-        <nav aria-label={i18nService.t('botHome')} className="mt-3 space-y-1 px-3">
+        <nav aria-label={i18nService.t('botHome')} className="mt-2 space-y-1 px-3">
           <div className="flex items-center gap-1">
             <button
               type="button"

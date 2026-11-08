@@ -573,10 +573,10 @@ const Sidebar: React.FC<SidebarProps> = ({
     await groupTaskService.archiveTask(taskId);
   };
 
-  // The shared header bar's right-hand slot. BotWorks keeps the records search
-  // and the shell's live indicators; BotHub carries the session window's two
-  // light actions — new session and session records. Both sets are 28 px
-  // controls on the same 36 px band (aesthetic grid v1).
+  // The shared header's action row, directly below the top-track band. BotWorks
+  // keeps the records search and the shell's live indicators; BotHub carries
+  // the session window's two light actions — new session and session records.
+  // Both sets are 28 px controls (aesthetic grid v1).
   const surfaceHeaderActions = mode === 'home' ? (
     <>
       <button
@@ -637,13 +637,11 @@ const Sidebar: React.FC<SidebarProps> = ({
       }`}
       style={{ width: isCollapsed ? 0 : width }}
     >
-      {/* The ONE shared surface header bar (owner ruling 2026-11-08 22:19):
-          the baseline two-cell segmented switcher at the left, the face's
-          light actions at the right. The 56 px strip above reserves the
-          traffic-light band, so the bar starts at the SAME height on both
-          faces — directly under the traffic lights, never beside them. */}
+      {/* The ONE shared surface header (owner ruling 2026-11-08 22:26): the
+          long two-cell segmented band rides the window's TOP track, to the
+          right of the traffic lights — the same geometry on both faces. The
+          face's light actions sit on the row directly below the band. */}
       <div data-slot="mid-column-header" className="shrink-0">
-        <div className="draggable h-14" />
         <BotBrowserModeSwitch
           mode={mode}
           onSelectBrowser={() => onSelectSurface('browser')}
