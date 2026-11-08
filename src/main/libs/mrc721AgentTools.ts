@@ -39,6 +39,11 @@ import {
   fetchMrc721SellIntents,
   type Mrc721SellIntentContent,
 } from '../services/mrc721SellIntentService';
+import {
+  fetchMrc721OpenOfferInfo,
+  fetchMrc721OpenOffers,
+  type Mrc721OpenOfferContent,
+} from '../services/mrc721OpenOfferService';
 
 /**
  * MRC-721 (pin-based MetaID NFT) agent tools — R6 of the IDBots MRC-721
@@ -232,6 +237,51 @@ export type Mrc721ToolsControl = {
     intent: Mrc721SellIntentContent;
     sellPinId?: string;
   }>>;
+  /** Passive open-offer protocol (docs/nft-offer-protocol.md): publish/cancel/list/take. */
+  offerPublish(input: {
+    metabotId: number;
+    itemPinId: string;
+    priceSats: number;
+    network?: 'mvc' | 'btc';
+  }): Promise<{
+    offerPinId: string;
+    txids: string[];
+    totalCost: number;
+    feeAssist?: unknown;
+    offer: Mrc721OpenOfferContent;
+  }>;
+  offerCancel(input: {
+    metabotId: number;
+    itemPinId: string;
+    network?: 'mvc' | 'btc';
+  }): Promise<{
+    offerPinId: string;
+    txids: string[];
+    totalCost: number;
+    feeAssist?: unknown;
+    offer: Mrc721OpenOfferContent;
+  }>;
+  listOffers(input: { metabotId: number }): Promise<Array<{
+    id: string;
+    itemPinId: string;
+    status: 'active' | 'cancelled' | 'stale';
+    reason?: string;
+    offer: Mrc721OpenOfferContent;
+    offerPinId?: string;
+  }>>;
+  takeOffer(input: {
+    metabotId: number;
+    offer: { itemPinId: string; priceSats: number; offerTx: string };
+    feeRate: number;
+    excludeOutpoints?: string[];
+  }): Promise<{
+    txId: string;
+    spentOutpoints: string[];
+    feeSats: number;
+    feeRateEffective: number;
+    offer: Mrc721OpenOfferContent;
+    sellerAddress: string;
+  }>;
 };
 
 function textResult(text: string, isError = false) {
@@ -2090,6 +2140,225 @@ export function buildMrc721AgentTools(deps: {
       }
     }
   );
+  // -------------------------------------------------------------------------
+  // mrc721_offer / cancel / list / take (passive open-offer protocol, "NFT 硬挂单")
+  // -------------------------------------------------------------------------
+  const mrc721Offer = tool(
+    'mrc721_offer',
+    [
+      'Publish a PASSIVE open offer for one MRC-721 item (docs/nft-offer-protocol.md): this bot signs the item input with SIGHASH_SINGLE|FORKID|ANYONECANPAY over a tx whose output0 IS the price, and the signed offer is wrapped in a /protocols/mrc721offer pin.',
+      'The offer is a first-taker-wins listing: ANY buyer can complete and broadcast it OFFLINE — no seller cooperation, no chat handshake, and the item can sell while this bot sleeps. The price is cryptographically locked in the signature; cancel via mrc721_offer_cancel; the offer also dies automatically the moment the item moves anywhere.',
+      'Broadcasts one pin (append-only log, latest offer per item wins) and appends an ```nft-card fence with action "listed" — include it verbatim in your announcement. The item must currently be held by this bot.',
+    ].join(' '),
+    {
+      item_pin_id: z.string().min(1).describe('Item pinId from mrc721_item_info (64-hex txid + "i" + index).'),
+      price_sats: z.number().int().min(22000).describe('Ask price in native sats (floor 22000). This IS the binding on-chain ask — the signed offer pays this bot exactly this amount.'),
+      network: z.enum(['mvc', 'btc']).optional().describe('Write network; default mvc (BTC writes are not yet supported in this version).'),
+    },
+    async (args: { item_pin_id: string; price_sats: number; network?: 'mvc' | 'btc' }) => {
+      const owner = requireSessionMetabot('mrc721_offer');
+      if (typeof owner === 'string') return textResult(owner, true);
+      if (args.network === 'btc') {
+        return textResult('mrc721_offer: BTC-side writes are not supported in this version — use network mvc.', true);
+      }
+      try {
+        const snapshot = await loadMrc721CardItem(control, args.item_pin_id);
+        const result = await control.offerPublish({
+          metabotId: owner,
+          itemPinId: args.item_pin_id,
+          priceSats: args.price_sats,
+          network: args.network,
+        });
+        const cardFields = buildMrc721CardFields({
+          pinId: result.offer.itemPinId,
+          facts: { item: snapshot, issuerAddress: await loadMrc721IssuerAddress(control, snapshot?.collectionName, snapshot?.collectionPinId) },
+          owner: control.getMetabotMvcAddress(owner) || undefined,
+          priceSats: result.offer.priceSats,
+          action: 'listed',
+        });
+        return textResult(appendNftCardBlock([
+          'MRC-721 open offer published. This is a PASSIVE first-taker-wins listing: the signed offer pays this bot exactly the ask, and any buyer can take it offline — no confirmation happens on this side.',
+          `- item pinId: ${result.offer.itemPinId}`,
+          `- offer pin: pin://${result.offerPinId}`,
+          `- ask: ${result.offer.priceSats} sats (locked in the seller signature)`,
+          'Buyers take it with mrc721_take_offer; cancel with mrc721_offer_cancel before someone takes it.',
+        ].join('\n'), withNftCardHostStamp(cardFields, sessionId)));
+      } catch (error) {
+        return textResult(`mrc721_offer failed: ${errorMessage(error)}${chainWriteFailureDetail(error)}`, true);
+      }
+    },
+  );
+
+  const mrc721OfferCancel = tool(
+    'mrc721_offer_cancel',
+    [
+      'Cancel one of THIS bot\'s MRC-721 open offers: broadcasts a closing declaration (active=false) on /protocols/mrc721offer — the item\'s latest offer pin — and flips the local record. The item itself is untouched.',
+      'Even without this call the offer is dead the moment the item UTXO moves. Read-only on funds; one declaration pin.',
+    ].join(' '),
+    {
+      item_pin_id: z.string().min(1).describe('Item pinId of the offer to cancel.'),
+      network: z.enum(['mvc', 'btc']).optional().describe('Write network; default mvc.'),
+    },
+    async (args: { item_pin_id: string; network?: 'mvc' | 'btc' }) => {
+      const owner = requireSessionMetabot('mrc721_offer_cancel');
+      if (typeof owner === 'string') return textResult(owner, true);
+      if (args.network === 'btc') {
+        return textResult('mrc721_offer_cancel: BTC-side writes are not supported in this version — use network mvc.', true);
+      }
+      try {
+        const result = await control.offerCancel({ metabotId: owner, itemPinId: args.item_pin_id, network: args.network });
+        return textResult([
+          'MRC-721 open offer cancelled on-chain.',
+          `- item pinId: ${result.offer.itemPinId}`,
+          `- offer pin: pin://${result.offerPinId} (closing declaration, active=false)`,
+        ].join('\n'));
+      } catch (error) {
+        return textResult(`mrc721_offer_cancel failed: ${errorMessage(error)}${chainWriteFailureDetail(error)}`, true);
+      }
+    },
+  );
+
+  const mrc721Offers = tool(
+    'mrc721_offers',
+    [
+      'List THIS bot\'s MRC-721 open offers (the /protocols/mrc721offer pins recorded locally). Each row is re-checked against the live holder view: active = still held and offered; stale = the item is no longer in this bot\'s hand (the offer is dead — the take would refuse); cancelled = withdrawn.',
+      'Read-only, no wallet involvement.',
+    ].join(' '),
+    {},
+    async () => {
+      const owner = requireSessionMetabot('mrc721_offers');
+      if (typeof owner === 'string') return textResult(owner, true);
+      try {
+        const views = await control.listOffers({ metabotId: owner });
+        if (!views.length) return textResult('No open offers published by this bot.');
+        const lines = [`${views.length} open offer(s):`];
+        for (const view of views) {
+          lines.push(`- ${view.status.toUpperCase()} ${view.itemPinId} | ask ${view.offer.priceSats} sats | pin://${view.offerPinId ?? '(unrecorded)'}`);
+          if (view.reason) lines.push(`  reason: ${view.reason}`);
+        }
+        return textResult(lines.join('\n'));
+      } catch (error) {
+        return textResult(`mrc721_offers failed: ${errorMessage(error)}`, true);
+      }
+    },
+  );
+
+  const mrc721TakeOffer = tool(
+    'mrc721_take_offer',
+    [
+      'Take a PASSIVE MRC-721 open offer (docs/nft-offer-protocol.md): verify the seller\'s SINGLE-signed offer against the live holder view (the price is locked at output0, the item still held and unspent), append the delivery output (item value to THIS bot) plus your funding, sign, and broadcast — the seller may be fully offline and nothing on their side moves.',
+      'Pass either the full offer payload (from the seller\'s announcement or the offer pin content) or just the item pinId (resolved through the R-E indexer endpoint when served).',
+      'This SPENDS this bot\'s SPACE (the ask + miner fee, one funding UTXO, 3x fee ceiling) and moves the item to this bot. A refused gate returns its reason and nothing is signed.',
+    ].join(' '),
+    {
+      offer_payload: z.string().optional().describe('The full offer payload JSON ({itemPinId, priceSats, offerTx}) — from the seller announcement or the offer pin content. Omit to resolve via the indexer by item_pin_id.'),
+      item_pin_id: z.string().optional().describe('Item pinId — required when offer_payload is omitted (indexer-resolved); otherwise a cross-check label.'),
+      fee_rate: z.number().positive().optional().describe('Fee rate sat/B for the take tx. Default 1.'),
+    },
+    async (args: { offer_payload?: string; item_pin_id?: string; fee_rate?: number }) => {
+      const owner = requireSessionMetabot('mrc721_take_offer');
+      if (typeof owner === 'string') return textResult(owner, true);
+      try {
+        let offer: { itemPinId: string; priceSats: number; offerTx: string } | null = null;
+        if (asString(args.offer_payload)) {
+          let parsedOffer: Record<string, unknown>;
+          try {
+            parsedOffer = JSON.parse(asString(args.offer_payload)) as Record<string, unknown>;
+          } catch {
+            return textResult('mrc721_take_offer: offer_payload is not valid JSON.', true);
+          }
+          offer = {
+            itemPinId: String(parsedOffer.itemPinId ?? ''),
+            priceSats: Number(parsedOffer.priceSats),
+            offerTx: String(parsedOffer.offerTx ?? ''),
+          };
+        } else if (asString(args.item_pin_id)) {
+          const row = await fetchMrc721OpenOfferInfo({ itemPinId: asString(args.item_pin_id) });
+          if (!row?.offerTx || row.priceSats == null) {
+            return textResult('mrc721_take_offer: no offer payload served for this item (the R-E indexer endpoint is not reachable, or the seller has not published an offer). Ask the seller for the offer payload, or use the directed mrc721_buy flow.', true);
+          }
+          offer = { itemPinId: row.itemPinId, priceSats: row.priceSats, offerTx: row.offerTx };
+        } else {
+          return textResult('mrc721_take_offer: pass offer_payload (the full signed offer) or item_pin_id (indexer-resolved).', true);
+        }
+        const result = await control.takeOffer({
+          metabotId: owner,
+          offer,
+          feeRate: args.fee_rate ?? 1,
+        });
+        const snapshot = await loadMrc721CardItem(control, result.offer.itemPinId);
+        const cardFields = buildMrc721CardFields({
+          pinId: result.offer.itemPinId,
+          facts: { item: snapshot, issuerAddress: await loadMrc721IssuerAddress(control, snapshot?.collectionName, snapshot?.collectionPinId) },
+          owner: control.getMetabotMvcAddress(owner) || undefined,
+          priceSats: result.offer.priceSats,
+          action: 'bought',
+        });
+        return textResult(appendNftCardBlock([
+          'MRC-721 open offer taken — the atomic settlement tx is broadcast. The item is yours once the tx confirms.',
+          `- item pinId: ${result.offer.itemPinId}`,
+          `- take tx: ${result.txId}`,
+          `- paid: ${result.offer.priceSats} sats + ${result.feeSats} sats fee (the seller\'s signature carried the deal; no seller action was needed)`,
+        ].join('\n'), withNftCardHostStamp(cardFields, sessionId)));
+      } catch (error) {
+        return textResult(`mrc721_take_offer failed: ${errorMessage(error)} Nothing was signed unless the failure came after broadcast.`, true);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // mrc721_offers_market (market read: discover passive open offers, R-E-2)
+  // -------------------------------------------------------------------------
+  const mrc721OffersMarket = tool(
+    'mrc721_offers_market',
+    [
+      'Discover PASSIVE MRC-721 open offers (docs/nft-offer-protocol.md) from the indexer: live first-taker-wins listings where the seller has signed the settlement tx — the price is locked, the seller may be offline, and mrc721_take_offer completes the purchase with no seller cooperation.',
+      'Read-only. Served by the built-in MetaSo-P2P production index (indexer requirement R-E). Before taking, the take tool re-verifies the holder view and outpoint itself, so a listed row that looks stale is refused safely at take time.',
+      'Filter by item, by collection, or by seller MetaID; page with cursor/size. Your own offers are better listed via mrc721_offers.',
+    ].join(' '),
+    {
+      item_pin_id: z.string().optional().describe('Filter to one item.'),
+      collection_pinid: z.string().optional().describe('Filter to one collection by collectionid (collection_desc pinId).'),
+      seller_meta_id: z.string().optional().describe('Filter by seller 64-hex MetaID (the offer pin creator).'),
+      cursor: z.string().optional().describe('Page cursor from the previous call.'),
+      size: z.number().int().min(1).max(100).optional().describe('Page size (default 20).'),
+    },
+    async (args: {
+      item_pin_id?: string;
+      collection_pinid?: string;
+      seller_meta_id?: string;
+      cursor?: string;
+      size?: number;
+    }) => {
+      try {
+        const page = await fetchMrc721OpenOffers({
+          itemPinId: asString(args.item_pin_id) || undefined,
+          collectionPinId: asString(args.collection_pinid) || undefined,
+          sellerMetaId: asString(args.seller_meta_id) || undefined,
+          cursor: args.cursor,
+          size: args.size ?? 20,
+        });
+        if (!page.items.length) return textResult('No open offers match these filters (or none published yet — the offer protocol is new).');
+        const lines = [`Live MRC-721 open offers${page.total != null ? ` (${page.items.length} of ${page.total})` : ` (${page.items.length})`}:`];
+        for (const row of page.items) {
+          lines.push(
+            `- ${row.itemPinId} | ask ${row.priceSats != null ? `${row.priceSats} sats` : '(see offerTx)'} | pin://${row.offerPinId ?? '(unrecorded)'}`
+            + `${row.height != null ? ` | height ${row.height}` : ''}`,
+          );
+          lines.push(`  take: mrc721_take_offer item_pin_id=${row.itemPinId}  (the take verifies the signed price and the holder view itself; refusing a stale row costs nothing)`);
+        }
+        if (page.cursor) lines.push(`- next cursor: ${page.cursor}`);
+        return textResult(lines.join('\n'));
+      } catch (error) {
+        const status = (error as { mrc721Status?: number }).mrc721Status;
+        return textResult(
+          `mrc721_offers_market: the offer index is not reachable${status ? ` (HTTP ${status})` : ''} — ${errorMessage(error)}. `
+          + 'Offers can still be shared and taken peer-to-peer: ask the seller for the offer payload and pass it to mrc721_take_offer offer_payload=...',
+          true,
+        );
+      }
+    },
+  );
 
   return [
     mrc721CollectionCreate,
@@ -2105,6 +2374,11 @@ export function buildMrc721AgentTools(deps: {
     mrc721SellIntentCancel,
     mrc721SellIntents,
     mrc721MarketIntents,
+    mrc721Offer,
+    mrc721OfferCancel,
+    mrc721Offers,
+    mrc721TakeOffer,
+    mrc721OffersMarket,
     mrc721Balance,
     mrc721Collections,
     mrc721ItemInfo,

@@ -1268,3 +1268,88 @@ export async function completeMvc721BuyTx(
     feeRateEffective: Number(result.feeRateEffective ?? 0),
   };
 }
+
+export async function buildMvc721OpenOfferTx(
+  store: MetabotStore,
+  params: {
+    metabotId: number;
+    priceSats: number;
+    outpoint: { txid: string; vout: number; satoshis: number };
+  },
+): Promise<{ offerTx: string; sigtype: number; outpoint: { txid: string; vout: number; satoshis: number }; priceSats: number }> {
+  const wallet = store.getMetabotWalletByMetabotId(params.metabotId);
+  if (!wallet?.mnemonic?.trim()) {
+    throw new Error('MetaBot wallet not found');
+  }
+  const result = await runWorker<WorkerTransferResult & {
+    offerTx?: string;
+    sigtype?: number;
+    outpoint?: { txid: string; vout: number; satoshis: number };
+    priceSats?: number;
+  }>(
+    'buildMvc721OpenOfferTxWorker.js',
+    {
+      priceSats: params.priceSats,
+      outpoint: params.outpoint,
+    },
+    {
+      IDBOTS_METABOT_MNEMONIC: wallet.mnemonic,
+      IDBOTS_METABOT_PATH: wallet.path || DEFAULT_PATH,
+    },
+    { requireTxHex: false },
+  );
+  if (!result.offerTx || typeof result.sigtype !== 'number') {
+    throw new Error('Open-offer worker did not return a signed offer');
+  }
+  return {
+    offerTx: result.offerTx,
+    sigtype: result.sigtype,
+    outpoint: result.outpoint ?? params.outpoint,
+    priceSats: Number(result.priceSats ?? params.priceSats),
+  };
+}
+
+export async function completeMvc721OpenOfferTx(
+  store: MetabotStore,
+  params: {
+    metabotId: number;
+    offer: { itemPinId: string; priceSats: number; offerTx: string };
+    feeRate: number;
+    excludeOutpoints: string[];
+  },
+): Promise<{
+  txId: string;
+  spentOutpoints: string[];
+  feeSats: number;
+  feeRateEffective: number;
+}> {
+  const wallet = store.getMetabotWalletByMetabotId(params.metabotId);
+  if (!wallet?.mnemonic?.trim()) {
+    throw new Error('MetaBot wallet not found');
+  }
+  const result = await runWorker<WorkerTransferResult & {
+    feeSats?: number;
+    feeRateEffective?: number;
+    spentOutpoints?: string[];
+  }>(
+    'completeMvc721OpenOfferTxWorker.js',
+    {
+      offer: params.offer,
+      feeRate: params.feeRate,
+      excludeOutpoints: params.excludeOutpoints,
+    },
+    {
+      IDBOTS_METABOT_MNEMONIC: wallet.mnemonic,
+      IDBOTS_METABOT_PATH: wallet.path || DEFAULT_PATH,
+    },
+  );
+  if (!result.txid) {
+    throw new Error('Open-offer take worker did not return a txid');
+  }
+  return {
+    txId: result.txid,
+    spentOutpoints: result.spentOutpoints ?? [],
+    feeSats: Number(result.feeSats ?? 0),
+    feeRateEffective: Number(result.feeRateEffective ?? 0),
+  };
+}

@@ -41,6 +41,10 @@ docs/*
 !docs/nft-sell-protocol-draft.md
 !docs/idbots-nft-ca-protocol.md
 !docs/nft-mrc721-acceptance-checklist.md
+!docs/nft-open-market-psbt-settlement.md
+!docs/nft-offer-indexer-requirements.md
+!docs/nft-offer-protocol.md
+!docs/nft-offer-metaso-handoff.md
 !docs/cloud-mobile/
 !docs/metaid_protocols/
 !docs/metaid_protocols/**
@@ -891,6 +895,8 @@ blob-report/
 !tests/mrc721Service.test.mjs
 !tests/mrc721AgentTools.test.mjs
 !tests/mrc721AtomicSwap.test.mjs
+!tests/mrc721OpenOfferTx.test.mjs
+!tests/mrc721OpenOfferService.test.mjs
 !tests/weixinGateway.test.ts
 !tests/weixinMedia.test.ts
 !tests/outboundImReceiptBubble.test.mjs

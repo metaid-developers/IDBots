@@ -225,7 +225,14 @@ import {
   listMrc721MySellIntents,
   mrc721SellIntentsFromSqlite,
 } from './services/mrc721SellIntentService';
-import { buildMvc721SellPartialTx, buildMvcTransferRawTx, completeMvc721BuyTx } from './services/walletRawTxService';
+import {
+  cancelMrc721OpenOffer,
+  listMrc721MyOpenOffers,
+  mrc721OpenOffersFromSqlite,
+  publishMrc721OpenOffer,
+  takeMrc721OpenOffer,
+} from './services/mrc721OpenOfferService';
+import { buildMvc721OpenOfferTx, buildMvc721SellPartialTx, buildMvcTransferRawTx, completeMvc721BuyTx, completeMvc721OpenOfferTx } from './services/walletRawTxService';
 import { BotWalletTransferStore } from './services/botWalletTransferStore';
 import { EscrowOrderStore } from './services/escrowOrderStore';
 import {
@@ -8109,6 +8116,40 @@ const getCoworkRunner = () => {
           mrc721SellIntentsFromSqlite(getStore()),
           input.metabotId,
           { collectionName: input.collectionName, collectionPinId: input.collectionPinId },
+        ),
+        // Passive open-offer backends (docs/nft-offer-protocol.md): publish /
+        // cancel / list are pin declarations (budgeted); take is a money-
+        // moving settlement (budgeted like the directed sell/buy). The wallet
+        // mnemonic never leaves the workers.
+        offerPublish: (input) => withChainWriteBudget(
+          'mrc721_offer',
+          () => publishMrc721OpenOffer(
+            {
+              createPin: mrc721CreatePinBackend,
+              buildOfferTx: (offerStore, params) => buildMvc721OpenOfferTx(offerStore, params),
+            },
+            { ...input, store: getMetabotStore(), offers: mrc721OpenOffersFromSqlite(getStore()) },
+          ),
+        ),
+        offerCancel: (input) => withChainWriteBudget(
+          'mrc721_offer_cancel',
+          () => cancelMrc721OpenOffer(
+            { createPin: mrc721CreatePinBackend },
+            { ...input, store: getMetabotStore(), offers: mrc721OpenOffersFromSqlite(getStore()) },
+          ),
+        ),
+        listOffers: (input) => listMrc721MyOpenOffers(
+          mrc721OpenOffersFromSqlite(getStore()),
+          input.metabotId,
+        ),
+        takeOffer: (input) => withChainWriteBudget(
+          'mrc721_take_offer',
+          () => takeMrc721OpenOffer(
+            {
+              completeOfferTx: (takeStore, params) => completeMvc721OpenOfferTx(takeStore, params),
+            },
+            { ...input, store: getMetabotStore() },
+          ),
         ),
       },
       // escrow_* tool backends (S3 generalized escrow, first-round slice):
