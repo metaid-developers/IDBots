@@ -3360,7 +3360,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     quotaExhaustedBannerMobile: '额度已用完。充值后即可继续对话。',
     quotaExhaustedRechargeMobile: '去充值',
     // ── S9 ME 积分（双池账本 · 一个数字）──────────────────────────────
-    usageCreditsTab: '用量 & 积分',
+    usageCreditsTab: '积分 & 流量',
+    usageCreditsSubTabCredits: '积分',
+    usageCreditsSubTabTraffic: '流量',
     mePanelTitle: '我的 ME 积分',
     meBadgeUnavailable: 'ME 不可用',
     mePanelRefresh: '刷新',
@@ -6967,7 +6969,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     quotaExhaustedBannerMobile: 'Quota exhausted. Recharge to keep chatting.',
     quotaExhaustedRechargeMobile: 'Recharge',
     // ── S9 ME points (double-pool ledger · one number) ─────────────────
-    usageCreditsTab: 'Usage & Credits',
+    usageCreditsTab: 'Credits & Traffic',
+    usageCreditsSubTabCredits: 'Credits',
+    usageCreditsSubTabTraffic: 'Traffic',
     mePanelTitle: 'My ME',
     meBadgeUnavailable: 'ME unavailable',
     mePanelRefresh: 'Refresh',
