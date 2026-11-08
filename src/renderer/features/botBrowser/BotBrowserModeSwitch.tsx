@@ -43,7 +43,7 @@ export const SurfaceModeMenu: React.FC<{
       data-slot="surface-switch-menu"
       role="menu"
       aria-label={i18nService.t('surfaceSwitcherLabel')}
-      className="non-draggable absolute left-0 top-[calc(100%+6px)] z-[60] w-[228px] overflow-hidden rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface p-1 shadow-xl"
+      className="non-draggable absolute left-0 top-full z-[60] mt-1.5 w-56 overflow-hidden rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface p-1 shadow-xl"
     >
       {items.map((item) => {
         const active = mode === item.id;
@@ -157,9 +157,9 @@ const BotBrowserModeSwitch: React.FC<BotBrowserModeSwitchProps> = ({
         aria-label={`${i18nService.t('surfaceSwitcherLabel')}: ${current.label}`}
         title={current.label}
         onClick={() => setOpen((value) => !value)}
-        className={`non-draggable inline-flex h-7 max-w-[180px] items-center gap-1 rounded-lg border px-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
+        className={`non-draggable inline-flex h-7 max-w-[10rem] items-center gap-1 rounded-lg border px-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
           open
-            ? 'border-claude-accent/60 dark:border-claude-accent/60 dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text'
+            ? 'border-claude-accent/60 dark:border-claude-accent/60 dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover dark:text-claude-darkText text-claude-text'
             : 'dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text hover:dark:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover'
         }`}
       >

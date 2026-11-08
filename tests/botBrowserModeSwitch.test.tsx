@@ -1,10 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import BotBrowserModeSwitch, { SurfaceModeMenu } from '../src/renderer/features/botBrowser/BotBrowserModeSwitch';
 import { getSurfaceMenuModel } from '../src/renderer/components/sidebar/sidebarNavigation.js';
 import type { BotBrowserSurfaceMode } from '../src/renderer/features/botBrowser/types';
+
+const switchSource = readFileSync(
+  new URL('../src/renderer/features/botBrowser/BotBrowserModeSwitch.tsx', import.meta.url),
+  'utf8',
+);
+const sidebarSource = readFileSync(
+  new URL('../src/renderer/components/Sidebar.tsx', import.meta.url),
+  'utf8',
+);
 
 /**
  * The surface switch became the middle column header's Codex-style capsule
@@ -118,4 +128,43 @@ test('the checked entry carries a ✓ — exactly one, on the current row', () =
 
 test('a closed menu renders nothing at all', () => {
   assert.equal(renderMenu(false, 'browser'), '');
+});
+
+test('the switcher wears this repo’s tokens, not an imported palette (owner patch 14:18)', () => {
+  // Codex is the STRUCTURAL reference only. No raw color literal and no
+  // Tailwind default palette may enter the control: every color has to be a
+  // claude-* token, i.e. the same family as the mid column header's controls.
+  assert.doesNotMatch(switchSource, /#[0-9a-fA-F]{3,8}\b/);
+  assert.doesNotMatch(switchSource, /\b(?:rgb|hsl)a?\(/);
+  assert.doesNotMatch(
+    switchSource,
+    /\b(?:bg|text|border|ring)-(?:red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose|slate|gray|zinc|neutral|stone)-\d{2,3}\b/,
+  );
+  // …and it really does use them (so the guard above is not vacuous).
+  for (const token of [
+    'bg-claude-surface',
+    'border-claude-border',
+    'text-claude-text',
+    'bg-claude-surfaceHover',
+    'ring-claude-accent',
+  ]) {
+    assert.ok(switchSource.includes(token), `missing repo token ${token}`);
+  }
+
+  // Same metrics as the header's other control (the records search button):
+  // h-7 + rounded-lg, so the capsule reads as a member of that row.
+  const triggerStart = switchSource.indexOf('data-slot="surface-switch-trigger"');
+  const trigger = switchSource.slice(triggerStart, switchSource.indexOf('</button>', triggerStart));
+  for (const metric of ['h-7', 'rounded-lg', 'text-xs']) {
+    assert.match(trigger, new RegExp(`\\b${metric}\\b`), `trigger is missing ${metric}`);
+  }
+  const headerStart = sidebarSource.indexOf('data-slot="mid-column-header"');
+  const headerSearch = sidebarSource.slice(headerStart, sidebarSource.indexOf('<BotBrowserModeSwitch', headerStart) + 1200);
+  assert.match(headerSearch, /\bh-7\b/);
+  assert.match(headerSearch, /\brounded-lg\b/);
+
+  // The popover is anchored with the spacing scale (top-full + mt-1.5), not an
+  // ad-hoc calc() offset.
+  assert.doesNotMatch(switchSource, /top-\[calc\(/);
+  assert.match(switchSource, /top-full[\s\S]{0,80}mt-1\.5/);
 });
