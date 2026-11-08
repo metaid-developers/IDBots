@@ -22,6 +22,7 @@
 
 import { TxComposer, mvc } from 'meta-contract';
 import { AddressType, BtcWallet, CoinType } from '@metalet/utxo-wallet-service';
+import { resolveMvcDeriveCoinType } from '../libs/createPinWorker';
 
 const DEFAULT_ASSIST_OPEN_API_BASE_URL = 'https://www.metaso.network/assist-open-api';
 const METALET_HOST = 'https://www.metalet.space';
@@ -884,6 +885,18 @@ export async function reconcileSponsorOrderAfterCommitFailure(input: {
 // Message signing (challenge + commit proof)
 // ---------------------------------------------------------------------------
 
+/**
+ * Wallet coin type for a BIP44 path, by the rule the createPin worker derives
+ * with (resolveMvcDeriveCoinType): an explicit m/44'/236'/0'/0/i path
+ * (restored legacy-NFT issuer identities) uses the BSV coin type, anything
+ * else MVC 10001. Signing with the other key fails every server-side
+ * publicKey-matches-address check (sponsor pre, traffic and ME identity
+ * headers), so 236-path wallets could never be sponsored.
+ */
+function mvcSignerCoinType(path: string): CoinType {
+  return resolveMvcDeriveCoinType(path) === 236 ? CoinType.BSV : CoinType.MVC;
+}
+
 export async function signMvcAddressMessage(input: {
   mnemonic: string;
   path: string;
@@ -891,7 +904,7 @@ export async function signMvcAddressMessage(input: {
 }): Promise<{ signature: string; publicKey: string }> {
   const addressIndex = parseAddressIndexFromPath(input.path);
   const wallet = new BtcWallet({
-    coinType: CoinType.MVC,
+    coinType: mvcSignerCoinType(input.path),
     addressType: AddressType.SameAsMvc,
     addressIndex,
     network: NET as never,
@@ -901,6 +914,22 @@ export async function signMvcAddressMessage(input: {
     signature: wallet.signMessage(input.message, 'base64'),
     publicKey: wallet.getPublicKey().toString('hex'),
   };
+}
+
+/**
+ * MVC address of the wallet that signs sponsor messages for (mnemonic, path):
+ * the same derivation as signMvcAddressMessage, so the address the sponsor
+ * checks always matches the challenge/commit signer.
+ */
+export function deriveMvcSponsorAddress(input: { mnemonic: string; path: string }): string {
+  const wallet = new BtcWallet({
+    coinType: mvcSignerCoinType(input.path),
+    addressType: AddressType.SameAsMvc,
+    addressIndex: parseAddressIndexFromPath(input.path),
+    network: NET as never,
+    mnemonic: input.mnemonic,
+  });
+  return wallet.getAddress();
 }
 
 // ---------------------------------------------------------------------------
@@ -1020,7 +1049,11 @@ export async function signMvcPreparedUserInputs(input: {
   const network = mvc.Networks.livenet;
   const mnemonicObject = mvc.Mnemonic.fromString(input.mnemonic);
   const hdPrivateKey = mnemonicObject.toHDPrivateKey('', network as never);
-  const childPrivateKey = hdPrivateKey.deriveChild(`m/44'/10001'/0'/0/${addressIndex}`);
+  // Same coin segment the createPin worker drafted with, so a 236-path wallet
+  // unlocks its own inputs instead of producing an invalid signature.
+  const childPrivateKey = hdPrivateKey.deriveChild(
+    `m/44'/${resolveMvcDeriveCoinType(input.walletPath)}'/0'/0/${addressIndex}`,
+  );
   const privateKey = childPrivateKey.privateKey;
 
   const txComposer = new TxComposer(new mvc.Transaction(input.preparedTxHex));
