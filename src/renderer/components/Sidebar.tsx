@@ -640,14 +640,16 @@ const Sidebar: React.FC<SidebarProps> = ({
       }`}
       style={{ width: isCollapsed ? 0 : width }}
     >
-      {/* Column header: the SURFACE switcher (owner ruling 2026-11-08 14:15 —
-          it moved here from the rail so it can carry the current surface's
-          name), the records search (Bot Home) and the live background-work
-          indicators. It sits one band above the record TYPE, which the left
-          rail alone selects: this row chooses WHICH SURFACE, never which record
-          type. The column's open/close toggle lives on the middle ⇄ right
-          boundary handle (App shell), not in here — a toggle inside the column
-          is unusable the moment the column collapses. */}
+      {/* Column header: the ONE shared surface header bar (owner spec
+          2026-11-08 21:31) — the surface switcher (owner ruling 14:15), plus
+          the right-hand light-action slot: BotHub puts the session window's
+          new-session / records actions there, BotWorks keeps its records
+          search. The live background-work indicators ride the same slot. It
+          sits one band above the record TYPE, which the left rail alone
+          selects: this row chooses WHICH SURFACE, never which record type. The
+          column's open/close toggle lives on the middle ⇄ right boundary
+          handle (App shell), not in here — a toggle inside the column is
+          unusable the moment the column collapses. */}
       {/* Header metrics, aesthetic pass 2026-11-08: 36 px band, 10 px inset —
           the same inset the column's body uses (px-2.5), so the capsule's left
           edge lines up with the list rows and the empty state below it. */}
