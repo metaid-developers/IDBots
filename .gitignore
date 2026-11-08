@@ -893,6 +893,7 @@ blob-report/
 !tests/mrc721Service.test.mjs
 !tests/mrc721AgentTools.test.mjs
 !tests/mrc721AtomicSwap.test.mjs
+!tests/mrc721OpenOfferTx.test.mjs
 !tests/weixinGateway.test.ts
 !tests/weixinMedia.test.ts
 !tests/outboundImReceiptBubble.test.mjs
