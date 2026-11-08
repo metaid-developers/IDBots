@@ -105,7 +105,10 @@ const RailButton: React.FC<{
     >
       {children}
       {active && (
-        <span aria-hidden className="absolute left-[-6px] top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-claude-accent" />
+        // The one "you are here" mark in the rail: a 3 px accent bar, 24 px
+        // tall, sitting on the column's own edge. (Aesthetic pass: 2 px × 20 px
+        // disappeared next to a 40 px tile at 1x display scale.)
+        <span aria-hidden className="absolute left-[-6px] top-1/2 h-6 w-[3px] -translate-y-1/2 rounded-full bg-claude-accent" />
       )}
       {hasIndicator ? (
         indicatorKind === 'decision' ? (
@@ -213,7 +216,7 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
       {mode === 'browser' ? (
         <nav
           aria-label={i18nService.t('botInternet')}
-          className="mt-2 flex min-h-0 w-full flex-1 flex-col items-center gap-1 overflow-y-auto px-1.5 pb-2"
+          className="mt-2 flex min-h-0 w-full flex-1 flex-col items-center gap-1.5 overflow-y-auto px-1.5 pb-2"
         >
           {internetItems.map((item) => (
             <RailButton

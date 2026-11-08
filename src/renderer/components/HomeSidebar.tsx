@@ -496,13 +496,19 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
     >
       <div className="pt-3 pb-3">
         <div className="draggable sidebar-header-drag h-8 flex items-center px-3">
+          {/* Same collapse control as the seam tab (aesthetic pass 2026-11-08):
+              a bare chevron read as a stray glyph here; the tab gives it the
+              same box, border and hover family as the ONE toggle on the seam,
+              so the two doors to the same state at least look like one control.
+              (Whether both should exist is an owner call — noted in the pass
+              report, not changed here.) */}
           <button
             type="button"
             onClick={onToggleCollapse}
-            className={`non-draggable h-8 w-8 inline-flex items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors ${isMac ? 'ml-[68px]' : ''}`}
+            className={`non-draggable inline-flex h-7 w-5 items-center justify-center rounded-md border dark:border-claude-darkBorder/60 border-claude-border/60 dark:bg-claude-darkSurface/80 bg-claude-surface/80 shadow-subtle dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${isMac ? 'ml-[68px]' : ''}`}
             aria-label={isCollapsed ? i18nService.t('expand') : i18nService.t('collapse')}
           >
-            <PanelToggleIcon className="h-4 w-4" collapsed={isCollapsed} />
+            <PanelToggleIcon className="h-3.5 w-3.5" collapsed={isCollapsed} />
           </button>
           <div className="ml-auto">
             {updateBadge}
@@ -523,7 +529,7 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
             <button
               type="button"
               onClick={onNewChat}
-              className="flex-1 inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-text dark:hover:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+              className="flex-1 inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-text dark:hover:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
             >
               <ComposeIcon className="h-4 w-4" />
               {i18nService.t('newChat')}
@@ -534,7 +540,7 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
                 onShowCowork();
                 setIsSearchOpen(true);
               }}
-              className="shrink-0 h-[36px] w-[36px] inline-flex items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-text dark:hover:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+              className="shrink-0 h-[36px] w-[36px] inline-flex items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-text dark:hover:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
               aria-label={i18nService.t('search')}
             >
               <MagnifyingGlassIcon className="h-4 w-4" />
@@ -552,7 +558,7 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
               key={item.id}
               type="button"
               onClick={() => handlePrimaryNavClick(item.id)}
-              className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
+              className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
                 activeView === item.id
                   ? 'dark:text-claude-darkText text-claude-text dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover'
                   : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-text dark:hover:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
@@ -597,7 +603,11 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
                   onClick={() => handleSetTaskRecordTab(tab.id)}
                   className={`non-draggable group relative inline-flex h-7 min-w-0 items-center justify-center gap-1 rounded-md px-1 text-xs font-medium leading-none transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
                     isActive
-                      ? 'btn-idchat-primary-filled still'
+                      // Same flat accent fill as the mid-column scope row
+                      // (aesthetic pass 2026-11-08): the primary-button class
+                      // brought rem padding + a 2px offset shadow that made the
+                      // active segment wider than its grid cell.
+                      ? 'bg-claude-accent text-claude-accentInk'
                       : 'text-claude-textSecondary hover:bg-claude-surfaceHover/70 hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover/70 dark:hover:text-claude-darkText'
                   }`}
                 >
@@ -743,7 +753,7 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
           <button
             type="button"
             onClick={() => onShowSettings()}
-            className="inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-text dark:hover:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+            className="inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-text dark:hover:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
             aria-label={i18nService.t('settings')}
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">

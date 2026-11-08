@@ -507,7 +507,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkTabCountChats: '{count} 个对话',
     coworkTabCountGroup: '{count} 个群任务',
     botBrowserCoworkTitle: 'Co-Work',
-    botBrowserCoworkPlaceholder: '让 Agent 帮你操作浏览器…',
+    botBrowserCoworkPlaceholder: '让 Bot 帮你操作浏览器…',
     botBrowserCoworkEmpty: '试试：显示最新的链上小游戏，或打开链上 Buzz。',
     botInternetNeedsTwin: 'Bot Internet 是你和你的 Twin Bot 的一对一空间。本机还没有 Twin Bot——先去 Bot Home 创建一个。',
     botInternetGoBotHome: '去 Bot Home 创建 Twin',
@@ -1679,7 +1679,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     mcpDesc_firecrawl: '网页抓取与数据提取：支持批处理、结构化提取和内容分析',
 
     // MetaBot
-    metabots: '我的Bot',
+    // Copy pass 2026-11-08: Latin product names always carry one space in this
+    // UI ("我的 Bot" like "Bot Home" / "Meta Apps"); the template literal was
+    // the only place the space was missing.
+    metabots: '我的 Bot',
     metabotAdd: '添加',
     metabotRestore: '从助记词恢复',
     metabotRestoreTitle: '从助记词恢复 MetaBot',
@@ -4144,7 +4147,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkTabCountChats: '{count} chats',
     coworkTabCountGroup: '{count} group tasks',
     botBrowserCoworkTitle: 'Co-Work',
-    botBrowserCoworkPlaceholder: 'Ask the Agent to drive this browser…',
+    botBrowserCoworkPlaceholder: 'Ask the Bot to drive this browser…',
     botBrowserCoworkEmpty: 'Try: show the latest on-chain mini-games, or open on-chain Buzz.',
     botInternetNeedsTwin: 'Bot Internet is a 1:1 space with your Twin bot. You have no Twin on this machine yet — create one in Bot Home first.',
     botInternetGoBotHome: 'Go to Bot Home to create your Twin',

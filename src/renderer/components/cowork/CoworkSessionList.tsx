@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
+import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
 import { RootState } from '../../store';
 import type { CoworkSessionSummary } from '../../types/cowork';
 import CoworkSessionItem, { SessionAvatarCircle, formatRelativeTime } from './CoworkSessionItem';
@@ -771,8 +772,15 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
   const hasAutoTasks = sortedAutoSessions.length > 0 && !showBotSelector;
   if (visibleSessions.length === 0 && !hasAutoTasks && !hasFollowUpTasks) {
     return (
-      <div ref={rootRef} className="text-center py-8">
-        <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
+      // Same landing recipe as the Co-Work panel's empty state (aesthetic pass
+      // 2026-11-08): one quiet mark over one sentence, centred in the list's
+      // own width. Two empty states in one product should read as siblings.
+      <div ref={rootRef} className="flex flex-col items-center justify-center gap-2 px-4 py-10 text-center">
+        <ChatBubbleLeftRightIcon
+          aria-hidden
+          className="h-5 w-5 opacity-40 dark:text-claude-darkTextSecondary text-claude-textSecondary"
+        />
+        <p className="max-w-[16rem] text-xs leading-5 dark:text-claude-darkTextSecondary text-claude-textSecondary">
           {emptyText ?? i18nService.t('coworkNoSessions')}
         </p>
       </div>
@@ -863,7 +871,7 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
                       e.stopPropagation();
                       onQuickCreateTask(group.bot.id);
                     }}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded transition-all opacity-0 invisible group-hover:opacity-100 group-hover:visible hover:bg-claude-accent/10 dark:hover:bg-claude-accent/10"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded transition-all opacity-0 invisible group-hover:opacity-100 group-hover:visible group-focus-within:opacity-100 group-focus-within:visible focus-visible:opacity-100 focus-visible:visible focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 hover:bg-claude-accent/10 dark:hover:bg-claude-accent/10"
                     title={i18nService.t('newTask')}
                   >
                     <PlusIcon className="h-4 w-4 text-claude-accent dark:text-claude-accent" />

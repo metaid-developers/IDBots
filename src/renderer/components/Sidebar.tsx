@@ -584,7 +584,10 @@ const Sidebar: React.FC<SidebarProps> = ({
           type. The column's open/close toggle lives on the middle ⇄ right
           boundary handle (App shell), not in here — a toggle inside the column
           is unusable the moment the column collapses. */}
-      <div data-slot="mid-column-header" className="draggable flex h-9 shrink-0 items-center gap-1 px-2">
+      {/* Header metrics, aesthetic pass 2026-11-08: 36 px band, 10 px inset —
+          the same inset the column's body uses (px-2.5), so the capsule's left
+          edge lines up with the list rows and the empty state below it. */}
+      <div data-slot="mid-column-header" className="draggable flex h-9 shrink-0 items-center gap-1 px-2.5">
         <BotBrowserModeSwitch
           mode={mode}
           onSelectBrowser={() => onSelectSurface('browser')}
@@ -597,7 +600,7 @@ const Sidebar: React.FC<SidebarProps> = ({
               onShowCowork();
               setIsSearchOpen(true);
             }}
-            className="non-draggable inline-flex h-7 w-7 items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+            className="non-draggable inline-flex h-7 w-7 items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
             aria-label={i18nService.t('search')}
           >
             <MagnifyingGlassIcon className="h-4 w-4" />
@@ -624,7 +627,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           {homeSection === 'longTerm' ? (
             <div className="min-h-0 flex-1 overflow-y-auto pb-2" data-home-section="longTerm">
               {longTermCards.length === 0 ? (
-                <p className="px-2 py-1.5 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                <p className="px-2 py-1.5 text-xs leading-5 dark:text-claude-darkTextSecondary text-claude-textSecondary">
                   {i18nService.t('homeMidLongTermEmpty')}
                 </p>
               ) : (
@@ -636,22 +639,22 @@ const Sidebar: React.FC<SidebarProps> = ({
                       dispatch(selectLongTermTask(card.id));
                       onShowScheduledTasks();
                     }}
-                    className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+                    className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
                   >
                     <span
                       aria-hidden
                       className={`h-1.5 w-1.5 shrink-0 rounded-full ${LONG_TERM_COLUMN_DOT_CLASS[card.column] ?? 'bg-claude-textSecondary'}`}
                     />
-                    <span className="min-w-0 flex-1 truncate text-[11px] dark:text-claude-darkText text-claude-text">
+                    <span className="min-w-0 flex-1 truncate text-xs dark:text-claude-darkText text-claude-text">
                       {card.title}
                     </span>
-                    <span className="shrink-0 text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    <span className="shrink-0 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
                       {i18nService.t(LONG_TERM_COLUMN_LABEL_KEYS[card.column])}
                     </span>
                   </button>
                 ))
               )}
-              <p className="px-2 pt-1 text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              <p className="px-2 pt-1 text-[11px] leading-4 dark:text-claude-darkTextSecondary text-claude-textSecondary">
                 {i18nService.t('homeMidLongTermHint')}
               </p>
             </div>
@@ -677,7 +680,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                 data-slot="group-task-sessions"
                 className="mt-1 border-t border-claude-border/60 pt-1 dark:border-claude-darkBorder/60"
               >
-                <div className="px-2 pb-1 pt-1 text-[10px] font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                <div className="px-2 pb-1 pt-1 text-[11px] font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
                   {i18nService.t('homeMidGroupSessionsTitle')}
                 </div>
                 <CoworkSessionList
@@ -725,7 +728,14 @@ const Sidebar: React.FC<SidebarProps> = ({
                         onClick={() => handleSetTaskRecordTab(tab.id)}
                         className={`non-draggable group relative inline-flex h-7 min-w-0 items-center justify-center gap-1 rounded-md px-1 text-xs font-medium leading-none transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
                           isActive
-                            ? 'btn-idchat-primary-filled still'
+                            // Scope tab, aesthetic pass 2026-11-08: this used
+                            // the primary-button class, whose fixed rem padding
+                            // and 2px offset shadow are designed for a free-
+                            // standing CTA — inside a 2-segment grid the pill
+                            // overflowed its cell and grew a grey second edge.
+                            // The fill comes straight from the accent tokens
+                            // now, same as the batch-confirm button beside it.
+                            ? 'bg-claude-accent text-claude-accentInk'
                             : 'text-claude-textSecondary hover:bg-claude-surfaceHover/70 hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover/70 dark:hover:text-claude-darkText'
                         }`}
                       >
@@ -748,7 +758,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                   filter & sort (+ batch archive on the local face) on the
                   right. Fixed with the header; only the list scrolls. */}
               {hasFaceSessions && (
-                <div className="flex shrink-0 items-center justify-between gap-1.5 px-1 pb-1.5">
+                <div className="flex shrink-0 items-center justify-between gap-1.5 px-2 pb-1.5">
                   <span className="min-w-0 truncate text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
                     {i18nService.t(faceViewMode === 'bot' ? 'sessionViewByBot' : 'sessionViewTimeline')}
                   </span>
@@ -769,7 +779,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                             type="button"
                             onClick={handleExitBatchArchiveMode}
                             aria-label={i18nService.t('batchArchiveCancel')}
-                            className="rounded p-1 text-claude-textSecondary transition-colors hover:bg-claude-surfaceHover hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText"
+                            className="inline-flex h-6 w-6 items-center justify-center rounded-md text-claude-textSecondary transition-colors hover:bg-claude-surfaceHover hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
                           >
                             <XMarkIcon className="h-4 w-4" />
                           </button>
@@ -785,7 +795,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                             aria-label={i18nService.t('sessionViewFilterSort')}
                             aria-haspopup="menu"
                             aria-expanded={isViewMenuOpen}
-                            className="rounded p-1 text-claude-textSecondary transition-colors hover:bg-claude-accent/10 hover:text-claude-accent dark:text-claude-darkTextSecondary"
+                            className="inline-flex h-6 w-6 items-center justify-center rounded-md text-claude-textSecondary transition-colors hover:bg-claude-surfaceHover hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
                           >
                             <FilterLinesIcon className="h-4 w-4" />
                           </button>
@@ -796,7 +806,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                               type="button"
                               onClick={handleEnterBatchArchiveMode}
                               aria-label={i18nService.t('batchArchive')}
-                              className="rounded p-1 text-claude-textSecondary transition-colors hover:bg-claude-accent/10 hover:text-claude-accent dark:text-claude-darkTextSecondary"
+                              className="inline-flex h-6 w-6 items-center justify-center rounded-md text-claude-textSecondary transition-colors hover:bg-claude-surfaceHover hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
                             >
                               <ArchiveBoxIcon className="h-4 w-4" />
                             </button>

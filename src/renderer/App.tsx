@@ -1725,11 +1725,12 @@ const App: React.FC = () => {
             onMouseDown={(event) => event.stopPropagation()}
             onDoubleClick={(event) => event.stopPropagation()}
             onClick={handleToggleSidebar}
-            className={`non-draggable absolute left-1/2 top-1/2 z-40 flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-md transition-colors dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/50 ${
-              isSidebarCollapsed
-                ? 'border dark:border-claude-darkBorder/70 border-claude-border/70 dark:bg-claude-darkSurface/90 bg-claude-surface/90 shadow-sm backdrop-blur-sm'
-                : ''
-            }`}
+            // Aesthetic pass 2026-11-08: the one toggle in the shell used to be
+            // a bare chevron glyph that only grew a container once the column
+            // collapsed — at rest it read as a stray character on the seam. The
+            // tab is now always there (same box collapsed or expanded), so the
+            // control looks the same before and after the state it toggles.
+            className="non-draggable absolute left-1/2 top-1/2 z-40 flex h-7 w-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-md border transition-colors dark:border-claude-darkBorder/60 border-claude-border/60 dark:bg-claude-darkSurface/80 bg-claude-surface/80 shadow-subtle backdrop-blur-sm dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/50"
           >
             <PanelToggleIcon className="h-3.5 w-3.5" collapsed={isSidebarCollapsed} />
           </button>

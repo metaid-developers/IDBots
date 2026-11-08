@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { ClockIcon, XMarkIcon, TrashIcon, FolderIcon } from '@heroicons/react/24/outline';
+import { ChatBubbleLeftRightIcon, ClockIcon, XMarkIcon, TrashIcon, FolderIcon } from '@heroicons/react/24/outline';
 import ComposeIcon from '../../components/icons/ComposeIcon';
 import MarkdownContent from '../../components/MarkdownContent';
 import CoworkPromptInput, { type CoworkPromptInputRef } from '../../components/cowork/CoworkPromptInput';
@@ -430,23 +430,28 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSki
           session and the rail entry that opened the panel already names it, so
           the label was an in-place self-introduction with nothing to add. The
           two actions stay — they are the only controls here. */}
-      <div data-slot="cowork-panel-actions" className="flex items-center justify-end gap-1 px-1 pb-2">
+      {/* Metric grid, aesthetic pass 2026-11-08: both actions use the SAME
+          28 px control box as the mid-column header's capsule and search
+          button, sitting on the column's 10 px inset. Before this they were
+          24 px and pulled 4 px inside that inset, so the eye read a second,
+          smaller control ladder floating under the header. */}
+      <div data-slot="cowork-panel-actions" className="flex items-center justify-end gap-0.5 pb-1.5">
         <button
           type="button"
           onClick={() => {
             setShowHistory(false);
             browserCoworkService.startNewDraft();
           }}
-          className="h-6 w-6 inline-flex items-center justify-center rounded-md dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
           aria-label={i18nService.t('botBrowserCoworkNew')}
           title={i18nService.t('botBrowserCoworkNew')}
         >
-          <ComposeIcon className="h-3.5 w-3.5" />
+          <ComposeIcon className="h-4 w-4" />
         </button>
         <button
           type="button"
           onClick={() => setShowHistory((value) => !value)}
-          className={`h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors ${
+          className={`inline-flex h-7 w-7 items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
             showHistory
               ? 'dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover dark:text-claude-darkText text-claude-text'
               : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
@@ -454,7 +459,7 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSki
           aria-label={i18nService.t('botBrowserCoworkHistory')}
           title={i18nService.t('botBrowserCoworkHistory')}
         >
-          <ClockIcon className="h-3.5 w-3.5" />
+          <ClockIcon className="h-4 w-4" />
         </button>
       </div>
 
@@ -463,19 +468,39 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSki
           needsTwinBootstrap ? (
             // No Twin on this machine: block the chat with bootstrap guidance
             // instead of the ordinary empty state (owner ruling #2).
-            <div className="rounded-lg border border-dashed dark:border-claude-darkBorder border-claude-border px-3 py-4 text-xs leading-5 dark:text-claude-darkTextSecondary text-claude-textSecondary">
+            // A blocked chat is a real call to action, so it keeps a container
+            // — but a solid hairline card, not the dashed "drop something here"
+            // frame the aesthetic pass retired.
+            <div
+              data-slot="cowork-needs-twin"
+              className="rounded-xl border dark:border-claude-darkBorder/80 border-claude-border/80 dark:bg-claude-darkSurface/50 bg-claude-surface/50 px-3.5 py-4 text-xs leading-5 dark:text-claude-darkTextSecondary text-claude-textSecondary"
+            >
               <p>{i18nService.t('botInternetNeedsTwin')}</p>
               <button
                 type="button"
                 onClick={onOpenBotHome}
-                className="mt-2 inline-flex items-center rounded-md px-2 py-1 -ml-1 text-xs font-medium dark:text-claude-accent text-claude-accent hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                className="mt-3 inline-flex items-center rounded-lg px-2 py-1 -ml-1 text-xs font-medium dark:text-claude-accent text-claude-accent hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
               >
                 {i18nService.t('botInternetGoBotHome')}
               </button>
             </div>
           ) : (
-            <div className="rounded-lg border border-dashed dark:border-claude-darkBorder border-claude-border px-3 py-4 text-xs leading-5 dark:text-claude-darkTextSecondary text-claude-textSecondary">
-              {i18nService.t('botBrowserCoworkEmpty')}
+            // Empty state, aesthetic pass 2026-11-08: the dashed frame made the
+            // first screen of this column read as an unfilled placeholder. An
+            // empty Co-Work panel is a landing, not a slot: one quiet mark, one
+            // sentence, centred in the room it actually has — and no control
+            // that pretends to be clickable.
+            <div
+              data-slot="cowork-empty"
+              className="flex h-full min-h-[180px] flex-col items-center justify-center gap-2.5 px-6 text-center"
+            >
+              <ChatBubbleLeftRightIcon
+                aria-hidden
+                className="h-5 w-5 opacity-50 dark:text-claude-darkTextSecondary text-claude-textSecondary"
+              />
+              <p className="max-w-[16rem] text-xs leading-5 dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                {i18nService.t('botBrowserCoworkEmpty')}
+              </p>
             </div>
           )
         ) : (
@@ -503,7 +528,7 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSki
         ) : null}
       </div>
 
-      <div className="flex items-center justify-between gap-0.5 px-1 pb-1.5">
+      <div className="flex items-center justify-between gap-0.5 pb-1.5">
         {chipMetabot ? (
           // Twin seat (owner ruling 2026-11-08): the chip is the appointment
           // control in the draft state — clicking opens the seat menu listing

@@ -109,11 +109,17 @@ const MeBalanceBadge: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
       ? 'text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-300/60 dark:border-amber-700/60'
       : 'text-claude-accent dark:text-claude-darkAccent';
 
-  const amountLabel = loading
+  // Copy pass 2026-11-08: the visible pill used to print the unit twice
+  // ("1,993 ME ME") — the label already carried it and the small unit span
+  // added a second one. The label keeps the unit for titles/aria (where there
+  // is no separate glyph column); the pill renders the number and ONE unit.
+  const amountText = loading
     ? '…'
     : unavailable
       ? i18nService.t('meBadgeUnavailable')
-      : `${formatMe(totalMe)} ME`;
+      : formatMe(totalMe);
+  const amountLabel = unavailable || loading ? amountText : `${amountText} ME`;
+  const showAmountUnit = !loading && !unavailable;
 
   return (
     <div className="relative">
@@ -132,8 +138,8 @@ const MeBalanceBadge: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
         <MeCoinIcon className={compact ? 'h-5 w-5' : 'h-3.5 w-3.5'} />
         {compact ? null : (
           <>
-            <span className="tabular-nums tracking-tight">{amountLabel}</span>
-            <span className="text-[10px] opacity-80">ME</span>
+            <span className="tabular-nums tracking-tight">{amountText}</span>
+            {showAmountUnit ? <span className="text-[10px] opacity-80">ME</span> : null}
             <ChevronUpIcon className={`h-3 w-3 transition-transform ${panelOpen ? 'rotate-180' : ''}`} />
           </>
         )}
