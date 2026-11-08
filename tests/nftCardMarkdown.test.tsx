@@ -770,3 +770,92 @@ test('the compiled main-side builder emits fences the renderer parser accepts (b
   assert.match(appended, /include this fenced block verbatim/i);
   assert.ok(appended.endsWith(buildNftCardFence(fields)));
 });
+
+// -------------------------------------------------------------------------
+// Collection card (album-level) — `nft-collection-card` fence
+// -------------------------------------------------------------------------
+
+import {
+  isNftCardFenceLanguage,
+  isNftCollectionCardFenceLanguage,
+  parseNftCollectionCardFence,
+} from '../src/renderer/components/chat/nftCardSyntax';
+import NftCollectionCard from '../src/renderer/components/chat/NftCollectionCard';
+
+const COLLECTION_PIN_ID = `${'ab'.repeat(32)}i0`;
+
+test('nft-collection-card: compiled main-side builder round-trips through the renderer parser', async () => {
+  const builderPath = require.resolve('../dist-electron/main/libs/nftCardMarkdown.js');
+  const { buildNftCollectionCardFence, buildMrc721CollectionCardFields } = require(builderPath) as {
+    buildNftCollectionCardFence: (fields: Record<string, unknown>) => string;
+    buildMrc721CollectionCardFields: (input: Record<string, unknown>) => Record<string, unknown>;
+  };
+
+  const fields = buildMrc721CollectionCardFields({
+    collectionName: 'pixel-cats',
+    pinId: COLLECTION_PIN_ID,
+    name: 'Pixel Cats',
+    desc: 'a series of pixel cats',
+    cover: MRC721_ICON_PIN,
+    totalSupply: 100,
+    minted: 3,
+    royaltyRate: 0,
+    issuerAddress: '1IssuerAddress1234',
+    action: 'issued',
+  });
+  assert.equal(fields.collectionId, COLLECTION_PIN_ID);
+  assert.equal(fields.icon, `metafile://${MRC721_ICON_PIN}`);
+
+  const fence = buildNftCollectionCardFence(fields);
+  assert.ok(fence.startsWith('```nft-collection-card\n'), 'fence uses the collection tag');
+  const parsed = parseNftCollectionCardFence(fence.split('\n').slice(1, -1).join(''));
+  assert.equal(parsed?.collectionId, COLLECTION_PIN_ID);
+  assert.equal(parsed?.collectionName, 'pixel-cats');
+  assert.equal(parsed?.name, 'Pixel Cats');
+  assert.equal(parsed?.totalSupply, 100);
+  assert.equal(parsed?.minted, 3);
+  assert.equal(parsed?.action, 'issued');
+
+  // Tag isolation: the collection tag is never an item-card tag and vice versa.
+  assert.equal(isNftCollectionCardFenceLanguage('nft-collection-card'), true);
+  assert.equal(isNftCardFenceLanguage('nft-collection-card'), false);
+});
+
+test('nft-collection-card: parser requires a collectionid and degrades malformed payloads', () => {
+  assert.equal(parseNftCollectionCardFence('not json'), null);
+  assert.equal(parseNftCollectionCardFence(JSON.stringify({ name: 'no identity' })), null);
+  assert.equal(parseNftCollectionCardFence(JSON.stringify({ collectionId: 'nothex' })), null);
+  const parsed = parseNftCollectionCardFence(JSON.stringify({ collectionId: COLLECTION_PIN_ID, totalSupply: -1 }));
+  assert.equal(parsed?.totalSupply, -1, 'totalSupply -1 (unlimited) survives parsing');
+});
+
+test('nft-collection-card: MarkdownContent renders the album card; malformed payload keeps the code block', () => {
+  const goodFence = `\`\`\`nft-collection-card\n${JSON.stringify({
+    collectionId: COLLECTION_PIN_ID,
+    collectionName: 'pixel-cats',
+    name: 'Pixel Cats',
+    totalSupply: 100,
+    minted: 3,
+    action: 'issued',
+  })}\n\`\`\``;
+  const goodMarkup = renderToStaticMarkup(<MarkdownContent content={`Issued.\n\n${goodFence}`} />);
+  assert.match(goodMarkup, /data-nft-collection-card="true"/);
+  assert.match(goodMarkup, /Pixel Cats/);
+  assert.match(goodMarkup, /3 \/ 100/);
+  assert.match(goodMarkup, /\/pixel-cats/);
+
+  const badMarkup = renderToStaticMarkup(
+    <MarkdownContent content={'```nft-collection-card\nnot json\n```'} />,
+  );
+  assert.doesNotMatch(badMarkup, /data-nft-collection-card/);
+  assert.match(badMarkup, /not json/);
+});
+
+test('nft-collection-card: component SSR anchors — unlimited supply label and coverless floor', () => {
+  const html = renderToStaticMarkup(
+    <NftCollectionCard data={{ collectionId: COLLECTION_PIN_ID, name: 'Open Series', totalSupply: -1, minted: 7 }} />,
+  );
+  assert.match(html, /data-nft-collection-card="true"/);
+  assert.match(html, /7 minted · unlimited/);
+  assert.match(html, /Open Series/);
+});

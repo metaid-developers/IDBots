@@ -1,9 +1,17 @@
 import { z } from 'zod';
 import { markdownSelfLink } from './metawebUri';
 import { chainWriteFailureDetail, feeAssistReceiptLines } from './chainFeeAssistReceipt';
-import { appendNftCardBlock, buildMrc721CardFields } from './nftCardMarkdown';
+import {
+  appendNftCardBlock,
+  appendNftCollectionCardBlock,
+  buildMrc721CardFields,
+  buildMrc721CollectionCardFields,
+  buildNftCardFence,
+  NFT_CARD_RESULT_HINT,
+} from './nftCardMarkdown';
 import { withNftCardHostStamp } from './tradeActivityStamp';
 import {
+  estimateMrc721Issue,
   fetchMrc721AddressByMetaId,
   fetchMrc721AddressCollections,
   fetchMrc721AddressItems,
@@ -22,6 +30,7 @@ import {
   waitForMrc721CollectionInfo,
   waitForMrc721ItemInfo,
   type Mrc721CollectionSummary,
+  type Mrc721IssueEstimate,
   type Mrc721ItemSummary,
   type Mrc721ItemTransferRecord,
   type Mrc721VerifyInfo,
@@ -121,6 +130,20 @@ export type Mrc721ToolsControl = {
     txids: string[];
     totalCost: number;
     feeAssist?: unknown;
+  }>;
+  /** Batch item_desc write: ONE item_desc pin carrying display info for up to 100 item pinIds. */
+  itemDescBatch(input: {
+    metabotId: number;
+    collectionName: string;
+    items: Array<{ pinId: string; name?: string; desc?: string; cover?: string; metadata?: unknown }>;
+    network?: 'mvc' | 'btc';
+  }): Promise<{
+    collectionName: string;
+    pinId: string;
+    txids: string[];
+    totalCost: number;
+    feeAssist?: unknown;
+    referencedPinIds: string[];
   }>;
   /** R3: forced-outpoint spend of the item's current UTXO to the recipient. */
   transfer(input: {
@@ -455,6 +478,52 @@ export function formatMrc721MintResult(input: {
   return lines.join('\n');
 }
 
+export function formatMrc721ItemDescBatchResult(input: {
+  collectionName: string;
+  pinId: string;
+  txids: string[];
+  totalCost: number;
+  feeAssist?: unknown;
+  referencedPinIds: string[];
+}): string {
+  const lines: string[] = [];
+  lines.push(`item_desc batch broadcast for collection "${input.collectionName}" (${input.referencedPinIds.length} items referenced) — ONE item_desc pin carries all display info.`);
+  lines.push(`- item_desc pinId: ${input.pinId}`);
+  if (input.txids.length) lines.push(`- txids: ${input.txids.join(', ')}`);
+  lines.push(`- cost: ${input.totalCost} sats`);
+  lines.push(...feeAssistReceiptLines(input.feeAssist));
+  lines.push('- referenced items:');
+  for (const pinId of input.referencedPinIds) lines.push(`  - ${pinId}`);
+  lines.push('- display info is per-field first-write-wins: fields an earlier item_desc pin already set stay locked; this write fills only missing fields.');
+  lines.push(`- view link: ${markdownSelfLink(`pin://${input.pinId}`)}`);
+  return lines.join('\n');
+}
+
+export function formatMrc721IssueEstimateResult(input: {
+  collectionName: string;
+  estimate: Mrc721IssueEstimate;
+  precheckWarning?: string;
+  sharedNameNote?: string;
+}): string {
+  const { estimate } = input;
+  const lines: string[] = [];
+  lines.push(`Fee estimate (dry run) for "${input.collectionName}" — ${estimate.itemCount} item(s), display mode "${estimate.displayMode}", registerCollection ${estimate.registerCollection}. No broadcast happened; no fees were spent.`);
+  lines.push(`- fee rate: ${estimate.feeRate} sat/vB (resolved MVC rate)`);
+  lines.push('- planned writes:');
+  for (const write of estimate.writes) {
+    lines.push(`  - ${write.kind} @ ${write.path} — payload ${write.payloadBytes} B, est ~${write.estimatedSats} sats`);
+  }
+  lines.push(`- TOTAL est ~${estimate.totalEstimatedSats} sats (UPPER BOUND — receipts carry exact costs; file uploads NOT included)`);
+  if (estimate.registerCollection) {
+    lines.push('- reminder: collection_name / total_supply / royalty_rate are immutable once registered.');
+  } else {
+    lines.push('- add-to-existing plan: no collection_desc write; supply is enforced at mint time and is immutable.');
+  }
+  if (input.sharedNameNote) lines.push(`- note: ${input.sharedNameNote}`);
+  if (input.precheckWarning) lines.push(`- precheck: ${input.precheckWarning}`);
+  return lines.join('\n');
+}
+
 export function formatMrc721TransferResult(input: {
   txId: string;
   pinId: string;
@@ -740,17 +809,32 @@ export function buildMrc721AgentTools(deps: {
         const confirmation = waitMs > 0
           ? await waitForMrc721CollectionInfo({ pinId: result.pinId, timeoutMs: waitMs })
           : { hit: null };
-        return textResult(formatMrc721CollectionCreateResult({
-          collectionName: result.collectionName,
-          pinId: result.pinId,
-          txids: result.txids,
-          totalCost: result.totalCost,
-          feeAssist: result.feeAssist,
-          confirmation,
-          waitMs,
-          precheckWarning,
-          sharedNameNote,
-        }));
+        return textResult(appendNftCollectionCardBlock(
+          formatMrc721CollectionCreateResult({
+            collectionName: result.collectionName,
+            pinId: result.pinId,
+            txids: result.txids,
+            totalCost: result.totalCost,
+            feeAssist: result.feeAssist,
+            confirmation,
+            waitMs,
+            precheckWarning,
+            sharedNameNote,
+          }),
+          buildMrc721CollectionCardFields({
+            collectionName: result.collectionName,
+            pinId: result.pinId,
+            name: asString(args.name) || undefined,
+            desc: asString(args.desc) || undefined,
+            website: asString(args.website) || undefined,
+            cover: asString(args.cover) || undefined,
+            totalSupply: args.total_supply ?? null,
+            minted: confirmation.hit?.mintedCount ?? null,
+            royaltyRate: args.royalty_rate ?? null,
+            issuerAddress: sessionAddress || undefined,
+            action: 'issued',
+          }),
+        ));
       } catch (error) {
         return textResult(`mrc721_collection_create failed: ${errorMessage(error)}${chainWriteFailureDetail(error)}`, true);
       }
@@ -806,6 +890,7 @@ export function buildMrc721AgentTools(deps: {
           true,
         );
       }
+      const sessionAddress = control.getMetabotMvcAddress(owner) || '';
 
       try {
         const result = await control.collectionUpdate({
@@ -818,14 +903,26 @@ export function buildMrc721AgentTools(deps: {
           metadata: args.metadata,
           network: 'mvc',
         });
-        return textResult(formatMrc721CollectionUpdateResult({
-          collectionName: result.collectionName,
-          pinId: result.pinId,
-          txids: result.txids,
-          totalCost: result.totalCost,
-          feeAssist: result.feeAssist,
-          updatedFields: result.updatedFields,
-        }));
+        return textResult(appendNftCollectionCardBlock(
+          formatMrc721CollectionUpdateResult({
+            collectionName: result.collectionName,
+            pinId: result.pinId,
+            txids: result.txids,
+            totalCost: result.totalCost,
+            feeAssist: result.feeAssist,
+            updatedFields: result.updatedFields,
+          }),
+          buildMrc721CollectionCardFields({
+            collectionName: result.collectionName,
+            pinId: result.pinId,
+            name: asString(args.name) || undefined,
+            desc: asString(args.desc) || undefined,
+            website: asString(args.website) || undefined,
+            cover: asString(args.cover) || undefined,
+            issuerAddress: sessionAddress || undefined,
+            action: 'updated',
+          }),
+        ));
       } catch (error) {
         return textResult(`mrc721_collection_update failed: ${errorMessage(error)}${chainWriteFailureDetail(error)}`, true);
       }
@@ -1800,10 +1897,206 @@ export function buildMrc721AgentTools(deps: {
     }
   );
 
+  // -------------------------------------------------------------------------
+  // mrc721_item_desc_batch (batch display-info write)
+  // -------------------------------------------------------------------------
+  const mrc721ItemDescBatch = tool(
+    'mrc721_item_desc_batch',
+    [
+      'Write display info (name/desc/cover/metadata) for up to 100 ALREADY-MINTED MRC-721 items in ONE item_desc pin — the fee-efficient path: N item mints + 1 batch write instead of N per-mint item_desc follow-ups.',
+      'Broadcasts one item_desc pin at /nft/mrc721/{collection_name}/item_desc; the indexer applies entries per pinid (per-field first-write-wins — fields an earlier item_desc pin already set stay locked; this write fills only missing fields).',
+      'Typical staged-issue flow: mint items with NO display info, then one batch write carrying every item\'s display info (pinids come from the mint receipts). On-chain write with fees.',
+    ].join(' '),
+    {
+      collection_name: z.string().min(1).describe('Collection namespace the items belong to (the item_desc pin path root).'),
+      items: z.array(z.object({
+        pin_id: z.string().min(1).describe('Item pinId from the mint receipt (64-hex txid + "i" + output index).'),
+        name: z.string().optional().describe('Item display name.'),
+        desc: z.string().optional().describe('Item description.'),
+        cover: z.string().optional().describe('Item cover: metafile pinId or metafile:// URI (upload via metabot-upload-file first).'),
+        metadata: z.union([z.string(), z.record(z.string(), z.unknown())]).optional().describe('Extra item metadata (JSON object or JSON string).'),
+      })).min(1).max(100).describe('1-100 item entries; duplicate pin_ids are refused.'),
+      settle_delay_ms: z.number().int().nonnegative().optional().describe('Wait before broadcasting so preceding mints settle (default 3000ms; UTXO race safety).'),
+      network: z.enum(['mvc', 'btc']).optional().describe('Write network; default mvc (BTC writes are not yet supported for MRC-721 in this version).'),
+    },
+    async (args: {
+      collection_name: string;
+      items: Array<{ pin_id: string; name?: string; desc?: string; cover?: string; metadata?: unknown }>;
+      settle_delay_ms?: number;
+      network?: 'mvc' | 'btc';
+    }) => {
+      const owner = requireSessionMetabot('mrc721_item_desc_batch');
+      if (typeof owner === 'string') return textResult(owner, true);
+      let collectionName: string;
+      try {
+        collectionName = validateMrc721CollectionName(args.collection_name);
+      } catch (error) {
+        return textResult(`mrc721_item_desc_batch: ${errorMessage(error)}`, true);
+      }
+      if (args.network === 'btc') {
+        return textResult('mrc721_item_desc_batch: BTC-side writes are not supported in this version — use network mvc.', true);
+      }
+      try {
+        const result = await control.itemDescBatch({
+          metabotId: owner,
+          collectionName,
+          items: args.items.map((item) => ({
+            pinId: asString(item.pin_id) || '',
+            name: asString(item.name) || undefined,
+            desc: asString(item.desc) || undefined,
+            cover: asString(item.cover) || undefined,
+            metadata: item.metadata,
+          })),
+          network: 'mvc',
+        });
+        const text = formatMrc721ItemDescBatchResult({
+          collectionName: result.collectionName,
+          pinId: result.pinId,
+          txids: result.txids,
+          totalCost: result.totalCost,
+          feeAssist: result.feeAssist,
+          referencedPinIds: result.referencedPinIds,
+        });
+        // One chat card per referenced item, one hint up front — adjacent
+        // fences merge into a group row in the renderer. Display info comes
+        // from the batch args; an unconfirmed item renders its identity card.
+        const issuerAddress = control.getMetabotMvcAddress(owner) || undefined;
+        const cardFences = result.referencedPinIds.map((pinId, index) => {
+          const entry: { name?: string; desc?: string; cover?: string; metadata?: unknown } = args.items[index] ?? {};
+          return buildNftCardFence(buildMrc721CardFields({
+            pinId,
+            facts: {
+              item: {
+                name: asString(entry.name) || undefined,
+                collectionName: result.collectionName,
+                cover: asString(entry.cover) || undefined,
+                ownerAddress: issuerAddress,
+              },
+              issuerAddress,
+            },
+            owner: issuerAddress,
+            action: 'minted',
+          }));
+        });
+        return textResult(`${text}\n\n${NFT_CARD_RESULT_HINT}\n${cardFences.join('\n\n')}`);
+      } catch (error) {
+        return textResult(`mrc721_item_desc_batch failed: ${errorMessage(error)}${chainWriteFailureDetail(error)}`, true);
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // mrc721_issue_estimate (dry-run plan + fee estimate, read-only)
+  // -------------------------------------------------------------------------
+  const mrc721IssueEstimate = tool(
+    'mrc721_issue_estimate',
+    [
+      'Dry-run plan + fee estimate for an MRC-721 issue — a new album (register_collection true, default) or an add-to-existing plan (register_collection false). NO broadcast, no fees spent.',
+      'Validates every planned field with the SAME builders the write tools use — invalid fields fail HERE, before any fee is spent — and prices each pin write at the resolved MVC fee rate: 1 collection_desc + N item pins + the display-info item_desc pins per display_mode.',
+      'Upper-bound estimate: receipts carry exact costs; file uploads (metabot-upload-file) are NOT included. Use it before the preview/confirm step of an issue wizard.',
+    ].join(' '),
+    {
+      collection_name: z.string().min(1).describe('Collection namespace to plan (lowercase [a-z0-9-]).'),
+      name: z.string().optional().describe('Display name of the collection.'),
+      total_supply: z.number().int().optional().describe('Max items, integer in [-1, 1e12]; -1 or omitted = unlimited.'),
+      royalty_rate: z.number().int().min(0).max(20).optional().describe('Royalty percentage [0, 20]; default 0.'),
+      desc: z.string().optional().describe('Collection description.'),
+      website: z.string().optional().describe('Collection website URL.'),
+      cover: z.string().optional().describe('Cover image: metafile pinId (64-hex…i0) or metafile:// URI.'),
+      metadata: z.union([z.string(), z.record(z.string(), z.unknown())]).optional().describe('Collection metadata (JSON object or JSON string).'),
+      items: z.array(z.object({
+        name: z.string().optional().describe('Item display name.'),
+        desc: z.string().optional().describe('Item description.'),
+        cover: z.string().optional().describe('Item cover: metafile pinId or metafile:// URI.'),
+        metadata: z.union([z.string(), z.record(z.string(), z.unknown())]).optional().describe('Extra item metadata.'),
+      })).max(100).optional().describe('Planned items (display info only; item pinids do not exist before minting).'),
+      display_mode: z.enum(['batch_desc', 'ride_along', 'none']).optional().describe('batch_desc (default): ONE item_desc write for all items after minting; ride_along: one item_desc per item (mrc721_mint behavior); none: bare item pins.'),
+      register_collection: z.boolean().optional().describe('true (default): the plan includes the collection_desc write; false: add-to-existing.'),
+    },
+    async (args: {
+      collection_name: string;
+      name?: string;
+      total_supply?: number;
+      royalty_rate?: number;
+      desc?: string;
+      website?: string;
+      cover?: string;
+      metadata?: unknown;
+      items?: Array<{ name?: string; desc?: string; cover?: string; metadata?: unknown }>;
+      display_mode?: 'batch_desc' | 'ride_along' | 'none';
+      register_collection?: boolean;
+    }) => {
+      const owner = requireSessionMetabot('mrc721_issue_estimate');
+      if (typeof owner === 'string') return textResult(owner, true);
+      let collectionName: string;
+      try {
+        collectionName = validateMrc721CollectionName(args.collection_name);
+      } catch (error) {
+        return textResult(`mrc721_issue_estimate: ${errorMessage(error)}`, true);
+      }
+      let precheckWarning: string | undefined;
+      let sharedNameNote: string | undefined;
+      if (args.register_collection !== false) {
+        const sessionAddress = control.getMetabotMvcAddress(owner) || '';
+        if (sessionAddress) {
+          try {
+            const scan = await scanMrc721CollectionNameForIssuer({ issuerAddress: sessionAddress, collectionName });
+            if (scan.own) {
+              return textResult(
+                `mrc721_issue_estimate: collection "${collectionName}" is already issued by this MetaBot `
+                + `(collectionid ${scan.own.pinid || '?'}) — plan an add-to-existing with register_collection false, `
+                + 'or mint directly with mrc721_mint.',
+                true,
+              );
+            }
+            if (scan.foreign.length) {
+              const row = scan.foreign[0];
+              sharedNameNote = `the name "${collectionName}" is shared with an independent album (collectionid `
+                + `${row.pinid || '?'}, issuer ${row.createMetaId || row.createAddress || '?'}) — albums are `
+                + 'distinguished by collectionid.';
+            }
+          } catch (error) {
+            precheckWarning = `indexer precheck unavailable (${errorMessage(error)}) — estimate proceeds on field validation only.`;
+          }
+        }
+      }
+      try {
+        const estimate = estimateMrc721Issue({
+          collectionName,
+          name: asString(args.name) || undefined,
+          totalSupply: args.total_supply,
+          royaltyRate: args.royalty_rate,
+          desc: asString(args.desc) || undefined,
+          website: asString(args.website) || undefined,
+          cover: asString(args.cover) || undefined,
+          metadata: args.metadata,
+          items: (args.items ?? []).map((item) => ({
+            name: asString(item.name) || undefined,
+            desc: asString(item.desc) || undefined,
+            cover: asString(item.cover) || undefined,
+            metadata: item.metadata,
+          })),
+          displayMode: args.display_mode,
+          registerCollection: args.register_collection,
+        });
+        return textResult(formatMrc721IssueEstimateResult({
+          collectionName,
+          estimate,
+          precheckWarning,
+          sharedNameNote,
+        }));
+      } catch (error) {
+        return textResult(`mrc721_issue_estimate failed: ${errorMessage(error)}`, true);
+      }
+    }
+  );
+
   return [
     mrc721CollectionCreate,
     mrc721CollectionUpdate,
     mrc721Mint,
+    mrc721ItemDescBatch,
+    mrc721IssueEstimate,
     mrc721Transfer,
     mrc721Sell,
     mrc721Buy,

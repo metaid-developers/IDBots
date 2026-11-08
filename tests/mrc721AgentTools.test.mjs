@@ -30,6 +30,8 @@ const TOOL_NAMES = [
   'mrc721_collection_create',
   'mrc721_collection_update',
   'mrc721_mint',
+  'mrc721_item_desc_batch',
+  'mrc721_issue_estimate',
   'mrc721_transfer',
   'mrc721_sell',
   'mrc721_buy',
@@ -47,10 +49,22 @@ const TOOL_NAMES = [
 ];
 
 function makeHarness(overrides = {}) {
-  const calls = { collectionCreate: [], collectionUpdate: [], mint: [], transfer: [], sell: [], buy: [], sellIntentDeclare: [], sellIntentCancel: [], listSellIntents: [] };
+  const calls = { collectionCreate: [], collectionUpdate: [], mint: [], itemDescBatch: [], transfer: [], sell: [], buy: [], sellIntentDeclare: [], sellIntentCancel: [], listSellIntents: [] };
   const control = {
     getMetabotMvcAddress: (id) => (id === 1 ? BOT_ADDRESS : id === 15 ? OTHER_ADDRESS : null),
     resolveMetabotIdByName: (name) => (name === 'AI_Sunny' ? 1 : null),
+    itemDescBatch: async (input) => {
+      calls.itemDescBatch.push(input);
+      if (overrides.itemDescBatchError) throw overrides.itemDescBatchError;
+      return {
+        collectionName: input.collectionName,
+        pinId: DESC_PINID,
+        txids: ['tx1'],
+        totalCost: 700,
+        feeAssist: undefined,
+        referencedPinIds: input.items.map((item) => item.pinId),
+      };
+    },
     collectionCreate: async (input) => {
       calls.collectionCreate.push(input);
       if (overrides.collectionCreateError) throw overrides.collectionCreateError;
@@ -1172,4 +1186,86 @@ test('no pre-revision minting semantics survive in the mrc721 surface copy', asy
       assert.doesNotMatch(text, pattern, `${file.pathname} must not carry pre-revision wording (${pattern})`);
     }
   }
+});
+
+// -------------------------------------------------------------------------
+// mrc721_item_desc_batch + mrc721_issue_estimate (issue wizard tooling)
+// -------------------------------------------------------------------------
+
+test('mrc721_item_desc_batch broadcasts through control and appends one card per item', async () => {
+  const { calls, byName } = makeHarness();
+  const itemA = `${'11'.repeat(32)}i0`;
+  const itemB = `${'22'.repeat(32)}i0`;
+  const result = await byName.mrc721_item_desc_batch.handler({
+    collection_name: 'pixel-cats',
+    items: [
+      { pin_id: itemA, name: 'Cat #1', desc: 'first', cover: `${'33'.repeat(32)}i0` },
+      { pin_id: itemB, name: 'Cat #2' },
+    ],
+  });
+  assert.equal(result.isError, undefined);
+  assert.equal(calls.itemDescBatch.length, 1);
+  assert.deepEqual(calls.itemDescBatch[0].items[0], {
+    pinId: itemA, name: 'Cat #1', desc: 'first', cover: `${'33'.repeat(32)}i0`, metadata: undefined,
+  });
+  const text = result.content[0].text;
+  assert.match(text, /item_desc batch broadcast for collection "pixel-cats" \(2 items referenced\)/);
+  assert.match(text, /per-field first-write-wins/);
+  assert.equal((text.match(/```nft-card\n/g) || []).length, 2);
+  assert.match(text, /Cat #1/);
+  assert.match(text, /Cat #2/);
+});
+
+test('mrc721_item_desc_batch relays control failures loudly', async () => {
+  const { byName } = makeHarness({ itemDescBatchError: new Error('insufficient balance') });
+  const result = await byName.mrc721_item_desc_batch.handler({
+    collection_name: 'pixel-cats',
+    items: [{ pin_id: `${'11'.repeat(32)}i0` }],
+  });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /mrc721_item_desc_batch failed: insufficient balance/);
+});
+
+test('mrc721_issue_estimate returns the dry-run write plan without broadcasting', async () => {
+  const { byName } = makeHarness();
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/collection/search', () => jsonResponse({ code: 1, data: { list: [], total: 0 } })],
+    ]),
+    () => byName.mrc721_issue_estimate.handler({
+      collection_name: 'pixel-cats',
+      total_supply: 10,
+      royalty_rate: 0,
+      items: [{ name: 'Cat #1' }, { name: 'Cat #2' }],
+    }),
+  );
+  assert.equal(result.isError, undefined);
+  const text = result.content[0].text;
+  assert.match(text, /Fee estimate \(dry run\) for "pixel-cats"/);
+  assert.match(text, /collection_desc @ \/nft\/mrc721\/pixel-cats\/collection_desc/);
+  assert.match(text, /item_desc @ \/nft\/mrc721\/pixel-cats\/item_desc/);
+  assert.match(text, /TOTAL est ~\d+ sats \(UPPER BOUND/);
+  assert.match(text, /immutable once registered/);
+});
+
+test('mrc721_issue_estimate refuses the session bot\'s own duplicate registration', async () => {
+  const { byName } = makeHarness();
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/collection/search', () => jsonResponse({ code: 1, data: { list: [collectionRow()], total: 1 } })],
+    ]),
+    () => byName.mrc721_issue_estimate.handler({ collection_name: 'pixel-cats' }),
+  );
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /already issued by this MetaBot/);
+});
+
+test('mrc721_issue_estimate surfaces invalid fields before any fee is spent', async () => {
+  const { byName } = makeHarness();
+  const result = await byName.mrc721_issue_estimate.handler({
+    collection_name: 'pixel-cats',
+    total_supply: 1.5,
+  });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /integer in \[-1, 1e12\]/);
 });
