@@ -1,10 +1,18 @@
-import test from 'node:test';
+import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { H1, pid } from './fixtures/preference/scenarios.mjs';
 
 const require = createRequire(import.meta.url);
 const { collectPreferenceEvents } = require('../dist-electron/main/services/preference/collector.js');
+const {
+  // Egress-guard memo/probe state is process-wide; reset between tests.
+  __resetProtocolPinFetchStateForTests,
+} = require('../dist-electron/main/services/protocolPinFetch.js');
+
+beforeEach(() => {
+  __resetProtocolPinFetchStateForTests();
+});
 
 const b64 = (value) => Buffer.from(JSON.stringify(value)).toString('base64');
 const row = (id, segment, body, over = {}) => ({

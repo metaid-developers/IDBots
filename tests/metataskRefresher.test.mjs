@@ -112,7 +112,11 @@ const openHarness = async (clock, over = {}) => {
   };
   const refresher = new MetaTaskRefresher({
     store: () => store,
-    collectOptions: { fetchImpl: over.fetchImpl ?? defaultFetchImpl },
+    // bypassCache: these tests pin refresher semantics (replay, coalescing,
+    // backoff) against a live wire — the process-wide walk memo (egress guard,
+    // protocolPinFetch) would otherwise serve repeat sweeps from memory. The
+    // memo/probe behavior itself is covered by protocolPinFetchEgressGuard.
+    collectOptions: { fetchImpl: over.fetchImpl ?? defaultFetchImpl, bypassCache: true },
     now: () => (over.frozenClock === false ? Date.now() : clock.value),
     minIntervalMs: over.minIntervalMs ?? 0,
     backoff: over.backoff,
@@ -549,8 +553,8 @@ test('wiring: the heartbeat sweep bypasses the coalescing window and is jittered
   const mainSource = fs.readFileSync(path.join(here, '..', 'src', 'main', 'main.ts'), 'utf-8');
   assert.match(
     mainSource,
-    /name: 'metatask\.refresh',\n\s+intervalMs: 5 \* 60_000,\n\s+jitterMs: 45_000,/,
-    'the 5-min sweep carries a jitter so instances do not walk the pools in lockstep'
+    /name: 'metatask\.refresh',\n\s+intervalMs: 10 \* 60_000,\n\s+jitterMs: 45_000,/,
+    'the 10-min sweep carries a jitter so instances do not walk the pools in lockstep'
   );
   assert.match(
     mainSource,

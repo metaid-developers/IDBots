@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
@@ -11,7 +11,16 @@ const {
   normalizeChainEvent,
   rosterPinsFromEvents,
 } = require('../dist-electron/main/services/metatask/collector.js');
+const {
+  // Egress-guard memo/probe state is process-wide; the collector tests below
+  // each expect a cold walk.
+  __resetProtocolPinFetchStateForTests,
+} = require('../dist-electron/main/services/protocolPinFetch.js');
 const { METATASK_COLLECTED_PATHS } = require('../dist-electron/main/services/metatask/constants.js');
+
+beforeEach(() => {
+  __resetProtocolPinFetchStateForTests();
+});
 
 /**
  * MetaTask TS engine — conformance vectors (P1).
@@ -1088,6 +1097,8 @@ test('collector: a truncated summary is recovered from the content URL (one requ
     contentSummary: '{"root":"r1","nodes":[]}',
     contentLength: 18_660,
   });
+  // Cold walk: the first collect memoized this pool (egress guard).
+  __resetProtocolPinFetchStateForTests();
   const second = await collectWithIndexer([shortRow], { treeshort000001i0: full });
   assert.deepEqual(second.collected.events[0].body, full);
   assert.equal(second.contentCalls().length, 1);
