@@ -89,9 +89,15 @@ test('App implements a branch for every renderer key the table can produce', () 
 });
 
 test('the shell pins every column to an explicit track (no auto-placement blind spot)', () => {
-  // Both collapse states must describe four tracks.
-  const templates = [...appSource.matchAll(/gridTemplateColumns:[^,]*?'([^']+)'/g)].map((match) => match[1]);
-  assert.ok(templates.length >= 2, 'expanded + collapsed templates are both declared');
+  // Both collapse states must describe four tracks. Read them off the shell's
+  // own style block (the two ternary arms), not off a comment.
+  const shellStart = appSource.indexOf('data-slot="app-three-column-shell"');
+  assert.ok(shellStart > 0, 'the shell exists');
+  const shellBlock = appSource.slice(shellStart, shellStart + 1200);
+  const templates = [...shellBlock.matchAll(/'([^']+)'/g)]
+    .map((match) => match[1])
+    .filter((template) => template.includes('minmax('));
+  assert.equal(templates.length, 2, 'expanded + collapsed templates are both declared');
   // `minmax(0, 1fr)` is ONE track, so collapse its inner spaces before counting.
   const trackCount = (template) => template.replace(/minmax\(([^)]*)\)/g, (_m, inner) => `minmax(${inner.replace(/\s+/g, '')})`).trim().split(/\s+/).length;
   for (const template of templates) {
@@ -101,27 +107,33 @@ test('the shell pins every column to an explicit track (no auto-placement blind 
   // The right column and the resize handle are placed by track number, so a
   // conditional middle child can never shift them into the wrong track.
   assert.match(appSource, /data-slot="app-right-column"[\s\S]{0,160}gridColumn: 4/);
-  assert.match(appSource, /role="separator"[\s\S]{0,240}gridColumn: 3/);
+  assert.match(appSource, /role="separator"[\s\S]{0,420}gridColumn: 3/);
 
-  // Negative control: the modelled bug still reproduces, so the assertions
-  // above are checking a real property rather than restating the source.
-  // Collapsed template = [64, 0, 0, 1fr]; three children (no handle) =>
-  // the right column is the THIRD child and lands in track 3 — the 0px track.
-  const tracks = [64, 0, 0, '1fr'];
+  // Negative control: the modelled bug still reproduces against the LIVE
+  // collapsed template, so the assertions above check a real property rather
+  // than restating the source. Collapsed template = [64, 0, 4, 1fr]: with
+  // three children (no handle) the right column becomes the THIRD child and
+  // auto-places into track 3 — the 4px handle track, not the content track.
+  const tracks = [64, 0, 4, '1fr'];
   const threeChildren = autoPlacementTracks(3);
-  assert.equal(tracks[threeChildren[2] - 1], 0, 'unplaced third child lands in the zero-width track');
+  assert.equal(tracks[threeChildren[2] - 1], 4, 'unplaced third child lands in the handle track');
+  assert.notEqual(tracks[threeChildren[2] - 1], '1fr', 'that track is not the content column');
   const fourChildren = autoPlacementTracks(4);
   assert.equal(tracks[fourChildren[3] - 1], '1fr', 'the explicit fourth track is the content column');
 });
 
 test('recovery never depends on a control inside the collapsible column', () => {
-  // The rail carries its own always-visible toggle …
-  assert.match(railSource, /data-slot="rail-collapse-toggle"/);
-  assert.match(railSource, /onClick=\{onToggleMiddleColumn\}/);
-  assert.match(railSource, /isMiddleColumnCollapsed/);
-  // … and App wires it to the same collapse state it renders the shell from.
-  assert.match(appSource, /isMiddleColumnCollapsed=\{isSidebarCollapsed\}/);
-  assert.match(appSource, /onToggleMiddleColumn=\{handleToggleSidebar\}/);
+  // The ONE panel toggle sits on the mid ⇄ right boundary handle, which is
+  // mounted in both states (the collapsed template keeps its 4px track) …
+  assert.match(appSource, /data-slot="panel-boundary-handle"/);
+  assert.match(appSource, /data-slot="panel-toggle"/);
+  assert.match(appSource, /onClick=\{handleToggleSidebar\}/);
+  assert.match(appSource, /aria-pressed=\{isSidebarCollapsed\}/);
+  assert.match(appSource, /'64px 0px 4px minmax\(0, 1fr\)'/);
+  // … and it is NOT duplicated back into the rail or the column it collapses.
+  assert.doesNotMatch(railSource, /rail-collapse-toggle/);
+  assert.doesNotMatch(railSource, /SidebarToggleIcon/);
+  assert.doesNotMatch(appSource, /SidebarToggleIcon/);
 });
 
 test('a rail destination click re-opens the middle column (the second recovery path)', () => {

@@ -12,7 +12,6 @@ import {
 } from '@heroicons/react/24/outline';
 import Tooltip from '../ui/Tooltip';
 import ComposeIcon from '../icons/ComposeIcon';
-import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import BotBrowserModeSwitch from '../../features/botBrowser/BotBrowserModeSwitch';
 import MeBalanceBadge from '../me/MeBalanceBadge';
 import { i18nService } from '../../services/i18n';
@@ -140,14 +139,6 @@ interface WorkspaceRailProps {
   onSelectHomeSection: (section: BotHomeSection) => void;
   onNewChat: () => void;
   onShowSettings: () => void;
-  /**
-   * Middle-column collapse state + its toggle. The rail owns the ONLY always
-   * visible copy of this control: when the middle column collapses, every
-   * control that lives inside a column goes to zero width, so without a toggle
-   * out here a collapsed workspace would have no way back (page reload only).
-   */
-  isMiddleColumnCollapsed: boolean;
-  onToggleMiddleColumn: () => void;
   /** Update dot (rendered above Settings when one is available). */
   updateBadge?: React.ReactNode;
 }
@@ -170,8 +161,6 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
   onSelectHomeSection,
   onNewChat,
   onShowSettings,
-  isMiddleColumnCollapsed,
-  onToggleMiddleColumn,
   updateBadge,
 }) => {
   const isMac = window.electron.platform === 'darwin';
@@ -225,32 +214,6 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
           onSelectBrowser={() => onSelectSurface('browser')}
           onSelectHome={() => onSelectSurface('home')}
         />
-      </div>
-      <div className="mt-1.5 w-full px-1.5">
-        <Tooltip
-          content={
-            isMiddleColumnCollapsed
-              ? i18nService.t('expandMiddleColumn')
-              : i18nService.t('collapseMiddleColumn')
-          }
-          position="right"
-          delay={200}
-        >
-          <button
-            type="button"
-            data-slot="rail-collapse-toggle"
-            aria-label={
-              isMiddleColumnCollapsed
-                ? i18nService.t('expandMiddleColumn')
-                : i18nService.t('collapseMiddleColumn')
-            }
-            aria-pressed={isMiddleColumnCollapsed}
-            onClick={onToggleMiddleColumn}
-            className="non-draggable flex h-8 w-full items-center justify-center rounded-lg transition-colors dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover hover:dark:text-claude-darkText hover:text-claude-text"
-          >
-            <SidebarToggleIcon className="h-4 w-4" isCollapsed={isMiddleColumnCollapsed} />
-          </button>
-        </Tooltip>
       </div>
       <div className="mt-1.5 w-full px-3">
         <div className="h-px w-full dark:bg-claude-darkBorder/70 bg-claude-border/70" />

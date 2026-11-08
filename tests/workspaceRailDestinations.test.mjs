@@ -141,9 +141,10 @@ test('the right column stays pinned to grid track 4, so a collapsed middle colum
   // The shell really is the four-track grid (rail | mid | handle | right).
   assert.match(appSource, /data-slot="app-three-column-shell"/);
   assert.match(appSource, /'64px auto 4px minmax\(0, 1fr\)'/);
-  assert.match(appSource, /'64px 0px 0px minmax\(0, 1fr\)'/);
-  // The resize handle is rendered only while expanded: explicit placement is
-  // what keeps the right column out of the zero-width third track.
+  assert.match(appSource, /'64px 0px 4px minmax\(0, 1fr\)'/);
+  // The boundary handle is mounted in BOTH states (its track keeps 4px), so
+  // the third child can never vanish; explicit placement is what keeps the
+  // right column out of a zero-width track either way.
   assert.match(appSource, /data-slot="app-right-column"/);
   assert.match(appSource, /data-slot="app-right-column"[\s\S]{0,160}style=\{\{ gridColumn: 4 \}\}/);
   assert.match(appSource, /style=\{\{ gridColumn: 3 \}\}/);
@@ -168,17 +169,30 @@ test('Bot Home section state stays derived from mainView — no second source of
   assert.match(appSource, /section === 'groupTasks'[\s\S]{0,120}setMainView\('groupTasks'\)/);
 });
 
-test('a collapsed middle column is recoverable from the rail alone', () => {
+test('a collapsed middle column is recoverable from the boundary handle alone', () => {
   const railSource = fs.readFileSync(
     path.join(root, 'src/renderer/components/layout/WorkspaceRail.tsx'),
     'utf8',
   );
-  // The rail carries its own collapse toggle, visible in both surfaces.
-  assert.match(railSource, /data-slot="rail-collapse-toggle"/);
-  assert.match(railSource, /aria-pressed=\{isMiddleColumnCollapsed\}/);
-  assert.match(railSource, /onClick=\{onToggleMiddleColumn\}/);
-  assert.match(appSource, /isMiddleColumnCollapsed=\{isSidebarCollapsed\}/);
-  assert.match(appSource, /onToggleMiddleColumn=\{handleToggleSidebar\}/);
+  // The rail no longer carries a collapse toggle: there is exactly ONE panel
+  // toggle in the shell and it lives on the mid ⇄ right boundary handle.
+  assert.doesNotMatch(railSource, /rail-collapse-toggle/);
+  assert.doesNotMatch(railSource, /isMiddleColumnCollapsed/);
+  assert.equal((appSource.match(/role="separator"/g) || []).length, 1, 'one boundary handle');
+
+  // The handle is rendered unconditionally between <Sidebar> and the right
+  // column: a control that hides a column must never be hidden by that same
+  // state (that was the 11:37 dead end).
+  const handleStart = appSource.indexOf('role="separator"');
+  const rightColumnStart = appSource.indexOf('data-slot="app-right-column"');
+  assert.ok(handleStart > 0 && rightColumnStart > handleStart, 'handle sits before the right column');
+  const handleBlock = appSource.slice(handleStart, rightColumnStart);
+  assert.match(handleBlock, /data-slot="panel-boundary-handle"/);
+  assert.match(handleBlock, /aria-orientation="vertical"/);
+  assert.match(handleBlock, /data-slot="panel-toggle"/);
+  assert.match(handleBlock, /aria-pressed=\{isSidebarCollapsed\}/);
+  assert.match(handleBlock, /onClick=\{handleToggleSidebar\}/);
+  assert.match(handleBlock, /<PanelToggleIcon/);
   // ... and every destination click re-opens the column, so a collapsed
   // workspace can never be a dead end.
   assert.match(

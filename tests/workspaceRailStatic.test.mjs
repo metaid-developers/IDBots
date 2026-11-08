@@ -19,12 +19,13 @@ const railSource = read('src/renderer/components/layout/WorkspaceRail.tsx');
 const sidebarSource = read('src/renderer/components/Sidebar.tsx');
 const navigationSource = read('src/renderer/components/sidebar/sidebarNavigation.js');
 
-test('App lays the shell out as three grid tracks: rail | mid column | right column', () => {
+test('App lays the shell out as four tracks: rail | mid column | handle | right column', () => {
   assert.match(appSource, /data-slot="app-three-column-shell"/);
   assert.match(appSource, /className="grid min-h-0 min-w-0 flex-1"/);
-  // 64 px rail, the user-resizable middle track, the resize handle, the right
-  // column. Collapsed: the middle track disappears, the rail never does.
-  assert.match(appSource, /'64px 0px 0px minmax\(0, 1fr\)'/);
+  // 64 px rail, the user-resizable middle track, the 4px boundary handle, the
+  // right column. Collapsed: the middle track goes to 0 but the handle keeps
+  // its 4px track — it carries the ONE panel toggle in both states.
+  assert.match(appSource, /'64px 0px 4px minmax\(0, 1fr\)'/);
   assert.match(appSource, /'64px auto 4px minmax\(0, 1fr\)'/);
   assert.match(appSource, /import WorkspaceRail from '\.\/components\/layout\/WorkspaceRail';/);
   assert.ok(

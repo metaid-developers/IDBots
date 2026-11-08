@@ -19,7 +19,6 @@ import CoworkPromptInput, { type CoworkPromptInputRef } from './CoworkPromptInpu
 import CoworkSessionDetail from './CoworkSessionDetail';
 import { buildNewTaskComposerCommands } from './composerCommandCatalog';
 import BootstrapShortcuts from './BootstrapShortcuts';
-import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import ComposeIcon from '../icons/ComposeIcon';
 import WindowTitleBar from '../window/WindowTitleBar';
 import { QuickActionBar, PromptPanel } from '../quick-actions';
@@ -40,7 +39,6 @@ export interface CoworkViewProps {
   focusedOrderTxid?: string | null;
   onFocusedOrderConsumed?: (orderTxid: string) => void;
   isSidebarCollapsed?: boolean;
-  onToggleSidebar?: () => void;
   onNewChat?: () => void;
   updateBadge?: React.ReactNode;
 }
@@ -52,7 +50,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   focusedOrderTxid,
   onFocusedOrderConsumed,
   isSidebarCollapsed,
-  onToggleSidebar,
   onNewChat,
   updateBadge,
 }) => {
@@ -762,7 +759,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
           onFocusedOrderConsumed={onFocusedOrderConsumed}
           onNavigateHome={() => dispatch(clearCurrentSession())}
           isSidebarCollapsed={isSidebarCollapsed}
-          onToggleSidebar={onToggleSidebar}
           onNewChat={onNewChat}
           onOpenBotInBrowser={onOpenBotInBrowser}
           onRequestAppSettings={onRequestAppSettings}
@@ -780,13 +776,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({
         <div className="non-draggable h-8 flex items-center">
           {isSidebarCollapsed && (
             <div className={`flex items-center gap-1 mr-2 ${isMac ? 'pl-[68px]' : ''}`}>
-              <button
-                type="button"
-                onClick={onToggleSidebar}
-                className="h-8 w-8 inline-flex items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
-              >
-                <SidebarToggleIcon className="h-4 w-4" isCollapsed={true} />
-              </button>
               <button
                 type="button"
                 onClick={onNewChat}

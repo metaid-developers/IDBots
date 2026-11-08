@@ -75,7 +75,7 @@ import { useBotBrowserShell } from './features/botBrowser/useBotBrowserShell';
 import { openBotBrowserConversationInCowork } from './features/botBrowser/conversationNavigationAdapter';
 import type { BotBrowserConversationRequest } from './features/botBrowser/types';
 import type { BotHomeSection } from './features/botBrowser/types';
-import SidebarToggleIcon from './components/icons/SidebarToggleIcon';
+import PanelToggleIcon from './components/icons/PanelToggleIcon';
 import { FREE_PROVIDER_DISPLAY_NAME, LLM_FREE_PROVIDER_KEY } from './services/llmFreeQuotaGate.js';
 import {
   loadUpdateNotifications,
@@ -232,7 +232,6 @@ const App: React.FC = () => {
 
   const pendingConsent = pendingConsents[0] ?? null;
   const isWindows = window.electron.platform === 'win32';
-  const isMac = window.electron.platform === 'darwin';
   const focusedOrderTxid = focusedOrderTarget?.sessionId === currentSessionId
     ? focusedOrderTarget.orderTxid
     : null;
@@ -1473,7 +1472,6 @@ const App: React.FC = () => {
   const metabotsPane = (
     <MetabotsView
       isSidebarCollapsed={isSidebarCollapsed}
-      onToggleSidebar={handleToggleSidebar}
       onNewChat={handleBlankNewChat}
       updateBadge={isSidebarCollapsed ? updateBadge : null}
       onRequestModelSettings={() => handleShowSettings({ initialTab: 'model' })}
@@ -1487,14 +1485,12 @@ const App: React.FC = () => {
   const homeContent = homePaneKey === 'scheduledTasksView' ? (
     <ScheduledTasksView
       isSidebarCollapsed={isSidebarCollapsed}
-      onToggleSidebar={handleToggleSidebar}
       onNewChat={handleBlankNewChat}
       updateBadge={isSidebarCollapsed ? updateBadge : null}
     />
   ) : homePaneKey === 'groupTasksView' ? (
     <GroupTasksView
       isSidebarCollapsed={isSidebarCollapsed}
-      onToggleSidebar={handleToggleSidebar}
       onNewChat={handleBlankNewChat}
       onNewGroupTask={handleNewGroupTask}
       updateBadge={isSidebarCollapsed ? updateBadge : null}
@@ -1506,7 +1502,6 @@ const App: React.FC = () => {
       onRequestAppSettings={handleShowSettings}
       onShowSkills={handleShowSkills}
       isSidebarCollapsed={isSidebarCollapsed}
-      onToggleSidebar={handleToggleSidebar}
       onNewChat={handleBlankNewChat}
       updateBadge={isSidebarCollapsed ? updateBadge : null}
       focusedOrderTxid={focusedOrderTxid}
@@ -1547,7 +1542,6 @@ const App: React.FC = () => {
   ) : internetPaneKey === 'metaAppsView' ? (
     <MetaAppsView
       isSidebarCollapsed={isSidebarCollapsed}
-      onToggleSidebar={handleToggleSidebar}
       onNewChat={handleNewChat}
       onOpenMetaAppInBrowser={botBrowserShell.openMetaApp}
       onPreviewMetaAppByPin={botBrowserShell.openMetaAppByPin}
@@ -1595,11 +1589,12 @@ const App: React.FC = () => {
         data-slot="app-three-column-shell"
         className="grid min-h-0 min-w-0 flex-1"
         style={{
-          // Four tracks in both states: collapsed keeps the middle column and
-          // the resize handle mounted at zero width, so the right column never
-          // falls into an implicit track. The rail itself never collapses.
+          // Four tracks in both states: the middle column collapses to 0 but
+          // the boundary handle keeps its 4px track, so the ONE panel toggle
+          // stays mounted (and clickable) exactly where it collapsed the
+          // column. The rail itself never collapses.
           gridTemplateColumns: isSidebarCollapsed
-            ? '64px 0px 0px minmax(0, 1fr)'
+            ? '64px 0px 4px minmax(0, 1fr)'
             : '64px auto 4px minmax(0, 1fr)',
         }}
       >
@@ -1628,8 +1623,6 @@ const App: React.FC = () => {
             handleBlankNewChat();
           }}
           onShowSettings={() => handleShowSettings()}
-          isMiddleColumnCollapsed={isSidebarCollapsed}
-          onToggleMiddleColumn={handleToggleSidebar}
           updateBadge={updateBadge}
         />
         <Sidebar
@@ -1645,26 +1638,60 @@ const App: React.FC = () => {
           onSelectHome={botBrowserShell.switchToHome}
           onSelectBrowserSession={handleSelectBrowserSession}
           isCollapsed={isSidebarCollapsed}
-          onToggleCollapse={handleToggleSidebar}
           width={sidebarWidth}
           isResizing={isSidebarResizing}
         />
-        {!isSidebarCollapsed ? (
-          <div
-            role="separator"
-            aria-orientation="vertical"
-            onMouseDown={handleSidebarResizeStart}
-            onDoubleClick={handleSidebarResizeReset}
-            style={{ gridColumn: 3 }}
-            className="w-1 cursor-col-resize transition-colors hover:bg-claude-accent/40"
-          />
-        ) : null}
-      {/* The right column is pinned to track 4 on purpose: the resize handle
-          above is conditional, and under `gridTemplateColumns: '64px 0px 0px
-          minmax(0, 1fr)'` a missing third child used to pull this column into
-          the zero-width middle track — the whole workspace went blank while
-          the rail kept rendering. Explicit placement makes the collapsed state
-          behave like the expanded one. */}
+        {/* Middle ⇄ right boundary handle: the ONE panel toggle in the shell,
+            plus the column resize grip. It is mounted in BOTH states on
+            purpose — a control that lives inside the collapsible column is
+            unusable the moment that column is gone, so the toggle sits on the
+            seam: same spot to collapse and to bring the column back. */}
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          data-slot="panel-boundary-handle"
+          data-collapsed={isSidebarCollapsed ? 'true' : 'false'}
+          onMouseDown={isSidebarCollapsed ? undefined : handleSidebarResizeStart}
+          onDoubleClick={isSidebarCollapsed ? undefined : handleSidebarResizeReset}
+          style={{ gridColumn: 3 }}
+          className={`group relative z-40 w-1 transition-colors ${
+            isSidebarCollapsed ? '' : 'cursor-col-resize hover:bg-claude-accent/40'
+          }`}
+        >
+          {/* Painted line is 4px; the draggable band is 8px so grabbing the
+              seam never requires pixel-hunting a 4px target. */}
+          <span aria-hidden="true" className="absolute inset-y-0 -left-0.5 -right-0.5" />
+          <button
+            type="button"
+            data-slot="panel-toggle"
+            aria-label={
+              isSidebarCollapsed
+                ? i18nService.t('expandMiddleColumn')
+                : i18nService.t('collapseMiddleColumn')
+            }
+            aria-pressed={isSidebarCollapsed}
+            title={
+              isSidebarCollapsed
+                ? i18nService.t('expandMiddleColumn')
+                : i18nService.t('collapseMiddleColumn')
+            }
+            onMouseDown={(event) => event.stopPropagation()}
+            onDoubleClick={(event) => event.stopPropagation()}
+            onClick={handleToggleSidebar}
+            className={`non-draggable absolute left-1/2 top-1/2 z-40 flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-md transition-colors dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/50 ${
+              isSidebarCollapsed
+                ? 'border dark:border-claude-darkBorder/70 border-claude-border/70 dark:bg-claude-darkSurface/90 bg-claude-surface/90 shadow-sm backdrop-blur-sm'
+                : ''
+            }`}
+          >
+            <PanelToggleIcon className="h-3.5 w-3.5" collapsed={isSidebarCollapsed} />
+          </button>
+        </div>
+      {/* The right column is pinned to track 4 on purpose: the boundary handle
+          above is the only optional-width child and it never unmounts, so a
+          missing third child can never pull this column into a zero-width
+          track (the 11:37 blank-workspace bug). Explicit placement keeps the
+          collapsed state behaving like the expanded one. */}
       <div
         data-slot="app-right-column"
         style={{ gridColumn: 4 }}
@@ -1703,16 +1730,6 @@ const App: React.FC = () => {
                 />
               </Suspense>
             </div>
-            {isSidebarCollapsed ? (
-              <button
-                type="button"
-                onClick={handleToggleSidebar}
-                className={`non-draggable absolute top-2 z-40 h-8 w-8 inline-flex items-center justify-center rounded-lg border border-claude-border/70 bg-claude-surface/90 text-claude-textSecondary shadow-sm backdrop-blur-sm transition-colors hover:bg-claude-surfaceHover hover:text-claude-text dark:border-claude-darkBorder/70 dark:bg-claude-darkSurface/90 dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText ${isMac ? 'left-[76px]' : 'left-2'}`}
-                aria-label={i18nService.t('expand')}
-              >
-                <SidebarToggleIcon className="h-4 w-4" isCollapsed={true} />
-              </button>
-            ) : null}
           </div>
         ) : null}
       </div>

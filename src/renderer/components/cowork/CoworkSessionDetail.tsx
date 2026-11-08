@@ -101,7 +101,6 @@ import { configService } from '../../services/config';
 import { useChatExperienceMode } from '../../hooks/useChatExperienceMode';
 import { projectsService } from '../../services/projects';
 import { fetchMetaidInfoByGlobalId, resolveMetaidAvatarSource } from '../../services/metabotInfoService';
-import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import ComposeIcon from '../icons/ComposeIcon';
 import WindowTitleBar from '../window/WindowTitleBar';
 import { getCompactFolderName } from '../../utils/path';
@@ -165,7 +164,6 @@ interface CoworkSessionDetailProps {
   onFocusedOrderConsumed?: (orderTxid: string) => void;
   onNavigateHome?: () => void;
   isSidebarCollapsed?: boolean;
-  onToggleSidebar?: () => void;
   onNewChat?: () => void;
   onOpenBotInBrowser?: (input: {
     globalMetaId: string;
@@ -2615,7 +2613,6 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   onFocusedOrderConsumed,
   onNavigateHome,
   isSidebarCollapsed,
-  onToggleSidebar,
   onNewChat,
   onOpenBotInBrowser,
   onRequestAppSettings,
@@ -4624,13 +4621,6 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         <div className="flex h-full items-center gap-2 min-w-0">
           {isSidebarCollapsed && (
             <div className={`non-draggable flex items-center gap-1 ${isMac ? 'pl-[68px]' : ''}`}>
-              <button
-                type="button"
-                onClick={onToggleSidebar}
-                className="h-8 w-8 inline-flex items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
-              >
-                <SidebarToggleIcon className="h-4 w-4" isCollapsed={true} />
-              </button>
               <button
                 type="button"
                 onClick={onNewChat}

@@ -19,7 +19,6 @@ import { buildUnifiedTaskList } from '../utils/unifiedTaskList';
 import { MagnifyingGlassIcon, ArchiveBoxIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import Tooltip from './ui/Tooltip';
 import FilterLinesIcon from './icons/FilterLinesIcon';
-import SidebarToggleIcon from './icons/SidebarToggleIcon';
 import BackgroundTasksBadge from './cowork/BackgroundTasksBadge';
 import { getHomeSectionModel } from './sidebar/sidebarNavigation.js';
 import { SleepGuardBadge } from './SleepGuardBadge';
@@ -67,7 +66,6 @@ interface SidebarProps {
    * the user there instead of the home chat view. */
   onSelectBrowserSession?: (sessionId: string) => void | Promise<void>;
   isCollapsed: boolean;
-  onToggleCollapse: () => void;
   /** Expanded middle-column width in px (resizable by the user). */
   width?: number;
   /** True while the user is dragging the resize handle; disables the width transition for lag-free dragging. */
@@ -162,7 +160,6 @@ const Sidebar: React.FC<SidebarProps> = ({
   onSelectHome,
   onSelectBrowserSession,
   isCollapsed,
-  onToggleCollapse,
   width = defaultSidebarWidth('home'),
   isResizing = false,
 }) => {
@@ -591,17 +588,12 @@ const Sidebar: React.FC<SidebarProps> = ({
       }`}
       style={{ width: isCollapsed ? 0 : width }}
     >
-      {/* Column header: collapse control, the records search (Bot Home) and the
-          live background-work indicators. Navigation lives in the left rail. */}
+      {/* Column header: the records search (Bot Home) and the live
+          background-work indicators. Navigation lives in the left rail; the
+          column's open/close toggle lives on the middle ⇄ right boundary
+          handle (App shell), not in here — a toggle inside the column is
+          unusable the moment the column collapses. */}
       <div className="draggable flex h-9 shrink-0 items-center gap-1 px-2">
-        <button
-          type="button"
-          onClick={onToggleCollapse}
-          className="non-draggable inline-flex h-7 w-7 items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
-          aria-label={isCollapsed ? i18nService.t('expand') : i18nService.t('collapse')}
-        >
-          <SidebarToggleIcon className="h-4 w-4" isCollapsed={isCollapsed} />
-        </button>
         {mode === 'home' ? (
           <button
             type="button"

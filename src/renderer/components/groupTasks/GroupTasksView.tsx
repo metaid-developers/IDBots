@@ -29,14 +29,12 @@ import {
   relativeTimeTitle,
 } from './GroupTaskListMeta';
 import { UserGroupIcon, EllipsisHorizontalIcon } from '@heroicons/react/24/outline';
-import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import ComposeIcon from '../icons/ComposeIcon';
 import WindowTitleBar from '../window/WindowTitleBar';
 import MetaTaskBoard from '../metatask/MetaTaskBoard';
 
 interface GroupTasksViewProps {
   isSidebarCollapsed?: boolean;
-  onToggleSidebar?: () => void;
   onNewChat?: () => void;
   onNewGroupTask?: () => void;
   updateBadge?: React.ReactNode;
@@ -204,7 +202,6 @@ const GroupTaskListItem: React.FC<GroupTaskListItemProps> = ({
 
 const GroupTasksView: React.FC<GroupTasksViewProps> = ({
   isSidebarCollapsed,
-  onToggleSidebar,
   onNewChat,
   onNewGroupTask,
   updateBadge,
@@ -257,7 +254,6 @@ const GroupTasksView: React.FC<GroupTasksViewProps> = ({
         key={selectedCollab.id}
         collab={selectedCollab}
         isSidebarCollapsed={isSidebarCollapsed}
-        onToggleSidebar={onToggleSidebar}
         onNewChat={onNewChat}
         updateBadge={updateBadge}
         onBack={() => dispatch(selectCollab(null))}
@@ -271,7 +267,6 @@ const GroupTasksView: React.FC<GroupTasksViewProps> = ({
         key={selectedTaskId}
         taskId={selectedTaskId}
         isSidebarCollapsed={isSidebarCollapsed}
-        onToggleSidebar={onToggleSidebar}
         onNewChat={onNewChat}
         updateBadge={updateBadge}
         onBack={() => dispatch(selectTask(null))}
@@ -308,13 +303,6 @@ const GroupTasksView: React.FC<GroupTasksViewProps> = ({
         <div className="flex items-center space-x-3 h-8">
           {isSidebarCollapsed && (
             <div className={`non-draggable flex items-center gap-1 ${isMac ? 'pl-[68px]' : ''}`}>
-              <button
-                type="button"
-                onClick={onToggleSidebar}
-                className="h-8 w-8 inline-flex items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
-              >
-                <SidebarToggleIcon className="h-4 w-4" isCollapsed={true} />
-              </button>
               <button
                 type="button"
                 onClick={onNewChat}
