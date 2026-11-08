@@ -34,11 +34,6 @@ export function getSidebarPrimaryNavModel({ t, hasRunningScheduledTask, needsDec
       icon: 'userGroup',
       hidden: !GROUP_TASKS_NAV_ENABLED,
     },
-    {
-      id: 'metabots',
-      label: t('metabots'),
-      icon: 'cpuChip',
-    },
   ];
 }
 
@@ -60,6 +55,14 @@ export function getSidebarInternetNavModel({ t }) {
       id: 'metaapps',
       label: t('metaApps'),
       icon: 'squares2x2',
+    },
+    {
+      // My Bots lives on the Bot Internet surface now (moved out of the Bot
+      // Home primary nav): it is a catalog-side view like Meta Apps, mounted
+      // right below it.
+      id: 'myBots',
+      label: t('metabots'),
+      icon: 'cpuChip',
     },
   ];
 }

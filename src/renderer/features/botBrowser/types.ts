@@ -5,7 +5,7 @@ import type { MetaAppRecord } from '../../types/metaApp';
 export type BotBrowserSurfaceMode = 'home' | 'browser';
 
 /** Destination inside the Bot Internet tab. The browser pane stays mounted. */
-export type BotInternetPane = 'browser' | 'gigSquare' | 'metaapps';
+export type BotInternetPane = 'browser' | 'gigSquare' | 'metaapps' | 'myBots';
 
 export type BotBrowserIntent =
   | { type: 'openBrowserHome' }

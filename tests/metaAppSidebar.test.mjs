@@ -18,7 +18,7 @@ const t = (key) => ({
   gigSquareAlphaBadge: 'Alpha',
 }[key] ?? key);
 
-test('getSidebarPrimaryNavModel keeps the Bot home entries in order', () => {
+test('getSidebarPrimaryNavModel keeps the Bot home entries in order (My Bots moved to the internet side)', () => {
   const items = getSidebarPrimaryNavModel({
     t,
     hasRunningScheduledTask: false,
@@ -27,17 +27,17 @@ test('getSidebarPrimaryNavModel keeps the Bot home entries in order', () => {
   assert.deepEqual(items.map((item) => item.id), [
     'scheduledTasks',
     'groupTasks',
-    'metabots',
   ]);
 });
 
-test('getSidebarInternetNavModel places Gig Square before MetaApps', () => {
+test('getSidebarInternetNavModel places Gig Square before MetaApps and My Bots last', () => {
   const items = getSidebarInternetNavModel({ t });
 
   assert.deepEqual(items.map((item) => item.id), [
     'browser',
     'gigSquare',
     'metaapps',
+    'myBots',
   ]);
 });
 

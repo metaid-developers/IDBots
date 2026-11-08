@@ -17,12 +17,12 @@ const t = (key) => key;
 const trackedTasksItem = (params) =>
   getSidebarPrimaryNavModel({ t, ...params }).find((item) => item.id === 'scheduledTasks');
 
-test('Bot Home primary nav keeps tasks and bots, without Bot Hub or Meta Apps', () => {
+test('Bot Home primary nav keeps tasks; My Bots has moved to the Bot Internet side', () => {
   const ids = getSidebarPrimaryNavModel({ t, hasRunningScheduledTask: false })
     .filter((item) => !item.hidden)
     .map((item) => item.id);
 
-  assert.deepEqual(ids, ['scheduledTasks', 'groupTasks', 'metabots']);
+  assert.deepEqual(ids, ['scheduledTasks', 'groupTasks']);
 });
 
 test('the 跟踪任务 entry carries no dot by default, an amber running dot while a task runs', () => {
@@ -57,21 +57,23 @@ test('a pending owner decision lights the 跟踪任务 dot with its own count la
   }
 });
 
-test('Bot Internet nav model keeps Bot Hub implemented but hidden behind its flag', () => {
+test('Bot Internet nav model keeps Bot Hub implemented but hidden, and mounts My Bots below Meta Apps', () => {
   const items = getSidebarInternetNavModel({ t });
 
-  assert.deepEqual(items.map((item) => item.id), ['browser', 'gigSquare', 'metaapps']);
+  assert.deepEqual(items.map((item) => item.id), ['browser', 'gigSquare', 'metaapps', 'myBots']);
   assert.equal(items[0].icon, 'globe');
   assert.equal(items[1].icon, 'shoppingBag');
   assert.equal(items[1].badge, 'gigSquareAlphaBadge');
   assert.equal(items[2].icon, 'squares2x2');
+  assert.equal(items[3].label, 'metabots');
+  assert.equal(items[3].icon, 'cpuChip');
 
   // Bot Hub is not a promoted column for now: its entry stays implemented but
-  // hidden, so the sidebar only lists Bot Browser and Meta Apps.
+  // hidden, so the sidebar lists Bot Browser, Meta Apps and My Bots.
   assert.equal(items[1].hidden, true);
   assert.deepEqual(
     items.filter((item) => !item.hidden).map((item) => item.id),
-    ['browser', 'metaapps'],
+    ['browser', 'metaapps', 'myBots'],
   );
 });
 

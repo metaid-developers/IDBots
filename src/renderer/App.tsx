@@ -1467,6 +1467,17 @@ const App: React.FC = () => {
       onOpenBotInBrowser={botBrowserShell.openRemoteBot}
       updateBadge={isSidebarCollapsed ? updateBadge : null}
     />
+  ) : botBrowserShell.internetPane === 'myBots' ? (
+    <MetabotsView
+      isSidebarCollapsed={isSidebarCollapsed}
+      onToggleSidebar={handleToggleSidebar}
+      onNewChat={handleNewChat}
+      updateBadge={isSidebarCollapsed ? updateBadge : null}
+      onRequestModelSettings={() => handleShowSettings({ initialTab: 'model' })}
+      onOpenMetabotInBrowser={botBrowserShell.openLocalMetabot}
+      onPreviewMetaAppHomepage={botBrowserShell.openMetaAppByPin}
+      onRequestMetaApps={handleShowMetaApps}
+    />
   ) : null;
 
   const showHomeSurface = botBrowserShell.surfaceMode === 'home';
