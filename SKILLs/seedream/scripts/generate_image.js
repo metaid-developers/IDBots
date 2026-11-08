@@ -187,6 +187,50 @@ async function makeRequest(method, urlStr, headers, body = null) {
   });
 }
 
+/**
+ * 按文件头魔数识别真实图片格式（不信任扩展名）。
+ * 返回规范扩展名，无法识别时返回 null。
+ */
+function detectImageExtension(buffer) {
+  if (!buffer || buffer.length < 3) return null;
+  if (buffer.length >= 8 && buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) return '.png';
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return '.jpg';
+  if (buffer.length >= 12 && buffer.subarray(0, 4).toString('ascii') === 'RIFF'
+    && buffer.subarray(8, 12).toString('ascii') === 'WEBP') return '.webp';
+  if (buffer.length >= 6 && /^GIF8[79]a$/.test(buffer.subarray(0, 6).toString('ascii'))) return '.gif';
+  return null;
+}
+
+/**
+ * 让文件扩展名与真实格式一致：API 返回的格式与 --output 写的扩展名无关
+ * （例如 frame.png 实际是 JPEG），扩展名不符时按真实格式改名。
+ * 返回最终文件路径（未改名时即原路径）。
+ */
+function alignImageExtension(filePath) {
+  let head;
+  try {
+    const fd = fs.openSync(filePath, 'r');
+    try {
+      head = Buffer.alloc(16);
+      const bytes = fs.readSync(fd, head, 0, 16, 0);
+      head = head.subarray(0, bytes);
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return filePath;
+  }
+  const realExt = detectImageExtension(head);
+  if (!realExt) return filePath;
+  const parsed = path.parse(filePath);
+  const currentExt = parsed.ext.toLowerCase();
+  const same = currentExt === realExt || (realExt === '.jpg' && currentExt === '.jpeg');
+  if (same) return filePath;
+  const finalPath = path.join(parsed.dir, `${parsed.name}${realExt}`);
+  fs.renameSync(filePath, finalPath);
+  return finalPath;
+}
+
 async function downloadFile(urlStr, outputPath) {
   return new Promise((resolve, reject) => {
     const urlObj = new URL(urlStr);
@@ -467,6 +511,7 @@ async function main() {
 
       printInfo('正在下载图片...');
       await downloadFile(imageUrl, options.output);
+      const finalPath = alignImageExtension(options.output);
 
       // 输出成功信息到 stdout（供 Claude 读取）
       printInfo('');
@@ -475,7 +520,10 @@ async function main() {
       printInfo('='.repeat(50));
 
       console.log('图片生成成功！');
-      console.log(`文件路径: ${path.resolve(options.output)}`);
+      console.log(`文件路径: ${path.resolve(finalPath)}`);
+      if (finalPath !== options.output) {
+        console.log(`注意: 实际格式为 ${path.extname(finalPath).slice(1).toUpperCase()}，已按真实格式保存（请使用上面的文件路径）`);
+      }
       console.log(`尺寸: ${data[0].size || 'N/A'}`);
       if (result.usage) {
         console.log(`生成图片数: ${result.usage.generated_images || 1}`);
@@ -488,6 +536,7 @@ async function main() {
       const suffix = outputBase.ext;
       const parent = path.dirname(options.output);
 
+      const finalPaths = [];
       for (let i = 0; i < data.length; i++) {
         const imageUrl = data[i].url;
         if (!imageUrl) {
@@ -495,10 +544,11 @@ async function main() {
           continue;
         }
 
-        // 生成文件名：image_1.png, image_2.png, ...
+        // 生成文件名：image_1.png, image_2.png, ...（扩展名随后按真实格式校正）
         const outputPath = path.join(parent, `${stem}_${i + 1}${suffix}`);
         printInfo(`正在下载图片 ${i + 1}/${data.length}...`);
         await downloadFile(imageUrl, outputPath);
+        finalPaths.push(alignImageExtension(outputPath));
       }
 
       // 输出成功信息到 stdout
@@ -509,7 +559,10 @@ async function main() {
 
       console.log(`组图生成成功！共 ${data.length} 张`);
       console.log(`输出目录: ${path.resolve(parent)}`);
-      console.log(`文件命名: ${stem}_1${suffix} ~ ${stem}_${data.length}${suffix}`);
+      console.log('文件路径（扩展名为真实格式）:');
+      for (const finalPath of finalPaths) {
+        console.log(`  ${path.resolve(finalPath)}`);
+      }
       if (result.usage) {
         console.log(`Token消耗: ${result.usage.total_tokens || 'N/A'}`);
       }
@@ -523,10 +576,13 @@ async function main() {
   }
 }
 
-// 捕获未处理的 Promise 拒绝
-process.on('unhandledRejection', (err) => {
-  printError(`未处理的错误: ${err.message}`);
-  process.exit(1);
-});
+if (require.main === module) {
+  // 捕获未处理的 Promise 拒绝（仅 CLI 运行时；被 require 时不改进程行为）
+  process.on('unhandledRejection', (err) => {
+    printError(`未处理的错误: ${err.message}`);
+    process.exit(1);
+  });
+  main();
+}
 
-main();
+module.exports = { detectImageExtension, alignImageExtension };
