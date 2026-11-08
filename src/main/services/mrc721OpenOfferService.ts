@@ -491,11 +491,15 @@ function openOfferRowFrom(raw: unknown): Mrc721OpenOfferRow {
 /** Query the indexer for open offers (R-E-2). Degrades honestly when the endpoint is absent. */
 export async function fetchMrc721OpenOffers(params: {
   itemPinId?: string;
+  collectionPinId?: string;
+  sellerMetaId?: string;
   cursor?: string | number;
   size?: number;
 }): Promise<{ items: Mrc721OpenOfferRow[]; total?: number; cursor?: string }> {
   const query = {
     itemPinId: params.itemPinId,
+    collectionPinId: params.collectionPinId,
+    sellerMetaId: params.sellerMetaId,
     active: 'true',
     cursor: params.cursor,
     size: params.size,

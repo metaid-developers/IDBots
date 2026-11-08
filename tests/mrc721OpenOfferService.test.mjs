@@ -18,6 +18,7 @@ const {
   verifyMrc721OpenOffer,
   takeMrc721OpenOffer,
   parseMrc721OpenOffer,
+  fetchMrc721OpenOffers,
   MRC721_OPEN_OFFER_PATH,
 } = require('../dist-electron/main/services/mrc721OpenOfferService.js');
 const { buildMrc721OpenOfferTx } = require('../dist-electron/main/libs/mrc721OpenOfferTx.js');
@@ -227,4 +228,40 @@ test('parse refuses a sub-floor price, a malformed pinId, and a missing offerTx'
   assert.throws(() => parseMrc721OpenOffer({ itemPinId: PINID, priceSats: 1000, offerTx: 'x' }), /22000/);
   assert.throws(() => parseMrc721OpenOffer({ itemPinId: 'nope', priceSats: 30_000, offerTx: 'x' }), /itemPinId/);
   assert.throws(() => parseMrc721OpenOffer({ itemPinId: PINID, priceSats: 30_000 }), /offerTx/);
+});
+
+test('market fetch maps the R-E-2 list envelope, passes filters, and degrades honestly on 404', async () => {
+  const seen = [];
+  const previous = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    seen.push(String(url));
+    return jsonResponse({
+      code: 1,
+      data: {
+        list: [
+          { itemPinId: PINID, offerPinId: `${'of'.repeat(32)}i0`, active: true, priceSats: 30_000, createdAt: 1_700_000_000, height: 197_900 },
+          { itempinid: `${'ef'.repeat(32)}i0`, offerpinid: `${'ee'.repeat(32)}i0`, active: true },
+        ],
+        total: 2,
+        cursor: 'c2',
+      },
+    });
+  };
+  try {
+    const page = await fetchMrc721OpenOffers({ collectionPinId: 'col-i0', size: 5 });
+    assert.equal(page.items.length, 2);
+    assert.equal(page.items[0].itemPinId, PINID);
+    assert.equal(page.items[0].priceSats, 30_000);
+    assert.equal(page.items[1].itemPinId, `${'ef'.repeat(32)}i0`, 'lowercase-duplicate rows are read too');
+    assert.equal(page.cursor, 'c2');
+    const marketUrl = seen.find((url) => url.includes('/api/mrc721/offers'));
+    assert.ok(marketUrl, 'the list endpoint was queried');
+    assert.ok(marketUrl.includes('collectionPinId=col-i0'), 'filters ride the query');
+    assert.ok(marketUrl.includes('active=true'), 'the market reads live offers only');
+
+    globalThis.fetch = async () => new Response(JSON.stringify({ code: 40400, message: 'not served here' }), { status: 404, headers: { 'content-type': 'application/json' } });
+    await assert.rejects(() => fetchMrc721OpenOffers({}), (error) => error.mrc721Status === 404 || error.mrc721Code !== undefined, 'the absent endpoint surfaces its structured marker');
+  } finally {
+    globalThis.fetch = previous;
+  }
 });
