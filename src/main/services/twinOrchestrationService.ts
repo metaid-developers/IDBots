@@ -28,6 +28,7 @@ import {
   type OrchestrationStep,
 } from '../orchestrationStore';
 import type { CoworkCrossSessionInsertResult } from './coworkCrossSession';
+import { CROSS_SESSION_INSERT_MAX_CHARS } from './coworkCrossSession';
 import type { Metabot } from '../types/metabot';
 import type { LongTermTaskStore } from '../longTermTaskStore';
 import { buildDelegationAnchorBlock, LONGTERM_ANCHOR_MARKER } from '../libs/longTermDelegationAnchor';
@@ -253,6 +254,19 @@ export class TwinOrchestrationService {
    * conversation about the task), so progress is visible where the owner expects
    * it rather than buried in a Worker session.
    */
+  /**
+   * Keep an ORCH-NOTIFY body under the cross-session insert cap: the
+   * notification header line rides at the front, the oversized tail is cut,
+   * and the truncation is stated so the Twin knows to pull the full worker
+   * session via idbots_session_read_all.
+   */
+  private trimOrchNotifyText(text: string): string {
+    const budget = CROSS_SESSION_INSERT_MAX_CHARS - 200; // room for the notice + frame
+    if (text.length <= budget) return text;
+    const notice = `\n\n（通知正文超出跨会话投递上限，已截断；完整内容请用 idbots_session_read_all 读取 worker 会话）`;
+    return text.slice(0, budget) + notice;
+  }
+
   private notifyTwinTerminalState(
     task: OrchestrationTask,
     attempt: OrchestrationAttempt,
@@ -306,13 +320,28 @@ export class TwinOrchestrationService {
         message: text,
         deliveryId: guardKey,
       });
-      if ('code' in result) {
+      let finalResult = result;
+      if ('code' in result && result.code === 'MESSAGE_TOO_LONG') {
+        // A failed-attempt notification embeds the worker's error report and
+        // can exceed the 12k insert cap; dropping it silently here meant the
+        // Twin never learned the attempt failed. Trim to the cap (keeping the
+        // notification header) and retry once in place — the claim row is
+        // already held, so this stays at-most-once.
+        const trimmed = this.trimOrchNotifyText(text);
+        finalResult = this.insertCrossSession({
+          sourceSessionId: workerSessionId,
+          targetSessionId,
+          message: trimmed,
+          deliveryId: guardKey,
+        });
+      }
+      if ('code' in finalResult) {
         // CoworkCrossSessionError (insert failed: missing session, A2A target…)
         // The claim row is deliberately KEPT: this is at-most-once, so a
         // definitively failed delivery is not retried by a duplicate terminal
         // transition. The row is the audit trail of what was attempted.
         console.warn(
-          `[TwinOrchestration] Twin notification skipped (${result.code}): ${result.message}`,
+          `[TwinOrchestration] Twin notification skipped (${finalResult.code}): ${finalResult.message}`,
         );
         return;
       }
