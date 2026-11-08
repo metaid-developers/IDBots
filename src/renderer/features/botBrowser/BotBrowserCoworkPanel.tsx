@@ -20,6 +20,7 @@ import { isAssistantModeOwnerChatSession } from '../../components/cowork/assista
 import { AssistantActivityIndicator } from '../../components/cowork/AssistantActivityIndicator';
 import { projectsService } from '../../services/projects';
 import { i18nService } from '../../services/i18n';
+import { dispatchMetabotsChanged, subscribeMetabotsChanged } from '../../services/metabotEvents';
 import { getCompactFolderName } from '../../utils/path';
 import type { CoworkMessage, CoworkWorkspaceSelection } from '../../types/cowork';
 import TwinSeatChip from './TwinSeatChip';
@@ -212,6 +213,14 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSki
     void loadMetabots();
   }, [loadMetabots]);
 
+  // Cross-view roster freshness: the My Bots editor and the chain-restore
+  // flow can move the same system-wide facts this panel renders (above all
+  // `metabot_type`). Re-read the roster when another surface announces a
+  // change, so an already-open panel never shows a stale Twin badge.
+  useEffect(() => subscribeMetabotsChanged(() => {
+    void loadMetabots();
+  }), [loadMetabots]);
+
   // Twin seat appointment: demote the current Twin, promote the chosen bot,
   // then re-read the roster. The sequence + rollback live in
   // twinSeatAppointment.ts so a mock-IPC unit test covers them without
@@ -230,6 +239,10 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSki
       await appointTwinSeat(target, metabots, {
         update: (id, patch) => window.electron.metabot.update(id, patch),
         reload: loadMetabots,
+        // The appointment writes `metabot_type`, which the My Bots pane shows
+        // as badge ownership on its cards: announce both moved ids so an
+        // already-open My Bots pane refetches instead of waiting for a switch.
+        announce: (metabotIds) => dispatchMetabotsChanged({ metabotIds, reason: 'twin-seat' }),
         notify: notifyTwinSeat,
         translate: (key) => i18nService.t(key),
       });

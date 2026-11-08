@@ -24,8 +24,10 @@ interface Harness {
   calls: UpdateCall[];
   toasts: string[];
   reloads: number;
+  announcements: number[][];
   update: (id: number, patch: TwinSeatUpdatePatch) => Promise<{ success: boolean; error?: string }>;
   reload: () => Promise<void>;
+  announce: (metabotIds: number[]) => void;
   notify: (message: string) => void;
   translate: (key: string) => string;
 }
@@ -33,10 +35,12 @@ interface Harness {
 function createHarness(script: ScriptStep[]): Harness {
   const calls: UpdateCall[] = [];
   const toasts: string[] = [];
+  const announcements: number[][] = [];
   let reloads = 0;
   return {
     calls,
     toasts,
+    announcements,
     get reloads() {
       return reloads;
     },
@@ -48,6 +52,9 @@ function createHarness(script: ScriptStep[]): Harness {
     },
     async reload() {
       reloads += 1;
+    },
+    announce(metabotIds) {
+      announcements.push(metabotIds);
     },
     notify(message) {
       toasts.push(message);
@@ -81,6 +88,11 @@ test('appointment demotes the acting Twin to worker before promoting the target'
     { id: 2, patch: { metabot_type: 'twin' } },
   ]);
   assert.equal(harness.reloads, 1, 'the roster must be re-read after a successful swap');
+  assert.deepEqual(
+    harness.announcements,
+    [[1, 2]],
+    'the previous Twin and the new Twin are announced so other open views refetch',
+  );
   assert.deepEqual(harness.toasts, ['Bob 已就任 Twin。']);
   assert.deepEqual(outcome, {
     status: 'appointed',
@@ -103,6 +115,7 @@ test('a failed promote restores the previous Twin and skips the roster reload', 
     { id: 1, patch: { metabot_type: 'twin' } },
   ]);
   assert.equal(harness.reloads, 0, 'a failed swap must not pretend the roster changed');
+  assert.deepEqual(harness.announcements, [], 'a failed swap announces nothing');
   assert.deepEqual(harness.toasts, ['chain sync failed']);
   assert.deepEqual(outcome, {
     status: 'failed',
@@ -166,6 +179,7 @@ test('appointing the current Twin is a no-op', async () => {
 
   assert.deepEqual(harness.calls, []);
   assert.equal(harness.reloads, 0);
+  assert.deepEqual(harness.announcements, []);
   assert.deepEqual(harness.toasts, []);
   assert.deepEqual(outcome, { status: 'unchanged', targetId: 1 });
 });
@@ -175,6 +189,7 @@ test('a machine without a Twin only promotes the target', async () => {
 
   assert.deepEqual(harness.calls, [{ id: 2, patch: { metabot_type: 'twin' } }]);
   assert.equal(harness.reloads, 1);
+  assert.deepEqual(harness.announcements, [[2]], 'a seatless machine announces only the promoted bot');
   assert.deepEqual(harness.toasts, ['Bob 已就任 Twin。']);
   assert.deepEqual(outcome, {
     status: 'appointed',

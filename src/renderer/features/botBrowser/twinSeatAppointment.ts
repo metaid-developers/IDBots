@@ -34,6 +34,12 @@ export interface TwinSeatAppointmentDeps {
   update: (id: number, patch: TwinSeatUpdatePatch) => Promise<TwinSeatUpdateResult>;
   /** Re-reads the roster after a successful appointment. */
   reload: () => Promise<void>;
+  /**
+   * Announces the ids whose `metabot_type` moved (previous Twin first) so the
+   * other mounted roster views — the My Bots list above all — refetch in
+   * place instead of waiting for a pane switch.
+   */
+  announce?: (metabotIds: number[]) => void;
   /** Surfaces the outcome to the user (the panel dispatches app:showToast). */
   notify: (message: string) => void;
   /** Resolves an i18n key (the panel passes i18nService.t). */
@@ -111,6 +117,10 @@ export async function appointTwinSeat<B extends TwinSeatBot>(
   }
 
   await deps.reload();
+  const movedIds = [currentTwin?.id, target.id].filter(
+    (id): id is number => typeof id === 'number',
+  );
+  deps.announce?.(movedIds);
   deps.notify(
     deps.translate('botInternetTwinSeatAppointed').replace('{name}', target.name),
   );

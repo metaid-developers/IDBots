@@ -17,6 +17,8 @@ function read(relativePath) {
 const panelSource = read('src/renderer/features/botBrowser/BotBrowserCoworkPanel.tsx');
 const chipSource = read('src/renderer/features/botBrowser/TwinSeatChip.tsx');
 const helperSource = read('src/renderer/features/botBrowser/twinSeatAppointment.ts');
+const dismissSource = read('src/renderer/features/botBrowser/seatMenuDismiss.ts');
+const managerSource = read('src/renderer/components/metabots/MetabotsManager.tsx');
 const i18nSource = read('src/renderer/services/i18n.ts');
 
 test('the panel delegates the Twin swap to the mock-testable helper', () => {
@@ -53,6 +55,36 @@ test('the chip renders menu rows from the roster and keeps live sessions read-on
   assert.match(chipSource, /disabled=\{busy \|\| isActing\}/);
   assert.match(chipSource, /\{isActing && <TwinBadge className="shrink-0" \/>\}/);
   assert.match(chipSource, /live \? \(/);
+});
+
+test('an open seat menu closes on an outside pointer through the tested helper', () => {
+  assert.match(chipSource, /import \{ bindSeatMenuOutsideDismiss \} from '\.\/seatMenuDismiss';/);
+  assert.match(chipSource, /if \(!menuOpen\) return undefined;/);
+  assert.match(chipSource, /container: \(\) => containerRef\.current/);
+  assert.match(chipSource, /onDismiss: onDismissMenu/);
+  assert.match(chipSource, /ref=\{containerRef\}/);
+  assert.match(panelSource, /onDismissMenu=\{closeTwinSeatMenu\}/);
+  // Capture phase: a row that stops propagation cannot pin the menu open.
+  assert.match(dismissSource, /addEventListener\('pointerdown', handlePointerDown, true\)/);
+});
+
+test('a completed appointment broadcasts the moved ids to every open roster view', () => {
+  assert.match(
+    panelSource,
+    /announce: \(metabotIds\) => dispatchMetabotsChanged\(\{ metabotIds, reason: 'twin-seat' \}\)/,
+  );
+  assert.match(panelSource, /subscribeMetabotsChanged/);
+  assert.match(helperSource, /deps\.announce\?\.\(movedIds\)/);
+});
+
+test('My Bots subscribes to the shared broadcast and refetches silently', () => {
+  assert.match(
+    managerSource,
+    /import \{ dispatchMetabotsChanged, subscribeMetabotsChanged \} from '\.\.\/\.\.\/services\/metabotEvents';/,
+  );
+  assert.match(managerSource, /useEffect\(\(\) => subscribeMetabotsChanged/);
+  assert.match(managerSource, /void loadList\(\{ silent: true \}\)/);
+  assert.match(managerSource, /dispatchMetabotsChanged\(\{ metabotIds: \[editId\], reason: 'edit' \}\)/);
 });
 
 test('the Twin-seat copy exists in both locales', () => {

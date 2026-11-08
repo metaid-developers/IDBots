@@ -3,6 +3,7 @@ import { useDispatch } from 'react-redux';
 import { ArrowLeftIcon, MagnifyingGlassIcon, PlusCircleIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
 import { setPreferredMetabotId } from '../../store/slices/coworkSlice';
 import { i18nService } from '../../services/i18n';
+import { dispatchMetabotsChanged, subscribeMetabotsChanged } from '../../services/metabotEvents';
 import { configService } from '../../services/config';
 import { buildModelGroupsFromConfig } from '../../services/modelCatalog';
 import type { Metabot } from '../../types/metabot';
@@ -203,8 +204,8 @@ const MetabotsManager: React.FC<MetabotsManagerProps> = ({
   // broadcast) keyed by the bot id, plus the banner-level result message.
   const [resumeSetupBusyId, setResumeSetupBusyId] = useState<number | null>(null);
 
-  const loadList = useCallback(async () => {
-    setLoading(true);
+  const loadList = useCallback(async (options?: { silent?: boolean }) => {
+    if (!options?.silent) setLoading(true);
     const result = await window.electron.metabot.list();
     setLoading(false);
     if (result.success && result.list) {
@@ -217,6 +218,15 @@ const MetabotsManager: React.FC<MetabotsManagerProps> = ({
   useEffect(() => {
     loadList();
   }, [loadList]);
+
+  // Roster writes made in another surface announce themselves on this window
+  // event: the Twin-seat appointment in the Bot Internet panel, a chain
+  // restore behind the Settings overlay. Re-read silently so the Twin/worker
+  // badge ownership on an already-open My Bots pane updates in place instead
+  // of waiting for the owner to switch panes and come back.
+  useEffect(() => subscribeMetabotsChanged(() => {
+    void loadList({ silent: true });
+  }), [loadList]);
 
   // Live dream-consolidation status: patch the card's moon indicator as bots
   // enter/leave their nightly dream run (initial state comes with metabot:list).
@@ -492,6 +502,10 @@ const MetabotsManager: React.FC<MetabotsManagerProps> = ({
       homepage: nextHomepage,
     };
     setList((prev) => prev.map((m) => (m.id === editId ? updatedMetabot : m)));
+    // Announce the write to every other mounted roster view (the Bot Internet
+    // panel's Twin-seat chip/menu above all): `metabot_type` is a
+    // system-wide fact, and this pane may be the one that moved the seat.
+    dispatchMetabotsChanged({ metabotIds: [editId], reason: 'edit' });
     // Stay in the edit view after a tab save so the user can keep editing
     // other tabs; the sync progress modal renders there too.
     // A Twin transfer also demotes the previous Twin main-process side, so
