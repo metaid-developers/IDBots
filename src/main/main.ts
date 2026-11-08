@@ -207,6 +207,7 @@ import {
   broadcastMvcTx,
   buyMrc721Listing,
   createMrc721Collection,
+  createMrc721ItemDescBatch,
   createMrc721Mint,
   fetchMrc721CollectionInfo,
   fetchMrc721ItemInfo,
@@ -8028,6 +8029,10 @@ const getCoworkRunner = () => {
         mint: (input) => withChainWriteBudget(
           'mrc721_mint',
           () => createMrc721Mint({ createPin: mrc721CreatePinBackend }, input),
+        ),
+        itemDescBatch: (input) => withChainWriteBudget(
+          'mrc721_item_desc_batch',
+          () => createMrc721ItemDescBatch({ createPin: mrc721CreatePinBackend }, input),
         ),
         transfer: (input) => withChainWriteBudget(
           'mrc721_transfer',

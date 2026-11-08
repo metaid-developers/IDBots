@@ -19,6 +19,9 @@ const {
   isMvcAddress,
   createMrc721Collection,
   createMrc721Mint,
+  createMrc721ItemDescBatch,
+  estimateMrc721Issue,
+  estimateMvcMrc721PinFeeSats,
   updateMrc721Collection,
   transferMrc721Item,
   fetchMrc721CollectionInfo,
@@ -659,4 +662,141 @@ test('MRC-721 reads target the MetaSo base, overridable via IDBOTS_METASO_API_BA
     if (previous == null) delete process.env.IDBOTS_METASO_API_BASE;
     else process.env.IDBOTS_METASO_API_BASE = previous;
   }
+});
+
+// ---------------------------------------------------------------------------
+// item_desc batch write + dry-run issue estimate
+// ---------------------------------------------------------------------------
+
+test('createMrc721ItemDescBatch broadcasts ONE item_desc pin with every entry', async () => {
+  const { createPin, calls } = makeCreatePinSpy();
+  const itemA = `${'11'.repeat(32)}i0`;
+  const itemB = `${'22'.repeat(32)}i0`;
+  const result = await createMrc721ItemDescBatch(
+    { createPin },
+    {
+      metabotId: 7,
+      collectionName: 'pixel-cats',
+      settleDelayMs: 0,
+      items: [
+        { pinId: itemA, name: 'Cat #1', desc: 'first', cover: `${'33'.repeat(32)}i0`, metadata: { trait: 'cool' } },
+        { pinId: itemB, name: 'Cat #2' },
+      ],
+    },
+  );
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].metaidData.path, '/nft/mrc721/pixel-cats/item_desc');
+  assert.equal(calls[0].metaidData.operation, 'create');
+  assert.deepEqual(JSON.parse(calls[0].metaidData.payload), {
+    items: [
+      { pinid: itemA, name: 'Cat #1', desc: 'first', cover: `metafile://${'33'.repeat(32)}i0`, metadata: { trait: 'cool' } },
+      { pinid: itemB, name: 'Cat #2' },
+    ],
+  });
+  assert.deepEqual(result.referencedPinIds, [itemA, itemB]);
+  assert.equal(result.collectionName, 'pixel-cats');
+});
+
+test('createMrc721ItemDescBatch refuses empty, duplicate, invalid, and oversized batches before any write', async () => {
+  const { createPin, calls } = makeCreatePinSpy();
+  const itemA = `${'11'.repeat(32)}i0`;
+  await assert.rejects(
+    () => createMrc721ItemDescBatch({ createPin }, { metabotId: 7, collectionName: 'pixel-cats', items: [] }),
+    /at least one/,
+  );
+  await assert.rejects(
+    () => createMrc721ItemDescBatch(
+      { createPin },
+      { metabotId: 7, collectionName: 'pixel-cats', items: [{ pinId: itemA }, { pinId: itemA }] },
+    ),
+    /duplicate pin_id/,
+  );
+  await assert.rejects(
+    () => createMrc721ItemDescBatch(
+      { createPin },
+      { metabotId: 7, collectionName: 'pixel-cats', items: [{ pinId: 'nothex' }] },
+    ),
+    /pin_id/,
+  );
+  await assert.rejects(
+    () => createMrc721ItemDescBatch(
+      { createPin },
+      { metabotId: 7, collectionName: 'pixel-cats', items: [{ pinId: itemA, metadata: 'x'.repeat(16_385) }] },
+    ),
+    /metadata must serialize/,
+  );
+  await assert.rejects(
+    () => createMrc721ItemDescBatch(
+      { createPin },
+      {
+        metabotId: 7,
+        collectionName: 'pixel-cats',
+        items: Array.from({ length: 101 }, (_, i) => ({ pinId: `${String(i).padStart(2, '0')}${'11'.repeat(31)}i0` })),
+      },
+    ),
+    /at most 100/,
+  );
+  assert.equal(calls.length, 0);
+});
+
+test('estimateMvcMrc721PinFeeSats pins the payload-aware upper-bound math', () => {
+  // OP_RETURN script: 1 + 7('metaid') + 7('create') + 33(path 32+push)
+  // + 2('0') + 6('1.0.0') + 17('application/json') + 3('{}') = 76 bytes.
+  const sats = estimateMvcMrc721PinFeeSats({
+    operation: 'create',
+    path: '/nft/mrc721/pixel-cats/item_desc',
+    encryption: '0',
+    version: '1.0.0',
+    contentType: 'application/json',
+    payload: '{}',
+  }, 1);
+  assert.equal(sats, 486); // 62 base + 76 script + 2×148 inputs + 52 change output
+});
+
+test('estimateMrc721Issue plans collection_desc + mints + ONE batch item_desc', () => {
+  const estimate = estimateMrc721Issue({
+    collectionName: 'pixel-cats',
+    name: 'Pixel Cats',
+    totalSupply: 10,
+    royaltyRate: 0,
+    desc: 'a series',
+    feeRate: 1,
+    items: [
+      { name: 'Cat #1', desc: 'first' },
+      { name: 'Cat #2', desc: 'second', metadata: { trait: 'cool' } },
+    ],
+  });
+  assert.equal(estimate.itemCount, 2);
+  assert.deepEqual(estimate.writes.map((write) => write.kind), [
+    'collection_desc', 'item_mint', 'item_mint', 'item_desc',
+  ]);
+  assert.equal(estimate.totalEstimatedSats, estimate.writes.reduce((sum, write) => sum + write.estimatedSats, 0));
+  assert.ok(estimate.writes[3].payloadBytes > 2, 'batch item_desc payload carries both entries');
+});
+
+test('estimateMrc721Issue ride_along costs more than batch_desc for 2 items', () => {
+  const items = [{ name: 'a' }, { name: 'b' }];
+  const batch = estimateMrc721Issue({ collectionName: 'pixel-cats', items, displayMode: 'batch_desc', feeRate: 1 });
+  const ride = estimateMrc721Issue({ collectionName: 'pixel-cats', items, displayMode: 'ride_along', feeRate: 1 });
+  assert.equal(batch.writes.length, 4);
+  assert.equal(ride.writes.length, 5);
+  assert.ok(ride.totalEstimatedSats > batch.totalEstimatedSats);
+});
+
+test('estimateMrc721Issue add-to-existing drops the registration write and validates immutable fields', () => {
+  const existing = estimateMrc721Issue({
+    collectionName: 'pixel-cats',
+    registerCollection: false,
+    feeRate: 1,
+    items: [{ name: 'Cat #3' }],
+  });
+  assert.deepEqual(existing.writes.map((write) => write.kind), ['item_mint', 'item_desc']);
+  assert.throws(
+    () => estimateMrc721Issue({ collectionName: 'pixel-cats', totalSupply: 1.5, feeRate: 1 }),
+    /integer in \[-1, 1e12\]/,
+  );
+  assert.throws(
+    () => estimateMrc721Issue({ collectionName: 'Bad Name', feeRate: 1 }),
+    /lowercase/,
+  );
 });
