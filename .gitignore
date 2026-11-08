@@ -43,6 +43,7 @@ docs/*
 !docs/nft-mrc721-acceptance-checklist.md
 !docs/nft-open-market-psbt-settlement.md
 !docs/nft-offer-indexer-requirements.md
+!docs/nft-offer-protocol.md
 !docs/cloud-mobile/
 !docs/metaid_protocols/
 !docs/metaid_protocols/**
