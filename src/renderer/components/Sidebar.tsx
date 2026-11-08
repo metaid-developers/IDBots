@@ -34,6 +34,7 @@ import type {
 import { shouldFoldIntoAutonomousTasks, splitSessionsWithFollowUp } from '../utils/sessionAutoGrouping';
 import type { SessionSidebarSection } from '../utils/sessionAutoGrouping';
 import { useStableCallback } from '../utils/useStableCallback';
+import { selectTrackedTasksNeedingAttention } from '../utils/trackedTaskAttention';
 import { LONG_TERM_COLUMN_LABEL_KEYS, type LongTermTaskSummary } from '../types/longTermTask';
 import type { SettingsOpenOptions } from './Settings';
 
@@ -248,6 +249,16 @@ const Sidebar: React.FC<SidebarProps> = ({
   // stronger signal, and the board behind it is kept live app-wide (App.tsx
   // init) so the dot is correct even if the 长期任务 tab was never opened.
   const longTermBoard = useSelector((state: RootState) => state.longTermTask.board);
+  // The same combined "needs the owner" derivation the rail's 跟踪任务 entry and
+  // the 长期任务 tab use. Bot Home's middle column owns the second amber dot:
+  // the record-type row is where the owner chooses what to look at, so a parked
+  // decision has to be visible THERE even when the long-term section is not the
+  // selected one — otherwise the strongest "you are the blocker" signal depends
+  // on the owner having already guessed where to look.
+  const trackedTaskAttention = useMemo(
+    () => selectTrackedTasksNeedingAttention({ longTermTask: { board: longTermBoard } }),
+    [longTermBoard],
+  );
   // Sessions currently owed an owner verdict (waiting_owner sub-projects' bound
   // sessions, board-derived): with no manual placement they land in the
   // Follow-Up section — the owner must SEE the decision, not find it buried in
@@ -564,6 +575,11 @@ const Sidebar: React.FC<SidebarProps> = ({
     const total = tabStats.local.count + tabStats.a2a.count;
     return total > 0 ? total : null;
   };
+  // Label for the amber decision dot on the record-type row; built at call time
+  // so a language switch re-derives it on the next render.
+  const decisionLabel = i18nService
+    .t('trackedTaskNeedsDecision')
+    .replace('{count}', String(trackedTaskAttention.total));
 
 
   return (
@@ -614,22 +630,35 @@ const Sidebar: React.FC<SidebarProps> = ({
               A native select keeps it single-line, keyboard-reachable and
               stateless. */}
           <div className="shrink-0 pb-1.5">
-            <select
-              data-slot="home-record-type"
-              aria-label={i18nService.t('homeRecordTypeLabel')}
-              value={homeSection}
-              onChange={(event) => handleSectionSelect(event.target.value as BotHomeSection)}
-              className="non-draggable w-full rounded-lg border border-claude-border/70 bg-claude-bg/80 px-2 py-1.5 text-xs font-medium dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80 dark:text-claude-darkText text-claude-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
-            >
-              {homeSections.map((section) => {
-                const count = sectionCount(section.id as BotHomeSection);
-                return (
-                  <option key={section.id} value={section.id}>
-                    {count != null ? `${section.label} · ${count}` : section.label}
-                  </option>
-                );
-              })}
-            </select>
+            {/* The record type and its decision signal share ONE row: the amber
+                dot belongs to the selector, not to the section body below it,
+                because it must stay on screen whatever type is selected. */}
+            <div className="flex items-center gap-2">
+              <select
+                data-slot="home-record-type"
+                aria-label={i18nService.t('homeRecordTypeLabel')}
+                value={homeSection}
+                onChange={(event) => handleSectionSelect(event.target.value as BotHomeSection)}
+                className="non-draggable min-w-0 flex-1 rounded-lg border border-claude-border/70 bg-claude-bg/80 px-2 py-1.5 text-xs font-medium dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80 dark:text-claude-darkText text-claude-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+              >
+                {homeSections.map((section) => {
+                  const count = sectionCount(section.id as BotHomeSection);
+                  return (
+                    <option key={section.id} value={section.id}>
+                      {count != null ? `${section.label} · ${count}` : section.label}
+                    </option>
+                  );
+                })}
+              </select>
+              {trackedTaskAttention.total > 0 ? (
+                <span
+                  role="img"
+                  aria-label={decisionLabel}
+                  title={decisionLabel}
+                  className="tracked-task-decision-indicator shrink-0"
+                />
+              ) : null}
+            </div>
           </div>
 
           {homeSection === 'longTerm' ? (
