@@ -4,13 +4,15 @@
  *
  * - me.persistentAutoDeduct: when true (the default), spending continues
  *   automatically from the persistent credit buckets (top-up / earned /
- *   bonus) after the weekly subscription grant runs out. The server's fixed
- *   deduction order (grant → bonus → topup → earned) already behaves this
- *   way unconditionally; this flag stores the user's preference for the
- *   「积分增量包」 toggle. Enforcing the OFF state server-side (a
- *   per-identity switch respected by the deduction/metering burn path) is a
- *   pending assist-base-service feature — until then the stored preference
- *   is authoritative for the UI and future client-side gating only.
+ *   bonus) after the weekly subscription grant runs out.
+ *
+ * Authority: the server-side per-identity switch (assist-base-service
+ * GET/POST /v1/me/settings, 727182a) is authoritative — its OFF state gates
+ * every ME consumption path (pay/freeze/burn/metering) to grant-only. The
+ * kvStore holds a local MIRROR of the last server-confirmed value, used as
+ * a degraded read when the server is unreachable or no local identity is
+ * signed in. Never write the mirror without a server confirmation: a local
+ * write the server never saw would silently drift from the enforced truth.
  */
 
 export const ME_PERSISTENT_AUTO_DEDUCT_KEY = 'me.persistentAutoDeduct';
@@ -68,4 +70,21 @@ export function setMePointSettings(
     }
   }
   return { autoDeductFromPersistent: nextAutoDeduct };
+}
+
+/**
+ * Mirror a SERVER-CONFIRMED value into the local kv. Only the IPC layer calls
+ * this after a successful /v1/me/settings read or write — see the header note:
+ * the mirror must never record an intent the server did not acknowledge.
+ */
+export function mirrorMePointSettings(
+  store: MePointSettingsStore | null | undefined,
+  autoDeductFromPersistent: boolean,
+): void {
+  if (!store) return;
+  try {
+    store.set(ME_PERSISTENT_AUTO_DEDUCT_KEY, autoDeductFromPersistent === true);
+  } catch {
+    // mirror loss is non-fatal: the next successful server read re-seeds it
+  }
 }

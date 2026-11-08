@@ -19,7 +19,7 @@
 
 import { signMvcAddressMessage } from './mvcSponsorClient';
 import type { UserIdentityStore } from '../userIdentityStore';
-import { getMePointSettings, setMePointSettings } from './mePointSettings';
+import { getMePointSettings, mirrorMePointSettings } from './mePointSettings';
 import type { MePointSettingsStore } from './mePointSettings';
 
 export const DEFAULT_ME_API_BASE_URL = 'https://www.metaso.network/assist-open-api';
@@ -35,6 +35,16 @@ const BALANCE_CACHE_TTL_MS = 30_000;
 export const ME_SUBSCRIPTION_ORDER_PATH = '/v1/me/subscription/order';
 export const ME_SUBSCRIPTION_ORDER_ACTION = 'subscription_order';
 
+/**
+ * Per-identity ME settings (assist-base-service 727182a). The authoritative
+ * autoDeductFromPersistent switch behind the 「积分增量包」 toggle: OFF gates
+ * every ME consumption path to grant-only. Path and signed actions are each
+ * pinned to ONE constant, same discipline as the subscription order pair.
+ */
+export const ME_SETTINGS_PATH = '/v1/me/settings';
+export const ME_GET_SETTINGS_ACTION = 'get_me_settings';
+export const ME_SET_SETTINGS_ACTION = 'set_me_settings';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -49,7 +59,8 @@ export type MeApiStage =
   | 'topup_submit'
   | 'topup_orders'
   | 'subscription_order'
-  | 'subscription_orders';
+  | 'subscription_orders'
+  | 'settings';
 
 export class MePointsApiError extends Error {
   readonly stage: MeApiStage;
@@ -560,6 +571,59 @@ export async function getMeSubscription(): Promise<MeSubscription> {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Per-identity settings (积分增量包 toggle 的权威开关)
+// ---------------------------------------------------------------------------
+
+export interface MeSettingsFlag {
+  identityAddress: string;
+  autoDeductFromPersistent: boolean;
+}
+
+/**
+ * The server view is strict (POST binds a *bool — absent/non-boolean is a
+ * param error), but a missing field on READ (e.g. an older server build)
+ * reads as ON, the default — never as OFF, which would silently gate
+ * persistent spending the user did not ask to gate.
+ */
+function normalizeMeSettings(data: Record<string, unknown>): MeSettingsFlag {
+  return {
+    identityAddress: pickText(data, 'identityAddress', 'identity_address'),
+    autoDeductFromPersistent: data.autoDeductFromPersistent !== false,
+  };
+}
+
+/** GET /v1/me/settings — authoritative per-identity auto-deduct flag. */
+export async function getMeSettings(): Promise<MeSettingsFlag> {
+  const { identity } = await signedAuth('settings', ME_GET_SETTINGS_ACTION);
+  const data = (await meRequestJson({
+    stage: 'settings',
+    method: 'GET',
+    path: ME_SETTINGS_PATH,
+    identity,
+  })) as Record<string, unknown>;
+  return normalizeMeSettings(data);
+}
+
+/** POST /v1/me/settings — strict boolean body, returns the confirmed view. */
+export async function setMeSettings(autoDeductFromPersistent: boolean): Promise<MeSettingsFlag> {
+  if (typeof autoDeductFromPersistent !== 'boolean') {
+    throw new MePointsApiError({
+      stage: 'settings',
+      message: 'autoDeductFromPersistent must be a boolean',
+    });
+  }
+  const { identity } = await signedAuth('settings', ME_SET_SETTINGS_ACTION);
+  const data = (await meRequestJson({
+    stage: 'settings',
+    method: 'POST',
+    path: ME_SETTINGS_PATH,
+    body: { autoDeductFromPersistent },
+    identity,
+  })) as Record<string, unknown>;
+  return normalizeMeSettings(data);
+}
+
 function listRows(data: Record<string, unknown> | unknown[], keys: string[]): unknown[] {
   if (Array.isArray(data)) return data;
   for (const key of keys) {
@@ -928,14 +992,37 @@ export function registerMePointsIpcHandlers(deps: {
   });
   wrap('me:getTopupOrders', async () => ({ orders: await getMeTopupOrders() }));
   wrap('me:getSubscriptionOrders', async () => ({ orders: await getMeSubscriptionOrders() }));
-  // 积分增量包 toggle: local kv-backed preference (default ON; see
-  // mePointSettings.ts for the server-behavior caveat).
-  wrap('me:getPointsSettings', async () => ({
-    settings: getMePointSettings(deps.getSettingsStore?.() ?? null),
-  }));
-  wrap('me:setPointsSettings', async (input) => ({
-    settings: setMePointSettings(deps.getSettingsStore?.() ?? null, input),
-  }));
+  // 积分增量包 toggle: the server flag (/v1/me/settings) is authoritative;
+  // the kvStore keeps a mirror for degraded reads (server unreachable / no
+  // identity). Writes only mirror AFTER a server confirmation — see
+  // mePointSettings.ts. A failed set propagates: wrap() answers success:false
+  // and the renderer reverts the toggle.
+  wrap('me:getPointsSettings', async () => {
+    try {
+      const remote = await getMeSettings();
+      mirrorMePointSettings(deps.getSettingsStore?.() ?? null, remote.autoDeductFromPersistent);
+      return {
+        settings: { autoDeductFromPersistent: remote.autoDeductFromPersistent },
+        source: 'server',
+      };
+    } catch {
+      return {
+        settings: getMePointSettings(deps.getSettingsStore?.() ?? null),
+        source: 'local',
+      };
+    }
+  });
+  wrap('me:setPointsSettings', async (input) => {
+    const requested = typeof input.autoDeductFromPersistent === 'boolean'
+      ? input.autoDeductFromPersistent
+      : getMePointSettings(deps.getSettingsStore?.() ?? null).autoDeductFromPersistent;
+    const remote = await setMeSettings(requested);
+    mirrorMePointSettings(deps.getSettingsStore?.() ?? null, remote.autoDeductFromPersistent);
+    return {
+      settings: { autoDeductFromPersistent: remote.autoDeductFromPersistent },
+      source: 'server',
+    };
+  });
   // S9 v1.2: the S3 「收款设置」 page lets ops paste a QR image/link on-device.
   // Prefer that (owner-editable, no rebuild) and fall back to the env seam.
   wrap('me:getPaymentInfo', async () => {

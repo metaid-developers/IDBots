@@ -18,8 +18,10 @@ import {
  * The persistent bucket (top-up + earned + bonus) never resets and is never
  * cleared with the weekly quota; it grows only through recharge, gifts, and
  * earnings. Besides the total the card carries:
- *  - the local auto-deduct preference (kvStore-backed, default ON — when the
- *    weekly grant runs out, spending continues from this pack),
+ *  - the auto-deduct switch (default ON — when the weekly grant runs out,
+ *    spending continues from this pack). Backed by the authoritative
+ *    per-identity server flag (GET/POST /v1/me/settings); a failed save
+ *    reverts the switch and shows an inline error instead of pretending.
  *  - 「购买额度」 opening the shared purchase modal on its topup section,
  *  - 「查看获得详情」 jumping to the 「用量 & 积分」 page.
  *
@@ -30,6 +32,7 @@ const MeIncrementPackCard: React.FC = () => {
   const snapshot = React.useSyncExternalStore(subscribeMeSnapshot, getMeSnapshot, getMeSnapshot);
   const [autoDeduct, setAutoDeduct] = useState(true);
   const [settingsReady, setSettingsReady] = useState(false);
+  const [saveFailed, setSaveFailed] = useState(false);
 
   useEffect(() => {
     ensureMeSnapshot();
@@ -54,14 +57,21 @@ const MeIncrementPackCard: React.FC = () => {
 
   const handleAutoDeductChange = (next: boolean) => {
     setAutoDeduct(next);
+    setSaveFailed(false);
     void window.electron.mePoints.setPointsSettings({ autoDeductFromPersistent: next })
       .then((res) => {
-        // Re-sync from the persisted snapshot; revert on failure.
-        setAutoDeduct(res.success && res.settings
-          ? res.settings.autoDeductFromPersistent !== false
-          : !next);
+        // Re-sync from the server-confirmed snapshot; revert + flag on failure.
+        if (res.success && res.settings) {
+          setAutoDeduct(res.settings.autoDeductFromPersistent !== false);
+        } else {
+          setAutoDeduct(!next);
+          setSaveFailed(true);
+        }
       })
-      .catch(() => setAutoDeduct(!next));
+      .catch(() => {
+        setAutoDeduct(!next);
+        setSaveFailed(true);
+      });
   };
 
   const balance = snapshot.balance;
@@ -135,6 +145,11 @@ const MeIncrementPackCard: React.FC = () => {
       <p className="mt-2 text-[10px] leading-relaxed text-claude-textSecondary dark:text-claude-darkTextSecondary">
         {i18nService.t('meIncrementPackNote')}
       </p>
+      {saveFailed && (
+        <p className="mt-1 text-[10px] leading-relaxed text-red-500" role="alert">
+          {i18nService.t('meIncrementPackToggleFailed')}
+        </p>
+      )}
     </section>
   );
 };
