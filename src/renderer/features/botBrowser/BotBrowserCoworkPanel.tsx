@@ -9,7 +9,6 @@ import { resolveLocalPathAgainstCwd, type LocalFilePathResolver } from '../../ut
 import { buildSessionComposerCommands } from '../../components/cowork/composerCommandCatalog';
 import FolderSelectorPopover from '../../components/cowork/FolderSelectorPopover';
 import type { MetaBotForSelector } from '../../components/cowork/MetaBotSelector';
-import TwinBadge from '../../components/metabots/TwinBadge';
 import ModelEffortPicker from '../../components/ModelEffortPicker';
 import { effortDisplayForPick, effortForSessionStart, type ComposerModelEffortPick } from '../../services/modelCatalog';
 import { ActiveSkillBadge } from '../../components/skills';
@@ -23,6 +22,8 @@ import { projectsService } from '../../services/projects';
 import { i18nService } from '../../services/i18n';
 import { getCompactFolderName } from '../../utils/path';
 import type { CoworkMessage, CoworkWorkspaceSelection } from '../../types/cowork';
+import TwinSeatChip from './TwinSeatChip';
+import { appointTwinSeat } from './twinSeatAppointment';
 
 const formatRelativeTime = (timestamp: number): string => {
   const deltaMs = Date.now() - timestamp;
@@ -173,6 +174,14 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSki
     loadPersistedWorkspaceSelection()
   );
   const [showFolderMenu, setShowFolderMenu] = useState(false);
+  // Twin seat appointment (owner ruling 2026-11-08): the bottom-left identity
+  // chip is a live appointment control, not a decoration. The appoint action
+  // drives the SAME metabot_type the My Bots editor writes (demote the current
+  // Twin → promote the chosen bot), so the seat stays one system-wide fact and
+  // never a second pointer. In a live session the chip is display-only: an
+  // acting transcript never changes actors mid-flight.
+  const [showTwinSeatMenu, setShowTwinSeatMenu] = useState(false);
+  const [twinSeatBusy, setTwinSeatBusy] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const promptInputRef = useRef<CoworkPromptInputRef>(null);
   const folderButtonRef = useRef<HTMLButtonElement>(null);
@@ -188,24 +197,49 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSki
     [messages]
   );
 
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const result = await window.electron?.metabot?.list?.();
-      if (cancelled) return;
-      setMetabotsLoaded(true);
-      if (!result?.success || !result.list) return;
-      const selectable = result.list
-        .filter(
-          (metabot) => metabot.enabled && typeof metabot.llm_id === 'string' && metabot.llm_id.trim()
-        )
-        .sort((a, b) => a.id - b.id);
-      setMetabots(selectable);
-    })();
-    return () => {
-      cancelled = true;
-    };
+  const loadMetabots = useCallback(async () => {
+    const result = await window.electron?.metabot?.list?.();
+    setMetabotsLoaded(true);
+    if (!result?.success || !result.list) return;
+    // The Twin seat menu is a roster-level control (owner ruling 2026-11-08):
+    // it lists every local bot, not just the ones selectable for a chat, so an
+    // appointment can land on any bot the My Bots editor can also flag. The
+    // seat itself stays a single system-wide fact (`metabot_type`).
+    setMetabots([...result.list].sort((a, b) => a.id - b.id));
   }, []);
+
+  useEffect(() => {
+    void loadMetabots();
+  }, [loadMetabots]);
+
+  // Twin seat appointment: demote the current Twin, promote the chosen bot,
+  // then re-read the roster. The sequence + rollback live in
+  // twinSeatAppointment.ts so a mock-IPC unit test covers them without
+  // touching the real roster; this handler only wires the effect (IPC,
+  // reload, toast) and owns the busy/menu UI state.
+  const notifyTwinSeat = useCallback((message: string) => {
+    window.dispatchEvent(new CustomEvent('app:showToast', { detail: message }));
+  }, []);
+
+  const handleAppointTwin = useCallback(async (target: PanelMetabot) => {
+    if (twinSeatBusy) return;
+    setTwinSeatBusy(true);
+    try {
+      await appointTwinSeat(target, metabots, {
+        update: (id, patch) => window.electron.metabot.update(id, patch),
+        reload: loadMetabots,
+        notify: notifyTwinSeat,
+        translate: (key) => i18nService.t(key),
+      });
+    } catch (error) {
+      // Transport-level rejection (IPC error): the helper reports outcome
+      // failures itself, but a thrown update must never fail silently.
+      notifyTwinSeat(error instanceof Error ? error.message : 'Twin seat appointment failed');
+    } finally {
+      setShowTwinSeatMenu(false);
+      setTwinSeatBusy(false);
+    }
+  }, [loadMetabots, metabots, notifyTwinSeat, twinSeatBusy]);
 
   // Remember the workspace choice across panel remounts / app restarts.
   useEffect(() => {
@@ -454,24 +488,20 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSki
 
       <div className="flex items-center justify-between gap-0.5 px-1 pb-1.5">
         {chipMetabot ? (
-          // Bot Internet is locked to the Twin: a fixed identity chip instead
-          // of a bot selector (owner ruling 2026-11-07). Legacy sessions show
-          // their own bot so old transcripts keep reading correctly.
-          <div className="flex min-w-0 max-w-[60%] items-center gap-1.5" title={chipMetabot.name}>
-            {chipMetabot.avatar && (chipMetabot.avatar.startsWith('data:') || chipMetabot.avatar.startsWith('http')) ? (
-              <img src={chipMetabot.avatar} alt="" className="h-5 w-5 rounded-md object-cover flex-shrink-0" />
-            ) : (
-              <div className="h-5 w-5 rounded-md dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover flex items-center justify-center flex-shrink-0">
-                <span className="text-[8px] font-semibold dark:text-claude-darkText text-claude-text uppercase">
-                  {chipMetabot.name.slice(0, 2) || '?'}
-                </span>
-              </div>
-            )}
-            <span className="truncate text-xs font-medium dark:text-claude-darkText text-claude-text">
-              {chipMetabot.name}
-            </span>
-            {chipMetabot.metabot_type === 'twin' && <TwinBadge className="shrink-0" />}
-          </div>
+          // Twin seat (owner ruling 2026-11-08): the chip is the appointment
+          // control in the draft state — clicking opens the seat menu listing
+          // every bot. In a live session it stays a fixed identity chip (the
+          // transcript always shows the bot it was started with; legacy
+          // sessions keep their own bot).
+          <TwinSeatChip
+            chipMetabot={chipMetabot}
+            roster={metabots}
+            live={Boolean(currentSession)}
+            busy={twinSeatBusy}
+            menuOpen={showTwinSeatMenu}
+            onToggleMenu={() => setShowTwinSeatMenu((value) => !value)}
+            onAppoint={handleAppointTwin}
+          />
         ) : null}
         <div className="flex shrink-0 items-center gap-0.5">
           <ModelEffortPicker
