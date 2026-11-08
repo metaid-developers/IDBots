@@ -387,6 +387,127 @@ test('resolveSponsorTrafficAccount lazily ensures + binds and signs traffic-pre'
   assert.equal(callsToPath(fetchImpl, '/v1/traffic/accounts/bindings').length, 1);
 });
 
+function bindingAndAccountRoutes() {
+  return createFetchStub([
+    ['/v1/traffic/accounts/bindings', (init) => {
+      const body = JSON.parse(init.body);
+      return { botAddress: body.botAddress, accountId: SERVER_ACCOUNT_ID, status: 1, createdAt: 1 };
+    }],
+    ['/v1/traffic/accounts', accountPayload()],
+  ]);
+}
+
+test('resolveSponsorTrafficAccount signs traffic-pre-me when ME billing is requested', async () => {
+  await makeServiceFixture({ fetchImpl: bindingAndAccountRoutes(), trafficMode: 'traffic' });
+
+  const result = await resolveSponsorTrafficAccount({
+    botAddress: BOT1_ADDRESS,
+    challengeId: 'challenge-me',
+    botMnemonic: BOT1_MNEMONIC,
+    botWalletPath: WALLET_PATH,
+    billing: 'me',
+  });
+  assert.ok(result);
+  assert.equal(result.billing, 'me');
+  assert.ok(
+    verifyMessage(IDENTITY_ADDRESS, `traffic-pre-me:${SERVER_ACCOUNT_ID}:challenge-me`, result.authSignature),
+    'authSignature must verify against traffic-pre-me:<accountId>:<challengeId>',
+  );
+  // The ME signature must not double as a byte-billing authorization.
+  assert.ok(!verifyMessage(IDENTITY_ADDRESS, `traffic-pre:${SERVER_ACCOUNT_ID}:challenge-me`, result.authSignature));
+});
+
+test('resolveSponsorTrafficAccount keeps byte billing for server-mode tenants (D4)', async () => {
+  await makeServiceFixture({ fetchImpl: bindingAndAccountRoutes(), trafficMode: 'traffic' });
+  const previous = process.env.IDBOTS_SERVER_MODE;
+  process.env.IDBOTS_SERVER_MODE = '1';
+  try {
+    const result = await resolveSponsorTrafficAccount({
+      botAddress: BOT1_ADDRESS,
+      challengeId: 'challenge-tenant',
+      botMnemonic: BOT1_MNEMONIC,
+      botWalletPath: WALLET_PATH,
+      billing: 'me',
+    });
+    assert.ok(result);
+    assert.equal(result.billing, undefined);
+    assert.ok(verifyMessage(IDENTITY_ADDRESS, `traffic-pre:${SERVER_ACCOUNT_ID}:challenge-tenant`, result.authSignature));
+  } finally {
+    if (previous === undefined) delete process.env.IDBOTS_SERVER_MODE;
+    else process.env.IDBOTS_SERVER_MODE = previous;
+  }
+});
+
+test('local spend journal records ME-billed spends without touching the byte balance cache', async () => {
+  const fetchImpl = createFetchStub([['/v1/traffic/accounts', accountPayload()]]);
+  await makeServiceFixture({ fetchImpl });
+
+  await ensureTrafficAccount();
+  assert.equal((await getTrafficBalance()).balanceBytes, 1000);
+
+  recordLocalTrafficSpend({
+    txId: 'dd'.repeat(32),
+    botAddress: BOT1_ADDRESS,
+    orderId: 'order-me',
+    txSize: 616,
+    sponsoredMinerFee: 616,
+    savedFee: 616,
+    billedBy: 'me',
+    meAmountMilli: 12,
+    kind: '/protocols/simplebuzz',
+  });
+  // A byte-billed row never stores an ME amount, even if one is passed.
+  recordLocalTrafficSpend({
+    txId: 'ee'.repeat(32),
+    botAddress: BOT2_ADDRESS,
+    orderId: 'order-bytes',
+    txSize: 300,
+    billedBy: 'traffic',
+    meAmountMilli: 99,
+  });
+
+  const [bytesRow, meRow] = listLocalTrafficJournal();
+  assert.equal(meRow.billedBy, 'me');
+  assert.equal(meRow.meAmountMilli, 12);
+  assert.equal(meRow.kind, '/protocols/simplebuzz');
+  assert.equal(bytesRow.billedBy, 'traffic');
+  assert.equal(bytesRow.meAmountMilli, 0);
+  // Only the byte-billed spend lowers the cached byte balance.
+  assert.equal((await getTrafficBalance()).balanceBytes, 700);
+});
+
+test('traffic_spend_journal adds me_amount_milli to a pre-ME table in place', async () => {
+  const { store } = await makeServiceFixture({ fetchImpl: createFetchStub([]) });
+  // Shape shipped before ME billing: kind column present, no me_amount_milli.
+  store.getDatabase().run(`
+    CREATE TABLE IF NOT EXISTS traffic_spend_journal (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tx_id TEXT NOT NULL,
+      bot_address TEXT NOT NULL,
+      order_id TEXT NOT NULL DEFAULT '',
+      tx_size INTEGER NOT NULL DEFAULT 0,
+      sponsored_miner_fee INTEGER NOT NULL DEFAULT 0,
+      saved_fee INTEGER NOT NULL DEFAULT 0,
+      billed_by TEXT NOT NULL DEFAULT 'quota',
+      kind TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL
+    );
+  `);
+  store.getDatabase().run(
+    `INSERT INTO traffic_spend_journal (tx_id, bot_address, order_id, tx_size, billed_by, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    ['ff'.repeat(32), BOT1_ADDRESS, 'order-old', 410, 'traffic', 1],
+  );
+
+  recordLocalTrafficSpend({ txId: COMMIT_TXID, botAddress: BOT1_ADDRESS, txSize: 500, billedBy: 'me', meAmountMilli: 10 });
+
+  const [fresh, legacy] = listLocalTrafficJournal();
+  assert.equal(fresh.meAmountMilli, 10);
+  assert.equal(legacy.orderId, 'order-old');
+  assert.equal(legacy.billedBy, 'traffic');
+  assert.equal(legacy.meAmountMilli, 0);
+});
+
 test('resolveSponsorTrafficAccount degrades to undefined on backend 404 (feature off)', async () => {
   const fetchImpl = createFetchStub([
     ['/v1/traffic/accounts', httpError(404, { code: 1, message: 'traffic disabled' })],

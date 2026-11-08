@@ -261,6 +261,53 @@ test('uploadMvcSponsorDirectFile falls back to self-paid on insufficient traffic
   assert.equal(selfPaidFeeAssist.stage, 'pre');
 });
 
+test('uploadMvcSponsorDirectFile falls back to self-paid when ME credits cannot cover the order at pre', async () => {
+  const mvcAddress = '1K9eUW4vED3qfWmr4Fcre64sU7D38QM1tX';
+  const fetchImpl = createFetchStub([
+    ['/v2/assist/gas/address/info', {
+      exists: true,
+      balance: 5000,
+      grantedAmount: 5000,
+      reservedAmount: 0,
+      spentAmount: 0,
+      availableAmount: 5000,
+      status: 'active',
+    }],
+    ['/v2/assist/gas/mvc/challenge', { challengeId: 'challenge-1', message: 'sign this message' }],
+    ['/v2/assist/gas/mvc/pre', () => ({
+      code: 1,
+      msg: 'me balance not enough',
+      data: { errorCode: 'ME_INSUFFICIENT', retryable: false },
+    })],
+  ]);
+  const { filePath } = await makeTestFile();
+
+  let selfPaidFeeAssist = null;
+  const result = await uploadMvcSponsorDirectFile({
+    filePath,
+    fileName: 'sponsor-test.bin',
+    contentType: 'application/octet-stream;binary',
+    bytes: 16,
+    extension: '.bin',
+    mnemonic: MNEMONIC,
+    walletPath: WALLET_PATH,
+    mvcAddress,
+    selfPaidUpload: async (feeAssist) => {
+      selfPaidFeeAssist = feeAssist;
+      return { success: true, pinId: 'selfpaid-i0' };
+    },
+    fetchImpl,
+    fetchUtxos: async () => [
+      { txId: TEST_TXID, outputIndex: 0, satoshis: 50000, address: mvcAddress, height: 1 },
+    ],
+  });
+
+  assert.equal(result.pinId, 'selfpaid-i0');
+  assert.equal(selfPaidFeeAssist.used, false);
+  assert.equal(selfPaidFeeAssist.reason, 'insufficient_me');
+  assert.equal(selfPaidFeeAssist.stage, 'pre');
+});
+
 test('uploadMvcSponsorDirectFile reconciles a dead commit order and falls back to self-paid', async () => {
   // 2026-09-08 outage regression: a commit failure (SPONSOR_BROADCAST_PENDING
   // / node broadcast errors) used to hard-fail; it must now reconcile the

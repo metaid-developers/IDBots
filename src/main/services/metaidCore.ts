@@ -863,12 +863,14 @@ export async function createPin(
               recordSpentOutpoints: (outpoints) => recordMvcSpentOutpoints(metabot_id, outpoints),
               replacePendingFundingUtxos: (utxo) => replaceMvcPendingFundingUtxos(metabot_id, utxo),
               // Traffic-account billing (Phase D): resolves to undefined and keeps
-              // the legacy quota path whenever the feature is off or unbound.
-              resolveTrafficAccount: ({ challengeId }) => resolveSponsorTrafficAccount({
+              // the legacy quota path whenever the feature is off or unbound;
+              // billing 'me' bills ME credits when the sponsor advertises it.
+              resolveTrafficAccount: ({ challengeId, billing }) => resolveSponsorTrafficAccount({
                 botAddress: sponsorMvcAddress,
                 challengeId,
                 botMnemonic: mnemonic,
                 botWalletPath: walletPath,
+                billing,
               }),
             },
           );

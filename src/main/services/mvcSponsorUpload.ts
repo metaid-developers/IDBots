@@ -11,10 +11,12 @@
  * mvcSponsorCreatePin (2026-09-08 owner rule: a sponsor outage or error must
  * never block the write — auto-switch to the bot's own wallet with an
  * explicit trace): ANY sponsor failure — service_unavailable / no_user_utxo /
- * insufficient_quota / insufficient_traffic / pre_rejected / commit_failed —
- * falls back to a regular self-paid direct upload. Commit-stage failures
- * reconcile the sponsor order first so an already-broadcast tx resolves as
- * sponsored success instead of double-writing.
+ * insufficient_quota / insufficient_traffic / insufficient_me / pre_rejected /
+ * commit_failed — falls back to a regular self-paid direct upload.
+ * Commit-stage failures reconcile the sponsor order first so an
+ * already-broadcast tx resolves as sponsored success instead of
+ * double-writing. Billing currency follows mvcSponsorCreatePin: ME credits
+ * when address/info advertises me.trafficBilling, traffic bytes otherwise.
  *
  * The sponsor protocol itself (API client, message signing, UTXO fetch,
  * size/fee estimation, user-input signing) lives in mvcSponsorClient.ts;
@@ -38,15 +40,22 @@ import {
   isNoUserUtxoDraftError,
   pickUtxos,
   reconcileSponsorOrderAfterCommitFailure,
+  meBillingOf,
   signMvcAddressMessage,
   signMvcPreparedUserInputs,
   trafficBalanceBytesOf,
   type MvcSponsorAddressInfo,
   type MvcSponsorDraft,
   type SponsorMvcUtxo,
+  type SponsorPaySource,
 } from './mvcSponsorClient';
 import { appendMetaidLog } from './metaidLog';
-import { recordLocalTrafficSpend, resolveSponsorTrafficAccount } from './trafficAccountService';
+import {
+  recordLocalTrafficSpend,
+  resolveSponsorTrafficAccount,
+  sponsorBilledBy,
+  type TrafficSpendBilledBy,
+} from './trafficAccountService';
 import {
   isSponsorBroadcastFailureError,
   isSponsorCircuitOpen,
@@ -75,6 +84,7 @@ export type MvcSponsorFeeAssistReason =
   | 'no_user_utxo'
   | 'insufficient_quota'
   | 'insufficient_traffic'
+  | 'insufficient_me'
   | 'pre_rejected'
   | 'commit_failed'
   | 'circuit_open';
@@ -104,6 +114,10 @@ export interface MvcSponsorFeeAssistMetadata {
   advisoryFeeEstimate?: number;
   sponsoredMinerFee?: number;
   savedFee?: number;
+  /** What a sponsored write was billed in ('me' credits / 'traffic' bytes / legacy 'quota'). */
+  billedBy?: TrafficSpendBilledBy;
+  /** ME charged in milliME when billedBy is 'me' and the sponsor echoed it. */
+  meAmountMilli?: number;
 }
 
 export interface MvcSponsorDirectUploadInput {
@@ -224,6 +238,7 @@ export function buildMvcFileInscriptionDraft(input: {
 function normalizeSponsorReason(value: unknown, fallback: MvcSponsorFeeAssistReason): MvcSponsorFeeAssistReason {
   return value === 'insufficient_quota'
     || value === 'insufficient_traffic'
+    || value === 'insufficient_me'
     || value === 'service_unavailable'
     || value === 'commit_failed'
     || value === 'pre_rejected'
@@ -446,21 +461,37 @@ export async function uploadMvcSponsorDirectFile(
   });
 
   // Traffic-account billing (Phase D): undefined keeps the legacy quota path
-  // (feature off, no account, unbound bot, or backend 404).
+  // (feature off, no account, unbound bot, or backend 404). ME credits are
+  // requested when address/info advertises me.trafficBilling.
   const trafficAccount = await resolveSponsorTrafficAccount({
     botAddress: input.mvcAddress,
     challengeId: challenge.challengeId,
     botMnemonic: input.mnemonic,
     botWalletPath: input.walletPath,
+    billing: meBillingOf(quotaBefore)?.trafficBilling ? 'me' : 'bytes',
   });
 
   // Balance preflight, gated on the billing account the pre will actually use.
-  // With a traffic account the upload bills account bytes, so the legacy
-  // sponsor quota (availableAmount) is irrelevant — gating on it silently
-  // self-paid every traffic-mode upload once a bot's legacy quota ran out
-  // (2026-09-07). estimatedMinerFee is computed at feeRate 1, so it doubles
-  // as the tx byte-size estimate for the traffic-bytes comparison.
-  if (trafficAccount) {
+  // With a traffic account the upload bills account bytes (or ME credits), so
+  // the legacy sponsor quota (availableAmount) is irrelevant — gating on it
+  // silently self-paid every traffic-mode upload once a bot's legacy quota ran
+  // out (2026-09-07). estimatedMinerFee is computed at feeRate 1, so it doubles
+  // as the tx byte-size estimate for the traffic-bytes comparison. The ME cost
+  // is priced server-side, so the ME preflight only short-circuits an empty
+  // balance and leaves the exact check to pre.
+  if (trafficAccount?.billing === 'me') {
+    const spendableMilli = meBillingOf(quotaBefore)?.spendableMilli;
+    if (spendableMilli !== undefined && spendableMilli <= 0) {
+      return fallbackSelfPaidForSponsorError({
+        error: { reason: 'insufficient_me' },
+        selfPaidUpload: input.selfPaidUpload,
+        fallbackReason: 'insufficient_me',
+        stage: 'address_info',
+        quotaBefore,
+        advisoryFeeEstimate: estimatedMinerFee,
+      });
+    }
+  } else if (trafficAccount) {
     const trafficBalanceBytes = trafficBalanceBytesOf(quotaBefore);
     if (trafficBalanceBytes !== undefined && estimatedMinerFee > 0 && trafficBalanceBytes < estimatedMinerFee) {
       return fallbackSelfPaidForSponsorError({
@@ -489,6 +520,8 @@ export async function uploadMvcSponsorDirectFile(
     minerFee: number;
     userInputIndexes: number[];
     expiresAt?: string;
+    paySource?: SponsorPaySource;
+    meAmountMilli?: number;
     raw: Record<string, unknown>;
   };
   try {
@@ -563,7 +596,14 @@ export async function uploadMvcSponsorDirectFile(
   });
 
   let commitRecovered = false;
-  let commit: { txId: string; txSize?: number; minerFee?: number; raw: Record<string, unknown> };
+  let commit: {
+    txId: string;
+    txSize?: number;
+    minerFee?: number;
+    paySource?: SponsorPaySource;
+    meAmountMilli?: number;
+    raw: Record<string, unknown>;
+  };
   try {
     commit = await sponsorClient.commitSponsor({
       orderId: pre.orderId,
@@ -595,6 +635,8 @@ export async function uploadMvcSponsorDirectFile(
         txId: reconciliation.txId,
         txSize: reconciliation.txSize,
         minerFee: reconciliation.minerFee,
+        paySource: reconciliation.paySource,
+        meAmountMilli: reconciliation.meAmountMilli,
         raw: { commitRecovered: true },
       };
       commitRecovered = true;
@@ -634,6 +676,8 @@ export async function uploadMvcSponsorDirectFile(
   }
 
   const sponsoredMinerFee = commit.minerFee ?? pre.minerFee;
+  const billedBy = sponsorBilledBy(trafficAccount, commit.paySource ?? pre.paySource);
+  const meAmountMilli = billedBy === 'me' ? commit.meAmountMilli ?? pre.meAmountMilli : undefined;
   recordSponsorSuccess(input.mvcAddress);
   // Local spend journal + balance-cache deduction (best-effort, never throws).
   recordLocalTrafficSpend({
@@ -643,7 +687,8 @@ export async function uploadMvcSponsorDirectFile(
     txSize: commit.txSize,
     sponsoredMinerFee,
     savedFee: sponsoredMinerFee,
-    billedBy: trafficAccount ? 'traffic' : 'quota',
+    billedBy,
+    meAmountMilli,
     kind: request.path,
   });
   let quotaAfter: MvcSponsorAddressInfo | undefined;
@@ -675,6 +720,8 @@ export async function uploadMvcSponsorDirectFile(
       advisoryFeeEstimate,
       sponsoredMinerFee,
       savedFee: sponsoredMinerFee,
+      billedBy,
+      meAmountMilli,
     } satisfies MvcSponsorFeeAssistMetadata,
   };
 }

@@ -6,10 +6,13 @@
  * orchestration stay in mvcSponsorUpload.ts.
  *
  * Error taxonomy: service_unavailable / no_user_utxo / insufficient_quota /
- * pre_rejected / commit_failed. insufficient_traffic is reserved for the
- * backend TRAFFIC_INSUFFICIENT error code (traffic-account billing, not yet
- * live); preSponsor accepts an optional trafficAccount pass-through so the
- * backend can switch an order to traffic billing once it ships.
+ * insufficient_traffic / insufficient_me / pre_rejected / commit_failed.
+ * insufficient_traffic maps the backend TRAFFIC_INSUFFICIENT error code
+ * (traffic-account byte billing); insufficient_me maps ME_INSUFFICIENT /
+ * ME_DAILY_LIMIT (ME credits billing, 2026-11-09 requirements v1.0). preSponsor
+ * forwards the optional trafficAccount block; its billing field opts an order
+ * into ME billing once the backend advertises me.trafficBilling on
+ * address/info.
  *
  * reconcileSponsorOrderAfterCommitFailure re-checks a committed order after a
  * failed commit so callers can tell "broadcasted after all" (resolve as
@@ -28,6 +31,10 @@ const MIN_MVC_UTXO_SATS = 600;
 const DEFAULT_REQUEST_TIMEOUT_MS = 8_000;
 const DEFAULT_RETRY_DELAYS_MS = [250, 750] as const;
 const TRAFFIC_INSUFFICIENT_ERROR_CODE = 'TRAFFIC_INSUFFICIENT';
+/** ME credits cannot cover the order (balance or daily limit) → self-pay that write. */
+const ME_INSUFFICIENT_ERROR_CODES = new Set(['ME_INSUFFICIENT', 'ME_DAILY_LIMIT']);
+/** ME billing switched off between address/info and pre → treated as a sponsor outage. */
+const ME_BILLING_DISABLED_ERROR_CODE = 'ME_TRAFFIC_BILLING_DISABLED';
 
 export interface MvcSponsorAddressInfo {
   exists: boolean;
@@ -40,10 +47,17 @@ export interface MvcSponsorAddressInfo {
   raw: Record<string, unknown>;
 }
 
+/** Currency a traffic-account order is billed in: traffic bytes (legacy) or ME credits. */
+export type SponsorBilling = 'bytes' | 'me';
+/** Pay source the sponsor echoes on pre/commit/order (requirements v1.0 R1.9). */
+export type SponsorPaySource = 'me' | 'bytes' | 'quota';
+
 export interface MvcSponsorTrafficAccount {
   accountId: string;
   authSignature: string;
   timestamp: number;
+  /** 'me' bills the order in ME credits (signed as traffic-pre-me); absent = traffic bytes. */
+  billing?: SponsorBilling;
 }
 
 export interface SponsorMvcUtxo {
@@ -153,6 +167,7 @@ export type SponsorStage = 'address_info' | 'challenge' | 'pre' | 'commit';
 export type SponsorReason =
   | 'insufficient_quota'
   | 'insufficient_traffic'
+  | 'insufficient_me'
   | 'service_unavailable'
   | 'commit_failed'
   | 'pre_rejected'
@@ -172,6 +187,9 @@ function normalizeReason(stage: SponsorStage, message: string): SponsorReason {
   if (/TRAFFIC_INSUFFICIENT/i.test(message)) {
     return 'insufficient_traffic';
   }
+  if (/ME_INSUFFICIENT|ME_DAILY_LIMIT/i.test(message)) {
+    return 'insufficient_me';
+  }
   if (/available amount not enough|quota not granted|insufficient quota|insufficient balance/i.test(message)) {
     return 'insufficient_quota';
   }
@@ -185,9 +203,11 @@ function normalizeReason(stage: SponsorStage, message: string): SponsorReason {
 }
 
 function normalizeErrorCodeReason(code: unknown): SponsorReason | undefined {
-  return normalizeText(code).toUpperCase() === TRAFFIC_INSUFFICIENT_ERROR_CODE
-    ? 'insufficient_traffic'
-    : undefined;
+  const normalized = normalizeText(code).toUpperCase();
+  if (normalized === TRAFFIC_INSUFFICIENT_ERROR_CODE) return 'insufficient_traffic';
+  if (ME_INSUFFICIENT_ERROR_CODES.has(normalized)) return 'insufficient_me';
+  if (normalized === ME_BILLING_DISABLED_ERROR_CODE) return 'service_unavailable';
+  return undefined;
 }
 
 function createSponsorError(
@@ -239,8 +259,9 @@ function unwrapEnvelope(body: unknown, stage: SponsorStage): Record<string, unkn
     pickText(record, 'message', 'msg', 'error') || `Sponsor service returned code ${normalizeText(record.code) || 'unknown'}.`,
     {
       data: record.data,
-      // Backend sends TRAFFIC_INSUFFICIENT as data.errorCode (envelope code stays
-      // numeric 1) — same pattern as SPONSOR_BROADCAST_PENDING.
+      // Backend sends TRAFFIC_INSUFFICIENT / ME_INSUFFICIENT / ME_DAILY_LIMIT as
+      // data.errorCode (envelope code stays numeric 1) — same pattern as
+      // SPONSOR_BROADCAST_PENDING.
       reason: normalizeErrorCodeReason(record.code)
         ?? normalizeErrorCodeReason(readObject(record.data)?.errorCode),
       retryable: normalizeBoolean(readObject(record.data)?.retryable) === true,
@@ -395,6 +416,44 @@ export function trafficBalanceBytesOf(info: MvcSponsorAddressInfo): number | und
   return Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
+/** ME credits billing capability reported by address/info (`me` block, requirements v1.0 R3). */
+export interface MvcSponsorMeBilling {
+  /** True when the backend bills this address's traffic-account orders in ME on request. */
+  trafficBilling: boolean;
+  /** What a new ME spend can draw now (grant + packs when auto-deduct is on); undefined when absent. */
+  spendableMilli?: number;
+}
+
+/**
+ * ME billing capability for the address, or undefined when the backend sends
+ * no `me` block (ME traffic billing not shipped, or the address is unbound).
+ * Callers only request ME billing when trafficBilling is true, so an older
+ * backend keeps billing traffic bytes.
+ */
+export function meBillingOf(info: MvcSponsorAddressInfo): MvcSponsorMeBilling | undefined {
+  const raw = info.raw?.me;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const record = raw as Record<string, unknown>;
+  const spendable = Number(record.spendableMilli ?? record.spendable_milli);
+  return {
+    trafficBilling: normalizeBoolean(record.trafficBilling ?? record.traffic_billing) === true,
+    spendableMilli: Number.isFinite(spendable) && spendable >= 0 ? spendable : undefined,
+  };
+}
+
+/** Sponsor echo of what an order was actually billed in (pre/commit/order responses). */
+function normalizePaySourceEcho(record: Record<string, unknown>): {
+  paySource?: SponsorPaySource;
+  meAmountMilli?: number;
+} {
+  const echo: { paySource?: SponsorPaySource; meAmountMilli?: number } = {};
+  const paySource = pickText(record, 'paySource', 'pay_source').toLowerCase();
+  if (paySource === 'me' || paySource === 'bytes' || paySource === 'quota') echo.paySource = paySource;
+  const meAmountMilli = normalizeOptionalNumber(record, 'meAmountMilli', 'me_amount_milli');
+  if (meAmountMilli !== undefined && meAmountMilli >= 0) echo.meAmountMilli = meAmountMilli;
+  return echo;
+}
+
 function normalizeChallenge(record: Record<string, unknown>): {
   challengeId: string;
   message: string;
@@ -418,6 +477,8 @@ function normalizePreResult(record: Record<string, unknown>): {
   minerFee: number;
   userInputIndexes: number[];
   expiresAt?: string;
+  paySource?: SponsorPaySource;
+  meAmountMilli?: number;
   raw: Record<string, unknown>;
 } {
   const preparedTxHex = pickText(record, 'preparedTxHex', 'prepared_tx_hex');
@@ -444,6 +505,7 @@ function normalizePreResult(record: Record<string, unknown>): {
     minerFee: normalizeRequiredNumber('pre', record, 'minerFee', 'miner_fee'),
     userInputIndexes,
     expiresAt: expiresAt || undefined,
+    ...normalizePaySourceEcho(record),
     raw: record,
   };
 }
@@ -452,6 +514,8 @@ function normalizeCommitResult(record: Record<string, unknown>): {
   txId: string;
   txSize?: number;
   minerFee?: number;
+  paySource?: SponsorPaySource;
+  meAmountMilli?: number;
   raw: Record<string, unknown>;
 } {
   const txId = pickText(record, 'txId', 'txid');
@@ -461,8 +525,16 @@ function normalizeCommitResult(record: Record<string, unknown>): {
       reason: 'commit_failed',
     });
   }
-  const result: { txId: string; txSize?: number; minerFee?: number; raw: Record<string, unknown> } = {
+  const result: {
+    txId: string;
+    txSize?: number;
+    minerFee?: number;
+    paySource?: SponsorPaySource;
+    meAmountMilli?: number;
+    raw: Record<string, unknown>;
+  } = {
     txId,
+    ...normalizePaySourceEcho(record),
     raw: record,
   };
   const txSize = normalizeOptionalNumber(record, 'txSize', 'tx_size');
@@ -481,6 +553,8 @@ function normalizeSponsorOrder(record: Record<string, unknown>): {
   pending: boolean;
   final: boolean;
   failureReason?: string;
+  paySource?: SponsorPaySource;
+  meAmountMilli?: number;
   raw: Record<string, unknown>;
 } {
   const orderId = pickText(record, 'orderId', 'order_id');
@@ -504,6 +578,7 @@ function normalizeSponsorOrder(record: Record<string, unknown>): {
     pending,
     final,
     failureReason: failureReason || undefined,
+    ...normalizePaySourceEcho(record),
     raw: record,
   };
 }
@@ -529,6 +604,9 @@ function normalizeTrafficAccount(value: unknown): MvcSponsorTrafficAccount | und
     accountId: requireText('pre', 'trafficAccount.accountId', record.accountId),
     authSignature: requireText('pre', 'trafficAccount.authSignature', record.authSignature),
     timestamp,
+    // Only an explicit ME opt-in is forwarded; anything else keeps the legacy
+    // byte billing request shape old backends already accept.
+    ...(normalizeText(record.billing).toLowerCase() === 'me' ? { billing: 'me' as const } : {}),
   };
 }
 
@@ -547,7 +625,7 @@ export interface MvcSponsorV2Client {
     challengeId: string;
     publicKey: string;
     signature: string;
-    /** Reserved pass-through for traffic-account billing (backend not yet live). */
+    /** Traffic-account billing block; billing:'me' bills the order in ME credits. */
     trafficAccount?: MvcSponsorTrafficAccount;
   }): Promise<{
     preparedTxHex: string;
@@ -555,6 +633,8 @@ export interface MvcSponsorV2Client {
     minerFee: number;
     userInputIndexes: number[];
     expiresAt?: string;
+    paySource?: SponsorPaySource;
+    meAmountMilli?: number;
     raw: Record<string, unknown>;
   }>;
   commitSponsor(payload: {
@@ -566,6 +646,8 @@ export interface MvcSponsorV2Client {
     txId: string;
     txSize?: number;
     minerFee?: number;
+    paySource?: SponsorPaySource;
+    meAmountMilli?: number;
     raw: Record<string, unknown>;
   }>;
   getSponsorOrder(orderId: string): Promise<{
@@ -577,6 +659,8 @@ export interface MvcSponsorV2Client {
     pending: boolean;
     final: boolean;
     failureReason?: string;
+    paySource?: SponsorPaySource;
+    meAmountMilli?: number;
     raw: Record<string, unknown>;
   }>;
 }
@@ -597,6 +681,8 @@ export function createMvcSponsorV2Client(input: {
     pending: boolean;
     final: boolean;
     failureReason?: string;
+    paySource?: SponsorPaySource;
+    meAmountMilli?: number;
     raw: Record<string, unknown>;
   }> {
     const orderId = requireText('commit', 'orderId', orderIdValue);
@@ -685,7 +771,14 @@ export function createMvcSponsorV2Client(input: {
         try {
           const order = await getSponsorOrder(orderId);
           if (order.final && order.status === 'broadcasted' && order.txId) {
-            return { txId: order.txId, txSize: order.txSize, minerFee: order.minerFee, raw: order.raw };
+            return {
+              txId: order.txId,
+              txSize: order.txSize,
+              minerFee: order.minerFee,
+              paySource: order.paySource,
+              meAmountMilli: order.meAmountMilli,
+              raw: order.raw,
+            };
           }
           const sponsorError = error as SponsorClientError;
           sponsorError.data = { transportError: sponsorError.data, order: order.raw };
@@ -713,6 +806,8 @@ export interface SponsorOrderSnapshot {
   pending: boolean;
   final: boolean;
   failureReason?: string;
+  paySource?: SponsorPaySource;
+  meAmountMilli?: number;
   raw: Record<string, unknown>;
 }
 
@@ -725,6 +820,8 @@ export interface SponsorCommitReconciliation {
   txId?: string;
   txSize?: number;
   minerFee?: number;
+  paySource?: SponsorPaySource;
+  meAmountMilli?: number;
   failureReason?: string;
 }
 
@@ -765,6 +862,8 @@ export async function reconcileSponsorOrderAfterCommitFailure(input: {
             txId: order.txId,
             txSize: order.txSize,
             minerFee: order.minerFee,
+            paySource: order.paySource,
+            meAmountMilli: order.meAmountMilli,
           };
         }
         return { outcome: 'failed', status: order.status, failureReason: order.failureReason };

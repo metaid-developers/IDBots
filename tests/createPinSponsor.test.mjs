@@ -595,6 +595,207 @@ test('runMvcSponsorCreatePin falls back on pre quota and traffic insufficiency',
   }
 });
 
+// ME credits billing (2026-11-09 requirements v1.0): the sponsor advertises
+// me.trafficBilling on address/info, the flow requests billing 'me' from the
+// resolver, pre-flights on spendableMilli, and journals what was billed.
+const ME_ADDRESS_INFO = {
+  exists: true,
+  balance: 5000,
+  grantedAmount: 5000,
+  reservedAmount: 0,
+  spentAmount: 0,
+  availableAmount: 5000,
+  status: 'active',
+  traffic: { accountId: 'gmid-account', balanceBytes: 0, reservedBytes: 0 },
+  me: { trafficBilling: true, spendableMilli: 50_000 },
+};
+const ME_TRAFFIC_ACCOUNT = { accountId: 'gmid-account', authSignature: 'bWU=', timestamp: 1730000000, billing: 'me' };
+
+test('runMvcSponsorCreatePin requests ME billing when the sponsor advertises it and reports what was billed', async () => {
+  const draftResult = buildDraftWorkerResult();
+  let preBody = null;
+  let resolverCtx = null;
+  const fetchImpl = createFetchStub([
+    ['/v2/assist/gas/address/info', ME_ADDRESS_INFO],
+    CHALLENGE_ROUTE,
+    ['/v2/assist/gas/mvc/pre', (init) => {
+      preBody = JSON.parse(init.body);
+      return {
+        preparedTxHex: draftResult.draft.unsignedTxHex,
+        orderId: 'order-me-1',
+        minerFee: 100,
+        userInputIndexes: [0],
+        paySource: 'me',
+        meAmountMilli: 7,
+      };
+    }],
+    ['/v2/assist/gas/mvc/commit', { txId: COMMIT_TXID, txSize: 300, minerFee: 100, paySource: 'me', meAmountMilli: 6 }],
+  ]);
+  const { runBroadcastWorker, state: broadcastState } = makeBroadcastWorker();
+
+  const result = await runMvcSponsorCreatePin(
+    {
+      metabotId: 9301,
+      mnemonic: MNEMONIC,
+      walletPath: WALLET_PATH,
+      mvcAddress: TEST_ADDRESS,
+      feeRate: 1,
+      fallbackPolicy: 'selfpay',
+      baseUrl: 'https://sponsor.test',
+      fetchImpl,
+    },
+    {
+      runDraftWorker: async () => draftResult,
+      runBroadcastWorker,
+      recordSpentOutpoints: () => {},
+      replacePendingFundingUtxos: () => {},
+      resolveTrafficAccount: async (ctx) => {
+        resolverCtx = ctx;
+        return ME_TRAFFIC_ACCOUNT;
+      },
+    },
+  );
+
+  assert.equal(broadcastState.calls, 0);
+  assert.deepEqual(resolverCtx, { challengeId: 'challenge-1', billing: 'me' });
+  // Zero traffic bytes must not block an ME-billed order.
+  assert.equal(preBody.trafficAccount.billing, 'me');
+  assert.equal(result.feeAssist.used, true);
+  assert.equal(result.feeAssist.billedBy, 'me');
+  // The commit echo is final; it wins over the pre estimate.
+  assert.equal(result.feeAssist.meAmountMilli, 6);
+});
+
+test('runMvcSponsorCreatePin requests byte billing when address/info has no me block', async () => {
+  const draftResult = buildDraftWorkerResult();
+  let resolverCtx = null;
+  const fetchImpl = createFetchStub([
+    ADDRESS_INFO_ROUTE,
+    CHALLENGE_ROUTE,
+    ['/v2/assist/gas/mvc/pre', {
+      preparedTxHex: draftResult.draft.unsignedTxHex,
+      orderId: 'order-bytes-1',
+      minerFee: 100,
+      userInputIndexes: [0],
+    }],
+    ['/v2/assist/gas/mvc/commit', { txId: COMMIT_TXID, txSize: 300, minerFee: 100 }],
+  ]);
+  const { runBroadcastWorker } = makeBroadcastWorker();
+
+  const result = await runMvcSponsorCreatePin(
+    {
+      metabotId: 9302,
+      mnemonic: MNEMONIC,
+      walletPath: WALLET_PATH,
+      mvcAddress: TEST_ADDRESS,
+      feeRate: 1,
+      fallbackPolicy: 'selfpay',
+      baseUrl: 'https://sponsor.test',
+      fetchImpl,
+    },
+    {
+      runDraftWorker: async () => draftResult,
+      runBroadcastWorker,
+      recordSpentOutpoints: () => {},
+      replacePendingFundingUtxos: () => {},
+      resolveTrafficAccount: async (ctx) => {
+        resolverCtx = ctx;
+        return { accountId: 'gmid-account', authSignature: 'YXV0aA==', timestamp: 1730000000 };
+      },
+    },
+  );
+
+  assert.equal(resolverCtx.billing, 'bytes');
+  assert.equal(result.feeAssist.billedBy, 'traffic');
+  assert.equal(result.feeAssist.meAmountMilli, undefined);
+});
+
+test('runMvcSponsorCreatePin falls back with insufficient_me when no ME is spendable', async () => {
+  const draftResult = buildDraftWorkerResult();
+  const fetchImpl = createFetchStub([
+    ['/v2/assist/gas/address/info', {
+      ...ME_ADDRESS_INFO,
+      // Plenty of legacy bytes: they must not rescue an ME-billed order.
+      traffic: { accountId: 'gmid-account', balanceBytes: 100_000_000, reservedBytes: 0 },
+      me: { trafficBilling: true, spendableMilli: 0 },
+    }],
+    CHALLENGE_ROUTE,
+  ]);
+  const { runBroadcastWorker, state: broadcastState } = makeBroadcastWorker();
+
+  const result = await runMvcSponsorCreatePin(
+    {
+      metabotId: 9303,
+      mnemonic: MNEMONIC,
+      walletPath: WALLET_PATH,
+      mvcAddress: TEST_ADDRESS,
+      feeRate: 1,
+      fallbackPolicy: 'selfpay',
+      baseUrl: 'https://sponsor.test',
+      fetchImpl,
+    },
+    {
+      runDraftWorker: async () => draftResult,
+      runBroadcastWorker,
+      recordSpentOutpoints: () => {},
+      replacePendingFundingUtxos: () => {},
+      resolveTrafficAccount: async () => ME_TRAFFIC_ACCOUNT,
+    },
+  );
+
+  assert.equal(broadcastState.calls, 1);
+  assert.equal(result.feeAssist.used, false);
+  assert.equal(result.feeAssist.reason, 'insufficient_me');
+  assert.equal(result.feeAssist.stage, 'address_info');
+  assert.equal(callsTo(fetchImpl, '/v2/assist/gas/mvc/pre').length, 0);
+});
+
+test('runMvcSponsorCreatePin maps the ME error codes at pre to self-paid fallbacks', async () => {
+  const cases = [
+    { errorCode: 'ME_INSUFFICIENT', reason: 'insufficient_me' },
+    { errorCode: 'ME_DAILY_LIMIT', reason: 'insufficient_me' },
+    { errorCode: 'ME_TRAFFIC_BILLING_DISABLED', reason: 'service_unavailable' },
+  ];
+  for (const [index, testCase] of cases.entries()) {
+    const draftResult = buildDraftWorkerResult();
+    const fetchImpl = createFetchStub([
+      ['/v2/assist/gas/address/info', ME_ADDRESS_INFO],
+      CHALLENGE_ROUTE,
+      ['/v2/assist/gas/mvc/pre', {
+        code: 1,
+        msg: 'sponsor rejected the order',
+        data: { errorCode: testCase.errorCode, retryable: false },
+      }],
+    ]);
+    const { runBroadcastWorker, state: broadcastState } = makeBroadcastWorker();
+
+    const result = await runMvcSponsorCreatePin(
+      {
+        metabotId: 9310 + index,
+        mnemonic: MNEMONIC,
+        walletPath: WALLET_PATH,
+        mvcAddress: TEST_ADDRESS,
+        feeRate: 1,
+        fallbackPolicy: 'selfpay',
+        baseUrl: 'https://sponsor.test',
+        fetchImpl,
+      },
+      {
+        runDraftWorker: async () => draftResult,
+        runBroadcastWorker,
+        recordSpentOutpoints: () => {},
+        replacePendingFundingUtxos: () => {},
+        resolveTrafficAccount: async () => ME_TRAFFIC_ACCOUNT,
+      },
+    );
+
+    assert.equal(broadcastState.calls, 1, testCase.errorCode);
+    assert.equal(result.feeAssist.used, false, testCase.errorCode);
+    assert.equal(result.feeAssist.reason, testCase.reason, testCase.errorCode);
+    assert.equal(result.feeAssist.stage, 'pre', testCase.errorCode);
+  }
+});
+
 test('runMvcSponsorCreatePin falls back to self-paid on pre_rejected at pre', async () => {
   // 2026-09-08 semantics: the sponsor refused the draft but nothing was
   // broadcast, so the bot's own wallet delivers instead of hard-failing.

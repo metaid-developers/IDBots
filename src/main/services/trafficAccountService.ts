@@ -12,6 +12,7 @@
  * - POST /v1/traffic/accounts/bindings: "traffic-bind:<botAddress>:<accountId>:<ts>"
  *   (identity signs via X-Signature header, bot key signs via body botSignature)
  * - sponsor pre trafficAccount:         "traffic-pre:<accountId>:<challengeId>"
+ *   (ME credits billing, requirements v1.0 R1: "traffic-pre-me:<accountId>:<challengeId>")
  * Headers: X-Identity-Address / X-Timestamp (unix seconds, ±300s) / X-Signature
  * (Bitcoin Signed Message compact, base64).
  *
@@ -22,10 +23,16 @@
  * backend feature is off (404) or the bot is unbound.
  */
 
-import { signMvcAddressMessage, type MvcSponsorTrafficAccount } from './mvcSponsorClient';
+import {
+  signMvcAddressMessage,
+  type MvcSponsorTrafficAccount,
+  type SponsorBilling,
+  type SponsorPaySource,
+} from './mvcSponsorClient';
 import {
   getTrafficPinMode,
   getTrafficSettings,
+  isMeTrafficBillingAllowed,
   readRechargeGatewayOverride,
   readTrafficApiBase,
   setTrafficSettings,
@@ -160,11 +167,39 @@ export interface TrafficSpendJournalEntry {
   txSize: number;
   sponsoredMinerFee: number;
   savedFee: number;
-  /** 'traffic' = billed to the traffic account; 'quota' = legacy sponsor quota. */
-  billedBy: 'traffic' | 'quota';
+  /**
+   * 'me' = billed to the identity's ME credits; 'traffic' = billed to the
+   * traffic account in bytes; 'quota' = legacy sponsor quota.
+   */
+  billedBy: TrafficSpendBilledBy;
+  /** ME charged for the order in milliME (0 unless billedBy is 'me' and the sponsor echoed it). */
+  meAmountMilli: number;
   /** Pin protocol path or purpose tag (e.g. /protocols/simplemsg, /file); '' for legacy rows. */
   kind: string;
   createdAt: number;
+}
+
+export type TrafficSpendBilledBy = 'me' | 'traffic' | 'quota';
+
+/**
+ * What a committed sponsor order was billed in. The sponsor's paySource echo
+ * wins (requirements v1.0 R1.9); without one, the trafficAccount block the
+ * pre actually sent decides.
+ */
+export function sponsorBilledBy(
+  trafficAccount: MvcSponsorTrafficAccount | undefined,
+  echoedPaySource?: SponsorPaySource,
+): TrafficSpendBilledBy {
+  if (echoedPaySource === 'me') return 'me';
+  if (echoedPaySource === 'bytes') return 'traffic';
+  if (echoedPaySource === 'quota') return 'quota';
+  if (trafficAccount?.billing === 'me') return 'me';
+  return trafficAccount ? 'traffic' : 'quota';
+}
+
+function normalizeBilledBy(value: unknown): TrafficSpendBilledBy {
+  const text = normalizeText(value);
+  return text === 'me' || text === 'traffic' ? text : 'quota';
 }
 
 // ---------------------------------------------------------------------------
@@ -305,6 +340,11 @@ function buildTrafficBindMessage(botAddress: string, accountId: string, timestam
 
 function buildTrafficPreMessage(accountId: string, challengeId: string): string {
   return `traffic-pre:${accountId}:${challengeId}`;
+}
+
+/** ME credits billing domain (requirements v1.0 R1.1) — distinct so a byte-billing signature cannot be replayed as an ME charge. */
+function buildTrafficPreMeMessage(accountId: string, challengeId: string): string {
+  return `traffic-pre-me:${accountId}:${challengeId}`;
 }
 
 function buildTrafficRechargeMessage(accountId: string, planId: string, timestamp: number): string {
@@ -1220,11 +1260,14 @@ function ensureJournalTable(): void {
       saved_fee INTEGER NOT NULL DEFAULT 0,
       billed_by TEXT NOT NULL DEFAULT 'quota',
       kind TEXT NOT NULL DEFAULT '',
+      me_amount_milli INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL
     );
   `);
-  // Idempotent migration for databases created before the kind column existed:
-  // CREATE TABLE IF NOT EXISTS is a no-op there, so ALTER the old shape in place.
+  // Idempotent migrations for databases created before the kind /
+  // me_amount_milli columns existed: CREATE TABLE IF NOT EXISTS is a no-op
+  // there, so ALTER the old shape in place. Existing rows keep 0 ME (they were
+  // billed in bytes or legacy quota).
   const tableInfo = db.exec('PRAGMA table_info(traffic_spend_journal)');
   const columns = new Set(
     (tableInfo[0]?.values ?? []).map((row) => normalizeText(row[1])),
@@ -1232,13 +1275,16 @@ function ensureJournalTable(): void {
   if (!columns.has('kind')) {
     db.run(`ALTER TABLE traffic_spend_journal ADD COLUMN kind TEXT NOT NULL DEFAULT ''`);
   }
+  if (!columns.has('me_amount_milli')) {
+    db.run(`ALTER TABLE traffic_spend_journal ADD COLUMN me_amount_milli INTEGER NOT NULL DEFAULT 0`);
+  }
 }
 
 /**
  * Record one locally-initiated sponsored commit. Traffic-billed spends also
  * decrement the in-memory balance cache by the known txSize so the UI reflects
- * the deduction immediately; quota-billed spends never touch the traffic
- * balance. Best-effort by design: never throws into the pin flow.
+ * the deduction immediately; quota- and ME-billed spends never touch the
+ * traffic byte balance. Best-effort by design: never throws into the pin flow.
  */
 export function recordLocalTrafficSpend(entry: {
   txId: string;
@@ -1247,7 +1293,9 @@ export function recordLocalTrafficSpend(entry: {
   txSize?: number;
   sponsoredMinerFee?: number;
   savedFee?: number;
-  billedBy?: 'traffic' | 'quota';
+  billedBy?: TrafficSpendBilledBy;
+  /** ME charged in milliME (ME-billed orders; the sponsor's meAmountMilli echo). */
+  meAmountMilli?: number;
   /** Pin protocol path or purpose tag (e.g. /protocols/simplemsg, /file). */
   kind?: string;
 }): void {
@@ -1257,13 +1305,14 @@ export function recordLocalTrafficSpend(entry: {
     const botAddress = normalizeText(entry.botAddress);
     if (!txId || !botAddress) return;
     const txSize = Math.max(0, Math.trunc(toNumber(entry.txSize)));
+    const billedBy = normalizeBilledBy(entry.billedBy);
     ensureJournalTable();
     const store = getDeps().getStore();
     if (!store) return;
     store.getDatabase().run(
       `INSERT INTO traffic_spend_journal
-        (tx_id, bot_address, order_id, tx_size, sponsored_miner_fee, saved_fee, billed_by, kind, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (tx_id, bot_address, order_id, tx_size, sponsored_miner_fee, saved_fee, billed_by, kind, me_amount_milli, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         txId,
         botAddress,
@@ -1271,14 +1320,15 @@ export function recordLocalTrafficSpend(entry: {
         txSize,
         Math.max(0, Math.trunc(toNumber(entry.sponsoredMinerFee))),
         Math.max(0, Math.trunc(toNumber(entry.savedFee))),
-        entry.billedBy === 'traffic' ? 'traffic' : 'quota',
+        billedBy,
         normalizeText(entry.kind),
+        billedBy === 'me' ? Math.max(0, Math.trunc(toNumber(entry.meAmountMilli))) : 0,
         Date.now(),
       ],
     );
     store.getSaveFunction()();
 
-    if (entry.billedBy === 'traffic' && balanceCache && txSize > 0) {
+    if (billedBy === 'traffic' && balanceCache && txSize > 0) {
       balanceCache = {
         ...balanceCache,
         balanceBytes: Math.max(0, balanceCache.balanceBytes - txSize),
@@ -1321,7 +1371,8 @@ export function listLocalTrafficJournal(input: {
       txSize: toNumber(values[columnIndex.get('tx_size') as number]),
       sponsoredMinerFee: toNumber(values[columnIndex.get('sponsored_miner_fee') as number]),
       savedFee: toNumber(values[columnIndex.get('saved_fee') as number]),
-      billedBy: normalizeText(values[columnIndex.get('billed_by') as number]) === 'traffic' ? 'traffic' : 'quota',
+      billedBy: normalizeBilledBy(values[columnIndex.get('billed_by') as number]),
+      meAmountMilli: columnIndex.has('me_amount_milli') ? toNumber(values[columnIndex.get('me_amount_milli') as number]) : 0,
       kind: columnIndex.has('kind') ? normalizeText(values[columnIndex.get('kind') as number]) : '',
       createdAt: toNumber(values[columnIndex.get('created_at') as number]),
     }));
@@ -1343,12 +1394,19 @@ export function listLocalTrafficJournal(input: {
  * drop to the legacy quota path is WARN-logged with its cause, and the
  * idempotent ensure/bind steps retry once after a short backoff so a single
  * transient network blip no longer flips a pin to legacy quota billing.
+ *
+ * billing 'me' (requested by the sponsor flows when address/info advertises
+ * me.trafficBilling) bills the order in ME credits and signs the
+ * traffic-pre-me domain; it is downgraded to byte billing for server-mode
+ * tenants (D4). The returned block's billing field is the billing actually
+ * requested, so callers pre-flight and journal against it.
  */
 export async function resolveSponsorTrafficAccount(input: {
   botAddress: string;
   challengeId: string;
   botMnemonic?: string;
   botWalletPath?: string;
+  billing?: SponsorBilling;
 }): Promise<MvcSponsorTrafficAccount | undefined> {
   const botAddress = normalizeText(input.botAddress);
   try {
@@ -1381,9 +1439,18 @@ export async function resolveSponsorTrafficAccount(input: {
     }
 
     const timestamp = nowSeconds();
-    const message = buildTrafficPreMessage(account.accountId, normalizeText(input.challengeId));
+    const challengeId = normalizeText(input.challengeId);
+    const meBilling = input.billing === 'me' && isMeTrafficBillingAllowed(getKvStore());
+    const message = meBilling
+      ? buildTrafficPreMeMessage(account.accountId, challengeId)
+      : buildTrafficPreMessage(account.accountId, challengeId);
     const { signature } = await signWithKey({ mnemonic: identity.mnemonic, path: identity.path, message });
-    return { accountId: account.accountId, authSignature: signature, timestamp };
+    return {
+      accountId: account.accountId,
+      authSignature: signature,
+      timestamp,
+      ...(meBilling ? { billing: 'me' as const } : {}),
+    };
   } catch (error) {
     console.warn(`[TrafficAccount] traffic-account resolution failed for bot ${botAddress || 'unknown'}; this pin bills the legacy sponsor quota:`, error instanceof Error ? error.message : error);
     return undefined;
