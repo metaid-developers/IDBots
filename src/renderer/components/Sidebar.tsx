@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState } from '../store';
 import { coworkService } from '../services/cowork';
+import { browserCoworkService } from '../services/browserCowork';
 import { groupTaskService } from '../services/groupTaskService';
 import { i18nService } from '../services/i18n';
 import CoworkSessionList from './cowork/CoworkSessionList';
@@ -16,7 +17,8 @@ import { selectTask as selectLongTermTask } from '../store/slices/longTermTaskSl
 import { clearCurrentSession, setNewTaskMetabotId } from '../store/slices/coworkSlice';
 import type { OpenTeamCollabSummary } from '../types/openTeamCollab';
 import { buildUnifiedTaskList } from '../utils/unifiedTaskList';
-import { MagnifyingGlassIcon, ArchiveBoxIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { MagnifyingGlassIcon, ArchiveBoxIcon, XMarkIcon, ClockIcon } from '@heroicons/react/24/outline';
+import ComposeIcon from './icons/ComposeIcon';
 import Tooltip from './ui/Tooltip';
 import FilterLinesIcon from './icons/FilterLinesIcon';
 import BackgroundTasksBadge from './cowork/BackgroundTasksBadge';
@@ -174,6 +176,12 @@ const Sidebar: React.FC<SidebarProps> = ({
   // tab is visible).
   const [openTeamCollabs, setOpenTeamCollabs] = useState<OpenTeamCollabSummary[]>([]);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  // BotHub session-records overlay (owner spec 2026-11-08 21:31, kept by the
+  // 22:19 re-ruling): the toggle lives in the shared surface header bar, so its
+  // state is owned here and the panel below is controlled. Switching to
+  // BotWorks closes it — the panel unmounts on that face anyway, and a stale
+  // "open" must not greet the next visit.
+  const [panelHistoryOpen, setPanelHistoryOpen] = useState(false);
   const dispatch = useDispatch();
   // Which task-record category the home history list shows. Persisted across
   // app restarts; the header + tabs stay fixed while only the list scrolls.
@@ -565,7 +573,60 @@ const Sidebar: React.FC<SidebarProps> = ({
     await groupTaskService.archiveTask(taskId);
   };
 
-
+  // The shared header bar's right-hand slot. BotWorks keeps the records search
+  // and the shell's live indicators; BotHub carries the session window's two
+  // light actions — new session and session records. Both sets are 28 px
+  // controls on the same 36 px band (aesthetic grid v1).
+  const surfaceHeaderActions = mode === 'home' ? (
+    <>
+      <button
+        type="button"
+        onClick={() => {
+          onShowCowork();
+          setIsSearchOpen(true);
+        }}
+        className="non-draggable inline-flex h-7 w-7 items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+        aria-label={i18nService.t('search')}
+      >
+        <MagnifyingGlassIcon className="h-4 w-4" />
+      </button>
+      <BackgroundTasksBadge onShowGroupTasks={onShowGroupTasks} />
+      <SleepGuardBadge />
+    </>
+  ) : (
+    <>
+      <button
+        type="button"
+        data-slot="cowork-new-session"
+        onClick={() => {
+          setPanelHistoryOpen(false);
+          browserCoworkService.startNewDraft();
+        }}
+        className="non-draggable inline-flex h-7 w-7 items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+        aria-label={i18nService.t('botBrowserCoworkNew')}
+        title={i18nService.t('botBrowserCoworkNew')}
+      >
+        <ComposeIcon className="h-4 w-4" />
+      </button>
+      <button
+        type="button"
+        data-slot="cowork-toggle-history"
+        aria-expanded={panelHistoryOpen}
+        onClick={() => setPanelHistoryOpen((value) => !value)}
+        className={`non-draggable inline-flex h-7 w-7 items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
+          panelHistoryOpen
+            ? 'dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover dark:text-claude-darkText text-claude-text'
+            : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text'
+        }`}
+        aria-label={i18nService.t('botBrowserCoworkHistory')}
+        title={i18nService.t('botBrowserCoworkHistory')}
+      >
+        <ClockIcon className="h-4 w-4" />
+      </button>
+      <BackgroundTasksBadge onShowGroupTasks={onShowGroupTasks} />
+      <SleepGuardBadge />
+    </>
+  );
 
   return (
     <aside
@@ -576,42 +637,19 @@ const Sidebar: React.FC<SidebarProps> = ({
       }`}
       style={{ width: isCollapsed ? 0 : width }}
     >
-      {/* Traffic-light strip. It reserves the same 56 px the BotWorks header
-          stack occupies (pt-3 + h-8 drag row + mt-3), so the surface switcher
-          below starts at the SAME height on both faces — directly under the
-          traffic lights, never beside them. The live background-work indicators
-          keep their old top-right seat. */}
+      {/* The ONE shared surface header bar (owner ruling 2026-11-08 22:19):
+          the baseline two-cell segmented switcher at the left, the face's
+          light actions at the right. The 56 px strip above reserves the
+          traffic-light band, so the bar starts at the SAME height on both
+          faces — directly under the traffic lights, never beside them. */}
       <div data-slot="mid-column-header" className="shrink-0">
-        <div className="draggable flex h-14 items-center gap-1 px-2.5">
-          {mode === 'home' && (
-            <button
-              type="button"
-              onClick={() => {
-                onShowCowork();
-                setIsSearchOpen(true);
-              }}
-              className="non-draggable inline-flex h-7 w-7 items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
-              aria-label={i18nService.t('search')}
-            >
-              <MagnifyingGlassIcon className="h-4 w-4" />
-            </button>
-          )}
-          <div className="ml-auto flex items-center gap-2">
-            <BackgroundTasksBadge onShowGroupTasks={onShowGroupTasks} />
-            <SleepGuardBadge />
-          </div>
-        </div>
-        {/* The ONE surface switcher (owner ruling 2026-11-08 22:19): the IDBots
-            baseline segmented control, mounted in the same place on BotHub and
-            BotWorks — full column width, directly below the traffic-light
-            strip. Same component, same position; only the face changes. */}
-        <div data-slot="surface-switcher-slot" className="px-2.5 pb-2">
-          <BotBrowserModeSwitch
-            mode={mode}
-            onSelectBrowser={() => onSelectSurface('browser')}
-            onSelectHome={() => onSelectSurface('home')}
-          />
-        </div>
+        <div className="draggable h-14" />
+        <BotBrowserModeSwitch
+          mode={mode}
+          onSelectBrowser={() => onSelectSurface('browser')}
+          onSelectHome={() => onSelectSurface('home')}
+          actions={surfaceHeaderActions}
+        />
       </div>
 
       {mode === 'home' ? (
@@ -877,6 +915,8 @@ const Sidebar: React.FC<SidebarProps> = ({
             onShowSkills={onShowSkills}
             onOpenNewProject={() => onShowSettings({ initialTab: 'projects', openNewProjectForm: true })}
             onOpenBotHome={onSelectHome}
+            historyOpen={panelHistoryOpen}
+            onHistoryOpenChange={setPanelHistoryOpen}
           />
         </div>
       )}

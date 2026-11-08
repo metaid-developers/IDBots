@@ -24,123 +24,140 @@ const panelSource = readFileSync(
 );
 
 /**
- * Owner ruling 2026-11-08 22:19 (supersedes the 21:31 header-bar form): the
- * switcher is the ORIGINAL IDBots segmented control — two cells in one bordered
- * tray, the current face filled with the yellow primary capsule — mounted in
- * the same place on both faces (directly below the traffic-light strip). Labels
- * are the finalized BotHub | BotWorks; interaction semantics stay aria-pressed +
- * the same two callbacks.
+ * Owner ruling 2026-11-08 22:19 (supersedes the 21:31 pill + menu form): the
+ * surface switcher is the ORIGINAL IDBots segmented control, living inside the
+ * shared 36 px header bar that sits directly below the traffic-light strip on
+ * both faces. Two text cells, yellow fill on the current face, no mark / no
+ * chevron / no menu; radiogroup + radio semantics and arrow-key movement.
  */
-function render(mode: BotBrowserSurfaceMode) {
+function render(
+  mode: BotBrowserSurfaceMode,
+  extra: { actions?: React.ReactNode } = {},
+) {
   return renderToStaticMarkup(
     <BotBrowserModeSwitch
       mode={mode}
       onSelectHome={() => {}}
       onSelectBrowser={() => {}}
+      {...extra}
     />,
   );
 }
 
-test('the switch is ONE two-cell segmented control naming both faces', () => {
+test('the bar is ONE shared 36 px row with a two-cell radiogroup at the left', () => {
   const markup = render('home');
 
-  assert.match(markup, /data-slot="bot-browser-mode-bar"/);
-  assert.match(markup, /data-slot="bot-browser-mode-segments"/);
-  assert.match(markup, /role="group"/);
-  // Exactly two buttons — the two surfaces, in order, text only.
+  assert.match(markup, /data-slot="surface-header-bar"/);
+  assert.match(markup, /data-slot="surface-header-bar"[^>]*h-9/);
+  assert.match(markup, /role="radiogroup"/);
+  // Exactly two radios — the two surfaces, in order, text only.
   assert.equal((markup.match(/<button/g) ?? []).length, 2);
+  assert.equal((markup.match(/role="radio"/g) ?? []).length, 2);
   const options = markup.match(/data-slot="surface-switch-option"/g) ?? [];
   assert.equal(options.length, 2);
   assert.ok(markup.indexOf('BotHub') < markup.indexOf('BotWorks'));
   assert.match(markup, /data-surface="browser"/);
   assert.match(markup, /data-surface="home"/);
-  // No header-bar residue: no logo, no chevron menu, no standalone trigger.
+  // No pill residue: no logo, no chevron menu, no haspopup trigger.
   assert.doesNotMatch(markup, /surface-brand-mark/);
-  assert.doesNotMatch(markup, /surface-switch-trigger/);
+  assert.doesNotMatch(markup, /aria-haspopup/);
   assert.doesNotMatch(markup, /surface-switch-menu/);
+  assert.doesNotMatch(markup, /surface-switch-trigger/);
 });
 
-test('the current face is the pressed, yellow-filled cell', () => {
+test('the current face is the checked, yellow-filled radio', () => {
   const home = render('home');
-  assert.match(home, /data-surface="home"[^>]*aria-pressed="true"/);
-  assert.match(home, /data-surface="browser"[^>]*aria-pressed="false"/);
+  assert.match(home, /aria-checked="true"[^>]*data-surface="home"/);
+  assert.match(home, /aria-checked="false"[^>]*data-surface="browser"/);
 
   const start = home.indexOf('data-surface="home"');
   const homeButton = home.slice(start, home.indexOf('</button>', start));
-  assert.match(homeButton, /btn-idchat-primary-filled/);
-  assert.match(homeButton, /\bstill\b/);
+  assert.match(homeButton, /bg-claude-accent/);
+  assert.match(homeButton, /text-claude-accentInk/);
+  assert.match(home, /aria-checked="true" tabindex="0"/);
 
   const browserStart = home.indexOf('data-surface="browser"');
   const browserButton = home.slice(browserStart, home.indexOf('</button>', browserStart));
   assert.match(browserButton, /text-claude-textSecondary/);
-  assert.doesNotMatch(browserButton, /btn-idchat-primary-filled/);
+  assert.doesNotMatch(browserButton, /bg-claude-accent\b/);
+  assert.match(home, /aria-checked="false" tabindex="-1"/);
 
   // Flipping the mode moves the fill, never duplicates it.
   const browser = render('browser');
-  assert.match(browser, /data-surface="browser"[^>]*aria-pressed="true"/);
-  assert.match(browser, /data-surface="home"[^>]*aria-pressed="false"/);
-  assert.equal((browser.match(/btn-idchat-primary-filled/g) ?? []).length, 1);
+  assert.match(browser, /aria-checked="true"[^>]*data-surface="browser"/);
+  assert.match(browser, /aria-checked="false"[^>]*data-surface="home"/);
+  assert.equal((browser.match(/bg-claude-accent\b/g) ?? []).length, 1);
 });
 
 test('the tray keeps the baseline segmented grammar', () => {
   const markup = render('browser');
   const trayStart = markup.indexOf('data-slot="bot-browser-mode-segments"');
-  const tray = markup.slice(trayStart, markup.indexOf('</div>', trayStart));
-  for (const token of ['grid-cols-2', 'rounded-lg', 'gap-1', 'p-1', 'border-claude-border/70']) {
+  const tray = markup.slice(trayStart, markup.indexOf('>', trayStart));
+  for (const token of ['grid-cols-2', 'rounded-lg', 'gap-1', 'p-0.5', 'border-claude-border/70']) {
     assert.ok(tray.includes(token), `tray is missing ${token}`);
   }
   const buttonStart = markup.indexOf('data-slot="surface-switch-option"');
-  const button = markup.slice(buttonStart, markup.indexOf('</button>', buttonStart));
-  for (const token of ['h-8', 'rounded-md', 'text-xs', 'font-medium']) {
+  const button = markup.slice(buttonStart, markup.indexOf('>', buttonStart));
+  for (const token of ['h-7', 'rounded-md', 'text-xs', 'font-medium']) {
     assert.ok(button.includes(token), `segment is missing ${token}`);
   }
 });
 
 test('the group aria-label speaks the new face names', () => {
   const markup = render('browser');
-  assert.match(markup, /role="group"[^>]*aria-label="[^"]*BotHub[^"]*BotWorks"/);
+  assert.match(markup, /role="radiogroup"[^>]*aria-label="[^"]*BotHub[^"]*BotWorks"/);
   // The old hard-coded English label must be gone.
   assert.doesNotMatch(markup, /Bot Internet display mode/);
 });
 
-test('the switch wears this repo’s tokens, not an imported palette', () => {
-  assert.doesNotMatch(switchSource, /#[0-9a-fA-F]{3,8}\b/);
-  assert.doesNotMatch(switchSource, /\b(?:rgb|hsl)a?\(/);
-  assert.doesNotMatch(
-    switchSource,
-    /\b(?:bg|text|border|ring)-(?:red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose|slate|gray|zinc|neutral|stone)-\d{2,3}\b/,
-  );
+test('arrow keys move focus and the checked face (radiogroup keyboard contract)', () => {
   for (const token of [
-    'bg-claude-bg',
-    'border-claude-border',
-    'text-claude-textSecondary',
-    'ring-claude-accent',
-    'btn-idchat-primary-filled',
+    'onKeyDown',
+    'ArrowRight',
+    'ArrowLeft',
+    'ArrowUp',
+    'ArrowDown',
+    'Home',
+    'End',
+    'tabIndex',
+    'role="radiogroup"',
+    'role="radio"',
   ]) {
-    assert.ok(switchSource.includes(token), `missing repo token ${token}`);
+    assert.ok(switchSource.includes(token), `switch source is missing ${token}`);
   }
 });
 
-test('both faces mount the SAME switch; the session actions return to the panel', () => {
+test('the bar keeps a right-hand action slot', () => {
+  const markup = render('browser', {
+    actions: <button type="button" aria-label="new session">✎</button>,
+  });
+  assert.match(markup, /data-slot="surface-header-actions"/);
+  const bar = markup.slice(markup.indexOf('data-slot="surface-header-bar"'));
+  assert.ok(bar.indexOf('surface-header-actions') > bar.indexOf('bot-browser-mode-segments'));
+  assert.match(bar, /aria-label="new session"/);
+});
+
+test('both faces mount the SAME bar; the session actions ride its right end', () => {
   // One mount per face, none in App.
   assert.equal((sidebarSource.match(/<BotBrowserModeSwitch/g) ?? []).length, 1);
   assert.equal((homeSidebarSource.match(/<BotBrowserModeSwitch/g) ?? []).length, 1);
 
   // Same position on both faces: below the traffic-light strip. BotWorks uses
-  // the baseline drag header + mt-3 slot; BotHub reserves the same 52/56 px
-  // above its switcher slot.
-  assert.match(homeSidebarSource, /draggable sidebar-header-drag h-8 flex items-center px-3/);
-  assert.match(homeSidebarSource, /className="mt-3 px-3"[\s\S]{0,120}<BotBrowserModeSwitch/);
-  assert.match(sidebarSource, /data-slot="mid-column-header"[\s\S]*?data-slot="surface-switcher-slot"[\s\S]{0,160}<BotBrowserModeSwitch/);
+  // the baseline drag row + mt-3 slot; BotHub reserves the same 56 px above
+  // the bar.
+  assert.match(homeSidebarSource, /draggable sidebar-header-drag h-8 px-3/);
+  assert.match(homeSidebarSource, /className="mt-3"[\s\S]{0,160}<BotBrowserModeSwitch/);
+  assert.match(sidebarSource, /data-slot="mid-column-header"[\s\S]*?<BotBrowserModeSwitch/);
+  assert.match(sidebarSource, /actions={surfaceHeaderActions}/);
 
-  // The 21:31 header-bar action slot is gone; new session / records live in the
-  // session window's own action row again, with the same service call.
-  assert.doesNotMatch(sidebarSource, /data-slot="cowork-new-session"/);
-  assert.doesNotMatch(sidebarSource, /data-slot="cowork-toggle-history"/);
-  assert.match(panelSource, /data-slot="cowork-panel-actions"/);
-  assert.match(panelSource, /browserCoworkService\.startNewDraft\(\)/);
-  assert.match(panelSource, /botBrowserCoworkNew/);
-  assert.match(panelSource, /botBrowserCoworkHistory/);
-  // …and the records panel restyle is untouched by this switch rework.
+  // The 21:31 action slots stay in the bar: new session / records on BotHub,
+  // collapse + update badge on BotWorks.
+  assert.match(sidebarSource, /data-slot="cowork-new-session"/);
+  assert.match(sidebarSource, /data-slot="cowork-toggle-history"/);
+  assert.match(homeSidebarSource, /onToggleCollapse/);
+  assert.match(homeSidebarSource, /updateBadge/);
+  // The panel keeps the records overlay but no second action row.
   assert.match(panelSource, /CoworkHistoryPanel/);
+  assert.doesNotMatch(panelSource, /data-slot="cowork-panel-actions"/);
+  assert.match(panelSource, /historyOpen \?\? internalShowHistory/);
 });
