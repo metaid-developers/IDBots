@@ -1,6 +1,6 @@
 # Backend Requirements — Bill Sponsored On-Chain Traffic in ME Credits (assist-base-service)
 
-- Status: Draft v0.1, 2026-11-09. Items marked **[D1]–[D4]** wait on owner decisions (section 6).
+- Status: **Approved v1.0**, 2026-11-09. Owner confirmed D1–D4 per section 6 (all recommendations adopted).
 - Client counterpart: IDBots branch `feat/credits-traffic-unify` (developed in parallel; see Appendix A).
 - Related contracts: `docs/gasfee-flow/backend-spec.md` (traffic account), `docs/gasfee-flow/me-payment-and-ledger-backend-requirements.md` (ME ledger), ABS `docs/me-points/客户端与宿主接入指南.md`.
 
@@ -58,7 +58,7 @@ Target client behavior:
 8. **Idempotency.** Every step above is keyed on `orderId`, like the byte path.
 9. **Echo.** The `pre` / `commit` responses and `GET /v2/assist/gas/mvc/order/:orderId` return `paySource` (`"me" | "bytes" | "quota"`) and `meAmountMilli`, so the client records what was actually billed.
 
-### R2. Fix the traffic rate unit — [D1]
+### R2. Traffic rate unit — decided (D1)
 
 - **Problem.** `ReportMeteringEvent` documents the traffic quantity in **MB** (`service/me_service/metering_burn_service.go`, comment above `ReportMeteringEvent`; `docs/me-points/客户端与宿主接入指南.md:344`), but `ConvertToMeMilli` divides by 1e6. With the owner value `trafficMePerMillion = 20` (`docs/me-points/参数默认值清单.md:62`), 1 MB costs 0.00002 ME.
 - **Fix.** The traffic base unit is **1 byte of final transaction size** (`txSize`, the unit the sponsor already measures). `trafficMePerMillion = 20` then means 20 ME per 1,000,000 bytes:
@@ -96,7 +96,7 @@ Target client behavior:
   It covers both pay sources, so users keep their older byte-billed history.
 - ME burn rows for traffic: `refType = "metering:traffic"`, `refId` = `orderId`, and `reason` carries the bot address and `txSize` (public values only).
 
-### R5. Existing byte balances — [D2]
+### R5. Existing byte balances — decided (D2): convert to ME
 
 **Recommended:** a one-time, per-account conversion of the remaining `balanceBytes` into ME at the R2 rate, minted into the `topup` bucket (never expires). The new client triggers it once when Credits payment is enabled, through a signed, idempotent endpoint:
 
@@ -147,13 +147,13 @@ Legacy per-address sats quota (`PaySourceQuota`), LLM relay admission and quota,
 
 R2 → R1 + R7 → R3 → R4 → R5 / R6. The client ships behind `me.trafficBilling`: until ABS reports it `true`, the client keeps byte billing, so the two sides can release independently.
 
-## 6. Owner decisions
+## 6. Owner decisions — all confirmed 2026-11-09
 
-| ID | Question | Recommendation |
+| ID | Question | Decision |
 |---|---|---|
 | D1 | Traffic rate | `trafficMePerMillion = 20` with base unit = byte, i.e. 1 MB = 20 ME |
 | D2 | Remaining byte balances | Convert to ME (`topup` bucket), triggered per account by the new client |
-| D3 | (client) Users who explicitly chose MetaBot self-pay | Keep them OFF; the default ON applies to everyone else |
+| D3 | (client) Users who explicitly chose MetaBot self-pay | They stay OFF; the default ON applies to everyone else |
 | D4 | (client / cloud) Server mode tenants | Stay on byte billing in this phase; the bundle product moves via a separate cloud-mobile change request |
 
 ## Appendix A — Client behavior (IDBots, for context)
