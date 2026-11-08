@@ -37,7 +37,8 @@ outputs[0] = P2PKH(priceSats → seller address)        ← paired with input 0
 
 - Signed with `SIGHASH_SINGLE | FORKID | ANYONECANPAY` (constant
   `MRC721_OPEN_OFFER_SIGHASH`, computed from `mvc.crypto.Signature`
-  constants — measured, never guessed; expected byte 194, asserted in
+  constants — measured, never guessed; the byte is 195
+  (SINGLE=0x03 | FORKID=0x40 | ACP=0x80), pinned in
   tests).
 - The offer tx contains EXACTLY one input and one output. Everything else
   (buyer funding, delivery output, change) is appended by the buyer and is
