@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   extractMeApprovalUrl,
+  extractMeExpiresAt,
   extractMeQrCode,
   meDiscountFromPct,
   mePaymentPhase,
@@ -33,9 +34,30 @@ test('checkout normalization uses server price and gateway data before local fal
     qrCode: 'https://qr.alipay.com/me-order-1',
     payAmount: 49,
     payCurrency: 'CNY',
+    expiresAt: undefined,
   });
   assert.equal(normalizeMePaymentCheckout(null, 49), null);
   assert.equal(normalizeMePaymentCheckout({ status: 'created' }, 49), null);
+});
+
+test('checkout carries the payment-code expiry when the server sends one (and nothing when it does not)', () => {
+  // Current servers send no expiry field at all.
+  assert.equal(extractMeExpiresAt({ gatewayParams: { qrCode: 'https://qr.alipay.com/x' } }), undefined);
+  // Order-body and gatewayParams keys, in seconds or milliseconds.
+  assert.equal(extractMeExpiresAt({ expiresAt: 1794000000 }), 1794000000000);
+  assert.equal(extractMeExpiresAt({ expire_at: 1794000000000 }), 1794000000000);
+  assert.equal(extractMeExpiresAt({ gatewayParams: { qrExpireAt: 1794000000 } }), 1794000000000);
+  assert.equal(extractMeExpiresAt({ gatewayParams: { timeExpire: 0 }, expiresAt: 1794000000 }), 1794000000000);
+  // Garbage values are ignored, not coerced.
+  assert.equal(extractMeExpiresAt({ expiresAt: 'not-a-number' }), undefined);
+  assert.equal(extractMeExpiresAt({ expiresAt: -5 }), undefined);
+  // Surfaced on the normalized checkout.
+  const checkout = normalizeMePaymentCheckout({
+    orderId: 'me-order-3',
+    status: 'created',
+    gatewayParams: { qrCode: 'https://qr.alipay.com/me-order-3', expiresAt: 1794000000 },
+  }, 49);
+  assert.equal(checkout?.expiresAt, 1794000000000);
 });
 
 test('checkout normalization accepts legacy amount fields without overriding server values', () => {

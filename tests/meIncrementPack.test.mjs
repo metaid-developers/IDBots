@@ -28,6 +28,9 @@ function verifyCall(call, action) {
 
 const settingsSource = read('src/renderer/components/Settings.tsx');
 const packCardSource = read('src/renderer/components/me/MeIncrementPackCard.tsx');
+const purchaseFlowSource = read('src/renderer/components/me/MePurchaseFlow.tsx');
+const usageSource = read('src/renderer/components/me/MeUsageAndCredits.tsx');
+const paymentSource = read('src/renderer/components/me/mePayment.ts');
 const serviceSource = read('src/main/services/mePointSettings.ts');
 const pointsServiceSource = read('src/main/services/mePointsService.ts');
 const i18nSource = read('src/renderer/services/i18n.ts');
@@ -192,4 +195,41 @@ test('getMeSettings/setMeSettings sign the pinned actions and normalize strictly
 
   // Non-boolean never leaves the client.
   await assert.rejects(() => setMeSettings('yes'), /must be a boolean/);
+});
+
+test('payment UX honesty: topup intro, code expiry, stale-unpaid orders, gateway fallback', () => {
+  // Topup section carries the corrected credit-pack intro (pack ME never
+  // expires, giftable, auto-continues paying after the weekly quota dies).
+  assert.match(purchaseFlowSource, /mePurchaseTopupIntro/);
+  assert.match(i18nSource, /mePurchaseTopupIntro: '充值所得 ME 直接进入「积分增量包」/);
+  // The payment-code deadline renders ONLY from a server-provided expiresAt —
+  // never a hardcoded validity claim.
+  assert.match(purchaseFlowSource, /checkout\.expiresAt\s*\n\s*\? i18nService\.t\('mePurchaseQrExpiryAt'\)/);
+  assert.match(paymentSource, /expiresAt\?: number/);
+  assert.match(paymentSource, /export function extractMeExpiresAt/);
+  // Gateway not enabled server-side → friendly "use Alipay" copy, not a raw
+  // backend error string.
+  assert.match(purchaseFlowSource, /isGatewayUnavailableError\(errorCode, orderError\)/);
+  assert.match(purchaseFlowSource, /GATEWAY_NOT_CONFIGURED\|GATEWAY_UNSUPPORTED/i);
+  assert.match(i18nSource, /mePurchaseGatewayUnavailable/);
+  // Usage page: subscription orders unpaid past 2h render 超时未支付 (gray,
+  // not the live amber 提交中) and stop driving the 20s status poll.
+  assert.match(usageSource, /ME_UNPAID_ORDER_STALE_MS = 2 \* 60 \* 60 \* 1000/);
+  assert.match(usageSource, /isStaleUnpaidSubscriptionOrder/);
+  assert.match(usageSource, /row\.staleUnpaid \? i18nService\.t\('meUsageOrderStale'\) : orderStatusLabel\(row\.status\)/);
+  assert.match(usageSource, /!isStaleUnpaidSubscriptionOrder\(order, now\) && pendingLive\(order\.status\)/);
+  assert.match(i18nSource, /meUsageOrderStale: '超时未支付'/);
+});
+
+test('d16681f server contract lands without further client changes; closed ≠ rejected', () => {
+  // assist-base-service d16681f: topup gateway checkout returns the order view
+  // at data top-level with gatewayParams(qrCode + expiresAt copy) — the
+  // desktop normalizer reads those exact fields; no client change needed.
+  assert.match(pointsServiceSource, /order: normalizeMeTopupOrder\(data\)/);
+  assert.match(pointsServiceSource, /gatewayParams: record\.gatewayParams \?\? record\.gateway_params/);
+  // Janitor-expired orders close with statusText "closed" — shown as 已关闭,
+  // never as the admin-rejection wording 已拒绝.
+  assert.match(usageSource, /\/reject\|fail\/i\.test\(normalized\)\s*\n\s*\? i18nService\.t\('meOrderStatusRejected'\)/);
+  assert.match(i18nSource, /meOrderStatusClosed: '已关闭'/);
+  assert.match(i18nSource, /meOrderStatusClosed: 'Closed'/);
 });

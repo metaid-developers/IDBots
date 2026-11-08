@@ -85,6 +85,26 @@ const priceLabel = (value: number | null | undefined): string => (
   value != null && Number.isFinite(value) ? `${value}` : '—'
 );
 
+/** Payment-code deadline (epoch ms) in the user's locale, e.g. "11/8/26, 5:16 PM". */
+const formatPaymentDeadline = (expiresAt: number): string => {
+  try {
+    return new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'short' }).format(expiresAt);
+  } catch {
+    return '—';
+  }
+};
+
+/**
+ * The selected gateway is not enabled server-side (assist-base-service
+ * ErrGatewayNotConfigured — e.g. PayPal credentials not set in production).
+ * Matched on the envelope errorCode first, then the server message, so the
+ * user sees "use Alipay instead" rather than a raw backend string.
+ */
+const isGatewayUnavailableError = (errorCode: string, message: string): boolean => (
+  /GATEWAY_NOT_CONFIGURED|GATEWAY_UNSUPPORTED/i.test(errorCode)
+  || /gateway is not configured|gateway unsupported/i.test(message)
+);
+
 const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectionChange, onClose }) => {
   const snapshot = React.useSyncExternalStore(subscribeMeSnapshot, getMeSnapshot, getMeSnapshot);
   const [selectedPlanId, setSelectedPlanId] = useState('');
@@ -476,6 +496,9 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
               {section === 'topup' && (
                 subscribed ? (
                   <div className="space-y-2">
+                    <p className="text-[11px] leading-relaxed text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                      {i18nService.t('mePurchaseTopupIntro')}
+                    </p>
                     {topupPackages.map((pkg) => (
                       <button
                         key={pkg.packageId}
@@ -620,7 +643,9 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
                 <span>{i18nService.t('mePurchaseChecking')}</span>
               </div>
               <p className="text-[10px] leading-relaxed text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                {i18nService.t('mePurchaseOrderExpiry')}
+                {checkout.expiresAt
+                  ? i18nService.t('mePurchaseQrExpiryAt').replace('{time}', formatPaymentDeadline(checkout.expiresAt))
+                  : i18nService.t('mePurchaseOrderExpiry')}
               </p>
               <div className="flex flex-wrap justify-end gap-2">
                 {paymentUrl && (
@@ -701,6 +726,10 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
                     {i18nService.t('mePurchaseOpenPlans')}
                   </button>
                 </>
+              ) : isGatewayUnavailableError(errorCode, orderError) ? (
+                <p className="text-[11px] text-red-700 dark:text-red-300">
+                  {i18nService.t('mePurchaseGatewayUnavailable')}
+                </p>
               ) : (
                 <p className="text-[11px] text-red-700 dark:text-red-300">
                   {i18nService.t('mePurchasePaymentFailed').replace('{error}', orderError)}
