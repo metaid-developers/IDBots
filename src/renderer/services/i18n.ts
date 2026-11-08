@@ -174,7 +174,22 @@ const translations: Record<LanguageType, Record<string, string>> = {
     botInternet: 'Bot Internet',
     botBrowser: 'Bot Browser',
     botHome: 'Bot Home',
-    
+
+    // 三栏骨架（切片一）：左图标栏 / Codex 式工作台下拉 / 中栏列表
+    workspaceRailLabel: '功能栏',
+    surfaceSwitcherLabel: '切换工作台',
+    surfaceBotInternetSubtitle: '浏览器、元应用与你的 Bots',
+    surfaceBotHomeSubtitle: '任务、长期任务与任务记录',
+    railLongTermTasks: '长期任务',
+    railTaskRecords: '任务记录',
+    homeMidLongTermEmpty: '还没有长期任务。',
+    homeMidLongTermHint: '完整看板在右栏。',
+    homeMidGroupTasksEmpty: '还没有群任务。',
+    internetCoworkPaneSessions: '{count} 条会话',
+    internetCoworkPaneBrowserSessions: '其中 {count} 条来自 Bot Browser',
+    internetCoworkPaneOpenBrowser: '在右栏打开 Bot Browser',
+    internetCoworkPaneHint: '会话列表在中栏。选一条会话即可继续；会话流将在下一刀接入右栏。',
+
     // 错误信息
     failedToLoadSettings: '加载设置失败',
     failedToSaveSettings: '保存设置失败',
@@ -3791,7 +3806,23 @@ const translations: Record<LanguageType, Record<string, string>> = {
     botInternet: 'Bot Internet',
     botBrowser: 'Bot Browser',
     botHome: 'Bot Home',
-    
+
+    // Three-column shell (slice 1): the icon rail, the Codex-style surface
+    // menu, and the middle column's list sections.
+    workspaceRailLabel: 'Workspace rail',
+    surfaceSwitcherLabel: 'Switch workspace',
+    surfaceBotInternetSubtitle: 'Browser, Meta Apps and your Bots',
+    surfaceBotHomeSubtitle: 'Tasks, long-term work and records',
+    railLongTermTasks: 'Long-term tasks',
+    railTaskRecords: 'Task records',
+    homeMidLongTermEmpty: 'No long-term tasks yet.',
+    homeMidLongTermHint: 'The full board is in the right pane.',
+    homeMidGroupTasksEmpty: 'No group tasks yet.',
+    internetCoworkPaneSessions: '{count} sessions',
+    internetCoworkPaneBrowserSessions: '{count} of them from Bot Browser',
+    internetCoworkPaneOpenBrowser: 'Open Bot Browser in the right pane',
+    internetCoworkPaneHint: 'The session list is in the middle pane. Pick a session to continue; the session flow joins this pane in the next slice.',
+
     // Error Messages
     failedToLoadSettings: 'Failed to load settings',
     failedToSaveSettings: 'Failed to save settings',

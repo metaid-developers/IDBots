@@ -1,4 +1,7 @@
-import React from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { ChevronDownIcon, GlobeAltIcon, HomeIcon } from '@heroicons/react/24/outline';
+import { i18nService } from '../../services/i18n';
+import { getSurfaceMenuModel } from '../../components/sidebar/sidebarNavigation.js';
 import type { BotBrowserSurfaceMode } from './types';
 
 interface BotBrowserModeSwitchProps {
@@ -7,46 +10,164 @@ interface BotBrowserModeSwitchProps {
   onSelectBrowser: () => void;
 }
 
-const tabClass = (active: boolean) => [
-  'non-draggable inline-flex h-8 min-w-0 items-center justify-center rounded-md px-2 text-xs font-medium leading-none transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40',
-  active
-    ? 'btn-idchat-primary-filled still'
-    : 'text-claude-textSecondary hover:bg-claude-surfaceHover/70 hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover/70 dark:hover:text-claude-darkText',
-].join(' ');
+interface SurfaceMenuModelItem {
+  id: BotBrowserSurfaceMode;
+  label: string;
+  subtitle: string;
+}
 
+const SurfaceEntryIcon: React.FC<{ id: BotBrowserSurfaceMode; className?: string }> = ({ id, className }) =>
+  id === 'home'
+    ? <HomeIcon className={className} />
+    : <GlobeAltIcon className={className} />;
+
+/**
+ * The expanded surface menu — split out of the trigger so the two states can be
+ * rendered independently (static-markup tests render it directly).
+ *
+ * Codex-style: every entry is a title line plus a muted subtitle line, the
+ * current surface is checked, and the whole list is one menu rather than the
+ * old two-segment control.
+ */
+export const SurfaceModeMenu: React.FC<{
+  open: boolean;
+  mode: BotBrowserSurfaceMode;
+  items: SurfaceMenuModelItem[];
+  onSelect: (mode: BotBrowserSurfaceMode) => void;
+}> = ({ open, mode, items, onSelect }) => {
+  if (!open) return null;
+  return (
+    <div
+      data-slot="surface-switch-menu"
+      role="menu"
+      aria-label={i18nService.t('surfaceSwitcherLabel')}
+      className="non-draggable absolute left-[calc(100%+10px)] top-0 z-[60] w-[252px] overflow-hidden rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface p-1 shadow-xl"
+    >
+      {items.map((item) => {
+        const active = mode === item.id;
+        return (
+          <button
+            key={item.id}
+            type="button"
+            role="menuitemradio"
+            aria-checked={active}
+            data-slot="surface-switch-option"
+            data-surface={item.id}
+            onClick={() => onSelect(item.id)}
+            className={`flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors ${
+              active
+                ? 'dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover'
+                : 'hover:dark:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover'
+            }`}
+          >
+            <SurfaceEntryIcon
+              id={item.id}
+              className={`mt-0.5 h-4 w-4 shrink-0 ${
+                active
+                  ? 'dark:text-claude-darkText text-claude-text'
+                  : 'dark:text-claude-darkTextSecondary text-claude-textSecondary'
+              }`}
+            />
+            <span className="min-w-0 flex-1">
+              <span
+                className={`block truncate text-[13px] font-medium leading-tight ${
+                  active
+                    ? 'dark:text-claude-darkText text-claude-text'
+                    : 'dark:text-claude-darkTextSecondary text-claude-textSecondary'
+                }`}
+              >
+                {item.label}
+              </span>
+              <span className="mt-0.5 block text-[11px] leading-snug dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                {item.subtitle}
+              </span>
+            </span>
+            {active && (
+              <span aria-hidden className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-claude-accent" />
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+};
+
+/**
+ * Surface switcher for the left rail (three-column shell, slice 1).
+ *
+ * The old control was a two-segment row. In a 64 px icon rail that cannot hold
+ * two labelled segments, so it became a Codex-style dropdown: one single-line
+ * trigger (the current surface's icon plus a chevron), and the menu carries the
+ * names and their subtitles. The trigger stays a single row; its accessible
+ * name names the current surface, and the menu is the only place both surfaces
+ * are listed.
+ */
 const BotBrowserModeSwitch: React.FC<BotBrowserModeSwitchProps> = ({
   mode,
   onSelectHome,
   onSelectBrowser,
 }) => {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  const items: SurfaceMenuModelItem[] = getSurfaceMenuModel({ t: (key: string) => i18nService.t(key) });
+  const current = items.find((item) => item.id === mode) ?? items[0];
+
+  const handleSelect = useCallback(
+    (next: BotBrowserSurfaceMode) => {
+      setOpen(false);
+      if (next === 'home') onSelectHome();
+      else onSelectBrowser();
+    },
+    [onSelectBrowser, onSelectHome],
+  );
+
+  // Outside click + Escape close the menu. Both listeners only exist while the
+  // menu is open, so a closed rail costs nothing.
+  useEffect(() => {
+    if (!open) return undefined;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (rootRef.current && event.target instanceof Node && rootRef.current.contains(event.target)) return;
+      setOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [open]);
+
   return (
-    <div
-      data-slot="bot-browser-mode-bar"
-      className="w-full"
-    >
-      <div
-        data-slot="bot-browser-mode-segments"
-        role="group"
-        aria-label="Bot Internet display mode"
-        className="non-draggable grid w-full grid-cols-2 gap-1 rounded-lg border border-claude-border/70 bg-claude-bg/80 p-1 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80"
+    <div ref={rootRef} data-slot="bot-browser-mode-bar" className="relative w-full">
+      <button
+        type="button"
+        data-slot="surface-switch-trigger"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`${i18nService.t('surfaceSwitcherLabel')}: ${current.label}`}
+        title={current.label}
+        onClick={() => setOpen((value) => !value)}
+        className={`non-draggable flex h-10 w-full items-center justify-center gap-0.5 rounded-xl border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
+          open
+            ? 'border-claude-accent/60 dark:border-claude-accent/60 dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover'
+            : 'border-transparent hover:dark:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover'
+        }`}
       >
-        <button
-          type="button"
-          aria-pressed={mode === 'browser'}
-          className={tabClass(mode === 'browser')}
-          onClick={onSelectBrowser}
-        >
-          Bot Internet
-        </button>
-        <button
-          type="button"
-          aria-pressed={mode === 'home'}
-          className={tabClass(mode === 'home')}
-          onClick={onSelectHome}
-        >
-          Bot Home
-        </button>
-      </div>
+        <SurfaceEntryIcon
+          id={mode}
+          className="h-[18px] w-[18px] dark:text-claude-darkText text-claude-text"
+        />
+        <ChevronDownIcon
+          className={`h-3 w-3 shrink-0 transition-transform dark:text-claude-darkTextSecondary text-claude-textSecondary ${
+            open ? 'rotate-180' : ''
+          }`}
+        />
+      </button>
+      <SurfaceModeMenu open={open} mode={mode} items={items} onSelect={handleSelect} />
     </div>
   );
 };

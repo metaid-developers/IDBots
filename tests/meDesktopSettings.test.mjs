@@ -10,15 +10,28 @@ const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), 'u
 const appSource = read('src/renderer/App.tsx');
 const sidebarSource = read('src/renderer/components/Sidebar.tsx');
 const badgeSource = read('src/renderer/components/me/MeBalanceBadge.tsx');
+const railSource = read('src/renderer/components/layout/WorkspaceRail.tsx');
 const settingsSource = read('src/renderer/components/Settings.tsx');
 const planCardSource = read('src/renderer/components/me/IdbotsPlanCard.tsx');
 
-test('ME entry lives in the sidebar footer instead of the global top-right corner', () => {
+test('ME entry lives in the left rail footer instead of the global top-right corner', () => {
+  // Three-column shell (slice 1): the ME entry moved from the old sidebar
+  // footer into the icon rail's pinned bottom block — never the global
+  // top-right corner, and never inside App's own chrome.
   assert.equal(appSource.includes("import MeBalanceBadge"), false);
   assert.equal(appSource.includes('fixed right-4 top-3'), false);
-  assert.match(sidebarSource, /import MeBalanceBadge from '\.\/me\/MeBalanceBadge'/);
-  assert.match(sidebarSource, /ml-auto flex items-center gap-2[\s\S]*<MeBalanceBadge \/>/);
-  assert.match(badgeSource, /absolute bottom-\[calc\(100%\+8px\)\] right-0/);
+  assert.match(railSource, /import MeBalanceBadge from '\.\.\/me\/MeBalanceBadge'/);
+  assert.match(railSource, /<MeBalanceBadge compact \/>/);
+  // The rail renders Settings immediately before ME in that bottom block.
+  assert.ok(
+    railSource.indexOf('itemId="settings"') < railSource.indexOf('<MeBalanceBadge compact />'),
+    'Settings sits above ME in the rail footer',
+  );
+  // A compact badge opens its panel to the right (a 300 px panel anchored
+  // right-0 inside a 64 px column would hang off the window), and the
+  // expanded form keeps the historic bottom-right anchor.
+  assert.match(badgeSource, /compact \? 'left-0' : 'right-0'/);
+  assert.match(badgeSource, /absolute bottom-\[calc\(100%\+8px\)\] z-\[80\][\s\S]*right-0/);
 });
 
 test('model settings uses one provider list with TypeSafe JEV as the decision-model destination', () => {

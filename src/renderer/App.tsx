@@ -1,8 +1,9 @@
-import React, { Suspense, useState, useEffect, useRef, useCallback } from 'react';
+import React, { Suspense, useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState } from './store';
 import type { SettingsOpenOptions } from './components/Settings';
 import Sidebar from './components/Sidebar';
+import WorkspaceRail from './components/layout/WorkspaceRail';
 import Toast from './components/Toast';
 import MePurchaseFlow from './components/me/MePurchaseFlow';
 import {
@@ -69,6 +70,7 @@ import {
 import { useBotBrowserShell } from './features/botBrowser/useBotBrowserShell';
 import { openBotBrowserConversationInCowork } from './features/botBrowser/conversationNavigationAdapter';
 import type { BotBrowserConversationRequest } from './features/botBrowser/types';
+import type { BotHomeSection } from './features/botBrowser/types';
 import SidebarToggleIcon from './components/icons/SidebarToggleIcon';
 import { FREE_PROVIDER_DISPLAY_NAME, LLM_FREE_PROVIDER_KEY } from './services/llmFreeQuotaGate.js';
 import {
@@ -213,6 +215,17 @@ const App: React.FC = () => {
     void coworkService.init();
   }, []);
   const pendingConsents = useSelector((state: RootState) => state.agentGame.pendingConsents);
+  const coworkSessions = useSelector((state: RootState) => state.cowork.sessions);
+
+  // Co-Work landing (slice 1): the session list is the MIDDLE column's content
+  // on this surface, so this pane states that, counts what is there, and hands
+  // the right column back to the browser. No new data: two counts over the
+  // session list the panel already reads.
+  const coworkSessionCounts = useMemo(() => ({
+    total: coworkSessions.length,
+    browser: coworkSessions.filter((session) => session.sessionType === 'browser').length,
+  }), [coworkSessions]);
+
   const pendingConsent = pendingConsents[0] ?? null;
   const isWindows = window.electron.platform === 'win32';
   const isMac = window.electron.platform === 'darwin';
@@ -637,10 +650,6 @@ const App: React.FC = () => {
     dispatch(selectGroupTask(task.id));
   }, [dispatch]);
 
-  const handleShowMetabots = useCallback(() => {
-    setMainView('metabots');
-  }, []);
-
   const handleToggleSidebar = useCallback(() => {
     setIsSidebarCollapsed((prev) => !prev);
   }, []);
@@ -739,6 +748,21 @@ const App: React.FC = () => {
   const handleShowMetaApps = useCallback(() => {
     botBrowserShell.selectInternetPane('metaapps');
   }, [botBrowserShell.selectInternetPane]);
+
+  // Bot Home destinations: the left rail entries and the middle column's
+  // section headers are two entry points into the same three lists, so they
+  // share one handler — it switches the surface and the right column's view
+  // together.
+  const handleSelectHomeSection = useCallback((section: BotHomeSection) => {
+    botBrowserShell.switchToHome();
+    if (section === 'longTerm') {
+      setMainView('scheduledTasks');
+    } else if (section === 'groupTasks') {
+      setMainView('groupTasks');
+    } else {
+      setMainView('cowork');
+    }
+  }, [botBrowserShell.switchToHome]);
 
   const handleSidebarResizeStart = useCallback((event: React.MouseEvent) => {
     event.preventDefault();
@@ -1414,6 +1438,15 @@ const App: React.FC = () => {
     );
   }
 
+  // The Bot Home middle column's expanded section is the main view's list
+  // reading — derived, never a second piece of state, so the column and the
+  // right pane can never disagree about where the user is.
+  const homeSection: BotHomeSection = mainView === 'scheduledTasks'
+    ? 'longTerm'
+    : mainView === 'groupTasks'
+      ? 'groupTasks'
+      : 'records';
+
   const homeContent = mainView === 'scheduledTasks' ? (
     <ScheduledTasksView
       isSidebarCollapsed={isSidebarCollapsed}
@@ -1454,7 +1487,31 @@ const App: React.FC = () => {
     />
   );
 
-  const internetCatalogContent = botBrowserShell.internetPane === 'gigSquare' ? (
+  const internetCatalogContent = botBrowserShell.internetPane === 'cowork' ? (
+    <div className="flex h-full items-center justify-center px-8">
+      <div className="max-w-sm rounded-2xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface p-5 text-center">
+        <ChatBubbleLeftRightIcon className="mx-auto h-6 w-6 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
+        <h2 className="mt-2 text-sm font-medium dark:text-claude-darkText text-claude-text">
+          {i18nService.t('botBrowserCoworkTitle')}
+        </h2>
+        <p className="mt-1 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+          {i18nService.t('internetCoworkPaneSessions').replace('{count}', String(coworkSessionCounts.total))}
+          {' · '}
+          {i18nService.t('internetCoworkPaneBrowserSessions').replace('{count}', String(coworkSessionCounts.browser))}
+        </p>
+        <p className="mt-2 text-[11px] leading-relaxed dark:text-claude-darkTextSecondary text-claude-textSecondary">
+          {i18nService.t('internetCoworkPaneHint')}
+        </p>
+        <button
+          type="button"
+          onClick={() => botBrowserShell.selectInternetPane('browser')}
+          className="mt-3 inline-flex items-center rounded-lg border dark:border-claude-darkBorder border-claude-border px-3 py-1.5 text-xs font-medium dark:text-claude-darkText text-claude-text transition-colors hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+        >
+          {i18nService.t('internetCoworkPaneOpenBrowser')}
+        </button>
+      </div>
+    </div>
+  ) : botBrowserShell.internetPane === 'gigSquare' ? (
     <GigSquareView onOpenRemoteBotInBrowser={botBrowserShell.openRemoteBot} />
   ) : botBrowserShell.internetPane === 'metaapps' ? (
     <MetaAppsView
@@ -1505,45 +1562,67 @@ const App: React.FC = () => {
           />
         </Suspense>
       )}
-      <Sidebar
-        onShowLogin={handleShowLogin}
-        onShowSettings={handleShowSettings}
-        activeView={mainView}
-        onShowSkills={handleShowSkills}
-        onShowCowork={handleShowCowork}
-        onShowScheduledTasks={handleShowScheduledTasks}
-        onShowGroupTasks={handleShowGroupTasks}
-        onShowMetabots={handleShowMetabots}
-        onNewChat={handleBlankNewChat}
-        mode={botBrowserShell.surfaceMode}
-        internetPane={botBrowserShell.internetPane}
-        onSelectHome={botBrowserShell.switchToHome}
-        onSelectBrowser={() => {
-          void botBrowserShell.openBrowserHome();
+      {/* Three-column shell (slice 1): the icon rail, the middle column and the
+          right column. The middle column keeps its own resizable width (auto
+          track) so the existing drag + transition machinery is untouched. */}
+      <div
+        data-slot="app-three-column-shell"
+        className="grid min-h-0 min-w-0 flex-1"
+        style={{
+          // Four tracks in both states: collapsed keeps the middle column and
+          // the resize handle mounted at zero width, so the right column never
+          // falls into an implicit track. The rail itself never collapses.
+          gridTemplateColumns: isSidebarCollapsed
+            ? '64px 0px 0px minmax(0, 1fr)'
+            : '64px auto 4px minmax(0, 1fr)',
         }}
-        onSelectInternetPane={botBrowserShell.selectInternetPane}
-        onSelectBrowserSession={handleSelectBrowserSession}
-        isCollapsed={isSidebarCollapsed}
-        onToggleCollapse={handleToggleSidebar}
-        width={sidebarWidth}
-        isResizing={isSidebarResizing}
-        updateBadge={!isSidebarCollapsed ? updateBadge : null}
-      />
-      {!isSidebarCollapsed ? (
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          onMouseDown={handleSidebarResizeStart}
-          onDoubleClick={handleSidebarResizeReset}
-          className="w-1 shrink-0 cursor-col-resize transition-colors hover:bg-claude-accent/40"
+      >
+        <WorkspaceRail
+          mode={botBrowserShell.surfaceMode}
+          internetPane={botBrowserShell.internetPane}
+          homeSection={homeSection}
+          onSelectSurface={(mode) => {
+            if (mode === 'home') {
+              botBrowserShell.switchToHome();
+            } else {
+              void botBrowserShell.openBrowserHome();
+            }
+          }}
+          onSelectInternetPane={botBrowserShell.selectInternetPane}
+          onSelectHomeSection={handleSelectHomeSection}
+          onNewChat={() => {
+            botBrowserShell.switchToHome();
+            handleBlankNewChat();
+          }}
+          onShowSettings={() => handleShowSettings()}
+          updateBadge={updateBadge}
         />
-      ) : null}
-      {/* While resizing, cover the content area so the Bot Browser iframe cannot
-          swallow mousemove/mouseup events mid-drag (iframe event capture made the
-          handle nearly undraggable in browser mode). */}
-      {isSidebarResizing ? (
-        <div className="fixed inset-0 z-50 cursor-col-resize" />
-      ) : null}
+        <Sidebar
+          onShowLogin={handleShowLogin}
+          onShowSettings={handleShowSettings}
+          onShowSkills={handleShowSkills}
+          onShowCowork={handleShowCowork}
+          onShowScheduledTasks={handleShowScheduledTasks}
+          onShowGroupTasks={handleShowGroupTasks}
+          mode={botBrowserShell.surfaceMode}
+          homeSection={homeSection}
+          onSelectHomeSection={handleSelectHomeSection}
+          onSelectHome={botBrowserShell.switchToHome}
+          onSelectBrowserSession={handleSelectBrowserSession}
+          isCollapsed={isSidebarCollapsed}
+          onToggleCollapse={handleToggleSidebar}
+          width={sidebarWidth}
+          isResizing={isSidebarResizing}
+        />
+        {!isSidebarCollapsed ? (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            onMouseDown={handleSidebarResizeStart}
+            onDoubleClick={handleSidebarResizeReset}
+            className="w-1 cursor-col-resize transition-colors hover:bg-claude-accent/40"
+          />
+        ) : null}
       <div className="relative flex flex-1 min-w-0 min-h-0 overflow-hidden">
         {showHomeSurface || showInternetCatalog ? (
           <div className={`flex-1 min-w-0 py-1.5 pr-1.5 ${isSidebarCollapsed ? 'pl-1.5' : ''}`}>
@@ -1584,6 +1663,7 @@ const App: React.FC = () => {
             ) : null}
           </div>
         ) : null}
+      </div>
       </div>
 
       {/* 设置窗口显示在所有主内容之上，但不影响主界面的交互 */}

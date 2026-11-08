@@ -93,12 +93,20 @@ test('the board is initialized app-wide, so the badges work without opening the 
 });
 
 test('both badges are wired to the shared derivation and the amber decision dot', () => {
+  // Three-column shell (slice 1): the nav dot moved with the navigation into
+  // the left rail; the middle column keeps its own decision count on the
+  // 长期任务 section header. Both read the SAME derivation.
+  const rail = readSource('src/renderer/components/layout/WorkspaceRail.tsx');
+  assert.match(rail, /selectTrackedTasksNeedingAttention\(\{ longTermTask: \{ board: longTermBoard \} \}\)/);
+  assert.match(rail, /needsDecisionCount: trackedTaskAttention\.total/);
+  assert.match(rail, /tracked-task-decision-indicator/);
+  assert.match(rail, /indicatorKind === 'decision'/);
+  assert.match(rail, /role="img"[\s\S]{0,160}aria-label=\{indicatorLabel\}/);
+
   const sidebar = readSource('src/renderer/components/Sidebar.tsx');
   assert.match(sidebar, /selectTrackedTasksNeedingAttention\(\{ longTermTask: \{ board: longTermBoard \} \}\)/);
-  assert.match(sidebar, /needsDecisionCount: trackedTaskAttention\.total/);
   assert.match(sidebar, /tracked-task-decision-indicator/);
-  assert.match(sidebar, /item\.indicatorKind === 'decision'/);
-  assert.match(sidebar, /role="img"[\s\S]{0,120}aria-label=\{item\.indicatorLabel\}/);
+  assert.match(sidebar, /role="img"[\s\S]{0,160}aria-label=\{decisionLabel\}/);
 
   const view = readSource('src/renderer/components/scheduledTasks/ScheduledTasksView.tsx');
   assert.match(view, /const longTermNeedsDecisionCount = useMemo/);

@@ -5,6 +5,7 @@ import test from 'node:test';
 const appPath = new URL('../src/renderer/App.tsx', import.meta.url);
 const sidebarPath = new URL('../src/renderer/components/Sidebar.tsx', import.meta.url);
 const switchPath = new URL('../src/renderer/features/botBrowser/BotBrowserModeSwitch.tsx', import.meta.url);
+const railPath = new URL('../src/renderer/components/layout/WorkspaceRail.tsx', import.meta.url);
 const surfacePath = new URL('../src/renderer/features/botBrowser/BotBrowserSurface.tsx', import.meta.url);
 const bridgePath = new URL('../src/renderer/features/botBrowser/browserIframeBridge.ts', import.meta.url);
 const shellPath = new URL('../src/renderer/features/botBrowser/useBotBrowserShell.ts', import.meta.url);
@@ -16,14 +17,20 @@ function readSource(url) {
 const appSource = readSource(appPath);
 const sidebarSource = readSource(sidebarPath);
 const switchSource = readSource(switchPath);
+const railSource = readSource(railPath);
 const surfaceSource = readSource(surfacePath);
 const bridgeSource = readSource(bridgePath);
 const shellSource = readSource(shellPath);
 
-test('Sidebar owns the mode switch while App keeps the Browser surface', () => {
+test('the left rail owns the mode switch while App keeps the Browser surface', () => {
   assert.ok(existsSync(switchPath), 'BotBrowserModeSwitch.tsx should exist');
   assert.ok(existsSync(shellPath), 'useBotBrowserShell.ts should exist');
-  assert.match(sidebarSource, /import BotBrowserModeSwitch from '\.\.\/features\/botBrowser\/BotBrowserModeSwitch';/);
+  assert.ok(existsSync(railPath), 'WorkspaceRail.tsx should exist');
+  // Three-column shell: the switch lives at the top of the icon rail, which
+  // itself is rendered by App. The mid column no longer carries it.
+  assert.match(railSource, /import BotBrowserModeSwitch from '\.\.\/\.\.\/features\/botBrowser\/BotBrowserModeSwitch';/);
+  assert.match(railSource, /<BotBrowserModeSwitch/);
+  assert.doesNotMatch(sidebarSource, /BotBrowserModeSwitch/);
   // The surface (and the ~550 kB ABC browser vendor chunk behind it) is code
   // split off the startup bundle; App binds it lazily under the same name.
   assert.match(
@@ -35,8 +42,8 @@ test('Sidebar owns the mode switch while App keeps the Browser surface', () => {
     /^import \{ BotBrowserSurface \} from '\.\/features\/botBrowser\/BotBrowserSurface';/m,
     'the surface must not be statically imported by App',
   );
-  assert.match(sidebarSource, /<BotBrowserModeSwitch/);
   assert.doesNotMatch(appSource, /<BotBrowserModeSwitch/);
+  assert.match(appSource, /<WorkspaceRail/);
   assert.match(appSource, /<BotBrowserSurface/);
 });
 
@@ -121,10 +128,18 @@ test('user-initiated URI opens land in a new browser tab, not over the active on
   assert.match(shellSource, /const newTab = input\?\.newTab === true;/);
 });
 
-test('sidebar switch puts Bot Internet before Bot Home', () => {
-  // Upstream renamed the leading tab to "Bot Internet" (feat/bot-internet-visual-assistant);
-  // this static guard follows the shipped labels.
-  assert.match(switchSource, />\s*Bot Internet\s*</);
-  assert.match(switchSource, />\s*Bot Home\s*</);
-  assert.ok(switchSource.indexOf('Bot Internet') < switchSource.indexOf('Bot Home'));
+test('the surface menu puts Bot Internet before Bot Home', () => {
+  // The labels moved from literals into i18n when the two-segment control
+  // became the Codex-style dropdown: the order guard now reads the model.
+  const modelSource = readSource(new URL('../src/renderer/components/sidebar/sidebarNavigation.js', import.meta.url));
+  assert.match(modelSource, /t\('botInternet'\)/);
+  assert.match(modelSource, /t\('botHome'\)/);
+  assert.ok(
+    modelSource.indexOf("t('botInternet')") < modelSource.indexOf("t('botHome')"),
+    'Bot Internet is the first entry of the surface menu',
+  );
+  // Both labels are translated in zh + en (one occurrence per locale block).
+  const i18nSource = readSource(new URL('../src/renderer/services/i18n.ts', import.meta.url));
+  assert.equal((i18nSource.match(/^\s+botInternet:/gm) ?? []).length, 2);
+  assert.equal((i18nSource.match(/^\s+botHome:/gm) ?? []).length, 2);
 });

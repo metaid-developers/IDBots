@@ -38,7 +38,14 @@ const MeCoinIcon: React.FC<{ className?: string }> = ({ className }) => (
   </svg>
 );
 
-const MeBalanceBadge: React.FC = () => {
+/**
+ * `compact` renders the icon-only form used by the 64 px workspace rail: the
+ * coin glyph alone (the amount moves to the accessible name/tooltip) and the
+ * breakdown panel opens to the RIGHT of the rail instead of from its right
+ * edge — a 300 px panel anchored `right-0` inside a 64 px column would hang
+ * off the window.
+ */
+const MeBalanceBadge: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
   // useSyncExternalStore keeps this render in step with the shared store.
   const snapshot = React.useSyncExternalStore(subscribeMeSnapshot, getMeSnapshot, getMeSnapshot);
   const [panelOpen, setPanelOpen] = useState(false);
@@ -102,26 +109,40 @@ const MeBalanceBadge: React.FC = () => {
       ? 'text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-300/60 dark:border-amber-700/60'
       : 'text-claude-accent dark:text-claude-darkAccent';
 
+  const amountLabel = loading
+    ? '…'
+    : unavailable
+      ? i18nService.t('meBadgeUnavailable')
+      : `${formatMe(totalMe)} ME`;
+
   return (
     <div className="relative">
       <button
         type="button"
         onClick={() => setPanelOpen((open) => !open)}
-        title={i18nService.t('mePanelTitle')}
-        className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors bg-claude-surface/80 dark:bg-claude-darkSurface/80 hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover ${badgeClass}`}
+        title={compact ? `${i18nService.t('mePanelTitle')} · ${amountLabel}` : i18nService.t('mePanelTitle')}
+        aria-label={compact ? `${i18nService.t('mePanelTitle')} · ${amountLabel}` : undefined}
+        aria-expanded={panelOpen}
+        className={
+          compact
+            ? `flex h-10 w-10 items-center justify-center rounded-xl border transition-colors bg-claude-surface/80 dark:bg-claude-darkSurface/80 hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover ${badgeClass}`
+            : `flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors bg-claude-surface/80 dark:bg-claude-darkSurface/80 hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover ${badgeClass}`
+        }
       >
-        <MeCoinIcon className="h-3.5 w-3.5" />
-        <span className="tabular-nums tracking-tight">
-          {loading ? '…' : unavailable ? i18nService.t('meBadgeUnavailable') : formatMe(totalMe)}
-        </span>
-        <span className="text-[10px] opacity-80">ME</span>
-        <ChevronUpIcon className={`h-3 w-3 transition-transform ${panelOpen ? 'rotate-180' : ''}`} />
+        <MeCoinIcon className={compact ? 'h-5 w-5' : 'h-3.5 w-3.5'} />
+        {compact ? null : (
+          <>
+            <span className="tabular-nums tracking-tight">{amountLabel}</span>
+            <span className="text-[10px] opacity-80">ME</span>
+            <ChevronUpIcon className={`h-3 w-3 transition-transform ${panelOpen ? 'rotate-180' : ''}`} />
+          </>
+        )}
       </button>
 
       {panelOpen && (
         <>
           <div className="fixed inset-0 z-[79]" onClick={() => setPanelOpen(false)} />
-          <div className="absolute bottom-[calc(100%+8px)] right-0 z-[80] max-h-[70vh] w-[300px] overflow-y-auto rounded-2xl border border-claude-border dark:border-claude-darkBorder bg-claude-surface dark:bg-claude-darkSurface p-3.5 shadow-xl">
+          <div className={`absolute bottom-[calc(100%+8px)] z-[80] max-h-[70vh] w-[300px] overflow-y-auto rounded-2xl border border-claude-border dark:border-claude-darkBorder bg-claude-surface dark:bg-claude-darkSurface p-3.5 shadow-xl ${compact ? 'left-0' : 'right-0'}`}>
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-claude-text dark:text-claude-darkText">
                 {i18nService.t('mePanelTitle')}
