@@ -1,97 +1,273 @@
 ---
 name: metabot-publish-nft
-description: Publish user content (images/audio/video/e-books/metaapp columns/any file) as an MRC-721 NFT (MetaID native pin-based NFT, Agent Goods), or issue a brand-new NFT collection. Full guidance included: inventory existing collections and remaining slots → suggest the target album or a new one → upload content (metabot-upload-file) → mint (mrc721_mint) → announce with the chat NFT card. Use when the user says "publish NFT", "issue a collection", "make it an NFT", "fan badge", "mint", "Agent Goods", or similar. This skill uses ONLY the mrc721_* tool family; MetaContract NFTs (wallet_nft_*) are the legacy compatibility line and out of scope.
+description: Guided MRC-721 NFT issuance wizard (MetaID native, pin-based Agent Goods — NOT the metacontract wallet_nft_* legacy line). Use when the owner wants to publish NFT content — "publish an NFT", "issue/release a collection/album/series", "make this an NFT", "fan badge", "mint", "paid-knowledge collection", "NFT 专辑", or asks what NFTs can do here. You walk the owner through: worldview intro → guided field Q&A → a LOCAL mock-preview page (hard gate) → staged on-chain publish (items first, collection_desc LAST) → a visual result page. Also covers adding items to an existing collection and resuming an interrupted issue.
 official: true
+version: 2.0.0
 ---
 
-# Publishing NFTs (MRC-721 / Agent Goods)
+# Publishing NFTs (MRC-721 / Agent Goods) — guided issuance wizard
 
-Worldview baseline: in an Agent's eyes an NFT is a real, tangible good — it
-cannot be confiscated, deleted, or copied, but it can be transferred,
-burned, and sold, and it can represent ownership and rights in the digital
-world. The carrier is not limited to images: video, audio, e-books, metaapp
-columns — theoretically any pin can become an NFT. NFTs that belong to a
-collection are indexed and searchable; pins without a collection are just
-plain pins.
+This skill is a **guided wizard, not a tool dump**. The owner expresses intent
+("I want to release an NFT album"); you carry them to a correctly published,
+visually confirmed result. Issuance is **irreversible** — your job is to make
+it smooth AND correct: nothing goes on-chain that the owner has not seen,
+understood, and confirmed. Never leave the owner holding an on-chain object
+they did not mean to create.
 
-## 0. Prerequisites and tool surface
+## 0. Non-negotiables
 
-- The session bot must be bound to a MetaBot whose MVC wallet has fee headroom
-  (all write tools run under a chain-write budget; insufficient balance fails
-  loudly — relay the error honestly).
-- Tools (host built-in, nothing to install):
-  - Inventory/search: `mrc721_search_collections` (keyword + issuer +
-    supply_state), `mrc721_collections`, `mrc721_collection_info`,
-    `mrc721_item_info`
-  - Writes: `mrc721_collection_create`, `mrc721_collection_update`,
-    `mrc721_mint`
-  - Verification/query: `mrc721_verify_holding`, `mrc721_balance`
-  - Trading next steps: `mrc721_sell_intent` (declare a sale), `mrc721_sell`
-    (locked atomic swap), `mrc721_transfer`
-- Content upload: use metabot-upload-file first to turn the file into a
-  metafile and get its pinId. For audio/video prepare a poster image as the
-  cover and put the content pinId into metadata.
+- **Hard gate 1 — fields**: no write tool call until every field below is
+  collected and confirmed in prose.
+- **Hard gate 2 — preview**: no write tool call (uploads included) until the
+  owner has seen the mock preview page and confirmed it in prose. The only
+  escape is the owner's explicit instruction to skip the page in THIS
+  conversation — say plainly that you relied on it.
+- **Immutable trio**: `collection_name` (the path), `total_supply`,
+  `royalty_rate` are fixed forever once registered. Treat the whole
+  `collection_desc` as write-once (see the immutability table in §6).
+- **item_desc is first-write-wins per field**: name/desc/cover/metadata of an
+  item are locked the moment an item_desc pin carries them; only still-missing
+  fields can be backfilled later. Write item display info right at mint time.
+- **Relay receipts honestly**: cost, txids, and index-confirmation state are
+  reported exactly as the tool returned them. Never say "confirmed" before the
+  indexer says so; never re-mint because a receipt looks slow (§7).
+- **Mint only into THIS session bot's own album.** Issuer-only minting: the
+  precheck refuses mints into another issuer's album (they would broadcast,
+  spend fees, and never be collected). Mint-before-register into a name that
+  is not yet indexed IS legitimate — that is the staged publish order (§3).
+- Every write costs MVC sats (uploads too). Run the preflight in §2; relay
+  insufficient-balance errors loudly, do not paper over them.
 
-## 1. Flow A: issue a new collection
+## 1. Step 1 — Trigger and the worldview beat
 
-1. Align five fields with the user:
-   - `collection_name`: lowercase `[a-z0-9-]`, globally first-come-first-served.
-     Precheck availability — `mrc721_search_collections {keyword: "<name>"}` or
-     `mrc721_collection_info {name}`; if taken, suggest another or a variant.
-   - Display `name` and `desc`.
-   - `total_supply`: the issuance size. Badges/tickets/gated collections
-     should be bounded (e.g. 100 fan badges); open content series may use -1
-     (unlimited). **Supply is fixed after creation and cannot be changed** —
-     when unsure, prefer a bounded supply.
-   - `royalty_rate`: 0-20%, default 0.
-   - `cover`: upload the artwork first (metabot-upload-file) and pass its pinId.
-2. `mrc721_collection_create` (the tool prechecks the name and waits ~30s by
-   default for index confirmation).
-3. Report back: the `collectionid` (= collection_desc pinId), cost, and
-   confirmation status. If indexing has not completed, say so — never
-   overstate; the tool receipt states it plainly.
+Triggers: publish/issue/release an NFT, album, collection, series, drop;
+fan badge; paid-knowledge collection; "make this an NFT"; mint; Agent Goods;
+NFT 专辑. Also fire proactively when the owner shows a batch of creative
+files and muses about "doing a series" — offer the wizard, do not start
+writing on-chain.
 
-## 2. Flow B: publish content as an NFT (into a collection)
+Open with a SHORT worldview beat (a few sentences; expand only if asked):
+on the AI internet an NFT is a real, tangible good — it cannot be
+confiscated, deleted, or copied; it can be transferred, sold, and burned,
+and it carries provable ownership. Unlike a platform post (hosted,
+revocable, owned by the platform), an Agent Good is pinned on-chain under
+the owner's identity. The carrier is not limited to images: video, audio,
+e-books, PDFs, metaapp columns — any pin can become an NFT. Pins inside a
+collection are indexed and searchable as a series; pins without a
+collection stay plain pins.
 
-1. **Inventory before suggesting**: `mrc721_search_collections {issuer:
-   "<this bot>", supply_state: true}` lists the user's own collections with
-   remaining slots. Make concrete suggestions: which collection has slots and
-   fits the theme; if none fits, propose a new collection (Flow A).
-2. Upload the content file → metafile pinId; add a poster for audio/video.
-3. `mrc721_mint {collection_name, name, desc, cover, metadata}`:
-   - `cover` is the display image; put the content pinId in `metadata`
-     (e.g. `{"contentType":"audio/mpeg","content":"metafile://<pinId>"}`).
-   - `item_path` is optional; it is auto-generated when omitted.
-4. The mint receipt carries a ```nft-card fence plus an NFT_CARD_RESULT_HINT
-   — **you must include that fence verbatim in the announcement message to
-   the user**, so their chat client renders the NFT card. This is a
-   convention, not optional.
-5. Verify: `mrc721_item_info` to confirm indexing, ownership, and numbering.
-   Before index confirmation the serial may show as unconfirmed (negative
-   number) — say so honestly; never rush the indexer.
+## 2. Step 2 — Tool surface and preflight
 
-## 3. Flow C: wrap an existing pin as an NFT
+Tools (host built-in, nothing to install):
 
-- Any existing pin (a metaapp column, an image inside a buzz, any metafile)
-  can become an NFT: mint a collection item whose `cover`/`metadata`
-  reference the existing pinId (`pin://` or `metafile://` URI). For a
-  metaapp column, put the column pinId and its `metaapp://` URI in metadata.
-- Direction matters: you mint a NEW item that REFERENCES the pin — you
-  cannot re-path an old pin; pin paths are immutable.
+- Inventory/search: `mrc721_search_collections` (keyword + issuer +
+  supply_state), `mrc721_collections`, `mrc721_collection_info`,
+  `mrc721_item_info`
+- Writes: `mrc721_collection_create` (registers collection_desc — the
+  go-public step), `mrc721_mint` (item pin + item_desc backfill pin),
+  `mrc721_collection_update` (emergency display-field repair only, §6)
+- Verification: `mrc721_balance`, `mrc721_verify_holding`
+- File upload: `metabot-upload-file` turns a workspace file into a
+  `metafile://` pinId. Never read large file bodies into context — pass
+  absolute paths to the CLI.
 
-## 4. Rules and red lines
+Preflight before collecting fields: `mrc721_balance` on the session bot —
+the owner should know the fee headroom before committing to an N-item issue.
 
-- **Open minting**: MRC-721 is an open-minting protocol — any bot can mint
-  into someone else's collection (the indexer only enforces supply). Ask the
-  user for consent BEFORE minting into a collection they do not own; minting
-  into the user's own collections is allowed by default.
-- Gated collections (fan badges etc.): recommend a bounded supply and an
-  explicit minting policy; to check "does this holder have one", use
-  `mrc721_verify_holding` — the indexer holder view is the source of truth
-  (transferred away = does not have it).
-- The tool receipt is the single source of truth: relay cost, txids, and
-  confirmation status exactly as returned; if the index lags, say it lags —
-  never invent success.
-- Want to sell after publishing? `mrc721_sell_intent` declares a sale
-  (any currency accepted, settled via atomic swap or guarantor escrow); with
-  a concrete buyer, go straight to `mrc721_sell` (locked atomic swap).
+## 3. Flow A — issue a NEW collection (main wizard)
+
+Work in one workspace folder per issue, so the preview, the ledger, and the
+source files stay together:
+
+```
+<workspace>/nft-issue-<collection_name>/
+  preview.html      # mock album page — LOCAL ONLY, never published on-chain
+  ledger.json       # machine-readable issue state (§5)
+  source/           # the owner's files + generated posters
+```
+
+### Step 2 — Field Q&A (guided, never a JSON dump)
+
+Ask in small batches, in roughly this order. Each field carries knowledge the
+owner cannot be expected to have — teach it as you ask.
+
+1. **Purpose / audience** — badges? gated fan goods? a paid-knowledge
+   column? an art/photo series? This drives the supply advice below.
+2. **`collection_name`** (the path name) — lowercase `[a-z0-9-]`, no "/",
+   lives at `/nft/mrc721/{collection_name}/`. Teach the identity model: an
+   album is identified by its **collectionid (= the collection_desc pinId)**,
+   NOT by its name — names are NOT globally unique; a (collection_name,
+   issuer) pair registers once, and another issuer's same-name album is an
+   independent album. A light `mrc721_search_collections {keyword}` check is
+   still polite: warn the owner if a confusing same-name album already
+   exists. Path and name are immutable.
+3. **Display `name`** — the human-readable album title (defaults to
+   collection_name).
+4. **`desc`** — the series description: what this series IS (editorial).
+5. **`metadata`** — the **rights & usage commitment**: what holders get,
+   license terms, redemption/perk instructions. Best practice: keep `desc`
+   editorial and put contractual/commitment content in `metadata`. Stored
+   verbatim; write it as if it can never be corrected.
+6. **`total_supply`** — ⚠️ IMMUTABLE. Badges/tickets/gated goods: bounded
+   (e.g. 100). Open-ended content columns: -1 (unlimited). The indexer
+   collects only the first-N items created under the path — extras beyond
+   supply are ignored forever. Make the owner re-confirm this number in the
+   preview step.
+7. **`royalty_rate`** — range 0–20 (%), **recommend 0**: royalty settlement
+   is not fully implemented yet; say so plainly. The owner may still set a
+   value, but they must hear that it does not yet pay out.
+8. **Cover** — one image, prepared BEFORE anything goes on-chain (the album
+   cover is referenced by the collection_desc and treated as final). Source:
+   the owner's file, an existing pin, or offer to generate one (seedream).
+9. **Items** — the list: each item = a file (image / PDF / audio / video /
+   any pin) + display `name` + `desc` (+ poster image for audio/video/PDF).
+   **Creation order = serial number order** under the path; agree the
+   ordering explicitly. Item display info rides item_desc and is
+   first-write-wins — get names and descs right before minting (missing
+   fields can be backfilled later; written fields are locked).
+
+### Step 3 — Mock preview page (HARD GATE 2)
+
+Build ONE self-contained HTML file (`preview.html` in the issue folder):
+inline CSS only, no external assets, no required JS — link the absolute
+path in your message; assistant mode renders local `.html` links as an
+inline block, so the page reads inside the conversation. **Do NOT publish
+it on-chain** — it is a mock, and the real files are not uploaded yet.
+
+Thumbnails reference the local files by RELATIVE path from the HTML file's
+directory (the sources sit in `source/`); fall back to file-type chips
+(IMG/PDF/AUDIO/VIDEO/PIN) when a thumbnail is not feasible. Never upload
+files just for the preview.
+
+The page must read at a glance:
+
+1. Status banner: "PREVIEW — nothing has been written on-chain yet".
+2. Album card: cover thumbnail, display name, `desc`, `metadata` summary,
+   chips for collection_name path / total_supply (⚠ immutable) /
+   royalty_rate (recommend 0) / network mvc.
+3. Item wall: each item in agreed order — thumbnail or type chip, display
+   name, desc, planned serial number.
+4. Cost line: N items ≈ 2N on-chain writes (item pin + item_desc pin each)
+   + 1 collection_desc + uploads; every write costs sats; exact per-write
+   costs appear in the receipts as they happen.
+5. Immutability warnings: the trio + item display info first-write-wins.
+6. Close your message asking for the verdict AT FIELD LEVEL ("哪一项、改成
+   什么"), not just yes/no. A change request loops back to Step 2 and the
+   page gets re-issued.
+
+### Step 4 — Staged publish (only after BOTH gates)
+
+**4a. Upload assets.** `metabot-upload-file` for the cover, every item
+file, and every poster (files must be inside the bot workspace). Record
+every returned pinId/URI in the ledger. Per-type playbooks for mints:
+
+- **Image item**: `cover` = the image pin itself.
+- **Audio/video item**: `cover` = poster image pin; put the content pin in
+  `metadata`, e.g. `{"contentType":"audio/mpeg","content":"metafile://<pinId>"}`.
+- **PDF/document item**: `cover` = poster or first-page image pin; content
+  pin in `metadata` the same way.
+- **Existing pin** (metaapp column, a buzz image, any pin): mint a NEW item
+  whose `cover`/`metadata` REFERENCE the existing pinId (`pin://` or
+  `metafile://` URI). You cannot re-path an old pin — pin paths are
+  immutable.
+
+**4b. Mint items one-by-one.** For each item in agreed order:
+`mrc721_mint {collection_name, name, desc, cover, metadata}` with
+`wait_ms: 0` (or ≤5000) for intermediates. The receipt will honestly report
+"not indexed yet — the mint still lands on-chain, and it is collected once
+your collection under this name registers" — **that is the EXPECTED state
+in this order, not an error**. Do not re-mint; do not wait per item. Record
+item pinId, item_desc pinId, txids, cost in the ledger. Each successful
+mint receipt carries an `nft-card` fenced block — keep them for Step 6.
+
+**4c. THE GO-PUBLIC MOMENT.** After the LAST item is minted:
+`mrc721_collection_create {collection_name, name, desc, total_supply,
+royalty_rate, cover, metadata}` (default wait is fine). This broadcasts the
+collection_desc pin — the indexer starts indexing NOW: items are collected
+first-N by creation order and numbered. This is the step that cannot be
+undone; it was gated twice for a reason.
+
+**4d. Reconciliation (mandatory, same turn).** `mrc721_collection_info`
+(prefer the collectionid) + `mrc721_item_info` per item. Check: serial
+numbers match the agreed order, ownership, indexing state. Compare against
+the approved preview page field by field and report drift honestly. If
+indexing lags, SAY it lags — list still-pending items and tell the owner
+verification is `mrc721_item_info`, never a re-mint.
+
+### Step 5 — Result visualization
+
+- Relay each mint's `nft-card` fenced block VERBATIM in your announcement
+  message so the chat renders the native NFT cards. This is a convention,
+  not optional.
+- Build a result page (same self-contained HTML rule) in the issue folder:
+  album header (cover, name, desc, metadata summary, **collectionid**,
+  genesis info from the receipt) + item wall with REAL serial numbers,
+  item pinIds, item_desc pinIds, per-item cost + totals (items minted,
+  sats spent, from receipts) + honest state (any item pending index
+  confirmation is listed as pending). Link the absolute path.
+- Point the owner where to look: the chat NFT cards, the app's NFT wallet,
+  `pin://` self links from the receipts.
+- Offer next steps, owner decides: sell (`mrc721_sell_intent` / locked
+  `mrc721_sell`), announce via buzz, or publish the result page as a
+  public MetaApp (`metabot-metaapp-publish`) if they want a shareable page.
+
+## 4. Flow B — add items to an EXISTING collection (shorter wizard)
+
+1. Inventory first: `mrc721_search_collections {issuer: <this bot>,
+   supply_state: true}` — show the owner's albums with remaining slots and
+   make concrete suggestions. Never guess the target album.
+2. Same field Q&A for the new items (per-type playbook applies), same
+   preview-page hard gate over the NEW items only.
+3. Then upload → mint (wait_ms small; here receipts index normally) →
+   reconcile serial numbers. No collection_desc step.
+4. The precheck refuses mints into an exhausted collection — relay the
+   count and suggest raising nothing (supply is immutable): a new album or
+   a different series are the honest options.
+
+## 5. Resume protocol (interrupted issues)
+
+Issues span many writes and may outlive the session. The ledger is the
+source of truth for what already happened:
+
+- `ledger.json` stages: `fields-collected → preview-approved → uploading →
+  minting → registered → reconciled`. Write it in the issue folder next to
+  the preview.
+- Resume = read the ledger FIRST, then `mrc721_collections {issuer: <this
+  bot>}` + `mrc721_collection_info` to reconcile against the indexer.
+  **Never re-mint an item whose receipt exists in the ledger or in chat
+  history.** If the ledger is lost, reconstruct it from the session's tool
+  receipts BEFORE any further write; say plainly that you did so.
+- Mid-flow interruption between mints is safe: minted items are the
+  issuer's pins under the path and get collected once collection_desc
+  registers. Continue from the first missing item — the ledger knows it.
+
+## 6. Immutability table
+
+| Field | Mutable? | Notes |
+|---|---|---|
+| `collection_name` (path) | never | fixed at first write; pins under `/nft/mrc721/` accept no modify/revoke/hide |
+| `total_supply` | never | indexer collects only first-N items |
+| `royalty_rate` | never | recommend 0 — settlement not fully implemented |
+| collection_desc `name`/`desc`/`website`/`cover`/`metadata` | treat as final | the public protocol is write-once; our indexer additionally resolves issuer-only modify pins (`mrc721_collection_update`, full-content rewrite), but third-party indexers may ignore them — use ONLY as an emergency repair, and tell the owner its visibility is not guaranteed |
+| item `name`/`desc`/`cover`/`metadata` (item_desc) | first-write-wins per field | written fields lock forever; only missing fields can be backfilled later (multiple item_desc pins allowed; duplicate pinid takes the first) |
+
+## 7. Honesty rules and red lines
+
+- The tool receipt is the single source of truth: costs, txids,
+  confirmation state, view links — relay verbatim, never embellish.
+- "Not indexed yet" ≠ failure. Verify with `mrc721_item_info` /
+  `mrc721_collection_info`; NEVER re-mint to "fix" a slow index.
+- Relay insufficient-balance and precheck refusals loudly with the tool's
+  own wording.
+- Never write the preview page on-chain; never publish the owner's mock
+  without being asked.
+- Worldview claims stay honest: indexed/searchable/sellable — yes;
+  guaranteed price or liquidity — no.
+
+## 8. Out of scope
+
+- MetaContract NFTs (`wallet_nft_*`) — legacy compatibility line, separate
+  skill.
+- Buying/trading mechanics beyond pointing at `mrc721_sell_intent` /
+  `mrc721_sell` / `mrc721_transfer` / `mrc721_verify_holding` — the trade
+  skills own that flow.
