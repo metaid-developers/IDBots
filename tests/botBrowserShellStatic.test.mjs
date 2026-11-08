@@ -44,10 +44,25 @@ test('App gates Home and Browser surfaces with botBrowserShell.surfaceMode', () 
   assert.match(appSource, /const botBrowserShell = useBotBrowserShell\(/);
   assert.match(appSource, /botBrowserShell\.surfaceMode === 'home'/);
   assert.match(appSource, /botBrowserShell\.hasMountedBrowser \?/);
-  assert.match(appSource, /visible=\{botBrowserShell\.surfaceMode === 'browser'\}/);
+  // Upstream split "surface mode" from "is a browser page on screen": the
+  // surface stays mounted but is hidden while the Bot Internet catalog shows.
+  assert.match(appSource, /const showInternetCatalog = botBrowserShell\.surfaceMode === 'browser' && !botBrowserShell\.isBrowserPaneVisible;/);
+  assert.match(appSource, /visible=\{botBrowserShell\.isBrowserPaneVisible\}/);
 });
 
-test('shell defaults to Bot Home with a mounted Browser while retaining guarded deep links', () => {
+test('Browser tab commands reach the ABC runtime through the shell -> surface -> iframe bridge', () => {
+  // Upstream moved the visible tab strip into the ABC browser runtime itself
+  // (the React sidebar no longer renders a "New Tab" button), so this guard
+  // covers the bridge that the shell's openNewTab()/controlTabs() still use.
+  assert.doesNotMatch(sidebarSource, />New Tab<\/span>/);
+  assert.match(shellSource, /controlTabs\(\{ action: 'open-tab' \}\)/);
+  assert.match(surfaceSource, /type: 'tab-command'/);
+  assert.match(bridgeSource, /if \(data\.type === 'tab-command'\)/);
+  assert.match(bridgeSource, /if \(action === 'open-tab'\) \{/);
+  assert.match(bridgeSource, /globalThis\.AgentBrowserTabs\.openTab/);
+});
+
+test('shell lands on Bot Internet by default (persisted last choice) with guarded deep links', () => {
   assert.match(shellSource, /window\.electron\.metabot\.list\(\)/);
   assert.match(shellSource, /if \(!result\?\.success\) \{/);
   assert.match(shellSource, /showToast\(messageFromError\(result\?\.error, 'Failed to load local Bots\.'\)\);/);
@@ -57,16 +72,13 @@ test('shell defaults to Bot Home with a mounted Browser while retaining guarded 
   assert.match(shellSource, /showToast\('No local Actor\. Set up your identity or create a Bot first\.'\);/);
   assert.match(shellSource, /catch \(error\) \{/);
   assert.match(shellSource, /showToast\(messageFromError\(error, 'Failed to load local Bots\.'\)\);/);
-  assert.match(shellSource, /const \[surfaceMode, setSurfaceMode\] = useState<BotBrowserSurfaceMode>\('home'\);/);
+  // Default landing surface is Bot Internet (the twin's daily surface); the
+  // last explicit choice persists across restarts via localStorage.
+  assert.match(shellSource, /const \[surfaceMode, setSurfaceModeState\] = useState<BotBrowserSurfaceMode>\(readStoredSurfaceMode\);/);
+  assert.match(shellSource, /stored === 'home' \|\| stored === 'browser' \? stored : 'browser'/);
+  assert.match(shellSource, /SURFACE_MODE_STORAGE_KEY = 'idbots\.botBrowser\.surfaceMode';/);
+  assert.match(shellSource, /writeStoredSurfaceMode\(mode\);/);
   assert.match(shellSource, /const \[hasMountedBrowser, setHasMountedBrowser\] = useState\(true\);/);
-});
-
-test('Browser sidebar exposes a working New Tab bridge to the welcome page', () => {
-  assert.match(sidebarSource, />New Tab<\/span>/);
-  assert.match(shellSource, /controlTabs\(\{ action: 'open-tab' \}\)/);
-  assert.match(surfaceSource, /type: 'tab-command'/);
-  assert.match(bridgeSource, /if \(data\.type === 'tab-command'\)/);
-  assert.match(bridgeSource, /globalThis\.AgentBrowserTabs\.openTab/);
 });
 
 test('App forwards host tab commands through the renderer and iframe response bridge', () => {
@@ -97,7 +109,10 @@ test('user-initiated URI opens land in a new browser tab, not over the active on
   // Every in-renderer dispatcher on the DOM channel is a user click
   // (MarkdownContent links, group-task deliverables, cowork panel), so App
   // defaults the channel to newTab and only an explicit false navigates in place.
-  assert.match(appSource, /botBrowserShell\.openUri\(\{ uri: uri\.trim\(\), newTab: detail\?\.newTab !== false \}\)/);
+  // Upstream also forwards the dispatcher's actorId so an embedded MetaApp
+  // hands the tab the same acting identity as the bubble that launched it.
+  assert.match(appSource, /const actorId = typeof detail\?\.actorId === 'string' && detail\.actorId\.trim\(\) \? detail\.actorId\.trim\(\) : undefined;/);
+  assert.match(appSource, /botBrowserShell\.openUri\(\{ uri: uri\.trim\(\), actorId, newTab: detail\?\.newTab !== false \}\)/);
   // Shell-level UI gestures (avatar bot pages, MetaApp launches) opt in too,
   // while the host IPC path (agent tools / RPC) forwards the input untouched.
   assert.match(shellSource, /openUriWhenBrowserReady\(\{ uri, actorId, newTab: true \}\)/);
@@ -106,8 +121,10 @@ test('user-initiated URI opens land in a new browser tab, not over the active on
   assert.match(shellSource, /const newTab = input\?\.newTab === true;/);
 });
 
-test('sidebar switch puts Bot Browser before Bot Home', () => {
-  assert.match(switchSource, />\s*Bot Browser\s*</);
+test('sidebar switch puts Bot Internet before Bot Home', () => {
+  // Upstream renamed the leading tab to "Bot Internet" (feat/bot-internet-visual-assistant);
+  // this static guard follows the shipped labels.
+  assert.match(switchSource, />\s*Bot Internet\s*</);
   assert.match(switchSource, />\s*Bot Home\s*</);
-  assert.ok(switchSource.indexOf('Bot Browser') < switchSource.indexOf('Bot Home'));
+  assert.ok(switchSource.indexOf('Bot Internet') < switchSource.indexOf('Bot Home'));
 });

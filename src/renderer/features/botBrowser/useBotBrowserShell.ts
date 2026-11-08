@@ -18,6 +18,27 @@ import type {
   BotInternetPane,
 } from './types';
 
+// Daily twin interaction lives on the Bot Internet surface (owner ruling
+// 2026-11-08): it is the app's default landing surface, while Bot Home stays
+// the full professional harness. The last explicit choice is remembered across
+// restarts; machines without that stored value still land on Bot Internet.
+const SURFACE_MODE_STORAGE_KEY = 'idbots.botBrowser.surfaceMode';
+const readStoredSurfaceMode = (): BotBrowserSurfaceMode => {
+  try {
+    const stored = window.localStorage.getItem(SURFACE_MODE_STORAGE_KEY);
+    return stored === 'home' || stored === 'browser' ? stored : 'browser';
+  } catch {
+    return 'browser';
+  }
+};
+const writeStoredSurfaceMode = (mode: BotBrowserSurfaceMode) => {
+  try {
+    window.localStorage.setItem(SURFACE_MODE_STORAGE_KEY, mode);
+  } catch {
+    // localStorage unavailable: the choice just stays this session's.
+  }
+};
+
 interface UseBotBrowserShellInput {
   showToast: (message: string) => void;
 }
@@ -26,7 +47,11 @@ export function useBotBrowserShell(input: UseBotBrowserShellInput) {
   const { showToast } = input;
   const browserRef = useRef<BotBrowserSurfaceHandle | null>(null);
   const pendingOpenUriRef = useRef<BotBrowserOpenUriInput | null>(null);
-  const [surfaceMode, setSurfaceMode] = useState<BotBrowserSurfaceMode>('home');
+  const [surfaceMode, setSurfaceModeState] = useState<BotBrowserSurfaceMode>(readStoredSurfaceMode);
+  const setSurfaceMode = useCallback((mode: BotBrowserSurfaceMode) => {
+    writeStoredSurfaceMode(mode);
+    setSurfaceModeState(mode);
+  }, []);
   const [internetPane, setInternetPane] = useState<BotInternetPane>('browser');
   const [hasMountedBrowser, setHasMountedBrowser] = useState(true);
 
