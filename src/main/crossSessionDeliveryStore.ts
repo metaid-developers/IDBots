@@ -19,6 +19,14 @@ export interface CrossSessionDelivery {
   startedAt: number | null;
   completedAt: number | null;
   updatedAt: number;
+  /**
+   * Dispatch-report flag: when the turn triggered by this delivery settles,
+   * the drain reports the outcome (plus the final reply excerpt) back into
+   * the SOURCE session as a `dispatch_report:<id>` delivery. Set by the
+   * bot-facing idbots_session_insert_user_message tool; internal relays
+   * (ORCH-NOTIFY, wrap-up, group-task) stay silent.
+   */
+  notifySource: boolean;
 }
 
 export interface CrossSessionDeliveryReliabilitySnapshot {
@@ -54,6 +62,7 @@ function fromRow(row: Row): CrossSessionDelivery {
     startedAt: row.started_at == null ? null : Number(row.started_at),
     completedAt: row.completed_at == null ? null : Number(row.completed_at),
     updatedAt: Number(row.updated_at),
+    notifySource: Number(row.notify_source ?? 0) === 1,
   };
 }
 
@@ -106,17 +115,24 @@ export class CrossSessionDeliveryStore {
         inserted_at INTEGER,
         started_at INTEGER,
         completed_at INTEGER,
-        updated_at INTEGER NOT NULL
+        updated_at INTEGER NOT NULL,
+        notify_source INTEGER NOT NULL DEFAULT 0
       );
       CREATE INDEX IF NOT EXISTS idx_cross_session_delivery_target
         ON cowork_cross_session_deliveries(target_session_id, state, next_attempt_at, created_at);
       CREATE INDEX IF NOT EXISTS idx_cross_session_delivery_state
         ON cowork_cross_session_deliveries(state, next_attempt_at, created_at);
     `);
+    // Upgrade path for tables created before the dispatch-report flag
+    // existed (idempotent: skipped once the column is present).
+    const columns = this.getAll<Row>('PRAGMA table_info(cowork_cross_session_deliveries)');
+    if (!columns.some((column) => String(column.name) === 'notify_source')) {
+      this.db.run('ALTER TABLE cowork_cross_session_deliveries ADD COLUMN notify_source INTEGER NOT NULL DEFAULT 0;');
+    }
     this.saveDb();
   }
 
-  enqueue(input: { sourceSessionId: string; targetSessionId: string; message: string; deliveryId?: string }): CrossSessionDelivery {
+  enqueue(input: { sourceSessionId: string; targetSessionId: string; message: string; deliveryId?: string; notifySource?: boolean }): CrossSessionDelivery {
     const id = input.deliveryId?.trim() || uuidv4();
     const existing = this.getById(id);
     if (existing) {
@@ -132,9 +148,9 @@ export class CrossSessionDeliveryStore {
     const now = this.now();
     this.db.run(`
       INSERT INTO cowork_cross_session_deliveries
-        (id, source_session_id, target_session_id, message, state, next_attempt_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, 'pending', 0, ?, ?)
-    `, [id, input.sourceSessionId, input.targetSessionId, input.message, now, now]);
+        (id, source_session_id, target_session_id, message, state, next_attempt_at, created_at, updated_at, notify_source)
+      VALUES (?, ?, ?, ?, 'pending', 0, ?, ?, ?)
+    `, [id, input.sourceSessionId, input.targetSessionId, input.message, now, now, input.notifySource ? 1 : 0]);
     this.saveDb();
     return this.getById(id)!;
   }
