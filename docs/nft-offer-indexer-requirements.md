@@ -27,8 +27,9 @@ serves). Follows the client-contract conventions already established in
   (join through the item → collection relation where available), plus
   standard `page`/`size`. Returns the payload fields + the offer pinId and
   block height.
-- `GET /api/mrc721/offer/info?pinId=` — one offer, full payload (including
-  `offerTx`). Miss = 40400, same envelope as sell intent info.
+- `GET /api/mrc721/offer/info?itemPinId=` — one offer (the client keys offers
+  per item, latest-wins), full payload (including `offerTx`). Miss = 40400,
+  same envelope as sell intent info.
 - Authentication: none (public read), identical to the sell-intent
   endpoints.
 

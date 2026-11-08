@@ -44,6 +44,7 @@ docs/*
 !docs/nft-open-market-psbt-settlement.md
 !docs/nft-offer-indexer-requirements.md
 !docs/nft-offer-protocol.md
+!docs/nft-offer-metaso-handoff.md
 !docs/cloud-mobile/
 !docs/metaid_protocols/
 !docs/metaid_protocols/**
