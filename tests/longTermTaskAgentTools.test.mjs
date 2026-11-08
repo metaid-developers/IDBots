@@ -496,3 +496,30 @@ test('task echoes keep a 9-sub-project roster inline under the spill cap, fresh 
   assert.equal('subtasks' in board.json.cards[0], false, 'cards are summaries');
   assert.equal('decisionSessionIds' in board.json.cards[0], false);
 });
+
+test('longterm_task_create echoes the plan page URI; a missing artifact gets an explicit reminder, not a refusal', async () => {
+  const { store, captured } = await openWorld();
+  const create = captured.get('longterm_task_create');
+
+  // With the plan page: the URI rides the echo and lands on the store.
+  const withPage = await create.handler({ ...SPEC, planArtifactUri: '/tmp/approved-plan.html' });
+  assert.equal(withPage.isError, undefined, withPage.content[0].text);
+  const withPageJson = JSON.parse(withPage.content[0].text);
+  assert.equal(withPageJson.planArtifactUri, '/tmp/approved-plan.html');
+  assert.equal('planArtifactReminder' in withPageJson, false);
+  assert.equal(store.getTask(withPageJson.id).planArtifactUri, '/tmp/approved-plan.html');
+
+  // Without it: the create still succeeds (the owner may order a skip), but
+  // the echo says so out loud — silence must not pass as consent.
+  const withoutPage = await create.handler({ ...SPEC });
+  assert.equal(withoutPage.isError, undefined, withoutPage.content[0].text);
+  const withoutPageJson = JSON.parse(withoutPage.content[0].text);
+  assert.equal(withoutPageJson.planArtifactUri, undefined, 'an absent plan artifact is dropped from the echo');
+  assert.match(withoutPageJson.planArtifactReminder, /plan page/i);
+  assert.match(withoutPageJson.planArtifactReminder, /longterm_task_update/);
+
+  // The URI is backfillable after the fact via longterm_task_update.
+  const updated = await captured.get('longterm_task_update').handler({ taskId: withoutPageJson.id, planArtifactUri: '/tmp/late-plan.html' });
+  assert.equal(updated.isError, undefined, updated.content[0].text);
+  assert.equal(JSON.parse(updated.content[0].text).planArtifactUri, '/tmp/late-plan.html');
+});

@@ -623,3 +623,56 @@ test('nudge state preserves the owner-activity anchor across partial writes', as
   store.setNudgeState(taskId, { lastNudgeAtMs: 1234, lastEventId: 42, lastOwnerActivityAtMs: 2000 });
   assert.equal(store.getNudgeState(taskId).lastOwnerActivityAtMs, 2000);
 });
+
+test('planArtifactUri: recorded at create, updatable, journalled, whitespace collapses to null', async () => {
+  const { store } = await openStore();
+  const created = store.createTask({ ...SPEC, planArtifactUri: '/tmp/plan.html' }, 'twin');
+  assert.ok(created.ok, JSON.stringify(created));
+  assert.equal(created.value.planArtifactUri, '/tmp/plan.html');
+  assert.equal(store.getTask(created.value.id).planArtifactUri, '/tmp/plan.html');
+
+  // Board cards (summaries) carry it too.
+  const card = store.listBoard().cards.find((c) => c.id === created.value.id);
+  assert.equal(card.planArtifactUri, '/tmp/plan.html');
+
+  // Whitespace-only collapses to null — absence is a fact, not an error.
+  const bare = store.createTask({ ...SPEC, planArtifactUri: '   ' }, 'twin');
+  assert.ok(bare.ok, JSON.stringify(bare));
+  assert.equal(bare.value.planArtifactUri, null);
+
+  // updateTask sets it and journals the replan.
+  const updated = store.updateTask({ taskId: bare.value.id, planArtifactUri: '/workspace/plan-v2.html' }, 'twin');
+  assert.ok(updated.ok, JSON.stringify(updated));
+  assert.equal(updated.value.planArtifactUri, '/workspace/plan-v2.html');
+  const replan = updated.value.events.find((e) => e.kind === 'replanned');
+  assert.ok(replan);
+  assert.match(replan.detail, /plan_artifact_uri/);
+
+  // A whitespace-only update is a no-op refusal; the stored value is intact.
+  const noop = store.updateTask({ taskId: bare.value.id, planArtifactUri: '  ' }, 'twin');
+  assert.equal(noop.ok, false);
+  assert.equal(store.getTask(bare.value.id).planArtifactUri, '/workspace/plan-v2.html');
+});
+
+test('migration: a pre-plan-page database gains plan_artifact_uri via a guarded ALTER, rows intact', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-longterm-plan-'));
+  const sqliteStore = await SqliteStore.create(dir);
+  const db = sqliteStore.getDatabase();
+  // Old shape: no plan_artifact_uri column (pre-plan-page databases).
+  db.run(`CREATE TABLE long_term_tasks (
+    id TEXT PRIMARY KEY, title TEXT NOT NULL, goal TEXT NOT NULL,
+    stage TEXT NOT NULL DEFAULT 'defining' CHECK(stage IN ('defining','active','paused','done','cancelled')),
+    acceptance_delegate INTEGER NOT NULL DEFAULT 1, current_subtask_id TEXT,
+    definition_session_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, done_at TEXT)`);
+  const now = new Date().toISOString();
+  db.run(`INSERT INTO long_term_tasks (id, title, goal, stage, created_at, updated_at)
+    VALUES ('ltt_old', 'legacy task', 'legacy goal', 'defining', ?, ?)`, [now, now]);
+
+  const store = new LongTermTaskStore(db, sqliteStore.getSaveFunction());
+  const task = store.getTask('ltt_old');
+  assert.ok(task, 'legacy row readable after migration');
+  assert.equal(task.planArtifactUri, null, 'legacy row has no plan artifact');
+  assert.ok(store.updateTask({ taskId: 'ltt_old', planArtifactUri: '/tmp/plan.html' }, 'twin').ok,
+    'new writes carry a plan artifact on the migrated table');
+  assert.equal(store.getTask('ltt_old').planArtifactUri, '/tmp/plan.html');
+});

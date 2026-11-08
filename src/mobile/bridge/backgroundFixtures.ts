@@ -54,6 +54,7 @@ export function createLongTermFixture(sessionId: string): LongTermTaskDetail {
     stage: 'active',
     column: 'waiting_owner',
     acceptanceDelegate: true,
+    planArtifactUri: null,
     currentSubtaskId: current.id,
     currentSubtaskTitle: current.title,
     currentSubtaskStatus: current.status,

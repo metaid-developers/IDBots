@@ -217,6 +217,7 @@ interface TaskRow {
   acceptance_delegate: number;
   current_subtask_id: string | null;
   definition_session_id: string | null;
+  plan_artifact_uri: string | null;
   created_at: string;
   updated_at: string;
   done_at: string | null;
@@ -325,6 +326,7 @@ export class LongTermTaskStore {
         acceptance_delegate INTEGER NOT NULL DEFAULT 1,
         current_subtask_id TEXT,
         definition_session_id TEXT,
+        plan_artifact_uri TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         done_at TEXT
@@ -373,6 +375,12 @@ export class LongTermTaskStore {
     // P1: additive columns — CREATE TABLE IF NOT EXISTS cannot extend an
     // existing table, so databases created before these columns get them via
     // guarded ALTERs (idempotent first-run migration, rows intact).
+    const taskColumns = this.getAll<{ name: unknown }>('PRAGMA table_info(long_term_tasks)').map((row) => String(row.name));
+    // Plan-page traceability (feat/ltt-creation-flow): the visual plan page the
+    // owner confirmed before `longterm_task_create` — local .html path or pin://.
+    if (!taskColumns.includes('plan_artifact_uri')) {
+      this.db.run('ALTER TABLE long_term_tasks ADD COLUMN plan_artifact_uri TEXT');
+    }
     const subtaskColumns = this.getAll<{ name: unknown }>('PRAGMA table_info(long_term_subtasks)').map((row) => String(row.name));
     if (!subtaskColumns.includes('expected_minutes')) {
       this.db.run('ALTER TABLE long_term_subtasks ADD COLUMN expected_minutes INTEGER');
@@ -420,6 +428,7 @@ export class LongTermTaskStore {
       acceptanceDelegate: row.acceptance_delegate === 1,
       currentSubtaskIdPinned: row.current_subtask_id ?? null,
       definitionSessionId: row.definition_session_id ?? null,
+      planArtifactUri: row.plan_artifact_uri ?? null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       doneAt: row.done_at ?? null,
@@ -510,6 +519,7 @@ export class LongTermTaskStore {
       stage: task.stage,
       column: column ?? 'done',
       acceptanceDelegate: task.acceptanceDelegate,
+      planArtifactUri: task.planArtifactUri,
       currentSubtaskId: current?.id ?? null,
       currentSubtaskTitle: current?.title ?? null,
       currentSubtaskStatus: current?.status ?? null,
@@ -589,9 +599,9 @@ export class LongTermTaskStore {
       void subtaskIds;
     }
     this.db.run(
-      `INSERT INTO long_term_tasks (id, title, goal, stage, acceptance_delegate, definition_session_id, created_at, updated_at)
-       VALUES (?, ?, ?, 'defining', 1, ?, ?, ?)`,
-      [taskId, title, goal, input.definitionSessionId ?? null, now, now],
+      `INSERT INTO long_term_tasks (id, title, goal, stage, acceptance_delegate, definition_session_id, plan_artifact_uri, created_at, updated_at)
+       VALUES (?, ?, ?, 'defining', 1, ?, ?, ?, ?)`,
+      [taskId, title, goal, input.definitionSessionId ?? null, asText(input.planArtifactUri ?? '').trim() || null, now, now],
     );
     drafts.forEach((draft, index) => {
       const dependsOn = (draft.dependsOnOrdinals ?? []).map((ordinal) => subtaskIds[ordinal - 1]);
@@ -740,6 +750,13 @@ export class LongTermTaskStore {
       if (next !== row.acceptance_delegate) {
         this.db.run('UPDATE long_term_tasks SET acceptance_delegate = ? WHERE id = ?', [next, row.id]);
         changes.push(`acceptance_delegate=${next === 1 ? 'on' : 'off'}`);
+      }
+    }
+    if (typeof input.planArtifactUri === 'string') {
+      const nextUri = input.planArtifactUri.trim();
+      if (nextUri && nextUri !== (row.plan_artifact_uri ?? '')) {
+        this.db.run('UPDATE long_term_tasks SET plan_artifact_uri = ? WHERE id = ?', [nextUri, row.id]);
+        changes.push('plan_artifact_uri');
       }
     }
     if (changes.length === 0) return { ok: false, code: 'VALIDATION', error: 'nothing to update' };
