@@ -49,7 +49,12 @@ const isOrderClosed = (status: string): boolean => /reject|closed|expired|cancel
 const orderStatusLabel = (status: string): string => {
   const normalized = (status || '').toLowerCase();
   if (isOrderCredited(normalized)) return i18nService.t('meOrderStatusConfirmed');
-  if (isOrderClosed(normalized)) return i18nService.t('meOrderStatusRejected');
+  if (isOrderClosed(normalized)) {
+    // Janitor-expired orders close as "closed" — not an admin rejection.
+    return /reject|fail/i.test(normalized)
+      ? i18nService.t('meOrderStatusRejected')
+      : i18nService.t('meOrderStatusClosed');
+  }
   if (/submit|created|pending|paid/i.test(normalized)) return i18nService.t('meOrderStatusSubmitted');
   return status || '—';
 };

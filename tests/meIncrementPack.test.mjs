@@ -220,3 +220,16 @@ test('payment UX honesty: topup intro, code expiry, stale-unpaid orders, gateway
   assert.match(usageSource, /!isStaleUnpaidSubscriptionOrder\(order, now\) && pendingLive\(order\.status\)/);
   assert.match(i18nSource, /meUsageOrderStale: '超时未支付'/);
 });
+
+test('d16681f server contract lands without further client changes; closed ≠ rejected', () => {
+  // assist-base-service d16681f: topup gateway checkout returns the order view
+  // at data top-level with gatewayParams(qrCode + expiresAt copy) — the
+  // desktop normalizer reads those exact fields; no client change needed.
+  assert.match(pointsServiceSource, /order: normalizeMeTopupOrder\(data\)/);
+  assert.match(pointsServiceSource, /gatewayParams: record\.gatewayParams \?\? record\.gateway_params/);
+  // Janitor-expired orders close with statusText "closed" — shown as 已关闭,
+  // never as the admin-rejection wording 已拒绝.
+  assert.match(usageSource, /\/reject\|fail\/i\.test\(normalized\)\s*\n\s*\? i18nService\.t\('meOrderStatusRejected'\)/);
+  assert.match(i18nSource, /meOrderStatusClosed: '已关闭'/);
+  assert.match(i18nSource, /meOrderStatusClosed: 'Closed'/);
+});
