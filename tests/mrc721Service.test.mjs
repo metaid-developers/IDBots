@@ -22,6 +22,9 @@ const {
   createMrc721ItemDescBatch,
   estimateMrc721Issue,
   estimateMvcMrc721PinFeeSats,
+  estimateMvcFileUploadFeeSats,
+  fetchMrc721RawPin,
+  serializeMrc721Metadata,
   updateMrc721Collection,
   transferMrc721Item,
   fetchMrc721CollectionInfo,
@@ -105,15 +108,16 @@ test('buildMrc721CollectionDescContent keeps provided fields and omits empty one
   assert.equal('website' in content, false);
 });
 
-test('buildMrc721CollectionDescContent handles metadata shapes like the indexer', () => {
-  // JSON string is round-tripped; object passes through; non-JSON string kept.
-  assert.deepEqual(
+test('buildMrc721CollectionDescContent writes metadata as a JSON string', () => {
+  // Wire form is always a string (R-F-11: indexers type the field as a
+  // string). Strings pass verbatim, objects serialize to compact JSON text.
+  assert.equal(
     buildMrc721CollectionDescContent({ metadata: '{"trait":"cool"}' }).metadata,
-    { trait: 'cool' },
+    '{"trait":"cool"}',
   );
-  assert.deepEqual(
+  assert.equal(
     buildMrc721CollectionDescContent({ metadata: { trait: 'cool' } }).metadata,
-    { trait: 'cool' },
+    '{"trait":"cool"}',
   );
   assert.equal(
     buildMrc721CollectionDescContent({ metadata: 'not json' }).metadata,
@@ -337,7 +341,7 @@ test('updateMrc721Collection passes indexed metadata through and lets overrides 
     { metabotId: 7, collectionName: 'pixel-cats', desc: 'new desc', current },
   );
   let content = JSON.parse(calls[0].metaidData.payload);
-  assert.deepEqual(content.metadata, { trait: 'old' });
+  assert.equal(content.metadata, '{"trait":"old"}');
   assert.equal(content.desc, 'new desc');
 
   await updateMrc721Collection(
@@ -345,7 +349,16 @@ test('updateMrc721Collection passes indexed metadata through and lets overrides 
     { metabotId: 7, collectionName: 'pixel-cats', metadata: { trait: 'new' }, current },
   );
   content = JSON.parse(calls[1].metaidData.payload);
-  assert.deepEqual(content.metadata, { trait: 'new' });
+  assert.equal(content.metadata, '{"trait":"new"}');
+
+  // The indexer serves an absent metadata as "": a cover-only update on such
+  // an album must not trip the "must not be empty" guard, and writes none.
+  await updateMrc721Collection(
+    { createPin, store: makeStore() },
+    { metabotId: 7, collectionName: 'pixel-cats', cover: `${'ab'.repeat(32)}i0`, current: { ...current, metadata: '' } },
+  );
+  content = JSON.parse(calls[2].metaidData.payload);
+  assert.equal('metadata' in content, false);
 });
 
 test('updateMrc721Collection refuses non-issuers, unindexed collections, unverifiable creators, and no-ops', async () => {
@@ -408,7 +421,7 @@ test('createMrc721Mint sends mint pin only, and item_desc only when display fiel
   assert.equal(descCall.path, '/nft/mrc721/pixel-cats/item_desc');
   const descContent = JSON.parse(descCall.payload);
   assert.deepEqual(descContent, {
-    items: [{ pinid: `${'cd'.repeat(32)}i0`, name: 'Cat #2', desc: 'second cat', metadata: { trait: 'cool' } }],
+    items: [{ pinid: `${'cd'.repeat(32)}i0`, name: 'Cat #2', desc: 'second cat', metadata: '{"trait":"cool"}' }],
   });
 });
 
@@ -689,7 +702,7 @@ test('createMrc721ItemDescBatch broadcasts ONE item_desc pin with every entry', 
   assert.equal(calls[0].metaidData.operation, 'create');
   assert.deepEqual(JSON.parse(calls[0].metaidData.payload), {
     items: [
-      { pinid: itemA, name: 'Cat #1', desc: 'first', cover: `metafile://${'33'.repeat(32)}i0`, metadata: { trait: 'cool' } },
+      { pinid: itemA, name: 'Cat #1', desc: 'first', cover: `metafile://${'33'.repeat(32)}i0`, metadata: '{"trait":"cool"}' },
       { pinid: itemB, name: 'Cat #2' },
     ],
   });
@@ -799,4 +812,113 @@ test('estimateMrc721Issue add-to-existing drops the registration write and valid
     () => estimateMrc721Issue({ collectionName: 'Bad Name', feeRate: 1 }),
     /lowercase/,
   );
+});
+
+// ---------------------------------------------------------------------------
+// Metadata wire form, upload pricing, placeholder covers, raw-pin fallback
+// ---------------------------------------------------------------------------
+
+test('serializeMrc721Metadata always yields a JSON string (R-F-11 safe)', () => {
+  assert.equal(serializeMrc721Metadata({ a: 1 }), '{"a":1}');
+  assert.equal(serializeMrc721Metadata('  {"a":1}  '), '{"a":1}', 'strings pass verbatim, trimmed, never re-parsed');
+  assert.equal(serializeMrc721Metadata('plain text'), 'plain text');
+  assert.equal(serializeMrc721Metadata([1, 2]), '[1,2]');
+  assert.equal(serializeMrc721Metadata(undefined), undefined);
+  assert.equal(serializeMrc721Metadata('   '), undefined);
+  assert.throws(() => serializeMrc721Metadata('x'.repeat(16_385), 'items[0].metadata'), /items\[0\]\.metadata must serialize/);
+});
+
+test('createMrc721Mint writes object metadata as a string in the item_desc ref', async () => {
+  const { createPin, calls } = makeCreatePinSpy();
+  await createMrc721Mint(
+    { createPin },
+    { metabotId: 7, collectionName: 'pixel-cats', itemPath: 'nft-09', name: 'Cat', metadata: { contentType: 'image/jpeg' }, settleDelayMs: 0 },
+  );
+  const ref = JSON.parse(calls[1].metaidData.payload).items[0];
+  assert.equal(typeof ref.metadata, 'string');
+  assert.equal(ref.metadata, '{"contentType":"image/jpeg"}');
+});
+
+test('estimateMvcFileUploadFeeSats is an upper bound on the 2026-11-08 calibration', () => {
+  // 5 JPEGs, 3,389,570 bytes, observed 3,753,133 sats at 1 sat/vB.
+  const sizes = [668799, 816554, 701384, 715701, 487132];
+  const estimated = sizes.reduce((sum, bytes) => sum + estimateMvcFileUploadFeeSats(bytes, 1), 0);
+  assert.ok(estimated >= 3_753_133, `estimate ${estimated} must not undershoot the observed spend`);
+  assert.ok(estimated <= 3_753_133 * 1.1, `estimate ${estimated} stays within 10% of the observed spend`);
+  assert.equal(estimateMvcFileUploadFeeSats(1000, 2), Math.ceil((1000 * 1.15 + 600) * 2));
+});
+
+test('estimateMrc721Issue prices uploads separately and sizes coverless items with a placeholder cover', () => {
+  const withPlaceholder = estimateMrc721Issue({
+    collectionName: 'pixel-cats',
+    feeRate: 1,
+    items: [{ name: 'a' }, { name: 'b' }],
+    uploads: [{ label: 'a.jpg', bytes: 500_000 }, { label: 'b.jpg', bytes: 400_000 }],
+  });
+  const withoutPlaceholder = estimateMrc721Issue({
+    collectionName: 'pixel-cats',
+    feeRate: 1,
+    items: [{ name: 'a' }, { name: 'b' }],
+    assumeItemCovers: false,
+  });
+  const descWith = withPlaceholder.writes.find((write) => write.kind === 'item_desc');
+  const descWithout = withoutPlaceholder.writes.find((write) => write.kind === 'item_desc');
+  assert.ok(descWith.payloadBytes > descWithout.payloadBytes, 'placeholder covers enlarge the sized item_desc');
+  assert.equal(withPlaceholder.writes.filter((write) => write.kind === 'upload').length, 2);
+  assert.equal(
+    withPlaceholder.uploadEstimatedSats,
+    estimateMvcFileUploadFeeSats(500_000, 1) + estimateMvcFileUploadFeeSats(400_000, 1),
+  );
+  assert.equal(withPlaceholder.totalEstimatedSats, withPlaceholder.protocolEstimatedSats + withPlaceholder.uploadEstimatedSats);
+  assert.equal(withoutPlaceholder.uploadEstimatedSats, 0);
+  assert.throws(
+    () => estimateMrc721Issue({ collectionName: 'pixel-cats', feeRate: 1, uploads: [{ bytes: -1 }] }),
+    /uploads\[0\]\.bytes/,
+  );
+});
+
+test('estimateMrc721Issue item_desc bound covers the real 2026-11-08 batch payload', () => {
+  // The real batch carried covers + metadata the estimate input lacked; the
+  // placeholder cover must keep the bound above what the batch really cost.
+  const items = [
+    { name: '像素落日 · 第一帧｜海帆落日', desc: '像素落日第一帧：海面落日，像素化波光与紫色帆船剪影。' },
+    { name: '像素落日 · 第二帧｜天际线落日', desc: '像素落日第二帧：城市天际线落日，霓虹楼群与车流剪影。' },
+    { name: '像素落日 · 第三帧｜沙漠驼队落日', desc: '像素落日第三帧：沙漠驼队剪影落日。' },
+    { name: '像素落日 · 第四帧｜湖面倒映落日', desc: '像素落日第四帧：山谷湖面倒映落日。' },
+    { name: '像素落日 · 第五帧｜初星落日', desc: '像素落日第五帧：黄昏转夜，第一颗星与落日同框，林梢剪影。' },
+  ].map((item) => ({ ...item, metadata: { contentType: 'image/jpeg', generator: 'Seedream 4.5' } }));
+  const estimate = estimateMrc721Issue({ collectionName: 'pixel-sun-test', feeRate: 1, items });
+  const desc = estimate.writes.find((write) => write.kind === 'item_desc');
+  assert.ok(desc.estimatedSats >= 2205, `item_desc estimate ${desc.estimatedSats} must cover the real 2205 sats`);
+});
+
+test('fetchMrc721RawPin reads a mempool pin (genesisHeight -1) and decodes its body', async () => {
+  const pinId = `${'46'.repeat(32)}i0`;
+  const body = Buffer.from(JSON.stringify({ name: 'Pixel', totalSupply: 5 })).toString('base64');
+  const raw = await withFetchStub(
+    async (url) => {
+      assert.match(String(url), new RegExp(`/api/pin/${pinId}$`));
+      return jsonResponse({
+        code: 1,
+        data: {
+          id: pinId,
+          path: '/nft/mrc721/pixel-sun-test/collection_desc',
+          operation: 'create',
+          address: BOT_ADDRESS,
+          genesisHeight: -1,
+          seenTime: 1794145105,
+          contentBody: body,
+        },
+      });
+    },
+    () => fetchMrc721RawPin(pinId),
+  );
+  assert.equal(raw.confirmed, false);
+  assert.equal(raw.genesisHeight, -1);
+  assert.equal(raw.path, '/nft/mrc721/pixel-sun-test/collection_desc');
+  assert.deepEqual(JSON.parse(raw.content), { name: 'Pixel', totalSupply: 5 });
+
+  const miss = await withFetchStub(async () => jsonResponse({ code: 404, data: null }), () => fetchMrc721RawPin(pinId));
+  assert.equal(miss, null);
+  assert.equal(await fetchMrc721RawPin('not-a-pin'), null);
 });
