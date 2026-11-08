@@ -13934,6 +13934,11 @@ export class CoworkRunner extends EventEmitter {
         ...buildLongTermTaskAgentTools({
           tool,
           control: this.longTermTaskTools,
+          // The calling session: longterm_task_create defaults
+          // definitionSessionId to it, so a task born in chat keeps its birth
+          // conversation visible to the heartbeat's venue rules — same
+          // injection the scheduled/metatask tool factories get here.
+          sessionId,
         })
       );
     }
