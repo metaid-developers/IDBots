@@ -123,7 +123,12 @@ test('the surface switcher sits in the mid column header — the rail top is a b
   assert.match(railSource, /isMac \? 'h-\[52px\]' : 'h-3'/);
 
   assert.match(sidebarSource, /data-slot="mid-column-header"/);
-  assert.match(sidebarSource, /data-slot="mid-column-header"[\s\S]{0,420}<BotBrowserModeSwitch/);
+  // The switcher is below the traffic-light strip in its own slot (owner
+  // ruling 22:19: the same position on both faces), still inside the header.
+  assert.match(
+    sidebarSource,
+    /data-slot="mid-column-header"[\s\S]*?data-slot="surface-switcher-slot"[\s\S]{0,200}<BotBrowserModeSwitch/,
+  );
   assert.match(sidebarSource, /onSelectSurface: \(mode: BotBrowserSurfaceMode\) => void;/);
   // The header control chooses the SURFACE only — the record TYPE stays a
   // rail-only decision.
@@ -141,12 +146,15 @@ test('the Co-Work face no longer introduces itself in either column', () => {
   // panel body now carries no action row at all.
   const panelSource = read('src/renderer/features/botBrowser/BotBrowserCoworkPanel.tsx');
   assert.doesNotMatch(panelSource, /botBrowserCoworkTitle/);
-  assert.doesNotMatch(panelSource, /cowork-panel-actions/);
-  assert.match(panelSource, /data-slot="cowork-history-panel"|CoworkHistoryPanel/);
-  assert.match(sidebarSource, /data-slot="cowork-new-session"/);
-  assert.match(sidebarSource, /data-slot="cowork-toggle-history"/);
-  assert.match(sidebarSource, /botBrowserCoworkNew/);
-  assert.match(sidebarSource, /botBrowserCoworkHistory/);
+  // The two session-window actions went back into the panel's own row when the
+  // 21:31 header-bar form was reverted (owner ruling 22:19); the records
+  // overlay itself keeps the baseline restyle.
+  assert.match(panelSource, /data-slot="cowork-panel-actions"/);
+  assert.match(panelSource, /botBrowserCoworkNew/);
+  assert.match(panelSource, /botBrowserCoworkHistory/);
+  assert.match(panelSource, /CoworkHistoryPanel/);
+  assert.doesNotMatch(sidebarSource, /data-slot="cowork-new-session"/);
+  assert.doesNotMatch(sidebarSource, /data-slot="cowork-toggle-history"/);
 
   // The right pane stays a REAL rendered branch (never `null`) — the card that
   // used to sit here (title + session counts + an "open the browser" button) is

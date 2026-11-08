@@ -494,31 +494,36 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
       style={{ width: isCollapsed ? 0 : width }}
     >
       <div className="pt-3 pb-3">
-        {/* The shared surface header bar (owner spec 2026-11-08 21:31). On
-            BotWorks this is the window's FIRST track, so the bar reserves the
-            macOS traffic lights and then hosts the same three-ring pill as the
-            BotHub column; the sidebar's own collapse control and the update
-            badge ride its right-hand action slot instead of a second row. */}
-        <BotBrowserModeSwitch
-          mode={mode}
-          onSelectHome={onSelectHome}
-          onSelectBrowser={() => onSelectSurface('browser')}
-          trafficLightInset={isMac}
-          actions={
-            <>
-              <button
-                type="button"
-                onClick={onToggleCollapse}
-                className="non-draggable inline-flex h-7 w-5 items-center justify-center rounded-md border dark:border-claude-darkBorder/60 border-claude-border/60 dark:bg-claude-darkSurface/80 bg-claude-surface/80 shadow-subtle dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
-                aria-label={isCollapsed ? i18nService.t('expand') : i18nService.t('collapse')}
-              >
-                <PanelToggleIcon className="h-3.5 w-3.5" collapsed={isCollapsed} />
-              </button>
-              {updateBadge}
-            </>
-          }
-        />
-        <nav aria-label={i18nService.t('botHome')} className="mt-2 space-y-1 px-3">
+        <div className="draggable sidebar-header-drag h-8 flex items-center px-3">
+          {/* Same collapse control as the seam tab (aesthetic pass 2026-11-08):
+              a bare chevron read as a stray glyph here; the tab gives it the
+              same box, border and hover family as the ONE toggle on the seam,
+              so the two doors to the same state at least look like one control.
+              (Whether both should exist is an owner call — noted in the pass
+              report, not changed here.) */}
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            className={`non-draggable inline-flex h-7 w-5 items-center justify-center rounded-md border dark:border-claude-darkBorder/60 border-claude-border/60 dark:bg-claude-darkSurface/80 bg-claude-surface/80 shadow-subtle dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${isMac ? 'ml-[68px]' : ''}`}
+            aria-label={isCollapsed ? i18nService.t('expand') : i18nService.t('collapse')}
+          >
+            <PanelToggleIcon className="h-3.5 w-3.5" collapsed={isCollapsed} />
+          </button>
+          <div className="ml-auto">
+            {updateBadge}
+          </div>
+        </div>
+        {/* Original switcher slot: the sidebar top, right under the drag
+            header. The control itself is the accepted Codex-structure ×
+            IDBots-token capsule — same component as the Internet header. */}
+        <div className="mt-3 px-3">
+          <BotBrowserModeSwitch
+            mode={mode}
+            onSelectHome={onSelectHome}
+            onSelectBrowser={() => onSelectSurface('browser')}
+          />
+        </div>
+        <nav aria-label={i18nService.t('botHome')} className="mt-3 space-y-1 px-3">
           <div className="flex items-center gap-1">
             <button
               type="button"

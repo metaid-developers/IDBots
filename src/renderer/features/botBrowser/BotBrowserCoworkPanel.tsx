@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { ChatBubbleLeftRightIcon, FolderIcon } from '@heroicons/react/24/outline';
+import { ChatBubbleLeftRightIcon, ClockIcon, FolderIcon } from '@heroicons/react/24/outline';
+import ComposeIcon from '../../components/icons/ComposeIcon';
 import MarkdownContent from '../../components/MarkdownContent';
 import CoworkPromptInput, { type CoworkPromptInputRef } from '../../components/cowork/CoworkPromptInput';
 import { UserMessageBody } from '../../components/cowork/UserAttachmentBody';
@@ -158,25 +159,16 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
   onShowSkills,
   onOpenNewProject,
   onOpenBotHome,
-  historyOpen,
-  onHistoryOpenChange,
 }) => {
   const dispatch = useDispatch();
   const currentSession = useSelector((state: RootState) => state.browserCowork.currentSession);
   const isStreaming = useSelector((state: RootState) => state.browserCowork.isStreaming);
   const sessions = useSelector((state: RootState) => state.cowork.sessions);
   const activeSkillIds = useSelector((state: RootState) => state.skill.activeSkillIds);
-  // Controlled by the header bar when the parent passes it; a standalone mount
-  // (tests, future hosts) falls back to the old internal toggle.
-  const [internalShowHistory, setInternalShowHistory] = useState(false);
-  const showHistory = historyOpen ?? internalShowHistory;
-  const setShowHistory = useCallback(
-    (next: boolean) => {
-      if (onHistoryOpenChange) onHistoryOpenChange(next);
-      else setInternalShowHistory(next);
-    },
-    [onHistoryOpenChange],
-  );
+  // The session-records overlay is toggled by the session window's own action
+  // row (restored 2026-11-08 22:19 when the header-bar experiment was reverted;
+  // the records panel itself keeps the baseline restyle).
+  const [showHistory, setShowHistory] = useState(false);
   const [metabots, setMetabots] = useState<PanelMetabot[]>([]);
   const [metabotsLoaded, setMetabotsLoaded] = useState(false);
   // Workspace choice for the next browser session, same selection model as the
@@ -439,6 +431,39 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
+      {/* Session-window actions: new session (the explicit entry) and the
+          records toggle. Same two service calls as before the switcher rework:
+          startNewDraft() / the overlay. 28 px controls on the column's 10 px
+          inset, per the aesthetic grid. */}
+      <div data-slot="cowork-panel-actions" className="flex items-center justify-end gap-0.5 pb-1.5">
+        <button
+          type="button"
+          onClick={() => {
+            setShowHistory(false);
+            browserCoworkService.startNewDraft();
+          }}
+          className="inline-flex h-7 w-7 items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+          aria-label={i18nService.t('botBrowserCoworkNew')}
+          title={i18nService.t('botBrowserCoworkNew')}
+        >
+          <ComposeIcon className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowHistory((value) => !value)}
+          aria-expanded={showHistory}
+          className={`inline-flex h-7 w-7 items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
+            showHistory
+              ? 'dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover dark:text-claude-darkText text-claude-text'
+              : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
+          }`}
+          aria-label={i18nService.t('botBrowserCoworkHistory')}
+          title={i18nService.t('botBrowserCoworkHistory')}
+        >
+          <ClockIcon className="h-4 w-4" />
+        </button>
+      </div>
+
       <div ref={listRef} className="min-h-0 flex-1 space-y-2.5 overflow-y-auto overflow-x-hidden px-1 pb-2">
         {visibleMessages.length === 0 ? (
           needsTwinBootstrap ? (
