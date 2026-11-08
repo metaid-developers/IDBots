@@ -11,7 +11,8 @@ interface LongTermTaskOriginHit {
 
 /**
  * Session-side "part of long-term task" chip (redesign): a session bound to a
- * sub-project (or a task's definition session) shows where it belongs.
+ * sub-project (or a task's definition session, or one a sub-project was bound
+ * to before a rotation/rebind) shows where it belongs.
  * Data: `longtermTask:forSession` (read-only). No hit → renders nothing —
  * belonging is a fact, never a guess. Click dispatches `longtermTask:viewTask`
  * which App.tsx routes to the tracking page with the task open.

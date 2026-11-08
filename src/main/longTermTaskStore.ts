@@ -1422,7 +1422,14 @@ export class LongTermTaskStore {
     }
   }
 
-  /** Reverse lookup for the session-side origin chip: which task/sub-project owns this session. */
+  /**
+   * Reverse lookup for the session-side origin chip: which task/sub-project
+   * owns this session. Precedence: the sub-project currently bound to it, the
+   * task born in it, then a sub-project that was bound to it earlier — a
+   * session rotated away from (or rebound off) stays visibly linked to its
+   * task. Before the history fallback a rotation silently dropped the chip,
+   * so the old session's readable history looked unrelated to any task.
+   */
   findBySessionId(sessionId: string): { task: LongTermTaskSummary; subtask: LongTermSubtask | null } | null {
     const trimmed = asText(sessionId).trim();
     if (!trimmed) return null;
@@ -1434,9 +1441,21 @@ export class LongTermTaskStore {
       return { task: this.toSummary(taskRow, subtasks), subtask: this.mapSubtask(subRow) };
     }
     const taskRow = this.getOne<TaskRow>('SELECT * FROM long_term_tasks WHERE definition_session_id = ?', [trimmed]);
-    if (!taskRow) return null;
-    const subtasks = this.listSubtaskRows(taskRow.id).map((row) => this.mapSubtask(row));
-    return { task: this.toSummary(taskRow, subtasks), subtask: null };
+    if (taskRow) {
+      const subtasks = this.listSubtaskRows(taskRow.id).map((row) => this.mapSubtask(row));
+      return { task: this.toSummary(taskRow, subtasks), subtask: null };
+    }
+    // Substring prefilter, then exact membership on the parsed history (a
+    // session id that is merely a substring of a recorded one must not match).
+    const historyRow = this.getAll<SubtaskRow>(
+      'SELECT * FROM long_term_subtasks WHERE instr(session_history_json, ?) > 0 ORDER BY updated_at DESC',
+      [trimmed],
+    ).find((row) => parseJsonArray<string>(row.session_history_json).includes(trimmed));
+    if (!historyRow) return null;
+    const historyTaskRow = this.getTaskRow(historyRow.task_id);
+    if (!historyTaskRow) return null;
+    const historySubtasks = this.listSubtaskRows(historyTaskRow.id).map((row) => this.mapSubtask(row));
+    return { task: this.toSummary(historyTaskRow, historySubtasks), subtask: this.mapSubtask(historyRow) };
   }
 
   /**

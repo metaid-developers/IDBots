@@ -233,9 +233,21 @@ const subtaskDraftSchema = z.object({
   expectedMinutes: z.number().int().positive().optional().describe('Rough expected duration in minutes — estimate it during grilling; the supervision heartbeat checks in when the sub-project runs past its budget.'),
 });
 
-export function buildLongTermTaskAgentTools(deps: { tool: SdkToolFactory; control: LongTermTaskAgentControl }): unknown[] {
+export function buildLongTermTaskAgentTools(deps: {
+  tool: SdkToolFactory;
+  control: LongTermTaskAgentControl;
+  /** The session these tools are mounted in. When the model omits
+   *  definitionSessionId on create, the calling session is recorded as the
+   *  task's definition session — the birth conversation must never depend on
+   *  the model remembering to pass an id it was only told about in prose
+   *  (2026-11-08 incident: a task created in the owner's chat recorded no
+   *  definition session, so the heartbeat could not see the conversation the
+   *  owner was actually talking in and forked fresh sessions all day). */
+  sessionId?: string;
+}): unknown[] {
   const { tool, control } = deps;
   const store = () => control.store();
+  const mountedSessionId = String(deps.sessionId ?? '').trim();
 
   const createTask = tool(
     'longterm_task_create',
@@ -244,7 +256,7 @@ export function buildLongTermTaskAgentTools(deps: { tool: SdkToolFactory; contro
       title: z.string().min(1).describe('Task title (short).'),
       goal: z.string().min(1).describe('The full goal statement, including the done-ness definition of the whole task.'),
       subtasks: z.array(subtaskDraftSchema).min(1).describe('Ordered sub-projects. Order should respect dependencies.'),
-      definitionSessionId: z.string().optional().describe('The session where the definition was discussed (for traceability).'),
+      definitionSessionId: z.string().optional().describe('Optional: the session where the definition was discussed. Defaults to this session when omitted — you normally do not need to pass it.'),
       planArtifactUri: z.string().min(1).optional().describe('URI of the confirmed plan page — the local .html file path shown in the bubble (or pin:// if the owner asked for an on-chain copy). Recorded on the task so the board can re-open the plan later.'),
     },
     async (args: { title?: string; goal?: string; subtasks?: unknown[]; definitionSessionId?: string; planArtifactUri?: string }) => {
@@ -254,7 +266,7 @@ export function buildLongTermTaskAgentTools(deps: { tool: SdkToolFactory; contro
             title: String(args.title ?? ''),
             goal: String(args.goal ?? ''),
             subtasks: (args.subtasks ?? []) as never[],
-            definitionSessionId: args.definitionSessionId ?? null,
+            definitionSessionId: String(args.definitionSessionId ?? '').trim() || mountedSessionId || null,
             planArtifactUri: args.planArtifactUri ?? null,
           },
           'twin',

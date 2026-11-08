@@ -217,7 +217,7 @@ longterm_task_create({
       preferredChannel, notes, expectedMinutes },
     ...
   ],
-  definitionSessionId,     // this session's id, for traceability
+  definitionSessionId,     // optional — defaults to this session's id; pass it only when the plan was discussed in a different session
   planArtifactUri,         // the plan page's absolute file path (or pin:// if published)
 })
 ```
