@@ -7,10 +7,14 @@ import { getSurfaceMenuModel } from '../src/renderer/components/sidebar/sidebarN
 import type { BotBrowserSurfaceMode } from '../src/renderer/features/botBrowser/types';
 
 /**
- * The surface switch became the Codex-style dropdown of the three-column
- * shell: a single-line trigger in the icon rail plus a menu whose entries each
- * carry a title and a subtitle. The old assertions pinned the two-segment
- * control this replaced.
+ * The surface switch became the middle column header's Codex-style capsule
+ * (owner ruling 2026-11-08 14:15). It used to be an icon-only trigger in the
+ * 64 px rail; a rail cannot hold a NAME, so the trigger is now a white capsule
+ * reading the current surface plus a chevron, and the menu hangs BELOW it with
+ * both surfaces, each with its subtitle, the current one checked with a ✓.
+ *
+ * The old assertions pinned the two-segment control this replaced; the rail-era
+ * ones pinned an icon-only trigger that no longer exists.
  */
 const t = (key: string) => ({
   botInternet: 'Bot Internet',
@@ -38,7 +42,7 @@ function renderMenu(open: boolean, mode: BotBrowserSurfaceMode) {
   );
 }
 
-test('the closed switch is ONE single-line trigger — no menu, no segments', () => {
+test('the closed switch is ONE capsule that names the current surface', () => {
   const markup = renderClosed('home');
 
   assert.match(markup, /data-slot="surface-switch-trigger"/);
@@ -48,12 +52,19 @@ test('the closed switch is ONE single-line trigger — no menu, no segments', ()
   assert.equal((markup.match(/<button/g) ?? []).length, 1);
   assert.doesNotMatch(markup, /grid-cols-2/);
   assert.doesNotMatch(markup, /data-slot="surface-switch-menu"/);
-  assert.doesNotMatch(markup, /Bot Home<\/button>/);
+  // The VISIBLE text is the current surface's name — the thing the rail's
+  // icon-only trigger could not show, and the reason the switch moved.
+  assert.match(markup, /data-slot="surface-switch-current"[^>]*>Bot Home</);
 });
 
-test('the trigger names the surface it is currently on', () => {
-  assert.match(renderClosed('home'), /aria-label="Switch workspace: Bot Home"/);
-  assert.match(renderClosed('browser'), /aria-label="Switch workspace: Bot Internet"/);
+test('the trigger names the surface it is currently on, visibly and accessibly', () => {
+  const home = renderClosed('home');
+  assert.match(home, /aria-label="Switch workspace: Bot Home"/);
+  assert.match(home, /data-slot="surface-switch-current"[^>]*>Bot Home</);
+
+  const internet = renderClosed('browser');
+  assert.match(internet, /aria-label="Switch workspace: Bot Internet"/);
+  assert.match(internet, /data-slot="surface-switch-current"[^>]*>Bot Internet</);
 });
 
 test('the open menu lists both surfaces in order, each with its subtitle', () => {
@@ -80,6 +91,29 @@ test('the current surface is the checked radio entry', () => {
   const home = renderMenu(true, 'home');
   assert.match(home, /aria-checked="true"[\s\S]*?data-surface="home"/);
   assert.match(home, /aria-checked="false"[\s\S]*?data-surface="browser"/);
+});
+
+test('the checked entry carries a ✓ — exactly one, on the current row', () => {
+  const browser = renderMenu(true, 'browser');
+  assert.equal((browser.match(/data-slot="surface-switch-check"/g) ?? []).length, 1);
+  // The old active marker was a dot; it must be gone, not sitting next to the ✓.
+  assert.doesNotMatch(browser, /rounded-full bg-claude-accent/);
+
+  const browserRow = browser.slice(
+    browser.indexOf('data-surface="browser"'),
+    browser.indexOf('data-surface="home"'),
+  );
+  const homeRow = browser.slice(browser.indexOf('data-surface="home"'));
+  assert.match(browserRow, /data-slot="surface-switch-check"/);
+  assert.doesNotMatch(homeRow, /data-slot="surface-switch-check"/);
+
+  // Flipping the surface moves the ✓ rather than adding a second one.
+  const home = renderMenu(true, 'home');
+  assert.equal((home.match(/data-slot="surface-switch-check"/g) ?? []).length, 1);
+  assert.doesNotMatch(
+    home.slice(home.indexOf('data-surface="browser"'), home.indexOf('data-surface="home"')),
+    /data-slot="surface-switch-check"/,
+  );
 });
 
 test('a closed menu renders nothing at all', () => {

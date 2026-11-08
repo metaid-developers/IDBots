@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronDownIcon, GlobeAltIcon, HomeIcon } from '@heroicons/react/24/outline';
+import { CheckIcon, ChevronDownIcon, GlobeAltIcon, HomeIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import { getSurfaceMenuModel } from '../../components/sidebar/sidebarNavigation.js';
 import type { BotBrowserSurfaceMode } from './types';
@@ -26,8 +26,10 @@ const SurfaceEntryIcon: React.FC<{ id: BotBrowserSurfaceMode; className?: string
  * rendered independently (static-markup tests render it directly).
  *
  * Codex-style: every entry is a title line plus a muted subtitle line, the
- * current surface is checked, and the whole list is one menu rather than the
- * old two-segment control.
+ * current surface carries a ✓, and the whole list is one menu rather than the
+ * old two-segment control. It opens BELOW the trigger now that the trigger is a
+ * labelled capsule in the middle column's header (it used to open to the right
+ * of an icon-only trigger standing in the 64 px rail).
  */
 export const SurfaceModeMenu: React.FC<{
   open: boolean;
@@ -41,7 +43,7 @@ export const SurfaceModeMenu: React.FC<{
       data-slot="surface-switch-menu"
       role="menu"
       aria-label={i18nService.t('surfaceSwitcherLabel')}
-      className="non-draggable absolute left-[calc(100%+10px)] top-0 z-[60] w-[252px] overflow-hidden rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface p-1 shadow-xl"
+      className="non-draggable absolute left-0 top-[calc(100%+6px)] z-[60] w-[228px] overflow-hidden rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface p-1 shadow-xl"
     >
       {items.map((item) => {
         const active = mode === item.id;
@@ -83,7 +85,11 @@ export const SurfaceModeMenu: React.FC<{
               </span>
             </span>
             {active && (
-              <span aria-hidden className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-claude-accent" />
+              <CheckIcon
+                data-slot="surface-switch-check"
+                aria-hidden
+                className="mt-0.5 h-3.5 w-3.5 shrink-0 dark:text-claude-darkText text-claude-text"
+              />
             )}
           </button>
         );
@@ -93,14 +99,14 @@ export const SurfaceModeMenu: React.FC<{
 };
 
 /**
- * Surface switcher for the left rail (three-column shell, slice 1).
+ * Surface switcher for the middle column's header (owner ruling 2026-11-08
+ * 14:15). It used to be an icon-only trigger in the 64 px rail; a named
+ * capsule is what Codex uses, and the rail cannot hold a name.
  *
- * The old control was a two-segment row. In a 64 px icon rail that cannot hold
- * two labelled segments, so it became a Codex-style dropdown: one single-line
- * trigger (the current surface's icon plus a chevron), and the menu carries the
- * names and their subtitles. The trigger stays a single row; its accessible
- * name names the current surface, and the menu is the only place both surfaces
- * are listed.
+ * Closed state = ONE capsule: the current surface's name plus a chevron. The
+ * menu is the only place both surfaces are listed, each with its subtitle, and
+ * the current one is checked. The trigger's accessible name still names the
+ * current surface, so the visible text is a bonus rather than the only cue.
  */
 const BotBrowserModeSwitch: React.FC<BotBrowserModeSwitchProps> = ({
   mode,
@@ -123,7 +129,7 @@ const BotBrowserModeSwitch: React.FC<BotBrowserModeSwitchProps> = ({
   );
 
   // Outside click + Escape close the menu. Both listeners only exist while the
-  // menu is open, so a closed rail costs nothing.
+  // menu is open, so a closed header costs nothing.
   useEffect(() => {
     if (!open) return undefined;
     const handlePointerDown = (event: MouseEvent) => {
@@ -142,7 +148,7 @@ const BotBrowserModeSwitch: React.FC<BotBrowserModeSwitchProps> = ({
   }, [open]);
 
   return (
-    <div ref={rootRef} data-slot="bot-browser-mode-bar" className="relative w-full">
+    <div ref={rootRef} data-slot="bot-browser-mode-bar" className="non-draggable relative min-w-0 shrink-0">
       <button
         type="button"
         data-slot="surface-switch-trigger"
@@ -151,16 +157,15 @@ const BotBrowserModeSwitch: React.FC<BotBrowserModeSwitchProps> = ({
         aria-label={`${i18nService.t('surfaceSwitcherLabel')}: ${current.label}`}
         title={current.label}
         onClick={() => setOpen((value) => !value)}
-        className={`non-draggable flex h-10 w-full items-center justify-center gap-0.5 rounded-xl border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
+        className={`non-draggable inline-flex h-7 max-w-[180px] items-center gap-1 rounded-lg border px-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
           open
-            ? 'border-claude-accent/60 dark:border-claude-accent/60 dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover'
-            : 'border-transparent hover:dark:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover'
+            ? 'border-claude-accent/60 dark:border-claude-accent/60 dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text'
+            : 'dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text hover:dark:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover'
         }`}
       >
-        <SurfaceEntryIcon
-          id={mode}
-          className="h-[18px] w-[18px] dark:text-claude-darkText text-claude-text"
-        />
+        <span data-slot="surface-switch-current" className="min-w-0 truncate">
+          {current.label}
+        </span>
         <ChevronDownIcon
           className={`h-3 w-3 shrink-0 transition-transform dark:text-claude-darkTextSecondary text-claude-textSecondary ${
             open ? 'rotate-180' : ''

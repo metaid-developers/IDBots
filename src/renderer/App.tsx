@@ -1,4 +1,4 @@
-import React, { Suspense, useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { Suspense, useState, useEffect, useRef, useCallback } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState } from './store';
 import type { SettingsOpenOptions } from './components/Settings';
@@ -224,16 +224,6 @@ const App: React.FC = () => {
     void coworkService.init();
   }, []);
   const pendingConsents = useSelector((state: RootState) => state.agentGame.pendingConsents);
-  const coworkSessions = useSelector((state: RootState) => state.cowork.sessions);
-
-  // Co-Work landing (slice 1): the session list is the MIDDLE column's content
-  // on this surface, so this pane states that, counts what is there, and hands
-  // the right column back to the browser. No new data: two counts over the
-  // session list the panel already reads.
-  const coworkSessionCounts = useMemo(() => ({
-    total: coworkSessions.length,
-    browser: coworkSessions.filter((session) => session.sessionType === 'browser').length,
-  }), [coworkSessions]);
 
   const pendingConsent = pendingConsents[0] ?? null;
   const isWindows = window.electron.platform === 'win32';
@@ -1536,30 +1526,18 @@ const App: React.FC = () => {
     />
   );
 
+  // The Co-Work destination's right pane (owner ruling 2026-11-08 14:15).
+  // Both halves of this destination already live in the MIDDLE column: the
+  // session list and the live transcript. The card that used to fill this pane
+  // introduced the destination to the user ("Co-Work" + session counts + an
+  // "open the browser" button), which duplicated the rail entry that opened it
+  // and the panel that actually holds the work. The pane stays a REAL rendered
+  // branch — never `null` — because the destination table's completeness guard
+  // (components/layout/workspaceDestinations.js) exists to keep a null branch
+  // from blanking the workspace again; it just has nothing of its own to say,
+  // exactly like a detail pane with no selection.
   const coworkLandingCard = (
-    <div className="flex h-full items-center justify-center px-8">
-      <div className="max-w-sm rounded-2xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface p-5 text-center">
-        <ChatBubbleLeftRightIcon className="mx-auto h-6 w-6 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
-        <h2 className="mt-2 text-sm font-medium dark:text-claude-darkText text-claude-text">
-          {i18nService.t('botBrowserCoworkTitle')}
-        </h2>
-        <p className="mt-1 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
-          {i18nService.t('internetCoworkPaneSessions').replace('{count}', String(coworkSessionCounts.total))}
-          {' · '}
-          {i18nService.t('internetCoworkPaneBrowserSessions').replace('{count}', String(coworkSessionCounts.browser))}
-        </p>
-        <p className="mt-2 text-[11px] leading-relaxed dark:text-claude-darkTextSecondary text-claude-textSecondary">
-          {i18nService.t('internetCoworkPaneHint')}
-        </p>
-        <button
-          type="button"
-          onClick={() => botBrowserShell.selectInternetPane('browser')}
-          className="mt-3 inline-flex items-center rounded-lg border dark:border-claude-darkBorder border-claude-border px-3 py-1.5 text-xs font-medium dark:text-claude-darkText text-claude-text transition-colors hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
-        >
-          {i18nService.t('internetCoworkPaneOpenBrowser')}
-        </button>
-      </div>
-    </div>
+    <div data-pane-empty="cowork" className="h-full" />
   );
 
   const internetPaneKey = resolveInternetPaneRenderer(botBrowserShell.internetPane);
@@ -1628,13 +1606,6 @@ const App: React.FC = () => {
           mode={botBrowserShell.surfaceMode}
           internetPane={botBrowserShell.internetPane}
           homeSection={homeSection}
-          onSelectSurface={(mode) => {
-            if (mode === 'home') {
-              botBrowserShell.switchToHome();
-            } else {
-              void botBrowserShell.openBrowserHome();
-            }
-          }}
           onSelectInternetPane={(pane) => {
             revealMiddleColumn();
             botBrowserShell.selectInternetPane(pane);
@@ -1661,6 +1632,13 @@ const App: React.FC = () => {
           mode={botBrowserShell.surfaceMode}
           homeSection={homeSection}
           onSelectHome={botBrowserShell.switchToHome}
+          onSelectSurface={(mode) => {
+            if (mode === 'home') {
+              botBrowserShell.switchToHome();
+            } else {
+              void botBrowserShell.openBrowserHome();
+            }
+          }}
           onSelectBrowserSession={handleSelectBrowserSession}
           isCollapsed={isSidebarCollapsed}
           width={sidebarWidth}

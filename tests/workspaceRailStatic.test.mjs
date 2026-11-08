@@ -85,6 +85,47 @@ test('the middle column renders the Co-Work panel or the record type the rail pi
   assert.match(sidebarSource, /<UnifiedTaskList/);
 });
 
+test('the surface switcher sits in the mid column header — the rail top is a bare spacer', () => {
+  // Owner ruling 2026-11-08 14:15: the switch left the 64 px rail so it can
+  // show the current surface's NAME in a Codex-style capsule. The rail keeps
+  // only its 52 px macOS traffic-light reservation, and mounts no switcher.
+  assert.doesNotMatch(railSource, /BotBrowserModeSwitch/);
+  assert.doesNotMatch(railSource, /surface-switch-trigger/);
+  assert.match(railSource, /isMac \? 'h-\[52px\]' : 'h-3'/);
+
+  assert.match(sidebarSource, /data-slot="mid-column-header"/);
+  assert.match(sidebarSource, /data-slot="mid-column-header"[\s\S]{0,420}<BotBrowserModeSwitch/);
+  assert.match(sidebarSource, /onSelectSurface: \(mode: BotBrowserSurfaceMode\) => void;/);
+  // The header control chooses the SURFACE only — the record TYPE stays a
+  // rail-only decision.
+  assert.match(sidebarSource, /onSelectBrowser=\{\(\) => onSelectSurface\('browser'\)\}/);
+  assert.match(sidebarSource, /onSelectHome=\{\(\) => onSelectSurface\('home'\)\}/);
+  // App feeds the same two transitions the rail used to emit.
+  assert.match(appSource, /onSelectSurface=\{\(mode\) => \{[\s\S]{0,200}openBrowserHome/);
+});
+
+test('the Co-Work destination no longer introduces itself in either column', () => {
+  // The NAME belongs to the rail entry that opened the destination (owner
+  // ruling 2026-11-08 14:15); the panel carries only its two actions.
+  const panelSource = read('src/renderer/features/botBrowser/BotBrowserCoworkPanel.tsx');
+  assert.doesNotMatch(panelSource, /botBrowserCoworkTitle/);
+  assert.match(panelSource, /data-slot="cowork-panel-actions"/);
+  assert.match(panelSource, /botBrowserCoworkNew/);
+  assert.match(panelSource, /botBrowserCoworkHistory/);
+
+  // The right pane stays a REAL rendered branch (never `null`) — the card that
+  // used to sit here (title + session counts + an "open the browser" button) is
+  // gone, but the destination still resolves to a mounted pane.
+  const cardStart = appSource.indexOf('const coworkLandingCard = (');
+  const cardEnd = appSource.indexOf('const internetPaneKey');
+  assert.ok(cardStart > 0 && cardEnd > cardStart, 'the landing branch still exists');
+  const cardBlock = appSource.slice(cardStart, cardEnd);
+  assert.match(cardBlock, /data-pane-empty="cowork"/);
+  assert.doesNotMatch(cardBlock, /botBrowserCoworkTitle/);
+  assert.doesNotMatch(cardBlock, /internetCoworkPane/);
+  assert.match(appSource, /\) : \(\n    coworkLandingCard\n  \);/);
+});
+
 test('the rail models are the single source of both surfaces’ entries', () => {
   assert.match(navigationSource, /export function getRailInternetNavModel/);
   assert.match(navigationSource, /export function getRailHomeNavModel/);

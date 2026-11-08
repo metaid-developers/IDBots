@@ -60,7 +60,7 @@ function Demo() {
         <Sidebar mode="home" homeSection="records" isCollapsed={false} onShowSettings={unavailable}
           onShowSkills={unavailable} onShowCowork={unavailable} onShowScheduledTasks={unavailable}
           onShowGroupTasks={unavailable}
-          onSelectHome={unavailable} />
+          onSelectHome={unavailable} onSelectSurface={unavailable} />
         <MessageExtensionContext.Provider value={message => message.id === 'preview-action' ?
           <div className="mt-4"><BotActionCard key={generation} request={exampleBotAction}
             initialConfirmation={confirmation} initialReceipt={receipt}

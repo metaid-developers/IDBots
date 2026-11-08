@@ -22,6 +22,7 @@ import FilterLinesIcon from './icons/FilterLinesIcon';
 import BackgroundTasksBadge from './cowork/BackgroundTasksBadge';
 import { SleepGuardBadge } from './SleepGuardBadge';
 import BotBrowserCoworkPanel from '../features/botBrowser/BotBrowserCoworkPanel';
+import BotBrowserModeSwitch from '../features/botBrowser/BotBrowserModeSwitch';
 import { defaultSidebarWidth } from '../utils/sidebarWidth';
 import type { BotBrowserSurfaceMode, BotHomeSection } from '../features/botBrowser/types';
 import type { CoworkSessionSummary } from '../types/cowork';
@@ -59,6 +60,11 @@ interface SidebarProps {
   homeSection: BotHomeSection;
   /** Open the Bot Home surface from the Co-Work panel. */
   onSelectHome: () => void;
+  /** Switch surface. The switcher lives in THIS column's header (owner ruling
+   * 2026-11-08 14:15: moved out of the 64 px rail so it can show the current
+   * surface's name in a Codex-style capsule). Both surfaces are always listed
+   * in its menu, so the header control is the ONE place a surface is chosen. */
+  onSelectSurface: (mode: BotBrowserSurfaceMode) => void;
   /** Open a browser-type session back in the Bot Browser co-work surface.
    * Browser sessions are listed in the Bot Home history (one list, no dead
    * ends), but they run in the Bot Browser panel — selecting one must return
@@ -143,6 +149,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   mode,
   homeSection,
   onSelectHome,
+  onSelectSurface,
   onSelectBrowserSession,
   isCollapsed,
   width = defaultSidebarWidth('home'),
@@ -569,12 +576,20 @@ const Sidebar: React.FC<SidebarProps> = ({
       }`}
       style={{ width: isCollapsed ? 0 : width }}
     >
-      {/* Column header: the records search (Bot Home) and the live
-          background-work indicators. Navigation lives in the left rail; the
-          column's open/close toggle lives on the middle ⇄ right boundary
-          handle (App shell), not in here — a toggle inside the column is
-          unusable the moment the column collapses. */}
-      <div className="draggable flex h-9 shrink-0 items-center gap-1 px-2">
+      {/* Column header: the SURFACE switcher (owner ruling 2026-11-08 14:15 —
+          it moved here from the rail so it can carry the current surface's
+          name), the records search (Bot Home) and the live background-work
+          indicators. It sits one band above the record TYPE, which the left
+          rail alone selects: this row chooses WHICH SURFACE, never which record
+          type. The column's open/close toggle lives on the middle ⇄ right
+          boundary handle (App shell), not in here — a toggle inside the column
+          is unusable the moment the column collapses. */}
+      <div data-slot="mid-column-header" className="draggable flex h-9 shrink-0 items-center gap-1 px-2">
+        <BotBrowserModeSwitch
+          mode={mode}
+          onSelectBrowser={() => onSelectSurface('browser')}
+          onSelectHome={() => onSelectSurface('home')}
+        />
         {mode === 'home' ? (
           <button
             type="button"

@@ -12,7 +12,6 @@ import {
 } from '@heroicons/react/24/outline';
 import Tooltip from '../ui/Tooltip';
 import ComposeIcon from '../icons/ComposeIcon';
-import BotBrowserModeSwitch from '../../features/botBrowser/BotBrowserModeSwitch';
 import MeBalanceBadge from '../me/MeBalanceBadge';
 import { i18nService } from '../../services/i18n';
 import { getRailHomeNavModel, getRailInternetNavModel } from '../sidebar/sidebarNavigation.js';
@@ -134,7 +133,6 @@ interface WorkspaceRailProps {
   mode: BotBrowserSurfaceMode;
   internetPane: BotInternetPane;
   homeSection: BotHomeSection;
-  onSelectSurface: (mode: BotBrowserSurfaceMode) => void;
   onSelectInternetPane: (pane: BotInternetPane) => void;
   onSelectHomeSection: (section: BotHomeSection) => void;
   onNewChat: () => void;
@@ -146,17 +144,21 @@ interface WorkspaceRailProps {
 /**
  * The left icon rail of the three-column shell (slice 1).
  *
- * One column, 64 px, shared by both surfaces: the surface switcher at the very
- * top, the surface's own destinations in the middle, Settings + ME pinned to
- * the bottom. Every entry is an icon with a hover tooltip — the old text rows
- * are gone. The rail is a container: selecting an entry only tells App which
- * destination is current, it renders no destination content itself.
+ * One column, 64 px, shared by both surfaces: the surface's destinations in the
+ * middle, Settings + ME pinned to the bottom. Every entry is an icon with a
+ * hover tooltip — the old text rows are gone. The rail is a container: selecting
+ * an entry only tells App which destination is current, it renders no
+ * destination content itself.
+ *
+ * The SURFACE switcher does not live here any more (owner ruling 2026-11-08
+ * 14:15): it moved to the middle column's header, where it can carry the
+ * current surface's name in a Codex-style capsule instead of a bare icon. What
+ * stays at the top is an empty strip that reserves the macOS traffic lights.
  */
 export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
   mode,
   internetPane,
   homeSection,
-  onSelectSurface,
   onSelectInternetPane,
   onSelectHomeSection,
   onNewChat,
@@ -205,19 +207,12 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
       aria-label={i18nService.t('workspaceRailLabel')}
       className="relative z-30 flex w-16 shrink-0 flex-col items-center dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted"
     >
-      {/* macOS traffic lights sit over this column's top-left corner: reserve
-          the strip so the surface switcher never lands underneath them. */}
+      {/* macOS traffic lights sit over this column's top-left corner. The
+          surface switcher moved to the middle column's header (owner ruling
+          2026-11-08 14:15), so this strip is pure reservation: it keeps the
+          traffic lights off every rail control even when the column next door
+          is collapsed to zero width. Height is unchanged (52 px on mac). */}
       <div className={`draggable w-full shrink-0 ${isMac ? 'h-[52px]' : 'h-3'}`} />
-      <div className="w-full px-1.5">
-        <BotBrowserModeSwitch
-          mode={mode}
-          onSelectBrowser={() => onSelectSurface('browser')}
-          onSelectHome={() => onSelectSurface('home')}
-        />
-      </div>
-      <div className="mt-1.5 w-full px-3">
-        <div className="h-px w-full dark:bg-claude-darkBorder/70 bg-claude-border/70" />
-      </div>
       {mode === 'browser' ? (
         <nav
           aria-label={i18nService.t('botInternet')}

@@ -425,10 +425,12 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSki
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center gap-1 px-1 pb-2">
-        <span className="flex-1 truncate text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
-          {i18nService.t('botBrowserCoworkTitle')}
-        </span>
+      {/* Actions only (owner ruling 2026-11-08 14:15). The row used to start
+          with a «Co-Work» label, but this column's every entry IS a co-work
+          session and the rail entry that opened the panel already names it, so
+          the label was an in-place self-introduction with nothing to add. The
+          two actions stay — they are the only controls here. */}
+      <div data-slot="cowork-panel-actions" className="flex items-center justify-end gap-1 px-1 pb-2">
         <button
           type="button"
           onClick={() => {

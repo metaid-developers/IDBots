@@ -22,15 +22,17 @@ const surfaceSource = readSource(surfacePath);
 const bridgeSource = readSource(bridgePath);
 const shellSource = readSource(shellPath);
 
-test('the left rail owns the mode switch while App keeps the Browser surface', () => {
+test('the mid column header owns the mode switch; the rail mounts none', () => {
   assert.ok(existsSync(switchPath), 'BotBrowserModeSwitch.tsx should exist');
   assert.ok(existsSync(shellPath), 'useBotBrowserShell.ts should exist');
   assert.ok(existsSync(railPath), 'WorkspaceRail.tsx should exist');
-  // Three-column shell: the switch lives at the top of the icon rail, which
-  // itself is rendered by App. The mid column no longer carries it.
-  assert.match(railSource, /import BotBrowserModeSwitch from '\.\.\/\.\.\/features\/botBrowser\/BotBrowserModeSwitch';/);
-  assert.match(railSource, /<BotBrowserModeSwitch/);
-  assert.doesNotMatch(sidebarSource, /BotBrowserModeSwitch/);
+  // Owner ruling 2026-11-08 14:15: the switch left the top of the icon rail so
+  // it can carry the current surface's NAME (a 64 px rail cannot). App still
+  // owns the shell; the switch is mounted one level down, in the middle
+  // column's header.
+  assert.match(sidebarSource, /import BotBrowserModeSwitch from '\.\.\/features\/botBrowser\/BotBrowserModeSwitch';/);
+  assert.match(sidebarSource, /<BotBrowserModeSwitch/);
+  assert.doesNotMatch(railSource, /BotBrowserModeSwitch/);
   // The surface (and the ~550 kB ABC browser vendor chunk behind it) is code
   // split off the startup bundle; App binds it lazily under the same name.
   assert.match(

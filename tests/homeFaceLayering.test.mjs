@@ -62,6 +62,23 @@ test('the record type has exactly ONE entry point: the left rail', () => {
   assert.match(railSource, /onSelectHomeSection\(id as BotHomeSection\)/);
 });
 
+test('the mid-column header chooses the SURFACE, never the record type', () => {
+  // Owner ruling 2026-11-08 14:15 moved the surface switcher into this header.
+  // It is a SURFACE selector: no section id and no section handler may appear
+  // in that band, otherwise the "rail is the ONLY record-type entry point" rule
+  // above would quietly gain a second entrance.
+  const headerStart = sidebarSource.indexOf('data-slot="mid-column-header"');
+  const headerEnd = sidebarSource.indexOf("{mode === 'home' ? (", headerStart);
+  assert.ok(headerStart > 0 && headerEnd > headerStart, 'the header band exists and ends at the body');
+  const headerBlock = sidebarSource.slice(headerStart, headerEnd);
+  assert.match(headerBlock, /<BotBrowserModeSwitch/);
+  assert.match(headerBlock, /onSelectSurface\('browser'\)/);
+  assert.match(headerBlock, /onSelectSurface\('home'\)/);
+  for (const section of ['longTerm', 'groupTasks', 'records']) {
+    assert.doesNotMatch(headerBlock, new RegExp(`'${section}'`));
+  }
+});
+
 test('the middle column renders the body of whichever type the rail picked', () => {
   // homeSection is a prop (derived in App from mainView), not local state: the
   // column cannot disagree with the rail about where the user is.
