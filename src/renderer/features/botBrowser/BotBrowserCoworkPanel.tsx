@@ -221,6 +221,8 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSki
     window.dispatchEvent(new CustomEvent('app:showToast', { detail: message }));
   }, []);
 
+  const closeTwinSeatMenu = useCallback(() => setShowTwinSeatMenu(false), []);
+
   const handleAppointTwin = useCallback(async (target: PanelMetabot) => {
     if (twinSeatBusy) return;
     setTwinSeatBusy(true);
@@ -500,6 +502,7 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSki
             busy={twinSeatBusy}
             menuOpen={showTwinSeatMenu}
             onToggleMenu={() => setShowTwinSeatMenu((value) => !value)}
+            onDismissMenu={closeTwinSeatMenu}
             onAppoint={handleAppointTwin}
           />
         ) : null}

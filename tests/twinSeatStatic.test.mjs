@@ -49,7 +49,7 @@ test('the helper keeps demote-before-promote and a rollback leg', () => {
 });
 
 test('the chip renders menu rows from the roster and keeps live sessions read-only', () => {
-  assert.match(chipSource, /\{roster\.map\(\(metabot\) => \{/);
+  assert.match(chipSource, /\{roster\.map\(\(metabot\) => \(/);
   assert.match(chipSource, /disabled=\{busy \|\| isActing\}/);
   assert.match(chipSource, /\{isActing && <TwinBadge className="shrink-0" \/>\}/);
   assert.match(chipSource, /live \? \(/);

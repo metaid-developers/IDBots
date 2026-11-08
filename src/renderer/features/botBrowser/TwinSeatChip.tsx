@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import TwinBadge from '../../components/metabots/TwinBadge';
 import { i18nService } from '../../services/i18n';
+import { bindSeatMenuOutsideDismiss } from './seatMenuDismiss';
 
 /**
  * Identity + seat control for the Bot Internet co-work panel footer.
@@ -13,7 +14,10 @@ import { i18nService } from '../../services/i18n';
  *
  * The component is intentionally presentational: the appointment sequence,
  * rollback and toast text live in twinSeatAppointment.ts so they can be
- * covered by mock-IPC unit tests instead of clicking the real roster.
+ * covered by mock-IPC unit tests instead of clicking the real roster. The one
+ * browser behavior it owns is menu dismissal: a pointer anywhere outside the
+ * chip container closes the menu (logic in seatMenuDismiss.ts, unit-tested
+ * with a fake pointer target).
  */
 
 export interface TwinSeatChipBot {
@@ -35,6 +39,8 @@ interface TwinSeatChipProps {
   busy: boolean;
   menuOpen: boolean;
   onToggleMenu: () => void;
+  /** Closes the menu when a pointer lands outside the chip container. */
+  onDismissMenu: () => void;
   onAppoint: (bot: TwinSeatChipBot) => void;
 }
 
@@ -55,6 +61,54 @@ const ChipIdentity: React.FC<{ metabot: TwinSeatChipBot }> = ({ metabot }) => (
   </>
 );
 
+export interface TwinSeatMenuRowProps {
+  metabot: TwinSeatChipBot;
+  /** The acting Twin row is informational: it shows what is already seated. */
+  isActing: boolean;
+  /** An appointment is in flight: no row may start another one. */
+  busy: boolean;
+  onAppoint: (bot: TwinSeatChipBot) => void;
+}
+
+/** One row of the seat menu. Exported so its click path is unit-tested directly. */
+export const TwinSeatMenuRow: React.FC<TwinSeatMenuRowProps> = ({
+  metabot,
+  isActing,
+  busy,
+  onAppoint,
+}) => (
+  <button
+    type="button"
+    role="menuitem"
+    disabled={busy || isActing}
+    onClick={() => onAppoint(metabot)}
+    className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${
+      isActing
+        ? 'dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover dark:text-claude-darkText text-claude-text'
+        : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:text-claude-text dark:hover:text-claude-darkText'
+    } disabled:cursor-default disabled:opacity-70`}
+  >
+    <span className="h-5 w-5 shrink-0">
+      {metabot.avatar && (metabot.avatar.startsWith('data:') || metabot.avatar.startsWith('http')) ? (
+        <img src={metabot.avatar} alt="" className="h-5 w-5 rounded-md object-cover" />
+      ) : (
+        <span className="flex h-5 w-5 items-center justify-center rounded-md dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover">
+          <span className="text-[8px] font-semibold uppercase dark:text-claude-darkText text-claude-text">
+            {metabot.name.slice(0, 2) || '?'}
+          </span>
+        </span>
+      )}
+    </span>
+    <span className="min-w-0 flex-1 truncate font-medium">{metabot.name}</span>
+    {metabot.role && (
+      <span className="min-w-0 max-w-[45%] truncate text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+        {metabot.role}
+      </span>
+    )}
+    {isActing && <TwinBadge className="shrink-0" />}
+  </button>
+);
+
 const TwinSeatChip: React.FC<TwinSeatChipProps> = ({
   chipMetabot,
   roster,
@@ -62,86 +116,80 @@ const TwinSeatChip: React.FC<TwinSeatChipProps> = ({
   busy,
   menuOpen,
   onToggleMenu,
+  onDismissMenu,
   onAppoint,
-}) => (
-  <div className="relative flex min-w-0 max-w-[60%] items-center gap-1.5">
-    {live ? (
-      <div className="flex min-w-0 items-center gap-1.5" title={chipMetabot.name}>
-        <ChipIdentity metabot={chipMetabot} />
-        {chipMetabot.metabot_type === 'twin' && <TwinBadge className="shrink-0" />}
-      </div>
-    ) : (
-      <>
-        <button
-          type="button"
-          disabled={busy}
-          aria-label={i18nService.t('botInternetTwinSeatChip')}
-          title={i18nService.t('botInternetTwinSeatChip')}
-          aria-expanded={menuOpen}
-          aria-haspopup="menu"
-          onClick={onToggleMenu}
-          className="flex min-w-0 items-center gap-1.5 rounded-md px-0.5 py-0.5 transition-colors hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover disabled:opacity-60"
-        >
+}) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Outside-pointer dismissal (owner UX finding 2026-11-08). The listener is
+  // bound only while the menu is open; a pointer on a menu row is inside the
+  // container, so it does not dismiss — the row's own click runs afterwards.
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    return bindSeatMenuOutsideDismiss({
+      container: () => containerRef.current,
+      onDismiss: onDismissMenu,
+    });
+  }, [menuOpen, onDismissMenu]);
+
+  return (
+    <div
+      ref={containerRef}
+      data-slot="twin-seat-container"
+      className="relative flex min-w-0 max-w-[60%] items-center gap-1.5"
+    >
+      {live ? (
+        <div className="flex min-w-0 items-center gap-1.5" title={chipMetabot.name}>
           <ChipIdentity metabot={chipMetabot} />
           {chipMetabot.metabot_type === 'twin' && <TwinBadge className="shrink-0" />}
-          <svg viewBox="0 0 12 12" aria-hidden className="h-3 w-3 shrink-0 dark:text-claude-darkTextSecondary text-claude-textSecondary">
-            <path d="M2 7.5 6 3.5l4 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
-        {menuOpen && (
-          <div
-            role="menu"
-            className="absolute bottom-full left-0 z-40 mb-2 w-72 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface p-2 shadow-lg"
+        </div>
+      ) : (
+        <>
+          <button
+            type="button"
+            disabled={busy}
+            aria-label={i18nService.t('botInternetTwinSeatChip')}
+            title={i18nService.t('botInternetTwinSeatChip')}
+            aria-expanded={menuOpen}
+            aria-haspopup="menu"
+            onClick={onToggleMenu}
+            className="flex min-w-0 items-center gap-1.5 rounded-md px-0.5 py-0.5 transition-colors hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover disabled:opacity-60"
           >
-            <p className="px-1 pb-1 text-xs font-medium dark:text-claude-darkText text-claude-text">
-              {i18nService.t('botInternetTwinSeatTitle')}
-            </p>
-            <div className="max-h-52 overflow-y-auto">
-              {roster.map((metabot) => {
-                const isActing = metabot.metabot_type === 'twin';
-                return (
-                  <button
+            <ChipIdentity metabot={chipMetabot} />
+            {chipMetabot.metabot_type === 'twin' && <TwinBadge className="shrink-0" />}
+            <svg viewBox="0 0 12 12" aria-hidden className="h-3 w-3 shrink-0 dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              <path d="M2 7.5 6 3.5l4 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          {menuOpen && (
+            <div
+              role="menu"
+              data-slot="twin-seat-menu"
+              className="absolute bottom-full left-0 z-40 mb-2 w-72 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface p-2 shadow-lg"
+            >
+              <p className="px-1 pb-1 text-xs font-medium dark:text-claude-darkText text-claude-text">
+                {i18nService.t('botInternetTwinSeatTitle')}
+              </p>
+              <div className="max-h-52 overflow-y-auto">
+                {roster.map((metabot) => (
+                  <TwinSeatMenuRow
                     key={metabot.id}
-                    type="button"
-                    role="menuitem"
-                    disabled={busy || isActing}
-                    onClick={() => onAppoint(metabot)}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${
-                      isActing
-                        ? 'dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover dark:text-claude-darkText text-claude-text'
-                        : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:text-claude-text dark:hover:text-claude-darkText'
-                    } disabled:cursor-default disabled:opacity-70`}
-                  >
-                    <span className="h-5 w-5 shrink-0">
-                      {metabot.avatar && (metabot.avatar.startsWith('data:') || metabot.avatar.startsWith('http')) ? (
-                        <img src={metabot.avatar} alt="" className="h-5 w-5 rounded-md object-cover" />
-                      ) : (
-                        <span className="flex h-5 w-5 items-center justify-center rounded-md dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover">
-                          <span className="text-[8px] font-semibold uppercase dark:text-claude-darkText text-claude-text">
-                            {metabot.name.slice(0, 2) || '?'}
-                          </span>
-                        </span>
-                      )}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate font-medium">{metabot.name}</span>
-                    {metabot.role && (
-                      <span className="min-w-0 max-w-[45%] truncate text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                        {metabot.role}
-                      </span>
-                    )}
-                    {isActing && <TwinBadge className="shrink-0" />}
-                  </button>
-                );
-              })}
+                    metabot={metabot}
+                    isActing={metabot.metabot_type === 'twin'}
+                    busy={busy}
+                    onAppoint={onAppoint}
+                  />
+                ))}
+              </div>
+              <p className="px-1 pt-1 text-[10px] leading-4 dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                {i18nService.t('botInternetTwinSeatHint')}
+              </p>
             </div>
-            <p className="px-1 pt-1 text-[10px] leading-4 dark:text-claude-darkTextSecondary text-claude-textSecondary">
-              {i18nService.t('botInternetTwinSeatHint')}
-            </p>
-          </div>
-        )}
-      </>
-    )}
-  </div>
-);
+          )}
+        </>
+      )}
+    </div>
+  );
+};
 
 export default TwinSeatChip;
