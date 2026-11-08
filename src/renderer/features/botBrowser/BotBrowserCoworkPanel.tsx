@@ -108,8 +108,16 @@ interface BotBrowserCoworkPanelProps {
   onShowSkills?: () => void;
   /** Open Settings > Projects > New Project (from the workspace popover). */
   onOpenNewProject?: () => void;
-  /** Switch the sidebar back to Bot Home (no-Twin bootstrap guidance). */
+  /** Switch the sidebar back to BotWorks (no-Twin bootstrap guidance). */
   onOpenBotHome?: () => void;
+  /**
+   * Session-records overlay state (owner spec 2026-11-08 21:31). The records
+   * toggle will live in the shared surface header bar, so the panel accepts
+   * the open state and its setter. Both are optional: a standalone mount keeps
+   * the internal toggle.
+   */
+  historyOpen?: boolean;
+  onHistoryOpenChange?: (open: boolean) => void;
 }
 
 const WORKSPACE_SELECTION_STORAGE_KEY = 'idbots.botBrowser.workspaceSelection';
@@ -156,13 +164,29 @@ function loadPersistedWorkspaceSelection(): CoworkWorkspaceSelection | null {
  * History is a toggleable overlay; sessions remember the browser URI they
  * were about.
  */
-const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSkills, onOpenNewProject, onOpenBotHome }) => {
+const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
+  onShowSkills,
+  onOpenNewProject,
+  onOpenBotHome,
+  historyOpen,
+  onHistoryOpenChange,
+}) => {
   const dispatch = useDispatch();
   const currentSession = useSelector((state: RootState) => state.browserCowork.currentSession);
   const isStreaming = useSelector((state: RootState) => state.browserCowork.isStreaming);
   const sessions = useSelector((state: RootState) => state.cowork.sessions);
   const activeSkillIds = useSelector((state: RootState) => state.skill.activeSkillIds);
-  const [showHistory, setShowHistory] = useState(false);
+  // Controlled by the header bar when the parent passes it; a standalone mount
+  // (tests, future hosts) falls back to the old internal toggle.
+  const [internalShowHistory, setInternalShowHistory] = useState(false);
+  const showHistory = historyOpen ?? internalShowHistory;
+  const setShowHistory = useCallback(
+    (next: boolean) => {
+      if (onHistoryOpenChange) onHistoryOpenChange(next);
+      else setInternalShowHistory(next);
+    },
+    [onHistoryOpenChange],
+  );
   const [metabots, setMetabots] = useState<PanelMetabot[]>([]);
   const [metabotsLoaded, setMetabotsLoaded] = useState(false);
   // Workspace choice for the next browser session, same selection model as the
@@ -450,7 +474,7 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSki
         </button>
         <button
           type="button"
-          onClick={() => setShowHistory((value) => !value)}
+          onClick={() => setShowHistory(!showHistory)}
           className={`inline-flex h-7 w-7 items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
             showHistory
               ? 'dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover dark:text-claude-darkText text-claude-text'
