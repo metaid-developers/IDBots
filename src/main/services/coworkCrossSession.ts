@@ -207,6 +207,15 @@ export class CoworkCrossSessionService {
     targetSessionId: string;
     message: string;
     deliveryId?: string;
+    /**
+     * Ask the host to report the dispatched turn's outcome back into the
+     * SOURCE session when it settles (the [DISPATCH-REPORT] return path).
+     * Stamped on the inserted message metadata; the durable delivery row
+     * carries the same flag so drain replays keep it. Internal relays
+     * (ORCH-NOTIFY, group-task acceptance) leave it unset — they have their
+     * own terminal-state notification and must not be double-woken.
+     */
+    notifySource?: boolean;
   }): CoworkCrossSessionInsertResult {
     // P4 (v1.2): the host pseudo-source `group-task:<id>` (group-task
     // acceptance/review relay attribution, "哪里发起哪里结束") contains a
@@ -281,6 +290,7 @@ export class CoworkCrossSessionService {
         sourceChannel: 'idbots_cross_session',
         sourceSessionId: sourceId.sessionId,
         ...(deliveryId ? { crossSessionDeliveryId: deliveryId } : {}),
+        ...(input.notifySource ? { crossSessionNotifySource: true } : {}),
       },
     };
     const message = deliveryId && this.store.addMessageWithId

@@ -16,6 +16,7 @@ import type { CrossSessionDeliveryStore, CrossSessionDeliveryReliabilitySnapshot
 import { getCurrentApiConfig, resolveCurrentModelLimits, resolveModelOptions, getPersistedAutoApproveTools, getPersistedCoworkEffortLevel, getPersistedChatExperienceMode, resolveDshProviderRoute, resolveSystemRescueBrain, isFreeQuotaProvider, ModelProviderSelectionError, type DshProviderRouteInfo } from './claudeSettings';
 import { resolveCoworkExecutionMode } from './coworkExecutionMode';
 import { buildGoalPromptSection, type CoworkSessionGoal } from './coworkSessionGoal';
+import { buildDispatchReportMessage, tailDispatchReportExcerpt } from './coworkCrossSessionReport';
 import { DshTurnHub, dshSessionRootFor, isNativeDeepSeekChatRoute, DSH_RUNTIME_IDLE_TTL_MS, type DshTurnProviderRoute } from './coworkDshTurn';
 import { getDshWebToolsProxyDescriptor } from '../services/dshWebToolsProxy';
 import { noteOwnerAskCancelled } from '../services/pendingOwnerAskBridge';
@@ -4622,14 +4623,22 @@ export class CoworkRunner extends EventEmitter {
     targetSessionId?: string;
     sessionId?: string;
     message?: string;
+    notifySource?: boolean;
   }, sourceSessionId: string): { success: boolean; text: string } {
     const targetSessionId = typeof args.targetSessionId === 'string'
       ? args.targetSessionId
       : String(args.sessionId ?? '');
+    // Report-back defaults ON for bot work orders: when the dispatched turn
+    // settles, the host delivers a [DISPATCH-REPORT] (outcome + final reply
+    // excerpt) into this session. Bots no longer need to invent a "reply to
+    // my session" protocol — which the target cannot satisfy host-side — or
+    // blind-poll with idbots_session_read_latest.
+    const notifySource = args.notifySource !== false;
     const combined = this.insertCrossSessionMessageAndQueue({
       sourceSessionId,
       targetSessionId,
       message: typeof args.message === 'string' ? args.message : '',
+      notifySource,
     });
 
     const result = combined.insert;
@@ -4649,6 +4658,12 @@ export class CoworkRunner extends EventEmitter {
         ...(combined.warning ? { warning: combined.warning } : {}),
         ...(combined.reason ? { reason: combined.reason } : {}),
         ...(combined.error ? { error: combined.error } : {}),
+        reportBack: {
+          enabled: notifySource,
+          detail: notifySource
+            ? 'When the turn triggered by this message ends, this session automatically receives a [DISPATCH-REPORT] with the outcome and the final reply excerpt. No polling needed.'
+            : 'Automatic report-back is disabled for this dispatch (notify_source=false).',
+        },
       }),
     };
   }
@@ -6534,7 +6549,7 @@ export class CoworkRunner extends EventEmitter {
       '- Historical retrieval is tool-first: when the user references previous chats, earlier outputs, prior decisions, or says "还记得/之前/上次/刚才", call `conversation_search` or `recent_chats` before answering.',
       '- When the conversation includes an `IDBots://{sessionId}` link, extract the session id and use `idbots_session_read_all` or `idbots_session_read_latest` to inspect that local Cowork/A2A session before relying on it.',
       '- When a <recent_sessions> digest rides the turn, it lists your most recent other conversations with their latest exchange (newest first). Treat it as live awareness of your own recent work: before asking the owner to do or provide anything, or reporting anything as still pending, cross-check the digest first and open the IDBots:// link with `idbots_session_read_all` when unsure.',
-      '- Use `idbots_session_insert_user_message` only to send an instruction into another Cowork session; the source session id is derived automatically.',
+      '- Use `idbots_session_insert_user_message` only to send an instruction into another Cowork session; the source session id is derived automatically. Work orders dispatched through it report back automatically: once the target turn ends, this session receives a [DISPATCH-REPORT] (outcome + final reply excerpt) — wait for it instead of asking the target to "reply back" or polling.',
       '- Do not guess historical facts from partial context. If retrieval returns no evidence, explicitly say not found.',
       '- Do not call history tools for every request; only use them when historical context is required.',
       '- If retrieved history conflicts with the latest explicit user instruction, follow the latest explicit user instruction.',
@@ -8491,6 +8506,7 @@ export class CoworkRunner extends EventEmitter {
             targetSessionId: next.targetSessionId,
             message: next.message,
             deliveryId: next.id,
+            notifySource: next.notifySource,
           });
           if (!inserted.ok) {
             store.markCancelled(next.id, String(inserted.message));
@@ -8513,8 +8529,13 @@ export class CoworkRunner extends EventEmitter {
           this.bumpCrossSessionReplayBudget(Date.now());
         }
         try {
+          // continueSession resolves only after the dispatched turn fully
+          // settles, so the dispatch-report below sees the final transcript.
           await this.continueSession(targetSessionId, renderedMessage, { skipUserMessage: true });
           store.markCompleted(next.id);
+          if (next.notifySource) {
+            this.reportCrossSessionDispatchSettlement(next.id);
+          }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           if (this.isDurableCrossSessionTargetStopped(targetSessionId)) {
@@ -8527,6 +8548,15 @@ export class CoworkRunner extends EventEmitter {
             deliveryId: next.id,
             error: message,
           });
+          // A dispatch expecting a report must hear about terminal delivery
+          // failures too — otherwise the source session waits on a work order
+          // that never even started (retryable attempts stay silent).
+          if (next.notifySource) {
+            const terminal = store.getById(next.id);
+            if (terminal && (terminal.state === 'failed' || terminal.state === 'cancelled')) {
+              this.reportCrossSessionDispatchSettlement(next.id, terminal.lastError);
+            }
+          }
         }
       }
     } finally {
@@ -8538,6 +8568,84 @@ export class CoworkRunner extends EventEmitter {
           pacedStop ? CoworkRunner.DURABLE_CROSS_SESSION_REPLAY_PACE_MS : undefined,
         );
       }
+    }
+  }
+
+  /**
+   * Dispatch-report return path: the dispatched turn (or the delivery itself)
+   * settled, so report the outcome back into the SOURCE session. This is the
+   * loop-closer for `idbots_session_insert_user_message` work orders —
+   * without it a dispatcher that "ends turn waiting for the worker's report"
+   * is never woken, because a compliant worker only prints its report in its
+   * OWN session (2026-11-08 session 86ee8cb9 → 59880ca0: TwinBot dispatched
+   * Phase C, the seller finished and printed SELLER_REPORT_C, and the
+   * orchestrator conversation died silently). Best-effort and idempotent:
+   * the return delivery uses the deterministic id `dispatch_report:<id>`, so
+   * repeats dedupe instead of double-waking the source session.
+   */
+  private reportCrossSessionDispatchSettlement(deliveryId: string, deliveryError?: string | null): void {
+    const store = this.crossSessionDeliveryStore;
+    if (!store) return;
+    try {
+      const delivery = store.getById(deliveryId);
+      if (!delivery || !delivery.notifySource) return;
+      const sourceSessionId = delivery.sourceSessionId;
+      const targetSessionId = delivery.targetSessionId;
+      if (!sourceSessionId || sourceSessionId === targetSessionId) return;
+
+      let outcome: 'completed' | 'failed' = 'completed';
+      let failureReason: string | null = null;
+      let finalReply: string | null = null;
+      let finalReplyTruncated = false;
+
+      if (deliveryError) {
+        outcome = 'failed';
+        failureReason = deliveryError;
+      } else {
+        const turnOutcome = this.store.getSessionTurnOutcome?.(targetSessionId);
+        const failedAt = turnOutcome?.lastFailedAtMs ?? null;
+        const completedAt = turnOutcome?.lastCompletedAtMs ?? null;
+        if (failedAt != null && (completedAt == null || failedAt > completedAt)) {
+          outcome = 'failed';
+          failureReason = 'the dispatched turn settled without an answer (failed/aborted/empty)';
+        }
+        const latest = this.store.getSessionLatestVisibleMessage?.(targetSessionId) ?? null;
+        if (latest && latest.type === 'assistant') {
+          const excerpt = tailDispatchReportExcerpt(latest.content);
+          if (excerpt) {
+            finalReply = excerpt.excerpt;
+            finalReplyTruncated = excerpt.truncated;
+          }
+        }
+      }
+
+      const message = buildDispatchReportMessage({
+        deliveryId,
+        targetSessionId,
+        outcome,
+        failureReason,
+        finalReply,
+        finalReplyTruncated,
+      });
+      const result = this.insertCrossSessionMessageAndQueue({
+        sourceSessionId: targetSessionId,
+        targetSessionId: sourceSessionId,
+        message,
+        deliveryId: `dispatch_report:${deliveryId}`,
+      });
+      if (!result.insert.ok || !result.runQueued) {
+        coworkLog('WARN', 'crossSession:dispatchReport', 'Dispatch-report delivery did not queue', {
+          sourceSessionId: targetSessionId,
+          targetSessionId: sourceSessionId,
+          deliveryId: `dispatch_report:${deliveryId}`,
+          insertError: result.insert.ok ? result.error : String(result.insert.message),
+        });
+      }
+    } catch (error) {
+      coworkLog('WARN', 'crossSession:dispatchReport', 'Dispatch-report settlement reporting failed', {
+        deliveryId,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -8570,6 +8678,7 @@ export class CoworkRunner extends EventEmitter {
     targetSessionId: string;
     message: string;
     deliveryId?: string;
+    notifySource?: boolean;
   }): CoworkCrossSessionInsertAndQueueResult {
     const store = this.crossSessionDeliveryStore!;
     const delivery = store.enqueue(input);
@@ -8624,6 +8733,8 @@ export class CoworkRunner extends EventEmitter {
     targetSessionId: string;
     message: string;
     deliveryId?: string;
+    /** Opt-in dispatch-report return path (see reportCrossSessionDispatchSettlement). */
+    notifySource?: boolean;
   }): CoworkCrossSessionInsertAndQueueResult {
     if (this.crossSessionDeliveryStore) {
       return this.insertDurableCrossSessionMessageAndQueue(input);
@@ -9565,6 +9676,7 @@ export class CoworkRunner extends EventEmitter {
           targetSessionId: typeof toolInput.targetSessionId === 'string' ? toolInput.targetSessionId : undefined,
           sessionId: typeof toolInput.sessionId === 'string' ? toolInput.sessionId : undefined,
           message: typeof toolInput.message === 'string' ? toolInput.message : undefined,
+          notifySource: typeof toolInput.notify_source === 'boolean' ? toolInput.notify_source : undefined,
         }, sessionId);
       }
 
@@ -13194,12 +13306,13 @@ export class CoworkRunner extends EventEmitter {
       ),
       tool(
         'idbots_session_insert_user_message',
-        'Send an instruction (as a user message) into ANOTHER local IDBots Cowork session and queue that session to continue processing it. Use to steer or hand off work to a parallel session the user has open. When NOT to use: do not write into the CURRENT session (reply normally instead), and never use this to spam or loop messages between sessions. A2A sessions are read-only targets — writes to them are rejected. Returns a confirmation, or an error if the target is missing or not a Cowork session.',
+        'Send an instruction (as a user message) into ANOTHER local IDBots Cowork session and queue that session to continue processing it. Use to steer or hand off work to a parallel session the user has open, e.g. delegating a work order to a Worker session. Loop guarantee: by default (notify_source unset or true) the host automatically reports back into THIS session with a [DISPATCH-REPORT] (outcome + final reply excerpt) once the triggered turn ends — do NOT tell the target to "reply back to my session" and do NOT poll idbots_session_read_latest; wait for the report. Pass notify_source=false only for fire-and-forget notices. When NOT to use: do not write into the CURRENT session (reply normally instead), and never use this to spam or loop messages between sessions. A2A sessions are read-only targets — writes to them are rejected. Returns a confirmation with the reportBack contract, or an error if the target is missing or not a Cowork session.',
         {
           targetSessionId: z.string().min(1),
           message: z.string().min(1),
+          notify_source: z.boolean().optional(),
         },
-        async (args: { targetSessionId: string; message: string }) => {
+        async (args: { targetSessionId: string; message: string; notify_source?: boolean }) => {
           const result = this.runIdbotsSessionInsertUserMessageTool(args, sessionId);
           return {
             content: [{ type: 'text', text: result.text }],
