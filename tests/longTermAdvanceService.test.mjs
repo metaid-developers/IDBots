@@ -1718,3 +1718,108 @@ test('CoworkStore turn-outcome markers: record/roundtrip (the self-heal signal s
   cowork.recordSessionTurnCompletion(session.id, 3000);
   assert.deepEqual(cowork.getSessionTurnOutcome(session.id), { lastFailedAtMs: 2000, lastCompletedAtMs: 3000 });
 });
+
+// ── begin-venue rule: a sub-project with no work session starts in the task's conversation ──
+
+async function createActiveIn(store, definitionSessionId) {
+  const created = store.createTask({ ...SPEC, definitionSessionId }, 'owner');
+  assert.ok(created.ok, JSON.stringify(created));
+  assert.ok(store.activateTask(created.value.id, 'owner').ok);
+  return created.value.id;
+}
+
+test('2026-11-08 incident: an unbound sub-project starts in the definition conversation, not a fresh session', async () => {
+  // Production incident: the task was born in the owner's chat; the owner kept
+  // talking about it there, yet every sub-project start (pending → ready, or
+  // "just began, no session") forked a new [长期] session — four in one
+  // afternoon, all folded away from the conversation the owner was reading.
+  // The owner last spoke three hours ago: outside the live-engagement window,
+  // so neither the live rebind nor hot delivery applies — only the begin-venue
+  // rule seats the turn.
+  const { store, cowork, runner, deps } = await openWorld();
+  cowork.registerSession('owner-chat', 7);
+  const taskId = await createActiveIn(store, 'owner-chat');
+  const now = Date.now();
+  cowork.engagement.set('owner-chat', { lastOwnerMessageAtMs: now - 3 * HOUR, lastAssistantMessageAtMs: now - 3 * HOUR });
+
+  const report = await new LongTermAdvanceService(deps).run(now);
+  assert.equal(report.escalated.length, 1, JSON.stringify(report));
+  assert.equal(report.escalated[0].sessionId, 'owner-chat');
+  assert.equal(report.escalated[0].reusedSession, true);
+  assert.equal(cowork.calls.create.length, 0, 'no fresh session was opened');
+  assert.equal(store.getTask(taskId).subtasks[0].sessionId, 'owner-chat', 'the sub-project is bound to the conversation');
+  assert.equal(runner.starts[0].sessionId, 'owner-chat');
+  assert.doesNotMatch(runner.starts[0].prompt, /SESSION ROTATION/);
+  assert.ok(
+    store.getTask(taskId).events.some((event) => event.kind === 'note' && event.actor === 'system' && /continues in the task's conversation/.test(event.detail)),
+    'the venue choice is journalled',
+  );
+
+  // The next sub-project starts there too: the conversation stays one line.
+  const first = store.getTask(taskId).subtasks[0];
+  assert.ok(store.beginSubtask(first.id, 'twin').ok);
+  assert.ok(store.proposeSubtask(first.id, { evidence: [{ kind: 'dir', uri: '/tmp/deliverable' }], summary: 'criteria met' }, 'twin').ok);
+  assert.ok(store.acceptSubtask(first.id, 'owner').ok);
+  const next = await new LongTermAdvanceService(deps).run(now + 2 * HOUR);
+  assert.equal(next.escalated.length, 1, JSON.stringify(next));
+  assert.equal(next.escalated[0].sessionId, 'owner-chat');
+  assert.equal(cowork.calls.create.length, 0, 'still no fresh session');
+});
+
+test('begin venue follows the owner\'s newest word across related sessions', async () => {
+  // "Wherever the owner last replied about this task, the task continues
+  // there": a related conversation holding a newer owner message than the
+  // definition session wins.
+  const { store, cowork, deps } = await openWorld();
+  cowork.registerSession('birth-chat', 7);
+  cowork.registerSession('later-chat', 7);
+  const taskId = await createActiveIn(store, 'birth-chat');
+  const second = store.getTask(taskId).subtasks[1];
+  assert.ok(store.bindSession(second.id, 'later-chat', 'system').ok); // make it related
+  const now = Date.now();
+  cowork.engagement.set('birth-chat', { lastOwnerMessageAtMs: now - 5 * HOUR, lastAssistantMessageAtMs: null });
+  cowork.engagement.set('later-chat', { lastOwnerMessageAtMs: now - 2 * HOUR, lastAssistantMessageAtMs: null });
+
+  const report = await new LongTermAdvanceService(deps).run(now);
+  assert.equal(report.escalated.length, 1, JSON.stringify(report));
+  assert.equal(report.escalated[0].sessionId, 'later-chat');
+  assert.equal(cowork.calls.create.length, 0);
+});
+
+test('a sub-project whose bound session was deleted resumes in the task\'s conversation, not a fresh session', async () => {
+  const { store, cowork, deps } = await openWorld();
+  cowork.registerSession('owner-chat', 7);
+  const taskId = await createActiveIn(store, 'owner-chat');
+  const first = store.getTask(taskId).subtasks[0];
+  assert.ok(store.bindSession(first.id, 'deleted-session', 'system').ok); // never registered → getSession null
+
+  const report = await new LongTermAdvanceService(deps).run(Date.now());
+  assert.equal(report.escalated.length, 1, JSON.stringify(report));
+  assert.equal(report.escalated[0].sessionId, 'owner-chat');
+  assert.equal(cowork.calls.create.length, 0);
+  assert.equal(store.getTask(taskId).subtasks[0].sessionId, 'owner-chat');
+});
+
+test('the begin-venue rule does not hijack rotation: an over-budget heartbeat session still rotates', async () => {
+  // Boundary: rotation is context hygiene for sessions the heartbeat created
+  // itself and keeps its own reviewed behavior (fresh session + pointer). Only
+  // the first-session fork is replaced.
+  const { store, cowork, runner, deps } = await openWorld();
+  cowork.registerSession('owner-chat', 7);
+  cowork.registerSession('hb-work', 7, 'longterm');
+  const taskId = await createActiveIn(store, 'owner-chat');
+  const first = store.getTask(taskId).subtasks[0];
+  assert.ok(store.bindSession(first.id, 'hb-work', 'system').ok);
+  assert.ok(store.beginSubtask(first.id, 'twin').ok);
+  cowork.counts.set('hb-work', DEFAULT_SESSION_ROTATION_MESSAGES);
+  const t2 = Date.now() + 3 * HOUR;
+  cowork.engagement.set('owner-chat', { lastOwnerMessageAtMs: t2 - 2 * HOUR, lastAssistantMessageAtMs: null });
+
+  const report = await new LongTermAdvanceService(deps).run(t2);
+  assert.equal(report.escalated.length, 1, JSON.stringify(report));
+  assert.equal(report.escalated[0].reusedSession, false, 'rotation opened a fresh session');
+  assert.notEqual(report.escalated[0].sessionId, 'owner-chat');
+  assert.notEqual(report.escalated[0].sessionId, 'hb-work');
+  assert.equal(cowork.calls.create.length, 1);
+  assert.match(runner.starts[0].prompt, /SESSION ROTATION/);
+});
