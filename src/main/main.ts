@@ -8019,6 +8019,8 @@ const getCoworkRunner = () => {
         getMetabotMvcAddress: (metabotId) =>
           getMetabotStore().getMetabotById(metabotId)?.mvc_address ?? null,
         resolveMetabotIdByName: (name) => resolveMetabotIdByName(getMetabotStore(), name),
+        // Offer-market seller filter: local bot → 64-hex MetaID (the offer pin creator key).
+        getMetabotMetaId: (metabotId) => getMetabotStore().getMetabotById(metabotId)?.metaid ?? null,
         // S3 chat NFT card enrichment (best-effort index reads).
         fetchItemInfo: (pinId) => fetchMrc721ItemInfo({ pinId }),
         fetchCollectionInfo: (input) => fetchMrc721CollectionInfo({ name: input.name, pinId: input.pinId }),

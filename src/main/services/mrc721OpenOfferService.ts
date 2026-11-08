@@ -526,10 +526,67 @@ export interface Mrc721OpenOfferRow {
   active?: boolean;
   priceSats?: number;
   offerTx?: string;
+  /** The offer pin creator's 64-hex MetaID (R-E-2 sellerMetaId). */
+  sellerMetaId?: string;
   createdAt?: number;
   chainName?: string;
   height?: number;
   txId?: string;
+}
+
+/**
+ * Liveness of one advertised offer, judged against chain state (the index
+ * is an advertisement, not the truth): LIVE only while the item still sits
+ * at the outpoint offerTx spends and its owner is the address output0 pays.
+ */
+export interface Mrc721OpenOfferLiveness {
+  status: 'live' | 'dead' | 'unverified';
+  reason?: string;
+  /** The seller address the signed offer pays (output0). */
+  sellerAddress?: string;
+}
+
+/** Rows beyond this many are labelled 'unverified' (one item read per row). */
+export const MRC721_OFFER_LIVENESS_CHECK_CAP = 20;
+
+export async function labelMrc721OpenOfferLiveness(
+  rows: Mrc721OpenOfferRow[],
+  deps?: { fetchItemInfo?: typeof fetchMrc721ItemInfo },
+): Promise<Mrc721OpenOfferLiveness[]> {
+  const fetchItemInfo = deps?.fetchItemInfo ?? fetchMrc721ItemInfo;
+  return Promise.all(rows.map(async (row, index): Promise<Mrc721OpenOfferLiveness> => {
+    if (index >= MRC721_OFFER_LIVENESS_CHECK_CAP) {
+      return { status: 'unverified', reason: `only the first ${MRC721_OFFER_LIVENESS_CHECK_CAP} rows are chain-checked` };
+    }
+    if (row.active === false) return { status: 'dead', reason: 'cancelled by the seller (active=false)' };
+    if (!row.offerTx) return { status: 'unverified', reason: 'the row carries no offerTx' };
+    let offeredTxid: string;
+    let offeredVout: number;
+    let sellerAddress: string;
+    try {
+      const tx = decodeMrc721OpenOfferTx(row.offerTx).tx;
+      offeredTxid = tx.inputs[0].prevTxId.toString('hex').toLowerCase();
+      offeredVout = Number(tx.inputs[0].outputIndex);
+      sellerAddress = tx.outputs[0].script.toAddress('livenet').toString();
+    } catch {
+      return { status: 'dead', reason: 'offerTx does not decode as an open offer' };
+    }
+    try {
+      const item = await fetchItemInfo({ pinId: row.itemPinId });
+      if (!item) return { status: 'unverified', reason: 'the item is not indexed (yet)', sellerAddress };
+      if (item.burned) return { status: 'dead', reason: 'the item is burned', sellerAddress };
+      const current = outpointOfItem(item);
+      if (!current || current.txid !== offeredTxid || current.vout !== offeredVout) {
+        return { status: 'dead', reason: 'sold, transferred, or revoked — the item left the offered outpoint', sellerAddress };
+      }
+      if (String(item.ownerAddress ?? '') !== sellerAddress) {
+        return { status: 'dead', reason: 'the item owner is not the address the offer pays', sellerAddress };
+      }
+      return { status: 'live', sellerAddress };
+    } catch (error) {
+      return { status: 'unverified', reason: `item read failed: ${error instanceof Error ? error.message : String(error)}`, sellerAddress };
+    }
+  }));
 }
 
 function openOfferRowFrom(raw: unknown): Mrc721OpenOfferRow {
@@ -547,6 +604,7 @@ function openOfferRowFrom(raw: unknown): Mrc721OpenOfferRow {
   };
   row.offerPinId = pickString('offerPinId', 'offerpinid');
   row.offerTx = pickString('offerTx', 'offertx');
+  row.sellerMetaId = pickString('sellerMetaId', 'sellermetaid');
   row.chainName = pickString('chainName', 'chainname');
   row.txId = pickString('txId', 'txid');
   if (Number.isFinite(Number(record.priceSats ?? record.pricesats))) {

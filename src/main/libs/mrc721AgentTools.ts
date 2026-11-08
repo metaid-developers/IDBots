@@ -42,6 +42,7 @@ import {
 import {
   fetchMrc721OpenOfferInfo,
   fetchMrc721OpenOffers,
+  labelMrc721OpenOfferLiveness,
   type Mrc721OpenOfferContent,
 } from '../services/mrc721OpenOfferService';
 
@@ -74,6 +75,8 @@ type SdkToolFactory = (
 export type Mrc721ToolsControl = {
   getMetabotMvcAddress(metabotId: number): string | null;
   resolveMetabotIdByName(name: string): number | null;
+  /** Local bot → its 64-hex MetaID (the offer pin creator key the R-E-2 index filters on). */
+  getMetabotMetaId?(metabotId: number): string | null;
   /**
    * Best-effort index reads for S3 chat NFT card enrichment. Optional so
    * minimal harnesses keep working; main.ts wires the real service calls.
@@ -2183,7 +2186,9 @@ export function buildMrc721AgentTools(deps: {
           `- item pinId: ${result.offer.itemPinId}`,
           `- offer pin: pin://${result.offerPinId}`,
           `- ask: ${result.offer.priceSats} sats (locked in the seller signature)`,
-          'Buyers take it with mrc721_take_offer; cancel with mrc721_offer_cancel before someone takes it.',
+          'Buyers take it with mrc721_take_offer (by item pinId once indexed, or by the payload below at once); cancel with mrc721_offer_cancel before someone takes it.',
+          'Offer payload (share for a peer-to-peer take — pass verbatim as mrc721_take_offer offer_payload):',
+          JSON.stringify({ itemPinId: result.offer.itemPinId, priceSats: result.offer.priceSats, offerTx: result.offer.offerTx }),
         ].join('\n'), withNftCardHostStamp(cardFields, sessionId)));
       } catch (error) {
         return textResult(`mrc721_offer failed: ${errorMessage(error)}${chainWriteFailureDetail(error)}`, true);
@@ -2320,41 +2325,72 @@ export function buildMrc721AgentTools(deps: {
   const mrc721OffersMarket = tool(
     'mrc721_offers_market',
     [
-      'Discover PASSIVE MRC-721 open offers (docs/nft-offer-protocol.md) from the indexer: live first-taker-wins listings where the seller has signed the settlement tx — the price is locked, the seller may be offline, and mrc721_take_offer completes the purchase with no seller cooperation.',
-      'Read-only. Served by the built-in MetaSo-P2P production index (indexer requirement R-E). Before taking, the take tool re-verifies the holder view and outpoint itself, so a listed row that looks stale is refused safely at take time.',
-      'Filter by item, by collection, or by seller MetaID; page with cursor/size. Your own offers are better listed via mrc721_offers.',
+      'Discover PASSIVE MRC-721 open offers (docs/nft-offer-protocol.md) from the indexer: first-taker-wins listings where the seller has signed the settlement tx — the price is locked, the seller may be offline, and mrc721_take_offer completes the purchase with no seller cooperation.',
+      'Every row is chain-checked (first 20): LIVE = the item still sits at the offered outpoint and its owner is the address the offer pays (takeable now); DEAD = sold, transferred, revoked, cancelled, or burned (the index is an advertisement — taking a DEAD row is refused). Read-only.',
+      'Filter by item, by collection, or by seller (a local MetaBot name, or a 64-hex MetaID); include_payload prints the full signed offer payload for each row (requires item_pin_id). Your own offers are better listed via mrc721_offers.',
     ].join(' '),
     {
       item_pin_id: z.string().optional().describe('Filter to one item.'),
       collection_pinid: z.string().optional().describe('Filter to one collection by collectionid (collection_desc pinId).'),
-      seller_meta_id: z.string().optional().describe('Filter by seller 64-hex MetaID (the offer pin creator).'),
+      seller: z.string().optional().describe('Filter by seller: a local MetaBot name, or the seller\'s 64-hex MetaID (the offer pin creator).'),
+      include_payload: z.boolean().optional().describe('Print each row\'s full offer payload JSON ({itemPinId, priceSats, offerTx}) for offer_payload takes. Requires item_pin_id.'),
       cursor: z.string().optional().describe('Page cursor from the previous call.'),
       size: z.number().int().min(1).max(100).optional().describe('Page size (default 20).'),
     },
     async (args: {
       item_pin_id?: string;
       collection_pinid?: string;
-      seller_meta_id?: string;
+      seller?: string;
+      include_payload?: boolean;
       cursor?: string;
       size?: number;
     }) => {
+      let sellerMetaId: string | undefined;
+      const sellerInput = asString(args.seller);
+      if (sellerInput) {
+        if (/^[0-9a-f]{64}$/i.test(sellerInput)) {
+          sellerMetaId = sellerInput.toLowerCase();
+        } else {
+          const sellerBotId = control.resolveMetabotIdByName(sellerInput);
+          const resolved = sellerBotId != null ? control.getMetabotMetaId?.(sellerBotId) : null;
+          if (!resolved) {
+            return textResult(`mrc721_offers_market: seller "${sellerInput}" is neither a 64-hex MetaID nor a local MetaBot with a known MetaID.`, true);
+          }
+          sellerMetaId = resolved.toLowerCase();
+        }
+      }
+      if (args.include_payload && !asString(args.item_pin_id)) {
+        return textResult('mrc721_offers_market: include_payload requires item_pin_id (payloads are large — one item at a time).', true);
+      }
       try {
         const page = await fetchMrc721OpenOffers({
           itemPinId: asString(args.item_pin_id) || undefined,
           collectionPinId: asString(args.collection_pinid) || undefined,
-          sellerMetaId: asString(args.seller_meta_id) || undefined,
+          sellerMetaId,
           cursor: args.cursor,
           size: args.size ?? 20,
         });
         if (!page.items.length) return textResult('No open offers match these filters (or none published yet — the offer protocol is new).');
-        const lines = [`Live MRC-721 open offers${page.total != null ? ` (${page.items.length} of ${page.total})` : ` (${page.items.length})`}:`];
-        for (const row of page.items) {
+        const liveness = await labelMrc721OpenOfferLiveness(page.items);
+        const liveCount = liveness.filter((entry) => entry.status === 'live').length;
+        const lines = [
+          `MRC-721 open offers${page.total != null ? ` (${page.items.length} of ${page.total})` : ` (${page.items.length})`}, ${liveCount} LIVE:`,
+        ];
+        page.items.forEach((row, index) => {
+          const label = liveness[index];
           lines.push(
-            `- ${row.itemPinId} | ask ${row.priceSats != null ? `${row.priceSats} sats` : '(see offerTx)'} | pin://${row.offerPinId ?? '(unrecorded)'}`
+            `- [${label.status.toUpperCase()}] ${row.itemPinId} | ask ${row.priceSats != null ? `${row.priceSats} sats` : '(see offerTx)'} | pin://${row.offerPinId ?? '(unrecorded)'}`
+            + `${row.sellerMetaId ? ` | seller metaid ${row.sellerMetaId}` : ''}${label.sellerAddress ? ` | pays ${label.sellerAddress}` : ''}`
             + `${row.height != null ? ` | height ${row.height}` : ''}`,
           );
-          lines.push(`  take: mrc721_take_offer item_pin_id=${row.itemPinId}  (the take verifies the signed price and the holder view itself; refusing a stale row costs nothing)`);
-        }
+          if (label.reason) lines.push(`  ${label.reason}`);
+          if (label.status === 'live') {
+            lines.push(`  take: mrc721_take_offer item_pin_id=${row.itemPinId}`);
+          }
+          if (args.include_payload && row.offerTx) {
+            lines.push(`  payload: ${JSON.stringify({ itemPinId: row.itemPinId, priceSats: row.priceSats, offerTx: row.offerTx })}`);
+          }
+        });
         if (page.cursor) lines.push(`- next cursor: ${page.cursor}`);
         return textResult(lines.join('\n'));
       } catch (error) {

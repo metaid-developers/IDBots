@@ -19,6 +19,7 @@ const {
   takeMrc721OpenOffer,
   parseMrc721OpenOffer,
   fetchMrc721OpenOffers,
+  labelMrc721OpenOfferLiveness,
   MRC721_OPEN_OFFER_PATH,
 } = require('../dist-electron/main/services/mrc721OpenOfferService.js');
 const { buildMrc721OpenOfferTx } = require('../dist-electron/main/libs/mrc721OpenOfferTx.js');
@@ -331,4 +332,32 @@ test('market fetch maps the R-E-2 list envelope, passes filters, and degrades ho
   } finally {
     globalThis.fetch = previous;
   }
+});
+
+test('market liveness: LIVE only while the item sits at the offered outpoint and pays its owner; sold/cancelled/garbled rows are DEAD', async () => {
+  const seller = keypair();
+  const built = buildMrc721OpenOfferTx({
+    sellerWif: seller.wif,
+    sellerAddress: seller.address,
+    outpoint: { txid: TXID, vout: 0, satoshis: 546 },
+    priceSats: 22_000,
+  });
+  const rows = [
+    { itemPinId: PINID, active: true, priceSats: 22_000, offerTx: built.offerTx },
+    { itemPinId: `${'ef'.repeat(32)}i0`, active: true, priceSats: 22_000, offerTx: built.offerTx },
+    { itemPinId: PINID, active: false, priceSats: 22_000, offerTx: built.offerTx },
+    { itemPinId: PINID, active: true, priceSats: 22_000, offerTx: 'bm90LWEtdHg=' },
+  ];
+  const fetchItemInfo = async ({ pinId }) => (pinId === PINID
+    ? itemFor(seller.address)
+    : { ...itemFor(seller.address), pinId, output: `${'77'.repeat(32)}:0` });
+  const labels = await labelMrc721OpenOfferLiveness(rows, { fetchItemInfo });
+  assert.equal(labels[0].status, 'live');
+  assert.equal(labels[0].sellerAddress, seller.address, 'the paid address comes from the signed output0');
+  assert.equal(labels[1].status, 'dead', 'the item left the offered outpoint (sold / moved / revoked)');
+  assert.match(labels[1].reason, /left the offered outpoint/);
+  assert.equal(labels[2].status, 'dead');
+  assert.match(labels[2].reason, /cancelled/);
+  assert.equal(labels[3].status, 'dead');
+  assert.match(labels[3].reason, /does not decode/);
 });
