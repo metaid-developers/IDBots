@@ -10,6 +10,22 @@ const require = createRequire(import.meta.url);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), 'utf8');
 
+// Signing fixtures for the /v1/me/settings contract test (same wallet as
+// mePointsHistory.test.mjs so the BSMA verification behaves identically).
+const { mvc } = require('meta-contract');
+const MNEMONIC = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+const WALLET_PATH = "m/44'/10001'/0'/0/0";
+const network = mvc.Networks.livenet;
+const child = mvc.Mnemonic.fromString(MNEMONIC).toHDPrivateKey('', network).deriveChild(WALLET_PATH);
+const ADDRESS = child.publicKey.toAddress(network).toString();
+
+function verifyCall(call, action) {
+  const timestamp = Number(call.init.headers['X-Timestamp']);
+  assert.equal(call.init.headers['X-Identity-Address'], ADDRESS);
+  const message = `me:${action}:${timestamp / 1000}`;
+  assert.equal(mvc.Message(message).verify(ADDRESS, call.init.headers['X-Signature']), true);
+}
+
 const settingsSource = read('src/renderer/components/Settings.tsx');
 const packCardSource = read('src/renderer/components/me/MeIncrementPackCard.tsx');
 const serviceSource = read('src/main/services/mePointSettings.ts');
@@ -22,7 +38,7 @@ const {
   ME_PERSISTENT_AUTO_DEDUCT_KEY,
   normalizeAutoDeductFromPersistent,
   getMePointSettings,
-  setMePointSettings,
+  mirrorMePointSettings,
 } = require('../dist-electron/main/services/mePointSettings.js');
 
 function fakeStore(initialEntries = []) {
@@ -78,17 +94,28 @@ test('credit pack card shows the persistent bucket with buy/details entry points
   assert.match(packCardSource, /meIncrementPackNote/);
 });
 
-test('auto-deduct toggle persists through the mePoints IPC pair (default ON)', () => {
-  // Renderer: optimistic toggle + kv-backed persistence via the mePoints surface.
+test('auto-deduct toggle is server-authoritative with a kvStore mirror fallback', () => {
+  // Renderer: optimistic toggle via the mePoints surface; failure reverts + flags.
   assert.match(packCardSource, /getPointsSettings/);
   assert.match(packCardSource, /setPointsSettings\(\{ autoDeductFromPersistent/);
+  assert.match(packCardSource, /meIncrementPackToggleFailed/);
   // Preload + typed surface + main handler channels.
   assert.match(preloadSource, /invoke\('me:getPointsSettings'\)/);
   assert.match(preloadSource, /invoke\('me:setPointsSettings', input \?\? \{\}\)/);
   assert.match(typesSource, /autoDeductFromPersistent: boolean/);
+  assert.match(typesSource, /type MePointsSettingsSource = 'server' \| 'local'/);
   assert.match(pointsServiceSource, /wrap\('me:getPointsSettings'/);
   assert.match(pointsServiceSource, /wrap\('me:setPointsSettings'/);
   assert.match(pointsServiceSource, /getSettingsStore\?: \(\) => MePointSettingsStore \| null/);
+  // The settings endpoints are pinned constants (path + both signed actions).
+  assert.match(pointsServiceSource, /ME_SETTINGS_PATH = '\/v1\/me\/settings'/);
+  assert.match(pointsServiceSource, /ME_GET_SETTINGS_ACTION = 'get_me_settings'/);
+  assert.match(pointsServiceSource, /ME_SET_SETTINGS_ACTION = 'set_me_settings'/);
+  // GET falls back to the kvStore mirror only on failure; writes NEVER fall
+  // back (a set must reach the server or surface as an error) and only
+  // mirror AFTER a server confirmation.
+  assert.match(pointsServiceSource, /const remote = await getMeSettings\(\);[\s\S]*?mirrorMePointSettings\([\s\S]*?source: 'server'[\s\S]*?\} catch \{[\s\S]*?getMePointSettings\([\s\S]*?source: 'local'/);
+  assert.match(pointsServiceSource, /const remote = await setMeSettings\(requested\);[\s\S]*?mirrorMePointSettings/);
 });
 
 test('mePointSettings defaults ON and only an explicit false turns it off', () => {
@@ -101,7 +128,7 @@ test('mePointSettings defaults ON and only an explicit false turns it off', () =
   assert.equal(normalizeAutoDeductFromPersistent(0), true);
 });
 
-test('mePointSettings get/set round-trips through the kvStore shape', () => {
+test('mePointSettings mirror + degraded read round-trip through the kvStore shape', () => {
   // Unset / unreadable store → default ON, never throws.
   assert.deepEqual(getMePointSettings(null), { autoDeductFromPersistent: true });
   assert.deepEqual(getMePointSettings({ get() { throw new Error('not ready'); } }), { autoDeductFromPersistent: true });
@@ -109,15 +136,60 @@ test('mePointSettings get/set round-trips through the kvStore shape', () => {
   const store = fakeStore();
   assert.deepEqual(getMePointSettings(store), { autoDeductFromPersistent: true });
 
-  assert.deepEqual(setMePointSettings(store, { autoDeductFromPersistent: false }), { autoDeductFromPersistent: false });
+  // The mirror records only server-confirmed values (strict booleans).
+  mirrorMePointSettings(store, false);
   assert.equal(store.map.get('me.persistentAutoDeduct'), false);
   assert.deepEqual(getMePointSettings(store), { autoDeductFromPersistent: false });
+  mirrorMePointSettings(store, true);
+  assert.equal(store.map.get('me.persistentAutoDeduct'), true);
+  assert.deepEqual(getMePointSettings(store), { autoDeductFromPersistent: true });
 
-  // Partial update keeps the stored value; garbage values normalize to ON.
-  assert.deepEqual(setMePointSettings(store, {}), { autoDeductFromPersistent: false });
-  assert.deepEqual(setMePointSettings(store, { autoDeductFromPersistent: 'yes' }), { autoDeductFromPersistent: true });
-
-  // Persistence loss is non-fatal: the returned snapshot still reflects intent.
+  // Mirror loss is non-fatal: the next successful server read re-seeds it.
   const brokenStore = { get: () => undefined, set: () => { throw new Error('locked'); } };
-  assert.deepEqual(setMePointSettings(brokenStore, { autoDeductFromPersistent: false }), { autoDeductFromPersistent: false });
+  assert.doesNotThrow(() => mirrorMePointSettings(brokenStore, false));
+});
+
+test('getMeSettings/setMeSettings sign the pinned actions and normalize strictly', async () => {
+  const { getMeSettings, setMeSettings, initMePointsService, ME_SETTINGS_PATH, ME_GET_SETTINGS_ACTION, ME_SET_SETTINGS_ACTION } =
+    await import('../dist-electron/main/services/mePointsService.js');
+  assert.equal(ME_SETTINGS_PATH, '/v1/me/settings');
+  assert.equal(ME_GET_SETTINGS_ACTION, 'get_me_settings');
+  assert.equal(ME_SET_SETTINGS_ACTION, 'set_me_settings');
+
+  const calls = [];
+  let respond = () => ({ code: 0, message: 'ok', data: { identityAddress: ADDRESS, autoDeductFromPersistent: false } });
+  initMePointsService({
+    fetchImpl: async (url, init = {}) => {
+      calls.push({ url: String(url), init });
+      return { ok: true, status: 200, json: async () => respond() };
+    },
+    getUserIdentityStore: () => ({
+      get: () => ({ id: 1, mnemonic: MNEMONIC, path: WALLET_PATH, mvc_address: ADDRESS, name: 'Owner' }),
+    }),
+  });
+
+  // GET: path + signed get_me_settings + strict-normalized view.
+  const got = await getMeSettings();
+  assert.equal(calls.length, 1);
+  assert.equal(new URL(calls[0].url).pathname.endsWith(ME_SETTINGS_PATH), true);
+  assert.equal(calls[0].init.method, 'GET');
+  verifyCall(calls[0], ME_GET_SETTINGS_ACTION);
+  assert.deepEqual(got, { identityAddress: ADDRESS, autoDeductFromPersistent: false });
+
+  // POST: strict boolean body rides the request; set_me_settings signs it.
+  respond = () => ({ code: 0, message: 'ok', data: { identityAddress: ADDRESS, autoDeductFromPersistent: true } });
+  const set = await setMeSettings(true);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].init.method, 'POST');
+  assert.deepEqual(JSON.parse(calls[1].init.body), { autoDeductFromPersistent: true });
+  verifyCall(calls[1], ME_SET_SETTINGS_ACTION);
+  assert.equal(set.autoDeductFromPersistent, true);
+
+  // A READ missing the field (older server) reads as ON, never OFF.
+  respond = () => ({ code: 0, message: 'ok', data: {} });
+  const defaulted = await getMeSettings();
+  assert.equal(defaulted.autoDeductFromPersistent, true);
+
+  // Non-boolean never leaves the client.
+  await assert.rejects(() => setMeSettings('yes'), /must be a boolean/);
 });
