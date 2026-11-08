@@ -69,8 +69,11 @@ import {
   defaultSidebarWidth,
   loadSidebarWidth,
   sidebarWidthStorageKey,
-  type SidebarWidthMode,
 } from './utils/sidebarWidth';
+import {
+  startSidebarResizeSession,
+  type SidebarResizeSession,
+} from './utils/sidebarResizeSession';
 import { useBotBrowserShell } from './features/botBrowser/useBotBrowserShell';
 import { openBotBrowserConversationInCowork } from './features/botBrowser/conversationNavigationAdapter';
 import type { BotBrowserConversationRequest } from './features/botBrowser/types';
@@ -176,7 +179,9 @@ const App: React.FC = () => {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => loadSidebarWidth((key) => window.localStorage.getItem(key), 'home'));
   const [isSidebarResizing, setIsSidebarResizing] = useState(false);
-  const sidebarResizeRef = useRef<{ startX: number; startWidth: number; mode: SidebarWidthMode } | null>(null);
+  // The live resize session owns the pointer between its mousedown and the
+  // single finish() funnel; only a session can move the column.
+  const sidebarResizeRef = useRef<SidebarResizeSession | null>(null);
   const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [updateModalState, setUpdateModalState] = useState<UpdateModalState>('info');
@@ -669,29 +674,11 @@ const App: React.FC = () => {
     setIsSidebarCollapsed(false);
   }, []);
 
-  useEffect(() => {
-    if (!isSidebarResizing) return;
-    const handleMove = (event: MouseEvent) => {
-      const start = sidebarResizeRef.current;
-      if (!start) return;
-      setSidebarWidth(clampSidebarWidth(start.startWidth + event.clientX - start.startX));
-    };
-    const handleUp = () => {
-      const start = sidebarResizeRef.current;
-      setIsSidebarResizing(false);
-      sidebarResizeRef.current = null;
-      setSidebarWidth((width) => {
-        window.localStorage.setItem(sidebarWidthStorageKey(start?.mode ?? 'home'), String(width));
-        return width;
-      });
-    };
-    document.addEventListener('mousemove', handleMove);
-    document.addEventListener('mouseup', handleUp);
-    return () => {
-      document.removeEventListener('mousemove', handleMove);
-      document.removeEventListener('mouseup', handleUp);
-    };
-  }, [isSidebarResizing]);
+  // Column resize is a SESSION started inside the seam's mousedown handler
+  // (handleSidebarResizeStart), not an effect keyed on a state flag. That
+  // difference is the fix for the "hover follows the pointer" hang: the
+  // listeners are attached before the mousedown returns, and every termination
+  // path funnels through one finish() that clears the ref + state.
 
   const handleNewChat = useCallback((preselectSkillId?: unknown, draftText?: string) => {
     const shouldClearInput = mainView === 'cowork' || !!currentSessionId;
@@ -779,26 +766,62 @@ const App: React.FC = () => {
     }
   }, [botBrowserShell.switchToHome]);
 
+  /**
+   * Seam drag = one session, started here and ended by the session's own
+   * finish() funnel. Three properties matter and are each load-bearing:
+   *
+   *   1. ONLY the primary button starts (a right/middle click would open a
+   *      native menu that eats the matching mouseup — the old way a drag could
+   *      be stranded "held down" forever);
+   *   2. the document listeners are attached synchronously, inside this
+   *      handler, so a down/up pair completing before React commits cannot
+   *      slip past them;
+   *   3. onEnd is the ONE exit: mouseup, pointerup, pointercancel, Escape,
+   *      window blur, tab hidden, mode switch and unmount all land in it and
+   *      clear both the session ref and the visual flag.
+   */
   const handleSidebarResizeStart = useCallback((event: React.MouseEvent) => {
+    if (event.button !== 0) return;
+    if (sidebarResizeRef.current?.active) return;
     event.preventDefault();
-    sidebarResizeRef.current = {
+    const session = startSidebarResizeSession({
       startX: event.clientX,
       startWidth: sidebarWidth,
       mode: botBrowserShell.surfaceMode,
-    };
+      button: event.button,
+      clamp: clampSidebarWidth,
+      onWidth: setSidebarWidth,
+      onEnd: ({ mode, width }) => {
+        sidebarResizeRef.current = null;
+        setIsSidebarResizing(false);
+        window.localStorage.setItem(sidebarWidthStorageKey(mode), String(width));
+      },
+    });
+    if (!session) return;
+    sidebarResizeRef.current = session;
     setIsSidebarResizing(true);
   }, [sidebarWidth, botBrowserShell.surfaceMode]);
 
   const handleSidebarResizeReset = useCallback(() => {
+    // A double-click's first click can leave a live session behind on the
+    // second; finish it before snapping back to the mode default.
+    sidebarResizeRef.current?.finish('explicit');
     const mode = botBrowserShell.surfaceMode;
     const width = defaultSidebarWidth(mode);
     setSidebarWidth(width);
     window.localStorage.setItem(sidebarWidthStorageKey(mode), String(width));
   }, [botBrowserShell.surfaceMode]);
 
+  // A resize session must never outlive the shell (HMR swap, reload, logout):
+  // the session owns document listeners, so unmount is an exit path too.
+  useEffect(() => () => {
+    sidebarResizeRef.current?.finish('unmount');
+  }, []);
+
   // Bot Home and Bot Internet keep independent widths: restore the surface's own
   // comfortable width on every mode switch.
   useEffect(() => {
+    sidebarResizeRef.current?.finish('mode-change');
     setSidebarWidth(loadSidebarWidth((key) => window.localStorage.getItem(key), botBrowserShell.surfaceMode));
   }, [botBrowserShell.surfaceMode]);
 

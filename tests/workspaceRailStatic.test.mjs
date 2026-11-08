@@ -28,8 +28,15 @@ test('App lays the shell out as four tracks: rail | mid column | handle | right 
   assert.match(appSource, /'64px 0px 4px minmax\(0, 1fr\)'/);
   assert.match(appSource, /'64px auto 4px minmax\(0, 1fr\)'/);
   assert.match(appSource, /import WorkspaceRail from '\.\/components\/layout\/WorkspaceRail';/);
+  // Anchor on the JSX element form (`<Sidebar` followed by whitespace), not a
+  // bare prefix: the bare prefix also matches type annotations such as
+  // `useRef<SidebarResizeSession | null>`, which made this ordering guard fail
+  // for a reason that had nothing to do with column order.
+  const railMount = appSource.indexOf('<WorkspaceRail');
+  const sidebarMount = appSource.search(/<Sidebar\s/);
+  assert.ok(railMount >= 0 && sidebarMount >= 0, 'both columns are mounted');
   assert.ok(
-    appSource.indexOf('<WorkspaceRail') < appSource.indexOf('<Sidebar'),
+    railMount < sidebarMount,
     'the rail is the first column of the shell',
   );
 });
