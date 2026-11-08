@@ -96,9 +96,11 @@ test('the board is initialized app-wide, so the badges work without opening the 
 });
 
 test('both badges are wired to the shared derivation and the amber decision dot', () => {
-  // Three-column shell (slice 1): the nav dot moved with the navigation into
-  // the left rail; the middle column keeps its own decision count on the
-  // 长期任务 section header. Both read the SAME derivation.
+  // The Internet surface's rail keeps its amber dot on the 长期任务 entry (this
+  // anchor is untouched by the Home restore — the rail is not mounted on the
+  // Home face). The restored Bot Home sidebar carries the SAME derivation and
+  // the SAME dot class on its own 长期任务 text row (owner ruling 2026-11-08
+  // 14:22), so each face has exactly one dot and neither face has two.
   const rail = readSource('src/renderer/components/layout/WorkspaceRail.tsx');
   assert.match(rail, /selectTrackedTasksNeedingAttention\(\{ longTermTask: \{ board: longTermBoard \} \}\)/);
   assert.match(rail, /needsDecisionCount: trackedTaskAttention\.total/);
@@ -106,9 +108,15 @@ test('both badges are wired to the shared derivation and the amber decision dot'
   assert.match(rail, /indicatorKind === 'decision'/);
   assert.match(rail, /role="img"[\s\S]{0,160}aria-label=\{indicatorLabel\}/);
 
-  // The mid column's copy is GONE with the record-type drawer: the rail is the
-  // only navigation surface, so a second amber dot there would duplicate the
-  // one the owner is looking at. Pinned as an absence so it cannot creep back.
+  const homeSidebar = readSource('src/renderer/components/HomeSidebar.tsx');
+  assert.match(homeSidebar, /selectTrackedTasksNeedingAttention\(\{ longTermTask: \{ board: longTermBoard \} \}\)/);
+  assert.match(homeSidebar, /needsDecisionCount: trackedTaskAttention\.total/);
+  assert.match(homeSidebar, /tracked-task-decision-indicator/);
+  assert.match(homeSidebar, /indicatorKind === 'decision'/);
+  assert.match(homeSidebar, /role="img"[\s\S]{0,160}aria-label=\{item\.indicatorLabel\}/);
+
+  // The Internet middle column still carries no copy of the dot (it duplicates
+  // neither the rail nor the Home sidebar).
   const sidebar = readSource('src/renderer/components/Sidebar.tsx');
   assert.doesNotMatch(sidebar, /tracked-task-decision-indicator/);
   assert.doesNotMatch(sidebar, /selectTrackedTasksNeedingAttention/);

@@ -19,8 +19,11 @@ function read(relativePath) {
   return fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
 }
 
-test('Sidebar keeps browser sessions OUT of the Bot Home history list', () => {
-  const source = read('src/renderer/components/Sidebar.tsx');
+test('the restored Home sidebar keeps browser sessions OUT of the Bot Home history list', () => {
+  // Owner ruling 2026-11-08 14:22 restored Bot Home to the baseline two-column
+  // form: the live Home list is HomeSidebar.tsx. Sidebar.tsx keeps its copy of
+  // the same contract for the Internet middle column (unchanged this batch).
+  const source = read('src/renderer/components/HomeSidebar.tsx');
 
   // The local (home) grouping excludes browser sessions; they render on the
   // Bot Internet surface instead.
@@ -36,8 +39,8 @@ test('Sidebar keeps browser sessions OUT of the Bot Home history list', () => {
   );
 });
 
-test('Sidebar routes a browser row back to the Bot Browser surface', () => {
-  const source = read('src/renderer/components/Sidebar.tsx');
+test('the Home sidebar routes a browser row back to the Bot Browser surface', () => {
+  const source = read('src/renderer/components/HomeSidebar.tsx');
 
   assert.match(source, /onSelectBrowserSession\?:\s*\(sessionId:\s*string\)\s*=>\s*void\s*\|\s*Promise<void>;/);
   const handlerStart = source.indexOf('const handleSelectSession = async');
@@ -63,7 +66,7 @@ test('Sidebar routes a browser row back to the Bot Browser surface', () => {
 });
 
 test('a2a and group_task grouping is unchanged; browser rows stay out of local', () => {
-  const source = read('src/renderer/components/Sidebar.tsx');
+  const source = read('src/renderer/components/HomeSidebar.tsx');
 
   // local holds human↔MetaBot chats but not browser co-work sessions (they
   // live on the Bot Internet surface). The one deliberate exception: an a2a

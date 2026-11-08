@@ -25,8 +25,11 @@ test('App lays the shell out as four tracks: rail | mid column | handle | right 
   // 64 px rail, the user-resizable middle track, the 4px boundary handle, the
   // right column. Collapsed: the middle track goes to 0 but the handle keeps
   // its 4px track — it carries the ONE panel toggle in both states.
+  // (Bot Home degrades this SAME container: the rail track is 0 and the
+  // restored HomeSidebar takes track 1 — see homeFaceLayering.test.mjs.)
   assert.match(appSource, /'64px 0px 4px minmax\(0, 1fr\)'/);
   assert.match(appSource, /'64px auto 4px minmax\(0, 1fr\)'/);
+  assert.match(appSource, /data-shell-face=\{showHomeSurface \? 'home' : 'browser'\}/);
   assert.match(appSource, /import WorkspaceRail from '\.\/components\/layout\/WorkspaceRail';/);
   // Anchor on the JSX element form (`<Sidebar` followed by whitespace), not a
   // bare prefix: the bare prefix also matches type annotations such as
@@ -68,7 +71,10 @@ test('Settings and ME moved out of the middle column into the rail', () => {
   assert.doesNotMatch(sidebarSource, /onClick=\{\(\) => onShowSettings\(\)\}/);
 });
 
-test('the middle column renders the Co-Work panel or the record type the rail picked', () => {
+test('the Internet middle column keeps its two bodies (panel / record type)', () => {
+  // Owner ruling 2026-11-08 14:22: Bot Home restored to two columns, Bot
+  // Internet's three columns unchanged. Sidebar.tsx is that middle column; the
+  // live Home list now lives in HomeSidebar.tsx (pinned there).
   assert.match(sidebarSource, /data-slot="workspace-mid-column"/);
   assert.match(sidebarSource, /<BotBrowserCoworkPanel\s+onShowSkills=\{onShowSkills\}/);
   // The record type is chosen in the left rail ONLY: the drawer that used to
@@ -83,6 +89,28 @@ test('the middle column renders the Co-Work panel or the record type the rail pi
   // Records keep the existing session list component (container move only).
   assert.match(sidebarSource, /<CoworkSessionList/);
   assert.match(sidebarSource, /<UnifiedTaskList/);
+
+  // The Home face renders the restored sidebar instead — never this column.
+  assert.match(appSource, /\{showHomeSurface \? \(\s*<HomeSidebar/);
+});
+
+test('the Home face has no rail entry and its sidebar carries the text menu rows', () => {
+  // The rail is mounted exactly once, in the Internet branch of the shell…
+  assert.equal((appSource.match(/<WorkspaceRail/g) ?? []).length, 1);
+  assert.ok(
+    appSource.indexOf('{showHomeSurface ? (') < appSource.indexOf('<WorkspaceRail'),
+    'the rail mount belongs to the non-home branch',
+  );
+  // …and the restored Home sidebar is a TEXT menu: 新建任务 / 长期任务 /
+  // 多人任务 / 我的 Bot, all rendered as rows, not as icon-rail entries.
+  const homeSidebarSource = read('src/renderer/components/HomeSidebar.tsx');
+  assert.match(homeSidebarSource, /getSidebarPrimaryNavModel/);
+  assert.match(homeSidebarSource, /onClick=\{onNewChat\}/);
+  assert.match(homeSidebarSource, /primaryNavItems\.map\(/);
+  assert.match(homeSidebarSource, /data-slot="workspace-home-sidebar"/);
+  // No rail item markup in the Home sidebar; no rail model behind it either.
+  assert.doesNotMatch(homeSidebarSource, /data-slot="rail-item"/);
+  assert.doesNotMatch(homeSidebarSource, /getRailHomeNavModel/);
 });
 
 test('the surface switcher sits in the mid column header — the rail top is a bare spacer', () => {

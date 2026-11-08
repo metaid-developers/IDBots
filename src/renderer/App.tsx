@@ -3,6 +3,7 @@ import { useSelector, useDispatch } from 'react-redux';
 import { RootState } from './store';
 import type { SettingsOpenOptions } from './components/Settings';
 import Sidebar from './components/Sidebar';
+import HomeSidebar from './components/HomeSidebar';
 import WorkspaceRail from './components/layout/WorkspaceRail';
 import {
   resolveHomeViewRenderer,
@@ -636,6 +637,13 @@ const App: React.FC = () => {
 
   const handleShowGroupTasks = useCallback(() => {
     setMainView('groupTasks');
+  }, []);
+
+  /** Bot Home's 我的 Bot text row (restored baseline menu). The Bot Internet
+   * surface reaches the same roster through its own rail pane; both resolve
+   * through workspaceDestinations.js to the same renderer. */
+  const handleShowMetabots = useCallback(() => {
+    setMainView('metabots');
   }, []);
 
   const handleNewGroupTask = useCallback(() => {
@@ -1563,6 +1571,11 @@ const App: React.FC = () => {
   const showInternetCatalog = botBrowserShell.surfaceMode === 'browser' && !botBrowserShell.isBrowserPaneVisible;
   /** The one right-column renderer currently mounted (see `data-pane-view`). */
   const rightPaneKey = showHomeSurface ? homePaneKey : internetPaneKey;
+  // Bot Home's degraded grid (owner ruling 2026-11-08 14:22: the Home face goes
+  // back to the baseline two-column form). Same four tracks as the Internet
+  // shell so the seam and the right column keep their explicit placement, but
+  // the rail track collapses to 0 and the restored Home sidebar takes track 1.
+  const homeShellGridTemplate = 'auto 0px 4px minmax(0, 1fr)';
 
   return (
     <div className="relative h-screen overflow-hidden flex dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted">
@@ -1586,64 +1599,101 @@ const App: React.FC = () => {
           />
         </Suspense>
       )}
-      {/* Three-column shell (slice 1): the icon rail, the middle column and the
-          right column. The middle column keeps its own resizable width (auto
-          track) so the existing drag + transition machinery is untouched. */}
+      {/* The workspace shell.
+          · Bot Internet keeps the three-column grid untouched: icon rail |
+            resizable middle column | 4 px seam | right column.
+          · Bot Home degrades to the baseline TWO-column form: the rail track
+            is 0 px, the restored HomeSidebar takes the first track, and the
+            right column keeps rendering the Co-Work content flow.
+          Both faces share this ONE container on purpose: the keep-alive Bot
+          Browser pane lives in the right column, so switching surfaces must
+          never unmount it (that would drop every open browser tab). */}
       <div
         data-slot="app-three-column-shell"
+        data-shell-face={showHomeSurface ? 'home' : 'browser'}
         className="grid min-h-0 min-w-0 flex-1"
         style={{
-          // Four tracks in both states: the middle column collapses to 0 but
-          // the boundary handle keeps its 4px track, so the ONE panel toggle
-          // stays mounted (and clickable) exactly where it collapsed the
-          // column. The rail itself never collapses.
-          gridTemplateColumns: isSidebarCollapsed
-            ? '64px 0px 4px minmax(0, 1fr)'
-            : '64px auto 4px minmax(0, 1fr)',
+          // Four tracks in every state: a collapsed column goes to 0 but the
+          // boundary handle keeps its 4px track, so the ONE panel toggle stays
+          // mounted (and clickable) exactly where it collapsed the column.
+          gridTemplateColumns: showHomeSurface
+            ? homeShellGridTemplate
+            : isSidebarCollapsed
+              ? '64px 0px 4px minmax(0, 1fr)'
+              : '64px auto 4px minmax(0, 1fr)',
         }}
       >
-        <WorkspaceRail
-          mode={botBrowserShell.surfaceMode}
-          internetPane={botBrowserShell.internetPane}
-          homeSection={homeSection}
-          onSelectInternetPane={(pane) => {
-            revealMiddleColumn();
-            botBrowserShell.selectInternetPane(pane);
-          }}
-          onSelectHomeSection={(section) => {
-            revealMiddleColumn();
-            handleSelectHomeSection(section);
-          }}
-          onNewChat={() => {
-            revealMiddleColumn();
-            botBrowserShell.switchToHome();
-            handleBlankNewChat();
-          }}
-          onShowSettings={() => handleShowSettings()}
-          updateBadge={updateBadge}
-        />
-        <Sidebar
-          onShowLogin={handleShowLogin}
-          onShowSettings={handleShowSettings}
-          onShowSkills={handleShowSkills}
-          onShowCowork={handleShowCowork}
-          onShowScheduledTasks={handleShowScheduledTasks}
-          onShowGroupTasks={handleShowGroupTasks}
-          mode={botBrowserShell.surfaceMode}
-          homeSection={homeSection}
-          onSelectHome={botBrowserShell.switchToHome}
-          onSelectSurface={(mode) => {
-            if (mode === 'home') {
-              botBrowserShell.switchToHome();
-            } else {
-              void botBrowserShell.openBrowserHome();
-            }
-          }}
-          onSelectBrowserSession={handleSelectBrowserSession}
-          isCollapsed={isSidebarCollapsed}
-          width={sidebarWidth}
-          isResizing={isSidebarResizing}
-        />
+        {showHomeSurface ? (
+          <HomeSidebar
+            activeView={mainView}
+            onShowSettings={handleShowSettings}
+            onShowCowork={handleShowCowork}
+            onShowScheduledTasks={handleShowScheduledTasks}
+            onShowGroupTasks={handleShowGroupTasks}
+            onShowMetabots={handleShowMetabots}
+            onNewChat={handleBlankNewChat}
+            mode={botBrowserShell.surfaceMode}
+            onSelectHome={botBrowserShell.switchToHome}
+            onSelectSurface={(mode) => {
+              if (mode === 'home') {
+                botBrowserShell.switchToHome();
+              } else {
+                void botBrowserShell.openBrowserHome();
+              }
+            }}
+            onSelectBrowserSession={handleSelectBrowserSession}
+            isCollapsed={isSidebarCollapsed}
+            onToggleCollapse={handleToggleSidebar}
+            width={sidebarWidth}
+            isResizing={isSidebarResizing}
+            updateBadge={isSidebarCollapsed ? null : updateBadge}
+          />
+        ) : (
+          <>
+            <WorkspaceRail
+              mode={botBrowserShell.surfaceMode}
+              internetPane={botBrowserShell.internetPane}
+              homeSection={homeSection}
+              onSelectInternetPane={(pane) => {
+                revealMiddleColumn();
+                botBrowserShell.selectInternetPane(pane);
+              }}
+              onSelectHomeSection={(section) => {
+                revealMiddleColumn();
+                handleSelectHomeSection(section);
+              }}
+              onNewChat={() => {
+                revealMiddleColumn();
+                botBrowserShell.switchToHome();
+                handleBlankNewChat();
+              }}
+              onShowSettings={() => handleShowSettings()}
+              updateBadge={updateBadge}
+            />
+            <Sidebar
+              onShowLogin={handleShowLogin}
+              onShowSettings={handleShowSettings}
+              onShowSkills={handleShowSkills}
+              onShowCowork={handleShowCowork}
+              onShowScheduledTasks={handleShowScheduledTasks}
+              onShowGroupTasks={handleShowGroupTasks}
+              mode={botBrowserShell.surfaceMode}
+              homeSection={homeSection}
+              onSelectHome={botBrowserShell.switchToHome}
+              onSelectSurface={(mode) => {
+                if (mode === 'home') {
+                  botBrowserShell.switchToHome();
+                } else {
+                  void botBrowserShell.openBrowserHome();
+                }
+              }}
+              onSelectBrowserSession={handleSelectBrowserSession}
+              isCollapsed={isSidebarCollapsed}
+              width={sidebarWidth}
+              isResizing={isSidebarResizing}
+            />
+          </>
+        )}
         {/* Middle ⇄ right boundary handle: the ONE panel toggle in the shell,
             plus the column resize grip. It is mounted in BOTH states on
             purpose — a control that lives inside the collapsible column is

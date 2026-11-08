@@ -22,6 +22,82 @@ const BOT_HUB_NAV_ENABLED = false;
  */
 
 /**
+ * Bot Home TEXT MENU (owner ruling 2026-11-08 14:22: "Bot home 界面先恢复到
+ * 原来的状态" — the restored two-column Home face, not the three-column shell).
+ *
+ * The Home face no longer renders the 64 px icon rail, so its destinations are
+ * the baseline text rows again: one creation action plus the three list
+ * destinations. `scheduledTasks` is the long-term workspace entry and carries
+ * the amber owner-decision dot; `metabots` is the Bot roster.
+ *
+ * Deliberately separate from `getRailHomeNavModel`: that model still feeds the
+ * rail component (which only mounts on the Internet surface now), while this
+ * one feeds the restored Home sidebar. They share destination ids, so App's
+ * right-column renderer table stays the single source of truth for both.
+ */
+export function getSidebarPrimaryNavModel({ t, hasRunningScheduledTask, needsDecisionCount = 0 }) {
+  // A parked owner decision (waiting_owner) outranks "a task is running": a
+  // running task needs nobody, while a parked decision needs the OWNER. Both
+  // surface as the same amber dot, so the decision wins and carries its own
+  // label/count.
+  const decisionCount = Number.isFinite(needsDecisionCount) && needsDecisionCount > 0
+    ? Math.floor(needsDecisionCount)
+    : 0;
+  const hasDecision = decisionCount > 0;
+  return [
+    {
+      id: 'scheduledTasks',
+      label: t('scheduledTasks'),
+      icon: 'clock',
+      hasIndicator: Boolean(hasRunningScheduledTask) || hasDecision,
+      indicatorKind: hasDecision ? 'decision' : hasRunningScheduledTask ? 'running' : undefined,
+      indicatorLabel: hasDecision
+        ? t('trackedTaskNeedsDecision').replace('{count}', String(decisionCount))
+        : undefined,
+    },
+    {
+      id: 'groupTasks',
+      label: t('groupTasks'),
+      icon: 'userGroup',
+      hidden: !GROUP_TASKS_NAV_ENABLED,
+    },
+    {
+      id: 'metabots',
+      label: t('metabots'),
+      icon: 'cpuChip',
+    },
+  ];
+}
+
+/**
+ * Bot Internet text menu, baseline shape. The three-column Internet face uses
+ * the rail instead; the model is kept beside the Home one because both
+ * describe the baseline sidebar's menus, and the restored Home face must never
+ * accidentally grow the Internet rows.
+ */
+export function getSidebarInternetNavModel({ t }) {
+  return [
+    {
+      id: 'browser',
+      label: t('botBrowser'),
+      icon: 'globe',
+    },
+    {
+      id: 'gigSquare',
+      label: t('gigSquare'),
+      icon: 'shoppingBag',
+      badge: t('gigSquareAlphaBadge'),
+      hidden: !BOT_HUB_NAV_ENABLED,
+    },
+    {
+      id: 'metaapps',
+      label: t('metaApps'),
+      icon: 'squares2x2',
+    },
+  ];
+}
+
+/**
  * The Codex-style surface switcher: two entries, each with a title line and a
  * subtitle line. `id` is the BotBrowserSurfaceMode the entry selects.
  */
