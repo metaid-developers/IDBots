@@ -24,11 +24,14 @@
  */
 
 import {
+  createMvcSponsorV2Client,
+  meBillingOf,
   signMvcAddressMessage,
   type MvcSponsorTrafficAccount,
   type SponsorBilling,
   type SponsorPaySource,
 } from './mvcSponsorClient';
+import { isServerMode } from '../server/serverMode';
 import {
   getTrafficPinMode,
   getTrafficSettings,
@@ -65,6 +68,8 @@ export type TrafficApiStage =
   | 'balance'
   | 'ledger'
   | 'usage'
+  | 'orders'
+  | 'convert'
   | 'pricing'
   | 'recharge'
   | 'campaign'
@@ -151,12 +156,18 @@ export interface TrafficDailyUsageRow {
   botAddress: string;
   bytes: number;
   txCount: number;
+  /** ME charged for the row's ME-billed orders (milliME); absent on backends without ME billing. */
+  meMilli?: number;
 }
 
 export interface TrafficUsageSummary {
   todayBytes: number;
   weekBytes: number;
   monthBytes: number;
+  /** ME-billed totals per bucket (milliME); absent on backends without ME billing. */
+  todayMeMilli?: number;
+  weekMeMilli?: number;
+  monthMeMilli?: number;
 }
 
 export interface TrafficSpendJournalEntry {
@@ -228,6 +239,8 @@ export function resetTrafficAccountServiceForTests(): void {
   depsRef = null;
   balanceCache = null;
   ensureAccountInFlight = null;
+  meBillingStatusCache = null;
+  meConversionAttempted.clear();
 }
 
 function getDeps(): TrafficAccountServiceDeps {
@@ -855,12 +868,15 @@ export async function getTrafficDailyUsage(input: {
   return rows.flatMap((item) => {
     const row = readObject(item);
     if (!row) return [];
-    return [{
+    const usageRow: TrafficDailyUsageRow = {
       date: pickText(row, 'date'),
       botAddress: pickText(row, 'botAddress', 'bot_address'),
       bytes: toNumber(row.bytes),
       txCount: toNumber(row.txCount ?? row.tx_count),
-    }];
+    };
+    const meMilli = optionalNumber(row, 'meMilli', 'me_milli');
+    if (meMilli !== undefined) usageRow.meMilli = meMilli;
+    return [usageRow];
   });
 }
 
@@ -872,11 +888,239 @@ export async function getTrafficUsageSummary(): Promise<TrafficUsageSummary> {
     path: `/v1/traffic/accounts/${encodeURIComponent(account.accountId)}/usage/summary`,
   });
   const record = data as Record<string, unknown>;
-  return {
+  const summary: TrafficUsageSummary = {
     todayBytes: toNumber(record.todayBytes ?? record.today_bytes),
     weekBytes: toNumber(record.weekBytes ?? record.week_bytes),
     monthBytes: toNumber(record.monthBytes ?? record.month_bytes),
   };
+  const todayMeMilli = optionalNumber(record, 'todayMeMilli', 'today_me_milli');
+  const weekMeMilli = optionalNumber(record, 'weekMeMilli', 'week_me_milli');
+  const monthMeMilli = optionalNumber(record, 'monthMeMilli', 'month_me_milli');
+  if (todayMeMilli !== undefined) summary.todayMeMilli = todayMeMilli;
+  if (weekMeMilli !== undefined) summary.weekMeMilli = weekMeMilli;
+  if (monthMeMilli !== undefined) summary.monthMeMilli = monthMeMilli;
+  return summary;
+}
+
+// ---------------------------------------------------------------------------
+// ME credits billing (2026-11-09 requirements v1.0: R3 capability, R4 order
+// history, R5 byte-balance conversion)
+// ---------------------------------------------------------------------------
+
+const ME_BILLING_STATUS_TTL_MS = 60_000;
+/** kvStore marker of the one-shot byte-balance → ME conversion (R5), per account. */
+const TRAFFIC_ME_CONVERSION_KEY = 'traffic.meConversion';
+
+export interface TrafficMeBillingStatus {
+  /** True when the sponsor bills this account's sponsored writes in ME credits. */
+  trafficBilling: boolean;
+  /** ME a new spend can draw now (milliME); undefined when the backend sent none. */
+  spendableMilli?: number;
+}
+
+export interface TrafficSponsorOrder {
+  orderId: string;
+  botAddress: string;
+  txId: string;
+  txSize: number;
+  /** What the order was billed in; '' when the backend did not say. */
+  paySource: SponsorPaySource | '';
+  /** ME charged in milliME (ME-billed orders only). */
+  meAmountMilli: number;
+  status: string;
+  createdAt: number;
+  committedAt: number;
+  /** Pin protocol path recorded by this device's spend journal; absent for other devices' orders. */
+  kind?: string;
+}
+
+export interface TrafficMeConversionResult {
+  convertedBytes: number;
+  mintedMilli: number;
+  entryId: string;
+  alreadyConverted: boolean;
+}
+
+let meBillingStatusCache: (TrafficMeBillingStatus & { identityAddress: string; fetchedAt: number }) | null = null;
+/** Accounts whose conversion was already attempted this launch (one request per launch at most). */
+const meConversionAttempted = new Set<string>();
+
+function optionalNumber(record: Record<string, unknown>, ...keys: string[]): number | undefined {
+  for (const key of keys) {
+    const raw = record[key];
+    if (raw === undefined || raw === null || (typeof raw === 'string' && !raw.trim())) continue;
+    const value = Number(raw);
+    if (Number.isFinite(value)) return value;
+  }
+  return undefined;
+}
+
+function buildTrafficConvertMeMessage(accountId: string, timestamp: number): string {
+  return `traffic-convert-me:${accountId}:${timestamp}`;
+}
+
+function toStatus(cached: TrafficMeBillingStatus): TrafficMeBillingStatus {
+  return cached.spendableMilli === undefined
+    ? { trafficBilling: cached.trafficBilling }
+    : { trafficBilling: cached.trafficBilling, spendableMilli: cached.spendableMilli };
+}
+
+/**
+ * Whether the sponsor bills this account in ME credits, read from the
+ * address/info `me` block of the (bound) identity address and cached for
+ * 60 s. The renderer only swaps the traffic tab to the credits UI while this
+ * reports trafficBilling, so a client shipped ahead of the backend keeps the
+ * byte-balance card it is still billed against. Never throws: no identity,
+ * no binding, or an unreachable sponsor read as the last known status (false
+ * when none). Server-mode tenants always read false (D4). Seeing
+ * trafficBilling with credits payment on also fires the one-shot byte-balance
+ * conversion (R5 / D2).
+ */
+export async function getMeTrafficBillingStatus(
+  options: { forceRefresh?: boolean } = {},
+): Promise<TrafficMeBillingStatus> {
+  if (isServerMode()) return { trafficBilling: false };
+  let identityAddress = '';
+  try {
+    identityAddress = requireIdentity().mvcAddress;
+  } catch {
+    return { trafficBilling: false };
+  }
+  const cached = meBillingStatusCache && meBillingStatusCache.identityAddress === identityAddress
+    ? meBillingStatusCache
+    : null;
+  if (!options.forceRefresh && cached && Date.now() - cached.fetchedAt < ME_BILLING_STATUS_TTL_MS) {
+    return toStatus(cached);
+  }
+  try {
+    const client = createMvcSponsorV2Client({ baseUrl: resolveApiBaseUrl(), fetchImpl: getDeps().fetchImpl });
+    const me = meBillingOf(await client.getAddressInfo({ address: identityAddress }));
+    const status: TrafficMeBillingStatus = me?.spendableMilli === undefined
+      ? { trafficBilling: me?.trafficBilling === true }
+      : { trafficBilling: me.trafficBilling, spendableMilli: me.spendableMilli };
+    meBillingStatusCache = { ...status, identityAddress, fetchedAt: Date.now() };
+    if (status.trafficBilling && isMeTrafficBillingAllowed(getKvStore())) {
+      void ensureTrafficBalanceConvertedToMe();
+    }
+    return status;
+  } catch {
+    return cached ? toStatus(cached) : { trafficBilling: false };
+  }
+}
+
+/**
+ * Per-order sponsor history for the account (R4), newest first, covering both
+ * ME- and byte-billed orders, enriched with this device's journal kind.
+ * Throws a featureUnavailable TrafficApiError on a backend without the
+ * endpoint (404) so the renderer can fall back to the local spend journal.
+ */
+export async function getTrafficSponsorOrders(input: {
+  cursor?: string;
+  limit?: number;
+  botAddress?: string;
+} = {}): Promise<{ orders: TrafficSponsorOrder[]; nextCursor: string }> {
+  const account = await requireAccount();
+  const data = await trafficRequestJson({
+    stage: 'orders',
+    method: 'GET',
+    path: `/v1/traffic/accounts/${encodeURIComponent(account.accountId)}/sponsor-orders`,
+    query: { cursor: normalizeText(input.cursor) || undefined, limit: input.limit, botAddress: input.botAddress },
+  });
+  const record: Record<string, unknown> = Array.isArray(data) ? { rows: data } : data;
+  const rows = Array.isArray(record.rows) ? record.rows : [];
+  const kindByOrderId = new Map<string, string>();
+  for (const journalEntry of listLocalTrafficJournal({ limit: 1000 })) {
+    if (journalEntry.orderId && journalEntry.kind && !kindByOrderId.has(journalEntry.orderId)) {
+      kindByOrderId.set(journalEntry.orderId, journalEntry.kind);
+    }
+  }
+  const orders = rows.flatMap((item): TrafficSponsorOrder[] => {
+    const row = readObject(item);
+    if (!row) return [];
+    const orderId = pickText(row, 'orderId', 'order_id');
+    const paySource = pickText(row, 'paySource', 'pay_source').toLowerCase();
+    const order: TrafficSponsorOrder = {
+      orderId,
+      botAddress: pickText(row, 'botAddress', 'bot_address'),
+      txId: pickText(row, 'txId', 'txid', 'tx_id'),
+      txSize: toNumber(row.txSize ?? row.tx_size),
+      paySource: paySource === 'me' || paySource === 'bytes' || paySource === 'quota' ? paySource : '',
+      meAmountMilli: toNumber(row.meAmountMilli ?? row.me_amount_milli),
+      status: pickText(row, 'status'),
+      createdAt: toNumber(row.createdAt ?? row.created_at),
+      committedAt: toNumber(row.committedAt ?? row.committed_at),
+    };
+    const kind = orderId ? kindByOrderId.get(orderId) : undefined;
+    if (kind) order.kind = kind;
+    return [order];
+  });
+  return { orders, nextCursor: normalizeText(record.nextCursor ?? record.next_cursor) };
+}
+
+/**
+ * One-shot conversion of the account's remaining byte balance into ME (R5;
+ * owner decision D2: minted into the never-expiring top-up bucket). The
+ * backend is idempotent per account; a kv marker additionally stops the
+ * client from asking again once the server confirmed.
+ */
+export async function convertTrafficBalanceToMe(): Promise<TrafficMeConversionResult> {
+  const identity = requireIdentity();
+  const account = await requireAccount();
+  const timestamp = nowSeconds();
+  const message = buildTrafficConvertMeMessage(account.accountId, timestamp);
+  const { signature } = await signWithKey({ mnemonic: identity.mnemonic, path: identity.path, message });
+  const data = await trafficRequestJson({
+    stage: 'convert',
+    method: 'POST',
+    path: `/v1/traffic/accounts/${encodeURIComponent(account.accountId)}/convert-to-me`,
+    body: {},
+    identity: { address: identity.mvcAddress, timestamp, signature },
+  });
+  const record = data as Record<string, unknown>;
+  balanceCache = null;
+  const result: TrafficMeConversionResult = {
+    convertedBytes: toNumber(record.convertedBytes ?? record.converted_bytes),
+    mintedMilli: toNumber(record.mintedMilli ?? record.minted_milli),
+    entryId: pickText(record, 'entryId', 'entry_id'),
+    alreadyConverted: normalizeBoolean(record.alreadyConverted ?? record.already_converted),
+  };
+  try {
+    getKvStore()?.set(TRAFFIC_ME_CONVERSION_KEY, {
+      accountId: account.accountId,
+      at: Date.now(),
+      convertedBytes: result.convertedBytes,
+      mintedMilli: result.mintedMilli,
+    });
+  } catch {
+    // marker loss only costs one idempotent re-request next launch
+  }
+  return result;
+}
+
+function hasMeConversionMarker(accountId: string): boolean {
+  try {
+    const marker = readObject(getKvStore()?.get(TRAFFIC_ME_CONVERSION_KEY));
+    return Boolean(marker && normalizeText(marker.accountId) === accountId);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Fire-and-forget R5 trigger: converts once per account (kv marker) and tries
+ * at most once per launch, so a backend without the endpoint (404) or a
+ * transient failure costs one request per launch, never one per status poll.
+ */
+async function ensureTrafficBalanceConvertedToMe(): Promise<void> {
+  try {
+    const account = readLocalAccount();
+    if (!account || hasMeConversionMarker(account.accountId) || meConversionAttempted.has(account.accountId)) return;
+    meConversionAttempted.add(account.accountId);
+    const result = await convertTrafficBalanceToMe();
+    console.log(`[TrafficAccount] converted ${result.convertedBytes} traffic bytes into ${result.mintedMilli} milliME (alreadyConverted=${result.alreadyConverted})`);
+  } catch (error) {
+    console.warn('[TrafficAccount] byte-balance conversion to ME failed; retrying next launch:', error instanceof Error ? error.message : error);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1515,6 +1759,24 @@ export function registerTrafficAccountIpcHandlers(deps: { registerIpcHandler: Re
       return { success: true, summary: await getTrafficUsageSummary() };
     } catch (error) {
       return { success: false, error: getErrorMessage(error) };
+    }
+  });
+  registerIpcHandler('traffic:getMeBillingStatus', async (_event, input: { forceRefresh?: boolean }) => {
+    try {
+      return { success: true, status: await getMeTrafficBillingStatus(input ?? {}) };
+    } catch (error) {
+      return { success: false, error: getErrorMessage(error) };
+    }
+  });
+  registerIpcHandler('traffic:getSponsorOrders', async (_event, input: { cursor?: string; limit?: number; botAddress?: string }) => {
+    try {
+      return { success: true, ...(await getTrafficSponsorOrders(input ?? {})) };
+    } catch (error) {
+      return {
+        success: false,
+        ...getErrorPayload(error),
+        featureUnavailable: error instanceof TrafficApiError && error.featureUnavailable,
+      };
     }
   });
   registerIpcHandler('traffic:bindAllBots', async () => {

@@ -813,6 +813,10 @@ contextBridge.exposeInMainWorld('electron', {
     getDailyUsage: (input?: { from?: number; to?: number; botAddress?: string }) =>
       ipcRenderer.invoke('traffic:getDailyUsage', input ?? {}),
     getUsageSummary: () => ipcRenderer.invoke('traffic:getUsageSummary'),
+    // ME credits billing (requirements v1.0): capability status + per-order history.
+    getMeBillingStatus: (input?: { forceRefresh?: boolean }) => ipcRenderer.invoke('traffic:getMeBillingStatus', input ?? {}),
+    getSponsorOrders: (input?: { cursor?: string; limit?: number; botAddress?: string }) =>
+      ipcRenderer.invoke('traffic:getSponsorOrders', input ?? {}),
     bindAllBots: () => ipcRenderer.invoke('traffic:bindAllBots'),
     getLocalJournal: (input?: { limit?: number; botAddress?: string }) =>
       ipcRenderer.invoke('traffic:getLocalJournal', input ?? {}),

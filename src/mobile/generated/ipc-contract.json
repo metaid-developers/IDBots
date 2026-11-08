@@ -3282,6 +3282,14 @@
       ]
     },
     {
+      "path": "traffic.getMeBillingStatus",
+      "kind": "invoke",
+      "channel": "traffic:getMeBillingStatus",
+      "args": [
+        "input"
+      ]
+    },
+    {
       "path": "traffic.getPricing",
       "kind": "invoke",
       "channel": "traffic:getPricing",
@@ -3306,6 +3314,14 @@
       "kind": "invoke",
       "channel": "traffic:getSettings",
       "args": []
+    },
+    {
+      "path": "traffic.getSponsorOrders",
+      "kind": "invoke",
+      "channel": "traffic:getSponsorOrders",
+      "args": [
+        "input"
+      ]
     },
     {
       "path": "traffic.getUsageSummary",
