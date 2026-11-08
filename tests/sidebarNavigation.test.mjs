@@ -69,26 +69,29 @@ test('a pending owner decision lights the 长期任务 dot with its own count la
   }
 });
 
-test('Bot Internet rail lists browser, hidden Bot Hub, Meta Apps, My Bots and the Co-Work destination', () => {
+test('Bot Internet rail lists browser, hidden Bot Hub, Meta Apps and My Bots — the Co-Work entry is retired', () => {
   const items = getRailInternetNavModel({ t });
 
-  assert.deepEqual(items.map((item) => item.id), ['browser', 'gigSquare', 'metaapps', 'myBots', 'cowork']);
+  assert.deepEqual(items.map((item) => item.id), ['browser', 'gigSquare', 'metaapps', 'myBots']);
   assert.equal(items[0].icon, 'globe');
   assert.equal(items[1].icon, 'shoppingBag');
   assert.equal(items[1].badge, 'gigSquareAlphaBadge');
   assert.equal(items[2].icon, 'squares2x2');
   assert.equal(items[3].label, 'metabots');
   assert.equal(items[3].icon, 'cpuChip');
-  assert.equal(items[4].label, 'botBrowserCoworkTitle', 'the Co-Work rail entry reuses the existing i18n label');
-  assert.equal(items[4].icon, 'chatBubbles');
 
   // Bot Hub is not a promoted column for now: its entry stays implemented but
-  // hidden, so the rail lists Bot Browser, Meta Apps, My Bots and Co-Work.
+  // hidden, so the rail lists exactly THREE visible destinations.
   assert.equal(items[1].hidden, true);
   assert.deepEqual(
     items.filter((item) => !item.hidden).map((item) => item.id),
-    ['browser', 'metaapps', 'myBots', 'cowork'],
+    ['browser', 'metaapps', 'myBots'],
   );
+  // Owner ruling 2026-11-08 20:18: the bubble icon is retired. The Co-Work
+  // face is this surface's default (the session list IS the mid column), so it
+  // needs no rail door — and no `chatBubbles` icon token stays behind.
+  assert.equal(items.some((item) => item.id === 'cowork'), false);
+  assert.equal(items.some((item) => item.icon === 'chatBubbles'), false);
 });
 
 test('the surface menu is the Codex-style pair: Bot Internet first, each entry carrying its subtitle', () => {
@@ -111,7 +114,9 @@ test('Bot Browser pane stays the visible internet destination only when selected
   assert.equal(isBotBrowserPaneVisible('browser', 'browser'), true);
   assert.equal(isBotBrowserPaneVisible('browser', 'gigSquare'), false);
   assert.equal(isBotBrowserPaneVisible('browser', 'metaapps'), false);
-  assert.equal(isBotBrowserPaneVisible('browser', 'cowork'), false, 'the Co-Work destination hides the browser pane');
+  // A retired Co-Work pane id still hides the browser pane: it resolves to the
+  // Bot Internet default branch, never to the browser surface.
+  assert.equal(isBotBrowserPaneVisible('browser', 'cowork'), false);
   assert.equal(isBotBrowserPaneVisible('home', 'browser'), false);
 });
 

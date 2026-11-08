@@ -133,9 +133,10 @@ test('the surface switcher sits in the mid column header — the rail top is a b
   assert.match(appSource, /onSelectSurface=\{\(mode\) => \{[\s\S]{0,200}openBrowserHome/);
 });
 
-test('the Co-Work destination no longer introduces itself in either column', () => {
-  // The NAME belongs to the rail entry that opened the destination (owner
-  // ruling 2026-11-08 14:15); the panel carries only its two actions.
+test('the Co-Work face no longer introduces itself in either column', () => {
+  // The NAME used to belong to the rail entry that opened the destination
+  // (owner ruling 2026-11-08 14:15); that entry is retired as well (20:18), so
+  // neither column restates it — the panel carries only its two actions.
   const panelSource = read('src/renderer/features/botBrowser/BotBrowserCoworkPanel.tsx');
   assert.doesNotMatch(panelSource, /botBrowserCoworkTitle/);
   assert.match(panelSource, /data-slot="cowork-panel-actions"/);
@@ -159,23 +160,33 @@ test('the rail models are the single source of both surfaces’ entries', () => 
   assert.match(navigationSource, /export function getRailInternetNavModel/);
   assert.match(navigationSource, /export function getRailHomeNavModel/);
   assert.match(navigationSource, /export function getSurfaceMenuModel/);
-  // Four internet destinations + four home destinations, one of which is the
-  // creation action rather than a list.
-  for (const id of ['browser', 'metaapps', 'myBots', 'cowork', 'gigSquare']) {
+  // Three visible internet destinations (the hidden Bot Hub slot stays
+  // implemented) + four home destinations, one of which is the creation action
+  // rather than a list. The Co-Work bubble entry is retired (owner ruling
+  // 2026-11-08 20:18) — it is the surface's default face, not a rail row.
+  for (const id of ['browser', 'metaapps', 'myBots', 'gigSquare']) {
     assert.ok(navigationSource.includes(`id: '${id}'`), `${id} is an internet destination`);
   }
+  assert.doesNotMatch(navigationSource, /id: 'cowork'/);
+  assert.doesNotMatch(navigationSource, /chatBubbles/);
   for (const id of ['newTask', 'longTerm', 'groupTasks', 'records']) {
     assert.ok(navigationSource.includes(`id: '${id}'`), `${id} is a Bot Home destination`);
   }
 });
 
-test('the Co-Work destination is an internet pane, and it is not the browser pane', () => {
+test('the Co-Work face is the Internet default branch, not a rail pane', () => {
   const typesSource = read('src/renderer/features/botBrowser/types.ts');
-  assert.match(typesSource, /export type BotInternetPane = 'browser' \| 'gigSquare' \| 'metaapps' \| 'myBots' \| 'cowork';/);
+  assert.match(typesSource, /export type BotInternetPane = 'browser' \| 'gigSquare' \| 'metaapps' \| 'myBots';/);
   assert.match(typesSource, /export type BotHomeSection = 'longTerm' \| 'groupTasks' \| 'records';/);
   // Slice-1 fix: the destination is resolved through the shared table instead
   // of an inline pane literal, so the completeness guard can see every branch.
   assert.match(appSource, /const internetPaneKey = resolveInternetPaneRenderer\(botBrowserShell\.internetPane\);/);
   assert.match(appSource, /const coworkLandingCard = \(/);
-  assert.match(read('src/renderer/components/layout/workspaceDestinations.js'), /cowork: 'coworkLanding'/);
+  // 20:18 ruling: the Co-Work mapping is consolidated into the DEFAULT branch.
+  // `cowork` must not come back as a pane row, and the card must stay the
+  // fallback (a real rendered branch, never `null`).
+  const destinationsSource = read('src/renderer/components/layout/workspaceDestinations.js');
+  assert.doesNotMatch(destinationsSource, /cowork: 'coworkLanding'/);
+  assert.match(destinationsSource, /INTERNET_PANE_FALLBACK_RENDERER = 'coworkLanding'/);
+  assert.match(destinationsSource, /resolveInternetPaneRenderer\(pane\) \{\s*return INTERNET_PANE_RENDERERS\[pane\] \?\? INTERNET_PANE_FALLBACK_RENDERER;/);
 });

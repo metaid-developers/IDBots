@@ -1527,13 +1527,15 @@ const App: React.FC = () => {
     />
   );
 
-  // The Co-Work destination's right pane (owner ruling 2026-11-08 14:15).
-  // Both halves of this destination already live in the MIDDLE column: the
-  // session list and the live transcript. The card that used to fill this pane
-  // introduced the destination to the user ("Co-Work" + session counts + an
-  // "open the browser" button), which duplicated the rail entry that opened it
-  // and the panel that actually holds the work. The pane stays a REAL rendered
-  // branch — never `null` — because the destination table's completeness guard
+  // The Co-Work face's right pane — the Bot Internet DEFAULT branch now
+  // (owner rulings 2026-11-08 14:15 and 20:18). Both halves of the face live in
+  // the MIDDLE column: the session list and the live transcript. The card that
+  // used to fill this pane introduced the destination to the user ("Co-Work" +
+  // session counts + an "open the browser" button), which duplicated the rail
+  // entry that opened it and the panel that actually holds the work. That rail
+  // entry is retired by the 20:18 ruling, so this card is what an unknown or
+  // retired pane id resolves to. It stays a REAL rendered branch — never
+  // `null` — because the destination table's completeness guard
   // (components/layout/workspaceDestinations.js) exists to keep a null branch
   // from blanking the workspace again; it just has nothing of its own to say,
   // exactly like a detail pane with no selection.

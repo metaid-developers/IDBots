@@ -42,7 +42,7 @@ test('the Bot Home rail keeps the four destinations in order', () => {
   ]);
 });
 
-test('the Bot Internet rail places Gig Square before MetaApps, My Bots, and Co-Work last', () => {
+test('the Bot Internet rail places Gig Square before MetaApps and My Bots — Co-Work retired', () => {
   const items = getRailInternetNavModel({ t });
 
   assert.deepEqual(items.map((item) => item.id), [
@@ -50,11 +50,12 @@ test('the Bot Internet rail places Gig Square before MetaApps, My Bots, and Co-W
     'gigSquare',
     'metaapps',
     'myBots',
-    'cowork',
   ]);
+  // The visible rail is three icons: the Co-Work bubble entry was retired by
+  // the owner ruling of 2026-11-08 20:18 (the face is the surface default).
   assert.deepEqual(
     items.filter((item) => !item.hidden).map((item) => item.label),
-    ['Bot 浏览器', '元应用', 'MetaBots', 'Co-Work'],
+    ['Bot 浏览器', '元应用', 'MetaBots'],
   );
 });
 

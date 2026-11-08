@@ -52,7 +52,10 @@ test('every rail entry resolves to a real pane renderer — an icon can never be
   const internet = getRailInternetNavModel({ t }).filter((item) => !item.hidden);
   const home = getRailHomeNavModel({ t, hasRunningScheduledTask: false }).filter((item) => !item.hidden);
 
-  assert.ok(internet.length >= 4, 'internet rail entries');
+  // Three visible internet destinations: the Co-Work bubble row is retired
+  // (owner ruling 2026-11-08 20:18) — the face is the surface default, not a
+  // door. Bot Home keeps its four (one is the creation action).
+  assert.equal(internet.length, 3, 'internet rail entries');
   assert.ok(home.length >= 4, 'home rail entries');
 
   for (const item of internet) {

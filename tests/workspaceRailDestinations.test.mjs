@@ -41,7 +41,13 @@ const internetItems = getRailInternetNavModel({ t });
 const homeItems = getRailHomeNavModel({ t, hasRunningScheduledTask: false, needsDecisionCount: 0 });
 
 test('every Bot Internet rail entry has an explicit destination row (hidden entries included)', () => {
-  assert.ok(internetItems.length >= 4);
+  // Three VISIBLE destinations: the Co-Work bubble row is retired (owner ruling
+  // 2026-11-08 20:18) and Bot Hub stays implemented but hidden.
+  assert.deepEqual(
+    internetItems.filter((item) => !item.hidden).map((item) => item.id),
+    ['browser', 'metaapps', 'myBots'],
+  );
+  assert.ok(internetItems.length >= 4, 'the hidden Bot Hub slot keeps its row too');
   for (const item of internetItems) {
     assert.ok(
       Object.hasOwn(INTERNET_PANE_RENDERERS, item.id),
@@ -52,6 +58,28 @@ test('every Bot Internet rail entry has an explicit destination row (hidden entr
       `rail entry "${item.id}" maps to an unimplemented renderer "${INTERNET_PANE_RENDERERS[item.id]}"`,
     );
   }
+});
+
+test('the retired Co-Work id degrades to the default face instead of owning a pane', () => {
+  // 20:18 ruling: the rail's bubble entry is gone and its mapping is folded
+  // into the DEFAULT branch. Three directions of the same contract:
+  //   1. no table row may re-own `cowork` (a re-added row would hand it a pane),
+  //   2. a stale `cowork` value resolves through the fallback,
+  //   3. the default face is a REAL branch App implements (never `null`).
+  assert.equal(
+    Object.hasOwn(INTERNET_PANE_RENDERERS, 'cowork'),
+    false,
+    'cowork must not be a destination row again — it is the default face',
+  );
+  assert.equal(resolveInternetPaneRenderer('cowork'), INTERNET_PANE_FALLBACK_RENDERER);
+  assert.equal(resolveRailEntryRenderer('browser', 'cowork'), INTERNET_PANE_FALLBACK_RENDERER);
+  assert.ok(PANE_RENDERER_KEYS.includes(INTERNET_PANE_FALLBACK_RENDERER));
+  // ...and the rail model itself must not grow the entry back.
+  assert.equal(
+    internetItems.some((item) => item.id === 'cowork' || item.icon === 'chatBubbles'),
+    false,
+    'the Co-Work bubble rail entry is retired',
+  );
 });
 
 test('every Bot Home rail entry has an explicit destination row', () => {

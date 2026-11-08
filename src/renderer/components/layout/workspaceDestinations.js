@@ -22,13 +22,19 @@
  * open an overlay/modal, not pane destinations.
  */
 
-/** Bot Internet rail entry id → right-column renderer key. */
+/** Bot Internet rail entry id → right-column renderer key.
+ *
+ * The Co-Work landing deliberately has NO row here (owner ruling 2026-11-08
+ * 20:18: the bubble entry is retired). It is this surface's DEFAULT face, not a
+ * destination: the middle column already IS the Co-Work panel, so the right
+ * column's landing card only has to be the place where an unknown or retired
+ * pane id lands (`INTERNET_PANE_FALLBACK_RENDERER` below).
+ */
 export const INTERNET_PANE_RENDERERS = Object.freeze({
   browser: 'botBrowserSurface',
   gigSquare: 'gigSquareView',
   metaapps: 'metaAppsView',
   myBots: 'metabotsView',
-  cowork: 'coworkLanding',
 });
 
 /**
@@ -57,7 +63,10 @@ export const HOME_MAIN_VIEW_RENDERERS = Object.freeze({
 
 /**
  * Every renderer App must implement. `botBrowserSurface` is the keep-alive
- * Browser pane; the rest are the right-column catalog/home payloads.
+ * Browser pane; `coworkLanding` is the Bot Internet DEFAULT/fallback card (it
+ * has no rail row, but it is still a real branch — a null branch here is what
+ * blanked the workspace once); the rest are the right-column catalog/home
+ * payloads.
  */
 export const PANE_RENDERER_KEYS = Object.freeze([
   'botBrowserSurface',
@@ -70,7 +79,13 @@ export const PANE_RENDERER_KEYS = Object.freeze([
   'groupTasksView',
 ]);
 
-/** Unknown pane → the Co-Work landing card (always renders something). */
+/**
+ * Unknown or retired pane → the Co-Work landing card: the Bot Internet
+ * surface's DEFAULT right pane (it always renders something). The retired
+ * `cowork` id from the pre-20:18 rail lands here too — it has no table row any
+ * more, and that is exactly the consolidation: the face is the default branch,
+ * not a destination that needs (or may re-grow) a door of its own.
+ */
 export const INTERNET_PANE_FALLBACK_RENDERER = 'coworkLanding';
 /** Unknown/removed mainView → the Co-Work view (the historic else branch). */
 export const HOME_MAIN_VIEW_FALLBACK_RENDERER = 'coworkView';

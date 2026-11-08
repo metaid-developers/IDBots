@@ -8,13 +8,16 @@ export type BotBrowserSurfaceMode = 'home' | 'browser';
  * Destination inside the Bot Internet tab. The browser pane stays mounted.
  *
  * Three destinations fill the right column with a catalog (metaapps / myBots /
- * the disabled gigSquare slot) while `browser` shows the Bot Browser itself;
- * `cowork` keeps the browser mounted-but-hidden and shows the Co-Work landing
- * in the right column, because the Co-Work session list lives in the MIDDLE
- * column of the three-column shell (slice 1 — the session flow joins it in the
- * next slice).
+ * the disabled gigSquare slot) while `browser` shows the Bot Browser itself.
+ *
+ * There is no `cowork` destination any more (owner ruling 2026-11-08 20:18: the
+ * rail's bubble entry is retired). The Co-Work session list is this surface's
+ * MIDDLE column, and the right column's Co-Work card is the DEFAULT branch —
+ * see INTERNET_PANE_FALLBACK_RENDERER in layout/workspaceDestinations.js. A
+ * stale `cowork` id therefore resolves to that default, not to a pane of its
+ * own.
  */
-export type BotInternetPane = 'browser' | 'gigSquare' | 'metaapps' | 'myBots' | 'cowork';
+export type BotInternetPane = 'browser' | 'gigSquare' | 'metaapps' | 'myBots';
 
 /**
  * The Bot Home middle column's list destinations. One is expanded at a time;

@@ -120,8 +120,15 @@ export function getSurfaceMenuModel({ t }) {
 /**
  * Bot Internet rail entries. `browser` / `metaapps` / `myBots` fill the right
  * column with their destination (the browser pane stays mounted and hidden
- * behind a catalog); `cowork` is the Co-Work landing. Bot Hub stays implemented
- * but hidden behind its feature flag.
+ * behind a catalog). Bot Hub stays implemented but hidden behind its feature
+ * flag.
+ *
+ * There is NO Co-Work entry (owner ruling 2026-11-08 20:18: the bubble icon is
+ * retired). The Co-Work face never needed a door of its own — the session list
+ * IS this surface's middle column, so the entry only re-opened a face that was
+ * already on screen. The right column's Co-Work card is the DEFAULT branch now
+ * (`INTERNET_PANE_FALLBACK_RENDERER` in components/layout/workspaceDestinations.js),
+ * which is also where a stale `cowork` pane id degrades to.
  */
 export function getRailInternetNavModel({ t }) {
   return [
@@ -148,13 +155,6 @@ export function getRailInternetNavModel({ t }) {
       id: 'myBots',
       label: t('metabots'),
       icon: 'cpuChip',
-    },
-    {
-      // The Co-Work list itself sits in the middle column on this surface; the
-      // rail entry is its destination (and the landing in the right column).
-      id: 'cowork',
-      label: t('botBrowserCoworkTitle'),
-      icon: 'chatBubbles',
     },
   ];
 }

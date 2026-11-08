@@ -2,7 +2,6 @@ import React, { useMemo } from 'react';
 import { useSelector } from 'react-redux';
 import {
   ArchiveBoxIcon,
-  ChatBubbleLeftRightIcon,
   ClockIcon,
   Cog6ToothIcon,
   CpuChipIcon,
@@ -50,8 +49,6 @@ const renderRailIcon = (icon: string): React.ReactNode => {
       return <UserGroupIcon className="h-5 w-5" />;
     case 'archive':
       return <ArchiveBoxIcon className="h-5 w-5" />;
-    case 'chatBubbles':
-      return <ChatBubbleLeftRightIcon className="h-5 w-5" />;
     case 'shoppingBag':
       return <ShoppingBagIcon className="h-5 w-5" />;
     case 'cpuChip':
