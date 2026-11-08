@@ -69,15 +69,27 @@ test('guided-restart failure and success are logged to cowork.log', () => {
 });
 
 test('quota-dead DSH turns name the provider and model in the transcript error', () => {
-  const settlement = runnerSource.indexOf('quotaNotice');
+  // Anchor on the settlement REGION, not a fixed character window: the error
+  // call now sits after the other terminal-notice definitions, several
+  // kilobytes past the quota notice (the old +1600 window stopped short of it
+  // and reported a phantom mismatch). Slice from the quota notice to the
+  // composed message it feeds.
+  const settlement = runnerSource.indexOf('const quotaNotice =');
   assert.ok(settlement !== -1, 'the quota notice must exist in the DSH turn error settlement');
-  const slice = runnerSource.slice(settlement - 1200, settlement + 1600);
+  const errorCall = runnerSource.indexOf('DSH turn failed:', settlement);
+  assert.ok(errorCall > settlement, 'the quota notice must feed the DSH turn error settlement');
+  const slice = runnerSource.slice(settlement, errorCall + 240);
   assert.match(slice, /isQuotaDshTurnError\(outcome\)/);
   assert.match(slice, /lastAttemptRoute\.provider/);
   assert.match(slice, /lastAttemptRoute\.model/);
+  // The settlement message was refactored from one ${failureDetail} slot into
+  // a composed notice chain (ladder semantics + quota + the other terminal
+  // notices). The CONTRACT is unchanged — the quota notice is interpolated
+  // into the DSH-turn error the transcript shows — so pin the composition,
+  // not the retired literal (stale-literal red found in the 2026-11-08 batch).
   assert.match(
     slice,
-    /this\.handleError\(sessionId, `DSH turn failed: \$\{failureDetail\}\$\{quotaNotice\}`\)/,
+    /`DSH turn failed: \$\{ladderSemantics\}\$\{quotaNotice\}/,
   );
 });
 

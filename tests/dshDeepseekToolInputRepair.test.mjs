@@ -1,5 +1,5 @@
 // Regression test for the dsh-llm-deepseek kernel patch
-// (scripts/dsh-kernel-patches/@deepseek-ai+dsh-llm-deepseek+0.2.1-rc.2.patch).
+// (scripts/dsh-kernel-patches/@deepseek-ai+dsh-llm-deepseek+0.2.2-rc.1.patch).
 //
 // The Messages adapter used to settle each tool-call block's accumulated
 // input_json_delta with a bare JSON.parse at message_stop; a gateway-truncated
