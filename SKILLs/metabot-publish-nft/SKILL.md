@@ -2,7 +2,7 @@
 name: metabot-publish-nft
 description: Guided MRC-721 NFT issuance wizard (MetaID native, pin-based Agent Goods — NOT the metacontract wallet_nft_* legacy line). Use when the owner wants to publish NFT content — "publish an NFT", "issue/release a collection/album/series", "make this an NFT", "fan badge", "mint", "paid-knowledge collection", "NFT 专辑", or asks what NFTs can do here. You walk the owner through: worldview intro → guided field Q&A → a LOCAL mock-preview page (hard gate) → staged on-chain publish (items first, collection_desc LAST) → a visual result page. Also covers adding items to an existing collection and resuming an interrupted issue.
 official: true
-version: 2.0.0
+version: 2.1.0
 ---
 
 # Publishing NFTs (MRC-721 / Agent Goods) — guided issuance wizard
@@ -63,8 +63,14 @@ Tools (host built-in, nothing to install):
 - Inventory/search: `mrc721_search_collections` (keyword + issuer +
   supply_state), `mrc721_collections`, `mrc721_collection_info`,
   `mrc721_item_info`
+- Planning: `mrc721_issue_estimate` — dry-run plan + upper-bound fee
+  estimate for the whole issue; validates every planned field with the
+  write tools' own builders, so invalid fields fail HERE, before any fee is
+  spent. Run it before building the preview page.
 - Writes: `mrc721_collection_create` (registers collection_desc — the
-  go-public step), `mrc721_mint` (item pin + item_desc backfill pin),
+  go-public step), `mrc721_mint` (item pin + optional item_desc backfill
+  pin), `mrc721_item_desc_batch` (ONE item_desc pin carrying display info
+  for up to 100 already-minted items — the fee-efficient path),
   `mrc721_collection_update` (emergency display-field repair only, §6)
 - Verification: `mrc721_balance`, `mrc721_verify_holding`
 - File upload: `metabot-upload-file` turns a workspace file into a
@@ -147,9 +153,11 @@ The page must read at a glance:
    royalty_rate (recommend 0) / network mvc.
 3. Item wall: each item in agreed order — thumbnail or type chip, display
    name, desc, planned serial number.
-4. Cost line: N items ≈ 2N on-chain writes (item pin + item_desc pin each)
-   + 1 collection_desc + uploads; every write costs sats; exact per-write
-   costs appear in the receipts as they happen.
+4. Cost line: run `mrc721_issue_estimate` FIRST (it also re-validates every
+   field with the write tools' own builders) and put its REAL plan on the
+   page — the per-write lines and the upper-bound TOTAL. Default shape:
+   N item pins + 1 batch item_desc + 1 collection_desc; exact per-write
+   costs appear in the receipts as they happen; file uploads are extra.
 5. Immutability warnings: the trio + item display info first-write-wins.
 6. Close your message asking for the verdict AT FIELD LEVEL ("哪一项、改成
    什么"), not just yes/no. A change request loops back to Step 2 and the
@@ -171,14 +179,23 @@ every returned pinId/URI in the ledger. Per-type playbooks for mints:
   `metafile://` URI). You cannot re-path an old pin — pin paths are
   immutable.
 
-**4b. Mint items one-by-one.** For each item in agreed order:
-`mrc721_mint {collection_name, name, desc, cover, metadata}` with
-`wait_ms: 0` (or ≤5000) for intermediates. The receipt will honestly report
+**4b. Mint items one-by-one, then batch the display info.** For each item in
+agreed order: `mrc721_mint {collection_name, wait_ms: 0}` (or ≤5000) —
+multi-item issues mint BARE (no display fields) and attach all display info
+in one batch write below; a SINGLE-item issue may pass
+`name/desc/cover/metadata` straight to the mint (rides a follow-up
+item_desc pin, same total cost). The receipt will honestly report
 "not indexed yet — the mint still lands on-chain, and it is collected once
 your collection under this name registers" — **that is the EXPECTED state
 in this order, not an error**. Do not re-mint; do not wait per item. Record
-item pinId, item_desc pinId, txids, cost in the ledger. Each successful
-mint receipt carries an `nft-card` fenced block — keep them for Step 6.
+every item pinId, txids, and cost in the ledger.
+
+Then attach display info: multi-item → ONE
+`mrc721_item_desc_batch {collection_name, items: [{pin_id, name, desc,
+cover, metadata}, …]}` — one write carries all N items' display info, and
+its receipt carries an `nft-card` fence per item. Per-field
+first-write-wins applies either way: get item names and descs right here
+(missing fields can be backfilled later; written fields lock forever).
 
 **4c. THE GO-PUBLIC MOMENT.** After the LAST item is minted:
 `mrc721_collection_create {collection_name, name, desc, total_supply,
@@ -199,6 +216,10 @@ verification is `mrc721_item_info`, never a re-mint.
 - Relay each mint's `nft-card` fenced block VERBATIM in your announcement
   message so the chat renders the native NFT cards. This is a convention,
   not optional.
+- Relay the `nft-collection-card` fenced block from the
+  mrc721_collection_create receipt VERBATIM too — the chat renders the
+  album-level card (cover, path, mint progress, royalty, copyable
+  collectionid).
 - Build a result page (same self-contained HTML rule) in the issue folder:
   album header (cover, name, desc, metadata summary, **collectionid**,
   genesis info from the receipt) + item wall with REAL serial numbers,
@@ -218,8 +239,10 @@ verification is `mrc721_item_info`, never a re-mint.
    make concrete suggestions. Never guess the target album.
 2. Same field Q&A for the new items (per-type playbook applies), same
    preview-page hard gate over the NEW items only.
-3. Then upload → mint (wait_ms small; here receipts index normally) →
-   reconcile serial numbers. No collection_desc step.
+3. Then upload → mint (wait_ms small; here receipts index normally) —
+   multi-item additions mint bare + ONE `mrc721_item_desc_batch`; a single
+   item may ride its display info on the mint → reconcile serial numbers.
+   No collection_desc step.
 4. The precheck refuses mints into an exhausted collection — relay the
    count and suggest raising nothing (supply is immutable): a new album or
    a different series are the honest options.
@@ -240,6 +263,9 @@ source of truth for what already happened:
 - Mid-flow interruption between mints is safe: minted items are the
   issuer's pins under the path and get collected once collection_desc
   registers. Continue from the first missing item — the ledger knows it.
+- If the batch item_desc write has not run yet, the ledger's item list IS
+  the batch payload — send it as ONE `mrc721_item_desc_batch` once the last
+  mint lands.
 
 ## 6. Immutability table
 
