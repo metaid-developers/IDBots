@@ -68,14 +68,18 @@ test('Settings and ME moved out of the middle column into the rail', () => {
   assert.doesNotMatch(sidebarSource, /onClick=\{\(\) => onShowSettings\(\)\}/);
 });
 
-test('the middle column renders the Co-Work panel or the three Bot Home lists', () => {
+test('the middle column renders the Co-Work panel or the record type the rail picked', () => {
   assert.match(sidebarSource, /data-slot="workspace-mid-column"/);
   assert.match(sidebarSource, /<BotBrowserCoworkPanel\s+onShowSkills=\{onShowSkills\}/);
-  assert.match(sidebarSource, /getHomeSectionModel\(\{ t: \(key: string\) => i18nService\.t\(key\) \}\)/);
-  // The record-type selector is ONE row above the list (slice-1 follow-up):
-  // the stacked section headers it replaced read as a second pill row and
-  // collided with the session-scope tabs below them.
-  assert.match(sidebarSource, /data-slot="home-record-type"/);
+  // The record type is chosen in the left rail ONLY: the drawer that used to
+  // sit above the list (and duplicated the rail) is gone, together with its
+  // second copy of the three-type model.
+  assert.doesNotMatch(sidebarSource, /getHomeSectionModel/);
+  assert.doesNotMatch(sidebarSource, /data-slot="home-record-type"/);
+  // The column renders the body of the type the rail picked, one body per type.
+  for (const section of ['longTerm', 'groupTasks', 'records']) {
+    assert.match(sidebarSource, new RegExp(`data-home-section="${section}"`));
+  }
   // Records keep the existing session list component (container move only).
   assert.match(sidebarSource, /<CoworkSessionList/);
   assert.match(sidebarSource, /<UnifiedTaskList/);

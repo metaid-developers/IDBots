@@ -9,19 +9,26 @@ import {
 } from '../src/renderer/components/sidebar/sidebarNavigation.js';
 
 /**
- * Bot Home face: two selector layers that must never read as peers.
+ * Bot Home face: the destination selector and the session scopes.
  *
- * Owner ruling 2026-11-08:
+ * Owner ruling 2026-11-08 (three rounds, merged):
  *   1. the record TYPE (long-term / group tasks / records) is the destination
- *      selector — ONE line of its own, above everything;
+ *      selector, and the LEFT RAIL is its ONLY entry point. The middle column's
+ *      type drawer (`<select data-slot="home-record-type">`) was removed: it
+ *      duplicated the rail, and its amber decision dot duplicated the rail's.
  *   2. the session SCOPE tabs belong to the records body only — two of them
- *      (local / online), sitting strictly BELOW the type row.
+ *      (local / online), sitting strictly BELOW the type the rail picked.
  *   3. the retired «群任务» scope is not allowed to lose reachability: every
  *      session_type='group_task' session must still be listed under the
  *      group-tasks record type.
+ *   4. BOTH records faces render the same by-Bot grouped template (one
+ *      collapsible group per bot, group header = avatar + name, trailing +
+ *      starts a new task with that bot), default 按 Bot, and each face
+ *      remembers its own grouping state.
  *
- * The suite pins the layering, the scope set, and the reachability that the
- * removed tab used to provide.
+ * The suite pins the single entry point, the layering, the scope set, the
+ * reachability the removed tab used to provide, and the shared grouping
+ * template with its per-face memory.
  */
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
@@ -31,7 +38,51 @@ function read(relativePath) {
 }
 
 const sidebarSource = read('src/renderer/components/Sidebar.tsx');
+const railSource = read('src/renderer/components/layout/WorkspaceRail.tsx');
 const i18nSource = read('src/renderer/services/i18n.ts');
+
+test('the record type has exactly ONE entry point: the left rail', () => {
+  // The middle column owns no type selector at all — no drawer, no <select>,
+  // no second copy of the three-type model.
+  assert.doesNotMatch(sidebarSource, /data-slot="home-record-type"/);
+  assert.doesNotMatch(sidebarSource, /<select\b/);
+  assert.doesNotMatch(sidebarSource, /getHomeSectionModel/);
+
+  // The rail's model is the destination table: four Bot Home entries, three of
+  // which are record types (the fourth is the creation action).
+  const railModel = getRailHomeNavModel({ t: (key) => key, hasRunningScheduledTask: false })
+    .filter((item) => !item.hidden);
+  assert.deepEqual(
+    railModel.map((item) => item.id),
+    ['newTask', 'longTerm', 'groupTasks', 'records'],
+  );
+
+  // The rail is what marks the current type, and clicking it is what switches.
+  assert.match(railSource, /active=\{item\.id === 'newTask' \? false : homeSection === item\.id\}/);
+  assert.match(railSource, /onSelectHomeSection\(id as BotHomeSection\)/);
+});
+
+test('the middle column renders the body of whichever type the rail picked', () => {
+  // homeSection is a prop (derived in App from mainView), not local state: the
+  // column cannot disagree with the rail about where the user is.
+  assert.match(sidebarSource, /homeSection: BotHomeSection;/);
+  for (const section of ['longTerm', 'groupTasks', 'records']) {
+    assert.match(sidebarSource, new RegExp(`data-home-section="${section}"`));
+  }
+  // No setter for the type exists in the column: only App's rail handler does.
+  assert.doesNotMatch(sidebarSource, /setHomeSection|handleSectionSelect/);
+  assert.doesNotMatch(sidebarSource, /onSelectHomeSection/);
+  assert.match(read('src/renderer/App.tsx'), /const handleSelectHomeSection = useCallback\(\(section: BotHomeSection\)/);
+});
+
+test('the rail and the mid column name the same record types', () => {
+  const types = getHomeSectionModel({ t: (key) => key }).map((section) => section.id);
+  assert.deepEqual(types, ['longTerm', 'groupTasks', 'records']);
+  const railTypes = getRailHomeNavModel({ t: (key) => key, hasRunningScheduledTask: false })
+    .filter((item) => item.id !== 'newTask' && !item.hidden)
+    .map((item) => item.id);
+  assert.deepEqual(railTypes, types, 'rail and mid column name the same record types');
+});
 
 test('the record list keeps exactly two session scopes: local + online', () => {
   const table = sidebarSource.slice(
@@ -54,28 +105,6 @@ test('the scope row is a two-column group, not the old three-way split', () => {
   assert.doesNotMatch(sidebarSource, /grid-cols-3/);
 });
 
-test('record type is its own single-line row ABOVE the session-scope tabs', () => {
-  const typeIndex = sidebarSource.indexOf('data-slot="home-record-type"');
-  const scopeIndex = sidebarSource.indexOf('data-slot="home-session-scope"');
-  assert.ok(typeIndex > 0, 'the record-type selector exists');
-  assert.ok(scopeIndex > 0, 'the session-scope row exists');
-  assert.ok(typeIndex < scopeIndex, 'the type row renders before the scope tabs');
-
-  // The type selector is a native single-line <select> over exactly the three
-  // record types the rail model declares — no second set of pills, no state.
-  assert.match(sidebarSource, /<select[\s\S]{0,400}data-slot="home-record-type"/);
-  assert.match(sidebarSource, /homeSections\.map\(\(section\) =>/);
-  assert.match(sidebarSource, /onChange=\{\(event\) => handleSectionSelect\(event\.target\.value as BotHomeSection\)\}/);
-
-  const types = getHomeSectionModel({ t: (key) => key }).map((section) => section.id);
-  assert.deepEqual(types, ['longTerm', 'groupTasks', 'records']);
-  // Same three destinations the rail exposes (minus the creation action).
-  const railTypes = getRailHomeNavModel({ t: (key) => key, hasRunningScheduledTask: false })
-    .filter((item) => item.id !== 'newTask' && !item.hidden)
-    .map((item) => item.id);
-  assert.deepEqual(railTypes, types, 'rail and mid column name the same record types');
-});
-
 test('the scope tabs only exist inside the records body', () => {
   const recordsStart = sidebarSource.indexOf('data-home-section="records"');
   const scopeIndex = sidebarSource.indexOf('data-slot="home-session-scope"');
@@ -87,6 +116,10 @@ test('the scope tabs only exist inside the records body', () => {
   assert.ok(
     sidebarSource.slice(longTermStart, groupStart).indexOf('home-session-scope') === -1,
     'the long-term body carries no session-scope tabs',
+  );
+  assert.ok(
+    sidebarSource.indexOf('home-session-scope') > groupStart,
+    'the scope row is not rendered above the records body any more',
   );
 });
 
@@ -104,9 +137,8 @@ test('group-task sessions stay reachable under the group-tasks record type', () 
     sidebarSource,
     /group:\s*homeSessions\.filter\(\(session\)\s*=>\s*session\.sessionType\s*===\s*'group_task'\)/,
   );
-  // Both locales carry the new section title, so the list is never unlabelled.
+  // Both locales carry the section title, so the list is never unlabelled.
   assert.equal((i18nSource.match(/homeMidGroupSessionsTitle:/g) ?? []).length, 2);
-  assert.equal((i18nSource.match(/homeRecordTypeLabel:/g) ?? []).length, 2);
 });
 
 test('the group-task rows load when their record type opens, not when a tab is picked', () => {
@@ -115,4 +147,78 @@ test('the group-task rows load when their record type opens, not when a tab is p
   assert.match(sidebarSource, /if \(homeSection !== 'groupTasks'\) return;\s*\n\s*void groupTaskService\.loadTasks\(\);/);
   assert.match(sidebarSource, /if \(homeSection !== 'groupTasks'\) return;\s*\n\s*let cancelled = false;/);
   assert.doesNotMatch(sidebarSource, /taskRecordTab !== 'group'/);
+});
+
+test('both records faces render the same by-Bot grouped template', () => {
+  // ONE component, two data sources: the same session list is fed the local
+  // bucket or the online bucket; nothing groups per face.
+  assert.match(
+    sidebarSource,
+    /const faceViewMode = taskRecordTab === 'local' \? sessionViewMode : a2aViewMode;/,
+    'each face feeds the same list its own remembered view mode',
+  );
+  assert.match(sidebarSource, /viewMode=\{faceViewMode\}/);
+  assert.match(sidebarSource, /groupFace=\{taskRecordTab\}/);
+  assert.match(
+    sidebarSource,
+    /onQuickCreateTask=\{handleQuickCreateTask\}/,
+    'the trailing + on a bot group is the same action on both faces',
+  );
+
+  const listSource = read('src/renderer/components/cowork/CoworkSessionList.tsx');
+  // The group header template: avatar + bot name, collapse control, trailing +.
+  assert.match(listSource, /<SessionAvatarCircle/);
+  assert.match(listSource, /aria-expanded=\{!collapsed\}/);
+  assert.match(listSource, /onQuickCreateTask\(group\.bot\.id\)/);
+  // The same grouping implementation drives both faces.
+  assert.match(
+    listSource,
+    /groupSessionsByBot\(visibleSessions, sortMode, viewBots, \{ includeEmptyBots: groupFace === 'local' \}\)/,
+  );
+});
+
+test('both lists default to 按 Bot, and each face remembers its own grouping', () => {
+  const grouping = read('src/renderer/utils/sessionViewGrouping.ts');
+  assert.match(grouping, /export const DEFAULT_SESSION_VIEW_MODE: SessionViewMode = 'bot';/);
+
+  const storage = read('src/renderer/utils/sessionGroupStorage.ts');
+  // Same storage family as sidebarWidth: one idbots.* key per face + a legacy
+  // unprefixed key that seeds the LOCAL face only.
+  assert.match(storage, /local: 'idbots\.sessionGroups\.local'/);
+  assert.match(storage, /a2a: 'idbots\.sessionGroups\.a2a'/);
+  assert.match(storage, /local: 'idbots\.sessionViewMode\.local'/);
+  assert.match(storage, /a2a: 'idbots\.sessionViewMode\.a2a'/);
+  assert.match(storage, /LEGACY_SESSION_VIEW_MODE_STORAGE_KEY = 'sessionViewMode'/);
+  assert.match(storage, /if \(face === 'local'\) \{/);
+  // Fail-open: a corrupt preference never hides groups.
+  assert.match(storage, /return new Set\(\);/);
+  // Both faces READ their own view key (the online face is not pinned).
+  assert.match(sidebarSource, /loadSessionViewMode\(\(key\) => window\.localStorage\.getItem\(key\), 'local'\)/);
+  assert.match(sidebarSource, /loadSessionViewMode\(\(key\) => window\.localStorage\.getItem\(key\), 'a2a'\)/);
+  assert.match(sidebarSource, /saveSessionViewMode\([\s\S]{0,160}'a2a',\s*mode,/);
+
+  // The list reads and writes the set through the per-face key, re-reading it
+  // when the face changes (one component instance serves both faces).
+  const listSource = read('src/renderer/components/cowork/CoworkSessionList.tsx');
+  assert.match(listSource, /loadCollapsedSessionGroups\(\(key\) => window\.localStorage\.getItem\(key\), groupFace\)/);
+  assert.match(listSource, /saveCollapsedSessionGroups\(/);
+  assert.match(listSource, /\}, \[groupFace\]\);/);
+});
+
+test('the amber decision dot has exactly one home: the rail long-term entry', () => {
+  // The mid column's copy lived on the removed drawer row. It must not come
+  // back as a second "you are the blocker" signal.
+  assert.doesNotMatch(sidebarSource, /tracked-task-decision-indicator/);
+  assert.doesNotMatch(sidebarSource, /selectTrackedTasksNeedingAttention/);
+  assert.doesNotMatch(sidebarSource, /trackedTaskNeedsDecision/);
+
+  // The rail keeps the dot next to the 长期任务 icon, driven by the SAME
+  // derivation, and only while something is actually waiting on the owner.
+  assert.match(railSource, /selectTrackedTasksNeedingAttention\(\{ longTermTask: \{ board: longTermBoard \} \}\)/);
+  assert.match(railSource, /needsDecisionCount: trackedTaskAttention\.total/);
+  assert.match(railSource, /indicatorKind === 'decision'/);
+  assert.match(railSource, /tracked-task-decision-indicator absolute right-1 top-1/);
+  const model = read('src/renderer/components/sidebar/sidebarNavigation.js');
+  assert.match(model, /const hasDecision = decisionCount > 0;/);
+  assert.match(model, /indicatorKind: hasDecision \? 'decision' : hasRunningScheduledTask \? 'running' : undefined/);
 });

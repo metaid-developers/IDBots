@@ -59,7 +59,7 @@ function Demo() {
       <div className="flex flex-1 min-h-0">
         <Sidebar mode="home" homeSection="records" isCollapsed={false} onShowSettings={unavailable}
           onShowSkills={unavailable} onShowCowork={unavailable} onShowScheduledTasks={unavailable}
-          onShowGroupTasks={unavailable} onSelectHomeSection={unavailable}
+          onShowGroupTasks={unavailable}
           onSelectHome={unavailable} />
         <MessageExtensionContext.Provider value={message => message.id === 'preview-action' ?
           <div className="mt-4"><BotActionCard key={generation} request={exampleBotAction}

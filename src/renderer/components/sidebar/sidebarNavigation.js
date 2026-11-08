@@ -128,8 +128,13 @@ export function getRailHomeNavModel({ t, hasRunningScheduledTask, needsDecisionC
 }
 
 /**
- * The Bot Home middle column reads as one list column with three sections;
- * every section header stays visible and exactly one body is expanded.
+ * The three Bot Home record types, in rail order.
+ *
+ * This is the CONTRACT model, not a rendered control: the middle column no
+ * longer renders these as a selector (the owner ruling of 2026-11-08 moved the
+ * only entry point to the rail's four icons). It stays here because the rail
+ * model above and the middle column's bodies must name the same three types,
+ * and tests/homeFaceLayering.test.mjs pins that parity against this list.
  */
 export function getHomeSectionModel({ t }) {
   return [

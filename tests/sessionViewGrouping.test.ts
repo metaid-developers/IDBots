@@ -4,12 +4,24 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  DEFAULT_SESSION_VIEW_MODE,
   buildBotSessionCounts,
   formatMonthLabel,
   groupSessionsByBot,
   groupSessionsByTimeline,
   type BotViewBot,
 } from '../src/renderer/utils/sessionViewGrouping';
+import {
+  LEGACY_SESSION_VIEW_MODE_STORAGE_KEY,
+  loadCollapsedSessionGroups,
+  loadSessionViewMode,
+  parseCollapsedSessionGroups,
+  saveCollapsedSessionGroups,
+  saveSessionViewMode,
+  serializeCollapsedSessionGroups,
+  sessionGroupCollapseStorageKey,
+  sessionViewModeStorageKey,
+} from '../src/renderer/utils/sessionGroupStorage';
 import type { CoworkSessionSummary } from '../src/renderer/types/cowork';
 
 const SRC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../src');
@@ -281,7 +293,7 @@ test('the card strip is gone: no dead symbol survives anywhere in src', () => {
   assert.deepEqual(hits, []);
 });
 
-test('the online list reuses the shared MetaBotSelector as its only selector', () => {
+test('the online list keeps the shared MetaBotSelector as a scope filter above its groups', () => {
   const list = readSource('renderer/components/cowork/CoworkSessionList.tsx');
   const selector = readSource('renderer/components/cowork/MetaBotSelector.tsx');
   // The online-chats tab renders the SAME component the composers use, with
@@ -291,20 +303,24 @@ test('the online list reuses the shared MetaBotSelector as its only selector', (
   assert.ok(list.includes('allowAll'), 'the list turns on the All Bots entry');
   assert.ok(list.includes('sessionCounts='), 'the list feeds the per-bot conversation counts');
   assert.ok(list.includes('useFixedDropdown'), 'the dropdown escapes the sidebar scroll container');
-  assert.ok(list.includes('{botSelectorRow}'), 'the control sits above the flat list');
+  assert.ok(list.includes('{selectorBlock}'), 'the control sits above the grouped body');
   assert.equal(/<select\b/.test(list), false, 'no native select came back');
   // The bots come from the live metabot list (enabled bots, Twin first), so a
-  // deleted bot can never linger as an option, and the default is the Twin.
+  // deleted bot can never linger as an option or a group.
   assert.ok(list.includes('getMetaBots'), 'the bot options come from the live metabot list');
-  assert.ok(list.includes("metabot_type === 'twin'"), 'the default selection is the Twin');
+  assert.ok(list.includes("metabot_type === 'twin'"), 'the roster still marks the Twin');
+  // Owner ruling 2026-11-08: the online face is grouped by bot like the local
+  // face, so the selector no longer DEFAULT-scopes the list to the Twin —
+  // 全部 Bot is the default and every bot's group is shown.
+  assert.match(list, /const defaultBotId = ALL_METABOTS_SELECTOR_ID;/);
+  // The selector is a FILTER on top of the groups, not a replacement for them:
+  // the grouped branch renders the control and the same collapsible headers.
+  const groupedBranch = list.slice(list.indexOf('if (botGrouped)'));
+  assert.ok(groupedBranch.includes('{selectorBlock}'), 'the control rides above the groups');
+  assert.ok(groupedBranch.includes('aria-expanded={!collapsed}'), 'groups collapse');
+  assert.ok(groupedBranch.includes('groupHeaderLabelClass'), 'groups carry a real header');
   assert.ok(selector.includes('allowAll'), 'the shared component owns the All Bots entry');
   assert.ok(selector.includes('ALL_METABOTS_SELECTOR_ID'), 'the All entry reports its sentinel id');
-  // A2A stays flat: the selector branch renders rows straight, with no group
-  // header and no collapse control.
-  const flatBranch = list.slice(list.indexOf('if (botSelectorRow)'));
-  assert.ok(flatBranch.includes('sortedSessions.map(renderItem)'));
-  assert.equal(flatBranch.includes('groupHeaderLabelClass'), false);
-  assert.equal(flatBranch.includes('aria-expanded'), false);
 });
 
 test('a hidden bot selector never leaves the online list filtered', () => {
@@ -327,5 +343,79 @@ test('the A2A title fallback is untouched by the selector change', () => {
   const item = readSource('renderer/components/cowork/CoworkSessionItem.tsx');
   assert.ok(item.includes('isPrivatePlaceholderTitle'));
   assert.match(item, /\^Private-\[A-Za-z0-9\]\{6,12\}\$/);
-  assert.ok(item.includes('storedTitle || session.peerName ||'));
+  // The fallback chain was refactored (a placeholder title yields the peer
+  // name first, everything else falls through the assistant-title helper and
+  // then the peer name); assert the BEHAVIOUR, not one historical literal.
+  assert.match(item, /isPrivatePlaceholderTitle && session\.peerName\?\.trim\(\)/);
+  assert.match(item, /\|\| session\.peerName/);
+});
+
+test('the by-Bot grouping is shared: empty bots only on the local face', () => {
+  const bots: BotViewBot[] = [
+    { id: 1, name: 'Twin', avatar: null, isTwin: true, createdAt: 10 },
+    { id: 2, name: 'Worker', avatar: null, isTwin: false, createdAt: 20 },
+  ];
+  const sessions = [mkSession({ id: 's1', metabotId: 2, updatedAt: 10 })];
+
+  // Local face: the roster IS the reading — a bot with no conversation still
+  // gets its group (the owner can start one from its +).
+  const local = groupSessionsByBot(sessions, 'updatedAt', bots);
+  assert.deepEqual(local.groups.map((group) => group.key), ['bot:1', 'bot:2']);
+
+  // Online face: a group exists only when the bot has a conversation; an
+  // A2A list seeded with one empty group per local bot would be pure noise.
+  const online = groupSessionsByBot(sessions, 'updatedAt', bots, { includeEmptyBots: false });
+  assert.deepEqual(online.groups.map((group) => group.key), ['bot:2']);
+  assert.deepEqual(online.groups[0].sessions.map((session) => session.id), ['s1']);
+
+  // A legacy row whose bot is not in the roster still lands in "other".
+  const legacy = groupSessionsByBot(
+    [mkSession({ id: 'legacy', updatedAt: 5 })],
+    'updatedAt',
+    bots,
+    { includeEmptyBots: false },
+  );
+  assert.deepEqual(legacy.groups.map((group) => group.key), ['other']);
+});
+
+test('both faces default to 按 Bot and never share one memory', () => {
+  assert.equal(DEFAULT_SESSION_VIEW_MODE, 'bot');
+
+  const store = new Map<string, string>();
+  const getItem = (key: string) => store.get(key) ?? null;
+  const setItem = (key: string, value: string) => void store.set(key, value);
+
+  // Fresh install: both faces open on 按 Bot.
+  assert.equal(loadSessionViewMode(getItem, 'local'), 'bot');
+  assert.equal(loadSessionViewMode(getItem, 'a2a'), 'bot');
+  assert.equal(sessionViewModeStorageKey('local'), 'idbots.sessionViewMode.local');
+  assert.equal(sessionViewModeStorageKey('a2a'), 'idbots.sessionViewMode.a2a');
+
+  // A stored choice wins, per face only.
+  saveSessionViewMode(setItem, 'local', 'timeline');
+  assert.equal(loadSessionViewMode(getItem, 'local'), 'timeline');
+  assert.equal(loadSessionViewMode(getItem, 'a2a'), 'bot', 'the online face did not inherit it');
+
+  // The pre-per-face key seeds the LOCAL face only (sidebarWidth's legacy rule).
+  store.clear();
+  store.set(LEGACY_SESSION_VIEW_MODE_STORAGE_KEY, 'timeline');
+  assert.equal(loadSessionViewMode(getItem, 'local'), 'timeline');
+  assert.equal(loadSessionViewMode(getItem, 'a2a'), 'bot');
+  // 'project' was the retired directory view; its successor is by-Bot.
+  store.clear();
+  store.set(LEGACY_SESSION_VIEW_MODE_STORAGE_KEY, 'project');
+  assert.equal(loadSessionViewMode(getItem, 'local'), 'bot');
+
+  // Collapsed groups: one key per face, stable serialization, fail-open parse.
+  assert.equal(sessionGroupCollapseStorageKey('local'), 'idbots.sessionGroups.local');
+  assert.equal(sessionGroupCollapseStorageKey('a2a'), 'idbots.sessionGroups.a2a');
+  saveCollapsedSessionGroups(setItem, 'local', ['bot:2', 'bot:1', 'bot:1']);
+  assert.equal(getItem('idbots.sessionGroups.local'), '["bot:1","bot:2"]');
+  assert.deepEqual([...loadCollapsedSessionGroups(getItem, 'local')], ['bot:1', 'bot:2']);
+  assert.equal(loadCollapsedSessionGroups(getItem, 'a2a').size, 0, 'the online face is independent');
+
+  assert.equal(serializeCollapsedSessionGroups([]), '[]');
+  assert.equal(parseCollapsedSessionGroups('not json').size, 0);
+  assert.equal(parseCollapsedSessionGroups('{"bot:1":true}').size, 0);
+  assert.equal(parseCollapsedSessionGroups('[1,"bot:1",null]').size, 1);
 });

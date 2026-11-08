@@ -23,6 +23,11 @@ import {
   type SessionViewMode,
 } from '../../utils/sessionViewGrouping';
 import {
+  loadCollapsedSessionGroups,
+  saveCollapsedSessionGroups,
+  type SessionGroupFace,
+} from '../../utils/sessionGroupStorage';
+import {
   AUTO_TASKS_EXPANDED_STORAGE_KEY,
   FOLLOW_UP_EXPANDED_STORAGE_KEY,
   parseAutoTasksExpandedPreference,
@@ -116,6 +121,17 @@ interface CoworkSessionListProps {
    * bot pre-selected.
    */
   onQuickCreateTask?: (botId: number) => void;
+  /**
+   * Which session face owns this instance (Bot Home records: 'local' or the
+   * online 'a2a' list). The grouped view is the SAME template on both faces —
+   * one collapsible group per bot, header = avatar + name, trailing + to start
+   * a new task with that bot — but the two memories must never be shared:
+   * collapsing a bot group on one face must not collapse it on the other.
+   * The face therefore keys both the persisted collapsed-group set and the
+   * empty-bot policy (the online list never seeds a group for a bot with no
+   * conversation). Callers that render flat (search modal) omit it.
+   */
+  groupFace?: SessionGroupFace;
 }
 
 const groupHeaderLabelClass =
@@ -238,6 +254,7 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
   onMoveSessionToSection,
   language: languageProp,
   onQuickCreateTask,
+  groupFace = 'local',
 }) => {
   // Same summary objects for the rows whose fields did not change (see the
   // hook); everything below reads these instead of the raw props.
@@ -285,9 +302,16 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
       .map((permission) => permission.sessionId),
   ), [pendingPermissions]);
   const selectedSessionIdSet = useMemo(() => new Set(selectedSessionIds ?? []), [selectedSessionIds]);
-  // Project-group collapse state lives here (not in the parent) so the search
-  // modal and A2A tab, which render flat, never see it. Defaults to expanded.
-  const [collapsedGroupKeys, setCollapsedGroupKeys] = useState<Set<string>>(new Set);
+  // Per-bot group collapse state, remembered PER FACE (owner ruling 2026-11-08:
+  // "分组状态每面各自记忆"). The search modal renders flat and never touches it.
+  // Read lazily on mount and re-read when the face changes — the same list
+  // instance serves both Bot Home faces, so the face is a real input here.
+  const [collapsedGroupKeys, setCollapsedGroupKeys] = useState<Set<string>>(
+    () => loadCollapsedSessionGroups((key) => window.localStorage.getItem(key), groupFace),
+  );
+  useEffect(() => {
+    setCollapsedGroupKeys(loadCollapsedSessionGroups((key) => window.localStorage.getItem(key), groupFace));
+  }, [groupFace]);
   // The Autonomous Tasks fold, unlike the project groups, remembers its state
   // across restarts: it holds background runs, so it opens collapsed every
   // launch.
@@ -392,14 +416,11 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
   // it must never turn the selector logic on for the local list — among other
   // things the fold/section visibility below keys off !showBotSelector.
   const showBotSelector = botSelector && (selectorBots?.length ?? 0) > 1;
-  // The selector opens on the Twin — the bot you converse with — falling back
-  // to 全部 Bot when there is no Twin or it has no online sessions yet, so the
-  // list never opens scoped to an empty selection.
-  const twinMetabotId = selectorBots?.find((bot) => bot.metabot_type === 'twin')?.id ?? null;
-  const defaultBotId =
-    twinMetabotId != null && (sessionCounts?.[twinMetabotId] ?? 0) > 0
-      ? twinMetabotId
-      : ALL_METABOTS_SELECTOR_ID;
+  // The selector opens on 全部 Bot. It used to open on the Twin when the flat
+  // list made the Twin the default reading; the online face is now grouped by
+  // bot, and a Twin-scoped default would hide every other bot's group behind a
+  // control the owner never touched — the opposite of "按 Bot 分组".
+  const defaultBotId = ALL_METABOTS_SELECTOR_ID;
   // An explicit pick wins while its bot still exists; otherwise the list falls
   // back to the default, so the filtered state cannot get stuck (e.g. on a bot
   // deleted after the pick). With the selector hidden there is no control to
@@ -449,8 +470,10 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
   );
 
   const botGrouped = useMemo(
-    () => (viewMode === 'bot' ? groupSessionsByBot(visibleSessions, sortMode, viewBots) : null),
-    [visibleSessions, viewMode, sortMode, viewBots],
+    () => (viewMode === 'bot'
+      ? groupSessionsByBot(visibleSessions, sortMode, viewBots, { includeEmptyBots: groupFace === 'local' })
+      : null),
+    [visibleSessions, viewMode, sortMode, viewBots, groupFace],
   );
 
   // The Follow-Up section: sessions awaiting a human decision, ordered like the
@@ -508,15 +531,18 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
   );
 
   const toggleGroupCollapsed = (key: string) => {
-    setCollapsedGroupKeys((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) {
-        next.delete(key);
-      } else {
-        next.add(key);
-      }
-      return next;
-    });
+    const next = new Set(collapsedGroupKeys);
+    if (next.has(key)) {
+      next.delete(key);
+    } else {
+      next.add(key);
+    }
+    setCollapsedGroupKeys(next);
+    try {
+      saveCollapsedSessionGroups((storageKey, value) => window.localStorage.setItem(storageKey, value), groupFace, next);
+    } catch {
+      // localStorage unavailable; the groups still toggle for this session.
+    }
   };
 
   // The row takes the session id for every action and one shared clock/language,
@@ -721,6 +747,21 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
     )
   ) : null;
 
+  // The selector (online face) and the grouped body are ONE list, not two
+  // competing selectors: the dropdown narrows WHICH bots are shown (全部 Bot
+  // by default), the groups below it organize the shown rows by bot. The
+  // hairline rides with the control and scrolls away with it — it is not
+  // sticky, so it never competes with the list for attention.
+  const selectorBlock = botSelectorRow ? (
+    <>
+      {botSelectorRow}
+      <div
+        data-testid="bot-selector-divider"
+        className="mt-0.5 border-t dark:border-claude-darkBorder border-claude-border"
+      />
+    </>
+  ) : null;
+
   // An empty human list still renders the Follow-Up section and the fold when
   // background runs exist: showing "no chats yet" above sections full of them
   // would be a lie. Every caller that passes neither bucket (A2A tab, search
@@ -742,6 +783,7 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
   if (timelineGrouped) {
     return (
       <div ref={rootRef}>
+        {selectorBlock}
         {renderPinnedSection(timelineGrouped.pinned)}
         {renderAutoTasksSection()}
         {renderFollowUpSection()}
@@ -760,13 +802,17 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
     );
   }
 
-  // By-Bot view: one collapsible group per local bot (empty bots included),
-  // Twin first then oldest-created first, pinned leading. The group header
-  // matches the session-row height (same px-2.5 py-1.5 box + h-6 avatar) so
-  // the roster reads as rows of its own, not as thin captions.
+  // By-Bot view — the SAME template on both Bot Home faces (owner ruling
+  // 2026-11-08): one collapsible group per bot, Twin first then oldest-created
+  // first, pinned leading. The group header matches the session-row height
+  // (same px-2.5 py-1.5 box + h-6 avatar) so the roster reads as rows of its
+  // own, not as thin captions, and the trailing + starts a new task with that
+  // bot. The local face includes empty bots (the roster is the reading); the
+  // online face only groups bots that actually have a conversation.
   if (botGrouped) {
     return (
       <div ref={rootRef}>
+        {selectorBlock}
         {renderPinnedSection(botGrouped.pinned)}
         {renderAutoTasksSection()}
         {renderFollowUpSection()}
@@ -839,31 +885,12 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
     );
   }
 
-  // Flat list — what the online-chats (A2A) tab renders: no grouping header and
-  // no view mode. When the selector is shown it sits directly above the list and
-  // is its sole selector: 全部 Bot renders every session, an entry narrows the
-  // list to that bot. A lone local bot gets no control at all (the live-list
-  // length rule in showBotSelector), and the list is then simply flat.
-  if (botSelectorRow) {
-    return (
-      <div ref={rootRef}>
-        {botSelectorRow}
-        {/* Hairline between the control area and the list area, using the host's
-         * own separator token (SessionViewOptionsMenu.tsx:149). It is a plain
-         * static line inside the scroll container — NOT sticky — so the control
-         * and its boundary scroll away with the rows and never compete with the
-         * list for attention. */}
-        <div
-          data-testid="bot-selector-divider"
-          className="mt-0.5 border-t dark:border-claude-darkBorder border-claude-border"
-        />
-        <div className="space-y-1">{sortedSessions.map(renderItem)}</div>
-      </div>
-    );
-  }
-
+  // Flat list — callers that pass no view mode (the search modal). A selector
+  // can still sit above it when the caller asked for one; every Bot Home face
+  // passes a view mode, so the grouped branches above are what those render.
   return (
     <div ref={rootRef} className="space-y-1">
+      {selectorBlock}
       {/* Flat mode has no group headers, so the sections' anchor is the pinned
        * block itself: pinned rows first, then the fold, then the Follow-Up
        * section, then the rest — the same "under pinned, above everything else"

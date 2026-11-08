@@ -20,7 +20,6 @@ import { MagnifyingGlassIcon, ArchiveBoxIcon, XMarkIcon } from '@heroicons/react
 import Tooltip from './ui/Tooltip';
 import FilterLinesIcon from './icons/FilterLinesIcon';
 import BackgroundTasksBadge from './cowork/BackgroundTasksBadge';
-import { getHomeSectionModel } from './sidebar/sidebarNavigation.js';
 import { SleepGuardBadge } from './SleepGuardBadge';
 import BotBrowserCoworkPanel from '../features/botBrowser/BotBrowserCoworkPanel';
 import { defaultSidebarWidth } from '../utils/sidebarWidth';
@@ -31,9 +30,9 @@ import type {
   SessionViewMode,
 } from '../utils/sessionViewGrouping';
 import { shouldFoldIntoAutonomousTasks, splitSessionsWithFollowUp } from '../utils/sessionAutoGrouping';
+import { loadSessionViewMode, saveSessionViewMode } from '../utils/sessionGroupStorage';
 import type { SessionSidebarSection } from '../utils/sessionAutoGrouping';
 import { useStableCallback } from '../utils/useStableCallback';
-import { selectTrackedTasksNeedingAttention } from '../utils/trackedTaskAttention';
 import { LONG_TERM_COLUMN_LABEL_KEYS, type LongTermTaskSummary } from '../types/longTermTask';
 import type { SettingsOpenOptions } from './Settings';
 
@@ -54,10 +53,10 @@ interface SidebarProps {
   onShowScheduledTasks: () => void;
   onShowGroupTasks: () => void;
   mode: BotBrowserSurfaceMode;
-  /** Bot Home: which of the three list sections is expanded. */
+  /** Bot Home: which of the three list sections is expanded. The left rail is
+   * the ONLY selector that sets it — the middle column renders the body of
+   * whatever the rail picked and owns no record-type control of its own. */
   homeSection: BotHomeSection;
-  /** Bot Home: expand a section (also switches the right column's view). */
-  onSelectHomeSection: (section: BotHomeSection) => void;
   /** Open the Bot Home surface from the Co-Work panel. */
   onSelectHome: () => void;
   /** Open a browser-type session back in the Bot Browser co-work surface.
@@ -120,23 +119,10 @@ const loadTaskRecordTab = (): TaskRecordTab => {
   return 'local';
 };
 
-/** localStorage keys for the local-chats list view ("filter & sort") choices. */
-const SESSION_VIEW_MODE_STORAGE_KEY = 'sessionViewMode';
+/** localStorage key for the local-chats list sort choice. The VIEW choice
+ * (按 Bot / 按时间线) is per face and lives in utils/sessionGroupStorage.ts —
+ * the local and online lists must not share one grouping preference. */
 const SESSION_SORT_MODE_STORAGE_KEY = 'sessionSortMode';
-
-const loadSessionViewMode = (): SessionViewMode => {
-  try {
-    const stored = window.localStorage.getItem(SESSION_VIEW_MODE_STORAGE_KEY);
-    // 'project' is the retired directory-based view; its closest successor is
-    // the by-Bot view, so the stored choice carries over instead of snapping
-    // back to the timeline default.
-    if (stored === 'project') return 'bot';
-    if (stored === 'bot') return 'bot';
-  } catch {
-    // localStorage unavailable; fall through to the default view.
-  }
-  return 'timeline';
-};
 
 const loadSessionSortMode = (): SessionSortMode => {
   try {
@@ -156,7 +142,6 @@ const Sidebar: React.FC<SidebarProps> = ({
   onShowGroupTasks,
   mode,
   homeSection,
-  onSelectHomeSection,
   onSelectHome,
   onSelectBrowserSession,
   isCollapsed,
@@ -192,14 +177,38 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [batchSelectedIds, setBatchSelectedIds] = useState<string[]>([]);
   // View + sort choices for the local-chats list, persisted across app
   // restarts; the menu itself is a transient popover anchored to the toolbar.
-  const [sessionViewMode, setSessionViewMode] = useState<SessionViewMode>(loadSessionViewMode);
+  const [sessionViewMode, setSessionViewMode] = useState<SessionViewMode>(() =>
+    loadSessionViewMode((key) => window.localStorage.getItem(key), 'local'),
+  );
+  // The online face has its own remembered view (same default, same storage
+  // family, different key): switching the local list to the timeline must not
+  // drag the online list with it.
+  const [a2aViewMode, setA2aViewMode] = useState<SessionViewMode>(() =>
+    loadSessionViewMode((key) => window.localStorage.getItem(key), 'a2a'),
+  );
   const [sessionSortMode, setSessionSortMode] = useState<SessionSortMode>(loadSessionSortMode);
   const [isViewMenuOpen, setIsViewMenuOpen] = useState(false);
   const viewMenuButtonRef = useRef<HTMLButtonElement>(null);
   const handleSetSessionViewMode = (mode: SessionViewMode) => {
     setSessionViewMode(mode);
     try {
-      window.localStorage.setItem(SESSION_VIEW_MODE_STORAGE_KEY, mode);
+      saveSessionViewMode(
+        (storageKey, value) => window.localStorage.setItem(storageKey, value),
+        'local',
+        mode,
+      );
+    } catch {
+      // localStorage unavailable; the view still switches for this session.
+    }
+  };
+  const handleSetA2aViewMode = (mode: SessionViewMode) => {
+    setA2aViewMode(mode);
+    try {
+      saveSessionViewMode(
+        (storageKey, value) => window.localStorage.setItem(storageKey, value),
+        'a2a',
+        mode,
+      );
     } catch {
       // localStorage unavailable; the view still switches for this session.
     }
@@ -246,16 +255,6 @@ const Sidebar: React.FC<SidebarProps> = ({
   // stronger signal, and the board behind it is kept live app-wide (App.tsx
   // init) so the dot is correct even if the 长期任务 tab was never opened.
   const longTermBoard = useSelector((state: RootState) => state.longTermTask.board);
-  // The same combined "needs the owner" derivation the rail's 跟踪任务 entry and
-  // the 长期任务 tab use. Bot Home's middle column owns the second amber dot:
-  // the record-type row is where the owner chooses what to look at, so a parked
-  // decision has to be visible THERE even when the long-term section is not the
-  // selected one — otherwise the strongest "you are the blocker" signal depends
-  // on the owner having already guessed where to look.
-  const trackedTaskAttention = useMemo(
-    () => selectTrackedTasksNeedingAttention({ longTermTask: { board: longTermBoard } }),
-    [longTermBoard],
-  );
   // Sessions currently owed an owner verdict (waiting_owner sub-projects' bound
   // sessions, board-derived): with no manual placement they land in the
   // Follow-Up section — the owner must SEE the decision, not find it buried in
@@ -316,17 +315,21 @@ const Sidebar: React.FC<SidebarProps> = ({
       a2a: { count: sessionGroups.a2a.length, unread: unreadOf(sessionGroups.a2a) },
     };
   }, [sessionGroups, localHumanSessions, localFollowUpSessions, unreadSessionIds]);
+  // The view mode of the face currently on screen, and its setter. Both faces
+  // render the same grouped component; only the remembered choice differs.
+  const faceViewMode = taskRecordTab === 'local' ? sessionViewMode : a2aViewMode;
+  const handleSetFaceViewMode = taskRecordTab === 'local' ? handleSetSessionViewMode : handleSetA2aViewMode;
+  // The toolbar (view label + filter & sort) shows while the face on screen has
+  // rows to control; the batch-archive half stays local-only.
+  const hasFaceSessions = taskRecordTab === 'local'
+    ? localHumanSessions.length > 0
+    : sessionGroups.a2a.length > 0;
+
   // Labels come from i18nService at call time, so the language is an input of
   // every memo below (and of the session list): this component re-renders on a
   // language switch through App's i18n subscription, and the memo has to see
   // the new language to rebuild what it cached.
   const language = i18nService.getLanguage();
-  // Bot Home reads as one list column with three sections; the model only
-  // changes on a language switch.
-  const homeSections = useMemo(
-    () => getHomeSectionModel({ t: (key: string) => i18nService.t(key) }),
-    [language],
-  );
   // Long-term cards in board order (waiting-owner column first), so the section
   // shows what needs the owner before the parked tasks.
   const longTermCards = useMemo<LongTermTaskSummary[]>(() => {
@@ -555,28 +558,6 @@ const Sidebar: React.FC<SidebarProps> = ({
     await groupTaskService.archiveTask(taskId);
   };
 
-  const handleSectionSelect = (section: BotHomeSection) => {
-    setIsSearchOpen(false);
-    if (section === 'groupTasks') {
-      // The entry is a fixed home-page entry point: never re-open whatever
-      // task/collab was drilled into last time.
-      dispatch(selectGroupTask(null));
-    }
-    onSelectHomeSection(section);
-  };
-
-  /** Per-section count shown next to the header (null hides it). */
-  const sectionCount = (id: BotHomeSection): number | null => {
-    if (id === 'longTerm') return longTermCards.length > 0 ? longTermCards.length : null;
-    if (id === 'groupTasks') return unifiedTaskList.length > 0 ? unifiedTaskList.length : null;
-    const total = tabStats.local.count + tabStats.a2a.count;
-    return total > 0 ? total : null;
-  };
-  // Label for the amber decision dot on the record-type row; built at call time
-  // so a language switch re-derives it on the next render.
-  const decisionLabel = i18nService
-    .t('trackedTaskNeedsDecision')
-    .replace('{count}', String(trackedTaskAttention.total));
 
 
   return (
@@ -615,44 +596,16 @@ const Sidebar: React.FC<SidebarProps> = ({
 
       {mode === 'home' ? (
         <div className="flex min-h-0 flex-1 flex-col px-2 pt-1">
-          {/* Layer 1 - record TYPE (long-term / group tasks / records).
-              Deliberately ONE line in its own row, above everything else: the
-              record type is the destination selector, so it must not read as a
-              peer of the session-scope tabs that belong to the records body.
-              A native select keeps it single-line, keyboard-reachable and
-              stateless. */}
-          <div className="shrink-0 pb-1.5">
-            {/* The record type and its decision signal share ONE row: the amber
-                dot belongs to the selector, not to the section body below it,
-                because it must stay on screen whatever type is selected. */}
-            <div className="flex items-center gap-2">
-              <select
-                data-slot="home-record-type"
-                aria-label={i18nService.t('homeRecordTypeLabel')}
-                value={homeSection}
-                onChange={(event) => handleSectionSelect(event.target.value as BotHomeSection)}
-                className="non-draggable min-w-0 flex-1 rounded-lg border border-claude-border/70 bg-claude-bg/80 px-2 py-1.5 text-xs font-medium dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80 dark:text-claude-darkText text-claude-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
-              >
-                {homeSections.map((section) => {
-                  const count = sectionCount(section.id as BotHomeSection);
-                  return (
-                    <option key={section.id} value={section.id}>
-                      {count != null ? `${section.label} · ${count}` : section.label}
-                    </option>
-                  );
-                })}
-              </select>
-              {trackedTaskAttention.total > 0 ? (
-                <span
-                  role="img"
-                  aria-label={decisionLabel}
-                  title={decisionLabel}
-                  className="tracked-task-decision-indicator shrink-0"
-                />
-              ) : null}
-            </div>
-          </div>
-
+          {/* The record TYPE (long-term / group tasks / records) is chosen in
+              the LEFT RAIL — the four Bot Home icons — and only there. The
+              middle column owns no type selector: an earlier native select drawer
+              sat right here and duplicated the rail, while its amber decision
+              dot duplicated the one on the rail's 长期任务 entry. The column
+              now renders the body of whatever the rail picked (the type is the
+              `homeSection` prop, derived from App's mainView) and nothing else.
+              The one control that stays is the records BODY's own scope row
+              (local / online), which filters rows inside this list and is not
+              a destination selector. */}
           {homeSection === 'longTerm' ? (
             <div className="min-h-0 flex-1 overflow-y-auto pb-2" data-home-section="longTerm">
               {longTermCards.length === 0 ? (
@@ -776,13 +729,13 @@ const Sidebar: React.FC<SidebarProps> = ({
                   })}
                 </div>
               </div>
-              {/* Toolbar row above the local list: current view label on the
-                  left, filter & sort + batch archive on the right. Fixed with
-                  the header; only the list scrolls. */}
-              {taskRecordTab === 'local' && localHumanSessions.length > 0 && (
+              {/* Toolbar row above the list: current view label on the left,
+                  filter & sort (+ batch archive on the local face) on the
+                  right. Fixed with the header; only the list scrolls. */}
+              {hasFaceSessions && (
                 <div className="flex shrink-0 items-center justify-between gap-1.5 px-1 pb-1.5">
                   <span className="min-w-0 truncate text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                    {i18nService.t(sessionViewMode === 'bot' ? 'sessionViewByBot' : 'sessionViewTimeline')}
+                    {i18nService.t(faceViewMode === 'bot' ? 'sessionViewByBot' : 'sessionViewTimeline')}
                   </span>
                   <div className="flex items-center gap-1.5">
                     {isBatchArchiveMode ? (
@@ -822,16 +775,18 @@ const Sidebar: React.FC<SidebarProps> = ({
                             <FilterLinesIcon className="h-4 w-4" />
                           </button>
                         </Tooltip>
-                        <Tooltip content={i18nService.t('batchArchive')} position="bottom">
-                          <button
-                            type="button"
-                            onClick={handleEnterBatchArchiveMode}
-                            aria-label={i18nService.t('batchArchive')}
-                            className="rounded p-1 text-claude-textSecondary transition-colors hover:bg-claude-accent/10 hover:text-claude-accent dark:text-claude-darkTextSecondary"
-                          >
-                            <ArchiveBoxIcon className="h-4 w-4" />
-                          </button>
-                        </Tooltip>
+                        {taskRecordTab === 'local' && (
+                          <Tooltip content={i18nService.t('batchArchive')} position="bottom">
+                            <button
+                              type="button"
+                              onClick={handleEnterBatchArchiveMode}
+                              aria-label={i18nService.t('batchArchive')}
+                              className="rounded p-1 text-claude-textSecondary transition-colors hover:bg-claude-accent/10 hover:text-claude-accent dark:text-claude-darkTextSecondary"
+                            >
+                              <ArchiveBoxIcon className="h-4 w-4" />
+                            </button>
+                          </Tooltip>
+                        )}
                       </>
                     )}
                   </div>
@@ -839,11 +794,11 @@ const Sidebar: React.FC<SidebarProps> = ({
               )}
               <SessionViewOptionsMenu
                 anchorRef={viewMenuButtonRef}
-                open={isViewMenuOpen && taskRecordTab === 'local' && !isBatchArchiveMode}
+                open={isViewMenuOpen && !isBatchArchiveMode}
                 onClose={() => setIsViewMenuOpen(false)}
-                viewMode={sessionViewMode}
+                viewMode={faceViewMode}
                 sortMode={sessionSortMode}
-                onViewModeChange={handleSetSessionViewMode}
+                onViewModeChange={handleSetFaceViewMode}
                 onSortModeChange={handleSetSessionSortMode}
               />
               {/* Scrollable list area */}
@@ -860,8 +815,11 @@ const Sidebar: React.FC<SidebarProps> = ({
                   selectionMode={isBatchArchiveMode && taskRecordTab === 'local'}
                   selectedSessionIds={batchSelectedIds}
                   onToggleSessionSelected={listOnToggleSessionSelected}
-                  viewMode={taskRecordTab === 'local' ? sessionViewMode : undefined}
-                  sortMode={taskRecordTab === 'local' ? sessionSortMode : undefined}
+                  /** Both faces render the SAME by-Bot grouped template and
+                   * default to 按 Bot; each keeps its own remembered choice. */
+                  viewMode={faceViewMode}
+                  sortMode={sessionSortMode}
+                  groupFace={taskRecordTab}
                   language={language}
                   /** Local chats: the machine-started runs (long-term task,
                    * orchestration, scheduled) that need no human follow-up fold
@@ -873,11 +831,14 @@ const Sidebar: React.FC<SidebarProps> = ({
                    * render in the Follow-Up section above the fold. */
                   followUpSessions={taskRecordTab === 'local' ? localFollowUpSessions : undefined}
                   decisionSessionIds={taskRecordTab === 'local' ? decisionSessionIds : undefined}
-                  /** Online chats: the Bot selector is this list's only
-                   * selector, so it is switched on here - nothing else changes. */
+                  /** Online chats: the bot dropdown narrows WHICH bots' groups
+                   * are shown (全部 Bot by default); the groups themselves are
+                   * the same template as the local face. */
                   botSelector={taskRecordTab === 'a2a'}
-                  /** Quick-create task with selected bot. */
-                  onQuickCreateTask={taskRecordTab === 'local' ? handleQuickCreateTask : undefined}
+                  /** The trailing + on a bot group header starts a new task with
+                   * that bot. Same action and same handler on BOTH faces — the
+                   * template is shared, not re-implemented per face. */
+                  onQuickCreateTask={handleQuickCreateTask}
                 />
               </div>
             </div>

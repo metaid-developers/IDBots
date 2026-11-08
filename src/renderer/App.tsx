@@ -751,20 +751,23 @@ const App: React.FC = () => {
     botBrowserShell.selectInternetPane('metaapps');
   }, [botBrowserShell.selectInternetPane]);
 
-  // Bot Home destinations: the left rail entries and the middle column's
-  // section headers are two entry points into the same three lists, so they
-  // share one handler — it switches the surface and the right column's view
-  // together.
+  // Bot Home destinations: the left rail is the ONLY entry point into the three
+  // record types (the middle column's old type drawer was removed as a second
+  // selector). It switches the surface and the right column's view together.
+  // Entering 多人任务 resets the drilled-in selection: the rail entry is a fixed
+  // home-page entry point, never "re-open last time's task". That reset used to
+  // live in the removed type drawer and moved here with the single entry point.
   const handleSelectHomeSection = useCallback((section: BotHomeSection) => {
     botBrowserShell.switchToHome();
     if (section === 'longTerm') {
       setMainView('scheduledTasks');
     } else if (section === 'groupTasks') {
+      dispatch(selectGroupTask(null));
       setMainView('groupTasks');
     } else {
       setMainView('cowork');
     }
-  }, [botBrowserShell.switchToHome]);
+  }, [botBrowserShell.switchToHome, dispatch]);
 
   /**
    * Seam drag = one session, started here and ended by the session's own
@@ -1657,7 +1660,6 @@ const App: React.FC = () => {
           onShowGroupTasks={handleShowGroupTasks}
           mode={botBrowserShell.surfaceMode}
           homeSection={homeSection}
-          onSelectHomeSection={handleSelectHomeSection}
           onSelectHome={botBrowserShell.switchToHome}
           onSelectBrowserSession={handleSelectBrowserSession}
           isCollapsed={isSidebarCollapsed}

@@ -2,8 +2,11 @@
 //
 // A sub-project parked on an owner decision is the one state where the task's
 // progress depends on the OWNER, so it must be visible without opening a tab:
-// the sidebar's 跟踪任务 entry and the 长期任务 L1 tab both carry an amber dot
-// driven by the same derivation. The same requirement forces the Twin's
+// the rail's 长期任务 entry and the 长期任务 L1 tab both carry an amber dot
+// driven by the same derivation. The mid column used to carry a THIRD copy on
+// its record-type row; that row was removed with the type drawer (owner ruling
+// 2026-11-08), so the badge contract now pins exactly two render sites and the
+// mid column's absence. The same requirement forces the Twin's
 // wait_note/summary to be a six-section decision brief, stated identically in
 // the tool descriptions, the exec skill and the heartbeat re-presentation.
 
@@ -103,10 +106,14 @@ test('both badges are wired to the shared derivation and the amber decision dot'
   assert.match(rail, /indicatorKind === 'decision'/);
   assert.match(rail, /role="img"[\s\S]{0,160}aria-label=\{indicatorLabel\}/);
 
+  // The mid column's copy is GONE with the record-type drawer: the rail is the
+  // only navigation surface, so a second amber dot there would duplicate the
+  // one the owner is looking at. Pinned as an absence so it cannot creep back.
   const sidebar = readSource('src/renderer/components/Sidebar.tsx');
-  assert.match(sidebar, /selectTrackedTasksNeedingAttention\(\{ longTermTask: \{ board: longTermBoard \} \}\)/);
-  assert.match(sidebar, /tracked-task-decision-indicator/);
-  assert.match(sidebar, /role="img"[\s\S]{0,160}aria-label=\{decisionLabel\}/);
+  assert.doesNotMatch(sidebar, /tracked-task-decision-indicator/);
+  assert.doesNotMatch(sidebar, /selectTrackedTasksNeedingAttention/);
+  assert.doesNotMatch(sidebar, /trackedTaskNeedsDecision/);
+  assert.doesNotMatch(sidebar, /decisionLabel/);
 
   const view = readSource('src/renderer/components/scheduledTasks/ScheduledTasksView.tsx');
   assert.match(view, /const longTermNeedsDecisionCount = useMemo/);
