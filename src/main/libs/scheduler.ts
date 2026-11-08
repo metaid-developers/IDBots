@@ -13,6 +13,7 @@ import type { CoworkStore, DreamPracticeProposalRecord } from '../coworkStore';
 import type { CoworkRunner } from './coworkRunner';
 import { resolveSessionWorkingDirectory } from './botWorkspace';
 import { resolveCoworkExecutionMode } from './coworkExecutionMode';
+import { buildScheduledRunReportMessage, tailDispatchReportExcerpt } from './coworkCrossSessionReport';
 import { createPracticeSessionState, PRACTICE_RUN_WATCHDOG_MS } from './practiceInteractionGuard';
 import type { IMGatewayManager } from '../im/imGatewayManager';
 import type { CoworkSubmitInput, CoworkSubmitInputResult } from '../services/coworkTurnSubmission';
@@ -570,6 +571,16 @@ export class Scheduler {
             await this.sendNotifications(task, success, durationMs, error);
           }
 
+          // Scheduled-run report-back: the origin session that created this
+          // task never heard about run outcomes (originSessionId was only
+          // ever printed into prompt text), so delegated work died silently
+          // in the [定时] fold. Best-effort — never fail the run bookkeeping.
+          try {
+            this.reportRunToOriginSession(task, run.id, sessionId, success, error, durationMs);
+          } catch (reportError) {
+            console.warn('[Scheduler] Origin-session run report failed:', reportError);
+          }
+
           // Emit final updates
           this.emitTaskStatusUpdate(task.id);
           const updatedRun = this.store.getRun(run.id);
@@ -768,6 +779,73 @@ export class Scheduler {
 
     console.log(`[Scheduler] Task ${task.id} submitted into bound session ${targetSessionId}`);
     return targetSessionId;
+  }
+
+  /**
+   * Report a finished run back into the session that created the task.
+   * Delegated one-shot ('at') work reports every run; recurring standing
+   * automation reports failures only — a per-fire success ping into the
+   * origin chat recreates the poll-flood failure class. A run that executed
+   * inside the origin chat itself (bound to it) is skipped: that chat just
+   * watched the turn happen. The delivery id is deterministic per run, so
+   * retries dedupe; a run that failed before its session opened attributes
+   * the report to the synthetic `scheduled-task:<taskId>` pseudo-source.
+   */
+  private reportRunToOriginSession(
+    task: ScheduledTask,
+    runId: string,
+    sessionId: string | null,
+    success: boolean,
+    error: string | null,
+    durationMs: number,
+  ): void {
+    const originSessionId = task.originSessionId?.trim();
+    if (!originSessionId) return;
+    if (task.schedule.type !== 'at' && success) return;
+    if (sessionId && sessionId === originSessionId) return;
+
+    let finalReply: string | null = null;
+    let finalReplyTruncated = false;
+    if (sessionId) {
+      try {
+        const latest = this.coworkStore.getSessionLatestVisibleMessage?.(sessionId) ?? null;
+        if (latest && latest.type === 'assistant') {
+          const excerpt = tailDispatchReportExcerpt(latest.content);
+          if (excerpt) {
+            finalReply = excerpt.excerpt;
+            finalReplyTruncated = excerpt.truncated;
+          }
+        }
+      } catch (excerptError) {
+        console.warn('[Scheduler] Run report excerpt failed:', excerptError);
+      }
+    }
+
+    const message = buildScheduledRunReportMessage({
+      taskId: task.id,
+      taskName: task.name,
+      fireNumber: task.schedule.type === 'at' ? null : (task.fireCount ?? 0) + 1,
+      outcome: success ? 'success' : 'failed',
+      durationMs,
+      runSessionId: sessionId,
+      failureReason: error,
+      finalReply,
+      finalReplyTruncated,
+    });
+    const result = this.getCoworkRunner().insertCrossSessionMessageAndQueue({
+      sourceSessionId: sessionId ?? `scheduled-task:${task.id}`,
+      targetSessionId: originSessionId,
+      message,
+      deliveryId: `schedule_report:${task.id}:${runId}`,
+    });
+    if (!result.insert.ok || !result.runQueued) {
+      console.warn('[Scheduler] Origin-session run report did not queue:', {
+        taskId: task.id,
+        originSessionId,
+        deliveryId: `schedule_report:${task.id}:${runId}`,
+        insertError: result.insert.ok ? result.error : String(result.insert.message),
+      });
+    }
   }
 
   // --- IM Notifications ---

@@ -524,6 +524,7 @@ man_base_data_pebble/
 !tests/orchestrationProgress.test.mjs
 !tests/crossSessionDeliveryRunner.test.mjs
 !tests/coworkCrossSessionDispatchReport.test.mjs
+!tests/schedulerOriginRunReport.test.mjs
 !tests/twinOrchestrationService.test.mjs
 !tests/twinNotifyOnce.test.mjs
 !tests/twinStepAcceptance.test.mjs

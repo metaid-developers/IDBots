@@ -131,6 +131,28 @@ async function waitFor(assertion, timeoutMs = 2000) {
   assertion();
 }
 
+test('insertUserMessage accepts the scheduled-task pseudo-source namespace', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-dispatch-report-pseudo-'));
+  t.after(() => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ } });
+  const sqliteStore = await SqliteStore.create(dir);
+  t.after(() => { try { sqliteStore.close(); } catch { /* best effort */ } });
+  const coworkStore = new CoworkStore(sqliteStore.getDatabase(), sqliteStore.getSaveFunction());
+  const service = new CoworkCrossSessionService(coworkStore);
+  const target = coworkStore.createSession('origin chat', dir, '', 'local', [], 1);
+
+  // `scheduled-task:<id>` has NO cowork_sessions row by design (scheduler run
+  // reports failed before their worker session opened) — it must not be
+  // rejected as SESSION_NOT_FOUND, same as the group-task namespace.
+  const result = service.insertUserMessage({
+    sourceSessionId: 'scheduled-task:9f1c2f0e-1111-4222-8333-444455556666',
+    targetSessionId: target.id,
+    message: 'run failed before its session opened',
+    deliveryId: 'schedule_report:x:y',
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.message.metadata.sourceSessionId, 'scheduled-task:9f1c2f0e-1111-4222-8333-444455556666');
+});
+
 test('insertUserMessage stamps crossSessionNotifySource only when requested', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-dispatch-report-meta-'));
   t.after(() => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ } });

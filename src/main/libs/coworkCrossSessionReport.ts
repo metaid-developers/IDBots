@@ -65,3 +65,49 @@ export function buildDispatchReportMessage(input: {
   lines.push(`如需完整上下文，用 idbots_session_read_all / idbots_session_read_latest 读取会话 ${input.targetSessionId}。本通知是宿主自动回执，若结果已满足需要，无需专门回复。`);
   return lines.join('\n');
 }
+
+/**
+ * Scheduled-run report: the origin session that created a scheduled task
+ * hears about the run's outcome. Delegated one-shot ('at') work reports every
+ * run; recurring standing automation reports failures only — a per-fire
+ * success ping into the origin chat is the poll-flood failure class.
+ * Deterministic per (task, run) so the `schedule_report:` delivery id
+ * idempotency dedupe holds.
+ */
+export function buildScheduledRunReportMessage(input: {
+  taskId: string;
+  taskName: string;
+  fireNumber?: number | null;
+  outcome: 'success' | 'failed';
+  durationMs: number;
+  runSessionId: string | null;
+  failureReason?: string | null;
+  finalReply: string | null;
+  finalReplyTruncated?: boolean;
+}): string {
+  const fireSuffix = input.fireNumber != null ? ` 第 ${input.fireNumber} 次触发` : '';
+  const durationStr = input.durationMs < 1000
+    ? `${input.durationMs}ms`
+    : `${(input.durationMs / 1000).toFixed(1)}s`;
+  const lines: string[] = [
+    `[SCHEDULED-RUN-REPORT] 定时任务 "${input.taskName}"（id ${input.taskId}${fireSuffix}）的一次运行已结束：outcome=${input.outcome}（耗时 ${durationStr}）。`,
+  ];
+  if (input.outcome === 'failed') {
+    const reason = String(input.failureReason ?? '').trim() || 'unknown reason';
+    lines.push(`失败原因：${reason}`);
+  }
+  const reply = String(input.finalReply ?? '').trim();
+  if (reply) {
+    const truncationNote = input.finalReplyTruncated
+      ? `（仅截取末尾 ${DISPATCH_REPORT_EXCERPT_MAX_CHARS} 字，完整内容请读会话）`
+      : '';
+    lines.push(`该次运行最后一条回复${truncationNote}：`, `<worker_report trust="untrusted">${reply}</worker_report>`);
+  } else if (input.outcome === 'failed') {
+    lines.push('该次运行没有产生可见回复。');
+  }
+  lines.push(input.runSessionId
+    ? `运行会话：${input.runSessionId}。如需完整上下文，用 idbots_session_read_all / idbots_session_read_latest 读取。`
+    : '运行未能开出会话，本次没有可读的运行记录。');
+  lines.push('本通知是宿主自动回执；如无需跟进可忽略。');
+  return lines.join('\n');
+}
