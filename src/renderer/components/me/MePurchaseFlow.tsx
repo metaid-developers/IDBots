@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import {
   AcademicCapIcon,
@@ -127,6 +127,14 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
     return subscribed ? cards.filter((plan) => plan.tier !== 'free') : cards;
   }, [serverFreePlan, paidPlans, subscribed]);
 
+  // Latest plan-selection context for the reset effect below. The effect must
+  // run ONLY on open/section transitions: the plan catalog refetches on every
+  // ensureMeSnapshot (no TTL) and lands as a fresh plans array, so data-derived
+  // deps would re-run the reset mid-panel — flashing a picked 季付/年付 back to
+  // 月付 and the gateway back to Alipay.
+  const selectionContextRef = useRef({ isCurrentPlan, planCards, paidPlans });
+  selectionContextRef.current = { isCurrentPlan, planCards, paidPlans };
+
   useEffect(() => {
     if (!open) return;
     ensureMeSnapshot();
@@ -152,6 +160,7 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
       });
     }
     setSelectedPlanId((current) => {
+      const { isCurrentPlan, planCards, paidPlans } = selectionContextRef.current;
       const stillValid = current
         && planCards.some((plan) => plan.planId === current && !isCurrentPlan(plan));
       if (stillValid) return current;
@@ -159,7 +168,7 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
       if (preferred && !isCurrentPlan(preferred)) return preferred.planId;
       return paidPlans.find((plan) => !isCurrentPlan(plan))?.planId ?? '';
     });
-  }, [open, section, isCurrentPlan, planCards, paidPlans]);
+  }, [open, section]);
 
   useEffect(() => {
     const listener = (event: Event) => {
@@ -336,7 +345,7 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/40" onClick={phase === 'creating' ? undefined : onClose} />
-      <div className="relative max-h-[86vh] w-[560px] overflow-y-auto rounded-2xl border border-claude-border dark:border-claude-darkBorder bg-claude-surface dark:bg-claude-darkSurface shadow-2xl">
+      <div className="relative max-h-[90vh] w-[560px] overflow-y-auto rounded-2xl border border-claude-border dark:border-claude-darkBorder bg-claude-surface dark:bg-claude-darkSurface shadow-2xl">
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-claude-border/60 dark:border-claude-darkBorder/60 bg-claude-surface/95 dark:bg-claude-darkSurface/95 px-4 py-3 backdrop-blur">
           <h3 className="text-sm font-semibold text-claude-text dark:text-claude-darkText">
             {section === 'subscribe' ? i18nService.t('mePurchaseTitle') : i18nService.t('mePurchaseTopupTitle')}
@@ -351,7 +360,7 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
           </button>
         </div>
 
-        <div className="space-y-4 px-4 py-4">
+        <div className="space-y-3 px-4 py-3">
           {(phase === 'pick' || phase === 'creating') && (
             <>
               {snapshot.plansLoading && paidPlans.length === 0 && (
@@ -359,10 +368,10 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
               )}
 
               {section === 'subscribe' && (
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   {planCards.map((plan) => {
                     const currentPlan = isCurrentPlan(plan);
-                    const highlighted = currentPlan || effectivePlanId === plan.planId;
+                    const selected = effectivePlanId === plan.planId;
                     return (
                       <button
                         key={plan.planId}
@@ -371,20 +380,24 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
                         onClick={() => {
                           if (!currentPlan) setSelectedPlanId(plan.planId);
                         }}
-                        className={`w-full rounded-xl border px-3 py-2.5 text-left transition-colors ${
-                          highlighted
-                            ? 'border-claude-accent bg-claude-accent/5 dark:bg-claude-accent/10'
-                            : 'border-claude-border dark:border-claude-darkBorder hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
-                        } ${currentPlan ? 'cursor-default' : ''}`}
+                        className={`w-full rounded-xl border px-3 py-2 text-left transition-colors ${
+                          currentPlan
+                            // "cannot select" style — deliberately distinct from
+                            // the accent selection state
+                            ? 'border-claude-border dark:border-claude-darkBorder bg-claude-surfaceHover/50 dark:bg-claude-darkSurfaceHover/30 cursor-not-allowed'
+                            : selected
+                              ? 'border-claude-accent bg-claude-accent/5 dark:bg-claude-accent/10'
+                              : 'border-claude-border dark:border-claude-darkBorder hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
+                        }`}
                       >
                         <div className="flex items-center justify-between gap-2">
                           <span className="flex min-w-0 items-center gap-2">
-                            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-claude-accent/10 text-claude-accent dark:bg-claude-accent/15 dark:text-claude-darkAccent">
+                            <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${currentPlan ? 'bg-claude-surfaceHover text-claude-textSecondary dark:bg-claude-darkSurfaceHover dark:text-claude-darkTextSecondary' : 'bg-claude-accent/10 text-claude-accent dark:bg-claude-accent/15 dark:text-claude-darkAccent'}`}>
                               {tierIcon(plan)}
                             </span>
-                            <span className="truncate text-xs font-semibold text-claude-text dark:text-claude-darkText">{plan.name}</span>
+                            <span className={`truncate text-xs font-semibold ${currentPlan ? 'text-claude-textSecondary dark:text-claude-darkTextSecondary' : 'text-claude-text dark:text-claude-darkText'}`}>{plan.name}</span>
                           </span>
-                          <span className="shrink-0 tabular-nums text-xs text-claude-text dark:text-claude-darkText">
+                          <span className={`shrink-0 tabular-nums text-xs ${currentPlan ? 'text-claude-textSecondary dark:text-claude-darkTextSecondary' : 'text-claude-text dark:text-claude-darkText'}`}>
                             {plan.tier === 'free'
                               ? i18nService.t('mePurchaseFreePrice')
                               : i18nService.t('mePlanPriceMonthly').replace('{price}', priceLabel(plan.desktopPriceCny ?? plan.priceCny))}
@@ -395,7 +408,7 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
                             {i18nService.t('mePlanHighlightWeekly').replace('{me}', formatMe(meFromMilli(plan.weeklyAmountMilli)))}
                           </span>
                           {currentPlan ? (
-                            <span className="shrink-0 rounded-full bg-claude-accent/10 px-2 py-0.5 text-[10px] font-medium text-claude-accent dark:text-claude-darkAccent">
+                            <span className="shrink-0 rounded-full bg-green-500/10 px-2 py-0.5 text-[10px] font-medium text-green-600 dark:text-green-400">
                               {i18nService.t('meCurrentPlanBadge')}
                             </span>
                           ) : plan.tier === 'pro' ? (
@@ -409,7 +422,7 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
                   })}
 
                   {selectedPlan && !isFreeSelected && (
-                    <div className="rounded-xl border border-claude-border dark:border-claude-darkBorder bg-claude-surfaceInset/40 dark:bg-claude-darkSurfaceInset/30 px-3 py-2.5">
+                    <div className="rounded-xl border border-claude-border dark:border-claude-darkBorder bg-claude-surfaceInset/40 dark:bg-claude-darkSurfaceInset/30 px-3 py-2">
                       <span className="text-[11px] font-medium text-claude-textSecondary dark:text-claude-darkTextSecondary">
                         {i18nService.t('mePurchasePeriod')}
                       </span>
@@ -434,7 +447,7 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
                   )}
 
                   {selectedPlan && !isFreeSelected && (
-                    <div className="rounded-xl border border-claude-border dark:border-claude-darkBorder bg-claude-surfaceInset/40 dark:bg-claude-darkSurfaceInset/30 px-3 py-2.5">
+                    <div className="rounded-xl border border-claude-border dark:border-claude-darkBorder bg-claude-surfaceInset/40 dark:bg-claude-darkSurfaceInset/30 px-3 py-2">
                       <span className="text-[11px] font-medium text-claude-textSecondary dark:text-claude-darkTextSecondary">
                         {i18nService.t('mePurchaseGatewayLabel')}
                       </span>
@@ -510,7 +523,7 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
 
               {section === 'subscribe' && selectedPlan && (
                 isFreeSelected ? (
-                  <div className="flex items-baseline justify-between rounded-xl bg-claude-surfaceInset/40 dark:bg-claude-darkSurfaceInset/30 px-3 py-2.5">
+                  <div className="flex items-baseline justify-between rounded-xl bg-claude-surfaceInset/40 dark:bg-claude-darkSurfaceInset/30 px-3 py-2">
                     <span className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
                       {i18nService.t('mePurchaseAmountDue')}
                     </span>
@@ -519,7 +532,7 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
                     </span>
                   </div>
                 ) : (
-                  <div className="rounded-xl bg-claude-surfaceInset/40 dark:bg-claude-darkSurfaceInset/30 px-3 py-2.5">
+                  <div className="rounded-xl bg-claude-surfaceInset/40 dark:bg-claude-darkSurfaceInset/30 px-3 py-2">
                     <div className="flex items-baseline justify-between gap-2">
                       <span className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
                         {i18nService.t('mePurchasePriceTagLabel')}
@@ -559,7 +572,7 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
               )}
 
               {section === 'topup' && canCreate && (
-                <div className="flex items-baseline justify-between rounded-xl bg-claude-surfaceInset/40 dark:bg-claude-darkSurfaceInset/30 px-3 py-2.5">
+                <div className="flex items-baseline justify-between rounded-xl bg-claude-surfaceInset/40 dark:bg-claude-darkSurfaceInset/30 px-3 py-2">
                   <span className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
                     {i18nService.t('mePurchaseAmountDue')}
                   </span>
@@ -696,13 +709,13 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
             </div>
           )}
 
-          <div className="space-y-1 rounded-xl bg-claude-surfaceHover/50 dark:bg-claude-darkSurfaceHover/40 px-3 py-2.5">
+          <div className="space-y-0.5 rounded-xl bg-claude-surfaceHover/50 dark:bg-claude-darkSurfaceHover/40 px-3 py-2">
             {COMPLIANCE_LINES().map((line) => (
-              <p key={line} className="text-[10px] leading-relaxed text-claude-textSecondary dark:text-claude-darkTextSecondary">· {line}</p>
+              <p key={line} className="text-[10px] leading-snug text-claude-textSecondary dark:text-claude-darkTextSecondary">· {line}</p>
             ))}
-            <p className="text-[10px] text-claude-textSecondary dark:text-claude-darkTextSecondary">{i18nService.t('mePurchaseRatesNote')}</p>
+            <p className="text-[10px] leading-snug text-claude-textSecondary dark:text-claude-darkTextSecondary">{i18nService.t('mePurchaseRatesNote')}</p>
             {section === 'topup' && (
-              <p className="text-[10px] text-claude-textSecondary dark:text-claude-darkTextSecondary">{i18nService.t('mePurchaseTopupCapNote')}</p>
+              <p className="text-[10px] leading-snug text-claude-textSecondary dark:text-claude-darkTextSecondary">{i18nService.t('mePurchaseTopupCapNote')}</p>
             )}
           </div>
         </div>

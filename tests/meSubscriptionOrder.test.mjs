@@ -349,6 +349,20 @@ test('MePurchaseFlow: current plan is highlighted but unselectable; paid users n
   assert.match(flowSource, /i18nService\.t\('meCurrentPlanBadge'\)/);
   // The default/effective selection must skip the current plan.
   assert.match(flowSource, /paidPlans\.find\(\(plan\) => !isCurrentPlan\(plan\)\)\?\.planId/);
+  // The current row uses a "cannot select" style — a muted, non-accent row
+  // with a green badge — never the accent selection state.
+  assert.match(flowSource, /cursor-not-allowed/);
+  assert.match(flowSource, /bg-green-500\/10 px-2 py-0\.5/);
   // Success page: celebratory centered layout.
   assert.match(flowSource, /mePurchaseSuccessTitle/);
+});
+
+test('MePurchaseFlow reset effect runs only on open/section transitions', () => {
+  // The panel reset (period/gateway/phase back to defaults) must be scoped to
+  // open/section transitions. Data-derived deps re-ran it on every plan
+  // catalog refetch (ensureMeSnapshot has no TTL), flashing a picked
+  // 季付/年付 back to 月付 and the gateway back to Alipay mid-panel.
+  assert.match(flowSource, /selectionContextRef\.current = \{ isCurrentPlan, planCards, paidPlans \};/);
+  assert.match(flowSource, /setPeriod\('month'\);[\s\S]*?\}, \[open, section\]\);/);
+  assert.equal(flowSource.includes('}, [open, section, isCurrentPlan, planCards, paidPlans]);'), false);
 });
