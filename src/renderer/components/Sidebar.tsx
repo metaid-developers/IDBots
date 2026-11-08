@@ -145,14 +145,13 @@ const Sidebar: React.FC<SidebarProps> = ({
   updateBadge,
 }) => {
   const sessions = useSelector((state: RootState) => state.cowork.sessions);
-  // Bot Home history lists EVERY cowork session, including the Bot Browser
-  // co-work sessions (session_type = 'browser'). They are ordinary cowork
-  // sessions the user can come back to; the browser surface only supplies the
-  // panel they were started from. Hiding them here left a browser chat with no
-  // entry point once the user switched away from Bot Browser. They are shown
-  // in the "local chats" tab and carry a type badge (see CoworkSessionItem),
-  // and selecting one routes back to the Bot Browser surface (see
-  // handleSelectSession below).
+  // Bot Browser co-work sessions (session_type = 'browser') live on the Bot
+  // Internet surface: the panel's own history overlay is their entry point.
+  // Bot Home is the task surface — browser chat rows no longer mix into its
+  // history list (two-surface split, owner ruling 2026-11-08). Reachability is
+  // preserved two ways: selecting a browser row from search still routes back
+  // to the Bot Browser surface (handleSelectSession below), and the panel
+  // history still lists every browser session.
   const homeSessions = sessions;
   const currentSessionId = useSelector((state: RootState) => state.cowork.currentSessionId);
   const unreadSessionIds = useSelector((state: RootState) => state.cowork.unreadSessionIds);
@@ -204,11 +203,11 @@ const Sidebar: React.FC<SidebarProps> = ({
       // localStorage unavailable; the tab still switches for this session.
     }
   };
-  // Sessions grouped by category: local (human↔MetaBot, including browser
-  // sessions started from the Bot Browser panel), a2a (MetaBot↔MetaBot), group
-  // (group-task chat channels). a2a / group_task keep their dedicated tabs and
-  // are matched by their own session type, so browser sessions can never leak
-  // into them.
+  // Sessions grouped by category: local (human↔MetaBot chats, EXCLUDING
+  // browser co-work sessions which stay on the Bot Internet surface), a2a
+  // (MetaBot↔MetaBot), group (group-task chat channels). a2a / group_task
+  // keep their dedicated tabs and are matched by their own session type, so
+  // browser sessions can never leak into them.
   const sessionGroups = useMemo(() => {
     // IM rows belong to the LOCAL list even when an older row is still stored
     // as 'a2a' (direct IM chats used to be created that way). The mapping
@@ -217,6 +216,7 @@ const Sidebar: React.FC<SidebarProps> = ({
     const isImSession = (session: CoworkSessionSummary) => Boolean(session.imChannel);
     const isLocal = (session: CoworkSessionSummary) =>
       session.sessionType !== 'group_task'
+      && session.sessionType !== 'browser'
       && (session.sessionType !== 'a2a' || isImSession(session));
     return {
       local: homeSessions.filter(isLocal),
