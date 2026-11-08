@@ -171,9 +171,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     collapse: '收起',
     expand: '展开',
     featureInDevelopment: '正在开发中',
-    botInternet: 'Bot Internet',
+    botInternet: 'BotHub',
     botBrowser: 'Bot Browser',
-    botHome: 'Bot Home',
+    botHome: 'BotWorks',
 
     // 三栏骨架（切片一）：左图标栏 / Codex 式工作台下拉 / 中栏列表
     workspaceRailLabel: '功能栏',
@@ -509,8 +509,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     botBrowserCoworkTitle: 'Co-Work',
     botBrowserCoworkPlaceholder: '让 Bot 帮你操作浏览器…',
     botBrowserCoworkEmpty: '试试：显示最新的链上小游戏，或打开链上 Buzz。',
-    botInternetNeedsTwin: 'Bot Internet 是你和你的 Twin Bot 的一对一空间。本机还没有 Twin Bot——先去 Bot Home 创建一个。',
-    botInternetGoBotHome: '去 Bot Home 创建 Twin',
+    botInternetNeedsTwin: 'BotHub 是你和你的 Twin Bot 的一对一空间。本机还没有 Twin Bot——先去 BotWorks 创建一个。',
+    botInternetGoBotHome: '去 BotWorks 创建 Twin',
     botInternetTwinSeatTitle: '选择当前当值 Twin',
     botInternetTwinSeatHint: '任命会与「我的 Bot」的 Twin 设定同步：原当值 Twin 回到 worker 岗位，所选 bot 立即上任。',
     botInternetTwinSeatAppoint: '任命',
@@ -3810,9 +3810,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     collapse: 'Collapse',
     expand: 'Expand',
     featureInDevelopment: 'In development',
-    botInternet: 'Bot Internet',
+    botInternet: 'BotHub',
     botBrowser: 'Bot Browser',
-    botHome: 'Bot Home',
+    botHome: 'BotWorks',
 
     // Three-column shell (slice 1): the icon rail, the Codex-style surface
     // menu, and the middle column's list sections.
@@ -4149,8 +4149,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     botBrowserCoworkTitle: 'Co-Work',
     botBrowserCoworkPlaceholder: 'Ask the Bot to drive this browser…',
     botBrowserCoworkEmpty: 'Try: show the latest on-chain mini-games, or open on-chain Buzz.',
-    botInternetNeedsTwin: 'Bot Internet is a 1:1 space with your Twin bot. You have no Twin on this machine yet — create one in Bot Home first.',
-    botInternetGoBotHome: 'Go to Bot Home to create your Twin',
+    botInternetNeedsTwin: 'BotHub is a 1:1 space with your Twin bot. You have no Twin on this machine yet — create one in BotWorks first.',
+    botInternetGoBotHome: 'Go to BotWorks to create your Twin',
     botInternetTwinSeatTitle: 'Choose the acting Twin',
     botInternetTwinSeatHint: 'Appointing stays in sync with the My Bots Twin setting: the previous Twin returns to the worker bench and the chosen bot takes the seat immediately.',
     botInternetTwinSeatAppoint: 'Appoint',

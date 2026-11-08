@@ -27,8 +27,8 @@ const sidebarSource = readFileSync(
  * ones pinned an icon-only trigger that no longer exists.
  */
 const t = (key: string) => ({
-  botInternet: 'Bot Internet',
-  botHome: 'Bot Home',
+  botInternet: 'BotHub',
+  botHome: 'BotWorks',
   surfaceSwitcherLabel: 'Switch workspace',
   surfaceBotInternetSubtitle: 'Browser, Meta Apps and your Bots',
   surfaceBotHomeSubtitle: 'Tasks, long-term work and records',
@@ -64,17 +64,17 @@ test('the closed switch is ONE capsule that names the current surface', () => {
   assert.doesNotMatch(markup, /data-slot="surface-switch-menu"/);
   // The VISIBLE text is the current surface's name — the thing the rail's
   // icon-only trigger could not show, and the reason the switch moved.
-  assert.match(markup, /data-slot="surface-switch-current"[^>]*>Bot Home</);
+  assert.match(markup, /data-slot="surface-switch-current"[^>]*>BotWorks</);
 });
 
 test('the trigger names the surface it is currently on, visibly and accessibly', () => {
   const home = renderClosed('home');
-  assert.match(home, /aria-label="Switch workspace: Bot Home"/);
-  assert.match(home, /data-slot="surface-switch-current"[^>]*>Bot Home</);
+  assert.match(home, /aria-label="Switch workspace: BotWorks"/);
+  assert.match(home, /data-slot="surface-switch-current"[^>]*>BotWorks</);
 
   const internet = renderClosed('browser');
-  assert.match(internet, /aria-label="Switch workspace: Bot Internet"/);
-  assert.match(internet, /data-slot="surface-switch-current"[^>]*>Bot Internet</);
+  assert.match(internet, /aria-label="Switch workspace: BotHub"/);
+  assert.match(internet, /data-slot="surface-switch-current"[^>]*>BotHub</);
 });
 
 test('the open menu lists both surfaces in order, each with its subtitle', () => {
@@ -82,7 +82,7 @@ test('the open menu lists both surfaces in order, each with its subtitle', () =>
 
   assert.match(markup, /data-slot="surface-switch-menu"/);
   assert.match(markup, /role="menu"/);
-  assert.ok(markup.indexOf('Bot Internet') < markup.indexOf('Bot Home'));
+  assert.ok(markup.indexOf('BotHub') < markup.indexOf('BotWorks'));
   // Subtitles ride the same entries (the "副标语" of the Codex-style menu).
   assert.match(markup, /Browser, Meta Apps and your Bots/);
   assert.match(markup, /Tasks, long-term work and records/);
