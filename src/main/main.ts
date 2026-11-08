@@ -628,6 +628,7 @@ import {
 } from './services/botBrowserSourceLocator';
 import { openMetaApp, resolveMetaAppUrl } from './services/metaAppOpenService';
 import { buildMetaAppAliases } from './libs/metaAppGuard';
+import { inlineHtmlLocalImages } from './libs/inlineHtmlLocalImages';
 import {
   type CommunityMetaAppInstallResult,
   findCommunityMetaAppRecordBySourcePinId,
@@ -19519,6 +19520,44 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
         return { success: true };
       }
       return { success: false, error: 'no_chooser_available' };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  });
+
+  // Inline HTML reports: resolve the local <img> sources of a rendered .html
+  // file into data URIs — the app CSP has no `file:` in img-src, so these
+  // images would render blank. Reads are confined to the document's own
+  // directory tree and to real images (see libs/inlineHtmlLocalImages).
+  registerIpcHandler('fs:inlineHtmlImages', async (_event, payload: { htmlPath: string; srcs: string[] }): Promise<{ success: boolean; images?: Record<string, string>; skipped?: Record<string, string>; error?: string }> => {
+    try {
+      const htmlPath = normalizeWindowsShellPath(payload?.htmlPath ?? '');
+      if (!htmlPath) {
+        return { success: false, error: 'empty_path' };
+      }
+      const srcs = Array.isArray(payload?.srcs) ? payload.srcs.filter((src): src is string => typeof src === 'string') : [];
+      const result = await inlineHtmlLocalImages(
+        {
+          realpath: (target) => fs.promises.realpath(target),
+          stat: (target) => fs.promises.stat(target),
+          readFile: (target) => fs.promises.readFile(target),
+          thumbnail: async (buffer, mime, maxEdge) => {
+            const image = nativeImage.createFromBuffer(buffer);
+            if (image.isEmpty()) return null;
+            const { width, height } = image.getSize();
+            const longest = Math.max(width, height);
+            const scaled = longest > maxEdge
+              ? image.resize(width >= height ? { width: maxEdge, quality: 'good' } : { height: maxEdge, quality: 'good' })
+              : image;
+            // PNG keeps transparency; JPEG re-encodes compactly.
+            return mime === 'image/png'
+              ? { data: scaled.toPNG(), mime: 'image/png' }
+              : { data: scaled.toJPEG(82), mime: 'image/jpeg' };
+          },
+        },
+        { htmlPath, srcs },
+      );
+      return { success: true, images: result.images, skipped: result.skipped };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
     }

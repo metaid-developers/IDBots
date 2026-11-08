@@ -784,6 +784,7 @@ contextBridge.exposeInMainWorld('electron', {
   },
   fs: {
     readTextFile: (filePath: string, maxBytes?: number) => ipcRenderer.invoke('fs:readTextFile', { filePath, maxBytes }),
+    inlineHtmlImages: (htmlPath: string, srcs: string[]) => ipcRenderer.invoke('fs:inlineHtmlImages', { htmlPath, srcs }),
   },
   autoLaunch: {
     get: () => ipcRenderer.invoke('app:getAutoLaunch'),

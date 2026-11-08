@@ -4,6 +4,7 @@ import MarkdownContent from '../MarkdownContent';
 import { i18nService } from '../../services/i18n';
 import { buildLocalFileDirBaseHref } from '../../services/localFileUrl';
 import { formatBytes } from '../update/format';
+import { inlineLocalHtmlImages } from './inlineHtmlImages';
 
 interface MarkdownViewerPanelProps {
   /** Absolute path of the document to render (markdown or HTML). */
@@ -128,7 +129,14 @@ const MarkdownViewerPanel: React.FC<MarkdownViewerPanelProps> = ({ filePath, onC
         const result = await window.electron.fs.readTextFile(filePath);
         if (cancelled) return;
         if (result?.success && typeof result.content === 'string') {
-          setState({ status: 'loaded', content: result.content });
+          // HTML reports: local <img> sources render blank under the app CSP
+          // (no file: in img-src) — swap them for host-resolved data URIs.
+          // Best effort; markdown documents are untouched.
+          const content = isHtmlFile
+            ? await inlineLocalHtmlImages(result.content, filePath)
+            : result.content;
+          if (cancelled) return;
+          setState({ status: 'loaded', content });
         } else {
           setState({
             status: 'error',
@@ -146,7 +154,7 @@ const MarkdownViewerPanel: React.FC<MarkdownViewerPanelProps> = ({ filePath, onC
     return () => {
       cancelled = true;
     };
-  }, [filePath]);
+  }, [filePath, isHtmlFile]);
 
   // HTML reports render through srcdoc (Bot Browser precedent: the app CSP
   // already permits inline scripts/styles, and React attribute-escapes the

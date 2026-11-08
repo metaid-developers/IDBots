@@ -782,6 +782,7 @@ man_base_data_pebble/
 !tests/coworkAssistantDeliveryIndex.test.mjs
 !tests/markdownContentHtmlReportCard.test.tsx
 !tests/inlineHtmlReportBlock.test.tsx
+!tests/inlineHtmlLocalImages.test.tsx
 !tests/inlineMetaAppBlock.test.tsx
 !tests/markdownContentSingleTilde.test.tsx
 !tests/nftCardMarkdown.test.tsx

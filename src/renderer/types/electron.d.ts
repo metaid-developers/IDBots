@@ -1694,6 +1694,8 @@ interface IElectronAPI {
   };
   fs: {
     readTextFile: (filePath: string, maxBytes?: number) => Promise<{ success: boolean; content?: string; size?: number; limit?: number; error?: string }>;
+    /** Desktop-only: local <img> sources of an HTML file → data URIs (document-dir confined, real images only). */
+    inlineHtmlImages?: (htmlPath: string, srcs: string[]) => Promise<{ success: boolean; images?: Record<string, string>; skipped?: Record<string, string>; error?: string }>;
   };
   autoLaunch: {
     get: () => Promise<{ enabled: boolean }>;

@@ -405,6 +405,9 @@ const POST_FREEZE_INVOKE: Record<string, AllowlistEntry> = {
   'updateNotification:hasViewed': { tier: 'N', note: 'Not in `02` v1.0.0 (desktop-only announcement system, 2026-10-26); denied by `02` default-deny pending a change request.' },
   'updateNotification:markAsViewed': { tier: 'N', note: 'Not in `02` v1.0.0 (desktop-only announcement system, 2026-10-26); denied by `02` default-deny pending a change request.' },
   'updateNotification:shouldForceShow': { tier: 'N', note: 'Not in `02` v1.0.0 (desktop-only announcement system, 2026-10-26); denied by `02` default-deny pending a change request.' },
+  'me:getPointsSettings': { tier: 'N', note: 'Not in `02` v1.0.1 (desktop ME credit-pack auto-deduct toggle, 2026-11-07); denied by `02` default-deny pending a change request.' },
+  'me:setPointsSettings': { tier: 'N', note: 'Not in `02` v1.0.1 (desktop ME credit-pack auto-deduct toggle, 2026-11-07); denied by `02` default-deny pending a change request.' },
+  'fs:inlineHtmlImages': { tier: 'N', note: 'Not in `02` v1.0.1 (desktop-only local-image inlining for rendered HTML reports, 2026-11-09); denied by `02` default-deny pending a change request — the mobile renderer degrades to the document as written.' },
 };
 
 export const INVOKE_ALLOWLIST: Record<string, AllowlistEntry> = {
