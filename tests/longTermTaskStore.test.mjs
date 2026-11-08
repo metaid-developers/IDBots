@@ -676,3 +676,29 @@ test('migration: a pre-plan-page database gains plan_artifact_uri via a guarded 
     'new writes carry a plan artifact on the migrated table');
   assert.equal(store.getTask('ltt_old').planArtifactUri, '/tmp/plan.html');
 });
+
+test('findBySessionId: a rotated-away session stays linked to its task; current binding and definition still take precedence', async () => {
+  const { store } = await openStore();
+  const created = store.createTask({ ...SPEC, definitionSessionId: 'birth-chat' }, 'owner');
+  assert.ok(created.ok, JSON.stringify(created));
+  const taskId = created.value.id;
+  const first = created.value.subtasks[0];
+  assert.ok(store.bindSession(first.id, 'old-work', 'system').ok);
+  assert.ok(store.bindSession(first.id, 'new-work', 'system').ok); // rotation
+
+  const current = store.findBySessionId('new-work');
+  assert.equal(current.task.id, taskId);
+  assert.equal(current.subtask.id, first.id, 'the current binding wins');
+
+  const birth = store.findBySessionId('birth-chat');
+  assert.equal(birth.task.id, taskId);
+  assert.equal(birth.subtask, null, 'the definition session links the task, not a sub-project');
+
+  const rotatedAway = store.findBySessionId('old-work');
+  assert.ok(rotatedAway, 'a rotated-away session keeps its origin chip');
+  assert.equal(rotatedAway.task.id, taskId);
+  assert.equal(rotatedAway.subtask.id, first.id);
+
+  assert.equal(store.findBySessionId('old-wor'), null, 'a substring of a recorded id is not membership');
+  assert.equal(store.findBySessionId('unrelated'), null);
+});
