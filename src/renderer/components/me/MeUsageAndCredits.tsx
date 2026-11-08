@@ -61,6 +61,27 @@ const orderStatusClass = (status: string): string => {
   return 'bg-amber-500/10 text-amber-600 dark:text-amber-400';
 };
 
+/**
+ * A subscription checkout order still unpaid after this long was abandoned:
+ * the Alipay 当面付 code lapses after ~2h, while the server janitor only
+ * closes the row at 24h. Rendering it as 「提交中」 for a whole day reads as a
+ * live payment, so it shows 「超时未支付」 and stops driving the status poll.
+ * Server status always wins once it moves (paid / credited / closed). Topup
+ * orders are manual-review rows whose `submitted` state is genuinely
+ * pending, so they never go stale here.
+ */
+export const ME_UNPAID_ORDER_STALE_MS = 2 * 60 * 60 * 1000;
+
+const isUnpaidOrderStatus = (status: string): boolean => /created|pending|submit/i.test(status || '') && !/paid/i.test(status || '');
+
+const isStaleUnpaidSubscriptionOrder = (
+  order: { status: string; createdAt?: number },
+  now: number,
+): boolean => {
+  const createdMs = orderEpochMs(order.createdAt);
+  return createdMs > 0 && isUnpaidOrderStatus(order.status) && now - createdMs > ME_UNPAID_ORDER_STALE_MS;
+};
+
 /** Metering reference types (llm/agent/traffic) — display slots reserved ahead of the burn rollout. */
 const meteringTagLabel = (refType: string | undefined): string | null => {
   const normalized = (refType || '').toLowerCase();
@@ -95,6 +116,8 @@ interface MePaymentRecordRow {
   amountCny?: number;
   status: string;
   rejectReason?: string;
+  /** Subscription order still unpaid past the stale window (超时未支付). */
+  staleUnpaid?: boolean;
 }
 
 const MeUsageAndCredits: React.FC = () => {
@@ -164,15 +187,6 @@ const MeUsageAndCredits: React.FC = () => {
     void loadOrders(true);
   }, [typeFilter]);
 
-  // Status polling while any order (topup or subscription) is still pending
-  // (refresh every 20s).
-  useEffect(() => {
-    const pending = [...orders, ...subOrders].some((order) => /submit|created|pending|paid/i.test(order.status));
-    if (!pending) return;
-    const handle = setInterval(() => void loadOrders(false), 20_000);
-    return () => clearInterval(handle);
-  }, [orders, subOrders, loadOrders]);
-
   const handleRefreshAll = useCallback(async () => {
     setRefreshing(true);
     void ensureMeSnapshot();
@@ -208,6 +222,8 @@ const MeUsageAndCredits: React.FC = () => {
     : snapshot.plans.find((plan) => plan.tier === 'free') ?? null;
 
   // Merged payment records: subscription orders + topup orders, newest first.
+  // `now` pins the staleness sweep to a single clock read per rebuild.
+  const now = Date.now();
   const paymentRows = useMemo<MePaymentRecordRow[]>(() => {
     const rows: MePaymentRecordRow[] = [];
     for (const order of subOrders) {
@@ -225,6 +241,7 @@ const MeUsageAndCredits: React.FC = () => {
         amountCny: order.payAmount ?? order.amountCny,
         status: order.status,
         rejectReason: order.rejectReason,
+        staleUnpaid: isStaleUnpaidSubscriptionOrder(order, now),
       });
     }
     for (const order of orders) {
@@ -241,7 +258,19 @@ const MeUsageAndCredits: React.FC = () => {
       });
     }
     return rows.sort((a, b) => orderEpochMs(b.createdAt) - orderEpochMs(a.createdAt));
-  }, [subOrders, orders, snapshot.plans]);
+  }, [subOrders, orders, snapshot.plans, now]);
+
+  // Status polling while any order (topup or subscription) is still live-
+  // pending (refresh every 20s). Stale-unpaid subscription orders stop
+  // driving the poll — only their server-side closure (janitor) changes them.
+  useEffect(() => {
+    const pendingLive = (status: string): boolean => /submit|created|pending|paid/i.test(status);
+    const pending = orders.some((order) => pendingLive(order.status))
+      || subOrders.some((order) => !isStaleUnpaidSubscriptionOrder(order, now) && pendingLive(order.status));
+    if (!pending) return;
+    const handle = setInterval(() => void loadOrders(false), 20_000);
+    return () => clearInterval(handle);
+  }, [orders, subOrders, loadOrders, now]);
 
   return (
     <div className="h-full overflow-y-auto px-4 py-4 space-y-4 max-w-3xl">
@@ -326,8 +355,12 @@ const MeUsageAndCredits: React.FC = () => {
                       ¥{row.amountCny}
                     </span>
                   )}
-                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${orderStatusClass(row.status)}`}>
-                    {orderStatusLabel(row.status)}
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                    row.staleUnpaid
+                      ? 'bg-claude-surfaceHover text-claude-textSecondary dark:bg-claude-darkSurfaceHover dark:text-claude-darkTextSecondary'
+                      : orderStatusClass(row.status)
+                  }`}>
+                    {row.staleUnpaid ? i18nService.t('meUsageOrderStale') : orderStatusLabel(row.status)}
                   </span>
                 </div>
               </div>
