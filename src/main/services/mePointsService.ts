@@ -139,6 +139,17 @@ export interface MeBalance {
   };
   frozenMilli: number;
   totalAvailable: number;
+  /**
+   * Per-identity credit-pack switch as echoed by /v1/me/balance (absent on
+   * older servers). False = spends may only draw the weekly grant.
+   */
+  autoDeductFromPersistent?: boolean;
+  /**
+   * What a new ME spend can draw now (requirements v1.0 R3): grant remaining
+   * plus the persistent pools when auto-deduct is on, frozen excluded.
+   * Absent on servers that predate it.
+   */
+  spendableMilli?: number;
 }
 
 /** GET /v1/me/subscription response (tolerant: guide pins statusText only). */
@@ -537,7 +548,7 @@ function normalizeMeBalance(data: Record<string, unknown>): MeBalance {
   const persistent = (data.persistent && typeof data.persistent === 'object'
     ? (data.persistent as Record<string, unknown>)
     : {}) as Record<string, unknown>;
-  return {
+  const balance: MeBalance = {
     identityAddress: pickText(data, 'identityAddress', 'identity_address'),
     weeklyGrant: {
       amountMilli: pickNumber(grant, 'amountMilli', 'amount_milli'),
@@ -555,6 +566,19 @@ function normalizeMeBalance(data: Record<string, unknown>): MeBalance {
     frozenMilli: pickNumber(data, 'frozenMilli', 'frozen_milli'),
     totalAvailable: pickNumber(data, 'totalAvailable', 'total_available'),
   };
+  // Optional fields stay absent when the server omits them, so callers can
+  // tell "not reported" from a real false / 0.
+  const autoDeduct = data.autoDeductFromPersistent ?? data.auto_deduct_from_persistent;
+  if (typeof autoDeduct === 'boolean') balance.autoDeductFromPersistent = autoDeduct;
+  const spendableRaw = data.spendableMilli ?? data.spendable_milli;
+  const spendable = typeof spendableRaw === 'number' || typeof spendableRaw === 'string'
+    ? Number(spendableRaw)
+    : Number.NaN;
+  // Unparseable values stay absent: reading them as 0 would claim "no ME left".
+  if (Number.isFinite(spendable) && spendable >= 0 && String(spendableRaw).trim() !== '') {
+    balance.spendableMilli = spendable;
+  }
+  return balance;
 }
 
 export async function getMeSubscription(): Promise<MeSubscription> {

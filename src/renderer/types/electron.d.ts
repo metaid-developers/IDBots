@@ -303,6 +303,10 @@ interface MeBalanceInfo {
   };
   frozenMilli: number;
   totalAvailable: number;
+  /** Per-identity credit-pack switch echoed by /v1/me/balance; absent on older servers. */
+  autoDeductFromPersistent?: boolean;
+  /** What a new ME spend can draw now (grant + packs when auto-deduct is on); absent on older servers. */
+  spendableMilli?: number;
 }
 
 /**
@@ -3076,6 +3080,11 @@ export type {
   MeTopupOrderInfo,
   MeSubmitTopupResultInfo,
   MeSubscriptionOrderInfo,
+  TrafficDailyUsageRowInfo,
+  TrafficUsageSummaryInfo,
+  TrafficMeBillingStatusInfo,
+  TrafficSponsorOrderInfo,
+  TrafficSpendJournalEntryInfo,
 };
 
 export {};
