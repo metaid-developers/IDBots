@@ -15526,7 +15526,7 @@ if (!gotTheLock) {
   });
 
   registerIpcHandler('longtermTask:update', async (_event, input: {
-    taskId: string; title?: string; goal?: string; acceptanceDelegate?: boolean;
+    taskId: string; title?: string; goal?: string; acceptanceDelegate?: boolean; planArtifactUri?: string;
   }) => {
     try {
       const result = getLongTermTaskStore().updateTask(input, 'owner');
