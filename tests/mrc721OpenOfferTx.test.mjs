@@ -219,7 +219,61 @@ test('price floor and key/address mismatch refuse before anything is signed', ()
   );
 });
 
-test('oversized fee and insufficient balance refuse before the buyer signs', () => {
+test('a large funding UTXO pays with change; the seller signature survives the change output', () => {
+  const seller = keypair();
+  const buyer = keypair();
+  const offer = buildOffer(seller);
+  const funding = offer.priceSats + 50_000;
+  const bought = completeMrc721OpenOfferTx({
+    offerTx: offer.offerTx,
+    outpoint: offer.outpoint,
+    sellerAddress: seller.address,
+    priceSats: offer.priceSats,
+    buyerWif: buyer.wif,
+    buyerAddress: buyer.address,
+    feeRate: 1,
+    utxos: [{ txId: '11'.repeat(32), outputIndex: 0, satoshis: funding, address: buyer.address, height: 3 }],
+  });
+  const tx = new mvc.Transaction(bought.txHex);
+  assert.equal(tx.outputs.length, 3, 'outputs: [price → seller, delivery → buyer, change → buyer]');
+  assert.equal(tx.outputs[0].satoshis, offer.priceSats);
+  assert.equal(tx.outputs[1].satoshis, ITEM_SATS);
+  assert.equal(tx.outputs[2].script.toAddress('livenet').toString(), buyer.address);
+  assert.equal(tx.outputs[2].satoshis, bought.changeSats);
+  assert.equal(bought.feeSats + bought.changeSats + offer.priceSats, funding, 'value conserved: funding = price + fee + change');
+  assert.ok(bought.feeSats > 0 && bought.feeSats < 1000, `fee stays normal (${bought.feeSats})`);
+  tx.inputs[0].output = mvc.Transaction.Output.fromObject({
+    script: mvc.Script.buildPublicKeyHashOut(new mvc.Address(seller.address, mvc.Networks.livenet)).toHex(),
+    satoshis: ITEM_SATS,
+  });
+  verifySellerSignature(tx, seller.address, ITEM_SATS);
+});
+
+test('several small UTXOs are combined when no single one covers the price', () => {
+  const seller = keypair();
+  const buyer = keypair();
+  const offer = buildOffer(seller);
+  const bought = completeMrc721OpenOfferTx({
+    offerTx: offer.offerTx,
+    outpoint: offer.outpoint,
+    sellerAddress: seller.address,
+    priceSats: offer.priceSats,
+    buyerWif: buyer.wif,
+    buyerAddress: buyer.address,
+    feeRate: 1,
+    utxos: [
+      { txId: '31'.repeat(32), outputIndex: 0, satoshis: 9_000, address: buyer.address, height: 3 },
+      { txId: '32'.repeat(32), outputIndex: 0, satoshis: 9_000, address: buyer.address, height: 3 },
+      { txId: '33'.repeat(32), outputIndex: 0, satoshis: 9_000, address: buyer.address, height: 3 },
+    ],
+  });
+  const tx = new mvc.Transaction(bought.txHex);
+  assert.equal(tx.inputs.length, 4, 'item input + three funding inputs');
+  assert.equal(bought.spentOutpoints.length, 4);
+  assert.equal(bought.feeSats + bought.changeSats + offer.priceSats, 27_000);
+});
+
+test('dust-sized change folds into a bounded fee, and an empty wallet refuses before signing', () => {
   const seller = keypair();
   const buyer = keypair();
   const offer = buildOffer(seller);
@@ -232,19 +286,20 @@ test('oversized fee and insufficient balance refuse before the buyer signs', () 
     buyerAddress: buyer.address,
     feeRate: 1,
   };
-  assert.throws(
-    () => completeMrc721OpenOfferTx({
-      ...base,
-      utxos: [{ txId: '11'.repeat(32), outputIndex: 0, satoshis: offer.priceSats + 4000, address: buyer.address, height: 3 }],
-    }),
-    /Nothing was signed/,
-  );
+  // 22000 + 700: covers price + normal fee, leftover too small for a visible change output.
+  const tight = completeMrc721OpenOfferTx({
+    ...base,
+    utxos: [{ txId: '41'.repeat(32), outputIndex: 0, satoshis: offer.priceSats + 700, address: buyer.address, height: 3 }],
+  });
+  assert.equal(tight.changeSats, 0);
+  assert.equal(tight.feeSats, 700);
+  assert.equal(new mvc.Transaction(tight.txHex).outputs.length, 2);
   assert.throws(
     () => completeMrc721OpenOfferTx({
       ...base,
       utxos: [{ txId: '22'.repeat(32), outputIndex: 0, satoshis: 1000, address: buyer.address, height: 3 }],
     }),
-    /Not enough MVC balance/,
+    /Not enough MVC balance[\s\S]*Nothing was signed/,
   );
 });
 

@@ -112,16 +112,27 @@ A take produces NO new pin — one ordinary transaction.
    nothing.
 4. `/protocols/mrc721offer` is outside `/nft/*`: offer pins can never be
    treated as items by indexers.
+5. A cancellation pin does NOT revoke the signature. The signed `offerTx` of
+   the original pin stays public on-chain, so while the item sits at the
+   offered outpoint anyone holding that payload can still complete it at the
+   signed price. A real cancel must MOVE the item (a self-transfer to a fresh
+   outpoint); the `active:false` pin only stops advertising. Hosts must
+   implement cancel as revoke-then-declare (§7).
 
 ## 7. Host implementation (this branch)
 
 - Tx primitives: `src/main/libs/mrc721OpenOfferTx.ts` (build / decode / shape
-  assert / payload / complete — offline-tested round-trips).
+  assert / payload / complete — offline-tested round-trips). Buyer funding is
+  ordinary coin selection (several inputs, change at output2): the seller's
+  SINGLE signature commits only output0, so nothing else is frozen.
 - Service: `mrc721OpenOfferService.ts` — publish (holding check → build →
   createPin → local ledger `mrc721_offers:<metabotId>`), list my offers,
-  cancel, take (five gates → complete → broadcast → ledger), market discovery
-  over the R-E endpoints with a structured "R-E not served here" fallback.
-- Agent tools: `mrc721_offer` / `mrc721_offers` / `mrc721_take_offer` /
-  `mrc721_offers_market`, mounted alongside the existing `mrc721_*` family.
+  HARD cancel (self-transfer revoke when the offer is still takeable → then
+  the `active:false` declaration; idempotent on retry), take (five gates →
+  complete → broadcast → ledger), market discovery over the R-E endpoints
+  with a structured "R-E not served here" fallback.
+- Agent tools: `mrc721_offer` / `mrc721_offer_cancel` / `mrc721_offers` /
+  `mrc721_take_offer` / `mrc721_offers_market`, mounted alongside the existing
+  `mrc721_*` family. The take refuses an index row that is a cancellation.
 - Cards: publishes emit the standard `nft-card` with action **`listed`** (the
   existing badge — no renderer contract change).

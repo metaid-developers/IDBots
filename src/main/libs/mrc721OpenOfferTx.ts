@@ -35,7 +35,6 @@ import {
   mrc721ListingError,
   normalizeMrc721Outpoint,
   outpointKey,
-  pickMvc721PaymentUtxo,
   sighashTypeOfScript,
   verifySellerSignature,
   type Mrc721Outpoint,
@@ -234,8 +233,9 @@ export function buildMrc721OpenOfferPayload(params: {
 
 /**
  * Complete a passive offer offline: verify the seller's locked price, append
- * the delivery output at index 1 (item value to the buyer) and the funding
- * input, sign, and produce the broadcast-ready tx. No network, no seller.
+ * the delivery output at index 1 (item value to the buyer), the funding
+ * inputs, and optional buyer change at index 2, sign, and produce the
+ * broadcast-ready tx. No network, no seller.
  */
 export function completeMrc721OpenOfferTx(params: {
   offerTx: string;
@@ -254,6 +254,7 @@ export function completeMrc721OpenOfferTx(params: {
   feeSats: number;
   feeRateEffective: number;
   normalFeeSats: number;
+  changeSats: number;
 } {
   const outpoint = normalizeMrc721Outpoint(params.outpoint);
   const composer = decodeMrc721OpenOfferTx(params.offerTx);
@@ -272,50 +273,129 @@ export function completeMrc721OpenOfferTx(params: {
   const buyer = addressOf(params.buyerAddress);
   composer.appendP2PKHOutput({ address: buyer, satoshis: outpoint.satoshis });
 
-  // Fee estimate AFTER the delivery output exists; the buyer input is not yet
-  // unlocked, so add one P2PKH input size. The item value is value-neutral for
-  // the buyer (input itemValue → output itemValue), so the buyer's net outlay
-  // is price + fee — the same pickMvc721PaymentUtxo economics as the directed swap.
-  const estimatedSize = Math.ceil(composer.getRawHex().length / 2) + P2PKH_INPUT_SIZE;
-  const normalFeeSats = Math.ceil(estimatedSize * params.feeRate);
-  const excludedOutpoints = new Set(params.excludedOutpoints ?? []);
-  excludedOutpoints.add(outpointKey(outpoint));
-  const payment = pickMvc721PaymentUtxo({
-    utxos: params.utxos,
-    priceSats: params.priceSats,
-    normalFeeSats,
-    excludedOutpoints,
-  });
-
+  // Funding (the buyer's side of the deal). Unlike the directed swap — whose
+  // seller signs SIGHASH_ALL and therefore freezes the output set, forcing one
+  // near-exact UTXO with no change — the open offer's seller signed
+  // SIGHASH_SINGLE, which commits ONLY output0. The buyer may append a change
+  // output and several funding inputs without touching the seller signature,
+  // so funding is ordinary coin selection. The item value is value-neutral for
+  // the buyer (input itemValue → output1 itemValue): the net outlay is price + fee.
   const buyerKey = mvc.PrivateKey.fromWIF(params.buyerWif);
   if (buyerKey.toAddress('livenet').toString() !== params.buyerAddress) {
     throw new Error('buyer private key does not match buyerAddress');
   }
-  const inputIndex = composer.appendP2PKHInput({
-    address: buyer,
-    txId: payment.txId,
-    outputIndex: payment.outputIndex,
-    satoshis: payment.satoshis,
+  const excludedOutpoints = new Set(params.excludedOutpoints ?? []);
+  excludedOutpoints.add(outpointKey(outpoint));
+  const funding = selectMrc721OpenOfferFunding({
+    utxos: params.utxos,
+    priceSats: params.priceSats,
+    feeRate: params.feeRate,
+    baseSize: Math.ceil(composer.getRawHex().length / 2),
+    excludedOutpoints,
   });
-  composer.unlockP2PKHInput(buyerKey, inputIndex);
 
-  // The seller signature must STILL verify after the buyer appended an input
-  // and the delivery output — the SINGLE|ACP digest covers neither. If this
-  // ever fails, the offer was not what it claimed.
+  for (const utxo of funding.inputs) {
+    composer.appendP2PKHInput({
+      address: buyer,
+      txId: utxo.txId,
+      outputIndex: utxo.outputIndex,
+      satoshis: utxo.satoshis,
+    });
+  }
+  // Change sits after the delivery output (R-E-3: outputs[2+] = buyer change)
+  // and is appended BEFORE the buyer signs — the buyer's SIGHASH_ALL commits it.
+  if (funding.changeSats > 0) {
+    composer.appendP2PKHOutput({ address: buyer, satoshis: funding.changeSats });
+  }
+  for (let index = 1; index < composer.tx.inputs.length; index += 1) {
+    composer.unlockP2PKHInput(buyerKey, index);
+  }
+
+  // The seller signature must STILL verify after the buyer appended inputs,
+  // the delivery output, and change — the SINGLE|ACP digest covers none of
+  // them. If this ever fails, the offer was not what it claimed.
   verifySellerSignature(composer.tx, params.sellerAddress, outpoint.satoshis);
 
   const txHex = composer.getRawHex();
   const txId = composer.getTxId();
-  const feeSats = payment.satoshis - params.priceSats;
+  const fundedSats = funding.inputs.reduce((sum, utxo) => sum + utxo.satoshis, 0);
+  const feeSats = fundedSats - params.priceSats - funding.changeSats;
   const size = txHex.length / 2;
   return {
     txHex,
     txId,
-    spentOutpoints: [outpointKey(outpoint), getUtxoOutpointKey(payment)],
+    spentOutpoints: [outpointKey(outpoint), ...funding.inputs.map((utxo) => getUtxoOutpointKey(utxo))],
     feeSats,
     feeRateEffective: size > 0 ? feeSats / size : 0,
-    normalFeeSats,
+    normalFeeSats: funding.normalFeeSats,
+    changeSats: funding.changeSats,
   };
+}
+
+/** Upper bound on buyer funding inputs per take (bounds tx size and signing time). */
+export const MRC721_OPEN_OFFER_MAX_FUNDING_INPUTS = 20;
+
+/**
+ * Coin selection for a take: the smallest single UTXO that settles the deal
+ * (fewest inputs, least fragmentation), otherwise largest-first accumulation.
+ * Change below the wallet-visibility floor (MRC721_WALLET_UTXO_FLOOR_SATS) is
+ * folded into the fee instead of creating an output the wallet API would hide,
+ * so the miner fee never exceeds normal fee + floor. Throws before anything is
+ * signed when the wallet cannot cover price + fee.
+ */
+export function selectMrc721OpenOfferFunding(params: {
+  utxos: SpendableMvcUtxo[];
+  priceSats: number;
+  feeRate: number;
+  /** Serialized size of the tx so far (signed item input + price + delivery outputs). */
+  baseSize: number;
+  excludedOutpoints?: ReadonlySet<string>;
+}): { inputs: SpendableMvcUtxo[]; changeSats: number; feeSats: number; normalFeeSats: number } {
+  if (!Number.isFinite(params.feeRate) || params.feeRate <= 0) {
+    throw new Error('feeRate must be a positive number');
+  }
+  const excluded = params.excludedOutpoints ?? new Set<string>();
+  const floor = MRC721_WALLET_UTXO_FLOOR_SATS;
+  const usable = params.utxos.filter((utxo) =>
+    !excluded.has(getUtxoOutpointKey(utxo).toLowerCase()) && utxo.satoshis > floor);
+  const feeFor = (inputCount: number, withChange: boolean): number =>
+    Math.ceil((params.baseSize + inputCount * P2PKH_INPUT_SIZE + (withChange ? P2PKH_OUTPUT_SIZE : 0)) * params.feeRate);
+
+  const plan = (inputs: SpendableMvcUtxo[]) => {
+    const total = inputs.reduce((sum, utxo) => sum + utxo.satoshis, 0);
+    const feeWithChange = feeFor(inputs.length, true);
+    const change = total - params.priceSats - feeWithChange;
+    if (change >= floor) {
+      return { inputs, changeSats: change, feeSats: feeWithChange, normalFeeSats: feeWithChange };
+    }
+    // Change would be dust-sized: fold the whole leftover into the fee. Reached
+    // only when change < floor, so the fee stays below feeWithChange + floor.
+    const feeNoChange = feeFor(inputs.length, false);
+    const leftover = total - params.priceSats;
+    if (leftover >= feeNoChange) {
+      return { inputs, changeSats: 0, feeSats: leftover, normalFeeSats: feeNoChange };
+    }
+    return null;
+  };
+
+  const ascending = [...usable].sort((left, right) => left.satoshis - right.satoshis || left.outputIndex - right.outputIndex);
+  for (const utxo of ascending) {
+    const single = plan([utxo]);
+    if (single) return single;
+  }
+  const picked: SpendableMvcUtxo[] = [];
+  for (const utxo of [...ascending].reverse()) {
+    if (picked.length >= MRC721_OPEN_OFFER_MAX_FUNDING_INPUTS) break;
+    picked.push(utxo);
+    const multi = plan(picked);
+    if (multi) return multi;
+  }
+  const spendable = usable.reduce((sum, utxo) => sum + utxo.satoshis, 0);
+  throw new Error(
+    `Not enough MVC balance to take this offer: it needs about ${params.priceSats + feeFor(1, false)} sats `
+    + `(price ${params.priceSats} + fee), but the buyer wallet has ${spendable} spendable sats across ${usable.length} UTXO(s) `
+    + `above the ${floor}-sat wallet floor (at most ${MRC721_OPEN_OFFER_MAX_FUNDING_INPUTS} are combined). Nothing was signed.`,
+  );
 }
 
 /** Re-exported so tool/service layers need only this module for offer flows. */
