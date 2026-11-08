@@ -1,8 +1,8 @@
 ---
 name: metabot-publish-nft
-description: Guided MRC-721 NFT issuance wizard (MetaID native, pin-based Agent Goods — NOT the metacontract wallet_nft_* legacy line). Use when the owner wants to publish NFT content — "publish an NFT", "issue/release a collection/album/series", "make this an NFT", "fan badge", "mint", "paid-knowledge collection", "NFT 专辑", or asks what NFTs can do here. You walk the owner through: worldview intro → guided field Q&A → a LOCAL mock-preview page (hard gate) → staged on-chain publish (items first, collection_desc LAST) → a visual result page. Also covers adding items to an existing collection and resuming an interrupted issue.
+description: Guided MRC-721 NFT issuance wizard (MetaID native, pin-based Agent Goods — NOT the metacontract wallet_nft_* legacy line). Use when the owner wants to publish NFT content — "publish an NFT", "issue/release a collection/album/series/drop", "make this an NFT", "fan badge", "mint", "paid-knowledge collection", "NFT 专辑", "专辑", "发专辑", "发行专辑", "数字藏品", "数字商品", "数字物品", "AI数字物品", "藏品", "合集", "上链一张图/一个作品", or asks what NFTs (数字藏品/数字商品) can do here — in this product's context ALL these Chinese words mean the same thing, the MRC-721 Agent Good. You walk the owner through: worldview intro → guided field Q&A → a LOCAL mock-preview page (hard gate) → staged on-chain publish (items first, collection_desc LAST) → a visual result page. Also covers adding items to an existing collection and resuming an interrupted issue.
 official: true
-version: 2.1.0
+version: 2.1.1
 ---
 
 # Publishing NFTs (MRC-721 / Agent Goods) — guided issuance wizard
@@ -42,9 +42,17 @@ they did not mean to create.
 
 Triggers: publish/issue/release an NFT, album, collection, series, drop;
 fan badge; paid-knowledge collection; "make this an NFT"; mint; Agent Goods;
-NFT 专辑. Also fire proactively when the owner shows a batch of creative
-files and muses about "doing a series" — offer the wizard, do not start
-writing on-chain.
+NFT 专辑. Chinese vocabulary maps onto this skill too — 数字藏品, 数字商品,
+数字物品, AI数字物品, 藏品, 专辑/发专辑/发行专辑, 合集 all mean the MRC-721
+Agent Good in this product's context: fire the wizard on them just as on
+"NFT". Also fire proactively when the owner shows a batch of creative
+files and muses about "doing a series" ("做个系列", "出个专栏") — offer the
+wizard, do not start writing on-chain.
+
+**Vocabulary rule**: after triggering, MIRROR the owner's word in every
+reply — if they say 数字藏品, say 数字藏品; if they say 专辑, say 专辑.
+Never force the term "NFT" on a conversation that uses another word; the
+protocol underneath (MRC-721) stays the same either way.
 
 Open with a SHORT worldview beat (a few sentences; expand only if asked):
 on the AI internet an NFT is a real, tangible good — it cannot be
