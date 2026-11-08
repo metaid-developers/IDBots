@@ -6,20 +6,30 @@ import test from 'node:test';
 import {
   getHomeSectionModel,
   getRailHomeNavModel,
+  getRailInternetNavModel,
   getSidebarPrimaryNavModel,
 } from '../src/renderer/components/sidebar/sidebarNavigation.js';
 
 /**
  * Bot Home face: layout, destination entry point and the session records body.
  *
- * Owner ruling 2026-11-08 14:22 (supersedes the 14:15 three-column Home):
- * "Bot home 界面先恢复到原来的状态，目前的 bot internet 界面的改动不变" —
- * Bot Home goes back to the baseline TWO-column form, Bot Internet keeps the
- * three-column shell untouched.
+ * Owner ruling 2026-11-08 14:22: "Bot home 界面先恢复到原来的状态，目前的 bot
+ * internet 界面的改动不变" — Bot Home goes back to the baseline TWO-column form,
+ * Bot Internet keeps the three-column shell untouched.
+ *
+ * Owner ruling 2026-11-08 15:46 (supersedes the 14:22 menu/tab composition
+ * pinned below, and §X of the closeout report):
+ *   · the 「我的 Bot」TEXT ROW is retired from the Home menu (its destination
+ *     keeps its Bot Internet rail entry — myBots → metabotsView);
+ *   · the 「群任务」RECORD SIGN is retired: the tab row is two signs
+ *     (本地对话 / 线上对话), and the group_task chat-channel list no longer
+ *     renders inside Home. The 多人任务 row still opens the management view.
+ * Nothing is deleted data-wise: sessions stay in the store, task rows stay in
+ * the groupTasks slice; only the two Home signboards are gone.
  *
  * What that means for this suite:
  *   1. The Home face mounts NO rail. Its destinations are the baseline TEXT
- *      rows (新建任务 / 长期任务 / 多人任务 / 我的 Bot) in HomeSidebar.tsx.
+ *      rows (新建任务 / 长期任务 / 多人任务) in HomeSidebar.tsx.
  *   2. The record-type selector is the sidebar's own text tab row — the drawer
  *      stays retired (owner ruled it redundant), and this is its only entrance.
  *   3. The amber 「待拍板」 decision dot is back on the restored 长期任务 row:
@@ -27,7 +37,8 @@ import {
  *   4. The records list keeps the accepted 6165d6449 fusion unchanged: by-Bot
  *      grouped template on both faces, group header = avatar + name + trailing
  *      +, no empty groups on the online face, per-face memory keys.
- *   5. group_task chat channels stay reachable under the group tab.
+ *   5. Group-task CHAT CHANNELS no longer have a Home entry (15:46); the
+ *      多人任务 row is the management-view door, pinned below.
  *
  * Internet anchors (mid-column header, Co-Work panel, rail) are NOT touched by
  * the restore and are pinned by workspaceRailStatic / botBrowserShellStatic.
@@ -47,6 +58,7 @@ const homeSidebarSource = read('src/renderer/components/HomeSidebar.tsx');
 const sidebarSource = read('src/renderer/components/Sidebar.tsx');
 const railSource = read('src/renderer/components/layout/WorkspaceRail.tsx');
 const i18nSource = read('src/renderer/services/i18n.ts');
+const navModelSource = read('src/renderer/components/sidebar/sidebarNavigation.js');
 
 test('the Home face mounts the restored text sidebar and NO rail', () => {
   // App gates the left slot on the surface: Home → HomeSidebar, Internet →
@@ -71,16 +83,29 @@ test('the Home face mounts the restored text sidebar and NO rail', () => {
   assert.match(homeSidebarSource, /i18nService\.t\('coworkHistory'\)/);
 });
 
-test('the Home destinations are the baseline text menu rows', () => {
+test('the Home destinations are the baseline text menu rows — 我的 Bot retired', () => {
   const homeRows = getSidebarPrimaryNavModel({
     t: (key) => key,
     hasRunningScheduledTask: false,
   }).filter((item) => !item.hidden);
   assert.deepEqual(
     homeRows.map((item) => item.id),
-    ['scheduledTasks', 'groupTasks', 'metabots'],
-    'long-term / multi-bot / my-bots — the baseline menu after the creation action',
+    ['scheduledTasks', 'groupTasks'],
+    'long-term / multi-bot — the owner retired the 我的 Bot row (15:46)',
   );
+
+  // The roster did not lose its only door: the Bot Internet rail keeps myBots,
+  // and it resolves to the same metabotsView.
+  const internetRows = getRailInternetNavModel({ t: (key) => key }).filter((item) => !item.hidden);
+  assert.equal(internetRows.find((item) => item.id === 'myBots')?.label, 'metabots');
+
+  // The Home model itself carries no 我的 Bot row: no id, no cpuChip icon.
+  const modelBody = navModelSource.slice(
+    navModelSource.indexOf('export function getSidebarPrimaryNavModel'),
+    navModelSource.indexOf('export function getSidebarInternetNavModel'),
+  );
+  assert.doesNotMatch(modelBody, /id: 'metabots'/);
+  assert.doesNotMatch(modelBody, /cpuChip/);
 
   assert.match(homeSidebarSource, /getSidebarPrimaryNavModel/);
   assert.match(homeSidebarSource, /onClick=\{onNewChat\}/);
@@ -88,7 +113,9 @@ test('the Home destinations are the baseline text menu rows', () => {
   assert.match(homeSidebarSource, /const handlePrimaryNavClick = \(itemId: string\) => \{/);
   assert.match(homeSidebarSource, /onShowScheduledTasks\(\)/);
   assert.match(homeSidebarSource, /onShowGroupTasks\(\)/);
-  assert.match(homeSidebarSource, /onShowMetabots\(\)/);
+  // No Home-side 我的 Bot wiring survives: no prop, no handler branch.
+  assert.doesNotMatch(homeSidebarSource, /onShowMetabots/);
+  assert.doesNotMatch(homeSidebarSource, /itemId === 'metabots'/);
 
   // Row order is data, not scatter: the creation row sits above the mapped
   // rows, and the click handlers never re-open a drilled-in group task.
@@ -106,16 +133,26 @@ test('the record type has exactly ONE entry point: the sidebar text tabs', () =>
   assert.doesNotMatch(homeSidebarSource, /getHomeSectionModel/);
   assert.doesNotMatch(appSource, /data-slot="home-record-type"/);
 
-  // The tab row is the selector: three baseline scopes, all rendered as text.
+  // The tab row is the selector: TWO signs after the 15:46 ruling (本地对话 /
+  // 线上对话), both rendered as text. The 群任务 sign is gone.
   const tableStart = homeSidebarSource.indexOf('const TASK_RECORD_TABS');
   const tableEnd = homeSidebarSource.indexOf('const TASK_RECORD_TAB_STORAGE_KEY');
   const table = homeSidebarSource.slice(tableStart, tableEnd);
   assert.match(table, /id: 'local'/);
   assert.match(table, /id: 'a2a'/);
-  assert.match(table, /id: 'group'/);
-  assert.equal((table.match(/id: '/g) ?? []).length, 3);
-  assert.match(homeSidebarSource, /data-slot="home-session-scope"[\s\S]{0,400}grid-cols-3/);
+  assert.doesNotMatch(table, /id: 'group'/);
+  assert.equal((table.match(/id: '/g) ?? []).length, 2);
+  assert.match(homeSidebarSource, /data-slot="home-session-scope"[\s\S]{0,400}grid-cols-2/);
   assert.match(homeSidebarSource, /aria-pressed=\{isActive\}/);
+
+  // The retired sign took its whole render branch with it — no task-card list,
+  // no group-task session slot, no group-only load gate survives on Home.
+  assert.doesNotMatch(homeSidebarSource, /UnifiedTaskList/);
+  assert.doesNotMatch(homeSidebarSource, /data-slot="group-task-sessions"/);
+  assert.doesNotMatch(homeSidebarSource, /taskRecordTab !== 'group'/);
+  assert.doesNotMatch(homeSidebarSource, /sessionGroups\.group/);
+  // A 'group' value persisted before the ruling must not resurrect the sign.
+  assert.match(homeSidebarSource, /if \(stored === 'a2a'\) return stored;/);
 });
 
 test('the records body keeps the accepted by-Bot grouped template', () => {
@@ -174,21 +211,31 @@ test('both lists default to 按 Bot, and each face keeps its own memory keys', (
   assert.match(listSource, /\}, \[groupFace\]\);/);
 });
 
-test('group-task sessions stay reachable under the group tab', () => {
-  assert.match(homeSidebarSource, /data-slot="group-task-sessions"/);
-  assert.match(
-    homeSidebarSource,
-    /data-slot="group-task-sessions"[\s\S]{0,600}sessions=\{sessionGroups\.group\}/,
-    'the group-task session list is fed by the group_task session bucket',
-  );
-  assert.match(
-    homeSidebarSource,
-    /group:\s*homeSessions\.filter\(\(session\)\s*=>\s*session\.sessionType\s*===\s*'group_task'\)/,
-  );
-  // The tab loads/polls the task rows when it opens, not on app start.
-  assert.match(homeSidebarSource, /if \(taskRecordTab !== 'group'\) return;\s*\n\s*void groupTaskService\.loadTasks\(\);/);
-  assert.match(homeSidebarSource, /if \(taskRecordTab !== 'group'\) return;\s*\n\s*let cancelled = false;/);
-  // Both locales carry the section title, so the list is never unlabelled.
+test('the group-task door is the 多人任务 row; the Home record list is two tabs', () => {
+  // Owner ruling 2026-11-08 15:46 SUPERSEDES the 14:22 contract that group-task
+  // chat channels stay reachable under a Home 「群任务」tab. The sign is retired,
+  // so the channel list no longer renders inside Home; the management view keeps
+  // its door through the 多人任务 menu row, which this batch leaves untouched.
+  assert.match(homeSidebarSource, /if \(itemId === 'groupTasks'\) \{/);
+  assert.match(homeSidebarSource, /dispatch\(selectGroupTask\(null\)\)/);
+  assert.match(homeSidebarSource, /onShowGroupTasks\(\)/);
+
+  // The management view loads its own task rows — it never depended on the tab.
+  const groupTasksView = read('src/renderer/components/groupTasks/GroupTasksView.tsx');
+  assert.match(groupTasksView, /void groupTaskService\.loadTasks\(\);/);
+
+  // No data was deleted on the view side: Home still reads the FULL session list
+  // (search spans it) and the default local list keeps excluding group_task rows.
+  assert.match(homeSidebarSource, /const homeSessions = sessions;/);
+  assert.match(homeSidebarSource, /session\.sessionType !== 'group_task'/);
+  // …and it derives no group bucket that a retired sign could select.
+  assert.doesNotMatch(homeSidebarSource, /group:\s*homeSessions\.filter\(\(session\)\s*=>\s*session\.sessionType\s*===\s*'group_task'\)/);
+
+  // The Bot Internet middle column keeps its own (untouched) group bucket, so
+  // the older sidebar contract still holds where it is still rendered.
+  assert.match(sidebarSource, /group:\s*homeSessions\.filter\(\(session\)\s*=>\s*session\.sessionType\s*===\s*'group_task'\)/);
+  assert.match(sidebarSource, /data-slot="group-task-sessions"/);
+  // Both locales carry the section title, so the Internet copy is never unlabelled.
   assert.equal((i18nSource.match(/homeMidGroupSessionsTitle:/g) ?? []).length, 2);
 });
 

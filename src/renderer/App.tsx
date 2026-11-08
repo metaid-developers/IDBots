@@ -639,13 +639,6 @@ const App: React.FC = () => {
     setMainView('groupTasks');
   }, []);
 
-  /** Bot Home's 我的 Bot text row (restored baseline menu). The Bot Internet
-   * surface reaches the same roster through its own rail pane; both resolve
-   * through workspaceDestinations.js to the same renderer. */
-  const handleShowMetabots = useCallback(() => {
-    setMainView('metabots');
-  }, []);
-
   const handleNewGroupTask = useCallback(() => {
     setIsNewGroupTaskOpen(true);
   }, []);
@@ -1630,7 +1623,6 @@ const App: React.FC = () => {
             onShowCowork={handleShowCowork}
             onShowScheduledTasks={handleShowScheduledTasks}
             onShowGroupTasks={handleShowGroupTasks}
-            onShowMetabots={handleShowMetabots}
             onNewChat={handleBlankNewChat}
             mode={botBrowserShell.surfaceMode}
             onSelectHome={botBrowserShell.switchToHome}

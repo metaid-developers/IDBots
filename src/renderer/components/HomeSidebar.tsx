@@ -2,23 +2,15 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState } from '../store';
 import { coworkService } from '../services/cowork';
-import { groupTaskService } from '../services/groupTaskService';
 import { i18nService } from '../services/i18n';
 import CoworkSessionList from './cowork/CoworkSessionList';
 import CoworkSearchModal from './cowork/CoworkSearchModal';
 import SessionViewOptionsMenu from './cowork/SessionViewOptionsMenu';
-import { UnifiedTaskList } from './groupTasks/UnifiedTaskList';
-import type { GroupTaskTypeVariant } from './groupTasks/GroupTaskSidebarList';
-import { OPEN_TEAM_COLLAB_POLL_INTERVAL_MS } from './groupTasks/OpenTeamCollabsSection';
-import { openTeamCollabService } from '../services/openTeamCollabService';
-import { selectCollab, selectTask as selectGroupTask } from '../store/slices/groupTasksSlice';
+import { selectTask as selectGroupTask } from '../store/slices/groupTasksSlice';
 import { clearCurrentSession, setNewTaskMetabotId } from '../store/slices/coworkSlice';
-import type { OpenTeamCollabSummary } from '../types/openTeamCollab';
-import { buildUnifiedTaskList } from '../utils/unifiedTaskList';
 import {
   ArchiveBoxIcon,
   ClockIcon,
-  CpuChipIcon,
   MagnifyingGlassIcon,
   UserGroupIcon,
   XMarkIcon,
@@ -54,9 +46,18 @@ import type { SettingsOpenOptions } from './Settings';
  *
  *   header (collapse toggle + update badge)
  *   surface switcher (the SAME Codex×IDBots capsule; original sidebar-top slot)
- *   text MENU: 新建任务 / 长期任务 / 多人任务 / 我的 Bot
- *   records block: 任务记录 header + local/online/group tabs + list
+ *   text MENU: 新建任务 / 长期任务 / 多人任务
+ *   records block: 任务记录 header + local/online tabs + list
  *   footer: Settings + background/sleep badges + ME balance
+ *
+ * OWNER RULING 2026-11-08 15:46 (supersedes the 14:22 menu/tabs restored above):
+ *   · the 「我的 Bot」menu row is retired — the Bot roster keeps its entry on
+ *     the Bot Internet surface (rail myBots pane, same metabotsView);
+ *   · the 「群任务」record tab is retired — the 多人任务 row still opens the
+ *     group-task management view (GroupTasksView), so task management keeps its
+ *     door. The group_task CHAT CHANNELS no longer render inside Home.
+ *   · no data is deleted anywhere: sessions stay in the store and the task rows
+ *     stay in the groupTasks slice. Only the two Home signboards are gone.
  *
  * The Bot Internet surface keeps the three-column shell (rail + mid column +
  * browser/panel) untouched; this component is mounted only while
@@ -77,13 +78,15 @@ import type { SettingsOpenOptions } from './Settings';
  * the list (text entry point), as the owner ruled when retiring the drawer.
  */
 
-/** The three baseline record scopes. `group` is the group-task chat channels. */
-type TaskRecordTab = 'local' | 'a2a' | 'group';
+/** The two record scopes the owner kept on Home (2026-11-08 15:46).
+ *  The third baseline scope (`group`, the group-task chat channels) is retired:
+ *  its sign is gone from the tab row, and the management view stays reachable
+ *  from the 多人任务 menu row. */
+type TaskRecordTab = 'local' | 'a2a';
 
 const TASK_RECORD_TABS: Array<{ id: TaskRecordTab; labelKey: string; emptyKey: string }> = [
   { id: 'local', labelKey: 'coworkTabLocal', emptyKey: 'coworkEmptyLocal' },
   { id: 'a2a', labelKey: 'coworkTabA2A', emptyKey: 'coworkEmptyA2A' },
-  { id: 'group', labelKey: 'coworkTabGroup', emptyKey: 'coworkEmptyGroup' },
 ];
 
 /** localStorage key for the remembered record tab (shared with the baseline). */
@@ -92,7 +95,9 @@ const TASK_RECORD_TAB_STORAGE_KEY = 'taskRecordTab';
 const loadTaskRecordTab = (): TaskRecordTab => {
   try {
     const stored = window.localStorage.getItem(TASK_RECORD_TAB_STORAGE_KEY);
-    if (stored === 'a2a' || stored === 'group') return stored;
+    // Only the kept scopes restore. A 'group' value persisted before the 15:46
+    // ruling falls back to the default tab instead of resurrecting a dead sign.
+    if (stored === 'a2a') return stored;
   } catch {
     // localStorage unavailable; fall through to the default tab.
   }
@@ -121,7 +126,6 @@ interface HomeSidebarProps {
   onShowCowork: () => void;
   onShowScheduledTasks: () => void;
   onShowGroupTasks: () => void;
-  onShowMetabots: () => void;
   onNewChat: () => void;
   mode: BotBrowserSurfaceMode;
   /** Return to the Home surface from the switcher menu. */
@@ -145,7 +149,6 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
   onShowCowork,
   onShowScheduledTasks,
   onShowGroupTasks,
-  onShowMetabots,
   onNewChat,
   mode,
   onSelectHome,
@@ -161,14 +164,10 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
   const sessions = useSelector((state: RootState) => state.cowork.sessions);
   const currentSessionId = useSelector((state: RootState) => state.cowork.currentSessionId);
   const unreadSessionIds = useSelector((state: RootState) => state.cowork.unreadSessionIds);
-  const groupTasks = useSelector((state: RootState) => state.groupTasks.tasks);
-  const selectedGroupTaskId = useSelector((state: RootState) => state.groupTasks.selectedTaskId);
-  const selectedCollabId = useSelector((state: RootState) => state.groupTasks.selectedCollabId);
   const longTermBoard = useSelector((state: RootState) => state.longTermTask.board);
   const scheduledTasks = useSelector((state: RootState) => state.scheduledTask.tasks);
   const dispatch = useDispatch();
 
-  const [openTeamCollabs, setOpenTeamCollabs] = useState<OpenTeamCollabSummary[]>([]);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [taskRecordTab, setTaskRecordTab] = useState<TaskRecordTab>(loadTaskRecordTab);
   const [isBatchArchiveMode, setIsBatchArchiveMode] = useState(false);
@@ -232,10 +231,15 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
   };
 
   // Sessions grouped by category: local (human↔MetaBot chats, EXCLUDING both
-  // browser co-work sessions and group-task channels), a2a (MetaBot↔MetaBot),
-  // group (group-task chat channels). IM rows belong to the LOCAL list even
-  // when an older row is still stored as 'a2a' — the mapping channel is the
-  // display source of truth, so this is a render-time reclassification.
+  // browser co-work sessions and group-task channels) and a2a (MetaBot↔MetaBot).
+  // IM rows belong to the LOCAL list even when an older row is still stored as
+  // 'a2a' — the mapping channel is the display source of truth, so this is a
+  // render-time reclassification.
+  //
+  // There is deliberately NO `group` bucket any more (owner ruling 15:46: the
+  // 群任务 sign is retired). Nothing was deleted: group_task sessions stay in
+  // `homeSessions`/the store and the 多人任务 management view lists the tasks;
+  // this list just stops deriving a Home bucket that no sign could ever select.
   const sessionGroups = useMemo(() => {
     const isImSession = (session: CoworkSessionSummary) => Boolean(session.imChannel);
     const isLocal = (session: CoworkSessionSummary) =>
@@ -245,7 +249,6 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
     return {
       local: homeSessions.filter(isLocal),
       a2a: homeSessions.filter((session) => session.sessionType === 'a2a' && !isImSession(session)),
-      group: homeSessions.filter((session) => session.sessionType === 'group_task'),
     };
   }, [homeSessions]);
 
@@ -262,22 +265,6 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
   const localListSessions = taskRecordTab === 'local' ? localHumanSessions : sessionGroups[taskRecordTab];
   const tabbedSessions = sessionGroups[taskRecordTab];
 
-  // Unified task list for the group-task tab: local group tasks + OpenTeam
-  // collabs, newest first. Each item carries its type badge variant.
-  const unifiedTaskList = useMemo(
-    () => buildUnifiedTaskList(groupTasks, openTeamCollabs),
-    [groupTasks, openTeamCollabs],
-  );
-  const taskTypeById = useMemo(() => {
-    const map = new Map<number, GroupTaskTypeVariant>();
-    for (const item of unifiedTaskList) {
-      if (item.kind !== 'openteam-guest') {
-        map.set(item.task.id, item.kind);
-      }
-    }
-    return map;
-  }, [unifiedTaskList]);
-
   const tabStats = useMemo(() => {
     const unreadSet = new Set(unreadSessionIds);
     const unreadOf = (list: CoworkSessionSummary[]) => list.filter((session) => unreadSet.has(session.id)).length;
@@ -287,9 +274,8 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
         unread: unreadOf(localHumanSessions) + unreadOf(localFollowUpSessions),
       },
       a2a: { count: sessionGroups.a2a.length, unread: unreadOf(sessionGroups.a2a) },
-      group: { count: unifiedTaskList.length, unread: unreadOf(sessionGroups.group) },
     };
-  }, [sessionGroups, localHumanSessions, localFollowUpSessions, unreadSessionIds, unifiedTaskList.length]);
+  }, [sessionGroups, localHumanSessions, localFollowUpSessions, unreadSessionIds]);
 
   // The view mode of the face currently on screen, and its setter. Both faces
   // render the same grouped component; only the remembered choice differs.
@@ -297,9 +283,7 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
   const handleSetFaceViewMode = taskRecordTab === 'local' ? handleSetSessionViewMode : handleSetA2aViewMode;
   const hasFaceSessions = taskRecordTab === 'local'
     ? localHumanSessions.length > 0
-    : taskRecordTab === 'a2a'
-      ? sessionGroups.a2a.length > 0
-      : false;
+    : sessionGroups.a2a.length > 0;
 
   // The 长期任务 row's attention dot. Same derivation and condition as the
   // three-column rail's copy — the rail is not mounted on the Home face, so
@@ -333,36 +317,6 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
       window.removeEventListener('cowork:shortcut:search', handleSearch);
     };
   }, [onShowCowork]);
-
-  // The group-task rows live in their own record tab again, so the load gate
-  // follows the tab (baseline behaviour) instead of the removed rail section.
-  useEffect(() => {
-    if (taskRecordTab !== 'group') return;
-    void groupTaskService.loadTasks();
-  }, [taskRecordTab]);
-
-  // Collab rows ride the same gate: load on entering the group tab, then poll
-  // so new remote collaborations surface without leaving it.
-  useEffect(() => {
-    if (taskRecordTab !== 'group') return;
-    let cancelled = false;
-    const load = () => {
-      openTeamCollabService
-        .list()
-        .then((list) => {
-          if (!cancelled) setOpenTeamCollabs(list);
-        })
-        .catch(() => {
-          // Traceability rows must never break the records list.
-        });
-    };
-    load();
-    const timer = setInterval(load, OPEN_TEAM_COLLAB_POLL_INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [taskRecordTab]);
 
   // Leaving the local tab ends any batch-archive selection in progress.
   useEffect(() => {
@@ -476,28 +430,6 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
     onShowCowork();
   });
 
-  const handleSelectGroupTask = (taskId: number) => {
-    onShowGroupTasks();
-    dispatch(selectGroupTask(taskId));
-  };
-
-  const handleSelectOpenTeamCollab = (collabId: number) => {
-    onShowGroupTasks();
-    dispatch(selectCollab(collabId));
-  };
-
-  const handleToggleGroupTaskPin = async (taskId: number, pinned: boolean) => {
-    await groupTaskService.setTaskPinned(taskId, pinned);
-  };
-
-  const handleRenameGroupTask = async (taskId: number, title: string) => {
-    await groupTaskService.renameTask(taskId, title);
-  };
-
-  const handleArchiveGroupTask = async (taskId: number) => {
-    await groupTaskService.archiveTask(taskId);
-  };
-
   const handlePrimaryNavClick = (itemId: string) => {
     setIsSearchOpen(false);
     if (itemId === 'scheduledTasks') {
@@ -509,18 +441,13 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
       // task/collab was drilled into last time.
       dispatch(selectGroupTask(null));
       onShowGroupTasks();
-      return;
-    }
-    if (itemId === 'metabots') {
-      onShowMetabots();
     }
   };
 
-  const renderNavIcon = (icon: string) => {
-    if (icon === 'clock') return <ClockIcon className="h-4 w-4" />;
-    if (icon === 'userGroup') return <UserGroupIcon className="h-4 w-4" />;
-    return <CpuChipIcon className="h-4 w-4" />;
-  };
+  // Only two icon tokens remain in the Home menu (clock / userGroup); the
+  // 「我的 Bot」row that used cpuChip is retired (owner 15:46).
+  const renderNavIcon = (icon: string) =>
+    icon === 'clock' ? <ClockIcon className="h-4 w-4" /> : <UserGroupIcon className="h-4 w-4" />;
 
   const renderNavContent = (item: {
     id: string;
@@ -648,12 +575,14 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
             data-slot="home-session-scope"
             role="group"
             aria-label={i18nService.t('coworkHistory')}
-            className="grid w-full grid-cols-3 gap-1 rounded-lg border border-claude-border/70 bg-claude-bg/80 p-1 mt-2 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80"
+            className="grid w-full grid-cols-2 gap-1 rounded-lg border border-claude-border/70 bg-claude-bg/80 p-1 mt-2 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80"
           >
             {TASK_RECORD_TABS.map((tab, index) => {
               const isActive = taskRecordTab === tab.id;
               const stats = tabStats[tab.id];
-              const countTipKey = tab.id === 'group' ? 'coworkTabCountGroup' : 'coworkTabCountChats';
+              // Both remaining signs count CHATS; the group-task count tip
+              // belonged to the retired 群任务 sign.
+              const countTipKey = 'coworkTabCountChats';
               const countTip = i18nService.t(countTipKey).replace('{count}', String(stats.count));
               const tooltipAlign = index === 0
                 ? 'left-0'
@@ -751,7 +680,7 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
         )}
         <SessionViewOptionsMenu
           anchorRef={viewMenuButtonRef}
-          open={isViewMenuOpen && taskRecordTab !== 'group' && !isBatchArchiveMode}
+          open={isViewMenuOpen && !isBatchArchiveMode}
           onClose={() => setIsViewMenuOpen(false)}
           viewMode={faceViewMode}
           sortMode={sessionSortMode}
@@ -760,85 +689,38 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
         />
         {/* Scrollable list area */}
         <div className="flex-1 min-h-0 overflow-y-auto pb-4">
-          {taskRecordTab === 'group' ? (
-            <>
-              {unifiedTaskList.length === 0 ? (
-                <div className="text-center py-8">
-                  <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                    {i18nService.t(activeTaskRecordTab.emptyKey)}
-                  </p>
-                </div>
-              ) : (
-                <UnifiedTaskList
-                  items={unifiedTaskList}
-                  selectedTaskId={selectedGroupTaskId}
-                  selectedCollabId={selectedCollabId}
-                  onSelectTask={handleSelectGroupTask}
-                  onSelectCollab={handleSelectOpenTeamCollab}
-                  onTogglePin={handleToggleGroupTaskPin}
-                  onRename={handleRenameGroupTask}
-                  onArchive={handleArchiveGroupTask}
-                  getTaskType={(task) => taskTypeById.get(task.id) ?? 'local'}
-                  emptyText={i18nService.t(activeTaskRecordTab.emptyKey)}
-                />
-              )}
-              {/* Group-task CHAT CHANNELS: the baseline group tab listed only
-                  the task cards, which left standalone channels with no entry.
-                  They stay listed here (fusion from the accepted reshuffle) so
-                  every session_type='group_task' session remains reachable. */}
-              <div
-                data-slot="group-task-sessions"
-                className="mt-1 border-t border-claude-border/60 pt-1 dark:border-claude-darkBorder/60"
-              >
-                <div className="px-2 pb-1 pt-1 text-[10px] font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                  {i18nService.t('homeMidGroupSessionsTitle')}
-                </div>
-                <CoworkSessionList
-                  sessions={sessionGroups.group}
-                  currentSessionId={currentSessionId}
-                  onSelectSession={listOnSelectSession}
-                  onDeleteSession={listOnDeleteSession}
-                  onTogglePin={listOnTogglePin}
-                  onRenameSession={listOnRenameSession}
-                  emptyText={i18nService.t('coworkEmptyGroup')}
-                  language={language}
-                />
-              </div>
-            </>
-          ) : (
-            <CoworkSessionList
-              sessions={localListSessions}
-              currentSessionId={currentSessionId}
-              onSelectSession={listOnSelectSession}
-              onDeleteSession={listOnDeleteSession}
-              onTogglePin={listOnTogglePin}
-              onMoveSessionToSection={taskRecordTab === 'local' ? listOnMoveSessionToSection : undefined}
-              onRenameSession={listOnRenameSession}
-              emptyText={i18nService.t(activeTaskRecordTab.emptyKey)}
-              selectionMode={isBatchArchiveMode && taskRecordTab === 'local'}
-              selectedSessionIds={batchSelectedIds}
-              onToggleSessionSelected={listOnToggleSessionSelected}
-              /** Both faces render the SAME by-Bot grouped template and
-               * default to 按 Bot; each keeps its own remembered choice. */
-              viewMode={faceViewMode}
-              sortMode={sessionSortMode}
-              groupFace={taskRecordTab}
-              language={language}
-              /** Local chats: machine-started runs fold into one collapsed
-               * "Autonomous Tasks" folder below the Follow-Up section. */
-              autoSessions={taskRecordTab === 'local' ? localAutoSessions : undefined}
-              /** Local chats: sessions awaiting a human decision or reply
-               * render in the Follow-Up section above the fold. */
-              followUpSessions={taskRecordTab === 'local' ? localFollowUpSessions : undefined}
-              decisionSessionIds={taskRecordTab === 'local' ? decisionSessionIds : undefined}
-              /** Online chats: the bot dropdown narrows WHICH bots' groups
-               * are shown (全部 Bot by default). */
-              botSelector={taskRecordTab === 'a2a'}
-              /** The trailing + on a bot group header starts a new task with
-               * that bot. Same action and same handler on BOTH faces. */
-              onQuickCreateTask={handleQuickCreateTask}
-            />
-          )}
+          <CoworkSessionList
+            sessions={localListSessions}
+            currentSessionId={currentSessionId}
+            onSelectSession={listOnSelectSession}
+            onDeleteSession={listOnDeleteSession}
+            onTogglePin={listOnTogglePin}
+            onMoveSessionToSection={taskRecordTab === 'local' ? listOnMoveSessionToSection : undefined}
+            onRenameSession={listOnRenameSession}
+            emptyText={i18nService.t(activeTaskRecordTab.emptyKey)}
+            selectionMode={isBatchArchiveMode && taskRecordTab === 'local'}
+            selectedSessionIds={batchSelectedIds}
+            onToggleSessionSelected={listOnToggleSessionSelected}
+            /** Both faces render the SAME by-Bot grouped template and
+             * default to 按 Bot; each keeps its own remembered choice. */
+            viewMode={faceViewMode}
+            sortMode={sessionSortMode}
+            groupFace={taskRecordTab}
+            language={language}
+            /** Local chats: machine-started runs fold into one collapsed
+             * "Autonomous Tasks" folder below the Follow-Up section. */
+            autoSessions={taskRecordTab === 'local' ? localAutoSessions : undefined}
+            /** Local chats: sessions awaiting a human decision or reply
+             * render in the Follow-Up section above the fold. */
+            followUpSessions={taskRecordTab === 'local' ? localFollowUpSessions : undefined}
+            decisionSessionIds={taskRecordTab === 'local' ? decisionSessionIds : undefined}
+            /** Online chats: the bot dropdown narrows WHICH bots' groups
+             * are shown (全部 Bot by default). */
+            botSelector={taskRecordTab === 'a2a'}
+            /** The trailing + on a bot group header starts a new task with
+             * that bot. Same action and same handler on BOTH faces. */
+            onQuickCreateTask={handleQuickCreateTask}
+          />
         </div>
       </div>
 

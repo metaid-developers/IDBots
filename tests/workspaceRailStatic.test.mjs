@@ -102,7 +102,8 @@ test('the Home face has no rail entry and its sidebar carries the text menu rows
     'the rail mount belongs to the non-home branch',
   );
   // …and the restored Home sidebar is a TEXT menu: 新建任务 / 长期任务 /
-  // 多人任务 / 我的 Bot, all rendered as rows, not as icon-rail entries.
+  // 多人任务 (the 我的 Bot row was retired by the owner ruling 15:46), all
+  // rendered as rows, not as icon-rail entries.
   const homeSidebarSource = read('src/renderer/components/HomeSidebar.tsx');
   assert.match(homeSidebarSource, /getSidebarPrimaryNavModel/);
   assert.match(homeSidebarSource, /onClick=\{onNewChat\}/);

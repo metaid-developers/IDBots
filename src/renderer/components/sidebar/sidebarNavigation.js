@@ -26,9 +26,15 @@ const BOT_HUB_NAV_ENABLED = false;
  * 原来的状态" — the restored two-column Home face, not the three-column shell).
  *
  * The Home face no longer renders the 64 px icon rail, so its destinations are
- * the baseline text rows again: one creation action plus the three list
- * destinations. `scheduledTasks` is the long-term workspace entry and carries
- * the amber owner-decision dot; `metabots` is the Bot roster.
+ * the baseline text rows again: one creation action plus the two list
+ * destinations the owner kept (2026-11-08 15:46). `scheduledTasks` is the
+ * long-term workspace entry and carries the amber owner-decision dot;
+ * `groupTasks` opens the 多人任务 management view.
+ *
+ * The 「我的 Bot」row is RETIRED from this menu by the same 15:46 ruling. The
+ * roster keeps its entry point on the Bot Internet surface — the rail's
+ * `myBots` pane (getRailInternetNavModel below) resolves to the same
+ * metabotsView — so the destination did not lose its only door.
  *
  * Deliberately separate from `getRailHomeNavModel`: that model still feeds the
  * rail component (which only mounts on the Internet surface now), while this
@@ -60,11 +66,6 @@ export function getSidebarPrimaryNavModel({ t, hasRunningScheduledTask, needsDec
       label: t('groupTasks'),
       icon: 'userGroup',
       hidden: !GROUP_TASKS_NAV_ENABLED,
-    },
-    {
-      id: 'metabots',
-      label: t('metabots'),
-      icon: 'cpuChip',
     },
   ];
 }

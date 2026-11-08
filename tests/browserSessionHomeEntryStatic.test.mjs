@@ -65,7 +65,7 @@ test('the Home sidebar routes a browser row back to the Bot Browser surface', ()
   );
 });
 
-test('a2a and group_task grouping is unchanged; browser rows stay out of local', () => {
+test('a2a grouping is unchanged; browser rows stay out of local; the group bucket is Internet-only', () => {
   const source = read('src/renderer/components/HomeSidebar.tsx');
 
   // local holds human↔MetaBot chats but not browser co-work sessions (they
@@ -77,10 +77,16 @@ test('a2a and group_task grouping is unchanged; browser rows stay out of local',
     source,
     /const isLocal = \(session: CoworkSessionSummary\) =>\s*session\.sessionType !== 'group_task'\s*&&\s*session\.sessionType !== 'browser'\s*&&\s*\(session\.sessionType !== 'a2a' \|\| isImSession\(session\)\)/,
   );
-  // and the two dedicated groups match their own type only — the a2a tab keeps
-  // the IM rows out of itself, since they now live in local.
+  // and the a2a group matches its own type only — the a2a tab keeps the IM rows
+  // out of itself, since they now live in local.
   assert.match(source, /a2a:\s*homeSessions\.filter\(\(session\)\s*=>\s*session\.sessionType\s*===\s*'a2a'\s*&&\s*!isImSession\(session\)\)/);
-  assert.match(source, /group:\s*homeSessions\.filter\(\(session\)\s*=>\s*session\.sessionType\s*===\s*'group_task'\)/);
+  // Owner ruling 2026-11-08 15:46 retired the Home 「群任务」sign: the live Home
+  // sidebar derives no group_task bucket any more. Nothing is deleted — the
+  // Internet middle column keeps its own copy of the bucket and its
+  // group-task session slot (that file is untouched by this batch).
+  assert.doesNotMatch(source, /group:\s*homeSessions\.filter\(\(session\)\s*=>\s*session\.sessionType\s*===\s*'group_task'\)/);
+  const internetCopy = read('src/renderer/components/Sidebar.tsx');
+  assert.match(internetCopy, /group:\s*homeSessions\.filter\(\(session\)\s*=>\s*session\.sessionType\s*===\s*'group_task'\)/);
 });
 
 test('browser rows carry a visible type badge', () => {
