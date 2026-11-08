@@ -8042,6 +8042,14 @@ const getCoworkRunner = () => {
         // S3 chat NFT card enrichment (best-effort index reads).
         fetchItemInfo: (pinId) => fetchMrc721ItemInfo({ pinId }),
         fetchCollectionInfo: (input) => fetchMrc721CollectionInfo({ name: input.name, pinId: input.pinId }),
+        // Issue-estimate balance line: total = confirmed + unconfirmed (MVC
+        // zero-conf spendable).
+        getMvcSpendableSats: async (metabotId) => {
+          const address = getMetabotStore().getMetabotById(metabotId)?.mvc_address;
+          if (!address) return null;
+          const snapshot = await getWalletBalanceSnapshot('mvc', address);
+          return snapshot.total_sats;
+        },
         collectionCreate: (input) => withChainWriteBudget(
           'mrc721_collection_create',
           () => createMrc721Collection({ createPin: mrc721CreatePinBackend }, input),

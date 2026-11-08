@@ -1,3 +1,5 @@
+import { statSync } from 'node:fs';
+import { basename } from 'node:path';
 import { z } from 'zod';
 import { markdownSelfLink } from './metawebUri';
 import { chainWriteFailureDetail, feeAssistReceiptLines } from './chainFeeAssistReceipt';
@@ -21,6 +23,7 @@ import {
   fetchMrc721ItemInfo,
   fetchMrc721ItemTransfers,
   fetchMrc721ItemVerify,
+  fetchMrc721RawPin,
   isMvcAddress,
   MRC721_MIN_SELL_PRICE_SATS,
   scanMrc721CollectionNameForIssuer,
@@ -33,6 +36,7 @@ import {
   type Mrc721IssueEstimate,
   type Mrc721ItemSummary,
   type Mrc721ItemTransferRecord,
+  type Mrc721RawPin,
   type Mrc721VerifyInfo,
 } from '../services/mrc721Service';
 import {
@@ -83,6 +87,12 @@ export type Mrc721ToolsControl = {
    */
   fetchItemInfo?(pinId: string): Promise<Mrc721ItemSummary | null>;
   fetchCollectionInfo?(input: { name?: string; pinId?: string }): Promise<Mrc721CollectionSummary | null>;
+  /**
+   * Spendable MVC sats of a local MetaBot (confirmed + unconfirmed — MVC
+   * zero-conf), for the issue estimate's balance line. Optional: harnesses
+   * without it simply skip the line.
+   */
+  getMvcSpendableSats?(metabotId: number): Promise<number | null>;
   /** R1: broadcast the collection_desc pin (registers the (collection_name, issuer) album). */
   collectionCreate(input: {
     metabotId: number;
@@ -457,16 +467,21 @@ export function formatMrc721CollectionCreateResult(input: {
   } else {
     const reason = confirm.lastError ? ` (last lookup error: ${confirm.lastError})` : '';
     const waited = input.waitMs > 0
-      ? `not visible after ${Math.round(input.waitMs / 1000)}s`
-      : 'confirmation wait skipped';
+      ? `not in the NFT index after ${Math.round(input.waitMs / 1000)}s`
+      : 'index check skipped';
     lines.push(
-      `- index confirmation: ${waited}${reason} — the pin may still be `
-      + 'confirming. Verify with mrc721_collection_info before minting; a registered album always appears '
-      + 'once its pin confirms — self-check with mrc721_search_collections (issuer = this bot) if it does not.',
+      `- index confirmation: ${waited}${reason}. This is EXPECTED: the broadcast is the issue — the pin is `
+      + 'on-chain now (mempool, zero-confirmation), and the NFT index only folds pins after a block confirms '
+      + '(MVC blocks can take 10-30 minutes). Do NOT wait, poll, or sleep for it, and never re-issue: deliver '
+      + 'now as "on-chain, pending block". mrc721_collection_info reports the pending state meanwhile; numbers '
+      + 'and indexed counts appear once the block lands.',
     );
   }
   lines.push(`- view link: ${markdownSelfLink(`pin://${input.pinId}`)}`);
-  lines.push('- next: mrc721_mint to add items under this collection.');
+  lines.push(
+    '- items minted earlier under this name (mint-before-register) are collected with this registration; '
+    + 'to add more items later, use mrc721_mint (multi-item: bare mints + one mrc721_item_desc_batch).',
+  );
   return lines.join('\n');
 }
 
@@ -519,17 +534,61 @@ export function formatMrc721MintResult(input: {
   } else {
     const reason = confirm.lastError ? ` (last lookup error: ${confirm.lastError})` : '';
     const waited = input.waitMs > 0
-      ? `not visible after ${Math.round(input.waitMs / 1000)}s`
-      : 'confirmation wait skipped';
+      ? `not in the NFT index after ${Math.round(input.waitMs / 1000)}s`
+      : 'index check skipped';
     lines.push(
-      `- index confirmation: ${waited}${reason} — the pin may still be `
-      + 'confirming. Verify with mrc721_item_info; if the collection is not yet indexed, this mint stays '
-      + 'pending until YOUR collection under this name registers (issuer-only minting) — '
-      + 'if that collection never registers, the mint never indexes.',
+      `- index confirmation: ${waited}${reason}. EXPECTED, not an error: the mint is on-chain now `
+      + '(mempool, zero-confirmation); the NFT index folds it after the block confirms — and, in a staged issue, '
+      + 'once YOUR collection under this name registers (issuer-only minting). Do NOT wait or re-mint; keep '
+      + 'going. If that collection never registers, the mint never indexes.',
     );
   }
   lines.push(`- view link: ${markdownSelfLink(`pin://${input.pinId}`)}`);
   lines.push('- transfers spend this item UTXO — use mrc721_transfer with this pinId.');
+  return lines.join('\n');
+}
+
+/**
+ * Zero-confirmation fallback sheet for an index miss: the NFT index only
+ * folds confirmed pins (requirement R-F), so a just-broadcast pin is on-chain
+ * but invisible there. Built from the raw pin read; returns null when the
+ * raw pin is unknown too (a genuine miss) or does not match the kind.
+ */
+export function formatMrc721PendingPinSheet(input: {
+  kind: 'collection' | 'item';
+  pin: Mrc721RawPin;
+}): string | null {
+  const { pin } = input;
+  const path = pin.path.toLowerCase();
+  if (!path.startsWith('/nft/mrc721/')) return null;
+  const isCollectionDesc = path.endsWith('/collection_desc');
+  if (input.kind === 'collection' && !isCollectionDesc) return null;
+  if (input.kind === 'item' && (isCollectionDesc || path.endsWith('/item_desc'))) return null;
+  const segments = path.split('/');
+  const collectionName = segments[3] || '?';
+  const lines: string[] = [];
+  const subject = input.kind === 'collection' ? `collection "${collectionName}"` : `item under "${collectionName}"`;
+  if (pin.confirmed) {
+    lines.push(
+      `MRC-721 ${subject}: the pin is CONFIRMED (height ${pin.genesisHeight}) but the NFT index has not folded it yet — `
+      + 'indexing lag, not a failure. Re-check later; never re-issue or re-mint.',
+    );
+  } else {
+    lines.push(
+      `MRC-721 ${subject}: ON-CHAIN, PENDING BLOCK — the pin is in the mempool (zero-confirmation) and its content `
+      + 'below is final. The NFT index folds it once a block confirms (MVC blocks can take 10-30 minutes): '
+      + 'numbers, mint counts, and holder views appear then. Do NOT wait, poll, or re-issue — report this state.',
+    );
+  }
+  lines.push(`- pinId: ${pin.pinId}`);
+  lines.push(`- path: ${pin.path} (operation ${pin.operation || 'create'})`);
+  if (pin.address) lines.push(`- creator: ${pin.address}`);
+  lines.push(`- genesisHeight: ${pin.genesisHeight}${pin.confirmed ? '' : ' (mempool)'}`);
+  if (pin.content) {
+    const content = pin.content.length > 1200 ? `${pin.content.slice(0, 1200)}…` : pin.content;
+    lines.push(`- content: ${content}`);
+  }
+  lines.push(`- view link: ${markdownSelfLink(`pin://${pin.pinId}`)}`);
   return lines.join('\n');
 }
 
@@ -559,6 +618,10 @@ export function formatMrc721IssueEstimateResult(input: {
   estimate: Mrc721IssueEstimate;
   precheckWarning?: string;
   sharedNameNote?: string;
+  /** Upload files that could not be sized (missing/unreadable) — listed, not priced. */
+  unsizedUploads?: string[];
+  /** Spendable balance of the session bot, when the host could read it. */
+  balanceSats?: number;
 }): string {
   const { estimate } = input;
   const lines: string[] = [];
@@ -566,9 +629,24 @@ export function formatMrc721IssueEstimateResult(input: {
   lines.push(`- fee rate: ${estimate.feeRate} sat/vB (resolved MVC rate)`);
   lines.push('- planned writes:');
   for (const write of estimate.writes) {
-    lines.push(`  - ${write.kind} @ ${write.path} — payload ${write.payloadBytes} B, est ~${write.estimatedSats} sats`);
+    const subject = write.kind === 'upload' ? `upload ${write.path}` : `${write.kind} @ ${write.path}`;
+    lines.push(`  - ${subject} — payload ${write.payloadBytes} B, est ~${write.estimatedSats} sats`);
   }
-  lines.push(`- TOTAL est ~${estimate.totalEstimatedSats} sats (UPPER BOUND — receipts carry exact costs; file uploads NOT included)`);
+  const hasUploads = estimate.uploadEstimatedSats > 0 || estimate.writes.some((write) => write.kind === 'upload');
+  lines.push(`- protocol writes: ~${estimate.protocolEstimatedSats} sats`);
+  if (hasUploads) {
+    lines.push(`- file uploads: ~${estimate.uploadEstimatedSats} sats (file bodies usually dominate the cost)`);
+    lines.push(`- TOTAL est ~${estimate.totalEstimatedSats} sats (UPPER BOUND, uploads included — receipts carry exact costs)`);
+  } else {
+    lines.push(`- TOTAL est ~${estimate.totalEstimatedSats} sats (UPPER BOUND for protocol writes only — file uploads NOT included; pass upload_files to price them)`);
+  }
+  if (input.unsizedUploads?.length) {
+    lines.push(`- NOT priced (unreadable files): ${input.unsizedUploads.join(', ')} — fix the paths before uploading.`);
+  }
+  if (input.balanceSats != null) {
+    const enough = input.balanceSats >= estimate.totalEstimatedSats;
+    lines.push(`- wallet: ${input.balanceSats} sats spendable — ${enough ? 'covers this plan' : 'INSUFFICIENT for this plan; top up before writing'}.`);
+  }
   if (estimate.registerCollection) {
     lines.push('- reminder: collection_name / total_supply / royalty_rate are immutable once registered.');
   } else {
@@ -1361,8 +1439,11 @@ export function buildMrc721AgentTools(deps: {
         return textResult(`mrc721_item_info failed: ${errorMessage(error)}`, true);
       }
       if (!item) {
+        const pending = await fetchMrc721RawPin(pinId);
+        const sheet = pending ? formatMrc721PendingPinSheet({ kind: 'item', pin: pending }) : null;
+        if (sheet) return textResult(sheet);
         return textResult(
-          `mrc721_item_info: item ${pinId} is not in the index — wrong pinId, or the pin is not confirmed/indexed yet.`,
+          `mrc721_item_info: item ${pinId} is not in the index and not on-chain as an MRC-721 item pin — check the pinId.`,
           true,
         );
       }
@@ -1419,8 +1500,14 @@ export function buildMrc721AgentTools(deps: {
         return textResult(`mrc721_collection_info failed: ${errorMessage(error)}`, true);
       }
       if (!collection) {
+        // Zero-confirmation fallback needs the collectionid: a name alone has
+        // no raw-pin address to read.
+        const pending = pinId ? await fetchMrc721RawPin(pinId) : null;
+        const sheet = pending ? formatMrc721PendingPinSheet({ kind: 'collection', pin: pending }) : null;
+        if (sheet) return textResult(sheet);
         return textResult(
-          `mrc721_collection_info: collection ${name || pinId} is not indexed — never registered, or the collection_desc pin is not confirmed yet.`,
+          `mrc721_collection_info: collection ${name || pinId} is not in the NFT index`
+          + (pinId ? ' and not on-chain as a collection_desc pin — check the collectionid.' : ' — pass pin_id (the collectionid) to check a just-issued album that may still be pending its block.'),
           true,
         );
       }
@@ -2048,7 +2135,7 @@ export function buildMrc721AgentTools(deps: {
     [
       'Dry-run plan + fee estimate for an MRC-721 issue — a new album (register_collection true, default) or an add-to-existing plan (register_collection false). NO broadcast, no fees spent.',
       'Validates every planned field with the SAME builders the write tools use — invalid fields fail HERE, before any fee is spent — and prices each pin write at the resolved MVC fee rate: 1 collection_desc + N item pins + the display-info item_desc pins per display_mode.',
-      'Upper-bound estimate: receipts carry exact costs; file uploads (metabot-upload-file) are NOT included. Use it before the preview/confirm step of an issue wizard.',
+      'Pass upload_files (absolute paths of the cover/item files/posters to upload first) so the TOTAL includes the file-body uploads — usually the dominant cost; the receipt also shows the session bot\'s spendable balance against the plan. Upper-bound estimate: receipts carry exact costs. Use it before the preview/confirm step of an issue wizard.',
     ].join(' '),
     {
       collection_name: z.string().min(1).describe('Collection namespace to plan (lowercase [a-z0-9-]).'),
@@ -2058,13 +2145,14 @@ export function buildMrc721AgentTools(deps: {
       desc: z.string().optional().describe('Collection description.'),
       website: z.string().optional().describe('Collection website URL.'),
       cover: z.string().optional().describe('Cover image: metafile pinId (64-hex…i0) or metafile:// URI.'),
-      metadata: z.union([z.string(), z.record(z.string(), z.unknown())]).optional().describe('Collection metadata (JSON object or JSON string).'),
+      metadata: z.union([z.string(), z.record(z.string(), z.unknown())]).optional().describe('Collection metadata (JSON object or JSON string; written on-chain as a JSON string).'),
       items: z.array(z.object({
         name: z.string().optional().describe('Item display name.'),
         desc: z.string().optional().describe('Item description.'),
         cover: z.string().optional().describe('Item cover: metafile pinId or metafile:// URI.'),
-        metadata: z.union([z.string(), z.record(z.string(), z.unknown())]).optional().describe('Extra item metadata.'),
-      })).max(100).optional().describe('Planned items (display info only; item pinids do not exist before minting).'),
+        metadata: z.union([z.string(), z.record(z.string(), z.unknown())]).optional().describe('Extra item metadata (written on-chain as a JSON string).'),
+      })).max(100).optional().describe('Planned items (display info only; item pinids do not exist before minting). Coverless items are sized with a placeholder cover.'),
+      upload_files: z.array(z.string().min(1)).max(110).optional().describe('Absolute local paths of every file to upload first (cover, item files, posters) — sized from disk and priced as uploads.'),
       display_mode: z.enum(['batch_desc', 'ride_along', 'none']).optional().describe('batch_desc (default): ONE item_desc write for all items after minting; ride_along: one item_desc per item (mrc721_mint behavior); none: bare item pins.'),
       register_collection: z.boolean().optional().describe('true (default): the plan includes the collection_desc write; false: add-to-existing.'),
     },
@@ -2078,6 +2166,7 @@ export function buildMrc721AgentTools(deps: {
       cover?: string;
       metadata?: unknown;
       items?: Array<{ name?: string; desc?: string; cover?: string; metadata?: unknown }>;
+      upload_files?: string[];
       display_mode?: 'batch_desc' | 'ride_along' | 'none';
       register_collection?: boolean;
     }) => {
@@ -2116,6 +2205,20 @@ export function buildMrc721AgentTools(deps: {
         }
       }
       try {
+        // Size the planned uploads from disk (no reads of file bodies).
+        const uploads: Array<{ label: string; bytes: number }> = [];
+        const unsizedUploads: string[] = [];
+        for (const filePath of args.upload_files ?? []) {
+          const target = asString(filePath);
+          if (!target) continue;
+          try {
+            const stats = statSync(target);
+            if (!stats.isFile()) throw new Error('not a file');
+            uploads.push({ label: basename(target), bytes: stats.size });
+          } catch {
+            unsizedUploads.push(target);
+          }
+        }
         const estimate = estimateMrc721Issue({
           collectionName,
           name: asString(args.name) || undefined,
@@ -2131,14 +2234,26 @@ export function buildMrc721AgentTools(deps: {
             cover: asString(item.cover) || undefined,
             metadata: item.metadata,
           })),
+          uploads,
           displayMode: args.display_mode,
           registerCollection: args.register_collection,
         });
+        let balanceSats: number | undefined;
+        if (control.getMvcSpendableSats) {
+          try {
+            const value = await control.getMvcSpendableSats(owner);
+            if (value != null && Number.isFinite(value)) balanceSats = value;
+          } catch {
+            // Best effort: the balance line is advisory.
+          }
+        }
         return textResult(formatMrc721IssueEstimateResult({
           collectionName,
           estimate,
           precheckWarning,
           sharedNameNote,
+          unsizedUploads,
+          balanceSats,
         }));
       } catch (error) {
         return textResult(`mrc721_issue_estimate failed: ${errorMessage(error)}`, true);
