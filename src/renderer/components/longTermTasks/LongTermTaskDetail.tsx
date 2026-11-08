@@ -14,6 +14,7 @@ import {
 import { formatRelativeTime } from './LongTermTaskCard';
 import CopyIdChip from './CopyIdChip';
 import ParticipantAvatars from './ParticipantAvatars';
+import LocalFileLink from '../ui/LocalFileLink';
 
 /**
  * Long-term task detail page (frozen prototype screen 2): goal + progress on
@@ -271,6 +272,26 @@ const LongTermTaskDetail: React.FC<{ taskId: string }> = ({ taskId }) => {
           {i18nService.t('longTermTask.goal')}
         </div>
         <p className="mt-1 text-sm leading-6 dark:text-claude-darkText text-claude-text">{detail.goal}</p>
+        {detail.planArtifactUri && (
+          <div className="mt-3 flex min-w-0 items-center gap-2 border-t dark:border-claude-darkBorder/30 border-claude-border/30 pt-2.5">
+            <span className="shrink-0 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              {i18nService.t('longTermTask.planPage')}
+            </span>
+            {/^([A-Za-z]:[\\/]|\/|file:\/\/)/.test(detail.planArtifactUri) ? (
+              <LocalFileLink
+                filePath={detail.planArtifactUri}
+                showTypeIcon={false}
+                className="min-w-0 text-xs text-brand hover:underline"
+              >
+                <span className="truncate">{detail.planArtifactUri}</span>
+              </LocalFileLink>
+            ) : (
+              <span className="min-w-0 truncate text-xs dark:text-claude-darkText text-claude-text">
+                {detail.planArtifactUri}
+              </span>
+            )}
+          </div>
+        )}
         <div className="mt-3 flex items-center gap-3">
           <div className="h-1.5 flex-1 rounded-full dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover">
             <div className="h-1.5 rounded-full bg-brand" style={{ width: `${detail.progress.percent}%` }} />
