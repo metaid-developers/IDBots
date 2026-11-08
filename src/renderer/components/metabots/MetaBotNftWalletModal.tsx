@@ -29,6 +29,7 @@ import {
   buildNftDetailRows,
   buildNftTileViewModel,
   buildNftTransferPayload,
+  MRC721_MIN_SELL_PRICE_SATS,
   mrc721SellOrderStatusKey,
   validateMrc721SellDraft,
   validateNftTransferDraft,
@@ -902,7 +903,7 @@ const Mrc721SellFlow: React.FC<{
             inputMode="numeric"
             value={priceSats}
             onChange={(event) => setPriceSats(event.target.value)}
-            placeholder="22000"
+            placeholder={String(MRC721_MIN_SELL_PRICE_SATS)}
             className={MRC721_FLOW_INPUT_CLASS}
             data-slot="metabot-nft-sell-price"
           />

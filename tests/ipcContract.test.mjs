@@ -42,7 +42,7 @@ test('generated IPC contract is fresh (generate-ipc-contract.mjs --check)', () =
 test('contract shape: versions, sorted unique method paths', () => {
   assert.equal(contract.contractVersion, '1.0.0');
   assert.equal(contract.allowlistVersion, allowlist.ALLOWLIST_VERSION);
-  assert.equal(allowlist.ALLOWLIST_VERSION, '1.0.0');
+  assert.equal(allowlist.ALLOWLIST_VERSION, '1.0.1');
   assert.equal(contract.source, 'src/main/preload.ts');
   assert.ok(Array.isArray(contract.methods) && contract.methods.length > 0);
 

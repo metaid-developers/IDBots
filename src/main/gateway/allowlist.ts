@@ -1,5 +1,6 @@
 // IPC allowlist data — encodes docs/cloud-mobile/02-ipc-allowlist-v1.md
-// (allowlist version 1.0.0, frozen 2026-10-15) as data, per REQ-A-17.
+// (allowlist version 1.0.1 per CR-WSA-001 + CR-WSA-002; frozen at 1.0.0 on
+// 2026-10-15) as data, per REQ-A-17.
 //
 // Every tier/restriction/timeout assignment in the FROZEN sections of this
 // file traces to a row of `02`. `02`'s header is itself a rule: "Everything
@@ -32,8 +33,8 @@ export interface AllowlistEntry {
   note?: string;
 }
 
-/** Allowlist version from `02` (frozen 2026-10-15). */
-export const ALLOWLIST_VERSION = '1.0.0';
+/** Allowlist version from `02` (frozen at 1.0.0 on 2026-10-15; 1.0.1 = CR-WSA-001). */
+export const ALLOWLIST_VERSION = '1.0.1';
 
 /** C2 Limits: default invoke timeout. Channel-specific overrides live on entries. */
 export const DEFAULT_INVOKE_TIMEOUT_MS = 120_000;
@@ -164,8 +165,8 @@ const IDENTITY_INVOKE: Record<string, AllowlistEntry> = {
   'idbots:transferMetabotMrc721': { tier: 'N', note: '`02`: moving funds out of custodial wallets needs SMS re-verification; later release.' },
   'idbots:sellMrc721Listing': { tier: 'N', note: '`02`: MRC-721 atomic-swap listing from the desktop MetaBot NFT wallet; moving funds out of custodial wallets needs SMS re-verification; later release.' },
   'idbots:buyMrc721Listing': { tier: 'N', note: '`02`: MRC-721 atomic-swap purchase from the desktop MetaBot NFT wallet; moving funds out of custodial wallets needs SMS re-verification; later release.' },
-  'idbots:listMrc721SellOrders': { tier: 'N', note: '`02`: MRC-721 sell-order records of the desktop MetaBot NFT wallet (read + per-order re-verify); tiered with the trade channels.' },
-  'idbots:verifyMrc721Listing': { tier: 'N', note: '`02`: read-only pre-buy MRC-721 listing check (indexer/node reads, no funds); tiered with the trade channels.' },
+  'idbots:listMrc721SellOrders': { tier: 'P1', note: '`02` v1.0.1 (CR-WSA-001): MRC-721 sell-order records of the desktop MetaBot NFT wallet (read + per-order re-verify, no funds); split from the trade channels.' },
+  'idbots:verifyMrc721Listing': { tier: 'P1', note: '`02` v1.0.1 (CR-WSA-001): read-only pre-buy MRC-721 listing check (indexer/node reads, no funds); split from the trade channels.' },
   'idbots:getMetaBotMnemonic': { tier: 'H', note: '`02`: C2 sensitive route only, never over the WebSocket.' },
   'idbots:restoreMetaBotFromMnemonic': { tier: 'N', note: '`02`: mnemonic input over the socket; later release.' },
   'userIdentity:get': { tier: 'P1' },
@@ -356,9 +357,8 @@ const WS_A_NEW_INVOKE: Record<string, AllowlistEntry> = {
   'bundle:getOrder': { tier: 'P1' },
   'bundle:getMeters': { tier: 'P1' },
   // S9 ME points (mobile): /v1/me/* runs in the main process behind the local
-  // identity signature; the mobile app only receives the envelopes. The
-  // voucher path on mobile is a photo upload + remark (no native dialog), so
-  // `me:pickVoucher` is deliberately NOT exposed here.
+  // identity signature; the mobile app only receives the envelopes. Registered
+  // in `02` by CR-WSA-002 (retroactive — the slices predate the rows).
   'me:getPlans': { tier: 'P1' },
   'me:getRates': { tier: 'P1' },
   'me:getTopupPackages': { tier: 'P1' },
@@ -370,6 +370,10 @@ const WS_A_NEW_INVOKE: Record<string, AllowlistEntry> = {
   'me:subscriptionOrder': { tier: 'P1' },
   'me:getTopupOrders': { tier: 'P1' },
   'me:getPaymentInfo': { tier: 'P1' },
+  'me:getSubscriptionOrders': { tier: 'P1' },
+  // Explicit deny (CR-WSA-002): the native voucher picker dialog is
+  // desktop-only; mobile uses the photo upload + remark path.
+  'me:pickVoucher': { tier: 'N' },
 };
 
 // ---------------------------------------------------------------------------
