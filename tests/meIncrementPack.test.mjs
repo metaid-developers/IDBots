@@ -233,3 +233,18 @@ test('d16681f server contract lands without further client changes; closed ≠ r
   assert.match(i18nSource, /meOrderStatusClosed: '已关闭'/);
   assert.match(i18nSource, /meOrderStatusClosed: 'Closed'/);
 });
+
+test('credits & traffic tab hosts two sub-pages (credits default, traffic restored verbatim)', () => {
+  // The on-chain traffic page is imported back and rendered verbatim as the
+  // second sub-tab; ME credits stay the default landing page.
+  assert.match(settingsSource, /import TrafficSettings from '\.\/traffic\/TrafficSettings';/);
+  assert.match(settingsSource, /const \[creditsSubTab, setCreditsSubTab\] = useState<'credits' \| 'traffic'>\('credits'\)/);
+  assert.match(settingsSource, /creditsSubTab === 'credits' \? <MeUsageAndCredits \/> : <TrafficSettings \/>/);
+  assert.match(settingsSource, /usageCreditsSubTabCredits/);
+  assert.match(settingsSource, /usageCreditsSubTabTraffic/);
+  // Sidebar label renamed, zh + en.
+  assert.match(i18nSource, /usageCreditsTab: '积分 & 流量'/);
+  assert.match(i18nSource, /usageCreditsTab: 'Credits & Traffic'/);
+  assert.match(i18nSource, /usageCreditsSubTabCredits: '积分'/);
+  assert.match(i18nSource, /usageCreditsSubTabTraffic: '流量'/);
+});

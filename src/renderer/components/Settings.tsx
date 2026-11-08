@@ -43,6 +43,7 @@ import UserSettings from './user/UserSettings';
 import IdbotsPlanCard from './me/IdbotsPlanCard';
 import MeIncrementPackCard from './me/MeIncrementPackCard';
 import MeUsageAndCredits from './me/MeUsageAndCredits';
+import TrafficSettings from './traffic/TrafficSettings';
 import { findMeRateForModel } from './me/meRates';
 import { ensureMeSnapshot, getMeSnapshot, subscribeMeSnapshot } from './me/mePointsStore';
 import { defaultConfig, type AppConfig, type ChatExperienceMode } from '../config';
@@ -692,6 +693,10 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
   // Provider awaiting delete confirmation (in-app modal — window.confirm is
   // a no-op in Electron, it resolves false without showing any dialog).
   const [pendingDeleteProvider, setPendingDeleteProvider] = useState<ProviderType | null>(null);
+
+  // 「积分 & 流量」 tab sub-page: ME credits (default) vs the on-chain
+  // traffic quota page, brought back verbatim.
+  const [creditsSubTab, setCreditsSubTab] = useState<'credits' | 'traffic'>('credits');
 
   // Right-click cut/copy/paste menus for the Base URL inputs on this page
   // (API-key fields get theirs from SecretInput itself).
@@ -3964,10 +3969,31 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
       case 'im':
         return <IMSettings />;
 
-      case 'traffic':
-        // S9: the traffic quota page retires on desktop; the merged
-        // 「用量 & 积分」 page (me_history + topup orders) owns this tab.
-        return <MeUsageAndCredits />;
+      case 'traffic': {
+        // 「积分 & 流量」: two sub-pages — the ME credits page (default)
+        // and the on-chain traffic quota page, restored verbatim.
+        return (
+          <div>
+            <div className="flex items-center gap-1 pb-4">
+              {(['credits', 'traffic'] as const).map((sub) => (
+                <button
+                  key={sub}
+                  type="button"
+                  onClick={() => setCreditsSubTab(sub)}
+                  className={`rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+                    creditsSubTab === sub
+                      ? 'border-claude-accent text-claude-accent dark:text-claude-darkAccent bg-claude-accent/5'
+                      : 'border-claude-border dark:border-claude-darkBorder text-claude-text dark:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
+                  }`}
+                >
+                  {i18nService.t(sub === 'credits' ? 'usageCreditsSubTabCredits' : 'usageCreditsSubTabTraffic')}
+                </button>
+              ))}
+            </div>
+            {creditsSubTab === 'credits' ? <MeUsageAndCredits /> : <TrafficSettings />}
+          </div>
+        );
+      }
 
       default:
         return null;
