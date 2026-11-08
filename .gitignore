@@ -45,6 +45,7 @@ docs/*
 !docs/nft-offer-indexer-requirements.md
 !docs/nft-offer-protocol.md
 !docs/nft-offer-metaso-handoff.md
+!docs/nft-offer-e2e-playbook.md
 !docs/cloud-mobile/
 !docs/metaid_protocols/
 !docs/metaid_protocols/**
