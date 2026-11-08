@@ -51,6 +51,7 @@ import {
 } from './mvcSponsorClient';
 import { appendMetaidLog } from './metaidLog';
 import {
+  noteMeTrafficBillingLive,
   recordLocalTrafficSpend,
   resolveSponsorTrafficAccount,
   sponsorBilledBy,
@@ -678,6 +679,7 @@ export async function uploadMvcSponsorDirectFile(
   const sponsoredMinerFee = commit.minerFee ?? pre.minerFee;
   const billedBy = sponsorBilledBy(trafficAccount, commit.paySource ?? pre.paySource);
   const meAmountMilli = billedBy === 'me' ? commit.meAmountMilli ?? pre.meAmountMilli : undefined;
+  if (billedBy === 'me') noteMeTrafficBillingLive();
   recordSponsorSuccess(input.mvcAddress);
   // Local spend journal + balance-cache deduction (best-effort, never throws).
   recordLocalTrafficSpend({

@@ -41,7 +41,7 @@ import {
   type SponsorBilling,
 } from './mvcSponsorClient';
 import { appendMetaidLog } from './metaidLog';
-import { recordLocalTrafficSpend, sponsorBilledBy } from './trafficAccountService';
+import { noteMeTrafficBillingLive, recordLocalTrafficSpend, sponsorBilledBy } from './trafficAccountService';
 import {
   isSponsorBroadcastFailureError,
   isSponsorCircuitOpen,
@@ -475,6 +475,7 @@ export async function runMvcSponsorCreatePin(
   const sponsoredMinerFee = commit.minerFee ?? pre.minerFee;
   const billedBy = sponsorBilledBy(trafficAccount, commit.paySource ?? pre.paySource);
   const meAmountMilli = billedBy === 'me' ? commit.meAmountMilli ?? pre.meAmountMilli : undefined;
+  if (billedBy === 'me') noteMeTrafficBillingLive();
   deps.recordSpentOutpoints(draftSpentOutpoints);
   recordSponsorSuccess(input.mvcAddress);
   // Local spend journal + balance-cache deduction (best-effort, never throws).

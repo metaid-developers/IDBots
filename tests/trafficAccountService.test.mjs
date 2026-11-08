@@ -613,15 +613,74 @@ function runSponsoredPin(fetchImpl, extraInput = {}) {
       },
       recordSpentOutpoints: () => {},
       replacePendingFundingUtxos: () => {},
-      resolveTrafficAccount: ({ challengeId }) => resolveSponsorTrafficAccount({
+      // Same wiring as metaidCore: the flow's billing request reaches the resolver.
+      resolveTrafficAccount: ({ challengeId, billing }) => resolveSponsorTrafficAccount({
         botAddress: BOT1_ADDRESS,
         challengeId,
         botMnemonic: BOT1_MNEMONIC,
         botWalletPath: WALLET_PATH,
+        billing,
       }),
     },
   );
 }
+
+test('an ME-billed sponsored write signs traffic-pre-me, journals ME, and converts the byte balance once', async () => {
+  let preBody = null;
+  const draftResult = buildSponsorDraft(BOT1_ADDRESS);
+  const [, challengeRoute] = sponsorRoutes(draftResult);
+  const fetchImpl = createFetchStub([
+    ['/v1/traffic/accounts/bindings', (init) => {
+      const body = JSON.parse(init.body);
+      return { botAddress: body.botAddress, accountId: SERVER_ACCOUNT_ID, status: 1, createdAt: 1 };
+    }],
+    ['/convert-to-me', { convertedBytes: 1000, mintedMilli: 20, entryId: 'me-entry', alreadyConverted: false }],
+    ['/v1/traffic/accounts', accountPayload()],
+    ['/v2/assist/gas/address/info', {
+      exists: true,
+      balance: 0,
+      grantedAmount: 0,
+      reservedAmount: 0,
+      spentAmount: 0,
+      availableAmount: 0,
+      status: 'active',
+      me: { trafficBilling: true, spendableMilli: 50_000 },
+    }],
+    challengeRoute,
+    ['/v2/assist/gas/mvc/pre', (init) => {
+      preBody = JSON.parse(init.body);
+      return {
+        preparedTxHex: draftResult.draft.unsignedTxHex,
+        orderId: 'order-me',
+        minerFee: 100,
+        userInputIndexes: [0],
+        paySource: 'me',
+        meAmountMilli: 7,
+      };
+    }],
+    ['/v2/assist/gas/mvc/commit', { txId: COMMIT_TXID, txSize: 300, minerFee: 100, paySource: 'me', meAmountMilli: 6 }],
+  ]);
+  const { store } = await makeServiceFixture({ fetchImpl, trafficMode: 'traffic' });
+
+  const result = await runSponsoredPin(fetchImpl);
+  assert.equal(result.feeAssist.used, true);
+  assert.equal(result.feeAssist.billedBy, 'me');
+  assert.equal(preBody.trafficAccount.billing, 'me');
+  assert.ok(
+    verifyMessage(IDENTITY_ADDRESS, `traffic-pre-me:${SERVER_ACCOUNT_ID}:challenge-1`, preBody.trafficAccount.authSignature),
+  );
+  const [journalRow] = listLocalTrafficJournal();
+  assert.equal(journalRow.billedBy, 'me');
+  assert.equal(journalRow.meAmountMilli, 6);
+
+  await settleMicrotasks();
+  assert.equal(callsTo(fetchImpl, '/convert-to-me').length, 1, 'first ME-billed write converts the byte balance');
+  assert.equal(store.get('traffic.meConversion').accountId, SERVER_ACCOUNT_ID);
+
+  await runSponsoredPin(fetchImpl);
+  await settleMicrotasks();
+  assert.equal(callsTo(fetchImpl, '/convert-to-me').length, 1, 'later writes never convert again');
+});
 
 test('sponsored createPin injects a verifiable trafficAccount into pre when traffic mode is on', async () => {
   let preBody = null;

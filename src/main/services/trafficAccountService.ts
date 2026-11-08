@@ -1123,6 +1123,17 @@ async function ensureTrafficBalanceConvertedToMe(): Promise<void> {
   }
 }
 
+/**
+ * Sponsor flows call this once a write is actually billed in ME credits, so
+ * the one-shot byte-balance conversion (R5 / D2) also happens for users who
+ * never open the traffic tab. Cheap and idempotent: the kv marker and the
+ * per-launch guard make every call after the first a no-op.
+ */
+export function noteMeTrafficBillingLive(): void {
+  if (!depsRef || !isMeTrafficBillingAllowed(getKvStore())) return;
+  void ensureTrafficBalanceConvertedToMe();
+}
+
 // ---------------------------------------------------------------------------
 // Pricing + recharge (PayPal live since Phase 4; Alipay QR since Phase 5;
 // mock payment for development)
