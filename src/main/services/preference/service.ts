@@ -31,7 +31,7 @@ export type PreferenceWriterResolution = PreferenceWriter | { error: string };
 
 export interface PreferenceServiceDeps {
   store: PreferenceStore;
-  collect: () => Promise<CollectPreferenceEventsResult>;
+  collect: (options?: { bypassCache?: boolean }) => Promise<CollectPreferenceEventsResult>;
   resolveWriter: (signer: PreferenceSigner) => PreferenceWriterResolution;
   nowMs?: () => number;
   onUpdate?: (reason: string) => void;
@@ -107,18 +107,21 @@ export class PreferenceService {
     return Math.floor(this.nowMs() / 1000);
   }
 
-  refresh(reason: string): Promise<PreferenceRefreshResult> {
+  refresh(reason: string, options?: { bypassCache?: boolean }): Promise<PreferenceRefreshResult> {
     if (!this.refreshing) {
-      this.refreshing = this.runRefresh(reason).finally(() => {
+      this.refreshing = this.runRefresh(reason, options).finally(() => {
         this.refreshing = null;
       });
     }
+    // If a sweep is already in flight we share it as-is: a bypassCache rider
+    // on a running non-bypass sweep is accepted (the next write-flow refresh
+    // will bypass again; the shared sweep only costs one extra TTL window).
     return this.refreshing;
   }
 
-  private async runRefresh(reason: string): Promise<PreferenceRefreshResult> {
+  private async runRefresh(reason: string, options?: { bypassCache?: boolean }): Promise<PreferenceRefreshResult> {
     try {
-      const result = await this.deps.collect();
+      const result = await this.deps.collect({ ...(options?.bypassCache ? { bypassCache: true } : {}) });
       this.deps.store.upsertEvents(result.events, this.nowMs());
       const errors = result.perPath.filter((entry) => entry.error).map((entry) => `${entry.segment}: ${entry.error}`);
       this.deps.onUpdate?.(reason);

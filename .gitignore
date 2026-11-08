@@ -885,6 +885,9 @@ blob-report/
 # Poll-loop backoff ladder + circuit breaker (PR #101)
 !tests/pollBackoffController.test.mjs
 
+# Manapi egress guard: walk memo + incremental head-stop (ops ticket 2026-11-08)
+!tests/protocolPinFetchEgressGuard.test.mjs
+
 # F-17: mobile permission payload rendering + uncertain-outcome reconcile
 !tests/ipcSanitizeDepth.test.ts
 !tests/coworkPermissionPanelFallback.test.tsx

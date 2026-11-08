@@ -105,7 +105,7 @@ export interface PreferenceAgentControl {
   service: () => PreferenceService;
   resolveGlobalMetaId: (metabotId: number) => string | null;
   metataskDetail: (rootPinId: string) => MetaTaskTaskProjection | null;
-  refreshMetaTask: (reason: string) => Promise<{ ok: boolean; error: string | null }>;
+  refreshMetaTask: (reason: string, options?: { bypassCache?: boolean }) => Promise<{ ok: boolean; error: string | null }>;
 }
 
 interface JudgeRole {
@@ -314,7 +314,7 @@ export function buildPreferenceAgentTools(deps: {
     async (args: RoundsListArgs) => {
       try {
         const service = control.service();
-        if (args.refresh) await service.refresh('preference_rounds_list');
+        if (args.refresh) await service.refresh('preference_rounds_list', { bypassCache: true });
         let judge: string | undefined;
         if (args.mine) {
           const bot = sessionBot();
@@ -355,7 +355,7 @@ export function buildPreferenceAgentTools(deps: {
     async (args: RoundStatusArgs) => {
       try {
         const service = control.service();
-        if (args.refresh) await service.refresh('preference_round_status');
+        if (args.refresh) await service.refresh('preference_round_status', { bypassCache: true });
         let roundPinId = args.roundPinId;
         let canonical: 'decided' | 'pending' | null = null;
         if (!roundPinId && args.subject) {
@@ -378,7 +378,7 @@ export function buildPreferenceAgentTools(deps: {
         if (!roundPinId) return refuse('preference:round-required (pass roundPinId or subject)');
         let view = service.roundStatus(roundPinId, { lessonPinId: args.lessonPinId });
         if ('error' in view && !args.refresh) {
-          await service.refresh('preference_round_status');
+          await service.refresh('preference_round_status', { bypassCache: true });
           view = service.roundStatus(roundPinId, { lessonPinId: args.lessonPinId });
         }
         if ('error' in view) return refuse(view.error);
@@ -400,7 +400,7 @@ export function buildPreferenceAgentTools(deps: {
     async (args: LessonsSearchArgs) => {
       try {
         const service = control.service();
-        if (args.refresh) await service.refresh('preference_lessons_search');
+        if (args.refresh) await service.refresh('preference_lessons_search', { bypassCache: true });
         const lessons = service.searchLessons({ category: args.category, limit: args.limit });
         return jsonResult({
           usage:
@@ -470,13 +470,13 @@ export function buildPreferenceAgentTools(deps: {
           if (args.candidates && args.candidates.length > 0) return refuse('preference:candidates-derived-from-subject');
           const taskid = args.subject.rootPinId;
           const node = args.subject.node;
-          await control.refreshMetaTask('preference_round_open');
+          await control.refreshMetaTask('preference_round_open', { bypassCache: true });
           const detail = control.metataskDetail(taskid);
           if (!detail) return refuse(`preference:task-not-found:${taskid}`);
           if (detail.publisher !== bot.globalMetaId) {
             return refuse('preference:not-task-author (only the task root author opens the canonical round, protocol §7)');
           }
-          await service.refresh('preference_round_open');
+          await service.refresh('preference_round_open', { bypassCache: true });
           const canonical = service.canonicalRound({ taskid, node, rootAuthor: bot.globalMetaId });
           if (canonical.state !== 'none') return refuse(`preference:subject-round-${canonical.state}:${canonical.roundPinId}`);
           const unconfirmed = service
@@ -551,7 +551,7 @@ export function buildPreferenceAgentTools(deps: {
         const service = control.service();
         let view: PreferenceRoundView | { error: string } = service.roundStatus(args.roundPinId);
         if ('error' in view) {
-          await service.refresh('preference_vote_commit');
+          await service.refresh('preference_vote_commit', { bypassCache: true });
           view = service.roundStatus(args.roundPinId);
         }
         if ('error' in view) return refuse(view.error);
@@ -601,7 +601,7 @@ export function buildPreferenceAgentTools(deps: {
         const bot = sessionBot();
         if ('error' in bot) return refuse(bot.error);
         const service = control.service();
-        await service.refresh('preference_lesson_publish');
+        await service.refresh('preference_lesson_publish', { bypassCache: true });
         const view = service.roundStatus(args.roundPinId);
         if ('error' in view) return refuse(view.error);
         const tally = view.tally;

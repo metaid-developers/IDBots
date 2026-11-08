@@ -645,7 +645,7 @@ import {
 import { recordMetaIDServiceOrderExperience } from './services/metaidExperienceRecorder';
 import { ServiceRefundSyncService } from './services/serviceRefundSyncService';
 import { ServiceRefundSettlementService } from './services/serviceRefundSettlementService';
-import { fetchProtocolPinsFromIndexer } from './services/protocolPinFetch';
+import { fetchProtocolPinsFromIndexer, setIndexerUserAgent } from './services/protocolPinFetch';
 import {
   buildDeliveryMessage,
   buildOrderStatusMessage,
@@ -776,7 +776,12 @@ const MIME_EXTENSION_MAP: Record<string, string> = {
   'text/csv': '.csv',
 };
 const SERVICE_ORDER_TIMEOUT_SCAN_INTERVAL_MS = 60_000;
-const SERVICE_ORDER_REFUND_SYNC_INTERVAL_MS = 60_000;
+// Refund pins settle on hour-scale TTLs, not seconds: 60s full-pool walks of
+// /protocols/service-refund-{request,finalize} from every tenant instance were
+// the single largest manapi egress source (ops ticket 2026-11-08, ~85k
+// requests/day/path across staging). 5 min + the protocolPinFetch memo and
+// head-stop probe keep refund detection well inside every flow's deadlines.
+const SERVICE_ORDER_REFUND_SYNC_INTERVAL_MS = 5 * 60_000;
 const GIG_SQUARE_SYNC_INTERVAL_MS = 10 * 60 * 1000;
 const SQLITE_MAINTENANCE_INTERVAL_MS = 30 * 60 * 1000;
 const SERVICE_REFUND_REQUEST_PATH = '/protocols/service-refund-request';
@@ -1874,8 +1879,17 @@ async function syncRemoteSkillServices(): Promise<void> {
   try {
     const sqliteStore = getStore();
     const db = sqliteStore.getDatabase();
+    // Egress-guard head-stop (ticket 2026-11-08): a page whose rows are all
+    // already stored ends the walk — the directory only grows by NEW pins.
+    const knownServicePinIds = new Set<string>(
+      db.exec('SELECT pin_id FROM remote_skill_service')
+        .flatMap((result) => result.values)
+        .map((row) => String(row[0] ?? '').trim())
+        .filter(Boolean)
+    );
     await syncRemoteSkillServicesWithCursor({
       pageSize: GIG_SQUARE_SYNC_SIZE,
+      stopOnKnownPagePinIds: knownServicePinIds,
       fetchPage: async (cursor?: string) => fetchRemoteSkillServicePageFromManapi({
         protocolPath: GIG_SQUARE_SERVICE_PATH,
         pageSize: GIG_SQUARE_SYNC_SIZE,
@@ -4464,15 +4478,19 @@ const startSqliteDaemons = (): void => {
       await getLongTermAdvanceService().run(nowMs);
     },
   });
-  // MetaTask chain sweep (5 min) + watch (10 min): the sweep keeps the local
+  // MetaTask chain sweep (10 min) + watch (10 min): the sweep keeps the local
   // projection warm; watch turns local-roster-relevant changes into alerts
   // surfaced on the MetaTask tab. Both are local/cheap; no LLM escalation.
   // Jitter (≤45s / ≤90s) spreads the manapi pool walks of many instances; the
   // sweep itself bypasses the refresher's tool-coalescing window (this cadence
   // is already spaced, and a burst of tool writes must not defer it).
+  // 10 min matches the board-auto stale threshold and halves the idle pool
+  // probes — with the protocolPinFetch head-stop a quiet sweep costs one page
+  // per pool (egress ticket 2026-11-08); active sessions stay fresh through
+  // write-following sweeps that bypass both the coalescing window and the memo.
   getHeartbeatService().registerHandler({
     name: 'metatask.refresh',
-    intervalMs: 5 * 60_000,
+    intervalMs: 10 * 60_000,
     jitterMs: 45_000,
     run: async () => {
       const refresher = getMetaTaskRefresher();
@@ -7736,7 +7754,7 @@ const getCoworkRunner = () => {
         service: () => getPreferenceService(),
         resolveGlobalMetaId: (metabotId) => getMetabotStore().getMetabotById(metabotId)?.globalmetaid ?? null,
         metataskDetail: (rootPinId) => getMetaTaskRefresher().detail(rootPinId),
-        refreshMetaTask: (reason) => getMetaTaskRefresher().refreshOnce(reason),
+        refreshMetaTask: (reason, options) => getMetaTaskRefresher().refreshOnce(reason, options),
       },
       // RSI P0 prediction ledger: prediction_record writes into the dream
       // store's ledger; the nightly dream reconciles it (startDreamService).
@@ -15783,7 +15801,9 @@ if (!gotTheLock) {
 
   registerIpcHandler('metatask:refresh', async () => {
     try {
-      const result = await getMetaTaskRefresher().refreshOnce('manual');
+      // Manual refresh means "show me the chain now" — never serve the walk
+      // memo; the incremental probe keeps the cost at one head page.
+      const result = await getMetaTaskRefresher().refreshOnce('manual', { bypassCache: true });
       return { success: result.ok, board: result.board ?? undefined, error: result.error ?? undefined };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'MetaTask refresh failed' };
@@ -20604,6 +20624,13 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     startupLog('initApp begin');
     await app.whenReady();
     startupLog('app.whenReady resolved');
+
+    // Indexer requests must be attributable in server logs (ops ticket
+    // 2026-11-08: 20 tenant instances shared the bare `node` UA). Tenant
+    // containers carry IDBOTS_TENANT_ID; dev machines fall back to hostname.
+    setIndexerUserAgent(
+      `IDBots/${app.getVersion()}/${process.env.IDBOTS_TENANT_ID || os.hostname()}`
+    );
 
     legacyUserDataCopiedThisBoot = migrateLegacyUserData();
 

@@ -22,13 +22,23 @@
  *      path instead of hanging forever.
  */
 
-import test from 'node:test';
+import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 
-const { fetchProtocolPinsFromIndexer, DEFAULT_TIMEOUT_MS } = require('../dist-electron/main/services/protocolPinFetch.js');
+const {
+  fetchProtocolPinsFromIndexer,
+  DEFAULT_TIMEOUT_MS,
+  // Egress-guard memo is process-wide and keyed by (path, size, pages) — the
+  // timeout tests must each drive a cold wire.
+  __resetProtocolPinFetchStateForTests,
+} = require('../dist-electron/main/services/protocolPinFetch.js');
+
+beforeEach(() => {
+  __resetProtocolPinFetchStateForTests();
+});
 
 function jsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {

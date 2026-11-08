@@ -103,6 +103,47 @@ test('syncRemoteSkillServicesWithCursor skips invalid remote items', async () =>
   assert.deepEqual(inserted, ['svc-valid']);
 });
 
+test('syncRemoteSkillServicesWithCursor head-stops at an all-known page (egress guard)', async () => {
+  const inserted = [];
+  const calls = [];
+  await syncRemoteSkillServicesWithCursor({
+    pageSize: 2,
+    stopOnKnownPagePinIds: new Set(['svc-3', 'svc-4', 'svc-5']),
+    fetchPage: async (cursor) => {
+      calls.push(cursor ?? null);
+      if (!cursor) return { list: [makeRemoteItem('svc-1'), makeRemoteItem('svc-2')], nextCursor: 'cursor-2' };
+      return { list: [makeRemoteItem('svc-3'), makeRemoteItem('svc-4')], nextCursor: 'cursor-3' };
+    },
+    upsertService: (row) => inserted.push(row.id),
+  });
+
+  // Page 1 carried new rows (walk continued); page 2 was entirely known — the
+  // walk stops there and never re-upserts the stored directory.
+  assert.deepEqual(calls, [null, 'cursor-2']);
+  assert.deepEqual(inserted, ['svc-1', 'svc-2']);
+});
+
+test('syncRemoteSkillServicesWithCursor keeps walking when an unknown row appears', async () => {
+  const inserted = [];
+  const calls = [];
+  await syncRemoteSkillServicesWithCursor({
+    pageSize: 2,
+    stopOnKnownPagePinIds: new Set(['svc-3', 'svc-4']),
+    fetchPage: async (cursor) => {
+      calls.push(cursor ?? null);
+      if (!cursor) return { list: [makeRemoteItem('svc-new'), makeRemoteItem('svc-3')], nextCursor: 'cursor-2' };
+      if (cursor === 'cursor-2') return { list: [makeRemoteItem('svc-4')], nextCursor: null };
+      return { list: [], nextCursor: null };
+    },
+    upsertService: (row) => inserted.push(row.id),
+  });
+
+  // One unknown row anywhere in a page keeps the walk alive past it; the
+  // final page is entirely known, so it is skipped (those rows are stored).
+  assert.deepEqual(calls, [null, 'cursor-2']);
+  assert.deepEqual(inserted, ['svc-new', 'svc-3']);
+});
+
 test('parseRemoteSkillServiceRow exposes ratingAvg when present in the cache row', () => {
   const row = parseRemoteSkillServiceRow({
     id: 'svc-1',
