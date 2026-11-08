@@ -37,11 +37,12 @@ import { getMainWorkerCandidatePaths, resolveMainWorkerPath } from './workerPath
 import { runMvcSponsorCreatePin, type CreatePinFeeAssistMetadata } from './mvcSponsorCreatePin';
 import { recordChainWriteFromCreatePin } from '../libs/chainWriteLedger';
 import { getConfiguredTrafficApiBase, resolveSponsorTrafficAccount } from './trafficAccountService';
-import type { MvcSponsorTrafficAccount } from './mvcSponsorClient';
+import { deriveMvcSponsorAddress, type MvcSponsorTrafficAccount } from './mvcSponsorClient';
 import { appendMetaidLog } from './metaidLog';
 import {
   getTrafficFallbackPolicy,
   getTrafficPinMode,
+  isMeTrafficBillingAllowed,
   type TrafficSettingsReader,
 } from './trafficSettings';
 import { resolveCreatePinFeeRate } from './feeRateStore';
@@ -105,7 +106,7 @@ export interface CreatePinOptions {
   sponsorBaseUrl?: string;
   /** fetch implementation override for the sponsor protocol (mainly tests). */
   sponsorFetchImpl?: typeof fetch;
-  /** Reserved pass-through for traffic-account billing (backend not yet live). */
+  /** Explicit trafficAccount block for the sponsor pre (skips the resolver; mainly tests). */
   sponsorTrafficAccount?: MvcSponsorTrafficAccount;
   /**
    * Ledger tag: which caller/flow published this pin (e.g. 'rpc',
@@ -675,10 +676,30 @@ export async function spawnCreatePinWorker(params: SpawnCreatePinWorkerParams): 
 }
 
 /**
+ * True when an identity pin goes through the sponsor: an MVC write on the
+ * desktop with credits payment (积分支付, traffic mode) on. Server-mode tenants
+ * keep identity pins wallet-paid this phase (D4 leaves tenant billing as is).
+ */
+export function isIdentityPinSponsored(input: {
+  network?: CreatePinNetwork | string;
+  reader: TrafficSettingsReader | null | undefined;
+  env?: NodeJS.ProcessEnv;
+}): boolean {
+  return resolveCreatePinNetwork(input.network) === 'mvc' && isMeTrafficBillingAllowed(input.reader, input.env);
+}
+
+/**
  * Create a pin for a non-MetaBot identity (e.g. the local human user identity).
  * Unlike createPin this bypasses the per-MetaBot MVC spend coordinator: the
  * caller owns serialization for the identity wallet and may thread
  * sessionSnapshot excludeOutpoints/preferredFundingUtxos between sequential pins.
+ *
+ * With credits payment on (isIdentityPinSponsored) the pin runs the same
+ * sponsor flow as MetaBot pins: the identity address is bound to the user's
+ * traffic account, so the write is billed to the account (ME credits once the
+ * sponsor offers them) and falls back to the identity wallet on any sponsor
+ * failure. The sponsored result carries spentOutpoints/changeUtxo like the
+ * wallet-paid one, so the caller's session snapshot keeps working.
  */
 export async function createPinForIdentity(params: {
   mnemonic: string;
@@ -691,13 +712,62 @@ export async function createPinForIdentity(params: {
   if (!mnemonic) {
     throw new Error('Identity mnemonic is empty');
   }
-  return spawnCreatePinWorker({
+  const walletPath = params.path || "m/44'/10001'/0'/0/0";
+  const runBroadcastWorker = () => spawnCreatePinWorker({
     mnemonic,
-    walletPath: params.path || "m/44'/10001'/0'/0/0",
+    walletPath,
     metaidData: params.metaidData,
     options: params.options,
     sessionSnapshot: params.sessionSnapshot,
   });
+  if (!isIdentityPinSponsored({ network: params.options?.network, reader: getMetaidCoreKvReader() })) {
+    return runBroadcastWorker();
+  }
+
+  let identityAddress = '';
+  try {
+    identityAddress = deriveMvcSponsorAddress({ mnemonic, path: walletPath });
+  } catch {
+    // An empty address makes the sponsor flow fall back to the identity wallet.
+  }
+  appendMetaidLog('INFO', 'Attempting sponsored MVC createPin for the user identity (credits payment)', {
+    mvcAddress: identityAddress,
+    operation: params.metaidData.operation,
+    path: params.metaidData.path || '',
+  });
+  return runMvcSponsorCreatePin(
+    {
+      // Not a MetaBot: 0 marks identity writes in the sponsor logs, which also carry mvcAddress.
+      metabotId: 0,
+      mnemonic,
+      walletPath,
+      mvcAddress: identityAddress,
+      feeRate: resolveCreatePinFeeRate('mvc', params.options?.feeRate),
+      fallbackPolicy: getTrafficFallbackPolicy(getMetaidCoreKvReader()),
+      baseUrl: getConfiguredTrafficApiBase(),
+      journalKind: params.metaidData.path || undefined,
+    },
+    {
+      runDraftWorker: () => spawnCreatePinWorker({
+        mnemonic,
+        walletPath,
+        metaidData: params.metaidData,
+        options: { ...params.options, mode: 'draft' },
+        sessionSnapshot: params.sessionSnapshot,
+      }),
+      runBroadcastWorker,
+      // The caller threads spentOutpoints/changeUtxo from the result into its own snapshot.
+      recordSpentOutpoints: () => {},
+      replacePendingFundingUtxos: () => {},
+      resolveTrafficAccount: ({ challengeId, billing }) => resolveSponsorTrafficAccount({
+        botAddress: identityAddress,
+        challengeId,
+        botMnemonic: mnemonic,
+        botWalletPath: walletPath,
+        billing,
+      }),
+    },
+  );
 }
 
 /**

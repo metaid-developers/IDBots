@@ -10,7 +10,7 @@ const {
   runMvcSponsorCreatePin,
   TrafficInsufficientError,
 } = await import('../dist-electron/main/services/mvcSponsorCreatePin.js');
-const { parseCreatePinWorkerResultForTests } = await import('../dist-electron/main/services/metaidCore.js');
+const { isIdentityPinSponsored, parseCreatePinWorkerResultForTests } = await import('../dist-electron/main/services/metaidCore.js');
 const {
   getMvcSpendSessionSnapshot,
   recordMvcSpentOutpoints,
@@ -20,6 +20,7 @@ const {
 const {
   getTrafficFallbackPolicy,
   getTrafficPinMode,
+  isMeTrafficBillingAllowed,
   normalizeTrafficFallbackPolicy,
   normalizeTrafficPinMode,
 } = await import('../dist-electron/main/services/trafficSettings.js');
@@ -1209,6 +1210,29 @@ test('traffic settings default to account quota and tolerate unreadable stores',
   assert.equal(getTrafficPinMode({ get: () => { throw new Error('closed'); } }), 'traffic');
   assert.equal(getTrafficFallbackPolicy({ get: () => 'strict' }), 'selfpay');
   assert.equal(getTrafficFallbackPolicy({ get: () => undefined }), 'selfpay');
+});
+
+test('ME billing is allowed on the desktop in credits-payment mode only (D3/D4)', () => {
+  const desktop = {};
+  const tenant = { IDBOTS_SERVER_MODE: '1' };
+  assert.equal(isMeTrafficBillingAllowed(null, desktop), true);
+  assert.equal(isMeTrafficBillingAllowed({ get: () => 'traffic' }, desktop), true);
+  // D3: an explicit self-pay choice survives the switch to credits payment.
+  assert.equal(isMeTrafficBillingAllowed({ get: () => 'selfpay' }, desktop), false);
+  // D4: server-mode tenants stay on byte billing this phase.
+  assert.equal(isMeTrafficBillingAllowed({ get: () => 'traffic' }, tenant), false);
+});
+
+test('identity pins are sponsored for desktop MVC writes with credits payment on', () => {
+  const desktop = {};
+  const credits = { get: () => 'traffic' };
+  assert.equal(isIdentityPinSponsored({ reader: credits, env: desktop }), true);
+  assert.equal(isIdentityPinSponsored({ network: 'MVC', reader: credits, env: desktop }), true);
+  for (const network of ['btc', 'doge', 'opcat']) {
+    assert.equal(isIdentityPinSponsored({ network, reader: credits, env: desktop }), false, network);
+  }
+  assert.equal(isIdentityPinSponsored({ reader: { get: () => 'selfpay' }, env: desktop }), false);
+  assert.equal(isIdentityPinSponsored({ reader: credits, env: { IDBOTS_SERVER_MODE: '1' } }), false);
 });
 
 test('runMvcSponsorCreatePin opens the sponsor circuit after repeated broadcast failures', async () => {
