@@ -18609,6 +18609,9 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
   initMePointsService({ getUserIdentityStore });
   registerMePointsIpcHandlers({
     registerIpcHandler,
+    // 积分增量包 toggle: the kvStore may still be opening while early IPC
+    // fires — getStoreOrNull reads as "default (ON)" until it is ready.
+    getSettingsStore: getStoreOrNull,
     // S9 v1.2: reuse the S3 receiving-info row so ops can paste the payee QR
     // in 收款设置 and have the ME purchase flow pick it up without a rebuild.
     getSavedPaymentInfo: () => {

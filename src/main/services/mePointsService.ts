@@ -19,6 +19,8 @@
 
 import { signMvcAddressMessage } from './mvcSponsorClient';
 import type { UserIdentityStore } from '../userIdentityStore';
+import { getMePointSettings, setMePointSettings } from './mePointSettings';
+import type { MePointSettingsStore } from './mePointSettings';
 
 export const DEFAULT_ME_API_BASE_URL = 'https://www.metaso.network/assist-open-api';
 const DEFAULT_WALLET_PATH = "m/44'/10001'/0'/0/0";
@@ -858,6 +860,8 @@ export function registerMePointsIpcHandlers(deps: {
   registerIpcHandler: RegisterIpcHandlerFn;
   /** S9 v1.2: owner-editable payee QR from the 「收款设置」 page (decrypted on demand). */
   getSavedPaymentInfo?: () => { qrContent?: string; qrImageDataUrl?: string };
+  /** kvStore access for the local ME point settings (credit-pack auto-deduct toggle); null until the store is ready. */
+  getSettingsStore?: () => MePointSettingsStore | null;
 }): void {
   const { registerIpcHandler } = deps;
   const wrap = (
@@ -924,6 +928,14 @@ export function registerMePointsIpcHandlers(deps: {
   });
   wrap('me:getTopupOrders', async () => ({ orders: await getMeTopupOrders() }));
   wrap('me:getSubscriptionOrders', async () => ({ orders: await getMeSubscriptionOrders() }));
+  // 积分增量包 toggle: local kv-backed preference (default ON; see
+  // mePointSettings.ts for the server-behavior caveat).
+  wrap('me:getPointsSettings', async () => ({
+    settings: getMePointSettings(deps.getSettingsStore?.() ?? null),
+  }));
+  wrap('me:setPointsSettings', async (input) => ({
+    settings: setMePointSettings(deps.getSettingsStore?.() ?? null, input),
+  }));
   // S9 v1.2: the S3 「收款设置」 page lets ops paste a QR image/link on-device.
   // Prefer that (owner-editable, no rebuild) and fall back to the env seam.
   wrap('me:getPaymentInfo', async () => {

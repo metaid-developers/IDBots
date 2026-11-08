@@ -845,6 +845,10 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('me:subscriptionOrder', input),
     getSubscriptionOrders: () => ipcRenderer.invoke('me:getSubscriptionOrders'),
     getTopupOrders: () => ipcRenderer.invoke('me:getTopupOrders'),
+    // 积分增量包 (credit pack): local kv-backed settings, no network call.
+    getPointsSettings: () => ipcRenderer.invoke('me:getPointsSettings'),
+    setPointsSettings: (input: { autoDeductFromPersistent?: boolean }) =>
+      ipcRenderer.invoke('me:setPointsSettings', input ?? {}),
     pickVoucher: (input?: Record<string, never>) => ipcRenderer.invoke('me:pickVoucher', input ?? {}),
     getPaymentInfo: () => ipcRenderer.invoke('me:getPaymentInfo'),
   },
