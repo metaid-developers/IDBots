@@ -46,34 +46,61 @@ TAG="${TAG:-${VERSION}-${COMMIT7}}"
 IMAGE="${REGISTRY}/idbots/tenant:${TAG}"
 
 echo "building ${IMAGE} (platform ${PLATFORM}, contract ${CONTRACT_VERSION})"
+
+# build_attempt <builder> <electron-mirror>
+#   One docker build pass. <electron-mirror> empty keeps the Dockerfile's
+#   default download source (github.com/electron/electron releases); non-empty
+#   feeds the Dockerfile's ELECTRON_MIRROR ARG (deps stage pnpm install).
+build_attempt() {
+  local builder="$1" mirror="$2"
+  shift 2
+  local args=(--build-arg "APP_VERSION=${VERSION}" --build-arg "GIT_COMMIT=${COMMIT_FULL}" --build-arg "CONTRACT_VERSION=${CONTRACT_VERSION}")
+  if [ -n "$mirror" ]; then
+    args+=(--build-arg "ELECTRON_MIRROR=${mirror}")
+  fi
+  if [ "$builder" = buildx ]; then
+    docker buildx build \
+      --platform "$PLATFORM" \
+      "${args[@]}" \
+      --tag "$IMAGE" \
+      --label "org.idbots.version=${VERSION}" \
+      --label "org.idbots.commit=${COMMIT_FULL}" \
+      --label "org.idbots.contract=${CONTRACT_VERSION}" \
+      --file "$HERE/Dockerfile" \
+      --load \
+      "$REPO_ROOT"
+  else
+    docker build \
+      "${args[@]}" \
+      --tag "$IMAGE" \
+      --file "$HERE/Dockerfile" \
+      "$REPO_ROOT"
+  fi
+}
+
+# The Electron binary download is the build's one github.com dependency, and
+# the releases CDN has recurring outage windows (2026-11-08 CI: two consecutive
+# 504s). When ELECTRON_MIRROR is not preset, retry the failed pass once against
+# npmmirror before giving up. An explicit ELECTRON_MIRROR is never overridden.
+ELECTRON_MIRROR="${ELECTRON_MIRROR:-}"
+ELECTRON_MIRROR_FALLBACK="${ELECTRON_MIRROR_FALLBACK:-https://npmmirror.com/mirrors/electron/}"
+
 BUILDER="${IDBOTS_BUILDER:-buildx}"
 if [ "$BUILDER" = buildx ]; then
-  if ! docker buildx build \
-    --platform "$PLATFORM" \
-    --build-arg "APP_VERSION=${VERSION}" \
-    --build-arg "GIT_COMMIT=${COMMIT_FULL}" \
-    --build-arg "CONTRACT_VERSION=${CONTRACT_VERSION}" \
-    --tag "$IMAGE" \
-    --label "org.idbots.version=${VERSION}" \
-    --label "org.idbots.commit=${COMMIT_FULL}" \
-    --label "org.idbots.contract=${CONTRACT_VERSION}" \
-    --file "$HERE/Dockerfile" \
-    --load \
-    "$REPO_ROOT"; then
+  if build_attempt buildx "$ELECTRON_MIRROR"; then
+    BUILDER=buildx-done
+  elif build_attempt buildx "$ELECTRON_MIRROR_FALLBACK"; then
+    echo "electron download failed from the default source; build succeeded via mirror fallback: ${ELECTRON_MIRROR_FALLBACK}" >&2
+    BUILDER=buildx-done
+  else
     echo "buildx failed (often registry reachability on dev machines) — falling back to classic docker build (host platform)" >&2
     BUILDER=classic
-  else
-    BUILDER=buildx-done
   fi
 fi
 if [ "$BUILDER" = classic ]; then
-  docker build \
-    --build-arg "APP_VERSION=${VERSION}" \
-    --build-arg "GIT_COMMIT=${COMMIT_FULL}" \
-    --build-arg "CONTRACT_VERSION=${CONTRACT_VERSION}" \
-    --tag "$IMAGE" \
-    --file "$HERE/Dockerfile" \
-    "$REPO_ROOT"
+  if ! build_attempt classic "$ELECTRON_MIRROR"; then
+    build_attempt classic "$ELECTRON_MIRROR_FALLBACK"
+  fi
 fi
 
 if [ "$SCAN" = 1 ]; then
