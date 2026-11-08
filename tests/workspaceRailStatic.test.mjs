@@ -64,7 +64,10 @@ test('the middle column renders the Co-Work panel or the three Bot Home lists', 
   assert.match(sidebarSource, /data-slot="workspace-mid-column"/);
   assert.match(sidebarSource, /<BotBrowserCoworkPanel\s+onShowSkills=\{onShowSkills\}/);
   assert.match(sidebarSource, /getHomeSectionModel\(\{ t: \(key: string\) => i18nService\.t\(key\) \}\)/);
-  assert.match(sidebarSource, /data-slot="home-section-header"/);
+  // The record-type selector is ONE row above the list (slice-1 follow-up):
+  // the stacked section headers it replaced read as a second pill row and
+  // collided with the session-scope tabs below them.
+  assert.match(sidebarSource, /data-slot="home-record-type"/);
   // Records keep the existing session list component (container move only).
   assert.match(sidebarSource, /<CoworkSessionList/);
   assert.match(sidebarSource, /<UnifiedTaskList/);
