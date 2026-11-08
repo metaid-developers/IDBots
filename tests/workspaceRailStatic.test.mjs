@@ -136,12 +136,17 @@ test('the surface switcher sits in the mid column header — the rail top is a b
 test('the Co-Work face no longer introduces itself in either column', () => {
   // The NAME used to belong to the rail entry that opened the destination
   // (owner ruling 2026-11-08 14:15); that entry is retired as well (20:18), so
-  // neither column restates it — the panel carries only its two actions.
+  // neither column restates it. The session window's two actions moved OUT of
+  // the panel into the shared surface header bar (owner spec 21:31) — the
+  // panel body now carries no action row at all.
   const panelSource = read('src/renderer/features/botBrowser/BotBrowserCoworkPanel.tsx');
   assert.doesNotMatch(panelSource, /botBrowserCoworkTitle/);
-  assert.match(panelSource, /data-slot="cowork-panel-actions"/);
-  assert.match(panelSource, /botBrowserCoworkNew/);
-  assert.match(panelSource, /botBrowserCoworkHistory/);
+  assert.doesNotMatch(panelSource, /cowork-panel-actions/);
+  assert.match(panelSource, /data-slot="cowork-history-panel"|CoworkHistoryPanel/);
+  assert.match(sidebarSource, /data-slot="cowork-new-session"/);
+  assert.match(sidebarSource, /data-slot="cowork-toggle-history"/);
+  assert.match(sidebarSource, /botBrowserCoworkNew/);
+  assert.match(sidebarSource, /botBrowserCoworkHistory/);
 
   // The right pane stays a REAL rendered branch (never `null`) — the card that
   // used to sit here (title + session counts + an "open the browser" button) is

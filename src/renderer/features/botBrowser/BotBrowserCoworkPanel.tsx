@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { ChatBubbleLeftRightIcon, ClockIcon, XMarkIcon, TrashIcon, FolderIcon } from '@heroicons/react/24/outline';
-import ComposeIcon from '../../components/icons/ComposeIcon';
+import { ChatBubbleLeftRightIcon, FolderIcon } from '@heroicons/react/24/outline';
 import MarkdownContent from '../../components/MarkdownContent';
 import CoworkPromptInput, { type CoworkPromptInputRef } from '../../components/cowork/CoworkPromptInput';
 import { UserMessageBody } from '../../components/cowork/UserAttachmentBody';
@@ -25,17 +24,7 @@ import { getCompactFolderName } from '../../utils/path';
 import type { CoworkMessage, CoworkWorkspaceSelection } from '../../types/cowork';
 import TwinSeatChip from './TwinSeatChip';
 import { appointTwinSeat } from './twinSeatAppointment';
-
-const formatRelativeTime = (timestamp: number): string => {
-  const deltaMs = Date.now() - timestamp;
-  const minutes = Math.floor(deltaMs / 60_000);
-  if (minutes < 1) return 'now';
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  return `${days}d`;
-};
+import CoworkHistoryPanel from './CoworkHistoryPanel';
 
 type PanelMetabot = MetaBotForSelector & { llm_id?: string | null; llm_provider?: string | null; llm_effort?: string | null };
 
@@ -112,9 +101,10 @@ interface BotBrowserCoworkPanelProps {
   onOpenBotHome?: () => void;
   /**
    * Session-records overlay state (owner spec 2026-11-08 21:31). The records
-   * toggle will live in the shared surface header bar, so the panel accepts
-   * the open state and its setter. Both are optional: a standalone mount keeps
-   * the internal toggle.
+   * toggle lives in the shared surface header bar — beside the surface pill,
+   * where the owner's screenshot puts it — so the panel receives the open
+   * state and its setter. Both are optional: a standalone mount keeps the
+   * previous internal toggle.
    */
   historyOpen?: boolean;
   onHistoryOpenChange?: (open: boolean) => void;
@@ -449,44 +439,6 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
-      {/* Actions only (owner ruling 2026-11-08 14:15). The row used to start
-          with a «Co-Work» label, but this column's every entry IS a co-work
-          session and the rail entry that opened the panel already names it, so
-          the label was an in-place self-introduction with nothing to add. The
-          two actions stay — they are the only controls here. */}
-      {/* Metric grid, aesthetic pass 2026-11-08: both actions use the SAME
-          28 px control box as the mid-column header's capsule and search
-          button, sitting on the column's 10 px inset. Before this they were
-          24 px and pulled 4 px inside that inset, so the eye read a second,
-          smaller control ladder floating under the header. */}
-      <div data-slot="cowork-panel-actions" className="flex items-center justify-end gap-0.5 pb-1.5">
-        <button
-          type="button"
-          onClick={() => {
-            setShowHistory(false);
-            browserCoworkService.startNewDraft();
-          }}
-          className="inline-flex h-7 w-7 items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
-          aria-label={i18nService.t('botBrowserCoworkNew')}
-          title={i18nService.t('botBrowserCoworkNew')}
-        >
-          <ComposeIcon className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          onClick={() => setShowHistory(!showHistory)}
-          className={`inline-flex h-7 w-7 items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
-            showHistory
-              ? 'dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover dark:text-claude-darkText text-claude-text'
-              : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
-          }`}
-          aria-label={i18nService.t('botBrowserCoworkHistory')}
-          title={i18nService.t('botBrowserCoworkHistory')}
-        >
-          <ClockIcon className="h-4 w-4" />
-        </button>
-      </div>
-
       <div ref={listRef} className="min-h-0 flex-1 space-y-2.5 overflow-y-auto overflow-x-hidden px-1 pb-2">
         {visibleMessages.length === 0 ? (
           needsTwinBootstrap ? (
@@ -653,59 +605,13 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
       )}
 
       {showHistory ? (
-        <div className="absolute inset-x-0 top-7 bottom-0 z-10 flex flex-col rounded-lg border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted shadow-lg">
-          <div className="flex items-center justify-between px-3 py-2 text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
-            <span>{i18nService.t('botBrowserCoworkHistory')}</span>
-            <button
-              type="button"
-              onClick={() => setShowHistory(false)}
-              className="h-5 w-5 inline-flex items-center justify-center rounded-md hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
-              aria-label={i18nService.t('close')}
-            >
-              <XMarkIcon className="h-3.5 w-3.5" />
-            </button>
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1.5 pb-2">
-            {browserSessions.length === 0 ? (
-              <div className="px-2 py-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                {i18nService.t('coworkNoSessions')}
-              </div>
-            ) : (
-              browserSessions.map((session) => (
-                <div
-                  key={session.id}
-                  className={`group flex items-start gap-1 rounded-md px-2 py-1.5 text-sm transition-colors cursor-pointer hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover ${
-                    currentSession?.id === session.id ? 'dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover' : ''
-                  }`}
-                  onClick={() => void handleSelectHistory(session.id)}
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-xs dark:text-claude-darkText text-claude-text">
-                      {session.title}
-                    </div>
-                    <div className="mt-0.5 truncate text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                      {(session.browserTitle || session.browserUri) ?? ''}
-                    </div>
-                  </div>
-                  <span className="shrink-0 pt-0.5 text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                    {formatRelativeTime(session.updatedAt)}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void handleDeleteHistory(session.id);
-                    }}
-                    className="hidden h-5 w-5 shrink-0 items-center justify-center rounded-md text-claude-textSecondary hover:text-red-500 group-hover:inline-flex"
-                    aria-label={i18nService.t('delete')}
-                  >
-                    <TrashIcon className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
+        <CoworkHistoryPanel
+          sessions={browserSessions}
+          currentSessionId={currentSession?.id ?? null}
+          onSelectSession={handleSelectHistory}
+          onDeleteSession={handleDeleteHistory}
+          onClose={() => setShowHistory(false)}
+        />
       ) : null}
     </div>
   );
