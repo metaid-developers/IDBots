@@ -1341,6 +1341,15 @@
       ]
     },
     {
+      "path": "fs.inlineHtmlImages",
+      "kind": "invoke",
+      "channel": "fs:inlineHtmlImages",
+      "args": [
+        "htmlPath",
+        "srcs"
+      ]
+    },
+    {
       "path": "fs.readTextFile",
       "kind": "invoke",
       "channel": "fs:readTextFile",
@@ -2328,6 +2337,12 @@
       "args": []
     },
     {
+      "path": "mePoints.getPointsSettings",
+      "kind": "invoke",
+      "channel": "me:getPointsSettings",
+      "args": []
+    },
+    {
       "path": "mePoints.getRates",
       "kind": "invoke",
       "channel": "me:getRates",
@@ -2369,6 +2384,14 @@
       "path": "mePoints.pickVoucher",
       "kind": "invoke",
       "channel": "me:pickVoucher",
+      "args": [
+        "input"
+      ]
+    },
+    {
+      "path": "mePoints.setPointsSettings",
+      "kind": "invoke",
+      "channel": "me:setPointsSettings",
       "args": [
         "input"
       ]
