@@ -1,7 +1,7 @@
 # Backend Requirements — Bill Sponsored On-Chain Traffic in ME Credits (assist-base-service)
 
-- Status: **Approved v1.2**, 2026-11-09. Owner confirmed D1–D4 per section 6 (all recommendations adopted). v1.1 pinned the R4 field names, the `sponsor-orders` page envelope, the R5 request shape, and the R3 identity-address requirement. v1.2 aligns the doc to the shipped backend (ABS `066194d` / `661f46f` / `c3e5be8`): the `sponsor-orders` envelope is `{ orders, nextCursor }` with a numeric id cursor (`0` = last page; the earlier `rows` + opaque-cursor draft was not built), and `limit` defaults to 50 with a max of 200. No other semantic change.
-- Client counterpart: IDBots branch `feat/credits-traffic-unify` (developed in parallel; see Appendix A).
+- Status: **Live v1.3**, 2026-11-09. Owner confirmed D1–D4 per section 6 (all recommendations adopted). v1.1 pinned the R4 field names, the `sponsor-orders` page envelope, the R5 request shape, and the R3 identity-address requirement. v1.2 aligned the doc to the shipped backend (ABS `066194d` / `661f46f` / `c3e5be8`): the `sponsor-orders` envelope is `{ orders, nextCursor }` with a numeric id cursor (`0` = last page; the earlier `rows` + opaque-cursor draft was not built), and `limit` defaults to 50 with a max of 200. **v1.3 records the shipped rollout semantics** (ABS through `a57b4c0`, live in production 2026-11-09, client joint-debug passed): `sponsor-orders` lists only billed orders; the address/info `me` block is present for the identity address without a binding row; the R7 allowlist matches the account's identity address only; grant-funded burns write `mint` + `burn` rows under the same `refId`. Production evidence: the owner account converted 180.8 MB → 3,616.6 ME in one idempotent mint, and four ME-billed orders settled with exact rate math (e.g. 857 B → 17 milliME).
+- Client counterpart: IDBots `main` (merged as `12a875dd`).
 - Related contracts: `docs/gasfee-flow/backend-spec.md` (traffic account), `docs/gasfee-flow/me-payment-and-ledger-backend-requirements.md` (ME ledger), ABS `docs/me-points/客户端与宿主接入指南.md`.
 
 ## 1. Goal
@@ -75,13 +75,14 @@ Target client behavior:
 
 ### R3. Capability and spendable balance
 
-- `GET /v2/assist/gas/address/info` (already read by the client for `data.traffic.balanceBytes`) adds, for addresses bound to a traffic account:
+- `GET /v2/assist/gas/address/info` (already read by the client for `data.traffic.balanceBytes`) adds, for any address that resolves to a traffic account — a bound bot address, or the account's identity address even when that address has no binding row of its own (v1.3, shipped in `20f339e`):
   ```json
   "me": { "trafficBilling": true, "spendableMilli": 1834000 }
   ```
   - `trafficBilling` = switch on AND rate configured AND identity allowed (R7).
   - `spendableMilli` = what a new ME spend can draw now: grant remaining + (`autoDeductFromPersistent` ? persistent pools : 0), excluding frozen amounts.
-  - The client also reads this block for the user identity address (bound to the account like the bots) to decide when the traffic tab switches from the byte-balance UI to the ME credits UI, so the block must be present for that address too.
+  - The client reads this block for the user identity address to decide when the traffic tab switches from the byte-balance UI to the ME credits UI.
+  - Shipped semantics (v1.3, live-verified 2026-11-09): `trafficBilling` is checked against the **account's identity address** only — the R7 allowlist (`traffic_billing_allowlist`) matches `account.IdentityAddress`, never bot addresses. `spendableMilli` is returned only while `trafficBilling` is true (otherwise `0`).
 - `GET /v1/me/balance` adds `spendableMilli` with the same definition. `totalAvailable` (`service/me_service/subscription_service.go:288-290`) ignores the auto-deduct switch, so the client cannot use it as "can pay".
 - The client never computes ME cost itself. Its pre-flight is only `spendableMilli > 0`; `pre` stays authoritative.
 
@@ -101,7 +102,7 @@ Target client behavior:
     "nextCursor": 0
   }
   ```
-  It covers both pay sources, so users keep their older byte-billed history.
+  It covers both pay sources, so users keep their older byte-billed history. Shipped semantics (v1.3): **only billed orders are listed** — orders that actually consumed bytes or ME (committed); pending and expired reservations are not returned.
 - ME burn rows for traffic: `refType = "metering:traffic"`, `refId` = `orderId`, and `reason` carries the bot address and `txSize` (public values only).
 
 ### R5. Existing byte balances — decided (D2): convert to ME
@@ -141,12 +142,12 @@ Legacy per-address sats quota (`PaySourceQuota`), LLM relay admission and quota,
 
 ## 4. Acceptance
 
-1. **ME-billed write.** `pre` freezes exactly `ConvertToMeMilli(txSize)`; `commit` burns it; `GET /v1/me/history?refType=metering:traffic&refId=<orderId>` shows burn rows summing to it; `spendableMilli` drops by the same amount.
+1. **ME-billed write.** `pre` freezes exactly `ConvertToMeMilli(txSize)`; `commit` burns it; `GET /v1/me/history?refType=metering:traffic&refId=<orderId>` shows burn rows summing to it; `spendableMilli` drops by the same amount. v1.3 caveat: a grant-funded portion writes a `mint` row **and** a `burn` row with the same `refId`, so any summing by `refId` must count only `type=burn` rows.
 2. **Grant-only.** With `autoDeductFromPersistent` OFF, the grant exhausted, and top-up > 0 → `ME_INSUFFICIENT` with `autoDeductDisabled: true`, and the persistent pools are untouched.
 3. **Daily limit.** Reaching it → `ME_DAILY_LIMIT`. Traffic never consumes the bot autonomous pay limit.
 4. **Expiry.** An expired ME order returns its frozen amount within the sponsor expiry sweep, not after 24 h.
 5. **Refund.** Broadcast-failure compensation reverses the burn; replaying any step writes nothing new.
-6. **Usage.** `usage/daily` and `usage/summary` include ME orders with `meMilli`; `sponsor-orders` lists both pay sources.
+6. **Usage.** `usage/daily` and `usage/summary` include ME orders with `meMilli`; `sponsor-orders` lists both pay sources (billed orders only, v1.3).
 7. **Conversion.** `convert-to-me` is idempotent; a byte credit landing on a migrated account mints ME.
 8. **Compatibility.** An old client (no `billing` field) on a non-migrated account is billed in bytes exactly as today.
 9. **Rate.** 1,000,000 bytes → 20,000 milliME at multiplier 1.
