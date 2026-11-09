@@ -12,10 +12,9 @@
  * — never hardcoded client-side.
  */
 
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { ArrowPathIcon, ChevronUpIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
-import { placePopoverAbove, useAnchorMoveWatcher } from '../../utils/anchoredPopover';
 import {
   ensureMeSnapshot,
   formatMe,
@@ -39,56 +38,18 @@ const MeCoinIcon: React.FC<{ className?: string }> = ({ className }) => (
   </svg>
 );
 
-/** Intrinsic panel width; the fixed placement clamps it to the viewport. */
-const ME_PANEL_WIDTH = 300;
-
-const MeBalanceBadge: React.FC = () => {
+/**
+ * `compact` renders the icon-only form used by the 64 px workspace rail: the
+ * coin glyph alone (the amount moves to the accessible name/tooltip) and the
+ * breakdown panel opens to the RIGHT of the rail instead of from its right
+ * edge — a 300 px panel anchored `right-0` inside a 64 px column would hang
+ * off the window.
+ */
+const MeBalanceBadge: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
   // useSyncExternalStore keeps this render in step with the shared store.
   const snapshot = React.useSyncExternalStore(subscribeMeSnapshot, getMeSnapshot, getMeSnapshot);
   const [panelOpen, setPanelOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
-  // The panel floats position:fixed anchored above the badge trigger (same
-  // pattern as ModelEffortPicker) so the sidebar's resizable, clipping
-  // ancestors can never cut it off: its right edge stays aligned with the
-  // badge and its left edge is clamped to the viewport, so a narrow sidebar
-  // simply lets it overhang into the main area.
-  const [fixedStyle, setFixedStyle] = useState<React.CSSProperties | null>(null);
-
-  const updatePlacement = useCallback(() => {
-    const anchorRect = triggerRef.current?.getBoundingClientRect() ?? null;
-    const panelRect = panelRef.current?.getBoundingClientRect();
-    const placement = placePopoverAbove(
-      anchorRect,
-      panelRect ? { width: panelRect.width, height: panelRect.height } : { width: ME_PANEL_WIDTH },
-      ME_PANEL_WIDTH,
-    );
-    setFixedStyle({ position: 'fixed', top: placement.top, left: placement.left, width: placement.width });
-  }, []);
-
-  useLayoutEffect(() => {
-    if (!panelOpen) {
-      setFixedStyle(null);
-      return;
-    }
-    updatePlacement();
-  }, [panelOpen, updatePlacement]);
-
-  useEffect(() => {
-    if (!panelOpen) return;
-    const handle = () => updatePlacement();
-    window.addEventListener('resize', handle);
-    window.addEventListener('scroll', handle, true);
-    return () => {
-      window.removeEventListener('resize', handle);
-      window.removeEventListener('scroll', handle, true);
-    };
-  }, [panelOpen, updatePlacement]);
-
-  // Re-place when the trigger MOVES without a window-level event (sidebar
-  // width drag).
-  useAnchorMoveWatcher(triggerRef, panelOpen, updatePlacement);
 
   useEffect(() => {
     ensureMeSnapshot();
@@ -148,31 +109,46 @@ const MeBalanceBadge: React.FC = () => {
       ? 'text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-300/60 dark:border-amber-700/60'
       : 'text-claude-accent dark:text-claude-darkAccent';
 
+  // Copy pass 2026-11-08: the visible pill used to print the unit twice
+  // ("1,993 ME ME") — the label already carried it and the small unit span
+  // added a second one. The label keeps the unit for titles/aria (where there
+  // is no separate glyph column); the pill renders the number and ONE unit.
+  const amountText = loading
+    ? '…'
+    : unavailable
+      ? i18nService.t('meBadgeUnavailable')
+      : formatMe(totalMe);
+  const amountLabel = unavailable || loading ? amountText : `${amountText} ME`;
+  const showAmountUnit = !loading && !unavailable;
+
   return (
     <div className="relative">
       <button
         type="button"
-        ref={triggerRef}
         onClick={() => setPanelOpen((open) => !open)}
-        title={i18nService.t('mePanelTitle')}
-        className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-medium transition-colors bg-claude-surface/80 dark:bg-claude-darkSurface/80 hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover ${badgeClass}`}
+        title={compact ? `${i18nService.t('mePanelTitle')} · ${amountLabel}` : i18nService.t('mePanelTitle')}
+        aria-label={compact ? `${i18nService.t('mePanelTitle')} · ${amountLabel}` : undefined}
+        aria-expanded={panelOpen}
+        className={
+          compact
+            ? `flex h-10 w-10 items-center justify-center rounded-xl border transition-colors bg-claude-surface/80 dark:bg-claude-darkSurface/80 hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover ${badgeClass}`
+            : `flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors bg-claude-surface/80 dark:bg-claude-darkSurface/80 hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover ${badgeClass}`
+        }
       >
-        <MeCoinIcon className="h-3.5 w-3.5" />
-        <span className="tabular-nums tracking-tight">
-          {loading ? '…' : unavailable ? i18nService.t('meBadgeUnavailable') : formatMe(totalMe)}
-        </span>
-        <span className="text-[10px] opacity-80">ME</span>
-        <ChevronUpIcon className={`h-3 w-3 transition-transform ${panelOpen ? 'rotate-180' : ''}`} />
+        <MeCoinIcon className={compact ? 'h-5 w-5' : 'h-3.5 w-3.5'} />
+        {compact ? null : (
+          <>
+            <span className="tabular-nums tracking-tight">{amountText}</span>
+            {showAmountUnit ? <span className="text-[10px] opacity-80">ME</span> : null}
+            <ChevronUpIcon className={`h-3 w-3 transition-transform ${panelOpen ? 'rotate-180' : ''}`} />
+          </>
+        )}
       </button>
 
       {panelOpen && (
         <>
           <div className="fixed inset-0 z-[79]" onClick={() => setPanelOpen(false)} />
-          <div
-            ref={panelRef}
-            className="fixed z-[80] max-h-[70vh] w-[300px] overflow-y-auto rounded-2xl border border-claude-border dark:border-claude-darkBorder bg-claude-surface dark:bg-claude-darkSurface p-3.5 shadow-xl"
-            style={fixedStyle ?? { visibility: 'hidden' }}
-          >
+          <div className={`absolute bottom-[calc(100%+8px)] z-[80] max-h-[70vh] w-[300px] overflow-y-auto rounded-2xl border border-claude-border dark:border-claude-darkBorder bg-claude-surface dark:bg-claude-darkSurface p-3.5 shadow-xl ${compact ? 'left-0' : 'right-0'}`}>
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-claude-text dark:text-claude-darkText">
                 {i18nService.t('mePanelTitle')}

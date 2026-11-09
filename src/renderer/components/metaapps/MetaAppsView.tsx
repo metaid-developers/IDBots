@@ -1,6 +1,5 @@
 import React from 'react';
 import MetaAppsManager from './MetaAppsManager';
-import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import ComposeIcon from '../icons/ComposeIcon';
 import WindowTitleBar from '../window/WindowTitleBar';
 import type { MetaAppRecord } from '../../types/metaApp';
@@ -9,7 +8,6 @@ import { i18nService } from '../../services/i18n';
 
 interface MetaAppsViewProps {
   isSidebarCollapsed?: boolean;
-  onToggleSidebar?: () => void;
   onNewChat?: () => void;
   onOpenMetaAppInBrowser?: (app: MetaAppRecord) => Promise<boolean> | boolean;
   onStartTaskWithMetaApp?: (app: MetaAppRecord) => Promise<void> | void;
@@ -24,7 +22,6 @@ interface MetaAppsViewProps {
 
 const MetaAppsView: React.FC<MetaAppsViewProps> = ({
   isSidebarCollapsed,
-  onToggleSidebar,
   onNewChat,
   onOpenMetaAppInBrowser,
   onStartTaskWithMetaApp,
@@ -41,13 +38,6 @@ const MetaAppsView: React.FC<MetaAppsViewProps> = ({
         <div className="flex items-center space-x-3 h-8">
           {isSidebarCollapsed ? (
             <div className={`non-draggable flex items-center gap-1 ${isMac ? 'pl-[68px]' : ''}`}>
-              <button
-                type="button"
-                onClick={onToggleSidebar}
-                className="h-8 w-8 inline-flex items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
-              >
-                <SidebarToggleIcon className="h-4 w-4" isCollapsed={true} />
-              </button>
               <button
                 type="button"
                 onClick={onNewChat}

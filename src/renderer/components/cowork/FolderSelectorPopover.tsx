@@ -30,7 +30,7 @@ const PathTooltip: React.FC<PathTooltipProps> = ({ path, anchorRect, visible }) 
   return (
     <div
       style={style}
-      className="px-3.5 py-2.5 text-[13px] leading-relaxed rounded-xl shadow-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text dark:border-claude-darkBorder border-claude-border border break-all pointer-events-none"
+      className="glass-surface px-3.5 py-2.5 text-[13px] leading-relaxed rounded-xl break-all pointer-events-none"
     >
       {path}
     </div>
@@ -302,14 +302,14 @@ const FolderSelectorPopover: React.FC<FolderSelectorPopoverProps> = ({
 
   if (!isOpen) return null;
 
-  const itemClass = 'w-full flex items-center gap-3 px-3 py-2.5 text-sm dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors';
+  const itemClass = 'w-full flex items-center gap-3 px-3 py-2.5 text-sm dark:text-claude-darkText text-claude-text hover:bg-black/[0.045] dark:hover:bg-white/[0.07] transition-colors';
 
   return (
     <>
       {/* Main popover */}
       <div
         ref={popoverRef}
-        className="fixed w-56 rounded-lg border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-lg z-50"
+        className="glass-surface fixed w-56 rounded-lg z-50"
         style={popoverStyle ?? { visibility: 'hidden' }}
       >
         {projectMode ? (
@@ -341,7 +341,7 @@ const FolderSelectorPopover: React.FC<FolderSelectorPopoverProps> = ({
             </button>
 
             {/* Divider */}
-            <div className="my-1 border-t dark:border-claude-darkBorder border-claude-border" />
+            <div className="my-1 border-t border-glass-line" />
 
             {/* Open folder */}
             <button onClick={handleAddFolder} className={itemClass}>
@@ -398,7 +398,7 @@ const FolderSelectorPopover: React.FC<FolderSelectorPopoverProps> = ({
             from the chosen folder, its ancestor git repositories, and any
             symlinked files (the same discovery the DeepSeek Harness web UI
             applies). */}
-        <div className="px-3 pb-2 pt-0.5 text-[10px] leading-3 dark:text-claude-darkTextSecondary text-claude-textSecondary opacity-70">
+        <div className="px-3 pb-2 pt-0.5 text-[10px] leading-3 glass-text-secondary">
           {i18nService.t('workspaceInstructionsHint')}
         </div>
       </div>
@@ -407,7 +407,7 @@ const FolderSelectorPopover: React.FC<FolderSelectorPopoverProps> = ({
       {!projectMode && showRecentSubmenu && (
         <div
           ref={submenuRef}
-          className="fixed w-64 max-h-80 overflow-y-auto rounded-lg border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-lg z-[60]"
+          className="glass-surface fixed w-64 max-h-80 overflow-y-auto rounded-lg z-[60]"
           style={{ top: submenuPosition.top, left: submenuPosition.left }}
           onMouseEnter={() => setShowRecentSubmenu(true)}
           onMouseLeave={() => setShowRecentSubmenu(false)}
@@ -427,7 +427,7 @@ const FolderSelectorPopover: React.FC<FolderSelectorPopoverProps> = ({
                 onClick={() => handleSelectRecentFolder(folder)}
                 onMouseEnter={(e) => handleFolderMouseEnter(folder, e)}
                 onMouseLeave={handleFolderMouseLeave}
-                className="w-full flex items-center gap-2 px-3 py-2 text-sm dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors text-left first:rounded-t-lg last:rounded-b-lg"
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm dark:text-claude-darkText text-claude-text hover:bg-black/[0.045] dark:hover:bg-white/[0.07] transition-colors text-left first:rounded-t-lg last:rounded-b-lg"
               >
                 <FolderIcon className="h-4 w-4 flex-shrink-0 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
                 <span className="truncate">{truncatePath(folder)}</span>

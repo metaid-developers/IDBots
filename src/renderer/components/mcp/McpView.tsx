@@ -1,18 +1,16 @@
 import React from 'react';
 import { i18nService } from '../../services/i18n';
 import McpManager from './McpManager';
-import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import ComposeIcon from '../icons/ComposeIcon';
 import WindowTitleBar from '../window/WindowTitleBar';
 
 interface McpViewProps {
   isSidebarCollapsed?: boolean;
-  onToggleSidebar?: () => void;
   onNewChat?: () => void;
   updateBadge?: React.ReactNode;
 }
 
-const McpView: React.FC<McpViewProps> = ({ isSidebarCollapsed, onToggleSidebar, onNewChat, updateBadge }) => {
+const McpView: React.FC<McpViewProps> = ({ isSidebarCollapsed, onNewChat, updateBadge }) => {
   const isMac = window.electron.platform === 'darwin';
   return (
     <div className="flex-1 flex flex-col dark:bg-claude-darkBg bg-claude-bg h-full">
@@ -20,13 +18,6 @@ const McpView: React.FC<McpViewProps> = ({ isSidebarCollapsed, onToggleSidebar, 
         <div className="flex items-center space-x-3 h-8">
           {isSidebarCollapsed && (
             <div className={`non-draggable flex items-center gap-1 ${isMac ? 'pl-[68px]' : ''}`}>
-              <button
-                type="button"
-                onClick={onToggleSidebar}
-                className="h-8 w-8 inline-flex items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
-              >
-                <SidebarToggleIcon className="h-4 w-4" isCollapsed={true} />
-              </button>
               <button
                 type="button"
                 onClick={onNewChat}

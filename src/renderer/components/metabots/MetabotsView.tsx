@@ -2,13 +2,11 @@ import React from 'react';
 import { i18nService } from '../../services/i18n';
 import type { Metabot } from '../../types/metabot';
 import MetabotsManager from './MetabotsManager';
-import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import ComposeIcon from '../icons/ComposeIcon';
 import WindowTitleBar from '../window/WindowTitleBar';
 
 interface MetabotsViewProps {
   isSidebarCollapsed?: boolean;
-  onToggleSidebar?: () => void;
   onNewChat?: () => void;
   updateBadge?: React.ReactNode;
   onRequestModelSettings?: () => void;
@@ -19,7 +17,6 @@ interface MetabotsViewProps {
 
 const MetabotsView: React.FC<MetabotsViewProps> = ({
   isSidebarCollapsed,
-  onToggleSidebar,
   onNewChat,
   updateBadge,
   onRequestModelSettings,
@@ -34,13 +31,6 @@ const MetabotsView: React.FC<MetabotsViewProps> = ({
         <div className="flex items-center space-x-3 h-8">
           {isSidebarCollapsed && (
             <div className={`non-draggable flex items-center gap-1 ${isMac ? 'pl-[68px]' : ''}`}>
-              <button
-                type="button"
-                onClick={onToggleSidebar}
-                className="h-8 w-8 inline-flex items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
-              >
-                <SidebarToggleIcon className="h-4 w-4" isCollapsed={true} />
-              </button>
               <button
                 type="button"
                 onClick={onNewChat}

@@ -399,7 +399,7 @@ contextBridge.exposeInMainWorld('electron', {
     ipcRenderer.invoke('git:getBranch', cwd),
   cowork: {
     // Session management
-    startSession: (options: { prompt: string; cwd?: string; systemPrompt?: string; title?: string; activeSkillIds?: string[]; metabotId?: number | null; sessionType?: 'standard' | 'browser'; assistantMode?: boolean; model?: string | null; modelProvider?: string | null; effort?: string | null; source?: 'quick_action'; projectId?: string | null; goal?: string }) =>
+    startSession: (options: { prompt: string; cwd?: string; systemPrompt?: string; title?: string; activeSkillIds?: string[]; metabotId?: number | null; sessionType?: 'standard' | 'browser' | 'a2a'; assistantMode?: boolean; model?: string | null; modelProvider?: string | null; effort?: string | null; source?: 'quick_action'; projectId?: string | null; goal?: string }) =>
       ipcRenderer.invoke('cowork:session:start', options),
     /** Fire-and-forget runtime-slot prewarm on composer/session-open intent —
      *  the slot boot overlaps typing instead of stacking inside the first turn. */

@@ -89,13 +89,13 @@ const CoworkSearchModal: React.FC<CoworkSearchModalProps> = ({
       onClick={onClose}
     >
       <div
-        className="modal-content w-full max-w-2xl mt-10 rounded-2xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-modal overflow-hidden"
+        className="modal-content glass-surface w-full max-w-2xl mt-10 rounded-2xl overflow-hidden"
         role="dialog"
         aria-modal="true"
         aria-label={i18nService.t('search')}
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex items-center gap-3 px-4 py-3 border-b dark:border-claude-darkBorder border-claude-border">
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-glass-line">
           <div className="relative flex-1">
             <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
             <input
@@ -109,14 +109,14 @@ const CoworkSearchModal: React.FC<CoworkSearchModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="p-2 rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+            className="p-2 rounded-lg glass-text-secondary hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
             aria-label={i18nService.t('close')}
           >
             <XMarkIcon className="h-5 w-5" />
           </button>
         </div>
-        <div className="flex items-center px-4 pb-2.5 border-b dark:border-claude-darkBorder border-claude-border">
-          <label className="inline-flex items-center gap-1.5 text-xs cursor-pointer select-none dark:text-claude-darkTextSecondary text-claude-textSecondary">
+        <div className="flex items-center px-4 pb-2.5 border-b border-glass-line">
+          <label className="inline-flex items-center gap-1.5 text-xs cursor-pointer select-none glass-text-secondary">
             <input
               type="checkbox"
               checked={scopedOnly}
@@ -126,7 +126,9 @@ const CoworkSearchModal: React.FC<CoworkSearchModalProps> = ({
             {i18nService.t('coworkSearchScopedOnly').replace('{scope}', scopeLabel)}
           </label>
         </div>
-        <div className="px-3 py-3 max-h-[60vh] overflow-y-auto">
+        {/* Results are a content surface: solid fill inside the glass sheet,
+            never glass-on-glass (docs: liquid-glass design law #1). */}
+        <div className="mx-3 mb-3 mt-3 rounded-xl border border-claude-border dark:border-claude-darkBorder bg-claude-surface px-3 py-3 max-h-[60vh] overflow-y-auto">
           {filteredSessions.length === 0 ? (
             <div className="py-10 text-center text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
               {i18nService.t('searchNoResults')}

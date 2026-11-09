@@ -3,12 +3,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
-// Regression guard for "a Bot Browser session has no entry point in Bot Home":
-// the SQL layer (coworkStore.listSessions) never filtered session_type, but the
-// renderer Sidebar dropped every `sessionType === 'browser'` row, so once the
-// user switched away from the Bot Browser surface the session was unreachable.
-// These assertions pin the renderer-side contract that fixes it, and pin the
-// a2a / group_task behaviour that must not regress.
+// Regression guard for the two-surface session split (owner ruling
+// 2026-11-08): Bot Browser co-work sessions (session_type = 'browser') live on
+// the Bot Internet surface — the panel's own history overlay is their entry
+// point — and must NOT mix into the Bot Home history list. Reachability stays
+// via search rows (routed back to the Bot Browser surface) and the panel
+// history. Earlier this file pinned the opposite contract: the 1.0.x regression
+// where a renderer-side `sessionType !== 'browser'` filter left browser chats
+// with no entry point at all. That concern is now answered by the panel history
+// overlay, not by the home list.
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
 
@@ -16,24 +19,28 @@ function read(relativePath) {
   return fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
 }
 
-test('Sidebar keeps browser sessions in the Bot Home history list', () => {
-  const source = read('src/renderer/components/Sidebar.tsx');
+test('the restored Home sidebar keeps browser sessions OUT of the Bot Home history list', () => {
+  // Owner ruling 2026-11-08 14:22 restored Bot Home to the baseline two-column
+  // form: the live Home list is HomeSidebar.tsx. Sidebar.tsx keeps its copy of
+  // the same contract for the Internet middle column (unchanged this batch).
+  const source = read('src/renderer/components/HomeSidebar.tsx');
 
-  // The bug: home sessions were filtered with `sessionType !== 'browser'`.
-  assert.doesNotMatch(
+  // The local (home) grouping excludes browser sessions; they render on the
+  // Bot Internet surface instead.
+  assert.match(
     source,
-    /filter\(\(session\)\s*=>\s*session\.sessionType\s*!==\s*'browser'\)/,
-    'Sidebar must not filter browser sessions out of the home history',
+    /&&\s*session\.sessionType\s*!==\s*'browser'/,
+    'the home local list must exclude browser co-work sessions',
   );
   assert.match(
     source,
     /const homeSessions = sessions;/,
-    'home history is the full cowork session list',
+    'home history is still backed by the full cowork session list (search spans it)',
   );
 });
 
-test('Sidebar routes a browser row back to the Bot Browser surface', () => {
-  const source = read('src/renderer/components/Sidebar.tsx');
+test('the Home sidebar routes a browser row back to the Bot Browser surface', () => {
+  const source = read('src/renderer/components/HomeSidebar.tsx');
 
   assert.match(source, /onSelectBrowserSession\?:\s*\(sessionId:\s*string\)\s*=>\s*void\s*\|\s*Promise<void>;/);
   const handlerStart = source.indexOf('const handleSelectSession = async');
@@ -58,22 +65,28 @@ test('Sidebar routes a browser row back to the Bot Browser surface', () => {
   );
 });
 
-test('a2a and group_task grouping is unchanged', () => {
-  const source = read('src/renderer/components/Sidebar.tsx');
+test('a2a grouping is unchanged; browser rows stay out of local; the group bucket is Internet-only', () => {
+  const source = read('src/renderer/components/HomeSidebar.tsx');
 
-  // local holds everything except the two dedicated groups, so browser lands in
-  // local. The one deliberate exception: an a2a row that arrived over an IM
-  // channel (a QQ / WeChat bot-to-bot conversation) is promoted into local so
-  // the owner can reach it from Bot Home — the behaviour pinned by
-  // qqSessionClassification.test.ts (CLS-09b).
+  // local holds human↔MetaBot chats but not browser co-work sessions (they
+  // live on the Bot Internet surface). The one deliberate exception: an a2a
+  // row that arrived over an IM channel (a QQ / WeChat bot-to-bot
+  // conversation) is promoted into local so the owner can reach it from Bot
+  // Home — the behaviour pinned by qqSessionClassification.test.ts (CLS-09b).
   assert.match(
     source,
-    /const isLocal = \(session: CoworkSessionSummary\) =>\s*session\.sessionType !== 'group_task'\s*&&\s*\(session\.sessionType !== 'a2a' \|\| isImSession\(session\)\)/,
+    /const isLocal = \(session: CoworkSessionSummary\) =>\s*session\.sessionType !== 'group_task'\s*&&\s*session\.sessionType !== 'browser'\s*&&\s*\(session\.sessionType !== 'a2a' \|\| isImSession\(session\)\)/,
   );
-  // and the two dedicated groups match their own type only — the a2a tab keeps
-  // the IM rows out of itself, since they now live in local.
+  // and the a2a group matches its own type only — the a2a tab keeps the IM rows
+  // out of itself, since they now live in local.
   assert.match(source, /a2a:\s*homeSessions\.filter\(\(session\)\s*=>\s*session\.sessionType\s*===\s*'a2a'\s*&&\s*!isImSession\(session\)\)/);
-  assert.match(source, /group:\s*homeSessions\.filter\(\(session\)\s*=>\s*session\.sessionType\s*===\s*'group_task'\)/);
+  // Owner ruling 2026-11-08 15:46 retired the Home 「群任务」sign: the live Home
+  // sidebar derives no group_task bucket any more. Nothing is deleted — the
+  // Internet middle column keeps its own copy of the bucket and its
+  // group-task session slot (that file is untouched by this batch).
+  assert.doesNotMatch(source, /group:\s*homeSessions\.filter\(\(session\)\s*=>\s*session\.sessionType\s*===\s*'group_task'\)/);
+  const internetCopy = read('src/renderer/components/Sidebar.tsx');
+  assert.match(internetCopy, /group:\s*homeSessions\.filter\(\(session\)\s*=>\s*session\.sessionType\s*===\s*'group_task'\)/);
 });
 
 test('browser rows carry a visible type badge', () => {

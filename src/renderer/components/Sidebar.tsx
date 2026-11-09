@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState } from '../store';
 import { coworkService } from '../services/cowork';
+import { browserCoworkService } from '../services/browserCowork';
 import { groupTaskService } from '../services/groupTaskService';
 import { i18nService } from '../services/i18n';
 import CoworkSessionList from './cowork/CoworkSessionList';
@@ -12,106 +13,125 @@ import type { GroupTaskTypeVariant } from './groupTasks/GroupTaskSidebarList';
 import { OPEN_TEAM_COLLAB_POLL_INTERVAL_MS } from './groupTasks/OpenTeamCollabsSection';
 import { openTeamCollabService } from '../services/openTeamCollabService';
 import { selectCollab, selectTask as selectGroupTask } from '../store/slices/groupTasksSlice';
-import { clearCurrentSession, setNewTaskMetabotId } from '../store/slices/coworkSlice';
+import { selectTask as selectLongTermTask } from '../store/slices/longTermTaskSlice';
+import { clearCurrentSession, setNewTaskMetabotId, setNewTaskOrigin } from '../store/slices/coworkSlice';
 import type { OpenTeamCollabSummary } from '../types/openTeamCollab';
 import { buildUnifiedTaskList } from '../utils/unifiedTaskList';
-import { MagnifyingGlassIcon, ClockIcon, CpuChipIcon, ShoppingBagIcon, UserGroupIcon, GlobeAltIcon, ArchiveBoxIcon, XMarkIcon } from '@heroicons/react/24/outline';
-import Tooltip from './ui/Tooltip';
+import { MagnifyingGlassIcon, ArchiveBoxIcon, XMarkIcon, ClockIcon } from '@heroicons/react/24/outline';
 import ComposeIcon from './icons/ComposeIcon';
+import Tooltip from './ui/Tooltip';
 import FilterLinesIcon from './icons/FilterLinesIcon';
-import SidebarToggleIcon from './icons/SidebarToggleIcon';
 import BackgroundTasksBadge from './cowork/BackgroundTasksBadge';
-import { getSidebarInternetNavModel, getSidebarPrimaryNavModel } from './sidebar/sidebarNavigation.js';
 import { SleepGuardBadge } from './SleepGuardBadge';
-import BotBrowserModeSwitch from '../features/botBrowser/BotBrowserModeSwitch';
 import BotBrowserCoworkPanel from '../features/botBrowser/BotBrowserCoworkPanel';
+import BotBrowserModeSwitch from '../features/botBrowser/BotBrowserModeSwitch';
+import { UserProfilePage } from '../features/userProfile';
 import { defaultSidebarWidth } from '../utils/sidebarWidth';
-import type { BotBrowserSurfaceMode, BotInternetPane } from '../features/botBrowser/types';
+import type { BotBrowserSurfaceMode, BotHomeSection } from '../features/botBrowser/types';
 import type { CoworkSessionSummary } from '../types/cowork';
 import type {
   SessionSortMode,
   SessionViewMode,
 } from '../utils/sessionViewGrouping';
 import { shouldFoldIntoAutonomousTasks, splitSessionsWithFollowUp } from '../utils/sessionAutoGrouping';
+import { loadSessionViewMode, saveSessionViewMode } from '../utils/sessionGroupStorage';
 import type { SessionSidebarSection } from '../utils/sessionAutoGrouping';
 import { useStableCallback } from '../utils/useStableCallback';
-import { selectTrackedTasksNeedingAttention } from '../utils/trackedTaskAttention';
+import { LONG_TERM_COLUMN_LABEL_KEYS, type LongTermTaskSummary } from '../types/longTermTask';
 import type { SettingsOpenOptions } from './Settings';
-import MeBalanceBadge from './me/MeBalanceBadge';
 
+/**
+ * The middle column of the three-column shell (slice 1).
+ *
+ * Container ownership moved here from the old single sidebar: this component no
+ * longer renders navigation (the left rail owns it) and no longer renders the
+ * settings/ME footer (the rail owns it too). What stays is the column's own
+ * content: the Bot Browser Co-Work panel on the Bot Internet surface, and the
+ * three task-list sections (long-term / group tasks / records) on Bot Home.
+ */
 interface SidebarProps {
   onShowSettings: (options?: SettingsOpenOptions) => void;
   onShowLogin?: () => void;
-  activeView: 'cowork' | 'skills' | 'scheduledTasks' | 'groupTasks' | 'metabots';
   onShowSkills: () => void;
   onShowCowork: () => void;
   onShowScheduledTasks: () => void;
   onShowGroupTasks: () => void;
-  onShowMetabots: () => void;
-  onNewChat: () => void;
   mode: BotBrowserSurfaceMode;
-  internetPane: BotInternetPane;
+  /** Bot Home: which of the three list sections is expanded. The left rail is
+   * the ONLY selector that sets it — the middle column renders the body of
+   * whatever the rail picked and owns no record-type control of its own. */
+  homeSection: BotHomeSection;
+  /** Open the Bot Home surface from the Co-Work panel. */
   onSelectHome: () => void;
-  onSelectBrowser: () => void;
-  onSelectInternetPane: (pane: BotInternetPane) => void;
+  /** Switch surface. The switcher lives in THIS column's header (owner ruling
+   * 2026-11-08 14:15: moved out of the 64 px rail so it can show the current
+   * surface's name in a Codex-style capsule). Both surfaces are always listed
+   * in its menu, so the header control is the ONE place a surface is chosen. */
+  onSelectSurface: (mode: BotBrowserSurfaceMode) => void;
   /** Open a browser-type session back in the Bot Browser co-work surface.
    * Browser sessions are listed in the Bot Home history (one list, no dead
    * ends), but they run in the Bot Browser panel — selecting one must return
    * the user there instead of the home chat view. */
   onSelectBrowserSession?: (sessionId: string) => void | Promise<void>;
   isCollapsed: boolean;
-  onToggleCollapse: () => void;
-  /** Expanded sidebar width in px (resizable by the user). */
+  /** Expanded middle-column width in px (resizable by the user). */
   width?: number;
   /** True while the user is dragging the resize handle; disables the width transition for lag-free dragging. */
   isResizing?: boolean;
-  updateBadge?: React.ReactNode;
 }
 
 /**
- * Task-record list categories: standard human↔MetaBot chats, A2A MetaBot↔MetaBot
- * chats, and group-task chat channels (session_type = 'group_task', created by
- * the Group Task daemon). The sidebar keeps them in separate tabs so the
- * history list does not mix unrelated conversation kinds.
+ * Task-record SESSION SCOPES (owner ruling 2026-11-08): the record list filters
+ * by who is talking — local owner↔Bot chats, or online Bot↔Bot chats.
+ *
+ * Group-task chat channels are deliberately NOT a third scope any more: group
+ * tasks are their own RECORD TYPE («多人任务»), and their chat channels are
+ * listed under that type instead (see the group-task section). Keeping them as
+ * a scope as well duplicated the same rows under a second selector that
+ * visually collided with the record-type selector above it.
+ *
+ * Layers (top → bottom): record TYPE (long-term / group tasks / records) →
+ * session SCOPE (local / a2a) → the list itself.
  */
-type TaskRecordTab = 'local' | 'a2a' | 'group';
+type TaskRecordTab = 'local' | 'a2a';
 
 const TASK_RECORD_TABS: Array<{ id: TaskRecordTab; labelKey: string; emptyKey: string }> = [
   { id: 'local', labelKey: 'coworkTabLocal', emptyKey: 'coworkEmptyLocal' },
   { id: 'a2a', labelKey: 'coworkTabA2A', emptyKey: 'coworkEmptyA2A' },
-  { id: 'group', labelKey: 'coworkTabGroup', emptyKey: 'coworkEmptyGroup' },
 ];
 
 /** localStorage key for the remembered task-record tab. */
 const TASK_RECORD_TAB_STORAGE_KEY = 'taskRecordTab';
 
+/**
+ * Column dot for the long-term cards previewed in the middle column. Same
+ * palette as the board's column dots so the two readings never disagree.
+ */
+const LONG_TERM_COLUMN_DOT_CLASS: Record<string, string> = {
+  waiting_owner: 'bg-amber-400',
+  in_progress: 'bg-sky-400',
+  waiting_external: 'bg-violet-400',
+  defining: 'bg-claude-textSecondary dark:bg-claude-darkTextSecondary',
+  paused: 'bg-zinc-500',
+  done: 'bg-emerald-400',
+};
+
 const loadTaskRecordTab = (): TaskRecordTab => {
   try {
     const stored = window.localStorage.getItem(TASK_RECORD_TAB_STORAGE_KEY);
-    if (stored === 'a2a' || stored === 'group') return stored;
+    // 'group' is the retired third scope: its rows now live under the
+    // group-tasks record type, so an old profile folds back to the local tab.
+    if (stored === 'a2a') return stored;
   } catch {
     // localStorage unavailable; fall through to the default tab.
   }
   return 'local';
 };
 
-/** localStorage keys for the local-chats list view ("filter & sort") choices. */
-const SESSION_VIEW_MODE_STORAGE_KEY = 'sessionViewMode';
+/** localStorage key for the local-chats list sort choice. The VIEW choice
+ * (按 Bot / 按时间线) is per face and lives in utils/sessionGroupStorage.ts —
+ * the local and online lists must not share one grouping preference. */
 const SESSION_SORT_MODE_STORAGE_KEY = 'sessionSortMode';
-
-const loadSessionViewMode = (): SessionViewMode => {
-  try {
-    const stored = window.localStorage.getItem(SESSION_VIEW_MODE_STORAGE_KEY);
-    // 'project' is the retired directory-based view; its closest successor is
-    // the by-Bot view, so the stored choice carries over instead of snapping
-    // back to the timeline default.
-    if (stored === 'project') return 'bot';
-    if (stored === 'bot') return 'bot';
-  } catch {
-    // localStorage unavailable; fall through to the default view.
-  }
-  return 'timeline';
-};
 
 const loadSessionSortMode = (): SessionSortMode => {
   try {
@@ -125,64 +145,87 @@ const loadSessionSortMode = (): SessionSortMode => {
 
 const Sidebar: React.FC<SidebarProps> = ({
   onShowSettings,
-  activeView,
   onShowSkills,
   onShowCowork,
   onShowScheduledTasks,
   onShowGroupTasks,
-  onShowMetabots,
-  onNewChat,
   mode,
-  internetPane,
+  homeSection,
   onSelectHome,
-  onSelectBrowser,
-  onSelectInternetPane,
+  onSelectSurface,
   onSelectBrowserSession,
   isCollapsed,
-  onToggleCollapse,
   width = defaultSidebarWidth('home'),
   isResizing = false,
-  updateBadge,
 }) => {
   const sessions = useSelector((state: RootState) => state.cowork.sessions);
-  // Bot Home history lists EVERY cowork session, including the Bot Browser
-  // co-work sessions (session_type = 'browser'). They are ordinary cowork
-  // sessions the user can come back to; the browser surface only supplies the
-  // panel they were started from. Hiding them here left a browser chat with no
-  // entry point once the user switched away from Bot Browser. They are shown
-  // in the "local chats" tab and carry a type badge (see CoworkSessionItem),
-  // and selecting one routes back to the Bot Browser surface (see
-  // handleSelectSession below).
+  // Bot Browser co-work sessions (session_type = 'browser') live on the Bot
+  // Internet surface: the panel's own history overlay is their entry point.
+  // Bot Home is the task surface — browser chat rows no longer mix into its
+  // history list (two-surface split, owner ruling 2026-11-08). Reachability is
+  // preserved two ways: selecting a browser row from search still routes back
+  // to the Bot Browser surface (handleSelectSession below), and the panel
+  // history still lists every browser session.
   const homeSessions = sessions;
   const currentSessionId = useSelector((state: RootState) => state.cowork.currentSessionId);
   const unreadSessionIds = useSelector((state: RootState) => state.cowork.unreadSessionIds);
   const groupTasks = useSelector((state: RootState) => state.groupTasks.tasks);
   const selectedGroupTaskId = useSelector((state: RootState) => state.groupTasks.selectedTaskId);
   const selectedCollabId = useSelector((state: RootState) => state.groupTasks.selectedCollabId);
-  const scheduledTasks = useSelector((state: RootState) => state.scheduledTask.tasks);
   // Joined OpenTeam collabs for the records "Group Tasks" tab (remote-hosted
   // tasks this machine's bots participate in; loaded/polled only while that
   // tab is visible).
   const [openTeamCollabs, setOpenTeamCollabs] = useState<OpenTeamCollabSummary[]>([]);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  // BotHub session-records overlay (owner spec 2026-11-08 21:31, kept by the
+  // 22:19 re-ruling): the toggle lives in the shared surface header bar, so its
+  // state is owned here and the panel below is controlled. Switching to
+  // BotWorks closes it — the panel unmounts on that face anyway, and a stale
+  // "open" must not greet the next visit.
+  const [panelHistoryOpen, setPanelHistoryOpen] = useState(false);
   const dispatch = useDispatch();
   // Which task-record category the home history list shows. Persisted across
   // app restarts; the header + tabs stay fixed while only the list scrolls.
   const [taskRecordTab, setTaskRecordTab] = useState<TaskRecordTab>(loadTaskRecordTab);
-  // Batch-archive selection mode for the local-chats list. The toolbar row
-  // above the list hosts this and the view "filter & sort" controls.
+  // Batch-archive selection mode for the session list — one mode shared by
+  // both faces (local and online). The toolbar row above the list hosts this
+  // and the view "filter & sort" controls.
   const [isBatchArchiveMode, setIsBatchArchiveMode] = useState(false);
   const [batchSelectedIds, setBatchSelectedIds] = useState<string[]>([]);
   // View + sort choices for the local-chats list, persisted across app
   // restarts; the menu itself is a transient popover anchored to the toolbar.
-  const [sessionViewMode, setSessionViewMode] = useState<SessionViewMode>(loadSessionViewMode);
+  const [sessionViewMode, setSessionViewMode] = useState<SessionViewMode>(() =>
+    loadSessionViewMode((key) => window.localStorage.getItem(key), 'local'),
+  );
+  // The online face has its own remembered view (same default, same storage
+  // family, different key): switching the local list to the timeline must not
+  // drag the online list with it.
+  const [a2aViewMode, setA2aViewMode] = useState<SessionViewMode>(() =>
+    loadSessionViewMode((key) => window.localStorage.getItem(key), 'a2a'),
+  );
   const [sessionSortMode, setSessionSortMode] = useState<SessionSortMode>(loadSessionSortMode);
   const [isViewMenuOpen, setIsViewMenuOpen] = useState(false);
   const viewMenuButtonRef = useRef<HTMLButtonElement>(null);
   const handleSetSessionViewMode = (mode: SessionViewMode) => {
     setSessionViewMode(mode);
     try {
-      window.localStorage.setItem(SESSION_VIEW_MODE_STORAGE_KEY, mode);
+      saveSessionViewMode(
+        (storageKey, value) => window.localStorage.setItem(storageKey, value),
+        'local',
+        mode,
+      );
+    } catch {
+      // localStorage unavailable; the view still switches for this session.
+    }
+  };
+  const handleSetA2aViewMode = (mode: SessionViewMode) => {
+    setA2aViewMode(mode);
+    try {
+      saveSessionViewMode(
+        (storageKey, value) => window.localStorage.setItem(storageKey, value),
+        'a2a',
+        mode,
+      );
     } catch {
       // localStorage unavailable; the view still switches for this session.
     }
@@ -204,11 +247,11 @@ const Sidebar: React.FC<SidebarProps> = ({
       // localStorage unavailable; the tab still switches for this session.
     }
   };
-  // Sessions grouped by category: local (human↔MetaBot, including browser
-  // sessions started from the Bot Browser panel), a2a (MetaBot↔MetaBot), group
-  // (group-task chat channels). a2a / group_task keep their dedicated tabs and
-  // are matched by their own session type, so browser sessions can never leak
-  // into them.
+  // Sessions grouped by category: local (human↔MetaBot chats, EXCLUDING
+  // browser co-work sessions which stay on the Bot Internet surface), a2a
+  // (MetaBot↔MetaBot), group (group-task chat channels). a2a / group_task
+  // keep their dedicated tabs and are matched by their own session type, so
+  // browser sessions can never leak into them.
   const sessionGroups = useMemo(() => {
     // IM rows belong to the LOCAL list even when an older row is still stored
     // as 'a2a' (direct IM chats used to be created that way). The mapping
@@ -217,6 +260,7 @@ const Sidebar: React.FC<SidebarProps> = ({
     const isImSession = (session: CoworkSessionSummary) => Boolean(session.imChannel);
     const isLocal = (session: CoworkSessionSummary) =>
       session.sessionType !== 'group_task'
+      && session.sessionType !== 'browser'
       && (session.sessionType !== 'a2a' || isImSession(session));
     return {
       local: homeSessions.filter(isLocal),
@@ -286,42 +330,34 @@ const Sidebar: React.FC<SidebarProps> = ({
         unread: unreadOf(localHumanSessions) + unreadOf(localFollowUpSessions),
       },
       a2a: { count: sessionGroups.a2a.length, unread: unreadOf(sessionGroups.a2a) },
-      group: { count: groupTasks.length + openTeamCollabs.length, unread: unreadOf(sessionGroups.group) },
     };
-  }, [sessionGroups, localHumanSessions, localFollowUpSessions, unreadSessionIds, groupTasks, openTeamCollabs]);
-  const isMac = window.electron.platform === 'darwin';
-  const hasRunningScheduledTask = scheduledTasks.some(
-    (task) => task.enabled && task.state.runningAtMs !== null && task.state.lastStatus === 'running'
-  );
-  // The 跟踪任务 nav entry's dot: a parked owner decision (waiting_owner) is the
-  // stronger signal, and the board behind it is kept live app-wide (App.tsx
-  // init) so the dot is correct even if the 长期任务 tab was never opened.
-  // (longTermBoard itself is selected above, where the fold split needs it.)
-  const trackedTaskAttention = useMemo(
-    () => selectTrackedTasksNeedingAttention({ longTermTask: { board: longTermBoard } }),
-    [longTermBoard],
-  );
+  }, [sessionGroups, localHumanSessions, localFollowUpSessions, unreadSessionIds]);
+  // The view mode of the face currently on screen, and its setter. Both faces
+  // render the same grouped component; only the remembered choice differs.
+  const faceViewMode = taskRecordTab === 'local' ? sessionViewMode : a2aViewMode;
+  const handleSetFaceViewMode = taskRecordTab === 'local' ? handleSetSessionViewMode : handleSetA2aViewMode;
+  // The toolbar (view label + filter & sort + batch archive) shows while the
+  // face on screen has rows to control; both faces get the same controls.
+  const hasFaceSessions = taskRecordTab === 'local'
+    ? localHumanSessions.length > 0
+    : sessionGroups.a2a.length > 0;
+
   // Labels come from i18nService at call time, so the language is an input of
   // every memo below (and of the session list): this component re-renders on a
   // language switch through App's i18n subscription, and the memo has to see
   // the new language to rebuild what it cached.
   const language = i18nService.getLanguage();
-  // The nav models only change when something they actually show changes —
-  // rebuilding both on every sidebar render (board pushes, unread changes) was
-  // wasted work and a fresh array identity for the nav lists each time.
-  const primaryNavItems = useMemo(
-    () =>
-      getSidebarPrimaryNavModel({
-        t: (key) => i18nService.t(key),
-        hasRunningScheduledTask,
-        needsDecisionCount: trackedTaskAttention.total,
-      }).filter((item) => !item.hidden),
-    [hasRunningScheduledTask, trackedTaskAttention.total, language],
-  );
-  const internetNavItems = useMemo(
-    () => getSidebarInternetNavModel({ t: (key) => i18nService.t(key) }).filter((item) => !item.hidden),
-    [language],
-  );
+  // Long-term cards in board order (waiting-owner column first), so the section
+  // shows what needs the owner before the parked tasks.
+  const longTermCards = useMemo<LongTermTaskSummary[]>(() => {
+    if (!longTermBoard) return [];
+    const byId = new Map(longTermBoard.cards.map((card) => [card.id, card]));
+    return longTermBoard.columns.flatMap((column) =>
+      column.cardIds
+        .map((id) => byId.get(id))
+        .filter((card): card is LongTermTaskSummary => Boolean(card)),
+    );
+  }, [longTermBoard]);
 
   useEffect(() => {
     const handleSearch = () => {
@@ -334,15 +370,17 @@ const Sidebar: React.FC<SidebarProps> = ({
     };
   }, [onShowCowork]);
 
+  // The group-task rows moved from a session-scope tab to their own record
+  // type, so the load gate follows the record type, not the scope tabs.
   useEffect(() => {
-    if (taskRecordTab !== 'group') return;
+    if (homeSection !== 'groupTasks') return;
     void groupTaskService.loadTasks();
-  }, [taskRecordTab]);
+  }, [homeSection]);
 
-  // Collab rows ride the same tab gate: load on entering the tab, then poll so
-  // new remote collaborations surface without leaving the sidebar.
+  // Collab rows ride the same gate: load on entering the group-tasks record
+  // type, then poll so new remote collaborations surface without leaving it.
   useEffect(() => {
-    if (taskRecordTab !== 'group') return;
+    if (homeSection !== 'groupTasks') return;
     let cancelled = false;
     const load = () => {
       openTeamCollabService
@@ -360,11 +398,12 @@ const Sidebar: React.FC<SidebarProps> = ({
       cancelled = true;
       clearInterval(timer);
     };
-  }, [taskRecordTab]);
+  }, [homeSection]);
 
-  // Leaving the local tab ends any batch-archive selection in progress.
+  // Switching faces ends any batch-archive selection in progress: the picked
+  // ids belong to the face they were picked on, and the two faces' session
+  // buckets never overlap. Batch archive itself exists on BOTH faces now.
   useEffect(() => {
-    if (taskRecordTab === 'local') return;
     setIsBatchArchiveMode(false);
     setBatchSelectedIds([]);
     setIsViewMenuOpen(false);
@@ -424,10 +463,14 @@ const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const handleConfirmBatchArchive = async () => {
-    // Only archive ids still present in the local list (a session may have
-    // been archived individually while selection mode was open).
+    // Only archive ids still present on the face that is on screen (a session
+    // may have been archived individually while selection mode was open). The
+    // bucket is the face's own: the local face keeps its full local set (fold
+    // and Follow-Up rows included), the online face its a2a set — before this
+    // the local bucket was hard-coded, which silently dropped every a2a pick.
+    const faceSessions = sessionGroups[taskRecordTab];
     const archivableIds = batchSelectedIds.filter((id) =>
-      sessionGroups.local.some((session) => session.id === id),
+      faceSessions.some((session) => session.id === id),
     );
     handleExitBatchArchiveMode();
     for (const sessionId of archivableIds) {
@@ -509,6 +552,10 @@ const Sidebar: React.FC<SidebarProps> = ({
     dispatch(clearCurrentSession());
     // Set the selected bot for the new task
     dispatch(setNewTaskMetabotId(botId));
+    // The composer's wording follows the face the + was pressed on: this face
+    // shows 本地对话 tasks AND 线上对话 (a2a) sessions, and only the a2a tabs arm
+    // the Bot-to-Bot copy. Every other opener resets the origin to 'local'.
+    dispatch(setNewTaskOrigin(taskRecordTab === 'a2a' ? 'a2a' : 'local'));
     // Switch to cowork view if not already there
     onShowCowork();
   });
@@ -537,385 +584,347 @@ const Sidebar: React.FC<SidebarProps> = ({
     await groupTaskService.archiveTask(taskId);
   };
 
-  const handlePrimaryNavClick = (itemId: string) => {
-    setIsSearchOpen(false);
-    if (itemId === 'scheduledTasks') {
-      onShowScheduledTasks();
-      return;
-    }
-    if (itemId === 'groupTasks') {
-      // The nav entry is a fixed home-page entry point: never re-open whatever
-      // task/collab was drilled into last time.
-      dispatch(selectGroupTask(null));
-      onShowGroupTasks();
-      return;
-    }
-    if (itemId === 'metabots') {
-      onShowMetabots();
-    }
-  };
-
-  const renderNavIcon = (icon: string) => {
-    if (icon === 'clock') return <ClockIcon className="h-4 w-4" />;
-    if (icon === 'userGroup') return <UserGroupIcon className="h-4 w-4" />;
-    if (icon === 'shoppingBag') return <ShoppingBagIcon className="h-4 w-4 shrink-0" />;
-    if (icon === 'globe') return <GlobeAltIcon className="h-4 w-4" />;
-    if (icon === 'squares2x2') return <MagnifyingGlassIcon className="h-4 w-4 opacity-0 absolute pointer-events-none" />;
-    return <CpuChipIcon className="h-4 w-4" />;
-  };
-
-  const renderNavContent = (item: {
-    id: string;
-    label: string;
-    hasIndicator?: boolean;
-    indicatorKind?: 'running' | 'decision';
-    indicatorLabel?: string;
-    badge?: string;
-  }) => {
-    if (item.id === 'scheduledTasks') {
-      return (
-        <span className="inline-flex min-w-0 items-center gap-2">
-          {item.hasIndicator ? (
-            item.indicatorKind === 'decision' ? (
-              // A parked owner decision: same amber family as the running dot,
-              // but its own class so the two meanings stay distinguishable in
-              // the DOM/CSS, and labelled — this dot means "you are the
-              // blocker", not "work is happening".
-              <span
-                role="img"
-                aria-label={item.indicatorLabel}
-                title={item.indicatorLabel}
-                className="tracked-task-decision-indicator shrink-0"
-              />
-            ) : (
-              <span
-                aria-hidden
-                className="scheduled-task-running-indicator shrink-0"
-              />
-            )
-          ) : null}
-          <span className="truncate">{item.label}</span>
-        </span>
-      );
-    }
-
-    if (item.id === 'gigSquare') {
-      return (
-        <span className="inline-flex items-center gap-1 min-w-0">
-          <span className="truncate">{item.label}</span>
-          <span
-            className="shrink-0 rounded px-0.5 py-px text-[9px] font-medium leading-none text-claude-textSecondary dark:text-claude-darkTextSecondary border border-claude-border dark:border-claude-darkBorder bg-claude-surfaceMuted dark:bg-claude-darkSurfaceMuted"
-            aria-hidden
-          >
-            {item.badge}
-          </span>
-        </span>
-      );
-    }
-
-    return <span className="truncate">{item.label}</span>;
-  };
-
-  const renderPrimaryNavIcon = (item: { icon: string }) => {
-    if (item.icon === 'squares2x2') {
-      return (
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="h-4 w-4"
-        >
-          <rect x="3" y="3" width="7" height="7" rx="1.5" />
-          <rect x="14" y="3" width="7" height="7" rx="1.5" />
-          <rect x="3" y="14" width="7" height="7" rx="1.5" />
-          <rect x="14" y="14" width="7" height="7" rx="1.5" />
-        </svg>
-      );
-    }
-
-    return renderNavIcon(item.icon);
-  };
+  // The shared header's action row, directly below the top-track band. BotWorks
+  // keeps the records search and the shell's live indicators; BotHub carries
+  // the session window's two light actions — new session and session records.
+  // Both sets are 28 px controls (aesthetic grid v1).
+  const surfaceHeaderActions = mode === 'home' ? (
+    <>
+      <button
+        type="button"
+        onClick={() => {
+          onShowCowork();
+          setIsSearchOpen(true);
+        }}
+        className="non-draggable inline-flex h-7 w-7 items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+        aria-label={i18nService.t('search')}
+      >
+        <MagnifyingGlassIcon className="h-4 w-4" />
+      </button>
+      <BackgroundTasksBadge onShowGroupTasks={onShowGroupTasks} />
+      <SleepGuardBadge />
+    </>
+  ) : (
+    <>
+      <button
+        type="button"
+        data-slot="cowork-new-session"
+        onClick={() => {
+          setPanelHistoryOpen(false);
+          browserCoworkService.startNewDraft();
+        }}
+        className="non-draggable inline-flex h-7 w-7 items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+        aria-label={i18nService.t('botBrowserCoworkNew')}
+        title={i18nService.t('botBrowserCoworkNew')}
+      >
+        <ComposeIcon className="h-4 w-4" />
+      </button>
+      <button
+        type="button"
+        data-slot="cowork-toggle-history"
+        aria-expanded={panelHistoryOpen}
+        onClick={() => setPanelHistoryOpen((value) => !value)}
+        className={`non-draggable inline-flex h-7 w-7 items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
+          panelHistoryOpen
+            ? 'dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover dark:text-claude-darkText text-claude-text'
+            : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text'
+        }`}
+        aria-label={i18nService.t('botBrowserCoworkHistory')}
+        title={i18nService.t('botBrowserCoworkHistory')}
+      >
+        <ClockIcon className="h-4 w-4" />
+      </button>
+      <BackgroundTasksBadge onShowGroupTasks={onShowGroupTasks} />
+      <SleepGuardBadge />
+    </>
+  );
 
   return (
     <aside
+      data-slot="workspace-mid-column"
+      aria-label={mode === 'home' ? i18nService.t('botHome') : i18nService.t('botBrowserCoworkTitle')}
       className={`shrink-0 dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted flex flex-col overflow-hidden ${
         isResizing ? '' : 'sidebar-transition'
       }`}
       style={{ width: isCollapsed ? 0 : width }}
     >
-      <div className="pt-3 pb-3">
-        <div className="draggable sidebar-header-drag h-8 flex items-center px-3">
-          <button
-            type="button"
-            onClick={onToggleCollapse}
-            className={`non-draggable h-8 w-8 inline-flex items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors ${isMac ? 'ml-[68px]' : ''}`}
-            aria-label={isCollapsed ? i18nService.t('expand') : i18nService.t('collapse')}
-          >
-            <SidebarToggleIcon className="h-4 w-4" isCollapsed={isCollapsed} />
-          </button>
-          <div className="ml-auto">
-            {updateBadge}
-          </div>
-        </div>
-        <div className="mt-3 px-3">
-          <BotBrowserModeSwitch
-            mode={mode}
-            onSelectHome={onSelectHome}
-            onSelectBrowser={onSelectBrowser}
-          />
-        </div>
-        {mode === 'browser' ? (
-          <nav aria-label={i18nService.t('botInternet')} className="mt-3 space-y-1 px-3">
-            {internetNavItems.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                aria-pressed={internetPane === item.id}
-                onClick={() => onSelectInternetPane(item.id as BotInternetPane)}
-                className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
-                  internetPane === item.id
-                    ? 'dark:text-claude-darkText text-claude-text dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover'
-                    : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-text dark:hover:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
-                }`}
-              >
-                {renderPrimaryNavIcon(item)}
-                {renderNavContent(item)}
-              </button>
-            ))}
-          </nav>
-        ) : (
-          <nav aria-label={i18nService.t('botHome')} className="mt-3 space-y-1 px-3">
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={onNewChat}
-                className="flex-1 inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-text dark:hover:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
-              >
-                <ComposeIcon className="h-4 w-4" />
-                {i18nService.t('newChat')}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  onShowCowork();
-                  setIsSearchOpen(true);
-                }}
-                className="shrink-0 h-[36px] w-[36px] inline-flex items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-text dark:hover:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
-                aria-label={i18nService.t('search')}
-              >
-                <MagnifyingGlassIcon className="h-4 w-4" />
-              </button>
-            </div>
-            {primaryNavItems.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => handlePrimaryNavClick(item.id)}
-                className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
-                  activeView === item.id
-                    ? 'dark:text-claude-darkText text-claude-text dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover'
-                    : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-text dark:hover:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
-                }`}
-              >
-                {renderPrimaryNavIcon(item)}
-                {renderNavContent(item)}
-              </button>
-            ))}
-          </nav>
-        )}
+      {/* The ONE shared surface header (owner red-box order 2026-11-09
+          10:58; identity relocated by the D-line final ruling 2026-11-09):
+          row 1 = the traffic lights' own 52 px strip, row 2 = the
+          BotHub | BotWorks band ALONE — the identity avatar moved into the
+          rail's top slot (WorkspaceRail), so this header carries no pill.
+          The face's light actions sit on the row below the band,
+          right-aligned. */}
+      <div data-slot="mid-column-header" className="shrink-0">
+        <BotBrowserModeSwitch
+          mode={mode}
+          onSelectBrowser={() => onSelectSurface('browser')}
+          onSelectHome={() => onSelectSurface('home')}
+          actions={surfaceHeaderActions}
+        />
       </div>
+
       {mode === 'home' ? (
-        <div className="flex-1 min-h-0 flex flex-col px-2.5 pt-2 mt-1">
-          {/* Fixed header + tabs; only the list below scrolls. */}
-          <div className="px-3 pb-2 shrink-0">
-            <div className="text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
-              {i18nService.t('coworkHistory')}
-            </div>
-            <div
-              role="group"
-              aria-label={i18nService.t('coworkHistory')}
-              className="grid w-full grid-cols-3 gap-1 rounded-lg border border-claude-border/70 bg-claude-bg/80 p-1 mt-2 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80"
-            >
-              {TASK_RECORD_TABS.map((tab, index) => {
-                const isActive = taskRecordTab === tab.id;
-                const stats = tabStats[tab.id];
-                // Per-tab item count is only shown on hover, as a tip under the
-                // tab; the label itself stays clean. Edge tabs align the tip to
-                // the outer edge so it never clips at the sidebar boundary.
-                const countTipKey = tab.id === 'group' ? 'coworkTabCountGroup' : 'coworkTabCountChats';
-                const countTip = i18nService.t(countTipKey).replace('{count}', String(stats.count));
-                const tooltipAlign = index === 0
-                  ? 'left-0'
-                  : index === TASK_RECORD_TABS.length - 1
-                    ? 'right-0'
-                    : 'left-1/2 -translate-x-1/2';
-                return (
+        <div className="flex min-h-0 flex-1 flex-col px-2 pt-1">
+          {/* The record TYPE (long-term / group tasks / records) is chosen in
+              the LEFT RAIL — the four Bot Home icons — and only there. The
+              middle column owns no type selector: an earlier native select drawer
+              sat right here and duplicated the rail, while its amber decision
+              dot duplicated the one on the rail's 长期任务 entry. The column
+              now renders the body of whatever the rail picked (the type is the
+              `homeSection` prop, derived from App's mainView) and nothing else.
+              The one control that stays is the records BODY's own scope row
+              (local / online), which filters rows inside this list and is not
+              a destination selector. */}
+          {homeSection === 'longTerm' ? (
+            <div className="min-h-0 flex-1 overflow-y-auto pb-2" data-home-section="longTerm">
+              {longTermCards.length === 0 ? (
+                <p className="px-2 py-1.5 text-xs leading-5 dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  {i18nService.t('homeMidLongTermEmpty')}
+                </p>
+              ) : (
+                longTermCards.slice(0, 5).map((card) => (
                   <button
-                    key={tab.id}
+                    key={card.id}
                     type="button"
-                    aria-pressed={isActive}
-                    onClick={() => handleSetTaskRecordTab(tab.id)}
-                    className={`non-draggable group relative inline-flex h-7 min-w-0 items-center justify-center gap-1 rounded-md px-1 text-xs font-medium leading-none transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
-                      isActive
-                        ? 'btn-idchat-primary-filled still'
-                        : 'text-claude-textSecondary hover:bg-claude-surfaceHover/70 hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover/70 dark:hover:text-claude-darkText'
-                    }`}
+                    onClick={() => {
+                      dispatch(selectLongTermTask(card.id));
+                      onShowScheduledTasks();
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
                   >
-                    {stats.unread > 0 && (
-                      <span className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" aria-hidden />
-                    )}
-                    <span className="truncate">{i18nService.t(tab.labelKey)}</span>
                     <span
-                      className={`pointer-events-none absolute top-full mt-1.5 z-50 ${tooltipAlign} whitespace-nowrap rounded-md border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface px-2 py-1 text-[11px] font-normal leading-none dark:text-claude-darkText text-claude-text shadow-lg opacity-0 transition-opacity duration-150 group-hover:opacity-100`}
                       aria-hidden
-                    >
-                      {countTip}
+                      className={`h-1.5 w-1.5 shrink-0 rounded-full ${LONG_TERM_COLUMN_DOT_CLASS[card.column] ?? 'bg-claude-textSecondary'}`}
+                    />
+                    <span className="min-w-0 flex-1 truncate text-xs dark:text-claude-darkText text-claude-text">
+                      {card.title}
+                    </span>
+                    <span className="shrink-0 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                      {i18nService.t(LONG_TERM_COLUMN_LABEL_KEYS[card.column])}
                     </span>
                   </button>
-                );
-              })}
+                ))
+              )}
+              <p className="px-2 pt-1 text-[11px] leading-4 dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                {i18nService.t('homeMidLongTermHint')}
+              </p>
             </div>
-          </div>
-          {/* Toolbar row above the local list: current view label on the
-              left, filter & sort + batch archive on the right. Fixed with the
-              header; only the list scrolls. */}
-          {taskRecordTab === 'local' && localHumanSessions.length > 0 && (
-            <div className="flex items-center justify-between gap-1.5 px-3 pb-1.5 shrink-0">
-              <span className="min-w-0 truncate text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                {i18nService.t(sessionViewMode === 'bot' ? 'sessionViewByBot' : 'sessionViewTimeline')}
-              </span>
-              <div className="flex items-center gap-1.5">
-                {isBatchArchiveMode ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => void handleConfirmBatchArchive()}
-                      disabled={batchSelectedIds.length === 0}
-                      className="inline-flex h-6 items-center rounded-md bg-claude-accent px-2.5 text-xs font-medium text-claude-accentInk transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {i18nService.t('batchArchiveConfirm')}
-                      {batchSelectedIds.length > 0 ? ` (${batchSelectedIds.length})` : ''}
-                    </button>
-                    <Tooltip content={i18nService.t('batchArchiveCancel')} position="bottom">
+          ) : homeSection === 'groupTasks' ? (
+            <div className="min-h-0 flex-1 overflow-y-auto pb-2" data-home-section="groupTasks">
+              <UnifiedTaskList
+                items={unifiedTaskList}
+                selectedTaskId={selectedGroupTaskId}
+                selectedCollabId={selectedCollabId}
+                onSelectTask={handleSelectGroupTask}
+                onSelectCollab={handleSelectOpenTeamCollab}
+                onTogglePin={handleToggleGroupTaskPin}
+                onRename={handleRenameGroupTask}
+                onArchive={handleArchiveGroupTask}
+                getTaskType={(task) => taskTypeById.get(task.id) ?? 'local'}
+                emptyText={i18nService.t('homeMidGroupTasksEmpty')}
+              />
+              {/* Group-task CHAT CHANNELS live here, under their own record
+                  type - that is why the records scope tabs no longer carry a
+                  group tab (owner ruling 2026-11-08). Reachability is the
+                  point: every session_type='group_task' session is listed. */}
+              <div
+                data-slot="group-task-sessions"
+                className="mt-1 border-t border-claude-border/60 pt-1 dark:border-claude-darkBorder/60"
+              >
+                <div className="px-2 pb-1 pt-1 text-[11px] font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  {i18nService.t('homeMidGroupSessionsTitle')}
+                </div>
+                <CoworkSessionList
+                  sessions={sessionGroups.group}
+                  currentSessionId={currentSessionId}
+                  onSelectSession={listOnSelectSession}
+                  onDeleteSession={listOnDeleteSession}
+                  onTogglePin={listOnTogglePin}
+                  onRenameSession={listOnRenameSession}
+                  emptyText={i18nService.t('coworkEmptyGroup')}
+                  language={language}
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="flex min-h-0 flex-1 flex-col pb-2" data-home-section="records">
+              {/* Layer 2 - session SCOPE of the record list. It sits strictly
+                  BELOW the record-type row; two scopes only. */}
+              <div className="shrink-0 pb-2">
+                <div
+                  data-slot="home-session-scope"
+                  role="group"
+                  aria-label={i18nService.t('coworkHistory')}
+                  className="grid w-full grid-cols-2 gap-1 rounded-lg border border-claude-border/70 bg-claude-bg/80 p-1 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80"
+                >
+                  {TASK_RECORD_TABS.map((tab, index) => {
+                    const isActive = taskRecordTab === tab.id;
+                    const stats = tabStats[tab.id];
+                    // Per-tab item count is only shown on hover, as a tip under
+                    // the tab; the label itself stays clean. Edge tabs align the
+                    // tip to the outer edge so it never clips at the boundary.
+                    const countTip = i18nService
+                      .t('coworkTabCountChats')
+                      .replace('{count}', String(stats.count));
+                    const tooltipAlign = index === 0
+                      ? 'left-0'
+                      : index === TASK_RECORD_TABS.length - 1
+                        ? 'right-0'
+                        : 'left-1/2 -translate-x-1/2';
+                    return (
                       <button
+                        key={tab.id}
                         type="button"
-                        onClick={handleExitBatchArchiveMode}
-                        aria-label={i18nService.t('batchArchiveCancel')}
-                        className="rounded p-1 text-claude-textSecondary transition-colors hover:bg-claude-surfaceHover hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText"
+                        aria-pressed={isActive}
+                        onClick={() => handleSetTaskRecordTab(tab.id)}
+                        className={`non-draggable group relative inline-flex h-7 min-w-0 items-center justify-center gap-1 rounded-md px-1 text-xs font-medium leading-none transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
+                          isActive
+                            // Scope tab, aesthetic pass 2026-11-08: this used
+                            // the primary-button class, whose fixed rem padding
+                            // and 2px offset shadow are designed for a free-
+                            // standing CTA — inside a 2-segment grid the pill
+                            // overflowed its cell and grew a grey second edge.
+                            // The fill comes straight from the accent tokens
+                            // now, same as the batch-confirm button beside it.
+                            ? 'bg-claude-accent text-claude-accentInk'
+                            : 'text-claude-textSecondary hover:bg-claude-surfaceHover/70 hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover/70 dark:hover:text-claude-darkText'
+                        }`}
                       >
-                        <XMarkIcon className="h-4 w-4" />
+                        {stats.unread > 0 && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" aria-hidden />
+                        )}
+                        <span className="truncate">{i18nService.t(tab.labelKey)}</span>
+                        <span
+                          className={`pointer-events-none absolute top-full mt-1.5 z-50 ${tooltipAlign} whitespace-nowrap rounded-md border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface px-2 py-1 text-[11px] font-normal leading-none dark:text-claude-darkText text-claude-text shadow-lg opacity-0 transition-opacity duration-150 group-hover:opacity-100`}
+                          aria-hidden
+                        >
+                          {countTip}
+                        </span>
                       </button>
-                    </Tooltip>
-                  </>
-                ) : (
-                  <>
-                    <Tooltip content={i18nService.t('sessionViewFilterSort')} position="bottom">
-                      <button
-                        ref={viewMenuButtonRef}
-                        type="button"
-                        onClick={() => setIsViewMenuOpen((open) => !open)}
-                        aria-label={i18nService.t('sessionViewFilterSort')}
-                        aria-haspopup="menu"
-                        aria-expanded={isViewMenuOpen}
-                        className="rounded p-1 text-claude-textSecondary transition-colors hover:bg-claude-accent/10 hover:text-claude-accent dark:text-claude-darkTextSecondary"
-                      >
-                        <FilterLinesIcon className="h-4 w-4" />
-                      </button>
-                    </Tooltip>
-                    <Tooltip content={i18nService.t('batchArchive')} position="bottom">
-                      <button
-                        type="button"
-                        onClick={handleEnterBatchArchiveMode}
-                        aria-label={i18nService.t('batchArchive')}
-                        className="rounded p-1 text-claude-textSecondary transition-colors hover:bg-claude-accent/10 hover:text-claude-accent dark:text-claude-darkTextSecondary"
-                      >
-                        <ArchiveBoxIcon className="h-4 w-4" />
-                      </button>
-                    </Tooltip>
-                  </>
-                )}
+                    );
+                  })}
+                </div>
+              </div>
+              {/* Toolbar row above the list: current view label on the left,
+                  filter & sort + batch archive on the right. The same controls
+                  on both faces — putting sessions away is a list operation,
+                  not a local-face privilege. Fixed with the header; only the
+                  list scrolls. */}
+              {hasFaceSessions && (
+                <div className="flex shrink-0 items-center justify-between gap-1.5 px-2 pb-1.5">
+                  <span className="min-w-0 truncate text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    {i18nService.t(faceViewMode === 'bot' ? 'sessionViewByBot' : 'sessionViewTimeline')}
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    {isBatchArchiveMode ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => void handleConfirmBatchArchive()}
+                          disabled={batchSelectedIds.length === 0}
+                          className="inline-flex h-6 items-center rounded-md bg-claude-accent px-2.5 text-xs font-medium text-claude-accentInk transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {i18nService.t('batchArchiveConfirm')}
+                          {batchSelectedIds.length > 0 ? ` (${batchSelectedIds.length})` : ''}
+                        </button>
+                        <Tooltip content={i18nService.t('batchArchiveCancel')} position="bottom">
+                          <button
+                            type="button"
+                            onClick={handleExitBatchArchiveMode}
+                            aria-label={i18nService.t('batchArchiveCancel')}
+                            className="inline-flex h-6 w-6 items-center justify-center rounded-md text-claude-textSecondary transition-colors hover:bg-claude-surfaceHover hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+                          >
+                            <XMarkIcon className="h-4 w-4" />
+                          </button>
+                        </Tooltip>
+                      </>
+                    ) : (
+                      <>
+                        <Tooltip content={i18nService.t('sessionViewFilterSort')} position="bottom">
+                          <button
+                            ref={viewMenuButtonRef}
+                            type="button"
+                            onClick={() => setIsViewMenuOpen((open) => !open)}
+                            aria-label={i18nService.t('sessionViewFilterSort')}
+                            aria-haspopup="menu"
+                            aria-expanded={isViewMenuOpen}
+                            className="inline-flex h-6 w-6 items-center justify-center rounded-md text-claude-textSecondary transition-colors hover:bg-claude-surfaceHover hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+                          >
+                            <FilterLinesIcon className="h-4 w-4" />
+                          </button>
+                        </Tooltip>
+                        <Tooltip content={i18nService.t('batchArchive')} position="bottom">
+                          <button
+                            type="button"
+                            onClick={handleEnterBatchArchiveMode}
+                            aria-label={i18nService.t('batchArchive')}
+                            className="inline-flex h-6 w-6 items-center justify-center rounded-md text-claude-textSecondary transition-colors hover:bg-claude-surfaceHover hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+                          >
+                            <ArchiveBoxIcon className="h-4 w-4" />
+                          </button>
+                        </Tooltip>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+              <SessionViewOptionsMenu
+                anchorRef={viewMenuButtonRef}
+                open={isViewMenuOpen && !isBatchArchiveMode}
+                onClose={() => setIsViewMenuOpen(false)}
+                viewMode={faceViewMode}
+                sortMode={sessionSortMode}
+                onViewModeChange={handleSetFaceViewMode}
+                onSortModeChange={handleSetSessionSortMode}
+              />
+              {/* Scrollable list area */}
+              <div className="min-h-0 flex-1 overflow-y-auto pb-4">
+                <CoworkSessionList
+                  sessions={localListSessions}
+                  currentSessionId={currentSessionId}
+                  onSelectSession={listOnSelectSession}
+                  onDeleteSession={listOnDeleteSession}
+                  onTogglePin={listOnTogglePin}
+                  onMoveSessionToSection={taskRecordTab === 'local' ? listOnMoveSessionToSection : undefined}
+                  onRenameSession={listOnRenameSession}
+                  emptyText={i18nService.t(activeTaskRecordTab.emptyKey)}
+                  selectionMode={isBatchArchiveMode}
+                  selectedSessionIds={batchSelectedIds}
+                  onToggleSessionSelected={listOnToggleSessionSelected}
+                  /** Both faces render the SAME by-Bot grouped template and
+                   * default to 按 Bot; each keeps its own remembered choice. */
+                  viewMode={faceViewMode}
+                  sortMode={sessionSortMode}
+                  groupFace={taskRecordTab}
+                  language={language}
+                  /** Local chats: the machine-started runs (long-term task,
+                   * orchestration, scheduled) that need no human follow-up fold
+                   * into one collapsed folder below the Follow-Up section
+                   * instead of mixing into the human list. */
+                  autoSessions={taskRecordTab === 'local' ? localAutoSessions : undefined}
+                  /** Local chats: sessions awaiting a human decision or reply
+                   * (persisted pending marker or a live board decision owed)
+                   * render in the Follow-Up section above the fold. */
+                  followUpSessions={taskRecordTab === 'local' ? localFollowUpSessions : undefined}
+                  decisionSessionIds={taskRecordTab === 'local' ? decisionSessionIds : undefined}
+                  /** The trailing + on a bot group header starts a new task with
+                   * that bot. Same action and same handler on BOTH faces — the
+                   * template is shared, not re-implemented per face. */
+                  onQuickCreateTask={handleQuickCreateTask}
+                />
               </div>
             </div>
           )}
-          <SessionViewOptionsMenu
-            anchorRef={viewMenuButtonRef}
-            open={isViewMenuOpen && taskRecordTab === 'local' && !isBatchArchiveMode}
-            onClose={() => setIsViewMenuOpen(false)}
-            viewMode={sessionViewMode}
-            sortMode={sessionSortMode}
-            onViewModeChange={handleSetSessionViewMode}
-            onSortModeChange={handleSetSessionSortMode}
-          />
-          {/* Scrollable list area */}
-          <div className="flex-1 min-h-0 overflow-y-auto pb-4">
-            {taskRecordTab === 'group' ? (
-              unifiedTaskList.length === 0 ? (
-                <div className="text-center py-8">
-                  <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                    {i18nService.t(activeTaskRecordTab.emptyKey)}
-                  </p>
-                </div>
-              ) : (
-                <UnifiedTaskList
-                  items={unifiedTaskList}
-                  selectedTaskId={selectedGroupTaskId}
-                  selectedCollabId={selectedCollabId}
-                  onSelectTask={handleSelectGroupTask}
-                  onSelectCollab={handleSelectOpenTeamCollab}
-                  onTogglePin={handleToggleGroupTaskPin}
-                  onRename={handleRenameGroupTask}
-                  onArchive={handleArchiveGroupTask}
-                  getTaskType={(task) => taskTypeById.get(task.id) ?? 'local'}
-                  emptyText={i18nService.t(activeTaskRecordTab.emptyKey)}
-                />
-              )
-            ) : (
-              <CoworkSessionList
-                sessions={localListSessions}
-                currentSessionId={currentSessionId}
-                onSelectSession={listOnSelectSession}
-                onDeleteSession={listOnDeleteSession}
-                onTogglePin={listOnTogglePin}
-                onMoveSessionToSection={taskRecordTab === 'local' ? listOnMoveSessionToSection : undefined}
-                onRenameSession={listOnRenameSession}
-                emptyText={i18nService.t(activeTaskRecordTab.emptyKey)}
-                selectionMode={isBatchArchiveMode && taskRecordTab === 'local'}
-                selectedSessionIds={batchSelectedIds}
-                onToggleSessionSelected={listOnToggleSessionSelected}
-                viewMode={taskRecordTab === 'local' ? sessionViewMode : undefined}
-                sortMode={taskRecordTab === 'local' ? sessionSortMode : undefined}
-                language={language}
-                /** Local chats: the machine-started runs (long-term task,
-                 * orchestration, scheduled) that need no human follow-up fold
-                 * into one collapsed folder below the Follow-Up section
-                 * instead of mixing into the human list. */
-                autoSessions={taskRecordTab === 'local' ? localAutoSessions : undefined}
-                /** Local chats: sessions awaiting a human decision or reply
-                 * (persisted pending marker or a live board decision owed)
-                 * render in the Follow-Up section above the fold. */
-                followUpSessions={taskRecordTab === 'local' ? localFollowUpSessions : undefined}
-                decisionSessionIds={taskRecordTab === 'local' ? decisionSessionIds : undefined}
-                /** Online chats: the Bot selector is this list's only
-                 * selector, so it is switched on here — nothing else changes. */
-                botSelector={taskRecordTab === 'a2a'}
-                /** Quick-create task with selected bot. */
-                onQuickCreateTask={taskRecordTab === 'local' ? handleQuickCreateTask : undefined}
-              />
-            )}
-          </div>
         </div>
       ) : (
-        <div className="flex-1 min-h-0 px-2.5 pb-3 pt-2 mt-1 flex flex-col">
+        <div className="flex min-h-0 flex-1 flex-col px-2.5 pb-3 pt-1">
           <BotBrowserCoworkPanel
             onShowSkills={onShowSkills}
             onOpenNewProject={() => onShowSettings({ initialTab: 'projects', openNewProjectForm: true })}
             onOpenBotHome={onSelectHome}
+            historyOpen={panelHistoryOpen}
+            onHistoryOpenChange={setPanelHistoryOpen}
           />
         </div>
       )}
@@ -932,33 +941,10 @@ const Sidebar: React.FC<SidebarProps> = ({
         onMoveSessionToSection={handleMoveSessionToSection}
         onRenameSession={handleRenameSession}
       />
-      <div className="px-3 pb-3 pt-1">
-        <div className="flex items-center justify-between gap-2">
-          <button
-            type="button"
-            onClick={() => onShowSettings()}
-            className="inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-text dark:hover:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors shrink-0 whitespace-nowrap"
-            aria-label={i18nService.t('settings')}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-              <path d="M14 17H5" />
-              <path d="M19 7h-9" />
-              <circle cx="17" cy="17" r="3" />
-              <circle cx="7" cy="7" r="3" />
-            </svg>
-            {i18nService.t('settings')}
-          </button>
-          {/* min-w-0 lets this group shrink on a narrow sidebar; the squeeze
-              is absorbed solely by the background-tasks label (it truncates),
-              while the settings button, sleep-guard dot and ME chip stay
-              intact — none of the footer elements may ever wrap. */}
-          <div className="ml-auto flex items-center gap-2 min-w-0">
-            <BackgroundTasksBadge onShowGroupTasks={onShowGroupTasks} />
-            <div className="shrink-0 flex"><SleepGuardBadge /></div>
-            <div className="shrink-0"><MeBalanceBadge /></div>
-          </div>
-        </div>
-      </div>
+      {/* The user page overlay. Mounted by whichever face is on screen, so
+          App.tsx (and the keep-alive Bot Browser pane it hosts) stays
+          untouched. */}
+      <UserProfilePage />
     </aside>
   );
 };

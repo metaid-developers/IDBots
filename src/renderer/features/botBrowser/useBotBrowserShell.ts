@@ -9,6 +9,7 @@ import {
   buildMetaAppBrowserUri,
   canOpenMetaAppInBrowser,
 } from '../../components/metaapps/metaAppLaunch.js';
+import { SURFACE_MODE_CHANGE_EVENT } from '../../hooks/chatExperienceModeSource';
 import type {
   BotBrowserOpenUriInput,
   BotBrowserSurfaceHandle,
@@ -18,6 +19,30 @@ import type {
   BotInternetPane,
 } from './types';
 
+// Daily twin interaction lives on the Bot Internet surface (owner ruling
+// 2026-11-08): it is the app's default landing surface, while Bot Home stays
+// the full professional harness. The last explicit choice is remembered across
+// restarts; machines without that stored value still land on Bot Internet.
+// This slot is ALSO the chat experience mode's source of truth since the
+// 2026-11-09 surface ruling (hooks/chatExperienceModeSource.ts) — the Settings
+// toggle is retired.
+const SURFACE_MODE_STORAGE_KEY = 'idbots.botBrowser.surfaceMode';
+const readStoredSurfaceMode = (): BotBrowserSurfaceMode => {
+  try {
+    const stored = window.localStorage.getItem(SURFACE_MODE_STORAGE_KEY);
+    return stored === 'home' || stored === 'browser' ? stored : 'browser';
+  } catch {
+    return 'browser';
+  }
+};
+const writeStoredSurfaceMode = (mode: BotBrowserSurfaceMode) => {
+  try {
+    window.localStorage.setItem(SURFACE_MODE_STORAGE_KEY, mode);
+  } catch {
+    // localStorage unavailable: the choice just stays this session's.
+  }
+};
+
 interface UseBotBrowserShellInput {
   showToast: (message: string) => void;
 }
@@ -26,7 +51,20 @@ export function useBotBrowserShell(input: UseBotBrowserShellInput) {
   const { showToast } = input;
   const browserRef = useRef<BotBrowserSurfaceHandle | null>(null);
   const pendingOpenUriRef = useRef<BotBrowserOpenUriInput | null>(null);
-  const [surfaceMode, setSurfaceMode] = useState<BotBrowserSurfaceMode>('home');
+  const [surfaceMode, setSurfaceModeState] = useState<BotBrowserSurfaceMode>(readStoredSurfaceMode);
+  const setSurfaceMode = useCallback((mode: BotBrowserSurfaceMode) => {
+    writeStoredSurfaceMode(mode);
+    setSurfaceModeState(mode);
+    // Announce the face change in-window (cross-window listeners get the
+    // native `storage` event from the write above). The chat experience mode
+    // derives from this slot — see hooks/chatExperienceModeSource.ts — so the
+    // announcement is what keeps live consumers honest across switches.
+    try {
+      window.dispatchEvent(new CustomEvent(SURFACE_MODE_CHANGE_EVENT, { detail: mode }));
+    } catch {
+      // No window (static tests): nothing to announce to.
+    }
+  }, []);
   const [internetPane, setInternetPane] = useState<BotInternetPane>('browser');
   const [hasMountedBrowser, setHasMountedBrowser] = useState(true);
 

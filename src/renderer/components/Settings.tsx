@@ -39,7 +39,12 @@ import EmailSkillConfig from './skills/EmailSkillConfig';
 import MemorySettings from './settings/MemorySettings';
 import SkillMcpManager from './skills/SkillMcpManager';
 import ProjectsManager from './projects/ProjectsManager';
-import UserSettings from './user/UserSettings';
+// The account block no longer renders here: it moved, unchanged, to the
+// standalone user page (`features/userProfile`) opened from the header's
+// top-left avatar entry. This tab keeps the entry and hands the click over.
+// Deep import on purpose: Settings only needs the notice card, not the page
+// shell or its ME panel — this keeps the settings chunk from pulling them in.
+import UserProfileMovedNotice from '../features/userProfile/UserProfileMovedNotice';
 import IdbotsPlanCard from './me/IdbotsPlanCard';
 import MeIncrementPackCard from './me/MeIncrementPackCard';
 import MeUsageAndCredits from './me/MeUsageAndCredits';
@@ -579,6 +584,11 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
   const [activeTab, setActiveTab] = useState<TabType>(resolvedInitialTab);
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('system');
   const [language, setLanguage] = useState<LanguageType>(i18nService.getLanguage());
+  // Transitional form (总裁办公室裁定修订 2026-11-09，以修订条为准): the
+  // legacy stored mode survives as DISPLAY-ONLY state — it drives the
+  // retained cards' selected highlight and nothing else. The active mode
+  // comes from the face (hooks/chatExperienceModeSource.ts); nothing here
+  // reads the stored value for behavior or writes it back.
   const [chatExperienceMode, setChatExperienceMode] = useState<ChatExperienceMode>('assistant');
   const [autoLaunch, setAutoLaunchState] = useState(false);
   const [isUpdatingAutoLaunch, setIsUpdatingAutoLaunch] = useState(false);
@@ -808,6 +818,10 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
       initialLanguageRef.current = config.language;
       setTheme(config.theme);
       setLanguage(config.language);
+      // Legacy display value only (the retired switch is kept as transitional
+      // UI): read for the cards' highlight, never written back, never read
+      // for behavior — the active mode follows the face
+      // (hooks/chatExperienceModeSource.ts).
       setChatExperienceMode(config.chatExperienceMode ?? 'assistant');
 
       // Load auto-launch setting
@@ -1573,12 +1587,9 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
     }));
   };
 
-  // Chat experience mode persists immediately on selection (same pattern as
-  // CoworkView's coworkPermissionMode), not on the form's Save button.
-  const handleChatExperienceModeChange = (mode: ChatExperienceMode) => {
-    setChatExperienceMode(mode);
-    void configService.updateConfig({ chatExperienceMode: mode });
-  };
+  // handleChatExperienceModeChange stays gone (修订条 2026-11-09): the switch
+  // is kept visible but inert — nothing here writes chatExperienceMode into
+  // app_config any more, and the value it shows no longer decides anything.
 
   // 阻止点击设置窗口时事件传播到背景
   const handleSettingsClick = (e: React.MouseEvent) => {
@@ -2423,18 +2434,33 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
   const renderTabContent = () => {
     switch(activeTab) {
       case 'user':
-        return <UserSettings />;
+        // D5: 摘出不删不废 — the block lives on the user page now; this tab is
+        // only the door, never a second copy of the form.
+        return <UserProfileMovedNotice />;
 
       case 'general':
         return (
           <div className="space-y-8">
-            {/* Chat Experience Mode Section */}
+            {/* Chat Experience Mode Section — transitional form (总裁办公室
+                裁定修订 2026-11-09，以修订条为准): the mode is decided by the
+                active FACE (hooks/chatExperienceModeSource.ts) — this switch
+                no longer affects it. The switch is KEPT visible as
+                transitional UI (保留不删) with the ruling's note above it,
+                slated for retirement; its cards are non-interactive and the
+                legacy stored value only drives their selected highlight
+                (display-only, never written back). The note copy is inline
+                bilingual because the i18n copy domain (services/i18n.ts) is
+                owned by the in-flight 文案单; mode/face NAMES ride the
+                existing keys (chatModeAssistant/chatModeProfessional,
+                botInternet/botHome). */}
             <div>
               <h4 className="text-sm font-medium dark:text-claude-darkText text-claude-text mb-1">
                 {i18nService.t('chatExperienceMode')}
               </h4>
               <p className="text-xs dark:text-claude-darkSecondaryText text-claude-secondaryText mb-3">
-                {i18nService.t('chatExperienceModeDesc')}
+                {language === 'en'
+                  ? 'The mode is decided by the surface you are on: BotHub = Assistant, BotWorks = Professional (this switch will be retired soon).'
+                  : '模式已随所在页面自动确定：BotHub＝助手模式，BotWorks＝专业模式（本开关即将退役）'}
               </p>
               <div className="grid grid-cols-2 gap-4">
                 {([
@@ -2457,11 +2483,11 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                     <button
                       key={option.value}
                       type="button"
-                      onClick={() => handleChatExperienceModeChange(option.value)}
-                      className={`flex flex-col items-start rounded-xl border-2 p-3 transition-colors cursor-pointer ${
+                      aria-disabled="true"
+                      className={`flex flex-col items-start rounded-xl border-2 p-3 transition-colors cursor-default ${
                         isSelected
                           ? 'border-claude-accent bg-claude-accent/5 dark:bg-claude-accent/10'
-                          : 'dark:border-claude-darkBorder border-claude-border hover:border-claude-accent/50 dark:hover:border-claude-accent/50'
+                          : 'dark:border-claude-darkBorder border-claude-border'
                       }`}
                     >
                       <OptionIcon className={`h-5 w-5 mb-2 ${
@@ -2482,6 +2508,24 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                     </button>
                   );
                 })}
+              </div>
+              <div className="rounded-xl border border-claude-border/70 bg-claude-bg/60 p-3 mt-3 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/60">
+                <div className="flex items-center justify-between py-1.5">
+                  <span className="text-sm dark:text-claude-darkText text-claude-text">
+                    {i18nService.t('botInternet')}
+                  </span>
+                  <span className="text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    {i18nService.t('chatModeAssistant')}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between border-t border-claude-border/60 py-1.5 dark:border-claude-darkBorder/60">
+                  <span className="text-sm dark:text-claude-darkText text-claude-text">
+                    {i18nService.t('botHome')}
+                  </span>
+                  <span className="text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    {i18nService.t('chatModeProfessional')}
+                  </span>
+                </div>
               </div>
             </div>
 

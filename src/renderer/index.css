@@ -684,3 +684,179 @@ select::-ms-expand {
 .dark .tracked-task-decision-indicator {
   background-color: #fbbf24;
 }
+
+/* ==========================================================================
+   Liquid Glass material — batch 1 (floating / control layers ONLY)
+   --------------------------------------------------------------------------
+   Design law (owner direction, 2026-11-08):
+     1. Glass belongs to floating / control layers — modal sheets, popovers,
+        tooltips, floating controls. Content and list surfaces stay SOLID.
+     2. Light-mode glass carries a thin ink film so the white material never
+        washes out against the page; readability is judged by MEASURED
+        contrast, not by the film's alpha.
+     3. Reduced transparency is a first-class fallback: the material degrades
+        to an opaque surface via prefers-reduced-transparency,
+        prefers-contrast, forced-colors, a missing backdrop-filter,
+        html[data-glass="reduce"], or the explicit .glass-reduce modifier.
+
+   Three tokens:
+     .glass-surface  the material  (fill + blur/saturate + hairline + sheen)
+     .glass-tint     the readability film (translucent ink/light wash)
+     .glass-reduce   the opaque fallback (also forced by the media queries)
+
+   Text on the material uses --glass-text-secondary, never the page's
+   --text-secondary: #64748B clears AA only on a near-white solid and measures
+   3.62–4.26:1 on light glass (see the measured table in the batch-1 report).
+
+   Scope note: the canonical shared tooltip (components/ui/Tooltip.tsx)
+   portals to <body> at z-[100]; it is glassed here because its text is
+   --text-primary. The four other role="tooltip" cards (GroupTaskListMeta,
+   AppUpdateBadge, MetaBotEditTabs, TurnNavigator) keep their solid fill:
+   they carry 10-12px secondary text and dense content, so glassing them
+   without touching their files would push that text under AA.
+   ========================================================================== */
+
+:root {
+  --glass-blur: 18px;
+  --glass-saturate: 165%;
+  /* Surface fill (per theme) + the film that sits on top of it. */
+  --glass-surface-bg: rgba(255, 255, 255, 0.82);
+  --glass-tint-bg: rgba(15, 23, 42, 0.055);
+  --glass-surface-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  /* Opaque fallback — what every degrade path lands on. */
+  --glass-reduce-bg: #F4F6F8;
+  --glass-reduce-shadow: 0 10px 30px rgba(15, 23, 42, 0.14), 0 1px 3px rgba(15, 23, 42, 0.08);
+  /* Edges + depth */
+  --glass-line: rgba(15, 23, 42, 0.16);
+  --glass-line-strong: rgba(15, 23, 42, 0.55);
+  --glass-highlight: rgba(255, 255, 255, 0.55);
+  --glass-shadow: 0 18px 48px rgba(15, 23, 42, 0.16), 0 2px 8px rgba(15, 23, 42, 0.08);
+  /* Secondary text that survives the material (AA 4.5:1, measured). */
+  --glass-text-secondary: #4B5563;
+}
+
+.dark {
+  --glass-surface-bg: rgba(31, 41, 55, 0.72);
+  --glass-tint-bg: rgba(255, 255, 255, 0.045);
+  --glass-reduce-bg: #1F2937;
+  --glass-reduce-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.35);
+  --glass-line: rgba(148, 163, 184, 0.26);
+  --glass-line-strong: rgba(226, 232, 240, 0.62);
+  --glass-highlight: rgba(255, 255, 255, 0.14);
+  --glass-shadow: 0 18px 48px rgba(0, 0, 0, 0.55), 0 2px 10px rgba(0, 0, 0, 0.4);
+  --glass-text-secondary: #C0CBD8;
+}
+
+/* The material. Deliberately NOT inside @layer components: a utility such as
+   bg-claude-surface must never be able to half-override the material — the
+   same rule the .btn-idchat-* identities follow. */
+.glass-surface,
+.glass-reduce,
+body > [role="tooltip"].z-\[100\] {
+  background-color: var(--glass-surface-bg);
+  background-image: linear-gradient(var(--glass-tint-bg), var(--glass-tint-bg));
+  -webkit-backdrop-filter: var(--glass-surface-filter);
+  backdrop-filter: var(--glass-surface-filter);
+  border: 1px solid var(--glass-line);
+  box-shadow: var(--glass-shadow), inset 0 1px 0 var(--glass-highlight);
+  color: var(--text-primary);
+}
+
+/* Readability film as a standalone layer, for a surface that keeps its own
+   fill but still needs the material's contrast curve. */
+.glass-tint {
+  background-image: linear-gradient(var(--glass-tint-bg), var(--glass-tint-bg));
+}
+
+/* Opaque fallback, explicit. Works alone or as a modifier on .glass-surface. */
+.glass-reduce {
+  --glass-surface-bg: var(--glass-reduce-bg);
+  --glass-surface-filter: none;
+  box-shadow: var(--glass-reduce-shadow);
+}
+
+/* Secondary text that is allowed on the material. */
+.glass-text-secondary {
+  color: var(--glass-text-secondary);
+}
+
+/* --- Degrade paths -------------------------------------------------------
+   Every path below declares the opaque surface DIRECTLY on the surface
+   element instead of swapping a custom property on :root. Reason (measured):
+   a nested .dark subtree re-declares --glass-surface-bg on itself, so a
+   :root-level swap is silently defeated there — the dark sample stage
+   exposed exactly that. Direct declarations resolve the nearest theme for
+   --glass-reduce-bg while ignoring who won the material variable. */
+
+/* 1. Explicit runtime switch (theme service / settings / QA). */
+html[data-glass="reduce"] .glass-surface,
+html[data-glass="reduce"] .glass-reduce,
+html[data-glass="reduce"] body > [role="tooltip"].z-\[100\],
+.glass-reduce {
+  background-color: var(--glass-reduce-bg);
+  background-image: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: var(--glass-reduce-shadow);
+}
+
+/* 2. OS "reduce transparency". Engines without the query never match; the
+   data-glass switch and .glass-reduce stay available. */
+@media (prefers-reduced-transparency: reduce) {
+  .glass-surface,
+  .glass-reduce,
+  body > [role="tooltip"].z-\[100\] {
+    background-color: var(--glass-reduce-bg);
+    background-image: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    box-shadow: var(--glass-reduce-shadow);
+  }
+}
+
+/* 3. High contrast: opaque surface + a harder edge (the one thing glass
+   cannot fake is a guaranteed boundary). */
+@media (prefers-contrast: more) {
+  .glass-surface,
+  .glass-reduce,
+  body > [role="tooltip"].z-\[100\] {
+    background-color: var(--glass-reduce-bg);
+    background-image: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    border-color: var(--glass-line-strong);
+    box-shadow: var(--glass-reduce-shadow);
+  }
+}
+
+/* 4. Windows high-contrast / forced colors: hand the surface back to the OS. */
+@media (forced-colors: active) {
+  .glass-surface,
+  .glass-reduce,
+  body > [role="tooltip"].z-\[100\] {
+    background-color: Canvas;
+    background-image: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    border: 1px solid CanvasText;
+    box-shadow: none;
+    color: CanvasText;
+  }
+}
+
+/* 5. Engine without backdrop-filter: never leave a half-material on screen. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass-surface,
+  .glass-reduce,
+  body > [role="tooltip"].z-\[100\] {
+    background-color: var(--glass-reduce-bg);
+    background-image: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    box-shadow: var(--glass-reduce-shadow);
+  }
+}
+
+/* Reduced motion: the material is static by design (no sheen animation), so
+   there is nothing to switch off. A future animated sheen MUST add its own
+   prefers-reduced-motion guard here. */

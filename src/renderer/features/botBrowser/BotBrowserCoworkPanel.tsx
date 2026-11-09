@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { ClockIcon, XMarkIcon, TrashIcon, FolderIcon } from '@heroicons/react/24/outline';
-import ComposeIcon from '../../components/icons/ComposeIcon';
+import { CpuChipIcon, FolderIcon } from '@heroicons/react/24/outline';
 import MarkdownContent from '../../components/MarkdownContent';
 import CoworkPromptInput, { type CoworkPromptInputRef } from '../../components/cowork/CoworkPromptInput';
 import { UserMessageBody } from '../../components/cowork/UserAttachmentBody';
@@ -9,7 +8,6 @@ import { resolveLocalPathAgainstCwd, type LocalFilePathResolver } from '../../ut
 import { buildSessionComposerCommands } from '../../components/cowork/composerCommandCatalog';
 import FolderSelectorPopover from '../../components/cowork/FolderSelectorPopover';
 import type { MetaBotForSelector } from '../../components/cowork/MetaBotSelector';
-import TwinBadge from '../../components/metabots/TwinBadge';
 import ModelEffortPicker from '../../components/ModelEffortPicker';
 import { effortDisplayForPick, effortForSessionStart, type ComposerModelEffortPick } from '../../services/modelCatalog';
 import { ActiveSkillBadge } from '../../components/skills';
@@ -21,19 +19,12 @@ import { isAssistantModeOwnerChatSession } from '../../components/cowork/assista
 import { AssistantActivityIndicator } from '../../components/cowork/AssistantActivityIndicator';
 import { projectsService } from '../../services/projects';
 import { i18nService } from '../../services/i18n';
+import { dispatchMetabotsChanged, subscribeMetabotsChanged } from '../../services/metabotEvents';
 import { getCompactFolderName } from '../../utils/path';
 import type { CoworkMessage, CoworkWorkspaceSelection } from '../../types/cowork';
-
-const formatRelativeTime = (timestamp: number): string => {
-  const deltaMs = Date.now() - timestamp;
-  const minutes = Math.floor(deltaMs / 60_000);
-  if (minutes < 1) return 'now';
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  return `${days}d`;
-};
+import TwinSeatChip from './TwinSeatChip';
+import { appointTwinSeat } from './twinSeatAppointment';
+import CoworkHistoryPanel from './CoworkHistoryPanel';
 
 type PanelMetabot = MetaBotForSelector & { llm_id?: string | null; llm_provider?: string | null; llm_effort?: string | null };
 
@@ -106,8 +97,17 @@ interface BotBrowserCoworkPanelProps {
   onShowSkills?: () => void;
   /** Open Settings > Projects > New Project (from the workspace popover). */
   onOpenNewProject?: () => void;
-  /** Switch the sidebar back to Bot Home (no-Twin bootstrap guidance). */
+  /** Switch the sidebar back to BotWorks (no-Twin bootstrap guidance). */
   onOpenBotHome?: () => void;
+  /**
+   * Session-records overlay state (owner spec 2026-11-08 21:31). The records
+   * toggle lives in the shared surface header bar — beside the surface pill,
+   * where the owner's screenshot puts it — so the panel receives the open
+   * state and its setter. Both are optional: a standalone mount keeps the
+   * previous internal toggle.
+   */
+  historyOpen?: boolean;
+  onHistoryOpenChange?: (open: boolean) => void;
 }
 
 const WORKSPACE_SELECTION_STORAGE_KEY = 'idbots.botBrowser.workspaceSelection';
@@ -154,13 +154,29 @@ function loadPersistedWorkspaceSelection(): CoworkWorkspaceSelection | null {
  * History is a toggleable overlay; sessions remember the browser URI they
  * were about.
  */
-const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSkills, onOpenNewProject, onOpenBotHome }) => {
+const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
+  onShowSkills,
+  onOpenNewProject,
+  onOpenBotHome,
+  historyOpen,
+  onHistoryOpenChange,
+}) => {
   const dispatch = useDispatch();
   const currentSession = useSelector((state: RootState) => state.browserCowork.currentSession);
   const isStreaming = useSelector((state: RootState) => state.browserCowork.isStreaming);
   const sessions = useSelector((state: RootState) => state.cowork.sessions);
   const activeSkillIds = useSelector((state: RootState) => state.skill.activeSkillIds);
-  const [showHistory, setShowHistory] = useState(false);
+  // Controlled by the shared surface header bar when the parent passes it; a
+  // standalone mount (tests, future hosts) falls back to an internal toggle.
+  const [internalShowHistory, setInternalShowHistory] = useState(false);
+  const showHistory = historyOpen ?? internalShowHistory;
+  const setShowHistory = useCallback(
+    (next: boolean) => {
+      if (onHistoryOpenChange) onHistoryOpenChange(next);
+      else setInternalShowHistory(next);
+    },
+    [onHistoryOpenChange],
+  );
   const [metabots, setMetabots] = useState<PanelMetabot[]>([]);
   const [metabotsLoaded, setMetabotsLoaded] = useState(false);
   // Workspace choice for the next browser session, same selection model as the
@@ -173,9 +189,23 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSki
     loadPersistedWorkspaceSelection()
   );
   const [showFolderMenu, setShowFolderMenu] = useState(false);
+  // Twin seat appointment (owner ruling 2026-11-08): the bottom-left identity
+  // chip is a live appointment control, not a decoration. The appoint action
+  // drives the SAME metabot_type the My Bots editor writes (demote the current
+  // Twin → promote the chosen bot), so the seat stays one system-wide fact and
+  // never a second pointer. In a live session the chip is display-only: an
+  // acting transcript never changes actors mid-flight.
+  const [showTwinSeatMenu, setShowTwinSeatMenu] = useState(false);
+  const [twinSeatBusy, setTwinSeatBusy] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const promptInputRef = useRef<CoworkPromptInputRef>(null);
   const folderButtonRef = useRef<HTMLButtonElement>(null);
+  // Twin welcome page (owner rulings 2026-11-09: the BotHub face is the
+  // twin's office — its landing invites like a friend, not a feature tour;
+  // the copy set is finalized in i18n and mirrored zh/en). The 缩略态定稿
+  // same-day ruling retires the width-derived expanded variant: the welcome
+  // renders ONE fixed compact form (name row + invitation + sub line), with
+  // no width state that could disagree with the seam.
 
   const browserSessions = useMemo(
     () => sessions.filter((session) => session.sessionType === 'browser'),
@@ -188,24 +218,63 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSki
     [messages]
   );
 
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const result = await window.electron?.metabot?.list?.();
-      if (cancelled) return;
-      setMetabotsLoaded(true);
-      if (!result?.success || !result.list) return;
-      const selectable = result.list
-        .filter(
-          (metabot) => metabot.enabled && typeof metabot.llm_id === 'string' && metabot.llm_id.trim()
-        )
-        .sort((a, b) => a.id - b.id);
-      setMetabots(selectable);
-    })();
-    return () => {
-      cancelled = true;
-    };
+  const loadMetabots = useCallback(async () => {
+    const result = await window.electron?.metabot?.list?.();
+    setMetabotsLoaded(true);
+    if (!result?.success || !result.list) return;
+    // The Twin seat menu is a roster-level control (owner ruling 2026-11-08):
+    // it lists every local bot, not just the ones selectable for a chat, so an
+    // appointment can land on any bot the My Bots editor can also flag. The
+    // seat itself stays a single system-wide fact (`metabot_type`).
+    setMetabots([...result.list].sort((a, b) => a.id - b.id));
   }, []);
+
+  useEffect(() => {
+    void loadMetabots();
+  }, [loadMetabots]);
+
+  // Cross-view roster freshness: the My Bots editor and the chain-restore
+  // flow can move the same system-wide facts this panel renders (above all
+  // `metabot_type`). Re-read the roster when another surface announces a
+  // change, so an already-open panel never shows a stale Twin badge.
+  useEffect(() => subscribeMetabotsChanged(() => {
+    void loadMetabots();
+  }), [loadMetabots]);
+
+  // Twin seat appointment: demote the current Twin, promote the chosen bot,
+  // then re-read the roster. The sequence + rollback live in
+  // twinSeatAppointment.ts so a mock-IPC unit test covers them without
+  // touching the real roster; this handler only wires the effect (IPC,
+  // reload, toast) and owns the busy/menu UI state.
+  const notifyTwinSeat = useCallback((message: string) => {
+    window.dispatchEvent(new CustomEvent('app:showToast', { detail: message }));
+  }, []);
+
+  const closeTwinSeatMenu = useCallback(() => setShowTwinSeatMenu(false), []);
+
+  const handleAppointTwin = useCallback(async (target: PanelMetabot) => {
+    if (twinSeatBusy) return;
+    setTwinSeatBusy(true);
+    try {
+      await appointTwinSeat(target, metabots, {
+        update: (id, patch) => window.electron.metabot.update(id, patch),
+        reload: loadMetabots,
+        // The appointment writes `metabot_type`, which the My Bots pane shows
+        // as badge ownership on its cards: announce both moved ids so an
+        // already-open My Bots pane refetches instead of waiting for a switch.
+        announce: (metabotIds) => dispatchMetabotsChanged({ metabotIds, reason: 'twin-seat' }),
+        notify: notifyTwinSeat,
+        translate: (key) => i18nService.t(key),
+      });
+    } catch (error) {
+      // Transport-level rejection (IPC error): the helper reports outcome
+      // failures itself, but a thrown update must never fail silently.
+      notifyTwinSeat(error instanceof Error ? error.message : 'Twin seat appointment failed');
+    } finally {
+      setShowTwinSeatMenu(false);
+      setTwinSeatBusy(false);
+    }
+  }, [loadMetabots, metabots, notifyTwinSeat, twinSeatBusy]);
 
   // Remember the workspace choice across panel remounts / app restarts.
   useEffect(() => {
@@ -355,6 +424,27 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSki
     />
   );
 
+  // Welcome-page avatar: same img/fallback rule as the home welcome
+  // (CoworkView) — data:/http avatars render, everything else falls back to
+  // the shared CpuChipIcon placeholder on a muted tile.
+  const renderWelcomeAvatar = (boxClass: string, iconClass: string) => {
+    if (chipMetabot?.avatar
+      && (chipMetabot.avatar.startsWith('data:') || chipMetabot.avatar.startsWith('http'))) {
+      return (
+        <img
+          src={chipMetabot.avatar}
+          alt={chipMetabot.name}
+          className={`${boxClass} shrink-0 object-cover`}
+        />
+      );
+    }
+    return (
+      <span className={`${boxClass} flex shrink-0 items-center justify-center dark:bg-claude-darkSurface bg-claude-surface`}>
+        <CpuChipIcon aria-hidden className={`${iconClass} dark:text-claude-darkTextSecondary text-claude-textSecondary`} />
+      </span>
+    );
+  };
+
   const workspaceLabel = workspaceSelection
     ? (workspaceSelection.kind === 'project'
         ? workspaceSelection.name
@@ -376,55 +466,55 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSki
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center gap-1 px-1 pb-2">
-        <span className="flex-1 truncate text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
-          {i18nService.t('botBrowserCoworkTitle')}
-        </span>
-        <button
-          type="button"
-          onClick={() => {
-            setShowHistory(false);
-            browserCoworkService.startNewDraft();
-          }}
-          className="h-6 w-6 inline-flex items-center justify-center rounded-md dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
-          aria-label={i18nService.t('botBrowserCoworkNew')}
-          title={i18nService.t('botBrowserCoworkNew')}
-        >
-          <ComposeIcon className="h-3.5 w-3.5" />
-        </button>
-        <button
-          type="button"
-          onClick={() => setShowHistory((value) => !value)}
-          className={`h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors ${
-            showHistory
-              ? 'dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover dark:text-claude-darkText text-claude-text'
-              : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
-          }`}
-          aria-label={i18nService.t('botBrowserCoworkHistory')}
-          title={i18nService.t('botBrowserCoworkHistory')}
-        >
-          <ClockIcon className="h-3.5 w-3.5" />
-        </button>
-      </div>
-
       <div ref={listRef} className="min-h-0 flex-1 space-y-2.5 overflow-y-auto overflow-x-hidden px-1 pb-2">
         {visibleMessages.length === 0 ? (
           needsTwinBootstrap ? (
             // No Twin on this machine: block the chat with bootstrap guidance
             // instead of the ordinary empty state (owner ruling #2).
-            <div className="rounded-lg border border-dashed dark:border-claude-darkBorder border-claude-border px-3 py-4 text-xs leading-5 dark:text-claude-darkTextSecondary text-claude-textSecondary">
+            // A blocked chat is a real call to action, so it keeps a container
+            // — but a solid hairline card, not the dashed "drop something here"
+            // frame the aesthetic pass retired.
+            <div
+              data-slot="cowork-needs-twin"
+              className="rounded-xl border dark:border-claude-darkBorder/80 border-claude-border/80 dark:bg-claude-darkSurface/50 bg-claude-surface/50 px-3.5 py-4 text-xs leading-5 dark:text-claude-darkTextSecondary text-claude-textSecondary"
+            >
               <p>{i18nService.t('botInternetNeedsTwin')}</p>
               <button
                 type="button"
                 onClick={onOpenBotHome}
-                className="mt-2 inline-flex items-center rounded-md px-2 py-1 -ml-1 text-xs font-medium dark:text-claude-accent text-claude-accent hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                className="mt-3 inline-flex items-center rounded-lg px-2 py-1 -ml-1 text-xs font-medium dark:text-claude-accent text-claude-accent hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
               >
                 {i18nService.t('botInternetGoBotHome')}
               </button>
             </div>
           ) : (
-            <div className="rounded-lg border border-dashed dark:border-claude-darkBorder border-claude-border px-3 py-4 text-xs leading-5 dark:text-claude-darkTextSecondary text-claude-textSecondary">
-              {i18nService.t('botBrowserCoworkEmpty')}
+            // Twin welcome page (owner rulings 2026-11-09: landing built on
+            // the white-screen fix + the finalized copy set; the 缩略态定稿
+            // same-day ruling retires the width-derived expanded variant).
+            // An empty BotHub column is the twin's office greeting — ONE
+            // fixed compact form: a small avatar + name row, one invitation
+            // line, one sub line. No control pretends to be clickable; the
+            // real invitation is the composer below, whose placeholder speaks
+            // the same voice.
+            <div
+              data-slot="cowork-empty"
+              data-welcome-state="compact"
+              className="flex h-full min-h-[180px] flex-col items-center justify-center gap-2.5 px-6 text-center"
+            >
+              {chipMetabot ? (
+                <div className="flex items-center gap-1.5">
+                  {renderWelcomeAvatar('h-6 w-6 rounded-md', 'h-3.5 w-3.5')}
+                  <span className="text-xs font-medium dark:text-claude-darkText text-claude-text">
+                    {chipMetabot.name}
+                  </span>
+                </div>
+              ) : null}
+              <p className="text-base font-semibold tracking-tight dark:text-claude-darkText text-claude-text">
+                {i18nService.t('botBrowserCoworkEmpty')}
+              </p>
+              <p className="max-w-[16rem] text-xs leading-5 dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                {i18nService.t('botBrowserCoworkEmptySub')}
+              </p>
             </div>
           )
         ) : (
@@ -452,26 +542,23 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSki
         ) : null}
       </div>
 
-      <div className="flex items-center justify-between gap-0.5 px-1 pb-1.5">
+      <div className="flex items-center justify-between gap-0.5 pb-1.5">
         {chipMetabot ? (
-          // Bot Internet is locked to the Twin: a fixed identity chip instead
-          // of a bot selector (owner ruling 2026-11-07). Legacy sessions show
-          // their own bot so old transcripts keep reading correctly.
-          <div className="flex min-w-0 max-w-[60%] items-center gap-1.5" title={chipMetabot.name}>
-            {chipMetabot.avatar && (chipMetabot.avatar.startsWith('data:') || chipMetabot.avatar.startsWith('http')) ? (
-              <img src={chipMetabot.avatar} alt="" className="h-5 w-5 rounded-md object-cover flex-shrink-0" />
-            ) : (
-              <div className="h-5 w-5 rounded-md dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover flex items-center justify-center flex-shrink-0">
-                <span className="text-[8px] font-semibold dark:text-claude-darkText text-claude-text uppercase">
-                  {chipMetabot.name.slice(0, 2) || '?'}
-                </span>
-              </div>
-            )}
-            <span className="truncate text-xs font-medium dark:text-claude-darkText text-claude-text">
-              {chipMetabot.name}
-            </span>
-            {chipMetabot.metabot_type === 'twin' && <TwinBadge className="shrink-0" />}
-          </div>
+          // Twin seat (owner ruling 2026-11-08): the chip is the appointment
+          // control in the draft state — clicking opens the seat menu listing
+          // every bot. In a live session it stays a fixed identity chip (the
+          // transcript always shows the bot it was started with; legacy
+          // sessions keep their own bot).
+          <TwinSeatChip
+            chipMetabot={chipMetabot}
+            roster={metabots}
+            live={Boolean(currentSession)}
+            busy={twinSeatBusy}
+            menuOpen={showTwinSeatMenu}
+            onToggleMenu={() => setShowTwinSeatMenu((value) => !value)}
+            onDismissMenu={closeTwinSeatMenu}
+            onAppoint={handleAppointTwin}
+          />
         ) : null}
         <div className="flex shrink-0 items-center gap-0.5">
           <ModelEffortPicker
@@ -556,59 +643,13 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSki
       )}
 
       {showHistory ? (
-        <div className="absolute inset-x-0 top-7 bottom-0 z-10 flex flex-col rounded-lg border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted shadow-lg">
-          <div className="flex items-center justify-between px-3 py-2 text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
-            <span>{i18nService.t('botBrowserCoworkHistory')}</span>
-            <button
-              type="button"
-              onClick={() => setShowHistory(false)}
-              className="h-5 w-5 inline-flex items-center justify-center rounded-md hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
-              aria-label={i18nService.t('close')}
-            >
-              <XMarkIcon className="h-3.5 w-3.5" />
-            </button>
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1.5 pb-2">
-            {browserSessions.length === 0 ? (
-              <div className="px-2 py-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                {i18nService.t('coworkNoSessions')}
-              </div>
-            ) : (
-              browserSessions.map((session) => (
-                <div
-                  key={session.id}
-                  className={`group flex items-start gap-1 rounded-md px-2 py-1.5 text-sm transition-colors cursor-pointer hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover ${
-                    currentSession?.id === session.id ? 'dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover' : ''
-                  }`}
-                  onClick={() => void handleSelectHistory(session.id)}
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-xs dark:text-claude-darkText text-claude-text">
-                      {session.title}
-                    </div>
-                    <div className="mt-0.5 truncate text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                      {(session.browserTitle || session.browserUri) ?? ''}
-                    </div>
-                  </div>
-                  <span className="shrink-0 pt-0.5 text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                    {formatRelativeTime(session.updatedAt)}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void handleDeleteHistory(session.id);
-                    }}
-                    className="hidden h-5 w-5 shrink-0 items-center justify-center rounded-md text-claude-textSecondary hover:text-red-500 group-hover:inline-flex"
-                    aria-label={i18nService.t('delete')}
-                  >
-                    <TrashIcon className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
+        <CoworkHistoryPanel
+          sessions={browserSessions}
+          currentSessionId={currentSession?.id ?? null}
+          onSelectSession={handleSelectHistory}
+          onDeleteSession={handleDeleteHistory}
+          onClose={() => setShowHistory(false)}
+        />
       ) : null}
     </div>
   );

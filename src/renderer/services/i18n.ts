@@ -53,7 +53,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     chatExperienceModeDesc: '选择适合你习惯的对话体验，可随时切换',
     chatModeProfessional: '专业模式',
     chatModeProfessionalDesc: '显示完整的思考过程与工具调用，适合开发者',
-    chatModeAssistant: '助理模式',
+    chatModeAssistant: '助手模式',
     chatModeAssistantDesc: '只看简报与结果，响应更快，适合日常使用',
 
     // API设置
@@ -169,10 +169,34 @@ const translations: Record<LanguageType, Record<string, string>> = {
     collapse: '收起',
     expand: '展开',
     featureInDevelopment: '正在开发中',
-    botInternet: 'Bot Internet',
+    botInternet: 'BotHub',
     botBrowser: 'Bot Browser',
-    botHome: 'Bot Home',
-    
+    botHome: 'BotWorks',
+
+    // 三栏骨架（切片一）：左图标栏 / Codex 式工作台下拉 / 中栏列表
+    workspaceRailLabel: '功能栏',
+    collapseMiddleColumn: '收起中栏',
+    expandMiddleColumn: '展开中栏',
+    // 接缝按钮双向化 2026-11-09：两面各自的收合方向读数（aria-label/title）
+    seamCollapseLeftBrowserFace: '向左收起 · 浏览器占满',
+    seamExpandMiddleFromLeft: '向右展开中栏',
+    seamCollapseRecordsHomeFace: '收起记录列 · 对话框占满',
+    seamExpandRecordsHomeFace: '向右展开记录列',
+    surfaceSwitcherLabel: '切换工作台',
+    surfaceBotInternetSubtitle: '浏览器、元应用与你的 Bots',
+    surfaceBotHomeSubtitle: '任务、长期任务与任务记录',
+    railLongTermTasks: '长期任务',
+    railTaskRecords: '任务记录',
+    homeMidLongTermEmpty: '还没有长期任务。',
+    homeMidLongTermHint: '完整看板在右栏。',
+    homeMidGroupTasksEmpty: '还没有群任务。',
+    homeRecordTypeLabel: '记录类型',
+    homeMidGroupSessionsTitle: '群任务会话',
+    internetCoworkPaneSessions: '{count} 条会话',
+    internetCoworkPaneBrowserSessions: '其中 {count} 条来自 Bot Browser',
+    internetCoworkPaneOpenBrowser: '在右栏打开 Bot Browser',
+    internetCoworkPaneHint: '会话列表在中栏。选一条会话即可继续；会话流将在下一刀接入右栏。',
+
     // 错误信息
     failedToLoadSettings: '加载设置失败',
     failedToSaveSettings: '保存设置失败',
@@ -458,6 +482,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkSandbox: '沙箱',
     coworkSettings: 'IDBots 设置',
     coworkHistory: '任务记录',
+    workspaceSectionTitle: '工作区',
+    workspaceSectionDefault: '默认工作区',
+    workspaceSectionUngrouped: '未分组',
     coworkTabLocal: '本地对话',
     coworkTabA2A: '线上对话',
     coworkTabGroup: '群任务',
@@ -486,12 +513,22 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkTabCountChats: '{count} 个对话',
     coworkTabCountGroup: '{count} 个群任务',
     botBrowserCoworkTitle: 'Co-Work',
-    botBrowserCoworkPlaceholder: '让 Agent 帮你操作浏览器…',
-    botBrowserCoworkEmpty: '试试：显示最新的链上小游戏，或打开链上 Buzz。',
-    botInternetNeedsTwin: 'Bot Internet 是你和你的 Twin Bot 的一对一空间。本机还没有 Twin Bot——先去 Bot Home 创建一个。',
-    botInternetGoBotHome: '去 Bot Home 创建 Twin',
-    botBrowserCoworkHistory: '历史对话',
-    botBrowserCoworkNew: '新对话',
+    // BotHub 空状态与输入框文案（先生裁定 2026-11-09 文案定版）：朋友对话式
+    // 邀请，不是功能演示导览——主语/副语/轻提示/占位符是同一套的四件（zh 在
+    // 此，en 镜像同一组键；BotBrowserCoworkPanel 欢迎块渲染同键）。
+    botBrowserCoworkPlaceholder: '跟你的 Twin 聊聊，或者派个任务给他…',
+    botBrowserCoworkEmpty: '今天，想从哪儿开始？',
+    botBrowserCoworkEmptySub: '把一句话交给你的 Twin——剩下的路，他来铺。',
+    botInternetNeedsTwin: 'BotHub 是你和你的 Twin Bot 的一对一空间。本机还没有 Twin Bot——先去 BotWorks 创建一个。',
+    botInternetGoBotHome: '去 BotWorks 创建 Twin',
+    botInternetTwinSeatTitle: '选择当前当值 Twin',
+    botInternetTwinSeatHint: '任命会与「我的 Bot」的 Twin 设定同步：原当值 Twin 回到 worker 岗位，所选 bot 立即上任。',
+    botInternetTwinSeatAppoint: '任命',
+    botInternetTwinSeatChip: 'Twin 当值铭牌（点击任命）',
+    botInternetTwinSeatAppointed: '{name} 已就任 Twin。',
+    botInternetTwinSeatRollbackFailed: '原当值 Twin 未能复原，请到「我的 Bot」手动设置。',
+    botBrowserCoworkHistory: '会话记录',
+    botBrowserCoworkNew: '新建会话',
     coworkNoSessions: '暂无任务记录',
     coworkPinSession: '置顶任务',
     coworkUnpinSession: '取消置顶',
@@ -502,6 +539,12 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkSessionActions: '更多操作',
     coworkCopySessionId: '复制Session ID',
     coworkPlaceholder: '分配一个任务或提问任何问题',
+    // 线上对话（a2a, Bot↔Bot）面 + 打开的新任务：这条会话不是给 Bot 派活，而是送 Bot
+    // 去链上串门，所以默认提示词不能沿用「分配一个任务或提问任何问题」。
+    // 三改定版（2026-11-09，先生裁定「以本条为准」）：占位符升级为意图句式——
+    // 与长任务「我想开一个长期任务：」同一引导范式；路由由该面 composer 结构性
+    // 保障（首条消息直接创建 A2A 线上会话），句子负责教会用户怎么开口。
+    coworkA2aPlaceholder: '我想开个线上对话：去拜访链上的某位伙伴，聊聊天或请个教…',
     coworkBootstrapPlaceholder: '试试“创建第一个 Bot”或提问任何问题',
     coworkBootstrapGreetShortcut: '和欢迎 Bot 打个招呼',
     coworkBootstrapCreateShortcut: '帮我创建第一个 Bot',
@@ -1123,7 +1166,14 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkDescription: '让你的 MetaBot 在链上链下为你完成任务、帮你赚钱',
     coworkDescriptionTwin: '你选择的是 TwinBot，你可以和他说出你任何想法，他会帮你搞定一切',
     coworkDescriptionPro: '你选择是专业 Bot，可以让他做其所擅长的工作',
+    // 线上对话（a2a）面的英雄区描述（2026-11-09 二改定版，先生裁定首稿「仍僵硬」）：
+    // 与 BotHub 面同族不同句——朋友邀请、串门/伙伴意象；headline 不再分叉，
+    // 线上/本地两 face 共用 coworkWelcome（开始协作），coworkA2aWelcome 键已退场。
+    coworkA2aDescription: '链上住着不少有趣的伙伴——让他去串个门，聊聊天、请个教，说不定还能学到一手。',
     coworkNewSession: '新会话',
+    // 两组会话列表里 Bot 分组标题右侧的 + 的悬停提示：用它给该 Bot 开一个新任务。
+    // 该键自列表上线起就被引用但两个语言包都没定义，t() 会把原始键名当文案吐出来。
+    newTask: '新建任务',
     coworkMetaBotLabel: '选择 MetaBot',
     coworkMetaBotPlaceholder: '选择对话的 MetaBot',
     coworkContinuePlaceholder: '继续对话...',
@@ -1652,7 +1702,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     mcpDesc_firecrawl: '网页抓取与数据提取：支持批处理、结构化提取和内容分析',
 
     // MetaBot
-    metabots: '我的Bot',
+    // Copy pass 2026-11-08: Latin product names always carry one space in this
+    // UI ("我的 Bot" like "Bot Home" / "Meta Apps"); the template literal was
+    // the only place the space was missing.
+    metabots: '我的 Bot',
     metabotAdd: '添加',
     metabotRestore: '从助记词恢复',
     metabotRestoreTitle: '从助记词恢复 MetaBot',
@@ -3815,10 +3868,36 @@ const translations: Record<LanguageType, Record<string, string>> = {
     collapse: 'Collapse',
     expand: 'Expand',
     featureInDevelopment: 'In development',
-    botInternet: 'Bot Internet',
+    botInternet: 'BotHub',
     botBrowser: 'Bot Browser',
-    botHome: 'Bot Home',
-    
+    botHome: 'BotWorks',
+
+    // Three-column shell (slice 1): the icon rail, the Codex-style surface
+    // menu, and the middle column's list sections.
+    workspaceRailLabel: 'Workspace rail',
+    collapseMiddleColumn: 'Collapse the middle column',
+    expandMiddleColumn: 'Expand the middle column',
+    // Seam button two-way pass 2026-11-09: per-face collapse direction labels
+    // (aria-label/title).
+    seamCollapseLeftBrowserFace: 'Collapse left — the browser fills the width',
+    seamExpandMiddleFromLeft: 'Expand the middle column to the right',
+    seamCollapseRecordsHomeFace: 'Collapse records — the conversation fills the width',
+    seamExpandRecordsHomeFace: 'Expand the records column to the right',
+    surfaceSwitcherLabel: 'Switch workspace',
+    surfaceBotInternetSubtitle: 'Browser, Meta Apps and your Bots',
+    surfaceBotHomeSubtitle: 'Tasks, long-term work and records',
+    railLongTermTasks: 'Long-term tasks',
+    railTaskRecords: 'Task records',
+    homeMidLongTermEmpty: 'No long-term tasks yet.',
+    homeMidLongTermHint: 'The full board is in the right pane.',
+    homeMidGroupTasksEmpty: 'No group tasks yet.',
+    homeRecordTypeLabel: 'Record type',
+    homeMidGroupSessionsTitle: 'Group-task sessions',
+    internetCoworkPaneSessions: '{count} sessions',
+    internetCoworkPaneBrowserSessions: '{count} of them from Bot Browser',
+    internetCoworkPaneOpenBrowser: 'Open Bot Browser in the right pane',
+    internetCoworkPaneHint: 'The session list is in the middle pane. Pick a session to continue; the session flow joins this pane in the next slice.',
+
     // Error Messages
     failedToLoadSettings: 'Failed to load settings',
     failedToSaveSettings: 'Failed to save settings',
@@ -4104,6 +4183,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkSandbox: 'Sandbox',
     coworkSettings: 'IDBots Settings',
     coworkHistory: 'Task History',
+    workspaceSectionTitle: 'Workspaces',
+    workspaceSectionDefault: 'Default workspace',
+    workspaceSectionUngrouped: 'Ungrouped',
     coworkTabLocal: 'Local Chats',
     coworkTabA2A: 'Online Chats',
     coworkTabGroup: 'Group Tasks',
@@ -4132,12 +4214,20 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkTabCountChats: '{count} chats',
     coworkTabCountGroup: '{count} group tasks',
     botBrowserCoworkTitle: 'Co-Work',
-    botBrowserCoworkPlaceholder: 'Ask the Agent to drive this browser…',
-    botBrowserCoworkEmpty: 'Try: show the latest on-chain mini-games, or open on-chain Buzz.',
-    botInternetNeedsTwin: 'Bot Internet is a 1:1 space with your Twin bot. You have no Twin on this machine yet — create one in Bot Home first.',
-    botInternetGoBotHome: 'Go to Bot Home to create your Twin',
-    botBrowserCoworkHistory: 'History',
-    botBrowserCoworkNew: 'New chat',
+    // Mirror of the zh finalized set (owner ruling 2026-11-09).
+    botBrowserCoworkPlaceholder: 'Chat with your Twin, or hand them a task…',
+    botBrowserCoworkEmpty: 'So, where would you like to start today?',
+    botBrowserCoworkEmptySub: 'Hand your Twin one sentence — the rest of the road is theirs to lay.',
+    botInternetNeedsTwin: 'BotHub is a 1:1 space with your Twin bot. You have no Twin on this machine yet — create one in BotWorks first.',
+    botInternetGoBotHome: 'Go to BotWorks to create your Twin',
+    botInternetTwinSeatTitle: 'Choose the acting Twin',
+    botInternetTwinSeatHint: 'Appointing stays in sync with the My Bots Twin setting: the previous Twin returns to the worker bench and the chosen bot takes the seat immediately.',
+    botInternetTwinSeatAppoint: 'Appoint',
+    botInternetTwinSeatChip: 'Acting Twin chip (click to appoint)',
+    botInternetTwinSeatAppointed: '{name} is now the acting Twin.',
+    botInternetTwinSeatRollbackFailed: 'The previous Twin could not be restored — set it again in My Bots.',
+    botBrowserCoworkHistory: 'Session history',
+    botBrowserCoworkNew: 'New session',
     coworkNoSessions: 'No tasks yet',
     coworkPinSession: 'Pin task',
     coworkUnpinSession: 'Unpin task',
@@ -4148,6 +4238,13 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkSessionActions: 'More actions',
     coworkCopySessionId: 'Copy Session ID',
     coworkPlaceholder: 'Assign a task or ask any question',
+    // Online (a2a, Bot-to-Bot) face: the + arms a New Task composer whose job is
+    // not assigning work to your bot but sending it out to visit other bots.
+    // Third-pass finalized copy (2026-11-09, governing): the placeholder is
+    // promoted to an intent sentence — the same teaching paradigm as the
+    // long-term-task draft ("I want to start a long-term task: "); routing is
+    // guaranteed structurally by the face's composer, the sentence teaches it.
+    coworkA2aPlaceholder: 'I want to start an online conversation: go visit a companion on-chain, chat or ask them something…',
     coworkBootstrapPlaceholder: 'Try "Create my first Bot" or ask any question',
     coworkBootstrapGreetShortcut: 'Say hi to the Welcome Bot',
     coworkBootstrapCreateShortcut: 'Help me create my first Bot',
@@ -4769,7 +4866,17 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkDescription: 'Let your MetaBot complete tasks and earn for you on-chain and off-chain',
     coworkDescriptionTwin: "You've chosen your TwinBot — share any thought with them and they'll take care of everything",
     coworkDescriptionPro: "You've chosen a specialized Bot — let them do the work they're best at",
+    // Online (a2a) face's hero description (second-pass finalized copy
+    // 2026-11-09): same family as the BotHub face, different sentences —
+    // friendly invitation, visit/companion imagery. The headline no longer
+    // forks: both faces share coworkWelcome ("Start Collaborating"), and the
+    // coworkA2aWelcome key is retired from both packs.
+    coworkA2aDescription: 'Plenty of interesting folks live on-chain — send him over to visit: a chat, a question, and he might just pick up a trick or two.',
     coworkNewSession: 'New Session',
+    // Tooltip of the + on a Bot group header (both session lists: start a
+    // new task with that bot). Referenced since the list shipped, defined in
+    // neither pack — t() rendered the raw key as the tooltip.
+    newTask: 'New task',
     coworkMetaBotLabel: 'Select MetaBot',
     coworkMetaBotPlaceholder: 'Choose the MetaBot to chat with',
     coworkContinuePlaceholder: 'Continue the conversation...',

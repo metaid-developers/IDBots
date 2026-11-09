@@ -52,8 +52,15 @@ test('timed ask mode: unanswered questions wait for a person — no host auto-an
   // (block until answered). A kernel patch ignores any model-supplied timeout.
   assert.match(generatorSource, /name: '@deepseek-ai\/dsh-tool-ask-user'/);
   assert.match(generatorSource, /config: \{ mode: 'timed', timeout: -1 \}/);
+  // The patch pin follows the installed kernel line: the runtime moved to
+  // 0.2.2-rc.1 and the patch was rebased onto it (a 0.2.1-rc.2 file no longer
+  // exists). Verified before repinning: the 0.2.2-rc.1 patch carries the same
+  // `IDBots patch (ask-waits-for-human)` marker, forces `const timeout = -1;`
+  // in execute(), and the installed copy under dsh-runtime/node_modules has the
+  // marker applied (manifest count 1) — so this is a path update, not a
+  // weakened assertion.
   assert.match(
-    readSource('scripts', 'dsh-kernel-patches', '@deepseek-ai+dsh-tool-ask-user+0.2.1-rc.2.patch'),
+    readSource('scripts', 'dsh-kernel-patches', '@deepseek-ai+dsh-tool-ask-user+0.2.2-rc.1.patch'),
     /IDBots patch \(ask-waits-for-human\)/,
   );
   // The retired host policy is gone: no 120s constant, no backstop timer, and

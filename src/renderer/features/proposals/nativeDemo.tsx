@@ -40,7 +40,6 @@ store.dispatch(setSelectedModel(model));
 i18nService.setLanguage('en', { persist: false });
 
 function Demo() {
-  const [collapsed, setCollapsed] = useState(false);
   const [confirmation, setConfirmation] = useState(loadConfirmation);
   const [receipt, setReceipt] = useState(loadReceipt);
   const [generation, setGeneration] = useState(0);
@@ -58,11 +57,10 @@ function Demo() {
         <span>{notice}</span><button onClick={reset}>Reset demo</button>
       </div>
       <div className="flex flex-1 min-h-0">
-        <Sidebar activeView="cowork" mode="home" internetPane="browser" isCollapsed={collapsed}
-          onToggleCollapse={() => setCollapsed(!collapsed)} onShowSettings={unavailable}
+        <Sidebar mode="home" homeSection="records" isCollapsed={false} onShowSettings={unavailable}
           onShowSkills={unavailable} onShowCowork={unavailable} onShowScheduledTasks={unavailable}
-          onShowGroupTasks={unavailable} onShowMetabots={unavailable} onNewChat={unavailable}
-          onSelectHome={unavailable} onSelectBrowser={unavailable} onSelectInternetPane={unavailable} />
+          onShowGroupTasks={unavailable}
+          onSelectHome={unavailable} onSelectSurface={unavailable} />
         <MessageExtensionContext.Provider value={message => message.id === 'preview-action' ?
           <div className="mt-4"><BotActionCard key={generation} request={exampleBotAction}
             initialConfirmation={confirmation} initialReceipt={receipt}
@@ -85,7 +83,7 @@ function Demo() {
               <pre className="whitespace-pre-wrap mt-2">{JSON.stringify(receipt, null, 2)}</pre></details>}
           </div> : null}>
           <div className="flex-1 min-w-0 flex flex-col"><CoworkSessionDetail onContinue={() => { unavailable(); return false; }}
-            onStop={unavailable} isSidebarCollapsed={collapsed} onToggleSidebar={() => setCollapsed(!collapsed)}
+            onStop={unavailable}
             onNewChat={unavailable} onNavigateHome={unavailable} /></div>
         </MessageExtensionContext.Provider>
       </div>

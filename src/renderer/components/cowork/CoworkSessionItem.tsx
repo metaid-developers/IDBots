@@ -741,7 +741,7 @@ const CoworkSessionItemRow: React.FC<CoworkSessionItemProps> = ({
             <span className="whitespace-nowrap" title={relativeTime.full}>
               {relativeTime.compact}
             </span>
-            <span className="text-[10px] uppercase tracking-wider whitespace-nowrap">
+            <span className="text-[10px] whitespace-nowrap">
               {i18nService.t(statusLabels[session.status])}
             </span>
             {isBrowser && (
@@ -756,7 +756,11 @@ const CoworkSessionItemRow: React.FC<CoworkSessionItemProps> = ({
         </div>
       </div>
 
-      {/* Actions - absolutely positioned overlay */}
+      {/* Actions - absolutely positioned overlay.
+          Focus pass 2026-11-08: the menu was hover-only, so a keyboard user
+          tabbing into a row's menu button focused an invisible control. The
+          row reveals it on focus-within as well — hover and keyboard now show
+          the same third state. */}
       {!selectionMode && (
         <div
           className={`absolute right-1.5 top-1.5 transition-opacity ${
@@ -764,13 +768,13 @@ const CoworkSessionItemRow: React.FC<CoworkSessionItemProps> = ({
               ? 'opacity-0 pointer-events-none'
               : session.pinned
                 ? 'opacity-100'
-                : 'opacity-0 group-hover:opacity-100'
+                : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
           }`}
         >
           <button
             ref={actionButtonRef}
             onClick={openMenu}
-            className="p-1.5 rounded-lg bg-claude-surfaceMuted dark:bg-claude-darkSurfaceMuted dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurface hover:bg-claude-surface transition-colors"
+            className="p-1.5 rounded-lg bg-claude-surfaceMuted dark:bg-claude-darkSurfaceMuted dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurface hover:bg-claude-surface transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
             aria-label={actionLabel}
           >
             {session.pinned ? (

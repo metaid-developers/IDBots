@@ -16,6 +16,33 @@ const COLORS = {
   },
 };
 
+/**
+ * Liquid Glass material tokens (floating / control layers only).
+ *
+ * CSS owns the values — index.css defines them per theme and per degrade path
+ * (reduced transparency / high contrast / forced colors / no backdrop-filter).
+ * This module never duplicates a color: it exposes the variable NAMES plus a
+ * live reader, so non-CSS consumers (Electron title-bar overlays, canvas,
+ * portal inline styles) can resolve exactly the same material without a
+ * second source of truth.
+ *
+ * The three core tokens:
+ *   surface — the material fill  (glass-surface)
+ *   tint    — the readability film (glass-tint)
+ *   reduce  — the opaque fallback (glass-reduce)
+ */
+export const GLASS_TOKEN_VARS = {
+  surface: '--glass-surface-bg',
+  tint: '--glass-tint-bg',
+  reduce: '--glass-reduce-bg',
+} as const;
+
+export type GlassTokenName = keyof typeof GLASS_TOKEN_VARS;
+export type GlassTokens = Record<GlassTokenName, string>;
+
+/** Attribute that forces the opaque fallback for every glass surface. */
+const GLASS_REDUCE_ATTRIBUTE = 'data-glass';
+
 class ThemeService {
   private mediaQuery: MediaQueryList | null = null;
   private currentTheme: ThemeType = 'system';
@@ -90,6 +117,53 @@ class ThemeService {
       return this.mediaQuery?.matches ? 'dark' : 'light';
     }
     return this.currentTheme;
+  }
+
+  /**
+   * Resolve the three Liquid Glass tokens from the live stylesheet.
+   * When there is no DOM (tests/SSR) or the variables are not registered yet,
+   * the CSS variable reference itself is returned — never an invented color.
+   */
+  getGlassTokens(): GlassTokens {
+    const tokens = {} as GlassTokens;
+    const canRead = typeof document !== 'undefined' && document.documentElement;
+    const computed = canRead ? getComputedStyle(document.documentElement) : null;
+    (Object.keys(GLASS_TOKEN_VARS) as GlassTokenName[]).forEach((name) => {
+      const cssVar = GLASS_TOKEN_VARS[name];
+      const live = computed?.getPropertyValue(cssVar).trim() ?? '';
+      tokens[name] = live || `var(${cssVar})`;
+    });
+    return tokens;
+  }
+
+  /**
+   * Force (or release) the opaque fallback for every glass surface.
+   * Mirrors the OS-level prefers-reduced-transparency / prefers-contrast
+   * queries so a settings toggle or a QA pass can exercise the same path.
+   */
+  setGlassReduced(reduced: boolean): void {
+    if (typeof document === 'undefined') return;
+    const root = document.documentElement;
+    if (reduced) {
+      root.setAttribute(GLASS_REDUCE_ATTRIBUTE, 'reduce');
+    } else {
+      root.removeAttribute(GLASS_REDUCE_ATTRIBUTE);
+    }
+  }
+
+  /** Whether the material is currently degraded to its opaque fallback. */
+  isGlassReduced(): boolean {
+    if (typeof document === 'undefined') return false;
+    if (document.documentElement.getAttribute(GLASS_REDUCE_ATTRIBUTE) === 'reduce') {
+      return true;
+    }
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+      return false;
+    }
+    return (
+      window.matchMedia('(prefers-reduced-transparency: reduce)').matches ||
+      window.matchMedia('(prefers-contrast: more)').matches
+    );
   }
 
   subscribe(listener: ThemeListener): () => void {

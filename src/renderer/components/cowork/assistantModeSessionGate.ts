@@ -15,29 +15,35 @@ export interface AssistantModeSessionIdentity {
 /**
  * Renderer mirror of the backend assistant-mode gate.
  *
+ * The `mode` argument is the FACE-derived chat experience mode
+ * (hooks/chatExperienceModeSource.ts, 总裁办公室裁定 2026-11-09): BotHub
+ * face ('browser' surface) -> 'assistant', BotWorks face ('home' surface) ->
+ * 'professional'. The retired Settings toggle feeds nothing any more.
+ *
  * Backend counterpart: `isAssistantModeOwnerChatSession(sessionId)` in
- * `src/main/libs/coworkRunner.ts` — the global mode must be 'assistant' AND
- * the session must be a regular interactive owner chat: standard type,
- * human-initiated (no autoOrigin), created from the cowork UI. Group tasks,
- * A2A/IM conversations, Bot Browser pages, long-term sessions, and
- * auto-created orchestration/schedule runs serve other audiences or run
- * unattended, so they keep the professional treatment there.
+ * `src/main/libs/coworkRunner.ts` — marker-only since the same ruling: the
+ * per-session assistantMode marker (BotHub layer, owner ruling 2026-11-07)
+ * with no autoOrigin is assistant; everything else — every BotWorks owner
+ * chat, twin included — runs the professional prompt, owner_update surface,
+ * and professional effort chain.
  *
- * The two implementations MUST NOT drift: the backend gates the assistant
- * prompt section, owner_update surface, and assistant effort rung on this
- * exact rule, so a renderer that decides differently recreates the defect
- * this mirror fixes — a transcript that "looks assistant" (thinking/tool
- * chrome hidden) while its turns actually run the professional prompt (or
- * vice versa). Change this function and the backend one in the same breath.
+ * The two implementations MUST NOT drift on the SESSION axis: the backend
+ * gates the assistant prompt section, owner_update surface, and assistant
+ * effort rung on the marker rule, so a renderer that misdetects a marker
+ * session recreates the defect this mirror fixes — a transcript that "looks
+ * assistant" while its turns run professional (or vice versa). Change this
+ * function and the backend one in the same breath.
  *
- * Known divergence: the backend additionally requires the session's
- * conversation source channel to be 'cowork_ui'
- * (getConversationSourceContextBySession). The renderer session payload
- * carries no source channel, so this mirror decides on the two available
- * signals ONLY. A standard, human-initiated session whose backend channel is
- * not cowork_ui (e.g. an IM-bridged conversation) renders assistant-side
- * while its backend turns stay professional. Do not pretend the two rules are
- * equivalent — widen this only together with a renderer-visible channel.
+ * Known divergence (the ruling's intent, not a defect): the renderer verdict
+ * is face-owned PRESENTATION while the backend verdict is session-owned
+ * EXECUTION. On the BotHub face this gate reports assistant chrome for
+ * anything listed there — including a BotWorks-created standard chat, whose
+ * turns run the professional prompt — because the ruling makes the face the
+ * mode's source of truth (BotHub 面=助手模式). On the BotWorks face the same
+ * chat renders professional. Do not "fix" this by keying the renderer on
+ * session shape again: the face decides, and a renderer-side
+ * conversation-source probe (the old sourceChannel divergence) has no
+ * renderer-visible payload.
  */
 export function isAssistantModeOwnerChatSession(
   mode: ChatExperienceMode,
@@ -45,9 +51,12 @@ export function isAssistantModeOwnerChatSession(
 ): boolean {
   if (!session) return false;
   // Bot Internet projector sessions carry a persisted per-session marker and
-  // run assistant mode regardless of the global chatExperienceMode — mirror
-  // of the backend branch in coworkRunner.isAssistantModeOwnerChatSession.
+  // run assistant mode on every face — mirror of the backend branch in
+  // coworkRunner.isAssistantModeOwnerChatSession (marker-only, 2026-11-09).
   if (session.assistantMode && !session.autoOrigin) return true;
+  // Face-owned presentation: the BotWorks face ('professional') renders every
+  // session shape professionally; the BotHub face ('assistant') renders the
+  // assistant presentation for what it lists.
   if (mode !== 'assistant') return false;
   if ((session.sessionType ?? 'standard') !== 'standard' || session.autoOrigin) return false;
   return true;

@@ -4,8 +4,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  getSidebarInternetNavModel,
-  getSidebarPrimaryNavModel,
+  getHomeSectionModel,
+  getRailHomeNavModel,
+  getRailInternetNavModel,
+  getSurfaceMenuModel,
   isBotBrowserPaneVisible,
 } from '../src/renderer/components/sidebar/sidebarNavigation.js';
 
@@ -13,65 +15,98 @@ const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const t = (key) => key;
 
-/** The 跟踪任务 entry of the Bot Home nav model. */
-const trackedTasksItem = (params) =>
-  getSidebarPrimaryNavModel({ t, ...params }).find((item) => item.id === 'scheduledTasks');
+/** The 长期任务 rail entry — the one that carries the attention dot. */
+const longTermItem = (params) =>
+  getRailHomeNavModel({ t, ...params }).find((item) => item.id === 'longTerm');
 
-test('Bot Home primary nav keeps tasks and bots, without Bot Hub or Meta Apps', () => {
-  const ids = getSidebarPrimaryNavModel({ t, hasRunningScheduledTask: false })
+test('Bot Home rail keeps the four destinations in order: new task, long-term, group tasks, records', () => {
+  const ids = getRailHomeNavModel({ t, hasRunningScheduledTask: false })
     .filter((item) => !item.hidden)
     .map((item) => item.id);
 
-  assert.deepEqual(ids, ['scheduledTasks', 'groupTasks', 'metabots']);
+  assert.deepEqual(ids, ['newTask', 'longTerm', 'groupTasks', 'records']);
+  const items = getRailHomeNavModel({ t, hasRunningScheduledTask: false });
+  assert.equal(items[0].icon, 'compose');
+  assert.equal(items[1].icon, 'clock');
+  assert.equal(items[2].icon, 'userGroup');
+  assert.equal(items[3].icon, 'archive');
+  // Every rail entry is an icon + a tooltip label — no text row survives.
+  for (const item of items) {
+    assert.equal(typeof item.label, 'string');
+    assert.ok(item.label.length > 0);
+  }
 });
 
-test('the 跟踪任务 entry carries no dot by default, an amber running dot while a task runs', () => {
-  const idle = trackedTasksItem({ hasRunningScheduledTask: false, needsDecisionCount: 0 });
+test('the 长期任务 rail entry carries no dot by default, an amber running dot while a task runs', () => {
+  const idle = longTermItem({ hasRunningScheduledTask: false, needsDecisionCount: 0 });
   assert.equal(idle.hasIndicator, false);
   assert.equal(idle.indicatorKind, undefined);
   assert.equal(idle.indicatorLabel, undefined);
 
-  const running = trackedTasksItem({ hasRunningScheduledTask: true, needsDecisionCount: 0 });
+  const running = longTermItem({ hasRunningScheduledTask: true, needsDecisionCount: 0 });
   assert.equal(running.hasIndicator, true);
   assert.equal(running.indicatorKind, 'running', 'no owner decision pending: the plain running dot');
   assert.equal(running.indicatorLabel, undefined, 'the running dot stays unlabelled (historic behaviour)');
 });
 
-test('a pending owner decision lights the 跟踪任务 dot with its own count label, and outranks "running"', () => {
-  const decision = trackedTasksItem({ hasRunningScheduledTask: false, needsDecisionCount: 2 });
+test('a pending owner decision lights the 长期任务 dot with its own count label, and outranks "running"', () => {
+  const decision = longTermItem({ hasRunningScheduledTask: false, needsDecisionCount: 2 });
   assert.equal(decision.hasIndicator, true);
   assert.equal(decision.indicatorKind, 'decision');
   assert.equal(decision.indicatorLabel, 'trackedTaskNeedsDecision', 'the label key carries the count placeholder');
 
-  const both = trackedTasksItem({ hasRunningScheduledTask: true, needsDecisionCount: 1 });
+  const both = longTermItem({ hasRunningScheduledTask: true, needsDecisionCount: 1 });
   assert.equal(both.indicatorKind, 'decision', 'the owner decision wins over a running task');
   assert.equal(both.hasIndicator, true);
 
   // Garbage counts must not light the dot.
   for (const needsDecisionCount of [0, -3, undefined, null, NaN]) {
     assert.equal(
-      trackedTasksItem({ hasRunningScheduledTask: false, needsDecisionCount }).hasIndicator,
+      longTermItem({ hasRunningScheduledTask: false, needsDecisionCount }).hasIndicator,
       false,
       `needsDecisionCount=${String(needsDecisionCount)} keeps the dot off`,
     );
   }
 });
 
-test('Bot Internet nav model keeps Bot Hub implemented but hidden behind its flag', () => {
-  const items = getSidebarInternetNavModel({ t });
+test('Bot Internet rail lists browser, hidden Bot Hub, Meta Apps and My Bots — the Co-Work entry is retired', () => {
+  const items = getRailInternetNavModel({ t });
 
-  assert.deepEqual(items.map((item) => item.id), ['browser', 'gigSquare', 'metaapps']);
+  assert.deepEqual(items.map((item) => item.id), ['browser', 'gigSquare', 'metaapps', 'myBots']);
   assert.equal(items[0].icon, 'globe');
   assert.equal(items[1].icon, 'shoppingBag');
   assert.equal(items[1].badge, 'gigSquareAlphaBadge');
   assert.equal(items[2].icon, 'squares2x2');
+  assert.equal(items[3].label, 'metabots');
+  assert.equal(items[3].icon, 'cpuChip');
 
   // Bot Hub is not a promoted column for now: its entry stays implemented but
-  // hidden, so the sidebar only lists Bot Browser and Meta Apps.
+  // hidden, so the rail lists exactly THREE visible destinations.
   assert.equal(items[1].hidden, true);
   assert.deepEqual(
     items.filter((item) => !item.hidden).map((item) => item.id),
-    ['browser', 'metaapps'],
+    ['browser', 'metaapps', 'myBots'],
+  );
+  // Owner ruling 2026-11-08 20:18: the bubble icon is retired. The Co-Work
+  // face is this surface's default (the session list IS the mid column), so it
+  // needs no rail door — and no `chatBubbles` icon token stays behind.
+  assert.equal(items.some((item) => item.id === 'cowork'), false);
+  assert.equal(items.some((item) => item.icon === 'chatBubbles'), false);
+});
+
+test('the surface menu is the Codex-style pair: Bot Internet first, each entry carrying its subtitle', () => {
+  const items = getSurfaceMenuModel({ t });
+
+  assert.deepEqual(items, [
+    { id: 'browser', label: 'botInternet', subtitle: 'surfaceBotInternetSubtitle' },
+    { id: 'home', label: 'botHome', subtitle: 'surfaceBotHomeSubtitle' },
+  ]);
+});
+
+test('the Bot Home middle column keeps exactly three list sections', () => {
+  assert.deepEqual(
+    getHomeSectionModel({ t }).map((section) => section.id),
+    ['longTerm', 'groupTasks', 'records'],
   );
 });
 
@@ -79,6 +114,9 @@ test('Bot Browser pane stays the visible internet destination only when selected
   assert.equal(isBotBrowserPaneVisible('browser', 'browser'), true);
   assert.equal(isBotBrowserPaneVisible('browser', 'gigSquare'), false);
   assert.equal(isBotBrowserPaneVisible('browser', 'metaapps'), false);
+  // A retired Co-Work pane id still hides the browser pane: it resolves to the
+  // Bot Internet default branch, never to the browser surface.
+  assert.equal(isBotBrowserPaneVisible('browser', 'cowork'), false);
   assert.equal(isBotBrowserPaneVisible('home', 'browser'), false);
 });
 

@@ -4,8 +4,28 @@ import type { MetaAppRecord } from '../../types/metaApp';
 
 export type BotBrowserSurfaceMode = 'home' | 'browser';
 
-/** Destination inside the Bot Internet tab. The browser pane stays mounted. */
-export type BotInternetPane = 'browser' | 'gigSquare' | 'metaapps';
+/**
+ * Destination inside the Bot Internet tab. The browser pane stays mounted.
+ *
+ * Three destinations fill the right column with a catalog (metaapps / myBots /
+ * the disabled gigSquare slot) while `browser` shows the Bot Browser itself.
+ *
+ * There is no `cowork` destination any more (owner ruling 2026-11-08 20:18: the
+ * rail's bubble entry is retired). The Co-Work session list is this surface's
+ * MIDDLE column, and the right column's Co-Work card is the DEFAULT branch —
+ * see INTERNET_PANE_FALLBACK_RENDERER in layout/workspaceDestinations.js. A
+ * stale `cowork` id therefore resolves to that default, not to a pane of its
+ * own.
+ */
+export type BotInternetPane = 'browser' | 'gigSquare' | 'metaapps' | 'myBots';
+
+/**
+ * The Bot Home middle column's list destinations. One is expanded at a time;
+ * every header stays visible so the column always reads as "the lists".
+ * Derived from the main view in App: scheduledTasks → longTerm, groupTasks →
+ * groupTasks, everything else → records.
+ */
+export type BotHomeSection = 'longTerm' | 'groupTasks' | 'records';
 
 export type BotBrowserIntent =
   | { type: 'openBrowserHome' }

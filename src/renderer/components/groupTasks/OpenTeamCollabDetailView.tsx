@@ -22,7 +22,6 @@ import {
 import { GroupTaskTinyAvatar, GroupTaskDeliverableUri } from './GroupTaskListMeta';
 import { GroupTaskTypeBadge } from './GroupTaskSidebarList';
 import { ArrowLeftIcon, ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
-import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import ComposeIcon from '../icons/ComposeIcon';
 import WindowTitleBar from '../window/WindowTitleBar';
 
@@ -31,7 +30,6 @@ const MESSAGE_PAGE_LIMIT = 50;
 interface OpenTeamCollabDetailViewProps {
   collab: OpenTeamCollabSummary;
   isSidebarCollapsed?: boolean;
-  onToggleSidebar?: () => void;
   onNewChat?: () => void;
   updateBadge?: React.ReactNode;
   onBack: () => void;
@@ -46,7 +44,6 @@ interface OpenTeamCollabDetailViewProps {
 const OpenTeamCollabDetailView: React.FC<OpenTeamCollabDetailViewProps> = ({
   collab,
   isSidebarCollapsed,
-  onToggleSidebar,
   onNewChat,
   updateBadge,
   onBack,
@@ -195,13 +192,6 @@ const OpenTeamCollabDetailView: React.FC<OpenTeamCollabDetailViewProps> = ({
           <div className="flex items-center space-x-3 h-8 min-w-0">
             {isSidebarCollapsed && (
               <div className={`non-draggable flex items-center gap-1 ${isMac ? 'pl-[68px]' : ''}`}>
-                <button
-                  type="button"
-                  onClick={onToggleSidebar}
-                  className="h-8 w-8 inline-flex items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
-                >
-                  <SidebarToggleIcon className="h-4 w-4" isCollapsed={true} />
-                </button>
                 <button
                   type="button"
                   onClick={onNewChat}

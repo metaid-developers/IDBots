@@ -38,7 +38,7 @@ export interface GroupedSessions<TGroup> {
   groups: TGroup[];
 }
 
-export const DEFAULT_SESSION_VIEW_MODE: SessionViewMode = 'timeline';
+export const DEFAULT_SESSION_VIEW_MODE: SessionViewMode = 'bot';
 export const DEFAULT_SESSION_SORT_MODE: SessionSortMode = 'updatedAt';
 
 /** Latest-first ordering for one sort mode; timestamps tie-break each other,
@@ -205,14 +205,22 @@ const compareBotViewBots = (a: BotViewBot, b: BotViewBot): number => {
 };
 
 /**
- * Group sessions by bot — one group per local bot, independent of any working
- * directory. Every bot in `bots` gets a group even with zero sessions, so the
- * view mirrors the local bot roster (20 bots → 20 groups). Sessions whose bot
- * is not in the live list (legacy rows without a metabotId, or the bot was
- * deleted/disabled since) fall into one trailing "other" group so no
- * conversation silently disappears from the view.
+ * Group sessions by bot — one group per bot, independent of any working
+ * directory. This is the ONE grouping implementation both session faces use
+ * (本地对话 and 线上对话): the caller only chooses the data source and whether
+ * empty bots get a group.
  *
- * When `bots` is empty (the live list is still loading, or its IPC failed) the
+ * `includeEmptyBots` (default true) mirrors the local list's roster reading:
+ * every bot in `bots` gets a group even with zero sessions, and the roster's
+ * empty groups render their own "no conversations yet" line (20 bots → 20
+ * groups). The online face turns it off: an A2A list seeded with one empty
+ * group per local bot would be 20 rows of noise, so there a group exists only
+ * when the bot actually has a conversation.
+ *
+ * Sessions whose bot is not in the live list (legacy rows without a
+ * metabotId, or the bot was deleted/disabled since) fall into one trailing
+ * "other" group so no conversation silently disappears from the view. When
+ * `bots` is empty (the live list is still loading, or its IPC failed) the
  * groups are derived straight from the sessions — per bot id, identity from
  * the freshest row snapshot, most recently active bot first — so the list
  * still groups by bot instead of dumping everything into "other".
@@ -221,7 +229,9 @@ export const groupSessionsByBot = (
   sessions: CoworkSessionSummary[],
   sortMode: SessionSortMode,
   bots: readonly BotViewBot[],
+  options: { includeEmptyBots?: boolean } = {},
 ): GroupedSessions<SessionBotListGroup> => {
+  const includeEmptyBots = options.includeEmptyBots !== false;
   const { pinned, rest } = splitPinned(sessions, sortMode);
 
   // The trailing bucket for rows no live bot claims. Created lazily so the
@@ -236,7 +246,11 @@ export const groupSessionsByBot = (
 
   if (bots.length > 0) {
     const byId = new Map<number, SessionBotListGroup>();
+    const botsWithSessions = includeEmptyBots
+      ? null
+      : new Set(rest.map((session) => session.metabotId).filter((id): id is number => id != null));
     for (const bot of [...bots].sort(compareBotViewBots)) {
+      if (botsWithSessions && !botsWithSessions.has(bot.id)) continue;
       const group: SessionBotListGroup = {
         key: `bot:${bot.id}`,
         kind: 'bot',
@@ -306,58 +320,4 @@ export const groupSessionsByBot = (
     group.sessions = sortSessionsByMode(group.sessions, sortMode);
   }
   return { pinned, groups };
-};
-
-/**
- * Per-bot conversation counts for the online-chats Bot selector's option rows.
- * Every bot id in `botIds` is pre-seeded at 0 so each option row shows a count,
- * and 'all' carries the list's total (legacy rows without a metabotId have no
- * bot entry but still count toward it — they only render under 全部 Bot).
- */
-export type BotSessionCounts = Partial<Record<number | 'all', number>>;
-
-export const buildBotSessionCounts = (
-  sessions: CoworkSessionSummary[],
-  botIds: readonly number[],
-): BotSessionCounts => {
-  const counts: Record<number, number> = {};
-  for (const id of botIds) {
-    counts[id] = 0;
-  }
-  let total = 0;
-  for (const session of sessions) {
-    if (session.metabotId != null) {
-      counts[session.metabotId] = (counts[session.metabotId] ?? 0) + 1;
-    }
-    total += 1;
-  }
-  return { ...counts, all: total };
-};
-
-/**
- * Per-bot unread session counts for the online-chats Bot selector's option rows.
- * Same structure as BotSessionCounts: every bot id in `botIds` is pre-seeded at 0,
- * and 'all' carries the total unread count.
- */
-export type BotUnreadCounts = Partial<Record<number | 'all', number>>;
-
-export const buildBotUnreadCounts = (
-  sessions: CoworkSessionSummary[],
-  botIds: readonly number[],
-  unreadSessionIds: ReadonlySet<string>,
-): BotUnreadCounts => {
-  const unreads: Record<number, number> = {};
-  for (const id of botIds) {
-    unreads[id] = 0;
-  }
-  let total = 0;
-  for (const session of sessions) {
-    if (unreadSessionIds.has(session.id)) {
-      if (session.metabotId != null) {
-        unreads[session.metabotId] = (unreads[session.metabotId] ?? 0) + 1;
-      }
-      total += 1;
-    }
-  }
-  return { ...unreads, all: total };
 };

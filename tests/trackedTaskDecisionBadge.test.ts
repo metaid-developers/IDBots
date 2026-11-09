@@ -2,8 +2,11 @@
 //
 // A sub-project parked on an owner decision is the one state where the task's
 // progress depends on the OWNER, so it must be visible without opening a tab:
-// the sidebar's 跟踪任务 entry and the 长期任务 L1 tab both carry an amber dot
-// driven by the same derivation. The same requirement forces the Twin's
+// the rail's 长期任务 entry and the 长期任务 L1 tab both carry an amber dot
+// driven by the same derivation. The mid column used to carry a THIRD copy on
+// its record-type row; that row was removed with the type drawer (owner ruling
+// 2026-11-08), so the badge contract now pins exactly two render sites and the
+// mid column's absence. The same requirement forces the Twin's
 // wait_note/summary to be a six-section decision brief, stated identically in
 // the tool descriptions, the exec skill and the heartbeat re-presentation.
 
@@ -93,12 +96,30 @@ test('the board is initialized app-wide, so the badges work without opening the 
 });
 
 test('both badges are wired to the shared derivation and the amber decision dot', () => {
+  // Three-column final ruling 2026-11-09: the SAME rail mount now serves both
+  // faces, so the Home face's dot lives on the rail's 长期任务 icon too — the
+  // dot machinery is defined once (here) and rendered on both surfaces. The
+  // records column dropped the sidebar-row copy together with the rows, and
+  // carries no derivation of its own.
+  const rail = readSource('src/renderer/components/layout/WorkspaceRail.tsx');
+  assert.match(rail, /selectTrackedTasksNeedingAttention\(\{ longTermTask: \{ board: longTermBoard \} \}\)/);
+  assert.match(rail, /needsDecisionCount: trackedTaskAttention\.total/);
+  assert.match(rail, /tracked-task-decision-indicator/);
+  assert.match(rail, /indicatorKind === 'decision'/);
+  assert.match(rail, /role="img"[\s\S]{0,160}aria-label=\{indicatorLabel\}/);
+
+  const homeSidebar = readSource('src/renderer/components/HomeSidebar.tsx');
+  assert.doesNotMatch(homeSidebar, /tracked-task-decision-indicator/);
+  assert.doesNotMatch(homeSidebar, /selectTrackedTasksNeedingAttention/);
+  assert.doesNotMatch(homeSidebar, /trackedTaskNeedsDecision/);
+
+  // The Internet middle column still carries no copy of the dot (it duplicates
+  // neither the rail nor the Home sidebar).
   const sidebar = readSource('src/renderer/components/Sidebar.tsx');
-  assert.match(sidebar, /selectTrackedTasksNeedingAttention\(\{ longTermTask: \{ board: longTermBoard \} \}\)/);
-  assert.match(sidebar, /needsDecisionCount: trackedTaskAttention\.total/);
-  assert.match(sidebar, /tracked-task-decision-indicator/);
-  assert.match(sidebar, /item\.indicatorKind === 'decision'/);
-  assert.match(sidebar, /role="img"[\s\S]{0,120}aria-label=\{item\.indicatorLabel\}/);
+  assert.doesNotMatch(sidebar, /tracked-task-decision-indicator/);
+  assert.doesNotMatch(sidebar, /selectTrackedTasksNeedingAttention/);
+  assert.doesNotMatch(sidebar, /trackedTaskNeedsDecision/);
+  assert.doesNotMatch(sidebar, /decisionLabel/);
 
   const view = readSource('src/renderer/components/scheduledTasks/ScheduledTasksView.tsx');
   assert.match(view, /const longTermNeedsDecisionCount = useMemo/);

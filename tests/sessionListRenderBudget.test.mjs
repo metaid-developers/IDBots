@@ -98,8 +98,10 @@ test('only a bounded prefix of rows mounts, and scrolling toward the end reveals
   assert.match(listSource, /pinned\.length > 0 && revealBudgetLeft\(\) && \(/);
   assert.match(listSource, /revealBudgetLeft\(\) && sortedAutoSessions\.length > 0 && \(/);
   assert.match(listSource, /if \(!revealBudgetLeft\(\)\) return null;/);
-  // Every branch roots at the element the reveal measures from.
-  assert.equal((listSource.match(/ref=\{rootRef\}/g) ?? []).length, 5);
+  // Every branch roots at the element the reveal measures from. The selector
+  // no longer owns a branch of its own (it rides above the grouped body), so
+  // the branch count dropped by one: timeline, by-Bot, flat, empty state.
+  assert.equal((listSource.match(/ref=\{rootRef\}/g) ?? []).length, 4);
   // Reveal is armed once per approach to the end: no unbounded state growth.
   assert.match(revealSource, /if \(!armed\) return \{ reveal: false, armed: false \};/);
   assert.match(revealSource, /if \(step\.reveal\) \{\s*\n\s*setRevealedRows\(\(previous\) => previous \+ REVEAL_CHUNK_ROWS\);/);
@@ -117,9 +119,10 @@ test('only a bounded prefix of rows mounts, and scrolling toward the end reveals
 test('the reveal budget applies to every branch that renders rows', () => {
   // Every row list ends in renderItem, which is what spends the budget: the
   // pinned block, the expanded Follow-Up section, the expanded Autonomous
-  // Tasks fold, the timeline groups, the project groups, and the three flat
-  // lists (the selector branch, plus the plain branch's pinned and unpinned
-  // halves).
-  assert.equal((listSource.match(/\.map\(renderItem\)/g) ?? []).length, 8);
+  // Tasks fold, the timeline groups, the by-Bot groups, and the flat branch's
+  // pinned and unpinned halves. (The old selector branch was removed when the
+  // online face moved onto the same grouped body, so its list is the by-Bot
+  // groups' `.map(renderItem)` — one list, not two.)
+  assert.equal((listSource.match(/\.map\(renderItem\)/g) ?? []).length, 7);
   assert.equal((listSource.match(/renderItem = \(session: CoworkSessionSummary\)/g) ?? []).length, 1);
 });

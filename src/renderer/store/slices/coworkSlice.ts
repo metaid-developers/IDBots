@@ -39,6 +39,16 @@ interface CoworkState {
   preferredMetabotId: number | null;
   /** MetaBot selected on the New Task home page; persisted globally so the single-instance page keeps its state across navigation. */
   newTaskMetabotId: number | null;
+  /**
+   * Which record face armed the current New Task composer: 'local' (owner
+   * tells their bot to DO a task) or 'a2a' (owner's bot goes to the chain to
+   * talk to another bot — consult, chat, learn). The welcome hero and the
+   * prompt placeholder read this; the + on the 线上对话 face's own
+   * tabs set 'a2a', every other opener (handleNewChat, 新会话 shortcut)
+   * resets to 'local', so a stale a2a wording can never leak into an
+   * owner-task composer.
+   */
+  newTaskOrigin: 'local' | 'a2a';
   draftPrompt: string;
   /**
    * Composer drafts keyed by session id (the steer input of each session
@@ -79,6 +89,10 @@ const initialState: CoworkState = {
   currentSession: null,
   preferredMetabotId: null,
   newTaskMetabotId: null,
+  // Every opener without an online intent is local by default: only the
+  // 线上对话 face's quick-create sets 'a2a' (and every other opener resets
+  // it), so the never-explicitly-set default is already correct.
+  newTaskOrigin: 'local',
   draftPrompt: '',
   sessionDrafts: {},
   unreadSessionIds: [],
@@ -278,6 +292,10 @@ const coworkSlice = createSlice({
 
     setNewTaskMetabotId(state, action: PayloadAction<number | null>) {
       state.newTaskMetabotId = action.payload;
+    },
+
+    setNewTaskOrigin(state, action: PayloadAction<'local' | 'a2a'>) {
+      state.newTaskOrigin = action.payload;
     },
 
     addSession(state, action: PayloadAction<CoworkSession>) {
@@ -639,6 +657,7 @@ export const {
   setDraftPrompt,
   setSessionDraft,
   setNewTaskMetabotId,
+  setNewTaskOrigin,
   addSession,
   registerBackgroundSession,
   updateSessionStatus,

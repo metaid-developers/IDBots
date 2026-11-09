@@ -2,21 +2,23 @@
  * Renderer assistant-mode session gate
  * (src/renderer/components/cowork/assistantModeSessionGate.ts).
  *
- * The chat-experience mode is a global setting, but its *effects* are
- * per-session: the backend applies assistant mode only to regular interactive
- * owner chats (isAssistantModeOwnerChatSession in
- * src/main/libs/coworkRunner.ts) and runs every unattended / non-standard
- * session with the professional prompt and the unattended effort branch. The
- * renderer used to read the global mode for every session, so opening an
- * orchestration / long-term / worker session showed assistant chrome (thinking
- * and tool detail hidden) while its turns actually ran professionally.
+ * Since the 总裁办公室 surface ruling (2026-11-09) the chat experience mode
+ * is decided by the FACE the user is on (hooks/chatExperienceModeSource.ts —
+ * BotHub=assistant, BotWorks=professional; the Settings toggle is retired),
+ * but its *effects* are still per-session: the backend applies assistant mode
+ * only to sessions carrying the per-session BotHub marker
+ * (isAssistantModeOwnerChatSession in src/main/libs/coworkRunner.ts) and runs
+ * every unattended / non-marker session — BotWorks owner chats included —
+ * with the professional prompt and the unattended effort branch. A renderer
+ * that keyed the transcript chrome on anything but (face mode, session)
+ * would show assistant chrome on a professional-running run again — the
+ * exact defect this gate exists to prevent.
  *
  * Coverage:
  *  1. behavioural — the gate's truth table, imported and called for real;
  *  2. static wiring — each session-scoped consumer routes through the gate and
- *     no consumer derives the verdict from the bare global comparison again
- *     (the exact regression this change exists to prevent), plus the drift
- *     guard that ties the mirror to its backend counterpart.
+ *     no consumer derives the verdict from the bare mode comparison again,
+ *     plus the drift guard that ties the mirror to its backend counterpart.
  *
  * Run: npx tsx --test tests/coworkAssistantModeSessionGate.test.ts
  */
@@ -68,11 +70,12 @@ test('gate: non-standard session types (a2a / browser / group) never take assist
   }
 });
 
-test('gate: Bot Internet projector sessions carry their own assistant marker past the global mode', () => {
+test('gate: Bot Internet projector sessions carry their own assistant marker past the face mode', () => {
   // Owner ruling 2026-11-07: the Bot Internet tab always chats assistant-side,
-  // locked to the Twin, whatever the Settings toggle says. Legacy browser
-  // sessions stay unmarked (assistant_mode = 0) and keep the professional
-  // treatment everywhere.
+  // locked to the Twin — marker sessions keep that treatment on every face
+  // (and the Settings toggle that used to govern the global mode is retired).
+  // Legacy browser sessions stay unmarked (assistant_mode = 0) and keep the
+  // professional treatment everywhere.
   assert.equal(
     isAssistantModeOwnerChatSession('professional', { sessionType: 'browser', autoOrigin: null, assistantMode: true }),
     true,
@@ -150,11 +153,13 @@ test('wiring: the gate names its backend counterpart so the two rules cannot dri
     /MUST NOT drift|must not drift/i.test(gate),
     'the mirror must state the no-drift contract',
   );
-  // The renderer payload carries no conversation source channel, so the known
-  // divergence stays documented rather than silently forgotten.
+  // The two verdicts diverge BY DESIGN since the 2026-11-09 surface ruling:
+  // renderer = face-owned presentation, backend = session marker. The
+  // divergence stays documented rather than silently forgotten (and the
+  // obsolete sourceChannel probe is named so nobody reinstates it).
   assert.ok(
-    /source channel|sourceChannel/.test(gate) && /Known divergence/i.test(gate),
-    'the known divergence (backend also keys on sourceChannel) must stay documented',
+    /Known divergence/.test(gate) && /face-owned PRESENTATION/.test(gate) && /sourceChannel/.test(gate),
+    'the known divergence (face presentation vs backend marker) must stay documented',
   );
 });
 

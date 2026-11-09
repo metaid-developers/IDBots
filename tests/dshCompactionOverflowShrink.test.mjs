@@ -1,5 +1,5 @@
 // Regression test for the dsh-compaction-basic kernel patch
-// (scripts/dsh-kernel-patches/@deepseek-ai+dsh-compaction-basic+0.2.1-rc.2.patch).
+// (scripts/dsh-kernel-patches/@deepseek-ai+dsh-compaction-basic+0.2.2-rc.1.patch).
 //
 // Upstream's context-overflow recovery summarizes the WHOLE surface (minus the
 // last node) on the same provider/model that just rejected the request — and

@@ -15,13 +15,11 @@ import LongTermTasksBoard from '../longTermTasks/LongTermTasksBoard';
 /** 长期任务页的外层 Tab：「长期任务」默认在前，「定时任务」原样保留。 */
 type TrackingTabId = 'longTerm' | 'scheduled';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
-import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import ComposeIcon from '../icons/ComposeIcon';
 import WindowTitleBar from '../window/WindowTitleBar';
 
 interface ScheduledTasksViewProps {
   isSidebarCollapsed?: boolean;
-  onToggleSidebar?: () => void;
   onNewChat?: () => void;
   updateBadge?: React.ReactNode;
 }
@@ -47,7 +45,6 @@ const tabButtonClass = (active: boolean): string =>
  */
 const ScheduledTasksView: React.FC<ScheduledTasksViewProps> = ({
   isSidebarCollapsed,
-  onToggleSidebar,
   onNewChat,
   updateBadge,
 }) => {
@@ -127,13 +124,6 @@ const ScheduledTasksView: React.FC<ScheduledTasksViewProps> = ({
         <div className="flex items-center space-x-3 h-8">
           {isSidebarCollapsed && (
             <div className={`non-draggable flex items-center gap-1 ${isMac ? 'pl-[68px]' : ''}`}>
-              <button
-                type="button"
-                onClick={onToggleSidebar}
-                className="h-8 w-8 inline-flex items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
-              >
-                <SidebarToggleIcon className="h-4 w-4" isCollapsed={true} />
-              </button>
               <button
                 type="button"
                 onClick={onNewChat}

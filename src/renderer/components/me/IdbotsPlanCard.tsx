@@ -22,6 +22,17 @@ const TIER_NAMES: Record<string, string> = {
   max: 'ID.Scholar',
 };
 
+interface IdbotsPlanCardProps {
+  /**
+   * Optional upgrade handler override. Default opens the shared floating
+   * purchase modal; the user-profile card passes its own handler so the
+   * button opens the in-card level-2 plans page instead (页面嵌套定版
+   * 2026-11-09) — the card is the SAME component everywhere, only the
+   * upgrade door is host-owned.
+   */
+  onUpgrade?: () => void;
+}
+
 const tierName = (plan: MePlanInfo | null, fallbackId: string): string => {
   const key = (plan?.tier || fallbackId).replace(/^me_/, '');
   return TIER_NAMES[key] || plan?.nameEn || plan?.name || fallbackId || TIER_NAMES.free;
@@ -30,7 +41,7 @@ const tierName = (plan: MePlanInfo | null, fallbackId: string): string => {
 // Shared with the usage page's current-tier badge (single naming source).
 export const meTierDisplayName = tierName;
 
-const IdbotsPlanCard: React.FC = () => {
+const IdbotsPlanCard: React.FC<IdbotsPlanCardProps> = ({ onUpgrade }) => {
   const snapshot = React.useSyncExternalStore(subscribeMeSnapshot, getMeSnapshot, getMeSnapshot);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -124,7 +135,7 @@ const IdbotsPlanCard: React.FC = () => {
 
       <button
         type="button"
-        onClick={() => requestOpenMePurchase('subscribe')}
+        onClick={onUpgrade ?? (() => requestOpenMePurchase('subscribe'))}
         className="btn-idchat-primary-filled mt-4 inline-flex w-full items-center justify-center rounded-xl px-3 py-2 text-xs font-medium"
       >
         {i18nService.t('mePlanUpgrade')}
