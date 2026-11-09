@@ -36,6 +36,7 @@ import { requestMvcGasSubsidy } from './mvcSubsidyService';
 import { getMainWorkerCandidatePaths, resolveMainWorkerPath } from './workerPathResolver';
 import { runMvcSponsorCreatePin, type CreatePinFeeAssistMetadata } from './mvcSponsorCreatePin';
 import { recordChainWriteFromCreatePin } from '../libs/chainWriteLedger';
+import { assertChainWritePinRefs } from '../libs/chainPinRefGuard';
 import { getConfiguredTrafficApiBase, resolveSponsorTrafficAccount } from './trafficAccountService';
 import { deriveMvcSponsorAddress, type MvcSponsorTrafficAccount } from './mvcSponsorClient';
 import { appendMetaidLog } from './metaidLog';
@@ -561,6 +562,11 @@ export interface SpawnCreatePinWorkerParams {
  */
 export async function spawnCreatePinWorker(params: SpawnCreatePinWorkerParams): Promise<CreatePinWorkerSuccess> {
   const { mnemonic, walletPath, metaidData, options, sessionSnapshot } = params;
+
+  // Pre-broadcast pin-reference guard: fail closed BEFORE the worker spawns —
+  // a malformed pin://, metafile://, or metaapp:// reference in the payload
+  // must never reach the chain (fee burned + a permanent invalid record).
+  assertChainWritePinRefs(metaidData);
 
   // Worker lives under dist-electron/main/libs in Vite dev builds; keep legacy fallbacks for packaging.
   const appPath = app.getAppPath();

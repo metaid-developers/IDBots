@@ -16,6 +16,7 @@ const {
   incrementMetaProtocolVersion,
   serializeMetaProtocolBody,
 } = require('../dist-electron/main/libs/metaProtocolAgentTools.js');
+const { PIN_REF_TOOL_RULE: pinRefToolRule } = require('../dist-electron/main/libs/chainPinRefGuard.js');
 
 const SESSION_ID = 'sess-metaprotocol-1';
 const METABOT_ID = 77;
@@ -176,6 +177,7 @@ test('registers metaprotocol_registry and post_metaprotocol with the verbatim sp
       'Both actions validate the payload against the metaprotocol schema BEFORE anything reaches',
       'the wallet, then ask the host to sign and broadcast the on-chain pin (fees apply).',
       'Resolve the target for update by protocolPath, protocolName or pinId.',
+      pinRefToolRule,
     ].join('\n'),
   );
 });

@@ -369,3 +369,7 @@ If you drive a task from a Twin session that is NOT the current driver, check `s
 1. Wrap the whole `--payload` JSON in single quotes; use double quotes inside. Prefer `--payload @file` for long/non-ASCII content.
 2. Do not invent `task_id`s or member names — `list` first, or ask the user.
 3. Requires the local IDBots app running with the MetaID RPC gateway up.
+
+## Pin reference format (chain-write preflight)
+
+Every pin reference you put into a chain-write payload — a `pin://`, `metafile://`, or `metaapp://` URI, or a JSON field named like a pin (`pinId`, `coursePinId`, `rootPinId`, …) — must be EXACTLY 64 lowercase hex characters followed by `i0`, 66 characters total (e.g. `1e288800fdec1a5911a169e0cb499a3bc63e6083e5f035f5d552f73c601f2cf2i0`). A 64-hex value WITHOUT `i0` (e.g. `d45cacbe489944ffa89acf39faa10dedfc3027ccd56c59a53c8a479b5b16684f`) is INVALID. Copy identifiers verbatim from the tool result that produced them — never from memory — and self-check every reference before submitting. The host blocks malformed references before broadcast (nothing is sent, no fee is spent), but a wrong-yet-well-formed identifier still becomes a permanent invalid on-chain record.

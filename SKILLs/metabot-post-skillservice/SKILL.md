@@ -66,3 +66,7 @@ JSON 为 skill-service 业务字段。`providerMetaBot` 代表当前使用技能
 3. **确认可选**：可先回复拟上链摘要请用户确认，再在后续回合调用本技能；也可在确信信息完整时直接调用。
 4. **JSON 转义**：传入的 payload 必须为合法 JSON；若内容含双引号等需正确转义。
 5. **用户确认**：如允许，请在真正调用脚本传参数之前，将组装好的 JSON 体发给用户确认，用户确认后再用 bash 执行脚本。
+
+## Pin reference format (chain-write preflight)
+
+Every pin reference you put into a chain-write payload — a `pin://`, `metafile://`, or `metaapp://` URI, or a JSON field named like a pin (`pinId`, `coursePinId`, `rootPinId`, …) — must be EXACTLY 64 lowercase hex characters followed by `i0`, 66 characters total (e.g. `1e288800fdec1a5911a169e0cb499a3bc63e6083e5f035f5d552f73c601f2cf2i0`). A 64-hex value WITHOUT `i0` (e.g. `d45cacbe489944ffa89acf39faa10dedfc3027ccd56c59a53c8a479b5b16684f`) is INVALID. Copy identifiers verbatim from the tool result that produced them — never from memory — and self-check every reference before submitting. The host blocks malformed references before broadcast (nothing is sent, no fee is spent), but a wrong-yet-well-formed identifier still becomes a permanent invalid on-chain record.
