@@ -96,15 +96,14 @@ type Model = NonNullable<ProviderConfig['models']>[number];
 type CerebellumConfig = NonNullable<AppConfig['cerebellum']>;
 
 // Cerebellum provider options: direct TypeSafe (user-owned key) plus the
-// official free relay (server holds the upstream key; client rides the
-// free-quota relay key shared with IDBots-Free chat).
+// official IDBots relay, whose usage is billed in ME credits server-side.
 const CEREBELLUM_PROVIDER_OPTIONS = [
   { value: 'typesafe-jev', label: 'TypeSafe JEV' },
-  { value: 'idbots-jev-free', label: 'IDBots-JEV-Free' },
+  { value: 'idbots-jev-free', label: 'IDBots-JEV' },
 ];
 
-// Mirrors src/main/libs/cerebellumConfig.ts + defaultConfig — the free
-// provider is the campaign default: enabled, no key, relay-pinned.
+// Keep the legacy storage key for config compatibility; the provider is now
+// presented as IDBots-JEV and metered through the user's ME credit balance.
 const CEREBELLUM_FREE_PROVIDER = 'idbots-jev-free';
 const CEREBELLUM_FREE_RELAY_BASE_URL = 'https://www.metaso.network/assist-open-api/v2/assist/llm/jev';
 const CEREBELLUM_FREE_MODEL = 'jev-latest';
@@ -607,8 +606,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
   // Add state for providers configuration
   const [providers, setProviders] = useState<ProvidersConfig>(() => getInitialProviders());
 
-  // The decision-model configuration is a provider-like destination at the
-  // bottom of the same list rather than a second top-level tab.
+  // The decision-model configuration sits beside ID.Bots in the provider list.
   const [showCerebellumSettings, setShowCerebellumSettings] = useState(false);
   // S9 ME points: shared server-data snapshot (plans / balance / rates).
   const meSnapshot = React.useSyncExternalStore(subscribeMeSnapshot, getMeSnapshot, getMeSnapshot);
@@ -624,11 +622,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
   }));
   const [cerebellumTestResult, setCerebellumTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [isTestingCerebellum, setIsTestingCerebellum] = useState(false);
-  // Free provider quota snapshot for the CEREBELLUM side; null = unavailable.
-  // Binds the JEV pool numbers; quotaCycleResetAt feeds the same weekly
-  // countdown the free-quota card shows (both pools share one cycle).
-  // S9: 小脑免费额度状态已随显示一起下线（token 口径不再出现在桌面端）。
-  
+
   // 创建引用来确保内容区域的滚动
   const contentRef = useRef<HTMLDivElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -1996,13 +1990,13 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
   };
 
   /**
-   * Free provider: the relay key lives in the main-process credential chain
-   * (kv -> metaid-free provider -> identity bootstrap), not in user input.
-   * Always resolve from the chain (fresher than the config snapshot) and
-   * persist it so the pure config path keeps working; an unresolved key is
-   * fine — the cerebellum silently stays off until credentials exist.
+   * IDBots-JEV: the identity-bound relay key lives in the main-process
+   * credential chain (kv -> metaid-free provider -> identity bootstrap), not
+   * in user input. Always resolve from the chain (fresher than the config
+   * snapshot) and persist it so the pure config path keeps working; an
+   * unresolved key leaves the cerebellum off until credentials exist.
    */
-  const ensureCerebellumFreeApiKey = async (): Promise<string> => {
+  const ensureCerebellumIdbotsApiKey = async (): Promise<string> => {
     try {
       const response = await window.electron.jevRelay.resolveCredentials();
       const apiKey = response?.success ? (response.credentials?.apiKey ?? '').trim() : '';
@@ -2019,13 +2013,12 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
   // S9 下线清单：原「小脑额度」（JEV/token 口径）显示与拉取已下线；
   // 统一口径展示走「用量 & 积分」页（me_balance / me_history）。
 
-  // Free provider without a key yet (panel open, default selection): resolve
-  // it once in the background so the shared-quota line can render without
-  // waiting for a connection test. Failure is silent — no key, no quota line;
-  // deps gate re-runs (a resolved key flips the condition off).
+  // IDBots-JEV without a key yet: resolve it once in the background so the
+  // connection test can run without a separate provisioning step. Failure is
+  // silent; the deps gate re-runs when credentials become available.
   useEffect(() => {
     if (cerebellum.provider === CEREBELLUM_FREE_PROVIDER && !cerebellum.apiKey.trim()) {
-      void ensureCerebellumFreeApiKey();
+      void ensureCerebellumIdbotsApiKey();
     }
   }, [cerebellum.provider, cerebellum.apiKey]);
 
@@ -2042,7 +2035,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
         baseUrl: CEREBELLUM_FREE_RELAY_BASE_URL,
         model: CEREBELLUM_FREE_MODEL,
       }));
-      void ensureCerebellumFreeApiKey();
+      void ensureCerebellumIdbotsApiKey();
       return;
     }
     setCerebellum(prev => ({
@@ -2061,10 +2054,10 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
     setIsTestingCerebellum(true);
     setCerebellumTestResult(null);
     try {
-      // Free provider: pull the relay key from the credential chain first
-      // (fresh installs may not have bootstrapped the free quota yet).
+      // IDBots-JEV: pull the identity-bound relay key from the credential
+      // chain first (fresh installs may not have bootstrapped it yet).
       const apiKey = cerebellum.provider === CEREBELLUM_FREE_PROVIDER
-        ? await ensureCerebellumFreeApiKey()
+        ? await ensureCerebellumIdbotsApiKey()
         : cerebellum.apiKey;
       const result = await testCerebellumConnection(
         { baseUrl: cerebellum.baseUrl, apiKey },
@@ -3299,37 +3292,57 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                 className="hidden"
                 onChange={handleImportProviders}
               />
-              {/* ID.Bots subscription entry pinned on top; the credits it
-                  spends live on the plan card (weekly pool + credit pack).
-                  Third-party entries follow under their own group label,
-                  which only appears once the group is non-empty. */}
+              {/* ID.Bots subscription entries stay together above third-party
+                  providers. Both cerebellum switches edit the same state and
+                  are persisted by the shared Save button. */}
               {providers[LLM_FREE_PROVIDER_KEY] && renderProviderRow(LLM_FREE_PROVIDER_KEY, providers[LLM_FREE_PROVIDER_KEY])}
+              <div
+                className={`flex w-full items-center rounded-xl border p-2 transition-colors ${
+                  showCerebellumSettings
+                    ? 'border-claude-accent/30 bg-claude-accent/10 dark:bg-claude-accent/20 shadow-subtle'
+                    : 'border-transparent dark:bg-claude-darkSurface/50 bg-claude-surface hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowProviderTemplatePicker(false);
+                    setShowCerebellumSettings(true);
+                  }}
+                  className="-my-2 flex min-h-10 min-w-0 flex-1 items-center text-left transition-transform active:scale-[0.96]"
+                >
+                  <span className="mr-2 flex h-7 w-7 shrink-0 items-center justify-center dark:text-claude-darkText text-claude-text">
+                    <BrainIcon className="h-5 w-5" />
+                  </span>
+                  <span className={`flex-1 text-sm font-medium ${showCerebellumSettings ? 'text-claude-accent' : 'dark:text-claude-darkText text-claude-text'}`}>
+                    {i18nService.t('modelCerebellumTab')}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={cerebellum.enabled}
+                  aria-label={i18nService.t('cerebellumEnabled')}
+                  onClick={() => handleCerebellumConfigChange('enabled', !cerebellum.enabled)}
+                  className="-my-2 ml-1 flex h-10 w-10 shrink-0 items-center justify-center transition-transform active:scale-[0.96]"
+                >
+                  <span className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${
+                    cerebellum.enabled ? 'bg-claude-accent' : 'dark:bg-claude-darkBorder bg-claude-border'
+                  }`}
+                  >
+                    <span className={`h-3 w-3 rounded-full bg-white shadow-md transform transition-transform ${
+                      cerebellum.enabled ? 'translate-x-3.5' : 'translate-x-0.5'
+                    }`}
+                    />
+                  </span>
+                </button>
+              </div>
               {thirdPartyProviderEntries.length > 0 && (
                 <div className="px-1 pt-2 pb-0.5 text-[11px] font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
                   {i18nService.t('thirdPartyProviders')}
                 </div>
               )}
               {thirdPartyProviderEntries.map(([provider, config]) => renderProviderRow(provider as ProviderType, config))}
-              <button
-                type="button"
-                onClick={() => {
-                  setShowProviderTemplatePicker(false);
-                  setShowCerebellumSettings(true);
-                }}
-                className={`mt-3 flex w-full items-center rounded-xl border p-2 text-left transition-colors ${
-                  showCerebellumSettings
-                    ? 'border-claude-accent/30 bg-claude-accent/10 dark:bg-claude-accent/20 shadow-subtle'
-                    : 'border-transparent dark:bg-claude-darkSurface/50 bg-claude-surface hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
-                }`}
-              >
-                <span className="mr-2 flex h-7 w-7 items-center justify-center dark:text-claude-darkText text-claude-text">
-                  <BrainIcon className="h-5 w-5" />
-                </span>
-                <span className={`flex-1 text-sm font-medium ${showCerebellumSettings ? 'text-claude-accent' : 'dark:text-claude-darkText text-claude-text'}`}>
-                  TypeSafe JEV
-                </span>
-                <span className={`h-2 w-2 rounded-full ${cerebellum.enabled ? 'bg-green-500' : 'bg-claude-border dark:bg-claude-darkBorder'}`} aria-hidden />
-              </button>
             </div>
 
             {/* Provider Settings - Right Side (or the template picker) */}
@@ -3712,6 +3725,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                   type="button"
                   role="switch"
                   aria-checked={cerebellum.enabled}
+                  aria-label={i18nService.t('cerebellumEnabled')}
                   onClick={() => handleCerebellumConfigChange('enabled', !cerebellum.enabled)}
                   className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
                     cerebellum.enabled
@@ -3750,18 +3764,13 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
               {cerebellum.provider === CEREBELLUM_FREE_PROVIDER && (
                 <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2">
                   <p className="text-[11px] leading-relaxed text-amber-700 dark:text-amber-400">
-                    {i18nService.t('cerebellumFreeProviderHint')}
-                  </p>
-                  {/* S9 下线清单：原「小脑额度」token 显示下线；统一走用量 & 积分页 */}
-                  <p className="mt-1 text-[11px] leading-relaxed text-amber-700 dark:text-amber-400">
-                    {i18nService.t('cerebellumFreeQuotaMeNote')}
+                    {i18nService.t('cerebellumIdbotsProviderHint')}
                   </p>
                 </div>
               )}
 
-              {/* Direct TypeSafe only: the free relay pins everything
-                  (key resolved from the credential chain, relay baseUrl,
-                  jev-latest), so only the test button is offered there. */}
+              {/* Direct TypeSafe only: the IDBots relay pins its credential,
+                  baseUrl, and model, so only the test button is offered there. */}
               {cerebellum.provider !== CEREBELLUM_FREE_PROVIDER && (
                 <>
                   <div>

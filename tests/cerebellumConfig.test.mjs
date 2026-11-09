@@ -101,10 +101,10 @@ test('resolveCerebellumConfig rejects malformed shapes', () => {
   );
 });
 
-// --- idbots-jev-free (official free relay) branches ---
+// --- idbots-jev-free (legacy storage id for official IDBots-JEV) branches ---
 
-test('resolveCerebellumConfig resolves the free provider with an empty api key', () => {
-  // The free provider's relay key is injected at call time (credential
+test('resolveCerebellumConfig resolves IDBots-JEV with an empty api key', () => {
+  // The identity-bound ME relay key is injected at call time (credential
   // chain), so a missing stored key must not disable the feature here.
   const resolved = resolveCerebellumConfig({
     cerebellum: {
@@ -123,7 +123,7 @@ test('resolveCerebellumConfig resolves the free provider with an empty api key',
   });
 });
 
-test('resolveCerebellumConfig pins the free provider relay baseUrl and model', () => {
+test('resolveCerebellumConfig pins the IDBots-JEV relay baseUrl and model', () => {
   // Stored values are ignored: the relay endpoint/model is a fixed contract
   // (assist-base-service《JEV 小脑模型中转接口.md》§3).
   const resolved = resolveCerebellumConfig({
@@ -141,7 +141,7 @@ test('resolveCerebellumConfig pins the free provider relay baseUrl and model', (
   assert.equal(resolved?.apiKey, 'mrk_stale');
 });
 
-test('resolveCerebellumConfig keeps the free provider disabled/malformed semantics', () => {
+test('resolveCerebellumConfig keeps IDBots-JEV disabled/malformed semantics', () => {
   assert.equal(resolveCerebellumConfig({ cerebellum: { enabled: false, provider: 'idbots-jev-free' } }), null);
   assert.equal(resolveCerebellumConfig({ cerebellum: { provider: 'idbots-jev-free', apiKey: 'mrk' } }), null);
   assert.equal(resolveCerebellumConfig({ cerebellum: { enabled: true, provider: 'idbots-jev-freezz', apiKey: 'mrk' } }), null);

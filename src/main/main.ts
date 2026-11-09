@@ -3589,9 +3589,10 @@ const ensureDataGuardAck = (): Promise<void> => {
 
 /**
  * Per-call cerebellum context for the decision factories below: the runtime
- * config (free provider gets its relay key injected; null = feature silently
- * off) plus the matching fetch — direct providers ride the raw Electron net
- * stack, the free relay rides a wrapper that re-bootstraps once on a 401,
+ * config (IDBots-JEV gets its identity-bound relay key injected; null =
+ * feature silently off) plus the matching fetch — direct TypeSafe rides the
+ * raw Electron net stack without entering ME billing, while the official
+ * ME-billed relay rides a wrapper that re-bootstraps once on a 401,
  * wrapped in turn by the result-code recorder (per-call codes + the daily
  * aggregate land in cowork.log; a quota 429 opens the 5-minute breaker).
  */

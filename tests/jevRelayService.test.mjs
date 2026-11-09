@@ -1,9 +1,9 @@
 /**
  * JEV relay service unit tests.
  *
- * Covers the free-provider credential chain (in-memory cache -> jevRelay kv
+ * Covers the IDBots-JEV credential chain (in-memory cache -> jevRelay kv
  * -> metaid-free provider -> identity bootstrap), the runtime cerebellum
- * config injection (typesafe passthrough / free key injection / silent off),
+ * config injection (direct TypeSafe / official ME relay key / silent off),
  * the one-shot 401 re-bootstrap retry wrapper, and the result-code layer
  * (classification, the recording fetch wrapper, the quota breaker, and the
  * per-day aggregate lines). All externals (store/bootstrap) are injected; no
@@ -130,8 +130,8 @@ test('resolveJevRelayCredentials: bootstrap is the last resort and persists', as
 // Runtime cerebellum config
 // ---------------------------------------------------------------------------
 
-test('resolveCerebellumRuntimeConfig: typesafe config passes through untouched', async () => {
-  setupDeps({ store: makeStore() });
+test('resolveCerebellumRuntimeConfig: direct TypeSafe bypasses the ME-billed IDBots relay', async () => {
+  const calls = setupDeps({ store: makeStore() });
   const config = await resolveCerebellumRuntimeConfig({
     cerebellum: {
       enabled: true,
@@ -147,9 +147,10 @@ test('resolveCerebellumRuntimeConfig: typesafe config passes through untouched',
     baseUrl: 'https://api.typesafe.ai',
     model: 'jev-preview',
   });
+  assert.equal(calls.bootstrap, 0, 'direct TypeSafe must not resolve IDBots relay credentials or enter its ME billing path');
 });
 
-test('resolveCerebellumRuntimeConfig: free provider gets the chain key injected', async () => {
+test('resolveCerebellumRuntimeConfig: IDBots-JEV gets the identity-bound ME relay key injected', async () => {
   const calls = setupDeps({
     store: makeStore(new Map([
       [JEV_RELAY_API_KEY_KV, 'mrk_live'],

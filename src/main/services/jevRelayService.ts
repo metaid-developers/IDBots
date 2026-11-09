@@ -1,16 +1,18 @@
 /**
- * JEV relay client for the official free cerebellum provider (idbots-jev-free).
+ * JEV relay client for official IDBots-JEV (legacy storage id idbots-jev-free).
  *
  * assist-base-service proxies the TypeSafe JEV upstream and holds the real
- * upstream key server-side; the client authorizes with the SAME free-quota
- * relay key (mrk_...) that serves chat. Backend contract (assist-base-service
- * 《JEV 小脑模型中转接口.md》):
+ * upstream key server-side; the client authorizes with the same identity-bound
+ * relay key (mrk_...) that serves chat, allowing the service to deduct ME
+ * credits and emit the corresponding usage ledger entries. Direct TypeSafe
+ * providers never use this module's request path. Backend contract
+ * (assist-base-service《JEV 小脑模型中转接口.md》):
  * - cerebellum baseUrl = https://www.metaso.network/assist-open-api/v2/assist/llm/jev
  *   (POST {baseUrl}/v1/systemone and GET {baseUrl}/v1/models are verbatim
  *   TypeSafe-shaped relays of the client payload/catalog)
  * - 401 invalid_api_key -> re-bootstrap once and retry (bounded here to one
  *   re-bootstrap so a revoked key can never loop)
- * - quota is shared with chat (GET /v2/assist/llm/quota, llmRelayService)
+ * - usage is visible through the ME balance/history APIs and Credits & Traffic
  *
  * Credential resolution mirrors visionRelayService's proven chain: in-memory
  * cache -> jevRelay kv -> the provisioned metaid-free provider -> a fresh
@@ -183,18 +185,19 @@ export async function resolveJevRelayCredentials(): Promise<JevRelayCredentials>
 
 /**
  * Runtime cerebellum config for the main-process decision call sites. Wraps
- * the pure resolver: direct TypeSafe configs pass through untouched; the free
- * provider gets its relay key injected from the credential chain (baseUrl and
- * model are already pinned by the resolver). Never throws — a free provider
- * with no obtainable key maps to null so the cerebellum silently stays off,
- * exactly like enabled=false.
+ * the pure resolver: direct TypeSafe configs pass through untouched without
+ * entering the ME-billed IDBots relay; IDBots-JEV gets its identity-bound
+ * relay key injected from the credential chain (baseUrl and model are already
+ * pinned by the resolver). Never throws — an official provider with no
+ * obtainable key maps to null so the cerebellum silently stays off, exactly
+ * like enabled=false.
  *
- * While the quota breaker is open (a recent http_429_quota, see
- * noteJevRelayQuotaExhaustion) the free provider maps to null WITHOUT a key
- * resolution: the relay fails quota checks in <50ms before touching the
+ * While the quota/credit breaker is open (a recent http_429_quota, see
+ * noteJevRelayQuotaExhaustion) IDBots-JEV maps to null WITHOUT a key
+ * resolution: the relay fails the spend in <50ms before touching the
  * upstream, but skipping the call entirely keeps per-turn logs clean and
  * avoids burning the 1.5s budget on a known-dead path. The breaker expires
- * on its own so a reset cycle (or a server-side fix) self-heals.
+ * on its own so a balance refill (or a server-side fix) self-heals.
  */
 export async function resolveCerebellumRuntimeConfig(appConfig: unknown): Promise<ResolvedCerebellumConfig | null> {
   const config = resolveCerebellumConfig(appConfig);
@@ -217,7 +220,7 @@ export async function resolveCerebellumRuntimeConfig(appConfig: unknown): Promis
 }
 
 /**
- * fetch wrapper for free-provider cerebellum calls: on a 401 (revoked relay
+ * fetch wrapper for IDBots-JEV cerebellum calls: on a 401 (revoked relay
  * key) it re-bootstraps ONCE and retries the same request with the fresh key.
  * Any failure (including a second 401) returns the last response unchanged —
  * the decision call sites keep their fail-to-null semantics, so no retry
@@ -286,7 +289,7 @@ function raceAbortSignal<T>(
  * trusting the underlying fetch to honor it. Empirically (2026-10-16
  * follow-up on session 70fa10aa): Electron's session.fetch rejects on abort
  * on a healthy network within ~1s, but when the connection stalls behind a
- * proxy/upstream (the free relay hung five cerebellum calls for 17s) the
+ * proxy/upstream (the IDBots relay hung five cerebellum calls for 17s) the
  * abort never surfaced — every 1s/1.5s call budget blew past its deadline and
  * the turn's first sentence waited out the upstream recovery. This wrapper
  * rejects the CALLER at the abort edge regardless; the abandoned socket is
@@ -335,7 +338,7 @@ export function createSignalBoundedFetch<R>(
 // ---------------------------------------------------------------------------
 // Result-code recording (2026-10-16 availability work)
 //
-// Every free-relay /v1/systemone call is classified into one result code,
+// Every IDBots relay /v1/systemone call is classified into one result code,
 // logged per call, and folded into a per-day aggregate that rides cowork.log
 // (counts per code + latency P50/P90). This is the observation surface the
 // post-fix triage depends on: ok rate, whether timeouts correlate with
@@ -355,9 +358,9 @@ export type JevRelayCallResultCode =
   | 'network';
 
 /**
- * Error envelope code the relay returns on an exhausted JEV pool. The CHAT
- * pool's code is plain `free_quota_exhausted` — deliberately NOT matched
- * here, so a chat-pool 429 (wrong route) classifies as http_429_rate.
+ * Legacy error envelope code retained for compatibility with older relay
+ * deployments. The CHAT pool's plain `free_quota_exhausted` is deliberately
+ * NOT matched here, so a chat-pool 429 (wrong route) is http_429_rate.
  */
 export const JEV_FREE_QUOTA_EXHAUSTED_CODE = 'jev_free_quota_exhausted';
 
@@ -449,7 +452,7 @@ export function classifyJevRelayThrownError(error: unknown): JevRelayCallResultC
 }
 
 /**
- * How long a http_429_quota verdict keeps the free-relay cerebellum off.
+ * How long a http_429_quota verdict keeps the IDBots relay cerebellum off.
  * The quota cycle resets weekly, but probing every few minutes is free (the
  * relay rejects in <50ms) and self-heals both a reset AND a misclassified 429
  * without an app restart.
@@ -463,7 +466,7 @@ export function noteJevRelayQuotaExhaustion(nowMs: number = Date.now()): void {
   quotaExhaustedUntil = nowMs + JEV_RELAY_QUOTA_BREAKER_MS;
 }
 
-/** True while the breaker is open — the free relay should be skipped. */
+/** True while the breaker is open — the IDBots relay should be skipped. */
 export function isJevRelayQuotaExhausted(nowMs: number = Date.now()): boolean {
   return nowMs < quotaExhaustedUntil;
 }
@@ -570,7 +573,7 @@ export function flushJevRelayCallStats(sink: JevRelayLogSink | null = statsSink)
 }
 
 /**
- * Result-code recorder for free-relay calls. Wraps the key-retry wrapper
+ * Result-code recorder for IDBots relay calls. Wraps the key-retry wrapper
  * (order: raw fetch -> key retry -> recorder) so ONE recorder entry covers
  * the whole logical call, bootstrap retry included: a first-401-then-200
  * sequence records `ok`, and the recorded latency includes the re-bootstrap.
@@ -683,7 +686,7 @@ export function createJevRelayCallRecorder<R extends { ok: boolean; status: numb
 }
 
 // ---------------------------------------------------------------------------
-// IPC surface (renderer: cerebellum free-provider connection test / key fill)
+// IPC surface (renderer: cerebellum IDBots-JEV connection test / key fill)
 // ---------------------------------------------------------------------------
 
 type RegisterIpcHandlerFn = (channel: string, handler: (event: any, ...args: any[]) => any) => void;
