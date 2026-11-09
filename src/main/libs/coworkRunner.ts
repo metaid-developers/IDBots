@@ -46,7 +46,7 @@ import {
 import { METAID_RPC_AUTHFILE_ENV, getMetaidRpcTokenFilePath } from '../services/metaidRpcEndpoint';
 import { mapDshReasoningEffort } from './dshReasoningEffort';
 import { shouldIncludeMetawebDeepSections, nextMetawebPromptTier, type MetawebPromptMode, type MetawebPromptTier } from './metawebPromptTier';
-import { dshModelReasoningDeclaration, dshRouteReasoningEffort, undeclaredReasoningRouteWarning } from './dshModelReasoning';
+import { dshModelReasoningDeclaration, dshRouteReasoningEffort, isGlmFamilyModelId, undeclaredReasoningRouteWarning } from './dshModelReasoning';
 import { resolveOpenCodeGoApiFormat, openCodeGoWireRouteKey } from './opencodeGoProtocol';
 import { toLlmEffortLevel, type LlmEffortLevel } from './llmEffort';
 import {
@@ -368,7 +368,14 @@ import {
 // most healthy turns; 1000ms keeps the enhancement live for them while a
 // genuine stall still degrades inside ~1s.
 const CEREBELLUM_TURN_DECISION_RACE_BUDGET_MS = 1000;
-const CEREBELLUM_EFFORT_RACE_BUDGET_MS = 400;
+// Effort-verdict race budget. Must clear the selector's real settle latency
+// beyond the pre-turn window: with 400ms and a 1s selector timeout, 72% of
+// production turns (cowork.log 2026-11-04..09) got no verdict at all — the
+// selector was still in flight when the wait lapsed, and assistant mode rode
+// the fallback effort for most turns. 1200ms applies verdicts landing within
+// ~2.0-2.4s of turn start (selector timeout 2.5s) while capping the
+// worst-case turn-start stall at ~1.2s when the backend hangs.
+const CEREBELLUM_EFFORT_RACE_BUDGET_MS = 1200;
 
 /** Sentinel resolved by raceTurnEnhancementBudget when the budget lapses. */
 const TURN_ENHANCEMENT_RACE_LAPSED: unique symbol = Symbol('turnEnhancementRaceLapsed');
@@ -825,9 +832,14 @@ export { resolveEffectiveEffort };
 export interface AutoEffortFallbackInput {
   /** Override origin was the 'default' sentinel (see resolveEffectiveEffort). */
   sentinelDefault: boolean;
-  /** Assistant chat-experience mode pins 'off' — no reasoning may delay the
-   * first visible token, whatever the origin. */
+  /** Assistant chat-experience mode pins the no-reasoning fallback ('off',
+   * or 'low' for the GLM family — see glmFamily) whatever the origin. */
   assistantMode: boolean;
+  /** The running model belongs to the GLM family (GLM-4.5+/5.x+). GLM-5.x
+   * always thinks and cannot express 'off' on any wire, so the
+   * assistant-mode no-verdict fallback spells 'low' for it instead — 'off'
+   * would degrade to the server default thinking, heavier than low. */
+  glmFamily?: boolean;
   /** Bot brain effort (primary brain for the main route, fallback brain's
    * effort on a fallback-route resume). */
   brainEffort: unknown;
@@ -850,11 +862,15 @@ export interface AutoEffortFallbackInput {
  * not the brain/global chain — the brain-high effort those users explicitly
  * avoided can never silently return. Plain-null sessions (user never picked)
  * keep the historical chain: brain effort, else global (brain-less only),
- * else model default. Assistant mode keeps its no-reasoning promise first.
+ * else model default. Assistant mode keeps its no-reasoning promise first —
+ * with one carve-out: a GLM-family route falls back to 'low' instead of
+ * 'off', because GLM-5.x always thinks and cannot express 'off' (the
+ * responses/anthropic wires drop the param and leave the SERVER default in
+ * charge, heavier than low), so 'low' is the honest no-verdict floor there.
  */
 function resolveAutoEffortFallback(input: AutoEffortFallbackInput): LlmEffortLevel | null {
   if (input.assistantMode) {
-    return 'off';
+    return input.glmFamily ? 'low' : 'off';
   }
   if (input.sentinelDefault) {
     return null;
@@ -11396,14 +11412,17 @@ export class CoworkRunner extends EventEmitter {
       // session picker override always wins (the user asked for that effort on
       // THIS session). Without an override, assistant mode skips the bot
       // brain effort, the persisted global, and the per-model default.
-      // Professional mode keeps the full chain unchanged. The mode is an
-      // owner-chat experience decision — the GATE alone decides (it encodes
-      // global-assistant for regular owner chats AND the per-session marker
-      // from the Bot Internet co-work panel, owner ruling 2026-11-07; an
-      // outer global-mode check would strip marker sessions of the no-reasoning
-      // promise when the global toggle is professional). Group tasks, A2A/IM,
-      // long-term and scheduled automation sessions keep the professional
-      // chain even under the global assistant default.
+      // GLM-family routes are the carve-out: the family always thinks and
+      // cannot express 'off', so the no-verdict fallback spells 'low'
+      // (resolveAutoEffortFallback) — 'off' would only hand the decision to
+      // the server default. Professional mode keeps the full chain unchanged.
+      // The mode is an owner-chat experience decision — the GATE alone
+      // decides (it encodes global-assistant for regular owner chats AND the
+      // per-session marker from the Bot Internet co-work panel, owner ruling
+      // 2026-11-07; an outer global-mode check would strip marker sessions of
+      // the no-reasoning promise when the global toggle is professional).
+      // Group tasks, A2A/IM, long-term and scheduled automation sessions keep
+      // the professional chain even under the global assistant default.
       const assistantMode = this.isAssistantModeOwnerChatSession(sessionId);
       const sessionEffortPicked = effectiveEffortRung != null;
       // "Auto" rung verdict: null (no selector, unconfigured cerebellum,
@@ -11471,6 +11490,7 @@ export class CoworkRunner extends EventEmitter {
             : autoEffortRung ?? resolveAutoEffortFallback({
               sentinelDefault: effortSentinelDefault,
               assistantMode,
+              glmFamily: isGlmFamilyModelId(route.model),
               brainEffort: automationBrain?.effort,
               hasBrain: automationBrain != null,
               globalEffort: getPersistedCoworkEffortLevel(),

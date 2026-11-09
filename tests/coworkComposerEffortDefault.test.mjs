@@ -178,6 +178,35 @@ test("resolveAutoEffortFallback keeps legacy Default rows off the bot-brain/glob
     }),
     'off',
   );
+  // GLM-family assistant sessions fall back to 'low', not 'off': GLM-5.x
+  // always thinks and cannot express off on any wire, so 'off' would degrade
+  // to the server default thinking on the responses/anthropic wires —
+  // heavier than the low the family CAN express. Session 42b6a16d
+  // (2026-11-09): glm-5.3-flash ran server-default thinking for minutes
+  // because the timed-out cerebellum verdict fell back to 'off'.
+  assert.equal(
+    resolveAutoEffortFallback({
+      sentinelDefault: true, assistantMode: true, glmFamily: true,
+      brainEffort: 'high', hasBrain: true, globalEffort: 'max', modelDefault: 'low',
+    }),
+    'low',
+  );
+  // Non-GLM assistant sessions keep the plain no-reasoning fallback, with or
+  // without the flag passed.
+  assert.equal(
+    resolveAutoEffortFallback({
+      sentinelDefault: true, assistantMode: true, glmFamily: false,
+      brainEffort: 'high', hasBrain: true, globalEffort: 'max', modelDefault: 'low',
+    }),
+    'off',
+  );
+  assert.equal(
+    resolveAutoEffortFallback({
+      sentinelDefault: false, assistantMode: true,
+      brainEffort: null, hasBrain: false, globalEffort: null, modelDefault: null,
+    }),
+    'off',
+  );
   // Plain "never picked" sessions keep the historical chain: brain effort...
   assert.equal(
     resolveAutoEffortFallback({
