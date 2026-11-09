@@ -11,6 +11,7 @@ const {
   buildMrc721AgentTools,
   formatMrc721CollectionCreateResult,
   formatMrc721MintResult,
+  formatMrc721PendingPinSheet,
   formatMrc721TransferResult,
   formatMrc721ItemDetail,
   formatMrc721Items,
@@ -30,6 +31,8 @@ const TOOL_NAMES = [
   'mrc721_collection_create',
   'mrc721_collection_update',
   'mrc721_mint',
+  'mrc721_item_desc_batch',
+  'mrc721_issue_estimate',
   'mrc721_transfer',
   'mrc721_sell',
   'mrc721_buy',
@@ -47,10 +50,22 @@ const TOOL_NAMES = [
 ];
 
 function makeHarness(overrides = {}) {
-  const calls = { collectionCreate: [], collectionUpdate: [], mint: [], transfer: [], sell: [], buy: [], sellIntentDeclare: [], sellIntentCancel: [], listSellIntents: [] };
+  const calls = { collectionCreate: [], collectionUpdate: [], mint: [], itemDescBatch: [], transfer: [], sell: [], buy: [], sellIntentDeclare: [], sellIntentCancel: [], listSellIntents: [] };
   const control = {
     getMetabotMvcAddress: (id) => (id === 1 ? BOT_ADDRESS : id === 15 ? OTHER_ADDRESS : null),
     resolveMetabotIdByName: (name) => (name === 'AI_Sunny' ? 1 : null),
+    itemDescBatch: async (input) => {
+      calls.itemDescBatch.push(input);
+      if (overrides.itemDescBatchError) throw overrides.itemDescBatchError;
+      return {
+        collectionName: input.collectionName,
+        pinId: DESC_PINID,
+        txids: ['tx1'],
+        totalCost: 700,
+        feeAssist: undefined,
+        referencedPinIds: input.items.map((item) => item.pinId),
+      };
+    },
     collectionCreate: async (input) => {
       calls.collectionCreate.push(input);
       if (overrides.collectionCreateError) throw overrides.collectionCreateError;
@@ -571,7 +586,10 @@ test('formatMrc721* helpers render receipts and sheets', () => {
     waitMs: 30000,
   });
   assert.match(createReceipt, /mrc721_collection_info/);
-  assert.match(createReceipt, /mrc721_search_collections/);
+  // Zero-conf receipt: an unindexed registration is expected, never a wait.
+  assert.match(createReceipt, /EXPECTED/);
+  assert.match(createReceipt, /Do NOT wait, poll, or sleep/);
+  assert.doesNotMatch(createReceipt, /before minting/, 'no desc-first "verify before minting" wording');
   assert.doesNotMatch(createReceipt, /first-registration-wins/i);
 
   const sharedReceipt = formatMrc721CollectionCreateResult({
@@ -622,6 +640,17 @@ test('formatMrc721* helpers render receipts and sheets', () => {
 
   const transfers = formatMrc721Transfers([{ fromAddress: BOT_ADDRESS, toAddress: OTHER_ADDRESS, txId: 't1' }]);
   assert.match(transfers, /1 transfer\(s\)/);
+});
+
+test('mrc721 transfer history renders manapi epoch-seconds times as real dates', () => {
+  // 1794190970 is the exact value MetaSo cited in the 1970-date bug report:
+  // epoch seconds = 2026-11-09T02:22:50Z (10:22:50 Beijing, UTC+8); treating
+  // it as ms used to render 1970-01-21.
+  const rendered = formatMrc721Transfers([
+    { fromAddress: BOT_ADDRESS, toAddress: OTHER_ADDRESS, txId: 't1', time: 1794190970 },
+  ]);
+  assert.match(rendered, /2026-11-09T02:22:50\.000Z/);
+  assert.doesNotMatch(rendered, /1970-01-21/);
 });
 
 test('mrc721_sell refuses a price under the 22000 sat floor before any wallet work', async () => {
@@ -1171,5 +1200,208 @@ test('no pre-revision minting semantics survive in the mrc721 surface copy', asy
     for (const pattern of banned) {
       assert.doesNotMatch(text, pattern, `${file.pathname} must not carry pre-revision wording (${pattern})`);
     }
+  }
+});
+
+// -------------------------------------------------------------------------
+// mrc721_item_desc_batch + mrc721_issue_estimate (issue wizard tooling)
+// -------------------------------------------------------------------------
+
+test('mrc721_item_desc_batch broadcasts through control and appends one card per item', async () => {
+  const { calls, byName } = makeHarness();
+  const itemA = `${'11'.repeat(32)}i0`;
+  const itemB = `${'22'.repeat(32)}i0`;
+  const result = await byName.mrc721_item_desc_batch.handler({
+    collection_name: 'pixel-cats',
+    items: [
+      { pin_id: itemA, name: 'Cat #1', desc: 'first', cover: `${'33'.repeat(32)}i0` },
+      { pin_id: itemB, name: 'Cat #2' },
+    ],
+  });
+  assert.equal(result.isError, undefined);
+  assert.equal(calls.itemDescBatch.length, 1);
+  assert.deepEqual(calls.itemDescBatch[0].items[0], {
+    pinId: itemA, name: 'Cat #1', desc: 'first', cover: `${'33'.repeat(32)}i0`, metadata: undefined,
+  });
+  const text = result.content[0].text;
+  assert.match(text, /item_desc batch broadcast for collection "pixel-cats" \(2 items referenced\)/);
+  assert.match(text, /per-field first-write-wins/);
+  assert.equal((text.match(/```nft-card\n/g) || []).length, 2);
+  assert.match(text, /Cat #1/);
+  assert.match(text, /Cat #2/);
+});
+
+test('mrc721_item_desc_batch relays control failures loudly', async () => {
+  const { byName } = makeHarness({ itemDescBatchError: new Error('insufficient balance') });
+  const result = await byName.mrc721_item_desc_batch.handler({
+    collection_name: 'pixel-cats',
+    items: [{ pin_id: `${'11'.repeat(32)}i0` }],
+  });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /mrc721_item_desc_batch failed: insufficient balance/);
+});
+
+test('mrc721_issue_estimate returns the dry-run write plan without broadcasting', async () => {
+  const { byName } = makeHarness();
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/collection/search', () => jsonResponse({ code: 1, data: { list: [], total: 0 } })],
+    ]),
+    () => byName.mrc721_issue_estimate.handler({
+      collection_name: 'pixel-cats',
+      total_supply: 10,
+      royalty_rate: 0,
+      items: [{ name: 'Cat #1' }, { name: 'Cat #2' }],
+    }),
+  );
+  assert.equal(result.isError, undefined);
+  const text = result.content[0].text;
+  assert.match(text, /Fee estimate \(dry run\) for "pixel-cats"/);
+  assert.match(text, /collection_desc @ \/nft\/mrc721\/pixel-cats\/collection_desc/);
+  assert.match(text, /item_desc @ \/nft\/mrc721\/pixel-cats\/item_desc/);
+  assert.match(text, /TOTAL est ~\d+ sats \(UPPER BOUND/);
+  assert.match(text, /immutable once registered/);
+});
+
+test('mrc721_issue_estimate refuses the session bot\'s own duplicate registration', async () => {
+  const { byName } = makeHarness();
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/collection/search', () => jsonResponse({ code: 1, data: { list: [collectionRow()], total: 1 } })],
+    ]),
+    () => byName.mrc721_issue_estimate.handler({ collection_name: 'pixel-cats' }),
+  );
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /already issued by this MetaBot/);
+});
+
+test('mrc721_issue_estimate surfaces invalid fields before any fee is spent', async () => {
+  const { byName } = makeHarness();
+  const result = await byName.mrc721_issue_estimate.handler({
+    collection_name: 'pixel-cats',
+    total_supply: 1.5,
+  });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /integer in \[-1, 1e12\]/);
+});
+
+// -------------------------------------------------------------------------
+// Zero-confirmation fallbacks + estimate uploads/balance
+// -------------------------------------------------------------------------
+
+function rawPinRow(overrides = {}) {
+  return {
+    id: DESC_PINID,
+    path: '/nft/mrc721/pixel-cats/collection_desc',
+    operation: 'create',
+    address: BOT_ADDRESS,
+    genesisHeight: -1,
+    contentBody: Buffer.from(JSON.stringify({ name: 'Pixel Cats', totalSupply: 5 })).toString('base64'),
+    ...overrides,
+  };
+}
+
+test('mrc721_collection_info reports a mempool registration as on-chain, pending block', async () => {
+  const { byName } = makeHarness();
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/collection/info', () => jsonResponse({ code: 100, data: null })],
+      [`/api/pin/${DESC_PINID}`, () => jsonResponse({ code: 1, data: rawPinRow() })],
+    ]),
+    () => byName.mrc721_collection_info.handler({ pin_id: DESC_PINID }),
+  );
+  assert.equal(result.isError, undefined);
+  const text = result.content[0].text;
+  assert.match(text, /ON-CHAIN, PENDING BLOCK/);
+  assert.match(text, /Do NOT wait, poll, or re-issue/);
+  assert.match(text, /genesisHeight: -1 \(mempool\)/);
+  assert.match(text, /"totalSupply":5/);
+});
+
+test('mrc721_collection_info keeps a real miss an error and asks for the collectionid on name-only misses', async () => {
+  const { byName } = makeHarness();
+  const bad = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/collection/info', () => jsonResponse({ code: 100, data: null })],
+      [`/api/pin/${DESC_PINID}`, () => jsonResponse({ code: 404, data: null })],
+    ]),
+    () => byName.mrc721_collection_info.handler({ pin_id: DESC_PINID }),
+  );
+  assert.equal(bad.isError, true);
+  assert.match(bad.content[0].text, /not on-chain as a collection_desc pin/);
+
+  const byNameOnly = await withFetchStub(
+    manapiDispatch([['/api/mrc721/collection/info', () => jsonResponse({ code: 100, data: null })]]),
+    () => byName.mrc721_collection_info.handler({ name: 'pixel-cats' }),
+  );
+  assert.equal(byNameOnly.isError, true);
+  assert.match(byNameOnly.content[0].text, /pass pin_id/);
+});
+
+test('mrc721_item_info reports a mempool mint as on-chain, pending block, and refuses foreign kinds', async () => {
+  const { byName } = makeHarness();
+  const mint = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/item/info', () => jsonResponse({ code: 100, data: null })],
+      [`/api/pin/${PINID}`, () => jsonResponse({ code: 1, data: rawPinRow({ id: PINID, path: '/nft/mrc721/pixel-cats/frame-1', contentBody: Buffer.from('{}').toString('base64') }) })],
+    ]),
+    () => byName.mrc721_item_info.handler({ pin_id: PINID }),
+  );
+  assert.equal(mint.isError, undefined);
+  assert.match(mint.content[0].text, /item under "pixel-cats": ON-CHAIN, PENDING BLOCK/);
+
+  // A collection_desc pinId passed to item_info is not an item.
+  const wrongKind = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/item/info', () => jsonResponse({ code: 100, data: null })],
+      [`/api/pin/${PINID}`, () => jsonResponse({ code: 1, data: rawPinRow({ id: PINID }) })],
+    ]),
+    () => byName.mrc721_item_info.handler({ pin_id: PINID }),
+  );
+  assert.equal(wrongKind.isError, true);
+});
+
+test('formatMrc721PendingPinSheet distinguishes confirmed-but-unindexed from mempool', () => {
+  const sheet = formatMrc721PendingPinSheet({
+    kind: 'collection',
+    pin: { pinId: DESC_PINID, path: '/nft/mrc721/pixel-cats/collection_desc', operation: 'create', address: BOT_ADDRESS, genesisHeight: 197805, confirmed: true, content: '{}' },
+  });
+  assert.match(sheet, /CONFIRMED \(height 197805\)/);
+  assert.match(sheet, /indexing lag/);
+  assert.equal(formatMrc721PendingPinSheet({
+    kind: 'collection',
+    pin: { pinId: DESC_PINID, path: '/protocols/simplebuzz', operation: 'create', address: BOT_ADDRESS, genesisHeight: -1, confirmed: false, content: '' },
+  }), null, 'non-MRC-721 pins never render as pending sheets');
+});
+
+test('mrc721_issue_estimate prices upload files from disk and shows the balance line', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const pathMod = await import('node:path');
+  const dir = fs.mkdtempSync(pathMod.join(os.tmpdir(), 'mrc721-est-'));
+  try {
+    const fileA = pathMod.join(dir, 'a.jpg');
+    fs.writeFileSync(fileA, Buffer.alloc(10_000));
+    const { byName, control } = makeHarness();
+    control.getMvcSpendableSats = async () => 1_000;
+    const result = await withFetchStub(
+      manapiDispatch([
+        ['/api/mrc721/collection/search', () => jsonResponse({ code: 1, data: { list: [], total: 0 } })],
+      ]),
+      () => byName.mrc721_issue_estimate.handler({
+        collection_name: 'pixel-cats',
+        items: [{ name: 'Cat #1' }],
+        upload_files: [fileA, pathMod.join(dir, 'missing.jpg')],
+      }),
+    );
+    assert.equal(result.isError, undefined);
+    const text = result.content[0].text;
+    assert.match(text, /upload a\.jpg — payload 10000 B/);
+    assert.match(text, /file uploads: ~\d+ sats/);
+    assert.match(text, /UPPER BOUND, uploads included/);
+    assert.match(text, /NOT priced \(unreadable files\): .*missing\.jpg/);
+    assert.match(text, /wallet: 1000 sats spendable — INSUFFICIENT/);
+  } finally {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort cleanup */ }
   }
 });

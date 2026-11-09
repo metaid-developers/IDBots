@@ -7,6 +7,12 @@ export interface MePaymentCheckout {
   qrCode: string;
   payAmount: number;
   payCurrency: string;
+  /**
+   * When the payment code expires (epoch ms), from the server. Optional —
+   * current servers do not send it yet; the paying phase shows a live
+   * deadline only when present, never a guessed one.
+   */
+  expiresAt?: number;
 }
 
 type PaymentOrder = Partial<MeSubscriptionOrderInfo & MeTopupOrderInfo>;
@@ -52,6 +58,28 @@ export function extractMeQrCode(gatewayParams: unknown): string {
   return '';
 }
 
+/**
+ * Payment-code expiry (epoch ms) from the order body or the gatewayParams
+ * snapshot. Accepts epoch seconds or milliseconds; a past timestamp is kept
+ * as-is (the caller decides how to render an already-expired code).
+ */
+export function extractMeExpiresAt(order: PaymentOrder | null | undefined): number | undefined {
+  const sources: Array<Record<string, unknown> | null> = [
+    recordOf(order?.gatewayParams),
+    recordOf(order),
+  ];
+  for (const record of sources) {
+    if (!record) continue;
+    for (const key of ['expiresAt', 'expireAt', 'qrExpireAt', 'timeExpire', 'expires_at', 'expire_at', 'time_expire']) {
+      const value = Number(record[key]);
+      if (!Number.isFinite(value) || value <= 0) continue;
+      // Seconds → ms when the value is plausibly a second-epoch.
+      return value < 1e12 ? value * 1000 : value;
+    }
+  }
+  return undefined;
+}
+
 export function normalizeMePaymentCheckout(
   order: PaymentOrder | null | undefined,
   fallbackAmount: number,
@@ -65,6 +93,7 @@ export function normalizeMePaymentCheckout(
     qrCode: extractMeQrCode(order?.gatewayParams),
     payAmount: amountOf(order?.payAmount) ?? amountOf(order?.amountCny) ?? amountOf(order?.priceCny) ?? fallbackAmount,
     payCurrency: textOf(order?.payCurrency) || 'CNY',
+    expiresAt: extractMeExpiresAt(order),
   };
 }
 

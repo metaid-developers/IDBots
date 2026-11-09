@@ -64,7 +64,10 @@ export interface MetaTaskAgentControl {
   refresher: () => {
     board: () => MetaTaskBoard;
     detail: (rootPinId: string) => MetaTaskTaskProjection | null;
-    refreshOnce: (reason: string) => Promise<{ ok: boolean; error: string | null }>;
+    refreshOnce: (
+      reason: string,
+      options?: { bypassMinInterval?: boolean; bypassCache?: boolean }
+    ) => Promise<{ ok: boolean; error: string | null }>;
     loadEvents: () => MetaTaskChainEvent[];
   };
   /** globalMetaIds of every local bot (the same-owner roster side). */
@@ -544,7 +547,9 @@ export function buildMetataskAgentTools(deps: {
   const projectionAfterRefresh = async (rootPinId: string): Promise<MetaTaskTaskProjection | null> => {
     let detail = refresher().detail(rootPinId);
     if (!detail) {
-      await refresher().refreshOnce('metatask-tool-miss');
+      // A miss must not be answered from the walk memo — the pin may be older
+      // than the memo snapshot; the sweep below still only probes pool heads.
+      await refresher().refreshOnce('metatask-tool-miss', { bypassCache: true });
       detail = refresher().detail(rootPinId);
     }
     return detail;
@@ -775,7 +780,7 @@ export function buildMetataskAgentTools(deps: {
           );
         }
         const result = await writePin(who.metabotId, 'claim', { taskid: rootPinId, node }, 'tool:metatask_claim');
-        void refresher().refreshOnce('metatask_claim');
+        void refresher().refreshOnce('metatask_claim', { bypassCache: true });
         return jsonResult({
           claimPinId: result.pinId,
           txids: result.txids,
@@ -1013,7 +1018,7 @@ export function buildMetataskAgentTools(deps: {
         if (parentrefs) payload.parentrefs = parentrefs;
         if (args.supersedePinId) payload.supersedeid = String(args.supersedePinId);
         const written = await writePin(who.metabotId, 'submission', payload, 'tool:metatask_submit');
-        void refresher().refreshOnce('metatask_submit');
+        void refresher().refreshOnce('metatask_submit', { bypassCache: true });
         return jsonResult({
           submissionPinId: written.pinId,
           txids: written.txids,
@@ -1098,7 +1103,7 @@ export function buildMetataskAgentTools(deps: {
         };
         if (verdict === 'fail') payload.failreason = asString(args.failReason).trim();
         const written = await writePin(who.metabotId, 'verify', payload, 'tool:metatask_verify');
-        void refresher().refreshOnce('metatask_verify');
+        void refresher().refreshOnce('metatask_verify', { bypassCache: true });
         return jsonResult({ verifyPinId: written.pinId, txids: written.txids });
       } catch (error) {
         return textResult(`Verify failed: ${error instanceof Error ? error.message : String(error)}`, true);
@@ -1139,7 +1144,7 @@ export function buildMetataskAgentTools(deps: {
           { taskid: String(args.rootPinId ?? ''), node: String(args.node ?? ''), claimid: String(args.claimPinId ?? '') },
           'tool:metatask_release',
         );
-        void refresher().refreshOnce('metatask_release');
+        void refresher().refreshOnce('metatask_release', { bypassCache: true });
         return jsonResult({ releasePinId: written.pinId, txids: written.txids });
       } catch (error) {
         return textResult(`Release failed: ${error instanceof Error ? error.message : String(error)}`, true);
@@ -1437,7 +1442,7 @@ export function buildMetataskAgentTools(deps: {
         };
         const taskPin = await writePin(who.metabotId, 'task', taskPayload, 'tool:metatask_publish');
 
-        void refresher().refreshOnce('metatask_publish');
+        void refresher().refreshOnce('metatask_publish', { bypassCache: true });
         return jsonResult({
           taskRootPinId: taskPin.pinId,
           treePinId: treePin.pinId,
@@ -1576,7 +1581,7 @@ export function buildMetataskAgentTools(deps: {
           }),
           'tool:metatask_publish_spec',
         );
-        void refresher().refreshOnce('metatask_publish_spec');
+        void refresher().refreshOnce('metatask_publish_spec', { bypassCache: true });
         return jsonResult({
           specPinId: written.pinId,
           txids: written.txids,
@@ -1813,7 +1818,7 @@ export function buildMetataskAgentTools(deps: {
           { taskid: rootPinId, bases: detail.amendHead, ops },
           'tool:metatask_amend',
         );
-        void refresher().refreshOnce('metatask_amend');
+        void refresher().refreshOnce('metatask_amend', { bypassCache: true });
         return jsonResult({ amendPinId: written.pinId, bases: detail.amendHead, txids: written.txids });
       } catch (error) {
         return textResult(`Amend failed: ${error instanceof Error ? error.message : String(error)}`, true);

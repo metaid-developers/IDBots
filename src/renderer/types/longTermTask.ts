@@ -160,6 +160,10 @@ export interface LongTermTaskSummary {
   stage: LongTermTaskStage;
   column: LongTermColumn;
   acceptanceDelegate: boolean;
+  /** URI of the visual plan page the owner confirmed before creation — the
+   *  local .html file shown in the bubble (or pin:// when the owner asked for
+   *  an on-chain copy). Null when creation skipped the plan page. */
+  planArtifactUri: string | null;
   currentSubtaskId: string | null;
   currentSubtaskTitle: string | null;
   currentSubtaskStatus: LongTermSubtaskStatus | null;
@@ -210,6 +214,8 @@ export interface LongTermTaskCreateInput {
   goal: string;
   subtasks: LongTermSubtaskDraft[];
   definitionSessionId?: string | null;
+  /** URI of the plan page the owner confirmed before this create call. */
+  planArtifactUri?: string | null;
 }
 
 export interface LongTermTaskUpdateInput {
@@ -217,6 +223,8 @@ export interface LongTermTaskUpdateInput {
   title?: string;
   goal?: string;
   acceptanceDelegate?: boolean;
+  /** Set/replace the plan-page URI (no clear — the page stays owed). */
+  planArtifactUri?: string | null;
 }
 
 export interface LongTermSubtaskUpdateInput {

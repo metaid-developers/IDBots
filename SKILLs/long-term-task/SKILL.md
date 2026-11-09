@@ -1,6 +1,6 @@
 ---
 name: long-term-task
-description: Create and define a long-term task (长期任务) — a persistent, cross-session decomposition of a fuzzy, multi-day/multi-week goal into ordered sub-projects with acceptance criteria. Use when the user wants to start something that cannot be finished in one session and will hit blocking points (owner decisions, external conditions). MUST be entered when the user says they want to start/open a long-term task. Not for one-session work (just do it in the current cowork turn), multi-bot short jobs (use metabot-group-task), scheduled automation (use scheduled-task), or on-chain multi-bot collaborative decompositions (that is a MetaTask — use the MetaTask tools instead).
+description: Create and define a long-term task (长期任务) — a persistent, cross-session decomposition of a fuzzy, multi-day/multi-week goal into ordered sub-projects with acceptance criteria. Use when the user wants to start something that cannot be finished in one session and will hit blocking points (owner decisions, external conditions). MUST be entered when the user says they want to start/open a long-term task — and EQUALLY when you are about to propose or create one yourself (any time longterm_task_create is on your mind): load this skill FIRST, never create from the tool descriptions alone. Not for one-session work (just do it in the current cowork turn), multi-bot short jobs (use metabot-group-task), scheduled automation (use scheduled-task), or on-chain multi-bot collaborative decompositions (that is a MetaTask — use the MetaTask tools instead).
 official: true
 ---
 
@@ -173,13 +173,40 @@ whichever makes the interpretation checkable at a glance. Open it for the
 owner; the write-back message links it.
 
 Then ask plainly: "这就是我对这个任务的理解——哪里不对直接说，确认了我才去拆
-分子项目。" **Hard gate: you do NOT call `longterm_task_create` until the owner
-confirms the understanding in prose.** A correction sends you back to Step 1/2
-for that branch — and the corrected understanding gets written back again.
+分子项目。" **Hard gate: you do NOT draft the sub-project plan for confirmation
+until the owner confirms the understanding in prose — and you do NOT call
+`longterm_task_create` until the plan page (Step 4) is confirmed too.** A
+correction sends you back to Step 1/2 for that branch — and the corrected
+understanding gets written back again.
 
-## Step 4 — Create the draft
+## Step 4 — The plan page (方案页): show the whole plan BEFORE anything is created
 
-Only when the split is concrete and the user has seen the full picture:
+Understanding approved ≠ the plan is presentable. Before `longterm_task_create`,
+turn the agreed split into ONE visual plan page and present it in the chat:
+
+- **One self-contained HTML file**: inline CSS only, no external assets, no
+  required JS. Save it into the session workspace and link the absolute path
+  in your message — assistant mode renders local `.html` links as an inline
+  block, so the page reads inside the conversation. **Do NOT publish it
+  on-chain unless the owner explicitly asks**: a long-term plan is the
+  owner's private material by default.
+- **Infographic, not a document dump** — it must read at a glance:
+  1. Title, the goal in one paragraph, and the whole-task done-ness definition.
+  2. The sub-project flow: ordered cards or lanes, dependency arrows, each
+     with its preferred channel and expected duration.
+  3. Acceptance criteria per sub-project, one checkable line each.
+  4. Known waits: owner decisions, external deliveries, dates.
+  5. The assumption ledger: 已验证（附证据）/ 待确认.
+- Close the accompanying message by asking for the verdict at field level
+  ("哪一项、改成什么"), not just a yes/no.
+
+**Hard gate: you do NOT call `longterm_task_create` until the owner has seen
+this page and confirmed it in prose.** A change request sends you back to
+Step 2/3 for that branch — and the page gets re-issued after the fix. The
+only escape is the owner's explicit instruction in THIS conversation to skip
+the page; say in your reply that you relied on it.
+
+## Step 5 — Create the draft (only after the page is confirmed)
 
 ```
 longterm_task_create({
@@ -190,9 +217,14 @@ longterm_task_create({
       preferredChannel, notes, expectedMinutes },
     ...
   ],
-  definitionSessionId,     // this session's id, for traceability
+  definitionSessionId,     // optional — defaults to this session's id; pass it only when the plan was discussed in a different session
+  planArtifactUri,         // the plan page's absolute file path (or pin:// if published)
 })
 ```
+
+`planArtifactUri` lands on the task so the board can re-open the plan months
+later. If you created under the owner's explicit skip instruction, the create
+echo carries a reminder instead — do not silence it.
 
 `expectedMinutes` is the sub-project's rough duration estimate (minutes) —
 ALWAYS estimate one during grilling (a ranged guess beats none: 120, 480,
@@ -200,30 +232,27 @@ ALWAYS estimate one during grilling (a ranged guess beats none: 120, 480,
 sub-project runs past it without converging, the Twin gets a supervision
 turn ("still moving toward acceptance, or looping?") instead of silence.
 
+**Read-back reconciliation (mandatory, same turn):** the create call is
+re-typed from chat memory, and transcription drift here is real — a goal
+typo once had to be hot-fixed by a `longterm_task_update` immediately after
+creation. Compare the create echo against the approved plan page field by
+field (goal wording, every sub-project's title / ACs / dependencies /
+channel / expectedMinutes) and fix any drift with `longterm_task_update` /
+`longterm_subtask_update` before moving on.
+
 This creates a **draft** (`defining` stage) — visible on the board's
 "Defining" column, not yet driven.
 
-## Step 5 — Present the COMPLETE definition, then activate (the confirmation round)
+## Step 6 — Confirm and activate (the final round)
 
-The confirmation round happens **entirely in chat**: the owner must be able to
-review every detail of the long-term task without ever opening the board.
-After creating the draft, read it back (`longterm_task_get`) and present the
-FULL definition in one well-structured message:
-
-- **任务标题 + 目标全文** — including the whole-task done-ness definition
-  (never omit this; a sub-project table alone is NOT the definition).
-- **每个子项目的全部字段**: ordinal / title / description（含义与边界）/
-  acceptance criteria（逐条列出）/ dependencies / preferred channel / notes /
-  expected duration（预计时长）.
-- **已锁定的关键决策**（架构、费用、范围等）与**预估节奏**（各阶段粗排期）。
-- **已知的等待点**: external deliveries, owner decisions, dates.
-
-Ask explicitly for the verdict, e.g. "这个长期任务的定义就是上面这样——有要
-改的直接说（哪一项、改成什么）；没有的话我就正式激活开工。"
+The plan page plus the reconciliation already carry the complete definition —
+do NOT re-dump every field in chat. Give a compact read-out: task title, goal
+one-liner, the sub-project count with one-line names, what starts first, and
+the known waits. Then ask for the final go.
 
 - A change request sends you back to Step 2 for that branch of the tree, then
   apply it (`longterm_subtask_update` / `longterm_subtask_add` /
-  `longterm_task_update`) and **re-present the updated full definition**.
+  `longterm_task_update`), re-issue the plan page, and re-reconcile.
 - Only after the owner confirms **in prose**:
 
 ```
@@ -237,6 +266,9 @@ Never activate on your own initiative — activation is the owner's sign-off.
 Drafts persist. If the user comes back to a half-defined task, call
 `longterm_task_list`, find the `defining` one, `longterm_task_get` it, and
 resume the grilling from where it stopped — never start a duplicate draft.
+If the resumed draft carries no `planArtifactUri`, the plan page (Step 4) is
+still owed: produce it, get the owner's prose confirmation, and only then ask
+for activation.
 
 ## After activation
 

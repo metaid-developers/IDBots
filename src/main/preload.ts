@@ -784,6 +784,7 @@ contextBridge.exposeInMainWorld('electron', {
   },
   fs: {
     readTextFile: (filePath: string, maxBytes?: number) => ipcRenderer.invoke('fs:readTextFile', { filePath, maxBytes }),
+    inlineHtmlImages: (htmlPath: string, srcs: string[]) => ipcRenderer.invoke('fs:inlineHtmlImages', { htmlPath, srcs }),
   },
   autoLaunch: {
     get: () => ipcRenderer.invoke('app:getAutoLaunch'),
@@ -812,6 +813,10 @@ contextBridge.exposeInMainWorld('electron', {
     getDailyUsage: (input?: { from?: number; to?: number; botAddress?: string }) =>
       ipcRenderer.invoke('traffic:getDailyUsage', input ?? {}),
     getUsageSummary: () => ipcRenderer.invoke('traffic:getUsageSummary'),
+    // ME credits billing (requirements v1.0): capability status + per-order history.
+    getMeBillingStatus: (input?: { forceRefresh?: boolean }) => ipcRenderer.invoke('traffic:getMeBillingStatus', input ?? {}),
+    getSponsorOrders: (input?: { cursor?: string; limit?: number; botAddress?: string }) =>
+      ipcRenderer.invoke('traffic:getSponsorOrders', input ?? {}),
     bindAllBots: () => ipcRenderer.invoke('traffic:bindAllBots'),
     getLocalJournal: (input?: { limit?: number; botAddress?: string }) =>
       ipcRenderer.invoke('traffic:getLocalJournal', input ?? {}),
@@ -843,7 +848,12 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('me:subscriptionOrder', input ?? {}),
     getSubscriptionOrder: (input: { orderId: string }) =>
       ipcRenderer.invoke('me:subscriptionOrder', input),
+    getSubscriptionOrders: () => ipcRenderer.invoke('me:getSubscriptionOrders'),
     getTopupOrders: () => ipcRenderer.invoke('me:getTopupOrders'),
+    // 积分增量包 (credit pack): local kv-backed settings, no network call.
+    getPointsSettings: () => ipcRenderer.invoke('me:getPointsSettings'),
+    setPointsSettings: (input: { autoDeductFromPersistent?: boolean }) =>
+      ipcRenderer.invoke('me:setPointsSettings', input ?? {}),
     pickVoucher: (input?: Record<string, never>) => ipcRenderer.invoke('me:pickVoucher', input ?? {}),
     getPaymentInfo: () => ipcRenderer.invoke('me:getPaymentInfo'),
   },

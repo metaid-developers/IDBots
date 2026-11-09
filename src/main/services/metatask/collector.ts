@@ -212,6 +212,12 @@ export interface CollectMetaTaskEventsOptions {
   pageSize?: number;
   maxPages?: number;
   timeoutMs?: number;
+  /**
+   * Skip the process-wide walk memo (write-following sweeps must observe pins
+   * pinned after the memo snapshot). See protocolPinFetch for the memo/probe
+   * mechanics (egress guard, ticket 2026-11-08).
+   */
+  bypassCache?: boolean;
 }
 
 export interface CollectMetaTaskEventsResult {
@@ -246,6 +252,7 @@ export async function collectMetaTaskEvents(
           maxPages: options.maxPages ?? DEFAULT_MAX_PAGES,
           timeoutMs: options.timeoutMs ?? 8_000,
           fetchImpl: options.fetchImpl,
+          bypassCache: options.bypassCache,
           selectContent: keepRaw,
           onTruncated: (info) => {
             console.warn('[metatask/collector] pool walk ended short of the empty page:', info);

@@ -57,12 +57,15 @@ import { buildLocalFileUrl, isMobileBridgeRuntime } from '../services/localFileU
 import { isTwemojiAssetUrl } from './chat/twemoji';
 import remarkTwemoji from './chat/remarkTwemoji';
 import NftCard, { NftCardGroup } from './chat/NftCard';
+import NftCollectionCard from './chat/NftCollectionCard';
 import {
   groupAdjacentNftCardFences,
   isNftCardFenceLanguage,
   isNftCardGroupFenceLanguage,
+  isNftCollectionCardFenceLanguage,
   parseNftCardFence,
   parseNftCardGroupFence,
+  parseNftCollectionCardFence,
 } from './chat/nftCardSyntax';
 import PaymentCard from './chat/PaymentCard';
 import { isPayCardFenceLanguage, parsePayCardFence } from './chat/paymentCardSyntax';
@@ -505,6 +508,15 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
       const cards = parseNftCardGroupFence(trimmedCodeText);
       if (cards) {
         return <NftCardGroup cards={cards} />;
+      }
+    }
+    // Album-level MRC-721 collection card (`nft-collection-card` fence from
+    // the mrc721 album tools) — dispatched before the item-card tags so an
+    // item-shaped payload can never leak into this branch.
+    if (isNftCollectionCardFenceLanguage(fenceLanguage)) {
+      const collectionData = parseNftCollectionCardFence(trimmedCodeText);
+      if (collectionData) {
+        return <NftCollectionCard data={collectionData} />;
       }
     }
     if (isNftCardFenceLanguage(fenceLanguage)) {

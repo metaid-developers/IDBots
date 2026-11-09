@@ -386,3 +386,87 @@ export const serializeNftCardFence = (data: NftCardData): string => {
   }
   return `\`\`\`${NFT_CARD_FENCE_TAG}\n${JSON.stringify(ordered)}\n\`\`\``;
 };
+
+// ---------------------------------------------------------------------------
+// Collection card (album-level) — the `nft-collection-card` fence
+//
+// Emitted by the mrc721 album tools (collection_create / collection_update
+// receipts). A separate fence tag, not an nft-card format: the item-card
+// identity rules (pinId / genesis triple) do not apply here, the heal
+// pipeline stays item-only, and the pinned nft-card contracts are untouched.
+// The collectionid (= the collection_desc pinId) is the only required
+// identity; everything else degrades independently.
+// ---------------------------------------------------------------------------
+
+export const NFT_COLLECTION_CARD_FENCE_TAG = 'nft-collection-card';
+
+export const isNftCollectionCardFenceLanguage = (language: string): boolean =>
+  language.trim().toLowerCase() === NFT_COLLECTION_CARD_FENCE_TAG;
+
+export interface NftCollectionCardData {
+  /** The collectionid (= the collection_desc pinId) — required identity. */
+  collectionId: string;
+  /** The path name under /nft/mrc721/. */
+  collectionName?: string;
+  name?: string;
+  desc?: string;
+  website?: string;
+  /** metafile:// cover URI. */
+  icon?: string;
+  /** -1 = unlimited. */
+  totalSupply?: number;
+  minted?: number;
+  royaltyRate?: number;
+  issuer?: string;
+  issuerLabel?: string;
+  action?: string;
+}
+
+/** totalSupply allows -1 (unlimited) — unlike the item serial. */
+const cleanTotalSupply = (value: unknown): number | undefined => {
+  const num = typeof value === 'number'
+    ? value
+    : typeof value === 'string' && /^-?\d+$/.test(value.trim()) ? Number(value) : NaN;
+  if (!Number.isInteger(num) || num < -1 || num > 1_000_000_000_000) return undefined;
+  return num;
+};
+
+export const parseNftCollectionCardFence = (codeText: string): NftCollectionCardData | null => {
+  const text = String(codeText ?? '').trim();
+  if (!text) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const row = parsed as Record<string, unknown>;
+  const collectionId = cleanPinId(row.collectionId);
+  if (!collectionId) return null;
+
+  const data: NftCollectionCardData = { collectionId };
+  const collectionName = cleanTextField(row.collectionName);
+  if (collectionName) data.collectionName = collectionName;
+  const name = cleanTextField(row.name);
+  if (name) data.name = name;
+  const desc = cleanTextField(row.desc, 200);
+  if (desc) data.desc = desc;
+  const website = cleanTextField(row.website, 200);
+  if (website) data.website = website;
+  const icon = cleanMetafileUri(row.icon);
+  if (icon) data.icon = icon;
+  const totalSupply = cleanTotalSupply(row.totalSupply);
+  if (totalSupply !== undefined) data.totalSupply = totalSupply;
+  const minted = cleanSerial(row.minted);
+  if (minted !== undefined) data.minted = minted;
+  const royaltyRate = cleanSerial(row.royaltyRate);
+  if (royaltyRate !== undefined) data.royaltyRate = royaltyRate;
+  const issuer = cleanAddress(row.issuer);
+  if (issuer) data.issuer = issuer;
+  const issuerLabel = cleanTextField(row.issuerLabel);
+  if (issuerLabel) data.issuerLabel = issuerLabel;
+  const action = cleanTextField(row.action, MAX_ACTION_FIELD);
+  if (action) data.action = action.toLowerCase();
+  return data;
+};

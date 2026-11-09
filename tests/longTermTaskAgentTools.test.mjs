@@ -496,3 +496,68 @@ test('task echoes keep a 9-sub-project roster inline under the spill cap, fresh 
   assert.equal('subtasks' in board.json.cards[0], false, 'cards are summaries');
   assert.equal('decisionSessionIds' in board.json.cards[0], false);
 });
+
+test('longterm_task_create echoes the plan page URI; a missing artifact gets an explicit reminder, not a refusal', async () => {
+  const { store, captured } = await openWorld();
+  const create = captured.get('longterm_task_create');
+
+  // With the plan page: the URI rides the echo and lands on the store.
+  const withPage = await create.handler({ ...SPEC, planArtifactUri: '/tmp/approved-plan.html' });
+  assert.equal(withPage.isError, undefined, withPage.content[0].text);
+  const withPageJson = JSON.parse(withPage.content[0].text);
+  assert.equal(withPageJson.planArtifactUri, '/tmp/approved-plan.html');
+  assert.equal('planArtifactReminder' in withPageJson, false);
+  assert.equal(store.getTask(withPageJson.id).planArtifactUri, '/tmp/approved-plan.html');
+
+  // Without it: the create still succeeds (the owner may order a skip), but
+  // the echo says so out loud — silence must not pass as consent.
+  const withoutPage = await create.handler({ ...SPEC });
+  assert.equal(withoutPage.isError, undefined, withoutPage.content[0].text);
+  const withoutPageJson = JSON.parse(withoutPage.content[0].text);
+  assert.equal(withoutPageJson.planArtifactUri, undefined, 'an absent plan artifact is dropped from the echo');
+  assert.match(withoutPageJson.planArtifactReminder, /plan page/i);
+  assert.match(withoutPageJson.planArtifactReminder, /longterm_task_update/);
+
+  // The URI is backfillable after the fact via longterm_task_update.
+  const updated = await captured.get('longterm_task_update').handler({ taskId: withoutPageJson.id, planArtifactUri: '/tmp/late-plan.html' });
+  assert.equal(updated.isError, undefined, updated.content[0].text);
+  assert.equal(JSON.parse(updated.content[0].text).planArtifactUri, '/tmp/late-plan.html');
+});
+
+test('longterm_task_create defaults definitionSessionId to the mounted session (2026-11-08 fork incident)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-lt-defsession-'));
+  const sqliteStore = await SqliteStore.create(dir);
+  const store = new LongTermTaskStore(sqliteStore.getDatabase(), sqliteStore.getSaveFunction());
+  const captured = new Map();
+  const toolFactory = (name, description, schema, handler) => {
+    captured.set(name, { description, handler });
+    return { name };
+  };
+  buildLongTermTaskAgentTools({
+    tool: toolFactory,
+    control: { store: () => store, getAppLanguage: () => 'en' },
+    sessionId: 'sess-owner-chat',
+  });
+  const create = captured.get('longterm_task_create');
+
+  // The model omits definitionSessionId → the birth session is recorded
+  // anyway. This is the load-bearing case: without it the task's birth
+  // conversation is invisible to the heartbeat venue rules and every
+  // escalation forks a fresh session away from the owner's chat.
+  const omitted = await create.handler({ ...SPEC });
+  assert.equal(omitted.isError, undefined, omitted.content[0].text);
+  const omittedJson = JSON.parse(omitted.content[0].text);
+  assert.equal(store.getTask(omittedJson.id).definitionSessionId, 'sess-owner-chat');
+
+  // An explicit id still wins (plan discussed in a different session).
+  const explicit = await create.handler({ ...SPEC, definitionSessionId: 'sess-elsewhere' });
+  assert.equal(explicit.isError, undefined, explicit.content[0].text);
+  const explicitJson = JSON.parse(explicit.content[0].text);
+  assert.equal(store.getTask(explicitJson.id).definitionSessionId, 'sess-elsewhere');
+
+  // A blank-string arg must not shadow the mounted session either.
+  const blank = await create.handler({ ...SPEC, definitionSessionId: '   ' });
+  assert.equal(blank.isError, undefined, blank.content[0].text);
+  const blankJson = JSON.parse(blank.content[0].text);
+  assert.equal(store.getTask(blankJson.id).definitionSessionId, 'sess-owner-chat');
+});

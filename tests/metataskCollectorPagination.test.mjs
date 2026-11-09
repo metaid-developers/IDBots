@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
@@ -21,8 +21,17 @@ import { createRequire } from 'node:module';
  */
 
 const require = createRequire(import.meta.url);
-const { fetchProtocolPinsFromIndexer } = require('../dist-electron/main/services/protocolPinFetch.js');
+const {
+  fetchProtocolPinsFromIndexer,
+  // The egress guard (memo + head-stop probe) keeps process-wide state keyed
+  // by (path, size, pages); each test must start from a cold walk.
+  __resetProtocolPinFetchStateForTests,
+} = require('../dist-electron/main/services/protocolPinFetch.js');
 const { collectMetaTaskEvents } = require('../dist-electron/main/services/metatask/collector.js');
+
+beforeEach(() => {
+  __resetProtocolPinFetchStateForTests();
+});
 
 const PATH = '/protocols/metatask/submission';
 

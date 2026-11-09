@@ -1,10 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
-import type { SqliteStore } from '../sqliteStore';
 import { EscrowOrderStore } from '../services/escrowOrderStore';
 import {
   applyEscrowReminder,
   applyEscrowTransition,
+  assertEscrowInvariants,
   createEscrowOrder,
   ESCROW_ACTIONS,
   escrowActiveTimerOf,
@@ -393,6 +393,18 @@ export function buildEscrowAgentTools(deps: {
       : `T${active.timer.slice(1)} EXPIRED at ${iso(active.deadlineAt)}`;
   };
 
+  /**
+   * Supervisory scan (doc 03 §5: the five invariant asserters are "供测试与
+   * 监管扫描复用"). The transition gates already enforce invariants 2-5
+   * structurally; the audit re-runs all five over the live document and
+   * SURFACES any violation on tool replies (non-blocking — invariant 1 is a
+   * free-text scan and must never reject a legitimate order at persist time).
+   */
+  const invariantAuditLine = (doc: EscrowOrder): string | null => {
+    const verdict = assertEscrowInvariants(doc);
+    return verdict === true ? null : `⚠ escrow invariant audit: ${verdict}`;
+  };
+
   // -------------------------------------------------------------------------
   // escrow_order_create
   // -------------------------------------------------------------------------
@@ -505,6 +517,7 @@ export function buildEscrowAgentTools(deps: {
       'The session bot\'s actor role (seller / buyer / escrow_agent) is resolved from the order parties; system-only actions (timeouts) belong to escrow_tick, not this tool.',
       'Proof rules: escrow_goods and release_goods need a 64-hex on-chain transfer txid for mrc721/metacontract orders (SELLER transfers to the agent address first, then records the escrow txid; AGENT transfers to the buyer address and records the release txid) — this tool never moves the item itself. upload_payment_evidence needs the payment evidence reference; confirm_received needs basis_amount_cents (exact to the cent) and basis_memo embedding the order id. dispute_open and rulings need a written basis.',
       'cancel_request only HANGS a cancel request (no state move); cancel_mutual requires mutual_confirmed=true from the confirming side.',
+      'Owner-level second ruling (04 branch 3): after an owner-review flag (T4 escalation, or an in-dispute appeal against the first ruling), the guarantor bot re-runs ruling_release / ruling_rollback with the basis prefixed "owner:" — the machine records it as an owner-level ruling.',
     ].join(' '),
     {
       order_id: z.string().min(1).describe('The escrow order id (esc-…).'),
@@ -567,10 +580,12 @@ export function buildEscrowAgentTools(deps: {
       const stored = persist(result.order);
       const entry = stored.timeline[stored.timeline.length - 1];
       const moved = entry && entry.from !== entry.to;
+      const audit = invariantAuditLine(stored);
       const lines = [
         `Escrow order ${stored.orderId}: ${args.action} ${moved ? `applied — state ${entry.from} → ${entry.to}` : 'recorded (no state move)'}.`,
         `- actor: ${actor}${entry?.proof ? ` | proof: ${entry.proof}` : ''}${entry?.basis ? ` | basis: ${entry.basis}` : ''}`,
         `- ${timerLine(stored)}`,
+        ...(audit ? [audit] : []),
       ];
       return textResult(statefulReply(stored, lines));
     }
@@ -652,6 +667,7 @@ export function buildEscrowAgentTools(deps: {
         `- disputes: seller ${doc.disputesByParty?.seller ?? 0}/2, buyer ${doc.disputesByParty?.buyer ?? 0}/2`,
         doc.pendingCancelRequest ? `- pending cancel request by ${doc.pendingCancelRequest.by} at ${iso(doc.pendingCancelRequest.at)} (12h silence without payment evidence counts as mutual cancel)` : '',
         doc.ownerReview ? `- OWNER REVIEW flagged: ${doc.ownerReview.reason} (${iso(doc.ownerReview.at)})` : '',
+        invariantAuditLine(doc) ?? '',
         doc.negativeRecords?.length
           ? `- negative records (${doc.negativeRecords.length}):\n${doc.negativeRecords.map((record) => `  - [${record.kind}] ${record.subject}: ${record.note} (${iso(record.at)})`).join('\n')}`
           : '',
@@ -704,6 +720,11 @@ export function buildEscrowAgentTools(deps: {
       for (const row of rows) {
         const doc = row.payload as EscrowOrderDocument;
         lines.push(`# ${doc.orderId} [${doc.goodsKind}] ${doc.state}`);
+        const audit = invariantAuditLine(doc);
+        if (audit) lines.push(`  - ${audit}`);
+        if (doc.ownerReview) {
+          lines.push(`  - OWNER REVIEW flagged: ${doc.ownerReview.reason} (${iso(doc.ownerReview.at)}) — surface this to the owner; an owner-level ruling re-runs ruling_release/ruling_rollback with a basis prefixed "owner:".`);
+        }
         const due = escrowDueTimeoutAt(doc, now);
         if (due?.dueAction) {
           const goodsReturnNeedsTxid = due.dueAction === 'timeout_t2_return_goods'
@@ -765,11 +786,3 @@ export function buildEscrowAgentTools(deps: {
     escrowTick,
   ];
 }
-
-/**
- * Construct the escrow order store over the shared SqliteStore (same pattern
- * as the other SqliteStore-backed stores; the escrow_orders table itself is
- * created idempotently by SqliteStore.initializeTables).
- */
-export const escrowOrderStoreFromSqlite = (store: SqliteStore): EscrowOrderStore =>
-  new EscrowOrderStore(store.getDatabase(), store.getSaveFunction());

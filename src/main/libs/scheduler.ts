@@ -9,10 +9,11 @@ import {
   ScheduledTaskMemoryAccess,
   SCHEDULED_TASK_MEMORY_ACCESS_LEVELS,
 } from '../scheduledTaskStore';
-import type { CoworkStore, DreamPracticeProposalRecord } from '../coworkStore';
+import type { CoworkMessage, CoworkSession, CoworkStore, DreamPracticeProposalRecord } from '../coworkStore';
 import type { CoworkRunner } from './coworkRunner';
 import { resolveSessionWorkingDirectory } from './botWorkspace';
 import { resolveCoworkExecutionMode } from './coworkExecutionMode';
+import { buildScheduledRunReportMessage, tailDispatchReportExcerpt } from './coworkCrossSessionReport';
 import { createPracticeSessionState, PRACTICE_RUN_WATCHDOG_MS } from './practiceInteractionGuard';
 import type { IMGatewayManager } from '../im/imGatewayManager';
 import type { CoworkSubmitInput, CoworkSubmitInputResult } from '../services/coworkTurnSubmission';
@@ -64,6 +65,152 @@ interface SchedulerDeps {
    * spawning a fresh session.
    */
   submitToSession?: (input: CoworkSubmitInput) => Promise<SubmitToSessionResult>;
+  /**
+   * Forwards a message the scheduler persisted itself (a fire's prompt, the
+   * rotation pointer) to open renderers — the runner only emits what it
+   * writes, so without this a standing conversation the owner has open would
+   * not show the new fire's prompt until reloaded.
+   */
+  emitSessionMessage?: (sessionId: string, message: CoworkMessage) => void;
+  /** Owner's UI language ('zh' | 'en') for the copy the scheduler writes into sessions. */
+  getAppLanguage?: () => string;
+  /** How long a fire waits for its busy standing conversation; tests shrink it. */
+  seriesSessionBusyWaitMs?: number;
+  /** How often the wait polls for idle; tests shrink it alongside the wait. */
+  seriesSessionBusyPollMs?: number;
+}
+
+/**
+ * Standing-conversation budget for a 'series' task (2026-11-09). Checked
+ * BEFORE each fire; crossing either limit rotates the task into a successor
+ * conversation titled `[定时] <name>（N）`.
+ * - Context: the provider-reported share of the context window the
+ *   conversation filled on its last turn (`usage_stats.lastRealContextUsage`,
+ *   persisted for every DSH turn). 0.6 leaves headroom for the fire itself and
+ *   usually rotates before the runtime has to compact a fat transcript.
+ * - Messages: a row backstop for sessions with no real usage reading and for
+ *   transcripts that compaction keeps under the ratio but that otherwise grow
+ *   without bound. Rows include tool traffic; recurring tasks average 9–95
+ *   rows per fire (one outlier ~270), so 1200 rows still hold a week or more
+ *   of a typical daily task.
+ */
+export const SERIES_SESSION_CONTEXT_RATIO_LIMIT = 0.6;
+export const SERIES_SESSION_MESSAGE_LIMIT = 1200;
+
+const SCHEDULED_SESSION_TITLE_PREFIX = '[定时] ';
+
+/**
+ * Title of a scheduled task's conversation: `[定时] <name>`, plus a `（N）`
+ * generation suffix from the second standing conversation on. A stored
+ * title, not UI chrome (like the `[长期]` long-term titles): the sidebar fold
+ * and the legacy message-origin labels key off the prefix. The task name is
+ * written by the creating bot (or typed by the owner), so the title is the
+ * human-readable label of the task's whole conversation.
+ *
+ * Exported for tests.
+ */
+export function buildScheduledSessionTitle(taskName: string, generation: number = 1): string {
+  const base = `${SCHEDULED_SESSION_TITLE_PREFIX}${taskName}`;
+  return generation > 1 ? `${base}（${generation}）` : base;
+}
+
+/**
+ * Generation of a standing conversation, read back from its title: the base
+ * title is 1, `…（N）` is N. A title that no longer matches the task name
+ * (either was renamed) reads as 1, so its successor is simply `（2）` — the
+ * title is only a label; the binding is the stored session id.
+ *
+ * Exported for tests.
+ */
+export function readScheduledSessionGeneration(title: string, taskName: string): number {
+  const base = buildScheduledSessionTitle(taskName);
+  if (title.startsWith(base)) {
+    const match = /^（(\d+)）$/.exec(title.slice(base.length));
+    if (match) return Math.max(1, Number(match[1]));
+  }
+  return 1;
+}
+
+/**
+ * Provider-reported context-window share of a session's last turn, read from
+ * its persisted usage stats; null when the session has no real reading yet.
+ *
+ * Exported for tests.
+ */
+export function readSessionContextUsageRatio(usageStats: Record<string, unknown> | null | undefined): number | null {
+  const usage = usageStats?.lastRealContextUsage;
+  if (!usage || typeof usage !== 'object') return null;
+  const { usageRatio, usedTokens, contextWindow, isRealUsage } = usage as Record<string, unknown>;
+  if (isRealUsage === false) return null;
+  if (typeof usageRatio === 'number' && Number.isFinite(usageRatio)) return usageRatio;
+  if (typeof usedTokens === 'number' && typeof contextWindow === 'number' && contextWindow > 0) {
+    return usedTokens / contextWindow;
+  }
+  return null;
+}
+
+/**
+ * Where a 'series' fire runs, decided before the turn starts:
+ * - `reuse`: continue the standing conversation;
+ * - `new`: open the task's first standing conversation;
+ * - `rotate`: open the successor of a standing conversation that outgrew its
+ *   budget (`budget`) or can no longer host fires — archived by the owner,
+ *   moved to another bot (`retired`);
+ * - `fresh`: the task opted out — a one-off session, nothing is seated.
+ */
+type ScheduledSessionSeat =
+  | { kind: 'fresh' }
+  | { kind: 'new' }
+  | { kind: 'reuse'; sessionId: string }
+  | {
+      kind: 'rotate';
+      cause: 'budget' | 'retired';
+      detail: string;
+      previousSessionId: string;
+      previousTitle: string;
+      generation: number;
+    };
+
+/**
+ * The factual frame of a 'series' fire, prepended after the lifecycle
+ * preamble: whether the bot continues the task's standing conversation (its
+ * earlier fires are in context) or starts a rotation successor (they are not
+ * — the previous conversation's last result rides along as the only anchor).
+ * A first standing conversation and every 'fresh' fire get no note.
+ *
+ * Exported for tests.
+ */
+export function buildScheduledSessionContinuityNote(
+  input:
+    | { kind: 'reuse' }
+    | {
+        kind: 'rotate';
+        cause: 'budget' | 'retired';
+        generation: number;
+        previousTitle: string;
+        previousSessionId: string;
+        previousResult?: { excerpt: string; truncated: boolean } | null;
+      },
+): string {
+  if (input.kind === 'reuse') {
+    return [
+      '[Standing conversation] Earlier fires of this task ran in this same conversation — their results are above; build on them instead of starting over.',
+      'An owner request from an earlier fire that is still unanswered stays open: carry it in this run\'s follow-up tag.',
+    ].join('\n');
+  }
+  const why = input.cause === 'budget'
+    ? 'reached its size budget'
+    : 'can no longer host this task (archived or reassigned)';
+  const lines = [
+    `[Standing conversation rotated] This is conversation #${input.generation} for this task: the previous one ("${input.previousTitle}", session ${input.previousSessionId}) ${why} and stays readable as an archive. None of its history is in this conversation; later fires of this task continue here.`,
+  ];
+  if (input.previousResult?.excerpt) {
+    lines.push(
+      `Last result in the previous conversation${input.previousResult.truncated ? ' (tail excerpt)' : ''}, for continuity:`,
+      input.previousResult.excerpt,
+    );
+  }
+  return lines.join('\n');
 }
 
 class SchedulerStoppedError extends Error {
@@ -145,7 +292,11 @@ export class Scheduler {
   private isRecoverableSqliteError: ((error: unknown) => boolean) | null;
   private recoverSqlite: ((error: unknown, operationName: string) => void | Promise<void>) | null;
   private submitToSession: ((input: CoworkSubmitInput) => Promise<SubmitToSessionResult>) | null;
+  private emitSessionMessage: ((sessionId: string, message: CoworkMessage) => void) | null;
+  private getAppLanguage: (() => string) | null;
   private readonly practiceRunWatchdogMs: number;
+  private readonly seriesSessionBusyWaitMs: number;
+  private readonly seriesSessionBusyPollMs: number;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
   private activeTasks: Map<string, AbortController> = new Map();
@@ -173,6 +324,13 @@ export class Scheduler {
    * alone.
    */
   private static readonly RUN_LIVENESS_LEASE_MS = 10 * 60_000;
+  /**
+   * How long a fire waits for its standing conversation to go idle (the owner
+   * chatting in it, a relayed turn) before it runs in a one-off session
+   * instead. tick() awaits every execution, so the wait stays short.
+   */
+  private static readonly SERIES_SESSION_BUSY_WAIT_MS = 2 * 60_000;
+  private static readonly SERIES_SESSION_BUSY_POLL_MS = 2_000;
 
   constructor(deps: SchedulerDeps) {
     this.store = deps.scheduledTaskStore;
@@ -183,7 +341,11 @@ export class Scheduler {
     this.isRecoverableSqliteError = deps.isRecoverableSqliteError ?? null;
     this.recoverSqlite = deps.recoverSqlite ?? null;
     this.submitToSession = deps.submitToSession ?? null;
+    this.emitSessionMessage = deps.emitSessionMessage ?? null;
+    this.getAppLanguage = deps.getAppLanguage ?? null;
     this.practiceRunWatchdogMs = deps.practiceRunWatchdogMs ?? PRACTICE_RUN_WATCHDOG_MS;
+    this.seriesSessionBusyWaitMs = Math.max(0, deps.seriesSessionBusyWaitMs ?? Scheduler.SERIES_SESSION_BUSY_WAIT_MS);
+    this.seriesSessionBusyPollMs = Math.max(1, deps.seriesSessionBusyPollMs ?? Scheduler.SERIES_SESSION_BUSY_POLL_MS);
   }
 
   // --- Lifecycle ---
@@ -486,7 +648,7 @@ export class Scheduler {
     let error: string | null = null;
 
     try {
-      sessionId = await this.startCoworkSession(task, executionGeneration);
+      sessionId = await this.startCoworkSession(task, executionGeneration, abortController.signal);
       success = true;
     } catch (err: unknown) {
       if (!(err instanceof SchedulerStoppedError)) {
@@ -570,6 +732,16 @@ export class Scheduler {
             await this.sendNotifications(task, success, durationMs, error);
           }
 
+          // Scheduled-run report-back: the origin session that created this
+          // task never heard about run outcomes (originSessionId was only
+          // ever printed into prompt text), so delegated work died silently
+          // in the [定时] fold. Best-effort — never fail the run bookkeeping.
+          try {
+            this.reportRunToOriginSession(task, run.id, sessionId, success, error, durationMs);
+          } catch (reportError) {
+            console.warn('[Scheduler] Origin-session run report failed:', reportError);
+          }
+
           // Emit final updates
           this.emitTaskStatusUpdate(task.id);
           const updatedRun = this.store.getRun(run.id);
@@ -585,7 +757,11 @@ export class Scheduler {
     }
   }
 
-  private async startCoworkSession(task: ScheduledTask, executionGeneration: number): Promise<string> {
+  private async startCoworkSession(
+    task: ScheduledTask,
+    executionGeneration: number,
+    signal?: AbortSignal,
+  ): Promise<string> {
     this.assertExecutionCurrent(executionGeneration);
 
     // The lifecycle preamble (fire number, budget, exit clause) and the
@@ -593,17 +769,53 @@ export class Scheduler {
     // delivery path so the firing bot can judge — and execute — the task's
     // retirement in the same run, and declare whether the owner is owed
     // follow-up. The lifecycle half is recurring-only; the contract is not.
+    // A 'series' fire adds its continuity note between the two.
     const preamble = buildScheduledTaskLifecyclePreamble(task);
     const contract = buildScheduledTaskFollowUpContract();
-    const frontMatter = [preamble, contract].filter(Boolean).join('\n\n');
-    const fullPrompt = frontMatter ? `${frontMatter}\n\n${task.prompt}` : task.prompt;
+    const composePrompt = (continuityNote: string = ''): string => {
+      const frontMatter = [preamble, continuityNote, contract].filter(Boolean).join('\n\n');
+      return frontMatter ? `${frontMatter}\n\n${task.prompt}` : task.prompt;
+    };
 
     // A task bound to an existing session posts its prompt there instead of
     // opening a fresh one. An invalid binding (deleted/archived/A2A/sandbox
-    // session) falls through to the fresh-session path below.
+    // session) falls through to the task's own conversation below.
     if (task.targetSessionId) {
-      const boundSessionId = await this.submitToBoundSession(task, task.targetSessionId, fullPrompt, executionGeneration);
+      const boundSessionId = await this.submitToBoundSession(task, task.targetSessionId, composePrompt(), executionGeneration);
       if (boundSessionId) return boundSessionId;
+    }
+
+    // Standing conversation (2026-11-09): a 'series' task — the default —
+    // runs every fire in one conversation instead of opening a new session
+    // per fire. 'fresh' keeps the old one-off behavior.
+    const seat: ScheduledSessionSeat = task.sessionMode === 'fresh'
+      ? { kind: 'fresh' }
+      : this.resolveSeriesSeat(task);
+
+    if (seat.kind === 'reuse') {
+      const idle = await this.waitForSeriesSessionIdle(seat.sessionId, executionGeneration, signal);
+      // The idle check and the turn start are one synchronous step — no await
+      // between here and runner.startSession's activeSessions.set — or an
+      // owner turn could start in the gap and have its live session object
+      // replaced by this fire's.
+      if (idle && !this.getCoworkRunner().isSessionActive?.(seat.sessionId)) {
+        // A legacy task's first fire after upgrade adopted its latest run's
+        // session: seat it so later fires stop re-deriving it.
+        if (task.seriesSessionId !== seat.sessionId) {
+          this.store.setSeriesSessionId?.(task.id, seat.sessionId);
+        }
+        return this.runScheduledTurn(
+          task,
+          seat.sessionId,
+          composePrompt(buildScheduledSessionContinuityNote({ kind: 'reuse' })),
+          executionGeneration,
+        );
+      }
+      // Still busy: this fire runs in a one-off session and the standing
+      // conversation keeps its seat — the next fire returns to it.
+      console.log(
+        `[Scheduler] Task ${task.id} standing conversation ${seat.sessionId} stayed busy, running this fire in a one-off session`
+      );
     }
 
     const config = this.coworkStore.getConfig();
@@ -625,8 +837,9 @@ export class Scheduler {
       .join('\n\n');
     const executionMode = resolveCoworkExecutionMode(task.executionMode || config.executionMode);
 
+    const title = buildScheduledSessionTitle(task.name, seat.kind === 'rotate' ? seat.generation : 1);
     const session = this.coworkStore.createSession(
-      `[定时] ${task.name}`,
+      title,
       cwd,
       systemPrompt,
       executionMode,
@@ -636,15 +849,190 @@ export class Scheduler {
     const sessionId = session.id;
     this.coworkStore.setSessionAutoOrigin(sessionId, 'schedule');
 
+    let continuityNote = '';
+    if (seat.kind === 'new' || seat.kind === 'rotate') {
+      this.store.setSeriesSessionId?.(task.id, sessionId);
+    }
+    if (seat.kind === 'rotate') {
+      continuityNote = buildScheduledSessionContinuityNote({
+        kind: 'rotate',
+        cause: seat.cause,
+        generation: seat.generation,
+        previousTitle: seat.previousTitle,
+        previousSessionId: seat.previousSessionId,
+        previousResult: this.readLatestAssistantExcerpt(seat.previousSessionId),
+      });
+      // Only a conversation that outgrew its budget gets the pointer: it is
+      // still live in the sidebar and the owner may return to it. An archived
+      // or reassigned one is left untouched.
+      if (seat.cause === 'budget') {
+        this.postSeriesRotationPointer(task, seat.previousSessionId, title);
+      }
+      console.log(
+        `[Scheduler] Task ${task.id} rotated its standing conversation ${seat.previousSessionId} → ${sessionId} (${seat.detail})`
+      );
+    }
+
+    return this.runScheduledTurn(task, sessionId, composePrompt(continuityNote), executionGeneration);
+  }
+
+  /**
+   * Decide where a 'series' fire runs. The stored standing conversation wins;
+   * a task without one (new, or legacy before its first fire after upgrade)
+   * adopts the session of its latest run, so an existing daily task continues
+   * right where its last fire ran instead of starting yet another session.
+   * Only conversations the scheduler itself opened for this task's bot are
+   * ever continued — a run that went into an owner's own chat (a since-
+   * cleared targetSessionId binding) is never adopted.
+   */
+  private resolveSeriesSeat(task: ScheduledTask): ScheduledSessionSeat {
+    const storedId = task.seriesSessionId?.trim() || null;
+    const candidateId = storedId ?? this.store.getLatestRunSessionId?.(task.id) ?? null;
+    if (!candidateId) return { kind: 'new' };
+
+    const session = this.coworkStore.getSessionWithoutMessages(candidateId);
+    if (!session) {
+      if (storedId) {
+        console.log(`[Scheduler] Task ${task.id} standing conversation ${storedId} no longer exists, opening a new one`);
+      }
+      return { kind: 'new' };
+    }
+    const generation = readScheduledSessionGeneration(session.title ?? '', task.name) + 1;
+
+    const unusable = this.describeUnusableSeriesSession(task, candidateId, session);
+    if (unusable) {
+      // An adoption candidate that cannot host fires is simply not adopted.
+      if (!storedId) return { kind: 'new' };
+      return {
+        kind: 'rotate',
+        cause: 'retired',
+        detail: unusable,
+        previousSessionId: candidateId,
+        previousTitle: session.title ?? '',
+        generation,
+      };
+    }
+
+    const overBudget = this.describeSeriesBudgetExceeded(candidateId);
+    if (overBudget) {
+      return {
+        kind: 'rotate',
+        cause: 'budget',
+        detail: overBudget,
+        previousSessionId: candidateId,
+        previousTitle: session.title ?? '',
+        generation,
+      };
+    }
+
+    return { kind: 'reuse', sessionId: candidateId };
+  }
+
+  private describeUnusableSeriesSession(task: ScheduledTask, sessionId: string, session: CoworkSession): string | null {
+    if (this.coworkStore.isSessionArchived(sessionId)) return 'archived';
+    if ((session.sessionType ?? 'standard') !== 'standard') return `${session.sessionType} session`;
+    if (session.hiddenFromSessionList) return 'hidden from the session list';
+    if ((session.metabotId ?? null) !== (task.metabotId ?? null)) return 'belongs to another bot';
+    const autoOrigin = session.autoOrigin ?? this.coworkStore.getSessionAutoOrigin?.(sessionId) ?? null;
+    if (autoOrigin !== 'schedule') return 'not a scheduled-task conversation';
+    return null;
+  }
+
+  /** The rotation reason when the standing conversation is over budget, else null. */
+  private describeSeriesBudgetExceeded(sessionId: string): string | null {
+    const ratio = readSessionContextUsageRatio(this.coworkStore.getSessionUsageStats?.(sessionId));
+    if (ratio !== null && ratio >= SERIES_SESSION_CONTEXT_RATIO_LIMIT) {
+      return `context at ${Math.round(ratio * 100)}% of the window`;
+    }
+    const messages = this.coworkStore.countSessionMessages?.(sessionId) ?? 0;
+    if (messages >= SERIES_SESSION_MESSAGE_LIMIT) {
+      return `${messages} messages`;
+    }
+    return null;
+  }
+
+  /**
+   * Wait (bounded) for the standing conversation to go idle. Returns false
+   * when it is still busy at the deadline; throws when the scheduler stops or
+   * the task is stopped meanwhile.
+   */
+  private async waitForSeriesSessionIdle(
+    sessionId: string,
+    executionGeneration: number,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    const runner = this.getCoworkRunner();
+    const deadline = Date.now() + this.seriesSessionBusyWaitMs;
+    while (runner.isSessionActive?.(sessionId)) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return false;
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, Math.min(this.seriesSessionBusyPollMs, remaining));
+      });
+      this.assertExecutionCurrent(executionGeneration);
+      if (signal?.aborted) {
+        throw new Error('Scheduled task was stopped while waiting for its conversation');
+      }
+    }
+    return true;
+  }
+
+  /** Tail excerpt of a session's latest visible assistant reply (best-effort). */
+  private readLatestAssistantExcerpt(sessionId: string): { excerpt: string; truncated: boolean } | null {
+    try {
+      const latest = this.coworkStore.getSessionLatestVisibleMessage?.(sessionId) ?? null;
+      if (!latest || latest.type !== 'assistant') return null;
+      return tailDispatchReportExcerpt(latest.content);
+    } catch (error) {
+      console.warn('[Scheduler] Previous conversation excerpt failed:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Visible pointer in a standing conversation the task rotated away from:
+   * an owner returning to it learns where later runs went. Routine
+   * maintenance wording — nothing is lost and no action is due.
+   */
+  private postSeriesRotationPointer(task: ScheduledTask, previousSessionId: string, nextTitle: string): void {
+    try {
+      const zh = String(this.getAppLanguage?.() ?? '').toLowerCase().startsWith('zh');
+      const pointer = this.coworkStore.addMessage(previousSessionId, {
+        type: 'system',
+        content: zh
+          ? `【定时任务】本会话已经较长，「${task.name}」之后的执行已自动转入新会话「${nextTitle}」继续，无需任何操作；本会话保留为可读归档。`
+          : `[Scheduled task] This conversation has grown long, so later runs of "${task.name}" now continue in a new conversation, "${nextTitle}" — no action needed. This one stays readable as an archive.`,
+        metadata: { origin: 'schedule' },
+      });
+      if (pointer) this.emitSessionMessage?.(previousSessionId, pointer);
+    } catch (error) {
+      console.warn('[Scheduler] Rotation pointer failed:', error);
+    }
+  }
+
+  /**
+   * Run one fire's turn in `sessionId` — a new session or the standing
+   * conversation. Everything up to runner.startSession is synchronous: the
+   * reuse path relies on that to keep its idle check and the turn start atomic.
+   */
+  private async runScheduledTurn(
+    task: ScheduledTask,
+    sessionId: string,
+    fullPrompt: string,
+    executionGeneration: number,
+  ): Promise<string> {
+    this.assertExecutionCurrent(executionGeneration);
+
     // Update session to running
     this.coworkStore.updateSession(sessionId, { status: 'running' });
 
-    // Add initial user message
-    this.coworkStore.addMessage(sessionId, {
+    // Add the fire's prompt as the turn's user message
+    const promptMessage = this.coworkStore.addMessage(sessionId, {
       type: 'user',
       content: fullPrompt,
       metadata: { origin: 'schedule', originLabel: task.name },
     });
+    if (promptMessage) this.emitSessionMessage?.(sessionId, promptMessage);
 
     // Start the session with normal permission flow (no auto-approve).
     this.taskSessionIds.set(task.id, sessionId);
@@ -768,6 +1156,73 @@ export class Scheduler {
 
     console.log(`[Scheduler] Task ${task.id} submitted into bound session ${targetSessionId}`);
     return targetSessionId;
+  }
+
+  /**
+   * Report a finished run back into the session that created the task.
+   * Delegated one-shot ('at') work reports every run; recurring standing
+   * automation reports failures only — a per-fire success ping into the
+   * origin chat recreates the poll-flood failure class. A run that executed
+   * inside the origin chat itself (bound to it) is skipped: that chat just
+   * watched the turn happen. The delivery id is deterministic per run, so
+   * retries dedupe; a run that failed before its session opened attributes
+   * the report to the synthetic `scheduled-task:<taskId>` pseudo-source.
+   */
+  private reportRunToOriginSession(
+    task: ScheduledTask,
+    runId: string,
+    sessionId: string | null,
+    success: boolean,
+    error: string | null,
+    durationMs: number,
+  ): void {
+    const originSessionId = task.originSessionId?.trim();
+    if (!originSessionId) return;
+    if (task.schedule.type !== 'at' && success) return;
+    if (sessionId && sessionId === originSessionId) return;
+
+    let finalReply: string | null = null;
+    let finalReplyTruncated = false;
+    if (sessionId) {
+      try {
+        const latest = this.coworkStore.getSessionLatestVisibleMessage?.(sessionId) ?? null;
+        if (latest && latest.type === 'assistant') {
+          const excerpt = tailDispatchReportExcerpt(latest.content);
+          if (excerpt) {
+            finalReply = excerpt.excerpt;
+            finalReplyTruncated = excerpt.truncated;
+          }
+        }
+      } catch (excerptError) {
+        console.warn('[Scheduler] Run report excerpt failed:', excerptError);
+      }
+    }
+
+    const message = buildScheduledRunReportMessage({
+      taskId: task.id,
+      taskName: task.name,
+      fireNumber: task.schedule.type === 'at' ? null : (task.fireCount ?? 0) + 1,
+      outcome: success ? 'success' : 'failed',
+      durationMs,
+      runSessionId: sessionId,
+      failureReason: error,
+      finalReply,
+      finalReplyTruncated,
+    });
+    const result = this.getCoworkRunner().insertCrossSessionMessageAndQueue({
+      sourceSessionId: sessionId ?? `scheduled-task:${task.id}`,
+      targetSessionId: originSessionId,
+      message,
+      deliveryId: `schedule_report:${task.id}:${runId}`,
+    });
+    if (!result.insert.ok || !result.runQueued) {
+      console.warn('[Scheduler] Origin-session run report did not queue:', {
+        taskId: task.id,
+        originSessionId,
+        deliveryId: `schedule_report:${task.id}:${runId}`,
+        insertError: result.insert.ok ? result.error : String(result.insert.message),
+      });
+    }
   }
 
   // --- IM Notifications ---

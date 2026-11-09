@@ -21,10 +21,14 @@ const {
   getFreeGrantCampaignStatus,
   getLocalTrafficAccount,
   getRechargeOrder,
+  getMeTrafficBillingStatus,
   getTrafficBalance,
+  getTrafficDailyUsage,
   getTrafficLedger,
   getTrafficPricing,
   getTrafficSettingsSnapshot,
+  getTrafficSponsorOrders,
+  getTrafficUsageSummary,
   initTrafficAccountService,
   isPackagedApp,
   listLocalTrafficJournal,
@@ -387,6 +391,127 @@ test('resolveSponsorTrafficAccount lazily ensures + binds and signs traffic-pre'
   assert.equal(callsToPath(fetchImpl, '/v1/traffic/accounts/bindings').length, 1);
 });
 
+function bindingAndAccountRoutes() {
+  return createFetchStub([
+    ['/v1/traffic/accounts/bindings', (init) => {
+      const body = JSON.parse(init.body);
+      return { botAddress: body.botAddress, accountId: SERVER_ACCOUNT_ID, status: 1, createdAt: 1 };
+    }],
+    ['/v1/traffic/accounts', accountPayload()],
+  ]);
+}
+
+test('resolveSponsorTrafficAccount signs traffic-pre-me when ME billing is requested', async () => {
+  await makeServiceFixture({ fetchImpl: bindingAndAccountRoutes(), trafficMode: 'traffic' });
+
+  const result = await resolveSponsorTrafficAccount({
+    botAddress: BOT1_ADDRESS,
+    challengeId: 'challenge-me',
+    botMnemonic: BOT1_MNEMONIC,
+    botWalletPath: WALLET_PATH,
+    billing: 'me',
+  });
+  assert.ok(result);
+  assert.equal(result.billing, 'me');
+  assert.ok(
+    verifyMessage(IDENTITY_ADDRESS, `traffic-pre-me:${SERVER_ACCOUNT_ID}:challenge-me`, result.authSignature),
+    'authSignature must verify against traffic-pre-me:<accountId>:<challengeId>',
+  );
+  // The ME signature must not double as a byte-billing authorization.
+  assert.ok(!verifyMessage(IDENTITY_ADDRESS, `traffic-pre:${SERVER_ACCOUNT_ID}:challenge-me`, result.authSignature));
+});
+
+test('resolveSponsorTrafficAccount keeps byte billing for server-mode tenants (D4)', async () => {
+  await makeServiceFixture({ fetchImpl: bindingAndAccountRoutes(), trafficMode: 'traffic' });
+  const previous = process.env.IDBOTS_SERVER_MODE;
+  process.env.IDBOTS_SERVER_MODE = '1';
+  try {
+    const result = await resolveSponsorTrafficAccount({
+      botAddress: BOT1_ADDRESS,
+      challengeId: 'challenge-tenant',
+      botMnemonic: BOT1_MNEMONIC,
+      botWalletPath: WALLET_PATH,
+      billing: 'me',
+    });
+    assert.ok(result);
+    assert.equal(result.billing, undefined);
+    assert.ok(verifyMessage(IDENTITY_ADDRESS, `traffic-pre:${SERVER_ACCOUNT_ID}:challenge-tenant`, result.authSignature));
+  } finally {
+    if (previous === undefined) delete process.env.IDBOTS_SERVER_MODE;
+    else process.env.IDBOTS_SERVER_MODE = previous;
+  }
+});
+
+test('local spend journal records ME-billed spends without touching the byte balance cache', async () => {
+  const fetchImpl = createFetchStub([['/v1/traffic/accounts', accountPayload()]]);
+  await makeServiceFixture({ fetchImpl });
+
+  await ensureTrafficAccount();
+  assert.equal((await getTrafficBalance()).balanceBytes, 1000);
+
+  recordLocalTrafficSpend({
+    txId: 'dd'.repeat(32),
+    botAddress: BOT1_ADDRESS,
+    orderId: 'order-me',
+    txSize: 616,
+    sponsoredMinerFee: 616,
+    savedFee: 616,
+    billedBy: 'me',
+    meAmountMilli: 12,
+    kind: '/protocols/simplebuzz',
+  });
+  // A byte-billed row never stores an ME amount, even if one is passed.
+  recordLocalTrafficSpend({
+    txId: 'ee'.repeat(32),
+    botAddress: BOT2_ADDRESS,
+    orderId: 'order-bytes',
+    txSize: 300,
+    billedBy: 'traffic',
+    meAmountMilli: 99,
+  });
+
+  const [bytesRow, meRow] = listLocalTrafficJournal();
+  assert.equal(meRow.billedBy, 'me');
+  assert.equal(meRow.meAmountMilli, 12);
+  assert.equal(meRow.kind, '/protocols/simplebuzz');
+  assert.equal(bytesRow.billedBy, 'traffic');
+  assert.equal(bytesRow.meAmountMilli, 0);
+  // Only the byte-billed spend lowers the cached byte balance.
+  assert.equal((await getTrafficBalance()).balanceBytes, 700);
+});
+
+test('traffic_spend_journal adds me_amount_milli to a pre-ME table in place', async () => {
+  const { store } = await makeServiceFixture({ fetchImpl: createFetchStub([]) });
+  // Shape shipped before ME billing: kind column present, no me_amount_milli.
+  store.getDatabase().run(`
+    CREATE TABLE IF NOT EXISTS traffic_spend_journal (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tx_id TEXT NOT NULL,
+      bot_address TEXT NOT NULL,
+      order_id TEXT NOT NULL DEFAULT '',
+      tx_size INTEGER NOT NULL DEFAULT 0,
+      sponsored_miner_fee INTEGER NOT NULL DEFAULT 0,
+      saved_fee INTEGER NOT NULL DEFAULT 0,
+      billed_by TEXT NOT NULL DEFAULT 'quota',
+      kind TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL
+    );
+  `);
+  store.getDatabase().run(
+    `INSERT INTO traffic_spend_journal (tx_id, bot_address, order_id, tx_size, billed_by, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    ['ff'.repeat(32), BOT1_ADDRESS, 'order-old', 410, 'traffic', 1],
+  );
+
+  recordLocalTrafficSpend({ txId: COMMIT_TXID, botAddress: BOT1_ADDRESS, txSize: 500, billedBy: 'me', meAmountMilli: 10 });
+
+  const [fresh, legacy] = listLocalTrafficJournal();
+  assert.equal(fresh.meAmountMilli, 10);
+  assert.equal(legacy.orderId, 'order-old');
+  assert.equal(legacy.billedBy, 'traffic');
+  assert.equal(legacy.meAmountMilli, 0);
+});
+
 test('resolveSponsorTrafficAccount degrades to undefined on backend 404 (feature off)', async () => {
   const fetchImpl = createFetchStub([
     ['/v1/traffic/accounts', httpError(404, { code: 1, message: 'traffic disabled' })],
@@ -488,15 +613,74 @@ function runSponsoredPin(fetchImpl, extraInput = {}) {
       },
       recordSpentOutpoints: () => {},
       replacePendingFundingUtxos: () => {},
-      resolveTrafficAccount: ({ challengeId }) => resolveSponsorTrafficAccount({
+      // Same wiring as metaidCore: the flow's billing request reaches the resolver.
+      resolveTrafficAccount: ({ challengeId, billing }) => resolveSponsorTrafficAccount({
         botAddress: BOT1_ADDRESS,
         challengeId,
         botMnemonic: BOT1_MNEMONIC,
         botWalletPath: WALLET_PATH,
+        billing,
       }),
     },
   );
 }
+
+test('an ME-billed sponsored write signs traffic-pre-me, journals ME, and converts the byte balance once', async () => {
+  let preBody = null;
+  const draftResult = buildSponsorDraft(BOT1_ADDRESS);
+  const [, challengeRoute] = sponsorRoutes(draftResult);
+  const fetchImpl = createFetchStub([
+    ['/v1/traffic/accounts/bindings', (init) => {
+      const body = JSON.parse(init.body);
+      return { botAddress: body.botAddress, accountId: SERVER_ACCOUNT_ID, status: 1, createdAt: 1 };
+    }],
+    ['/convert-to-me', { convertedBytes: 1000, mintedMilli: 20, entryId: 'me-entry', alreadyConverted: false }],
+    ['/v1/traffic/accounts', accountPayload()],
+    ['/v2/assist/gas/address/info', {
+      exists: true,
+      balance: 0,
+      grantedAmount: 0,
+      reservedAmount: 0,
+      spentAmount: 0,
+      availableAmount: 0,
+      status: 'active',
+      me: { trafficBilling: true, spendableMilli: 50_000 },
+    }],
+    challengeRoute,
+    ['/v2/assist/gas/mvc/pre', (init) => {
+      preBody = JSON.parse(init.body);
+      return {
+        preparedTxHex: draftResult.draft.unsignedTxHex,
+        orderId: 'order-me',
+        minerFee: 100,
+        userInputIndexes: [0],
+        paySource: 'me',
+        meAmountMilli: 7,
+      };
+    }],
+    ['/v2/assist/gas/mvc/commit', { txId: COMMIT_TXID, txSize: 300, minerFee: 100, paySource: 'me', meAmountMilli: 6 }],
+  ]);
+  const { store } = await makeServiceFixture({ fetchImpl, trafficMode: 'traffic' });
+
+  const result = await runSponsoredPin(fetchImpl);
+  assert.equal(result.feeAssist.used, true);
+  assert.equal(result.feeAssist.billedBy, 'me');
+  assert.equal(preBody.trafficAccount.billing, 'me');
+  assert.ok(
+    verifyMessage(IDENTITY_ADDRESS, `traffic-pre-me:${SERVER_ACCOUNT_ID}:challenge-1`, preBody.trafficAccount.authSignature),
+  );
+  const [journalRow] = listLocalTrafficJournal();
+  assert.equal(journalRow.billedBy, 'me');
+  assert.equal(journalRow.meAmountMilli, 6);
+
+  await settleMicrotasks();
+  assert.equal(callsTo(fetchImpl, '/convert-to-me').length, 1, 'first ME-billed write converts the byte balance');
+  assert.equal(store.get('traffic.meConversion').accountId, SERVER_ACCOUNT_ID);
+
+  await runSponsoredPin(fetchImpl);
+  await settleMicrotasks();
+  assert.equal(callsTo(fetchImpl, '/convert-to-me').length, 1, 'later writes never convert again');
+});
 
 test('sponsored createPin injects a verifiable trafficAccount into pre when traffic mode is on', async () => {
   let preBody = null;
@@ -1330,4 +1514,236 @@ test('resolveSponsorTrafficAccount WARN-logs when a bot stays unbindable', async
     warnings.some((line) => line.includes('[TrafficAccount]') && line.includes('could not be bound')),
     `expected a bind-failure WARN log, got: ${JSON.stringify(warnings)}`,
   );
+});
+
+// ---------------------------------------------------------------------------
+// ME credits billing surfaces (requirements v1.0 R3/R4/R5)
+// ---------------------------------------------------------------------------
+
+function addressInfoPayload(me) {
+  return {
+    exists: true,
+    balance: 0,
+    grantedAmount: 0,
+    reservedAmount: 0,
+    spentAmount: 0,
+    availableAmount: 0,
+    status: 'active',
+    ...(me ? { me } : {}),
+  };
+}
+
+function conversionPayload(overrides = {}) {
+  return { convertedBytes: 182_000_000, mintedMilli: 3_640_000, entryId: 'me-entry-1', alreadyConverted: false, ...overrides };
+}
+
+async function settleMicrotasks() {
+  await new Promise((resolve) => setTimeout(resolve, 20));
+}
+
+test('getMeTrafficBillingStatus reads the identity address me block and caches it', async () => {
+  const fetchImpl = createFetchStub([
+    ['/v2/assist/gas/address/info', addressInfoPayload({ trafficBilling: true, spendableMilli: 1_834_000 })],
+    ['/convert-to-me', conversionPayload()],
+    ['/v1/traffic/accounts', accountPayload()],
+  ]);
+  // selfpay: no conversion side effect in this test.
+  await makeServiceFixture({ fetchImpl, trafficMode: 'selfpay' });
+
+  const status = await getMeTrafficBillingStatus();
+  assert.deepEqual(status, { trafficBilling: true, spendableMilli: 1_834_000 });
+  const infoCall = callsTo(fetchImpl, '/v2/assist/gas/address/info')[0];
+  assert.equal(new URL(infoCall.url).searchParams.get('address'), IDENTITY_ADDRESS);
+
+  await getMeTrafficBillingStatus();
+  assert.equal(callsTo(fetchImpl, '/v2/assist/gas/address/info').length, 1, 'second read is served from the cache');
+  await getMeTrafficBillingStatus({ forceRefresh: true });
+  assert.equal(callsTo(fetchImpl, '/v2/assist/gas/address/info').length, 2);
+  await settleMicrotasks();
+  assert.equal(callsTo(fetchImpl, '/convert-to-me').length, 0, 'credits payment off: no conversion');
+});
+
+test('getMeTrafficBillingStatus reads false without a me block, on errors, and for server-mode tenants', async () => {
+  const noBlock = createFetchStub([['/v2/assist/gas/address/info', addressInfoPayload()]]);
+  await makeServiceFixture({ fetchImpl: noBlock, trafficMode: 'traffic' });
+  assert.deepEqual(await getMeTrafficBillingStatus(), { trafficBilling: false });
+
+  const broken = createFetchStub([['/v2/assist/gas/address/info', httpError(503)]]);
+  await makeServiceFixture({ fetchImpl: broken, trafficMode: 'traffic' });
+  assert.deepEqual(await getMeTrafficBillingStatus(), { trafficBilling: false });
+
+  const tenant = createFetchStub([['/v2/assist/gas/address/info', addressInfoPayload({ trafficBilling: true })]]);
+  await makeServiceFixture({ fetchImpl: tenant, trafficMode: 'traffic' });
+  const previous = process.env.IDBOTS_SERVER_MODE;
+  process.env.IDBOTS_SERVER_MODE = '1';
+  try {
+    assert.deepEqual(await getMeTrafficBillingStatus(), { trafficBilling: false });
+    assert.equal(tenant.calls.length, 0);
+  } finally {
+    if (previous === undefined) delete process.env.IDBOTS_SERVER_MODE;
+    else process.env.IDBOTS_SERVER_MODE = previous;
+  }
+});
+
+test('getMeTrafficBillingStatus keeps the last known status when a refresh fails', async () => {
+  let fail = false;
+  const fetchImpl = createFetchStub([
+    ['/v2/assist/gas/address/info', () => (fail ? httpError(503) : addressInfoPayload({ trafficBilling: true }))],
+  ]);
+  await makeServiceFixture({ fetchImpl, trafficMode: 'selfpay' });
+  assert.equal((await getMeTrafficBillingStatus()).trafficBilling, true);
+  fail = true;
+  assert.equal((await getMeTrafficBillingStatus({ forceRefresh: true })).trafficBilling, true);
+});
+
+test('ME billing with credits payment on converts the byte balance once per account (D2)', async () => {
+  let captured = null;
+  const fetchImpl = createFetchStub([
+    ['/v2/assist/gas/address/info', addressInfoPayload({ trafficBilling: true, spendableMilli: 0 })],
+    ['/convert-to-me', (init) => {
+      captured = { headers: init.headers, body: JSON.parse(init.body) };
+      return conversionPayload();
+    }],
+    ['/v1/traffic/accounts', accountPayload()],
+  ]);
+  const { store } = await makeServiceFixture({ fetchImpl, trafficMode: 'traffic' });
+  await ensureTrafficAccount();
+
+  await getMeTrafficBillingStatus();
+  await settleMicrotasks();
+  assert.equal(callsTo(fetchImpl, '/convert-to-me').length, 1);
+  assert.equal(new URL(callsTo(fetchImpl, '/convert-to-me')[0].url).pathname.endsWith(`/v1/traffic/accounts/${SERVER_ACCOUNT_ID}/convert-to-me`), true);
+  assert.equal(captured.headers['X-Identity-Address'], IDENTITY_ADDRESS);
+  const timestamp = Number(captured.headers['X-Timestamp']);
+  assert.ok(
+    verifyMessage(IDENTITY_ADDRESS, `traffic-convert-me:${SERVER_ACCOUNT_ID}:${timestamp}`, captured.headers['X-Signature']),
+    'X-Signature must verify against traffic-convert-me:<accountId>:<ts>',
+  );
+  assert.equal(store.get('traffic.meConversion').accountId, SERVER_ACCOUNT_ID);
+  assert.equal(store.get('traffic.meConversion').mintedMilli, 3_640_000);
+
+  // The kv marker stops further requests, even across a fresh service instance.
+  initTrafficAccountService({
+    getStore: () => store,
+    getMetabotStore: () => ({ listMetabots: () => [], getMetabotWalletById: () => null }),
+    getUserIdentityStore: () => ({
+      get: () => ({ id: 1, mnemonic: IDENTITY_MNEMONIC, path: WALLET_PATH, mvc_address: IDENTITY_ADDRESS, globalmetaid: IDENTITY_GMID, name: 'Owner' }),
+    }),
+    fetchImpl,
+    baseUrl: 'https://traffic.test',
+  });
+  await getMeTrafficBillingStatus({ forceRefresh: true });
+  await settleMicrotasks();
+  assert.equal(callsTo(fetchImpl, '/convert-to-me').length, 1);
+});
+
+test('a missing conversion endpoint (404) is tried once per launch and never fails the status read', async () => {
+  const fetchImpl = createFetchStub([
+    ['/v2/assist/gas/address/info', addressInfoPayload({ trafficBilling: true })],
+    ['/convert-to-me', httpError(404)],
+    ['/v1/traffic/accounts', accountPayload()],
+  ]);
+  const { store } = await makeServiceFixture({ fetchImpl, trafficMode: 'traffic' });
+  await ensureTrafficAccount();
+
+  const originalWarn = console.warn;
+  console.warn = () => {};
+  try {
+    assert.equal((await getMeTrafficBillingStatus()).trafficBilling, true);
+    await settleMicrotasks();
+    await getMeTrafficBillingStatus({ forceRefresh: true });
+    await settleMicrotasks();
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.equal(callsTo(fetchImpl, '/convert-to-me').length, 1);
+  assert.equal(store.get('traffic.meConversion'), undefined);
+});
+
+test('getTrafficSponsorOrders normalizes rows, enriches the local kind, and passes the cursor', async () => {
+  const fetchImpl = createFetchStub([
+    ['/sponsor-orders', {
+      // Shipped backend shape (ABS c3e5be8): `orders` + numeric id cursor.
+      orders: [
+        { orderId: 'order-me', botAddress: BOT1_ADDRESS, txId: COMMIT_TXID, txSize: 616, paySource: 'me', meAmountMilli: 12, status: 'committed', createdAt: 2, committedAt: 3 },
+        { order_id: 'order-old', bot_address: BOT2_ADDRESS, tx_id: 'bb'.repeat(32), tx_size: '300', pay_source: 'BYTES', status: 'committed', created_at: 1 },
+      ],
+      nextCursor: 42,
+    }],
+    ['/v1/traffic/accounts', accountPayload()],
+  ]);
+  await makeServiceFixture({ fetchImpl });
+  await ensureTrafficAccount();
+  recordLocalTrafficSpend({ txId: COMMIT_TXID, botAddress: BOT1_ADDRESS, orderId: 'order-me', txSize: 616, billedBy: 'me', meAmountMilli: 12, kind: '/protocols/simplebuzz' });
+
+  const page = await getTrafficSponsorOrders({ cursor: '17', limit: 20, botAddress: BOT1_ADDRESS });
+  const query = new URL(callsTo(fetchImpl, '/sponsor-orders')[0].url).searchParams;
+  assert.equal(query.get('cursor'), '17');
+  assert.equal(query.get('limit'), '20');
+  assert.equal(query.get('botAddress'), BOT1_ADDRESS);
+  assert.equal(page.nextCursor, '42');
+  assert.deepEqual(page.orders[0], {
+    orderId: 'order-me',
+    botAddress: BOT1_ADDRESS,
+    txId: COMMIT_TXID,
+    txSize: 616,
+    paySource: 'me',
+    meAmountMilli: 12,
+    status: 'committed',
+    createdAt: 2,
+    committedAt: 3,
+    kind: '/protocols/simplebuzz',
+  });
+  assert.equal(page.orders[1].paySource, 'bytes');
+  assert.equal(page.orders[1].txSize, 300);
+  assert.equal(page.orders[1].kind, undefined);
+});
+
+test('getTrafficSponsorOrders ends paging at the numeric-zero cursor and still reads rows', async () => {
+  const fetchImpl = createFetchStub([
+    ['/sponsor-orders', { rows: [{ orderId: 'order-1', botAddress: BOT1_ADDRESS, txId: COMMIT_TXID, txSize: 10, paySource: 'bytes', meAmountMilli: 0, status: 'committed', createdAt: 1 }], nextCursor: 0 }],
+    ['/v1/traffic/accounts', accountPayload()],
+  ]);
+  await makeServiceFixture({ fetchImpl });
+  await ensureTrafficAccount();
+
+  const page = await getTrafficSponsorOrders();
+  assert.equal(page.nextCursor, '', 'nextCursor 0 means no more pages, never a truthy cursor');
+  assert.equal(page.orders.length, 1);
+});
+
+test('getTrafficSponsorOrders surfaces a missing endpoint as featureUnavailable', async () => {
+  const fetchImpl = createFetchStub([
+    ['/sponsor-orders', httpError(404)],
+    ['/v1/traffic/accounts', accountPayload()],
+  ]);
+  await makeServiceFixture({ fetchImpl });
+  await ensureTrafficAccount();
+  await assert.rejects(getTrafficSponsorOrders(), (error) => {
+    assert.ok(error instanceof TrafficApiError);
+    assert.equal(error.featureUnavailable, true);
+    assert.equal(error.stage, 'orders');
+    return true;
+  });
+});
+
+test('usage endpoints pass ME totals through only when the backend sends them', async () => {
+  const fetchImpl = createFetchStub([
+    ['/usage/daily', [
+      { date: '2026-11-09', botAddress: BOT1_ADDRESS, bytes: 1000, txCount: 2, meMilli: 20 },
+      { date: '2026-11-08', botAddress: BOT2_ADDRESS, bytes: 500, txCount: 1 },
+    ]],
+    ['/usage/summary', { todayBytes: 1000, weekBytes: 1500, monthBytes: 1500, todayMeMilli: 20, week_me_milli: '30' }],
+    ['/v1/traffic/accounts', accountPayload()],
+  ]);
+  await makeServiceFixture({ fetchImpl });
+  await ensureTrafficAccount();
+
+  const [meRow, bytesRow] = await getTrafficDailyUsage();
+  assert.equal(meRow.meMilli, 20);
+  assert.equal('meMilli' in bytesRow, false);
+  const summary = await getTrafficUsageSummary();
+  assert.equal(summary.todayMeMilli, 20);
+  assert.equal(summary.weekMeMilli, 30);
+  assert.equal('monthMeMilli' in summary, false);
 });

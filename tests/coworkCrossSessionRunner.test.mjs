@@ -266,10 +266,12 @@ test('write tool inserts source-prefixed message, ignores spoofed source, emits 
   assert.equal(payload.sourceSessionId, source.id);
   assert.equal(payload.targetSessionId, target.id);
   assert.equal(payload.runQueued, true);
+  assert.equal(payload.reportBack.enabled, true, 'bot work orders report back by default');
   assert.equal(payload.message.content, `来自${source.id} 的信息：<cross_session_message trust="untrusted">continue from source</cross_session_message>`);
   assert.deepEqual(payload.message.metadata, {
     sourceChannel: 'idbots_cross_session',
     sourceSessionId: source.id,
+    crossSessionNotifySource: true,
   });
 
   assert.deepEqual(emittedMessages.map((event) => [event.sessionId, event.message.id]), [

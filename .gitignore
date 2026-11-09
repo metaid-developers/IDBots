@@ -40,6 +40,13 @@ docs/*
 !docs/nft-indexer-requirements.md
 !docs/nft-sell-protocol-draft.md
 !docs/idbots-nft-ca-protocol.md
+!docs/nft-mrc721-acceptance-checklist.md
+!docs/nft-open-market-psbt-settlement.md
+!docs/nft-offer-indexer-requirements.md
+!docs/nft-offer-protocol.md
+!docs/nft-offer-metaso-handoff.md
+!docs/nft-offer-e2e-playbook.md
+!docs/nft-zero-conf-indexer-requirements.md
 !docs/cloud-mobile/
 !docs/metaid_protocols/
 !docs/metaid_protocols/**
@@ -363,6 +370,7 @@ tests/*
 !tests/metabotHomepageInlineLayout.test.tsx
 !tests/metabotTwinSwitch.test.mjs
 !tests/metaAppProtocol.test.mjs
+!tests/trafficCreditsMode.test.ts
 
 # Local DB (never commit)
 *.sqlite
@@ -516,9 +524,12 @@ man_base_data_pebble/
 !tests/orchestrationStore.test.mjs
 !tests/orchestrationProgress.test.mjs
 !tests/crossSessionDeliveryRunner.test.mjs
+!tests/coworkCrossSessionDispatchReport.test.mjs
+!tests/schedulerOriginRunReport.test.mjs
 !tests/twinOrchestrationService.test.mjs
 !tests/twinNotifyOnce.test.mjs
 !tests/twinStepAcceptance.test.mjs
+!tests/twinDelegationAutoClosure.test.mjs
 !tests/twinOrchestrationPrompt.test.mjs
 !tests/skillTurnTimeoutRecovery.test.mjs
 !tests/groupTaskOrchestrationBridge.test.mjs
@@ -732,6 +743,8 @@ man_base_data_pebble/
 !tests/scheduledTaskTargetSession.test.mjs
 !tests/scheduledTaskCreateDefaultBinding.test.mjs
 !tests/schedulerTargetSession.test.mjs
+!tests/schedulerSeriesSession.test.mjs
+!tests/scheduledTaskSessionSeriesStore.test.mjs
 !tests/scheduledTaskSkipLedger.test.mjs
 !tests/scheduledTaskSingleRunner.test.mjs
 !tests/scheduledTaskLifecycleStore.test.mjs
@@ -775,6 +788,7 @@ man_base_data_pebble/
 !tests/coworkAssistantDeliveryIndex.test.mjs
 !tests/markdownContentHtmlReportCard.test.tsx
 !tests/inlineHtmlReportBlock.test.tsx
+!tests/inlineHtmlLocalImages.test.tsx
 !tests/inlineMetaAppBlock.test.tsx
 !tests/markdownContentSingleTilde.test.tsx
 !tests/nftCardMarkdown.test.tsx
@@ -879,6 +893,9 @@ blob-report/
 # Poll-loop backoff ladder + circuit breaker (PR #101)
 !tests/pollBackoffController.test.mjs
 
+# Manapi egress guard: walk memo + incremental head-stop (ops ticket 2026-11-08)
+!tests/protocolPinFetchEgressGuard.test.mjs
+
 # F-17: mobile permission payload rendering + uncertain-outcome reconcile
 !tests/ipcSanitizeDepth.test.ts
 !tests/coworkPermissionPanelFallback.test.tsx
@@ -890,6 +907,8 @@ blob-report/
 !tests/mrc721Service.test.mjs
 !tests/mrc721AgentTools.test.mjs
 !tests/mrc721AtomicSwap.test.mjs
+!tests/mrc721OpenOfferTx.test.mjs
+!tests/mrc721OpenOfferService.test.mjs
 !tests/weixinGateway.test.ts
 !tests/weixinMedia.test.ts
 !tests/outboundImReceiptBubble.test.mjs
@@ -929,5 +948,6 @@ blob-report/
 !tests/mePointsHistory.test.mjs
 # Settings > Models provider template catalog (ZCode port) + layout anchors
 !tests/providerTemplateCatalog.test.ts
+!tests/seedreamImageExtension.test.mjs
 # ME subscription checkout backend requirements (assist-base-service)
 !docs/me-subscription-checkout-backend-requirements.md

@@ -10,6 +10,8 @@ export interface CollectPreferenceEventsOptions {
   pageSize?: number;
   maxPages?: number;
   timeoutMs?: number;
+  /** Skip the process-wide walk memo (write-following refreshes). */
+  bypassCache?: boolean;
 }
 
 export interface CollectPreferenceEventsResult {
@@ -32,6 +34,7 @@ async function walkPool(
         maxPages: options.maxPages ?? 1000,
         timeoutMs: options.timeoutMs ?? 8_000,
         fetchImpl: options.fetchImpl,
+        bypassCache: options.bypassCache,
         selectContent: keepRaw,
         onTruncated: (info) => {
           if (info.reason === 'fetch-error') failed = true;

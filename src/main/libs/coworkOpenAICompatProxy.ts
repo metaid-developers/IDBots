@@ -28,8 +28,16 @@ import {
 } from './coworkRequestHeadWatch';
 import { modelSupportsVision } from './coworkModelLimits';
 import { modelAlwaysThinks, responsesEffortForThinkingOff, thinkingWireFamily } from './modelThinking';
-import type { ScheduledTaskStore, ScheduledTaskInput } from '../scheduledTaskStore';
-import { DEFAULT_AGENT_MAX_FIRES } from '../scheduledTaskStore';
+import type { ScheduledTaskStore, ScheduledTaskInput, ScheduledTaskSessionMode } from '../scheduledTaskStore';
+import { DEFAULT_AGENT_MAX_FIRES, SCHEDULED_TASK_SESSION_MODES } from '../scheduledTaskStore';
+
+/** `sessionMode` is optional everywhere: absent = 'series' on create, keep on update. */
+function validateScheduledTaskSessionMode(value: unknown): string | null {
+  if (value === undefined) return null;
+  return SCHEDULED_TASK_SESSION_MODES.includes(value as ScheduledTaskSessionMode)
+    ? null
+    : 'sessionMode must be "series" (default: every fire continues one standing conversation) or "fresh" (a new session for every fire), or omitted.';
+}
 import type { Scheduler } from './scheduler';
 
 export type OpenAICompatUpstreamConfig = {
@@ -3586,6 +3594,12 @@ async function handleCreateScheduledTask(
   // Optional session binding submitted as `sessionId`; stored as targetSessionId.
   const sessionBinding = resolveCreateTargetSessionId(input.sessionId);
 
+  const sessionModeError = validateScheduledTaskSessionMode(input.sessionMode);
+  if (sessionModeError) {
+    writeJSON(res, 400, { success: false, error: sessionModeError } as any);
+    return;
+  }
+
   // Lifecycle discipline (2026-10-24, Seedance-probe incident): every API
   // create comes from a bot session (humans use the settings UI), so the task
   // is stamped agent-origin with this session as its birthplace — a recurring
@@ -3651,6 +3665,7 @@ async function handleCreateScheduledTask(
     exitCondition: exitCondition || null,
     maxFires,
     ...(sessionBinding.targetSessionId ? { targetSessionId: sessionBinding.targetSessionId } : {}),
+    ...(input.sessionMode !== undefined ? { sessionMode: input.sessionMode as ScheduledTaskSessionMode } : {}),
   };
 
   const sessionWarning = sessionBinding.warning
@@ -3798,7 +3813,7 @@ function validateScheduledTaskPartialInput(input: Record<string, unknown>): stri
   if (input.sessionId !== undefined && input.sessionId !== null && typeof input.sessionId !== 'string') {
     return 'sessionId must be a string, null, or omitted';
   }
-  return null;
+  return validateScheduledTaskSessionMode(input.sessionMode);
 }
 
 async function handleUpdateScheduledTask(

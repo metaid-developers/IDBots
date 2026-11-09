@@ -19,8 +19,11 @@ interface TaskFormProps {
   onSaved: () => void;
 }
 
-// Which conversation the task runs in.
-type SessionMode = 'new' | 'current' | 'custom';
+// Which conversation the task runs in. 'series' (default): a recurring task
+// continues one standing conversation "[定时] <name>". The other three bind a
+// session via targetSessionId; 'new' additionally sets sessionMode 'fresh'
+// (the pre-series behavior: a new session every run).
+type SessionMode = 'series' | 'new' | 'current' | 'custom';
 
 const NOTIFY_PLATFORMS: NotifyPlatform[] = ['dingtalk', 'feishu', 'telegram', 'discord'];
 const WEEKDAYS = [0, 1, 2, 3, 4, 5, 6] as const; // 0=Sunday
@@ -39,13 +42,18 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved }) =>
   // Parse existing schedule for edit mode
   const parsed = task ? parseScheduleToFormState(task.schedule) : null;
 
-  // Seed the session binding from the edited task (new tasks run in a fresh session).
+  // Seed the session choice from the edited task. New tasks use the standing
+  // conversation; an existing task without a binding keeps its stored mode
+  // ('series' default, 'fresh' shows as 'new'); a bound task shows as
+  // current/custom.
   const boundSessionId = task?.targetSessionId ?? null;
-  const initialSessionMode: SessionMode = boundSessionId == null
-    ? 'new'
-    : boundSessionId === currentSessionId
+  const initialSessionMode: SessionMode = boundSessionId != null
+    ? boundSessionId === currentSessionId
       ? 'current'
-      : 'custom';
+      : 'custom'
+    : task?.sessionMode === 'fresh'
+      ? 'new'
+      : 'series';
 
   // Form state
   const [name, setName] = useState(task?.name ?? '');
@@ -160,10 +168,12 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved }) =>
   };
 
   const resolveTargetSessionId = (): string | null => {
-    if (sessionMode === 'new') return null;
     if (sessionMode === 'current') return currentSessionId ?? null;
-    return customSessionId.trim() || null;
+    if (sessionMode === 'custom') return customSessionId.trim() || null;
+    return null;
   };
+
+  const resolveSessionMode = (): 'series' | 'fresh' => (sessionMode === 'new' ? 'fresh' : 'series');
 
   const handleSubmit = async () => {
     if (!validate()) return;
@@ -182,6 +192,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved }) =>
         executionMode: 'local',
         metabotId: selectedMetabotId,
         targetSessionId: resolveTargetSessionId(),
+        sessionMode: resolveSessionMode(),
         memoryAccess,
         expiresAt: expiresAt || null,
         notifyPlatforms,
@@ -293,6 +304,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved }) =>
           onChange={(e) => setSessionMode(e.target.value as SessionMode)}
           className={inputClass}
         >
+          <option value="series">{i18nService.t('scheduledTasksFormSessionSeries')}</option>
           <option value="new">{i18nService.t('scheduledTasksFormSessionNew')}</option>
           <option value="current" disabled={currentSessionId == null}>
             {currentSession?.title
@@ -301,6 +313,16 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved }) =>
           </option>
           <option value="custom">{i18nService.t('scheduledTasksFormSessionCustom')}</option>
         </select>
+        {sessionMode === 'series' && (
+          <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1">
+            {i18nService.t('scheduledTasksFormSessionSeriesHint')}
+          </p>
+        )}
+        {sessionMode === 'new' && (
+          <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1">
+            {i18nService.t('scheduledTasksFormSessionNewHint')}
+          </p>
+        )}
         {sessionMode === 'custom' && (
           <>
             <input

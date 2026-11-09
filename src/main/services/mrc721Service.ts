@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { fetchFromLocalOrFallback, fetchJsonWithFallbackOnMiss } from './localIndexerProxy';
+import { resolveCreatePinFeeRate } from './feeRateStore';
 import { resolveBroadcastTxResult } from '../libs/mvcSpend';
 import type { MetabotStore } from '../metabotStore';
 
@@ -150,6 +151,24 @@ export function normalizeMrc721CoverUri(raw: unknown, field = 'cover'): string |
 }
 
 /**
+ * Metadata wire form: always a JSON *string*. The protocol example writes
+ * `"metadata": "<any data>"` and indexers type the item field as a string —
+ * on MetaSo-P2P a JSON object in ONE item_desc ref fails the whole decode and
+ * drops every ref of the pin (requirement R-F-11). Strings pass verbatim
+ * (trimmed, never re-parsed); any other JSON value is serialized to its
+ * compact JSON text. Absent or blank → undefined (the field is omitted).
+ */
+export function serializeMrc721Metadata(raw: unknown, field = 'metadata'): string | undefined {
+  if (raw == null) return undefined;
+  const serialized = typeof raw === 'string' ? raw.trim() : JSON.stringify(raw);
+  if (!serialized) return undefined;
+  if (serialized.length > MRC721_FIELD_LIMITS.metadataSerialized) {
+    throw new Error(`${field} must serialize to at most ${MRC721_FIELD_LIMITS.metadataSerialized} characters`);
+  }
+  return serialized;
+}
+
+/**
  * collection_desc pin content. Fields absent from the input are omitted so
  * the indexer defaults apply (totalSupply -1 = unlimited, royaltyRate 0).
  */
@@ -174,26 +193,9 @@ export function buildMrc721CollectionDescContent(input: {
   if (website) content.website = website;
   if (cover) content.cover = cover;
   if (input.metadata != null) {
-    const serialized = typeof input.metadata === 'string'
-      ? input.metadata.trim()
-      : JSON.stringify(input.metadata);
+    const serialized = serializeMrc721Metadata(input.metadata);
     if (!serialized) throw new Error('metadata must not be empty when provided');
-    if (serialized.length > MRC721_FIELD_LIMITS.metadataSerialized) {
-      throw new Error(`metadata must serialize to at most ${MRC721_FIELD_LIMITS.metadataSerialized} characters`);
-    }
-    // Round-trip: reject non-JSON strings early (the indexer would just drop
-    // the collection as invalid content otherwise).
-    let normalized: unknown = serialized;
-    if (typeof input.metadata !== 'string') {
-      normalized = input.metadata;
-    } else {
-      try {
-        normalized = JSON.parse(serialized);
-      } catch {
-        normalized = serialized;
-      }
-    }
-    content.metadata = normalized;
+    content.metadata = serialized;
   }
   return content;
 }
@@ -215,17 +217,8 @@ export function buildMrc721ItemDescContent(items: Array<{
     if (item.name) ref.name = item.name;
     if (item.desc) ref.desc = item.desc;
     if (item.cover) ref.cover = item.cover;
-    if (item.metadata != null) {
-      ref.metadata = typeof item.metadata === 'string'
-        ? (() => {
-            try {
-              return JSON.parse(item.metadata);
-            } catch {
-              return item.metadata;
-            }
-          })()
-        : item.metadata;
-    }
+    const metadata = serializeMrc721Metadata(item.metadata);
+    if (metadata) ref.metadata = metadata;
     return ref;
   });
   return { items: refs };
@@ -302,6 +295,7 @@ export interface Mrc721ItemTransferRecord {
   chainName?: string;
   height?: number;
   txId?: string;
+  /** Epoch SECONDS (manapi contract, frozen) — not ms; multiply by 1000 for Date. */
   time?: number;
 }
 
@@ -507,6 +501,69 @@ export async function fetchMrc721ItemVerify(params: {
  * https://manapi.metaid.io to revert reads without a rebuild).
  */
 export const METASO_API_BASE_DEFAULT = 'https://so.metaid.io';
+
+/** man-p2p raw pin index (serves mempool pins with genesisHeight -1). */
+export const MRC721_RAW_PIN_BASE = 'https://manapi.metaid.io';
+
+/** One raw pin as the chain carries it — the zero-confirmation fallback view. */
+export interface Mrc721RawPin {
+  pinId: string;
+  path: string;
+  operation: string;
+  address: string;
+  /** -1 = in the mempool, not yet in a block. */
+  genesisHeight: number;
+  confirmed: boolean;
+  /** Decoded pin body (utf-8); empty when undecodable. */
+  content: string;
+  /** Unix seconds the indexer first saw the pin. */
+  seenTime?: number;
+}
+
+/**
+ * Raw pin read for MRC-721 zero-confirmation fallbacks: the MetaSo NFT
+ * aggregate only folds confirmed pins (requirement R-F), while man-p2p's raw
+ * pin endpoint already serves mempool pins. Returns null on a miss or any
+ * failure — callers use it for DISPLAY only ("on-chain, pending block"), never
+ * as a trade precondition.
+ */
+export async function fetchMrc721RawPin(pinId: string): Promise<Mrc721RawPin | null> {
+  const id = String(pinId ?? '').trim().toLowerCase();
+  if (!isMrc721PinId(id)) return null;
+  try {
+    const response = await fetchFromLocalOrFallback(
+      `/api/pin/${encodeURIComponent(id)}`,
+      `${MRC721_RAW_PIN_BASE}/api/pin/${encodeURIComponent(id)}`,
+    );
+    if (!response.ok) return null;
+    const json = await response.json() as { code?: number; data?: Record<string, unknown> | null };
+    const row = json?.code === 1 && json.data && typeof json.data === 'object' ? json.data : null;
+    if (!row) return null;
+    const rawHeight = Number(row.genesisHeight);
+    const genesisHeight = Number.isFinite(rawHeight) ? rawHeight : -1;
+    let content = '';
+    const body = typeof row.contentBody === 'string' ? row.contentBody : '';
+    if (body) {
+      try {
+        content = Buffer.from(body, 'base64').toString('utf8');
+      } catch {
+        content = '';
+      }
+    }
+    return {
+      pinId: typeof row.id === 'string' ? row.id : id,
+      path: typeof row.path === 'string' ? row.path : '',
+      operation: typeof row.operation === 'string' ? row.operation : '',
+      address: typeof row.address === 'string' ? row.address : '',
+      genesisHeight,
+      confirmed: genesisHeight > 0,
+      content,
+      seenTime: Number.isFinite(Number(row.seenTime)) ? Number(row.seenTime) : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
 
 export function getMetasoApiBase(): string {
   const override = (process.env.IDBOTS_METASO_API_BASE ?? '').trim().replace(/\/+$/, '');
@@ -1115,7 +1172,10 @@ export async function updateMrc721Collection(
     desc: overrides.desc ?? current.desc,
     website: overrides.website ?? current.website,
     cover: overrides.cover ?? current.cover,
-    metadata: hasMetadataOverride ? input.metadata : current.metadata,
+    // The indexer serves an absent metadata as "" — carry it only when set,
+    // so a cover-only update on a metadata-less album never trips the
+    // "must not be empty" guard.
+    metadata: hasMetadataOverride ? input.metadata : (current.metadata?.trim() ? current.metadata : undefined),
   });
 
   return {
@@ -1210,6 +1270,349 @@ export async function createMrc721Mint(
     }])),
   }, { network: input.network ?? 'mvc', origin: input.origin ?? 'tool:mrc721_mint' });
   return { ...mint, collectionName, itemPath, itemDescPinId: itemDesc.pinId };
+}
+
+// ---------------------------------------------------------------------------
+// item_desc batch write (multi-item display info in ONE item_desc pin)
+// ---------------------------------------------------------------------------
+
+export const MRC721_ITEM_DESC_BATCH_MAX_ITEMS = 100;
+
+export interface Mrc721ItemDescBatchEntry {
+  pinId: string;
+  name?: string;
+  desc?: string;
+  cover?: string;
+  metadata?: unknown;
+}
+
+export interface Mrc721ItemDescBatchInput {
+  metabotId: number;
+  collectionName: string;
+  items: Mrc721ItemDescBatchEntry[];
+  network?: 'mvc' | 'btc';
+  origin?: string;
+  /** Gap between the preceding pins and this batch write (UTXO race safety). */
+  settleDelayMs?: number;
+}
+
+/** Validate one batch entry's display fields exactly like the mint path does. */
+function validateMrc721BatchEntryDisplay(entry: Mrc721ItemDescBatchEntry, index: number): {
+  pinid: string;
+  name?: string;
+  desc?: string;
+  cover?: string;
+  metadata?: unknown;
+} {
+  const label = `items[${index}]`;
+  const pinid = String(entry.pinId ?? '').trim().toLowerCase();
+  if (!isMrc721PinId(pinid)) {
+    throw new Error(`${label}.pin_id must be a valid item pinId (64-hex txid + "i" + output index)`);
+  }
+  const name = validateMrc721TextField(entry.name, `${label}.name`, MRC721_FIELD_LIMITS.name);
+  const desc = validateMrc721TextField(entry.desc, `${label}.desc`, MRC721_FIELD_LIMITS.desc);
+  const cover = normalizeMrc721CoverUri(entry.cover, `${label}.cover`);
+  const metadata = serializeMrc721Metadata(entry.metadata, `${label}.metadata`);
+  return { pinid, name, desc, cover, metadata };
+}
+
+/**
+ * Batch item_desc write: ONE item_desc pin at
+ * /nft/mrc721/{collectionName}/item_desc carrying display info
+ * (name/desc/cover/metadata) for up to 100 item pinIds — N mints + 1 batch
+ * write instead of N×(mint + item_desc follow-up) pins. Per-field
+ * first-write-wins still applies: fields already set by an earlier item_desc
+ * pin stay locked; this write only fills missing fields (the indexer applies
+ * per pinid, first seen wins).
+ */
+export async function createMrc721ItemDescBatch(
+  deps: { createPin: Mrc721CreatePinFn },
+  input: Mrc721ItemDescBatchInput,
+): Promise<Mrc721PinWriteResult & { collectionName: string; referencedPinIds: string[] }> {
+  const collectionName = validateMrc721CollectionName(input.collectionName);
+  if (!Array.isArray(input.items) || input.items.length === 0) {
+    throw new Error('item_desc batch requires at least one item entry');
+  }
+  if (input.items.length > MRC721_ITEM_DESC_BATCH_MAX_ITEMS) {
+    throw new Error(`item_desc batch supports at most ${MRC721_ITEM_DESC_BATCH_MAX_ITEMS} items per pin — split into several writes`);
+  }
+  const seen = new Set<string>();
+  const refs = input.items.map((entry, index) => {
+    const ref = validateMrc721BatchEntryDisplay(entry, index);
+    if (seen.has(ref.pinid)) {
+      throw new Error(`duplicate pin_id in item_desc batch: ${ref.pinid} (items[${index}])`);
+    }
+    seen.add(ref.pinid);
+    return ref;
+  });
+  // Sequential-pin gap: mirrors the mint path — the wallet-api UTXO list lags
+  // behind just-broadcast txs, so give the spend coordinator snapshot a moment
+  // before this pin re-picks funding.
+  const settleDelayMs = Math.max(0, input.settleDelayMs ?? 3_000);
+  if (settleDelayMs > 0) await sleep(settleDelayMs);
+  const write = await broadcastMrc721Pin(deps.createPin, input.metabotId, {
+    operation: 'create',
+    path: `${MRC721_PATH_ROOT}/${collectionName}/item_desc`,
+    encryption: '0',
+    version: '1.0.0',
+    contentType: 'application/json',
+    payload: JSON.stringify(buildMrc721ItemDescContent(refs)),
+  }, { network: input.network ?? 'mvc', origin: input.origin ?? 'tool:mrc721_item_desc_batch' });
+  return { ...write, collectionName, referencedPinIds: refs.map((ref) => ref.pinid) };
+}
+
+// ---------------------------------------------------------------------------
+// Dry-run fee estimate (payload-aware upper bound; no broadcast)
+// ---------------------------------------------------------------------------
+
+/**
+ * P2PKH input size, mirroring libs/mvcSpend's P2PKH_INPUT_SIZE (148 bytes).
+ * A literal instead of an import: mvcSpend pulls in meta-contract, which
+ * must stay out of the main process (the createPin worker exists for that).
+ */
+const MRC721_ESTIMATE_P2PKH_INPUT_SIZE = 148;
+
+/**
+ * OP_RETURN script size for one metaid pin, mirroring createPinWorker's
+ * buildMvcOpReturn + getOpReturnScriptSize byte math (keep in sync).
+ */
+function estimateMrc721OpReturnScriptSize(metaidData: {
+  operation: string;
+  path: string;
+  encryption?: string;
+  version?: string;
+  contentType: string;
+  payload: string;
+}): number {
+  const parts: (string | Buffer)[] = ['metaid', metaidData.operation];
+  parts.push((metaidData.path || '').toLowerCase());
+  parts.push(metaidData.encryption || '0');
+  parts.push(metaidData.version || '1.0');
+  parts.push(metaidData.contentType || 'text/plain;utf-8');
+  parts.push(Buffer.from(metaidData.payload, 'utf-8'));
+  let size = 1; // OP_RETURN
+  for (const part of parts) {
+    const len = Buffer.isBuffer(part) ? part.length : Buffer.byteLength(part, 'utf8');
+    if (len < 76) size += 1 + len;
+    else if (len <= 0xff) size += 2 + len;
+    else if (len <= 0xffff) size += 3 + len;
+    else size += 5 + len; // OP_PUSHDATA4
+  }
+  return size;
+}
+
+/**
+ * Upper-bound fee estimate for ONE pin write at the given fee rate (sat/vB):
+ * mirrors createPinWorker's size accounting — base tx (62) + OP_RETURN script
+ * + 2 P2PKH inputs (1 funding + 1 reserved, matching the draft-mode estimate)
+ * + 1 change output. Every fee-facing surface labels this an ESTIMATE; exact
+ * costs come from the write receipts.
+ */
+export function estimateMvcMrc721PinFeeSats(metaidData: {
+  operation: string;
+  path: string;
+  encryption?: string;
+  version?: string;
+  contentType: string;
+  payload: string;
+}, feeRate: number): number {
+  const scriptSize = estimateMrc721OpReturnScriptSize(metaidData);
+  const txSize = 62 + scriptSize + 2 * MRC721_ESTIMATE_P2PKH_INPUT_SIZE + (9 + 43);
+  return Math.ceil(txSize * Math.max(0, feeRate));
+}
+
+export type Mrc721IssueDisplayMode = 'ride_along' | 'batch_desc' | 'none';
+
+export interface Mrc721IssueEstimateItem {
+  name?: string;
+  desc?: string;
+  cover?: string;
+  metadata?: unknown;
+}
+
+export interface Mrc721IssueEstimateInput {
+  collectionName: string;
+  name?: string;
+  totalSupply?: number;
+  royaltyRate?: number;
+  desc?: string;
+  website?: string;
+  cover?: string;
+  metadata?: unknown;
+  /** Planned items (display info only; item pin payloads are empty JSON). */
+  items?: Mrc721IssueEstimateItem[];
+  /** How display info rides: per-mint item_desc, ONE batch item_desc, or none. */
+  displayMode?: Mrc721IssueDisplayMode;
+  /** false = add-to-existing (no collection_desc write in the plan). */
+  registerCollection?: boolean;
+  /**
+   * Size coverless items' item_desc refs with a placeholder metafile cover
+   * (default true): covers usually only exist after the uploads, and the
+   * receipts must never exceed this upper bound.
+   */
+  assumeItemCovers?: boolean;
+  /** File bodies to upload first (covers, item files, posters), by size. */
+  uploads?: Array<{ label?: string; bytes: number }>;
+  /** Fee rate in sat/vB; defaults to the resolved MVC createPin rate. */
+  feeRate?: number;
+}
+
+export interface Mrc721IssueEstimateWrite {
+  kind: 'collection_desc' | 'item_mint' | 'item_desc' | 'upload';
+  path: string;
+  payloadBytes: number;
+  estimatedSats: number;
+}
+
+export interface Mrc721IssueEstimate {
+  feeRate: number;
+  displayMode: Mrc721IssueDisplayMode;
+  registerCollection: boolean;
+  itemCount: number;
+  writes: Mrc721IssueEstimateWrite[];
+  /** Protocol pin writes only (collection_desc + mints + item_desc). */
+  protocolEstimatedSats: number;
+  /** File-body uploads only (0 when no uploads were planned). */
+  uploadEstimatedSats: number;
+  totalEstimatedSats: number;
+}
+
+/** Placeholder item pinId (66 bytes) so batch item_desc payload sizes are realistic pre-mint. */
+const MRC721_ESTIMATE_PLACEHOLDER_PINID = `${'0'.repeat(64)}i0`;
+
+/** Placeholder cover URI with an extension — the longest common cover shape. */
+const MRC721_ESTIMATE_PLACEHOLDER_COVER = `metafile://${'0'.repeat(64)}i0.jpeg`;
+
+/**
+ * Upper-bound fee for uploading one file body on-chain. Calibrated on the
+ * 2026-11-08 issue: 5 JPEGs, 3,389,570 bytes in total, cost 3,753,133 sats at
+ * 1 sat/vB (1.107 sats/byte, incl. per-tx overhead). 1.15/byte plus 600 per
+ * file keeps a margin. Sponsored uploads cost the bot less, never more.
+ */
+export function estimateMvcFileUploadFeeSats(bytes: number, feeRate: number): number {
+  const size = Math.max(0, Math.floor(Number(bytes) || 0));
+  return Math.ceil((size * 1.15 + 600) * Math.max(0, feeRate));
+}
+
+function estimateMrc721PinWrite(
+  kind: Mrc721IssueEstimateWrite['kind'],
+  path: string,
+  payload: string,
+  feeRate: number,
+): Mrc721IssueEstimateWrite {
+  return {
+    kind,
+    path,
+    payloadBytes: Buffer.byteLength(payload, 'utf8'),
+    estimatedSats: estimateMvcMrc721PinFeeSats({
+      operation: 'create',
+      path,
+      encryption: '0',
+      version: '1.0.0',
+      contentType: 'application/json',
+      payload,
+    }, feeRate),
+  };
+}
+
+/**
+ * Dry-run plan for an NFT issue (new album, or add-to-existing with
+ * registerCollection false): validates every planned field with the SAME
+ * builders the write tools use — invalid fields throw here, before any fee
+ * is spent — and prices each pin write with the payload-aware upper bound,
+ * plus the planned file-body uploads (usually the dominant cost).
+ * Pure: no broadcast, no indexer calls, no filesystem. Item pinids do not
+ * exist pre-mint, so item_desc payloads are sized with 66-byte placeholder
+ * pinids (and placeholder covers unless assumeItemCovers is false).
+ */
+export function estimateMrc721Issue(input: Mrc721IssueEstimateInput): Mrc721IssueEstimate {
+  const collectionName = validateMrc721CollectionName(input.collectionName);
+  const feeRate = input.feeRate != null && Number.isFinite(input.feeRate) && input.feeRate > 0
+    ? input.feeRate
+    : resolveCreatePinFeeRate('mvc');
+  const displayMode: Mrc721IssueDisplayMode = input.displayMode ?? 'batch_desc';
+  const registerCollection = input.registerCollection !== false;
+  const assumeItemCovers = input.assumeItemCovers !== false;
+  const items = Array.isArray(input.items) ? input.items : [];
+  if (items.length > MRC721_ITEM_DESC_BATCH_MAX_ITEMS) {
+    throw new Error(`issue estimate supports at most ${MRC721_ITEM_DESC_BATCH_MAX_ITEMS} items per batch — split the issue`);
+  }
+
+  const writes: Mrc721IssueEstimateWrite[] = [];
+  const root = `${MRC721_PATH_ROOT}/${collectionName}`;
+
+  if (registerCollection) {
+    // Validates name/totalSupply/royaltyRate/desc/website/cover/metadata.
+    const content = buildMrc721CollectionDescContent({
+      name: validateMrc721TextField(input.name, 'name', MRC721_FIELD_LIMITS.name) ?? collectionName,
+      totalSupply: validateMrc721TotalSupply(input.totalSupply),
+      royaltyRate: validateMrc721RoyaltyRate(input.royaltyRate),
+      desc: validateMrc721TextField(input.desc, 'desc', MRC721_FIELD_LIMITS.desc),
+      website: validateMrc721TextField(input.website, 'website', MRC721_FIELD_LIMITS.website),
+      cover: normalizeMrc721CoverUri(input.cover),
+      metadata: input.metadata,
+    });
+    writes.push(estimateMrc721PinWrite('collection_desc', `${root}/collection_desc`, JSON.stringify(content), feeRate));
+  }
+
+  // Validate item display info exactly like the mint path does.
+  const validatedItems = items.map((item, index) => {
+    const label = `items[${index}]`;
+    const name = validateMrc721TextField(item.name, `${label}.name`, MRC721_FIELD_LIMITS.name);
+    const desc = validateMrc721TextField(item.desc, `${label}.desc`, MRC721_FIELD_LIMITS.desc);
+    const cover = normalizeMrc721CoverUri(item.cover, `${label}.cover`);
+    const metadata = serializeMrc721Metadata(item.metadata, `${label}.metadata`);
+    return { name, desc, cover, metadata };
+  });
+  // Sizing refs: a coverless item gets a placeholder cover unless the caller
+  // opted out, so the item_desc estimate stays an upper bound when covers are
+  // attached after the uploads.
+  const sizingRefs = validatedItems.map((item) => ({
+    pinid: MRC721_ESTIMATE_PLACEHOLDER_PINID,
+    ...item,
+    cover: item.cover ?? (assumeItemCovers ? MRC721_ESTIMATE_PLACEHOLDER_COVER : undefined),
+  }));
+
+  // Item mint pins: empty JSON payloads, auto-generated item paths (the
+  // estimate uses a same-shape placeholder path for sizing).
+  for (let index = 0; index < validatedItems.length; index += 1) {
+    writes.push(estimateMrc721PinWrite('item_mint', `${root}/nft-estimate-${index + 1}`, '{}', feeRate));
+  }
+
+  if (displayMode === 'batch_desc' && sizingRefs.length > 0) {
+    writes.push(estimateMrc721PinWrite('item_desc', `${root}/item_desc`, JSON.stringify(buildMrc721ItemDescContent(sizingRefs)), feeRate));
+  } else if (displayMode === 'ride_along') {
+    for (const ref of sizingRefs) {
+      writes.push(estimateMrc721PinWrite('item_desc', `${root}/item_desc`, JSON.stringify(buildMrc721ItemDescContent([ref])), feeRate));
+    }
+  }
+
+  const protocolEstimatedSats = writes.reduce((sum, write) => sum + write.estimatedSats, 0);
+  const uploads = Array.isArray(input.uploads) ? input.uploads : [];
+  for (const [index, upload] of uploads.entries()) {
+    const bytes = Math.floor(Number(upload?.bytes));
+    if (!Number.isFinite(bytes) || bytes < 0) {
+      throw new Error(`uploads[${index}].bytes must be a non-negative integer`);
+    }
+    writes.push({
+      kind: 'upload',
+      path: String(upload.label || `upload-${index + 1}`),
+      payloadBytes: bytes,
+      estimatedSats: estimateMvcFileUploadFeeSats(bytes, feeRate),
+    });
+  }
+  const totalEstimatedSats = writes.reduce((sum, write) => sum + write.estimatedSats, 0);
+
+  return {
+    feeRate,
+    displayMode,
+    registerCollection,
+    itemCount: validatedItems.length,
+    writes,
+    protocolEstimatedSats,
+    uploadEstimatedSats: totalEstimatedSats - protocolEstimatedSats,
+    totalEstimatedSats,
+  };
 }
 
 /** Metalet wallet-api host for MVC broadcast (same channel as mvcNftService). */

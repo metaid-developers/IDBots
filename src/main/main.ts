@@ -119,7 +119,7 @@ import {
 import { getSkillServiceManager } from './skillServices';
 import { createTray, destroyTray, updateTrayMenu } from './trayManager';
 import { isAutoLaunched, getAutoLaunchEnabled, setAutoLaunchEnabled } from './autoLaunchManager';
-import { ScheduledTaskStore, DEFAULT_AGENT_MAX_FIRES } from './scheduledTaskStore';
+import { ScheduledTaskStore, DEFAULT_AGENT_MAX_FIRES, SCHEDULED_TASK_SESSION_MODES } from './scheduledTaskStore';
 import { dshPluginsDirFor, resolveDshPluginEntries } from './libs/dshPluginManager';
 import { GroupTaskStore, setGroupTaskStoreStatusBroadcaster, type GroupTaskStatus } from './groupTaskStore';
 import { OpenTeamMembershipStore } from './openTeamMembershipStore';
@@ -207,6 +207,7 @@ import {
   broadcastMvcTx,
   buyMrc721Listing,
   createMrc721Collection,
+  createMrc721ItemDescBatch,
   createMrc721Mint,
   fetchMrc721CollectionInfo,
   fetchMrc721ItemInfo,
@@ -224,7 +225,14 @@ import {
   listMrc721MySellIntents,
   mrc721SellIntentsFromSqlite,
 } from './services/mrc721SellIntentService';
-import { buildMvc721SellPartialTx, buildMvcTransferRawTx, completeMvc721BuyTx } from './services/walletRawTxService';
+import {
+  cancelMrc721OpenOffer,
+  listMrc721MyOpenOffers,
+  mrc721OpenOffersFromSqlite,
+  publishMrc721OpenOffer,
+  takeMrc721OpenOffer,
+} from './services/mrc721OpenOfferService';
+import { buildMvc721OpenOfferTx, buildMvc721SellPartialTx, buildMvcTransferRawTx, completeMvc721BuyTx, completeMvc721OpenOfferTx } from './services/walletRawTxService';
 import { BotWalletTransferStore } from './services/botWalletTransferStore';
 import { EscrowOrderStore } from './services/escrowOrderStore';
 import {
@@ -620,6 +628,7 @@ import {
 } from './services/botBrowserSourceLocator';
 import { openMetaApp, resolveMetaAppUrl } from './services/metaAppOpenService';
 import { buildMetaAppAliases } from './libs/metaAppGuard';
+import { inlineHtmlLocalImages } from './libs/inlineHtmlLocalImages';
 import {
   type CommunityMetaAppInstallResult,
   findCommunityMetaAppRecordBySourcePinId,
@@ -637,7 +646,7 @@ import {
 import { recordMetaIDServiceOrderExperience } from './services/metaidExperienceRecorder';
 import { ServiceRefundSyncService } from './services/serviceRefundSyncService';
 import { ServiceRefundSettlementService } from './services/serviceRefundSettlementService';
-import { fetchProtocolPinsFromIndexer } from './services/protocolPinFetch';
+import { fetchProtocolPinsFromIndexer, setIndexerUserAgent } from './services/protocolPinFetch';
 import {
   buildDeliveryMessage,
   buildOrderStatusMessage,
@@ -768,7 +777,12 @@ const MIME_EXTENSION_MAP: Record<string, string> = {
   'text/csv': '.csv',
 };
 const SERVICE_ORDER_TIMEOUT_SCAN_INTERVAL_MS = 60_000;
-const SERVICE_ORDER_REFUND_SYNC_INTERVAL_MS = 60_000;
+// Refund pins settle on hour-scale TTLs, not seconds: 60s full-pool walks of
+// /protocols/service-refund-{request,finalize} from every tenant instance were
+// the single largest manapi egress source (ops ticket 2026-11-08, ~85k
+// requests/day/path across staging). 5 min + the protocolPinFetch memo and
+// head-stop probe keep refund detection well inside every flow's deadlines.
+const SERVICE_ORDER_REFUND_SYNC_INTERVAL_MS = 5 * 60_000;
 const GIG_SQUARE_SYNC_INTERVAL_MS = 10 * 60 * 1000;
 const SQLITE_MAINTENANCE_INTERVAL_MS = 30 * 60 * 1000;
 const SERVICE_REFUND_REQUEST_PATH = '/protocols/service-refund-request';
@@ -1866,8 +1880,17 @@ async function syncRemoteSkillServices(): Promise<void> {
   try {
     const sqliteStore = getStore();
     const db = sqliteStore.getDatabase();
+    // Egress-guard head-stop (ticket 2026-11-08): a page whose rows are all
+    // already stored ends the walk — the directory only grows by NEW pins.
+    const knownServicePinIds = new Set<string>(
+      db.exec('SELECT pin_id FROM remote_skill_service')
+        .flatMap((result) => result.values)
+        .map((row) => String(row[0] ?? '').trim())
+        .filter(Boolean)
+    );
     await syncRemoteSkillServicesWithCursor({
       pageSize: GIG_SQUARE_SYNC_SIZE,
+      stopOnKnownPagePinIds: knownServicePinIds,
       fetchPage: async (cursor?: string) => fetchRemoteSkillServicePageFromManapi({
         protocolPath: GIG_SQUARE_SERVICE_PATH,
         pageSize: GIG_SQUARE_SYNC_SIZE,
@@ -4456,15 +4479,19 @@ const startSqliteDaemons = (): void => {
       await getLongTermAdvanceService().run(nowMs);
     },
   });
-  // MetaTask chain sweep (5 min) + watch (10 min): the sweep keeps the local
+  // MetaTask chain sweep (10 min) + watch (10 min): the sweep keeps the local
   // projection warm; watch turns local-roster-relevant changes into alerts
   // surfaced on the MetaTask tab. Both are local/cheap; no LLM escalation.
   // Jitter (≤45s / ≤90s) spreads the manapi pool walks of many instances; the
   // sweep itself bypasses the refresher's tool-coalescing window (this cadence
   // is already spaced, and a burst of tool writes must not defer it).
+  // 10 min matches the board-auto stale threshold and halves the idle pool
+  // probes — with the protocolPinFetch head-stop a quiet sweep costs one page
+  // per pool (egress ticket 2026-11-08); active sessions stay fresh through
+  // write-following sweeps that bypass both the coalescing window and the memo.
   getHeartbeatService().registerHandler({
     name: 'metatask.refresh',
-    intervalMs: 5 * 60_000,
+    intervalMs: 10 * 60_000,
     jitterMs: 45_000,
     run: async () => {
       const refresher = getMetaTaskRefresher();
@@ -7728,7 +7755,7 @@ const getCoworkRunner = () => {
         service: () => getPreferenceService(),
         resolveGlobalMetaId: (metabotId) => getMetabotStore().getMetabotById(metabotId)?.globalmetaid ?? null,
         metataskDetail: (rootPinId) => getMetaTaskRefresher().detail(rootPinId),
-        refreshMetaTask: (reason) => getMetaTaskRefresher().refreshOnce(reason),
+        refreshMetaTask: (reason, options) => getMetaTaskRefresher().refreshOnce(reason, options),
       },
       // RSI P0 prediction ledger: prediction_record writes into the dream
       // store's ledger; the nightly dream reconciles it (startDreamService).
@@ -8011,9 +8038,19 @@ const getCoworkRunner = () => {
         getMetabotMvcAddress: (metabotId) =>
           getMetabotStore().getMetabotById(metabotId)?.mvc_address ?? null,
         resolveMetabotIdByName: (name) => resolveMetabotIdByName(getMetabotStore(), name),
+        // Offer-market seller filter: local bot → 64-hex MetaID (the offer pin creator key).
+        getMetabotMetaId: (metabotId) => getMetabotStore().getMetabotById(metabotId)?.metaid ?? null,
         // S3 chat NFT card enrichment (best-effort index reads).
         fetchItemInfo: (pinId) => fetchMrc721ItemInfo({ pinId }),
         fetchCollectionInfo: (input) => fetchMrc721CollectionInfo({ name: input.name, pinId: input.pinId }),
+        // Issue-estimate balance line: total = confirmed + unconfirmed (MVC
+        // zero-conf spendable).
+        getMvcSpendableSats: async (metabotId) => {
+          const address = getMetabotStore().getMetabotById(metabotId)?.mvc_address;
+          if (!address) return null;
+          const snapshot = await getWalletBalanceSnapshot('mvc', address);
+          return snapshot.total_sats;
+        },
         collectionCreate: (input) => withChainWriteBudget(
           'mrc721_collection_create',
           () => createMrc721Collection({ createPin: mrc721CreatePinBackend }, input),
@@ -8028,6 +8065,10 @@ const getCoworkRunner = () => {
         mint: (input) => withChainWriteBudget(
           'mrc721_mint',
           () => createMrc721Mint({ createPin: mrc721CreatePinBackend }, input),
+        ),
+        itemDescBatch: (input) => withChainWriteBudget(
+          'mrc721_item_desc_batch',
+          () => createMrc721ItemDescBatch({ createPin: mrc721CreatePinBackend }, input),
         ),
         transfer: (input) => withChainWriteBudget(
           'mrc721_transfer',
@@ -8104,6 +8145,61 @@ const getCoworkRunner = () => {
           mrc721SellIntentsFromSqlite(getStore()),
           input.metabotId,
           { collectionName: input.collectionName, collectionPinId: input.collectionPinId },
+        ),
+        // Passive open-offer backends (docs/nft-offer-protocol.md): publish /
+        // cancel / list are pin declarations (budgeted); take is a money-
+        // moving settlement (budgeted like the directed sell/buy). The wallet
+        // mnemonic never leaves the workers.
+        offerPublish: (input) => withChainWriteBudget(
+          'mrc721_offer',
+          () => publishMrc721OpenOffer(
+            {
+              createPin: mrc721CreatePinBackend,
+              buildOfferTx: (offerStore, params) => buildMvc721OpenOfferTx(offerStore, params),
+            },
+            { ...input, store: getMetabotStore(), offers: mrc721OpenOffersFromSqlite(getStore()) },
+          ),
+        ),
+        offerCancel: (input) => withChainWriteBudget(
+          'mrc721_offer_cancel',
+          () => cancelMrc721OpenOffer(
+            {
+              createPin: mrc721CreatePinBackend,
+              // Hard cancel: self-transfer the item to a fresh outpoint so the
+              // public signed offer can never complete (same backend as
+              // mrc721_transfer, destination = this bot's own address).
+              revokeItem: (revokeStore, params) => {
+                const ownAddress = revokeStore.getMetabotById(params.metabotId)?.mvc_address ?? '';
+                return transferMrc721Item(
+                  {
+                    buildRawTx: (store, rawParams) => buildMvcTransferRawTx(store, rawParams),
+                    broadcastTx: broadcastMvcTx,
+                  },
+                  {
+                    metabotId: params.metabotId,
+                    pinId: params.itemPinId,
+                    toAddress: ownAddress,
+                    store: revokeStore,
+                    feeRate: getGlobalFeeRate('mvc'),
+                  },
+                );
+              },
+            },
+            { ...input, store: getMetabotStore(), offers: mrc721OpenOffersFromSqlite(getStore()) },
+          ),
+        ),
+        listOffers: (input) => listMrc721MyOpenOffers(
+          mrc721OpenOffersFromSqlite(getStore()),
+          input.metabotId,
+        ),
+        takeOffer: (input) => withChainWriteBudget(
+          'mrc721_take_offer',
+          () => takeMrc721OpenOffer(
+            {
+              completeOfferTx: (takeStore, params) => completeMvc721OpenOfferTx(takeStore, params),
+            },
+            { ...input, store: getMetabotStore() },
+          ),
         ),
       },
       // escrow_* tool backends (S3 generalized escrow, first-round slice):
@@ -11030,6 +11126,14 @@ const getScheduler = () => {
       isRecoverableSqliteError: isSqliteWasmBoundsError,
       recoverSqlite: recoverSqliteStore,
       submitToSession: (input) => getCoworkTurnSubmissionController().submit(input),
+      // A fire's prompt in a standing conversation (and the rotation pointer)
+      // is persisted by the scheduler, not the runner — forward it through the
+      // same sanitize+broadcast channel so an open conversation shows it live.
+      emitSessionMessage: (sessionId, message) => {
+        if (!shouldForwardCoworkStreamEvent(getCoworkStore(), sessionId)) return;
+        emitCoworkStreamMessage(sessionId, message);
+      },
+      getAppLanguage: () => getPersistedAppLanguage(),
     });
   }
   return scheduler;
@@ -15526,7 +15630,7 @@ if (!gotTheLock) {
   });
 
   registerIpcHandler('longtermTask:update', async (_event, input: {
-    taskId: string; title?: string; goal?: string; acceptanceDelegate?: boolean;
+    taskId: string; title?: string; goal?: string; acceptanceDelegate?: boolean; planArtifactUri?: string;
   }) => {
     try {
       const result = getLongTermTaskStore().updateTask(input, 'owner');
@@ -15714,7 +15818,9 @@ if (!gotTheLock) {
 
   registerIpcHandler('metatask:refresh', async () => {
     try {
-      const result = await getMetaTaskRefresher().refreshOnce('manual');
+      // Manual refresh means "show me the chain now" — never serve the walk
+      // memo; the incremental probe keeps the cost at one head page.
+      const result = await getMetaTaskRefresher().refreshOnce('manual', { bypassCache: true });
       return { success: result.ok, board: result.board ?? undefined, error: result.error ?? undefined };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'MetaTask refresh failed' };
@@ -15797,6 +15903,10 @@ if (!gotTheLock) {
       } else {
         delete normalizedInput.targetSessionId;
       }
+      // Unknown values fall to the store default ('series', the standing conversation).
+      if (!SCHEDULED_TASK_SESSION_MODES.includes(normalizedInput.sessionMode)) {
+        delete normalizedInput.sessionMode;
+      }
 
       const task = getScheduledTaskStore().createTask(normalizedInput);
       getScheduler().reschedule();
@@ -15829,6 +15939,10 @@ if (!gotTheLock) {
         // Absent or non-string payload values preserve the existing binding;
         // an explicit null clears it.
         delete normalizedInput.targetSessionId;
+      }
+      // An absent or unknown mode keeps the stored one.
+      if (!SCHEDULED_TASK_SESSION_MODES.includes(normalizedInput.sessionMode)) {
+        delete normalizedInput.sessionMode;
       }
 
       const task = scheduledTaskStore.updateTask(id, normalizedInput);
@@ -18609,6 +18723,9 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
   initMePointsService({ getUserIdentityStore });
   registerMePointsIpcHandlers({
     registerIpcHandler,
+    // 积分增量包 toggle: the kvStore may still be opening while early IPC
+    // fires — getStoreOrNull reads as "default (ON)" until it is ready.
+    getSettingsStore: getStoreOrNull,
     // S9 v1.2: reuse the S3 receiving-info row so ops can paste the payee QR
     // in 收款设置 and have the ME purchase flow pick it up without a rebuild.
     getSavedPaymentInfo: () => {
@@ -19419,6 +19536,44 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
         return { success: true };
       }
       return { success: false, error: 'no_chooser_available' };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  });
+
+  // Inline HTML reports: resolve the local <img> sources of a rendered .html
+  // file into data URIs — the app CSP has no `file:` in img-src, so these
+  // images would render blank. Reads are confined to the document's own
+  // directory tree and to real images (see libs/inlineHtmlLocalImages).
+  registerIpcHandler('fs:inlineHtmlImages', async (_event, payload: { htmlPath: string; srcs: string[] }): Promise<{ success: boolean; images?: Record<string, string>; skipped?: Record<string, string>; error?: string }> => {
+    try {
+      const htmlPath = normalizeWindowsShellPath(payload?.htmlPath ?? '');
+      if (!htmlPath) {
+        return { success: false, error: 'empty_path' };
+      }
+      const srcs = Array.isArray(payload?.srcs) ? payload.srcs.filter((src): src is string => typeof src === 'string') : [];
+      const result = await inlineHtmlLocalImages(
+        {
+          realpath: (target) => fs.promises.realpath(target),
+          stat: (target) => fs.promises.stat(target),
+          readFile: (target) => fs.promises.readFile(target),
+          thumbnail: async (buffer, mime, maxEdge) => {
+            const image = nativeImage.createFromBuffer(buffer);
+            if (image.isEmpty()) return null;
+            const { width, height } = image.getSize();
+            const longest = Math.max(width, height);
+            const scaled = longest > maxEdge
+              ? image.resize(width >= height ? { width: maxEdge, quality: 'good' } : { height: maxEdge, quality: 'good' })
+              : image;
+            // PNG keeps transparency; JPEG re-encodes compactly.
+            return mime === 'image/png'
+              ? { data: scaled.toPNG(), mime: 'image/png' }
+              : { data: scaled.toJPEG(82), mime: 'image/jpeg' };
+          },
+        },
+        { htmlPath, srcs },
+      );
+      return { success: true, images: result.images, skipped: result.skipped };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
     }
@@ -20532,6 +20687,13 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     startupLog('initApp begin');
     await app.whenReady();
     startupLog('app.whenReady resolved');
+
+    // Indexer requests must be attributable in server logs (ops ticket
+    // 2026-11-08: 20 tenant instances shared the bare `node` UA). Tenant
+    // containers carry IDBOTS_TENANT_ID; dev machines fall back to hostname.
+    setIndexerUserAgent(
+      `IDBots/${app.getVersion()}/${process.env.IDBOTS_TENANT_ID || os.hostname()}`
+    );
 
     legacyUserDataCopiedThisBoot = migrateLegacyUserData();
 

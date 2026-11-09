@@ -3,6 +3,7 @@ import {
   normalizeProviderSkillList,
   resolveSkillServicePaymentTerms,
 } from '../shared/skillServiceProtocol.js';
+import { indexerUserAgentHeader } from './protocolPinFetch';
 
 type RemoteSkillServiceItem = Record<string, unknown>;
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -189,7 +190,11 @@ export async function fetchRemoteSkillServicePageFromManapi(
     url.searchParams.set('cursor', cursor);
   }
 
-  const response = await (input.fetchImpl ?? fetch)(url.toString());
+  // Attributable UA (ops ticket 2026-11-08): this fetcher bypasses
+  // protocolPinFetch, so it carries the same header itself.
+  const response = await (input.fetchImpl ?? fetch)(url.toString(), {
+    headers: { 'User-Agent': indexerUserAgentHeader() },
+  });
   if (!response.ok) {
     throw new Error(`Sync failed: ${response.status}`);
   }
@@ -535,10 +540,20 @@ export async function syncRemoteSkillServicesWithCursor(input: {
   maxPages?: number;
   fetchPage: (cursor?: string) => Promise<{ list: RemoteSkillServiceItem[]; nextCursor?: string | null }>;
   upsertService: (row: ParsedRemoteSkillServiceRow) => void;
+  /**
+   * Egress-guard head-stop (ticket 2026-11-08): pin ids this store already
+   * knows. The listing is timestamp-desc, so a page whose EVERY row id is
+   * already stored proves the rest is older — stop before re-upserting it.
+   * Unparsed rows count as unknown (they fail again each pass), which at
+   * worst degrades to today's full walk. Update pins carry a new id
+   * (original_id points at the old row), so they always keep the walk alive.
+   */
+  stopOnKnownPagePinIds?: Set<string> | null;
 }): Promise<void> {
   const maxPages = Number.isFinite(input.maxPages) && (input.maxPages as number) > 0
     ? Math.floor(input.maxPages as number)
     : DEFAULT_REMOTE_SKILL_SERVICE_SYNC_MAX_PAGES;
+  const known = input.stopOnKnownPagePinIds;
   let cursor: string | undefined;
   const seenCursors = new Set<string>();
   let pages = 0;
@@ -546,6 +561,14 @@ export async function syncRemoteSkillServicesWithCursor(input: {
     if (pages >= maxPages) break;
     const page = await input.fetchPage(cursor);
     pages += 1;
+    if (
+      known
+      && known.size > 0
+      && page.list.length > 0
+      && page.list.every((item) => known.has(toSafeString((item as Record<string, unknown>).id).trim()))
+    ) {
+      break;
+    }
     for (const item of page.list) {
       const parsed = parseRemoteSkillServiceItem(item);
       if (parsed) input.upsertService(parsed);

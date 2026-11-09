@@ -75,9 +75,10 @@ test('models settings page keeps the new layout and visibility anchors', () => {
   assert.equal(settings.includes('w-2/5 border-r'), false);
   assert.equal(settings.includes('w-3/5 pl-4'), false);
 
-  // The ID.Bots top-up pseudo-entry + placeholder detail pane.
-  assert.match(settings, /IDBOTS_RECHARGE_PROVIDER_KEY = 'idbots-recharge' as ProviderType/);
-  assert.match(settings, /idbotsRechargePlaceholder/);
+  // The old ID.Bots top-up pseudo-entry + placeholder pane are gone; the
+  // credit-pack lives on the subscription detail pane instead.
+  assert.equal(settings.includes("IDBOTS_RECHARGE_PROVIDER_KEY"), false);
+  assert.equal(settings.includes('idbotsRechargePlaceholder'), false);
 
   // Subscription entry is always visible; untouched built-ins stay hidden.
   assert.match(settings, /!isTouched && !isBuiltInFreeProvider\(key\)/);

@@ -92,6 +92,11 @@ jobs:
       # so the bundle must exist before its build starts (the Dockerfile documents
       # this contract in its header).
       - name: Build mobile login bundle for the control-plane image
+        env:
+          # Same escape hatch as the tenant image build (build.sh mirror
+          # fallback): the electron binary is the runner's one github.com
+          # dependency and the releases CDN has recurring outage windows.
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
         run: |
           pnpm install --frozen-lockfile
           pnpm run build:mobile

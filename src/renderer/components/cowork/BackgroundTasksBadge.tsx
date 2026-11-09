@@ -55,15 +55,21 @@ const BackgroundTasksBadge: React.FC<BackgroundTasksBadgeProps> = ({ onShowGroup
           onShowGroupTasks();
         }
       }}
-      className={`flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-medium transition-colors ${
+      className={`flex min-w-0 items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-medium transition-colors ${
         canJump
           ? 'text-claude-accent dark:text-claude-accent hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
           : 'dark:text-claude-darkTextSecondary text-claude-textSecondary cursor-default'
       }`}
       title={title}
     >
-      <span className="inline-block h-1.5 w-1.5 rounded-full bg-claude-accent animate-pulse" />
-      {i18nService.t('coworkBackgroundTasksBadge').replace('{count}', String(totalActive))}
+      <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-claude-accent animate-pulse" />
+      {/* The one flexible element in the sidebar footer: when the sidebar is
+          narrow the label absorbs the squeeze via ellipsis instead of
+          wrapping (a wrapped footer row reads broken). Full text stays on
+          the `title` tooltip. */}
+      <span className="truncate">
+        {i18nService.t('coworkBackgroundTasksBadge').replace('{count}', String(totalActive))}
+      </span>
     </button>
   );
 };

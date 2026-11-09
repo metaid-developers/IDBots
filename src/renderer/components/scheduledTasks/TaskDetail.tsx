@@ -70,6 +70,21 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ task, onRequestDelete }) => {
     return sessions.find((session) => session.id === task.targetSessionId)?.title ?? null;
   }, [sessions, task.targetSessionId]);
 
+  // The standing conversation a 'series' task continues in, if it has fired
+  // at least once since the feature landed (or was adopted from past runs).
+  const seriesSession = useMemo(() => {
+    if (task.targetSessionId || task.sessionMode === 'fresh') return null;
+    const seriesId = task.seriesSessionId;
+    if (!seriesId) return null;
+    return sessions.find((session) => session.id === seriesId) ?? null;
+  }, [sessions, task.targetSessionId, task.sessionMode, task.seriesSessionId]);
+
+  const openSession = (sessionId: string) => {
+    window.dispatchEvent(new CustomEvent('scheduledTask:viewSession', {
+      detail: { sessionId },
+    }));
+  };
+
   const handleEdit = () => {
     dispatch(setViewMode('edit'));
   };
@@ -201,8 +216,21 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ task, onRequestDelete }) => {
                     {task.targetSessionId}
                   </span>
                 </>
+              ) : task.sessionMode === 'fresh' ? (
+                i18nService.t('scheduledTasksDetailSessionFresh')
+              ) : seriesSession ? (
+                <button
+                  type="button"
+                  onClick={() => openSession(seriesSession.id)}
+                  className="text-claude-accent hover:text-claude-accentHover transition-colors"
+                >
+                  {seriesSession.title}
+                </button>
               ) : (
-                i18nService.t('scheduledTasksFormSessionNew')
+                <span>
+                  {i18nService.t('scheduledTasksDetailSessionSeries')}
+                  {task.name}」
+                </span>
               )}
             </div>
           </div>

@@ -276,7 +276,9 @@ export interface EscrowOrder {
   negativeRecords: { subject: string; kind: string; note: string; at: number }[];
   /** 单方取消请求在途（04 分支二：只生成不执行）。 */
   pendingCancelRequest?: { by: 'seller' | 'buyer'; at: number };
-  /** T4 升级 / 已确认后申诉等需要 owner 层复核的挂起标记（占位）。 */
+  /** Owner-level review pending flag (T4 escalation, or an in-dispute appeal
+   *  against a first-level ruling). Surfaced on escrow_order_info / escrow_tick;
+   *  resolved by a second ruling whose basis carries the `owner:` prefix. */
   ownerReview?: { reason: string; at: number };
 }
 
@@ -580,7 +582,8 @@ export interface EscrowClockSideEffect {
   timer: 't1' | 't2' | 't3' | 't4';
   /** 50% 一档、−2h 一档（每档 ≤1 条）；timeout 时为 'expired'. */
   stage: '50%' | '-2h' | 'expired';
-  /** 消息模板占位：@责任方 + 剩余时长 + 该做什么 + 超时后果。 */
+  /** Rendered reminder text: @responsible party + remaining time + what to do
+   *  next + the timeout consequence (composed by reminderMessageOf). */
   message: string;
   /** timeout 时调用方要 apply 的系统动作。 */
   dueAction?: EscrowAction;
@@ -668,9 +671,11 @@ export const ESCROW_TIMEOUT_ACTIONS: Record<'t1' | 't2' | 't3' | 't4', { action:
   t4: { action: 'timeout_t4_escalate' },
 };
 
-// 仲裁入口占位（04 分支三）：一级=担保人调证+裁决（放行/回退二选一）；二级=
-// owner 复核（维持/改判）+ 失职处置（白名单除名，MVP 只记录）。本切片只挂
-// 状态位与记录位；owner 改判复用 ruling_* 动作，basis 加 `owner:` 前缀落档。
+// 仲裁入口（04 分支三）已落位：一级=担保人调证+裁决（escrow_order_act 的
+// ruling_release / ruling_rollback，放行/回退二选一，basis 必填）；二级=owner
+// 复核（维持/改判）——owner 改判复用 ruling_* 动作，basis 加 `owner:` 前缀落
+// 档；当事人申诉入口在渲染侧 escrow-card 的「申诉 / 复核」展开面板。失职处置
+// （白名单除名）仍只记录，不自动除名。
 export const ESCROW_RULING_LEVELS = ['first', 'owner'] as const;
 
 /** 单方取消请求 12h 静默阈值（04 分支二）。 */

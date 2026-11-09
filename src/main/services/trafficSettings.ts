@@ -4,9 +4,13 @@
  * renderer toggle, persistence helpers, and IPC surface following the
  * feeRateStore.ts pattern.
  *
- * - traffic.mode: 'traffic' (account quota, default) | 'selfpay' (MetaBot wallet).
- * - traffic.fallbackPolicy: always 'selfpay' — when account quota is
- *   unavailable or insufficient, writes fall back to the MetaBot wallet.
+ * - traffic.mode: 'traffic' (credits payment, default) | 'selfpay' (each
+ *   wallet pays its own gas). In credits-payment mode sponsored writes are
+ *   billed to the user's ME credits (weekly grant first, then credit packs
+ *   while auto-deduct is on); when the credits cannot cover a write it falls
+ *   back to the writing wallet, like every other sponsor failure.
+ * - traffic.fallbackPolicy: always 'selfpay' — when credits payment is
+ *   unavailable or insufficient, writes fall back to the writing wallet.
  *   The old 'strict' option is no longer exposed.
  * - traffic.apiBase: assist-service base URL override (integration testing);
  *   empty/unset means the production default baked into the clients.
@@ -14,7 +18,14 @@
  *   testing): 'paypal' | 'mock' | 'alipay'; empty/unset means automatic
  *   (packaged builds pick by plan currency: CNY → Alipay, other → PayPal).
  *   Packaged builds ignore this override.
+ *
+ * ME traffic billing (2026-11-09 requirements v1.0) is gated server-side by
+ * the backend's me.trafficBilling capability; this module only decides
+ * whether the client may request it (D4: server-mode tenants keep sponsored
+ * byte billing this phase).
  */
+
+import { isServerMode } from '../server/serverMode';
 
 export const TRAFFIC_MODE_KEY = 'traffic.mode';
 export const TRAFFIC_FALLBACK_POLICY_KEY = 'traffic.fallbackPolicy';
@@ -28,6 +39,26 @@ export type RechargeGatewayOverride = '' | 'paypal' | 'mock' | 'alipay';
 
 export function normalizeTrafficPinMode(value: unknown): TrafficPinMode {
   return String(value ?? '').trim().toLowerCase() === 'selfpay' ? 'selfpay' : 'traffic';
+}
+
+/**
+ * True when sponsored writes may be billed in ME credits: the credits-payment
+ * switch (积分支付, mode 'traffic', the default) is on and this is not a
+ * server-mode tenant. D4: tenants keep sponsoring but stay on byte billing
+ * this phase, so the sponsor-or-not gate stays getTrafficPinMode() and this
+ * only picks the billing currency. Explicit 'selfpay' users keep paying their
+ * own gas (D3 grandfathering). Never throws.
+ */
+export function isMeTrafficBillingAllowed(
+  reader: TrafficSettingsReader | null | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (isServerMode(env)) return false;
+  try {
+    return getTrafficPinMode(reader) === 'traffic';
+  } catch {
+    return true;
+  }
 }
 
 /** Stored 'strict' is ignored; account-quota mode always falls back to self-pay. */

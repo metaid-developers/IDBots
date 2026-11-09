@@ -1137,7 +1137,10 @@ export class LongTermAdvanceService {
    * opens one. The rotation budget NEVER applies to owner-facing turns: a
    * fat session is a bot-context problem (compaction's job), while rotating
    * the decision line into a session the owner has never opened forks the
-   * human conversation — the exact failure this resolves.
+   * human conversation — the exact failure this resolves. The same
+   * resolution seats a sub-project that has no usable work session yet (the
+   * begin-venue rule in escalate), so a task's work starts where its human
+   * line already is.
    */
   private resolveOwnerVenue(detail: LongTermTaskDetail, engagement: LongTermTaskEngagement): string | null {
     const coworkStore = this.deps.coworkStore();
@@ -1336,6 +1339,36 @@ export class LongTermAdvanceService {
         // counts EVERY message row (tool traffic included) and is checked
         // before a turn, so the count at rotation overshoots it by one turn.
         rotation = { from: boundSessionId, messages: messageCount };
+      }
+    }
+    // Begin-venue rule (2026-11-08 incident): a sub-project with no usable
+    // work session — never bound, or its bound session is gone — starts in the
+    // task's conversation (the related session holding the owner's newest
+    // message, else the definition session) instead of a freshly forked one.
+    // The owner's model: whatever happens next on a task happens where they
+    // last talked about it. In the incident every sub-project start forked a
+    // new heartbeat session (four in one afternoon) while the owner was
+    // talking about the task in its birth conversation, so progress and
+    // decisions scattered across sessions the owner never opened. Rotation is
+    // deliberately NOT routed here: a fat heartbeat-owned session still
+    // rotates (with its pointer message) — this only replaces the first-session
+    // fork, and a sub-project seated in an owner-opened conversation is never
+    // rotated afterwards.
+    if (!sessionId && !rotation) {
+      const beginVenueId = this.resolveOwnerVenue(detail, engagement);
+      if (beginVenueId !== null) {
+        sessionId = beginVenueId;
+        reusedSession = true;
+        this.deps.store().bindSession(current.id, beginVenueId, 'system');
+        this.deps.store().addNote(
+          detail.id,
+          current.id,
+          `sub-project continues in the task's conversation instead of a new session: ${boundSessionId || '(unbound)'} → ${beginVenueId}`,
+          'system',
+        );
+        this.emitLog(
+          `[LongTermAdvance] seated task "${detail.title}" sub-project #${current.ordinal} in the task's conversation ${beginVenueId} (no new session)`,
+        );
       }
     }
     if (!sessionId) {

@@ -55,6 +55,7 @@ import { i18nService } from '../../services/i18n';
 import { dispatchViewSession, parseIdbotsSessionUri } from '../../utils/sessionDeepLink';
 import { buildLocalFileUrl } from '../../services/localFileUrl';
 import { injectHtmlBaseHref } from './MarkdownViewerPanel';
+import { inlineLocalHtmlImages } from './inlineHtmlImages';
 import LocalFileLink from '../ui/LocalFileLink';
 
 SyntaxHighlighter.registerLanguage('markup', prismMarkup);
@@ -213,7 +214,10 @@ const InlineHtmlReportBlock: React.FC<InlineHtmlReportBlockProps> = ({
   onOpenInSidePanel,
 }) => {
   const [status, setStatus] = useState<'loading' | 'ready' | 'fallback'>('loading');
+  // `html` is the document as written (view-source, download); `renderHtml`
+  // is what the frame renders — local <img> sources swapped for data URIs.
   const [html, setHtml] = useState('');
+  const [renderHtml, setRenderHtml] = useState('');
   const [view, setView] = useState<'render' | 'source'>('render');
   const [height, setHeight] = useState(DEFAULT_FRAME_HEIGHT);
   const [heightTruncated, setHeightTruncated] = useState(false);
@@ -251,14 +255,23 @@ const InlineHtmlReportBlock: React.FC<InlineHtmlReportBlockProps> = ({
         if (!content || content.includes('\u0000')) {
           setStatus('fallback');
           setHtml('');
+          setRenderHtml('');
           return;
         }
+        // Local <img> sources render blank under the app CSP (no file: in
+        // img-src); swap them for host-resolved data URIs before the first
+        // paint. Best effort: on any failure the frame renders the document
+        // exactly as written.
+        const withImages = await inlineLocalHtmlImages(content, filePath);
+        if (cancelled) return;
         setHtml(content);
+        setRenderHtml(withImages);
         setStatus('ready');
       } catch {
         if (!cancelled) {
           setStatus('fallback');
           setHtml('');
+          setRenderHtml('');
         }
       }
     })();
@@ -300,8 +313,8 @@ const InlineHtmlReportBlock: React.FC<InlineHtmlReportBlockProps> = ({
   }, [status, filePath]);
 
   const srcDoc = useMemo(
-    () => (status === 'ready' ? buildInlineHtmlSrcDoc(html, filePath) : ''),
-    [status, html, filePath],
+    () => (status === 'ready' ? buildInlineHtmlSrcDoc(renderHtml, filePath) : ''),
+    [status, renderHtml, filePath],
   );
 
   const closeMenu = useCallback(() => {

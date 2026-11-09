@@ -8,6 +8,7 @@ import path from 'path';
 import { fetchContentWithFallback, fetchJsonWithFallbackOnMiss, isEmptyListDataPayload } from './localIndexerProxy';
 import { getConfiguredP2PLocalBase } from './p2pLocalEndpoint';
 import { parseProtocolPinContent } from './protocolPinContent';
+import { indexerUserAgentHeader } from './protocolPinFetch';
 import { resolveWritableSkillsRoot } from '../libs/skillRoots';
 
 // Dynamically require AdmZip to avoid crash if not installed
@@ -476,7 +477,10 @@ async function fetchCommunitySkillPins(): Promise<unknown[]> {
       const url = buildCommunitySkillListUrl(baseUrl, PAGE_SIZE, cursor);
       let response: Response;
       try {
-        response = await fetch(url, { signal: AbortSignal.timeout(3000) });
+        response = await fetch(url, {
+          signal: AbortSignal.timeout(3000),
+          headers: { 'User-Agent': indexerUserAgentHeader() },
+        });
       } catch {
         break;
       }

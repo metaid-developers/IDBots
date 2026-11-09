@@ -1,6 +1,6 @@
 {
   "contractVersion": "1.0.0",
-  "allowlistVersion": "1.0.0",
+  "allowlistVersion": "1.0.1",
   "source": "src/main/preload.ts",
   "methods": [
     {
@@ -1341,6 +1341,15 @@
       ]
     },
     {
+      "path": "fs.inlineHtmlImages",
+      "kind": "invoke",
+      "channel": "fs:inlineHtmlImages",
+      "args": [
+        "htmlPath",
+        "srcs"
+      ]
+    },
+    {
       "path": "fs.readTextFile",
       "kind": "invoke",
       "channel": "fs:readTextFile",
@@ -2328,6 +2337,12 @@
       "args": []
     },
     {
+      "path": "mePoints.getPointsSettings",
+      "kind": "invoke",
+      "channel": "me:getPointsSettings",
+      "args": []
+    },
+    {
       "path": "mePoints.getRates",
       "kind": "invoke",
       "channel": "me:getRates",
@@ -2337,6 +2352,20 @@
       "path": "mePoints.getSubscription",
       "kind": "invoke",
       "channel": "me:getSubscription",
+      "args": []
+    },
+    {
+      "path": "mePoints.getSubscriptionOrder",
+      "kind": "invoke",
+      "channel": "me:subscriptionOrder",
+      "args": [
+        "input"
+      ]
+    },
+    {
+      "path": "mePoints.getSubscriptionOrders",
+      "kind": "invoke",
+      "channel": "me:getSubscriptionOrders",
       "args": []
     },
     {
@@ -2355,6 +2384,14 @@
       "path": "mePoints.pickVoucher",
       "kind": "invoke",
       "channel": "me:pickVoucher",
+      "args": [
+        "input"
+      ]
+    },
+    {
+      "path": "mePoints.setPointsSettings",
+      "kind": "invoke",
+      "channel": "me:setPointsSettings",
       "args": [
         "input"
       ]
@@ -3245,6 +3282,14 @@
       ]
     },
     {
+      "path": "traffic.getMeBillingStatus",
+      "kind": "invoke",
+      "channel": "traffic:getMeBillingStatus",
+      "args": [
+        "input"
+      ]
+    },
+    {
       "path": "traffic.getPricing",
       "kind": "invoke",
       "channel": "traffic:getPricing",
@@ -3269,6 +3314,14 @@
       "kind": "invoke",
       "channel": "traffic:getSettings",
       "args": []
+    },
+    {
+      "path": "traffic.getSponsorOrders",
+      "kind": "invoke",
+      "channel": "traffic:getSponsorOrders",
+      "args": [
+        "input"
+      ]
     },
     {
       "path": "traffic.getUsageSummary",

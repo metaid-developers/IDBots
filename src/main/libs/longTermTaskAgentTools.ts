@@ -21,6 +21,10 @@ import { buildDelegationAnchorBlock } from './longTermDelegationAnchor';
  * the owner's channel is the board UI (IPC with `actor: 'owner'`).
  *
  * Discipline the tool descriptions encode (the creation skill owns the rest):
+ *  - create requires the pre-create discipline (research digest, grilling, a
+ *    confirmed visual plan page) — the description is the checklist and the
+ *    echo reminds when no plan artifact is recorded (it never refuses: the
+ *    owner may explicitly order a skip).
  *  - create stays a DRAFT until the owner explicitly confirms → activate.
  *  - acceptance is owner-only unless the task's delegate switch is on (the
  *    switch defaults ON at task creation since 2026-10-22; the owner can turn
@@ -229,32 +233,54 @@ const subtaskDraftSchema = z.object({
   expectedMinutes: z.number().int().positive().optional().describe('Rough expected duration in minutes — estimate it during grilling; the supervision heartbeat checks in when the sub-project runs past its budget.'),
 });
 
-export function buildLongTermTaskAgentTools(deps: { tool: SdkToolFactory; control: LongTermTaskAgentControl }): unknown[] {
+export function buildLongTermTaskAgentTools(deps: {
+  tool: SdkToolFactory;
+  control: LongTermTaskAgentControl;
+  /** The session these tools are mounted in. When the model omits
+   *  definitionSessionId on create, the calling session is recorded as the
+   *  task's definition session — the birth conversation must never depend on
+   *  the model remembering to pass an id it was only told about in prose
+   *  (2026-11-08 incident: a task created in the owner's chat recorded no
+   *  definition session, so the heartbeat could not see the conversation the
+   *  owner was actually talking in and forked fresh sessions all day). */
+  sessionId?: string;
+}): unknown[] {
   const { tool, control } = deps;
   const store = () => control.store();
+  const mountedSessionId = String(deps.sessionId ?? '').trim();
 
   const createTask = tool(
     'longterm_task_create',
-    'Create a long-term task DRAFT after you and the owner have aligned on it (grilling-style Q&A: the goal was fuzzy, you asked until the boundary, sub-project split and acceptance criteria were explicit). A long-term task is for work that spans days/weeks with blocking points — never for something finishable in one session (that is a normal cowork turn) or a multi-bot short job (that is a group task). The draft is NOT active yet: present the split in chat and only call longterm_task_activate after the owner confirms in prose.',
+    'Create a long-term task DRAFT after the full creation discipline (the long-term-task skill owns it — load and follow that skill; this description is only the checklist). Preconditions, all required: (1) you researched MetaWeb + Web2 BEFORE asking and opened with a research digest naming the searches; (2) you grilled the owner one question per round until no load-bearing detail was guessed; (3) you presented a visual plan page (infographic HTML linked in the bubble) and the owner confirmed it in prose — pass its URI as planArtifactUri (skip only on the owner\'s explicit instruction in THIS conversation, and say so in your reply). Never create from a fuzzy one-line ask. The draft is NOT active: after create, reconcile the echo against the approved plan page field by field and fix drift with the update tools; only call longterm_task_activate after the owner\'s final confirmation in prose. Not for one-session work (normal cowork turn) or a multi-bot short job (group task).',
     {
       title: z.string().min(1).describe('Task title (short).'),
       goal: z.string().min(1).describe('The full goal statement, including the done-ness definition of the whole task.'),
       subtasks: z.array(subtaskDraftSchema).min(1).describe('Ordered sub-projects. Order should respect dependencies.'),
-      definitionSessionId: z.string().optional().describe('The session where the definition was discussed (for traceability).'),
+      definitionSessionId: z.string().optional().describe('Optional: the session where the definition was discussed. Defaults to this session when omitted — you normally do not need to pass it.'),
+      planArtifactUri: z.string().min(1).optional().describe('URI of the confirmed plan page — the local .html file path shown in the bubble (or pin:// if the owner asked for an on-chain copy). Recorded on the task so the board can re-open the plan later.'),
     },
-    async (args: { title?: string; goal?: string; subtasks?: unknown[]; definitionSessionId?: string }) => {
+    async (args: { title?: string; goal?: string; subtasks?: unknown[]; definitionSessionId?: string; planArtifactUri?: string }) => {
       try {
         const result = store().createTask(
           {
             title: String(args.title ?? ''),
             goal: String(args.goal ?? ''),
             subtasks: (args.subtasks ?? []) as never[],
-            definitionSessionId: args.definitionSessionId ?? null,
+            definitionSessionId: String(args.definitionSessionId ?? '').trim() || mountedSessionId || null,
+            planArtifactUri: args.planArtifactUri ?? null,
           },
           'twin',
         );
         if (!result.ok) return textResult(`Refused (${result.code}): ${result.error}`, true);
-        return jsonResult(toAgentTaskDetailView(result.value));
+        const view = toAgentTaskDetailView(result.value);
+        // Missing plan artifact → the echo reminds, it does not refuse: the
+        // owner may legitimately order a skip, but silence must not pass as
+        // consent (2026-11-08 incident: a draft was created with no plan page
+        // ever shown, off the tool description alone).
+        const echo = args.planArtifactUri
+          ? view
+          : { ...view, planArtifactReminder: 'No planArtifactUri recorded. If you have not shown the owner a visual plan page yet, present one (infographic HTML linked in chat) and get prose confirmation BEFORE asking for activation; once shown, set it via longterm_task_update planArtifactUri.' };
+        return jsonResult(echo);
       } catch (error) {
         return textResult(`Failed to create the long-term task: ${error instanceof Error ? error.message : String(error)}`, true);
       }
@@ -306,16 +332,17 @@ export function buildLongTermTaskAgentTools(deps: { tool: SdkToolFactory; contro
 
   const updateTask = tool(
     'longterm_task_update',
-    'Update a long-term task\'s title/goal, toggle the acceptance-delegate switch (it defaults to on; change it only when the owner explicitly asks in chat), or pause/resume/cancel the task. Every change is journalled as a replan.',
+    'Update a long-term task\'s title/goal, set the plan-page URI (planArtifactUri — record it when the plan page is presented or re-issued), toggle the acceptance-delegate switch (it defaults to on; change it only when the owner explicitly asks in chat), or pause/resume/cancel the task. Every change is journalled as a replan.',
     {
       taskId: z.string().min(1),
       title: z.string().optional(),
       goal: z.string().optional(),
+      planArtifactUri: z.string().min(1).optional().describe('Set/replace the plan-page URI (local .html path or pin://) for traceability.'),
       acceptanceDelegate: z.boolean().optional().describe('TwinBot acceptance authority for THIS task (defaults to on; set false only at the owner\'s explicit request).'),
       action: z.enum(['pause', 'resume', 'cancel']).optional(),
       note: z.string().optional().describe('Reason for pause/cancel.'),
     },
-    async (args: { taskId?: string; title?: string; goal?: string; acceptanceDelegate?: boolean; action?: 'pause' | 'resume' | 'cancel'; note?: string }) => {
+    async (args: { taskId?: string; title?: string; goal?: string; planArtifactUri?: string; acceptanceDelegate?: boolean; action?: 'pause' | 'resume' | 'cancel'; note?: string }) => {
       try {
         const taskId = String(args.taskId ?? '');
         if (args.action === 'pause') {
@@ -334,7 +361,7 @@ export function buildLongTermTaskAgentTools(deps: { tool: SdkToolFactory; contro
           return textResult('Cancelled.');
         }
         const result = store().updateTask(
-          { taskId, title: args.title, goal: args.goal, acceptanceDelegate: args.acceptanceDelegate },
+          { taskId, title: args.title, goal: args.goal, planArtifactUri: args.planArtifactUri, acceptanceDelegate: args.acceptanceDelegate },
           'twin',
         );
         if (!result.ok) return textResult(`Refused (${result.code}): ${result.error}`, true);

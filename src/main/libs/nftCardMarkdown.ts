@@ -192,3 +192,102 @@ export const buildMrc721CardFields = (input: {
   if (action) fields.action = action.toLowerCase();
   return fields;
 };
+
+// ---------------------------------------------------------------------------
+// Collection card (album-level) — a separate fence tag, not an nft-card
+// format: item-card identity rules (pinId/triple) do not apply, the heal
+// pipeline stays item-only, and the pinned nft-card contracts are untouched.
+// ---------------------------------------------------------------------------
+
+export const NFT_COLLECTION_CARD_FENCE_TAG = 'nft-collection-card';
+
+export interface NftCollectionCardEmitFields {
+  /** The collectionid (= the collection_desc pinId) — the album's identity. */
+  collectionId?: string;
+  /** The path name under /nft/mrc721/. */
+  collectionName?: string;
+  name?: string;
+  desc?: string;
+  website?: string;
+  /** metafile:// cover pinId (normalized; bare pinIds accepted). */
+  icon?: string;
+  totalSupply?: number;
+  minted?: number;
+  royaltyRate?: number;
+  issuer?: string;
+  issuerLabel?: string;
+  action?: string;
+}
+
+const NFT_COLLECTION_CARD_KEY_ORDER: Array<keyof NftCollectionCardEmitFields> = [
+  'collectionId', 'collectionName', 'name', 'desc', 'website', 'icon',
+  'totalSupply', 'minted', 'royaltyRate', 'issuer', 'issuerLabel', 'action',
+];
+
+const cleanOptionalNumber = (value: number | undefined, min: number, max: number): number | undefined => {
+  if (value == null || !Number.isInteger(value) || value < min || value > max) return undefined;
+  return value;
+};
+
+/** Serialize one collection card to the exact fence form (fixed key order, compact JSON). */
+export const buildNftCollectionCardFence = (fields: NftCollectionCardEmitFields): string => {
+  const ordered: Record<string, unknown> = {};
+  for (const key of NFT_COLLECTION_CARD_KEY_ORDER) {
+    const value = fields[key];
+    if (value !== undefined && value !== null && value !== '') {
+      ordered[key] = value;
+    }
+  }
+  return `\`\`\`${NFT_COLLECTION_CARD_FENCE_TAG}\n${JSON.stringify(ordered)}\n\`\`\``;
+};
+
+/** Result text + blank line + hint + collection fence. Used by the album tools. */
+export const appendNftCollectionCardBlock = (resultText: string, fields: NftCollectionCardEmitFields): string =>
+  `${resultText}\n\n${NFT_CARD_RESULT_HINT}\n${buildNftCollectionCardFence(fields)}`;
+
+/**
+ * Build the collection-card emit fields the mrc721 album tools hold at action
+ * time (Mrc721CollectionSummary subset + action context). Fields degrade
+ * independently — a missing cover yields a coverless card, never a missing
+ * card; the collectionid is the only required identity.
+ */
+export const buildMrc721CollectionCardFields = (input: {
+  collectionName: string;
+  pinId: string;
+  name?: string;
+  desc?: string;
+  website?: string;
+  cover?: string;
+  totalSupply?: number | null;
+  minted?: number | null;
+  royaltyRate?: number | null;
+  issuerAddress?: string;
+  issuerLabel?: string;
+  action?: string;
+}): NftCollectionCardEmitFields => {
+  const cover = normalizeMrc721Cover(input.cover);
+  const fields: NftCollectionCardEmitFields = {
+    collectionId: input.pinId,
+    collectionName: cleanOptional(input.collectionName, 64),
+  };
+  const name = cleanOptional(input.name, 64);
+  if (name) fields.name = name;
+  const desc = cleanOptional(input.desc, 200);
+  if (desc) fields.desc = desc;
+  const website = cleanOptional(input.website, 200);
+  if (website) fields.website = website;
+  if (cover.icon) fields.icon = cover.icon;
+  const totalSupply = cleanOptionalNumber(input.totalSupply ?? undefined, -1, 1_000_000_000_000);
+  if (totalSupply !== undefined) fields.totalSupply = totalSupply;
+  const minted = cleanOptionalNumber(input.minted ?? undefined, 0, 1_000_000_000);
+  if (minted !== undefined) fields.minted = minted;
+  const royaltyRate = cleanOptionalNumber(input.royaltyRate ?? undefined, 0, 20);
+  if (royaltyRate !== undefined) fields.royaltyRate = royaltyRate;
+  const issuer = cleanOptional(input.issuerAddress, 80);
+  if (issuer) fields.issuer = issuer;
+  const issuerLabel = cleanOptional(input.issuerLabel, 64);
+  if (issuerLabel) fields.issuerLabel = issuerLabel;
+  const action = cleanOptional(input.action, 16);
+  if (action) fields.action = action.toLowerCase();
+  return fields;
+};

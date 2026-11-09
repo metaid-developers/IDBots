@@ -186,7 +186,7 @@ node "$SKILLS_ROOT/seedream/scripts/generate_image.js" \
   --output seasons.png
 ```
 
-输出文件会自动编号：`seasons_1.png`, `seasons_2.png`, `seasons_3.png`, `seasons_4.png`
+输出文件会自动编号：`seasons_1.<ext>` ~ `seasons_4.<ext>`，扩展名按真实格式校正（通常是 `.jpg`）——以脚本打印的文件路径为准。
 
 #### 单图生组图
 
@@ -344,12 +344,12 @@ node "$SKILLS_ROOT/seedream/scripts/generate_image.js" \
 
 生成的图片具有以下特征：
 
-- **格式**: PNG, JPEG（根据output参数自动识别）
+- **格式**: 由 API 决定（通常为 JPEG），与 `--output` 写的扩展名无关。脚本下载后按文件头校正扩展名：例如写 `--output frame.png` 而实际是 JPEG，最终文件为 `frame.jpg`。**以脚本输出的「文件路径」为准**，不要按自己写的文件名去找文件。
 - **分辨率**: 1K / 2K / 4K（根据 size 参数）
 - **文件大小**: 约 0.5-10 MB（取决于尺寸和复杂度）
 - **命名规则**:
-  - 单图：指定的文件名
-  - 组图：`文件名_1.png`, `文件名_2.png`, ...
+  - 单图：指定的文件名（扩展名按真实格式校正）
+  - 组图：`文件名_1.<ext>`, `文件名_2.<ext>`, ...（脚本逐行打印每张图的最终路径）
 
 ## 提示词最佳实践
 

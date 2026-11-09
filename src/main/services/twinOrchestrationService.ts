@@ -28,6 +28,7 @@ import {
   type OrchestrationStep,
 } from '../orchestrationStore';
 import type { CoworkCrossSessionInsertResult } from './coworkCrossSession';
+import { CROSS_SESSION_INSERT_MAX_CHARS } from './coworkCrossSession';
 import type { Metabot } from '../types/metabot';
 import type { LongTermTaskStore } from '../longTermTaskStore';
 import { buildDelegationAnchorBlock, LONGTERM_ANCHOR_MARKER } from '../libs/longTermDelegationAnchor';
@@ -103,6 +104,8 @@ export interface TwinStepAcceptanceResult {
   acceptance: OrchestrationStepAcceptance;
   /** All acceptance rows for the step, oldest first. */
   acceptances: OrchestrationStepAcceptance[];
+  /** Present when this acceptance was the last one and the twin_delegate card auto-completed. */
+  taskAutoCompleted?: true;
 }
 
 export interface TwinOrchestrationServiceDeps {
@@ -253,6 +256,19 @@ export class TwinOrchestrationService {
    * conversation about the task), so progress is visible where the owner expects
    * it rather than buried in a Worker session.
    */
+  /**
+   * Keep an ORCH-NOTIFY body under the cross-session insert cap: the
+   * notification header line rides at the front, the oversized tail is cut,
+   * and the truncation is stated so the Twin knows to pull the full worker
+   * session via idbots_session_read_all.
+   */
+  private trimOrchNotifyText(text: string): string {
+    const budget = CROSS_SESSION_INSERT_MAX_CHARS - 200; // room for the notice + frame
+    if (text.length <= budget) return text;
+    const notice = `\n\n（通知正文超出跨会话投递上限，已截断；完整内容请用 idbots_session_read_all 读取 worker 会话）`;
+    return text.slice(0, budget) + notice;
+  }
+
   private notifyTwinTerminalState(
     task: OrchestrationTask,
     attempt: OrchestrationAttempt,
@@ -306,13 +322,28 @@ export class TwinOrchestrationService {
         message: text,
         deliveryId: guardKey,
       });
-      if ('code' in result) {
+      let finalResult = result;
+      if ('code' in result && result.code === 'MESSAGE_TOO_LONG') {
+        // A failed-attempt notification embeds the worker's error report and
+        // can exceed the 12k insert cap; dropping it silently here meant the
+        // Twin never learned the attempt failed. Trim to the cap (keeping the
+        // notification header) and retry once in place — the claim row is
+        // already held, so this stays at-most-once.
+        const trimmed = this.trimOrchNotifyText(text);
+        finalResult = this.insertCrossSession({
+          sourceSessionId: workerSessionId,
+          targetSessionId,
+          message: trimmed,
+          deliveryId: guardKey,
+        });
+      }
+      if ('code' in finalResult) {
         // CoworkCrossSessionError (insert failed: missing session, A2A target…)
         // The claim row is deliberately KEPT: this is at-most-once, so a
         // definitively failed delivery is not retried by a duplicate terminal
         // transition. The row is the audit trail of what was attempted.
         console.warn(
-          `[TwinOrchestration] Twin notification skipped (${result.code}): ${result.message}`,
+          `[TwinOrchestration] Twin notification skipped (${finalResult.code}): ${finalResult.message}`,
         );
         return;
       }
@@ -953,12 +984,61 @@ export class TwinOrchestrationService {
       evidence: input.evidence,
       note: input.note ?? null,
     });
+    // v1.5 completion (owner ruling 「谁发起，谁验收」): a Twin-delegated card
+    // whose LAST step just got accepted is done — close it right here. The
+    // design made these cards twin-closable (origin='twin_delegate', never
+    // queued for the owner), but nothing ever performed the close, so every
+    // delegation accumulated as a permanent 'review' row (543 review vs 124
+    // completed in the 2026-11-09 store audit). The acceptance IS the
+    // verdict; closing the card is bookkeeping. Best-effort and gated:
+    // owner-origin cards keep their own closure ceremony.
+    let taskAutoCompleted = false;
+    try {
+      taskAutoCompleted = this.maybeAutoCompleteDelegationTask(task.id);
+    } catch (error) {
+      console.warn(
+        `[TwinOrchestration] Auto-complete after step acceptance failed (task ${task.id}): ` +
+        `${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     return {
       task: this.deps.orchestrationStore.getTask(task.id)!,
       step: this.deps.orchestrationStore.getStep(step.id)!,
       acceptance,
       acceptances: this.deps.orchestrationStore.listStepAcceptances(step.id),
+      ...(taskAutoCompleted ? { taskAutoCompleted: true } : {}),
     };
+  }
+
+  /**
+   * Close a twin_delegate task for which every step is now completed AND
+   * carries at least one acceptance row, transitioning review → completed
+   * with a conclusion-free self-processed closure (conclusion-free closures
+   * never enter the pending queue, so no extra processing pass is needed).
+   * Returns whether the close happened.
+   */
+  private maybeAutoCompleteDelegationTask(taskId: string): boolean {
+    const task = this.deps.orchestrationStore.getTask(taskId);
+    if (!task) return false;
+    if (task.origin !== 'twin_delegate') return false;
+    if (task.status !== 'review') return false;
+    const steps = this.deps.orchestrationStore.listSteps(taskId);
+    if (steps.length === 0) return false;
+    const allAccepted = steps.every((step) =>
+      step.status === 'completed'
+      && this.deps.orchestrationStore.listStepAcceptances(step.id).length > 0
+    );
+    if (!allAccepted) return false;
+    this.deps.orchestrationStore.updateTaskStatus(taskId, 'completed');
+    this.deps.orchestrationStore.recordClosure(taskId, {
+      conclusion: null,
+      by: 'twin',
+      selfProcessed: { by: 'twin', hash: null },
+    });
+    console.log(
+      `[TwinOrchestration] Task ${taskId} auto-completed: every step accepted by the Twin (谁发起，谁验收).`,
+    );
+    return true;
   }
 
   cancelTask(sourceSessionId: string, taskId: string): OrchestrationTask {

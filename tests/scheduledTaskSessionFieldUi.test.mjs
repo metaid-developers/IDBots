@@ -28,19 +28,25 @@ const i18nPath = path.join(projectRoot, 'src', 'renderer', 'services', 'i18n.ts'
 
 const SESSION_KEYS = [
   'scheduledTasksFormSession',
+  'scheduledTasksFormSessionSeries',
+  'scheduledTasksFormSessionSeriesHint',
   'scheduledTasksFormSessionNew',
+  'scheduledTasksFormSessionNewHint',
   'scheduledTasksFormSessionCurrent',
   'scheduledTasksFormSessionCustom',
   'scheduledTasksFormSessionIdPlaceholder',
   'scheduledTasksFormSessionFallbackHint',
+  'scheduledTasksDetailSessionSeries',
+  'scheduledTasksDetailSessionFresh',
 ];
 
 test('scheduled task form lets the user bind the task to a conversation', () => {
   const source = fs.readFileSync(taskFormPath, 'utf8');
 
-  assert.match(source, /type SessionMode = 'new' \| 'current' \| 'custom'/);
+  assert.match(source, /type SessionMode = 'series' \| 'new' \| 'current' \| 'custom'/);
   assert.match(source, /useState<SessionMode>\(initialSessionMode\)/);
   assert.match(source, /setSessionMode\(e\.target\.value as SessionMode\)/);
+  assert.match(source, /scheduledTasksFormSessionSeries/);
   assert.match(source, /scheduledTasksFormSessionNew/);
   assert.match(source, /scheduledTasksFormSessionCurrent/);
   assert.match(source, /scheduledTasksFormSessionCustom/);
@@ -57,24 +63,29 @@ test('scheduled task form shows the custom session input with the fallback hint'
   assert.match(source, /scheduledTasksFormSessionFallbackHint/);
 });
 
-test('scheduled task form submits the resolved targetSessionId', () => {
+test('scheduled task form submits the resolved targetSessionId and session mode', () => {
   const source = fs.readFileSync(taskFormPath, 'utf8');
 
   assert.match(source, /resolveTargetSessionId/);
-  assert.match(source, /sessionMode === 'new'\)\s*return null/);
   assert.match(source, /sessionMode === 'current'\)\s*return currentSessionId \?\? null/);
-  assert.match(source, /customSessionId\.trim\(\) \|\| null/);
+  assert.match(source, /sessionMode === 'custom'\)\s*return customSessionId\.trim\(\) \|\| null/);
   assert.match(source, /targetSessionId:\s*resolveTargetSessionId\(\)/);
+  // 'new' maps to the stored 'fresh' opt-out; every other choice is 'series'.
+  assert.match(source, /resolveSessionMode/);
+  assert.match(source, /sessionMode === 'new' \? 'fresh' : 'series'/);
+  assert.match(source, /sessionMode:\s*resolveSessionMode\(\)/);
 });
 
-test('scheduled task detail displays the bound conversation', () => {
+test('scheduled task detail displays the bound conversation, the standing conversation, or the fresh mode', () => {
   const source = fs.readFileSync(taskDetailPath, 'utf8');
 
   assert.match(source, /boundSessionTitle/);
   assert.match(source, /state\.cowork\.sessions/);
   assert.match(source, /session\.id === task\.targetSessionId/);
-  assert.match(source, /scheduledTasksFormSessionNew/);
   assert.match(source, /task\.targetSessionId/);
+  assert.match(source, /scheduledTasksDetailSessionFresh/);
+  assert.match(source, /scheduledTasksDetailSessionSeries/);
+  assert.match(source, /task\.seriesSessionId/);
 });
 
 test('i18n defines the conversation binding keys in both languages', () => {

@@ -7,15 +7,21 @@
  * (2026-09-08 owner rule: a sponsor outage or error must never block the
  * write — auto-switch to the bot's own wallet with an explicit trace):
  * ANY sponsor failure — service_unavailable / no_user_utxo /
- * insufficient_quota / insufficient_traffic / pre_rejected / commit_failed —
- * falls back to the regular self-paid broadcast (fallbackPolicy 'selfpay',
- * tagged with feeAssist metadata) or throws a TrafficInsufficientError
- * ('strict'). Commit-stage failures reconcile the sponsor order first: an
+ * insufficient_quota / insufficient_traffic / insufficient_me /
+ * pre_rejected / commit_failed — falls back to the regular self-paid
+ * broadcast (fallbackPolicy 'selfpay', tagged with feeAssist metadata) or
+ * throws a TrafficInsufficientError ('strict'). Commit-stage failures
+ * reconcile the sponsor order first: an
  * order that actually broadcast resolves as sponsored success, a
  * terminal-dead order falls back safely, and an order still reconciling past
  * the bounded wait budget falls back too (WARN log + feeAssist carry the
  * orderId and order outcome; the residual duplicate-ping risk of a late
  * sponsor recovery is accepted and traceable).
+ *
+ * Billing currency (2026-11-09 requirements v1.0): when address/info
+ * advertises me.trafficBilling the traffic-account order is requested in ME
+ * credits (insufficient_me when the credits cannot cover it); otherwise it
+ * bills traffic bytes as before.
  */
 
 import {
@@ -24,6 +30,7 @@ import {
   getMvcSponsorCommitMessage,
   isMvcInsufficientSelfPayError,
   isNoUserUtxoDraftError,
+  meBillingOf,
   reconcileSponsorOrderAfterCommitFailure,
   signMvcAddressMessage,
   signMvcPreparedUserInputs,
@@ -31,9 +38,10 @@ import {
   type MvcSponsorAddressInfo,
   type MvcSponsorTrafficAccount,
   type MvcSponsorV2Client,
+  type SponsorBilling,
 } from './mvcSponsorClient';
 import { appendMetaidLog } from './metaidLog';
-import { recordLocalTrafficSpend } from './trafficAccountService';
+import { noteMeTrafficBillingLive, recordLocalTrafficSpend, sponsorBilledBy } from './trafficAccountService';
 import {
   isSponsorBroadcastFailureError,
   isSponsorCircuitOpen,
@@ -105,7 +113,7 @@ export interface MvcSponsorCreatePinInput {
   fallbackPolicy: TrafficFallbackPolicy;
   baseUrl?: string;
   fetchImpl?: typeof fetch;
-  /** Reserved pass-through for traffic-account billing (backend not yet live). */
+  /** Explicit trafficAccount block (pre-resolved callers / tests); skips resolveTrafficAccount. */
   trafficAccount?: MvcSponsorTrafficAccount;
   /** MetaID pin path (e.g. /protocols/simplemsg), journaled as the spend kind. */
   journalKind?: string;
@@ -125,14 +133,20 @@ export interface MvcSponsorCreatePinDeps {
    * Optional trafficAccount resolver invoked between challenge and pre
    * (wired to trafficAccountService in production). When it returns
    * undefined — or is not provided — the pre goes out without a
-   * trafficAccount and stays on the legacy quota path.
+   * trafficAccount and stays on the legacy quota path. billing is the
+   * currency the sponsor offers for this address ('me' when address/info
+   * advertises me.trafficBilling); the resolver may downgrade it to bytes.
    */
-  resolveTrafficAccount?: (ctx: { challengeId: string }) => Promise<MvcSponsorTrafficAccount | undefined>;
+  resolveTrafficAccount?: (ctx: {
+    challengeId: string;
+    billing: SponsorBilling;
+  }) => Promise<MvcSponsorTrafficAccount | undefined>;
 }
 
 function normalizeSponsorReason(value: unknown, fallback: MvcSponsorFeeAssistReason): MvcSponsorFeeAssistReason {
   return value === 'insufficient_quota'
     || value === 'insufficient_traffic'
+    || value === 'insufficient_me'
     || value === 'service_unavailable'
     || value === 'commit_failed'
     || value === 'pre_rejected'
@@ -293,13 +307,28 @@ export async function runMvcSponsorCreatePin(
   });
 
   const trafficAccount = input.trafficAccount
-    ?? await deps.resolveTrafficAccount?.({ challengeId: challenge.challengeId });
+    ?? await deps.resolveTrafficAccount?.({
+      challengeId: challenge.challengeId,
+      billing: meBillingOf(quotaBefore)?.trafficBilling ? 'me' : 'bytes',
+    });
 
   // Balance preflight, gated on the billing account the pre will actually use.
-  // With a traffic account the pin bills account bytes, so the legacy sponsor
-  // quota (availableAmount) is irrelevant — gating on it silently self-paid
-  // every traffic-mode pin once a bot's legacy quota ran out (2026-09-07).
-  if (trafficAccount) {
+  // With a traffic account the pin bills account bytes (or ME credits), so the
+  // legacy sponsor quota (availableAmount) is irrelevant — gating on it
+  // silently self-paid every traffic-mode pin once a bot's legacy quota ran
+  // out (2026-09-07). ME cost stays server-side (secret rate), so the ME
+  // preflight only short-circuits an empty balance; pre is authoritative.
+  if (trafficAccount?.billing === 'me') {
+    const spendableMilli = meBillingOf(quotaBefore)?.spendableMilli;
+    if (spendableMilli !== undefined && spendableMilli <= 0) {
+      return fallbackToSelfPaid({
+        reason: 'insufficient_me',
+        stage: 'address_info',
+        quotaBefore,
+        advisoryFeeEstimate,
+      });
+    }
+  } else if (trafficAccount) {
     const trafficBalanceBytes = trafficBalanceBytesOf(quotaBefore);
     if (trafficBalanceBytes !== undefined && draft.estimatedTxSize > 0 && trafficBalanceBytes < draft.estimatedTxSize) {
       return fallbackToSelfPaid({
@@ -407,6 +436,8 @@ export async function runMvcSponsorCreatePin(
         txId: reconciliation.txId,
         txSize: reconciliation.txSize,
         minerFee: reconciliation.minerFee,
+        paySource: reconciliation.paySource,
+        meAmountMilli: reconciliation.meAmountMilli,
         raw: { commitRecovered: true },
       };
       commitRecovered = true;
@@ -442,6 +473,9 @@ export async function runMvcSponsorCreatePin(
   }
 
   const sponsoredMinerFee = commit.minerFee ?? pre.minerFee;
+  const billedBy = sponsorBilledBy(trafficAccount, commit.paySource ?? pre.paySource);
+  const meAmountMilli = billedBy === 'me' ? commit.meAmountMilli ?? pre.meAmountMilli : undefined;
+  if (billedBy === 'me') noteMeTrafficBillingLive();
   deps.recordSpentOutpoints(draftSpentOutpoints);
   recordSponsorSuccess(input.mvcAddress);
   // Local spend journal + balance-cache deduction (best-effort, never throws).
@@ -452,7 +486,8 @@ export async function runMvcSponsorCreatePin(
     txSize: commit.txSize,
     sponsoredMinerFee,
     savedFee: sponsoredMinerFee,
-    billedBy: trafficAccount ? 'traffic' : 'quota',
+    billedBy,
+    meAmountMilli,
     kind: input.journalKind,
   });
   const changeUtxo: MvcCachedFundingUtxo | null = draft.changeOutput
@@ -493,6 +528,8 @@ export async function runMvcSponsorCreatePin(
       sponsoredMinerFee,
       savedFee: sponsoredMinerFee,
       txSize: commit.txSize,
+      billedBy,
+      meAmountMilli,
     },
   };
 }

@@ -10,7 +10,8 @@
  *   2. graceful degradation: broken JSON, unknown state, missing parties —
  *      all fall back to the plain code block, never a half-rendered card,
  *   3. the skeleton has NO funds controls (zero-funds-flow red line): the
- *      only button is the disabled 申诉 placeholder,
+ *      only control is the 申诉/复核 entry, which expands to the appeal rules
+ *      and a copyable dispute_open template — it instructs, never moves money,
  *   4. marker/style isolation: data-escrow-card only, never data-nft-card or
  *      the (unmerged) pay-card markers — fence tags stay disjoint,
  *   5. source wiring: MarkdownContent keeps the escrow branch, and the A2A /
@@ -30,7 +31,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import MarkdownContent from '../src/renderer/components/MarkdownContent';
 import EscrowCard from '../src/renderer/components/chat/EscrowCard';
 import {
+  buildEscrowAppealTemplate,
   ESCROW_CARD_FENCE_TAG,
+  ESCROW_CARD_TERMINAL_STATES,
   escrowCardStateLabel,
   escrowRemainingTimeText,
   formatEscrowYuan,
@@ -128,14 +131,33 @@ test('malformed escrow fences degrade to the plain code block (no half card)', (
 // 3. No funds controls（零资金流红线）
 // ---------------------------------------------------------------------------
 
-test('the card skeleton has no funds buttons — only the disabled 申诉 placeholder', () => {
+test('the card has no funds buttons — the only control is the appeal entry', () => {
   const markup = renderToStaticMarkup(React.createElement(EscrowCard, { data: PAYLOAD, now: NOW }));
   const buttons = markup.match(/<button/g) ?? [];
   assert.equal(buttons.length, 1);
-  assert.match(markup, /disabled/);
+  assert.match(markup, /data-escrow-appeal="toggle"/);
+  assert.doesNotMatch(markup, /disabled/);
   assert.match(markup, /申诉/);
-  // No release/refund/pay affordances exist in the skeleton at all.
+  // No release/refund/pay affordances exist in the card at all.
   assert.doesNotMatch(markup, /放款|立即退款|去付款|确认收货/);
+});
+
+test('the appeal template embeds the order id and the dispute_open action, and the panel stays collapsed by default', () => {
+  assert.equal(
+    buildEscrowAppealTemplate('esc-42'),
+    'escrow_order_act order_id=esc-42 action=dispute_open basis=<你的申诉理由>',
+  );
+  const markup = renderToStaticMarkup(React.createElement(EscrowCard, { data: PAYLOAD, now: NOW }));
+  assert.doesNotMatch(markup, /data-escrow-appeal-panel/);
+});
+
+test('terminal escrow cards carry no appeal entry', () => {
+  for (const state of ESCROW_CARD_TERMINAL_STATES) {
+    const markup = renderToStaticMarkup(
+      React.createElement(EscrowCard, { data: { ...PAYLOAD, state, timerHours: 0, next: undefined }, now: NOW }),
+    );
+    assert.doesNotMatch(markup, /data-escrow-appeal/, `state ${state} must not offer an appeal entry`);
+  }
 });
 
 // ---------------------------------------------------------------------------

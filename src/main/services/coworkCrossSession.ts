@@ -207,6 +207,15 @@ export class CoworkCrossSessionService {
     targetSessionId: string;
     message: string;
     deliveryId?: string;
+    /**
+     * Ask the host to report the dispatched turn's outcome back into the
+     * SOURCE session when it settles (the [DISPATCH-REPORT] return path).
+     * Stamped on the inserted message metadata; the durable delivery row
+     * carries the same flag so drain replays keep it. Internal relays
+     * (ORCH-NOTIFY, group-task acceptance) leave it unset — they have their
+     * own terminal-state notification and must not be double-woken.
+     */
+    notifySource?: boolean;
   }): CoworkCrossSessionInsertResult {
     // P4 (v1.2): the host pseudo-source `group-task:<id>` (group-task
     // acceptance/review relay attribution, "哪里发起哪里结束") contains a
@@ -214,10 +223,13 @@ export class CoworkCrossSessionService {
     // strict id pattern and the source-row check, so the R2 seam rejected
     // every acceptance insert and the origin session never received the
     // close/review notices (task #23: notified_session empty, no kv guard).
-    // Recognize the synthetic namespace up front; every other source id keeps
-    // the strict normalization + existence checks.
+    // `scheduled-task:<id>` (scheduler run reports, same attribution need)
+    // joins the namespace: a run that failed before its session opened has no
+    // worker session to attribute the report to. Recognize the synthetic
+    // namespaces up front; every other source id keeps the strict
+    // normalization + existence checks.
     const rawSource = String(input.sourceSessionId ?? '').trim().replace(IDBOTS_SESSION_SCHEME, '');
-    const isHostPseudoSource = /^group-task:\d+$/.test(rawSource);
+    const isHostPseudoSource = /^group-task:\d+$/.test(rawSource) || /^scheduled-task:[A-Za-z0-9._-]+$/.test(rawSource);
     const sourceId = isHostPseudoSource
       ? { ok: true as const, sessionId: rawSource }
       : normalizeIdbotsSessionId(input.sourceSessionId);
@@ -281,6 +293,7 @@ export class CoworkCrossSessionService {
         sourceChannel: 'idbots_cross_session',
         sourceSessionId: sourceId.sessionId,
         ...(deliveryId ? { crossSessionDeliveryId: deliveryId } : {}),
+        ...(input.notifySource ? { crossSessionNotifySource: true } : {}),
       },
     };
     const message = deliveryId && this.store.addMessageWithId

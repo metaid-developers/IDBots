@@ -19,6 +19,8 @@
 
 import { signMvcAddressMessage } from './mvcSponsorClient';
 import type { UserIdentityStore } from '../userIdentityStore';
+import { getMePointSettings, mirrorMePointSettings } from './mePointSettings';
+import type { MePointSettingsStore } from './mePointSettings';
 
 export const DEFAULT_ME_API_BASE_URL = 'https://www.metaso.network/assist-open-api';
 const DEFAULT_WALLET_PATH = "m/44'/10001'/0'/0/0";
@@ -33,6 +35,16 @@ const BALANCE_CACHE_TTL_MS = 30_000;
 export const ME_SUBSCRIPTION_ORDER_PATH = '/v1/me/subscription/order';
 export const ME_SUBSCRIPTION_ORDER_ACTION = 'subscription_order';
 
+/**
+ * Per-identity ME settings (assist-base-service 727182a). The authoritative
+ * autoDeductFromPersistent switch behind the 「积分增量包」 toggle: OFF gates
+ * every ME consumption path to grant-only. Path and signed actions are each
+ * pinned to ONE constant, same discipline as the subscription order pair.
+ */
+export const ME_SETTINGS_PATH = '/v1/me/settings';
+export const ME_GET_SETTINGS_ACTION = 'get_me_settings';
+export const ME_SET_SETTINGS_ACTION = 'set_me_settings';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -46,7 +58,9 @@ export type MeApiStage =
   | 'history'
   | 'topup_submit'
   | 'topup_orders'
-  | 'subscription_order';
+  | 'subscription_order'
+  | 'subscription_orders'
+  | 'settings';
 
 export class MePointsApiError extends Error {
   readonly stage: MeApiStage;
@@ -125,6 +139,17 @@ export interface MeBalance {
   };
   frozenMilli: number;
   totalAvailable: number;
+  /**
+   * Per-identity credit-pack switch as echoed by /v1/me/balance (absent on
+   * older servers). False = spends may only draw the weekly grant.
+   */
+  autoDeductFromPersistent?: boolean;
+  /**
+   * What a new ME spend can draw now (requirements v1.0 R3): grant remaining
+   * plus the persistent pools when auto-deduct is on, frozen excluded.
+   * Absent on servers that predate it.
+   */
+  spendableMilli?: number;
 }
 
 /** GET /v1/me/subscription response (tolerant: guide pins statusText only). */
@@ -523,7 +548,7 @@ function normalizeMeBalance(data: Record<string, unknown>): MeBalance {
   const persistent = (data.persistent && typeof data.persistent === 'object'
     ? (data.persistent as Record<string, unknown>)
     : {}) as Record<string, unknown>;
-  return {
+  const balance: MeBalance = {
     identityAddress: pickText(data, 'identityAddress', 'identity_address'),
     weeklyGrant: {
       amountMilli: pickNumber(grant, 'amountMilli', 'amount_milli'),
@@ -541,6 +566,19 @@ function normalizeMeBalance(data: Record<string, unknown>): MeBalance {
     frozenMilli: pickNumber(data, 'frozenMilli', 'frozen_milli'),
     totalAvailable: pickNumber(data, 'totalAvailable', 'total_available'),
   };
+  // Optional fields stay absent when the server omits them, so callers can
+  // tell "not reported" from a real false / 0.
+  const autoDeduct = data.autoDeductFromPersistent ?? data.auto_deduct_from_persistent;
+  if (typeof autoDeduct === 'boolean') balance.autoDeductFromPersistent = autoDeduct;
+  const spendableRaw = data.spendableMilli ?? data.spendable_milli;
+  const spendable = typeof spendableRaw === 'number' || typeof spendableRaw === 'string'
+    ? Number(spendableRaw)
+    : Number.NaN;
+  // Unparseable values stay absent: reading them as 0 would claim "no ME left".
+  if (Number.isFinite(spendable) && spendable >= 0 && String(spendableRaw).trim() !== '') {
+    balance.spendableMilli = spendable;
+  }
+  return balance;
 }
 
 export async function getMeSubscription(): Promise<MeSubscription> {
@@ -555,6 +593,59 @@ export async function getMeSubscription(): Promise<MeSubscription> {
     statusText: pickText(data, 'statusText', 'status_text', 'status', 'stage'),
     raw: data,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Per-identity settings (积分增量包 toggle 的权威开关)
+// ---------------------------------------------------------------------------
+
+export interface MeSettingsFlag {
+  identityAddress: string;
+  autoDeductFromPersistent: boolean;
+}
+
+/**
+ * The server view is strict (POST binds a *bool — absent/non-boolean is a
+ * param error), but a missing field on READ (e.g. an older server build)
+ * reads as ON, the default — never as OFF, which would silently gate
+ * persistent spending the user did not ask to gate.
+ */
+function normalizeMeSettings(data: Record<string, unknown>): MeSettingsFlag {
+  return {
+    identityAddress: pickText(data, 'identityAddress', 'identity_address'),
+    autoDeductFromPersistent: data.autoDeductFromPersistent !== false,
+  };
+}
+
+/** GET /v1/me/settings — authoritative per-identity auto-deduct flag. */
+export async function getMeSettings(): Promise<MeSettingsFlag> {
+  const { identity } = await signedAuth('settings', ME_GET_SETTINGS_ACTION);
+  const data = (await meRequestJson({
+    stage: 'settings',
+    method: 'GET',
+    path: ME_SETTINGS_PATH,
+    identity,
+  })) as Record<string, unknown>;
+  return normalizeMeSettings(data);
+}
+
+/** POST /v1/me/settings — strict boolean body, returns the confirmed view. */
+export async function setMeSettings(autoDeductFromPersistent: boolean): Promise<MeSettingsFlag> {
+  if (typeof autoDeductFromPersistent !== 'boolean') {
+    throw new MePointsApiError({
+      stage: 'settings',
+      message: 'autoDeductFromPersistent must be a boolean',
+    });
+  }
+  const { identity } = await signedAuth('settings', ME_SET_SETTINGS_ACTION);
+  const data = (await meRequestJson({
+    stage: 'settings',
+    method: 'POST',
+    path: ME_SETTINGS_PATH,
+    body: { autoDeductFromPersistent },
+    identity,
+  })) as Record<string, unknown>;
+  return normalizeMeSettings(data);
 }
 
 function listRows(data: Record<string, unknown> | unknown[], keys: string[]): unknown[] {
@@ -734,6 +825,29 @@ export async function getMeTopupOrders(): Promise<MeTopupOrder[]> {
   return orders;
 }
 
+// GET /v1/me/subscription/orders — the owner-scoped subscription order list
+// (Amendment v0.3). The server ships this after v0.2; until then the 404
+// surfaces as featureUnavailable and the usage page degrades to topup-only.
+export const ME_SUBSCRIPTION_ORDERS_PATH = '/v1/me/subscription/orders';
+
+export async function getMeSubscriptionOrders(): Promise<MeSubscriptionOrder[]> {
+  const { identity } = await signedAuth('subscription_orders', ME_SUBSCRIPTION_ORDER_ACTION);
+  const data = await meRequestJson({
+    stage: 'subscription_orders',
+    method: 'GET',
+    path: ME_SUBSCRIPTION_ORDERS_PATH,
+    identity,
+  });
+  const rows = listRows(data, ['orders', 'entries', 'items', 'list', 'records', 'rows']);
+  const orders: MeSubscriptionOrder[] = [];
+  for (const row of rows) {
+    const record = (row && typeof row === 'object' ? row : {}) as Record<string, unknown>;
+    if (!pickText(record, 'orderId', 'order_id')) continue;
+    orders.push(normalizeMeSubscriptionOrder(record));
+  }
+  return orders;
+}
+
 function normalizeMeTopupOrder(record: Record<string, unknown>, orderIdFallback?: string): MeTopupOrder {
   return {
     orderId: pickText(record, 'orderId', 'order_id') || orderIdFallback || '',
@@ -834,6 +948,8 @@ export function registerMePointsIpcHandlers(deps: {
   registerIpcHandler: RegisterIpcHandlerFn;
   /** S9 v1.2: owner-editable payee QR from the 「收款设置」 page (decrypted on demand). */
   getSavedPaymentInfo?: () => { qrContent?: string; qrImageDataUrl?: string };
+  /** kvStore access for the local ME point settings (credit-pack auto-deduct toggle); null until the store is ready. */
+  getSettingsStore?: () => MePointSettingsStore | null;
 }): void {
   const { registerIpcHandler } = deps;
   const wrap = (
@@ -899,6 +1015,38 @@ export function registerMePointsIpcHandlers(deps: {
     };
   });
   wrap('me:getTopupOrders', async () => ({ orders: await getMeTopupOrders() }));
+  wrap('me:getSubscriptionOrders', async () => ({ orders: await getMeSubscriptionOrders() }));
+  // 积分增量包 toggle: the server flag (/v1/me/settings) is authoritative;
+  // the kvStore keeps a mirror for degraded reads (server unreachable / no
+  // identity). Writes only mirror AFTER a server confirmation — see
+  // mePointSettings.ts. A failed set propagates: wrap() answers success:false
+  // and the renderer reverts the toggle.
+  wrap('me:getPointsSettings', async () => {
+    try {
+      const remote = await getMeSettings();
+      mirrorMePointSettings(deps.getSettingsStore?.() ?? null, remote.autoDeductFromPersistent);
+      return {
+        settings: { autoDeductFromPersistent: remote.autoDeductFromPersistent },
+        source: 'server',
+      };
+    } catch {
+      return {
+        settings: getMePointSettings(deps.getSettingsStore?.() ?? null),
+        source: 'local',
+      };
+    }
+  });
+  wrap('me:setPointsSettings', async (input) => {
+    const requested = typeof input.autoDeductFromPersistent === 'boolean'
+      ? input.autoDeductFromPersistent
+      : getMePointSettings(deps.getSettingsStore?.() ?? null).autoDeductFromPersistent;
+    const remote = await setMeSettings(requested);
+    mirrorMePointSettings(deps.getSettingsStore?.() ?? null, remote.autoDeductFromPersistent);
+    return {
+      settings: { autoDeductFromPersistent: remote.autoDeductFromPersistent },
+      source: 'server',
+    };
+  });
   // S9 v1.2: the S3 「收款设置」 page lets ops paste a QR image/link on-device.
   // Prefer that (owner-editable, no rebuild) and fall back to the env seam.
   wrap('me:getPaymentInfo', async () => {

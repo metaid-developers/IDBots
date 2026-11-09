@@ -18,6 +18,12 @@ export interface MetaTaskRefreshOptions {
    * deferred by a burst of tool-triggered requests.
    */
   bypassMinInterval?: boolean;
+  /**
+   * Skip the protocol-pin walk memo for this sweep (write-following refreshes
+   * must observe the just-pinned rows; the incremental head-stop still walks
+   * the pool head, so cost stays at one page for a quiet pool).
+   */
+  bypassCache?: boolean;
 }
 
 export interface MetaTaskRefresherOptions {
@@ -101,9 +107,9 @@ export class MetaTaskRefresher {
       this.lastStartedAtMs !== null &&
       nowMs - this.lastStartedAtMs < this.minIntervalMs
     ) {
-      return this.scheduleTrailing(reason);
+      return this.scheduleTrailing(reason, options);
     }
-    return this.start(reason);
+    return this.start(reason, options);
   }
 
   /** Cancel a pending coalesced sweep (app shutdown). */
@@ -122,15 +128,15 @@ export class MetaTaskRefresher {
     return this.options.backoff ? this.options.backoff.ready() : true;
   }
 
-  private start(reason: string): Promise<MetaTaskRefreshResult> {
+  private start(reason: string, options: MetaTaskRefreshOptions = {}): Promise<MetaTaskRefreshResult> {
     this.lastStartedAtMs = this.now();
-    this.inFlight = this.runRefresh(reason, this.lastStartedAtMs).finally(() => {
+    this.inFlight = this.runRefresh(reason, this.lastStartedAtMs, options).finally(() => {
       this.inFlight = null;
     });
     return this.inFlight;
   }
 
-  private scheduleTrailing(reason: string): Promise<MetaTaskRefreshResult> {
+  private scheduleTrailing(reason: string, options: MetaTaskRefreshOptions = {}): Promise<MetaTaskRefreshResult> {
     if (this.trailing) return this.trailing.promise;
     const waitMs = Math.max(0, (this.lastStartedAtMs ?? this.now()) + this.minIntervalMs - this.now());
     const entry: { timer: ReturnType<typeof setTimeout> | null; promise: Promise<MetaTaskRefreshResult> } = {
@@ -142,7 +148,7 @@ export class MetaTaskRefresher {
         this.trailing = null;
         // runRefresh never rejects (it records the failure and reports ok:false),
         // so a failing trailing sweep cannot wedge the scheduler.
-        resolve(this.start(`${reason}+coalesced`));
+        resolve(this.start(`${reason}+coalesced`, options));
       }, waitMs);
       // Never hold the process open for a pending coalesced sweep.
       entry.timer.unref?.();
@@ -174,11 +180,18 @@ export class MetaTaskRefresher {
     return deadline >= evaluatedAtMs && deadline < nowMs;
   }
 
-  private async runRefresh(reason: string, nowMs: number): Promise<MetaTaskRefreshResult> {
+  private async runRefresh(
+    reason: string,
+    nowMs: number,
+    options: MetaTaskRefreshOptions = {}
+  ): Promise<MetaTaskRefreshResult> {
     const store = this.options.store();
     store.setRefreshing(true);
     try {
-      const collected = await collectMetaTaskEvents(this.options.collectOptions);
+      const collected = await collectMetaTaskEvents({
+        ...this.options.collectOptions,
+        ...(options.bypassCache ? { bypassCache: true } : {}),
+      });
       // Issue #24: the collector deliberately swallows pool-walk failures into
       // per-path `error` fields (a failed path must not fail the whole sweep),
       // so a total network outage still lands here with ok semantics. A sweep

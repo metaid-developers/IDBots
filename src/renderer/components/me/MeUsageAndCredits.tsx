@@ -2,27 +2,27 @@
  * 「用量 & 积分」 merged details page (S9 §3 信息架构 2) — replaces the old
  * 剩余流量 / 免费 LLM 额度 / 小脑额度 surfaces on desktop.
  *
- * Sections: 双池概览 (from /v1/me/balance), 充值订单 (topup orders with
- * submitted → confirmed/rejected status polling), ME 流水 (/v1/me/history
- * cursor paging with type filter; metering entries carry refType llm/agent/
- * traffic — the burn pipeline is backend-pending, the display slot is ready),
- * and the rates/multiplier explainer.
+ * Sections: 双池概览 (MeBalanceOverviewCard, from /v1/me/balance), 充值订单
+ * (topup orders with submitted → confirmed/rejected status polling), ME 流水
+ * (/v1/me/history cursor paging with type filter; metering burns carry refType
+ * metering:llm / metering:agent / metering:traffic), and the rates/multiplier
+ * explainer.
  * All values render live from the API; nothing is hardcoded.
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ArrowPathIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
-import type { MeHistoryEntryInfo, MeTopupOrderInfo } from '../../types/electron';
+import type { MeHistoryEntryInfo, MeSubscriptionOrderInfo, MeTopupOrderInfo } from '../../types/electron';
 import {
   ensureMeSnapshot,
   formatMe,
   formatMeSigned,
   getMeSnapshot,
   meFromMilli,
-  meResetParts,
   subscribeMeSnapshot,
 } from './mePointsStore';
+import MeBalanceOverviewCard from './MeBalanceOverviewCard';
 
 const HISTORY_TYPES = ['', 'mint', 'topup', 'bonus', 'burn', 'transfer', 'reverse', 'adjust', 'expire'] as const;
 
@@ -46,7 +46,12 @@ const isOrderClosed = (status: string): boolean => /reject|closed|expired|cancel
 const orderStatusLabel = (status: string): string => {
   const normalized = (status || '').toLowerCase();
   if (isOrderCredited(normalized)) return i18nService.t('meOrderStatusConfirmed');
-  if (isOrderClosed(normalized)) return i18nService.t('meOrderStatusRejected');
+  if (isOrderClosed(normalized)) {
+    // Janitor-expired orders close as "closed" — not an admin rejection.
+    return /reject|fail/i.test(normalized)
+      ? i18nService.t('meOrderStatusRejected')
+      : i18nService.t('meOrderStatusClosed');
+  }
   if (/submit|created|pending|paid/i.test(normalized)) return i18nService.t('meOrderStatusSubmitted');
   return status || '—';
 };
@@ -58,9 +63,35 @@ const orderStatusClass = (status: string): string => {
   return 'bg-amber-500/10 text-amber-600 dark:text-amber-400';
 };
 
-/** Metering reference types (llm/agent/traffic) — display slots reserved ahead of the burn rollout. */
-const meteringTagLabel = (refType: string | undefined): string | null => {
-  const normalized = (refType || '').toLowerCase();
+/**
+ * A subscription checkout order still unpaid after this long was abandoned:
+ * the Alipay 当面付 code lapses after ~2h, while the server janitor only
+ * closes the row at 24h. Rendering it as 「提交中」 for a whole day reads as a
+ * live payment, so it shows 「超时未支付」 and stops driving the status poll.
+ * Server status always wins once it moves (paid / credited / closed). Topup
+ * orders are manual-review rows whose `submitted` state is genuinely
+ * pending, so they never go stale here.
+ */
+export const ME_UNPAID_ORDER_STALE_MS = 2 * 60 * 60 * 1000;
+
+const isUnpaidOrderStatus = (status: string): boolean => /created|pending|submit/i.test(status || '') && !/paid/i.test(status || '');
+
+const isStaleUnpaidSubscriptionOrder = (
+  order: { status: string; createdAt?: number },
+  now: number,
+): boolean => {
+  const createdMs = orderEpochMs(order.createdAt);
+  return createdMs > 0 && isUnpaidOrderStatus(order.status) && now - createdMs > ME_UNPAID_ORDER_STALE_MS;
+};
+
+/**
+ * Metering reference types (llm/agent/traffic). The backend writes metering
+ * burns as `metering:<line>` (ABS RefTypePrefixMetering) — sponsored traffic
+ * burns as `metering:traffic` — while older rows and docs used the bare line,
+ * so both shapes map to the same tag.
+ */
+export const meteringTagLabel = (refType: string | undefined): string | null => {
+  const normalized = (refType || '').toLowerCase().replace(/^metering:/, '');
   if (normalized === 'llm' || normalized === 'agent' || normalized === 'traffic' || normalized === 'brain') {
     return normalized.toUpperCase();
   }
@@ -76,6 +107,26 @@ const formatOrderTime = (ts: number | undefined): string => {
   }
 };
 
+const orderEpochMs = (ts: number | undefined): number => (
+  ts && Number.isFinite(ts) ? (ts > 1e11 ? ts : ts * 1000) : 0
+);
+
+/** One row of the merged payment-records list (subscription + topup orders). */
+interface MePaymentRecordRow {
+  key: string;
+  kind: 'subscription' | 'topup';
+  orderId: string;
+  title: string;
+  createdAt?: number;
+  /** milliME granted (topup only). */
+  meMilli?: number;
+  amountCny?: number;
+  status: string;
+  rejectReason?: string;
+  /** Subscription order still unpaid past the stale window (超时未支付). */
+  staleUnpaid?: boolean;
+}
+
 const MeUsageAndCredits: React.FC = () => {
   const snapshot = React.useSyncExternalStore(subscribeMeSnapshot, getMeSnapshot, getMeSnapshot);
   const [entries, setEntries] = useState<MeHistoryEntryInfo[]>([]);
@@ -84,6 +135,8 @@ const MeUsageAndCredits: React.FC = () => {
   const [historyError, setHistoryError] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('');
   const [orders, setOrders] = useState<MeTopupOrderInfo[]>([]);
+  const [subOrders, setSubOrders] = useState<MeSubscriptionOrderInfo[]>([]);
+  const [subOrdersUnavailable, setSubOrdersUnavailable] = useState(false);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [ratesOpen, setRatesOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -113,8 +166,21 @@ const MeUsageAndCredits: React.FC = () => {
   const loadOrders = useCallback(async (withSpinner: boolean) => {
     if (withSpinner) setOrdersLoading(true);
     try {
-      const res = await window.electron.mePoints.getTopupOrders();
-      if (res.success && Array.isArray(res.orders)) setOrders(res.orders);
+      const [topupRes, subRes] = await Promise.all([
+        window.electron.mePoints.getTopupOrders(),
+        window.electron.mePoints.getSubscriptionOrders().catch(() => null),
+      ]);
+      if (topupRes.success && Array.isArray(topupRes.orders)) setOrders(topupRes.orders);
+      if (subRes && subRes.success && Array.isArray(subRes.orders)) {
+        setSubOrders(subRes.orders);
+        setSubOrdersUnavailable(false);
+      } else if (subRes && subRes.featureUnavailable) {
+        // List endpoint not deployed yet (pre-v0.3 servers) — degrade to
+        // topup-only records instead of surfacing an error.
+        setSubOrders([]);
+        setSubOrdersUnavailable(true);
+      }
+      // Other subscription-list failures keep the previous rows (transient).
     } catch {
       // Orders stay as-is on failure; the section shows its empty state.
     } finally {
@@ -128,13 +194,6 @@ const MeUsageAndCredits: React.FC = () => {
     void loadOrders(true);
   }, [typeFilter]);
 
-  // Status polling while any order is still submitted (refresh every 20s).
-  useEffect(() => {
-    if (!orders.some((order) => /submit/i.test(order.status))) return;
-    const handle = setInterval(() => void loadOrders(false), 20_000);
-    return () => clearInterval(handle);
-  }, [orders, loadOrders]);
-
   const handleRefreshAll = useCallback(async () => {
     setRefreshing(true);
     void ensureMeSnapshot();
@@ -144,20 +203,58 @@ const MeUsageAndCredits: React.FC = () => {
     setRefreshing(false);
   }, [loadHistory, loadOrders]);
 
-  const balance = snapshot.balance;
-  const weekly = balance?.weeklyGrant;
-  const grantMe = meFromMilli(weekly?.amountMilli);
-  const remainingMe = meFromMilli(weekly?.remainingMilli);
-  const reset = weekly ? meResetParts(weekly.nextResetAt) : null;
-  const resetLine = !reset
-    ? ''
-    : reset.unit === 'soon'
-      ? i18nService.t('mePanelResetSoon')
-      : reset.unit === 'hours'
-        ? i18nService.t('mePanelResetInHours').replace('{n}', String(reset.n))
-        : i18nService.t('mePanelResetInDays').replace('{n}', String(reset.n));
-
   const rates = snapshot.rates ?? [];
+
+  // Merged payment records: subscription orders + topup orders, newest first.
+  // `now` pins the staleness sweep to a single clock read per rebuild.
+  const now = Date.now();
+  const paymentRows = useMemo<MePaymentRecordRow[]>(() => {
+    const rows: MePaymentRecordRow[] = [];
+    for (const order of subOrders) {
+      const plan = snapshot.plans.find((item) => item.planId === order.planId);
+      const isPeriod = order.period === 'month' || order.period === 'quarter' || order.period === 'year';
+      const periodLabel = isPeriod
+        ? i18nService.t(`mePurchasePeriod_${order.period as 'month' | 'quarter' | 'year'}`)
+        : '';
+      rows.push({
+        key: `sub-${order.orderId}`,
+        kind: 'subscription',
+        orderId: order.orderId,
+        title: `${plan?.name ?? order.planId}${periodLabel ? ` · ${periodLabel}` : ''}`,
+        createdAt: order.createdAt,
+        amountCny: order.payAmount ?? order.amountCny,
+        status: order.status,
+        rejectReason: order.rejectReason,
+        staleUnpaid: isStaleUnpaidSubscriptionOrder(order, now),
+      });
+    }
+    for (const order of orders) {
+      rows.push({
+        key: `topup-${order.orderId}`,
+        kind: 'topup',
+        orderId: order.orderId,
+        title: order.packageId,
+        createdAt: order.createdAt,
+        meMilli: order.meMilli,
+        amountCny: order.priceCny,
+        status: order.status,
+        rejectReason: order.rejectReason,
+      });
+    }
+    return rows.sort((a, b) => orderEpochMs(b.createdAt) - orderEpochMs(a.createdAt));
+  }, [subOrders, orders, snapshot.plans, now]);
+
+  // Status polling while any order (topup or subscription) is still live-
+  // pending (refresh every 20s). Stale-unpaid subscription orders stop
+  // driving the poll — only their server-side closure (janitor) changes them.
+  useEffect(() => {
+    const pendingLive = (status: string): boolean => /submit|created|pending|paid/i.test(status);
+    const pending = orders.some((order) => pendingLive(order.status))
+      || subOrders.some((order) => !isStaleUnpaidSubscriptionOrder(order, now) && pendingLive(order.status));
+    if (!pending) return;
+    const handle = setInterval(() => void loadOrders(false), 20_000);
+    return () => clearInterval(handle);
+  }, [orders, subOrders, loadOrders, now]);
 
   return (
     <div className="h-full overflow-y-auto px-4 py-4 space-y-4 max-w-3xl">
@@ -177,65 +274,60 @@ const MeUsageAndCredits: React.FC = () => {
       </div>
 
       {/* 双池概览 */}
-      <div className="rounded-2xl border border-claude-border dark:border-claude-darkBorder bg-claude-surface dark:bg-claude-darkSurface/60 p-3.5">
-        <div className="grid grid-cols-2 gap-3">
-          <div className="rounded-xl bg-claude-surfaceInset/50 dark:bg-claude-darkSurfaceInset/40 px-3 py-2.5">
-            <p className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">{i18nService.t('mePanelWeekly')}</p>
-            <p className="mt-1 text-lg font-semibold tabular-nums text-claude-text dark:text-claude-darkText">
-              {balance ? `${formatMe(remainingMe)} / ${formatMe(grantMe)}` : '—'}
-              <span className="ml-1 text-[10px] font-normal text-claude-textSecondary">ME</span>
-            </p>
-            <p className="mt-0.5 text-[10px] text-claude-textSecondary dark:text-claude-darkTextSecondary">{resetLine}</p>
-          </div>
-          <div className="rounded-xl bg-claude-surfaceInset/50 dark:bg-claude-darkSurfaceInset/40 px-3 py-2.5">
-            <p className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">{i18nService.t('meUsagePersistent')}</p>
-            <div className="mt-1 space-y-0.5 text-[11px] tabular-nums text-claude-text dark:text-claude-darkText">
-              <div className="flex justify-between"><span>{i18nService.t('mePanelTopup')}</span><span>{balance ? formatMe(meFromMilli(balance.persistent?.topupMilli)) : '—'}</span></div>
-              <div className="flex justify-between"><span>{i18nService.t('mePanelBonus')}</span><span>{balance ? formatMe(meFromMilli(balance.persistent?.bonusMilli)) : '—'}</span></div>
-              <div className="flex justify-between"><span>{i18nService.t('mePanelEarned')}</span><span>{balance ? formatMe(meFromMilli(balance.persistent?.earnedMilli)) : '—'}</span></div>
-            </div>
-          </div>
-        </div>
-        <p className="mt-2 border-t border-claude-border/50 dark:border-claude-darkBorder/50 pt-2 text-[10px] leading-relaxed text-claude-textSecondary dark:text-claude-darkTextSecondary">
-          {i18nService.t('mePanelNote')}
-        </p>
-      </div>
+      <MeBalanceOverviewCard />
 
-      {/* 充值订单 */}
+      {/* 支付记录：订阅订单 + 充值订单合并展示 */}
       <div className="rounded-2xl border border-claude-border dark:border-claude-darkBorder bg-claude-surface dark:bg-claude-darkSurface/60 p-3.5">
         <h3 className="text-xs font-semibold text-claude-text dark:text-claude-darkText">{i18nService.t('meUsageOrders')}</h3>
-        {orders.length === 0 ? (
+        {paymentRows.length === 0 ? (
           <p className="mt-2 text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
             {ordersLoading ? i18nService.t('loading') : i18nService.t('meUsageOrdersEmpty')}
           </p>
         ) : (
           <div className="mt-2 divide-y divide-claude-border/50 dark:divide-claude-darkBorder/50">
-            {orders.map((order) => (
-              <div key={order.orderId} className="flex items-center justify-between py-2 text-[11px]">
+            {paymentRows.map((row) => (
+              <div key={row.key} className="flex items-center justify-between py-2 text-[11px]">
                 <div className="min-w-0">
                   <p className="truncate text-claude-text dark:text-claude-darkText">
-                    {order.packageId}
+                    <span className="mr-1.5 rounded-md bg-claude-surfaceHover px-1.5 py-0.5 text-[10px] text-claude-textSecondary dark:bg-claude-darkSurfaceHover dark:text-claude-darkTextSecondary">
+                      {i18nService.t(row.kind === 'subscription' ? 'meUsageOrderKindSubscription' : 'meUsageOrderKindTopup')}
+                    </span>
+                    {row.title}
                     <span className="ml-2 tabular-nums text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                      {formatOrderTime(order.createdAt)}
+                      {formatOrderTime(row.createdAt)}
                     </span>
                   </p>
-                  {order.rejectReason && (
-                    <p className="truncate text-[10px] text-red-500">{order.rejectReason}</p>
+                  {row.rejectReason && (
+                    <p className="truncate text-[10px] text-red-500">{row.rejectReason}</p>
                   )}
                 </div>
                 <div className="flex items-center gap-2">
-                  {order.meMilli != null && order.meMilli > 0 && (
+                  {row.kind === 'topup' && row.meMilli != null && row.meMilli > 0 && (
                     <span className="tabular-nums text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                      +{formatMe(meFromMilli(order.meMilli))} ME
+                      +{formatMe(meFromMilli(row.meMilli))} ME
                     </span>
                   )}
-                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${orderStatusClass(order.status)}`}>
-                    {orderStatusLabel(order.status)}
+                  {row.kind === 'subscription' && row.amountCny != null && row.amountCny > 0 && (
+                    <span className="tabular-nums text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                      ¥{row.amountCny}
+                    </span>
+                  )}
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                    row.staleUnpaid
+                      ? 'bg-claude-surfaceHover text-claude-textSecondary dark:bg-claude-darkSurfaceHover dark:text-claude-darkTextSecondary'
+                      : orderStatusClass(row.status)
+                  }`}>
+                    {row.staleUnpaid ? i18nService.t('meUsageOrderStale') : orderStatusLabel(row.status)}
                   </span>
                 </div>
               </div>
             ))}
           </div>
+        )}
+        {subOrdersUnavailable && paymentRows.length > 0 && (
+          <p className="mt-2 text-[10px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+            {i18nService.t('meUsageSubOrdersPending')}
+          </p>
         )}
       </div>
 
