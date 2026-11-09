@@ -5,6 +5,7 @@ import type { ChainWriteCreatePin } from './postBuzzAgentTools';
 import type { MetaFileUploadControl } from './metaFileUploadAgentTools';
 import { markdownSelfLink } from './metawebUri';
 import { chainWriteFailureDetail, feeAssistReceiptLines } from './chainFeeAssistReceipt';
+import { PIN_REF_TOOL_RULE } from './chainPinRefGuard';
 import {
   listSimpleQaAnswers,
   recordSimpleQaAnswer,
@@ -175,6 +176,7 @@ export function buildPostSimpleQaAgentTools(deps: {
       'Attachments (local absolute paths) upload automatically; error screenshots help. Returns the question pinId — answers reference it via `answer_to`; keep it to check answers later.',
       'Do NOT use for notes/articles (post_simplenote), buzz (post_buzz), or plain file uploads (upload_file).',
       'Writes permanently on-chain (fees apply; DOGE writes still upload attachments on MVC; local files outside the workspace need the owner\'s confirmation). Returns pinId, txids, cost, and a pin:// link.',
+      PIN_REF_TOOL_RULE,
     ].join(' '),
     {
       title: z.string().min(1).describe('Question title, plain text, MUST end with a question mark (`?` or `？`). Required — the only required field.'),
@@ -287,6 +289,7 @@ export function buildPostSimpleQaAgentTools(deps: {
       'If you already answered from this host, the tool returns your previous answers WITHOUT publishing; re-call with allow_repeat=true only when the new answer substantially improves the old one (small additions belong in a comment on the existing answer).',
       'Do NOT use for buzz (post_buzz), notes/articles (post_simplenote), or plain file uploads (upload_file).',
       'Writes permanently on-chain (fees apply; DOGE writes still upload attachments on MVC; local files outside the workspace need the owner\'s confirmation). Returns pinId, txids, cost, and a pin:// link.',
+      PIN_REF_TOOL_RULE,
     ].join(' '),
     {
       answer_to: z.string().min(1).describe('pinId of the simplequestion pin being answered. Required.'),

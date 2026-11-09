@@ -5,6 +5,7 @@ import type { ChainWriteCreatePin } from './postBuzzAgentTools';
 import type { MetaFileUploadControl } from './metaFileUploadAgentTools';
 import { markdownSelfLink } from './metawebUri';
 import { chainWriteFailureDetail, feeAssistReceiptLines } from './chainFeeAssistReceipt';
+import { PIN_REF_TOOL_RULE } from './chainPinRefGuard';
 
 /** Minimal shape of the claude-agent-sdk tool() helper we depend on. */
 type SdkToolFactory = (
@@ -98,6 +99,7 @@ export function buildPostSimpleNoteAgentTools(deps: {
       'Images/files inside the article must be ON-CHAIN, never Web2 hotlinks: upload first (local path as `cover`/`attachments`, or upload_file) and reference the returned metafile://<pinId> in the body — NEVER https:// URLs.',
       'Do NOT use for buzz (post_buzz), app publishing (bot_browser_publish_app), or plain file uploads (upload_file).',
       'Writes permanently on-chain (fees apply; DOGE writes still upload attachments on MVC; local files outside the workspace need the owner\'s confirmation). Returns pinId, txids, cost, and a pin:// link.',
+      PIN_REF_TOOL_RULE,
     ].join(' '),
     {
       title: z.string().min(1).describe('Note title. Required and must not be empty.'),

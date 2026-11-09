@@ -16,6 +16,7 @@ import { METAPROTOCOL_REGISTRY_PATH } from '../services/metaProtocolService';
 import { validateAgainstSchema } from './agentpediaSchemaValidator';
 import { stripLoneSurrogates, truncateUtf16Units } from './llmSafeText';
 import { METAWEB_CITATION_RULE, markdownSelfLink } from './metawebUri';
+import { PIN_REF_TOOL_RULE } from './chainPinRefGuard';
 import { chainWriteFailureDetail, feeAssistReceiptLines } from './chainFeeAssistReceipt';
 import { recordChainReadSafe } from './chainReadLedger';
 import type { RecordChainReadInput } from '../chainContentHistoryStore';
@@ -652,6 +653,7 @@ export function buildMetaProtocolAgentTools(deps: {
       'Both actions validate the payload against the metaprotocol schema BEFORE anything reaches',
       'the wallet, then ask the host to sign and broadcast the on-chain pin (fees apply).',
       'Resolve the target for update by protocolPath, protocolName or pinId.',
+      PIN_REF_TOOL_RULE,
     ].join('\n'),
     {
       action: z.enum(['publish', 'update']).describe('publish registers a NEW protocol; update publishes a new version of an existing one.'),

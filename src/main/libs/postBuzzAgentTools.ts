@@ -3,6 +3,7 @@ import path from 'path';
 import { z } from 'zod';
 import type { MetaFileUploadControl } from './metaFileUploadAgentTools';
 import { chainWriteFailureDetail, feeAssistReceiptLines } from './chainFeeAssistReceipt';
+import { PIN_REF_TOOL_RULE } from './chainPinRefGuard';
 
 /**
  * Chain-write surface the host (main.ts) provides for on-chain pin creation.
@@ -105,6 +106,7 @@ export function buildPostBuzzAgentTools(deps: {
       'Use to post a buzz — a short on-chain message or development-journal entry. Attachments accept local paths (auto-uploaded) and metafile:// URIs; quote_pin quotes/reposts an existing buzz.',
       'Do NOT use for file-only uploads (upload_file), paylike/paycomment (omni_cast), or chat messages.',
       'Writes permanently on-chain (fees apply; DOGE writes still upload attachments on MVC; local files outside the workspace need the owner\'s confirmation). Returns pinId, txids, cost, attachment metafile URIs, and a pin:// link.',
+      PIN_REF_TOOL_RULE,
     ].join(' '),
     {
       content: z.string().min(1).describe('Buzz text content. Required and must not be empty.'),
