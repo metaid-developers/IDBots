@@ -275,8 +275,11 @@ test('Scheduler does not write task completion state through a stale store after
   assert.equal(staleStoreReads, 0);
 });
 
-test('Scheduler creates a fresh cowork session for repeated runs of the same scheduled task', async () => {
-  const task = createTask({ id: 'recurring-task', metabotId: 7 });
+test('Scheduler creates a fresh cowork session per run for a sessionMode "fresh" task and never revives the legacy session pointer', async () => {
+  // 'fresh' is the explicit opt-out of the standing conversation (series
+  // behavior lives in tests/schedulerSeriesSession.test.mjs). Either way the
+  // legacy cowork_session_id pointer (getTaskSessionId) is never reused.
+  const task = createTask({ id: 'recurring-task', metabotId: 7, sessionMode: 'fresh' });
   const runs = new Map();
   const completedRuns = [];
   let runIndex = 0;

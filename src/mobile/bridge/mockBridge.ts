@@ -698,6 +698,8 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
       metabotId: 1,
       coworkSessionId: null,
       targetSessionId: null,
+      sessionMode: 'series',
+      seriesSessionId: null,
       memoryAccess: 'none',
       expiresAt: null,
       notifyPlatforms: [],
@@ -732,6 +734,8 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
       metabotId: 2,
       coworkSessionId: null,
       targetSessionId: null,
+      sessionMode: 'series',
+      seriesSessionId: null,
       memoryAccess: 'none',
       expiresAt: null,
       notifyPlatforms: [],
@@ -804,6 +808,9 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
       !SCHEDULED_TASK_MEMORY_ACCESS_OPTIONS.includes(input.memoryAccess)
     ) {
       return 'unknown memory access';
+    }
+    if (input.sessionMode !== undefined && input.sessionMode !== 'series' && input.sessionMode !== 'fresh') {
+      return 'unknown session mode';
     }
     return null;
   }
@@ -940,6 +947,8 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
           metabotId: typeof input.metabotId === 'number' ? input.metabotId : null,
           coworkSessionId: null,
           targetSessionId: typeof input.targetSessionId === 'string' ? input.targetSessionId : null,
+          sessionMode: input.sessionMode === 'fresh' ? 'fresh' : 'series',
+          seriesSessionId: null,
           memoryAccess: SCHEDULED_TASK_MEMORY_ACCESS_OPTIONS.includes(input.memoryAccess as ScheduledTaskMemoryAccess)
             ? (input.memoryAccess as ScheduledTaskMemoryAccess)
             : 'none',
@@ -974,7 +983,7 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
         if (!input || typeof input !== 'object') return { success: false, error: 'input must be an object' };
         const editableFields = [
           'name', 'description', 'schedule', 'prompt', 'workingDirectory', 'systemPrompt',
-          'executionMode', 'metabotId', 'targetSessionId', 'memoryAccess', 'expiresAt',
+          'executionMode', 'metabotId', 'targetSessionId', 'sessionMode', 'memoryAccess', 'expiresAt',
           'notifyPlatforms', 'enabled', 'exitCondition', 'maxFires',
         ] as const;
         const changes: Partial<ScheduledTaskInput> = {};
@@ -995,6 +1004,7 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
         if (input.metabotId !== undefined && input.metabotId !== previousMetabotId) {
           task.coworkSessionId = null;
           task.targetSessionId = null;
+          task.seriesSessionId = null;
         }
         task.state = {
           ...task.state,

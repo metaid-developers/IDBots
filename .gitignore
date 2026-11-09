@@ -743,6 +743,8 @@ man_base_data_pebble/
 !tests/scheduledTaskTargetSession.test.mjs
 !tests/scheduledTaskCreateDefaultBinding.test.mjs
 !tests/schedulerTargetSession.test.mjs
+!tests/schedulerSeriesSession.test.mjs
+!tests/scheduledTaskSessionSeriesStore.test.mjs
 !tests/scheduledTaskSkipLedger.test.mjs
 !tests/scheduledTaskSingleRunner.test.mjs
 !tests/scheduledTaskLifecycleStore.test.mjs

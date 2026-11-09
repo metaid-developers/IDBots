@@ -95,6 +95,9 @@ function createHarness({ task, practiceProposal = null } = {}) {
         trigger,
       }),
       markTaskRunning: () => {},
+      // The fire path claims atomically and refreshes its liveness marker.
+      tryMarkTaskRunning: () => true,
+      touchTaskRunning: () => {},
       recordSkippedRun: () => ({}),
       releaseStuckRunningTask: () => {},
       completeRun: (runId, status, sessionId, durationMs, error) => ({

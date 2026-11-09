@@ -119,7 +119,7 @@ import {
 import { getSkillServiceManager } from './skillServices';
 import { createTray, destroyTray, updateTrayMenu } from './trayManager';
 import { isAutoLaunched, getAutoLaunchEnabled, setAutoLaunchEnabled } from './autoLaunchManager';
-import { ScheduledTaskStore, DEFAULT_AGENT_MAX_FIRES } from './scheduledTaskStore';
+import { ScheduledTaskStore, DEFAULT_AGENT_MAX_FIRES, SCHEDULED_TASK_SESSION_MODES } from './scheduledTaskStore';
 import { dshPluginsDirFor, resolveDshPluginEntries } from './libs/dshPluginManager';
 import { GroupTaskStore, setGroupTaskStoreStatusBroadcaster, type GroupTaskStatus } from './groupTaskStore';
 import { OpenTeamMembershipStore } from './openTeamMembershipStore';
@@ -11126,6 +11126,14 @@ const getScheduler = () => {
       isRecoverableSqliteError: isSqliteWasmBoundsError,
       recoverSqlite: recoverSqliteStore,
       submitToSession: (input) => getCoworkTurnSubmissionController().submit(input),
+      // A fire's prompt in a standing conversation (and the rotation pointer)
+      // is persisted by the scheduler, not the runner — forward it through the
+      // same sanitize+broadcast channel so an open conversation shows it live.
+      emitSessionMessage: (sessionId, message) => {
+        if (!shouldForwardCoworkStreamEvent(getCoworkStore(), sessionId)) return;
+        emitCoworkStreamMessage(sessionId, message);
+      },
+      getAppLanguage: () => getPersistedAppLanguage(),
     });
   }
   return scheduler;
@@ -15895,6 +15903,10 @@ if (!gotTheLock) {
       } else {
         delete normalizedInput.targetSessionId;
       }
+      // Unknown values fall to the store default ('series', the standing conversation).
+      if (!SCHEDULED_TASK_SESSION_MODES.includes(normalizedInput.sessionMode)) {
+        delete normalizedInput.sessionMode;
+      }
 
       const task = getScheduledTaskStore().createTask(normalizedInput);
       getScheduler().reschedule();
@@ -15927,6 +15939,10 @@ if (!gotTheLock) {
         // Absent or non-string payload values preserve the existing binding;
         // an explicit null clears it.
         delete normalizedInput.targetSessionId;
+      }
+      // An absent or unknown mode keeps the stored one.
+      if (!SCHEDULED_TASK_SESSION_MODES.includes(normalizedInput.sessionMode)) {
+        delete normalizedInput.sessionMode;
       }
 
       const task = scheduledTaskStore.updateTask(id, normalizedInput);

@@ -10,12 +10,20 @@
 #   "current"  -> runs in the session this script is called from (resolved here
 #                 from IDBOTS_COWORK_SESSION_ID)
 #   "<uuid>"   -> runs in that session
-#   null or "" -> CLEARS an existing binding (task runs in a new session again)
+#   null or "" -> CLEARS an existing binding (task falls back to its standing
+#                 conversation, or a fresh session per fire for "sessionMode":
+#                 "fresh")
 #   omitted    -> keeps the current binding (no defaulting here — only
 #                 create-task.sh defaults one-shot "at" tasks to the current session)
-#   If the bound session is missing or archived at run time, the task runs in a
-#   new session instead. The API response may add a "sessionWarning" field when
-#   the sessionId does not resolve to a usable session.
+#   If the bound session is missing or archived at run time, the task falls back
+#   to its standing conversation. The API response may add a "sessionWarning"
+#   field when the sessionId does not resolve to a usable session.
+#
+# Session mode ("sessionMode", recurring tasks only):
+#   "series" -> all fires continue one standing conversation "[定时] <name>"
+#               (the default; the host rotates to "（2）", "（3）"… when it
+#               outgrows its budget)
+#   "fresh"  -> a new session for every fire (one-off sessions, nothing kept)
 #
 # Lifecycle fields (partial-update like any other field):
 #   exitCondition -> revise the retire clause (natural language)
