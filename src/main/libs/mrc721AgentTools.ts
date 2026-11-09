@@ -378,7 +378,9 @@ export function formatMrc721Transfers(transfers: Mrc721ItemTransferRecord[]): st
   if (!transfers.length) return '- no transfers recorded yet (genesis mint only)';
   const lines: string[] = [`${transfers.length} transfer(s):`];
   for (const transfer of transfers) {
-    const when = transfer.time ? new Date(transfer.time).toISOString() : `height ${transfer.height ?? '?'}`;
+    // manapi transfer `time` is epoch SECONDS (upstream contract, frozen) —
+    // Date needs ms or every row renders as January 1970.
+    const when = transfer.time ? new Date(transfer.time * 1000).toISOString() : `height ${transfer.height ?? '?'}`;
     lines.push(
       `  - ${when}: ${formatShortAddress(transfer.fromAddress)} → ${formatShortAddress(transfer.toAddress)}`
       + `${transfer.txId ? ` · tx ${transfer.txId}` : ''}${transfer.chainName ? ` [${transfer.chainName}]` : ''}`,

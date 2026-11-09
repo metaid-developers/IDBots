@@ -642,6 +642,17 @@ test('formatMrc721* helpers render receipts and sheets', () => {
   assert.match(transfers, /1 transfer\(s\)/);
 });
 
+test('mrc721 transfer history renders manapi epoch-seconds times as real dates', () => {
+  // 1794190970 is the exact value MetaSo cited in the 1970-date bug report:
+  // epoch seconds = 2026-11-09T02:22:50Z (10:22:50 Beijing, UTC+8); treating
+  // it as ms used to render 1970-01-21.
+  const rendered = formatMrc721Transfers([
+    { fromAddress: BOT_ADDRESS, toAddress: OTHER_ADDRESS, txId: 't1', time: 1794190970 },
+  ]);
+  assert.match(rendered, /2026-11-09T02:22:50\.000Z/);
+  assert.doesNotMatch(rendered, /1970-01-21/);
+});
+
 test('mrc721_sell refuses a price under the 22000 sat floor before any wallet work', async () => {
   const { calls, byName } = makeHarness();
   const result = await byName.mrc721_sell.handler({
