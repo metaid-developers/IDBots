@@ -197,6 +197,44 @@ test('getMeSettings/setMeSettings sign the pinned actions and normalize strictly
   await assert.rejects(() => setMeSettings('yes'), /must be a boolean/);
 });
 
+test('getMeBalance keeps the auto-deduct echo and spendableMilli, absent when not reported', async () => {
+  const { getMeBalance, initMePointsService } = await import('../dist-electron/main/services/mePointsService.js');
+  let respond = () => ({
+    code: 0,
+    message: 'ok',
+    data: {
+      identityAddress: ADDRESS,
+      weeklyGrant: { amountMilli: 2_000_000, remainingMilli: 1_500_000, nextResetAt: 1 },
+      persistent: { topupMilli: 30_000_000, earnedMilli: 0, bonusMilli: 0 },
+      frozenMilli: 0,
+      totalAvailable: 31_500_000,
+      autoDeductFromPersistent: false,
+      spendableMilli: 1_500_000,
+    },
+  });
+  initMePointsService({
+    fetchImpl: async () => ({ ok: true, status: 200, json: async () => respond() }),
+    getUserIdentityStore: () => ({
+      get: () => ({ id: 1, mnemonic: MNEMONIC, path: WALLET_PATH, mvc_address: ADDRESS, name: 'Owner' }),
+    }),
+  });
+
+  const echoed = await getMeBalance({ forceRefresh: true });
+  assert.equal(echoed.autoDeductFromPersistent, false);
+  // Grant-only: the persistent 30,000 ME are not spendable.
+  assert.equal(echoed.spendableMilli, 1_500_000);
+
+  // Older servers omit both fields: they stay absent (never false / 0).
+  respond = () => ({ code: 0, message: 'ok', data: { weeklyGrant: {}, persistent: {} } });
+  const legacy = await getMeBalance({ forceRefresh: true });
+  assert.equal('autoDeductFromPersistent' in legacy, false);
+  assert.equal('spendableMilli' in legacy, false);
+
+  // An unparseable spendable figure must not read as "0 ME left".
+  respond = () => ({ code: 0, message: 'ok', data: { spendableMilli: 'n/a' } });
+  assert.equal('spendableMilli' in (await getMeBalance({ forceRefresh: true })), false);
+});
+
 test('payment UX honesty: topup intro, code expiry, stale-unpaid orders, gateway fallback', () => {
   // Topup section carries the corrected credit-pack intro (pack ME never
   // expires, giftable, auto-continues paying after the weekly quota dies).

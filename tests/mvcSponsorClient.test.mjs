@@ -4,11 +4,13 @@ import { createRequire } from 'node:module';
 
 const {
   createMvcSponsorV2Client,
+  deriveMvcSponsorAddress,
   estimateDraftMinerFee,
   getEstimatedBaseTxSize,
   getOpReturnScriptSize,
   isNoUserUtxoDraftError,
   isSponsorClientError,
+  meBillingOf,
   pickUtxos,
   reconcileSponsorOrderAfterCommitFailure,
   signMvcAddressMessage,
@@ -255,6 +257,58 @@ test('preSponsor passes trafficAccount through untouched when provided', async (
   });
   const body = JSON.parse(callsTo(fetchImpl, '/v2/assist/gas/mvc/pre')[0].init.body);
   assert.deepEqual(body.trafficAccount, trafficAccount);
+});
+
+test('preSponsor forwards billing:"me" and normalizes the paySource / meAmountMilli echo', async () => {
+  const preparedTxHex = buildPreparedTxHex();
+  const fetchImpl = createFetchStub([
+    ['/v2/assist/gas/mvc/pre', {
+      preparedTxHex,
+      orderId: 'order-me',
+      minerFee: 100,
+      userInputIndexes: [0],
+      paySource: 'me',
+      meAmountMilli: '12',
+    }],
+  ]);
+  const client = createMvcSponsorV2Client({ baseUrl: 'https://sponsor.test', fetchImpl });
+  const base = {
+    address: MVC_ADDRESS,
+    txHex: preparedTxHex,
+    challengeId: 'challenge-1',
+    publicKey: '02'.padEnd(66, '11'),
+    signature: 'c2ln',
+  };
+  const pre = await client.preSponsor({
+    ...base,
+    trafficAccount: { accountId: 'gmid-account', authSignature: 'bWU=', timestamp: 1730000000, billing: 'me' },
+  });
+  assert.equal(pre.paySource, 'me');
+  assert.equal(pre.meAmountMilli, 12);
+  const meBody = JSON.parse(callsTo(fetchImpl, '/v2/assist/gas/mvc/pre')[0].init.body);
+  assert.equal(meBody.trafficAccount.billing, 'me');
+
+  // Anything but an explicit 'me' keeps the legacy request shape old backends accept.
+  await client.preSponsor({
+    ...base,
+    trafficAccount: { accountId: 'gmid-account', authSignature: 'YXV0aA==', timestamp: 1730000000, billing: 'bytes' },
+  });
+  const bytesBody = JSON.parse(callsTo(fetchImpl, '/v2/assist/gas/mvc/pre')[1].init.body);
+  assert.equal('billing' in bytesBody.trafficAccount, false);
+});
+
+test('meBillingOf reads the address/info me block and tolerates its absence', () => {
+  const info = (raw) => ({ exists: true, balance: 0, grantedAmount: 0, reservedAmount: 0, spentAmount: 0, availableAmount: 0, status: '', raw });
+  assert.deepEqual(meBillingOf(info({ me: { trafficBilling: true, spendableMilli: 1834000 } })), {
+    trafficBilling: true,
+    spendableMilli: 1834000,
+  });
+  assert.deepEqual(meBillingOf(info({ me: { traffic_billing: 'false', spendable_milli: -1 } })), {
+    trafficBilling: false,
+    spendableMilli: undefined,
+  });
+  assert.equal(meBillingOf(info({})), undefined);
+  assert.equal(meBillingOf(info({ me: [] })), undefined);
 });
 
 test('preSponsor rejects an incomplete trafficAccount locally without any HTTP call', async () => {
@@ -523,6 +577,49 @@ test('signMvcAddressMessage returns a base64 signature and compressed public key
   });
   assert.ok(Buffer.from(signature, 'base64').length > 0);
   assert.match(publicKey, /^[0-9a-f]{66}$/);
+});
+
+test('deriveMvcSponsorAddress yields the address signMvcAddressMessage signs for', async () => {
+  const hd = mvc.Mnemonic.fromString(MNEMONIC).toHDPrivateKey('', mvc.Networks.livenet);
+  const address = deriveMvcSponsorAddress({ mnemonic: MNEMONIC, path: WALLET_PATH });
+  assert.equal(address, hd.deriveChild(WALLET_PATH).publicKey.toAddress(mvc.Networks.livenet).toString());
+  const { signature } = await signMvcAddressMessage({ mnemonic: MNEMONIC, path: WALLET_PATH, message: 'challenge' });
+  assert.ok(mvc.Message('challenge').verify(address, signature));
+});
+
+test('sponsor signing honours an explicit 236 coin-type path (legacy-imported wallets)', async () => {
+  const legacyPath = "m/44'/236'/0'/0/0";
+  const hd = mvc.Mnemonic.fromString(MNEMONIC).toHDPrivateKey('', mvc.Networks.livenet);
+  const legacyKey = hd.deriveChild(legacyPath);
+  const legacyAddress = legacyKey.publicKey.toAddress(mvc.Networks.livenet).toString();
+  assert.equal(deriveMvcSponsorAddress({ mnemonic: MNEMONIC, path: legacyPath }), legacyAddress);
+
+  // The sponsor checks publicKey -> address; the 10001 key never matched a 236 address.
+  const { signature, publicKey } = await signMvcAddressMessage({ mnemonic: MNEMONIC, path: legacyPath, message: 'challenge' });
+  assert.ok(mvc.Message('challenge').verify(legacyAddress, signature));
+  assert.equal(publicKey, legacyKey.publicKey.toString());
+
+  // User inputs owned by the 236 address must be unlocked with the 236 key.
+  const legacyUtxo = { ...TEST_UTXO, address: legacyAddress };
+  const tx = new mvc.Transaction();
+  tx.addInput(new mvc.Transaction.Input.PublicKeyHash({
+    output: new mvc.Transaction.Output({ script: mvc.Script.buildPublicKeyHashOut(legacyAddress), satoshis: legacyUtxo.satoshis }),
+    prevTxId: legacyUtxo.txId,
+    outputIndex: legacyUtxo.outputIndex,
+    script: mvc.Script.empty(),
+  }));
+  tx.addOutput(new mvc.Transaction.Output({ script: mvc.Script.buildPublicKeyHashOut(legacyAddress), satoshis: 40000 }));
+  const { txHex } = await signMvcPreparedUserInputs({
+    mnemonic: MNEMONIC,
+    walletPath: legacyPath,
+    mvcAddress: legacyAddress,
+    preparedTxHex: tx.toString(),
+    userInputs: [legacyUtxo],
+    userInputIndexes: [0],
+  });
+  const signed = new mvc.Transaction(txHex);
+  const unlockingPubKey = signed.inputs[0].script.chunks[1].buf.toString('hex');
+  assert.equal(unlockingPubKey, legacyKey.publicKey.toString());
 });
 
 test('signMvcPreparedUserInputs unlocks only the user-owned inputs', async () => {

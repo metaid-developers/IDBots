@@ -100,6 +100,37 @@ interface TrafficDailyUsageRowInfo {
   botAddress: string;
   bytes: number;
   txCount: number;
+  /** ME charged for the row's ME-billed orders (milliME); absent on backends without ME billing. */
+  meMilli?: number;
+}
+
+interface TrafficUsageSummaryInfo {
+  todayBytes: number;
+  weekBytes: number;
+  monthBytes: number;
+  todayMeMilli?: number;
+  weekMeMilli?: number;
+  monthMeMilli?: number;
+}
+
+/** Sponsor's ME credits billing capability for this account (address/info `me` block). */
+interface TrafficMeBillingStatusInfo {
+  trafficBilling: boolean;
+  spendableMilli?: number;
+}
+
+/** One sponsored write as recorded by the sponsor (newest first). */
+interface TrafficSponsorOrderInfo {
+  orderId: string;
+  botAddress: string;
+  txId: string;
+  txSize: number;
+  paySource: 'me' | 'bytes' | 'quota' | '';
+  meAmountMilli: number;
+  status: string;
+  createdAt: number;
+  committedAt: number;
+  kind?: string;
 }
 
 interface TrafficBindSummaryInfo {
@@ -118,7 +149,10 @@ interface TrafficSpendJournalEntryInfo {
   txSize: number;
   sponsoredMinerFee: number;
   savedFee: number;
-  billedBy: 'traffic' | 'quota';
+  /** 'me' = ME credits; 'traffic' = traffic bytes; 'quota' = legacy sponsor quota. */
+  billedBy: 'me' | 'traffic' | 'quota';
+  /** ME charged in milliME (0 unless billedBy is 'me'). */
+  meAmountMilli: number;
   /** Pin protocol path or purpose tag (e.g. /protocols/simplemsg, /file); '' for legacy rows. */
   kind: string;
   createdAt: number;
@@ -269,6 +303,10 @@ interface MeBalanceInfo {
   };
   frozenMilli: number;
   totalAvailable: number;
+  /** Per-identity credit-pack switch echoed by /v1/me/balance; absent on older servers. */
+  autoDeductFromPersistent?: boolean;
+  /** What a new ME spend can draw now (grant + packs when auto-deduct is on); absent on older servers. */
+  spendableMilli?: number;
 }
 
 /**
@@ -1725,7 +1763,17 @@ interface IElectronAPI {
     getBalance: (input?: { forceRefresh?: boolean }) => Promise<{ success: boolean; balance?: TrafficAccountInfo; error?: string }>;
     getLedger: (input?: { cursor?: number; limit?: number; direction?: number }) => Promise<{ success: boolean; entries?: TrafficLedgerEntryInfo[]; nextCursor?: number; error?: string }>;
     getDailyUsage: (input?: { from?: number; to?: number; botAddress?: string }) => Promise<{ success: boolean; rows?: TrafficDailyUsageRowInfo[]; error?: string }>;
-    getUsageSummary: () => Promise<{ success: boolean; summary?: { todayBytes: number; weekBytes: number; monthBytes: number }; error?: string }>;
+    getUsageSummary: () => Promise<{ success: boolean; summary?: TrafficUsageSummaryInfo; error?: string }>;
+    getMeBillingStatus: (input?: { forceRefresh?: boolean }) => Promise<{ success: boolean; status?: TrafficMeBillingStatusInfo; error?: string }>;
+    getSponsorOrders: (input?: { cursor?: string; limit?: number; botAddress?: string }) => Promise<{
+      success: boolean;
+      orders?: TrafficSponsorOrderInfo[];
+      nextCursor?: string;
+      error?: string;
+      errorCode?: string;
+      /** True on a backend without the endpoint: fall back to the local spend journal. */
+      featureUnavailable?: boolean;
+    }>;
     bindAllBots: () => Promise<{ success: boolean; summary?: TrafficBindSummaryInfo; error?: string }>;
     getLocalJournal: (input?: { limit?: number; botAddress?: string }) => Promise<{ success: boolean; entries?: TrafficSpendJournalEntryInfo[]; error?: string }>;
     getPricing: () => Promise<{ success: boolean; plans?: TrafficPricingPlanInfo[]; error?: string }>;
@@ -3032,6 +3080,11 @@ export type {
   MeTopupOrderInfo,
   MeSubmitTopupResultInfo,
   MeSubscriptionOrderInfo,
+  TrafficDailyUsageRowInfo,
+  TrafficUsageSummaryInfo,
+  TrafficMeBillingStatusInfo,
+  TrafficSponsorOrderInfo,
+  TrafficSpendJournalEntryInfo,
 };
 
 export {};

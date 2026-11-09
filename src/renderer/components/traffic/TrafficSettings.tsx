@@ -1,10 +1,17 @@
 /**
  * Traffic Settings panel.
- * Sections in one tab: billing-mode toggle (account quota vs MetaBot
- * self-pay), available quota with the free-grant claim banner, recharge
- * (plan picker → order → PayPal browser checkout or Alipay QR scan → status
- * polling), redeem-code entry, and usage (per-bot daily table, 30-day
- * summary, ledger).
+ * Sections in one tab: billing mode, balance, and usage (per-bot daily
+ * table, 30-day summary, detailed history).
+ *
+ * Two billing worlds, picked by the sponsor's ME billing capability
+ * (traffic:getMeBillingStatus, requirements v1.0 R3):
+ * - ME credits billing live: a single 积分支付 switch (traffic.mode 'traffic'
+ *   = on), the shared ME balance card (weekly grant + credit packs), and the
+ *   per-order usage history. Byte top-ups (recharge / redeem / free grant)
+ *   are gone — credits come from the ME purchase flow.
+ * - Not live yet (older backend, server-mode tenant): the legacy account
+ *   quota UI — mode toggle, byte balance with recharge / redeem / free-grant,
+ *   and the byte ledger — because sponsored writes are still billed in bytes.
  * UI copy goes through i18nService (zh/en), same as Settings/UserSettings.
  */
 
@@ -22,7 +29,21 @@ import {
   UserCircleIcon,
 } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
+import type {
+  TrafficMeBillingStatusInfo,
+  TrafficSponsorOrderInfo,
+  TrafficUsageSummaryInfo,
+} from '../../types/electron';
 import { AlipayIcon, PayPalIcon } from '../icons/payments';
+import MeBalanceOverviewCard from '../me/MeBalanceOverviewCard';
+import {
+  ensureMeSnapshot,
+  getMeSnapshot,
+  isMeEffectivelySubscribed,
+  requestMeBalance,
+  requestOpenMePurchase,
+  subscribeMeSnapshot,
+} from '../me/mePointsStore';
 import {
   DEFAULT_FREE_GRANT_BYTES,
   TRAFFIC_LOW_BALANCE_BYTES,
@@ -30,6 +51,7 @@ import {
   type TrafficDisplayUnit,
 } from './formatTraffic';
 import { resolveFreeGrantBanner } from './freeGrantVisibility';
+import { creditsSpendableMilli, formatOrderMe, journalEntriesToOrders } from './creditsTraffic';
 
 type TrafficSettingsInfo = {
   mode: 'traffic' | 'selfpay';
@@ -71,7 +93,7 @@ type TrafficBindSummaryInfo = {
   conflictCount: number;
   failedCount: number;
 };
-type TrafficDailyUsageRowInfo = { date: string; botAddress: string; bytes: number; txCount: number };
+type TrafficDailyUsageRowInfo = { date: string; botAddress: string; bytes: number; txCount: number; meMilli?: number };
 type TrafficLedgerEntryInfo = {
   id: number;
   direction: number;
@@ -405,7 +427,7 @@ const TrafficSettings: React.FC = () => {
   const [redeeming, setRedeeming] = useState(false);
   const [redeemError, setRedeemError] = useState('');
   const [redeemSuccess, setRedeemSuccess] = useState<TrafficRedeemResultInfo | null>(null);
-  const [summary, setSummary] = useState<{ todayBytes: number; weekBytes: number; monthBytes: number } | null>(null);
+  const [summary, setSummary] = useState<TrafficUsageSummaryInfo | null>(null);
   const [dailyRows, setDailyRows] = useState<TrafficDailyUsageRowInfo[] | null>(null);
   const [dailyFallbackRows, setDailyFallbackRows] = useState<TrafficDailyUsageRowInfo[] | null>(null);
   const [usageError, setUsageError] = useState('');
@@ -414,6 +436,16 @@ const TrafficSettings: React.FC = () => {
   const [ledgerDone, setLedgerDone] = useState(false);
   const [ledgerLoading, setLedgerLoading] = useState(false);
   const [ledgerError, setLedgerError] = useState('');
+  // ME credits billing (requirements v1.0): null until the first status read.
+  const [meBilling, setMeBilling] = useState<TrafficMeBillingStatusInfo | null>(null);
+  const [meBillingRefreshing, setMeBillingRefreshing] = useState(false);
+  const [orders, setOrders] = useState<TrafficSponsorOrderInfo[]>([]);
+  const [ordersCursor, setOrdersCursor] = useState('');
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [ordersError, setOrdersError] = useState('');
+  const [ordersLocalOnly, setOrdersLocalOnly] = useState(false);
+  const meSnapshot = React.useSyncExternalStore(subscribeMeSnapshot, getMeSnapshot, getMeSnapshot);
+  const creditsMode = meBilling?.trafficBilling === true;
   const [botNames, setBotNames] = useState<Record<string, string>>({});
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [apiBaseInput, setApiBaseInput] = useState('');
@@ -536,9 +568,10 @@ const TrafficSettings: React.FC = () => {
       for (const entry of journalRes.entries) {
         const date = new Date(entry.createdAt).toISOString().slice(0, 10);
         const key = `${date}|${entry.botAddress}`;
-        const bucket = buckets.get(key) ?? { date, botAddress: entry.botAddress, bytes: 0, txCount: 0 };
+        const bucket: TrafficDailyUsageRowInfo = buckets.get(key) ?? { date, botAddress: entry.botAddress, bytes: 0, txCount: 0 };
         bucket.bytes += entry.txSize;
         bucket.txCount += 1;
+        if (entry.billedBy === 'me') bucket.meMilli = (bucket.meMilli ?? 0) + (entry.meAmountMilli || 0);
         buckets.set(key, bucket);
       }
       setDailyRows(null);
@@ -565,6 +598,51 @@ const TrafficSettings: React.FC = () => {
       setLedgerLoading(false);
     }
   }, [trafficApi]);
+
+  // Per-order history (credits mode). A backend without the sponsor-orders
+  // endpoint falls back to this device's spend journal, which records what
+  // every local sponsored write was billed in.
+  const loadOrders = useCallback(async (cursor: string) => {
+    setOrdersLoading(true);
+    setOrdersError('');
+    try {
+      const res = await trafficApi.getSponsorOrders({ cursor: cursor || undefined, limit: 20 });
+      if (res.success && res.orders) {
+        setOrdersLocalOnly(false);
+        setOrders((previous) => (cursor ? [...previous, ...res.orders!] : res.orders!));
+        setOrdersCursor(res.nextCursor || '');
+        return;
+      }
+      if (!res.featureUnavailable) {
+        setOrdersError(describeTrafficError(res.error || '', 'trafficErrLoadLedger', res.errorCode));
+        return;
+      }
+      const journalRes = await trafficApi.getLocalJournal({ limit: 200 }).catch(() => null);
+      setOrdersLocalOnly(true);
+      setOrders(journalRes?.success && journalRes.entries ? journalEntriesToOrders(journalRes.entries) : []);
+      setOrdersCursor('');
+    } catch (error) {
+      setOrdersError(describeTrafficError(error instanceof Error ? error.message : '', 'trafficErrLoadLedger'));
+    } finally {
+      setOrdersLoading(false);
+    }
+  }, [trafficApi]);
+
+  const refreshMeBilling = useCallback(async (forceRefresh = false): Promise<boolean> => {
+    const res = await trafficApi.getMeBillingStatus({ forceRefresh }).catch(() => null);
+    const status: TrafficMeBillingStatusInfo = res?.success && res.status ? res.status : { trafficBilling: false };
+    setMeBilling(status);
+    return status.trafficBilling;
+  }, [trafficApi]);
+
+  const refreshCredits = useCallback(async () => {
+    setMeBillingRefreshing(true);
+    try {
+      await Promise.all([refreshMeBilling(true), requestMeBalance({ forceRefresh: true })]);
+    } finally {
+      setMeBillingRefreshing(false);
+    }
+  }, [refreshMeBilling]);
 
   useEffect(() => {
     let cancelled = false;
@@ -600,6 +678,16 @@ const TrafficSettings: React.FC = () => {
         }
         setBotNames(names);
       }).catch(() => {});
+      // Credits billing live: the ME card and per-order history replace the
+      // byte balance / free-grant / ledger reads entirely.
+      if (await refreshMeBilling()) {
+        if (cancelled) return;
+        ensureMeSnapshot();
+        loadUsage();
+        loadOrders('');
+        return;
+      }
+      if (cancelled) return;
       // Create the traffic account (via getBalance → requireAccount) before
       // reading campaign status. Parallel first-run POSTs used to lose the
       // campaign call on a create-conflict, which hid the free-grant button
@@ -679,8 +767,14 @@ const TrafficSettings: React.FC = () => {
     } else {
       setBindState('idle');
     }
-    refreshBalance(true);
-  }, [refreshBalance, trafficApi]);
+    // Bindings decide which writes the account pays for in both worlds; only
+    // the balance being refreshed differs.
+    if (creditsMode) {
+      void refreshMeBilling(true);
+    } else {
+      refreshBalance(true);
+    }
+  }, [creditsMode, refreshBalance, refreshMeBilling, trafficApi]);
 
   const handleSelectMode = async (mode: 'traffic' | 'selfpay') => {
     if (!settings || settingsSaving || settings.mode === mode) return;
@@ -978,6 +1072,13 @@ const TrafficSettings: React.FC = () => {
   // (the local-journal fallback aggregates ascending; both get sorted here).
   const visibleDailyRows = [...(dailyRows ?? dailyFallbackRows ?? [])]
     .sort((a, b) => b.date.localeCompare(a.date) || a.botAddress.localeCompare(b.botAddress));
+  // ME columns appear only once some usage was actually billed in credits.
+  const showMeColumn = creditsMode && visibleDailyRows.some((row) => typeof row.meMilli === 'number');
+  const creditsSpendable = creditsSpendableMilli({
+    sponsorSpendableMilli: meBilling?.spendableMilli,
+    balance: meSnapshot.balance,
+  });
+  const creditsPaymentOn = (settings?.mode ?? 'traffic') === 'traffic';
   // Payment-method model for the recharge modal: a configured dev override
   // forces one gateway for every plan (single unfiltered list, no tabs);
   // otherwise plans split by currency (CNY → Alipay, other → PayPal) and the
@@ -1065,6 +1166,42 @@ const TrafficSettings: React.FC = () => {
       ) : null}
 
       {/* Mode */}
+      {creditsMode ? (
+        <div>
+          <div className="flex items-center justify-between gap-3">
+            <h4 className="text-sm font-medium dark:text-claude-darkText text-claude-text">
+              {i18nService.t('trafficCreditsPayTitle')}
+            </h4>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={creditsPaymentOn}
+              aria-label={i18nService.t('trafficCreditsPayTitle')}
+              disabled={settingsSaving || !settings}
+              onClick={() => handleSelectMode(creditsPaymentOn ? 'selfpay' : 'traffic')}
+              className={`shrink-0 w-9 h-5 rounded-full flex items-center transition-colors ${
+                creditsPaymentOn ? 'bg-claude-accent' : 'dark:bg-claude-darkBorder bg-claude-border'
+              } disabled:opacity-50 disabled:cursor-not-allowed`}
+            >
+              <span
+                className={`w-4 h-4 rounded-full bg-white shadow-md transform transition-transform ${
+                  creditsPaymentOn ? 'translate-x-[18px]' : 'translate-x-0.5'
+                }`}
+              />
+            </button>
+          </div>
+          <p className={`${hintClass} mt-1`}>{i18nService.t('trafficCreditsPayDesc')}</p>
+          <p className={`${hintClass} mt-2`}>
+            {i18nService.t(creditsPaymentOn ? 'trafficCreditsPayOnHint' : 'trafficCreditsPayOffHint')}
+          </p>
+          {bindState === 'running' && (
+            <p className={`${hintClass} mt-2`}>{i18nService.t('trafficBindingRunning')}</p>
+          )}
+          {bindState === 'error' && (
+            <p className="text-xs text-red-500 mt-2">{bindError || i18nService.t('trafficBindFailed')}</p>
+          )}
+        </div>
+      ) : (
       <div>
         <h4 className="text-sm font-medium dark:text-claude-darkText text-claude-text mb-1">
           {i18nService.t('trafficModeTitle')}
@@ -1118,8 +1255,47 @@ const TrafficSettings: React.FC = () => {
           <p className="text-xs text-red-500 mt-2">{bindError || i18nService.t('trafficBindFailed')}</p>
         )}
       </div>
+      )}
 
       {/* Balance */}
+      {creditsMode ? (
+        <div className="space-y-2">
+          <MeBalanceOverviewCard note={i18nService.t('trafficCreditsBalanceNote')} />
+          {creditsPaymentOn && creditsSpendable === 0 && (
+            <div className="flex items-center gap-2 rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-2">
+              <ExclamationTriangleIcon className="h-4 w-4 text-amber-500 shrink-0" />
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                {i18nService.t('trafficCreditsEmptyWarning')}
+              </p>
+            </div>
+          )}
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              className={ghostButtonClass}
+              onClick={() => void refreshCredits()}
+              disabled={meBillingRefreshing}
+            >
+              <span className="inline-flex items-center gap-1">
+                <ArrowPathIcon className={`h-4 w-4 ${meBillingRefreshing ? 'animate-spin' : ''}`} />
+                {i18nService.t('trafficCreditsRefresh')}
+              </span>
+            </button>
+            <button
+              type="button"
+              className={primaryButtonClass}
+              // Credit packs need an active paid plan (SUBSCRIPTION_REQUIRED),
+              // so free-tier users land on the plans instead.
+              onClick={() => requestOpenMePurchase(isMeEffectivelySubscribed(meSnapshot.subscription) ? 'topup' : 'subscribe')}
+            >
+              <span className="inline-flex items-center gap-1">
+                <BoltIcon className="h-4 w-4" />
+                {i18nService.t('trafficCreditsBuy')}
+              </span>
+            </button>
+          </div>
+        </div>
+      ) : (
       <div className={cardClass}>
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -1236,6 +1412,7 @@ const TrafficSettings: React.FC = () => {
           </div>
         )}
       </div>
+      )}
 
       {/* Usage */}
       <div>
@@ -1243,14 +1420,19 @@ const TrafficSettings: React.FC = () => {
         {summary && (
           <div className="grid grid-cols-3 gap-2 mb-3">
             {([
-              { label: i18nService.t('trafficSummaryToday'), bytes: summary.todayBytes },
-              { label: i18nService.t('trafficSummaryWeek'), bytes: summary.weekBytes },
-              { label: i18nService.t('trafficSummaryMonth'), bytes: summary.monthBytes },
+              { label: i18nService.t('trafficSummaryToday'), bytes: summary.todayBytes, meMilli: summary.todayMeMilli },
+              { label: i18nService.t('trafficSummaryWeek'), bytes: summary.weekBytes, meMilli: summary.weekMeMilli },
+              { label: i18nService.t('trafficSummaryMonth'), bytes: summary.monthBytes, meMilli: summary.monthMeMilli },
             ]).map((item) => (
               <div key={item.label} className={`${cardClass} text-center`}>
                 <div className="text-sm font-bold tabular-nums dark:text-claude-darkText text-claude-text">
                   {formatTraffic(item.bytes)}
                 </div>
+                {creditsMode && typeof item.meMilli === 'number' && (
+                  <div className="text-[11px] tabular-nums dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    {formatOrderMe(item.meMilli)} ME
+                  </div>
+                )}
                 <div className="text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
                   {item.label}
                 </div>
@@ -1268,6 +1450,7 @@ const TrafficSettings: React.FC = () => {
                   <th className="py-1 pr-3 font-medium">{i18nService.t('trafficTableDate')}</th>
                   <th className="py-1 pr-3 font-medium">{i18nService.t('trafficTableBot')}</th>
                   <th className="py-1 pr-3 font-medium text-right">{i18nService.t('trafficTableTraffic')}</th>
+                  {showMeColumn && <th className="py-1 pr-3 font-medium text-right">{i18nService.t('trafficTableMe')}</th>}
                   <th className="py-1 font-medium text-right">{i18nService.t('trafficTableWrites')}</th>
                 </tr>
               </thead>
@@ -1279,6 +1462,11 @@ const TrafficSettings: React.FC = () => {
                     <td className="py-1 pr-3 text-right tabular-nums" title={formatBytesExact(row.bytes)}>
                       {formatTraffic(row.bytes)}
                     </td>
+                    {showMeColumn && (
+                      <td className="py-1 pr-3 text-right tabular-nums">
+                        {typeof row.meMilli === 'number' ? `${formatOrderMe(row.meMilli)} ME` : '—'}
+                      </td>
+                    )}
                     <td className="py-1 text-right tabular-nums">{row.txCount}</td>
                   </tr>
                 ))}
@@ -1289,6 +1477,61 @@ const TrafficSettings: React.FC = () => {
           !usageError && <p className={hintClass}>{i18nService.t('trafficUsageEmpty')}</p>
         )}
 
+        {creditsMode ? (
+          <>
+            <h4 className="text-sm font-medium dark:text-claude-darkText text-claude-text mt-4 mb-2">{i18nService.t('trafficOrdersTitle')}</h4>
+            {ordersLocalOnly && <p className={`${hintClass} mb-2`}>{i18nService.t('trafficOrdersLocalOnly')}</p>}
+            {orders.length > 0 ? (
+              <div className={`${cardClass} space-y-1.5`}>
+                {orders.map((order) => (
+                  <div key={order.orderId || `${order.txId}|${order.createdAt}`} className="flex items-center gap-3 text-xs">
+                    <span className="dark:text-claude-darkTextSecondary text-claude-textSecondary tabular-nums shrink-0">
+                      {formatLedgerTimestamp(order.committedAt || order.createdAt)}
+                    </span>
+                    <span
+                      className="dark:text-claude-darkTextSecondary text-claude-textSecondary truncate flex-1"
+                      title={[order.kind, order.botAddress].filter(Boolean).join(' · ') || undefined}
+                    >
+                      {[resolveLedgerKindLabel(order.kind ?? ''), resolveBotLabel(order.botAddress)].filter(Boolean).join(' · ')}
+                    </span>
+                    {order.txId ? <LedgerTxIdBadge txId={order.txId} /> : null}
+                    <span className="tabular-nums dark:text-claude-darkTextSecondary text-claude-textSecondary shrink-0" title={formatBytesExact(order.txSize)}>
+                      {formatTraffic(order.txSize)}
+                    </span>
+                    <span className="tabular-nums font-medium dark:text-claude-darkText text-claude-text shrink-0">
+                      {order.paySource === 'me'
+                        ? `-${formatOrderMe(order.meAmountMilli)} ME`
+                        : i18nService.t(order.paySource === 'quota' ? 'trafficOrderBilledQuota' : 'trafficOrderBilledBytes')}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              !ordersError && !ordersLoading && <p className={hintClass}>{i18nService.t('trafficOrdersEmpty')}</p>
+            )}
+            {ordersError && (
+              <div className="flex items-center gap-2 mt-2">
+                <p className="text-xs text-red-500 flex-1">{ordersError}</p>
+                <button type="button" className={ghostButtonClass} onClick={() => loadOrders('')}>
+                  {i18nService.t('trafficRetry')}
+                </button>
+              </div>
+            )}
+            {ordersCursor && orders.length > 0 && (
+              <div className="flex justify-center mt-2">
+                <button
+                  type="button"
+                  className={ghostButtonClass}
+                  onClick={() => loadOrders(ordersCursor)}
+                  disabled={ordersLoading}
+                >
+                  {ordersLoading ? i18nService.t('trafficLedgerLoading') : i18nService.t('trafficLedgerLoadMore')}
+                </button>
+              </div>
+            )}
+          </>
+        ) : (
+          <>
         <h4 className="text-sm font-medium dark:text-claude-darkText text-claude-text mt-4 mb-2">{i18nService.t('trafficLedgerTitle')}</h4>
         {ledgerEntries.length > 0 ? (
           <div className={`${cardClass} space-y-1.5`}>
@@ -1335,6 +1578,8 @@ const TrafficSettings: React.FC = () => {
               {ledgerLoading ? i18nService.t('trafficLedgerLoading') : i18nService.t('trafficLedgerLoadMore')}
             </button>
           </div>
+        )}
+          </>
         )}
       </div>
 

@@ -2,11 +2,11 @@
  * 「用量 & 积分」 merged details page (S9 §3 信息架构 2) — replaces the old
  * 剩余流量 / 免费 LLM 额度 / 小脑额度 surfaces on desktop.
  *
- * Sections: 双池概览 (from /v1/me/balance), 充值订单 (topup orders with
- * submitted → confirmed/rejected status polling), ME 流水 (/v1/me/history
- * cursor paging with type filter; metering entries carry refType llm/agent/
- * traffic — the burn pipeline is backend-pending, the display slot is ready),
- * and the rates/multiplier explainer.
+ * Sections: 双池概览 (MeBalanceOverviewCard, from /v1/me/balance), 充值订单
+ * (topup orders with submitted → confirmed/rejected status polling), ME 流水
+ * (/v1/me/history cursor paging with type filter; metering burns carry refType
+ * metering:llm / metering:agent / metering:traffic), and the rates/multiplier
+ * explainer.
  * All values render live from the API; nothing is hardcoded.
  */
 
@@ -19,13 +19,10 @@ import {
   formatMe,
   formatMeSigned,
   getMeSnapshot,
-  isMeEffectivelySubscribed,
-  meActivePlanId,
   meFromMilli,
-  meResetParts,
   subscribeMeSnapshot,
 } from './mePointsStore';
-import { meTierDisplayName } from './IdbotsPlanCard';
+import MeBalanceOverviewCard from './MeBalanceOverviewCard';
 
 const HISTORY_TYPES = ['', 'mint', 'topup', 'bonus', 'burn', 'transfer', 'reverse', 'adjust', 'expire'] as const;
 
@@ -87,9 +84,14 @@ const isStaleUnpaidSubscriptionOrder = (
   return createdMs > 0 && isUnpaidOrderStatus(order.status) && now - createdMs > ME_UNPAID_ORDER_STALE_MS;
 };
 
-/** Metering reference types (llm/agent/traffic) — display slots reserved ahead of the burn rollout. */
-const meteringTagLabel = (refType: string | undefined): string | null => {
-  const normalized = (refType || '').toLowerCase();
+/**
+ * Metering reference types (llm/agent/traffic). The backend writes metering
+ * burns as `metering:<line>` (ABS RefTypePrefixMetering) — sponsored traffic
+ * burns as `metering:traffic` — while older rows and docs used the bare line,
+ * so both shapes map to the same tag.
+ */
+export const meteringTagLabel = (refType: string | undefined): string | null => {
+  const normalized = (refType || '').toLowerCase().replace(/^metering:/, '');
   if (normalized === 'llm' || normalized === 'agent' || normalized === 'traffic' || normalized === 'brain') {
     return normalized.toUpperCase();
   }
@@ -201,30 +203,7 @@ const MeUsageAndCredits: React.FC = () => {
     setRefreshing(false);
   }, [loadHistory, loadOrders]);
 
-  const balance = snapshot.balance;
-  const weekly = balance?.weeklyGrant;
-  const grantMe = meFromMilli(weekly?.amountMilli);
-  const remainingMe = meFromMilli(weekly?.remainingMilli);
-  const reset = weekly ? meResetParts(weekly.nextResetAt) : null;
-  const resetLine = !reset
-    ? ''
-    : reset.unit === 'soon'
-      ? i18nService.t('mePanelResetSoon')
-      : reset.unit === 'hours'
-        ? i18nService.t('mePanelResetInHours').replace('{n}', String(reset.n))
-        : i18nService.t('mePanelResetInDays').replace('{n}', String(reset.n));
-
   const rates = snapshot.rates ?? [];
-
-  // Current subscription tier for the weekly-grant badge (same resolution
-  // as the plan card): active paid tier, or ID.Free when not subscribed.
-  const subscribed = isMeEffectivelySubscribed(snapshot.subscription);
-  const activePlanId = meActivePlanId(snapshot.subscription);
-  const currentPlan = subscribed
-    ? snapshot.plans.find((plan) => plan.planId === activePlanId || plan.tier === activePlanId)
-      ?? snapshot.plans.find((plan) => plan.tier === snapshot.subscription?.raw?.tier)
-      ?? null
-    : snapshot.plans.find((plan) => plan.tier === 'free') ?? null;
 
   // Merged payment records: subscription orders + topup orders, newest first.
   // `now` pins the staleness sweep to a single clock read per rebuild.
@@ -295,34 +274,7 @@ const MeUsageAndCredits: React.FC = () => {
       </div>
 
       {/* 双池概览 */}
-      <div className="rounded-2xl border border-claude-border dark:border-claude-darkBorder bg-claude-surface dark:bg-claude-darkSurface/60 p-3.5">
-        <div className="grid grid-cols-2 gap-3">
-          <div className="rounded-xl bg-claude-surfaceInset/50 dark:bg-claude-darkSurfaceInset/40 px-3 py-2.5">
-            <p className="flex items-center gap-1.5 text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
-              {i18nService.t('mePanelWeekly')}
-              <span className="rounded-full bg-claude-accent/10 px-2 py-0.5 text-[10px] font-medium text-claude-accent dark:text-claude-darkAccent">
-                {meTierDisplayName(currentPlan, activePlanId || 'free')}
-              </span>
-            </p>
-            <p className="mt-1 text-lg font-semibold tabular-nums text-claude-text dark:text-claude-darkText">
-              {balance ? `${formatMe(remainingMe)} / ${formatMe(grantMe)}` : '—'}
-              <span className="ml-1 text-[10px] font-normal text-claude-textSecondary">ME</span>
-            </p>
-            <p className="mt-0.5 text-[10px] text-claude-textSecondary dark:text-claude-darkTextSecondary">{resetLine}</p>
-          </div>
-          <div className="rounded-xl bg-claude-surfaceInset/50 dark:bg-claude-darkSurfaceInset/40 px-3 py-2.5">
-            <p className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">{i18nService.t('meUsagePersistent')}</p>
-            <div className="mt-1 space-y-0.5 text-[11px] tabular-nums text-claude-text dark:text-claude-darkText">
-              <div className="flex justify-between"><span>{i18nService.t('mePanelTopup')}</span><span>{balance ? formatMe(meFromMilli(balance.persistent?.topupMilli)) : '—'}</span></div>
-              <div className="flex justify-between"><span>{i18nService.t('mePanelBonus')}</span><span>{balance ? formatMe(meFromMilli(balance.persistent?.bonusMilli)) : '—'}</span></div>
-              <div className="flex justify-between"><span>{i18nService.t('mePanelEarned')}</span><span>{balance ? formatMe(meFromMilli(balance.persistent?.earnedMilli)) : '—'}</span></div>
-            </div>
-          </div>
-        </div>
-        <p className="mt-2 border-t border-claude-border/50 dark:border-claude-darkBorder/50 pt-2 text-[10px] leading-relaxed text-claude-textSecondary dark:text-claude-darkTextSecondary">
-          {i18nService.t('mePanelNote')}
-        </p>
-      </div>
+      <MeBalanceOverviewCard />
 
       {/* 支付记录：订阅订单 + 充值订单合并展示 */}
       <div className="rounded-2xl border border-claude-border dark:border-claude-darkBorder bg-claude-surface dark:bg-claude-darkSurface/60 p-3.5">

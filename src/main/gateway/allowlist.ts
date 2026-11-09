@@ -408,6 +408,8 @@ const POST_FREEZE_INVOKE: Record<string, AllowlistEntry> = {
   'me:getPointsSettings': { tier: 'N', note: 'Not in `02` v1.0.1 (desktop ME credit-pack auto-deduct toggle, 2026-11-07); denied by `02` default-deny pending a change request.' },
   'me:setPointsSettings': { tier: 'N', note: 'Not in `02` v1.0.1 (desktop ME credit-pack auto-deduct toggle, 2026-11-07); denied by `02` default-deny pending a change request.' },
   'fs:inlineHtmlImages': { tier: 'N', note: 'Not in `02` v1.0.1 (desktop-only local-image inlining for rendered HTML reports, 2026-11-09); denied by `02` default-deny pending a change request — the mobile renderer degrades to the document as written.' },
+  'traffic:getMeBillingStatus': { tier: 'N', note: 'Not in `02` v1.0.1 (desktop ME credits traffic billing capability, 2026-11-09); denied by `02` default-deny pending a change request — server-mode tenants stay on byte billing this phase (D4).' },
+  'traffic:getSponsorOrders': { tier: 'N', note: 'Not in `02` v1.0.1 (desktop per-order traffic history for ME credits billing, 2026-11-09); denied by `02` default-deny pending a change request.' },
 };
 
 export const INVOKE_ALLOWLIST: Record<string, AllowlistEntry> = {
