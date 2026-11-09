@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { ChatBubbleLeftRightIcon, FolderIcon } from '@heroicons/react/24/outline';
+import { CpuChipIcon, FolderIcon } from '@heroicons/react/24/outline';
 import MarkdownContent from '../../components/MarkdownContent';
 import CoworkPromptInput, { type CoworkPromptInputRef } from '../../components/cowork/CoworkPromptInput';
 import { UserMessageBody } from '../../components/cowork/UserAttachmentBody';
@@ -200,6 +200,12 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
   const listRef = useRef<HTMLDivElement>(null);
   const promptInputRef = useRef<CoworkPromptInputRef>(null);
   const folderButtonRef = useRef<HTMLButtonElement>(null);
+  // Twin welcome page (owner rulings 2026-11-09: the BotHub face is the
+  // twin's office — its landing invites like a friend, not a feature tour;
+  // the copy set is finalized in i18n and mirrored zh/en). The 缩略态定稿
+  // same-day ruling retires the width-derived expanded variant: the welcome
+  // renders ONE fixed compact form (name row + invitation + sub line), with
+  // no width state that could disagree with the seam.
 
   const browserSessions = useMemo(
     () => sessions.filter((session) => session.sessionType === 'browser'),
@@ -418,6 +424,27 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     />
   );
 
+  // Welcome-page avatar: same img/fallback rule as the home welcome
+  // (CoworkView) — data:/http avatars render, everything else falls back to
+  // the shared CpuChipIcon placeholder on a muted tile.
+  const renderWelcomeAvatar = (boxClass: string, iconClass: string) => {
+    if (chipMetabot?.avatar
+      && (chipMetabot.avatar.startsWith('data:') || chipMetabot.avatar.startsWith('http'))) {
+      return (
+        <img
+          src={chipMetabot.avatar}
+          alt={chipMetabot.name}
+          className={`${boxClass} shrink-0 object-cover`}
+        />
+      );
+    }
+    return (
+      <span className={`${boxClass} flex shrink-0 items-center justify-center dark:bg-claude-darkSurface bg-claude-surface`}>
+        <CpuChipIcon aria-hidden className={`${iconClass} dark:text-claude-darkTextSecondary text-claude-textSecondary`} />
+      </span>
+    );
+  };
+
   const workspaceLabel = workspaceSelection
     ? (workspaceSelection.kind === 'project'
         ? workspaceSelection.name
@@ -461,21 +488,32 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
               </button>
             </div>
           ) : (
-            // Empty state, aesthetic pass 2026-11-08: the dashed frame made the
-            // first screen of this column read as an unfilled placeholder. An
-            // empty Co-Work panel is a landing, not a slot: one quiet mark, one
-            // sentence, centred in the room it actually has — and no control
-            // that pretends to be clickable.
+            // Twin welcome page (owner rulings 2026-11-09: landing built on
+            // the white-screen fix + the finalized copy set; the 缩略态定稿
+            // same-day ruling retires the width-derived expanded variant).
+            // An empty BotHub column is the twin's office greeting — ONE
+            // fixed compact form: a small avatar + name row, one invitation
+            // line, one sub line. No control pretends to be clickable; the
+            // real invitation is the composer below, whose placeholder speaks
+            // the same voice.
             <div
               data-slot="cowork-empty"
+              data-welcome-state="compact"
               className="flex h-full min-h-[180px] flex-col items-center justify-center gap-2.5 px-6 text-center"
             >
-              <ChatBubbleLeftRightIcon
-                aria-hidden
-                className="h-5 w-5 opacity-50 dark:text-claude-darkTextSecondary text-claude-textSecondary"
-              />
-              <p className="max-w-[16rem] text-xs leading-5 dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              {chipMetabot ? (
+                <div className="flex items-center gap-1.5">
+                  {renderWelcomeAvatar('h-6 w-6 rounded-md', 'h-3.5 w-3.5')}
+                  <span className="text-xs font-medium dark:text-claude-darkText text-claude-text">
+                    {chipMetabot.name}
+                  </span>
+                </div>
+              ) : null}
+              <p className="text-base font-semibold tracking-tight dark:text-claude-darkText text-claude-text">
                 {i18nService.t('botBrowserCoworkEmpty')}
+              </p>
+              <p className="max-w-[16rem] text-xs leading-5 dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                {i18nService.t('botBrowserCoworkEmptySub')}
               </p>
             </div>
           )

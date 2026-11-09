@@ -2,14 +2,13 @@ import React, { useCallback, useEffect, useState, useRef } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import { CpuChipIcon } from '@heroicons/react/24/outline';
 import { RootState, store } from '../../store';
-import { clearCurrentSession, setCurrentSession, setStreaming, clearPreferredMetabotId, setNewTaskMetabotId } from '../../store/slices/coworkSlice';
+import { clearCurrentSession, setCurrentSession, setStreaming, clearPreferredMetabotId, setNewTaskMetabotId, setNewTaskOrigin } from '../../store/slices/coworkSlice';
 import { clearActiveSkills, setActiveSkillIds } from '../../store/slices/skillSlice';
 import { setActions, selectAction, clearSelection } from '../../store/slices/quickActionSlice';
 import { coworkService } from '../../services/cowork';
 import { resolveDefaultMetabotId } from '../../services/coworkSessionStart';
 import { configService } from '../../services/config';
-import { localStore } from '../../services/store';
-import { CONFIG_KEYS, type AppConfig, type ChatExperienceMode } from '../../config';
+import { useChatExperienceMode } from '../../hooks/useChatExperienceMode';
 import { projectsService } from '../../services/projects';
 import { metaAppService } from '../../services/metaApp';
 import { quickActionService } from '../../services/quickAction';
@@ -43,6 +42,23 @@ export interface CoworkViewProps {
   updateBadge?: React.ReactNode;
 }
 
+/**
+ * 线上对话面（a2a origin）专属的拜访任务前言。Routing itself is structural —
+ * the composer starts the session as sessionType 'a2a' (see handleStartSession);
+ * this preamble only tells the bot HOW to run the visit: find the companion
+ * on-chain first, greet privately only when the owner asked for it, keep
+ * read-only when the owner said so, and bring the encounter back home.
+ * Kept renderer-side and short: it rides the session system prompt once.
+ */
+const A2A_VISIT_SYSTEM_PROMPT = [
+  '## Online conversation (A2A visit · 线上对话)',
+  'This session is an online conversation: the owner sent you out to visit a companion on the chain (去链上拜访一位伙伴).',
+  '1) Find the companion first: search_metaids / list_online_bots to locate them, metaid_profile to confirm the match. If the owner named no one, pick a companion that fits their intent and say who you picked.',
+  '2) Follow the owner\'s latest instruction about contact: if they asked you to actually reach the peer, deliver your greeting with send_private_chat (one concise message); if they asked for a read-only visit (只读拜访 / 不要打扰), do NOT message the peer — observe and return.',
+  '3) Be a polite guest: check_peer_relationship before trust-sensitive moves, no spam, no unsolicited chain writes.',
+  '4) Report back: who you visited (metaid:// link), what you saw, and what you would do next.',
+].join('\n');
+
 const CoworkView: React.FC<CoworkViewProps> = ({
   onRequestAppSettings,
   onShowSkills,
@@ -67,6 +83,11 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   // the global store so it survives navigating to conversations or other
   // columns and back.
   const selectedMetabotId = useSelector((state: RootState) => state.cowork.newTaskMetabotId);
+  // Which face armed this New Task page: 'a2a' = the 线上对话 face's + (the bot
+  // goes to the chain to talk with other bots), 'local' = everything else. Only
+  // the hero description and the composer placeholder read it.
+  const newTaskOrigin = useSelector((state: RootState) => state.cowork.newTaskOrigin);
+  const isA2aOrigin = newTaskOrigin === 'a2a';
   const setSelectedMetabotId = useCallback(
     (id: number | null) => dispatch(setNewTaskMetabotId(id)),
     [dispatch],
@@ -84,23 +105,14 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   // degrading to the model default — never brain/global) — it must not fall
   // through to the brain/global rungs the way a missing pick does.
   const [pendingModelEffort, setPendingModelEffort] = useState<ComposerModelEffortPick | null>(null);
-  // Chat experience mode (Settings > General). Assistant mode defaults
-  // reasoning effort to off, so the composer effort chip displays 'off' for a
-  // session with no explicit pick (mirrors the runtime chain). Kept reactive
-  // through the app_config store-changed broadcast, same as
-  // CoworkSessionDetail, so flipping the mode re-renders without a reload.
-  const [chatExperienceMode, setChatExperienceMode] = useState<ChatExperienceMode>(
-    () => configService.getConfig().chatExperienceMode ?? 'assistant',
-  );
-  useEffect(() => {
-    const unsubscribe = localStore.onChanged(({ key }) => {
-      if (key !== CONFIG_KEYS.APP_CONFIG) return;
-      void localStore.getItem<AppConfig>(CONFIG_KEYS.APP_CONFIG).then((stored) => {
-        setChatExperienceMode(stored?.chatExperienceMode ?? 'assistant');
-      });
-    });
-    return unsubscribe;
-  }, []);
+  // Chat experience mode — decided by the FACE (总裁办公室裁定 2026-11-09).
+  // This view mounts only on the BotWorks face, so the mode is 'professional'
+  // here: every bot — twin included — composes and renders without the
+  // assistant shell (no assistant effort 'off' rung display, full transcript
+  // chrome). The shared hook derives the mode from the active surface; the
+  // old Settings toggle and this view's inline app_config subscription are
+  // both retired.
+  const chatExperienceMode = useChatExperienceMode();
   const isAssistantMode = chatExperienceMode === 'assistant';
   // Permission mode is a global preference persisted in app_config; the new
   // task composer shows and updates the same value every session/Bot uses.
@@ -448,6 +460,14 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     // entry so a later setPendingGoal (or another command) during the awaits
     // below cannot swap what this submission carries.
     const submittedGoal = pendingGoalRef.current;
+    // 线上对话路由保障（以本条为准, 2026-11-09）：the a2a origin is read ONCE
+    // here — composer-direct routing, not intent-string parsing. Whatever the
+    // face armed (线上对话 tab → 新建 → setNewTaskOrigin('a2a')) decides the
+    // session kind BEFORE any await, so a mid-flight origin reset (新会话
+    // shortcut, another opener) can never flip a started visit into a plain
+    // local chat. The intent sentence in the placeholder teaches the wording;
+    // the face itself guarantees the routing.
+    const startAsA2a = isA2aOrigin;
 
     try {
       try {
@@ -490,6 +510,10 @@ const CoworkView: React.FC<CoworkViewProps> = ({
         title: fallbackTitle,
         claudeSessionId: null,
         status: 'running',
+        // The optimistic row must already carry the a2a kind: on the 线上对话
+        // face the temp session renders with the A2A badge and would group
+        // into the 线上对话 record tab even before the real row arrives.
+        sessionType: startAsA2a ? 'a2a' : 'standard',
         pinned: false,
         createdAt: now,
         updatedAt: now,
@@ -524,7 +548,12 @@ const CoworkView: React.FC<CoworkViewProps> = ({
       dispatch(clearSelection());
       setPendingModelEffort(null);
 
-      const combinedSystemPrompt = await buildCombinedSystemPrompt(skillPrompt);
+      // A2A visit sessions carry the visit preamble so the bot knows HOW to
+      // run the trip (find on-chain → greet/read-only per the owner's words →
+      // report back). Local tasks keep the exact previous prompt composition.
+      const combinedSystemPrompt = await buildCombinedSystemPrompt(
+        startAsA2a ? `${A2A_VISIT_SYSTEM_PROMPT}${skillPrompt ? `\n\n${skillPrompt}` : ''}` : skillPrompt,
+      );
 
       // Session titles: start with the placeholder (first line of the prompt);
       // the DSH runtime's dsh-session-title fallback refines it from the first
@@ -550,6 +579,11 @@ const CoworkView: React.FC<CoworkViewProps> = ({
         activeSkillIds: sessionSkillIds,
         metabotId: selectedMetabotId,
         permissionMode,
+        // 线上对话路由保障：the a2a face's first message MUST create an A2A
+        // online session (the bot goes on-chain to find the companion), never
+        // a plain local chat. Main coerces anything unknown back to standard,
+        // so the kind is carried explicitly here.
+        sessionType: startAsA2a ? 'a2a' : 'standard',
         // Pending picker selection from the home composer; empty pick falls
         // back to the selected bot's brain (its model and effort). An explicit
         // pick with effort null carries the 'default' sentinel (the "Auto"
@@ -668,11 +702,17 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   // The bot the selector is locked to: drives the welcome hero (avatar, name,
   // description) above the composer.
   const selectedNewTaskBot = metabots.find((m) => m.id === selectedMetabotId) ?? null;
-  const descriptionKey = !selectedNewTaskBot
-    ? 'coworkDescription'
-    : selectedNewTaskBot.metabot_type === 'twin'
-      ? 'coworkDescriptionTwin'
-      : 'coworkDescriptionPro';
+  // The a2a origin overrides the per-bot-type copy: a New Task opened from the
+  // 线上对话 face is a Bot-to-Bot session whatever the selected bot's type is,
+  // so its description cannot say "为我们完成任务/帮你赚钱". The local face keeps
+  // its exact previous ladder (generic → TwinBot → professional Bot).
+  const descriptionKey = isA2aOrigin
+    ? 'coworkA2aDescription'
+    : !selectedNewTaskBot
+      ? 'coworkDescription'
+      : selectedNewTaskBot.metabot_type === 'twin'
+        ? 'coworkDescriptionTwin'
+        : 'coworkDescriptionPro';
 
   // Fill (without sending) one of the bootstrap shortcuts into the composer.
   const handleBootstrapShortcut = (text: string) => {
@@ -721,6 +761,10 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     const handleNewSession = () => {
       dispatch(clearCurrentSession());
       dispatch(clearSelection());
+      // The 新会话 shortcut is a generic local new task: drop any a2a wording
+      // armed by an earlier 线上对话 + so the composer comes back as an
+      // owner-task composer.
+      dispatch(setNewTaskOrigin('local'));
       window.dispatchEvent(new CustomEvent('cowork:focus-input', {
         detail: { clear: true },
       }));
@@ -817,6 +861,10 @@ const CoworkView: React.FC<CoworkViewProps> = ({
                 <img src="logo.png" alt="logo" className="w-16 h-16 mx-auto" />
               )}
               <h2 className="text-3xl font-bold tracking-tight dark:text-claude-darkText text-claude-text">
+                {/* headline 两 face 共用 coworkWelcome（二改定版 2026-11-09：只换副语与
+                    占位符，避免同义双键漂移）。系列扩展棒曾提的线上面独立欢迎问句分支
+                    （「想让你的 Bot 出门见谁？」）已按场上自洽终态退场，留档于 git 历史
+                    与本棒 handoff 供编排方复议；若裁「分叉」，恢复三元与同名 i18n 键即可。 */}
                 {i18nService.t('coworkWelcome')}
               </h2>
               <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary max-w-md mx-auto">
@@ -875,7 +923,13 @@ const CoworkView: React.FC<CoworkViewProps> = ({
             onSubmit={handleStartSession}
             onStop={handleStopSession}
             isStreaming={isStreaming}
-            placeholder={i18nService.t(isBootstrap ? 'coworkBootstrapPlaceholder' : 'coworkPlaceholder')}
+            placeholder={i18nService.t(
+              isBootstrap
+                ? 'coworkBootstrapPlaceholder'
+                : isA2aOrigin
+                  ? 'coworkA2aPlaceholder'
+                  : 'coworkPlaceholder',
+            )}
             size="large"
             workingDirectory={config.workingDirectory}
             onWorkingDirectoryChange={async (dir: string) => {

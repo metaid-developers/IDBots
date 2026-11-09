@@ -9,8 +9,12 @@ export type ModelOptions = {
 
 /**
  * Chat experience mode: 'professional' shows full reasoning and tool calls,
- * 'assistant' shows brief progress notes and results only. Persisted in
- * app_config; defaults to 'assistant'.
+ * 'assistant' shows brief progress notes and results only.
+ *
+ * Since the 总裁办公室 surface ruling (2026-11-09) the mode is NOT persisted
+ * or chosen any more — it follows the active face (BotHub=assistant,
+ * BotWorks=professional; see hooks/chatExperienceModeSource.ts). The type
+ * remains because MarkdownContent / the session gate still speak in modes.
  */
 export type ChatExperienceMode = 'professional' | 'assistant';
 
@@ -209,9 +213,10 @@ export interface AppConfig {
   coworkPermissionMode?: CoworkPermissionMode;
   coworkEffortLevel?: string | null;
   /**
-   * User-facing chat experience mode. Absent on legacy configs — readers
-   * default to 'assistant' (see defaultConfig and
-   * getPersistedChatExperienceMode in main).
+   * RETIRED (总裁办公室 surface ruling 2026-11-09): kept on the type so old
+   * persisted app_config rows still parse, but IGNORED — no reader depends on
+   * this value any more. The mode now follows the active face (BotHub=
+   * assistant, BotWorks=professional; see hooks/chatExperienceModeSource.ts).
    */
   chatExperienceMode?: ChatExperienceMode;
   /**
@@ -806,6 +811,8 @@ export const defaultConfig: AppConfig = {
     baseUrl: 'https://www.metaso.network/assist-open-api/v2/assist/llm/jev',
     model: 'jev-latest',
   },
+  // Retired compat default (2026-11-09 surface ruling): the value is ignored
+  // by every reader; kept so persisted/default configs keep the same shape.
   chatExperienceMode: 'assistant',
   app: {
     port: 3000,

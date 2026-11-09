@@ -89,9 +89,12 @@ test('assistant chat-experience mode defaults reasoning off behind the auto rung
   // mode pins 'off' and skips the bot brain / persisted global / per-model
   // tail (any reasoning pass would delay the first visible token the mode
   // promises). The professional-mode chain stays intact inside the helper.
+  // 2026-11-09 surface ruling: assistant mode = the per-session BotHub
+  // marker; the effort chain keys on the per-turn GATE, not on any persisted
+  // Settings value (the toggle is retired).
   assert.ok(
-    coworkRunnerSource.includes('getPersistedChatExperienceMode'),
-    'coworkRunner: effort resolution must read the persisted chat experience mode',
+    coworkRunnerSource.includes('const assistantMode = this.isAssistantModeOwnerChatSession(sessionId);'),
+    'coworkRunner: effort resolution must read the per-turn assistant-mode gate (marker-only under the surface ruling)',
   );
   const overrideFirstChains = coworkRunnerSource.match(
     /sessionEffortPicked\s*\?\s*toLlmEffortLevel\(effectiveEffortRung\)\s*:\s*(?:unattendedTurn\s*\?\s*resolveUnattendedAutoEffort\(\{[\s\S]*?\}\)\s*:\s*)?autoEffortRung\s*\?\?/g,

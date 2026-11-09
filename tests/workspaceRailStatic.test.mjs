@@ -17,6 +17,7 @@ function read(relativePath) {
 const appSource = read('src/renderer/App.tsx');
 const railSource = read('src/renderer/components/layout/WorkspaceRail.tsx');
 const sidebarSource = read('src/renderer/components/Sidebar.tsx');
+const homeSidebarSource = read('src/renderer/components/HomeSidebar.tsx');
 const navigationSource = read('src/renderer/components/sidebar/sidebarNavigation.js');
 
 test('App lays the shell out as four tracks: rail | mid column | handle | right column', () => {
@@ -53,22 +54,60 @@ test('the rail is an icon column inside the 48–64 px budget, shared by both su
   assert.match(railSource, /getRailHomeNavModel\(\{/);
 });
 
-test('rail entries are icon buttons with hover tooltips, settings and ME pinned to the bottom', () => {
+test('rail entries are icon buttons with hover tooltips, Settings pinned to the bottom, NO ME badge', () => {
   assert.match(railSource, /<Tooltip content=\{label\} position="right" delay=\{200\}>/);
   assert.match(railSource, /data-slot="rail-item"/);
   // The label is the accessible name (the tooltip carries the visible text).
   assert.match(railSource, /aria-label=\{label\}/);
-  // Bottom block: the update dot, then Settings, then ME — and nothing else.
+  // Bottom block: the update dot, then Settings — and nothing else. The old
+  // compact ME badge is retired from this corner (owner 2026-11-09 10:05, D5):
+  // the standalone user page is the ONE home of the ME credits panel.
   const bottom = railSource.slice(railSource.indexOf('<div className="mt-auto'));
   assert.ok(bottom.includes('updateBadge'));
-  assert.ok(bottom.indexOf('itemId="settings"') < bottom.indexOf('<MeBalanceBadge compact />'));
   assert.match(bottom, /i18nService\.t\('settings'\)/);
+  // Pin the JSX usage AND the import (a prose comment naming the retired
+  // component is fine — the mount and the import must not come back).
+  assert.doesNotMatch(railSource, /<MeBalanceBadge/);
+  assert.doesNotMatch(railSource, /import MeBalanceBadge/);
+});
+
+test('the rail top: lights strip, then the avatar slot on the band row; icons start below it (D-line final 2026-11-09)', () => {
+  // Row 1 = the lights' pure reservation (52 px mac / 12 px elsewhere).
+  assert.match(railSource, /isMac \? 'h-\[52px\]' : 'h-3'/);
+  // Row 2 = the identity AVATAR slot (Mac-WeChat form): the SAME 52 px height
+  // as the mid column's band row (BotBrowserModeSwitch surface-header-bar),
+  // content centered — the slot's centerline is the band labels' centerline,
+  // and the rail's centerline is the icon column's X.
+  assert.match(railSource, /data-slot="workspace-rail-avatar-slot"/);
+  assert.match(railSource, /className="flex h-\[52px\] w-full shrink-0 items-center justify-center"/);
+  assert.match(railSource, /<UserProfileAvatarButton \/>/);
+  // Row 3: the nav's 8 px top margin puts the first icon at 52 + 52 + 8 =
+  // 112 px — below the avatar slot, never in the top cell.
+  assert.match(railSource, /className="mt-2 flex min-h-0 w-full flex-1 flex-col items-center/);
+  assert.equal(52 + 52 + 8, 112);
 });
 
 test('Settings and ME moved out of the middle column into the rail', () => {
-  // The old sidebar footer rendered both in this order; the rail owns them now.
+  // The old sidebar footer rendered both in this order; the rail owns them
+  // now. HomeSidebar's 「⚙ 设置」 text row joined the exit (设置按钮共享化,
+  // 总裁办侧栏微调批单 2026-11-09 12:23, superseding the 11:16 order that
+  // kept it): the rail's bottom RailButton is the ONE shared settings entry
+  // on BOTH faces — same component, same onShowSettings chain.
   assert.doesNotMatch(sidebarSource, /MeBalanceBadge/);
   assert.doesNotMatch(sidebarSource, /onClick=\{\(\) => onShowSettings\(\)\}/);
+  assert.doesNotMatch(homeSidebarSource, /MeBalanceBadge/);
+  // Code form only (prop decl or JSX pass-through) — prose comments naming
+  // the consolidation are fine and must not trip this pin.
+  assert.doesNotMatch(homeSidebarSource, /onShowSettings\s*[:=]/);
+  // The home branch's rail mount no longer opts out: no showSettings={false}
+  // anywhere in App, and BOTH rail mounts ride the same handleShowSettings
+  // chain.
+  assert.doesNotMatch(appSource, /showSettings=\{false\}/);
+  assert.equal(
+    (appSource.match(/onShowSettings=\{\(\) => handleShowSettings\(\)\}/g) ?? []).length,
+    2,
+    'both faces' + ' rail mounts share the one settings chain',
+  );
 });
 
 test('the Internet middle column keeps its two bodies (panel / record type)', () => {
@@ -90,34 +129,35 @@ test('the Internet middle column keeps its two bodies (panel / record type)', ()
   assert.match(sidebarSource, /<CoworkSessionList/);
   assert.match(sidebarSource, /<UnifiedTaskList/);
 
-  // The Home face renders the restored sidebar instead — never this column.
-  assert.match(appSource, /\{showHomeSurface \? \(\s*<HomeSidebar/);
+  // The Home face renders its own three-column composition (rail | records
+  // column | right column) — never this Internet mid column.
+  assert.match(appSource, /\{showHomeSurface \? \(\s*<>\s*\{\/\*[\s\S]*?\*\/\}\s*<WorkspaceRail/);
+  assert.doesNotMatch(sidebarSource, /data-slot="workspace-home-sidebar"/);
 });
 
-test('the Home face has no rail entry and its sidebar carries the text menu rows', () => {
-  // The rail is mounted exactly once, in the Internet branch of the shell…
-  assert.equal((appSource.match(/<WorkspaceRail/g) ?? []).length, 1);
+test('the Home face mounts the same rail; its records column carries no rail items', () => {
+  // Three-column final ruling 2026-11-09: the rail is mounted EXACTLY TWICE —
+  // once per face — and the home mount opens the home branch.
+  assert.equal((appSource.match(/<WorkspaceRail/g) ?? []).length, 2);
   assert.ok(
     appSource.indexOf('{showHomeSurface ? (') < appSource.indexOf('<WorkspaceRail'),
-    'the rail mount belongs to the non-home branch',
+    'the rail mount opens the home branch',
   );
-  // …and the restored Home sidebar is a TEXT menu: 新建任务 / 长期任务 /
-  // 多人任务 (the 我的 Bot row was retired by the owner ruling 15:46), all
-  // rendered as rows, not as icon-rail entries.
+  // The records column is NOT a rail: it renders no rail item markup and
+  // behinds no rail model — its body is the records list under the shared
+  // surface header.
   const homeSidebarSource = read('src/renderer/components/HomeSidebar.tsx');
-  assert.match(homeSidebarSource, /getSidebarPrimaryNavModel/);
-  assert.match(homeSidebarSource, /onClick=\{onNewChat\}/);
-  assert.match(homeSidebarSource, /primaryNavItems\.map\(/);
   assert.match(homeSidebarSource, /data-slot="workspace-home-sidebar"/);
-  // No rail item markup in the Home sidebar; no rail model behind it either.
   assert.doesNotMatch(homeSidebarSource, /data-slot="rail-item"/);
   assert.doesNotMatch(homeSidebarSource, /getRailHomeNavModel/);
+  assert.doesNotMatch(homeSidebarSource, /getSidebarPrimaryNavModel/);
 });
 
-test('the surface switcher sits in the mid column header — the rail top is a bare spacer', () => {
+test('the surface switcher sits in the mid column header — the rail top has no switcher', () => {
   // Owner ruling 2026-11-08 14:15: the switch left the 64 px rail so it can
   // show the current surface's NAME in a Codex-style capsule. The rail keeps
-  // only its 52 px macOS traffic-light reservation, and mounts no switcher.
+  // its 52 px macOS traffic-light reservation plus the identity avatar slot
+  // (owner D-line final ruling 2026-11-09), and mounts no switcher.
   assert.doesNotMatch(railSource, /BotBrowserModeSwitch/);
   assert.doesNotMatch(railSource, /surface-switch-trigger/);
   assert.match(railSource, /isMac \? 'h-\[52px\]' : 'h-3'/);
@@ -163,7 +203,7 @@ test('the Co-Work face no longer introduces itself in either column', () => {
   assert.match(cardBlock, /data-pane-empty="cowork"/);
   assert.doesNotMatch(cardBlock, /botBrowserCoworkTitle/);
   assert.doesNotMatch(cardBlock, /internetCoworkPane/);
-  assert.match(appSource, /\) : \(\n    coworkLandingCard\n  \);/);
+  assert.match(appSource, /\) : \(\n {4}coworkLandingCard\n {2}\);/);
 });
 
 test('the rail models are the single source of both surfaces’ entries', () => {

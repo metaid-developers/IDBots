@@ -96,11 +96,11 @@ test('the board is initialized app-wide, so the badges work without opening the 
 });
 
 test('both badges are wired to the shared derivation and the amber decision dot', () => {
-  // The Internet surface's rail keeps its amber dot on the 长期任务 entry (this
-  // anchor is untouched by the Home restore — the rail is not mounted on the
-  // Home face). The restored Bot Home sidebar carries the SAME derivation and
-  // the SAME dot class on its own 长期任务 text row (owner ruling 2026-11-08
-  // 14:22), so each face has exactly one dot and neither face has two.
+  // Three-column final ruling 2026-11-09: the SAME rail mount now serves both
+  // faces, so the Home face's dot lives on the rail's 长期任务 icon too — the
+  // dot machinery is defined once (here) and rendered on both surfaces. The
+  // records column dropped the sidebar-row copy together with the rows, and
+  // carries no derivation of its own.
   const rail = readSource('src/renderer/components/layout/WorkspaceRail.tsx');
   assert.match(rail, /selectTrackedTasksNeedingAttention\(\{ longTermTask: \{ board: longTermBoard \} \}\)/);
   assert.match(rail, /needsDecisionCount: trackedTaskAttention\.total/);
@@ -109,11 +109,9 @@ test('both badges are wired to the shared derivation and the amber decision dot'
   assert.match(rail, /role="img"[\s\S]{0,160}aria-label=\{indicatorLabel\}/);
 
   const homeSidebar = readSource('src/renderer/components/HomeSidebar.tsx');
-  assert.match(homeSidebar, /selectTrackedTasksNeedingAttention\(\{ longTermTask: \{ board: longTermBoard \} \}\)/);
-  assert.match(homeSidebar, /needsDecisionCount: trackedTaskAttention\.total/);
-  assert.match(homeSidebar, /tracked-task-decision-indicator/);
-  assert.match(homeSidebar, /indicatorKind === 'decision'/);
-  assert.match(homeSidebar, /role="img"[\s\S]{0,160}aria-label=\{item\.indicatorLabel\}/);
+  assert.doesNotMatch(homeSidebar, /tracked-task-decision-indicator/);
+  assert.doesNotMatch(homeSidebar, /selectTrackedTasksNeedingAttention/);
+  assert.doesNotMatch(homeSidebar, /trackedTaskNeedsDecision/);
 
   // The Internet middle column still carries no copy of the dot (it duplicates
   // neither the rail nor the Home sidebar).

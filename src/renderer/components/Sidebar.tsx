@@ -14,7 +14,7 @@ import { OPEN_TEAM_COLLAB_POLL_INTERVAL_MS } from './groupTasks/OpenTeamCollabsS
 import { openTeamCollabService } from '../services/openTeamCollabService';
 import { selectCollab, selectTask as selectGroupTask } from '../store/slices/groupTasksSlice';
 import { selectTask as selectLongTermTask } from '../store/slices/longTermTaskSlice';
-import { clearCurrentSession, setNewTaskMetabotId } from '../store/slices/coworkSlice';
+import { clearCurrentSession, setNewTaskMetabotId, setNewTaskOrigin } from '../store/slices/coworkSlice';
 import type { OpenTeamCollabSummary } from '../types/openTeamCollab';
 import { buildUnifiedTaskList } from '../utils/unifiedTaskList';
 import { MagnifyingGlassIcon, ArchiveBoxIcon, XMarkIcon, ClockIcon } from '@heroicons/react/24/outline';
@@ -25,6 +25,7 @@ import BackgroundTasksBadge from './cowork/BackgroundTasksBadge';
 import { SleepGuardBadge } from './SleepGuardBadge';
 import BotBrowserCoworkPanel from '../features/botBrowser/BotBrowserCoworkPanel';
 import BotBrowserModeSwitch from '../features/botBrowser/BotBrowserModeSwitch';
+import { UserProfilePage } from '../features/userProfile';
 import { defaultSidebarWidth } from '../utils/sidebarWidth';
 import type { BotBrowserSurfaceMode, BotHomeSection } from '../features/botBrowser/types';
 import type { CoworkSessionSummary } from '../types/cowork';
@@ -186,8 +187,9 @@ const Sidebar: React.FC<SidebarProps> = ({
   // Which task-record category the home history list shows. Persisted across
   // app restarts; the header + tabs stay fixed while only the list scrolls.
   const [taskRecordTab, setTaskRecordTab] = useState<TaskRecordTab>(loadTaskRecordTab);
-  // Batch-archive selection mode for the local-chats list. The toolbar row
-  // above the list hosts this and the view "filter & sort" controls.
+  // Batch-archive selection mode for the session list — one mode shared by
+  // both faces (local and online). The toolbar row above the list hosts this
+  // and the view "filter & sort" controls.
   const [isBatchArchiveMode, setIsBatchArchiveMode] = useState(false);
   const [batchSelectedIds, setBatchSelectedIds] = useState<string[]>([]);
   // View + sort choices for the local-chats list, persisted across app
@@ -334,8 +336,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   // render the same grouped component; only the remembered choice differs.
   const faceViewMode = taskRecordTab === 'local' ? sessionViewMode : a2aViewMode;
   const handleSetFaceViewMode = taskRecordTab === 'local' ? handleSetSessionViewMode : handleSetA2aViewMode;
-  // The toolbar (view label + filter & sort) shows while the face on screen has
-  // rows to control; the batch-archive half stays local-only.
+  // The toolbar (view label + filter & sort + batch archive) shows while the
+  // face on screen has rows to control; both faces get the same controls.
   const hasFaceSessions = taskRecordTab === 'local'
     ? localHumanSessions.length > 0
     : sessionGroups.a2a.length > 0;
@@ -398,9 +400,10 @@ const Sidebar: React.FC<SidebarProps> = ({
     };
   }, [homeSection]);
 
-  // Leaving the local tab ends any batch-archive selection in progress.
+  // Switching faces ends any batch-archive selection in progress: the picked
+  // ids belong to the face they were picked on, and the two faces' session
+  // buckets never overlap. Batch archive itself exists on BOTH faces now.
   useEffect(() => {
-    if (taskRecordTab === 'local') return;
     setIsBatchArchiveMode(false);
     setBatchSelectedIds([]);
     setIsViewMenuOpen(false);
@@ -460,10 +463,14 @@ const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const handleConfirmBatchArchive = async () => {
-    // Only archive ids still present in the local list (a session may have
-    // been archived individually while selection mode was open).
+    // Only archive ids still present on the face that is on screen (a session
+    // may have been archived individually while selection mode was open). The
+    // bucket is the face's own: the local face keeps its full local set (fold
+    // and Follow-Up rows included), the online face its a2a set — before this
+    // the local bucket was hard-coded, which silently dropped every a2a pick.
+    const faceSessions = sessionGroups[taskRecordTab];
     const archivableIds = batchSelectedIds.filter((id) =>
-      sessionGroups.local.some((session) => session.id === id),
+      faceSessions.some((session) => session.id === id),
     );
     handleExitBatchArchiveMode();
     for (const sessionId of archivableIds) {
@@ -545,6 +552,10 @@ const Sidebar: React.FC<SidebarProps> = ({
     dispatch(clearCurrentSession());
     // Set the selected bot for the new task
     dispatch(setNewTaskMetabotId(botId));
+    // The composer's wording follows the face the + was pressed on: this face
+    // shows 本地对话 tasks AND 线上对话 (a2a) sessions, and only the a2a tabs arm
+    // the Bot-to-Bot copy. Every other opener resets the origin to 'local'.
+    dispatch(setNewTaskOrigin(taskRecordTab === 'a2a' ? 'a2a' : 'local'));
     // Switch to cowork view if not already there
     onShowCowork();
   });
@@ -637,10 +648,13 @@ const Sidebar: React.FC<SidebarProps> = ({
       }`}
       style={{ width: isCollapsed ? 0 : width }}
     >
-      {/* The ONE shared surface header (owner ruling 2026-11-08 22:26): the
-          long two-cell segmented band rides the window's TOP track, to the
-          right of the traffic lights — the same geometry on both faces. The
-          face's light actions sit on the row directly below the band. */}
+      {/* The ONE shared surface header (owner red-box order 2026-11-09
+          10:58; identity relocated by the D-line final ruling 2026-11-09):
+          row 1 = the traffic lights' own 52 px strip, row 2 = the
+          BotHub | BotWorks band ALONE — the identity avatar moved into the
+          rail's top slot (WorkspaceRail), so this header carries no pill.
+          The face's light actions sit on the row below the band,
+          right-aligned. */}
       <div data-slot="mid-column-header" className="shrink-0">
         <BotBrowserModeSwitch
           mode={mode}
@@ -793,8 +807,10 @@ const Sidebar: React.FC<SidebarProps> = ({
                 </div>
               </div>
               {/* Toolbar row above the list: current view label on the left,
-                  filter & sort (+ batch archive on the local face) on the
-                  right. Fixed with the header; only the list scrolls. */}
+                  filter & sort + batch archive on the right. The same controls
+                  on both faces — putting sessions away is a list operation,
+                  not a local-face privilege. Fixed with the header; only the
+                  list scrolls. */}
               {hasFaceSessions && (
                 <div className="flex shrink-0 items-center justify-between gap-1.5 px-2 pb-1.5">
                   <span className="min-w-0 truncate text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
@@ -838,18 +854,16 @@ const Sidebar: React.FC<SidebarProps> = ({
                             <FilterLinesIcon className="h-4 w-4" />
                           </button>
                         </Tooltip>
-                        {taskRecordTab === 'local' && (
-                          <Tooltip content={i18nService.t('batchArchive')} position="bottom">
-                            <button
-                              type="button"
-                              onClick={handleEnterBatchArchiveMode}
-                              aria-label={i18nService.t('batchArchive')}
-                              className="inline-flex h-6 w-6 items-center justify-center rounded-md text-claude-textSecondary transition-colors hover:bg-claude-surfaceHover hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
-                            >
-                              <ArchiveBoxIcon className="h-4 w-4" />
-                            </button>
-                          </Tooltip>
-                        )}
+                        <Tooltip content={i18nService.t('batchArchive')} position="bottom">
+                          <button
+                            type="button"
+                            onClick={handleEnterBatchArchiveMode}
+                            aria-label={i18nService.t('batchArchive')}
+                            className="inline-flex h-6 w-6 items-center justify-center rounded-md text-claude-textSecondary transition-colors hover:bg-claude-surfaceHover hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+                          >
+                            <ArchiveBoxIcon className="h-4 w-4" />
+                          </button>
+                        </Tooltip>
                       </>
                     )}
                   </div>
@@ -875,7 +889,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                   onMoveSessionToSection={taskRecordTab === 'local' ? listOnMoveSessionToSection : undefined}
                   onRenameSession={listOnRenameSession}
                   emptyText={i18nService.t(activeTaskRecordTab.emptyKey)}
-                  selectionMode={isBatchArchiveMode && taskRecordTab === 'local'}
+                  selectionMode={isBatchArchiveMode}
                   selectedSessionIds={batchSelectedIds}
                   onToggleSessionSelected={listOnToggleSessionSelected}
                   /** Both faces render the SAME by-Bot grouped template and
@@ -894,10 +908,6 @@ const Sidebar: React.FC<SidebarProps> = ({
                    * render in the Follow-Up section above the fold. */
                   followUpSessions={taskRecordTab === 'local' ? localFollowUpSessions : undefined}
                   decisionSessionIds={taskRecordTab === 'local' ? decisionSessionIds : undefined}
-                  /** Online chats: the bot dropdown narrows WHICH bots' groups
-                   * are shown (全部 Bot by default); the groups themselves are
-                   * the same template as the local face. */
-                  botSelector={taskRecordTab === 'a2a'}
                   /** The trailing + on a bot group header starts a new task with
                    * that bot. Same action and same handler on BOTH faces — the
                    * template is shared, not re-implemented per face. */
@@ -931,6 +941,10 @@ const Sidebar: React.FC<SidebarProps> = ({
         onMoveSessionToSection={handleMoveSessionToSection}
         onRenameSession={handleRenameSession}
       />
+      {/* The user page overlay. Mounted by whichever face is on screen, so
+          App.tsx (and the keep-alive Bot Browser pane it hosts) stays
+          untouched. */}
+      <UserProfilePage />
     </aside>
   );
 };

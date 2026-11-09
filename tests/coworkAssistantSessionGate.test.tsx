@@ -2,19 +2,24 @@
 //
 // The assistant transcript form (thinking/tool chrome hidden, replies in
 // .assistant-bubble) belongs to regular interactive owner chats ONLY. The
-// backend gates every assistant-mode behavior on that same per-session rule
-// (isAssistantModeOwnerChatSession in src/main/libs/coworkRunner.ts); before
-// this suite the renderer derived the form from the GLOBAL mode alone, so
-// opening an orchestration/long-term/worker session while the global mode was
-// 'assistant' rendered the assistant transcript while the backend ran the
-// professional prompt — "looks assistant, behaves professional".
+// backend gates every assistant-mode behavior on the per-session BotHub
+// marker rule (isAssistantModeOwnerChatSession in
+// src/main/libs/coworkRunner.ts); the RENDERER derives the form from the
+// FACE-derived chat experience mode (hooks/chatExperienceModeSource.ts,
+// 总裁办公室 ruling 2026-11-09 — BotHub=assistant, BotWorks=professional;
+// the Settings toggle is retired). Before the session gate existed the
+// renderer derived the form from the GLOBAL mode alone, so opening an
+// orchestration/long-term/worker session while the mode was 'assistant'
+// rendered the assistant transcript while the backend ran the professional
+// prompt — "looks assistant, behaves professional".
 //
 // Four rendering scenarios are pinned against the real component
-// (renderToStaticMarkup) driving the real gate:
-//   1. global assistant + regular interactive session -> assistant form;
-//   2. global assistant + auto-origin run -> professional transcript;
-//   3. global assistant + non-standard session type -> professional transcript;
-//   4. global professional -> professional transcript for every shape.
+// (renderToStaticMarkup) driving the real gate, with the face set through
+// the same localStorage slot the shell writes:
+//   1. BotHub face + regular interactive session -> assistant form;
+//   2. BotHub face + auto-origin run -> professional transcript;
+//   3. BotHub face + non-standard session type -> professional transcript;
+//   4. BotWorks face -> professional transcript for every session shape.
 //
 // Observed markers: i18nService.t('reasoning') is the ThinkingBlock header,
 // the fixture tool name is the ToolCallGroup row, `.assistant-bubble` is the
@@ -38,9 +43,7 @@ import skillReducer from '../src/renderer/store/slices/skillSlice';
 import modelReducer from '../src/renderer/store/slices/modelSlice';
 import CoworkSessionDetail from '../src/renderer/components/cowork/CoworkSessionDetail';
 import { isAssistantModeOwnerChatSession } from '../src/renderer/components/cowork/assistantModeSessionGate';
-import { configService } from '../src/renderer/services/config';
 import { i18nService } from '../src/renderer/services/i18n';
-import type { ChatExperienceMode } from '../src/renderer/config';
 import type { CoworkMessage, CoworkSession } from '../src/renderer/types/cowork';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -92,18 +95,24 @@ const fixtureSession = (overrides: Partial<CoworkSession> = {}): CoworkSession =
   ...overrides,
 });
 
-/** Render CoworkSessionDetail for one (global mode, session) pair. */
-function renderDetail(mode: ChatExperienceMode, session: CoworkSession): string {
-  const config = configService.getConfig();
-  const previousMode = config.chatExperienceMode;
+/** Render CoworkSessionDetail for one (active face, session) pair. */
+function renderDetail(surface: 'browser' | 'home', session: CoworkSession): string {
   const previousWindow = (globalThis as { window?: unknown }).window;
-  config.chatExperienceMode = mode;
   // The component reads window.electron.platform during render; effects (and
-  // their window listeners) never run under renderToStaticMarkup.
+  // their window listeners) never run under renderToStaticMarkup. The FACE
+  // rides the same localStorage slot the shell writes
+  // (SURFACE_MODE_STORAGE_KEY in useBotBrowserShell.ts) — the mode is derived
+  // from it by hooks/chatExperienceModeSource.ts (BotHub=assistant,
+  // BotWorks=professional).
   (globalThis as { window?: unknown }).window = {
     electron: { platform: 'darwin' },
     innerWidth: 1280,
     innerHeight: 800,
+    localStorage: {
+      getItem: (key: string) => (key === 'idbots.botBrowser.surfaceMode' ? surface : null),
+      setItem: () => {},
+      removeItem: () => {},
+    },
   };
   try {
     const store = configureStore({
@@ -116,7 +125,6 @@ function renderDetail(mode: ChatExperienceMode, session: CoworkSession): string 
       </Provider>,
     );
   } finally {
-    config.chatExperienceMode = previousMode;
     (globalThis as { window?: unknown }).window = previousWindow;
   }
 }
@@ -141,22 +149,22 @@ function assertProfessionalForm(markup: string, label: string): void {
   assert.ok(markup.includes(FINAL_TEXT), `${label}: the reply text still renders`);
 }
 
-test('scenario 1: global assistant + regular interactive session renders the assistant form (unchanged)', () => {
-  const markup = renderDetail('assistant', fixtureSession());
-  assertAssistantForm(markup, 'assistant + standard/no-autoOrigin');
+test('scenario 1: BotHub face + regular interactive session renders the assistant form', () => {
+  const markup = renderDetail('browser', fixtureSession());
+  assertAssistantForm(markup, 'BotHub face + standard/no-autoOrigin');
 });
 
-test('scenario 2: global assistant + auto-created run renders the professional transcript', () => {
+test('scenario 2: BotHub face + auto-created run renders the professional transcript', () => {
   for (const autoOrigin of ['orchestration', 'longterm', 'schedule'] as const) {
-    const markup = renderDetail('assistant', fixtureSession({ autoOrigin }));
-    assertProfessionalForm(markup, `assistant + autoOrigin ${autoOrigin}`);
+    const markup = renderDetail('browser', fixtureSession({ autoOrigin }));
+    assertProfessionalForm(markup, `BotHub face + autoOrigin ${autoOrigin}`);
   }
 });
 
-test('scenario 3: global assistant + non-standard session type renders the professional transcript', () => {
+test('scenario 3: BotHub face + non-standard session type renders the professional transcript', () => {
   for (const sessionType of ['browser', 'group_task', 'longterm'] as const) {
-    const markup = renderDetail('assistant', fixtureSession({ sessionType }));
-    assertProfessionalForm(markup, `assistant + sessionType ${sessionType}`);
+    const markup = renderDetail('browser', fixtureSession({ sessionType }));
+    assertProfessionalForm(markup, `BotHub face + sessionType ${sessionType}`);
   }
   // A2A conversations render their own message view (A2AMessageItem), which
   // filters internal status items (thinking, tool chrome) itself — in BOTH
@@ -166,18 +174,18 @@ test('scenario 3: global assistant + non-standard session type renders the profe
   // test (the A2A item receives the gated value from the detail view).
 });
 
-test('scenario 4: global professional renders the professional transcript for every session shape', () => {
+test('scenario 4: BotWorks face renders the professional transcript for every session shape', () => {
   assertProfessionalForm(
-    renderDetail('professional', fixtureSession()),
-    'professional + regular session',
+    renderDetail('home', fixtureSession()),
+    'BotWorks face + regular session',
   );
   assertProfessionalForm(
-    renderDetail('professional', fixtureSession({ autoOrigin: 'orchestration' })),
-    'professional + auto-origin run',
+    renderDetail('home', fixtureSession({ autoOrigin: 'orchestration' })),
+    'BotWorks face + auto-origin run',
   );
   assertProfessionalForm(
-    renderDetail('professional', fixtureSession({ sessionType: 'browser' })),
-    'professional + non-standard session',
+    renderDetail('home', fixtureSession({ sessionType: 'browser' })),
+    'BotWorks face + non-standard session',
   );
 });
 
@@ -196,7 +204,7 @@ test('the gate mirrors the backend rule on the two renderer-visible signals', ()
     false,
   );
   assert.equal(isAssistantModeOwnerChatSession('assistant', { sessionType: 'a2a' }), false);
-  // No session (draft) and the professional global mode render professional.
+  // No session (draft) and the BotWorks face mode render professional.
   assert.equal(isAssistantModeOwnerChatSession('assistant', null), false);
   assert.equal(isAssistantModeOwnerChatSession('professional', { sessionType: 'standard' }), false);
 });

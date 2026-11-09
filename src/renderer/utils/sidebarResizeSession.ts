@@ -62,6 +62,14 @@ export interface SidebarResizeSessionOptions {
   onEnd: (info: SidebarResizeEndInfo) => void;
   /** MouseEvent.button of the originating mousedown; only 0 (primary) starts. */
   button?: number;
+  /**
+   * Optional per-move width shaper (extreme damping, 3:7 ruling 2026-11-09).
+   * Receives the raw uncapped target and the session's current width and
+   * returns the width actually pursued; `clamp` still bounds the result, so a
+   * shaper can never push the column out of range. Omitted = unchanged
+   * straight-line drag.
+   */
+  shapeNext?: (rawNext: number, currentWidth: number) => number;
   documentTarget?: Document;
   windowTarget?: Window;
 }
@@ -69,6 +77,50 @@ export interface SidebarResizeSessionOptions {
 export interface SidebarResizeSession {
   readonly active: boolean;
   finish(reason?: SidebarResizeEndReason): void;
+}
+
+// ── Extreme damping (ratio-ruling companion, fourth expansion order
+// 2026-11-09; band math is ratio-independent and unchanged since 40:60) ──
+// Near either range edge each pointer pixel contributes proportionally less,
+// so the column eases into the cap instead of hitting it with a jerk. The
+// factor floor keeps the column still reachable at extreme proximity (it
+// always can take the last few pixels, just slowly).
+export const SIDEBAR_DAMP_BAND_PX = 96;
+export const SIDEBAR_DAMP_MIN_FACTOR = 0.12;
+
+/**
+ * Delta actually applied for a raw pointer delta near the [min, max] range
+ * edges. Far from both edges this is the identity; inside `band` of the edge
+ * being approached the delta scales down linearly to `SIDEBAR_DAMP_MIN_FACTOR`
+ * of itself; at/past an edge it is 0. The returned magnitude never exceeds the
+ * raw delta and never crosses the bound (clamping stays a safety net).
+ */
+export function dampedSidebarDelta(
+  delta: number,
+  currentWidth: number,
+  minWidth: number,
+  maxWidth: number,
+  band: number = SIDEBAR_DAMP_BAND_PX,
+): number {
+  if (!Number.isFinite(delta) || delta === 0) return 0;
+  if (!Number.isFinite(maxWidth) || maxWidth < minWidth) return 0;
+  const room = delta > 0 ? maxWidth - currentWidth : currentWidth - minWidth;
+  if (room <= 0) return 0;
+  const factor = room >= band ? 1 : Math.max(SIDEBAR_DAMP_MIN_FACTOR, room / band);
+  const damped = Math.round(delta * factor);
+  if (damped === 0) return 0;
+  const magnitude = Math.min(Math.abs(damped), Math.abs(delta), room);
+  return delta > 0 ? magnitude : -magnitude;
+}
+
+// ── Double-click snap tween (ratio-ruling companion; unchanged since 40:60) ──
+export const SIDEBAR_SNAP_TWEEN_MS = 220;
+
+/** Pure ease-out curve for the snap tween: fast start, soft landing, 0→1. */
+export function easeOutCubic(t: number): number {
+  if (!Number.isFinite(t)) return t <= 0 ? 0 : 1;
+  const x = Math.min(1, Math.max(0, t));
+  return 1 - Math.pow(1 - x, 3);
 }
 
 function resolveDocument(): Document | undefined {
@@ -128,7 +180,12 @@ export function startSidebarResizeSession(
       finish('pointer-released');
       return;
     }
-    const next = clamp(startWidth + (event.clientX - startX));
+    const rawNext = startWidth + (event.clientX - startX);
+    // shapeNext (extreme damping) shapes the pursued width BEFORE clamp; with
+    // no shaper the drag is the unchanged straight line it has always been.
+    const next = clamp(
+      options.shapeNext ? options.shapeNext(rawNext, width) : rawNext,
+    );
     if (next === width) return;
     moved = true;
     width = next;

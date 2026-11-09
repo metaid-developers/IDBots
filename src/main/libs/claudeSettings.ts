@@ -761,17 +761,12 @@ export function getPersistedCoworkEffortLevel(): string | null {
   return toLlmEffortLevel(level);
 }
 
-/**
- * Chat experience mode ('professional' | 'assistant'), persisted in
- * app_config by the renderer's configService. Unknown/missing values fall
- * back to 'assistant'.
- */
-export function getPersistedChatExperienceMode(): 'professional' | 'assistant' {
-  const sqliteStore = getStore();
-  const appConfig = sqliteStore?.get<{ chatExperienceMode?: unknown }>('app_config');
-  const mode = appConfig?.chatExperienceMode;
-  return (mode === 'professional' || mode === 'assistant') ? mode : 'assistant';
-}
+// getPersistedChatExperienceMode is RETIRED (总裁办公室 surface ruling
+// 2026-11-09): the chat experience mode is decided by the active face in the
+// renderer (BotHub=assistant, BotWorks=professional) and, on the backend, by
+// the per-session assistantMode marker alone — see
+// coworkRunner.isAssistantModeOwnerChatSession. Nothing reads the legacy
+// app_config.chatExperienceMode value any more.
 
 /**
  * Persists a global cowork preference (permission mode / effort level) to

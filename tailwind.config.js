@@ -57,6 +57,24 @@ export default {
           DEFAULT: 'var(--text-secondary)',
           dark: 'var(--border-color)',
         },
+        // Liquid Glass material tokens (floating / control layers only).
+        // The composite material lives in index.css (.glass-surface /
+        // .glass-tint / .glass-reduce); these are the Tailwind-facing
+        // handles for call sites that need one property at a time
+        // (bg-glass-surface, border-glass-line, text-glass-secondary, …).
+        // All values are CSS variables, so light/dark + every degrade path
+        // stay defined in ONE place (index.css).
+        glass: {
+          surface: 'var(--glass-surface-bg)',
+          tint: 'var(--glass-tint-bg)',
+          reduce: 'var(--glass-reduce-bg)',
+          line: 'var(--glass-line)',
+          highlight: 'var(--glass-highlight)',
+          secondary: 'var(--glass-text-secondary)',
+        },
+      },
+      backdropBlur: {
+        glass: 'var(--glass-blur)',
       },
       boxShadow: {
         subtle: '0 1px 2px rgba(0,0,0,0.05)',
@@ -65,6 +83,8 @@ export default {
         modal: '0 8px 30px rgba(0,0,0,0.16), 0 2px 8px rgba(0,0,0,0.08)',
         popover: '0 4px 20px rgba(0,0,0,0.12), 0 1px 4px rgba(0,0,0,0.05)',
         'glow-accent': '0 0 20px rgba(59,130,246,0.15)',
+        glass: 'var(--glass-shadow)',
+        'glass-reduce': 'var(--glass-reduce-shadow)',
       },
       keyframes: {
         'fade-in': {

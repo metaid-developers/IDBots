@@ -13,7 +13,7 @@ import { stampPermissionDeadline, timeoutDefaultForToolApproval, type Permission
 import { isServerMode } from '../server/serverMode';
 import type { CoworkStore, CoworkMessage, CoworkExecutionMode, CoworkSessionStatus, CoworkPermissionMode } from '../coworkStore';
 import type { CrossSessionDeliveryStore, CrossSessionDeliveryReliabilitySnapshot } from '../crossSessionDeliveryStore';
-import { getCurrentApiConfig, resolveCurrentModelLimits, resolveModelOptions, getPersistedAutoApproveTools, getPersistedCoworkEffortLevel, getPersistedChatExperienceMode, resolveDshProviderRoute, resolveSystemRescueBrain, isFreeQuotaProvider, ModelProviderSelectionError, type DshProviderRouteInfo } from './claudeSettings';
+import { getCurrentApiConfig, resolveCurrentModelLimits, resolveModelOptions, getPersistedAutoApproveTools, getPersistedCoworkEffortLevel, resolveDshProviderRoute, resolveSystemRescueBrain, isFreeQuotaProvider, ModelProviderSelectionError, type DshProviderRouteInfo } from './claudeSettings';
 import { resolveCoworkExecutionMode } from './coworkExecutionMode';
 import { buildGoalPromptSection, type CoworkSessionGoal } from './coworkSessionGoal';
 import { buildDispatchReportMessage, tailDispatchReportExcerpt } from './coworkCrossSessionReport';
@@ -6477,26 +6477,23 @@ export class CoworkRunner extends EventEmitter {
   }
 
   /**
-   * Whether the assistant chat-experience mode applies to this session: the
-   * global mode flag is on AND the session is a regular interactive owner
-   * chat — standard type, human-initiated (no autoOrigin), created from the
-   * cowork UI. Group tasks, A2A/IM conversations, Bot Browser pages,
-   * long-term sessions, and auto-created orchestration/schedule runs all
-   * serve other audiences or run unattended, so they keep the professional
-   * prompt.
+   * Whether the assistant chat-experience mode applies to this session.
+   *
+   * Since the 总裁办公室 surface ruling (2026-11-09, superseding the global
+   * chatExperienceMode toggle — the persisted setting is retired and read by
+   * nothing any more) assistant mode lives ONLY in the BotHub layer: sessions
+   * started there carry the persisted per-session assistantMode marker
+   * (owner ruling 2026-11-07, locked to the Twin). Everything else chats
+   * professional — the BotWorks face runs every bot, twin included, without
+   * the assistant prompt section, the owner_update surface, or the assistant
+   * effort rung. Unattended runs forked FROM a projector session are separate
+   * unmarked sessions, so the autoOrigin guard keeps them professional.
    */
   private isAssistantModeOwnerChatSession(sessionId: string): boolean {
     const session = this.store.getSession(sessionId);
     if (!session) return false;
-    // Bot Internet projector sessions carry a persisted per-session marker
-    // and run assistant mode regardless of the global chatExperienceMode
-    // (owner ruling 2026-11-07: the Bot Internet tab is always assistant,
-    // locked to the Twin). Unattended runs forked FROM one are separate
-    // unmarked sessions, so the autoOrigin guard keeps them professional.
     if (session.assistantMode && !session.autoOrigin) return true;
-    if (getPersistedChatExperienceMode() !== 'assistant') return false;
-    if ((session.sessionType ?? 'standard') !== 'standard' || session.autoOrigin) return false;
-    return this.store.getConversationSourceContextBySession(sessionId).sourceChannel === 'cowork_ui';
+    return false;
   }
 
   /**
@@ -11213,11 +11210,10 @@ export class CoworkRunner extends EventEmitter {
         // carry no user message. Already-persisted cross-session deliveries
         // are different: the owner still needs an immediate, contextual
         // opening even though insertion is not repeated. The GATE alone
-        // decides — it encodes global-assistant for regular owner chats AND
-        // the per-session marker (Bot Internet projector sessions stay
-        // assistant-mode whatever the Settings toggle says, owner ruling
-        // 2026-11-07), so an outer global-mode check here would silently
-        // strip the first-sentence promise from marker sessions.
+        // decides — it encodes the 2026-11-09 surface ruling (assistant mode
+        // = the per-session BotHub marker; the global Settings toggle is
+        // retired), so an outer mode check here would silently strip the
+        // first-sentence promise from marker sessions.
         assistantOwnerChatForTurn = this.isAssistantModeOwnerChatSession(sessionId);
         const crossSessionDelivery = /<cross_session_message\b|\[ORCH-NOTIFY\]/i.test(prompt);
         if (ackSourceChannel === 'cowork_ui' && assistantOwnerChatForTurn
@@ -11397,13 +11393,12 @@ export class CoworkRunner extends EventEmitter {
       // THIS session). Without an override, assistant mode skips the bot
       // brain effort, the persisted global, and the per-model default.
       // Professional mode keeps the full chain unchanged. The mode is an
-      // owner-chat experience decision — the GATE alone decides (it encodes
-      // global-assistant for regular owner chats AND the per-session marker
-      // from the Bot Internet co-work panel, owner ruling 2026-11-07; an
-      // outer global-mode check would strip marker sessions of the no-reasoning
-      // promise when the global toggle is professional). Group tasks, A2A/IM,
-      // long-term and scheduled automation sessions keep the professional
-      // chain even under the global assistant default.
+      // owner-chat experience decision — the GATE alone decides (2026-11-09
+      // surface ruling: assistant mode = the per-session BotHub marker; the
+      // global Settings toggle is retired, so an outer mode check would
+      // strip marker sessions of the no-reasoning promise). Group tasks,
+      // A2A/IM, long-term and scheduled automation sessions — and every
+      // BotWorks owner chat — keep the professional chain.
       const assistantMode = this.isAssistantModeOwnerChatSession(sessionId);
       const sessionEffortPicked = effectiveEffortRung != null;
       // "Auto" rung verdict: null (no selector, unconfigured cerebellum,

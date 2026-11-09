@@ -4,18 +4,13 @@ import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
 import { RootState } from '../../store';
 import type { CoworkSessionSummary } from '../../types/cowork';
 import CoworkSessionItem, { SessionAvatarCircle, formatRelativeTime } from './CoworkSessionItem';
-import MetaBotSelector, {
-  ALL_METABOTS_SELECTOR_ID,
-  type MetaBotForSelector,
-} from './MetaBotSelector';
+import type { MetaBotForSelector } from './MetaBotSelector';
 import { i18nService } from '../../services/i18n';
 import { useStableCallback } from '../../utils/useStableCallback';
 import { useChatExperienceMode } from '../../hooks/useChatExperienceMode';
 import { isAssistantModeOwnerChatSession } from './assistantModeSessionGate';
 import { useProgressiveRowReveal } from './sessionListRevealBudget';
 import {
-  buildBotSessionCounts,
-  buildBotUnreadCounts,
   groupSessionsByBot,
   groupSessionsByTimeline,
   sortSessionsByMode,
@@ -95,18 +90,6 @@ interface CoworkSessionListProps {
    * same-section move.
    */
   onMoveSessionToSection?: (sessionId: string, target: SessionSidebarSection) => void;
-  /** Online-chats (A2A) Bot selector — that list's ONLY selector. When on, the
-   * list reuses the shared MetaBotSelector (the same component the cowork home
-   * and Bot Internet composer use) above the flat list, with `allowAll` adding
-   * the leading 全部 Bot entry. The bots come from the live metabot list
-   * (enabled bots, Twin first), so a deleted bot never reappears; it opens on
-   * the Twin (the bot you converse with; workers are picked on purpose), and
-   * picking an entry scopes the flat list to that bot while 全部 Bot restores
-   * it. Each option row carries the bot's conversation count on its right.
-   * There is no grouping header and no view mode behind it, and a lone local
-   * bot gets no control (a single option would only repeat the list). Every
-   * other caller leaves it off, so their output is unchanged. */
-  botSelector?: boolean;
   /**
    * i18n generation marker. The rows and the group headers read their copy from
    * i18nService at render time, so a memoized list needs the language among its
@@ -248,7 +231,6 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
   onToggleSessionSelected,
   viewMode,
   sortMode = 'updatedAt',
-  botSelector = false,
   autoSessions: incomingAutoSessions,
   followUpSessions: incomingFollowUpSessions,
   decisionSessionIds,
@@ -348,45 +330,39 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
       return next;
     });
   };
-  const [pickedBotId, setPickedBotId] = useState<number | null>(null);
-  // null = the live bot list has not settled yet. The control waits for it:
-  // while it is pending the row is held open by a value-less placeholder (same
-  // boxes as the trigger), so the control never paints a bot and then jumps to
-  // the Twin default a frame later — the default-Twin promise is kept on the
-  // very first painted frame.
-  const [selectorBots, setSelectorBots] = useState<MetaBotForSelector[] | null>(null);
+  const [rosterBots, setRosterBots] = useState<MetaBotForSelector[] | null>(null);
+  // null = the live bot roster has not settled yet; the by-Bot groups simply
+  // wait for it (an empty roster degrades to session-derived groups).
   // The caller's language, with a standalone fallback (see the prop's docs).
   const language = languageProp ?? i18nService.getLanguage();
 
-  // The selector's bots come from the same read-only IPC the composers use
-  // (enabled bots only, Twin first) — NOT from the sessions, so a deleted or
-  // disabled bot can never reappear as a filter option. Best effort: any
-  // failure leaves the selector off (empty list). The same roster also feeds
-  // the by-Bot view's groups (every enabled bot gets a group, empty ones
-  // included), so the view opens for the local list too, not just the A2A
-  // selector.
+  // The by-Bot view's groups read their roster from the same read-only IPC the
+  // composers use (enabled bots only, Twin first) — NOT from the sessions, so a
+  // deleted or disabled bot can never reappear as a group. Best effort: any
+  // failure leaves the roster empty and the grouping degrades to session-derived
+  // groups. Only the by-Bot view needs it; the timeline/flat views never read it.
   useEffect(() => {
-    if (!botSelector && viewMode !== 'bot') return;
+    if (viewMode !== 'bot') return;
     let cancelled = false;
     window.electron?.idbots
       ?.getMetaBots?.()
       .then((result) => {
-        if (!cancelled) setSelectorBots(result?.success && result.list ? result.list : []);
+        if (!cancelled) setRosterBots(result?.success && result.list ? result.list : []);
       })
       .catch(() => {
-        if (!cancelled) setSelectorBots([]);
+        if (!cancelled) setRosterBots([]);
       });
     return () => {
       cancelled = true;
     };
-  }, [botSelector, viewMode]);
+  }, [viewMode]);
 
   // Roster shaped for the by-Bot view: Twin flag + creation time for the
   // group order. An IPC row that predates created_at (impossible today, but
-  // the field is optional on the selector type) orders as the oldest.
+  // the field is optional on the roster type) orders as the oldest.
   const viewBots = useMemo<BotViewBot[]>(
     () =>
-      (selectorBots ?? []).map((bot) => ({
+      (rosterBots ?? []).map((bot) => ({
         id: bot.id,
         name: bot.name,
         avatar: bot.avatar,
@@ -394,52 +370,15 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
         createdAt: bot.created_at ?? 0,
         role: bot.role,
       })),
-    [selectorBots],
+    [rosterBots],
   );
 
-  // Per-bot conversation counts for the selector's option rows (each live bot
-  // pre-seeded at 0, 'all' carrying the total). They exist only for the online
-  // list; every other caller computes nothing.
-  const sessionCounts = useMemo(
-    () => (botSelector ? buildBotSessionCounts(sessions, (selectorBots ?? []).map((bot) => bot.id)) : undefined),
-    [botSelector, sessions, selectorBots],
-  );
-  // Per-bot unread counts for the selector's option unread indicators (yellow
-  // dots). Each live bot is pre-seeded at 0, 'all' carrying the total unread
-  // count. Only computed for the online list; every other caller gets nothing.
-  const unreadCounts = useMemo(
-    () => (botSelector ? buildBotUnreadCounts(sessions, (selectorBots ?? []).map((bot) => bot.id), unreadSessionIdSet) : undefined),
-    [botSelector, sessions, selectorBots, unreadSessionIdSet],
-  );
-  // A lone local bot needs no selector (the same "zero noise" rule as the
-  // single-group degradation), so the control stays off below two local bots.
-  // Gated on the botSelector PROP: the by-Bot view also loads the roster, but
-  // it must never turn the selector logic on for the local list — among other
-  // things the fold/section visibility below keys off !showBotSelector.
-  const showBotSelector = botSelector && (selectorBots?.length ?? 0) > 1;
-  // The selector opens on 全部 Bot. It used to open on the Twin when the flat
-  // list made the Twin the default reading; the online face is now grouped by
-  // bot, and a Twin-scoped default would hide every other bot's group behind a
-  // control the owner never touched — the opposite of "按 Bot 分组".
-  const defaultBotId = ALL_METABOTS_SELECTOR_ID;
-  // An explicit pick wins while its bot still exists; otherwise the list falls
-  // back to the default, so the filtered state cannot get stuck (e.g. on a bot
-  // deleted after the pick). With the selector hidden there is no control to
-  // escape a filter, so the list must show everything — legacy A2A rows with
-  // no metabotId and sessions of since-deleted/disabled bots included.
-  const activeBotId = showBotSelector
-    ? (pickedBotId != null
-        && (pickedBotId === ALL_METABOTS_SELECTOR_ID || selectorBots?.some((bot) => bot.id === pickedBotId))
-      ? pickedBotId
-      : defaultBotId)
-    : ALL_METABOTS_SELECTOR_ID;
-  const visibleSessions = useMemo(
-    () =>
-      activeBotId === ALL_METABOTS_SELECTOR_ID
-        ? sessions
-        : sessions.filter((session) => session.metabotId === activeBotId),
-    [sessions, activeBotId],
-  );
+  // The list itself is never scoped by bot. The online face used to carry a
+  // MetaBotSelector dropdown above the groups, which both duplicated the 按 Bot
+  // grouping and hid every bot the owner had not picked; the dropdown is gone
+  // (owner ruling 2026-11-09), so every row of the face reaches the groups and
+  // legacy rows whose bot is gone still show up.
+  const visibleSessions = sessions;
 
   const sortedSessions = useMemo(() => {
     const sortByRecentActivity = (a: CoworkSessionSummary, b: CoworkSessionSummary) => {
@@ -704,72 +643,13 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
       </section>
     );
 
-  // The online list's only selector: the SAME MetaBotSelector the composers
-  // use (cowork home, Bot Internet panel), so the two surfaces can never drift
-  // apart again. allowAll adds the leading 全部 Bot entry, the option rows
-  // carry each bot's conversation count on their right, and the dropdown
-  // floats fixed so the sidebar's scroll container cannot clip it.
-  const botSelectorRow = showBotSelector ? (
-    selectorBots ? (
-      <div data-testid="bot-selector-row" className="px-2.5 pb-1.5 pt-0.5">
-        <MetaBotSelector
-          metabots={selectorBots}
-          selectedId={activeBotId}
-          onSelect={(id) => setPickedBotId(id ?? ALL_METABOTS_SELECTOR_ID)}
-          label={i18nService.t('coworkMetaBotLabel')}
-          placeholder={i18nService.t('coworkMetaBotPlaceholder')}
-          compact
-          allowAll
-          sessionCounts={sessionCounts}
-          unreadCounts={unreadCounts}
-          useFixedDropdown
-        />
-      </div>
-    ) : (
-      /* Bot list pending: hold the control's row open with an inert
-       * placeholder instead of painting a value. The boxes (row padding, 20px
-       * avatar, label slot, 12px chevron) mirror the real compact trigger, so
-       * settling swaps the content in place — nothing below the row moves, and
-       * no value the lookup has not confirmed is ever shown. aria-hidden: a
-       * loading shell must not enter the accessibility tree as a fake value;
-       * the real control arrives with its own name one tick later. */
-      <div
-        data-testid="bot-selector-row"
-        data-pending="true"
-        aria-hidden="true"
-        className="px-2.5 pb-1.5 pt-0.5"
-      >
-        <span className="flex w-full items-center gap-1.5 rounded-lg border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface px-2 py-1 text-xs">
-          <span className="h-5 w-5 flex-shrink-0 animate-pulse rounded-md dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover" />
-          <span className="h-3 w-16 flex-shrink-0 animate-pulse rounded-sm dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover" />
-          <span className="ml-auto h-3 w-3 flex-shrink-0 animate-pulse rounded-sm dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover" />
-        </span>
-      </div>
-    )
-  ) : null;
-
-  // The selector (online face) and the grouped body are ONE list, not two
-  // competing selectors: the dropdown narrows WHICH bots are shown (全部 Bot
-  // by default), the groups below it organize the shown rows by bot. The
-  // hairline rides with the control and scrolls away with it — it is not
-  // sticky, so it never competes with the list for attention.
-  const selectorBlock = botSelectorRow ? (
-    <>
-      {botSelectorRow}
-      <div
-        data-testid="bot-selector-divider"
-        className="mt-0.5 border-t dark:border-claude-darkBorder border-claude-border"
-      />
-    </>
-  ) : null;
-
   // An empty human list still renders the Follow-Up section and the fold when
   // background runs exist: showing "no chats yet" above sections full of them
   // would be a lie. Every caller that passes neither bucket (A2A tab, search
   // modal) keeps the old empty state exactly — both sections belong to the
-  // local list only, so the selector path never counts them either.
-  const hasFollowUpTasks = sortedFollowUpSessions.length > 0 && !showBotSelector;
-  const hasAutoTasks = sortedAutoSessions.length > 0 && !showBotSelector;
+  // local list only.
+  const hasFollowUpTasks = sortedFollowUpSessions.length > 0;
+  const hasAutoTasks = sortedAutoSessions.length > 0;
   if (visibleSessions.length === 0 && !hasAutoTasks && !hasFollowUpTasks) {
     return (
       // Same landing recipe as the Co-Work panel's empty state (aesthetic pass
@@ -791,7 +671,6 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
   if (timelineGrouped) {
     return (
       <div ref={rootRef}>
-        {selectorBlock}
         {renderPinnedSection(timelineGrouped.pinned)}
         {renderAutoTasksSection()}
         {renderFollowUpSection()}
@@ -820,7 +699,6 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
   if (botGrouped) {
     return (
       <div ref={rootRef}>
-        {selectorBlock}
         {renderPinnedSection(botGrouped.pinned)}
         {renderAutoTasksSection()}
         {renderFollowUpSection()}
@@ -893,12 +771,11 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
     );
   }
 
-  // Flat list — callers that pass no view mode (the search modal). A selector
-  // can still sit above it when the caller asked for one; every Bot Home face
-  // passes a view mode, so the grouped branches above are what those render.
+  // Flat list — callers that pass no view mode (the search modal). Every Bot
+  // Home face passes a view mode, so the grouped branches above are what those
+  // render; nothing is stacked above the rows any more.
   return (
     <div ref={rootRef} className="space-y-1">
-      {selectorBlock}
       {/* Flat mode has no group headers, so the sections' anchor is the pinned
        * block itself: pinned rows first, then the fold, then the Follow-Up
        * section, then the rest — the same "under pinned, above everything else"

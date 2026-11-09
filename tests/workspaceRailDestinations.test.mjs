@@ -218,14 +218,16 @@ test('a collapsed middle column is recoverable from the boundary handle alone', 
   assert.match(handleBlock, /data-slot="panel-boundary-handle"/);
   assert.match(handleBlock, /aria-orientation="vertical"/);
   assert.match(handleBlock, /data-slot="panel-toggle"/);
-  assert.match(handleBlock, /aria-pressed=\{isSidebarCollapsed\}/);
-  assert.match(handleBlock, /onClick=\{handleToggleSidebar\}/);
+  // 接缝按钮双向化 2026-11-09: the seam publishes its per-face state instead
+  // of a boolean toggle, and each face's transitions live on its own chevrons.
+  assert.match(handleBlock, /data-seam-state=\{showHomeSurface \? \(homeSeamCollapsed \? 'left' : 'split'\) : botHubSeamState\}/);
+  assert.match(handleBlock, /onClick=\{handleCollapseHomeSeam\}/);
   assert.match(handleBlock, /<PanelToggleIcon/);
   // ... and every destination click re-opens the column, so a collapsed
   // workspace can never be a dead end.
   assert.match(
     appSource,
-    /const revealMiddleColumn = useCallback\(\(\) => \{\s*setIsSidebarCollapsed\(false\);/,
+    /const revealMiddleColumn = useCallback\(\(\) => \{\s*if \(isHomeSurfaceMode\) \{\s*setHomeSeamCollapsed\(false\);/,
   );
   assert.match(appSource, /onSelectInternetPane=\{\(pane\) => \{\s*revealMiddleColumn\(\);/);
   assert.match(appSource, /onSelectHomeSection=\{\(section\) => \{\s*revealMiddleColumn\(\);/);

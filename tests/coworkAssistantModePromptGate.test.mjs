@@ -1,8 +1,10 @@
 // Static wiring checks for the assistant-mode system-prompt gate: the
-// ASSISTANT_MODE_PROMPT section may mount only for regular interactive owner
-// chats while the global chat experience mode is 'assistant' — group tasks,
-// A2A/IM sessions, Bot Browser pages, long-term sessions, and auto-created
-// orchestration runs keep the professional prompt.
+// ASSISTANT_MODE_PROMPT section may mount only for sessions carrying the
+// per-session assistantMode marker (the BotHub layer, 总裁办公室 surface
+// ruling 2026-11-09) — group tasks, A2A/IM sessions, Bot Browser pages,
+// long-term sessions, auto-created orchestration runs, and every BotWorks
+// owner chat keep the professional prompt. The retired global
+// chatExperienceMode toggle is read by nothing any more.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,6 +14,7 @@ import { dirname, join } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const coworkRunnerSource = readFileSync(join(here, '../src/main/libs/coworkRunner.ts'), 'utf8');
+const claudeSettingsSource = readFileSync(join(here, '../src/main/libs/claudeSettings.ts'), 'utf8');
 
 test('the assistant-mode prompt section mounts only behind the per-turn gate', () => {
   // The composer mounts the section only when its assistantMode argument is
@@ -29,27 +32,29 @@ test('the assistant-mode prompt section mounts only behind the per-turn gate', (
   );
 });
 
-test('the gate reads the persisted mode fresh and restricts to interactive owner chats', () => {
+test('the gate is marker-only under the 2026-11-09 surface ruling', () => {
   const gate = coworkRunnerSource.match(
     /private isAssistantModeOwnerChatSession\(sessionId: string\): boolean \{[\s\S]*?\n  \}/,
   );
   assert.ok(gate, 'isAssistantModeOwnerChatSession must exist');
   const body = gate[0];
   assert.ok(
-    body.includes("getPersistedChatExperienceMode() !== 'assistant'"),
-    'the gate must read the persisted mode on every call, so a mid-session flip to professional takes effect on the next turn',
+    body.includes('session.assistantMode && !session.autoOrigin'),
+    'the gate must keep the per-session BotHub marker branch with its autoOrigin guard',
+  );
+  // The retired Settings value must not be read anywhere in the runner —
+  // the mode is decided by the face (renderer) and the marker (backend).
+  assert.ok(
+    !body.includes('getPersistedChatExperienceMode'),
+    'the gate must not read the retired persisted chat experience mode',
   );
   assert.ok(
-    body.includes("sessionType ?? 'standard') !== 'standard'"),
-    'the gate must exclude non-standard session types (A2A/group/browser)',
+    !coworkRunnerSource.includes('getPersistedChatExperienceMode'),
+    'coworkRunner must carry no reference to the retired persisted mode',
   );
   assert.ok(
-    body.includes('session.autoOrigin'),
-    'the gate must exclude auto-created sessions (orchestration/schedule runs)',
-  );
-  assert.ok(
-    body.includes("sourceChannel === 'cowork_ui'"),
-    'the gate must restrict to sessions created from the cowork UI',
+    !/function getPersistedChatExperienceMode/.test(claudeSettingsSource),
+    'claudeSettings must not keep the retired persisted-mode reader (no dangling reference)',
   );
 });
 

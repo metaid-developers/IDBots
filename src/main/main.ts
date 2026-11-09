@@ -12362,7 +12362,13 @@ if (!gotTheLock) {
     title?: string;
     activeSkillIds?: string[];
     metabotId?: number | null;
-    sessionType?: 'standard' | 'browser';
+    /**
+     * 'a2a' joins 'standard' | 'browser' (线上对话意图引导路由, 2026-11-09):
+     * the 线上对话 face's composer starts a REAL online A2A session — the
+     * owner's first message must land as session_type 'a2a' (record tab
+     * 线上对话, bot visits on-chain), never fall back to a plain local chat.
+     */
+    sessionType?: 'standard' | 'browser' | 'a2a';
     /** Bot Internet projector sessions: run assistant mode regardless of the global chatExperienceMode. */
     assistantMode?: boolean;
     permissionMode?: 'default' | 'plan' | 'acceptEdits' | 'bypassPermissions';
@@ -12393,7 +12399,16 @@ if (!gotTheLock) {
         'cowork:session:start',
       ) ?? [];
       const systemPrompt = options.systemPrompt ?? config.systemPrompt;
-      const sessionType = options.sessionType === 'browser' ? 'browser' : 'standard';
+      // Coercion gate: only the three renderer-created kinds pass through;
+      // everything else stays 'standard'. The a2a arm is the 线上对话 face's
+      // composer-direct route — a real MetaBot↔MetaBot visit session with no
+      // peer bound yet (the bot resolves the companion on-chain during the
+      // visit), so the record lands in the 线上对话 tab, not the local list.
+      const sessionType = options.sessionType === 'browser'
+        ? 'browser'
+        : options.sessionType === 'a2a'
+          ? 'a2a'
+          : 'standard';
       let selectedWorkspaceRoot = (options.cwd || config.workingDirectory || '').trim();
 
       if (!selectedWorkspaceRoot && sessionType === 'browser') {

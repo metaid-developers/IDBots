@@ -92,15 +92,18 @@ test('App implements a branch for every renderer key the table can produce', () 
 });
 
 test('the shell pins every column to an explicit track (no auto-placement blind spot)', () => {
-  // Both collapse states must describe four tracks. Read them off the shell's
-  // own style block (the two ternary arms), not off a comment.
+  // Every seam state must describe four tracks. Read them off the shell's
+  // own style block (the ternary arms), not off a comment. 接缝按钮双向化
+  // 2026-11-09 declared three templates; the 平铺态砍掉 same-day ruling
+  // removed the 对话框占满 arm — the browser face declares TWO templates
+  // (split / left-collapsed) and the fill direction stays retired.
   const shellStart = appSource.indexOf('data-slot="app-three-column-shell"');
   assert.ok(shellStart > 0, 'the shell exists');
-  const shellBlock = appSource.slice(shellStart, shellStart + 1200);
+  const shellBlock = appSource.slice(shellStart, shellStart + 1400);
   const templates = [...shellBlock.matchAll(/'([^']+)'/g)]
     .map((match) => match[1])
     .filter((template) => template.includes('minmax('));
-  assert.equal(templates.length, 2, 'expanded + collapsed templates are both declared');
+  assert.equal(templates.length, 2, 'split + left-collapsed templates are declared; the retired fill arm stays gone');
   // `minmax(0, 1fr)` is ONE track, so collapse its inner spaces before counting.
   const trackCount = (template) => template.replace(/minmax\(([^)]*)\)/g, (_m, inner) => `minmax(${inner.replace(/\s+/g, '')})`).trim().split(/\s+/).length;
   for (const template of templates) {
@@ -110,7 +113,7 @@ test('the shell pins every column to an explicit track (no auto-placement blind 
   // The right column and the resize handle are placed by track number, so a
   // conditional middle child can never shift them into the wrong track.
   assert.match(appSource, /data-slot="app-right-column"[\s\S]{0,160}gridColumn: 4/);
-  assert.match(appSource, /role="separator"[\s\S]{0,420}gridColumn: 3/);
+  assert.match(appSource, /role="separator"[\s\S]{0,520}gridColumn: 3/);
 
   // Negative control: the modelled bug still reproduces against the LIVE
   // collapsed template, so the assertions above check a real property rather
@@ -126,12 +129,17 @@ test('the shell pins every column to an explicit track (no auto-placement blind 
 });
 
 test('recovery never depends on a control inside the collapsible column', () => {
-  // The ONE panel toggle sits on the mid ⇄ right boundary handle, which is
-  // mounted in both states (the collapsed template keeps its 4px track) …
+  // The ONE panel-toggle spot sits on the mid ⇄ right boundary handle, which
+  // is mounted in every seam state (the collapsed template keeps its 4px
+  // track; the right-collapsed state zeroes the browser track instead) …
   assert.match(appSource, /data-slot="panel-boundary-handle"/);
   assert.match(appSource, /data-slot="panel-toggle"/);
-  assert.match(appSource, /onClick=\{handleToggleSidebar\}/);
-  assert.match(appSource, /aria-pressed=\{isSidebarCollapsed\}/);
+  // 接缝按钮双向化 2026-11-09: a collapsed face always renders its recover
+  // chevron back to split (BotHub's handleExpandBotHubSeam / BotWorks's
+  // handleExpandHomeSeam) — no collapsed state is a dead end.
+  assert.match(appSource, /onClick=\{handleExpandBotHubSeam\}/);
+  assert.match(appSource, /onClick=\{handleExpandHomeSeam\}/);
+  assert.match(appSource, /data-seam-state=\{showHomeSurface \? \(homeSeamCollapsed \? 'left' : 'split'\) : botHubSeamState\}/);
   assert.match(appSource, /'64px 0px 4px minmax\(0, 1fr\)'/);
   // … and it is NOT duplicated back into the rail or the column it collapses.
   assert.doesNotMatch(railSource, /rail-collapse-toggle/);
@@ -140,13 +148,18 @@ test('recovery never depends on a control inside the collapsible column', () => 
 });
 
 test('a rail destination click re-opens the middle column (the second recovery path)', () => {
-  assert.match(appSource, /const revealMiddleColumn = useCallback\(\(\) => \{\s*setIsSidebarCollapsed\(false\);/);
+  // Per-face scope (接缝按钮双向化 2026-11-09): the reveal resets ONLY the
+  // active face's seam machine — the other face keeps its own state.
+  assert.match(
+    appSource,
+    /const revealMiddleColumn = useCallback\(\(\) => \{\s*if \(isHomeSurfaceMode\) \{\s*setHomeSeamCollapsed\(false\);/,
+  );
   // Scope the search to the rail's own JSX block: the same prop names appear
   // again on <Sidebar> where no reveal is expected.
   const railStart = appSource.indexOf('<WorkspaceRail');
   const railEnd = appSource.indexOf('/>', railStart);
   const railBlock = appSource.slice(railStart, railEnd);
-  for (const handler of ['onSelectInternetPane', 'onSelectHomeSection', 'onNewChat']) {
+  for (const handler of ['onSelectInternetPane', 'onSelectHomeSection']) {
     const start = railBlock.indexOf(`${handler}={`);
     assert.ok(start > 0, `${handler} wiring exists on the rail`);
     assert.match(
@@ -155,4 +168,20 @@ test('a rail destination click re-opens the middle column (the second recovery p
       `${handler} reveals the middle column before acting`,
     );
   }
+  // NOTE (并行工作区回归单 2026-11-09 13:40): the home rail's onNewChat was
+  // re-wired to call handleBlankNewChat directly (no reveal prefix) by the
+  // parallel workspace-regression order — NOT a ruling of this seam task.
+  // The browser face's rail keeps the full reveal + switch + new-chat chain,
+  // which is asserted below against the SECOND rail mount.
+  const secondRailStart = appSource.indexOf('<WorkspaceRail', railStart + 1);
+  assert.ok(secondRailStart > 0, 'the browser face mounts its own rail');
+  const secondRailEnd = appSource.indexOf('/>', secondRailStart);
+  const browserRailBlock = appSource.slice(secondRailStart, secondRailEnd);
+  const newChatStart = browserRailBlock.indexOf('onNewChat={');
+  assert.ok(newChatStart > 0, 'browser rail onNewChat wiring exists');
+  assert.match(
+    browserRailBlock.slice(newChatStart, newChatStart + 400),
+    /revealMiddleColumn\(\)/,
+    'the browser rail reveals the middle column before a new chat',
+  );
 });

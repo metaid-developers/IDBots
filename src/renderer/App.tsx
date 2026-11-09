@@ -47,7 +47,7 @@ import {
 } from './services/appUpdateUi';
 import { defaultConfig, type ModelOptions } from './config';
 import { setAvailableModels, setSelectedModel } from './store/slices/modelSlice';
-import { setDraftPrompt } from './store/slices/coworkSlice';
+import { setDraftPrompt, setNewTaskOrigin } from './store/slices/coworkSlice';
 import { clearSelection } from './store/slices/quickActionSlice';
 import { setActiveSkillIds } from './store/slices/skillSlice';
 import { selectTask as selectLongTermTask } from './store/slices/longTermTaskSlice';
@@ -67,12 +67,17 @@ import { openSelectedMetaApp } from './components/metaapps/metaAppLaunch.js';
 import { normalizePreselectedSkillId } from './utils/newChatPreselect';
 import {
   clampSidebarWidth,
-  defaultSidebarWidth,
   loadSidebarWidth,
+  maxSidebarWidthForWindow,
+  sidebarSnapWidthForWindow,
   sidebarWidthStorageKey,
+  SIDEBAR_WIDTH_MIN,
 } from './utils/sidebarWidth';
 import {
+  dampedSidebarDelta,
+  easeOutCubic,
   startSidebarResizeSession,
+  SIDEBAR_SNAP_TWEEN_MS,
   type SidebarResizeSession,
 } from './utils/sidebarResizeSession';
 import { useBotBrowserShell } from './features/botBrowser/useBotBrowserShell';
@@ -177,12 +182,34 @@ const App: React.FC = () => {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isNewGroupTaskOpen, setIsNewGroupTaskOpen] = useState(false);
   const [, forceLanguageRefresh] = useState(0);
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  // Seam state is PER FACE (总裁办接缝按钮双向化 2026-11-09; 砍平铺态同日令):
+  // the BotHub face (browser surface) runs a TWO-state cycle — split ↔
+  // left(中栏收起·浏览器占满). The 对话框占满 fill state (right, the › pill) is
+  // RETIRED — this face's browser must always stay in use, so the seam never
+  // hides it. The BotWorks face (home surface) stays single-direction
+  // split ↔ left. The two machines never share a variable, so one face's
+  // collapse can never leak into the other.
+  const [botHubSeamState, setBotHubSeamState] = useState<'split' | 'left'>('split');
+  const [homeSeamCollapsed, setHomeSeamCollapsed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => loadSidebarWidth((key) => window.localStorage.getItem(key), 'home'));
   const [isSidebarResizing, setIsSidebarResizing] = useState(false);
   // The live resize session owns the pointer between its mousedown and the
   // single finish() funnel; only a session can move the column.
   const sidebarResizeRef = useRef<SidebarResizeSession | null>(null);
+  // Double-click snap tween (3:7 ruling 2026-11-09 fourth order): one rAF
+  // loop animating sidebarWidth to the 3:7 target. The mirror ref lets the
+  // tween read the live width without re-creating the handler on every drag frame.
+  const sidebarTweenRafRef = useRef<number | null>(null);
+  const sidebarWidthRef = useRef(sidebarWidth);
+  useEffect(() => {
+    sidebarWidthRef.current = sidebarWidth;
+  }, [sidebarWidth]);
+  const stopSidebarSnapTween = useCallback(() => {
+    if (sidebarTweenRafRef.current != null) {
+      window.cancelAnimationFrame(sidebarTweenRafRef.current);
+      sidebarTweenRafRef.current = null;
+    }
+  }, []);
   const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [updateModalState, setUpdateModalState] = useState<UpdateModalState>('info');
@@ -649,21 +676,31 @@ const App: React.FC = () => {
     dispatch(selectGroupTask(task.id));
   }, [dispatch]);
 
-  const handleToggleSidebar = useCallback(() => {
-    setIsSidebarCollapsed((prev) => !prev);
+  // Seam button handlers (接缝按钮双向化 2026-11-09). Each face owns its own
+  // transition set; every handler is a pure setter (no face probe), so they
+  // can live above the shell hook without touching its bindings:
+  //
+  // · BotWorks (home): ONE direction only — split ‹→ left, left ›→ split.
+  //   No right-collapsed state exists on this face.
+  // · BotHub (browser): ONE collapse direction — split ‹→ left (browser
+  //   fills), left ›→ split. The › collapse (对话框占满 fill) is retired with
+  //   the 平铺态 (same-day ruling) and has no handler anymore.
+  const handleCollapseHomeSeam = useCallback(() => {
+    setHomeSeamCollapsed(true);
+  }, []);
+  const handleExpandHomeSeam = useCallback(() => {
+    setHomeSeamCollapsed(false);
+  }, []);
+  const handleCollapseBotHubSeamLeft = useCallback(() => {
+    setBotHubSeamState('left');
+  }, []);
+  const handleExpandBotHubSeam = useCallback(() => {
+    setBotHubSeamState('split');
   }, []);
 
-  /**
-   * Self-rescue: any rail destination click re-opens the middle column.
-   *
-   * Collapsing hides the column that owns almost every control, so a collapsed
-   * workspace must be recoverable from the rail alone — a rail click is the
-   * cheapest, most obvious recovery gesture there is. (The rail also carries a
-   * dedicated toggle; this is the second, always-taken path.)
-   */
-  const revealMiddleColumn = useCallback(() => {
-    setIsSidebarCollapsed(false);
-  }, []);
+  // Face-scoped seam helpers. Defined after the shell hook (below) because
+  // they probe the active face — see the derivation block after
+  // `useBotBrowserShell`.
 
   // Column resize is a SESSION started inside the seam's mousedown handler
   // (handleSidebarResizeStart), not an effect keyed on a state flag. That
@@ -676,6 +713,11 @@ const App: React.FC = () => {
     const normalizedPreselectSkillId = normalizePreselectedSkillId(preselectSkillId);
     coworkService.clearSession();
     dispatch(clearSelection());
+    // Every generic new-chat entry (rail 新建, the blank-new-chat buttons, a
+    // draft handoff) is an OWNER-task composer: reset the wording origin so an
+    // a2a composer armed earlier by a 线上对话 + never leaks its Bot-to-Bot copy
+    // into it. handleBlankNewChat funnels through here, so it is covered too.
+    dispatch(setNewTaskOrigin('local'));
     if (normalizedPreselectSkillId) {
       dispatch(setActiveSkillIds([normalizedPreselectSkillId]));
     }
@@ -738,6 +780,45 @@ const App: React.FC = () => {
     showToast,
   });
 
+  // ---- Face-scoped seam derivation (接缝按钮双向化 2026-11-09) -----------
+  // The active face owns the seam: every layout consumer below reads the SAME
+  // collapsed boolean as before, but its value now comes from the ACTIVE
+  // face's own state machine. The two faces' machines never write each other.
+  const isHomeSurfaceMode = botBrowserShell.surfaceMode === 'home';
+  // On the BotHub face only `left` (records column collapsed, browser fills)
+  // is a real middle-column collapse. The retired `right` fill state (对话
+  // 框占满) once mapped to a collapse here and zeroed the Sidebar's own width
+  // inside its 1fr grid track, blanking the whole face — the BotHub
+  // white-screen, fixed 2026-11-09. The 平铺态砍掉 ruling (same day) removed
+  // that state entirely, so exactly one collapse remains to check.
+  const isSidebarCollapsed = isHomeSurfaceMode ? homeSeamCollapsed : botHubSeamState === 'left';
+  // Dragging / double-click snap only make sense while the middle column is
+  // its user-resizable self: the BotHub right-collapsed state (browser gone)
+  // must not arm the middle-column resize grip either.
+  const middleColumnResizable = isHomeSurfaceMode
+    ? !homeSeamCollapsed
+    : botHubSeamState === 'split';
+
+  /**
+   * Self-rescue: any rail destination click re-opens the middle column.
+   *
+   * Collapsing hides the column that owns almost every control, so a collapsed
+   * workspace must be recoverable from the rail alone — a rail click is the
+   * cheapest, most obvious recovery gesture there is. (The rail also carries a
+   * dedicated toggle; this is the second, always-taken path.)
+   *
+   * Per-face scope: only the ACTIVE face's seam resets — the other face keeps
+   * its own seam state, so switching surfaces never drags one face's collapse
+   * into the other.
+   */
+  const revealMiddleColumn = useCallback(() => {
+    if (isHomeSurfaceMode) {
+      setHomeSeamCollapsed(false);
+    } else {
+      setBotHubSeamState('split');
+    }
+  }, [isHomeSurfaceMode]);
+
   const handleShowMetaApps = useCallback(() => {
     botBrowserShell.selectInternetPane('metaapps');
   }, [botBrowserShell.selectInternetPane]);
@@ -762,7 +843,7 @@ const App: React.FC = () => {
 
   /**
    * Seam drag = one session, started here and ended by the session's own
-   * finish() funnel. Three properties matter and are each load-bearing:
+   * finish() funnel. Four properties matter and are each load-bearing:
    *
    *   1. ONLY the primary button starts (a right/middle click would open a
    *      native menu that eats the matching mouseup — the old way a drag could
@@ -772,18 +853,36 @@ const App: React.FC = () => {
    *      slip past them;
    *   3. onEnd is the ONE exit: mouseup, pointerup, pointercancel, Escape,
    *      window blur, tab hidden, mode switch and unmount all land in it and
-   *      clear both the session ref and the visual flag.
+   *      clear both the session ref and the visual flag;
+   *   4. 3:7 ruling (2026-11-09 fourth expansion order, superseding 40:60):
+   *      the cap is the middle:right = 3:7 ratio of the live window (live
+   *      innerWidth read, never a stale closure), the drag follows the
+   *      pointer in real time, and shapeNext damps movement near both range
+   *      edges so the column eases into 3:7 / the minimum instead of jerking
+   *      against them.
    */
   const handleSidebarResizeStart = useCallback((event: React.MouseEvent) => {
     if (event.button !== 0) return;
     if (sidebarResizeRef.current?.active) return;
+    // Grabbing the seam mid-tween takes the pointer back: kill the animation
+    // first or the frames would fight the drag.
+    stopSidebarSnapTween();
     event.preventDefault();
     const session = startSidebarResizeSession({
       startX: event.clientX,
       startWidth: sidebarWidth,
       mode: botBrowserShell.surfaceMode,
       button: event.button,
-      clamp: clampSidebarWidth,
+      // Cap = 40% of the live middle+right split, floored at the minimum
+      // width; window width is read live per move so a mid-drag window
+      // resize cannot be outrun by a captured constant.
+      clamp: (width) => clampSidebarWidth(width, window.innerWidth),
+      shapeNext: (rawNext, current) => current + dampedSidebarDelta(
+        rawNext - current,
+        current,
+        SIDEBAR_WIDTH_MIN,
+        maxSidebarWidthForWindow(window.innerWidth),
+      ),
       onWidth: setSidebarWidth,
       onEnd: ({ mode, width }) => {
         sidebarResizeRef.current = null;
@@ -794,30 +893,80 @@ const App: React.FC = () => {
     if (!session) return;
     sidebarResizeRef.current = session;
     setIsSidebarResizing(true);
-  }, [sidebarWidth, botBrowserShell.surfaceMode]);
+  }, [sidebarWidth, botBrowserShell.surfaceMode, stopSidebarSnapTween]);
 
-  const handleSidebarResizeReset = useCallback(() => {
+  /**
+   * Double-click the seam → smooth snap to the 3:7 split (2026-11-09 fourth
+   * expansion order, supersedes the third order's 40:60 wording and the old
+   * "reset to mode default" semantics).
+   * A JS rAF tween drives sidebarWidth with an ease-out curve: fast start,
+   * soft landing, ~220 ms, no hard jump. Each frame re-clamps against the
+   * live window so a resize mid-tween can never overshoot the cap. The
+   * middle column carries no CSS width transition in this state, so the tween
+   * is the single animator.
+   */
+  const handleSidebarResizeSnapToRatio = useCallback(() => {
     // A double-click's first click can leave a live session behind on the
-    // second; finish it before snapping back to the mode default.
+    // second; finish it before the tween takes the pointer's place.
     sidebarResizeRef.current?.finish('explicit');
+    stopSidebarSnapTween();
     const mode = botBrowserShell.surfaceMode;
-    const width = defaultSidebarWidth(mode);
-    setSidebarWidth(width);
-    window.localStorage.setItem(sidebarWidthStorageKey(mode), String(width));
-  }, [botBrowserShell.surfaceMode]);
+    const target = clampSidebarWidth(sidebarSnapWidthForWindow(window.innerWidth), window.innerWidth);
+    const from = sidebarWidthRef.current;
+    if (from === target) return;
+    const startedAt = performance.now();
+    let last = from;
+    const step = () => {
+      const t = Math.min(1, (performance.now() - startedAt) / SIDEBAR_SNAP_TWEEN_MS);
+      last = clampSidebarWidth(Math.round(from + (target - from) * easeOutCubic(t)), window.innerWidth);
+      setSidebarWidth(last);
+      if (t < 1) {
+        sidebarTweenRafRef.current = window.requestAnimationFrame(step);
+      } else {
+        sidebarTweenRafRef.current = null;
+        window.localStorage.setItem(sidebarWidthStorageKey(mode), String(last));
+      }
+    };
+    sidebarTweenRafRef.current = window.requestAnimationFrame(step);
+  }, [botBrowserShell.surfaceMode, stopSidebarSnapTween]);
 
   // A resize session must never outlive the shell (HMR swap, reload, logout):
-  // the session owns document listeners, so unmount is an exit path too.
+  // the session owns document listeners, so unmount is an exit path too. The
+  // snap tween is a shell-owned rAF loop and dies with the shell as well.
   useEffect(() => () => {
     sidebarResizeRef.current?.finish('unmount');
+    stopSidebarSnapTween();
+  }, [stopSidebarSnapTween]);
+
+  // The 3:7 cap is window-relative: after a window resize the stored width
+  // may no longer fit under the cap, so re-clamp (persisting happens on the
+  // next drag end / tween end / mode switch, as before). One immediate pass
+  // also heals a width persisted by a larger window in an earlier session.
+  useEffect(() => {
+    const handleWindowResize = () => {
+      setSidebarWidth((current) => {
+        const capped = clampSidebarWidth(current, window.innerWidth);
+        return capped === current ? current : capped;
+      });
+    };
+    handleWindowResize();
+    window.addEventListener('resize', handleWindowResize);
+    return () => window.removeEventListener('resize', handleWindowResize);
   }, []);
 
   // Bot Home and Bot Internet keep independent widths: restore the surface's own
-  // comfortable width on every mode switch.
+  // comfortable width on every mode switch. The load re-clamps against the live
+  // 3:7 cap too — loadSidebarWidth's legacy fixed cap alone would let a width
+  // persisted by a wider window mount past the ratio cap (and would also race
+  // the resize re-clamp effect above, since this effect runs after it).
   useEffect(() => {
     sidebarResizeRef.current?.finish('mode-change');
-    setSidebarWidth(loadSidebarWidth((key) => window.localStorage.getItem(key), botBrowserShell.surfaceMode));
-  }, [botBrowserShell.surfaceMode]);
+    stopSidebarSnapTween();
+    setSidebarWidth(clampSidebarWidth(
+      loadSidebarWidth((key) => window.localStorage.getItem(key), botBrowserShell.surfaceMode),
+      window.innerWidth,
+    ));
+  }, [botBrowserShell.surfaceMode, stopSidebarSnapTween]);
 
   useEffect(() => {
     return window.electron.botBrowser.onOpenUri((input) => {
@@ -1562,15 +1711,21 @@ const App: React.FC = () => {
     coworkLandingCard
   );
 
-  const showHomeSurface = botBrowserShell.surfaceMode === 'home';
+  const showHomeSurface = isHomeSurfaceMode;
   const showInternetCatalog = botBrowserShell.surfaceMode === 'browser' && !botBrowserShell.isBrowserPaneVisible;
   /** The one right-column renderer currently mounted (see `data-pane-view`). */
   const rightPaneKey = showHomeSurface ? homePaneKey : internetPaneKey;
-  // Bot Home's degraded grid (owner ruling 2026-11-08 14:22: the Home face goes
-  // back to the baseline two-column form). Same four tracks as the Internet
-  // shell so the seam and the right column keep their explicit placement, but
-  // the rail track collapses to 0 and the restored Home sidebar takes track 1.
-  const homeShellGridTemplate = 'auto 0px 4px minmax(0, 1fr)';
+  // Bot Home's THREE-COLUMN final ruling 2026-11-09 (supersedes the 2026-11-08
+  // 14:22 two-column degradation): the Home face now mounts the SAME shell
+  // shape as the Internet face — 64px icon rail | user-resizable records
+  // column | 4px seam | right column. Collapsed: the middle track goes to 0
+  // while the rail keeps its column (the rail is how a collapsed workspace
+  // recovers its records column). Single-direction (接缝按钮双向化
+  // 2026-11-09): the BotWorks face reads its OWN homeSeamCollapsed machine —
+  // no right-collapsed track exists on this face.
+  const homeShellGridTemplate = homeSeamCollapsed
+    ? '64px 0px 4px minmax(0, 1fr)'
+    : '64px auto 4px minmax(0, 1fr)';
 
   return (
     <div className="relative h-screen overflow-hidden flex dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted">
@@ -1597,9 +1752,11 @@ const App: React.FC = () => {
       {/* The workspace shell.
           · Bot Internet keeps the three-column grid untouched: icon rail |
             resizable middle column | 4 px seam | right column.
-          · Bot Home degrades to the baseline TWO-column form: the rail track
-            is 0 px, the restored HomeSidebar takes the first track, and the
-            right column keeps rendering the Co-Work content flow.
+          · Bot Home runs the SAME three-column shell (three-column final
+            ruling 2026-11-09): rail | records column | right column — the
+            rail carries the three task entries, the middle column is the
+            records (任务记录) list, the right column keeps rendering the
+            Co-Work content flow.
           Both faces share this ONE container on purpose: the keep-alive Bot
           Browser pane lives in the right column, so switching surfaces must
           never unmount it (that would drop every open browser tab). */}
@@ -1611,37 +1768,74 @@ const App: React.FC = () => {
           // Four tracks in every state: a collapsed column goes to 0 but the
           // boundary handle keeps its 4px track, so the ONE panel toggle stays
           // mounted (and clickable) exactly where it collapsed the column.
+          // BotHub has exactly TWO states after the 平铺态砍掉 (the 对话框占满
+          // branch that zeroed the browser track is retired): split keeps the
+          // middle column user-resizable (`auto`), left hands the whole 1fr
+          // to the browser.
           gridTemplateColumns: showHomeSurface
             ? homeShellGridTemplate
-            : isSidebarCollapsed
+            : botHubSeamState === 'left'
               ? '64px 0px 4px minmax(0, 1fr)'
               : '64px auto 4px minmax(0, 1fr)',
         }}
       >
         {showHomeSurface ? (
-          <HomeSidebar
-            activeView={mainView}
-            onShowSettings={handleShowSettings}
-            onShowCowork={handleShowCowork}
-            onShowScheduledTasks={handleShowScheduledTasks}
-            onShowGroupTasks={handleShowGroupTasks}
-            onNewChat={handleBlankNewChat}
-            mode={botBrowserShell.surfaceMode}
-            onSelectHome={botBrowserShell.switchToHome}
-            onSelectSurface={(mode) => {
-              if (mode === 'home') {
-                botBrowserShell.switchToHome();
-              } else {
-                void botBrowserShell.openBrowserHome();
-              }
-            }}
-            onSelectBrowserSession={handleSelectBrowserSession}
-            isCollapsed={isSidebarCollapsed}
-            onToggleCollapse={handleToggleSidebar}
-            width={sidebarWidth}
-            isResizing={isSidebarResizing}
-            updateBadge={isSidebarCollapsed ? null : updateBadge}
-          />
+          <>
+            {/* BotWorks three-column final ruling 2026-11-09: the Home face
+                mounts the SAME WorkspaceRail the Internet face mounts — its
+                home nav carries exactly the three entries that used to be the
+                sidebar's stacked text rows (新建任务 / 长期任务 / 多人任务),
+                same RailButton form, size, spacing and interaction states.
+                Behavior is the OLD rows' behavior verbatim: 新建任务 →
+                handleBlankNewChat (rail's own onNewChat hook), 长期任务 →
+                handleShowScheduledTasks, 多人任务 → handleShowGroupTasks —
+                no group-task drill-in reset here, because the old Home rows
+                never did one. Settings rides the rail on BOTH faces now
+                (设置按钮共享化, 总裁办侧栏微调批单 2026-11-09 12:23 —
+                superseding the 11:16 order): ONE shared implementation (the
+                rail's bottom RailButton + Cog6ToothIcon), ONE onShowSettings
+                chain (handleShowSettings), and the records column's old
+                「⚙ 设置」 text row is gone. The update badge keeps living in
+                the records column's header actions row (the rail gets none —
+                one badge per screen). */}
+            <WorkspaceRail
+              mode={botBrowserShell.surfaceMode}
+              internetPane={botBrowserShell.internetPane}
+              homeSection={homeSection}
+              onSelectInternetPane={(pane) => {
+                revealMiddleColumn();
+                botBrowserShell.selectInternetPane(pane);
+              }}
+              onSelectHomeSection={(section) => {
+                revealMiddleColumn();
+                if (section === 'longTerm') {
+                  handleShowScheduledTasks();
+                } else if (section === 'groupTasks') {
+                  handleShowGroupTasks();
+                }
+              }}
+              onNewChat={handleBlankNewChat}
+              onShowSettings={() => handleShowSettings()}
+            />
+            <HomeSidebar
+              onShowCowork={handleShowCowork}
+              onShowGroupTasks={handleShowGroupTasks}
+              mode={botBrowserShell.surfaceMode}
+              onSelectHome={botBrowserShell.switchToHome}
+              onSelectSurface={(mode) => {
+                if (mode === 'home') {
+                  botBrowserShell.switchToHome();
+                } else {
+                  void botBrowserShell.openBrowserHome();
+                }
+              }}
+              onSelectBrowserSession={handleSelectBrowserSession}
+              isCollapsed={isSidebarCollapsed}
+              width={sidebarWidth}
+              isResizing={isSidebarResizing}
+              updateBadge={isSidebarCollapsed ? null : updateBadge}
+            />
+          </>
         ) : (
           <>
             <WorkspaceRail
@@ -1688,52 +1882,110 @@ const App: React.FC = () => {
             />
           </>
         )}
-        {/* Middle ⇄ right boundary handle: the ONE panel toggle in the shell,
-            plus the column resize grip. It is mounted in BOTH states on
-            purpose — a control that lives inside the collapsible column is
-            unusable the moment that column is gone, so the toggle sits on the
-            seam: same spot to collapse and to bring the column back. */}
+        {/* Middle ⇄ right boundary handle: the ONE panel-toggle spot in the
+            shell, plus the column resize grip. It is mounted in EVERY seam
+            state on purpose — a control that lives inside a collapsible
+            column is unusable the moment that column is gone, so the toggle
+            sits on the seam: same spot to collapse and to bring the column
+            back. Drag caps at the middle:right = 3:7 split with edge damping
+            (2026-11-09 fourth expansion order, superseding 40:60); double-
+            click eases the column to that same 3:7 split with a short tween.
+            接缝按钮双向化 2026-11-09, then the 平铺态砍掉 same-day ruling:
+            the chevron(s) always point where the pane on their own side will
+            GROW on click. The BotWorks face shows a single chevron (its one
+            direction: collapse records, conversation fills); the BotHub split
+            state keeps ONE chevron — ‹ hugs the browser column's edge (right
+            of the seam) — and its collapsed state shows a single recover
+            chevron (the › direction is retired with the 平铺态). */}
         <div
           role="separator"
           aria-orientation="vertical"
           data-slot="panel-boundary-handle"
           data-collapsed={isSidebarCollapsed ? 'true' : 'false'}
-          onMouseDown={isSidebarCollapsed ? undefined : handleSidebarResizeStart}
-          onDoubleClick={isSidebarCollapsed ? undefined : handleSidebarResizeReset}
+          data-seam-state={showHomeSurface ? (homeSeamCollapsed ? 'left' : 'split') : botHubSeamState}
+          onMouseDown={middleColumnResizable ? handleSidebarResizeStart : undefined}
+          onDoubleClick={middleColumnResizable ? handleSidebarResizeSnapToRatio : undefined}
           style={{ gridColumn: 3 }}
           className={`group relative z-40 w-1 transition-colors ${
-            isSidebarCollapsed ? '' : 'cursor-col-resize hover:bg-claude-accent/40'
+            middleColumnResizable ? 'cursor-col-resize hover:bg-claude-accent/40' : ''
           }`}
         >
           {/* Painted line is 4px; the draggable band is 8px so grabbing the
               seam never requires pixel-hunting a 4px target. */}
           <span aria-hidden="true" className="absolute inset-y-0 -left-0.5 -right-0.5" />
-          <button
-            type="button"
-            data-slot="panel-toggle"
-            aria-label={
-              isSidebarCollapsed
-                ? i18nService.t('expandMiddleColumn')
-                : i18nService.t('collapseMiddleColumn')
-            }
-            aria-pressed={isSidebarCollapsed}
-            title={
-              isSidebarCollapsed
-                ? i18nService.t('expandMiddleColumn')
-                : i18nService.t('collapseMiddleColumn')
-            }
-            onMouseDown={(event) => event.stopPropagation()}
-            onDoubleClick={(event) => event.stopPropagation()}
-            onClick={handleToggleSidebar}
-            // Aesthetic pass 2026-11-08: the one toggle in the shell used to be
-            // a bare chevron glyph that only grew a container once the column
-            // collapsed — at rest it read as a stray character on the seam. The
-            // tab is now always there (same box collapsed or expanded), so the
-            // control looks the same before and after the state it toggles.
-            className="non-draggable absolute left-1/2 top-1/2 z-40 flex h-7 w-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-md border transition-colors dark:border-claude-darkBorder/60 border-claude-border/60 dark:bg-claude-darkSurface/80 bg-claude-surface/80 shadow-subtle backdrop-blur-sm dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/50"
-          >
-            <PanelToggleIcon className="h-3.5 w-3.5" collapsed={isSidebarCollapsed} />
-          </button>
+          {/* 接缝铰链分置定版 2026-11-09 (fourth order, supersedes the
+              same-spot two-pill pair), then the 平铺态砍掉 same-day ruling:
+              the pills are SLIM bars, and the BotHub split state keeps ONE
+              pill — ‹ hugs the browser column's edge (right of the seam, the
+              browser grows leftward to fill). The › pill (conversation fills,
+              the retired fill state) is gone. The single-pill states (BotWorks
+              both states, BotHub collapsed recover) stay centered on the seam
+              as before. */}
+          {showHomeSurface ? (
+            homeSeamCollapsed ? (
+              /* BotWorks face, collapsed: the records column re-opens to the
+                 right. Single direction, single chevron. */
+              <button
+                type="button"
+                data-slot="panel-toggle"
+                aria-label={i18nService.t('seamExpandRecordsHomeFace')}
+                title={i18nService.t('seamExpandRecordsHomeFace')}
+                onMouseDown={(event) => event.stopPropagation()}
+                onDoubleClick={(event) => event.stopPropagation()}
+                onClick={handleExpandHomeSeam}
+                className="non-draggable absolute left-1/2 top-1/2 z-40 flex h-7 w-3.5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded border transition-colors dark:border-claude-darkBorder/60 border-claude-border/60 dark:bg-claude-darkSurface/80 bg-claude-surface/80 shadow-subtle backdrop-blur-sm dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/50"
+              >
+                <PanelToggleIcon className="h-3 w-3" direction="right" />
+              </button>
+            ) : (
+              /* BotWorks face, split: collapse the records column left — the
+                 conversation fills. The ONLY direction this face offers. */
+              <button
+                type="button"
+                data-slot="panel-toggle"
+                aria-label={i18nService.t('seamCollapseRecordsHomeFace')}
+                title={i18nService.t('seamCollapseRecordsHomeFace')}
+                onMouseDown={(event) => event.stopPropagation()}
+                onDoubleClick={(event) => event.stopPropagation()}
+                onClick={handleCollapseHomeSeam}
+                className="non-draggable absolute left-1/2 top-1/2 z-40 flex h-7 w-3.5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded border transition-colors dark:border-claude-darkBorder/60 border-claude-border/60 dark:bg-claude-darkSurface/80 bg-claude-surface/80 shadow-subtle backdrop-blur-sm dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/50"
+              >
+                <PanelToggleIcon className="h-3 w-3" direction="left" />
+              </button>
+            )
+          ) : botHubSeamState === 'split' ? (
+            /* BotHub face, split: one pill on the browser's side of the seam —
+               ‹ (the browser grows leftward to fill). The › pill and its
+               对话框占满 fill state are retired (平铺态砍掉). */
+            <button
+              type="button"
+              data-slot="panel-toggle"
+              aria-label={i18nService.t('seamCollapseLeftBrowserFace')}
+              title={i18nService.t('seamCollapseLeftBrowserFace')}
+              onMouseDown={(event) => event.stopPropagation()}
+              onDoubleClick={(event) => event.stopPropagation()}
+              onClick={handleCollapseBotHubSeamLeft}
+              className="non-draggable absolute left-full top-1/2 z-40 ml-0.5 flex h-7 w-3.5 -translate-y-1/2 items-center justify-center rounded border transition-colors dark:border-claude-darkBorder/60 border-claude-border/60 dark:bg-claude-darkSurface/80 bg-claude-surface/80 shadow-subtle backdrop-blur-sm dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/50"
+            >
+              <PanelToggleIcon className="h-3 w-3" direction="left" />
+            </button>
+          ) : (
+            /* BotHub face, collapsed (browser fills): one chevron pointing
+               back to the split state — the seam travels right when the
+               middle column re-opens. */
+            <button
+              type="button"
+              data-slot="panel-toggle"
+              aria-label={i18nService.t('seamExpandMiddleFromLeft')}
+              title={i18nService.t('seamExpandMiddleFromLeft')}
+              onMouseDown={(event) => event.stopPropagation()}
+              onDoubleClick={(event) => event.stopPropagation()}
+              onClick={handleExpandBotHubSeam}
+              className="non-draggable absolute left-1/2 top-1/2 z-40 flex h-7 w-3.5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded border transition-colors dark:border-claude-darkBorder/60 border-claude-border/60 dark:bg-claude-darkSurface/80 bg-claude-surface/80 shadow-subtle backdrop-blur-sm dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/50"
+            >
+              <PanelToggleIcon className="h-3 w-3" direction="right" />
+            </button>
+          )}
         </div>
       {/* The right column is pinned to track 4 on purpose: the boundary handle
           above is the only optional-width child and it never unmounts, so a

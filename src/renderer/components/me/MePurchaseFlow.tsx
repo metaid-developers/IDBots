@@ -79,6 +79,15 @@ interface MePurchaseFlowProps {
   section: MePurchaseSection;
   onSectionChange?: (section: MePurchaseSection) => void;
   onClose: () => void;
+  /**
+   * Container chrome (页面嵌套定版 2026-11-09):
+   *  - 'modal' (default) — the self-contained floating card mounted once in
+   *    App.tsx (Settings path, badge popover path). Unchanged behaviour.
+   *  - 'embedded' — body only, no overlay/backdrop/no own header: the
+   *    user-profile card hosts this very flow as its level-2 page and owns
+   *    the container, the back bar and the close semantics.
+   */
+  chrome?: 'modal' | 'embedded';
 }
 
 const priceLabel = (value: number | null | undefined): string => (
@@ -105,7 +114,7 @@ const isGatewayUnavailableError = (errorCode: string, message: string): boolean 
   || /gateway is not configured|gateway unsupported/i.test(message)
 );
 
-const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectionChange, onClose }) => {
+const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectionChange, onClose, chrome = 'modal' }) => {
   const snapshot = React.useSyncExternalStore(subscribeMeSnapshot, getMeSnapshot, getMeSnapshot);
   const [selectedPlanId, setSelectedPlanId] = useState('');
   const [selectedPackageId, setSelectedPackageId] = useState('');
@@ -362,25 +371,16 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
     : section === 'topup' && subscribed && Boolean(selectedTopup);
   const paymentUrl = checkout?.approvalUrl || (/^https?:\/\//i.test(checkout?.qrCode ?? '') ? checkout!.qrCode : '');
 
-  return (
-    <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/40" onClick={phase === 'creating' ? undefined : onClose} />
-      <div className="relative max-h-[90vh] w-[560px] overflow-y-auto rounded-2xl border border-claude-border dark:border-claude-darkBorder bg-claude-surface dark:bg-claude-darkSurface shadow-2xl">
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-claude-border/60 dark:border-claude-darkBorder/60 bg-claude-surface/95 dark:bg-claude-darkSurface/95 px-4 py-3 backdrop-blur">
-          <h3 className="text-sm font-semibold text-claude-text dark:text-claude-darkText">
-            {section === 'subscribe' ? i18nService.t('mePurchaseTitle') : i18nService.t('mePurchaseTopupTitle')}
-          </h3>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label={i18nService.t('close')}
-            className="rounded-lg p-1 text-claude-textSecondary dark:text-claude-darkTextSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
-          >
-            <XMarkIcon className="h-4 w-4" />
-          </button>
-        </div>
-
-        <div className="space-y-3 px-4 py-3">
+  // The flow body, shared verbatim by both chromes (页面嵌套定版 2026-11-09):
+  // 'modal' is the self-contained floating card mounted once in App.tsx
+  // (Settings path, badge popover path); 'embedded' renders ONLY the body so
+  // the user-profile card hosts this very flow as its level-2 page — identical
+  // content and behaviour, the host card provides the container chrome and the
+  // back bar. Embedded content drops the modal's own padding: the host card's
+  // scroll area (px-5 py-5) already sets the page rhythm.
+  const flowBody = (
+    <>
+      <div className={`space-y-4 ${chrome === 'embedded' ? '' : 'px-4 py-4'}`}>
           {(phase === 'pick' || phase === 'creating') && (
             <>
               {snapshot.plansLoading && paidPlans.length === 0 && (
@@ -665,10 +665,13 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
                 >
                   {checking ? i18nService.t('mePurchaseCheckChecking') : i18nService.t('mePurchaseCheckNow')}
                 </button>
+                {/* 返回按钮常显常可点 (owner ruling 2026-11-09): bordered
+                    resting state — same visible-button language as the
+                    reopen/check buttons beside it; hover only deepens. */}
                 <button
                   type="button"
                   onClick={backToPicker}
-                  className="rounded-lg px-3 py-1.5 text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+                  className="rounded-lg border border-claude-border dark:border-claude-darkBorder px-3 py-1.5 text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary hover:bg-claude-surfaceHover hover:text-claude-text dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText"
                 >
                   {i18nService.t('mePurchaseBack')}
                 </button>
@@ -747,28 +750,54 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
               <p className="text-[10px] leading-snug text-claude-textSecondary dark:text-claude-darkTextSecondary">{i18nService.t('mePurchaseTopupCapNote')}</p>
             )}
           </div>
+      </div>
+
+      {(phase === 'pick' || phase === 'creating') && canCreate && (
+        <div className="sticky bottom-0 border-t border-claude-border/60 dark:border-claude-darkBorder/60 bg-claude-surface/95 dark:bg-claude-darkSurface/95 px-4 py-3 backdrop-blur">
+          <button
+            type="button"
+            disabled={phase === 'creating'}
+            onClick={() => void handleCreateOrder()}
+            className="btn-idchat-primary-filled w-full rounded-xl px-3 py-2 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {phase === 'creating' ? i18nService.t('mePurchaseCreating') : i18nService.t('mePurchasePay')}
+          </button>
+        </div>
+      )}
+
+      {(phase === 'pick' || phase === 'creating') && section === 'subscribe' && isFreeSelected && (
+        <div className="sticky bottom-0 border-t border-claude-border/60 dark:border-claude-darkBorder/60 bg-claude-surface/95 dark:bg-claude-darkSurface/95 px-4 py-3 backdrop-blur">
+          <p className="text-center text-[11px] leading-relaxed text-claude-textSecondary dark:text-claude-darkTextSecondary">
+            {i18nService.t('mePurchaseFreeNote')}
+          </p>
+        </div>
+      )}
+    </>
+  );
+
+  if (chrome === 'embedded') {
+    return <div data-slot="me-purchase-embedded">{flowBody}</div>;
+  }
+
+  return (
+    <div className="fixed inset-0 z-[130] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40" onClick={phase === 'creating' ? undefined : onClose} />
+      <div className="relative m-auto max-h-[86vh] w-[560px] max-w-full overflow-y-auto rounded-2xl border border-claude-border dark:border-claude-darkBorder bg-claude-surface dark:bg-claude-darkSurface shadow-2xl">
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-claude-border/60 dark:border-claude-darkBorder/60 bg-claude-surface/95 dark:bg-claude-darkSurface/95 px-4 py-3 backdrop-blur">
+          <h3 className="text-sm font-semibold text-claude-text dark:text-claude-darkText">
+            {section === 'subscribe' ? i18nService.t('mePurchaseTitle') : i18nService.t('mePurchaseTopupTitle')}
+          </h3>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={i18nService.t('close')}
+            className="rounded-lg p-1 text-claude-textSecondary dark:text-claude-darkTextSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+          >
+            <XMarkIcon className="h-4 w-4" />
+          </button>
         </div>
 
-        {(phase === 'pick' || phase === 'creating') && canCreate && (
-          <div className="sticky bottom-0 border-t border-claude-border/60 dark:border-claude-darkBorder/60 bg-claude-surface/95 dark:bg-claude-darkSurface/95 px-4 py-3 backdrop-blur">
-            <button
-              type="button"
-              disabled={phase === 'creating'}
-              onClick={() => void handleCreateOrder()}
-              className="btn-idchat-primary-filled w-full rounded-xl px-3 py-2 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {phase === 'creating' ? i18nService.t('mePurchaseCreating') : i18nService.t('mePurchasePay')}
-            </button>
-          </div>
-        )}
-
-        {(phase === 'pick' || phase === 'creating') && section === 'subscribe' && isFreeSelected && (
-          <div className="sticky bottom-0 border-t border-claude-border/60 dark:border-claude-darkBorder/60 bg-claude-surface/95 dark:bg-claude-darkSurface/95 px-4 py-3 backdrop-blur">
-            <p className="text-center text-[11px] leading-relaxed text-claude-textSecondary dark:text-claude-darkTextSecondary">
-              {i18nService.t('mePurchaseFreeNote')}
-            </p>
-          </div>
-        )}
+        {flowBody}
       </div>
     </div>
   );

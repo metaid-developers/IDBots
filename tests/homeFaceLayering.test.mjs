@@ -60,24 +60,30 @@ const railSource = read('src/renderer/components/layout/WorkspaceRail.tsx');
 const i18nSource = read('src/renderer/services/i18n.ts');
 const navModelSource = read('src/renderer/components/sidebar/sidebarNavigation.js');
 
-test('the Home face mounts the restored text sidebar and NO rail', () => {
-  // App gates the left slot on the surface: Home → HomeSidebar, Internet →
-  // rail + mid column. The Home branch therefore never renders a rail item.
-  assert.match(appSource, /\{showHomeSurface \? \(\s*<HomeSidebar/);
-  assert.equal((appSource.match(/<WorkspaceRail/g) ?? []).length, 1, 'one rail mount, in the Internet branch');
+test('the Home face mounts the three-column shell: rail | records column | right column', () => {
+  // Three-column final ruling 2026-11-09 (supersedes the 14:22 two-column
+  // degradation): the Home branch mounts the SAME WorkspaceRail the Internet
+  // branch mounts, followed by the records mid column. Both faces share the
+  // one shell container; the rail appears exactly twice (once per face).
+  assert.match(appSource, /\{showHomeSurface \? \(\s*<>\s*\{\/\*[\s\S]*?\*\/\}\s*<WorkspaceRail/);
+  assert.equal((appSource.match(/<WorkspaceRail/g) ?? []).length, 2, 'one rail mount per face');
   assert.ok(
-    appSource.indexOf('<HomeSidebar') < appSource.indexOf('<WorkspaceRail'),
-    'the Home sidebar is the home branch; the rail only appears in the else branch',
+    appSource.indexOf('<HomeSidebar') > appSource.indexOf('<WorkspaceRail'),
+    'the home branch is [rail, records column]: the rail is the first column',
   );
-  // The shell degrades on Home instead of replacing the container: the rail
-  // track goes to 0 and the sidebar takes track 1 (four tracks stay so the
-  // seam and the right column keep their explicit placement).
+  // The shell no longer degrades on Home: same four tracks, the rail keeps
+  // its 64px column, the records column keeps its user-resizable track, and
+  // a collapsed middle track still leaves the 4px handle + recoverable rail.
   assert.match(appSource, /data-shell-face=\{showHomeSurface \? 'home' : 'browser'\}/);
-  assert.match(appSource, /const homeShellGridTemplate = 'auto 0px 4px minmax\(0, 1fr\)';/);
+  // 接缝按钮双向化 2026-11-09: the home face reads its OWN single-direction
+  // seam machine (homeSeamCollapsed) — not the BotHub face's three-state one.
+  assert.match(appSource, /const homeShellGridTemplate = homeSeamCollapsed/);
+  assert.match(appSource, /\? '64px 0px 4px minmax\(0, 1fr\)'/);
+  assert.match(appSource, /: '64px auto 4px minmax\(0, 1fr\)'/);
 
-  // The restored sidebar is the baseline composition, not the three-column
-  // column: text rows + switcher + records + footer.
+  // The records column keeps its composition: switcher + records + footer.
   assert.match(homeSidebarSource, /data-slot="workspace-home-sidebar"/);
+  assert.match(homeSidebarSource, /data-slot="mid-column-header"/);
   assert.match(homeSidebarSource, /<BotBrowserModeSwitch/);
   // Owner ruling 2026-11-08 20:59: the full "My ME" panel is retired from the
   // BotWorks face footer; the BotHub face keeps the compact rail badge.
@@ -85,15 +91,18 @@ test('the Home face mounts the restored text sidebar and NO rail', () => {
   assert.match(homeSidebarSource, /i18nService\.t\('coworkHistory'\)/);
 });
 
-test('the Home destinations are the baseline text menu rows — 我的 Bot retired', () => {
-  const homeRows = getSidebarPrimaryNavModel({
-    t: (key) => key,
-    hasRunningScheduledTask: false,
-  }).filter((item) => !item.hidden);
+test('the Home destinations are the rail icon entries — 新建任务/长期任务/多人任务', () => {
+  // Three-column final ruling 2026-11-09: the three entries moved to the
+  // rail's home nav. The model keeps FOUR items (records included) but the
+  // rail filters `records` out — the records BODY is always on screen in the
+  // middle column, so a fourth icon would add a door the face never had.
+  const railRows = getRailHomeNavModel({ t: (key) => key, hasRunningScheduledTask: false })
+    .filter((item) => !item.hidden)
+    .filter((item) => item.id !== 'records');
   assert.deepEqual(
-    homeRows.map((item) => item.id),
-    ['scheduledTasks', 'groupTasks'],
-    'long-term / multi-bot — the owner retired the 我的 Bot row (15:46)',
+    railRows.map((item) => item.id),
+    ['newTask', 'longTerm', 'groupTasks'],
+    'the three entries, in rail order',
   );
 
   // The roster did not lose its only door: the Bot Internet rail keeps myBots,
@@ -101,30 +110,24 @@ test('the Home destinations are the baseline text menu rows — 我的 Bot retir
   const internetRows = getRailInternetNavModel({ t: (key) => key }).filter((item) => !item.hidden);
   assert.equal(internetRows.find((item) => item.id === 'myBots')?.label, 'metabots');
 
-  // The Home model itself carries no 我的 Bot row: no id, no cpuChip icon.
-  const modelBody = navModelSource.slice(
-    navModelSource.indexOf('export function getSidebarPrimaryNavModel'),
-    navModelSource.indexOf('export function getSidebarInternetNavModel'),
-  );
-  assert.doesNotMatch(modelBody, /id: 'metabots'/);
-  assert.doesNotMatch(modelBody, /cpuChip/);
-
-  assert.match(homeSidebarSource, /getSidebarPrimaryNavModel/);
-  assert.match(homeSidebarSource, /onClick=\{onNewChat\}/);
-  assert.match(homeSidebarSource, /i18nService\.t\('newChat'\)/);
-  assert.match(homeSidebarSource, /const handlePrimaryNavClick = \(itemId: string\) => \{/);
-  assert.match(homeSidebarSource, /onShowScheduledTasks\(\)/);
-  assert.match(homeSidebarSource, /onShowGroupTasks\(\)/);
-  // No Home-side 我的 Bot wiring survives: no prop, no handler branch.
+  // The rail renders the FILTERED home model; App wires the OLD rows'
+  // behavior VERBATIM in the home-branch mount — 新建任务 →
+  // handleBlankNewChat (the rail's own onNewChat hook), 长期任务 →
+  // handleShowScheduledTasks, 多人任务 → handleShowGroupTasks. No Home-side
+  // 我的 Bot wiring survives.
+  const branchStart = appSource.indexOf('{showHomeSurface ? (');
+  const homeBranch = appSource.slice(branchStart, appSource.indexOf(') : (', branchStart));
+  assert.match(homeBranch, /onNewChat=\{handleBlankNewChat\}/);
+  assert.match(homeBranch, /handleShowScheduledTasks\(\)/);
+  assert.match(homeBranch, /handleShowGroupTasks\(\)/);
+  assert.doesNotMatch(homeBranch, /onShowMetabots/);
+  assert.match(railSource, /homeItems\.filter\(\(item\) => item\.id !== 'records'\)/);
+  assert.match(railSource, /if \(id === 'newTask'\) \{/);
+  assert.match(railSource, /const handleHomeItem = \(id: string\) => \{/);
+  // The records column renders no task rows and no rail machinery.
+  assert.doesNotMatch(homeSidebarSource, /getSidebarPrimaryNavModel/);
+  assert.doesNotMatch(homeSidebarSource, /data-slot="rail-item"/);
   assert.doesNotMatch(homeSidebarSource, /onShowMetabots/);
-  assert.doesNotMatch(homeSidebarSource, /itemId === 'metabots'/);
-
-  // Row order is data, not scatter: the creation row sits above the mapped
-  // rows, and the click handlers never re-open a drilled-in group task.
-  const newChatRow = homeSidebarSource.indexOf('onClick={onNewChat}');
-  const mappedRows = homeSidebarSource.indexOf('{primaryNavItems.map(');
-  assert.ok(newChatRow > 0 && mappedRows > newChatRow, 'new task row first, then the mapped destinations');
-  assert.match(homeSidebarSource, /dispatch\(selectGroupTask\(null\)\)/);
 });
 
 test('the record type has exactly ONE entry point: the sidebar text tabs', () => {
@@ -213,14 +216,24 @@ test('both lists default to 按 Bot, and each face keeps its own memory keys', (
   assert.match(listSource, /\}, \[groupFace\]\);/);
 });
 
-test('the group-task door is the 多人任务 row; the Home record list is two tabs', () => {
+test('the group-task door is the rail 多人任务 icon; the Home record list is two tabs', () => {
   // Owner ruling 2026-11-08 15:46 SUPERSEDES the 14:22 contract that group-task
   // chat channels stay reachable under a Home 「群任务」tab. The sign is retired,
-  // so the channel list no longer renders inside Home; the management view keeps
-  // its door through the 多人任务 menu row, which this batch leaves untouched.
-  assert.match(homeSidebarSource, /if \(itemId === 'groupTasks'\) \{/);
-  assert.match(homeSidebarSource, /dispatch\(selectGroupTask\(null\)\)/);
-  assert.match(homeSidebarSource, /onShowGroupTasks\(\)/);
+  // so the channel list no longer renders inside Home. Three-column final
+  // ruling 2026-11-09: the management-view door moved from the text row to
+  // the rail's 多人任务 icon; the wiring is App's home-branch rail mount and
+  // the OLD rows' behavior (plain view switch — the drill-in reset belonged
+  // to the removed Internet type drawer, never to the Home rows).
+  const branchStart = appSource.indexOf('{showHomeSurface ? (');
+  const homeBranch = appSource.slice(branchStart, appSource.indexOf(') : (', branchStart));
+  assert.match(homeBranch, /handleShowGroupTasks\(\)/);
+  assert.doesNotMatch(homeBranch, /selectGroupTask\(null\)/);
+  const railModelBody = navModelSource.slice(
+    navModelSource.indexOf('export function getRailHomeNavModel'),
+    navModelSource.indexOf('export function getHomeSectionModel'),
+  );
+  assert.match(railModelBody, /id: 'groupTasks'/);
+  assert.match(railModelBody, /icon: 'userGroup'/);
 
   // The management view loads its own task rows — it never depended on the tab.
   const groupTasksView = read('src/renderer/components/groupTasks/GroupTasksView.tsx');
@@ -241,22 +254,27 @@ test('the group-task door is the 多人任务 row; the Home record list is two t
   assert.equal((i18nSource.match(/homeMidGroupSessionsTitle:/g) ?? []).length, 2);
 });
 
-test('the amber decision dot is back on the restored 长期任务 row', () => {
-  // Same derivation, same condition, same class/style as the accepted dot work.
-  assert.match(homeSidebarSource, /selectTrackedTasksNeedingAttention\(\{ longTermTask: \{ board: longTermBoard \} \}\)/);
-  assert.match(homeSidebarSource, /needsDecisionCount: trackedTaskAttention\.total/);
-  assert.match(homeSidebarSource, /tracked-task-decision-indicator/);
-  assert.match(homeSidebarSource, /indicatorKind === 'decision'/);
-  assert.match(homeSidebarSource, /role="img"[\s\S]{0,160}aria-label=\{item\.indicatorLabel\}/);
-  const model = read('src/renderer/components/sidebar/sidebarNavigation.js');
-  assert.match(model, /export function getSidebarPrimaryNavModel/);
-  assert.match(model, /trackedTaskNeedsDecision/);
-  assert.match(model, /const hasDecision = decisionCount > 0;/);
-  assert.match(model, /indicatorKind: hasDecision \? 'decision' : hasRunningScheduledTask \? 'running' : undefined/);
+test('the amber decision dot rides the rail 长期任务 entry on BOTH faces', () => {
+  // Three-column final ruling 2026-11-09: the Home face's dot lives on the
+  // RAIL's 长期任务 icon — the same rail mount serves both faces now, so the
+  // dot machinery is defined once and rendered on both surfaces. Same
+  // derivation, same condition, same class as the accepted dot work (the
+  // detail pins live in trackedTaskDecisionBadge.test.ts).
+  assert.match(railSource, /hasIndicator=\{item\.hasIndicator\}/);
+  assert.match(railSource, /indicatorKind=\{item\.indicatorKind\}/);
+  const railModelBody = navModelSource.slice(
+    navModelSource.indexOf('export function getRailHomeNavModel'),
+    navModelSource.indexOf('export function getHomeSectionModel'),
+  );
+  assert.match(railModelBody, /hasIndicator: Boolean\(hasRunningScheduledTask\) \|\| hasDecision/);
+  assert.match(railModelBody, /indicatorKind: hasDecision \? 'decision' : hasRunningScheduledTask \? 'running' : undefined/);
+  assert.match(railModelBody, /trackedTaskNeedsDecision/);
 
-  // The Internet mid column still carries no second copy of the dot; the rail
-  // keeps its own copy for its own surface (pinned by
-  // trackedTaskDecisionBadge.test.ts). No Home face shows two amber dots.
+  // Neither middle column carries a second copy of the dot: the records
+  // column dropped the sidebar-row copy with the rows themselves, and the
+  // Internet mid column never had one.
+  assert.doesNotMatch(homeSidebarSource, /tracked-task-decision-indicator/);
+  assert.doesNotMatch(homeSidebarSource, /selectTrackedTasksNeedingAttention/);
   assert.doesNotMatch(sidebarSource, /tracked-task-decision-indicator/);
 });
 

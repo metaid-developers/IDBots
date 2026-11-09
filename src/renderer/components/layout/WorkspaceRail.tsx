@@ -11,7 +11,7 @@ import {
 } from '@heroicons/react/24/outline';
 import Tooltip from '../ui/Tooltip';
 import ComposeIcon from '../icons/ComposeIcon';
-import MeBalanceBadge from '../me/MeBalanceBadge';
+import { UserProfileAvatarButton } from '../../features/userProfile';
 import { i18nService } from '../../services/i18n';
 import { getRailHomeNavModel, getRailInternetNavModel } from '../sidebar/sidebarNavigation.js';
 import { selectTrackedTasksNeedingAttention } from '../../utils/trackedTaskAttention';
@@ -139,6 +139,14 @@ interface WorkspaceRailProps {
   onShowSettings: () => void;
   /** Update dot (rendered above Settings when one is available). */
   updateBadge?: React.ReactNode;
+  /** Whether the rail pins its own Settings entry to the bottom. Default
+   * true. Since the 设置按钮共享化 (总裁办侧栏微调批单 2026-11-09 12:23,
+   * superseding the 11:16 order) BOTH faces default to true — the rail's
+   * bottom RailButton is the ONE shared settings entry (same component,
+   * same onShowSettings chain), and the wide sidebars carry no settings row
+   * of their own. The prop stays for a surface that would genuinely need
+   * the entry hidden. */
+  showSettings?: boolean;
 }
 
 /**
@@ -152,8 +160,10 @@ interface WorkspaceRailProps {
  *
  * The SURFACE switcher does not live here any more (owner ruling 2026-11-08
  * 14:15): it moved to the middle column's header, where it can carry the
- * current surface's name in a Codex-style capsule instead of a bare icon. What
- * stays at the top is an empty strip that reserves the macOS traffic lights.
+ * current surface's name in a Codex-style capsule instead of a bare icon.
+ * The identity entry DOES live here now (owner D-line final ruling
+ * 2026-11-09): the user avatar takes the rail's top slot — the Mac-WeChat
+ * form — and the function icons start below it.
  */
 export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
   mode,
@@ -164,6 +174,7 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
   onNewChat,
   onShowSettings,
   updateBadge,
+  showSettings = true,
 }) => {
   const isMac = window.electron.platform === 'darwin';
   const language = i18nService.getLanguage();
@@ -207,12 +218,22 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
       aria-label={i18nService.t('workspaceRailLabel')}
       className="relative z-30 flex w-16 shrink-0 flex-col items-center dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted"
     >
-      {/* macOS traffic lights sit over this column's top-left corner. The
-          surface switcher moved to the middle column's header (owner ruling
-          2026-11-08 14:15), so this strip is pure reservation: it keeps the
-          traffic lights off every rail control even when the column next door
-          is collapsed to zero width. Height is unchanged (52 px on mac). */}
+      {/* Row 1 is the pure traffic-light reservation (52 px on mac — the
+          lights, trafficLightPosition y=20, own it alone). Row 2 is the
+          identity AVATAR slot (owner D-line final ruling 2026-11-09): the
+          same 52 px height as the mid column's band row (the switch's
+          surface-header-bar), so the avatar's centerline rides the band
+          labels' centerline, and the rail's own centerline puts it on the
+          icon column's X — the Mac-WeChat form. The nav's 8 px top margin
+          then lands the first function icon at 52 + 52 + 8 = 112 px — below
+          the avatar, never in the top cell. */}
       <div className={`draggable w-full shrink-0 ${isMac ? 'h-[52px]' : 'h-3'}`} />
+      <div
+        data-slot="workspace-rail-avatar-slot"
+        className="flex h-[52px] w-full shrink-0 items-center justify-center"
+      >
+        <UserProfileAvatarButton />
+      </div>
       {mode === 'browser' ? (
         <nav
           aria-label={i18nService.t('botInternet')}
@@ -235,7 +256,13 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
           aria-label={i18nService.t('botHome')}
           className="mt-2 flex min-h-0 w-full flex-1 flex-col items-center gap-1 overflow-y-auto px-1.5 pb-2"
         >
-          {homeItems.map((item) => (
+          {/* 两面一致性令 (owner order 2026-11-09 11:16): the Home face's
+              rail carries exactly the three entries that used to be the
+              sidebar's stacked text rows — 新建任务 / 长期任务 / 多人任务.
+              The records archive selector stays out: on this surface the
+              records body is always on screen below, so a fourth icon would
+              add a door the face never had. */}
+          {homeItems.filter((item) => item.id !== 'records').map((item) => (
             <RailButton
               key={item.id}
               itemId={item.id}
@@ -253,17 +280,22 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
       )}
       <div className="mt-auto flex w-full flex-col items-center gap-1.5 px-1.5 pb-3 pt-1">
         {updateBadge ? <div className="flex w-full justify-center">{updateBadge}</div> : null}
-        <RailButton
-          itemId="settings"
-          label={i18nService.t('settings')}
-          active={false}
-          onClick={onShowSettings}
-        >
-          <Cog6ToothIcon className="h-5 w-5" />
-        </RailButton>
-        {/* ME is the identity/credits corner: icon-only in the narrow rail, the
-            amount and the full breakdown panel stay one click away. */}
-        <MeBalanceBadge compact />
+        {showSettings ? (
+          <RailButton
+            itemId="settings"
+            label={i18nService.t('settings')}
+            active={false}
+            onClick={onShowSettings}
+          >
+            <Cog6ToothIcon className="h-5 w-5" />
+          </RailButton>
+        ) : null}
+        {/* The old compact ME badge is GONE from the rail (owner ruling
+            2026-11-09 10:05, D5): the standalone user page — opened from the
+            header's top-left User pill — is now the ONE home of the ME credits
+            panel, and a second copy in this corner would be exactly the
+            duplication D5 removes. The MeBalanceBadge component file stays on
+            disk; the page's MeCreditsPanel carries every value it showed. */}
       </div>
     </aside>
   );

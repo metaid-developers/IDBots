@@ -975,8 +975,15 @@ export interface CoworkStartOptions {
   title?: string;
   activeSkillIds?: string[];
   metabotId?: number | null;
-  /** Only 'standard' (default) and 'browser' sessions can be created from the renderer. */
-  sessionType?: 'standard' | 'browser';
+  /**
+   * 'standard' (default) and 'browser' were the original renderer-created
+   * kinds. 'a2a' joins them (线上对话意图引导路由, 2026-11-09): a New Task
+   * opened on the 线上对话 face must start a REAL online A2A session — the
+   * composer-direct route, not an intent-string parse — so the owner's first
+   * message lands in the 线上对话 record tab and the bot actually goes
+   * on-chain to visit the named companion.
+   */
+  sessionType?: 'standard' | 'browser' | 'a2a';
   /** Bot Internet projector sessions: run assistant mode regardless of the global chatExperienceMode. */
   assistantMode?: boolean;
   /** Permission mode for this session. Defaults to 'default'. */

@@ -34,7 +34,7 @@ function sliceBetween(source, startMarker, endMarker) {
 const resizeStartBlock = sliceBetween(
   appSource,
   'const handleSidebarResizeStart',
-  'const handleSidebarResizeReset',
+  'const handleSidebarResizeSnapToRatio',
 );
 
 const handleBlock = sliceBetween(
@@ -97,29 +97,56 @@ test('every exit path clears the session ref and the visual flag in one funnel',
   );
 });
 
-test('the seam keeps its three interaction semantics', () => {
+test('the seam keeps its per-face interaction semantics', () => {
   assert.ok(handleBlock.includes('data-slot="panel-boundary-handle"'), 'handle stays labelled');
   assert.ok(
     handleBlock.includes("data-collapsed={isSidebarCollapsed ? 'true' : 'false'}"),
-    'the handle stays mounted in both collapse states',
+    'the handle stays mounted in every collapse state',
   );
   assert.ok(
-    handleBlock.includes('onMouseDown={isSidebarCollapsed ? undefined : handleSidebarResizeStart}'),
-    'expanded seam starts the resize; collapsed seam cannot',
+    handleBlock.includes("data-seam-state={showHomeSurface ? (homeSeamCollapsed ? 'left' : 'split') : botHubSeamState}"),
+    'the seam publishes its per-face state (split/left) for tests and styling',
   );
   assert.ok(
-    handleBlock.includes('onDoubleClick={isSidebarCollapsed ? undefined : handleSidebarResizeReset}'),
-    'double click on the expanded seam still resets the width',
+    handleBlock.includes('onMouseDown={middleColumnResizable ? handleSidebarResizeStart : undefined}'),
+    'the resizable split state starts the resize; a collapsed state cannot',
   );
-  assert.ok(handleBlock.includes('data-slot="panel-toggle"'), 'the single toggle stays on the seam');
+  assert.ok(
+    handleBlock.includes('onDoubleClick={middleColumnResizable ? handleSidebarResizeSnapToRatio : undefined}'),
+    'double click on the resizable seam still snaps the width (40:60 tween)',
+  );
+  assert.ok(handleBlock.includes('data-slot="panel-toggle"'), 'the toggle stays on the seam');
   assert.ok(
     handleBlock.includes('onMouseDown={(event) => event.stopPropagation()}'),
     'the toggle mousedown must not leak into the resize start',
   );
   assert.ok(
     handleBlock.includes('onDoubleClick={(event) => event.stopPropagation()}'),
-    'the toggle double click must not leak into the seam reset',
+    'the toggle double click must not leak into the seam snap',
   );
-  assert.ok(handleBlock.includes('onClick={handleToggleSidebar}'), 'click = collapse/expand');
-  assert.ok(handleBlock.includes('aria-pressed={isSidebarCollapsed}'), 'the toggle stays a toggle');
+  // 接缝按钮双向化 2026-11-09: per-face chevron wiring. Every chevron points
+  // where the seam moves on click; no toggle button remains on the old
+  // single-axis handleToggleSidebar contract.
+  assert.ok(
+    handleBlock.includes('onClick={handleCollapseHomeSeam}') &&
+      handleBlock.includes('onClick={handleExpandHomeSeam}'),
+    'the BotWorks face owns its single-direction pair (collapse records ⇄ expand records)',
+  );
+  assert.ok(
+    handleBlock.includes('onClick={handleCollapseBotHubSeamLeft}') &&
+      handleBlock.includes('onClick={handleExpandBotHubSeam}'),
+    'the BotHub face owns its two transitions (collapse left, recover) — the fill direction is retired',
+  );
+  assert.ok(
+    !handleBlock.includes('collapseBotHubSeamRight'),
+    'the retired fill-direction handler must not come back (平铺态砍掉)',
+  );
+  assert.ok(
+    !handleBlock.includes('aria-pressed'),
+    'the per-face seam is not a boolean toggle — data-seam-state carries the state',
+  );
+  assert.ok(
+    handleBlock.includes("direction=\"left\"") && handleBlock.includes("direction=\"right\""),
+    'every chevron renders through the direction-mapped PanelToggleIcon (static directions)',
+  );
 });

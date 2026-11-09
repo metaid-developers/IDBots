@@ -1401,7 +1401,7 @@ interface IElectronAPI {
     onStateChanged: (callback: (state: WindowState) => void) => () => void;
   };
   cowork: {
-    startSession: (options: { prompt: string; cwd?: string; systemPrompt?: string; title?: string; activeSkillIds?: string[]; metabotId?: number | null; sessionType?: 'standard' | 'browser'; assistantMode?: boolean; model?: string | null; modelProvider?: string | null; effort?: string | null; source?: 'quick_action'; goal?: string }) => Promise<{ success: boolean; session?: CoworkSession; error?: string }>;
+    startSession: (options: { prompt: string; cwd?: string; systemPrompt?: string; title?: string; activeSkillIds?: string[]; metabotId?: number | null; sessionType?: 'standard' | 'browser' | 'a2a'; assistantMode?: boolean; model?: string | null; modelProvider?: string | null; effort?: string | null; source?: 'quick_action'; goal?: string }) => Promise<{ success: boolean; session?: CoworkSession; error?: string }>;
     prewarmTurnSlot: (input: { sessionId?: string; metabotId?: number | null; model?: string | null; modelProvider?: string | null; cwd?: string | null }) => Promise<{ success: boolean }>;
     continueSession: (options: { sessionId: string; prompt: string; systemPrompt?: string; activeSkillIds?: string[] }) => Promise<{ success: boolean; session?: CoworkSession; error?: string }>;
     createGreetingSession: (options: { title?: string; cwd?: string; systemPrompt?: string; fallbackGreeting: string; metabotId?: number | null }) => Promise<{ success: boolean; session?: CoworkSession; error?: string }>;
