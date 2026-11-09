@@ -197,6 +197,13 @@ jobs:
       - name: Run group-task / skill-assignment / cowork-proxy regression tests
         run: pnpm run test:release-regressions
 
+      # Umbrella for the release-review test wiring (2026-11-10): 32 new test
+      # files from the v1.0.10..HEAD cycle existed on disk but were referenced
+      # by no chain, so CI never executed them. The script runs
+      # compile:electron first (14 of its node suites require dist-electron).
+      - name: Run release-review umbrella tests
+        run: pnpm run test:release-review
+
       # H-64 leg B: a wake re-drive must be identifiable at the presentation
       # layer — the re-presented row carries the re-served bit plus the
       # original message id, never retroactively, with the wake scheduling
