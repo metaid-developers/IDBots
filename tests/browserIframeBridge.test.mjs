@@ -29,13 +29,19 @@ test('bridge opens user-clicked URIs in a new tab and keeps agent opens in place
     script.indexOf('async function handleOpenNewTab()'),
   );
 
-  // newTab opens ride AgentBrowserTabs.openTab(uri, actorId) — the runtime
-  // creates + activates the tab and seeds the actor onto it directly — and
+  // newTab opens ride AgentBrowserTabs.openTab(uri, target?) — the runtime
+  // creates + activates the tab and seeds the actor (or, since the projection
+  // protocol, a { label, actorId? } options object) onto it directly — and
   // must return before the selectUsingIdentity/navigateTo fallback.
   assert.match(openUriBody, /var newTab = Boolean\(input && input\.newTab\);/);
   assert.match(
     openUriBody,
-    /if \(newTab && typeof globalThis\.AgentBrowserTabs\.openTab === 'function'\) \{[\s\S]*globalThis\.AgentBrowserTabs\.openTab\(uri, actorId \|\| undefined\);[\s\S]*return;\s*\}/,
+    /if \(newTab && typeof globalThis\.AgentBrowserTabs\.openTab === 'function'\) \{[\s\S]*globalThis\.AgentBrowserTabs\.openTab\(uri[\s\S]*return;\s*\}/,
+  );
+  assert.match(openUriBody, /var openLabel = textValue\(input && input\.label\);/);
+  assert.match(
+    openUriBody,
+    /Object\.assign\(\{ label: openLabel \}, actorId \? \{ actorId: actorId \} : \{\}\)/,
   );
   assert.ok(
     openUriBody.indexOf('AgentBrowserTabs.openTab(uri') < openUriBody.indexOf('await globalThis.selectUsingIdentity(actorId)'),

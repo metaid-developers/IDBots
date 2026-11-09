@@ -27,7 +27,10 @@ const taskDetailPath = path.join(
 test('scheduled task form lets the user choose the execution MetaBot', () => {
   const source = fs.readFileSync(taskFormPath, 'utf8');
 
-  assert.match(source, /window\.electron\?\.metabot\?\.list\?\.\(\)/);
+  // Since a8cf1c44 the form loads the roster via idbots.getMetaBots and
+  // delegates the picker UI to the shared MetaBotSelector component.
+  assert.match(source, /window\.electron\?\.idbots\?\.getMetaBots\?\.\(\)/);
+  assert.match(source, /<MetaBotSelector/);
   assert.match(source, /setSelectedMetabotId/);
   assert.match(source, /scheduledTasksFormMetabot/);
   assert.match(source, /metabotId:\s*selectedMetabotId/);
