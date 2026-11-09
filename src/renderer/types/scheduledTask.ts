@@ -42,6 +42,12 @@ export type NotifyPlatform = 'dingtalk' | 'feishu' | 'telegram' | 'discord';
 // SCHEDULED_TASK_MEMORY_ACCESS_LEVELS; 'none' = legacy full blackout).
 export type ScheduledTaskMemoryAccess = 'none' | 'read-only' | 'read-write';
 
+// Where a recurring task's fires run when no session is bound (mirrors the
+// main-process SCHEDULED_TASK_SESSION_MODES): 'series' = one standing
+// conversation "[定时] <name>" (the default; rotated to "（2）" when long),
+// 'fresh' = a new session per fire. Null/legacy = 'series'.
+export type ScheduledTaskSessionMode = 'series' | 'fresh';
+
 // 定时任务
 export interface ScheduledTask {
   id: string;
@@ -55,7 +61,9 @@ export interface ScheduledTask {
   executionMode: 'auto' | 'local' | 'sandbox';
   metabotId: number | null;
   coworkSessionId: string | null;
-  targetSessionId: string | null; // bound cowork session id; null = start a new session each run
+  targetSessionId: string | null; // bound cowork session id; null = use sessionMode
+  sessionMode: ScheduledTaskSessionMode; // recurring execution venue; 'series' = standing conversation (default)
+  seriesSessionId: string | null; // the standing conversation a 'series' task currently continues in
   /** Memory-surface opt-in for the task's session; 'none' = legacy blackout. */
   memoryAccess: ScheduledTaskMemoryAccess;
   expiresAt: string | null; // ISO 8601 日期（精确到天），null 表示不过期
@@ -108,7 +116,9 @@ export interface ScheduledTaskInput {
   systemPrompt: string;
   executionMode: 'auto' | 'local' | 'sandbox';
   metabotId?: number | null;
-  targetSessionId?: string | null; // bound cowork session id; null/undefined = start a new session each run
+  targetSessionId?: string | null; // bound cowork session id; null/undefined = use sessionMode
+  /** Optional; absent defaults to 'series' (the standing conversation). */
+  sessionMode?: ScheduledTaskSessionMode;
   /** Optional; absent/invalid values store as 'none' (legacy blackout). */
   memoryAccess?: ScheduledTaskMemoryAccess;
   expiresAt: string | null; // ISO 8601 日期（精确到天），null 表示不过期

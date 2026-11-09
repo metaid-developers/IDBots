@@ -15,13 +15,17 @@
 #                              - one-shot ("schedule.type": "at") created inside
 #                                a session binds to that session
 #                                (IDBOTS_COWORK_SESSION_ID)
-#                              - recurring (interval / cron) runs in a NEW session
+#                              - recurring (interval / cron) runs in the task's
+#                                STANDING conversation ("[定时] <name>") — the
+#                                same conversation every fire; pass
+#                                "sessionMode": "fresh" for a new session
 #                                each time
 #   An explicit sessionId always wins over the default. The defaulting is
 #   announced on stderr; pass "sessionId": null to opt a one-shot task out.
-#   If the bound session is missing or archived at run time, the task runs in a
-#   new session instead. The API response may add a "sessionWarning" field when
-#   the sessionId does not resolve to a usable session.
+#   If the bound session is missing or archived at run time, the task falls
+#   back to its standing conversation. The API response may add a
+#   "sessionWarning" field when the sessionId does not resolve to a usable
+#   session.
 #
 # Environment variables (set automatically by IDBots cowork session):
 #   IDBOTS_API_BASE_URL - Internal proxy URL (always points to local proxy)
@@ -262,9 +266,12 @@ NODE
 
 # One-shot tasks created inside a session default to that session: a follow-up
 # ("check the release I just started") belongs in the conversation that asked for
-# it. Recurring tasks keep the new-session-per-run default — repeating inside one
-# conversation would bloat its context. An explicit sessionId always wins; an
-# explicit null opts a one-shot task out of the default.
+# it. Recurring tasks default to their standing conversation ("[定时] <name>") —
+# the same conversation every fire, so results across days stay in one place and
+# the host rotates to a fresh "（2）" conversation when it outgrows its budget.
+# An explicit sessionId always wins; an explicit null opts a one-shot task out
+# of the default; an explicit "sessionMode": "fresh" restores the one-off
+# session-per-fire behavior for tasks that truly need isolation.
 apply_default_session_binding() {
   local BODY="$1"
 
