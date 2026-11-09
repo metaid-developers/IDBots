@@ -295,6 +295,7 @@ export interface Mrc721ItemTransferRecord {
   chainName?: string;
   height?: number;
   txId?: string;
+  /** Epoch SECONDS (manapi contract, frozen) — not ms; multiply by 1000 for Date. */
   time?: number;
 }
 
