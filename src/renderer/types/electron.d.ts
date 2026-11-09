@@ -2378,6 +2378,12 @@ interface IElectronAPI {
       chainSync?: UserIdentityChainSyncResult;
       error?: string;
     }>;
+    updateAvatar: (input: { avatar: string | null }) => Promise<{
+      success: boolean;
+      identity?: PublicUserIdentity | null;
+      chainSync?: UserIdentityChainSyncResult;
+      error?: string;
+    }>;
     logout: () => Promise<{ success: boolean; error?: string }>;
     revealMnemonic: () => Promise<{ success: boolean; mnemonic?: string; error?: string }>;
     retrySubsidy: () => Promise<{ success: boolean; identity?: PublicUserIdentity | null; subsidy?: UserIdentitySubsidyResult; error?: string }>;
