@@ -6,9 +6,11 @@
  * "brain" LLM. This resolver is the single seam future decision call sites
  * (memory ranking, intent routing, ...) read; it returns null whenever the
  * feature is off or unusable, so callers need no shape checks of their own.
- * The second provider, idbots-jev-free, rides the official free relay with
- * the same wire shape — its relay key is injected at call time (see
- * services/jevRelayService.ts), so an empty apiKey resolves fine here.
+ * The second provider keeps its legacy idbots-jev-free storage key and rides
+ * the official ME-billed relay with the same wire shape — its identity-bound
+ * relay key is injected at call time (see services/jevRelayService.ts), so an
+ * empty apiKey resolves fine here. Direct TypeSafe calls never enter the
+ * IDBots relay and therefore do not consume IDBots ME credits.
  */
 
 export type CerebellumProvider = 'typesafe-jev' | 'idbots-jev-free';
@@ -24,12 +26,12 @@ export const CEREBELLUM_DEFAULT_BASE_URL = 'https://api.typesafe.ai';
 export const CEREBELLUM_DEFAULT_MODEL = 'jev-latest';
 
 /**
- * Official free relay provider: assist-base-service proxies the TypeSafe JEV
+ * Official IDBots-JEV provider: assist-base-service proxies the TypeSafe JEV
  * upstream and holds the real upstream key server-side, so users need no
  * TypeSafe key of their own. The wire shape is identical to `typesafe-jev`
- * (POST {baseUrl}/v1/systemone), only the credentials differ: a free-quota
- * relay key (mrk_...) resolved at runtime — see resolveCerebellumRuntimeConfig
- * in services/jevRelayService.ts.
+ * (POST {baseUrl}/v1/systemone), but the identity-bound relay key lets the
+ * service meter usage to the user's ME balance. The exported constant names
+ * retain FREE only for backward compatibility with the persisted provider id.
  */
 export const CEREBELLUM_FREE_PROVIDER = 'idbots-jev-free' as const;
 /** Hardcoded JEV relay base (backend doc《JEV 小脑模型中转接口.md》§3). */
@@ -59,19 +61,19 @@ export function resolveCerebellumConfig(appConfig: unknown): ResolvedCerebellumC
   if (typeof candidate.provider !== 'string' || !CEREBELLUM_PROVIDERS.includes(candidate.provider)) {
     return null;
   }
-  const isFreeProvider = candidate.provider === CEREBELLUM_FREE_PROVIDER;
-  // Free provider: the apiKey comes from the relay credential chain at call
-  // time, so an empty stored key is valid here (the runtime resolver injects
-  // it or disables the feature); baseUrl/model are fixed to the relay values
+  const isIdbotsProvider = candidate.provider === CEREBELLUM_FREE_PROVIDER;
+  // IDBots-JEV: the apiKey comes from the relay credential chain at call time,
+  // so an empty stored key is valid here (the runtime resolver injects it or
+  // disables the feature); baseUrl/model are fixed to the relay values
   // regardless of what is stored. Direct TypeSafe keeps requiring a key.
   const apiKey = typeof candidate.apiKey === 'string' ? candidate.apiKey.trim() : '';
-  if (!apiKey && !isFreeProvider) {
+  if (!apiKey && !isIdbotsProvider) {
     return null;
   }
 
   let baseUrl: string;
   let model: string;
-  if (isFreeProvider) {
+  if (isIdbotsProvider) {
     baseUrl = CEREBELLUM_FREE_RELAY_BASE_URL;
     model = CEREBELLUM_FREE_MODEL;
   } else {

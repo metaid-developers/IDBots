@@ -159,10 +159,10 @@ export interface AppConfig {
   cerebellum?: {
     enabled: boolean;
     /**
-     * 'typesafe-jev' = user-owned TypeSafe key, direct upstream.
-     * 'idbots-jev-free' = official free relay (assist-base-service JEV
-     * proxy): no user key needed, relay key resolved from the free-quota
-     * credential chain, baseUrl/model pinned to the relay values.
+     * 'typesafe-jev' = user-owned TypeSafe key, direct upstream; no IDBots ME spend.
+     * 'idbots-jev-free' = legacy storage id for official IDBots-JEV. The
+     * identity-bound relay key is resolved from the credential chain, the
+     * service deducts ME credits, and baseUrl/model stay relay-pinned.
      */
     provider: 'typesafe-jev' | 'idbots-jev-free';
     apiKey: string;
@@ -793,9 +793,9 @@ export const defaultConfig: AppConfig = {
   },
   theme: 'system',
   language: 'zh',
-  // Cerebellum defaults ON with the official free relay (campaign: free for
-  // everyone) — no key needed, the relay key resolves from the free-quota
-  // credential chain and the feature silently stays off until one exists.
+  // Cerebellum defaults ON with official IDBots-JEV — no user key needed; the
+  // identity-bound relay key resolves from the credential chain, usage deducts
+  // ME credits server-side, and the feature stays off until credentials exist.
   // Legacy installs sitting on the untouched old default are flipped by the
   // one-time cerebellumFreeDefaultMigration (services/config.ts); anything a
   // user actually configured is never touched.
