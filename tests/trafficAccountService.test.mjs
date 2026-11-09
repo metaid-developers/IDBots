@@ -1663,11 +1663,12 @@ test('a missing conversion endpoint (404) is tried once per launch and never fai
 test('getTrafficSponsorOrders normalizes rows, enriches the local kind, and passes the cursor', async () => {
   const fetchImpl = createFetchStub([
     ['/sponsor-orders', {
-      rows: [
+      // Shipped backend shape (ABS c3e5be8): `orders` + numeric id cursor.
+      orders: [
         { orderId: 'order-me', botAddress: BOT1_ADDRESS, txId: COMMIT_TXID, txSize: 616, paySource: 'me', meAmountMilli: 12, status: 'committed', createdAt: 2, committedAt: 3 },
         { order_id: 'order-old', bot_address: BOT2_ADDRESS, tx_id: 'bb'.repeat(32), tx_size: '300', pay_source: 'BYTES', status: 'committed', created_at: 1 },
       ],
-      nextCursor: 'cursor-2',
+      nextCursor: 42,
     }],
     ['/v1/traffic/accounts', accountPayload()],
   ]);
@@ -1675,12 +1676,12 @@ test('getTrafficSponsorOrders normalizes rows, enriches the local kind, and pass
   await ensureTrafficAccount();
   recordLocalTrafficSpend({ txId: COMMIT_TXID, botAddress: BOT1_ADDRESS, orderId: 'order-me', txSize: 616, billedBy: 'me', meAmountMilli: 12, kind: '/protocols/simplebuzz' });
 
-  const page = await getTrafficSponsorOrders({ cursor: 'cursor-1', limit: 20, botAddress: BOT1_ADDRESS });
+  const page = await getTrafficSponsorOrders({ cursor: '17', limit: 20, botAddress: BOT1_ADDRESS });
   const query = new URL(callsTo(fetchImpl, '/sponsor-orders')[0].url).searchParams;
-  assert.equal(query.get('cursor'), 'cursor-1');
+  assert.equal(query.get('cursor'), '17');
   assert.equal(query.get('limit'), '20');
   assert.equal(query.get('botAddress'), BOT1_ADDRESS);
-  assert.equal(page.nextCursor, 'cursor-2');
+  assert.equal(page.nextCursor, '42');
   assert.deepEqual(page.orders[0], {
     orderId: 'order-me',
     botAddress: BOT1_ADDRESS,
@@ -1696,6 +1697,19 @@ test('getTrafficSponsorOrders normalizes rows, enriches the local kind, and pass
   assert.equal(page.orders[1].paySource, 'bytes');
   assert.equal(page.orders[1].txSize, 300);
   assert.equal(page.orders[1].kind, undefined);
+});
+
+test('getTrafficSponsorOrders ends paging at the numeric-zero cursor and still reads rows', async () => {
+  const fetchImpl = createFetchStub([
+    ['/sponsor-orders', { rows: [{ orderId: 'order-1', botAddress: BOT1_ADDRESS, txId: COMMIT_TXID, txSize: 10, paySource: 'bytes', meAmountMilli: 0, status: 'committed', createdAt: 1 }], nextCursor: 0 }],
+    ['/v1/traffic/accounts', accountPayload()],
+  ]);
+  await makeServiceFixture({ fetchImpl });
+  await ensureTrafficAccount();
+
+  const page = await getTrafficSponsorOrders();
+  assert.equal(page.nextCursor, '', 'nextCursor 0 means no more pages, never a truthy cursor');
+  assert.equal(page.orders.length, 1);
 });
 
 test('getTrafficSponsorOrders surfaces a missing endpoint as featureUnavailable', async () => {

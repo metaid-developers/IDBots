@@ -1,6 +1,6 @@
 # Backend Requirements — Bill Sponsored On-Chain Traffic in ME Credits (assist-base-service)
 
-- Status: **Approved v1.1**, 2026-11-09. Owner confirmed D1–D4 per section 6 (all recommendations adopted). v1.1 pins the R4 field names and the `sponsor-orders` page envelope, the R5 request shape, and the R3 identity-address requirement; no semantic change from v1.0.
+- Status: **Approved v1.2**, 2026-11-09. Owner confirmed D1–D4 per section 6 (all recommendations adopted). v1.1 pinned the R4 field names, the `sponsor-orders` page envelope, the R5 request shape, and the R3 identity-address requirement. v1.2 aligns the doc to the shipped backend (ABS `066194d` / `661f46f` / `c3e5be8`): the `sponsor-orders` envelope is `{ orders, nextCursor }` with a numeric id cursor (`0` = last page; the earlier `rows` + opaque-cursor draft was not built), and `limit` defaults to 50 with a max of 200. No other semantic change.
 - Client counterpart: IDBots branch `feat/credits-traffic-unify` (developed in parallel; see Appendix A).
 - Related contracts: `docs/gasfee-flow/backend-spec.md` (traffic account), `docs/gasfee-flow/me-payment-and-ledger-backend-requirements.md` (ME ledger), ABS `docs/me-points/客户端与宿主接入指南.md`.
 
@@ -90,15 +90,15 @@ Target client behavior:
 - `GET /v1/traffic/accounts/:accountId/usage/daily` and `/usage/summary` aggregate `tb_traffic_ledger` spend rows today (`service/traffic_service/usage_service.go:45-121`), so ME-billed orders would disappear from them. They must include committed ME-billed sponsor orders and add ME totals (integer milliME) next to the byte totals:
   - `usage/daily`: every row gains `meMilli`.
   - `usage/summary`: gains `todayMeMilli`, `weekMeMilli`, `monthMeMilli` next to `todayBytes`, `weekBytes`, `monthBytes`.
-- **New:** `GET /v1/traffic/accounts/:accountId/sponsor-orders?cursor&limit&botAddress`, newest first, with the same auth as the existing `ledger` endpoint. `cursor` is the opaque `nextCursor` string of the previous page (absent on the first page); `limit` defaults to 20, max 100; `botAddress` filters to one bound address. Response `data`:
+- **New:** `GET /v1/traffic/accounts/:accountId/sponsor-orders?cursor&limit&botAddress`, newest first, with the same auth as the existing `ledger` endpoint. `cursor` resumes after the given numeric order id (absent / 0 on the first page); `limit` defaults to 50, max 200; `botAddress` filters to one bound address. Response `data` (v1.2: the shipped shape — an `orders` array and a **numeric** `nextCursor` that is `0` on the last page):
   ```json
   {
-    "rows": [
+    "orders": [
       { "orderId": "...", "botAddress": "...", "txId": "...", "txSize": 616,
         "paySource": "me", "meAmountMilli": 12, "status": "committed",
         "createdAt": 1762650000000, "committedAt": 1762650001000 }
     ],
-    "nextCursor": "opaque-string, empty when there are no more rows"
+    "nextCursor": 0
   }
   ```
   It covers both pay sources, so users keep their older byte-billed history.

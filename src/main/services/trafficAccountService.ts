@@ -1026,8 +1026,11 @@ export async function getTrafficSponsorOrders(input: {
     path: `/v1/traffic/accounts/${encodeURIComponent(account.accountId)}/sponsor-orders`,
     query: { cursor: normalizeText(input.cursor) || undefined, limit: input.limit, botAddress: input.botAddress },
   });
-  const record: Record<string, unknown> = Array.isArray(data) ? { rows: data } : data;
-  const rows = Array.isArray(record.rows) ? record.rows : [];
+  const record: Record<string, unknown> = Array.isArray(data) ? { orders: data } : data;
+  // The shipped backend pages with `{ orders, nextCursor }` where nextCursor
+  // is the numeric order id to resume from and 0 means "no more pages"
+  // (ABS c3e5be8); the documented `rows` spelling is accepted too.
+  const rows = Array.isArray(record.orders) ? record.orders : Array.isArray(record.rows) ? record.rows : [];
   const kindByOrderId = new Map<string, string>();
   for (const journalEntry of listLocalTrafficJournal({ limit: 1000 })) {
     if (journalEntry.orderId && journalEntry.kind && !kindByOrderId.has(journalEntry.orderId)) {
@@ -1054,7 +1057,20 @@ export async function getTrafficSponsorOrders(input: {
     if (kind) order.kind = kind;
     return [order];
   });
-  return { orders, nextCursor: normalizeText(record.nextCursor ?? record.next_cursor) };
+  return { orders, nextCursor: normalizeOrderCursor(record.nextCursor ?? record.next_cursor) };
+}
+
+/**
+ * Sponsor-orders cursor: the backend pages by numeric order id and sends 0
+ * at the end, so a bare 0 / '0' must not read as "there is a next page".
+ * A non-numeric opaque cursor (early draft) passes through unchanged.
+ */
+function normalizeOrderCursor(value: unknown): string {
+  const text = normalizeText(value);
+  if (!text) return '';
+  const numeric = Number(text);
+  if (Number.isFinite(numeric)) return numeric > 0 ? String(Math.trunc(numeric)) : '';
+  return text;
 }
 
 /**
