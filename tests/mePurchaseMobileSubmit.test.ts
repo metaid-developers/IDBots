@@ -134,6 +134,37 @@ test('topup success still reads submission.order.orderId from submitTopupOrder',
   assert.deepEqual(api.calls.map((call) => call.method), ['submitTopupOrder']);
 });
 
+test('subscribe success carries the server-priced payAmount through (2026-11-10 P1)', async () => {
+  const api = fakeApi({
+    subscription: { success: true, subscriptionOrder: { orderId: 'sub-9', payAmount: 267.3 } },
+  });
+  const request = buildMePurchaseOrderRequest({ section: 'subscribe', planId: 'plan-pro', period: 'quarter', now: 1 });
+  assert.ok(request);
+  const result = await submitMePurchaseOrder(api, request);
+  assert.deepEqual(result, { ok: true, orderId: 'sub-9', payAmount: 267.3 });
+});
+
+test('topup success carries the server-priced payAmount through when present', async () => {
+  const api = fakeApi({
+    topup: { success: true, submission: { order: { orderId: 'top-9', payAmount: 30 } } },
+  });
+  const request = buildMePurchaseOrderRequest({ section: 'topup', packageId: 'pkg-9', period: 'month', now: 1 });
+  assert.ok(request);
+  const result = await submitMePurchaseOrder(api, request);
+  assert.deepEqual(result, { ok: true, orderId: 'top-9', payAmount: 30 });
+});
+
+test('a response without payAmount omits the field (no fabricated amount)', async () => {
+  const api = fakeApi({
+    subscription: { success: true, subscriptionOrder: { orderId: 'sub-10' } },
+  });
+  const request = buildMePurchaseOrderRequest({ section: 'subscribe', planId: 'plan-pro', period: 'month', now: 1 });
+  assert.ok(request);
+  const result = await submitMePurchaseOrder(api, request);
+  assert.deepEqual(result, { ok: true, orderId: 'sub-10' });
+  assert.equal(result.payAmount, undefined);
+});
+
 test('404 featureUnavailable surfaces after exactly one call — no retry', async () => {
   for (const section of ['subscribe', 'topup'] as const) {
     const api = fakeApi({
