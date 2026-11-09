@@ -937,7 +937,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           <button
             type="button"
             onClick={() => onShowSettings()}
-            className="inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-text dark:hover:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+            className="inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-text dark:hover:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors shrink-0 whitespace-nowrap"
             aria-label={i18nService.t('settings')}
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
@@ -948,10 +948,14 @@ const Sidebar: React.FC<SidebarProps> = ({
             </svg>
             {i18nService.t('settings')}
           </button>
-          <div className="ml-auto flex items-center gap-2">
+          {/* min-w-0 lets this group shrink on a narrow sidebar; the squeeze
+              is absorbed solely by the background-tasks label (it truncates),
+              while the settings button, sleep-guard dot and ME chip stay
+              intact — none of the footer elements may ever wrap. */}
+          <div className="ml-auto flex items-center gap-2 min-w-0">
             <BackgroundTasksBadge onShowGroupTasks={onShowGroupTasks} />
-            <SleepGuardBadge />
-            <MeBalanceBadge />
+            <div className="shrink-0 flex"><SleepGuardBadge /></div>
+            <div className="shrink-0"><MeBalanceBadge /></div>
           </div>
         </div>
       </div>

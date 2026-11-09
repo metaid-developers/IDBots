@@ -155,7 +155,7 @@ const MeBalanceBadge: React.FC = () => {
         ref={triggerRef}
         onClick={() => setPanelOpen((open) => !open)}
         title={i18nService.t('mePanelTitle')}
-        className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors bg-claude-surface/80 dark:bg-claude-darkSurface/80 hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover ${badgeClass}`}
+        className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-medium transition-colors bg-claude-surface/80 dark:bg-claude-darkSurface/80 hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover ${badgeClass}`}
       >
         <MeCoinIcon className="h-3.5 w-3.5" />
         <span className="tabular-nums tracking-tight">
