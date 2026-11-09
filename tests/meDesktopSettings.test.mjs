@@ -15,22 +15,24 @@ const settingsSource = read('src/renderer/components/Settings.tsx');
 const planCardSource = read('src/renderer/components/me/IdbotsPlanCard.tsx');
 const i18nSource = read('src/renderer/services/i18n.ts');
 
-test('ME entry lives in the left rail footer instead of the global top-right corner', () => {
-  // Three-column shell (slice 1): the ME entry moved from the old sidebar
-  // footer into the icon rail's pinned bottom block — never the global
-  // top-right corner, and never inside App's own chrome.
-  assert.equal(appSource.includes("import MeBalanceBadge"), false);
+test('the ME badge is retired from the rail; the user page is its one home (D5)', () => {
+  // Three-column shell, final state (owner ruling 2026-11-09 10:05, D5):
+  // the compact ME badge is GONE from the rail's bottom block — the
+  // standalone user page, opened from the header's User pill, is the ONE
+  // home of the ME credits panel. The MeBalanceBadge component file stays
+  // on disk but nothing wires it in; App's own chrome keeps no top-right
+  // corner badge either.
   assert.equal(appSource.includes('fixed right-4 top-3'), false);
-  assert.match(railSource, /import MeBalanceBadge from '\.\.\/me\/MeBalanceBadge'/);
-  assert.match(railSource, /<MeBalanceBadge compact \/>/);
-  // The rail renders Settings immediately before ME in that bottom block.
-  assert.ok(
-    railSource.indexOf('itemId="settings"') < railSource.indexOf('<MeBalanceBadge compact />'),
-    'Settings sits above ME in the rail footer',
-  );
-  // A compact badge opens its panel to the right (a 300 px panel anchored
-  // right-0 inside a 64 px column would hang off the window), and the
-  // expanded form keeps the historic bottom-right anchor.
+  assert.equal(appSource.includes('import MeBalanceBadge'), false);
+  assert.equal(railSource.includes('import MeBalanceBadge'), false);
+  assert.equal(railSource.includes('<MeBalanceBadge'), false);
+  // The rail's bottom block keeps exactly the one shared Settings entry
+  // (the update badge may render above it when an update is available).
+  assert.match(railSource, /itemId="settings"/);
+  // A compact badge would open its panel to the right (a 300 px panel
+  // anchored right-0 inside a 64 px column would hang off the window), and
+  // the expanded form keeps the historic bottom-right anchor — pin the
+  // retired component's geometry so a future rewire inherits it sane.
   assert.match(badgeSource, /compact \? 'left-0' : 'right-0'/);
   assert.match(badgeSource, /absolute bottom-\[calc\(100%\+8px\)\] z-\[80\][\s\S]*right-0/);
 });
