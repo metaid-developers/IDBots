@@ -133,8 +133,11 @@ export function formatMe(me: number): string {
 /** Signed ledger amount in ME (negative = spend). */
 export function formatMeSigned(milli: number | null | undefined): string {
   const value = typeof milli === 'number' && Number.isFinite(milli) ? milli : 0;
-  const me = Math.trunc(value / 1000);
-  return `${me < 0 ? '-' : '+'}${new Intl.NumberFormat().format(Math.abs(me))}`;
+  // Sub-1-ME metering burns are common: whole-ME truncation printed them as
+  // "-0" — mirror the desktop formatter (3 decimals below 1 ME, 2 above).
+  const decimals = Math.abs(value) >= 1000 ? 2 : 3;
+  const me = value / 1000;
+  return `${me < 0 ? '-' : '+'}${new Intl.NumberFormat(undefined, { maximumFractionDigits: decimals }).format(Math.abs(me))}`;
 }
 
 /** Display multiplier: 1 → "1x", 1.5 → "1.5x". */

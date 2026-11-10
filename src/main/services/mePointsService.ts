@@ -1042,6 +1042,11 @@ export function registerMePointsIpcHandlers(deps: {
       : getMePointSettings(deps.getSettingsStore?.() ?? null).autoDeductFromPersistent;
     const remote = await setMeSettings(requested);
     mirrorMePointSettings(deps.getSettingsStore?.() ?? null, remote.autoDeductFromPersistent);
+    // The toggle changes how the NEXT spend is funded, and the balance echo
+    // (spendableMilli / autoDeductFromPersistent) renders from the cached
+    // balance — drop the cache so the UI reflects the toggle immediately
+    // instead of for up to the cache TTL.
+    state.balanceCache = null;
     return {
       settings: { autoDeductFromPersistent: remote.autoDeductFromPersistent },
       source: 'server',
