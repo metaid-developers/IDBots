@@ -596,29 +596,46 @@ const lightboxSource = fs.readFileSync(
   'utf8',
 );
 
-test('the pending attachment strip renders inside the composer card, not beside it', () => {
+test('the pending attachments render in the large left rail above the pinned buttons', () => {
+  // Pass #5 ② redesign #2 (owner 00:48, supersedes the side-by-side row):
+  // the large card is two columns. Source order inside the large branch:
+  // two-column container → left rail (68px) → rail's stack block → rail's
+  // pinned +/emoji button row → right text column → right bottom row. The
+  // compact branch keeps its w-16 column in the items-end row. One
+  // attachment block per branch.
   const cardIndex = composerSource.indexOf('ref={composerCardRef}');
-  const stripIndex = composerSource.indexOf('{attachments.length > 0 && (');
-  const textRowIndex = composerSource.indexOf('{isLarge ? (');
+  const largeIndex = composerSource.indexOf('{isLarge ? (');
+  const railIndex = composerSource.indexOf('flex w-[68px] flex-shrink-0 flex-col items-center');
+  const stackIndex = composerSource.indexOf('flex max-h-36 w-full flex-col gap-2 overflow-y-auto');
+  const railButtonsIndex = composerSource.indexOf('mt-auto flex items-center justify-center gap-1');
+  const rightColIndex = composerSource.indexOf('flex min-w-0 flex-1 flex-col');
+  const firstCol = composerSource.indexOf('{attachments.length > 0 && (');
+  const colCount = composerSource.split('{attachments.length > 0 && (').length - 1;
 
   assert.ok(cardIndex >= 0, 'the composer card ref must exist');
-  assert.ok(stripIndex >= 0, 'the attachment strip must still be rendered');
-  assert.ok(textRowIndex >= 0, 'the text row must still be rendered');
+  assert.ok(largeIndex >= 0, 'the large branch must exist');
+  assert.ok(railIndex >= 0, 'the left rail must exist');
+  assert.ok(stackIndex >= 0, 'the attachment stack must exist');
+  assert.ok(railButtonsIndex >= 0, 'the pinned rail button row must exist');
+  assert.ok(rightColIndex >= 0, 'the right text column must exist');
+  assert.ok(firstCol >= 0, 'the attachment block must still be rendered');
+  assert.equal(colCount, 2, 'both composer branches render an attachment block');
+  assert.ok(cardIndex < largeIndex, 'the large branch must render inside the card');
   assert.ok(
-    cardIndex < stripIndex,
-    'the attachment strip must render inside the card (after the card ref), not above it',
+    largeIndex < railIndex && railIndex < stackIndex,
+    'the stack must live inside the left rail',
   );
   assert.ok(
-    stripIndex < textRowIndex,
-    'the attachment strip must sit above the text row inside the card',
+    stackIndex < railButtonsIndex,
+    'the rail buttons must render below the attachment stack (stack bottom hugs button top)',
   );
   assert.ok(
-    /flex w-full flex-wrap gap-2/.test(composerSource),
-    'the strip must claim a full row so the small (flex-row) composer stacks it above the input',
+    railIndex < rightColIndex,
+    'the right text column must render beside (after) the left rail',
   );
   assert.ok(
-    /relative flex flex-wrap items-end gap-2 p-3/.test(composerSource),
-    'the small composer card must wrap, so a full-width strip can occupy its own row',
+    /flex max-h-36 w-16 flex-shrink-0 flex-col gap-2 overflow-y-auto/.test(composerSource),
+    'the compact branch keeps its capped w-16 column',
   );
 });
 
