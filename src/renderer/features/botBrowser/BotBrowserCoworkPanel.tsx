@@ -38,6 +38,8 @@ import {
   resolveContextMenuPlacement,
 } from './panelContextMenuGeometry';
 import PanelMessageContextMenu from './PanelMessageContextMenu';
+import PanelMessageLocatorRail from './PanelMessageLocatorRail';
+import { buildPanelLocatorRows } from './panelMessageLocator';
 import { createMessageQuotedSelection } from '../../components/cowork/coworkQuotedSelections';
 
 type PanelMetabot = MetaBotForSelector & { llm_id?: string | null; llm_provider?: string | null; llm_effort?: string | null };
@@ -127,7 +129,9 @@ export const PanelMessage: React.FC<{
   );
   if (isUser) {
     return (
-      <div className="flex flex-col items-end">
+      // data-panel-message-id lets the locator rail measure this row
+      // (purity pass #2 ③) without touching the bubble chrome.
+      <div data-panel-message-id={message.id} className="flex flex-col items-end">
         {/* Same display-side body pipeline as the main cowork transcript: the
             attachment marker lines split out at render time, image files render
             as the shared thumbnail strip with the in-app lightbox, and the rest
@@ -148,7 +152,7 @@ export const PanelMessage: React.FC<{
     // (narration and final alike) sit in the neutral-gray .assistant-bubble
     // instead of bare full-width text, so both surfaces read the same way.
     return (
-      <div className="flex min-w-0 flex-col items-start">
+      <div data-panel-message-id={message.id} className="flex min-w-0 flex-col items-start">
         <div
           onContextMenu={handleBubbleContextMenu}
           className="assistant-bubble w-fit max-w-[92%] rounded-[22px] px-[16px] py-[10px] text-[13px] leading-5 dark:text-claude-darkText text-claude-text shadow-subtle [&_h1]:text-sm [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h2]:text-[13px] [&_h2]:mt-2.5 [&_h2]:mb-1 [&_h3]:text-[13px] [&_h3]:mt-2 [&_h3]:mb-1 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:break-all [&_a]:break-all"
@@ -160,7 +164,7 @@ export const PanelMessage: React.FC<{
     );
   }
   return (
-    <div className="flex min-w-0 flex-col items-start text-[13px] leading-5 dark:text-claude-darkText text-claude-text [&_h1]:text-sm [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h2]:text-[13px] [&_h2]:mt-2.5 [&_h2]:mb-1 [&_h3]:text-[13px] [&_h3]:mt-2 [&_h3]:mb-1 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:break-all [&_a]:break-all">
+    <div data-panel-message-id={message.id} className="flex min-w-0 flex-col items-start text-[13px] leading-5 dark:text-claude-darkText text-claude-text [&_h1]:text-sm [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h2]:text-[13px] [&_h2]:mt-2.5 [&_h2]:mb-1 [&_h3]:text-[13px] [&_h3]:mt-2 [&_h3]:mb-1 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:break-all [&_a]:break-all">
       <div onContextMenu={handleBubbleContextMenu} className="min-w-0">
         <MarkdownContent content={message.content} compact onOpenBotBrowserUri={onOpenUri} emojiImages />
       </div>
@@ -570,6 +574,17 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     }
   }, [visibleMessages.length, isStreaming]);
 
+  // Locator rail rows (purity pass #2 ③): identity + preview text per
+  // visible message; the rail itself decides visibility from overflow, and
+  // the transcript's auto-scroll-to-bottom effect above stays untouched.
+  const locatorRows = useMemo(
+    () => buildPanelLocatorRows(visibleMessages, {
+      botName: chipMetabot?.name ?? null,
+      userLabel: i18nService.t('coworkOriginBadgeYou'),
+    }),
+    [visibleMessages, chipMetabot?.name],
+  );
+
   const handleSubmit = async (prompt: string, skillPrompt?: string) => {
     if (!currentSession && !twinMetabot) return; // no-Twin machines never start sessions here
     setShowHistory(false);
@@ -691,7 +706,11 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
-      <div ref={listRef} className="min-h-0 flex-1 space-y-2.5 overflow-y-auto overflow-x-hidden px-1 pb-2">
+      {/* The relative wrapper hosts the locator rail (purity pass #2 ③) at
+          the transcript's right edge; the scroller itself stays unpositioned
+          so the rail never scrolls with the content. */}
+      <div className="relative min-h-0 flex-1">
+        <div ref={listRef} className="h-full space-y-2.5 overflow-y-auto overflow-x-hidden px-1 pb-2">
         {visibleMessages.length === 0 ? (
           needsTwinBootstrap ? (
             // No Twin on this machine: block the chat with bootstrap guidance
@@ -765,6 +784,12 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
             </div>
           )
         ) : null}
+        </div>
+        <PanelMessageLocatorRail
+          containerRef={listRef}
+          rows={locatorRows}
+          ariaLabel={i18nService.t('botBrowserLocatorRail')}
+        />
       </div>
 
       <div className="flex items-center justify-between gap-0.5 pb-1.5">

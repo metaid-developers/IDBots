@@ -513,6 +513,8 @@ man_base_data_pebble/
 !tests/panelMessageReactions.test.ts
 !tests/panelContextMenuGeometry.test.ts
 !tests/panelPurityWiring.test.mjs
+!tests/panelMessageLocator.test.ts
+!tests/panelPurityPass2Wiring.test.mjs
 !tests/browserIframeBridge.test.mjs
 !tests/sqliteStoreFreshMigrations.test.mjs
 !tests/userIdentityStore.test.mjs
