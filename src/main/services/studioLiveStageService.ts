@@ -5,6 +5,7 @@ import type { BotBrowserProjectionInput, BotBrowserProjectionOutcome } from './b
 import type { StudioLiveStageSettings } from './studioLiveStageSettings';
 import { completeLiveStage, createLiveStageState, isLiveStageWorkerReport, liveStageError, reduceLiveStageMessage, reportReadyLiveStage, type LiveStageState } from './studioLiveStageModel';
 import { renderLiveStageHtml } from './studioLiveStageTemplate';
+import { resolveStudioLiveStageTemplate, type StudioLiveStageTemplateResolution } from './studioLiveStageTemplateRegistry';
 import { directLiveStageScene } from './studioLiveStageDirector';
 
 const MAX_DIRECTOR_CALLS_PER_TURN = 8;
@@ -31,6 +32,7 @@ type LiveStageRun = {
   directorInFlight: boolean;
   directorDirty: boolean;
   directorGeneration: number;
+  template: StudioLiveStageTemplateResolution;
 };
 
 export type StudioLiveStageServiceDeps = {
@@ -46,6 +48,8 @@ export type StudioLiveStageServiceDeps = {
   reportDelayMs?: number;
   directScene?: typeof directLiveStageScene;
   now?: () => number;
+  /** Resolve and validate the template package; defaults to the built-in registry. */
+  resolveTemplate?: () => StudioLiveStageTemplateResolution;
 };
 
 export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
@@ -99,14 +103,26 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     });
   }
 
+  // Resolve and validate one template version at the start of each turn and
+  // pin it there: a task never changes appearance halfway through.
+  function resolveTurnTemplate(): StudioLiveStageTemplateResolution {
+    const resolution = deps.resolveTemplate
+      ? deps.resolveTemplate()
+      : resolveStudioLiveStageTemplate({ assetRoot: deps.assetRoot });
+    return resolution;
+  }
+
   function projectStage(run: LiveStageRun): void {
     enqueue(run, async () => {
       const session = deps.getSession(run.state.sessionId);
       if (!session || !run.state.enabled) return;
+      // The template resolved at turn start is pinned for the whole turn; a
+      // fallback resolution keeps rendering from the raw built-in assets.
+      const templateAssetRoot = run.template.status === 'ok' ? run.template.template.assetRoot : deps.assetRoot;
       const html = renderLiveStageHtml({
         state: run.state,
         avatarDataUri: avatarFor(session),
-        assets: { assetRoot: deps.assetRoot, fallbackAvatarDataUri: deps.fallbackAvatarDataUri },
+        assets: { assetRoot: templateAssetRoot, fallbackAvatarDataUri: deps.fallbackAvatarDataUri },
       });
       fs.mkdirSync(path.dirname(run.stagePath!), { recursive: true });
       fs.writeFileSync(run.stagePath!, html, 'utf8');
@@ -205,7 +221,11 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       directorInFlight: false,
       directorDirty: false,
       directorGeneration: 0,
+      template: resolveTurnTemplate(),
     };
+    if (run.template.status === 'fallback') {
+      console.warn(`[StudioLiveStage] template fallback for ${sessionId}: ${run.template.reason}`);
+    }
     runs.set(sessionId, run);
     if (process.env.NODE_ENV === 'development') {
       console.warn(`[StudioLiveStage] run created ${sessionId} turn=${turnId} director=${currentSettings.directorEnabled}`);
