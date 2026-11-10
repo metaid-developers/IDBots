@@ -341,6 +341,20 @@
       ]
     },
     {
+      "path": "botHubLiveStage.get",
+      "kind": "invoke",
+      "channel": "botHubLiveStage:get",
+      "args": []
+    },
+    {
+      "path": "botHubLiveStage.set",
+      "kind": "invoke",
+      "channel": "botHubLiveStage:set",
+      "args": [
+        "updates"
+      ]
+    },
+    {
       "path": "brainSwitch.switchFreeBrainsTo",
       "kind": "invoke",
       "channel": "brainSwitch:switchFreeBrainsTo",

@@ -562,6 +562,9 @@ import {
 import {
   initBotBrowserProjectionService,
 } from './services/botBrowserProjectionService';
+import { createBotHubLiveStageService, type BotHubLiveStageService } from './services/botHubLiveStageService';
+import { applyBotHubLiveStagePatch } from './services/botHubLiveStageFrame';
+import { readBotHubLiveStageSettings, writeBotHubLiveStageSettings } from './services/botHubLiveStageSettings';
 import {
   executeBotBrowserPreviewAct,
   type BotBrowserPreviewActRequest,
@@ -893,6 +896,7 @@ const sanitizePermissionRequestForIpc = (request: any): any => {
 };
 
 const emitCoworkStreamMessage = (sessionId: string, message: unknown): void => {
+  getBotHubLiveStageService().observeMessage(sessionId, message as any);
   const safeMessage = sanitizeCoworkMessageForIpc(message);
   broadcastToRenderers('cowork:stream:message', { sessionId, message: safeMessage });
 };
@@ -7291,7 +7295,10 @@ const getCoworkRunner = () => {
         openUri: (input) => sendBotBrowserOpenUri(input),
         execute: (command) => getBotBrowserTabBridge().execute(command),
         projectReport: async (input) => {
-          const outcome = await getBotBrowserProjection().project(input);
+          const outcome = await getBotHubLiveStageService().projectReport(
+            input,
+            () => getBotBrowserProjection().project(input),
+          );
           // Projection receipt in the conversation (owner ruling #7 companion):
           // a small host-injected bubble whose link re-opens the projection tab
           // (openTab dedupes by URI, so the click focuses the existing tab).
@@ -8611,6 +8618,7 @@ const getCoworkRunner = () => {
 
     // Set up event listeners to forward to renderer
     coworkRunner.on('message', (sessionId: string, message: any) => {
+      getBotHubLiveStageService().observeMessage(sessionId, message);
       if (!shouldForwardCoworkStreamEvent(getCoworkStore(), sessionId)) {
         return;
       }
@@ -8688,6 +8696,7 @@ const getCoworkRunner = () => {
     });
 
     coworkRunner.on('complete', (sessionId: string, claudeSessionId: string | null) => {
+      getBotHubLiveStageService().observeComplete(sessionId);
       // A session finished: recompute the sleep guard so the blocker is
       // released as soon as no other work source is active.
       recomputeSleepGuard();
@@ -8698,6 +8707,7 @@ const getCoworkRunner = () => {
     });
 
     coworkRunner.on('error', (sessionId: string, error: string, metadata?: { errorCode?: string }) => {
+      getBotHubLiveStageService().observeError(sessionId);
       recomputeSleepGuard();
       if (!shouldForwardCoworkStreamEvent(getCoworkStore(), sessionId)) {
         return;
@@ -8941,7 +8951,12 @@ const getBotBrowserHostService = () => {
 const getBotBrowserTabBridge = () => {
   if (!botBrowserTabBridge) {
     botBrowserTabBridge = createBotBrowserTabBridge({
-      getWindows: () => BrowserWindow.getAllWindows(),
+      getWindows: () => {
+        const windows = BrowserWindow.getAllWindows();
+        return mainWindow && !mainWindow.isDestroyed()
+          ? [mainWindow, ...windows.filter((window) => window !== mainWindow)]
+          : windows;
+      },
     });
   }
   return botBrowserTabBridge;
@@ -8951,6 +8966,32 @@ const getBotBrowserTabBridge = () => {
 // session's projection tab silently (never stealing tab or OS focus).
 const getBotBrowserProjection = () =>
   initBotBrowserProjectionService({ getTabBridge: getBotBrowserTabBridge });
+
+let botHubLiveStageService: BotHubLiveStageService | null = null;
+const getBotHubLiveStageService = (): BotHubLiveStageService => {
+  if (!botHubLiveStageService) {
+    const fallbackAvatarPath = path.join(app.getAppPath(), app.isPackaged ? 'dist/default_metabot.png' : 'public/default_metabot.png');
+    botHubLiveStageService = createBotHubLiveStageService({
+      getSession: (sessionId) => getCoworkStore().getSession(sessionId),
+      getMetabotById: (id) => getMetabotStore().getMetabotById(id),
+      getSettings: () => readBotHubLiveStageSettings(getStoreOrNull()),
+      getLanguage: () => getPersistedAppLanguage(),
+      project: (input) => getBotBrowserProjection().project(input),
+      findStageTab: async (localPath) => {
+        const result = await getBotBrowserTabBridge().execute({ action: 'get-tabs' }, { focusWindow: false });
+        const expectedPrefix = `preview-metaapp://localhost${localPath}`;
+        return result.tabs.find((tab) => typeof tab.uri === 'string' && tab.uri.startsWith(expectedPrefix))?.id ?? null;
+      },
+      applyPatch: (input) => applyBotHubLiveStagePatch({
+        getWindows: () => BrowserWindow.getAllWindows(),
+        executeTabCommand: (command) => getBotBrowserTabBridge().execute(command),
+      }, input),
+      assetRoot: path.join(app.getAppPath(), app.isPackaged ? 'dist/live-stage' : 'public/live-stage'),
+      fallbackAvatarDataUri: `data:image/png;base64,${fs.readFileSync(fallbackAvatarPath).toString('base64')}`,
+    });
+  }
+  return botHubLiveStageService;
+};
 
 // Shared act executor for the agent tool and the RPC gateway route: resolves
 // the active tab's renderer envelope via the tab bridge, then reaches into the
@@ -11525,6 +11566,25 @@ if (!gotTheLock) {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to set the experimental automation switch',
       };
+    }
+  });
+
+  registerIpcHandler('botHubLiveStage:get', () => readBotHubLiveStageSettings(getStoreOrNull()));
+  registerIpcHandler('botHubLiveStage:set', (_event, payload: unknown) => {
+    if (typeof payload !== 'object' || payload === null) {
+      return { success: false, error: 'Invalid parameter: settings object is required' };
+    }
+    const updates = payload as { enabled?: unknown; directorEnabled?: unknown };
+    if ((updates.enabled !== undefined && typeof updates.enabled !== 'boolean')
+      || (updates.directorEnabled !== undefined && typeof updates.directorEnabled !== 'boolean')) {
+      return { success: false, error: 'Invalid parameter: enabled values must be boolean' };
+    }
+    try {
+      const settings = writeBotHubLiveStageSettings(getStore(), updates as { enabled?: boolean; directorEnabled?: boolean });
+      getBotHubLiveStageService().updateSettings(settings);
+      return { success: true, ...settings };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to update Live Stage settings' };
     }
   });
 

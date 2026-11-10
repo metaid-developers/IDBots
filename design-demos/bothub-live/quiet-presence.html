@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BotHub Live Stage - Quiet Presence</title>
+  <link rel="stylesheet" href="shared/shell.css" />
+  <style>
+    .quiet-presence { background: #f3f3ef; color: #171917; isolation: isolate; }
+    .quiet-top { position: absolute; z-index: 5; left: 5%; right: 5%; top: 5%; display: flex; justify-content: space-between; align-items: center; }
+    .quiet-brand { display: flex; align-items: center; gap: 9px; color: #4b514c; font-size: 12px; }
+    .quiet-brand img { width: 22px; height: 22px; border-radius: 5px; }
+    .quiet-state { color: #6e746f; font-size: 11px; }
+    .quiet-copy { position: absolute; z-index: 4; left: 6%; top: 18%; width: 47%; pointer-events: none; }
+    .quiet-verb { margin: 0 0 12px; color: #8b6c0b; font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+    .quiet-word { margin: 0 0 20px -5px; font-size: clamp(58px,8vw,116px); font-weight: 650; line-height: .88; letter-spacing: -.075em; text-transform: uppercase; }
+    .quiet-title { max-width: 400px; margin: 0; font-size: clamp(20px,2.3vw,31px); font-weight: 550; line-height: 1.15; letter-spacing: -.03em; }
+    .quiet-caption { max-width: 360px; margin: 14px 0 0; color: #606761; font-size: 14px; line-height: 1.65; }
+    .quiet-scene { position: absolute; z-index: 3; inset: 0; pointer-events: none; }
+    .quiet-twin { position: absolute; left: 73%; top: 48%; width: 168px; transition: transform 1s cubic-bezier(.16,1,.3,1); }
+    .quiet-twin img { position: relative; z-index: 2; display: block; width: 100%; height: 168px; object-fit: cover; border-radius: 3px; animation: quiet-arrive 5.5s ease-in-out infinite; }
+    .quiet-plinth { position: absolute; left: -22%; right: -22%; bottom: -24px; height: 24px; border-radius: 50%; background: rgba(23,25,23,.12); filter: blur(12px); transform: scaleY(.36); transition: transform .8s, opacity .8s; }
+    .quiet-plinth-line { position: absolute; left: -35%; right: -35%; bottom: -32px; height: 1px; background: #c8cbc5; }
+    .paper { position: absolute; width: 148px; height: 184px; padding: 17px; border: 1px solid #d4d7d1; background: #fbfbf8; box-shadow: 0 15px 35px rgba(32,37,32,.07); transition: transform 1s cubic-bezier(.16,1,.3,1), opacity .5s; }
+    .paper::before { content: ""; display: block; width: 30px; height: 3px; margin-bottom: 22px; background: var(--brand); }
+    .paper::after { content: ""; position: absolute; left: 17px; right: 17px; bottom: 20px; height: 40px; background: repeating-linear-gradient(to bottom, #d9dcd6 0, #d9dcd6 1px, transparent 1px, transparent 11px); }
+    .paper-label { color: #424842; font-size: 12px; font-weight: 650; line-height: 1.4; }
+    .paper small { display: block; margin-top: 7px; color: #7b817b; font-size: 10px; font-weight: 400; }
+    .paper-one { left: 62%; top: 26%; transform: translate(35px,18px) rotate(5deg); }
+    .paper-two { left: 66%; top: 29%; transform: translate(-20px,25px) rotate(-4deg); }
+    .paper-three { left: 70%; top: 25%; transform: translate(10px,-12px) rotate(2deg); }
+    .quiet-presence[data-family="received"] .paper,
+    .quiet-presence[data-family="speaking"] .paper { opacity: 0; transform: translateY(25px) scale(.9); }
+    .quiet-presence[data-family="local-recall"] .quiet-twin { transform: translate(70px,85px) scale(.75); }
+    .quiet-presence[data-family="local-recall"] .paper-one { transform: translate(-45px,15px) rotate(-7deg); }
+    .quiet-presence[data-family="local-recall"] .paper-two { transform: translate(-20px,0) rotate(3deg); }
+    .quiet-presence[data-family="local-recall"] .paper-three { transform: translate(15px,18px) rotate(-1deg); }
+    .quiet-presence[data-family="making"] .quiet-twin { transform: translate(110px,90px) scale(.67); }
+    .quiet-presence[data-family="making"] .paper-one { transform: translate(-30px,40px) rotate(0); }
+    .quiet-presence[data-family="making"] .paper-two { transform: translate(-28px,35px) rotate(0); }
+    .quiet-presence[data-family="making"] .paper-three { transform: translate(-26px,30px) rotate(0); }
+    .quiet-presence[data-family="delegation"] .quiet-twin { transform: translate(-80px,65px) scale(.78); }
+    .quiet-presence[data-family="delegation"] .paper-one { transform: translate(180px,35px) rotate(4deg); }
+    .quiet-presence[data-family="delegation"] .paper-two,
+    .quiet-presence[data-family="delegation"] .paper-three { opacity: 0; transform: translateY(20px); }
+    .quiet-presence[data-family="worker-report"] .quiet-twin { transform: translate(-45px,70px) scale(.75); }
+    .quiet-presence[data-family="worker-report"] .paper-one { transform: translate(110px,25px) rotate(-3deg); border-color: #c59b12; }
+    .quiet-presence[data-family="worker-report"] .paper-two,
+    .quiet-presence[data-family="worker-report"] .paper-three { opacity: .25; }
+    .quiet-presence[data-family="verification"] .quiet-twin { transform: translate(-150px,75px) scale(.72); }
+    .quiet-presence[data-family="verification"] .paper-one { transform: translate(40px,25px) rotate(0); border-color: #c59b12; }
+    .quiet-presence[data-family="verification"] .paper-two { transform: translate(44px,29px) rotate(0); }
+    .quiet-presence[data-family="verification"] .paper-three { opacity: 0; }
+    .quiet-presence[data-family="browser-action"] .quiet-twin { transform: translate(100px,90px) scale(.65); }
+    .quiet-presence[data-family="browser-action"] .paper-one { width: 230px; height: 150px; transform: translate(-50px,35px) rotate(0); border-color: #c59b12; }
+    .quiet-presence[data-family="browser-action"] .paper-two,
+    .quiet-presence[data-family="browser-action"] .paper-three { opacity: 0; }
+    .quiet-presence[data-family="report-ready"] .quiet-twin { transform: translate(65px,105px) scale(.62); }
+    .quiet-presence[data-family="report-ready"] .quiet-twin img { animation: none; }
+    .quiet-presence[data-family="report-ready"] .paper-one { transform: translate(70px,35px) rotate(0); border-color: #c59b12; }
+    .quiet-presence[data-family="report-ready"] .paper-two,
+    .quiet-presence[data-family="report-ready"] .paper-three { opacity: 0; }
+    .quiet-proof { position: absolute; left: 68%; top: 30%; width: 70px; height: 70px; display: grid; place-items: center; border: 1px solid #b58b08; border-radius: 50%; color: #8b6c0b; font-size: 12px; opacity: 0; transform: scale(.6); transition: opacity .5s, transform .7s cubic-bezier(.16,1,.3,1); }
+    .quiet-presence[data-family="verification"] .quiet-proof { opacity: 1; transform: scale(1); }
+    .quiet-relations { position: absolute; z-index: 5; right: 5%; bottom: 6%; display: flex; gap: 18px; }
+    .quiet-relation { color: #656c66; font-size: 12px; }
+    .quiet-relation + .quiet-relation::before { content: "/"; margin-right: 18px; color: #b1b5af; }
+    .quiet-open-report { position: absolute; z-index: 6; left: 6%; bottom: 8%; display: none; border: 0; border-radius: 0; padding: 12px 0; border-bottom: 1px solid #171917; background: transparent; color: #171917; font-size: 13px; font-weight: 700; }
+    .quiet-open-report span { display: inline-block; margin-left: 26px; color: #8b6c0b; transition: transform .25s; }
+    .quiet-open-report:hover span { transform: translateX(5px); }
+    .quiet-presence[data-family="report-ready"] .quiet-open-report { display: block; animation: quiet-cta .45s both; }
+    .quiet-presence[data-family="report-ready"] .quiet-copy { top: 16%; }
+    .quiet-presence[data-family="report-ready"] .quiet-word { font-size: clamp(52px,7vw,96px); }
+    @keyframes quiet-arrive { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-9px); } }
+    @keyframes quiet-cta { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    .quiet-state, .paper small { font-size: 12px; }
+    @media (max-width: 1100px) {
+      .quiet-copy { width: 46%; }
+      .quiet-word { font-size: 66px; }
+      .quiet-title { font-size: 23px; }
+      .quiet-twin { left: 75%; width: 130px; }
+      .quiet-twin img { height: 130px; }
+      .paper { width: 116px; height: 150px; padding: 13px; }
+      .quiet-relations { max-width: 45%; flex-wrap: wrap; justify-content: flex-end; gap: 6px 12px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script src="shared/demo-data.js"></script>
+  <script src="shared/shell.js"></script>
+  <script>
+    (() => {
+      const stageHtml = `
+        <div class="quiet-top"><div class="quiet-brand"><img src="assets/logo.png" alt="" /><span>Twin, in the room</span></div><span class="quiet-state" data-quiet-state>Live</span></div>
+        <section class="quiet-copy" aria-live="polite"><div class="quiet-verb" data-quiet-verb>Received</div><h1 class="quiet-word" data-quiet-word>HERE</h1><h2 class="quiet-title" data-quiet-title></h2><p class="quiet-caption" data-quiet-caption></p></section>
+        <div class="quiet-scene" aria-hidden="true">
+          <div class="paper paper-one"><span class="paper-label" data-paper-one>Task board<small>Source</small></span></div>
+          <div class="paper paper-two"><span class="paper-label" data-paper-two>Conversation<small>Context</small></span></div>
+          <div class="paper paper-three"><span class="paper-label" data-paper-three>MetaWeb<small>Evidence</small></span></div>
+          <div class="quiet-proof">Checked</div>
+          <div class="quiet-twin"><img src="assets/current-twin-avatar.jpg" onerror="this.onerror=null;this.src='assets/twinbot.png'" alt="" /><div class="quiet-plinth"></div><div class="quiet-plinth-line"></div></div>
+        </div>
+        <div class="quiet-relations" data-quiet-relations></div>
+        <button class="quiet-open-report" type="button" data-action="open-report">Open the report <span>→</span></button>`;
+
+      const paperLabels = {
+        decision: [['Task board','Source'],['Conversation','Context'],['MetaWeb','Evidence']],
+        bp: [['November BP','Source'],['Screen copy','Independent'],['Projection','13 pages']],
+        greeting: [['Hello','Owner'],['Welcome','Twin'],['BotHub','Together']]
+      };
+      const words = {
+        received: 'HERE', speaking: 'HELLO', 'local-recall': 'GATHER', making: 'SHAPE',
+        delegation: 'SEND', 'worker-report': 'RETURN', verification: 'CHECK',
+        'browser-action': 'SHOW', 'report-ready': 'READY'
+      };
+
+      mountBotHubDemo({
+        prototypeLabel: 'C · Quiet Presence',
+        stageClass: 'quiet-presence',
+        stageHtml,
+        onStep: (event, state) => {
+          const stage = document.querySelector('.quiet-presence');
+          stage.querySelector('[data-quiet-state]').textContent = event.reportReady ? 'Settled' : 'Live';
+          stage.querySelector('[data-quiet-verb]').textContent = event.verb;
+          stage.querySelector('[data-quiet-word]').textContent = words[event.family] || 'LIVE';
+          stage.querySelector('[data-quiet-title]').textContent = event.title;
+          stage.querySelector('[data-quiet-caption]').textContent = event.caption;
+          stage.querySelector('[data-quiet-relations]').innerHTML = event.participants.map((participant) => `<span class="quiet-relation">${participant}</span>`).join('');
+          const labels = paperLabels[state.scenarioId].map(([title, subtitle]) => [title, subtitle]);
+          if (event.family === 'delegation') labels[0] = [state.scenarioId === 'bp' ? 'Screen copy' : 'S9 proof', 'Delegated'];
+          if (event.family === 'worker-report') labels[0] = ['Worker report', 'Returned'];
+          if (event.family === 'verification') {
+            labels[0] = state.scenarioId === 'bp' ? ['Screenshot', 'Captured'] : ['Claim', 'Worker report'];
+            labels[1] = state.scenarioId === 'bp' ? ['Original page', 'Compared'] : ['Original proof', 'Independent'];
+          }
+          if (event.family === 'browser-action') labels[0] = ['Projection', 'Live'];
+          if (event.family === 'report-ready') labels[0] = [state.scenarioId === 'greeting' ? 'Welcome' : 'Owner brief', 'Ready'];
+          ['one','two','three'].forEach((name,index) => {
+            stage.querySelector(`[data-paper-${name}]`).innerHTML = `${labels[index][0]}<small>${event.family === 'verification' && index < 2 ? 'Aligned' : labels[index][1]}</small>`;
+          });
+          if (!state.reducedMotion) {
+            stage.querySelector('.quiet-copy').animate([
+              { opacity: .15, transform: 'translateY(14px)' }, { opacity: 1, transform: 'translateY(0)' }
+            ], { duration: 620, easing: 'cubic-bezier(.16,1,.3,1)' });
+            stage.querySelectorAll('.paper').forEach((paper,index) => {
+              paper.animate([
+                { opacity: Number(getComputedStyle(paper).opacity) * .55 },
+                { opacity: getComputedStyle(paper).opacity }
+              ], { duration: 500 + index * 90, easing: 'ease-out' });
+            });
+          }
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

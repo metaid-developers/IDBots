@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BotHub Live Stage - Living Core</title>
+  <link rel="stylesheet" href="shared/shell.css" />
+  <style>
+    .living-core { background: #0a1220; color: #f4f6fa; isolation: isolate; }
+    .core-canvas, .core-aurora { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+    .core-aurora {
+      background:
+        radial-gradient(ellipse at 67% 45%, rgba(255,220,81,.075), transparent 36%),
+        radial-gradient(ellipse at 20% 100%, rgba(148,163,184,.07), transparent 42%);
+      transition: background 1s;
+    }
+    .core-canvas { z-index: 1; }
+    .core-topline { position: absolute; z-index: 4; left: 5%; right: 5%; top: 5%; display: flex; justify-content: space-between; align-items: center; }
+    .core-presence { display: flex; align-items: center; gap: 10px; color: #d9e0e9; font-size: 12px; }
+    .core-presence img { width: 22px; height: 22px; border-radius: 6px; }
+    .core-family { color: #9daabd; font-family: "SF Mono", Menlo, monospace; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+    .core-copy { position: absolute; z-index: 4; left: 6%; top: 28%; width: 38%; max-width: 390px; }
+    .core-kicker { margin-bottom: 14px; color: var(--brand); font-size: 12px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; }
+    .core-copy h1 { margin: 0; max-width: 390px; font-size: clamp(34px,4.2vw,62px); line-height: 1.02; letter-spacing: -.052em; text-wrap: balance; }
+    .core-copy p { margin: 18px 0 0; max-width: 350px; color: #aab6c6; font-size: 14px; line-height: 1.65; text-wrap: pretty; }
+    .core-entity { position: absolute; z-index: 3; left: 67%; top: 45%; width: 0; height: 0; }
+    .membrane-wrap { position: absolute; left: -110px; top: -110px; width: 220px; height: 220px; transition: transform .9s cubic-bezier(.16,1,.3,1); }
+    .membrane {
+      position: absolute; inset: 12px; display: grid; place-items: center;
+      border: 1px solid rgba(255,220,81,.65); border-radius: 46% 54% 59% 41% / 45% 42% 58% 55%;
+      background: radial-gradient(circle at 40% 34%, rgba(255,255,255,.15), rgba(255,220,81,.07) 45%, rgba(255,220,81,.015) 70%);
+      box-shadow: inset 0 0 40px rgba(255,220,81,.08), 0 0 50px rgba(255,220,81,.07);
+      animation: membrane-morph 8s ease-in-out infinite alternate;
+    }
+    .membrane::before, .membrane::after { content: ""; position: absolute; pointer-events: none; transition: opacity .5s; }
+    .membrane::before { inset: -17px; border: 1px solid rgba(255,220,81,.22); border-radius: 56% 44% 47% 53% / 44% 58% 42% 56%; animation: membrane-turn 16s linear infinite; }
+    .membrane::after { inset: 24px; border: 1px solid rgba(255,255,255,.1); border-radius: 50%; }
+    .liquid-orb-canvas { position: absolute; left: 50%; top: 50%; z-index: 0; width: 340px; height: 340px; transform: translate(-50%,-50%); opacity: 0; transition: opacity .65s; }
+    .living-core[data-orb-backend="webgpu"] .liquid-orb-canvas { opacity: 1; }
+    .living-core[data-orb-backend="webgpu"] .membrane { border-color: transparent; background: transparent; box-shadow: none; animation: none; }
+    .living-core[data-orb-backend="webgpu"] .membrane::before,
+    .living-core[data-orb-backend="webgpu"] .membrane::after { opacity: 0; }
+    .core-avatar { position: relative; z-index: 2; width: 84px; height: 84px; object-fit: cover; border: 1px solid rgba(255,255,255,.58); border-radius: 50%; background: #172536; box-shadow: 0 12px 30px rgba(0,0,0,.3); }
+    .core-voice { position: absolute; left: 50%; top: calc(100% + 24px); transform: translateX(-50%); display: flex; align-items: center; gap: 5px; height: 22px; }
+    .core-voice i { display: block; width: 2px; height: 7px; background: var(--brand); animation: voice-wave 1.8s ease-in-out infinite; }
+    .core-voice i:nth-child(2) { animation-delay: -.45s; }
+    .core-voice i:nth-child(3) { animation-delay: -.9s; }
+    .core-voice i:nth-child(4) { animation-delay: -.25s; }
+    .core-voice i:nth-child(5) { animation-delay: -.65s; }
+    .core-orbit-label { position: absolute; left: 130px; top: -118px; min-width: 130px; color: #cad3df; font-size: 12px; opacity: 0; transform: translateY(8px); transition: opacity .5s, transform .5s; }
+    .living-core[data-family="delegation"] .core-orbit-label,
+    .living-core[data-family="worker-report"] .core-orbit-label { opacity: 1; transform: translateY(0); }
+    .living-core[data-family="delegation"] .membrane-wrap { transform: translateX(-45px) scale(.92); }
+    .living-core[data-family="verification"] .membrane-wrap { transform: scale(1.1); }
+    .living-core[data-family="report-ready"] .membrane-wrap { transform: translateY(-14px) scale(.9); }
+    .living-core[data-family="report-ready"] .core-voice i { animation-iteration-count: 1; opacity: .35; }
+    .hybrid-node { position: absolute; z-index: 4; display: flex; flex-direction: column; align-items: center; gap: 5px; min-width: 92px; color: #dce3eb; opacity: 0; transform: scale(.72); transition: opacity .55s, transform .8s cubic-bezier(.16,1,.3,1); pointer-events: none; }
+    .hybrid-node .hybrid-mark { display: grid; place-items: center; width: 46px; height: 46px; border: 1px solid rgba(255,220,81,.7); border-radius: 50%; background: #111c30; color: var(--brand); font-size: 12px; font-weight: 700; }
+    .hybrid-node span:not(.hybrid-mark) { font-size: 12px; white-space: nowrap; }
+    .hybrid-node small { color: #8e9baf; font-size: 12px; }
+    .hybrid-source { right: 24%; top: 17%; }
+    .hybrid-worker { right: 9%; top: 40%; }
+    .hybrid-evidence { right: 12%; top: 66%; }
+    .living-core[data-topology="structured"] .hybrid-node { opacity: 1; transform: scale(1); }
+    .living-core[data-topology="structured"] .membrane-wrap { transform: translateX(-120px) scale(.85); }
+    .living-core[data-topology="structured"] .core-orbit-label { opacity: 0; }
+    .living-core[data-family="delegation"] .hybrid-source,
+    .living-core[data-family="delegation"] .hybrid-evidence,
+    .living-core[data-family="worker-report"] .hybrid-source { opacity: 0; }
+    .core-participants { position: absolute; z-index: 4; right: 5%; bottom: 7%; width: 42%; display: flex; justify-content: flex-end; gap: 0; }
+    .core-participant { min-width: 0; padding: 0 14px; border-left: 1px solid rgba(148,163,184,.2); }
+    .core-participant:first-child { border-left: 0; }
+    .core-participant small { display: block; margin-bottom: 3px; color: #7e8ca1; font-size: 11px; }
+    .core-participant span { display: block; color: #dce3eb; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .core-open-report { position: absolute; z-index: 5; left: 6%; bottom: 8%; display: none; align-items: center; gap: 18px; border: 0; border-radius: 9px; padding: 12px 16px; background: var(--brand); color: #303133; font-size: 13px; font-weight: 700; box-shadow: 0 8px 28px rgba(255,220,81,.12); }
+    .core-open-report::after { content: "→"; font-size: 17px; transition: transform .25s; }
+    .core-open-report:hover::after { transform: translateX(4px); }
+    .living-core[data-family="report-ready"] .core-open-report { display: flex; animation: core-cta-in .5s cubic-bezier(.16,1,.3,1) both; }
+    .core-footnote { position: absolute; z-index: 4; left: 6%; bottom: 7%; color: #758398; font-size: 11px; }
+    .living-core[data-family="report-ready"] .core-footnote { display: none; }
+    @keyframes membrane-morph {
+      0% { border-radius: 46% 54% 59% 41% / 45% 42% 58% 55%; transform: rotate(-2deg) scale(.97); }
+      50% { border-radius: 58% 42% 45% 55% / 52% 57% 43% 48%; transform: rotate(2deg) scale(1.03); }
+      100% { border-radius: 42% 58% 52% 48% / 58% 45% 55% 42%; transform: rotate(-1deg) scale(1); }
+    }
+    @keyframes membrane-turn { to { transform: rotate(360deg); } }
+    @keyframes voice-wave { 0%,100% { transform: scaleY(.65); opacity: .35; } 50% { transform: scaleY(2.5); opacity: 1; } }
+    @keyframes core-cta-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    .core-family, .core-participant small, .core-footnote { font-size: 12px; }
+    @media (max-width: 1100px) {
+      .core-copy { width: 40%; }
+      .core-copy h1 { font-size: 38px; }
+      .core-entity { left: 72%; }
+      .membrane-wrap { transform: scale(.82); }
+      .living-core[data-family="delegation"] .membrane-wrap { transform: translateX(-35px) scale(.78); }
+      .core-participants { width: 48%; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script src="shared/demo-data.js"></script>
+  <script src="shared/shell.js"></script>
+  <script src="shared/liquid-orb-effect.js"></script>
+  <script src="shared/liquid-orb.js"></script>
+  <script>
+    (() => {
+      const stageHtml = `
+        <div class="core-aurora"></div>
+        <canvas class="core-canvas" aria-hidden="true"></canvas>
+        <div class="core-topline"><div class="core-presence"><img src="assets/logo.png" alt="" /><span>Twin presence</span></div><span class="core-family" data-core-family>Received</span></div>
+        <section class="core-copy" aria-live="polite"><div class="core-kicker" data-core-verb>Received</div><h1 data-core-title></h1><p data-core-caption></p></section>
+        <div class="core-entity"><div class="membrane-wrap"><div class="membrane"><canvas class="liquid-orb-canvas" aria-hidden="true"></canvas><img class="core-avatar" src="assets/current-twin-avatar.jpg" onerror="this.onerror=null;this.src='assets/twinbot.png'" alt="AI_Sunny" /></div><div class="core-voice" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div><span class="core-orbit-label">S9 session</span></div></div>
+        <div class="hybrid-node hybrid-source"><span class="hybrid-mark">02</span><span data-hybrid-source>MetaWeb</span><small>source</small></div>
+        <div class="hybrid-node hybrid-worker"><span class="hybrid-mark">S9</span><span data-hybrid-worker>S9 session</span><small>worker</small></div>
+        <div class="hybrid-node hybrid-evidence"><span class="hybrid-mark">✓</span><span data-hybrid-evidence>Original proof</span><small>evidence</small></div>
+        <div class="core-participants" data-core-participants></div>
+        <div class="core-footnote">Live semantic events, not a page reload</div>
+        <button class="core-open-report" type="button" data-action="open-report">Open report</button>`;
+
+      let canvas, ctx, width = 0, height = 0, raf = 0;
+      let current = null, reduced = false;
+      let orbController = null, orbStarting = false, orbFailed = false;
+      const particles = Array.from({ length: 54 }, (_, index) => {
+        const random = (salt) => {
+          const value = Math.sin(index * 91.731 + salt * 17.17) * 43758.5453;
+          return value - Math.floor(value);
+        };
+        return { angle: random(1) * Math.PI * 2, radius: 110 + random(2) * 250, speed: .12 + random(3) * .35, size: .7 + random(4) * 1.8, drift: random(5) };
+      });
+
+      function resize() {
+        if (!canvas) return;
+        const rect = canvas.getBoundingClientRect();
+        const ratio = Math.min(window.devicePixelRatio || 1, 2);
+        width = rect.width; height = rect.height;
+        canvas.width = Math.max(1, Math.round(width * ratio));
+        canvas.height = Math.max(1, Math.round(height * ratio));
+        ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+      }
+
+      function draw(time = 0) {
+        if (!ctx || !current) return;
+        ctx.clearRect(0, 0, width, height);
+        const t = reduced ? current.stepIndex * 2.7 : time / 1000;
+        const family = current.family;
+        const structured = Boolean(current.topology);
+        const cx = width * (structured ? .56 : family === 'delegation' ? .60 : .67);
+        const cy = height * .45;
+        const energy = family === 'report-ready' ? .18 : family === 'verification' ? .7 : 1;
+        ctx.lineWidth = 1;
+
+        if (structured) {
+          const source = { x: width * .72, y: height * .2 };
+          const worker = { x: width * .87, y: height * .43 };
+          const evidence = { x: width * .84, y: height * .7 };
+          const core = { x: cx, y: cy };
+          const edges = family === 'delegation'
+            ? [[core, worker]]
+            : family === 'worker-report'
+              ? [[core, worker], [worker, evidence], [evidence, core]]
+              : [[core, source], [core, worker], [worker, evidence], [evidence, core]];
+          edges.forEach(([from, to], index) => {
+            ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y);
+            ctx.strokeStyle = 'rgba(255,220,81,.3)'; ctx.lineWidth = 1.1; ctx.stroke();
+            const progress = reduced ? .6 : (t * .2 + index * .27) % 1;
+            ctx.beginPath();
+            ctx.arc(from.x + (to.x - from.x) * progress, from.y + (to.y - from.y) * progress, 3.5, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(255,220,81,.9)'; ctx.fill();
+          });
+        }
+
+        particles.forEach((particle, index) => {
+          const angle = particle.angle + t * particle.speed * energy;
+          let radius = particle.radius;
+          let x = cx + Math.cos(angle) * radius * 1.22;
+          let y = cy + Math.sin(angle) * radius * .68;
+          if (family === 'local-recall') {
+            const pull = .68 + Math.sin(t * .8 + particle.drift * 6) * .18;
+            x = cx + Math.cos(angle) * radius * pull * 1.25;
+            y = cy + Math.sin(angle) * radius * pull * .68;
+          } else if (family === 'delegation' || family === 'worker-report') {
+            const direction = family === 'delegation' ? 1 : -1;
+            const progress = (particle.drift + t * .12) % 1;
+            x = family === 'delegation' ? cx + progress * width * .27 : width * .87 - progress * width * .27;
+            y = cy + Math.sin(progress * Math.PI) * -70 + (particle.drift - .5) * 55;
+            if (index % 3 !== 0) { x = cx + Math.cos(angle) * radius * .65; y = cy + Math.sin(angle) * radius * .45; }
+          } else if (family === 'verification') {
+            const side = index % 2 ? -1 : 1;
+            x = cx + side * 62 + Math.cos(angle) * radius * .52;
+            y = cy + Math.sin(angle) * radius * .52;
+          } else if (family === 'making') {
+            x = cx + ((index % 9) - 4) * 29;
+            y = cy + (Math.floor(index / 9) - 2.5) * 29 + Math.sin(t + particle.drift * 4) * 5;
+          } else if (family === 'browser-action') {
+            const px = (index % 9) / 8, py = Math.floor(index / 9) / 5;
+            const onEdge = index % 9 === 0 || index % 9 === 8 || Math.floor(index / 9) === 0 || Math.floor(index / 9) === 5;
+            x = onEdge ? cx - 170 + px * 340 : cx + Math.cos(angle) * radius * .45;
+            y = onEdge ? cy - 115 + py * 230 : cy + Math.sin(angle) * radius * .35;
+          } else if (family === 'report-ready') {
+            const arc = -Math.PI * .85 + (index / particles.length) * Math.PI * 1.7;
+            x = cx + Math.cos(arc) * 190;
+            y = cy + Math.sin(arc) * 125;
+          }
+          const alpha = family === 'report-ready' ? .18 : .18 + particle.drift * .35;
+          ctx.beginPath();
+          ctx.fillStyle = index % 7 === 0 ? `rgba(255,220,81,${alpha + .2})` : `rgba(211,222,234,${alpha})`;
+          ctx.arc(x, y, particle.size, 0, Math.PI * 2);
+          ctx.fill();
+          if (index % 9 === 0 && family !== 'making') {
+            ctx.beginPath();
+            ctx.strokeStyle = `rgba(255,220,81,${alpha * .35})`;
+            ctx.moveTo(cx, cy); ctx.lineTo(x, y); ctx.stroke();
+          }
+        });
+
+        if (family === 'verification') {
+          ctx.strokeStyle = 'rgba(255,220,81,.38)';
+          ctx.beginPath(); ctx.ellipse(cx - 58, cy, 105, 105, 0, 0, Math.PI * 2); ctx.stroke();
+          ctx.beginPath(); ctx.ellipse(cx + 58, cy, 105, 105, 0, 0, Math.PI * 2); ctx.stroke();
+        }
+        if (!reduced) raf = requestAnimationFrame(draw);
+      }
+
+      function restartCanvas() {
+        cancelAnimationFrame(raf);
+        resize();
+        draw(performance.now());
+      }
+
+      function fallbackOrb(stage, error) {
+        orbFailed = true; orbStarting = false; orbController = null;
+        stage.dataset.orbBackend = 'canvas';
+        window.__orbBackend = 'canvas';
+        window.__orbError = error instanceof Error ? error.message : String(error);
+        restartCanvas();
+      }
+
+      mountBotHubDemo({
+        prototypeLabel: 'A+B · Liquid Presence',
+        stageClass: 'living-core',
+        stageHtml,
+        onScenario: () => { current = null; },
+        onMotion: (value) => { reduced = value; restartCanvas(); },
+        onStep: (event, state) => {
+          const topology = event.topology ?? ['delegation','worker-report','verification','browser-action'].includes(event.family);
+          current = { ...event, ...state, topology };
+          reduced = state.reducedMotion || state.reportOpen || !state.liveEnabled;
+          const stage = document.querySelector('.living-core');
+          stage.dataset.topology = topology ? 'structured' : 'presence';
+          stage.querySelector('[data-core-family]').textContent = event.verb;
+          stage.querySelector('[data-core-verb]').textContent = event.verb;
+          stage.querySelector('[data-core-title]').textContent = event.title;
+          stage.querySelector('[data-core-caption]').textContent = event.caption;
+          stage.querySelector('[data-hybrid-source]').textContent = state.scenarioId === 'bp' ? 'BP source' : 'MetaWeb';
+          stage.querySelector('[data-hybrid-worker]').textContent = state.scenarioId === 'bp' ? 'Screen copy' : 'S9 session';
+          stage.querySelector('[data-hybrid-evidence]').textContent = state.scenarioId === 'bp' ? 'Screenshots' : 'Original proof';
+          stage.querySelector('[data-core-participants]').innerHTML = event.participants.map((participant, index) => `
+            <div class="core-participant"><small>${index === 0 ? 'In focus' : 'Connected'}</small><span>${participant}</span></div>`).join('');
+          if (!reduced) {
+            stage.querySelector('.core-copy').animate([
+              { opacity: .25, transform: 'translateY(10px)' },
+              { opacity: 1, transform: 'translateY(0)' }
+            ], { duration: 520, easing: 'cubic-bezier(.16,1,.3,1)' });
+          }
+          if (!canvas) {
+            canvas = stage.querySelector('.core-canvas');
+            ctx = canvas.getContext('2d');
+            new ResizeObserver(restartCanvas).observe(canvas);
+          }
+          orbController?.setState(event.family, reduced);
+          if (!orbController && !orbStarting && !orbFailed) {
+            orbStarting = true;
+            stage.dataset.orbBackend = 'loading';
+            window.__orbBackend = 'loading';
+            createLiquidOrbRenderer(stage.querySelector('.liquid-orb-canvas'), {
+              onReady: () => {
+                stage.dataset.orbBackend = 'webgpu';
+                window.__orbBackend = 'webgpu';
+              },
+              onError: (error) => fallbackOrb(stage, error)
+            }).then((controller) => {
+              orbController = controller; orbStarting = false;
+              controller.setState(current.family, reduced);
+            }).catch((error) => fallbackOrb(stage, error));
+          }
+          restartCanvas();
+        }
+      });
+      window.addEventListener('pagehide', () => orbController?.dispose());
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BotHub Live Stage - Direction Studies</title>
+  <style>
+    :root { font-family: -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC",sans-serif; color: #172536; background: #edf0f2; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 48px; }
+    header { max-width: 1240px; margin: 0 auto 34px; display: flex; align-items: flex-end; justify-content: space-between; gap: 30px; }
+    .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+    .brand img { width: 36px; height: 36px; border-radius: 9px; }
+    .brand span { font-size: 13px; font-weight: 700; }
+    h1 { margin: 0; max-width: 720px; font-size: clamp(34px,5vw,62px); line-height: .98; letter-spacing: -.055em; }
+    header p { max-width: 400px; margin: 0; color: #64748b; font-size: 14px; line-height: 1.65; }
+    main { max-width: 1240px; margin: auto; display: grid; gap: 24px; }
+    .direction { display: grid; grid-template-columns: minmax(0,1.7fr) minmax(260px,.7fr); overflow: hidden; border: 1px solid #d6dce1; border-radius: 16px; background: #fff; }
+    .direction img { display: block; width: 100%; height: 100%; min-height: 320px; object-fit: cover; object-position: left center; background: #0b1323; }
+    .direction-copy { display: flex; flex-direction: column; padding: 28px; }
+    .direction-label { color: #8a6507; font-size: 12px; font-weight: 700; }
+    .direction h2 { margin: 10px 0; font-size: 28px; letter-spacing: -.035em; }
+    .direction p { margin: 0; color: #64748b; font-size: 14px; line-height: 1.65; }
+    .direction ul { margin: 20px 0; padding: 0; list-style: none; color: #475569; font-size: 13px; line-height: 1.9; }
+    .direction li::before { content: ""; display: inline-block; width: 14px; height: 1px; margin: 0 8px 4px 0; background: #b58b08; }
+    .open { align-self: flex-start; margin-top: auto; padding: 10px 14px; border-radius: 8px; background: #172536; color: #fff; text-decoration: none; font-size: 12px; font-weight: 700; }
+    .note { margin: 14px 0 0; color: #64748b; font-size: 13px; line-height: 1.65; }
+    .direction li, .note { font-size: 14px; }
+    @media (max-width: 850px) { body { padding: 22px; } header { display: block; } header p { margin-top: 20px; } .direction { grid-template-columns: 1fr; } .direction img { min-height: 0; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div><div class="brand"><img src="assets/logo.png" alt="IDBots" /><span>BotHub Live Stage</span></div><h1>Three ways to make work feel alive.</h1></div>
+    <p>One shared event sequence. One persistent stage per direction. Compare presence, spatial clarity, and everyday restraint before selecting a production direction.</p>
+  </header>
+  <main>
+    <section class="direction">
+      <a href="living-core.html"><img src="screenshots/living-core.png" alt="Living Core prototype" /></a>
+      <div class="direction-copy"><span class="direction-label">A+B · Selected hybrid</span><h2>Liquid Presence</h2><p>A WebGPU liquid glass orb carries the current Bot Avatar, then expands into a relationship graph for structured work.</p><ul><li>Current conversation Bot Avatar</li><li>Delegation and dependencies morph into an atlas</li><li>WebGPU with Canvas2D fallback</li></ul><a class="open" href="living-core.html">Open hybrid demo</a></div>
+    </section>
+    <section class="direction">
+      <a href="signal-atlas.html"><img src="screenshots/signal-atlas.png" alt="Signal Atlas prototype" /></a>
+      <div class="direction-copy"><span class="direction-label">B · Spatial interaction</span><h2>Signal Atlas</h2><p>A living map makes sources, workers, evidence, and the owner visible as meaningful relationships.</p><ul><li>Strongest multi-Bot task comprehension</li><li>Camera follows real task paths</li><li>Best for complex orchestration</li></ul><a class="open" href="signal-atlas.html">Open live demo</a></div>
+    </section>
+    <section class="direction">
+      <a href="quiet-presence.html"><img src="screenshots/quiet-presence.png" alt="Quiet Presence prototype" /></a>
+      <div class="direction-copy"><span class="direction-label">C · White-gallery roulette</span><h2>Quiet Presence</h2><p>Paper, alignment, contact shadows, and the pixel Twin create a calm but physical working space.</p><ul><li>Lowest visual fatigue</li><li>Motion explains each state</li><li>Best for a restrained daily experience</li></ul><a class="open" href="quiet-presence.html">Open live demo</a></div>
+    </section>
+    <p class="note">Controls in every demo: choose a scenario, play or pause, inspect each event, toggle Live stage, reduce motion, open the final report, and return to the frozen process. All demo data is scripted and anonymized. No LLM calls are made.</p>
+  </main>
+</body>
+</html>
