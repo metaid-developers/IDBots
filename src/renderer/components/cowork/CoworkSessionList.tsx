@@ -485,21 +485,31 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
     }
   };
 
-  // Double-click on the by-Bot list's blank space collapses every expanded
-  // folder at once: all bot groups plus the Autonomous and Follow-Up folds.
-  // Each piece is persisted through its own existing single-toggle write
-  // (same try/catch posture: a localStorage failure only loses the memory,
-  // the collapse still applies for this session). This is an explicit
-  // collapse, not a toggle, so a stray second double-click cannot re-open
-  // anything. Blank space means "not on anything clickable": session rows
-  // are plain divs (CoworkSessionItem's root carries cursor-pointer, not a
-  // button role), so the guard matches the interactive elements AND the row
-  // root's cursor-pointer signature — double-clicking a row, a group-header
-  // button, or the trailing + keeps their single-click behaviors untouched.
-  const collapseAllGroups = (event: React.MouseEvent<HTMLDivElement>) => {
-    const target = event.target as HTMLElement;
-    if (target.closest('button, a, [role="button"], input, .cursor-pointer')) return;
-    if (!botGrouped) return;
+  // Double-click on the by-Bot list viewport's blank space collapses every
+  // expanded folder at once: all bot groups plus the Autonomous and
+  // Follow-Up folds. Each piece is persisted through its own existing
+  // single-toggle write (same try/catch posture: a localStorage failure
+  // only loses the memory, the collapse still applies for this session).
+  // This is an explicit collapse, not a toggle, so a stray second
+  // double-click cannot re-open anything.
+  //
+  // "Blank" is decided by WHERE THE DOUBLE-CLICK LANDED, not by which zone
+  // it sits in (owner's red-box test 2026-11-10: the leading strip beside
+  // the rows is the intended target, and those rows are full-width plain
+  // divs — their left margin is visually blank but DOM-wise part of the
+  // row). So the guard rejects only actual content: interactive elements
+  // (buttons, links, inputs) and text/media nodes (titles, avatars,
+  // timestamps). A double-click landing on a row's own empty box, the
+  // gaps between sections, the space under the last row, or the viewport's
+  // gutters all count as blank; a double-click on any title, avatar, or
+  // button keeps its own single-click behavior. Note the row's own click
+  // still fires first (two clicks = two selects) — selecting semantics are
+  // untouched; only the folder collapse rides on top.
+  const collapseAllGroups = (event: MouseEvent) => {
+    const target = event.target as HTMLElement | null;
+    if (!target || !botGrouped) return;
+    if (target.closest('button, a, [role="button"], input, textarea, select, [contenteditable="true"]')) return;
+    if (target.closest('img, svg, span, time, p, h1, h2, h3, h4, h5, h6, label')) return;
     const next = new Set(collapsedGroupKeys);
     botGrouped.groups.forEach((group) => next.add(group.key));
     setCollapsedGroupKeys(next);
@@ -527,6 +537,20 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
       // localStorage unavailable; the section still collapses for this session.
     }
   };
+
+  // The listener rides on the VIEWPORT — the list's scroll container, this
+  // root's parent element — one level above the rows. That element is what
+  // the user experiences as "the list", and attaching here covers every
+  // blank zone in one reach: the space under the last row, the gaps between
+  // sections, and the rows' own leading margins. Re-attached whenever the
+  // collapse inputs change so the handler never closes over a stale set.
+  useEffect(() => {
+    if (!botGrouped) return;
+    const viewport = rootRef.current?.parentElement;
+    if (!viewport) return;
+    viewport.addEventListener('dblclick', collapseAllGroups);
+    return () => viewport.removeEventListener('dblclick', collapseAllGroups);
+  }, [botGrouped, collapsedGroupKeys, groupFace]);
 
   // The row takes the session id for every action and one shared clock/language,
   // so that two consecutive renders of an unchanged row produce referentially
@@ -741,7 +765,7 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
   // online face only groups bots that actually have a conversation.
   if (botGrouped) {
     return (
-      <div ref={rootRef} onDoubleClick={collapseAllGroups}>
+      <div ref={rootRef}>
         {renderPinnedSection(botGrouped.pinned)}
         {renderAutoTasksSection()}
         {renderFollowUpSection()}
