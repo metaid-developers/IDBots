@@ -12,6 +12,14 @@ import path from 'node:path';
 // panelMessageTimestamp.test.ts (group-end predicate); this file pins the
 // wiring so a refactor cannot quietly re-grow per-bubble stamps, drop the
 // card's family cues, or re-deadlock the cancel button mid-stream.
+//
+// SUPERSEDED IN PLACE (pass #5, delegation 7459ba51 / step b64861e1,
+// 2026-11-10, merged three-item card): the stamp is now the TWIN side's
+// group-end line and reads by DEFAULT — the pass #3 hover reveal
+// (visibility toggles, reserved invisible slot, `group` hover proxy) is
+// retired per the owner's new口径, and the pending card gets the real
+// speaker name from the panel. The two ① tests below pin the pass #5
+// contract; the pass #5 surface itself lives in panelPurityPass5Wiring.test.mjs.
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
 
@@ -25,27 +33,40 @@ const tilesSource = read('src/renderer/components/cowork/CoworkQuotedSelectionTi
 const inputSource = read('src/renderer/components/cowork/CoworkPromptInput.tsx');
 const i18nSource = read('src/renderer/services/i18n.ts');
 
-test('① group-end predicate: sender adjacency, no time gap, exported and wired', () => {
+test('① group-end predicate: sender adjacency, no time gap, exported and twin-side-only', () => {
   // The predicate itself: adjacency by message type flip.
   assert.match(timestampSource, /export const isPanelMessageGroupEnd/);
   assert.match(timestampSource, /return !next \|\| next\.type !== current\.type;/);
-  // The panel feeds it the RENDERED sequence with the map index.
-  assert.match(panelSource, /showTimestamp=\{isPanelMessageGroupEnd\(visibleMessages, index\)\}/);
+  // The panel feeds it the RENDERED sequence with the map index, scoped to
+  // the twin side (pass #5 ③): a user row never carries the stamp.
+  assert.match(panelSource, /showTimestamp=\{message\.type === 'assistant' && isPanelMessageGroupEnd\(visibleMessages, index\)\}/);
   assert.match(panelSource, /const renderMessage = \(message: CoworkMessage, index: number\) =>/);
 });
 
-test('① the stamp is hover-revealed with reserved space (no hover jitter)', () => {
-  // Owner refinement 2026-11-10: mount-on-hover made the bubble grow under
-  // the pointer and jitter the transcript. The row now ALWAYS mounts with
-  // its height reserved; the reveal toggles visibility only, never display.
-  assert.match(panelSource, /stampOnlyRow \? 'invisible group-hover:visible' : 'flex'/);
-  // A chip-carrying row stays mounted, and its stamp still waits for hover.
-  assert.match(panelSource, /'invisible group-hover:inline'/);
-  // The reveal is driven by a group-scoped hover proxy on the row wrapper.
-  const groupWrappers = panelSource.match(/data-panel-message-id=\{message\.id\} className="group /g) ?? [];
-  assert.equal(groupWrappers.length, 3, 'all three bubble branches carry the group hover proxy');
-  // Non-group-end rows render no stamp at all, even when a label exists.
-  assert.match(panelSource, /\{timestampLabel \? \(\n\s*showTimestamp \? \(/);
+test('① the stamp is default-visible on assistant group-end rows (hover reveal retired)', () => {
+  // Pass #5 ③④: no hover gating — the meta row mounts only when it has
+  // content and reads by default. The pass #3 machinery (reserved invisible
+  // slot, visibility toggles, `group` hover proxy) is gone for good.
+  assert.doesNotMatch(panelSource, /group-hover:/);
+  assert.doesNotMatch(panelSource, /stampOnlyRow/);
+  assert.doesNotMatch(panelSource, /className="group /);
+  // Defense-in-depth in the row: a user bubble never carries a stamp,
+  // whatever a caller passes.
+  assert.match(panelSource, /const showStamp = showTimestamp && !isUser;/);
+  // The row mounts only when it has content (stamp or chip)…
+  assert.match(panelSource, /showStamp \|\| hasReactionChip \? \(/);
+  // …aligns with the bubble side (user right, assistant left)…
+  assert.match(panelSource, /isUser \? 'justify-end' : 'justify-start'/);
+  // …and the row reads [👍chip][time] — chip first, stamp second.
+  const metaRowBlock = panelSource.match(/data-slot="panel-message-meta"[\s\S]*?\) : null;/)?.[0] ?? '';
+  assert.ok(metaRowBlock, 'meta row block found');
+  const chipIndex = metaRowBlock.indexOf('data-panel-reaction-chip');
+  const stampIndex = metaRowBlock.indexOf('data-panel-message-timestamp');
+  assert.ok(chipIndex !== -1, 'reaction chip wired in the row');
+  assert.ok(stampIndex !== -1, 'stamp wired in the row');
+  assert.ok(chipIndex < stampIndex, 'assistant rows read [chip][time]');
+  // The stamp renders only when formatting produced one.
+  assert.match(panelSource, /\{showStamp && timestampLabel \? \(/);
 });
 
 test('② the pending quote is a Telegram-style card in the sent-quote family', () => {
