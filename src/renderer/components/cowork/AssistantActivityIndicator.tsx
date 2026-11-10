@@ -6,7 +6,11 @@ import { isRenderableAvatarSource } from '../../utils/avatarSource';
 import { splitThinkTaggedContent } from './ThinkingBlock';
 import { drawTurnAckPhrase, findTailTurnAck } from './turnAckPhrases';
 import {
-  ASSISTANT_IDLE_POOLS,
+  ASSISTANT_COORDINATE_POOLS,
+  ASSISTANT_CONTINUE_POOLS,
+  ASSISTANT_DIGEST_POOLS,
+  ASSISTANT_PROJECTED_POOLS,
+  ASSISTANT_RESUME_POOLS,
   ASSISTANT_THINKING_POOLS,
   ASSISTANT_WORK_POOLS,
   ASSISTANT_WRITING_POOLS,
@@ -14,48 +18,44 @@ import {
   describeToolUseStatus,
   drawAssistantStatusPhrase,
   formatWaitSuffix,
+  isResumeSpliceContent,
   type AssistantStatusLanguage,
 } from './assistantStatusPhrases';
 
 const DEFAULT_BOT_AVATAR = getDefaultMetabotAvatarUrl();
 
-/** Idle rotation cadence — the fallback pool is the only rotating surface. */
-const IDLE_ROTATE_INTERVAL_MS = 3000;
-
 /** 1s tick drives the waiting-phase elapsed suffix ("· 已 45 秒"). */
 const TICK_INTERVAL_MS = 1000;
 
+/** The projection tool whose landed result means the artifact is on screen. */
+const PROJECT_TOOL = 'bot_browser_preview_local';
+
+/** Subagent events that mean a delegation is LIVE right now. */
+const LIVE_SUBAGENT_EVENTS = new Set(['task_started', 'task_progress', 'tool_progress']);
+
 /**
  * Assistant-mode replacement for StreamingActivityBar: the session bot's
- * avatar with a soft breathing ring plus a status line that tells the owner
- * WHAT is happening, not just that something is (owner ruling 2026-11-10,
- * session 42b6a16d follow-up: the old fixed keys + 3s blind rotation read as
- * "a few words circling", and a 7m45s provider retry storm read as silence).
+ * avatar with a soft breathing ring plus a status line that names the phase
+ * the bot is actually IN. Revision 2 (owner ruling 2026-11-11, session
+ * b817372f): the old fallback rotated idle/warm-up/completion phrases on a
+ * 3s timer, so a 429-storm session (where every auto-resume splice breaks
+ * the runtime-status tail run) showed "热身/蓄力/马上就好" looping like a
+ * recording while the Studio right pane already displayed the projected
+ * HTML. Rules now:
  *
- * Status resolution, most specific wins:
- *   1. api_retry — with the real attempt/max counters the runtime payload
- *      already carries (lead-in phrase from a shuffle pool).
- *   2. Visible reply text streaming — writing pool.
- *   3. Pending tool_use — event-derived line from the tool's OWN object:
- *      "正在执行：pdftoppm -png …", "正在修改 bp-2026-11.html" (the tone
- *      stays conversational; the object is the information).
- *   4. turnGoal — the LLM-authored per-turn headline emitted by the main
- *      process pre-first-token, shown verbatim with an elapsed suffix.
- *   5. Heuristic activity keys (search_local / verify_delivery).
- *   6. Turn-ack tier phrase (existing shuffle bag).
- *   7. Thinking pool with elapsed suffix; idle pool rotates as the fallback.
- *
- * Phrase stability: every pool draw is keyed by (session, phase, instance id)
- * via drawAssistantStatusPhrase — a phase holds ONE phrase for its whole
- * lifetime (no re-roll per tick), and the elapsed suffix is the only part
- * that ticks.
+ *   - NO timer rotation anywhere; every phrase is stable for its phase
+ *     instance (only the waiting-phase elapsed suffix ticks).
+ *   - Completion words exist ONLY in the writing pool (visible text actually
+ *     streaming); no other state may promise or imply "almost done".
+ *   - Phase precedence, most specific wins: retry counters → writing →
+ *     pending tool (its own object) → live delegation (subagent events /
+ *     worker tools) → projected artifact → turn-goal headline → heuristic
+ *     activity → ack tier → resume-from-interruption → thinking → digesting
+ *     (inter-step gap) → neutral continue fallback.
  *
  * Single placement: `inline` inside the transcript at the reply position,
- * where it is assistant mode's only activity indicator. It stays visible
- * through the ENTIRE running state — pre-first-token wait, narration and
- * reply streaming, tool runs, hidden thinking — and only its status line
- * differentiates the phases. Professional mode keeps the above-composer
- * StreamingActivityBar.
+ * where it is assistant mode's only activity indicator. Professional mode
+ * keeps the above-composer StreamingActivityBar.
  */
 export const AssistantActivityIndicator: React.FC<{
   messages: CoworkMessage[];
@@ -122,6 +122,76 @@ export const AssistantActivityIndicator: React.FC<{
       }
     }
     return signals;
+  }, [messages]);
+
+  // Live-delegation signal: the newest subagent event message decides whether
+  // a delegation is running RIGHT NOW (task started/progress/tool progress)
+  // or has settled (completed/notification/failure → not delegating).
+  const delegating = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const payload = messages[i].metadata?.subagentEvent as
+        | { event?: unknown; taskId?: unknown }
+        | undefined;
+      if (!payload || typeof payload !== 'object') continue;
+      const event = typeof payload.event === 'string' ? payload.event : '';
+      if (!event) continue;
+      if (LIVE_SUBAGENT_EVENTS.has(event)) {
+        return { active: true, taskId: typeof payload.taskId === 'string' ? payload.taskId : '' };
+      }
+      return { active: false, taskId: '' };
+    }
+    return { active: false, taskId: '' };
+  }, [messages]);
+
+  // Projection state: the newest ANSWERED bot_browser_preview_local call —
+  // the artifact is on the big screen and the turn is still going. The
+  // status must acknowledge what the owner can see.
+  const projected = useMemo(() => {
+    const toolResultIds = new Set<string>();
+    for (const msg of messages) {
+      const id = msg.metadata?.toolUseId;
+      if (typeof id === 'string' && msg.type === 'tool_result') {
+        toolResultIds.add(id);
+      }
+    }
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.type === 'tool_use'
+        && msg.metadata?.toolName === PROJECT_TOOL) {
+        const id = msg.metadata?.toolUseId;
+        if (typeof id === 'string' && toolResultIds.has(id)) {
+          return { messageId: id };
+        }
+      }
+    }
+    return null;
+  }, [messages]);
+
+  // Inter-step gap: the newest CONCRETE transcript message (skipping the
+  // runtime-status system run) is a tool_result — its answer landed and no
+  // pending tool, stream, or request has superseded it yet.
+  const digesting = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.type === 'system') continue;
+      return msg.type === 'tool_result';
+    }
+    return false;
+  }, [messages]);
+
+  // Resume-from-interruption: the newest user message is the runner's
+  // auto-resume splice (provider-death turn) — say THAT, not generic words.
+  const resuming = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.type === 'user') {
+        const content = typeof msg.content === 'string' ? msg.content : '';
+        return isResumeSpliceContent(content);
+      }
+      // A concrete bot action after the splice means it already resumed.
+      if (msg.type === 'assistant' || msg.type === 'tool_use') return false;
+    }
+    return false;
   }, [messages]);
 
   const ackPhrase = useMemo(
@@ -210,7 +280,8 @@ export const AssistantActivityIndicator: React.FC<{
         bagKey: `${scope}|${tailSignals.retryMessageId}`,
       });
     }
-    // 2. Visible reply text streaming.
+    // 2. Visible reply text streaming — the ONLY phase allowed to speak of
+    //    wrapping up (the words are literally on screen).
     if (streamingTextMessageId !== null) {
       return drawAssistantStatusPhrase({
         key: `writing:${scope}|${language}|${streamingTextMessageId}`,
@@ -231,7 +302,16 @@ export const AssistantActivityIndicator: React.FC<{
         language,
       });
     }
-    // 4. LLM turn-goal headline — specific beats every generic waiting
+    // 4. Live delegation — subagent events say a worker is running NOW.
+    if (delegating.active) {
+      return drawAssistantStatusPhrase({
+        key: `delegate:${scope}|${language}|${delegating.taskId}`,
+        bagScope: `${scope}|${language}|delegate`,
+        pool: ASSISTANT_COORDINATE_POOLS[language],
+        language,
+      });
+    }
+    // 5. LLM turn-goal headline — specific beats every generic waiting
     //    phrase; shown with the elapsed suffix (the phase it exists for is
     //    exactly the silent pre-first-token wait).
     if (tailSignals.goalPhrase && tailSignals.goalMessageId !== null) {
@@ -242,15 +322,34 @@ export const AssistantActivityIndicator: React.FC<{
       const suffix = formatWaitSuffix(now - phaseClock.current.startedAt, language);
       return `${tailSignals.goalPhrase}${suffix}`;
     }
-    // 5. Heuristic activity keys.
+    // 6. Projected artifact — the owner can SEE the deliverable; the status
+    //    acknowledges it instead of rotating generic waiting words.
+    if (projected !== null) {
+      return drawAssistantStatusPhrase({
+        key: `projected:${scope}|${language}|${projected.messageId}`,
+        bagScope: `${scope}|${language}|projected`,
+        pool: ASSISTANT_PROJECTED_POOLS[language],
+        language,
+      });
+    }
+    // 7. Heuristic activity keys.
     if (activityKey && (tailTurnAck || tailSignals.sawRequesting)) {
       return i18nService.t(activityKey);
     }
-    // 6. Turn-ack tier phrase.
+    // 8. Turn-ack tier phrase.
     if (ackPhrase && tailTurnAck) {
       return ackPhrase;
     }
-    // 7. Thinking pool + elapsed suffix.
+    // 9. Resume-from-interruption — the turn is a provider-death recovery.
+    if (resuming) {
+      return drawAssistantStatusPhrase({
+        key: `resume:${scope}|${language}|cont`,
+        bagScope: `${scope}|${language}|resume`,
+        pool: ASSISTANT_RESUME_POOLS[language],
+        language,
+      });
+    }
+    // 10. Thinking pool + elapsed suffix (request in flight).
     if (tailSignals.sawRequesting) {
       const key = `thinking:${scope}|${language}|${tailTurnAck?.messageId ?? tailSignals.goalMessageId ?? 'cont'}`;
       if (phaseClock.current.key !== key) {
@@ -264,10 +363,22 @@ export const AssistantActivityIndicator: React.FC<{
       });
       return `${phrase}${formatWaitSuffix(now - phaseClock.current.startedAt, language)}`;
     }
-    // 8. Idle fallback — the only rotating surface (3s cadence, 10-phrase bag).
-    const idlePool = ASSISTANT_IDLE_POOLS[language];
-    const idleIndex = Math.floor(now / IDLE_ROTATE_INTERVAL_MS) % idlePool.length;
-    return fallbackText || idlePool[idleIndex];
+    // 11. Inter-step gap — a tool result landed, nothing in flight yet.
+    if (digesting) {
+      return drawAssistantStatusPhrase({
+        key: `digest:${scope}|${language}|cont`,
+        bagScope: `${scope}|${language}|digest`,
+        pool: ASSISTANT_DIGEST_POOLS[language],
+        language,
+      });
+    }
+    // 12. Cold-start fallback — neutral, stable, no theater.
+    return fallbackText || drawAssistantStatusPhrase({
+      key: `continue:${scope}|${language}`,
+      bagScope: `${scope}|${language}|continue`,
+      pool: ASSISTANT_CONTINUE_POOLS[language],
+      language,
+    });
   };
 
   const avatarSrc = isRenderableAvatarSource(avatar) ? avatar! : DEFAULT_BOT_AVATAR;
@@ -287,10 +398,9 @@ export const AssistantActivityIndicator: React.FC<{
       </div>
       {/* The status line gets a calm light-sweep shimmer (CSS class in
           index.css, gated on prefers-reduced-motion: no-preference); the
-          glyphs themselves never move. 15px + primary-ish ink: the status is
-          the only thing talking during a long bubble phase, so it reads as
-          body text, not fine print. */}
-      <span className="assistant-status-shimmer min-w-0 truncate text-[15px] dark:text-claude-darkText text-claude-text">
+          glyphs themselves never move. Size back to text-sm per owner
+          feedback 2026-11-11 — the 15px bump read as too loud. */}
+      <span className="assistant-status-shimmer min-w-0 truncate text-sm dark:text-claude-darkText text-claude-text">
         {getStatusText()}
       </span>
     </div>

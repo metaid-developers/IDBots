@@ -1,23 +1,28 @@
 /**
  * Assistant-mode activity indicator phrase pools + event-derived status lines
- * — the renderer half of the bubble-phase display upgrade (owner-approved
- * 2026-11-10, session 42b6a16d follow-up: "几个词在轮换" reads as idle, and a
- * 7-minute invisible retry storm reads as silence).
+ * — the renderer half of the bubble-phase display upgrade.
  *
- * Three sources feed the status line, in the priority the indicator applies:
- *   1. EVENT-DERIVED (zero tokens): the newest runtime event names what is
- *      actually happening — a pending tool_use becomes "正在执行：pdftoppm
- *      -png 第 3 页…", an api_retry becomes "连接不太稳，第 3/8 次重试中…"
- *      (the retry counters already rode the sdkRuntimeStatus payload; the
- *      old wording deliberately hid them). The tone stays non-technical —
- *      objects and counts, never tool jargon or stack traces.
- *   2. LLM HEADLINE (tens of tokens/turn): the main process emits one
- *      progressive goal phrase per turn (`sdkRuntimeStatus: 'turnGoal'`).
- *      Pure rendering here — the pools only cover turns whose goal call
- *      failed or has not landed yet.
- *   3. PRESET POOLS (this file): the generic phases (thinking / writing /
- *      working / idle) rotate through 6-10 phrase pools via the same
- *      shuffle-bag contract as turnAckPhrases — no back-to-back repeats.
+ * Revision 2 (owner feedback 2026-11-11, session b817372f): revision 1's
+ * fallback pool rotated on a 3s timer, and it contained completion-flavored
+ * words ("马上就好…", "还有一小会儿…") plus warm-up theater ("正在热身…").
+ * A 429-storm session surfaced both flaws: every auto-resume splice breaks
+ * the runtime-status tail run, the renderer fell through to the rotating
+ * pool, and the owner watched "热身/蓄力" loop like a recording while the
+ * Studio right pane already showed the projected HTML. Rules now:
+ *
+ *   - NO TIMER ROTATION anywhere. Every phase draws ONE phrase per instance
+ *     (keyed by session + phase + the runtime-status/tool message id) and
+ *     holds it until the phase instance changes; a full pool cycle never
+ *     repeats (shuffle bag per rotation scope).
+ *   - COMPLETION WORDS live ONLY in the writing pool (phrases shown while
+ *     reply text is actually streaming — the one state where "收尾/almost
+ *     done" is honest). No other pool may carry them.
+ *   - PHASE-ACCURATE pools, one per real working state: thinking, writing,
+ *     working (tool with its own object), coordinating (delegation via
+ *     worker tools / live subagent events), projecting (the artifact already
+ *     on the big screen), digesting (tool result landed, next step not yet
+ *     in flight), resuming (auto-resume after a provider interruption),
+ *     retry lead-ins, and a minimal continue fallback.
  *
  * Pure and dependency-free so it is unit-testable in plain Node.
  */
@@ -25,49 +30,51 @@
 export type AssistantStatusLanguage = 'zh' | 'en';
 
 /**
- * Owner-approved pools (zh originals 2026-11-10; en mirrors the same voice).
- * Sizes are deliberate: thinking and idle carry the most wall-clock time and
- * need the most ammunition; writing and retry leads rotate less.
+ * Owner-approved pools (zh originals 2026-11-11; en mirrors the same voice).
+ * Sizes stay small on purpose: phrases are STABLE per phase instance now, so
+ * a human reads one phrase per state change, not a carousel — variety comes
+ * from state changes, not from re-rolling.
  */
 export const ASSISTANT_THINKING_POOLS: Record<AssistantStatusLanguage, readonly string[]> = {
   zh: [
     '正在思考…',
     '正在琢磨…',
     '正在理思路…',
-    '正在打腹稿…',
     '正在认真想…',
     '正在推敲细节…',
     '正在消化你的问题…',
-    '正在想怎么答…',
   ],
   en: [
     'Thinking…',
     'Pondering…',
     'Sorting out the approach…',
-    'Drafting in my head…',
     'Thinking it through…',
     'Weighing the details…',
     'Digesting your question…',
-    'Figuring out the answer…',
   ],
 };
 
+/**
+ * Shown while visible reply text is actually streaming — the ONLY pool where
+ * completion-flavored wording is allowed ("收尾" is honest here: text is on
+ * screen and the turn is wrapping up).
+ */
 export const ASSISTANT_WRITING_POOLS: Record<AssistantStatusLanguage, readonly string[]> = {
   zh: [
     '正在输出中…',
     '正在写回复…',
-    '正在敲字…',
     '正在组织语言…',
-    '正在落笔…',
     '正在把结果写出来…',
+    '正在收尾总结…',
+    '正在写出最终结果…',
   ],
   en: [
     'Writing the reply…',
     'Putting it into words…',
-    'Typing it out…',
     'Composing the answer…',
     'Writing it up…',
-    'Getting it down on paper…',
+    'Wrapping up the summary…',
+    'Writing the final result…',
   ],
 };
 
@@ -91,6 +98,7 @@ export const ASSISTANT_RETRY_LEAD_POOLS: Record<AssistantStatusLanguage, readonl
   ],
 };
 
+/** Generic tool work when the specific tool has no nameable object. */
 export const ASSISTANT_WORK_POOLS: Record<AssistantStatusLanguage, readonly string[]> = {
   zh: [
     '正在使用工具…',
@@ -98,8 +106,6 @@ export const ASSISTANT_WORK_POOLS: Record<AssistantStatusLanguage, readonly stri
     '正在一步步推进…',
     '正在执行任务…',
     '正在处理细节…',
-    '正在忙活…',
-    '正在多手准备…',
     '正在埋头苦干…',
   ],
   en: [
@@ -108,36 +114,88 @@ export const ASSISTANT_WORK_POOLS: Record<AssistantStatusLanguage, readonly stri
     'Stepping through it…',
     'Executing the task…',
     'Handling the details…',
-    'Busy at work…',
-    'Juggling a few things…',
     'Heads-down at work…',
   ],
 };
 
-export const ASSISTANT_IDLE_POOLS: Record<AssistantStatusLanguage, readonly string[]> = {
+/** Delegation: worker tools in flight, or live subagent events on the channel. */
+export const ASSISTANT_COORDINATE_POOLS: Record<AssistantStatusLanguage, readonly string[]> = {
   zh: [
-    '正在思考…',
-    '正在查资料…',
-    '正在整理结果…',
-    '马上就好…',
-    '还有一小会儿…',
-    '发现了一些有趣的线索…',
-    '正在整理思路…',
-    '正在热身…',
-    '正在蓄力…',
-    '正在准备动手…',
+    '正在和其他 Bot 沟通…',
+    '正在协调分身执行…',
+    '正在给协作 Bot 派活…',
+    '正在跟进协作进度…',
   ],
   en: [
-    'Thinking…',
-    'Looking things up…',
-    'Organizing results…',
-    'Almost there…',
-    'Just a little longer…',
-    'Found some interesting leads…',
-    'Sorting out my thoughts…',
-    'Warming up…',
-    'Gearing up…',
-    'Getting ready to dig in…',
+    'Coordinating with other bots…',
+    'Directing the subagent…',
+    'Handing work to a partner bot…',
+    'Following up on the delegation…',
+  ],
+};
+
+/**
+ * The deliverable is ALREADY on the big screen (bot_browser_preview_local
+ * landed) and the turn keeps running — the status must acknowledge what the
+ * owner can see, never fall back to generic waiting words (session b817372f:
+ * the Studio right pane showed the HTML while the left rotated "热身").
+ */
+export const ASSISTANT_PROJECTED_POOLS: Record<AssistantStatusLanguage, readonly string[]> = {
+  zh: [
+    '成品已投屏，正在继续完善…',
+    '大屏已在展示，正在打磨细节…',
+    '投屏已更新，正在补充后续内容…',
+  ],
+  en: [
+    'Draft is on the big screen — refining…',
+    'The stage is showing the result; polishing details…',
+    'Projection updated — adding the finishing touches…',
+  ],
+};
+
+/** Tool result landed, next LLM step not yet in flight — the inter-step gap. */
+export const ASSISTANT_DIGEST_POOLS: Record<AssistantStatusLanguage, readonly string[]> = {
+  zh: [
+    '正在消化刚才的结果…',
+    '正在核对拿到的东西…',
+    '正在衔接下一步…',
+    '正在整理阶段性进展…',
+  ],
+  en: [
+    'Digesting the last result…',
+    'Checking what came back…',
+    'Setting up the next step…',
+    'Sorting the progress so far…',
+  ],
+};
+
+/** Auto-resume after a provider interruption splice — honest recovery copy. */
+export const ASSISTANT_RESUME_POOLS: Record<AssistantStatusLanguage, readonly string[]> = {
+  zh: [
+    '正在从刚才的中断里恢复…',
+    '正在接着刚才的进度继续…',
+    '正在重新拉起任务…',
+  ],
+  en: [
+    'Picking up from the interruption…',
+    'Continuing where it left off…',
+    'Relaunching the task…',
+  ],
+};
+
+/**
+ * Cold-start fallback (no runtime signal at all yet). Deliberately tiny and
+ * neutral — no warm-up theater, no completion promises; this state lasts
+ * seconds before the goal headline or the requesting marker lands.
+ */
+export const ASSISTANT_CONTINUE_POOLS: Record<AssistantStatusLanguage, readonly string[]> = {
+  zh: [
+    '正在继续处理…',
+    '正在推进…',
+  ],
+  en: [
+    'Continuing to work…',
+    'Making progress…',
   ],
 };
 
@@ -173,12 +231,12 @@ function drawFromBag(bagKey: string, pool: readonly string[]): string {
 
 /**
  * Stable draw for one status-line instance. `key` identifies the INSTANCE
- * (session + phase + runtime-status message id): the first call draws from
- * the bag, every later call for the same key returns the remembered phrase —
- * a phase holds one wording for its whole lifetime (the "低改变频率"
- * requirement). `bagScope` identifies the ROTATION scope (session + language
- * + phase NAME): consecutive instances of one phase draw from the same bag,
- * so pool-size consecutive turns never repeat a phrase.
+ * (session + phase + runtime-status/tool message id): the first call draws
+ * from the bag, every later call for the same key returns the remembered
+ * phrase — a phase holds one wording for its whole lifetime (no timer
+ * re-roll, ever). `bagScope` identifies the ROTATION scope (session +
+ * language + phase NAME): consecutive instances of one phase draw from the
+ * same bag, so pool-size consecutive instances never repeat a phrase.
  */
 export function drawAssistantStatusPhrase(input: {
   key: string;
@@ -249,8 +307,14 @@ const WRITE_TOOLS = new Set([
   'write', 'edit', 'multi_edit', 'str_replace_editor', 'str_replace_based_edit_tool',
   'notebook_edit', 'create_file',
 ]);
-const SEARCH_SESSION_TOOLS = new Set(['conversation_search', 'idbots_session_read_all', 'session_search']);
-const WEB_TOOLS = new Set(['web_search', 'webfetch', 'web_fetch', 'open_url', 'browser_navigate']);
+const SEARCH_SESSION_TOOLS = new Set([
+  'conversation_search', 'idbots_session_read_all', 'idbots_session_read_latest', 'session_search',
+]);
+const PROJECT_TOOL = 'bot_browser_preview_local';
+const COORDINATE_TOOLS = new Set([
+  'local_worker_delegate', 'worker_delegate', 'twin_task_create', 'send_group_message',
+]);
+const COORDINATE_STATUS_TOOLS = new Set(['twin_task_status', 'worker_status', 'twin_task_list']);
 const TODO_TOOLS = new Set(['todo_write', 'todo_read', 'todowrite', 'todoread']);
 const SHELL_TOOLS = new Set(['bash', 'pwsh', 'bash_persistent', 'pwsh_persistent']);
 const MEMORY_TOOLS_PREFIX = 'memory_';
@@ -258,8 +322,14 @@ const KNOWLEDGE_TOOLS_PREFIX = 'knowledge_';
 const SKILL_TOOLS_PREFIX = 'skill';
 const DELEGATE_TOOLS = new Set(['task', 'agent', 'subagent', 'spawn_agent', 'agent_team']);
 const ONCHAIN_TOOLS = new Set(['omni_read', 'mrc721_collection_create', 'mrc721_mint', 'mrc721_transfer']);
+const WEB_TOOL_SET = new Set(['web_search', 'webfetch', 'web_fetch', 'open_url', 'browser_navigate']);
+const BROWSER_TOOLS_PREFIXES = ['mcp__playwright', 'browser_', 'bot_browser_'];
 
 const MAX_OBJECT_CHARS = 32;
+
+function matchesBrowserTool(name: string): boolean {
+  return BROWSER_TOOLS_PREFIXES.some((prefix) => name.startsWith(prefix));
+}
 
 /**
  * Event-derived status for a pending tool call — the specific "what is it
@@ -279,6 +349,15 @@ export function describeToolUseStatus(
   const clip = (text: string): string => truncateUnits(oneLine(text), MAX_OBJECT_CHARS);
   const objectOf = (): string => clip(firstString(toolInput, ['query', 'pattern', 'url', 'file_path', 'path', 'command', 'target']));
 
+  if (name === PROJECT_TOOL) {
+    return zh ? '正在投屏到大屏…' : 'Projecting to the big screen…';
+  }
+  if (COORDINATE_TOOLS.has(name)) {
+    return zh ? '正在委派 Bot 协作…' : 'Delegating to a partner bot…';
+  }
+  if (COORDINATE_STATUS_TOOLS.has(name)) {
+    return zh ? '正在跟进协作进度…' : 'Checking on the delegation…';
+  }
   if (SHELL_TOOLS.has(name)) {
     const command = firstString(toolInput, ['command']);
     if (!command) return zh ? '正在执行命令…' : 'Running a command…';
@@ -302,7 +381,16 @@ export function describeToolUseStatus(
       ? (zh ? `正在翻找会话：${clip(query)}` : `Searching chats: ${clip(query)}`)
       : (zh ? '正在翻找会话记录…' : 'Searching past chats…');
   }
-  if (WEB_TOOLS.has(name)) {
+  if (matchesBrowserTool(name)) {
+    if (name.includes('screenshot')) {
+      return zh ? '正在截屏核对效果…' : 'Taking a check-up screenshot…';
+    }
+    const target = firstString(toolInput, ['query', 'url']);
+    return target
+      ? (zh ? `正在操作浏览器：${clip(target)}` : `Using the browser: ${clip(target)}`)
+      : (zh ? '正在操作浏览器…' : 'Using the browser…');
+  }
+  if (WEB_TOOL_SET.has(name)) {
     const target = firstString(toolInput, ['query', 'url']);
     if (name === 'web_search') {
       return target
@@ -337,6 +425,18 @@ export function describeToolUseStatus(
     return zh ? `正在处理：${object}` : `Working on: ${object}`;
   }
   return null;
+}
+
+/**
+ * The auto-resume splice the runner inserts after a provider-death turn.
+ * Matched loosely (host copy, EN source) — a user message starting a turn
+ * with this frame is a RESUME, not a human reply.
+ */
+export function isResumeSpliceContent(content: string): boolean {
+  const text = (content ?? '').trim();
+  if (!text) return false;
+  return /interrupted by a transient network or provider failure/i.test(text)
+    || /Continue the task from where you left off/i.test(text);
 }
 
 /**
