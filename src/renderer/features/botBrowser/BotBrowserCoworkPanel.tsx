@@ -109,29 +109,33 @@ export const PanelMessage: React.FC<{
     event.stopPropagation();
     onContextMenu(event, message);
   };
-  // Meta line under the bubble (pass #3 ①): the stamp is group-scoped and
-  // hover-revealed. A group-end row without a reaction mounts nothing until
-  // hover (`hidden group-hover:flex` — zero layout footprint while idle); a
-  // row carrying a reaction chip stays mounted (functional state must stay
-  // visible and cancellable) with its stamp still hover-gated inside. The
-  // row wrapper below carries the `group` class that drives the reveal.
+  // Meta line under the bubble (pass #3 ①, refined after owner's live test):
+  // the stamp is group-scoped and hover-revealed, but the ROW ITSELF ALWAYS
+  // MOUNTS and keeps its height — reveal switches visibility only
+  // (`invisible group-hover:visible`), never display. Mount-on-hover made
+  // the bubble grow under the pointer and jitter the whole transcript
+  // (owner report 2026-11-10); a reserved ~20px meta slot on group-end rows
+  // is the stability cost the owner explicitly chose. A row carrying a
+  // reaction chip is functional state (visible and cancellable) with its
+  // stamp still hover-gated inside. The row wrapper below carries the
+  // `group` class that drives the reveal.
   const hasReactionChip = Boolean(currentReaction && onToggleReaction);
   const stampOnlyRow = showTimestamp && !hasReactionChip;
   const metaRow = showTimestamp || hasReactionChip ? (
     <div
       data-slot="panel-message-meta"
-      className={`${stampOnlyRow ? 'hidden group-hover:flex' : 'flex'} items-center gap-1.5 px-1 pt-0.5 text-[11px] leading-3 dark:text-claude-darkTextSecondary text-claude-textSecondary ${
+      className={`${stampOnlyRow ? 'invisible group-hover:visible' : 'flex'} items-center gap-1.5 px-1 pt-0.5 text-[11px] leading-3 dark:text-claude-darkTextSecondary text-claude-textSecondary ${
         isUser ? 'justify-end' : 'justify-start'
       }`}
     >
       {timestampLabel ? (
         showTimestamp ? (
           // Group-end rows only. The span reveals with its row when the row
-          // is stamp-only (row itself is hover-gated); on a chip-carrying row
+          // is stamp-only (visibility toggle only); on a chip-carrying row
           // (always mounted) the stamp waits for hover on its own.
           <span
             data-panel-message-timestamp="true"
-            className={stampOnlyRow ? undefined : 'hidden group-hover:inline'}
+            className={stampOnlyRow ? undefined : 'invisible group-hover:inline'}
           >
             {timestampLabel}
           </span>

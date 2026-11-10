@@ -515,6 +515,7 @@ man_base_data_pebble/
 !tests/panelPurityWiring.test.mjs
 !tests/panelMessageLocator.test.ts
 !tests/panelPurityPass2Wiring.test.mjs
+!tests/panelPurityPass3Wiring.test.mjs
 !tests/browserIframeBridge.test.mjs
 !tests/sqliteStoreFreshMigrations.test.mjs
 !tests/userIdentityStore.test.mjs
