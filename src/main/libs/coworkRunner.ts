@@ -13064,12 +13064,24 @@ export class CoworkRunner extends EventEmitter {
       const outcome = this.emitAssistantOwnerUpdate(sessionId, { message: text, kind: 'waiting' }, activeSession)
       if (!outcome.shown) {
         coworkLog('DEBUG', 'turn:ack', 'owner wait heartbeat suppressed', { sessionId, reason: outcome.reason ?? 'unknown' })
+        // Re-arm with the same backoff as the empty-generator path, or a
+        // suppression (invalid message, ...) silently ends the heartbeat for
+        // the rest of a long turn. armAssistantOwnerWaitTimer itself stops
+        // re-arming once the per-turn update cap is reached.
+        activeSession.assistantOwnerHeartbeatCount = (activeSession.assistantOwnerHeartbeatCount ?? 0) + 1
+        activeSession.assistantOwnerLastVisibleAt = Date.now()
+        this.armAssistantOwnerWaitTimer(sessionId, activeSession)
       }
     } catch (error) {
       coworkLog('WARN', 'turn:ack', 'owner wait heartbeat failed; backing off to the next window', {
         sessionId,
         message: error instanceof Error ? error.message : String(error),
       })
+      // Same re-arm as the empty-generator path: a failed fire must back off
+      // to the NEXT window, not lose the heartbeat for the rest of the turn.
+      activeSession.assistantOwnerHeartbeatCount = (activeSession.assistantOwnerHeartbeatCount ?? 0) + 1
+      activeSession.assistantOwnerLastVisibleAt = Date.now()
+      this.armAssistantOwnerWaitTimer(sessionId, activeSession)
     }
   }
 

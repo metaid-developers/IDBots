@@ -135,7 +135,12 @@ function createHarness({
       setTaskSessionId: () => {},
       getLatestRunSessionId: (taskId) => task.id === taskId ? (task.latestRunSessionId ?? null) : null,
       setSeriesSessionId: (taskId, sessionId) => {
-        if (task.id === taskId) recording.seatedSeries.push(sessionId);
+        if (task.id === taskId) {
+          // Persist onto the task like the real store does, so a later fire
+          // resolves the stored seat instead of re-deriving it.
+          task.seriesSessionId = sessionId;
+          recording.seatedSeries.push(sessionId);
+        }
       },
     },
     coworkStore: {
@@ -213,7 +218,7 @@ function createHarness({
     seriesSessionBusyPollMs: busyPollMs,
   });
 
-  return { scheduler, recording, allSessions, usageStats, messageCounts };
+  return { scheduler, recording, allSessions, usageStats, messageCounts, activeSessionIds: activeIds };
 }
 
 function seriesSession(id, overrides = {}) {
@@ -431,6 +436,57 @@ test('a busy standing conversation holds the fire only briefly, then runs it one
   assert.equal(recording.createdSessions.length, 1);
   assert.deepEqual(recording.seatedSeries, []);
   assert.equal(recording.runnerCalls[0].sessionId, 'session-1');
+});
+
+test('a busy fallback keeps an adopted seat, and the next reuse fire discloses the one-off run', async () => {
+  // Legacy adoption: no stored seriesSessionId — the seat is derived from the
+  // latest run's session, and the derived session starts out busy.
+  const task = createTask({ latestRunSessionId: 'prev-fire' });
+  const { scheduler, recording, allSessions, activeSessionIds } = createHarness({
+    task,
+    sessions: { 'prev-fire': seriesSession('prev-fire') },
+    activeSessionIds: ['prev-fire'],
+  });
+
+  // Fire 1 falls back to a one-off session — but the adopted seat must be
+  // written NOW: the one-off fire becomes the latest run, so the next fire
+  // re-deriving the seat would adopt the one-off session and drop the real
+  // standing conversation from the series for good.
+  await scheduler.executeTask(task, 'manual');
+  assert.deepEqual(recording.seatedSeries, ['prev-fire'], 'the adopted seat survives the busy fallback');
+  assert.equal(recording.createdSessions.length, 1);
+  assert.equal(recording.runnerCalls[0].sessionId, 'session-1');
+
+  // The one-off fire completes as the task's newest run.
+  task.latestRunSessionId = 'session-1';
+  allSessions['session-1'].lastAssistantContent = 'FALLBACK_REPORT: ran elsewhere while you were busy.';
+  activeSessionIds.delete('prev-fire');
+
+  // Fire 2 returns to the standing conversation — and its continuity note
+  // must admit the latest fire ran elsewhere instead of claiming every
+  // earlier result is above.
+  await scheduler.executeTask(task, 'manual');
+  assert.deepEqual(recording.runnerCalls.map((call) => call.sessionId), ['session-1', 'prev-fire']);
+  assert.deepEqual(recording.seatedSeries, ['prev-fire'], 'the stored seat is not re-written');
+  const prompt = recording.runnerCalls[1].prompt;
+  assert.ok(prompt.includes('[Standing conversation] Earlier fires of this task ran in this same conversation'));
+  assert.ok(prompt.includes('ran in a different one-off conversation'), 'honest elsewhere-run disclosure');
+  assert.ok(prompt.includes('FALLBACK_REPORT: ran elsewhere while you were busy.'), 'the fallback fire\'s result rides in the note');
+});
+
+test('a reuse fire whose latest run is the standing conversation itself carries no elsewhere-run note', async () => {
+  const task = createTask({ seriesSessionId: 'standing-1', latestRunSessionId: 'standing-1' });
+  const { scheduler, recording } = createHarness({
+    task,
+    sessions: { 'standing-1': seriesSession('standing-1', { lastAssistantContent: 'Regular last reply.' }) },
+  });
+
+  await scheduler.executeTask(task, 'manual');
+
+  const prompt = recording.runnerCalls[0].prompt;
+  assert.ok(prompt.includes('[Standing conversation] Earlier fires of this task ran in this same conversation'));
+  assert.equal(prompt.includes('ran in a different one-off conversation'), false);
+  assert.equal(prompt.includes('Regular last reply.'), false, 'no excerpt when the last run ran right here');
 });
 
 test('an archived standing conversation rotates to a successor without touching the archived one', async () => {

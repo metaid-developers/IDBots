@@ -163,6 +163,30 @@ test('a recurring task stays silent on success but reports failures', async () =
   assert.match(delivery.message, /失败原因：provider outage/);
 });
 
+test('a flapping recurring task reports once per cooldown window; a one-shot task reports every failure', async () => {
+  // Three consecutive failures of the same recurring task within the window:
+  // each failed fire would otherwise queue a full owner LLM turn into the
+  // origin chat, so only the first one reports.
+  const recurring = createTask({ id: 'flap-1', schedule: { type: 'interval', intervalMs: 60_000 } });
+  const flapWorld = createHarness({ task: recurring, startSessionError: 'provider outage' });
+  await flapWorld.scheduler.executeTask(recurring, 'manual');
+  await flapWorld.scheduler.executeTask(recurring, 'manual');
+  await flapWorld.scheduler.executeTask(recurring, 'manual');
+  assert.equal(flapWorld.recording.deliveries.length, 1, 'one failure report per cooldown window, not one per failed fire');
+
+  // A manual one-shot run reports EVERY failure immediately — the owner must
+  // learn about it. The per-run delivery ids stay distinct.
+  const oneshot = createTask({ id: 'manual-1' });
+  const oneshotWorld = createHarness({ task: oneshot, startSessionError: 'provider outage' });
+  await oneshotWorld.scheduler.executeTask(oneshot, 'manual');
+  await oneshotWorld.scheduler.executeTask(oneshot, 'manual');
+  assert.equal(oneshotWorld.recording.deliveries.length, 2, 'non-recurring failures bypass the cooldown');
+  assert.deepEqual(
+    oneshotWorld.recording.deliveries.map((d) => d.deliveryId),
+    ['schedule_report:manual-1:run-1', 'schedule_report:manual-1:run-2'],
+  );
+});
+
 test('a run that executed inside the origin chat itself is not reported back into it', async () => {
   const bound = createTask({
     id: 'self-bound',
