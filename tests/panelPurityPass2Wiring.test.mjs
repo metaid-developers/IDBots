@@ -98,8 +98,18 @@ test('④ the composer textarea adapts: shrink, single-line hint, capped scroll'
   assert.match(composerSource, /composerTextareaHeight\(contentHeight, minHeight, maxHeight\)/);
 });
 
-test('④ the attachment strip stays above the input and caps its own height', () => {
-  assert.match(composerSource, /relative z-10 flex w-full max-h-24 flex-wrap gap-2 overflow-y-auto/);
+test('④ the large card is two-column: attachment rail + text column', () => {
+  // Pass #5 ② redesign #2 (owner 00:48): the large card splits into a LEFT
+  // rail (68px: attachment stack, capped with internal scroll, above the
+  // +/emoji buttons pinned to the rail bottom via mt-auto) and a RIGHT text
+  // column. The compact branch keeps its items-end row with the w-16
+  // column. The old in-card horizontal strip (pass #2) and the brief-lived
+  // external bar must not return.
+  assert.match(composerSource, /mb-1 ml-3 mt-2\.5 flex w-\[68px\] flex-shrink-0 flex-col items-center/);
+  assert.match(composerSource, /mt-auto flex items-center justify-center gap-1/);
+  assert.match(composerSource, /flex max-h-36 w-16 flex-shrink-0 flex-col gap-2 overflow-y-auto/);
+  assert.doesNotMatch(composerSource, /relative z-10 flex w-full max-h-24/);
+  assert.doesNotMatch(composerSource, /mb-2 flex w-full max-h-24/);
 });
 
 test('compat the shared composer surface contracts are unchanged', () => {
