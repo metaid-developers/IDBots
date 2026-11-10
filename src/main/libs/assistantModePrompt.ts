@@ -66,6 +66,14 @@
  * the who/what/cost (people, material changes, money spent — the owner tracks
  * 人/事/物, never a process running commentary), and the final report must
  * close with one concrete recommended next action.
+ *
+ * 2026-11-11 (projection fast path, owner ruling): the projector section now
+ * mandates calling the zero-arg host tool projection_begin right before
+ * writing the page file. The hub re-binds the live turn's model selection to
+ * the model's lowest reasoning effort between steps, so the large HTML write
+ * streams without deep thinking — phase-scoped, since the kernel fixes the
+ * effort per step from the agent's current selection (see
+ * DshTurnHub.forceProjectionFastMode).
  */
 
 import { tApp } from './appLanguage';
@@ -157,7 +165,7 @@ export function buildProjectorModePrompt(): string {
       '',
       '**何时投影。** 当本轮产出了值得看的东西——结果、交付物、新安排（你安排了哪些 Bot 去干什么、它们正在哪个对话里干活）、状态变化、数据或对比——就在轮末投一张新页。若本轮只是寒暄、快速问答，或上一页仍然准确反映现状，就不要投影，让投影仪保持原样。如果本轮围绕右侧正打开着的某个 MetaApp 展开，就让它留在屏幕上，不要用汇报页盖掉它。每轮最多投影一次，以最后一次为准——把它做完整。',
       '',
-      '**怎么投影。** 把一个完全自包含的 HTML 文件写进当前 workspace 的 reports/ 目录（如 reports/2026-11-07-surf-digest.html），然后用文件的绝对路径、projection: true 和一个简短标题调用 bot_browser_preview_local。页面会打开/替换在本会话的投影页签里，主人可以用后退键回看之前的页面——所以每页都要自带标题、本会话内的投影序号（1、2、3…）和日期。',
+      '**怎么投影。** 写页面文件之前，先调用一次 projection_begin（无参数，立即返回）——它让宿主为本轮收尾切到极速档，页面生成明显更快。然后把一个完全自包含的 HTML 文件写进当前 workspace 的 reports/ 目录（如 reports/2026-11-07-surf-digest.html），再用文件的绝对路径、projection: true 和一个简短标题调用 bot_browser_preview_local。页面会打开/替换在本会话的投影页签里，主人可以用后退键回看之前的页面——所以每页都要自带标题、本会话内的投影序号（1、2、3…）和日期。',
       '',
       '**页面设计（一页 = 一份快照）。** 页面必须独立成立，当作主人没有读过聊天记录：结论先行，做成一条大标题；关键数字、人名、状态放大突出；次要信息小而弱化——用字号、字重、颜色做出 Markdown 做不到的层级。优先用表格、时间线、卡片、进度条和简单的内联 SVG/CSS 图表代替大段文字。CSS/JS 全部内联，页面边距为零，自适应，大约一屏的滚动量，干净高对比的浅色底。做策展，不要把聊天文字倒进页面：挑出重点，把它画出来。',
       '',
@@ -172,7 +180,7 @@ export function buildProjectorModePrompt(): string {
       '',
       '**When to project.** End the turn with a NEW projection when it produced something worth seeing: a result, a finished deliverable, an arrangement (which bots you asked to do what, and where they are working), a state change, numbers or a comparison. Do NOT project when the turn was small talk, a quick answer, or when the previous page still tells the story accurately — leave the projector as it is. If the turn revolves around a metaapp that is currently open on the right, keep it on screen; do not cover it with a report. At most ONE projection per turn — the last one counts, make it complete.',
       '',
-      '**How to project.** Write ONE self-contained HTML file into the current workspace under reports/ (e.g. reports/2026-11-07-surf-digest.html), then call bot_browser_preview_local with the file\'s absolute path, projection: true, and a short title. The page opens/replaces in this session\'s projector tab, and the owner can press Back to revisit earlier pages — so every page carries its own title, its projection number within this session (1, 2, 3…), and the date.',
+      '**How to project.** Call projection_begin once first (no parameters, returns immediately) — it puts the host into fast mode for this turn\'s closing stretch, so the page generates noticeably faster. Then write ONE self-contained HTML file into the current workspace under reports/ (e.g. reports/2026-11-07-surf-digest.html), and call bot_browser_preview_local with the file\'s absolute path, projection: true, and a short title. The page opens/replaces in this session\'s projector tab, and the owner can press Back to revisit earlier pages — so every page carries its own title, its projection number within this session (1, 2, 3…), and the date.',
       '',
       '**Page design (one page = one snapshot).** The page must stand alone, as if the owner had not read the chat: conclusion first as one big headline; key numbers, names and statuses enlarged; secondary detail small and muted — build the hierarchy with size, weight and color that Markdown cannot express. Prefer tables, timelines, cards, progress bars and simple inline SVG/CSS charts over prose. Inline all CSS/JS, zero page margins, responsive, roughly one screen of scrolling, clean high-contrast light background. Curate — do not dump the chat text into the page: pick what matters and visualize it.',
       '',

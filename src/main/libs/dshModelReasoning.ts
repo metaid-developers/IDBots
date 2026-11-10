@@ -269,6 +269,31 @@ export function dshRouteReasoningEffort(
 }
 
 /**
+ * The lowest reasoning-effort SELECTION id the route's model can express —
+ * the projection fast path (owner ruling 2026-11-11) re-binds the live
+ * session to it right before the bot writes the projector page, so the large
+ * HTML write streams without deep thinking. Selection ids follow the pi-ai
+ * vocabulary: 'off' when the model's ladder expresses it (the declaration
+ * folds it to the family's minimal wire shape — GLM-5.x chat/responses map
+ * off to reasoning:{effort:'low'}), else the lowest rung the ladder does
+ * express (GLM-5.x on the Anthropic wire omits off entirely — Ark rejects
+ * thinking:{type:'disabled'} — so 'low' is the floor). Unknown models keep
+ * the default pi-ai ladder, which includes off.
+ */
+export function dshLowestReasoningSelection(
+  modelId: string,
+  apiFormat: 'openai' | 'responses' | 'anthropic',
+  baseUrl: string | null | undefined,
+): 'off' | 'low' | 'medium' | 'high' | 'max' {
+  const ladder = dshModelReasoningDeclaration(modelId, apiFormat, baseUrl)?.reasoningEfforts;
+  if (!ladder || 'off' in ladder) return 'off';
+  for (const rung of ['low', 'medium', 'high', 'max'] as const) {
+    if (rung in ladder) return rung;
+  }
+  return 'off';
+}
+
+/**
  * Family trait for the DSH event mapper's tool-ride text classification:
  * DeepSeek models narrate tool-round process text in the CONTENT channel —
  * short "先看仓库结构。" lines riding a tool call — so the mapper folds such
