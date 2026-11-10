@@ -5,7 +5,9 @@ import {
   formatPanelClock,
   formatPanelDate,
   formatPanelMessageTimestamp,
+  isPanelMessageGroupEnd,
 } from '../src/renderer/features/botBrowser/panelMessageTimestamp';
+import type { CoworkMessage } from '../src/renderer/types/cowork';
 
 // Bubble meta-line stamps (purity pass #1, item ①): same-day `HH:mm`, older
 // days `MM-DD HH:mm`. All expectations are computed against a FIXED `now`
@@ -49,4 +51,46 @@ test('clock and date helpers agree with the composed stamp', () => {
   assert.equal(formatPanelClock(stamp), '18:31');
   assert.equal(formatPanelDate(stamp), '11-09');
   assert.equal(`${formatPanelDate(stamp)} ${formatPanelClock(stamp)}`, '11-09 18:31');
+});
+
+// --- Group-end predicate (purity pass #3, item ①) ---------------------------
+// Only the LAST bubble of a same-sender burst carries the stamp. The grouping
+// mirrors the transcript's turn semantics: sender adjacency, no time-gap
+// threshold (a group breaks when the message type flips, never on a clock).
+
+const panelMessage = (id: string, type: CoworkMessage['type']): CoworkMessage => ({
+  id,
+  type,
+  content: `${type} body`,
+  timestamp: NOW,
+});
+
+test('only the last message of a same-sender burst is a group end', () => {
+  const messages = [
+    panelMessage('u1', 'user'),
+    panelMessage('u2', 'user'),
+    panelMessage('a1', 'assistant'),
+    panelMessage('a2', 'assistant'),
+    panelMessage('a3', 'assistant'),
+    panelMessage('u3', 'user'),
+  ];
+  // u2 (user burst ends before a1), a3 (assistant burst ends before u3), and
+  // the transcript-final u3 carry the stamp; every earlier burst member is
+  // stamp-free.
+  assert.deepEqual(
+    messages.map((_, index) => isPanelMessageGroupEnd(messages, index)),
+    [false, true, false, false, true, true],
+  );
+});
+
+test('a group also ends at the very end of the transcript', () => {
+  const messages = [panelMessage('a1', 'assistant'), panelMessage('a2', 'assistant')];
+  assert.equal(isPanelMessageGroupEnd(messages, 1), true, 'final bubble is always a group end');
+  assert.equal(isPanelMessageGroupEnd(messages, 0), false);
+});
+
+test('out-of-range and empty sequences carry no stamp', () => {
+  assert.equal(isPanelMessageGroupEnd([], 0), false);
+  assert.equal(isPanelMessageGroupEnd([panelMessage('u1', 'user')], 1), false);
+  assert.equal(isPanelMessageGroupEnd([panelMessage('u1', 'user')], -1), false);
 });

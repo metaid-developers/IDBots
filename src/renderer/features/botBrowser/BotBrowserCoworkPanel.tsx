@@ -25,7 +25,7 @@ import type { CoworkMessage, CoworkWorkspaceSelection } from '../../types/cowork
 import TwinSeatChip from './TwinSeatChip';
 import { appointTwinSeat } from './twinSeatAppointment';
 import CoworkHistoryPanel from './CoworkHistoryPanel';
-import { formatPanelMessageTimestamp } from './panelMessageTimestamp';
+import { formatPanelMessageTimestamp, isPanelMessageGroupEnd } from './panelMessageTimestamp';
 import {
   applyPanelReactionToggle,
   getPanelReactionsStorage,
@@ -77,6 +77,12 @@ export const PanelMessage: React.FC<{
   resolveLocalFilePath?: LocalFilePathResolver;
   /** Meta-line stamp, pre-formatted (`HH:mm` / `MM-DD HH:mm`, '' = omit). */
   timestampLabel?: string;
+  /**
+   * Whether this bubble ends a same-sender group (purity pass #3 ①): only
+   * group-end rows carry the stamp at all, and even there the stamp stays
+   * hidden until the row is hovered (zero layout footprint otherwise).
+   */
+  showTimestamp?: boolean;
   /** This bubble's stored reaction (local MVP; null = none). */
   currentReaction?: PanelReactionRating | null;
   /** Right-click on the bubble chrome opens the panel context menu. */
@@ -89,6 +95,7 @@ export const PanelMessage: React.FC<{
   isAssistantMode = false,
   resolveLocalFilePath,
   timestampLabel,
+  showTimestamp = true,
   currentReaction = null,
   onContextMenu,
   onToggleReaction,
@@ -102,18 +109,33 @@ export const PanelMessage: React.FC<{
     event.stopPropagation();
     onContextMenu(event, message);
   };
-  // Meta line under the bubble: the quiet timestamp plus, once reacted, the
-  // small chip that carries (and cancels) the local reaction. 11px secondary
-  // tone — visible by default but never competing with the content.
-  const metaRow = (
+  // Meta line under the bubble (pass #3 ①): the stamp is group-scoped and
+  // hover-revealed. A group-end row without a reaction mounts nothing until
+  // hover (`hidden group-hover:flex` — zero layout footprint while idle); a
+  // row carrying a reaction chip stays mounted (functional state must stay
+  // visible and cancellable) with its stamp still hover-gated inside. The
+  // row wrapper below carries the `group` class that drives the reveal.
+  const hasReactionChip = Boolean(currentReaction && onToggleReaction);
+  const stampOnlyRow = showTimestamp && !hasReactionChip;
+  const metaRow = showTimestamp || hasReactionChip ? (
     <div
       data-slot="panel-message-meta"
-      className={`flex items-center gap-1.5 px-1 pt-0.5 text-[11px] leading-3 dark:text-claude-darkTextSecondary text-claude-textSecondary ${
+      className={`${stampOnlyRow ? 'hidden group-hover:flex' : 'flex'} items-center gap-1.5 px-1 pt-0.5 text-[11px] leading-3 dark:text-claude-darkTextSecondary text-claude-textSecondary ${
         isUser ? 'justify-end' : 'justify-start'
       }`}
     >
       {timestampLabel ? (
-        <span data-panel-message-timestamp="true">{timestampLabel}</span>
+        showTimestamp ? (
+          // Group-end rows only. The span reveals with its row when the row
+          // is stamp-only (row itself is hover-gated); on a chip-carrying row
+          // (always mounted) the stamp waits for hover on its own.
+          <span
+            data-panel-message-timestamp="true"
+            className={stampOnlyRow ? undefined : 'hidden group-hover:inline'}
+          >
+            {timestampLabel}
+          </span>
+        ) : null
       ) : null}
       {currentReaction && onToggleReaction ? (
         <button
@@ -126,12 +148,13 @@ export const PanelMessage: React.FC<{
         </button>
       ) : null}
     </div>
-  );
+  ) : null;
   if (isUser) {
     return (
       // data-panel-message-id lets the locator rail measure this row
-      // (purity pass #2 ③) without touching the bubble chrome.
-      <div data-panel-message-id={message.id} className="flex flex-col items-end">
+      // (purity pass #2 ③) without touching the bubble chrome. `group` is
+      // the hover proxy for the stamp reveal (pass #3 ①).
+      <div data-panel-message-id={message.id} className="group flex flex-col items-end">
         {/* Same display-side body pipeline as the main cowork transcript: the
             attachment marker lines split out at render time, image files render
             as the shared thumbnail strip with the in-app lightbox, and the rest
@@ -152,7 +175,7 @@ export const PanelMessage: React.FC<{
     // (narration and final alike) sit in the neutral-gray .assistant-bubble
     // instead of bare full-width text, so both surfaces read the same way.
     return (
-      <div data-panel-message-id={message.id} className="flex min-w-0 flex-col items-start">
+      <div data-panel-message-id={message.id} className="group flex min-w-0 flex-col items-start">
         <div
           onContextMenu={handleBubbleContextMenu}
           className="assistant-bubble w-fit max-w-[92%] rounded-[22px] px-[16px] py-[10px] text-[13px] leading-5 dark:text-claude-darkText text-claude-text shadow-subtle [&_h1]:text-sm [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h2]:text-[13px] [&_h2]:mt-2.5 [&_h2]:mb-1 [&_h3]:text-[13px] [&_h3]:mt-2 [&_h3]:mb-1 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:break-all [&_a]:break-all"
@@ -164,7 +187,7 @@ export const PanelMessage: React.FC<{
     );
   }
   return (
-    <div data-panel-message-id={message.id} className="flex min-w-0 flex-col items-start text-[13px] leading-5 dark:text-claude-darkText text-claude-text [&_h1]:text-sm [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h2]:text-[13px] [&_h2]:mt-2.5 [&_h2]:mb-1 [&_h3]:text-[13px] [&_h3]:mt-2 [&_h3]:mb-1 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:break-all [&_a]:break-all">
+    <div data-panel-message-id={message.id} className="group flex min-w-0 flex-col items-start text-[13px] leading-5 dark:text-claude-darkText text-claude-text [&_h1]:text-sm [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h2]:text-[13px] [&_h2]:mt-2.5 [&_h2]:mb-1 [&_h3]:text-[13px] [&_h3]:mt-2 [&_h3]:mb-1 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:break-all [&_a]:break-all">
       <div onContextMenu={handleBubbleContextMenu} className="min-w-0">
         <MarkdownContent content={message.content} compact onOpenBotBrowserUri={onOpenUri} emojiImages />
       </div>
@@ -648,7 +671,10 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     return (href: string, text: string) => resolveLocalPathAgainstCwd(href, text, { cwd, executionMode });
   }, [currentSession?.cwd, currentSession?.executionMode]);
 
-  const renderMessage = (message: CoworkMessage) => (
+  // (message, index) rides Array.map: the group-end predicate reads the
+  // rendered sequence (visibleMessages), so same-sender bursts collapse to
+  // one hover-revealed stamp on their last bubble (purity pass #3 ①).
+  const renderMessage = (message: CoworkMessage, index: number) => (
     <PanelMessage
       key={message.id}
       message={message}
@@ -656,8 +682,10 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
       isAssistantMode={isAssistantMode}
       resolveLocalFilePath={resolveLocalFilePath}
       // Quiet per-bubble stamp on the meta line: same-day `HH:mm`, older
-      // days `MM-DD HH:mm` (computed at render, local time).
+      // days `MM-DD HH:mm` (computed at render, local time). The stamp only
+      // mounts on a group-end row and only shows while that row is hovered.
       timestampLabel={formatPanelMessageTimestamp(message.timestamp, Date.now())}
+      showTimestamp={isPanelMessageGroupEnd(visibleMessages, index)}
       currentReaction={panelReactions[message.id] ?? null}
       onContextMenu={handlePanelContextMenu}
       onToggleReaction={handleToggleReaction}
@@ -922,3 +950,4 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
 };
 
 export default BotBrowserCoworkPanel;
+

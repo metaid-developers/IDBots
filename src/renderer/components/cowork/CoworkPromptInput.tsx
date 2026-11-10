@@ -1493,7 +1493,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         selections={quotedSelections}
         onRemove={handleRemoveQuotedSelection}
         botName={botName}
-        disabled={disabled || isStreaming}
+        // No `disabled` hand-off on purpose (purity pass #3 ③): removing a
+        // pending quote is composer-local state mutation, so the slot stays
+        // clickable while the session streams — the former running-state
+        // chain (hard disabled OR isStreaming) tied both surfaces
+        // (CoworkSessionDetail's BotWorks transcript and the office panel
+        // composer) into the cancel control and dead-locked it exactly when
+        // a steer quote was most needed.
       />
       <div
         ref={composerCardRef}

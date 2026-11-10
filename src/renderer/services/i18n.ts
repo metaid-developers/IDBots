@@ -1334,6 +1334,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkQuoteJumpMissing: '引用的消息不在当前加载的对话中，可向上滚动加载更早的消息后再试',
     coworkQuoteReplyPreviewLabel: '引用消息预览',
     coworkQuoteReplyCancel: '取消回复',
+    // Telegram-style pending reply card (purity pass #3 ②): header line
+    // "回复 {speaker}" — {speaker} is a bare name (no colon), the owner reads
+    // 你 and the assistant speaks in the session bot's own name.
+    coworkQuoteReplyCardReplyingTo: '回复 {speaker}',
+    coworkQuoteReplyCardSpeakerUser: '你',
     coworkQuoteReplyPlaceholder: '回复…',
     coworkQuoteReplyBlockHeader: '回复以下消息：',
     coworkQuoteReplyBlockItem: '#{ordinal} {source}{streaming}：',
@@ -5064,6 +5069,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkQuoteJumpMissing: 'The quoted message is not in the loaded conversation — scroll up to load earlier messages and try again',
     coworkQuoteReplyPreviewLabel: 'Quoted message',
     coworkQuoteReplyCancel: 'Cancel reply',
+    // Telegram-style pending reply card header (see the zh note).
+    coworkQuoteReplyCardReplyingTo: 'Replying to {speaker}',
+    coworkQuoteReplyCardSpeakerUser: 'you',
     coworkQuoteReplyPlaceholder: 'Reply…',
     coworkQuoteReplyBlockHeader: 'Replying to the following messages:',
     coworkQuoteReplyBlockItem: '#{ordinal} {source}{streaming}:',
