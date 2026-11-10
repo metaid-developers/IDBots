@@ -42,6 +42,41 @@ test('surface consumes ABC picker frames before the idbots-bridge source filter'
   );
 });
 
+test('picker bridge lifecycle lives in an effect, not render (StrictMode trap)', () => {
+  // dispose() is terminal: a bridge created during render is killed by
+  // StrictMode's dev mount/cleanup/mount pass and never rebuilt (the
+  // render-phase ref init does not re-run), silently swallowing every
+  // changed-event refetch. The creation must sit in an effect whose cleanup
+  // nulls the ref, declared BEFORE the message-listener effect so each mount
+  // has a bridge to dispatch to.
+  const effectBody = getSection(
+    surfaceSource,
+    '// ABC element-picker bridge (v0.10.0): request/response envelopes plus',
+    '}, []);',
+  );
+  assert.match(effectBody, /useEffect\(\(\) => \{/);
+  assert.match(effectBody, /selectionsBridgeRef\.current = createBrowserElementSelectionsBridge\(/);
+  assert.match(effectBody, /selectionsBridgeRef\.current\?\.dispose\(\);/);
+  assert.match(effectBody, /selectionsBridgeRef\.current = null;/);
+
+  const bridgeEffectStart = surfaceSource.indexOf('// ABC element-picker bridge (v0.10.0)');
+  const listenerEffectStart = surfaceSource.indexOf('const handleMessage = (event: MessageEvent) => {');
+  assert.ok(
+    bridgeEffectStart !== -1 && listenerEffectStart !== -1 && bridgeEffectStart < listenerEffectStart,
+    'bridge creation effect must be declared before the message listener effect',
+  );
+  // Negative control: no bridge creation may appear in the render-phase
+  // region of the component (anything before the bridge effect's own body).
+  const renderPhaseRegion = surfaceSource.slice(
+    surfaceSource.indexOf('const endpointShimRef'),
+    surfaceSource.indexOf('createBrowserElementSelectionsBridge(', bridgeEffectStart),
+  );
+  assert.ok(
+    !renderPhaseRegion.includes('selectionsBridgeRef.current = createBrowserElementSelectionsBridge('),
+    'render-phase bridge creation must stay removed',
+  );
+});
+
 test('surface registers the live fetcher into the shared picker store', () => {
   assert.match(
     surfaceSource,

@@ -206,22 +206,6 @@ export const BotBrowserSurface = forwardRef<BotBrowserSurfaceHandle, BotBrowserS
       endpointShimRef.current = createBrowserEndpointShim(adapter);
     }
 
-    if (!selectionsBridgeRef.current) {
-      // ABC element-picker bridge (v0.10.0): request/response envelopes plus
-      // element-selections-changed pushes. Inbound frames are only dispatched
-      // here after the listener's event.source check, matching ABC's own
-      // active-tab-frame-only acceptance on the way in.
-      selectionsBridgeRef.current = createBrowserElementSelectionsBridge({
-        postToFrame: (payload) => {
-          const target = iframeRef.current?.contentWindow;
-          if (!target) return false;
-          target.postMessage(payload, '*');
-          return true;
-        },
-        onSnapshot: (snapshot) => elementSelectionsStore.recordSnapshot(snapshot),
-      });
-    }
-
     const postToIframe = useCallback((message: Record<string, unknown>): boolean => {
       const target = iframeRef.current?.contentWindow;
       if (!target) return false;
@@ -363,6 +347,31 @@ export const BotBrowserSurface = forwardRef<BotBrowserSurfaceHandle, BotBrowserS
       });
     }, [postThemeToIframe]);
 
+    // ABC element-picker bridge (v0.10.0): request/response envelopes plus
+    // element-selections-changed pushes. Created in an effect — NOT during
+    // render — because dispose() is terminal and StrictMode's dev
+    // mount/cleanup/mount pass would otherwise leave the render-created
+    // singleton disposed forever (every refetch silently swallowed). Cleanup
+    // nulls the ref so the next mount builds a fresh bridge. Declared before
+    // the message-listener effect so each mount has a bridge to dispatch to.
+    useEffect(() => {
+      if (!selectionsBridgeRef.current) {
+        selectionsBridgeRef.current = createBrowserElementSelectionsBridge({
+          postToFrame: (payload) => {
+            const target = iframeRef.current?.contentWindow;
+            if (!target) return false;
+            target.postMessage(payload, '*');
+            return true;
+          },
+          onSnapshot: (snapshot) => elementSelectionsStore.recordSnapshot(snapshot),
+        });
+      }
+      return () => {
+        selectionsBridgeRef.current?.dispose();
+        selectionsBridgeRef.current = null;
+      };
+    }, []);
+
     // Publish the live read to the shared picker store so the Co-Work panel
     // can capture marks at send time (elementSelectionsStore.captureForTurn).
     // The read itself never switches panes or steals focus — it is a plain
@@ -385,7 +394,6 @@ export const BotBrowserSurface = forwardRef<BotBrowserSurfaceHandle, BotBrowserS
         // tag — it is consumed here before the source-tagged branches below.
         if (selectionsBridgeRef.current?.handleMessage(data)) return;
         if (data.source !== 'idbots-browser-iframe-bridge') return;
-
         if (data.type === 'browser-ready') {
           readyRef.current = true;
           postThemeToIframe();
@@ -446,7 +454,6 @@ export const BotBrowserSurface = forwardRef<BotBrowserSurfaceHandle, BotBrowserS
 
     useEffect(() => {
       return () => {
-        selectionsBridgeRef.current?.dispose();
         for (const pending of pendingTabResponsesRef.current.values()) {
           window.clearTimeout(pending.timeout);
           pending.reject(new Error('Bot Browser surface was closed.'));

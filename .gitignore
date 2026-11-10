@@ -624,6 +624,11 @@ man_base_data_pebble/
 .dev-userdata-dsh/
 .dev-appdata-dsh/
 
+# smoke-test instance for the ABC element-picker integration line (isolated
+# userData via IDBOTS_USER_DATA_PATH, launched straight from the worktree)
+.dev-userdata-picker/
+.dev-appdata-picker/
+
 # Data-guard fingerprints live NEXT TO the data dir, not inside it. For a dev
 # instance whose userData is <repo>/.dev-userdata-*, "next to" is the repo root
 # (src/main/libs/dataGuard.ts:49). Anchored to the root on purpose, so a nested
