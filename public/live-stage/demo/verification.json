@@ -1,0 +1,106 @@
+{
+  "protocol": "idbots.live-stage.v1",
+  "sessionId": "demo-live-stage",
+  "turnId": "demo-turn-1",
+  "revision": 5,
+  "enabled": true,
+  "family": "verification",
+  "botName": "Nova",
+  "language": "en",
+  "headline": "Checking the evidence",
+  "caption": "Comparing claims with original material and observed results.",
+  "participants": [
+    "Nova",
+    "Pixel"
+  ],
+  "composition": "converge",
+  "motif": "verification",
+  "topology": {
+    "mode": "structured",
+    "nodes": [
+      {
+        "id": "twin",
+        "label": "Nova",
+        "kind": "twin"
+      },
+      {
+        "id": "source",
+        "label": "Source",
+        "kind": "source"
+      },
+      {
+        "id": "worker",
+        "label": "Pixel",
+        "kind": "worker"
+      },
+      {
+        "id": "evidence",
+        "label": "Evidence",
+        "kind": "evidence"
+      }
+    ],
+    "edges": [
+      [
+        "twin",
+        "worker"
+      ],
+      [
+        "source",
+        "twin"
+      ],
+      [
+        "worker",
+        "evidence"
+      ],
+      [
+        "evidence",
+        "twin"
+      ]
+    ]
+  },
+  "motion": {
+    "preset": "verification",
+    "seed": 33872,
+    "durationMs": 720,
+    "easing": "emphasized-decelerate",
+    "energy": 0.55,
+    "density": 0.55
+  },
+  "metrics": {
+    "directorEnabled": false,
+    "directorCalls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "cacheReadTokens": 0,
+    "cacheCreationTokens": 0,
+    "rejectedPatches": 0,
+    "fallbackCount": 0,
+    "directorLatencyMs": 0
+  },
+  "handoff": null,
+  "pendingProjectionIds": [],
+  "eventWindow": [
+    {
+      "family": "received"
+    },
+    {
+      "family": "web2-research",
+      "tool": "web_search"
+    },
+    {
+      "family": "metaweb-research",
+      "tool": "omni_reader"
+    },
+    {
+      "family": "delegation",
+      "tool": "local_worker_delegate"
+    },
+    {
+      "family": "worker-report"
+    },
+    {
+      "family": "verification",
+      "tool": "bot_browser_screenshot"
+    }
+  ]
+}

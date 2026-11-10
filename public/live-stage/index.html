@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Live Stage · Demo</title>
+  <link rel="stylesheet" href="stage.css" />
+  <style>
+    /* Demo-only chrome. Everything stage-related comes from stage.css. */
+    .demo-banner {
+      position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+      z-index: 40; max-width: min(680px, calc(100vw - 32px));
+      padding: 8px 14px; border-radius: 999px;
+      background: rgba(10, 18, 32, .72); border: 1px solid rgba(255, 220, 81, .28);
+      color: #f4f7fa; font: 12px/1.4 ui-sans-serif, system-ui, sans-serif;
+      text-align: center; backdrop-filter: blur(10px);
+    }
+    .demo-banner strong { color: #ffdc51; font-weight: 600; }
+    .demo-controls {
+      position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+      z-index: 40; display: flex; align-items: center; gap: 8px;
+      padding: 8px 10px; border-radius: 14px;
+      background: rgba(10, 18, 32, .72); border: 1px solid rgba(255, 255, 255, .12);
+      backdrop-filter: blur(10px); font: 12px/1.4 ui-sans-serif, system-ui, sans-serif; color: #d3deea;
+    }
+    .demo-controls button {
+      appearance: none; cursor: pointer; border-radius: 9px;
+      border: 1px solid rgba(255, 220, 81, .35); background: rgba(255, 220, 81, .1);
+      color: #ffdc51; padding: 5px 12px; font: inherit;
+    }
+    .demo-controls button:hover { background: rgba(255, 220, 81, .2); }
+    .demo-controls button:disabled { opacity: .4; cursor: default; }
+    .demo-steps { display: flex; gap: 4px; }
+    .demo-steps button { border-color: rgba(211, 222, 234, .25); background: transparent; color: #d3deea; padding: 5px 8px; }
+    .demo-steps button[data-current="true"] { border-color: rgba(255, 220, 81, .6); color: #ffdc51; background: rgba(255, 220, 81, .12); }
+    .demo-status { min-width: 180px; color: #8fa0b3; }
+    .demo-status[data-error="true"] { color: #ff9d55; }
+  </style>
+</head>
+<body data-enabled="true" data-orb-backend="loading">
+  <div class="demo-banner" role="note"><strong>Static demo</strong> — fictional fixtures only. No live Twin is working and no real task is tracked on this page.</div>
+  <div class="stage-off"><div><strong>Live stage is off</strong><span>The text conversation and final projector remain available.</span></div></div>
+  <main class="live-stage" aria-live="polite">
+    <div class="core-aurora"></div>
+    <canvas class="core-canvas" aria-hidden="true"></canvas>
+    <div class="core-topline"><div class="core-presence"><img data-avatar src="default_metabot.png" alt="" /><span data-bot-name>Twin presence</span></div><span class="core-family" data-core-family>Received</span></div>
+    <section class="core-copy"><div class="core-kicker" data-core-verb>Received</div><h1 data-core-title></h1><p data-core-caption></p></section>
+    <div class="core-entity"><div class="membrane-wrap"><div class="membrane"><img class="core-avatar" data-avatar src="default_metabot.png" alt="Demo bot avatar" /></div><div class="core-voice" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div></div></div>
+    <svg class="handoff-flow" data-handoff-flow viewBox="0 0 1000 700" preserveAspectRatio="none" aria-hidden="true" hidden><path class="handoff-track" d="M870 300 Q735 155 560 315"/><circle class="handoff-packet" r="8"><animateMotion data-handoff-motion begin="indefinite" dur="1.15s" repeatCount="2" calcMode="linear" keyTimes="0;1" keyPoints="0;1" path="M870 300 Q735 155 560 315"/></circle></svg><div class="handoff-label" data-handoff-label hidden><span data-handoff-worker></span><small data-handoff-copy></small></div>
+    <div class="hybrid-node hybrid-source"><span class="hybrid-mark">02</span><span data-node-source>Source</span><small>source</small></div>
+    <div class="hybrid-node hybrid-worker"><span class="hybrid-mark">W</span><span data-node-worker>Worker</span><small>worker</small></div>
+    <div class="hybrid-node hybrid-evidence"><span class="hybrid-mark">✓</span><span data-node-evidence>Evidence</span><small>evidence</small></div>
+    <div class="core-participants" data-core-participants></div>
+    <div class="core-footnote" data-director-metrics></div>
+    <div class="core-report-ready">Report ready<span>Opening the final page</span></div>
+  </main>
+  <div class="demo-controls">
+    <button type="button" data-demo-next disabled>Next scene</button>
+    <div class="demo-steps" data-demo-steps></div>
+    <button type="button" data-demo-replay disabled>Replay</button>
+    <span class="demo-status" data-demo-status>Loading fixtures…</span>
+  </div>
+  <script>
+    // Minimal offline fallback (used only when demo/*.json cannot be fetched,
+    // e.g. opening this file directly over file://). Shape matches the host
+    // LiveStageState contract; ids match the bundled fixtures.
+    window.__DEMO_FALLBACK_FIXTURE__ = {
+      protocol: 'idbots.live-stage.v1', sessionId: 'demo-live-stage', turnId: 'demo-turn-1',
+      revision: 0, enabled: true, family: 'received', botName: 'Nova', language: 'en',
+      headline: 'Request received', caption: 'Nova has the request and is establishing this run.',
+      composition: 'presence', motif: 'received', participants: ['Nova'],
+      topology: { mode: 'presence', nodes: [], edges: [] },
+      motion: { preset: 'received', seed: 41967, durationMs: 720, easing: 'emphasized-decelerate', energy: 0.35, density: 0.25 },
+      metrics: { directorEnabled: false, directorCalls: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, rejectedPatches: 0, fallbackCount: 0, directorLatencyMs: 0 },
+      handoff: null, pendingProjectionIds: [], eventWindow: [{ family: 'received' }]
+    };
+  </script>
+  <script src="liquid-orb-effect.js"></script>
+  <script src="liquid-orb.js"></script>
+  <script>
+    (() => {
+      // Demo playback order. All assets and data are bundled; nothing here
+      // touches a network or a host bridge. Revisions must stay strictly
+      // increasing — that monotonic rule is part of the stage protocol.
+      const SEQUENCE = ['received', 'web2-research', 'metaweb-research', 'delegation', 'worker-report', 'verification', 'report-ready'];
+      const STORAGE_KEY = 'idbots.live-stage:demo-live-stage:demo-turn-1';
+      const status = document.querySelector('[data-demo-status]');
+      const nextButton = document.querySelector('[data-demo-next]');
+      const replayButton = document.querySelector('[data-demo-replay]');
+      const stepsBox = document.querySelector('[data-demo-steps]');
+      const fixtures = [];
+      let cursor = 0;
+
+      const setStatus = (text, isError = false) => {
+        status.textContent = text;
+        status.dataset.error = String(isError);
+      };
+
+      const applyUpTo = (index) => {
+        while (cursor <= index && cursor < fixtures.length) {
+          const fixture = fixtures[cursor];
+          if (cursor === 0) {
+            // The first fixture is the initial state and is already applied at boot.
+            cursor += 1;
+            continue;
+          }
+          const accepted = window.IDBotsLiveStage && window.IDBotsLiveStage.applyPatch(fixture) === true;
+          if (!accepted) {
+            setStatus(`Patch rejected at ${fixture.family} (revision ${fixture.revision})`, true);
+            return;
+          }
+          cursor += 1;
+        }
+        nextButton.disabled = cursor >= fixtures.length;
+        stepsBox.querySelectorAll('button').forEach((button, buttonIndex) => {
+          button.dataset.current = String(buttonIndex < cursor);
+        });
+        const current = fixtures[Math.min(cursor, fixtures.length) - 1];
+        if (!status.dataset.error || status.dataset.error === 'false') {
+          setStatus(`${current.family} · revision ${current.revision} · orb: ${window.__liveStageBackend || 'loading'}`);
+        }
+      };
+
+      const boot = (initial) => {
+        // Start every visit from the first fixture: the stage persists state
+        // per session/turn in sessionStorage and rejects stale revisions.
+        try { sessionStorage.removeItem(STORAGE_KEY); } catch { /* in-memory only */ }
+        window.__INITIAL_LIVE_STAGE__ = initial;
+        window.__FALLBACK_AVATAR__ = new URL('default_metabot.png', location.href).href;
+        const stageScript = document.createElement('script');
+        stageScript.src = 'stage.js';
+        stageScript.onload = () => {
+          nextButton.disabled = false;
+          replayButton.disabled = false;
+          applyUpTo(0);
+        };
+        document.body.append(stageScript);
+      };
+
+      const buildSteps = () => {
+        SEQUENCE.forEach((name, index) => {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.textContent = name;
+          button.addEventListener('click', () => applyUpTo(index));
+          stepsBox.append(button);
+        });
+      };
+
+      nextButton.addEventListener('click', () => applyUpTo(cursor));
+      replayButton.addEventListener('click', () => {
+        try { sessionStorage.removeItem(STORAGE_KEY); } catch { /* in-memory only */ }
+        location.reload();
+      });
+      window.addEventListener('keydown', (event) => {
+        if (event.key === 'ArrowRight' || event.key === 'n') nextButton.click();
+        if (event.key === 'r') replayButton.click();
+      });
+
+      buildSteps();
+      Promise.all(SEQUENCE.map((name) =>
+        fetch(`demo/${name}.json`).then((response) => {
+          if (!response.ok) throw new Error(`${name}: HTTP ${response.status}`);
+          return response.json();
+        })
+      )).then((loaded) => {
+        fixtures.push(...loaded);
+        boot(fixtures[0]);
+      }).catch((error) => {
+        fixtures.push(window.__DEMO_FALLBACK_FIXTURE__);
+        setStatus(`Fixture fetch failed (${error.message}); showing the bundled static frame.`, true);
+        boot(window.__DEMO_FALLBACK_FIXTURE__);
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,48 @@
+{
+  "protocol": "idbots.live-stage.v1",
+  "sessionId": "demo-live-stage",
+  "turnId": "demo-turn-1",
+  "revision": 0,
+  "enabled": true,
+  "family": "received",
+  "botName": "Nova",
+  "language": "en",
+  "headline": "Request received",
+  "caption": "Nova has the request and is establishing this run.",
+  "participants": [
+    "Nova"
+  ],
+  "composition": "presence",
+  "motif": "received",
+  "topology": {
+    "mode": "presence",
+    "nodes": [],
+    "edges": []
+  },
+  "motion": {
+    "preset": "received",
+    "seed": 41967,
+    "durationMs": 720,
+    "easing": "emphasized-decelerate",
+    "energy": 0.35,
+    "density": 0.25
+  },
+  "metrics": {
+    "directorEnabled": false,
+    "directorCalls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "cacheReadTokens": 0,
+    "cacheCreationTokens": 0,
+    "rejectedPatches": 0,
+    "fallbackCount": 0,
+    "directorLatencyMs": 0
+  },
+  "handoff": null,
+  "pendingProjectionIds": [],
+  "eventWindow": [
+    {
+      "family": "received"
+    }
+  ]
+}

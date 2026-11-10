@@ -1,0 +1,106 @@
+{
+  "protocol": "idbots.live-stage.v1",
+  "sessionId": "demo-live-stage",
+  "turnId": "demo-turn-1",
+  "revision": 4,
+  "enabled": true,
+  "family": "worker-report",
+  "botName": "Nova",
+  "language": "en",
+  "headline": "A worker has reported back",
+  "caption": "A receipt has arrived and still needs evidence verification.",
+  "participants": [
+    "Nova",
+    "Pixel",
+    "Report"
+  ],
+  "composition": "topology",
+  "motif": "worker-report",
+  "topology": {
+    "mode": "structured",
+    "nodes": [
+      {
+        "id": "twin",
+        "label": "Nova",
+        "kind": "twin"
+      },
+      {
+        "id": "source",
+        "label": "MetaWeb",
+        "kind": "source"
+      },
+      {
+        "id": "worker",
+        "label": "Pixel",
+        "kind": "worker"
+      },
+      {
+        "id": "evidence",
+        "label": "Evidence",
+        "kind": "evidence"
+      }
+    ],
+    "edges": [
+      [
+        "twin",
+        "worker"
+      ],
+      [
+        "source",
+        "twin"
+      ],
+      [
+        "worker",
+        "evidence"
+      ],
+      [
+        "evidence",
+        "twin"
+      ]
+    ]
+  },
+  "motion": {
+    "preset": "worker-report",
+    "seed": 71491,
+    "durationMs": 720,
+    "easing": "emphasized-decelerate",
+    "energy": 0.4,
+    "density": 0.55
+  },
+  "metrics": {
+    "directorEnabled": false,
+    "directorCalls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "cacheReadTokens": 0,
+    "cacheCreationTokens": 0,
+    "rejectedPatches": 0,
+    "fallbackCount": 0,
+    "directorLatencyMs": 0
+  },
+  "handoff": {
+    "direction": "return",
+    "eventId": "demo-delivery-1"
+  },
+  "pendingProjectionIds": [],
+  "eventWindow": [
+    {
+      "family": "received"
+    },
+    {
+      "family": "web2-research",
+      "tool": "web_search"
+    },
+    {
+      "family": "metaweb-research",
+      "tool": "omni_reader"
+    },
+    {
+      "family": "delegation",
+      "tool": "local_worker_delegate"
+    },
+    {
+      "family": "worker-report"
+    }
+  ]
+}

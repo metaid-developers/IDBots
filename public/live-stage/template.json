@@ -1,0 +1,10 @@
+{
+  "templateId": "studio-live-stage-official",
+  "templateVersion": "1.0.0",
+  "stageProtocol": "idbots.live-stage.v1",
+  "entry": "index.html",
+  "render": "stage.html",
+  "scenes": "scenes.json",
+  "capabilities": ["stage.applyPatch"],
+  "offline": true
+}

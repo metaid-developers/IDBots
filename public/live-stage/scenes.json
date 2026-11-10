@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "protocol": "idbots.live-stage.v1",
+  "note": "Declarative scene surface for the official Live Stage template. Every family carries an explicit scene; the 'fallback' key is available to remixes that want a family to reuse another scene. Motion values are the official presentation defaults for a family entered on its own; the host's terminal helpers carry some fields over from the previous state at runtime.",
+  "palette": {
+    "colorA": "#FFDC51",
+    "colorB": "#FFF3B0",
+    "colorC": "#FF9D55",
+    "colorD": "#22D3EE",
+    "highlightColor": "#FFFFFF",
+    "shellInner": "#FFFFFF",
+    "shellMid": "#FFF3B0",
+    "shellEdge": "#FFDC51",
+    "sheenColor": "#F4F7FA",
+    "specColor": "#FFFFFF",
+    "canvasColor": "#0A1220",
+    "glowColor": "#FFDC51"
+  },
+  "handoff": {
+    "treatment": "bounded-arc",
+    "settleMs": 2600
+  },
+  "reducedMotion": {
+    "behavior": "static-frame"
+  },
+  "families": {
+    "received": {
+      "orb": { "style": 9, "preset": "received" },
+      "composition": "presence",
+      "topology": { "mode": "presence" },
+      "motion": { "durationMs": 720, "easing": "emphasized-decelerate", "energy": 0.35, "density": 0.25 }
+    },
+    "reasoning": {
+      "orb": { "style": 15, "preset": "reasoning" },
+      "composition": "presence",
+      "topology": { "mode": "presence" },
+      "motion": { "durationMs": 720, "easing": "emphasized-decelerate", "energy": 0.4, "density": 0.28 }
+    },
+    "speaking": {
+      "orb": { "style": 9, "preset": "speaking" },
+      "composition": "presence",
+      "topology": { "mode": "presence" },
+      "motion": { "durationMs": 720, "easing": "emphasized-decelerate", "energy": 0.4, "density": 0.28 }
+    },
+    "local-recall": {
+      "orb": { "style": 10, "preset": "local-recall" },
+      "composition": "gather",
+      "topology": { "mode": "presence" },
+      "motion": { "durationMs": 720, "easing": "emphasized-decelerate", "energy": 0.4, "density": 0.28 }
+    },
+    "web2-research": {
+      "orb": { "style": 10, "preset": "web2-research" },
+      "composition": "gather",
+      "topology": { "mode": "presence" },
+      "motion": { "durationMs": 720, "easing": "emphasized-decelerate", "energy": 0.4, "density": 0.28 }
+    },
+    "metaweb-research": {
+      "orb": { "style": 13, "preset": "metaweb-research" },
+      "composition": "gather",
+      "topology": { "mode": "presence" },
+      "motion": { "durationMs": 720, "easing": "emphasized-decelerate", "energy": 0.4, "density": 0.28 }
+    },
+    "making": {
+      "orb": { "style": 23, "preset": "making" },
+      "composition": "presence",
+      "topology": { "mode": "presence" },
+      "motion": { "durationMs": 720, "easing": "emphasized-decelerate", "energy": 0.4, "density": 0.28 }
+    },
+    "delegation": {
+      "orb": { "style": 24, "preset": "delegation" },
+      "composition": "topology",
+      "topology": { "mode": "structured" },
+      "motion": { "durationMs": 720, "easing": "emphasized-decelerate", "energy": 0.4, "density": 0.55 }
+    },
+    "waiting": {
+      "orb": { "style": 24, "preset": "waiting" },
+      "composition": "presence",
+      "topology": { "mode": "presence" },
+      "motion": { "durationMs": 720, "easing": "emphasized-decelerate", "energy": 0.4, "density": 0.28 }
+    },
+    "worker-report": {
+      "orb": { "style": 14, "preset": "worker-report" },
+      "composition": "topology",
+      "topology": { "mode": "structured" },
+      "motion": { "durationMs": 720, "easing": "emphasized-decelerate", "energy": 0.4, "density": 0.55 }
+    },
+    "verification": {
+      "orb": { "style": 12, "preset": "verification" },
+      "composition": "converge",
+      "topology": { "mode": "structured" },
+      "motion": { "durationMs": 720, "easing": "emphasized-decelerate", "energy": 0.55, "density": 0.55 }
+    },
+    "browser-action": {
+      "orb": { "style": 23, "preset": "browser-action" },
+      "composition": "topology",
+      "topology": { "mode": "structured" },
+      "motion": { "durationMs": 720, "easing": "emphasized-decelerate", "energy": 0.4, "density": 0.55 }
+    },
+    "owner-needed": {
+      "orb": { "style": 21, "preset": "owner-needed" },
+      "composition": "presence",
+      "topology": { "mode": "presence" },
+      "motion": { "durationMs": 720, "easing": "emphasized-decelerate", "energy": 0.4, "density": 0.28 }
+    },
+    "problem": {
+      "orb": { "style": 21, "preset": "problem" },
+      "composition": "presence",
+      "topology": { "mode": "presence" },
+      "motion": { "durationMs": 720, "easing": "emphasized-decelerate", "energy": 0.25, "density": 0.25 },
+      "note": "Energy matches the dedicated liveStageError helper; the generic reducer may keep the previous energy when it classifies a problem mid-flow."
+    },
+    "report-ready": {
+      "orb": { "style": 9, "preset": "report-ready" },
+      "composition": "ready",
+      "topology": { "mode": "presence" },
+      "motion": { "durationMs": 650, "easing": "emphasized-decelerate", "energy": 0.18, "density": 0.25 },
+      "note": "The host helper carries density over from the previous state; 0.25 is the standalone default after a presence family."
+    },
+    "complete": {
+      "orb": { "style": 9, "preset": "complete" },
+      "composition": "ready",
+      "topology": { "mode": "presence" },
+      "motion": { "durationMs": 600, "easing": "emphasized-decelerate", "energy": 0.12, "density": 0.25 },
+      "note": "The host helper carries density over from the previous state; 0.25 is the standalone default after a presence family."
+    }
+  }
+}
