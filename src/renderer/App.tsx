@@ -81,6 +81,7 @@ import {
   type SidebarResizeSession,
 } from './utils/sidebarResizeSession';
 import { useBotBrowserShell } from './features/botBrowser/useBotBrowserShell';
+import TwinApprovalStrip from './features/botBrowser/TwinApprovalStrip';
 import { openBotBrowserConversationInCowork } from './features/botBrowser/conversationNavigationAdapter';
 import type { BotBrowserConversationRequest } from './features/botBrowser/types';
 import type { BotHomeSection } from './features/botBrowser/types';
@@ -1738,9 +1739,14 @@ const App: React.FC = () => {
         onSectionChange={(section) => setMePurchase((prev) => ({ ...prev, section }))}
         onClose={() => setMePurchase((prev) => ({ ...prev, open: false }))}
       />
-      <CoworkPermissionOverlay
-        inlineSessionId={mainView === 'cowork' && showHomeSurface ? currentSessionId : null}
-      />
+      {/* Office face: the twin approval strip seats every pending ruling, so
+          the corner overlay stands down while the browser pane is visible —
+          one visible seat per prompt, no double cards. */}
+      {!botBrowserShell.isBrowserPaneVisible && (
+        <CoworkPermissionOverlay
+          inlineSessionId={mainView === 'cowork' && showHomeSurface ? currentSessionId : null}
+        />
+      )}
       {isNewGroupTaskOpen && (
         <Suspense fallback={null}>
           <NewGroupTaskModal
@@ -2019,6 +2025,7 @@ const App: React.FC = () => {
                 <WindowTitleBar isOverlayActive={isOverlayActive} />
               </div>
             ) : null}
+            <TwinApprovalStrip />
             <div className="flex-1 min-h-0">
               <Suspense fallback={<AppLoadingIndicator />}>
                 <BotBrowserSurface
