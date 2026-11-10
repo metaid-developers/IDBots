@@ -334,7 +334,7 @@ function resolveMatchedProvider(
         // A paid/explicit brain (DeepSeek, OpenCode, ...) must never be
         // rewritten onto the free-quota relay just because the chosen
         // provider is disabled or the model id went stale. That silently
-        // burns IDBots-Free and surfaces as free_quota_exhausted.
+        // burns the ID.Bots relay and surfaces as free_quota_exhausted.
         if (
           isFreeQuotaProvider(defaultRoute.matched.providerName)
           && !isFreeQuotaProvider(requestedOverride)
@@ -572,7 +572,7 @@ export function getAppConfigProviders(): Record<
  * order. This is the last-resort rung for one-shot cognitive calls
  * (services/llmFallback.runWithSystemRescue) and for the DSH current-default
  * rescue when a bot's primary AND fallback brains both die on terminal errors
- * (quota/auth/config) — the classic case being a new user whose IDBots-Free
+ * (quota/auth/config) — the classic case being a new user whose ID.Bots
  * allowance ran out but who already configured their own provider key in
  * Settings without wiring it into any brain setting.
  *

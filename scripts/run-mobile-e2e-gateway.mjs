@@ -516,7 +516,7 @@ const appConfigStore = {
         apiKey: 'gateway-fixture-relay-key',
         baseUrl: 'https://gateway.fixture/relay',
         apiFormat: 'openai',
-        name: 'IDBots-Free',
+        name: 'ID.Bots',
         models: [
           { id: 'deepseek-flash', name: 'DeepSeek Flash', contextWindow: 1000000, maxOutputTokens: 100000 },
           { id: 'glm-flash', name: 'GLM Flash', contextWindow: 128000, maxOutputTokens: 32768 },

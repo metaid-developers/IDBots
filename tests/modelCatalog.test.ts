@@ -70,8 +70,10 @@ test('buildModelGroupsFromConfig falls back to a capitalized key without a provi
 });
 
 test('buildModelGroupsFromConfig shows the canonical free-provider label over the stored legacy name', () => {
-  // Installs provisioned before the rename still store "MetaID Free"; the
-  // picker group must render the canonical IDBots-Free label either way.
+  // Installs provisioned before the renames still store "MetaID Free" or
+  // "IDBots-Free"; the picker group must render the canonical ID.Bots label
+  // either way (the label is plan-neutral: the same provider serves every
+  // subscription tier).
   const legacy = buildModelGroupsFromConfig({
     providers: {
       'metaid-free': {
@@ -84,9 +86,9 @@ test('buildModelGroupsFromConfig shows the canonical free-provider label over th
       },
     },
   });
-  assert.equal(legacy[0].name, 'IDBots-Free');
+  assert.equal(legacy[0].name, 'ID.Bots');
 
-  const fresh = buildModelGroupsFromConfig({
+  const prior = buildModelGroupsFromConfig({
     providers: {
       'metaid-free': {
         enabled: true,
@@ -98,7 +100,21 @@ test('buildModelGroupsFromConfig shows the canonical free-provider label over th
       },
     },
   });
-  assert.equal(fresh[0].name, 'IDBots-Free');
+  assert.equal(prior[0].name, 'ID.Bots');
+
+  const fresh = buildModelGroupsFromConfig({
+    providers: {
+      'metaid-free': {
+        enabled: true,
+        apiKey: 'mrk-test',
+        baseUrl: 'https://relay.example/v1',
+        apiFormat: 'openai' as const,
+        name: 'ID.Bots',
+        models: [{ id: 'deepseek-chat', name: 'deepseek-v4-flash' }],
+      },
+    },
+  });
+  assert.equal(fresh[0].name, 'ID.Bots');
 });
 
 test('buildModelGroupsFromConfig skips providers without models', () => {

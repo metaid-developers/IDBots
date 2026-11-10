@@ -3,7 +3,7 @@
  * free-quota post-mortem).
  *
  * The runtime rescue rung (llmFallback.runWithSystemRescue) keeps passive
- * scenarios alive when the IDBots-Free allowance dies; this service is the
+ * scenarios alive when the ID.Bots allowance dies; this service is the
  * PROACTIVE surface: it computes a single derivable state for the global
  * QuotaNudgeBanner so the owner learns "the free allowance is running out /
  * is exhausted, and N bots still ride it" BEFORE or AS it happens — with a

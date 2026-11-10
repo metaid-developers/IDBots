@@ -77,6 +77,7 @@ import {
   FREE_PROVIDER_DISPLAY_NAME,
   isFreeProviderConfigured,
   LLM_FREE_PROVIDER_KEY,
+  pickFreeProviderDefaultModelId,
 } from '../../renderer/services/llmFreeQuotaGate.js';
 import { pickTwinBotName } from '../../renderer/components/onboarding/twinBotNames.js';
 import { twinBotAvatarUrl } from '../../renderer/assets/twinBotAvatar';
@@ -202,8 +203,9 @@ export function createServerBootstrapStepExecutors(
   const findTwin = () => deps.getMetabotStore().listMetabots().find((m) => m.metabot_type === 'twin') ?? null;
 
   /**
-   * The Twin's brain: the provisioned free provider's first model, else the
-   * configured default (mirrors WelcomeFlow.resolveTwinBrain). A free primary
+   * The Twin's brain: the provisioned free provider's default model
+   * (deepseek-flash when the catalog carries it), else the configured
+   * default (mirrors WelcomeFlow.resolveTwinBrain). A free primary
    * is paired with a backup brain seeded from the first usable self-configured
    * provider when one exists, so an exhausted free allowance never silently
    * kills the twin before the owner learns the brain settings.
@@ -216,7 +218,7 @@ export function createServerBootstrapStepExecutors(
   } | null => {
     const config = (deps.getSqliteStore()?.get<AppConfigRow>('app_config') ?? {}) as AppConfigRow;
     const freeProvider = config.providers?.[LLM_FREE_PROVIDER_KEY];
-    const freeModelId = freeProvider?.enabled ? freeProvider.models?.[0]?.id : '';
+    const freeModelId = freeProvider?.enabled ? pickFreeProviderDefaultModelId(freeProvider.models) : '';
     if (freeModelId) {
       const defaultModel = String(config.model?.defaultModel ?? '').trim();
       for (const key of collectUsablePaidProviderKeys(config)) {
@@ -277,7 +279,7 @@ export function createServerBootstrapStepExecutors(
         },
         model: {
           ...(current.model ?? {}),
-          defaultModel: models[0]?.id ?? current.model?.defaultModel,
+          defaultModel: pickFreeProviderDefaultModelId(models) || current.model?.defaultModel,
           defaultProvider: LLM_FREE_PROVIDER_KEY,
         },
       }));

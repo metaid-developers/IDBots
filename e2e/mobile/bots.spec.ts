@@ -47,7 +47,7 @@ test.describe('Bot lifecycle and configuration', () => {
     await editForm.getByTestId('bot-tab-persona').click();
     await editForm.getByLabel('Persona (soul)').fill('Careful and concise');
     await editForm.getByTestId('bot-tab-model').click();
-    await editForm.getByLabel('Default model').selectOption({ label: 'IDBots-Free · GLM Flash' });
+    await editForm.getByLabel('Default model').selectOption({ label: 'ID.Bots · GLM Flash' });
     await editForm.getByLabel('Reasoning effort', { exact: true }).first().selectOption('high');
     await editForm.getByTestId('bot-tab-chatSettings').click();
     await expect(editForm.getByTestId('bot-skills-toggle')).toHaveAttribute('aria-expanded', 'false');

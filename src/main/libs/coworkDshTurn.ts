@@ -367,7 +367,7 @@ export interface DshHubOptions {
    *  that bash sources via BASH_ENV after the KEY/TOKEN scrub. */
   skillHostEnvProvider?: () => Record<string, string>
   /** The host web-tools proxy every slot mounts its web-search block against
-   *  (services/dshWebToolsProxy: user DeepSeek first, IDBots-Free relay
+   *  (services/dshWebToolsProxy: user DeepSeek first, ID.Bots relay
    *  fallback). Re-read on every config build; null (proxy not running)
    *  mounts no web seam and logs one notice per hub. The descriptor is
    *  constant for the app run, so the block never flaps a slot. */
@@ -1607,7 +1607,7 @@ export class DshTurnHub {
 
   private buildRuntimeConfig(slot: DshRuntimeSlot, input: DshTurnInput): DshRuntimeConfigInput {
     // Every slot mounts the same web seam: the host web-tools proxy, which
-    // owns the credential ladder (user DeepSeek first, IDBots-Free relay when
+    // owns the credential ladder (user DeepSeek first, ID.Bots relay when
     // that key is missing or out of quota). The descriptor is constant for
     // the app run, so this block never changes a slot's config after boot #1.
     const webTools = this.opts.webToolsProxy?.() ?? null

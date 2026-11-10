@@ -2,7 +2,7 @@
 // through (src/main/services/dshWebToolsProxy.ts). Pins the credential ladder
 // the owner asked for (2026-10-26): the user's own DeepSeek key serves while
 // it works; a 401/402/403 from DeepSeek suppresses that upstream for a TTL and
-// the call falls back to the IDBots-Free relay (free search bucket); 5xx/429/
+// the call falls back to the ID.Bots relay (free search bucket); 5xx/429/
 // transport failures fall through without marking; other 4xx are the
 // request's fault and come back as-is. No electron import — the module is
 // host-plain. Requires: npm run compile:electron.
@@ -270,7 +270,7 @@ test('proxy: with no upstream at all the plugin gets an actionable 503', async (
   const result = await callProxy(proxy, 'search', { query: 'x' })
   assert.equal(result.status, 503)
   assert.match(result.json.error.message, /DeepSeek API key/)
-  assert.match(result.json.error.message, /IDBots-Free/)
+  assert.match(result.json.error.message, /ID\.Bots/)
 })
 
 test('proxy: /fetch rides the same ladder', async (t) => {

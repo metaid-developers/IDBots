@@ -565,7 +565,7 @@ export const defaultConfig: AppConfig = {
       baseUrl: '',
       apiFormat: 'openai',
       models: [],
-      name: 'IDBots-Free',
+      name: 'ID.Bots',
     },
     deepseek: {
       enabled: false,

@@ -2,7 +2,7 @@
 // runtime slot mounts the same web seam — the host web-tools proxy
 // (services/dshWebToolsProxy) — so the model sees `web_search`/`web_fetch`
 // regardless of which chat provider the slot serves. The proxy owns the
-// credential ladder (the user's own DeepSeek key first, the IDBots-Free
+// credential ladder (the user's own DeepSeek key first, the ID.Bots
 // relay when that key is missing or answers 401/402/403); the runtime config
 // only ever carries the loopback proxy URL and an env NAME whose value is a
 // loopback-local token — neither a provider key nor the token itself enters
