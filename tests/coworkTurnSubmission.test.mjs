@@ -66,6 +66,8 @@ class FakeRunner extends EventEmitter {
     this.interruptKernelTurn = false;
     this.interruptCalls = [];
     this.releaseCalls = [];
+    this.permissionModeCalls = [];
+    this.permissionModeAtContinue = null;
   }
 
   getSteerCapability() {
@@ -97,7 +99,15 @@ class FakeRunner extends EventEmitter {
     return this.sessionStopped;
   }
 
+  setPermissionMode(sessionId, mode) {
+    this.permissionModeCalls.push({ sessionId, mode });
+  }
+
   async continueSession(sessionId, text, options) {
+    // Snapshot how many permission-mode writes already landed when the turn
+    // boots: an elevation ordered AFTER the continue call would boot the turn
+    // with the stale mode (the regression this ordering guard pins).
+    this.permissionModeAtContinue = this.permissionModeCalls.length;
     this.continueCalls.push({ sessionId, text, options });
     await this.continueDelivery;
     if (this.continueError) throw this.continueError;
@@ -146,6 +156,48 @@ test('persists once and submits a trimmed live steer without applying turn confi
   assert.equal(harness.emitted.length, 1);
   assert.equal(harness.store.getMessageById('session-1', UUID).metadata.steerStatus, 'delivered');
   assert.equal(harness.store.getMessageById('session-1', UUID).metadata.submissionMode, 'steer');
+});
+
+test('Studio conversations: a legacy browser session elevates to full trust before its turn boots', async () => {
+  // Owner ruling 2026-11-11: Studio (browser-type) conversations ALWAYS run
+  // full trust — equivalent to picking 完全信任 on the BotWorks composer chip.
+  // Rows created before the ruling carry 'default': the elevation must land
+  // BEFORE continueSession so the booted turn never runs with the stale mode.
+  const harness = createHarness({
+    sessionOverrides: { sessionType: 'browser', permissionMode: 'default' },
+  });
+  const result = await harness.controller.submit(input());
+
+  assert.equal(result.success, true);
+  assert.equal(result.mode, 'continue');
+  assert.deepEqual(harness.runner.permissionModeCalls, [
+    { sessionId: 'session-1', mode: 'bypassPermissions' },
+  ]);
+  assert.equal(harness.runner.permissionModeAtContinue, 1, 'elevation must precede the continue call');
+});
+
+test('Studio conversations: a browser session already in full trust is not rewritten', async () => {
+  const harness = createHarness({
+    sessionOverrides: { sessionType: 'browser', permissionMode: 'bypassPermissions' },
+  });
+  const result = await harness.controller.submit(input());
+
+  assert.equal(result.success, true);
+  assert.equal(result.mode, 'continue');
+  assert.deepEqual(harness.runner.permissionModeCalls, [], 'one UPDATE per migrated session, ever');
+});
+
+test('BotWorks conversations: a standard session never gets its permission mode rewritten', async () => {
+  // The ruling is scoped to the Studio surface: the BotWorks chip stays the
+  // only writer of standard sessions' permission mode.
+  const harness = createHarness({
+    sessionOverrides: { sessionType: 'standard', permissionMode: 'acceptEdits' },
+  });
+  const result = await harness.controller.submit(input());
+
+  assert.equal(result.success, true);
+  assert.equal(result.mode, 'continue');
+  assert.deepEqual(harness.runner.permissionModeCalls, []);
 });
 
 test('inactive sessions continue once with the requested system prompt and skills', async () => {

@@ -12530,7 +12530,7 @@ if (!gotTheLock) {
         null,
         null,
         null,
-        options.permissionMode ?? 'default',
+        sessionType === 'browser' ? 'bypassPermissions' : (options.permissionMode ?? 'default'),
         options.model?.trim() || null,
         // undefined effort keeps the tiered defaults (bot brain → global); an
         // explicit pick persists as sent — the 'default' sentinel records an
@@ -12564,8 +12564,18 @@ if (!gotTheLock) {
       // latest global choice, survives restart). When the renderer passes a
       // value it is the UI's current selection — persist it too so the global
       // default stays in sync with what the user just picked.
-      const resolvedPermissionMode = options.permissionMode ?? getPersistedCoworkPermissionMode();
-      if (options.permissionMode && options.permissionMode !== getPersistedCoworkPermissionMode()) {
+      // Studio conversations are the exception (owner ruling 2026-11-11): they
+      // ALWAYS run full trust — equivalent to picking 完全信任 on the BotWorks
+      // composer chip — but scoped to this surface, so the persisted global
+      // default (the chip the user last chose in BotWorks) is NOT touched.
+      const resolvedPermissionMode = sessionType === 'browser'
+        ? 'bypassPermissions'
+        : (options.permissionMode ?? getPersistedCoworkPermissionMode());
+      if (
+        sessionType !== 'browser'
+        && options.permissionMode
+        && options.permissionMode !== getPersistedCoworkPermissionMode()
+      ) {
         setPersistedCoworkPreference({ permissionMode: options.permissionMode });
       }
       runner.startSession(session.id, options.prompt, {

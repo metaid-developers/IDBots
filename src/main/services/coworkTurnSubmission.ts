@@ -1,6 +1,7 @@
 import type {
   CoworkMessage,
   CoworkMessageMetadata,
+  CoworkPermissionMode,
   CoworkSession,
 } from '../coworkStore';
 import { CoworkDshSteerWindowClosedError } from '../libs/coworkSteerChannel';
@@ -84,6 +85,7 @@ interface SubmissionRunner {
   interruptKernelTurnForHumanInput(sessionId: string): Promise<boolean>;
   releaseKernelTurnInterrupt(sessionId: string): void;
   wasSessionStopped(sessionId: string): boolean;
+  setPermissionMode(sessionId: string, mode: CoworkPermissionMode): void;
   continueSession(
     sessionId: string,
     text: string,
@@ -503,6 +505,17 @@ export class CoworkTurnSubmissionController {
     if (currentSessionError) {
       this.markSubmissionFailed(sessionId, message, currentSessionError.code, currentSessionError.error);
       return currentSessionError;
+    }
+
+    // Studio conversations run full trust (owner ruling 2026-11-11): every
+    // browser-type session resolves bypassPermissions, so legacy rows created
+    // before the ruling elevate on their first submit here. The runner's
+    // setPermissionMode updates the active session and the persisted row
+    // WITHOUT touching the app-level global default (the BotWorks composer
+    // chip keeps whatever the user chose there). Already-elevated sessions
+    // skip the write, so this is one UPDATE per migrated session, ever.
+    if (currentSession.sessionType === 'browser' && currentSession.permissionMode !== 'bypassPermissions') {
+      this.runner.setPermissionMode(sessionId, 'bypassPermissions');
     }
 
     const continuing = this.store.getMessageById(sessionId, submissionId) ?? message;
