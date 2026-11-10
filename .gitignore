@@ -752,6 +752,7 @@ man_base_data_pebble/
 !tests/coworkSessionController.test.ts
 !tests/coworkSessionStart.test.ts
 !tests/mobileChatProjection.test.ts
+!tests/mobileChatDiagnosticReason.test.tsx
 !tests/coworkCompactedNotice.test.tsx
 !tests/coworkConversationSearch.test.tsx
 !tests/sessionListRenderBudget.test.mjs
