@@ -43,7 +43,7 @@ function isUnexpectedRuntimeExitError(error: unknown): boolean {
   return /runtime exited|stream closed|runtime is not running/i.test(text)
 }
 import type { DshKernelOptions } from './dshKernel/dshKernel'
-import { dshModelReasoningDeclaration } from './dshModelReasoning'
+import { dshLowestReasoningSelection, dshModelReasoningDeclaration } from './dshModelReasoning'
 import { currentClientTimeZone } from './dshKernel/clientTimeZone'
 import type { DshWebToolsProxyDescriptor } from '../services/dshWebToolsProxy'
 import type {
@@ -513,6 +513,12 @@ export class DshTurnHub {
   private readonly slots = new Map<string, DshRuntimeSlot>()
   /** Keyed by DSH session id — that is what kernel event callbacks carry. */
   private controllersByDsh = new Map<string, DshTurnController>()
+  /** The live turn's provider route per DSH session id — the projection fast
+   *  path re-binds its selection (same route, lowest effort) mid-turn, so the
+   *  route the turn ensured with must stay reachable from host tool handlers.
+   *  Overwritten at every turn registration; a stale entry is unreachable
+   *  because the projection_begin tool only exists on projector sessions. */
+  private routeByDsh = new Map<string, DshTurnProviderRoute>()
   /** cowork session id → DSH session id (steer/cancel look up by cowork id). */
   private dshByCowork = new Map<string, string>()
   /** Reverse mapping for tool-request routing. */
@@ -825,6 +831,7 @@ export class DshTurnHub {
     // session at this point; the set is a fresh registration, never an
     // overwrite of an in-flight turn.
     this.controllersByDsh.set(input.dshSessionId, controller)
+    this.routeByDsh.set(input.dshSessionId, input.provider)
     this.dshByCowork.set(input.sessionId, input.dshSessionId)
     this.coworkByDsh.set(input.dshSessionId, input.sessionId)
     this.pinnedDshIds.set(input.sessionId, input.dshSessionId)
@@ -981,6 +988,46 @@ export class DshTurnHub {
       }
     }
     return false
+  }
+
+  /**
+   * Projection fast path (owner ruling 2026-11-11): re-bind the LIVE turn's
+   * model selection to the lowest reasoning effort the model can express, so
+   * the large projection-page HTML write streams without deep thinking. The
+   * kernel resolves each step's request config from the agent's CURRENT
+   * selection and host tools execute between steps — a projection_begin tool
+   * call therefore flips the effort for the very next request, which is the
+   * page write. No restore: every turn's ensureSession re-binds the turn-
+   * resolved effort, and a turn whose effort mapping is empty inherits the
+   * low selection — for the one family that drops the effort parameter there
+   * (GLM on the responses wire) low is the desired floor anyway.
+   *
+   * Best-effort by contract: the caller turns a failure into a plain "write
+   * the page as usual" tool result, never into a turn error.
+   */
+  async forceProjectionFastMode(coworkSessionId: string): Promise<{ ok: boolean; effort?: string; error?: string }> {
+    const dshId = this.dshByCowork.get(coworkSessionId) ?? this.pinnedDshIds.get(coworkSessionId)
+    const route = dshId ? this.routeByDsh.get(dshId) : undefined
+    const kernel = dshId ? this.kernelByDsh.get(dshId) : undefined
+    if (!dshId || !route || !kernel) {
+      return { ok: false, error: 'no live turn to re-bind' }
+    }
+    const effort = dshLowestReasoningSelection(route.model, route.apiFormat, route.baseUrl)
+    try {
+      await kernel.selectModel({ sessionId: dshId, provider: route.key, model: route.model, reasoningEffort: effort })
+      this.opts.log?.('info', 'projectionFastMode', {
+        sessionId: coworkSessionId,
+        dshSessionId: dshId,
+        provider: route.key,
+        model: route.model,
+        effort,
+      })
+      return { ok: true, effort }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.opts.log?.('warn', 'projectionFastMode', { sessionId: coworkSessionId, error: message })
+      return { ok: false, error: message }
+    }
   }
 
   /**

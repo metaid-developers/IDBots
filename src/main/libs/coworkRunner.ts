@@ -12741,6 +12741,27 @@ export class CoworkRunner extends EventEmitter {
       },
       async (args) => this.emitAssistantOwnerUpdate(sessionId, args, activeSession),
     ))
+    // Projection fast path (owner ruling 2026-11-11): the projector prompt
+    // makes the bot call projection_begin right before it writes the page
+    // file; the hub re-binds the live selection to the model's lowest effort
+    // so the large HTML write streams without deep thinking (GLM floors at
+    // low — it cannot express off). A failed or unavailable re-bind degrades
+    // to the status quo (normal effort) — the tool result must never error
+    // the turn, so both outcomes return plain text.
+    if (this.isProjectorModeSession(sessionId)) {
+      tools.push(passthrough(
+        'projection_begin',
+        'Signal that you are about to write the projection page (the reports/*.html file you will preview with bot_browser_preview_local). Call it ONCE, immediately before writing that file — never for ordinary files. It puts this session into fast mode: the next reasoning steps run with minimal thinking so the large HTML write finishes as fast as possible. Takes no parameters and returns immediately.',
+        {},
+        async () => {
+          const result = await this.dshTurnHub?.forceProjectionFastMode(sessionId)
+          const text = result?.ok
+            ? `Fast mode engaged (reasoning effort: ${result.effort}). Write the projection page now.`
+            : 'Fast mode unavailable right now — write the projection page as usual.'
+          return { content: [{ type: 'text', text }] } as any
+        },
+      ))
+    }
     return tools
   }
 

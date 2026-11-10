@@ -6,7 +6,7 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { dshModelReasoningDeclaration, dshRouteReasoningEffort } from '../dist-electron/main/libs/dshModelReasoning.js'
+import { dshLowestReasoningSelection, dshModelReasoningDeclaration, dshRouteReasoningEffort } from '../dist-electron/main/libs/dshModelReasoning.js'
 
 test('deepseek-v4 family declares the official chat-completions dialect, vendor prefix or not', () => {
   for (const id of [
@@ -177,3 +177,21 @@ test('undeclared-reasoning route warning fires once per route identity', async (
   assert.ok(changedEffort, 'a different effort is a new identity')
   assert.match(changedEffort, /"off"/)
 })
+
+test('dshLowestReasoningSelection: off when the ladder expresses it, else the lowest rung (projection fast path)', () => {
+  // DeepSeek V4 chat-completions: off is expressible (reasoning:false wire).
+  assert.equal(dshLowestReasoningSelection('deepseek-v4-flash', 'openai', null), 'off');
+  // GLM-5.x on the zhipu chat wire: off IS declared — the declaration folds it
+  // to the family's minimal wire shape (reasoning:{effort:'low'}), so the
+  // selection id stays off and the kernel does the folding.
+  assert.equal(dshLowestReasoningSelection('glm-5.3-flash', 'openai', 'https://open.bigmodel.cn/api/paas/v4'), 'off');
+  // GLM-5.x on the responses wire: off declared (off:'low' fold).
+  assert.equal(dshLowestReasoningSelection('glm-5.3-flash', 'responses', 'https://open.bigmodel.cn/api/coding/v3'), 'off');
+  // GLM-5.x on the Anthropic wire (Volcengine Ark): off is OMITTED entirely —
+  // Ark 400s thinking:{type:'disabled'} — so low is the expressible floor.
+  assert.equal(dshLowestReasoningSelection('glm-5.3-flash', 'anthropic', 'https://ark.cn-beijing.volces.com/api/coding/v3'), 'low');
+  // GLM-4.x (disable-capable): off expressible everywhere.
+  assert.equal(dshLowestReasoningSelection('glm-4.6-air', 'anthropic', null), 'off');
+  // Unknown family: no declaration, default pi-ai ladder includes off.
+  assert.equal(dshLowestReasoningSelection('some-unknown-model', 'openai', null), 'off');
+});
