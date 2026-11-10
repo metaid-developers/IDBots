@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ArrowPathIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
-import IdbotsPlanCard from '../../components/me/IdbotsPlanCard';
 import {
   ensureMeSnapshot,
   formatMe,
@@ -24,9 +23,7 @@ import { openUserProfilePlansPage } from './userProfileStore';
  * This is the old sidebar-footer popover's content, laid out for a page instead
  * of a 300 px tray: total available (with the frozen note), the weekly grant
  * with its reset countdown, the three persistent pools, the plan/upgrade and
- * top-up entries, and the usage-details door. The plan card
- * (`components/me/IdbotsPlanCard`) is the SAME component Settings already
- * renders — nothing about plans is re-implemented here.
+ * top-up entries, and the usage-details door.
  *
  * No new service call and no new endpoint: every number is read from the one
  * shared snapshot store (`components/me/mePointsStore`), and every action
@@ -187,10 +184,6 @@ const MeCreditsPanel: React.FC = () => {
             <span>{copy.meUsage}</span>
             <ChevronRightIcon className="h-4 w-4" aria-hidden="true" />
           </button>
-
-          {/* The SAME plan card Settings renders; its upgrade button is wired
-              to the in-card level-2 plans page instead of the floating modal. */}
-          <IdbotsPlanCard onUpgrade={() => openUserProfilePlansPage('subscribe')} />
 
           <p className="text-[11px] leading-relaxed text-claude-textSecondary dark:text-claude-darkTextSecondary">{copy.meNote}</p>
         </>
