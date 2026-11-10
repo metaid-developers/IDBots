@@ -1,5 +1,6 @@
 /**
- * Panel bubble timestamp formatting (office-chat purity pass #1, item ①).
+ * Panel bubble timestamp formatting (office-chat purity pass #1, item ①;
+ * hover-revealed grouping added in pass #3, item ①).
  *
  * One message bubble, one small meta line: same-day stamps read as local
  * `HH:mm`, stamps from any earlier day read as `MM-DD HH:mm`. The panel is a
@@ -9,6 +10,8 @@
  * Kept as a pure function of (timestamp, now) so tests pin the day boundary
  * without freezing a clock.
  */
+
+import type { CoworkMessage } from '../../types/cowork';
 
 const pad2 = (value: number): string => (value < 10 ? `0${value}` : String(value));
 
@@ -42,4 +45,26 @@ export const formatPanelMessageTimestamp = (timestampMs: number, nowMs: number):
     && stamp.getDate() === now.getDate();
   const clock = formatPanelClock(stamp);
   return sameDay ? clock : `${formatPanelDate(stamp)} ${clock}`;
+};
+
+/**
+ * Group-end predicate (purity pass #3, item ①): consecutive VISIBLE messages
+ * from the same sender render as one group, and only the group's last bubble
+ * carries the hover-revealed stamp — the other rows stay meta-free, so the
+ * chat reads as per-sender bursts instead of one stamped line per bubble.
+ *
+ * The grouping follows the transcript's own turn semantics
+ * (buildConversationTurns in coworkConversationProjection): sender adjacency
+ * with no time-gap threshold — a group breaks when the message type flips
+ * (user ↔ assistant), not when N minutes elapsed. Pure over the already
+ * filtered (rendered) sequence, so hidden noise never splits a group.
+ */
+export const isPanelMessageGroupEnd = (
+  messages: readonly CoworkMessage[],
+  index: number,
+): boolean => {
+  const current = messages[index];
+  if (!current) return false;
+  const next = messages[index + 1];
+  return !next || next.type !== current.type;
 };
