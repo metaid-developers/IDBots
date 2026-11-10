@@ -11,7 +11,7 @@ import { imService } from '../services/im';
 import { APP_ID, EXPORT_FORMAT_TYPE, EXPORT_PASSWORD } from '../constants/app';
 import ErrorMessage from './ErrorMessage';
 import FreeQuotaCard from './FreeQuotaCard';
-import { XMarkIcon, Cog6ToothIcon, PlusCircleIcon, TrashIcon, PencilIcon, SignalIcon, CheckCircleIcon, XCircleIcon, CubeIcon, ChatBubbleLeftIcon, UserCircleIcon, ArchiveBoxIcon, PuzzlePieceIcon, BriefcaseIcon, BoltIcon, ArrowPathIcon, WrenchScrewdriverIcon, SparklesIcon, QuestionMarkCircleIcon } from '@heroicons/react/24/outline';
+import { XMarkIcon, Cog6ToothIcon, PlusCircleIcon, TrashIcon, PencilIcon, SignalIcon, CheckCircleIcon, XCircleIcon, CubeIcon, ChatBubbleLeftIcon, UserCircleIcon, ArchiveBoxIcon, PuzzlePieceIcon, BriefcaseIcon, BoltIcon, ArrowPathIcon, QuestionMarkCircleIcon } from '@heroicons/react/24/outline';
 import BrainIcon from './icons/BrainIcon';
 import { CustomProviderIcon, CommandCodeIcon, OpenCodeIcon } from './icons/providers';
 import { fetchProviderModelList, providerSupportsModelListSync } from '../services/providerModels';
@@ -51,7 +51,7 @@ import MeUsageAndCredits from './me/MeUsageAndCredits';
 import TrafficSettings from './traffic/TrafficSettings';
 import { findMeRateForModel } from './me/meRates';
 import { ensureMeSnapshot, getMeSnapshot, subscribeMeSnapshot } from './me/mePointsStore';
-import { defaultConfig, type AppConfig, type ChatExperienceMode } from '../config';
+import { defaultConfig, type AppConfig } from '../config';
 import { LLM_FREE_PROVIDER_KEY, getFreeProviderModelDisplayName } from '../services/llmFreeQuotaGate.js';
 import { PROVIDER_TEMPLATES, type ProviderTemplate } from '../services/providerTemplates';
 import { resolveProviderTemplateLogo } from './settings/providerTemplateLogos';
@@ -584,18 +584,11 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
   const [activeTab, setActiveTab] = useState<TabType>(resolvedInitialTab);
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('system');
   const [language, setLanguage] = useState<LanguageType>(i18nService.getLanguage());
-  // Transitional form (总裁办公室裁定修订 2026-11-09，以修订条为准): the
-  // legacy stored mode survives as DISPLAY-ONLY state — it drives the
-  // retained cards' selected highlight and nothing else. The active mode
-  // comes from the face (hooks/chatExperienceModeSource.ts); nothing here
-  // reads the stored value for behavior or writes it back.
-  const [chatExperienceMode, setChatExperienceMode] = useState<ChatExperienceMode>('assistant');
   const [autoLaunch, setAutoLaunchState] = useState(false);
   const [isUpdatingAutoLaunch, setIsUpdatingAutoLaunch] = useState(false);
   const [experimentalAutomation, setExperimentalAutomationState] = useState(true);
   const [isUpdatingExperimentalAutomation, setIsUpdatingExperimentalAutomation] = useState(false);
   const [liveStageEnabled, setLiveStageEnabled] = useState(false);
-  const [liveStageDirectorEnabled, setLiveStageDirectorEnabled] = useState(false);
   const [isUpdatingLiveStage, setIsUpdatingLiveStage] = useState(false);
   const [preventDeviceSleep, setPreventDeviceSleepState] = useState(false);
   const [isUpdatingPreventDeviceSleep, setIsUpdatingPreventDeviceSleep] = useState(false);
@@ -817,7 +810,6 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
     window.electron.studioLiveStage.get().then((settings) => {
       if (!active) return;
       setLiveStageEnabled(settings.enabled);
-      setLiveStageDirectorEnabled(settings.directorEnabled);
     }).catch((loadError) => console.error('Failed to load Live Stage settings:', loadError));
     return () => { active = false; };
   }, []);
@@ -831,11 +823,6 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
       initialLanguageRef.current = config.language;
       setTheme(config.theme);
       setLanguage(config.language);
-      // Legacy display value only (the retired switch is kept as transitional
-      // UI): read for the cards' highlight, never written back, never read
-      // for behavior — the active mode follows the face
-      // (hooks/chatExperienceModeSource.ts).
-      setChatExperienceMode(config.chatExperienceMode ?? 'assistant');
 
       // Load auto-launch setting
       window.electron.autoLaunch.get().then(({ enabled }) => {
@@ -1600,14 +1587,13 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
     }));
   };
 
-  const handleLiveStageSettings = async (updates: { enabled?: boolean; directorEnabled?: boolean }) => {
+  const handleLiveStageSettings = async (updates: { enabled?: boolean }) => {
     if (isUpdatingLiveStage) return;
     setIsUpdatingLiveStage(true);
     try {
       const result = await window.electron.studioLiveStage.set(updates);
       if (result.success) {
         setLiveStageEnabled(result.enabled === true);
-        setLiveStageDirectorEnabled(result.directorEnabled === true);
       } else {
         setError(result.error || 'Failed to update Live Stage settings');
       }
@@ -1619,9 +1605,9 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
     }
   };
 
-  // handleChatExperienceModeChange stays gone (修订条 2026-11-09): the switch
-  // is kept visible but inert — nothing here writes chatExperienceMode into
-  // app_config any more, and the value it shows no longer decides anything.
+  // The chat-experience-mode switch UI is gone (owner ruling 2026-11-10): the
+  // mode is decided by the active face (hooks/chatExperienceModeSource.ts) and
+  // nothing here reads or writes chatExperienceMode any more.
 
   // 阻止点击设置窗口时事件传播到背景
   const handleSettingsClick = (e: React.MouseEvent) => {
@@ -2473,95 +2459,14 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
       case 'general':
         return (
           <div className="space-y-8">
-            {/* Chat Experience Mode Section — transitional form (总裁办公室
-                裁定修订 2026-11-09，以修订条为准): the mode is decided by the
-                active FACE (hooks/chatExperienceModeSource.ts) — this switch
-                no longer affects it. The switch is KEPT visible as
-                transitional UI (保留不删) with the ruling's note above it,
-                slated for retirement; its cards are non-interactive and the
-                legacy stored value only drives their selected highlight
-                (display-only, never written back). The note copy is inline
-                bilingual because the i18n copy domain (services/i18n.ts) is
-                owned by the in-flight 文案单; mode/face NAMES ride the
-                existing keys (chatModeAssistant/chatModeProfessional,
-                botInternet/botHome). */}
-            <div>
-              <h4 className="text-sm font-medium dark:text-claude-darkText text-claude-text mb-1">
-                {i18nService.t('chatExperienceMode')}
-              </h4>
-              <p className="text-xs dark:text-claude-darkSecondaryText text-claude-secondaryText mb-3">
-                {language === 'en'
-                  ? 'The mode is decided by the surface you are on: Studio = Assistant, BotWorks = Professional (this switch will be retired soon).'
-                  : '模式已随所在页面自动确定：Studio＝助手模式，BotWorks＝专业模式（本开关即将退役）'}
-              </p>
-              <div className="grid grid-cols-2 gap-4">
-                {([
-                  {
-                    value: 'professional' as const,
-                    label: i18nService.t('chatModeProfessional'),
-                    desc: i18nService.t('chatModeProfessionalDesc'),
-                    icon: WrenchScrewdriverIcon,
-                  },
-                  {
-                    value: 'assistant' as const,
-                    label: i18nService.t('chatModeAssistant'),
-                    desc: i18nService.t('chatModeAssistantDesc'),
-                    icon: SparklesIcon,
-                  },
-                ]).map((option) => {
-                  const isSelected = chatExperienceMode === option.value;
-                  const OptionIcon = option.icon;
-                  return (
-                    <button
-                      key={option.value}
-                      type="button"
-                      aria-disabled="true"
-                      className={`flex flex-col items-start rounded-xl border-2 p-3 transition-colors cursor-default ${
-                        isSelected
-                          ? 'border-claude-accent bg-claude-accent/5 dark:bg-claude-accent/10'
-                          : 'dark:border-claude-darkBorder border-claude-border'
-                      }`}
-                    >
-                      <OptionIcon className={`h-5 w-5 mb-2 ${
-                        isSelected
-                          ? 'text-claude-accent'
-                          : 'dark:text-claude-darkText text-claude-text'
-                      }`} />
-                      <span className={`text-sm font-medium ${
-                        isSelected
-                          ? 'text-claude-accent'
-                          : 'dark:text-claude-darkText text-claude-text'
-                      }`}>
-                        {option.label}
-                      </span>
-                      <span className="text-xs dark:text-claude-darkSecondaryText text-claude-secondaryText mt-1 text-left">
-                        {option.desc}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="rounded-xl border border-claude-border/70 bg-claude-bg/60 p-3 mt-3 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/60">
-                <div className="flex items-center justify-between py-1.5">
-                  <span className="text-sm dark:text-claude-darkText text-claude-text">
-                    {i18nService.t('botInternet')}
-                  </span>
-                  <span className="text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                    {i18nService.t('chatModeAssistant')}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between border-t border-claude-border/60 py-1.5 dark:border-claude-darkBorder/60">
-                  <span className="text-sm dark:text-claude-darkText text-claude-text">
-                    {i18nService.t('botHome')}
-                  </span>
-                  <span className="text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                    {i18nService.t('chatModeProfessional')}
-                  </span>
-                </div>
-              </div>
-            </div>
+            {/* Chat Experience Mode Section — removed (owner ruling 2026-11-10):
+                the mode is decided by the active face
+                (hooks/chatExperienceModeSource.ts), so the inert transitional
+                switch only confused users. The general tab now opens with the
+                language selector. */}
 
-            {/* Language Section */}
+            {/* Language Section — the label is intentionally bilingual so
+                speakers of either UI language can tell what it selects. */}
             <div className="flex items-center justify-between">
               <h4 className="text-sm font-medium dark:text-claude-darkText text-claude-text">
                 {i18nService.t('language')}
@@ -2641,17 +2546,9 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                   <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${liveStageEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
                 </button>
               </label>
-            </div>
-
-            <div>
-              <h4 className="text-sm font-medium dark:text-claude-darkText text-claude-text mb-1">{i18nService.t('studioLiveStageDirector')}</h4>
-              <p className="text-xs dark:text-claude-darkSecondaryText text-claude-secondaryText mb-3">{i18nService.t('studioLiveStageDirectorDescription')}</p>
-              <label className={`flex items-center justify-between ${liveStageEnabled ? 'cursor-pointer' : 'opacity-50'}`}>
-                <span className="text-sm dark:text-claude-darkSecondaryText text-claude-secondaryText">{i18nService.t('studioLiveStageDirectorToggle')}</span>
-                <button type="button" role="switch" aria-checked={liveStageDirectorEnabled} onClick={() => void handleLiveStageSettings({ directorEnabled: !liveStageDirectorEnabled })} disabled={isUpdatingLiveStage || !liveStageEnabled} className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${isUpdatingLiveStage || !liveStageEnabled ? 'opacity-50 cursor-not-allowed' : ''} ${liveStageDirectorEnabled ? 'bg-claude-accent' : 'bg-gray-300 dark:bg-gray-600'}`}>
-                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${liveStageDirectorEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
-                </button>
-              </label>
+              {/* The Generative visual Director has no switch of its own any
+                  more (owner ruling 2026-11-10): it is always on and follows
+                  this toggle — see writeStudioLiveStageSettings. */}
             </div>
 
             {/* Experimental automation kill-switch (browser automation + desktop computer use) */}

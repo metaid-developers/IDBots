@@ -13,12 +13,13 @@ export const STUDIO_LIVE_STAGE_DIRECTOR_KEY = 'studio.liveStage.director.enabled
 
 /**
  * LEGACY (pre-Studio naming): builds that called this surface BotHub persisted
- * these keys. They are data-compatibility only — read once, copied onto the
- * STUDIO_* keys, and never written again — so an existing install keeps its
- * live-stage toggles across the rename instead of silently falling back to off.
+ * this key. It is data-compatibility only — read once, copied onto the
+ * STUDIO_* key, and never written again — so an existing install keeps its
+ * live-stage toggle across the rename instead of silently falling back to off.
+ * (The legacy director key is not migrated: the Director is now derived from
+ * the stage toggle and has no stored state of its own.)
  */
 const LEGACY_LIVE_STAGE_KEY = 'botHub.liveStage.enabled';
-const LEGACY_LIVE_STAGE_DIRECTOR_KEY = 'botHub.liveStage.director.enabled';
 
 /** Read a persisted key, migrating a pre-rename value forward on first sight. */
 function readPersisted(store: StudioLiveStageSettingsStore | null | undefined, key: string, legacyKey: string): unknown {
@@ -38,12 +39,15 @@ function readPersisted(store: StudioLiveStageSettingsStore | null | undefined, k
 export function readStudioLiveStageSettings(store: StudioLiveStageSettingsStore | null | undefined): StudioLiveStageSettings {
   try {
     const rawEnabled = readPersisted(store, STUDIO_LIVE_STAGE_KEY, LEGACY_LIVE_STAGE_KEY);
-    const rawDirector = readPersisted(store, STUDIO_LIVE_STAGE_DIRECTOR_KEY, LEGACY_LIVE_STAGE_DIRECTOR_KEY);
-    const enabled = rawEnabled === true || rawEnabled === '1';
-    const directorEnabled = rawDirector === true || rawDirector === '1';
-    return { enabled, directorEnabled: enabled && directorEnabled };
+    // Default ON (owner ruling 2026-11-10): the stage is on unless the user
+    // explicitly turned it off ('0', migrated forward from the legacy key if
+    // needed). The Director has no independent switch — it is linked to the
+    // stage toggle and shares its state, so a stale director key from before
+    // the linkage can never strand the Director off.
+    const enabled = rawEnabled === undefined || rawEnabled === null ? true : rawEnabled === true || rawEnabled === '1';
+    return { enabled, directorEnabled: enabled };
   } catch {
-    return { enabled: false, directorEnabled: false };
+    return { enabled: true, directorEnabled: true };
   }
 }
 
@@ -52,14 +56,18 @@ export function writeStudioLiveStageSettings(
   updates: Partial<StudioLiveStageSettings>,
 ): StudioLiveStageSettings {
   const current = readStudioLiveStageSettings(store);
+  // The Director follows the stage toggle (owner ruling 2026-11-10): only the
+  // stage's enabled state is honored, and both keys are mirrored so older
+  // builds reading the director key still see a consistent state.
   const enabled = updates.enabled ?? current.enabled;
-  const directorEnabled = enabled && (updates.directorEnabled ?? current.directorEnabled);
   try {
-    if (updates.enabled !== undefined) store?.set?.(STUDIO_LIVE_STAGE_KEY, enabled ? '1' : '0');
-    if (updates.directorEnabled !== undefined || updates.enabled !== undefined) store?.set?.(STUDIO_LIVE_STAGE_DIRECTOR_KEY, directorEnabled ? '1' : '0');
+    if (updates.enabled !== undefined) {
+      store?.set?.(STUDIO_LIVE_STAGE_KEY, enabled ? '1' : '0');
+      store?.set?.(STUDIO_LIVE_STAGE_DIRECTOR_KEY, enabled ? '1' : '0');
+    }
   } catch {
     // The in-memory result still reflects the requested setting; the next read
     // safely falls back to the persisted values.
   }
-  return { enabled, directorEnabled };
+  return { enabled, directorEnabled: enabled };
 }

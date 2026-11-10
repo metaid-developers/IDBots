@@ -7,7 +7,7 @@ import path from 'node:path';
 
 const require = Module.createRequire(import.meta.url);
 const { createStudioLiveStageService } = require('../dist-electron/main/services/studioLiveStageService.js');
-const { readStudioLiveStageSettings, writeStudioLiveStageSettings } = require('../dist-electron/main/services/studioLiveStageSettings.js');
+const { readStudioLiveStageSettings, writeStudioLiveStageSettings, STUDIO_LIVE_STAGE_KEY, STUDIO_LIVE_STAGE_DIRECTOR_KEY } = require('../dist-electron/main/services/studioLiveStageSettings.js');
 
 const message = (id, type, metadata = {}) => ({ id, type, content: '', timestamp: 1, metadata });
 
@@ -51,13 +51,18 @@ function fixture(t, directorEnabled = false, initialTabId = 7) {
   return { service, session, projected, patches, calls, settings };
 }
 
-test('settings default off and Director cannot be enabled without Live Stage', () => {
+test('settings default on and Director follows the Live Stage toggle', () => {
   const values = new Map();
   const store = { get: (key) => values.get(key), set: (key, value) => values.set(key, value) };
-  assert.deepEqual(readStudioLiveStageSettings(store), { enabled: false, directorEnabled: false });
-  assert.deepEqual(writeStudioLiveStageSettings(store, { directorEnabled: true }), { enabled: false, directorEnabled: false });
-  assert.deepEqual(writeStudioLiveStageSettings(store, { enabled: true, directorEnabled: true }), { enabled: true, directorEnabled: true });
+  assert.deepEqual(readStudioLiveStageSettings(store), { enabled: true, directorEnabled: true });
+  assert.deepEqual(writeStudioLiveStageSettings(store, { directorEnabled: false }), { enabled: true, directorEnabled: true });
   assert.deepEqual(writeStudioLiveStageSettings(store, { enabled: false }), { enabled: false, directorEnabled: false });
+  assert.equal(values.get(STUDIO_LIVE_STAGE_KEY), '0');
+  assert.equal(values.get(STUDIO_LIVE_STAGE_DIRECTOR_KEY), '0');
+  assert.deepEqual(readStudioLiveStageSettings(store), { enabled: false, directorEnabled: false });
+  assert.deepEqual(writeStudioLiveStageSettings(store, { enabled: true }), { enabled: true, directorEnabled: true });
+  assert.equal(values.get(STUDIO_LIVE_STAGE_KEY), '1');
+  assert.equal(values.get(STUDIO_LIVE_STAGE_DIRECTOR_KEY), '1');
 });
 
 test('service writes one stage per turn, dedupes messages, and preserves report readiness', async (t) => {
