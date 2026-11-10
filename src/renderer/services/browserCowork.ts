@@ -64,6 +64,11 @@ class BrowserCoworkService {
     modelEffort?: { model?: string | null; modelProvider?: string | null; effort?: string | null },
     skills?: BrowserCoworkSkills,
     projectId?: string | null,
+    /**
+     * What the title generator sees (defaults to prompt). The element-picker
+     * context block rides inside prompt but must not seed the session title.
+     */
+    titleSource?: string,
   ): Promise<CoworkSession | null> {
     if (this.starting) return null;
     const cowork = window.electron?.cowork;
@@ -71,9 +76,10 @@ class BrowserCoworkService {
     this.starting = true;
     try {
       store.dispatch(setBrowserStreaming(true));
-      const fallbackTitle = prompt.split('\n')[0].slice(0, 50) || 'Bot Browser';
+      const titlePrompt = titleSource?.trim() ? titleSource : prompt;
+      const fallbackTitle = titlePrompt.split('\n')[0].slice(0, 50) || 'Bot Browser';
       const [generatedTitle, systemPrompt] = await Promise.all([
-        coworkService.generateSessionTitle(prompt).catch(() => null),
+        coworkService.generateSessionTitle(titlePrompt).catch(() => null),
         this.buildCombinedSystemPrompt(skills?.prompt),
       ]);
       const result = await cowork.startSession({

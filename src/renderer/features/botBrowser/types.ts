@@ -1,4 +1,8 @@
-import type { BrowserActor, BrowserTrustedActionKind } from '@openagentinternet/agent-browser-host-contract';
+import type {
+  BrowserActor,
+  BrowserElementSelectionsSnapshot,
+  BrowserTrustedActionKind,
+} from '@openagentinternet/agent-browser-host-contract';
 import type { Metabot } from '../../types/metabot';
 import type { MetaAppRecord } from '../../types/metaApp';
 
@@ -111,11 +115,20 @@ export interface BotBrowserTabCommandResult {
   info?: BotBrowserTabEnvelope | null;
 }
 
+/** `{ tabId, cleared: true }` returned by the ABC clear-element-selections bridge. */
+export type BotBrowserElementSelectionsClearResult = { tabId: number | string; cleared: boolean };
+
 export interface BotBrowserSurfaceHandle {
   openUri(input: BotBrowserOpenUriInput): Promise<void>;
   openNewTab(): Promise<void>;
   controlTabs(command: BotBrowserTabCommand): Promise<BotBrowserTabCommandResult>;
   refreshRuntime(): Promise<void>;
+  /**
+   * Element-picker read (ABC v0.10.0 message bridge). Null when the tab does
+   * not exist (mirrors getTabInfo), so callers treat null as "no marks".
+   */
+  getElementSelections(tabId?: number | string): Promise<BrowserElementSelectionsSnapshot | null>;
+  clearElementSelections(tabId?: number | string): Promise<BotBrowserElementSelectionsClearResult | null>;
 }
 
 export interface BotBrowserLocalActor extends BrowserActor {

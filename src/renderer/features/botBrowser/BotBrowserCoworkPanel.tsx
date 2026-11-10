@@ -24,6 +24,7 @@ import { getCompactFolderName } from '../../utils/path';
 import type { CoworkMessage, CoworkWorkspaceSelection } from '../../types/cowork';
 import TwinSeatChip from './TwinSeatChip';
 import { appointTwinSeat } from './twinSeatAppointment';
+import { elementSelectionsStore } from './elementSelectionsStore';
 import CoworkHistoryPanel from './CoworkHistoryPanel';
 
 type PanelMetabot = MetaBotForSelector & { llm_id?: string | null; llm_provider?: string | null; llm_effort?: string | null };
@@ -354,6 +355,15 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
   const handleSubmit = async (prompt: string, skillPrompt?: string) => {
     if (!currentSession && !twinMetabot) return; // no-Twin machines never start sessions here
     setShowHistory(false);
+    // Element-picker capture (ABC v0.10.0): when the human marked elements on
+    // the page they are talking about, the snapshot rides at the front of the
+    // submitted text (blockquote block, comments verbatim) — "change this"
+    // resolves to the exact marks. Live read of the active tab first; the
+    // pre-navigation cache rescues marks that a navigation just cleared.
+    // Read at submit time per the ABC integration guide (marks die on
+    // navigation, so late reads would miss them).
+    const markedElementsBlock = await elementSelectionsStore.capturePromptBlock();
+    const outgoingPrompt = markedElementsBlock ? `${markedElementsBlock}\n\n${prompt}` : prompt;
     // Pinned-skill snapshot, same contract as the home composer: the ids ride
     // the submitted turn (persisted main-side for the session, driving
     // per-skill env overrides), and the inlined `## Skill:` blocks embed into
@@ -366,7 +376,7 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
       ? { prompt: skillPrompt, activeSkillIds: skillIds }
       : undefined;
     if (currentSession) {
-      await browserCoworkService.send(prompt, skills);
+      await browserCoworkService.send(outgoingPrompt, skills);
     } else {
       // Only project/folder selections carry a concrete cwd; bot workspace
       // (and no selection) start in the default bot workspace chain. The
@@ -378,11 +388,11 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
         ? workspaceSelection.cwd.trim()
         : undefined;
       const startProjectId = workspaceSelection?.kind === 'project' ? workspaceSelection.projectId : undefined;
-      await browserCoworkService.start(prompt, effectiveMetabotId, startCwd, {
+      await browserCoworkService.start(outgoingPrompt, effectiveMetabotId, startCwd, {
         model: pendingModelEffort?.modelId ?? undefined,
         modelProvider: pendingModelEffort?.providerKey ?? undefined,
         effort: effortForSessionStart(pendingModelEffort),
-      }, skills, startProjectId);
+      }, skills, startProjectId, prompt);
       setPendingModelEffort(null);
     }
     if (skillIds.length > 0) {
