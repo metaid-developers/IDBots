@@ -32,7 +32,33 @@ export interface VoiceCaptureEvents {
   onInterrupted: () => void;
   /** Capture-side failure with a machine error code. */
   onError: (code: 'mic_denied' | 'mic_unavailable' | 'audio_context_failed') => void;
+  /**
+   * Live input level in 0..1, derived from the RMS of the same PCM frames the
+   * wire gets (no synthetic animation). Emitted roughly every 30 ms while
+   * recording; consumers draw the hold overlay's volume bars from it.
+   */
+  onLevel?: (level: number) => void;
 }
+
+/**
+ * Perceptual mapping from frame RMS to a 0..1 bar height. Speech lands around
+ * -30..-12 dBFS, so the useful window is roughly -60 dB (silence) to -10 dB
+ * (loud). Values are clamped, never randomized: the bars must track the mic.
+ */
+export function rmsToLevel(rms: number): number {
+  if (!Number.isFinite(rms) || rms <= 0) return 0;
+  const db = 20 * Math.log10(rms);
+  return Math.min(1, Math.max(0, (db + 60) / 50));
+}
+
+function frameRms(frame: Float32Array): number {
+  let sum = 0;
+  for (let i = 0; i < frame.length; i += 1) sum += frame[i]! * frame[i]!;
+  return frame.length > 0 ? Math.sqrt(sum / frame.length) : 0;
+}
+
+/** Worklet frames are 128 samples; 4 frames ≈ 32 ms at the 16 kHz target rate. */
+const LEVEL_EMIT_FRAMES = 4;
 
 export type VoiceAudioContextLike = {
   sampleRate: number;
@@ -65,6 +91,9 @@ interface ActiveSession {
   source: { connect(node: unknown): void; disconnect(): void };
   workletNode: { port: { onmessage: ((event: { data: Float32Array }) => void) | null }; disconnect(): void };
   chunker: PcmChunker;
+  /** Level aggregation: peak over the frames since the last emit. */
+  levelFrames: number;
+  levelPeak: number;
 }
 
 const DEFAULT_WORKLET_URL = new URL('./pcm-capture-processor.js', import.meta.url).toString();
@@ -138,8 +167,28 @@ export class VoiceCapture {
     const chunker = new PcmChunker(context.sampleRate);
     const source = context.createMediaStreamSource(stream);
     const workletNode = this.deps.createWorkletNode!(context);
+    const session: ActiveSession = {
+      stream,
+      context,
+      source,
+      workletNode,
+      chunker,
+      levelFrames: 0,
+      levelPeak: 0,
+    };
     workletNode.port.onmessage = (event) => {
       const frame = event.data;
+      // Level first: the chunker may hold frames back until a chunk is full,
+      // but the overlay should react immediately.
+      if (this.events.onLevel) {
+        session.levelPeak = Math.max(session.levelPeak, frameRms(frame));
+        session.levelFrames += 1;
+        if (session.levelFrames >= LEVEL_EMIT_FRAMES) {
+          this.events.onLevel(rmsToLevel(session.levelPeak));
+          session.levelFrames = 0;
+          session.levelPeak = 0;
+        }
+      }
       for (const bytes of chunker.push(frame)) this.events.onWireChunk(bytes);
     };
     source.connect(workletNode);
@@ -155,7 +204,7 @@ export class VoiceCapture {
       }
     }
 
-    this.active = { stream, context, source, workletNode, chunker };
+    this.active = session;
     return { sampleRate: context.sampleRate };
   }
 

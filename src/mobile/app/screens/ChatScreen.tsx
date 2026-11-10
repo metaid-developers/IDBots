@@ -23,6 +23,7 @@ import { filterSessionsByTitle, groupSessionsByDay, resolveSessionBot } from '..
 import { sortBotsForList } from '../botList';
 import { useVoiceInput } from '../voice/useVoiceInput';
 import { VoiceButton, VoiceErrorBanner } from '../voice/VoiceButton';
+import { sendVoiceMessage, type HoldCancelReason } from '../voice/holdToSend';
 
 type Chat = ReturnType<typeof useChat>;
 
@@ -506,10 +507,26 @@ export default function ChatScreen(props: {
     steerDisabled: chat.pendingPermissionCount > 0 || turnPhase === 'stopping',
   }) && !chat.isUploading;
 
-  // Voice input (voice P0, subtask #10): tap-to-toggle mic button beside the
-  // composer; streaming partials backfill the draft at the caret and finals
-  // replace the trailing partial (Doubao-style). The hook owns capture +
-  // socket + state machine; this screen only supplies the draft seam.
+  // Voice input (voice P1: hold to send). Press and hold the mic to record;
+  // release sends the transcript as a NEW message via chat.send, so the
+  // composer draft (whatever the user already typed) is never touched. Swipe
+  // up cancels, and a pointer press shorter than 400 ms is discarded as an
+  // accidental press (one-shot hint, never a send). The accessible path is the
+  // click/keyboard activation, which keeps the P0 tap toggle and its streaming
+  // backfill into the draft.
+  const [voiceHint, setVoiceHint] = useState<string | null>(null);
+  const voiceHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showVoiceHint = useCallback((copy: string) => {
+    setVoiceHint(copy);
+    if (voiceHintTimerRef.current !== null) clearTimeout(voiceHintTimerRef.current);
+    voiceHintTimerRef.current = setTimeout(() => setVoiceHint(null), 2200);
+  }, []);
+  useEffect(
+    () => () => {
+      if (voiceHintTimerRef.current !== null) clearTimeout(voiceHintTimerRef.current);
+    },
+    [],
+  );
   const voice = useVoiceInput({
     getDraftAndCaret: () => {
       const textarea = textareaRef.current;
@@ -523,7 +540,20 @@ export default function ChatScreen(props: {
       pendingCaretRef.current = caret;
       chat.setDraft(text);
     },
+    // Release-to-send: the transcript bypasses the composer entirely. An empty
+    // transcript is an accidental press (hint only); a busy composer keeps the
+    // words in the draft instead of dropping them.
+    onFinalText: (text) => {
+      const outcome = sendVoiceMessage(chat, text, { blocked: composerBlocked });
+      if (outcome === 'empty') showVoiceHint(t('mobile.chat.voice.hintNoSpeech'));
+      else if (outcome === 'kept_in_draft') showVoiceHint(t('mobile.chat.voice.hintKeptInDraft'));
+    },
   });
+  const handleVoiceHoldCancelled = (reason: HoldCancelReason) => {
+    // One-shot hint for an accidental short press; the swipe path already has
+    // its own visual feedback in the overlay.
+    if (reason === 'too_short') showVoiceHint(t('mobile.chat.voice.hintTooShort'));
+  };
 
   // Track stickiness on user scroll: leaving the near-bottom zone releases
   // auto-follow; returning to it re-arms follow and dismisses the pill.
@@ -715,6 +745,11 @@ export default function ChatScreen(props: {
         ) : null}
         <ChatComposerAttachments chat={chat} />
         <VoiceErrorBanner state={voice.state} onDismiss={voice.dismissError} />
+        {voiceHint ? (
+          <div className="twin-voice-hint" role="status" data-testid="voice-hint">
+            {voiceHint}
+          </div>
+        ) : null}
         <div className="twin-composer">
           <button
             type="button"
@@ -742,7 +777,21 @@ export default function ChatScreen(props: {
           >
             <PaperClipIcon className="h-5 w-5" aria-hidden />
           </button>
-          <VoiceButton state={voice.state} elapsedSec={voice.elapsedSec} onStart={voice.start} onStop={voice.stop} />
+          <VoiceButton
+            state={voice.state}
+            elapsedSec={voice.elapsedSec}
+            recognizedText={voice.recognizedText}
+            levelRef={voice.levelRef}
+            bottomInset={keyboardInset}
+            onStart={voice.start}
+            onStop={voice.stop}
+            onStartHold={voice.startHold}
+            onEndHold={voice.endHold}
+            onCancelHold={voice.cancelHold}
+            onSalvage={voice.commitToDraft}
+            onDismissError={voice.dismissError}
+            onHoldCancelled={handleVoiceHoldCancelled}
+          />
           <textarea
             ref={textareaRef}
             value={draft}
