@@ -157,6 +157,19 @@ export function useBotBrowserShell(input: UseBotBrowserShellInput) {
     return browser.controlTabs(command);
   }, [waitForBrowserSurface]);
 
+  // Same tab access WITHOUT the face switch: startup restore and background
+  // binding bookkeeping must never yank the user off the surface they are
+  // reading (the visible controlTabs is for flows that legitimately reveal
+  // the browser pane). The surface stays mounted from boot, so the wait is
+  // only for the lazy chunk + srcDoc build.
+  const controlTabsSilent = useCallback(async (
+    command: BotBrowserTabCommand,
+  ): Promise<BotBrowserTabCommandResult> => {
+    setHasMountedBrowser(true);
+    const browser = await waitForBrowserSurface();
+    return browser.controlTabs(command);
+  }, [waitForBrowserSurface]);
+
   const openNewTab = useCallback(async () => {
     await controlTabs({ action: 'open-tab' });
   }, [controlTabs]);
@@ -237,6 +250,7 @@ export function useBotBrowserShell(input: UseBotBrowserShellInput) {
     selectInternetPane,
     openNewTab,
     controlTabs,
+    controlTabsSilent,
     openLocalMetabot,
     openRemoteBot,
     openUri,

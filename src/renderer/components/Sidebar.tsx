@@ -3,6 +3,7 @@ import { useSelector, useDispatch } from 'react-redux';
 import { RootState } from '../store';
 import { coworkService } from '../services/cowork';
 import { browserCoworkService } from '../services/browserCowork';
+import { sessionTabBinding } from '../services/sessionTabBinding';
 import { groupTaskService } from '../services/groupTaskService';
 import { i18nService } from '../services/i18n';
 import CoworkSessionList from './cowork/CoworkSessionList';
@@ -612,6 +613,10 @@ const Sidebar: React.FC<SidebarProps> = ({
         onClick={() => {
           setPanelHistoryOpen(false);
           browserCoworkService.startNewDraft();
+          // The upcoming session owns one tab (owner request 2026-11-10): a
+          // page-carrying active tab gets a fresh blank sibling; a blank
+          // active tab is reused. Best-effort — no tab when the bridge is down.
+          void sessionTabBinding.prepareDraftTab();
         }}
         className="non-draggable inline-flex h-7 w-7 items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
         aria-label={i18nService.t('botBrowserCoworkNew')}

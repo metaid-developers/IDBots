@@ -100,3 +100,32 @@ export function isOnboardingEnterPending(): boolean {
     return false;
   }
 }
+
+/**
+ * The BotHub face's open Co-Work session, persisted separately from the home
+ * surface's `sessionId` above (the two panels deliberately keep independent
+ * pointers). Restoring it on launch is what makes the BotHub conversation
+ * window survive a restart instead of falling back to the Twin welcome page.
+ */
+const BROWSER_VIEW_STATE_KEY = 'idbots.botBrowser.viewState';
+
+export function loadPersistedBrowserSessionId(): string | null {
+  try {
+    const raw = window.localStorage.getItem(BROWSER_VIEW_STATE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { sessionId?: unknown };
+    return typeof parsed?.sessionId === 'string' && parsed.sessionId.trim()
+      ? parsed.sessionId.trim()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function savePersistedBrowserSessionId(sessionId: string | null): void {
+  try {
+    window.localStorage.setItem(BROWSER_VIEW_STATE_KEY, JSON.stringify({ sessionId }));
+  } catch {
+    // Best effort, same as the view state above.
+  }
+}

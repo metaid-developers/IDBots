@@ -5,6 +5,7 @@ import {
 } from '../store/slices/browserCoworkSlice';
 import { setBrowserOpenSessionId } from '../store/slices/coworkSlice';
 import { coworkService } from './cowork';
+import { sessionTabBinding } from './sessionTabBinding';
 import type { CoworkSession } from '../types/cowork';
 
 /**
@@ -41,6 +42,10 @@ class BrowserCoworkService {
   private applySession(session: CoworkSession | null): void {
     store.dispatch(setBrowserSession(session));
     store.dispatch(setBrowserOpenSessionId(session?.id ?? null));
+    // The BotHub conversation window's last-open session pointer (survives
+    // restarts); null (draft/archive) clears it and launch falls back to the
+    // freshest browser session.
+    sessionTabBinding.rememberOpenSession(session?.id ?? null);
   }
 
   private async buildCombinedSystemPrompt(skillPrompt?: string): Promise<string | undefined> {
@@ -104,6 +109,9 @@ class BrowserCoworkService {
       });
       if (result?.success && result.session) {
         this.applySession(result.session);
+        // Every session owns one browser tab: bind the fresh session to the
+        // pending draft tab (blank-reuse policy), fire-and-forget.
+        void sessionTabBinding.bindNewSession(result.session.id);
         // Refresh the shared session list so the panel history sees the new session.
         await coworkService.loadSessions();
         return result.session;
