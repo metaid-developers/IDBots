@@ -22,24 +22,25 @@ test('orb families use bounded official styles and continuous breathing paramete
     verification: 12,
     'owner-needed': 21,
     problem: 21,
-    'report-ready': 20,
-    complete: 20,
+    'report-ready': 9,
+    complete: 9,
   };
   for (const [family, style] of Object.entries(expected)) {
     assert.equal(window.liquidOrbStyleForFamily(family), style, family);
   }
   const source = read('liquid-orb.js');
   assert.match(source, /params\.exposure, params\.style, params\.edgeSoftness/);
-  assert.match(source, /c\.rgb \* fit \* c\.a/);
+  assert.match(source, /c\.rgb \* fit, c\.a \* fit/);
+  assert.doesNotMatch(source, /c\.rgb \* fit \* c\.a/);
   assert.match(source, /const breath = reduced \? 0 : Math\.sin\(phase \* 1\.32\)/);
   assert.match(source, /rendered\.radius = current\.radius \* \(1 \+ breath \* \.018\)/);
   assert.match(source, /setReduced,/);
   assert.match(source, /getSharedResources\(\) \{ return \{ device, shader, pipeline \}; \}/);
 });
 
-test('Avatar sits behind translucent glass and style changes cross-fade canvases', () => {
+test('Avatar stays above original opaque glass and style changes cross-fade canvases', () => {
   const css = read('stage.css');
-  assert.match(css, /\.core-avatar\{[^}]*z-index:0;[^}]*width:112px;[^}]*height:112px/);
+  assert.match(css, /\.core-avatar\{[^}]*z-index:2;[^}]*width:112px;[^}]*height:112px/);
   assert.match(css, /\.liquid-orb-canvas\{[^}]*z-index:1/);
   assert.match(css, /transition:opacity \.9s/);
   assert.match(css, /@keyframes core-breathe/);
@@ -52,10 +53,11 @@ test('Avatar sits behind translucent glass and style changes cross-fade canvases
   assert.match(stage, /\$\('\[data-handoff-flow\]'\)\.removeAttribute\('hidden'\)/);
   assert.doesNotMatch(stage, /\$\('\[data-handoff-flow\]'\)\.hidden/);
   assert.match(stage, /sharedResources: previous\?\.controller\?\.getSharedResources\(\)/);
+  assert.match(stage, /if \(orbStarting \|\| orbFailed \|\| !state.enabled \|\| document.hidden\) return;/);
   assert.match(stage, /reduced !== \(body\.dataset\.motion === 'reduced'\)/);
   const window = {};
   vm.runInNewContext(read('liquid-orb-effect.js'), { window });
-  assert.match(window.LiquidOrbEffectSource, /let rimAlpha = mix\(u\.glassOpacity \* 0\.75, 1\.0, smoothstep\(0\.72, 0\.97, pd\)\)/);
-  assert.match(window.LiquidOrbEffectSource, /max\(ballA \* rimAlpha, emissionAlpha \* \(1\.0 - ballA\)\)/);
+  assert.match(window.LiquidOrbEffectSource, /max\(ballA, emissionAlpha\)/);
+  assert.doesNotMatch(window.LiquidOrbEffectSource, /rimAlpha/);
   assert.match(read('stage.html'), /<animateMotion data-handoff-motion begin="indefinite"/);
 });

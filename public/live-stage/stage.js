@@ -161,7 +161,7 @@
   }
 
   function mountOrb(family) {
-    if (orbStarting || orbFailed || effectiveReduced()) return;
+    if (orbStarting || orbFailed || !state.enabled || document.hidden) return;
     const previous = orb;
     const style = window.liquidOrbStyleForFamily(family);
     const layerCanvas = document.createElement('canvas');
@@ -202,11 +202,12 @@
 
   function syncOrb(family) {
     orbLayers.forEach((layer) => layer.controller?.setReduced(effectiveReduced()));
-    if (orbFailed || effectiveReduced()) return;
+    if (orbFailed) return;
     if (!orb) {
       mountOrb(family);
       return;
     }
+    if (effectiveReduced()) return;
     orb.family = family;
     if (orbStarting) return;
     if (orb.controller && orb.controller.getStyle() !== window.liquidOrbStyleForFamily(family)) mountOrb(family);
