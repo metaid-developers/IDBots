@@ -458,6 +458,7 @@ man_base_data_pebble/
 !tests/botBrowserMetaAppFork.test.mjs
 !tests/botBrowserMetaAppPublish.test.mjs
 !tests/botBrowserCoworkPanel.test.ts
+!tests/botBrowserAbc0101IntegrationStatic.test.mjs
 !tests/botInternetComposerReuse.test.mjs
 !tests/pinnedSkillBackstop.test.mjs
 !tests/releaseRunbook.test.mjs
