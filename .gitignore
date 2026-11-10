@@ -988,3 +988,6 @@ blob-report/
 # ME ledger signed-amount formatting (sub-1-ME milli precision)
 !tests/meLedgerFormatting.test.ts
 !tests/sessionTabBinding.test.ts
+
+# DSH host tool schema normalizer + hand-off guard (400 type=object incident 2026-11-11)
+!tests/coworkToolSchemaGuard.test.mjs

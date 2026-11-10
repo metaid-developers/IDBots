@@ -17,6 +17,7 @@ import { getCurrentApiConfig, resolveCurrentModelLimits, resolveModelOptions, ge
 import { resolveCoworkExecutionMode } from './coworkExecutionMode';
 import { buildGoalPromptSection, type CoworkSessionGoal } from './coworkSessionGoal';
 import { buildDispatchReportMessage, tailDispatchReportExcerpt } from './coworkCrossSessionReport';
+import { formatHostToolSchemaGuardWarning, guardHostToolSchemas, normalizeHostToolParameters } from './hostToolSchemaGuard';
 import { DshTurnHub, dshSessionRootFor, isNativeDeepSeekChatRoute, DSH_RUNTIME_IDLE_TTL_MS, type DshTurnProviderRoute } from './coworkDshTurn';
 import { getDshWebToolsProxyDescriptor } from '../services/dshWebToolsProxy';
 import { noteOwnerAskCancelled } from '../services/pendingOwnerAskBridge';
@@ -11310,7 +11311,17 @@ export class CoworkRunner extends EventEmitter {
       const promptImagesPromise = this.collectDshPromptImages(prompt, cwd, modelLimits?.supportsVision === true);
       promptImagesPromise.catch(() => undefined);
       await this.syncDshSkillSessionEnv(dshSessionId, sessionId, cwd);
-      const hostTools = this.buildDshHostTools(sessionId)
+      const hostToolsBuilt = this.buildDshHostTools(sessionId)
+      // Hand-off boundary #1 (registry + pre-warm): a single tool whose
+      // parameters are not a top-level object schema rejects the WHOLE
+      // provider request ("tools.77.function.parameters must be a JSON Schema
+      // of type object"). Coerce and name what was repaired — the tool name is
+      // the only useful fingerprint when this recurs.
+      const hostToolsGuard = guardHostToolSchemas(hostToolsBuilt)
+      if (hostToolsGuard.coerced.length > 0) {
+        coworkLog('WARN', 'runDshSessionLocal', formatHostToolSchemaGuardWarning(hostToolsGuard.coerced))
+      }
+      const hostTools = hostToolsGuard.tools
       // Per-session registry: a concurrent turn of ANOTHER session must not
       // clobber this session's tool set (Twin-only tools would intermittently
       // go missing while a worker turn ran, and vice versa).
@@ -11725,13 +11736,22 @@ export class CoworkRunner extends EventEmitter {
         const goalSection = sessionGoal && sessionGoal.status === 'active'
           ? [{ name: 'idbots:goal', order: 10, text: buildGoalPromptSection(sessionGoal), interpolate: false as const }]
           : [];
+        // Hand-off boundary #2 (the real provider request): re-check exactly
+        // what this attempt sends. The build-site guard already repaired the
+        // list, so this pass is normally a no-op and logs nothing — it exists
+        // so no later mutation between build and send can slip a non-object
+        // schema out, and if one ever does the WARN still names the tool.
+        const sendHostToolsGuard = guardHostToolSchemas(turnOpts?.finalizing ? [] : hostTools)
+        if (sendHostToolsGuard.coerced.length > 0) {
+          coworkLog('WARN', 'runDshSessionLocal', formatHostToolSchemaGuardWarning(sendHostToolsGuard.coerced))
+        }
         try {
           return await hub.runTurn({
         sessionId,
         dshSessionId,
         prompt: turnPrompt,
         promptImages: images,
-        hostTools: turnOpts?.finalizing ? [] : hostTools,
+        hostTools: sendHostToolsGuard.tools,
         workspace: { cwd },
         sections: [
           // interpolate:false — see the prewarm site above: the base prompt
@@ -12684,38 +12704,17 @@ export class CoworkRunner extends EventEmitter {
    * round-trips back to the host bridge.
    */
   private buildDshHostTools(sessionId: string): Array<{ name: string; description: string; parameters: Record<string, unknown>; execute: (args: any) => Promise<unknown> }> {
-    const isZodValue = (value: unknown): boolean =>
-      Boolean(value) && typeof value === 'object'
-      && (Object.hasOwn(value as object, '_def') || Object.hasOwn(value as object, 'def')
-        || typeof (value as any).parse === 'function' || typeof (value as any).safeParse === 'function')
-    const normalizeToolSchema = (parameters: unknown): Record<string, unknown> => {
-      if (!parameters || typeof parameters !== 'object') return { type: 'object', properties: {} }
-      try {
-        // The SDK's tool() accepts a full zod schema, a zod RAW SHAPE
-        // ({key: ZodType} — plain shell with zod values), or plain JSON
-        // schema; pi-ai needs the JSON form.
-        if (isZodValue(parameters)) {
-          return z.toJSONSchema(parameters as any, { target: 'draft-7' }) as Record<string, unknown>
-        }
-        const values = Object.values(parameters as Record<string, unknown>)
-        if (values.length > 0 && values.some(isZodValue)) {
-          return z.toJSONSchema(z.object(parameters as any), { target: 'draft-7' }) as Record<string, unknown>
-        }
-        // The SDK's tool() accepts a bare {} (or a shape without top-level
-        // type) as "no parameters"; providers require an explicit object
-        // schema ("must be of type 'object', got 'type: null'").
-        const record = parameters as Record<string, unknown>
-        if (record.type !== 'object') {
-          return { type: 'object', properties: {}, ...record }
-        }
-        return parameters as Record<string, unknown>
-      } catch (error) {
+    // Schema conversion lives in hostToolSchemaGuard so both the passthrough
+    // and the hand-off guard are pure and unit-tested (see the 400
+    // "tools.77.function.parameters must be a JSON Schema of type object"
+    // incident: the old spread order let a record's own non-object `type`
+    // overwrite the coercion).
+    const normalizeToolSchema = (parameters: unknown): Record<string, unknown> =>
+      normalizeHostToolParameters(parameters, (error) => {
         coworkLog('WARN', 'buildDshHostTools', 'zod schema conversion failed; falling back to empty schema', {
           error: error instanceof Error ? error.message : String(error),
         })
-        return { type: 'object', properties: {} }
-      }
-    }
+      })
     const passthrough = (
       name: string,
       description: string,
