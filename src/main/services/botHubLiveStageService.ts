@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { CoworkMessage, CoworkSession } from '../coworkStore';
 import type { BotBrowserProjectionInput, BotBrowserProjectionOutcome } from './botBrowserProjectionService';
 import type { BotHubLiveStageSettings } from './botHubLiveStageSettings';
-import { completeLiveStage, createLiveStageState, liveStageError, reduceLiveStageMessage, reportReadyLiveStage, type LiveStageState } from './botHubLiveStageModel';
+import { completeLiveStage, createLiveStageState, isLiveStageWorkerReport, liveStageError, reduceLiveStageMessage, reportReadyLiveStage, type LiveStageState } from './botHubLiveStageModel';
 import { renderLiveStageHtml } from './botHubLiveStageTemplate';
 import { directLiveStageScene } from './botHubLiveStageDirector';
 
@@ -73,6 +73,19 @@ export function createBotHubLiveStageService(deps: BotHubLiveStageServiceDeps) {
   const botNameFor = (session: CoworkSession): string => {
     const metabot = session.metabotId == null ? null : deps.getMetabotById(session.metabotId);
     return session.metabotName ?? metabot?.name ?? 'Twin';
+  };
+
+  const workerNameFor = (message: CoworkMessage): string | undefined => {
+    const metadata = message.metadata as { sourceSessionId?: unknown; toolInput?: { workerMetabotId?: unknown } } | undefined;
+    if (typeof metadata?.sourceSessionId === 'string') {
+      const sourceSession = deps.getSession(metadata.sourceSessionId);
+      if (sourceSession) return botNameFor(sourceSession);
+    }
+    const workerId = metadata?.toolInput?.workerMetabotId;
+    if (typeof workerId === 'number' && Number.isInteger(workerId) && workerId > 0) {
+      return deps.getMetabotById(workerId)?.name?.trim().slice(0, 80) || undefined;
+    }
+    return undefined;
   };
 
   function enqueue(run: LiveStageRun, task: () => Promise<void>): void {
@@ -203,7 +216,8 @@ export function createBotHubLiveStageService(deps: BotHubLiveStageServiceDeps) {
       console.warn(`[BotHubLiveStage] observe ${sessionId} type=${message.type} id=${message.id} enabled=${currentSettings.enabled} director=${currentSettings.directorEnabled}`);
     }
     if (!currentSettings.enabled) return;
-    const humanOrigin = message.type === 'user' && (!message.metadata?.origin || message.metadata.origin === 'user' || message.metadata.origin === 'quick_action');
+    const humanOrigin = message.type === 'user' && !isLiveStageWorkerReport(message)
+      && (!message.metadata?.origin || message.metadata.origin === 'user' || message.metadata.origin === 'quick_action');
     let run = runs.get(sessionId);
     const submissionId = humanOrigin ? String(message.metadata?.submissionId ?? message.id) : null;
     if (humanOrigin && submissionId && run?.submissionId !== submissionId) {
@@ -218,7 +232,7 @@ export function createBotHubLiveStageService(deps: BotHubLiveStageServiceDeps) {
     if (!run || run.seen.has(message.id)) return;
     run.seen.add(message.id);
     if (submissionId) run.submissionId = submissionId;
-    run.state = reduceLiveStageMessage(run.state, message);
+    run.state = reduceLiveStageMessage(run.state, message, { workerName: workerNameFor(message) });
     schedulePatch(run);
     scheduleDirector(run);
   }

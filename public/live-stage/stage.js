@@ -12,7 +12,9 @@
   const canvas = $('.core-canvas');
   const ctx = canvas.getContext('2d');
   const reducedMedia = window.matchMedia('(prefers-reduced-motion: reduce)');
-  let orbController = null, orbStarting = false, orbFailed = false;
+  const orbLayers = new Set();
+  let orb = null, orbStarting = false, orbFailed = false;
+  let handoffKey = '', handoffTimer = 0;
   let width = 0, height = 0, raf = 0;
 
   document.querySelectorAll('[data-avatar]').forEach((image) => {
@@ -46,6 +48,10 @@
     if (!state || !width || !height) return;
     ctx.clearRect(0, 0, width, height);
     const reduced = effectiveReduced();
+    if (reduced !== (body.dataset.motion === 'reduced')) {
+      applyState();
+      return;
+    }
     const t = reduced ? state.motion.seed * .01 : time / 1000;
     const structured = state.topology.mode === 'structured';
     const cx = width * (structured ? .56 : .67), cy = height * .45;
@@ -111,6 +117,142 @@
     });
   }
 
+  function disposeOrbLayer(layer) {
+    if (!layer) return;
+    clearTimeout(layer.fadeTimer);
+    layer.controller?.dispose(false);
+    layer.canvas.remove();
+    orbLayers.delete(layer);
+  }
+
+  function disposeAllOrbLayers() {
+    const devices = new Set([...orbLayers].map((layer) => layer.controller?.getSharedResources().device).filter(Boolean));
+    orbLayers.forEach(disposeOrbLayer);
+    devices.forEach((device) => device.destroy());
+    orb = null;
+    orbStarting = false;
+  }
+
+  function fallbackOrb(error) {
+    orbFailed = true;
+    disposeAllOrbLayers();
+    body.dataset.orbBackend = 'canvas';
+    window.__liveStageBackend = 'canvas';
+    window.__liveStageOrbError = error instanceof Error ? error.message : String(error);
+  }
+
+  function failOrbLayer(layer, previous, error) {
+    if (orb !== layer) {
+      disposeOrbLayer(layer);
+      return;
+    }
+    disposeOrbLayer(layer);
+    orbStarting = false;
+    if (previous && orbLayers.has(previous) && previous.controller) {
+      orb = previous;
+      previous.canvas.dataset.active = 'true';
+      previous.controller.setReduced(effectiveReduced());
+      body.dataset.orbBackend = 'webgpu';
+      window.__liveStageBackend = 'webgpu';
+    } else {
+      orb = null;
+      fallbackOrb(error);
+    }
+  }
+
+  function mountOrb(family) {
+    if (orbStarting || orbFailed || effectiveReduced()) return;
+    const previous = orb;
+    const style = window.liquidOrbStyleForFamily(family);
+    const layerCanvas = document.createElement('canvas');
+    layerCanvas.className = 'liquid-orb-canvas';
+    layerCanvas.dataset.orbStyle = String(style);
+    layerCanvas.setAttribute('aria-hidden', 'true');
+    $('.membrane').append(layerCanvas);
+    const layer = { canvas: layerCanvas, controller: null, style, family, fadeTimer: 0 };
+    orbLayers.add(layer);
+    orb = layer;
+    orbStarting = true;
+    window.createLiquidOrbRenderer(layerCanvas, {
+      sharedResources: previous?.controller?.getSharedResources(),
+      onReady: () => {
+        if (orb !== layer) return;
+        body.dataset.orbBackend = 'webgpu';
+        window.__liveStageBackend = 'webgpu';
+        layerCanvas.getBoundingClientRect();
+        layerCanvas.dataset.active = 'true';
+        if (previous && previous !== layer && orbLayers.has(previous)) {
+          previous.canvas.dataset.active = 'false';
+          if (effectiveReduced()) disposeOrbLayer(previous);
+          else previous.fadeTimer = setTimeout(() => disposeOrbLayer(previous), 950);
+        }
+      },
+      onError: (error) => failOrbLayer(layer, previous, error)
+    }).then((controller) => {
+      if (orb !== layer) {
+        controller.dispose(false);
+        return;
+      }
+      layer.controller = controller;
+      orbStarting = false;
+      controller.setState(layer.family, effectiveReduced());
+      if (window.liquidOrbStyleForFamily(layer.family) !== layer.style) syncOrb(layer.family);
+    }).catch((error) => failOrbLayer(layer, previous, error));
+  }
+
+  function syncOrb(family) {
+    orbLayers.forEach((layer) => layer.controller?.setReduced(effectiveReduced()));
+    if (orbFailed || effectiveReduced()) return;
+    if (!orb) {
+      mountOrb(family);
+      return;
+    }
+    orb.family = family;
+    if (orbStarting) return;
+    if (orb.controller && orb.controller.getStyle() !== window.liquidOrbStyleForFamily(family)) mountOrb(family);
+    else orb.controller?.setState(family, effectiveReduced());
+  }
+
+  function stopHandoff() {
+    clearTimeout(handoffTimer);
+    const motion = $('[data-handoff-motion]');
+    try { motion.endElement(); } catch { /* the motion may not have started */ }
+    $('[data-handoff-flow]').setAttribute('hidden', '');
+    $('[data-handoff-label]').hidden = true;
+  }
+
+  function syncHandoff() {
+    const handoff = state.handoff;
+    body.dataset.handoff = handoff?.direction || 'none';
+    if (effectiveReduced()) {
+      stopHandoff();
+      return;
+    }
+    const key = handoff ? `${handoff.direction}:${handoff.eventId}` : '';
+    if (key === handoffKey) return;
+    handoffKey = key;
+    if (!handoff) {
+      stopHandoff();
+      return;
+    }
+    clearTimeout(handoffTimer);
+    const motion = $('[data-handoff-motion]');
+    const worker = state.topology.nodes.find((node) => node.kind === 'worker')?.label || 'Worker';
+    $('[data-handoff-worker]').textContent = worker;
+    $('[data-handoff-copy]').textContent = handoff.direction === 'return'
+      ? (state.language === 'zh' ? '正在交回结果 · 等待 Twin 核验' : 'Returning work · Twin review required')
+      : (state.language === 'zh' ? '正在接收获派任务' : 'Receiving the delegated step');
+    motion.setAttribute('keyPoints', handoff.direction === 'return' ? '0;1' : '1;0');
+    $('[data-handoff-flow]').removeAttribute('hidden');
+    $('[data-handoff-label]').hidden = false;
+    try {
+      motion.beginElement();
+      handoffTimer = setTimeout(stopHandoff, 2600);
+    } catch {
+      stopHandoff();
+    }
+  }
+
   function applyState() {
     body.dataset.enabled = String(state.enabled);
     body.dataset.family = state.family;
@@ -131,30 +273,9 @@
       ? `Director ${metrics.directorCalls} calls · ${metrics.inputTokens + metrics.outputTokens} tokens${metrics.fallbackCount ? ` · ${metrics.fallbackCount} fallback` : ''}`
       : '';
     updateParticipants();
-    orbController?.setState(state.family, effectiveReduced());
+    syncOrb(state.family);
+    syncHandoff();
     restartParticles();
-  }
-
-  function fallbackOrb(error) {
-    orbFailed = true; orbStarting = false; orbController = null;
-    body.dataset.orbBackend = 'canvas';
-    window.__liveStageBackend = 'canvas';
-    window.__liveStageOrbError = error instanceof Error ? error.message : String(error);
-  }
-
-  function initializeOrb() {
-    if (orbStarting || orbController || orbFailed) return;
-    orbStarting = true;
-    window.createLiquidOrbRenderer($('.liquid-orb-canvas'), {
-      onReady: () => {
-        body.dataset.orbBackend = 'webgpu';
-        window.__liveStageBackend = 'webgpu';
-      },
-      onError: fallbackOrb
-    }).then((controller) => {
-      orbController = controller; orbStarting = false;
-      controller.setState(state.family, effectiveReduced());
-    }).catch(fallbackOrb);
   }
 
   window.IDBotsLiveStage = {
@@ -172,9 +293,12 @@
   window.__liveStageBackend = 'loading';
   reducedMedia.addEventListener('change', applyState);
   document.addEventListener('visibilitychange', applyState);
-  window.addEventListener('pagehide', () => orbController?.dispose());
+  window.addEventListener('pagehide', () => {
+    disposeAllOrbLayers();
+    stopHandoff();
+    cancelAnimationFrame(raf);
+  });
   new ResizeObserver(restartParticles).observe(canvas);
   applyState();
-  initializeOrb();
   window.__ready = true;
 })();

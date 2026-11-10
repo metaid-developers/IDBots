@@ -48,6 +48,7 @@ export type LiveStageState = {
     density: number;
   };
   metrics: LiveStageMetrics;
+  handoff: { direction: 'dispatch' | 'return'; eventId: string } | null;
   pendingProjectionIds: string[];
   eventWindow: Array<{ family: LiveStageFamily; tool?: string; outcome?: string }>;
 };
@@ -121,6 +122,7 @@ export function createLiveStageState(context: LiveStageSessionContext): LiveStag
     ...scene,
     motion: { preset: 'received', seed: seedFor(context.sessionId, context.turnId, 0), durationMs: 720, easing: 'emphasized-decelerate', energy: .35, density: .25 },
     metrics: { directorEnabled: context.directorEnabled === true, directorCalls: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, rejectedPatches: 0, fallbackCount: 0, directorLatencyMs: 0 },
+    handoff: null,
     pendingProjectionIds: [],
     eventWindow: [{ family: 'received' }],
   };
@@ -146,13 +148,23 @@ function eventSummary(message: CoworkMessage, family: LiveStageFamily): LiveStag
   return { family, ...(tool ? { tool } : {}), ...(outcome ? { outcome } : {}) };
 }
 
-export function reduceLiveStageMessage(state: LiveStageState, message: CoworkMessage): LiveStageState {
+export function isLiveStageWorkerReport(message: CoworkMessage): boolean {
+  const metadata = message.metadata as Record<string, unknown> | undefined;
+  return message.type === 'user' && (metadata?.origin === 'cross_session' || metadata?.sourceChannel === 'idbots_cross_session');
+}
+
+export function reduceLiveStageMessage(
+  state: LiveStageState,
+  message: CoworkMessage,
+  options: { workerName?: string } = {},
+): LiveStageState {
   let family = state.family;
   let headline: string | undefined;
   let caption: string | undefined;
   let pendingProjectionIds = state.pendingProjectionIds;
+  const metadata = message.metadata as Record<string, unknown> | undefined;
   if (message.type === 'user') {
-    family = message.metadata?.origin === 'cross_session' ? 'worker-report' : state.revision === 0 ? 'received' : 'received';
+    family = isLiveStageWorkerReport(message) ? 'worker-report' : 'received';
   } else if (message.type === 'assistant') {
     family = message.metadata?.isThinking ? 'reasoning' : 'speaking';
   } else if (message.type === 'system') {
@@ -178,6 +190,17 @@ export function reduceLiveStageMessage(state: LiveStageState, message: CoworkMes
     }
   }
   const scene = sceneFor(family, state.language, state.botName);
+  const workerLabel = options.workerName?.trim().slice(0, 80)
+    || (state.topology.mode === 'structured' ? state.topology.nodes.find((node) => node.kind === 'worker')?.label : undefined);
+  if (workerLabel && scene.topology.mode === 'structured') {
+    scene.topology.nodes = scene.topology.nodes.map((node) => node.kind === 'worker' ? { ...node, label: workerLabel } : node);
+    scene.participants = scene.participants.map((participant, index) => index === 1 ? workerLabel : participant);
+  }
+  const handoff = family === 'worker-report'
+    ? { direction: 'return' as const, eventId: typeof metadata?.crossSessionDeliveryId === 'string' ? metadata.crossSessionDeliveryId : message.id }
+    : family === 'delegation'
+      ? { direction: 'dispatch' as const, eventId: typeof metadata?.toolUseId === 'string' ? metadata.toolUseId : message.id }
+      : null;
   return {
     ...state,
     ...scene,
@@ -185,6 +208,7 @@ export function reduceLiveStageMessage(state: LiveStageState, message: CoworkMes
     caption: caption ?? scene.caption,
     revision: state.revision + 1,
     family,
+    handoff,
     motion: { preset: family, seed: seedFor(state.sessionId, state.turnId, state.revision + 1), durationMs: 720, easing: 'emphasized-decelerate', energy: family === 'report-ready' || family === 'complete' ? .18 : family === 'verification' ? .55 : .4, density: scene.topology.mode === 'structured' ? .55 : .28 },
     pendingProjectionIds,
     eventWindow: [...state.eventWindow, eventSummary(message, family)].slice(-8),
@@ -194,15 +218,15 @@ export function reduceLiveStageMessage(state: LiveStageState, message: CoworkMes
 export function completeLiveStage(state: LiveStageState): LiveStageState {
   if (state.family === 'report-ready') return state;
   const scene = sceneFor('complete', state.language, state.botName);
-  return { ...state, ...scene, family: 'complete', revision: state.revision + 1, motion: { ...state.motion, preset: 'complete', energy: .12, durationMs: 600 } };
+  return { ...state, ...scene, family: 'complete', handoff: null, revision: state.revision + 1, motion: { ...state.motion, preset: 'complete', energy: .12, durationMs: 600 } };
 }
 
 export function reportReadyLiveStage(state: LiveStageState): LiveStageState {
   const scene = sceneFor('report-ready', state.language, state.botName);
-  return { ...state, ...scene, family: 'report-ready', revision: state.revision + 1, pendingProjectionIds: [], motion: { ...state.motion, preset: 'report-ready', energy: .18, durationMs: 650 } };
+  return { ...state, ...scene, family: 'report-ready', handoff: null, revision: state.revision + 1, pendingProjectionIds: [], motion: { ...state.motion, preset: 'report-ready', energy: .18, durationMs: 650 } };
 }
 
 export function liveStageError(state: LiveStageState): LiveStageState {
   const scene = sceneFor('problem', state.language, state.botName);
-  return { ...state, ...scene, family: 'problem', revision: state.revision + 1, motion: { ...state.motion, preset: 'problem', energy: .25 } };
+  return { ...state, ...scene, family: 'problem', handoff: null, revision: state.revision + 1, motion: { ...state.motion, preset: 'problem', energy: .25 } };
 }
