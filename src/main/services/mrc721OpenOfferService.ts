@@ -6,6 +6,7 @@ import {
   type Mrc721CreatePinFn,
 } from './mrc721Service';
 import { isMrc721OutpointUnspent } from './mrc721AtomicSwapService';
+import { getMvcSpendSessionSnapshot, recordMvcSpentOutpoints } from './mvcSpendSessionState';
 import type { MetabotStore } from '../metabotStore';
 import { MRC721_MIN_SELL_PRICE_SATS, verifySellerSignature, type Mrc721Outpoint } from '../libs/mrc721AtomicSwapTx';
 import {
@@ -205,8 +206,11 @@ export async function publishMrc721OpenOffer(
     createdAt: Math.floor(nowMs / 1000),
   };
 
-  const records = readOffers(input.offers, input.metabotId);
-  const existing = records.findIndex((record) => record.offer.itemPinId === itemPinId);
+  // Only the id-reuse lookup happens before the await; the write-back below
+  // RE-READS the book (a read→write section must not span an await, see the
+  // race-safety note above readOffers).
+  const existingId = readOffers(input.offers, input.metabotId)
+    .find((record) => record.offer.itemPinId === itemPinId)?.id;
 
   const broadcast = await broadcastMrc721Pin(deps.createPin, input.metabotId, {
     operation: 'create',
@@ -218,13 +222,19 @@ export async function publishMrc721OpenOffer(
   }, { network: input.network ?? 'mvc', origin: input.origin ?? 'tool:mrc721_offer' });
 
   const record: Mrc721OpenOfferRecord = {
-    id: existing >= 0 ? records[existing].id : randomBytes(8).toString('hex'),
+    id: existingId ?? randomBytes(8).toString('hex'),
     metabotId: input.metabotId,
     offer: content,
     offerPinId: broadcast.pinId,
     status: 'active',
     updatedAt: nowMs,
   };
+  // Re-read AFTER the await: a concurrent tool call may have written the book
+  // while the pin was broadcasting. Merge into the freshest array — replace a
+  // same-item record that appeared meanwhile, else append — and write back
+  // immediately (synchronous read→modify→write).
+  const records = readOffers(input.offers, input.metabotId);
+  const existing = records.findIndex((record) => record.offer.itemPinId === itemPinId);
   if (existing >= 0) records[existing] = record;
   else records.push(record);
   writeOffers(input.offers, input.metabotId, records);
@@ -492,9 +502,16 @@ export async function takeMrc721OpenOffer(
     store: MetabotStore;
   },
 ): Promise<Mrc721OpenOfferTakeResult> {
+  // Seed the fee-input exclusions from this session's spend snapshot (same
+  // double-spend guard as buyMrc721Listing): the wallet UTXO list lags behind
+  // a just-broadcast tx, so back-to-back takes would otherwise re-pick the
+  // same funding UTXO and the second take would fail at broadcast.
+  const excluded = new Set(getMvcSpendSessionSnapshot(input.metabotId).excludeOutpoints);
+  for (const extra of input.excludeOutpoints ?? []) excluded.add(extra);
   const verified = await verifyMrc721OpenOffer(input.offer, {
     fetchItemInfo: deps.fetchItemInfo,
     isOutpointUnspent: deps.isOutpointUnspent,
+    excludedOutpoints: excluded,
   });
   const result = await deps.completeOfferTx(input.store, {
     metabotId: input.metabotId,
@@ -504,8 +521,11 @@ export async function takeMrc721OpenOffer(
       offerTx: verified.offer.offerTx,
     },
     feeRate: input.feeRate,
-    excludeOutpoints: input.excludeOutpoints ?? [],
+    excludeOutpoints: Array.from(excluded),
   });
+  // Record what the settlement tx spent so the next coin selection in this
+  // session excludes it until the wallet UTXO list catches up.
+  recordMvcSpentOutpoints(input.metabotId, result.spentOutpoints);
   return {
     txId: result.txId,
     spentOutpoints: result.spentOutpoints ?? [],

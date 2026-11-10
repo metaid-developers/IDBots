@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { fetchFromLocalOrFallback, fetchJsonWithFallbackOnMiss } from './localIndexerProxy';
 import { resolveCreatePinFeeRate } from './feeRateStore';
 import { resolveBroadcastTxResult } from '../libs/mvcSpend';
+import { recordMvcSpentOutpoints } from './mvcSpendSessionState';
 import type { MetabotStore } from '../metabotStore';
 
 /**
@@ -1255,20 +1256,36 @@ export async function createMrc721Mint(
   const settleDelayMs = Math.max(0, input.settleDelayMs ?? 3_000);
   if (settleDelayMs > 0) await sleep(settleDelayMs);
 
-  const itemDesc = await broadcastMrc721Pin(deps.createPin, input.metabotId, {
-    operation: 'create',
-    path: `${MRC721_PATH_ROOT}/${collectionName}/item_desc`,
-    encryption: '0',
-    version: '1.0.0',
-    contentType: 'application/json',
-    payload: JSON.stringify(buildMrc721ItemDescContent([{
-      pinid: mint.pinId,
-      name: display.name,
-      desc: display.desc,
-      cover: display.cover,
-      metadata: hasMetadata ? input.metadata : undefined,
-    }])),
-  }, { network: input.network ?? 'mvc', origin: input.origin ?? 'tool:mrc721_mint' });
+  let itemDesc: Awaited<ReturnType<typeof broadcastMrc721Pin>>;
+  try {
+    itemDesc = await broadcastMrc721Pin(deps.createPin, input.metabotId, {
+      operation: 'create',
+      path: `${MRC721_PATH_ROOT}/${collectionName}/item_desc`,
+      encryption: '0',
+      version: '1.0.0',
+      contentType: 'application/json',
+      payload: JSON.stringify(buildMrc721ItemDescContent([{
+        pinid: mint.pinId,
+        name: display.name,
+        desc: display.desc,
+        cover: display.cover,
+        metadata: hasMetadata ? input.metadata : undefined,
+      }])),
+    }, { network: input.network ?? 'mvc', origin: input.origin ?? 'tool:mrc721_mint' });
+  } catch (error) {
+    // The MINT pin is already broadcast and paid for — discarding its receipt
+    // would send the agent into a retry that mints a DUPLICATE item (second
+    // fee). Fail with the mint receipt embedded so the agent backfills the
+    // display info via mrc721_item_desc_batch instead of re-minting.
+    const reason = error instanceof Error ? error.message : String(error);
+    const mintTxid = mint.txids[0] ?? 'unknown';
+    throw new Error(
+      `the MINT SUCCEEDED (pin ${mint.pinId}) but the follow-up item_desc broadcast failed (${reason}). `
+      + `Do NOT re-run mrc721_mint — that would mint a duplicate item and charge a second fee. `
+      + `Backfill the display info with mrc721_item_desc_batch for pinid ${mint.pinId}. `
+      + `(mintPinId: ${mint.pinId}, mintTxid: ${mintTxid})`,
+    );
+  }
   return { ...mint, collectionName, itemPath, itemDescPinId: itemDesc.pinId };
 }
 
@@ -1742,6 +1759,10 @@ export async function transferMrc721Item(
     }],
   });
   const txId = await deps.broadcastTx(built.raw_tx);
+  // Record what the transfer spent (item outpoint + fee inputs) so the next
+  // coin selection in this session excludes them until the wallet UTXO list
+  // catches up (same guard as the directed-swap buy).
+  recordMvcSpentOutpoints(input.metabotId, built.spent_outpoints);
   return {
     txId,
     pinId,

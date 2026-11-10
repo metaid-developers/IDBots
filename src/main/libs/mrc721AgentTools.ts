@@ -1574,7 +1574,7 @@ export function buildMrc721AgentTools(deps: {
       if (typeof owner === 'string') return textResult(owner, true);
       if (!Number.isInteger(args.price_sats) || args.price_sats < MRC721_MIN_SELL_PRICE_SATS) {
         return textResult(
-          `mrc721_sell: Selling Price must be greater than or equals to ${MRC721_MIN_SELL_PRICE_SATS} satoshis. 销售价格最低为${MRC721_MIN_SELL_PRICE_SATS}聪。`,
+          `mrc721_sell: the selling price must be greater than or equal to ${MRC721_MIN_SELL_PRICE_SATS} satoshis.`,
           true,
         );
       }

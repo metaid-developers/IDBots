@@ -115,6 +115,47 @@ test('publish signs the offer, broadcasts the /protocols/mrc721offer pin, and re
   }
 });
 
+test('publish re-reads the offer book after the broadcast — a concurrent tool-call write survives', async () => {
+  const seller = keypair();
+  const restore = installFetch(itemFor(seller.address));
+  try {
+    const calls = { pins: [] };
+    const map = new Map();
+    const offers = { get: (key) => map.get(key), set: (key, value) => map.set(key, value) };
+    // Simulate a concurrent tool call (another mrc721_offer on a different
+    // item) writing the book WHILE this publish awaits the pin broadcast.
+    const deps = {
+      createPin: async (metabotId, metaidData) => {
+        map.set('mrc721_offers:1', [{
+          id: 'concurrent',
+          metabotId: 1,
+          offer: parseMrc721OpenOffer({ itemPinId: `${'cd'.repeat(32)}i0`, priceSats: 30_000, offerTx: 'x' }),
+          offerPinId: 'other-offer-pin',
+          status: 'active',
+          updatedAt: 1,
+        }]);
+        return makePinDeps(calls).createPin(metabotId, metaidData);
+      },
+      buildOfferTx: async (_store, params) => buildMrc721OpenOfferTx({
+        sellerWif: seller.wif,
+        sellerAddress: seller.address,
+        outpoint: params.outpoint,
+        priceSats: params.priceSats,
+      }),
+    };
+    await publishMrc721OpenOffer(
+      deps,
+      { metabotId: 1, itemPinId: PINID, priceSats: 30_000, store: { getMetabotById: () => ({ mvc_address: seller.address }) }, offers },
+    );
+    const records = map.get('mrc721_offers:1');
+    assert.equal(records.length, 2, 'the concurrent record was not clobbered by the write-back');
+    assert.ok(records.some((record) => record.id === 'concurrent'), 'the concurrent entry survives');
+    assert.ok(records.some((record) => record.offer.itemPinId === PINID), 'the new offer is recorded too');
+  } finally {
+    restore();
+  }
+});
+
 test('publish refuses an item this bot does not hold, a burned item, and a sub-floor price', async () => {
   const seller = keypair();
   const stranger = keypair();
