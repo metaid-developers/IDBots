@@ -26,7 +26,7 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
   let fitFeather = 2.0 / max(min(u.size.x, u.size.y), 1.0);
   let fitStart = min(mix(contourRad, fitEnd, 0.5), fitEnd - fitFeather);
   let fit = 1.0 - smoothstep(fitStart, fitEnd, max(abs(q.x), abs(q.y)));
-  return vec4<f32>(c.rgb * fit, c.a * fit);
+  return vec4<f32>(c.rgb * fit * c.a, c.a * fit);
 }`;
 
   const baseParams = {
@@ -45,17 +45,25 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
   };
   const paletteStops = ['#FFFFFF','#FFF9DB','#FFF3B0','#FFDC51','#FFC247','#FF9D55','#82E7F2','#22D3EE','#22D3EE','#22D3EE','#22D3EE','#22D3EE'];
   const statePresets = {
-    received: { speed: .82, radius: .72, warp: 3.2, contourDeform: .035, glassOpacity: .62, edgeGlow: .08 },
-    speaking: { speed: 1.05, radius: .72, warp: 3.6, contourDeform: .045, glassOpacity: .64, edgeGlow: .1 },
-    'local-recall': { speed: 1.18, radius: .7, warp: 4.1, contourDeform: .06, glassOpacity: .66, edgeGlow: .1 },
-    making: { speed: .92, radius: .71, warp: 3.4, contourDeform: .03, glassOpacity: .6, edgeGlow: .08 },
-    delegation: { speed: 1.08, radius: .67, warp: 4.3, contourDeform: .07, glassOpacity: .66, edgeGlow: .12 },
-    'worker-report': { speed: .88, radius: .69, warp: 3.8, contourDeform: .05, glassOpacity: .64, edgeGlow: .1 },
-    verification: { speed: .48, radius: .7, warp: 2.5, contourDeform: .025, glassOpacity: .7, edgeGlow: .07 },
-    'browser-action': { speed: .74, radius: .73, warp: 3, contourDeform: .025, glassOpacity: .64, edgeGlow: .1 },
-    'report-ready': { speed: .24, radius: .7, warp: 2.2, contourDeform: .015, glassOpacity: .68, edgeGlow: .04 }
+    received: { style: 9, speed: .82, radius: .72, warp: 3.2, contourDeform: .035, glassOpacity: .62, edgeGlow: .08 },
+    reasoning: { style: 15, speed: .46, radius: .72, warp: 2.5, contourDeform: .025, glassOpacity: .58, edgeGlow: .065 },
+    speaking: { style: 9, speed: 1.05, radius: .72, warp: 3.6, contourDeform: .045, glassOpacity: .64, edgeGlow: .1 },
+    'local-recall': { style: 10, speed: .82, radius: .7, warp: 3.4, contourDeform: .045, glassOpacity: .6, edgeGlow: .1 },
+    'web2-research': { style: 10, speed: 1.08, radius: .7, warp: 4.1, contourDeform: .055, glassOpacity: .62, edgeGlow: .12 },
+    'metaweb-research': { style: 13, speed: .86, radius: .71, warp: 3.8, contourDeform: .045, glassOpacity: .62, edgeGlow: .11 },
+    making: { style: 23, speed: .76, radius: .71, warp: 3.4, contourDeform: .03, glassOpacity: .58, edgeGlow: .08 },
+    delegation: { style: 24, speed: 1.08, radius: .69, warp: 4.3, contourDeform: .06, glassOpacity: .64, edgeGlow: .12 },
+    waiting: { style: 24, speed: .42, radius: .7, warp: 3.2, contourDeform: .025, glassOpacity: .58, edgeGlow: .07 },
+    'worker-report': { style: 14, speed: .88, radius: .69, warp: 3.8, contourDeform: .045, glassOpacity: .62, edgeGlow: .13 },
+    verification: { style: 12, speed: .48, radius: .7, warp: 2.5, contourDeform: .025, glassOpacity: .68, edgeGlow: .07 },
+    'browser-action': { style: 23, speed: .74, radius: .73, warp: 3, contourDeform: .025, glassOpacity: .64, edgeGlow: .1 },
+    'owner-needed': { style: 21, speed: .5, radius: .71, warp: 2.7, contourDeform: .025, glassOpacity: .62, edgeGlow: .1 },
+    problem: { style: 21, speed: .4, radius: .7, warp: 2.4, contourDeform: .02, glassOpacity: .58, edgeGlow: .07 },
+    'report-ready': { style: 20, speed: .24, radius: .7, warp: 2.2, contourDeform: .015, glassOpacity: .66, edgeGlow: .05 },
+    complete: { style: 20, speed: .2, radius: .7, warp: 2, contourDeform: .012, glassOpacity: .64, edgeGlow: .04 }
   };
-  const numericKeys = Object.keys(baseParams).filter((key) => typeof baseParams[key] === 'number');
+  window.liquidOrbStyleForFamily = (family) => (statePresets[family] || statePresets.received).style;
+  const numericKeys = Object.keys(baseParams).filter((key) => typeof baseParams[key] === 'number' && key !== 'style');
 
   function rgb(hex) {
     const value = hex.slice(1);
@@ -68,7 +76,7 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     target.set([
       params.speed, params.radius, params.zoom, params.warp, params.ridgeAmt,
       params.sharp, params.shade, params.sheen, params.gloss, params.shellMidAlpha,
-      params.shellEdgeAlpha, params.exposure, 9, params.edgeSoftness, params.edgeGlow,
+      params.shellEdgeAlpha, params.exposure, params.style, params.edgeSoftness, params.edgeGlow,
       0, params.glassEnabled ? 1 : 0, params.glassOpacity, params.contourDeform,
       params.bandDensity, params.chromaticShift, params.metalScale, params.metalStretch,
       params.metalAngle, params.metalOffset, params.metalPhase, params.metalEvolution,
@@ -86,21 +94,30 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     const forcedCanvas = new URLSearchParams(window.location.search).get('orb') === 'canvas';
     if (forcedCanvas) throw new Error('Canvas2D fallback requested');
     if (!navigator.gpu) throw new Error('WebGPU is unavailable');
-    const adapter = await navigator.gpu.requestAdapter();
-    if (!adapter) throw new Error('No WebGPU adapter');
-    const device = await adapter.requestDevice();
+    const sharedResources = options.sharedResources;
+    let device = sharedResources?.device;
+    if (!device) {
+      const adapter = await navigator.gpu.requestAdapter();
+      if (!adapter) throw new Error('No WebGPU adapter');
+      device = await adapter.requestDevice();
+    }
     const context = canvas.getContext('webgpu');
-    if (!context) { device.destroy(); throw new Error('No WebGPU canvas context'); }
+    if (!context) {
+      if (!sharedResources?.device) device.destroy();
+      throw new Error('No WebGPU canvas context');
+    }
     const format = navigator.gpu.getPreferredCanvasFormat();
     context.configure({ device, format, alphaMode: 'premultiplied' });
-    const shader = device.createShaderModule({ code: `${window.LiquidOrbEffectSource}\n${entryPoints}` });
-    const compilation = await shader.getCompilationInfo();
-    const errors = compilation.messages.filter((message) => message.type === 'error');
-    if (errors.length) {
-      device.destroy();
-      throw new Error(errors.map((message) => `${message.lineNum}:${message.linePos} ${message.message}`).join('\n'));
+    const shader = sharedResources?.shader ?? device.createShaderModule({ code: `${window.LiquidOrbEffectSource}\n${entryPoints}` });
+    if (!sharedResources?.shader) {
+      const compilation = await shader.getCompilationInfo();
+      const errors = compilation.messages.filter((message) => message.type === 'error');
+      if (errors.length) {
+        device.destroy();
+        throw new Error(errors.map((message) => `${message.lineNum}:${message.linePos} ${message.message}`).join('\n'));
+      }
     }
-    const pipeline = device.createRenderPipeline({
+    const pipeline = sharedResources?.pipeline ?? device.createRenderPipeline({
       layout: 'auto',
       vertex: { module: shader, entryPoint: 'vs_main' },
       fragment: { module: shader, entryPoint: 'fs_main', targets: [{
@@ -118,7 +135,9 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
       layout: pipeline.getBindGroupLayout(0),
       entries: [{ binding: 0, resource: { buffer: uniformBuffer } }]
     });
-    let current = { ...baseParams }, target = { ...baseParams };
+    let current = { ...baseParams, style: statePresets.received.style };
+    let target = { ...baseParams, ...statePresets.received };
+    const rendered = { ...baseParams };
     let reduced = false, disposed = false, ready = false, raf = 0, lastFrame = null, phase = 0;
 
     function resize() {
@@ -138,7 +157,11 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
         if (!reduced) phase += dt;
         const blend = reduced ? 1 : 1 - Math.exp(-dt * 5.5);
         numericKeys.forEach((key) => { current[key] += (target[key] - current[key]) * blend; });
-        writeUniforms(values, canvas.width, canvas.height, phase, current);
+        Object.assign(rendered, current);
+        const breath = reduced ? 0 : Math.sin(phase * 1.32);
+        rendered.radius = current.radius * (1 + breath * .018);
+        rendered.edgeGlow = current.edgeGlow * (1 + breath * .32);
+        writeUniforms(values, canvas.width, canvas.height, phase, rendered);
         device.queue.writeBuffer(uniformBuffer, 0, values);
         const encoder = device.createCommandEncoder();
         const pass = encoder.beginRenderPass({ colorAttachments: [{
@@ -171,20 +194,30 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     });
     raf = requestAnimationFrame(frame);
 
+    function setReduced(value) {
+      if (disposed) return;
+      reduced = Boolean(value);
+      canvas.dataset.motion = reduced ? 'reduced' : 'full';
+      cancelAnimationFrame(raf); raf = 0; lastFrame = null;
+      if (reduced) current = { ...target };
+      raf = requestAnimationFrame(frame);
+    }
+
     return {
       setState(family, reduceMotion) {
         if (disposed) return;
         target = { ...baseParams, ...(statePresets[family] || statePresets.received) };
-        reduced = Boolean(reduceMotion);
-        canvas.dataset.motion = reduced ? 'reduced' : 'full';
-        cancelAnimationFrame(raf); raf = 0; lastFrame = null;
-        if (reduced) current = { ...target };
-        raf = requestAnimationFrame(frame);
+        current.style = target.style;
+        canvas.dataset.orbStyle = String(target.style);
+        setReduced(reduceMotion);
       },
-      dispose() {
+      setReduced,
+      getStyle() { return target.style; },
+      getSharedResources() { return { device, shader, pipeline }; },
+      dispose(destroyDevice = true) {
         disposed = true;
         cancelAnimationFrame(raf);
-        device.destroy();
+        if (destroyDevice) device.destroy();
       }
     };
   };

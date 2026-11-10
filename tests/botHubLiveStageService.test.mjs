@@ -24,8 +24,8 @@ function fixture(t, directorEnabled = false, initialTabId = 7) {
   const projected = [], patches = [], calls = [];
   const settings = { enabled: true, directorEnabled };
   const service = createBotHubLiveStageService({
-    getSession: () => session,
-    getMetabotById: () => ({ name: 'AI_Sunny', avatar: session.metabotAvatar, llm_id: 'brain', llm_provider: 'test' }),
+    getSession: (id) => id === 'worker-session' ? { ...session, metabotId: 2, metabotName: 'Builder阿码' } : session,
+    getMetabotById: (id) => ({ name: id === 2 ? 'Builder阿码' : 'AI_Sunny', avatar: session.metabotAvatar, llm_id: 'brain', llm_provider: 'test' }),
     getSettings: () => settings,
     getLanguage: () => 'en',
     project: async (input) => { projected.push(input); return { uri: `preview-metaapp://localhost${input.localPath}`, tabId: initialTabId, announced: true }; },
@@ -115,4 +115,39 @@ test('a null first projection tab id is recovered through stage URI lookup', asy
   await run.queue;
   assert.equal(service.getState('s').family, 'local-recall');
   assert.ok(patches.some((patch) => patch.tabId === 7 && patch.state.family === 'local-recall'));
+});
+
+
+test('real worker receipts stay in the same turn and name the source session Bot', async (t) => {
+  const { service } = fixture(t);
+  service.observeMessage('s', message('human', 'user', { origin: 'user', submissionId: 'turn-1' }));
+  const run = service.getRunInternals('s');
+  await run.queue;
+  const stagePath = run.stagePath;
+
+  service.observeMessage('s', message('delegate', 'tool_use', {
+    toolName: 'local_worker_delegate',
+    toolInput: { workerMetabotId: 2 },
+    toolUseId: 'call-1',
+  }));
+  await run.queue;
+  assert.deepEqual(service.getState('s').handoff, { direction: 'dispatch', eventId: 'call-1' });
+  assert.equal(service.getState('s').topology.nodes.find((node) => node.kind === 'worker').label, 'Builder阿码');
+
+  service.observeMessage('s', message('orch_notify:delivery-1', 'user', {
+    sourceChannel: 'idbots_cross_session',
+    sourceSessionId: 'worker-session',
+    crossSessionDeliveryId: 'delivery-1',
+  }));
+  await run.queue;
+  assert.strictEqual(service.getRunInternals('s'), run, 'a worker receipt must not start a new turn');
+  assert.equal(run.stagePath, stagePath);
+  assert.equal(service.getState('s').family, 'worker-report');
+  assert.deepEqual(service.getState('s').handoff, { direction: 'return', eventId: 'delivery-1' });
+  assert.equal(service.getState('s').topology.nodes.find((node) => node.kind === 'worker').label, 'Builder阿码');
+
+  service.observeMessage('s', message('verify', 'tool_use', { toolName: 'twin_task_accept', toolUseId: 'accept-1' }));
+  await run.queue;
+  assert.equal(service.getState('s').family, 'verification');
+  assert.equal(service.getState('s').handoff, null);
 });
