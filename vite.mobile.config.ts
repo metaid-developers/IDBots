@@ -75,6 +75,10 @@ function mobileDevProxy() {
     return {
       '/api': { target: httpTarget, changeOrigin: true, secure: true, ...originHeader, ...cookieRewrite },
       '/ws': { target: wsTarget, ws: true, changeOrigin: true, secure: true, ...originHeader, ...cookieRewrite },
+      // The ASR voice gateway is same-origin by design (`/asr/v1/ws`, cookie
+      // auth), so remote dev has to forward it as well — without this rule a
+      // press on the mic lands on the vite server and 404s before the upgrade.
+      '/asr': { target: wsTarget, ws: true, changeOrigin: true, secure: true, ...originHeader, ...cookieRewrite },
       '/files/': { target: httpTarget, changeOrigin: true, secure: true, ...originHeader, ...cookieRewrite },
       '/upload': { target: httpTarget, changeOrigin: true, secure: true, ...originHeader, ...cookieRewrite },
     };
