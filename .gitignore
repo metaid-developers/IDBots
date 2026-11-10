@@ -991,3 +991,6 @@ blob-report/
 
 # DSH host tool schema normalizer + hand-off guard (400 type=object incident 2026-11-11)
 !tests/coworkToolSchemaGuard.test.mjs
+
+# Studio Live Stage template package (manifest, scenes, fixtures, loader, demo)
+!tests/studioLiveStageTemplate.test.mjs
