@@ -33,6 +33,8 @@ import { apiService } from './services/api';
 import { themeService } from './services/theme';
 import { coworkService } from './services/cowork';
 import { browserCoworkService } from './services/browserCowork';
+import { sessionTabBinding } from './services/sessionTabBinding';
+import { store } from './store';
 import { agentGameService } from './services/agentGame';
 import { enqueuePendingConsent, dequeuePendingConsent } from './store/slices/agentGameSlice';
 import { scheduledTaskService } from './services/scheduledTask';
@@ -780,6 +782,45 @@ const App: React.FC = () => {
     showToast,
   });
 
+  // Session ↔ tab binding (owner request 2026-11-10): every BotHub Co-Work
+  // session owns one browser tab. The coordinator gets the shell's SILENT tab
+  // control (restore/switch must never yank the active face) plus store-backed
+  // session reads so it stays free of app imports. Re-attached on shell
+  // identity change; the binding itself lives module-level.
+  useEffect(() => {
+    sessionTabBinding.attach({
+      controlTabs: (command) => botBrowserShell.controlTabsSilent(command),
+      getOpenSession: () => store.getState().browserCowork.currentSession,
+      openSession: async (sessionId) => {
+        try {
+          await browserCoworkService.loadSession(sessionId);
+          const loaded = store.getState().browserCowork.currentSession;
+          return loaded?.id === sessionId ? loaded : null;
+        } catch {
+          return null;
+        }
+      },
+      listBrowserSessions: async () => {
+        await coworkService.loadSessions();
+        return store.getState().cowork.sessions.filter(
+          (entry) => entry.sessionType === 'browser',
+        );
+      },
+    });
+    // controlTabsSilent is a stable useCallback; everything else injected above
+    // reads module-level services/store, so this only re-runs on shell swaps.
+  }, [botBrowserShell.controlTabsSilent]);
+
+  // Launch restore (owner request 2026-11-10): the BotHub conversation window
+  // opens on the session that was open at quit time, and that session's tab is
+  // restored into the freshly booted browser. One-shot; the coordinator is a
+  // no-op before attach and queues tab commands behind the surface's
+  // browser-ready handshake.
+  useEffect(() => {
+    if (!isInitialized) return;
+    void sessionTabBinding.restoreLastSession();
+  }, [isInitialized]);
+
   // ---- Face-scoped seam derivation (接缝按钮双向化 2026-11-09) -----------
   // The active face owns the seam: every layout consumer below reads the SAME
   // collapsed boolean as before, but its value now comes from the ACTIVE
@@ -1338,10 +1379,12 @@ const App: React.FC = () => {
   // A browser-type session listed in the Bot Home history opens back in the Bot
   // Browser co-work panel: switch to that surface first, then point the panel at
   // the selected session. (Home history shows browser chats so they always have
-  // an entry point; the panel is still where they run.)
+  // an entry point; the panel is still where they run.) The session's browser
+  // tab is revealed too — one session, one tab.
   const handleSelectBrowserSession = useCallback(async (sessionId: string) => {
     await botBrowserShell.openBrowserHome();
     await browserCoworkService.loadSession(sessionId);
+    void sessionTabBinding.revealSessionTab(sessionId);
   }, [botBrowserShell.openBrowserHome]);
 
   const handleCloseSettings = () => {

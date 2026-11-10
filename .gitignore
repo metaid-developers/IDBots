@@ -970,3 +970,4 @@ blob-report/
 !tests/mobileMePeriodPricing.test.ts
 # ME ledger signed-amount formatting (sub-1-ME milli precision)
 !tests/meLedgerFormatting.test.ts
+!tests/sessionTabBinding.test.ts
