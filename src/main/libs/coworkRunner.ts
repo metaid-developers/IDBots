@@ -55,7 +55,7 @@ import {
   buildCoworkSteerSdkMessage,
   buildCoworkSteerText,
 } from './coworkSteerChannel';
-import { getEnhancedEnv, getSkillHostEnv, getSkillsRoot, ensureCoworkTempDir, generateSessionTitle, generateTurnAckReply, generateOwnerWaitUpdate } from './coworkUtil';
+import { getEnhancedEnv, getSkillHostEnv, getSkillsRoot, ensureCoworkTempDir, generateSessionTitle, generateTurnAckReply, generateOwnerWaitUpdate, generateTurnStatusGoal } from './coworkUtil';
 import type { OwnerWaitUpdateInput } from './turnAckReply';
 import { buildDeterministicTurnAckOpening, resolveTurnAckActivity } from './turnAckReply';
 import { rewriteWin32McpStdioServer } from './win32StdioCommand';
@@ -11282,6 +11282,13 @@ export class CoworkRunner extends EventEmitter {
           // it, a newer turn started, or the output was unusable — no bubble
           // beats a canned or wrong one.
           void this.emitTurnAckReplyBubble(sessionId, prompt, activeSession, turnAckSerial);
+          // Same window, complementary surface: the activity indicator's
+          // HEADLINE (one LLM-authored progressive clause naming what this
+          // turn will do) fires in parallel and lands 1-2s later than the
+          // ack phrase — it covers the silent pre-first-token minutes where
+          // the pools have nothing task-specific to say (session 42b6a16d:
+          // a 3.5-minute first step read as an idle spinner).
+          void this.emitTurnStatusGoal(sessionId, prompt, activeSession, turnAckSerial);
         }
       } catch { /* best-effort: the ack must never break a turn */ }
       // Unattended automation turns (see isUnattendedAutomationSession) never
@@ -17388,6 +17395,50 @@ export class CoworkRunner extends EventEmitter {
       });
     } catch (error) {
       coworkLog('WARN', 'turn:ack', 'llm first sentence skipped; activity indicator covers the wait', {
+        sessionId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
+   * Emits ONE `sdkRuntimeStatus: 'turnGoal'` system message carrying the
+   * LLM-authored status headline (generateTurnStatusGoal) for this turn —
+   * the activity indicator's specific line while the turn is still
+   * pre-first-token. Fired in parallel with the ack-reply bubble and gated by
+   * the same identity/serial checks; additionally dropped once ANY visible
+   * content or the opening bubble landed — at that point the headline's job
+   * is done (the bubble/tool stream speaks for itself) and a late goal line
+   * would only contradict what the owner can already see. Once-per-turn by
+   * construction, like emitTurnAck; a failed call leaves no message at all
+   * (the pools cover the wait — no headline beats a wrong one).
+   */
+  private async emitTurnStatusGoal(
+    sessionId: string,
+    userPrompt: string,
+    turn: ActiveSession,
+    turnSerial: number,
+  ): Promise<void> {
+    try {
+      const sessionTitle = this.store.getSession(sessionId)?.title ?? null;
+      const phrase = await generateTurnStatusGoal(userPrompt, sessionTitle);
+      if (!phrase) return;
+      if (this.activeSessions.get(sessionId) !== turn
+        || turn.dshTurnAckSerial !== turnSerial
+        || turn.dshTurnAckVisibleTextSeen
+        || turn.dshTurnAckOpeningEmitted) return;
+      const message = this.store.addMessage(sessionId, {
+        type: 'system',
+        content: '',
+        metadata: {
+          sdkRuntimeStatus: 'turnGoal',
+          turnGoalPhrase: phrase,
+        },
+      });
+      this.emit('message', sessionId, message);
+      coworkLog('INFO', 'turn:statusGoal', 'turn status goal emitted', { sessionId });
+    } catch (error) {
+      coworkLog('WARN', 'turn:statusGoal', 'status goal skipped; activity indicator covers the wait', {
         sessionId,
         message: error instanceof Error ? error.message : String(error),
       });

@@ -12,7 +12,7 @@ import { resolveWritableSkillsRoot } from './skillRoots';
 import { getMetaidRpcBase, getMetaidRpcTokenFilePath, METAID_RPC_AUTHFILE_ENV } from '../services/metaidRpcEndpoint';
 import { chatCompletionWithTools } from '../services/cognitiveChatCompletion';
 import type { MetabotBrainOptions } from '../services/llmFallback';
-import { buildTurnAckReplyMessages, buildOwnerWaitUpdateMessages, sanitizeTurnAckReplyForInput, type OwnerWaitUpdateInput } from './turnAckReply';
+import { buildTurnAckReplyMessages, buildOwnerWaitUpdateMessages, buildTurnStatusGoalMessages, sanitizeTurnAckReplyForInput, sanitizeTurnStatusGoalForInput, type OwnerWaitUpdateInput } from './turnAckReply';
 import { modelAlwaysThinks } from './modelThinking';
 import { isSqliteWasmBoundsError } from '../sqliteRecovery';
 import { assignPathValue, collapseWindowsPathKeys, pathValueOf } from './windowsPathEnv';
@@ -1491,6 +1491,62 @@ export async function generateOwnerWaitUpdate(input: OwnerWaitUpdateInput): Prom
       throw error;
     }
     console.error('Failed to generate owner wait update:', error);
+    return '';
+  }
+}
+
+/**
+ * One-shot LLM status-goal headline — the activity indicator's phrase while a
+ * turn is still pre-first-token (assistant mode). Same call class as
+ * generateTurnAckReply: Twin system brain pair, thinking off, 4s per-attempt
+ * timeout, reasoning-promoted/length-truncated output rejected — but a much
+ * tighter ask (ONE progressive clause naming the action, ≤30 units) so the
+ * marginal cost stays at tens of tokens per turn. The renderer shows this
+ * headline ahead of its generic phrase pools exactly in the window this call
+ * targets (the silent first minutes before the opening bubble or any tool
+ * event); '' on any failure means the indicator never changes shape.
+ */
+export async function generateTurnStatusGoal(userText: string, sessionTitle?: string | null): Promise<string> {
+  try {
+    const brain = turnAckReplyBrainProvider?.() ?? null;
+    const effectiveModel =
+      brain?.llmId ??
+      resolveApiConfigForModel(null, 'local', null, brain?.llmProvider ?? null)?.config?.model ??
+      null;
+    const maxTokens = modelAlwaysThinks(effectiveModel) ? 2048 : 48;
+    const result = await chatCompletionWithTools(
+      buildTurnStatusGoalMessages({ userText, sessionTitle }),
+      {
+        llmId: brain?.llmId ?? undefined,
+        llmProvider: brain?.llmProvider ?? undefined,
+        fallbackLlmId: brain?.fallbackLlmId ?? undefined,
+        fallbackLlmProvider: brain?.fallbackLlmProvider ?? undefined,
+        thinking: 'disabled',
+        effort: 'off',
+        maxTokens,
+        temperature: 0.7,
+        throwOnEmptyContent: true,
+        webSearch: false,
+        attemptTimeoutMs: 4_000,
+      }
+    );
+    const metadata = result.responseMetadata;
+    const promotedFromReasoning = metadata?.contentBlockTypes?.includes('reasoning') ?? false;
+    if (promotedFromReasoning || metadata?.stopReason === 'length') {
+      console.info(
+        '[turnStatusGoal] dropped LLM status goal:',
+        `promotedFromReasoning=${promotedFromReasoning}`,
+        `stopReason=${metadata?.stopReason ?? 'n/a'}`,
+        `blocks=${metadata?.contentBlockTypes?.join(',') ?? 'none'}`
+      );
+      return '';
+    }
+    return sanitizeTurnStatusGoalForInput(result.content ?? '', userText);
+  } catch (error) {
+    if (isSqliteWasmBoundsError(error)) {
+      throw error;
+    }
+    console.error('Failed to generate turn status goal:', error);
     return '';
   }
 }

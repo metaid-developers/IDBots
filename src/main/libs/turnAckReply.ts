@@ -252,3 +252,89 @@ export function sanitizeTurnAckReplyForInput(raw: string, userText: string): str
   if (containsCjk(userText ?? '') && !containsCjk(raw ?? '')) return '';
   return sanitizeTurnAckReply(raw);
 }
+
+// ---------------------------------------------------------------------------
+// Turn status goal — the activity indicator's headline phrase (assistant mode)
+// ---------------------------------------------------------------------------
+
+/**
+ * Display cap for the status goal: ONE progressive clause, never a sentence.
+ * A CJK clause past ~14 characters stops reading as a status headline; 30
+ * UTF-16 units leaves margin for the model overshooting mildly.
+ */
+export const TURN_STATUS_GOAL_MAX_CHARS = 30;
+
+/** Input cap for the user-text slice sent to the status-goal model. */
+const TURN_STATUS_GOAL_USER_TEXT_MAX_CHARS = 600;
+
+export interface TurnStatusGoalInput {
+  /** The turn's user message — the action source and language cue. */
+  userText: string;
+  sessionTitle?: string | null;
+}
+
+/**
+ * Prompt messages for the one-shot status-goal call (pure). Same call class
+ * as the ack reply (same Twin brain pair, thinking off, tight budget) but a
+ * much tighter output: ONE progressive-aspect clause naming the ACTION this
+ * turn calls for, shown as the activity indicator's headline while the turn
+ * is still pre-first-token — the window where the renderer only has generic
+ * rotating phrases. It never answers the message (same context-free contract
+ * as the ack): it compresses the message into the intent, e.g. "帮我把 10 月
+ * 版 BP 改成 11 月版" → "正在恢复 10 月版 BP 配图".
+ */
+export function buildTurnStatusGoalMessages(
+  input: TurnStatusGoalInput
+): Array<{ role: 'system' | 'user'; content: string }> {
+  const userText = (input.userText ?? '').trim();
+  const title = (input.sessionTitle ?? '').trim();
+  const titleLine = title ? `Session title: ${truncateUtf16UnitsSafe(title, TURN_ACK_TITLE_MAX_CHARS)}\n\n` : '';
+  return [
+    {
+      role: 'system',
+      content: [
+        'You write ONE short status line that a chat app shows on the assistant\'s progress indicator while it works on the user\'s just-arrived message — a headline of what is happening, not a reply to the user.',
+        'Compress the message into its ACTION and write it in progressive aspect, starting with a verb: what you are about to do or are doing right now (e.g. "正在恢复10月版BP的配图", "正在排查定时任务的报错", "Looking up the October backup").',
+        '- NEVER answer the message, state facts, or promise outcomes; you see no conversation context, so any substantive claim can contradict the real work that follows.',
+        '- NEVER restate the user\'s sentence; compress it into the intent. Never analyze it, never mention what language it is in.',
+        'Rules: ONE clause only — under 14 characters for CJK, under 8 words otherwise. Same language as the user message. No quotes, markdown, emoji, or ending punctuation. Output only the finished line — never your thinking about these rules.',
+      ].join('\n'),
+    },
+    {
+      role: 'user',
+      content: `${titleLine}User message:\n${truncateUtf16UnitsSafe(userText, TURN_STATUS_GOAL_USER_TEXT_MAX_CHARS)}`,
+    },
+  ];
+}
+
+/** Normalize a raw status-goal completion into a headline ('' when unusable). */
+export function sanitizeTurnStatusGoal(raw: string): string {
+  let text = (raw ?? '')
+    .replace(/```[a-zA-Z]*\r?\n?/g, '')
+    .replace(/```/g, '')
+    .trim();
+  // Drop the "Here is..." / "Status:" preamble class outright.
+  text = text.replace(/^(here is|here's|status|status line|译文|翻译)\s*[:：]?\s*/i, '').trim();
+  text = text.replace(/^["'`«»“”‘’「」『』]+|["'`«»「」『』]+$/g, '').trim();
+  // One line, no trailing sentence punctuation — the renderer appends its own
+  // ellipsis/timer and a full stop would read as a reply.
+  text = text.replace(/\s+/g, ' ').replace(/[.。!！?？;；,，、]+$/g, '').trim();
+  if (!text) return '';
+  return truncateUtf16UnitsSafe(text, TURN_STATUS_GOAL_MAX_CHARS);
+}
+
+/**
+ * Input-aware guard over sanitizeTurnStatusGoal, same posture as the ack's:
+ * meta-analysis about the message ("The user wants...") and wrong-language
+ * output (CJK user, non-CJK phrase) are both worse than no headline, so they
+ * return '' and the indicator keeps its generic phrase pool.
+ */
+export function sanitizeTurnStatusGoalForInput(raw: string, userText: string): string {
+  const probe = (raw ?? '')
+    .replace(/^[\s"'`«»“”‘’「」『』]+/, '')
+    .toLowerCase();
+  if (!probe) return '';
+  if (probe.startsWith('the user')) return '';
+  if (containsCjk(userText ?? '') && !containsCjk(raw ?? '')) return '';
+  return sanitizeTurnStatusGoal(raw);
+}
