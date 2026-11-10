@@ -16,6 +16,12 @@ import path from 'node:path';
 // whole-message-only assertions now pin the selection-first precedence), and
 // test ⑥ pins the new capture + label-switch wiring. Behavior lives in
 // panelBubbleSelection.test.ts.
+//
+// REWRITTEN (pass #5, delegation 7459ba51 / step b64861e1, 2026-11-10): the
+// stamp's render guard in test ① was superseded in place — the stamp now
+// mounts only on the twin side's group-end rows and reads by default (the
+// pass #3 hover reveal is retired); the formula pin lives in the pass #3
+// and pass #5 guard files.
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
 
@@ -32,12 +38,14 @@ const bubbleSelectionSource = read('src/renderer/features/botBrowser/panelBubble
 const quotedSelectionsSource = read('src/renderer/components/cowork/coworkQuotedSelections.ts');
 const i18nSource = read('src/renderer/services/i18n.ts');
 
-test('① every bubble renders a meta line with the formatted timestamp', () => {
+test('① the meta line carries the formatted stamp on the twin side (pass #5: default visible)', () => {
   assert.match(panelSource, /timestampLabel=\{formatPanelMessageTimestamp\(message\.timestamp, Date\.now\(\)\)\}/);
   // The meta line carries the 11px secondary tone…
   assert.match(panelSource, /text-\[11px\][^`]*dark:text-claude-darkTextSecondary text-claude-textSecondary/);
-  // …and the stamp only renders when formatting produced one.
-  assert.match(panelSource, /\{timestampLabel \? \(/);
+  // …and the stamp renders only when the row may show it AND formatting
+  // produced one (pass #5 ③: assistant group-end rows, no hover gating;
+  // user rows never render a stamp).
+  assert.match(panelSource, /\{showStamp && timestampLabel \? \(/);
   assert.match(timestampSource, /sameDay \? clock : `\$\{formatPanelDate\(stamp\)\} \$\{clock\}`/);
 });
 

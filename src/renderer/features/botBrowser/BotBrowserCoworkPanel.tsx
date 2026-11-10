@@ -21,7 +21,7 @@ import { projectsService } from '../../services/projects';
 import { i18nService } from '../../services/i18n';
 import { dispatchMetabotsChanged, subscribeMetabotsChanged } from '../../services/metabotEvents';
 import { getCompactFolderName } from '../../utils/path';
-import type { CoworkMessage, CoworkWorkspaceSelection } from '../../types/cowork';
+import type { CoworkMessage, CoworkQuotedSelectionRole, CoworkWorkspaceSelection } from '../../types/cowork';
 import TwinSeatChip from './TwinSeatChip';
 import { appointTwinSeat } from './twinSeatAppointment';
 import CoworkHistoryPanel from './CoworkHistoryPanel';
@@ -42,8 +42,30 @@ import PanelMessageLocatorRail from './PanelMessageLocatorRail';
 import { buildPanelLocatorRows } from './panelMessageLocator';
 import { createMessageQuotedSelection } from '../../components/cowork/coworkQuotedSelections';
 import { resolveBubbleSelectedText } from './panelBubbleSelection';
+import { buildPanelSentQuoteCardModel } from './panelSentQuoteCard';
 
 type PanelMetabot = MetaBotForSelector & { llm_id?: string | null; llm_provider?: string | null; llm_effort?: string | null };
+
+/**
+ * Display-only speaker names for a sent reply quote in this panel (purity
+ * pass #5 ②), the Telegram-card vocabulary shared with the pending reply
+ * card (CoworkQuotedSelectionTiles): the owner reads 「你」 and the
+ * assistant speaks in the session bot's own name — the 「Bot」 fallback only
+ * when no bot name is known. The prompt body keeps the generated
+ * `#<ordinal> <side>：` label untouched (parseSentQuoteBlock is
+ * display-only); only the rendered card shows these names.
+ */
+const panelQuoteDisplaySources = (
+  botName: string | null | undefined,
+): Record<CoworkQuotedSelectionRole, string> => {
+  const name = (botName ?? '').trim();
+  const assistantName = name || i18nService.t('coworkQuoteSentReplySourceAssistantFallback');
+  return {
+    user: i18nService.t('coworkQuoteReplyCardSpeakerUser'),
+    assistant: assistantName,
+    other: assistantName,
+  };
+};
 
 /**
  * Minimal rendering contract for the side panel: user messages and final
@@ -79,11 +101,19 @@ export const PanelMessage: React.FC<{
   /** Meta-line stamp, pre-formatted (`HH:mm` / `MM-DD HH:mm`, '' = omit). */
   timestampLabel?: string;
   /**
-   * Whether this bubble ends a same-sender group (purity pass #3 ①): only
-   * group-end rows carry the stamp at all, and even there the stamp stays
-   * hidden until the row is hovered (zero layout footprint otherwise).
+   * Whether this bubble may carry the stamp at all (purity pass #5 ③): the
+   * parent passes (assistant && group-end) — the stamp is the twin side's
+   * group-end line and is DEFAULT-VISIBLE there, no hover involved. A user
+   * row never carries a stamp regardless of this flag, and the pass #3
+   * hover reveal is retired.
    */
   showTimestamp?: boolean;
+  /**
+   * The session bot's name (purity pass #5 ①②): names the speaker on the
+   * pending reply card and on a sent message's Telegram quote card. Null /
+   * undefined falls back to the i18n 「Bot」 placeholder.
+   */
+  botName?: string | null;
   /** This bubble's stored reaction (local MVP; null = none). */
   currentReaction?: PanelReactionRating | null;
   /** Right-click on the bubble chrome opens the panel context menu. */
@@ -96,7 +126,8 @@ export const PanelMessage: React.FC<{
   isAssistantMode = false,
   resolveLocalFilePath,
   timestampLabel,
-  showTimestamp = true,
+  showTimestamp = false,
+  botName = null,
   currentReaction = null,
   onContextMenu,
   onToggleReaction,
@@ -110,38 +141,23 @@ export const PanelMessage: React.FC<{
     event.stopPropagation();
     onContextMenu(event, message);
   };
-  // Meta line under the bubble (pass #3 ①, refined after owner's live test):
-  // the stamp is group-scoped and hover-revealed, but the ROW ITSELF ALWAYS
-  // MOUNTS and keeps its height — reveal switches visibility only
-  // (`invisible group-hover:visible`), never display. Mount-on-hover made
-  // the bubble grow under the pointer and jitter the whole transcript
-  // (owner report 2026-11-10); a reserved ~20px meta slot on group-end rows
-  // is the stability cost the owner explicitly chose. A row carrying a
-  // reaction chip is functional state (visible and cancellable) with its
-  // stamp still hover-gated inside. The row wrapper below carries the
-  // `group` class that drives the reveal.
+  // Meta line under the bubble (pass #5 ③④, superseding pass #3's hover
+  // reveal): the stamp is the TWIN side's group-end line and reads by
+  // DEFAULT there — no hover gating, no `group` hover proxy, no reserved
+  // invisible slot. The row mounts only when it has content (chip, stamp,
+  // or both) and adapts to the bubble alignment: assistant rows sit
+  // left-aligned under the bubble and read [👍chip][time]; user rows are
+  // right-aligned and carry the chip alone (a user row never shows a
+  // stamp, whatever a caller passes).
+  const showStamp = showTimestamp && !isUser;
   const hasReactionChip = Boolean(currentReaction && onToggleReaction);
-  const stampOnlyRow = showTimestamp && !hasReactionChip;
-  const metaRow = showTimestamp || hasReactionChip ? (
+  const metaRow = showStamp || hasReactionChip ? (
     <div
       data-slot="panel-message-meta"
-      className={`${stampOnlyRow ? 'invisible group-hover:visible' : 'flex'} items-center gap-1.5 px-1 pt-0.5 text-[11px] leading-3 dark:text-claude-darkTextSecondary text-claude-textSecondary ${
+      className={`flex items-center gap-1.5 px-1 pt-0.5 text-[11px] leading-3 dark:text-claude-darkTextSecondary text-claude-textSecondary ${
         isUser ? 'justify-end' : 'justify-start'
       }`}
     >
-      {timestampLabel ? (
-        showTimestamp ? (
-          // Group-end rows only. The span reveals with its row when the row
-          // is stamp-only (visibility toggle only); on a chip-carrying row
-          // (always mounted) the stamp waits for hover on its own.
-          <span
-            data-panel-message-timestamp="true"
-            className={stampOnlyRow ? undefined : 'invisible group-hover:inline'}
-          >
-            {timestampLabel}
-          </span>
-        ) : null
-      ) : null}
       {currentReaction && onToggleReaction ? (
         <button
           type="button"
@@ -152,24 +168,56 @@ export const PanelMessage: React.FC<{
           {currentReaction === 'up' ? '👍' : '👎'}
         </button>
       ) : null}
+      {showStamp && timestampLabel ? (
+        <span data-panel-message-timestamp="true">{timestampLabel}</span>
+      ) : null}
     </div>
   ) : null;
   if (isUser) {
+    // Sent reply quote (pass #5 ②): a body that opens with the generated
+    // reply block renders as a Telegram-style quote card — accent speaker
+    // line + one-line excerpt, both clamped to the bubble width — with the
+    // owner's instruction underneath. DISPLAY-ONLY: the parsed block is a
+    // render-time view of the stored body; the prompt body keeps the
+    // generated label and the wider excerpt. Plain bodies render exactly
+    // as before.
+    const sentQuoteCard = buildPanelSentQuoteCardModel(
+      message.content,
+      panelQuoteDisplaySources(botName),
+    );
+    const bubbleClassName = "max-w-[90%] min-w-0 whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-[13px] dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text shadow-subtle";
     return (
       // data-panel-message-id lets the locator rail measure this row
-      // (purity pass #2 ③) without touching the bubble chrome. `group` is
-      // the hover proxy for the stamp reveal (pass #3 ①).
-      <div data-panel-message-id={message.id} className="group flex flex-col items-end">
-        {/* Same display-side body pipeline as the main cowork transcript: the
-            attachment marker lines split out at render time, image files render
-            as the shared thumbnail strip with the in-app lightbox, and the rest
-            renders as markdown. The panel keeps its own bubble chrome. */}
-        <div
-          onContextMenu={handleBubbleContextMenu}
-          className="max-w-[90%] min-w-0 whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-[13px] dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text shadow-subtle"
-        >
-          <UserMessageBody content={message.content} resolveLocalFilePath={resolveLocalFilePath} />
-        </div>
+      // (purity pass #2 ③) without touching the bubble chrome.
+      <div data-panel-message-id={message.id} className="flex flex-col items-end">
+        {sentQuoteCard ? (
+          <div onContextMenu={handleBubbleContextMenu} className={bubbleClassName}>
+            <div
+              data-panel-sent-quote="true"
+              aria-label={i18nService.t('coworkQuoteReplyPreviewLabel')}
+              className="mb-1.5 flex items-start gap-1.5 rounded-lg border border-claude-border border-l-2 border-l-claude-accent dark:border-claude-darkBorder dark:border-l-claude-accent dark:bg-claude-darkSurfaceInset bg-claude-surfaceInset py-1 pl-2 pr-1.5 text-xs"
+            >
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-medium text-claude-accent">{sentQuoteCard.speaker}</div>
+                <div className="mt-0.5 truncate dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  {sentQuoteCard.excerpt}
+                </div>
+              </div>
+            </div>
+            {sentQuoteCard.rest ? (
+              <UserMessageBody content={sentQuoteCard.rest} resolveLocalFilePath={resolveLocalFilePath} />
+            ) : null}
+          </div>
+        ) : (
+          <div onContextMenu={handleBubbleContextMenu} className={bubbleClassName}>
+            {/* Same display-side body pipeline as the main cowork transcript:
+                the attachment marker lines split out at render time, image
+                files render as the shared thumbnail strip with the in-app
+                lightbox, and the rest renders as markdown. The panel keeps
+                its own bubble chrome. */}
+            <UserMessageBody content={message.content} resolveLocalFilePath={resolveLocalFilePath} />
+          </div>
+        )}
         {metaRow}
       </div>
     );
@@ -180,7 +228,7 @@ export const PanelMessage: React.FC<{
     // (narration and final alike) sit in the neutral-gray .assistant-bubble
     // instead of bare full-width text, so both surfaces read the same way.
     return (
-      <div data-panel-message-id={message.id} className="group flex min-w-0 flex-col items-start">
+      <div data-panel-message-id={message.id} className="flex min-w-0 flex-col items-start">
         <div
           onContextMenu={handleBubbleContextMenu}
           className="assistant-bubble w-fit max-w-[92%] rounded-[22px] px-[16px] py-[10px] text-[13px] leading-5 dark:text-claude-darkText text-claude-text shadow-subtle [&_h1]:text-sm [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h2]:text-[13px] [&_h2]:mt-2.5 [&_h2]:mb-1 [&_h3]:text-[13px] [&_h3]:mt-2 [&_h3]:mb-1 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:break-all [&_a]:break-all"
@@ -192,7 +240,7 @@ export const PanelMessage: React.FC<{
     );
   }
   return (
-    <div data-panel-message-id={message.id} className="group flex min-w-0 flex-col items-start text-[13px] leading-5 dark:text-claude-darkText text-claude-text [&_h1]:text-sm [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h2]:text-[13px] [&_h2]:mt-2.5 [&_h2]:mb-1 [&_h3]:text-[13px] [&_h3]:mt-2 [&_h3]:mb-1 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:break-all [&_a]:break-all">
+    <div data-panel-message-id={message.id} className="flex min-w-0 flex-col items-start text-[13px] leading-5 dark:text-claude-darkText text-claude-text [&_h1]:text-sm [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h2]:text-[13px] [&_h2]:mt-2.5 [&_h2]:mb-1 [&_h3]:text-[13px] [&_h3]:mt-2 [&_h3]:mb-1 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:break-all [&_a]:break-all">
       <div onContextMenu={handleBubbleContextMenu} className="min-w-0">
         <MarkdownContent content={message.content} compact onOpenBotBrowserUri={onOpenUri} emojiImages />
       </div>
@@ -702,7 +750,9 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
 
   // (message, index) rides Array.map: the group-end predicate reads the
   // rendered sequence (visibleMessages), so same-sender bursts collapse to
-  // one hover-revealed stamp on their last bubble (purity pass #3 ①).
+  // ONE stamp on their last bubble — and pass #5 ③ scopes that stamp to the
+  // twin side only: showTimestamp is (assistant && group-end), default
+  // visible, no hover.
   const renderMessage = (message: CoworkMessage, index: number) => (
     <PanelMessage
       key={message.id}
@@ -710,11 +760,15 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
       onOpenUri={handleOpenUri}
       isAssistantMode={isAssistantMode}
       resolveLocalFilePath={resolveLocalFilePath}
+      // The session bot's own name (pass #5 ①②): names the speaker on the
+      // pending reply card and on sent quote cards.
+      botName={chipMetabot?.name ?? null}
       // Quiet per-bubble stamp on the meta line: same-day `HH:mm`, older
-      // days `MM-DD HH:mm` (computed at render, local time). The stamp only
-      // mounts on a group-end row and only shows while that row is hovered.
+      // days `MM-DD HH:mm` (computed at render, local time). Pass #5 ③:
+      // assistant group-end rows only, DEFAULT-VISIBLE — the pass #3 hover
+      // reveal is retired.
       timestampLabel={formatPanelMessageTimestamp(message.timestamp, Date.now())}
-      showTimestamp={isPanelMessageGroupEnd(visibleMessages, index)}
+      showTimestamp={message.type === 'assistant' && isPanelMessageGroupEnd(visibleMessages, index)}
       currentReaction={panelReactions[message.id] ?? null}
       onContextMenu={handlePanelContextMenu}
       onToggleReaction={handleToggleReaction}
@@ -946,6 +1000,9 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
           // Scope the skills picker to the session's bot (live session wins,
           // draft follows the Twin) so pins stay inside that bot's view.
           sessionMetabotId={currentSession?.metabotId ?? effectiveMetabotId}
+          // The pending reply card names the real speaker (pass #5 ①): the
+          // session bot's own name — 「回复 Monday」 instead of 「回复 Bot」.
+          botName={chipMetabot?.name ?? null}
         />
       )}
 
