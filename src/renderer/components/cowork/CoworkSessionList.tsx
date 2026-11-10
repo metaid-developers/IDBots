@@ -485,6 +485,49 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
     }
   };
 
+  // Double-click on the by-Bot list's blank space collapses every expanded
+  // folder at once: all bot groups plus the Autonomous and Follow-Up folds.
+  // Each piece is persisted through its own existing single-toggle write
+  // (same try/catch posture: a localStorage failure only loses the memory,
+  // the collapse still applies for this session). This is an explicit
+  // collapse, not a toggle, so a stray second double-click cannot re-open
+  // anything. Blank space means "not on anything clickable": session rows
+  // are plain divs (CoworkSessionItem's root carries cursor-pointer, not a
+  // button role), so the guard matches the interactive elements AND the row
+  // root's cursor-pointer signature — double-clicking a row, a group-header
+  // button, or the trailing + keeps their single-click behaviors untouched.
+  const collapseAllGroups = (event: React.MouseEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement;
+    if (target.closest('button, a, [role="button"], input, .cursor-pointer')) return;
+    if (!botGrouped) return;
+    const next = new Set(collapsedGroupKeys);
+    botGrouped.groups.forEach((group) => next.add(group.key));
+    setCollapsedGroupKeys(next);
+    try {
+      saveCollapsedSessionGroups((storageKey, value) => window.localStorage.setItem(storageKey, value), groupFace, next);
+    } catch {
+      // localStorage unavailable; the groups still collapse for this session.
+    }
+    setIsAutoTasksExpanded(false);
+    try {
+      window.localStorage.setItem(
+        AUTO_TASKS_EXPANDED_STORAGE_KEY,
+        serializeAutoTasksExpandedPreference(false),
+      );
+    } catch {
+      // localStorage unavailable; the fold still collapses for this session.
+    }
+    setIsFollowUpExpanded(false);
+    try {
+      window.localStorage.setItem(
+        FOLLOW_UP_EXPANDED_STORAGE_KEY,
+        serializeFollowUpExpandedPreference(false),
+      );
+    } catch {
+      // localStorage unavailable; the section still collapses for this session.
+    }
+  };
+
   // The row takes the session id for every action and one shared clock/language,
   // so that two consecutive renders of an unchanged row produce referentially
   // equal props and the memo on CoworkSessionItem bails out.
@@ -698,7 +741,7 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
   // online face only groups bots that actually have a conversation.
   if (botGrouped) {
     return (
-      <div ref={rootRef}>
+      <div ref={rootRef} onDoubleClick={collapseAllGroups}>
         {renderPinnedSection(botGrouped.pinned)}
         {renderAutoTasksSection()}
         {renderFollowUpSection()}
