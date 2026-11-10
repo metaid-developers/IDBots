@@ -13,7 +13,8 @@ import TwemojiText from '@/components/chat/TwemojiText';
 import { t } from '../../i18n';
 import type { MockMetabot } from '../../bridge/types';
 import type { useChat } from '../hooks/useChat';
-import type { ChatMessageView } from '../chatProjection';
+import { formatDiagnosticCopy, type ChatMessageView } from '../chatProjection';
+import { copyTextToClipboard } from '../../login/inAppBrowser';
 import { useKeyboardInset } from '../hooks/useKeyboardInset';
 import { useNativeBackHandler } from '../hooks/useNativeBackHandler';
 import { getNativeAdapter } from '../../native/nativeAdapter';
@@ -375,7 +376,43 @@ function messageText(message: ChatMessageView): string {
   return message.diagnostic ? t(`mobile.chat.diagnostic.${message.diagnostic}`) : message.text;
 }
 
-function MessageRow({ message, onOpenFile }: { message: ChatMessageView; onOpenFile: (filePath: string) => boolean }): JSX.Element {
+/**
+ * "Copy diagnostics" for a turnFailed bubble: puts timestamp, session id (when
+ * known), the diagnostic kind and the FULL raw error text on the clipboard so
+ * the owner can paste a self-describing report. When the clipboard is
+ * unavailable (insecure context / webview) the button says so and the reason
+ * line stays selectable — long-press to copy manually.
+ */
+function DiagnosticCopyButton({ message, sessionId }: { message: ChatMessageView; sessionId: string | null }): JSX.Element {
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (timerRef.current !== null) clearTimeout(timerRef.current);
+  }, []);
+  const copy = async (): Promise<void> => {
+    const copied = await copyTextToClipboard(formatDiagnosticCopy(message, sessionId));
+    setCopyState(copied ? 'copied' : 'failed');
+    if (timerRef.current !== null) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => setCopyState('idle'), 1600);
+  };
+  const labelKey = copyState === 'idle'
+    ? 'mobile.chat.diagnostic.copy'
+    : copyState === 'copied'
+      ? 'mobile.chat.diagnostic.copied'
+      : 'mobile.chat.diagnostic.copyFailed';
+  return (
+    <button
+      type="button"
+      data-testid="chat-diagnostic-copy"
+      onClick={() => void copy()}
+      className="mt-1 min-h-[36px] select-none text-[11px] font-normal underline opacity-80 active:opacity-100"
+    >
+      {t(labelKey)}
+    </button>
+  );
+}
+
+function MessageRow({ message, sessionId, onOpenFile }: { message: ChatMessageView; sessionId: string | null; onOpenFile: (filePath: string) => boolean }): JSX.Element {
   if (message.role === 'user') {
     return (
       <div className="twin-message flex justify-end">
@@ -390,11 +427,21 @@ function MessageRow({ message, onOpenFile }: { message: ChatMessageView; onOpenF
   if (message.role === 'error') {
     return (
       <div className="twin-message flex justify-start">
-        <div className="twin-message-error whitespace-pre-wrap break-words" data-testid="error-bubble">
+        {/* select-text keeps the reason long-pressable on phones where the
+            clipboard API is unavailable (copy button's documented fallback). */}
+        <div className="twin-message-error select-text whitespace-pre-wrap break-words" data-testid="error-bubble">
           {/* Display-only mapping (wechatEmojiDisplay.ts); catalog emoji
               render as bundled Twemoji images (alt = codepoint). Same
               display convention as the user/assistant bubbles. */}
           <TwemojiText text={mapWechatBracketCodesForDisplay(messageText(message))} />
+          {message.diagnosticReason ? (
+            <p className="mt-1 break-words text-[11px] font-normal opacity-80" data-testid="chat-diagnostic-reason">
+              {`${t('mobile.chat.diagnostic.reasonLabel')}: ${message.diagnosticReason}`}
+            </p>
+          ) : null}
+          {message.diagnostic === 'turnFailed' ? (
+            <DiagnosticCopyButton message={message} sessionId={sessionId} />
+          ) : null}
         </div>
       </div>
     );
@@ -674,7 +721,7 @@ export default function ChatScreen(props: {
               {!chat.restoring ? <p className="twin-empty-copy">{t('mobile.chat.emptyBody')}</p> : null}
             </div>
           ) : (
-            chat.messages.map((message) => <MessageRow key={message.id} message={message} onOpenFile={openPreview} />)
+            chat.messages.map((message) => <MessageRow key={message.id} message={message} sessionId={chat.sessionId ?? null} onOpenFile={openPreview} />)
           )}
           {turnPhase !== 'idle' && turnPhase !== 'completed' ? (
             <p className="px-2 py-1 text-xs text-[var(--text-secondary)]" data-testid="turn-phase">

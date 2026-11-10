@@ -36,9 +36,10 @@ import { projectChatMessages } from '../src/mobile/app/chatProjection.ts';
  *      frame) — an end-to-end mock assertion;
  *   4. ChatScreen renders the prompt card (with the recharge entry) and the
  *      inline error notice instead of a bare/silent failure;
- *   5. a string-fallback MISS (unknown terminal error) never surfaces the
- *      raw system error row: the projection collapses it into the localized
- *      turnFailed diagnostics one-liner.
+ *   5. a string-fallback MISS (unknown terminal error) keeps the raw system
+ *      error row out of the bubble body: the projection renders the localized
+ *      turnFailed one-liner as the main copy, with a bounded raw reason line
+ *      underneath (2026-11-11 diagnosability fix) — never the raw row itself.
  */
 
 type Chat = ReturnType<typeof useChat>;
@@ -245,8 +246,15 @@ test('a string-fallback miss renders the localized one-liner, not the raw error 
     <ChatScreen chat={chatFixture({ messages: unknownViews })} bots={[]} onOpenRecharge={() => undefined} />,
   );
   assert.ok(markup.includes('error-bubble'), 'the failure still surfaces as an error bubble');
-  assert.ok(markup.includes(t('mobile.chat.diagnostic.turnFailed')), 'the localized one-liner renders');
-  assert.ok(!markup.includes('mystery upstream body'), 'the raw upstream copy is not surfaced');
+  const friendlyAt = markup.indexOf(t('mobile.chat.diagnostic.turnFailed'));
+  const reasonAt = markup.indexOf('data-testid="chat-diagnostic-reason"');
+  const rawAt = markup.indexOf('mystery upstream body');
+  assert.ok(friendlyAt >= 0, 'the localized one-liner renders as the main copy');
+  // 2026-11-11: the raw cause is no longer discarded — it rides a dedicated,
+  // bounded reason line UNDER the friendly copy (the owner could not diagnose
+  // a repeated failure from the one-liner alone).
+  assert.ok(reasonAt > friendlyAt, 'the bounded reason line renders under the friendly copy');
+  assert.ok(rawAt > reasonAt, 'the raw excerpt only appears inside the reason line');
 
   // The recognized quota row keeps its raw transcript record (code visible).
   const quotaViews = projectChatMessages([
