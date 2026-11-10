@@ -93,7 +93,7 @@ test('③ reactions persist locally under the twinChatReactions key, toggle-canc
 test('④ quote reply rides the shared composer slot; copy writes raw text', () => {
   // Same entry as CoworkSessionDetail's reply path: fragment → composer quote
   // slot → shared chip / removal / send composition.
-  assert.match(panelSource, /import \{ createMessageQuotedSelection \} from '\.\.\/\.\.\/components\/cowork\/coworkQuotedSelections';/);
+  assert.match(panelSource, /import \{[^}]*createMessageQuotedSelection[^}]*\} from '\.\.\/\.\.\/components\/cowork\/coworkQuotedSelections';/);
   // SUPERSEDED in place (pass #4): the content is the captured selection when
   // one exists, else the whole message — one factory, same truncation cap.
   assert.match(panelSource, /const content = menu\.selectedText \?\? message\.content;/);

@@ -34,6 +34,7 @@ const message = (overrides: Partial<CoworkMessage>): CoworkMessage => ({
 
 const renderPanel = (node: CoworkMessage, props: {
   showTimestamp?: boolean;
+  botName?: string | null;
   currentReaction?: 'up' | 'down' | null;
   timestampLabel?: string;
 } = {}): string => renderToStaticMarkup(
@@ -41,6 +42,7 @@ const renderPanel = (node: CoworkMessage, props: {
     message={node}
     onOpenUri={() => {}}
     showTimestamp={props.showTimestamp}
+    botName={props.botName}
     currentReaction={props.currentReaction ?? null}
     onToggleReaction={props.currentReaction ? () => {} : undefined}
     timestampLabel={props.timestampLabel}
@@ -57,19 +59,20 @@ const sentReplyBody = [
   '请帮我分析这段话',
 ].join('\n');
 
-test('② a sent reply quote renders in the ORIGINAL inline style (card reverted)', () => {
-  // Owner ruling 2026-11-11: quote and reply belong in ONE bubble — the
-  // generated block flows inline exactly as it did before pass #5 ②.
-  const markup = renderPanel(message({ type: 'user', content: sentReplyBody }));
+test('② a sent reply quote renders INLINE with the real speaker, no card', () => {
+  // Owner rulings synthesized: ONE bubble, original inline flow, but the
+  // label names the session bot (main-transcript mapping) — not #152.
+  const markup = renderPanel(message({ type: 'user', content: sentReplyBody }), { botName: 'Monday' });
 
   assert.ok(!markup.includes('data-panel-sent-quote'), 'no card element mounts');
-  assert.ok(markup.includes('助手消息'), 'the generated label renders inline as stored');
+  assert.ok(markup.includes('Monday'), 'the label names the real bot');
+  assert.ok(!markup.includes('助手消息'), 'the machine label never leaks');
   assert.ok(markup.includes('来看一下这个方案，特别是第二段。'), 'the quoted lines render inline');
   assert.ok(markup.includes('请帮我分析这段话'), 'the owner instruction renders in the same bubble');
 });
 
 test('② a plain user body renders exactly as before', () => {
-  const markup = renderPanel(message({ type: 'user', content: '你好\n> 手写引用不算' }));
+  const markup = renderPanel(message({ type: 'user', content: '你好\n> 手写引用不算' }), { botName: 'Monday' });
   assert.ok(markup.includes('你好'));
 });
 

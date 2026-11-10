@@ -40,7 +40,8 @@ import {
 import PanelMessageContextMenu from './PanelMessageContextMenu';
 import PanelMessageLocatorRail from './PanelMessageLocatorRail';
 import { buildPanelLocatorRows } from './panelMessageLocator';
-import { createMessageQuotedSelection } from '../../components/cowork/coworkQuotedSelections';
+import { createMessageQuotedSelection, parseSentQuoteBlock, parseSentSelectionQuoteBlock } from '../../components/cowork/coworkQuotedSelections';
+import { buildSentQuoteDisplaySources, buildSentSelectionQuoteLabelSets } from '../../components/cowork/CoworkSessionDetail';
 import { resolveBubbleSelectedText } from './panelBubbleSelection';
 
 type PanelMetabot = MetaBotForSelector & { llm_id?: string | null; llm_provider?: string | null; llm_effort?: string | null };
@@ -86,6 +87,12 @@ export const PanelMessage: React.FC<{
    * hover reveal is retired.
    */
   showTimestamp?: boolean;
+  /**
+   * The session bot's name: names the speaker on the pending reply card and
+   * in a sent quote's inline display label (main-transcript mapping). Null
+   * falls back to the i18n placeholder.
+   */
+  botName?: string | null;
   /** This bubble's stored reaction (local MVP; null = none). */
   currentReaction?: PanelReactionRating | null;
   /** Right-click on the bubble chrome opens the panel context menu. */
@@ -99,6 +106,7 @@ export const PanelMessage: React.FC<{
   resolveLocalFilePath,
   timestampLabel,
   showTimestamp = false,
+  botName = null,
   currentReaction = null,
   onContextMenu,
   onToggleReaction,
@@ -145,12 +153,22 @@ export const PanelMessage: React.FC<{
     </div>
   ) : null;
   if (isUser) {
-    // Sent reply quotes keep the ORIGINAL inline style (owner ruling
-    // 2026-11-11: the Telegram quote card read as a separate block — quote
-    // and reply felt disjointed; the generated `> #<ordinal>` block flowing
-    // inside the bubble fits IDBots better). The body renders through the
-    // same pipeline as before pass #5; nothing display-side special-cases
-    // quote bodies anymore.
+    // Sent quotes keep the ORIGINAL inline style — one bubble, quote flowing
+    // above the reply (owner ruling 2026-11-11, after the Telegram card read
+    // as a separate block) — but the label line shows the REAL speaker via
+    // the main transcript's WeChat-style mapping (`你：` / `Monday：`),
+    // not the machine label ("#152 助手消息："). Display-only: the stored
+    // body stays verbatim for the model; hand-written blockquotes never
+    // match the generated form and render untouched.
+    const sentQuote = parseSentQuoteBlock(message.content, buildSentQuoteDisplaySources(botName));
+    const sentSelectionQuote = sentQuote
+      ? null
+      : parseSentSelectionQuoteBlock(message.content, buildSentSelectionQuoteLabelSets(botName));
+    const sentQuoteBlock = sentQuote?.block ?? sentSelectionQuote?.block ?? null;
+    const sentQuoteRest = sentQuote?.rest ?? sentSelectionQuote?.rest ?? null;
+    const displayContent = sentQuoteBlock
+      ? [sentQuoteBlock, sentQuoteRest].filter(Boolean).join('\n\n')
+      : message.content;
     const bubbleClassName = "max-w-[90%] min-w-0 whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-[13px] dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text shadow-subtle";
     return (
       // data-panel-message-id lets the locator rail measure this row
@@ -162,7 +180,7 @@ export const PanelMessage: React.FC<{
               files render as the shared thumbnail strip with the in-app
               lightbox, and the rest renders as markdown. The panel keeps
               its own bubble chrome. */}
-          <UserMessageBody content={message.content} resolveLocalFilePath={resolveLocalFilePath} />
+          <UserMessageBody content={displayContent} resolveLocalFilePath={resolveLocalFilePath} />
         </div>
         {metaRow}
       </div>
@@ -712,6 +730,9 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
       // reveal is retired.
       timestampLabel={formatPanelMessageTimestamp(message.timestamp, Date.now())}
       showTimestamp={message.type === 'assistant' && isPanelMessageGroupEnd(visibleMessages, index)}
+      // The real speaker for the pending card and sent-quote labels (pass
+      // #5 ① + the inline label mapping).
+      botName={chipMetabot?.name ?? null}
       currentReaction={panelReactions[message.id] ?? null}
       onContextMenu={handlePanelContextMenu}
       onToggleReaction={handleToggleReaction}

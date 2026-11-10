@@ -33,7 +33,7 @@ test('① the panel feeds the real bot name to the composer (pending card)', () 
   // Monday」 replaces 「回复 Bot」. (The PanelMessage wire from the reverted
   // sent-quote card is gone with it.)
   const wires = panelSource.match(/botName=\{chipMetabot\?\.name \?\? null\}/g) ?? [];
-  assert.equal(wires.length, 1, 'only the composer receives the bot name');
+  assert.equal(wires.length, 2, 'composer AND PanelMessage receive the bot name');
   // The composer forwards it into the pending tiles.
   const tilesCall = inputSource.match(/<CoworkQuotedSelectionTiles[\s\S]*?\/>/)?.[0] ?? '';
   assert.ok(tilesCall, 'tiles call site found');
@@ -44,15 +44,20 @@ test('① the panel feeds the real bot name to the composer (pending card)', () 
   assert.match(i18nSource, /coworkQuoteSentReplySourceAssistantFallback: 'Bot'/);
 });
 
-test('② sent quotes keep the ORIGINAL inline style (Telegram card reverted)', () => {
-  // Owner ruling 2026-11-11: the card split the quote from the reply. No
-  // card machinery may survive or regrow in the panel.
+test('② sent quotes render INLINE with the real speaker (card stays reverted)', () => {
+  // Owner rulings, synthesized 2026-11-11: the quote and the reply live in
+  // ONE bubble (no Telegram card) AND the label shows the real speaker via
+  // the main transcript's WeChat-style mapping, not the machine label.
+  // No card machinery may survive or regrow in the panel.
   assert.doesNotMatch(panelSource, /panelSentQuoteCard/);
   assert.doesNotMatch(panelSource, /buildPanelSentQuoteCardModel/);
   assert.doesNotMatch(panelSource, /data-panel-sent-quote/);
   assert.doesNotMatch(panelSource, /panelQuoteDisplaySources/);
-  // And the plain body pipeline stays the only user-bubble renderer.
-  assert.match(panelSource, /<UserMessageBody content=\{message\.content\}/);
+  // The inline mapping rides the shared parsers + display-source builders.
+  assert.match(panelSource, /parseSentQuoteBlock\(message\.content, buildSentQuoteDisplaySources\(botName\)\)/);
+  assert.match(panelSource, /parseSentSelectionQuoteBlock\(message\.content, buildSentSelectionQuoteLabelSets\(botName\)\)/);
+  // The body renders the display transform, not the stored body.
+  assert.match(panelSource, /<UserMessageBody content=\{displayContent\}/);
   // DISPLAY-ONLY BOUNDARY (still holds): the stored body is never rewritten.
   assert.doesNotMatch(panelSource, /message\.content\s*=[^=]/);
 });
