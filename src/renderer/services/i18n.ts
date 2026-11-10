@@ -526,6 +526,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     botBrowserPanelMenuDislike: '踩',
     botBrowserPanelMenuQuoteReply: '引用回复',
     botBrowserPanelMenuCopyText: '复制文本',
+    // 消息定位滚轮（办公室聊天窗纯度优化第二批 2026-11-10）：右缘细轨的
+    // 可达性标签；预览卡的发送者名复用 coworkOriginBadgeYou（「你」）。
+    botBrowserLocatorRail: '消息定位',
     botInternetGoBotHome: '去 BotWorks 创建 Twin',
     botInternetTwinSeatTitle: '选择当前当值 Twin',
     botInternetTwinSeatHint: '任命会与「我的 Bot」的 Twin 设定同步：原当值 Twin 回到 worker 岗位，所选 bot 立即上任。',
@@ -4270,6 +4273,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     botBrowserPanelMenuDislike: 'Dislike',
     botBrowserPanelMenuQuoteReply: 'Quote reply',
     botBrowserPanelMenuCopyText: 'Copy text',
+    // Mirror of the zh locator key (purity pass #2, 2026-11-10); the preview
+    // sender label for user rows reuses coworkOriginBadgeYou.
+    botBrowserLocatorRail: 'Message locator',
     botInternetGoBotHome: 'Go to BotWorks to create your Twin',
     botInternetTwinSeatTitle: 'Choose the acting Twin',
     botInternetTwinSeatHint: 'Appointing stays in sync with the My Bots Twin setting: the previous Twin returns to the worker bench and the chosen bot takes the seat immediately.',
