@@ -160,7 +160,10 @@ test('selectEffortWithCerebellum aborts at the timeout and returns null', async 
 });
 
 test('selectEffortWithCerebellum default timeout is the solo-call budget', () => {
-  assert.equal(CEREBELLUM_EFFORT_TIMEOUT_MS, 1000);
+  // 2500ms: production relay latency (cowork.log 2026-11-04..09) put the
+  // success median at 701ms with 72% of calls exceeding the old 1s budget;
+  // the runner's race budget still bounds the turn-start wait.
+  assert.equal(CEREBELLUM_EFFORT_TIMEOUT_MS, 2500);
 });
 
 // ---- session stickiness ------------------------------------------------------

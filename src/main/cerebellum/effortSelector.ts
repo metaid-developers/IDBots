@@ -38,11 +38,17 @@ import type { CerebellumFetchLike } from './memoryRank';
 /**
  * Solo-call budget. The other cerebellum call sites share a 1.5 s window; the
  * effort selector usually overlaps them (the runner kicks it before the
- * volatile-context build and awaits it at the effort resolution), but when it
- * flies alone it must not delay the turn start materially — observed JEV
- * latency for this question is 200–665 ms, so 1 s bounds the tail.
+ * volatile-context build and awaits it at the effort resolution). The
+ * Phase-0 eval measured 200–665 ms, but production JEV relay latency runs
+ * hotter: cowork.log 2026-11-04..09 shows successful verdicts at a 701 ms
+ * median with the tail pressed right against the budget, and 1 s aborted 72%
+ * of all selector calls (93/130, every no-verdict settle ≥1000 ms) —
+ * assistant mode then silently rode the fallback effort for most turns.
+ * 2.5 s covers the observed production tail; the runner's race budget
+ * (CEREBELLUM_EFFORT_RACE_BUDGET_MS) still bounds how long the turn START
+ * waits, so this only caps the HTTP call, not the turn.
  */
-export const CEREBELLUM_EFFORT_TIMEOUT_MS = 1000;
+export const CEREBELLUM_EFFORT_TIMEOUT_MS = 2500;
 
 /**
  * Assistant-mode escalation threshold on P(high)+P(max). 0.5 sits in the
