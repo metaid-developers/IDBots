@@ -1,4 +1,4 @@
-import { fetchProtocolPinsFromIndexer, type ProtocolPinRecord } from '../protocolPinFetch';
+import { fetchProtocolPinsFromIndexer, indexerUserAgentHeader, type ProtocolPinRecord } from '../protocolPinFetch';
 import { looksLikeContentUrl } from '../protocolPinContent';
 import {
   METATASK_COLLECTED_PATHS,
@@ -24,7 +24,9 @@ import type { MetaTaskChainEvent } from './types';
  * the replay drop every node of a large tree pin, so rows whose inline body is
  * missing or visibly shorter than the row's declared `contentLength` are
  * refetched from that URL (bounded concurrency, one extra request only for the
- * rows that need it; a healthy small pin issues none).
+ * rows that need it; a healthy small pin issues none). Recovered bodies are
+ * cached process-lifetime (chain pins are immutable) so later sweeps reuse
+ * them instead of re-downloading the same pins every sweep.
  */
 
 /** manapi silently falls back to 20 rows/page for size > 100. */
@@ -50,6 +52,59 @@ const CONTENT_MAX_BYTES = 8 * 1024 * 1024;
  * counts as "longer than what we have" past this margin.
  */
 const TRUNCATION_MARGIN_BYTES = 16;
+
+/**
+ * Process-lifetime cache of recovered pin bodies, keyed by content URL.
+ *
+ * Chain pins are immutable — a body fetched once is correct forever — but
+ * nothing here used to remember that across sweeps, so every 10-minute
+ * heartbeat re-downloaded every long (> 4096-byte) pin in every walked pool.
+ * Fleet-wide that was ~286k manapi `/content/` requests per day under a bare
+ * `node` UA (follow-up ticket 2026-11-10: the residual 86% after the 11-08
+ * walk fix). The cache is LRU-bounded by entries and total bytes; an eviction
+ * only costs one re-fetch on a later sweep. Only successfully parsed bodies
+ * enter the cache, so a transient fetch failure keeps retrying as before.
+ */
+const CONTENT_CACHE_MAX_ENTRIES = 500;
+const CONTENT_CACHE_MAX_TOTAL_BYTES = 32 * 1024 * 1024;
+const contentBodyTextCache = new Map<string, string>();
+let contentBodyTextCacheTotalBytes = 0;
+
+/** Map iteration is insertion-ordered, so delete+set refreshes LRU recency. */
+const contentCacheGet = (url: string): string | null => {
+  const text = contentBodyTextCache.get(url);
+  if (text === undefined) return null;
+  contentBodyTextCache.delete(url);
+  contentBodyTextCache.set(url, text);
+  return text;
+};
+
+const contentCachePut = (url: string, text: string): void => {
+  if (text.length > CONTENT_CACHE_MAX_TOTAL_BYTES) return;
+  const existing = contentBodyTextCache.get(url);
+  if (existing !== undefined) {
+    contentBodyTextCacheTotalBytes -= existing.length;
+    contentBodyTextCache.delete(url);
+  }
+  contentBodyTextCache.set(url, text);
+  contentBodyTextCacheTotalBytes += text.length;
+  while (
+    (contentBodyTextCache.size > CONTENT_CACHE_MAX_ENTRIES
+      || contentBodyTextCacheTotalBytes > CONTENT_CACHE_MAX_TOTAL_BYTES)
+    && contentBodyTextCache.size > 0
+  ) {
+    const oldest = contentBodyTextCache.keys().next();
+    if (oldest.done) break;
+    contentBodyTextCacheTotalBytes -= contentBodyTextCache.get(oldest.value)?.length ?? 0;
+    contentBodyTextCache.delete(oldest.value);
+  }
+};
+
+/** Test seam: module-level cache state leaks across test files otherwise. */
+export const __resetMetataskContentCacheForTests = (): void => {
+  contentBodyTextCache.clear();
+  contentBodyTextCacheTotalBytes = 0;
+};
 
 const parseBody = (item: Record<string, unknown>): Record<string, unknown> => {
   const contentBody = item.contentBody;
@@ -122,15 +177,29 @@ export const contentRecoveryUrl = (
 
 /**
  * Fetch a pin's full body from its content URL (plain text → JSON object).
- * Any failure — non-2xx, timeout, transport error, non-object JSON, oversized
+ * Served from the process-lifetime cache when this URL was already recovered;
+ * any failure — non-2xx, timeout, transport error, non-object JSON, oversized
  * body — returns null so the caller keeps whatever it parsed inline.
  */
 const fetchContentBody = async (
   url: string,
   fetchImpl: ((input: string, init?: RequestInit) => Promise<Response>) | undefined
 ): Promise<Record<string, unknown> | null> => {
+  const cachedText = contentCacheGet(url);
+  if (cachedText !== null) {
+    try {
+      const cachedParsed = JSON.parse(cachedText);
+      return cachedParsed && typeof cachedParsed === 'object' && !Array.isArray(cachedParsed)
+        ? (cachedParsed as Record<string, unknown>)
+        : null;
+    } catch {
+      // Cache poisoning guard: fall through and refetch once.
+    }
+  }
   const impl = fetchImpl ?? fetch;
-  const init: RequestInit = {};
+  const init: RequestInit = {
+    headers: { 'User-Agent': indexerUserAgentHeader() },
+  };
   if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
     init.signal = AbortSignal.timeout(CONTENT_FETCH_TIMEOUT_MS);
   }
@@ -140,9 +209,11 @@ const fetchContentBody = async (
     const text = await response.text();
     if (text.length > CONTENT_MAX_BYTES) return null;
     const parsed = JSON.parse(text);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : null;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      contentCachePut(url, text);
+      return parsed as Record<string, unknown>;
+    }
+    return null;
   } catch {
     return null;
   }

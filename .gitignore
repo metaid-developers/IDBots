@@ -155,6 +155,7 @@ tests/*
 !tests/metataskAgentTools.test.mjs
 !tests/metataskRefresher.test.mjs
 !tests/metataskCompetitive.test.mjs
+!tests/metataskCollectorContentCache.test.mjs
 !tests/quotaRendererSync.test.mjs
 !tests/metabotArchetypesStatic.test.mjs
 !tests/surfHostStatsFold.test.mjs

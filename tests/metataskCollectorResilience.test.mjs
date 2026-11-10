@@ -8,10 +8,11 @@ const {
   // Egress-guard memo/probe state is process-wide; reset between tests.
   __resetProtocolPinFetchStateForTests,
 } = require('../dist-electron/main/services/protocolPinFetch.js');
-const { collectMetaTaskEvents } = require('../dist-electron/main/services/metatask/collector.js');
+const { collectMetaTaskEvents, __resetMetataskContentCacheForTests } = require('../dist-electron/main/services/metatask/collector.js');
 
 beforeEach(() => {
   __resetProtocolPinFetchStateForTests();
+  __resetMetataskContentCacheForTests();
 });
 
 const PATH = '/protocols/metatask/submission';
