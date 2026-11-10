@@ -86,6 +86,8 @@ interface CoworkSessionItemProps {
    * the shallow memo compares cleanly; the list subscribes to the mode once.
    */
   assistantMode?: boolean;
+  /** BotHub history keeps the visited page in the metadata line instead of the task status. */
+  showBrowserContext?: boolean;
 }
 
 const statusLabels: Record<CoworkSessionStatus, string> = {
@@ -303,6 +305,7 @@ const CoworkSessionItemRow: React.FC<CoworkSessionItemProps> = ({
   nowMs,
   decisionPending = false,
   assistantMode = false,
+  showBrowserContext = false,
 }) => {
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(session.title);
@@ -737,13 +740,15 @@ const CoworkSessionItemRow: React.FC<CoworkSessionItemProps> = ({
               </>
             )}
           </div>
-          <div className="flex items-center gap-2 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary leading-tight">
+          <div className="flex min-w-0 items-center gap-2 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary leading-tight">
             <span className="whitespace-nowrap" title={relativeTime.full}>
               {relativeTime.compact}
             </span>
-            <span className="text-[10px] whitespace-nowrap">
-              {i18nService.t(statusLabels[session.status])}
-            </span>
+            {!showBrowserContext && (
+              <span className="text-[10px] whitespace-nowrap">
+                {i18nService.t(statusLabels[session.status])}
+              </span>
+            )}
             {isBrowser && (
               <span
                 className="shrink-0 rounded px-1 py-px text-[9px] font-medium uppercase leading-none tracking-wider bg-claude-accent/10 text-claude-accent"
@@ -752,6 +757,14 @@ const CoworkSessionItemRow: React.FC<CoworkSessionItemProps> = ({
                 {i18nService.t('coworkSessionTypeBrowser')}
               </span>
             )}
+            {showBrowserContext && (session.browserTitle || session.browserUri) ? (
+              <span
+                className="min-w-0 truncate"
+                title={session.browserTitle || session.browserUri}
+              >
+                {session.browserTitle || session.browserUri}
+              </span>
+            ) : null}
           </div>
         </div>
       </div>

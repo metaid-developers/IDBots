@@ -14,6 +14,7 @@ import { ActiveSkillBadge } from '../../components/skills';
 import { RootState } from '../../store';
 import { clearActiveSkills } from '../../store/slices/skillSlice';
 import { browserCoworkService } from '../../services/browserCowork';
+import { coworkService } from '../../services/cowork';
 import { useChatExperienceMode } from '../../hooks/useChatExperienceMode';
 import { isAssistantModeOwnerChatSession } from '../../components/cowork/assistantModeSessionGate';
 import { AssistantActivityIndicator } from '../../components/cowork/AssistantActivityIndicator';
@@ -409,6 +410,14 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     await browserCoworkService.archiveSession(sessionId);
   };
 
+  const handleToggleHistoryPin = async (sessionId: string, pinned: boolean) => {
+    await coworkService.setSessionPinned(sessionId, pinned);
+  };
+
+  const handleRenameHistory = async (sessionId: string, title: string) => {
+    await coworkService.renameSession(sessionId, title);
+  };
+
   const handleOpenUri = useCallback((uri: string) => {
     window.dispatchEvent(new CustomEvent('botBrowser:openUri', { detail: { uri } }));
   }, []);
@@ -658,6 +667,8 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
           currentSessionId={currentSession?.id ?? null}
           onSelectSession={handleSelectHistory}
           onDeleteSession={handleDeleteHistory}
+          onTogglePin={handleToggleHistoryPin}
+          onRenameSession={handleRenameHistory}
           onClose={() => setShowHistory(false)}
         />
       ) : null}
