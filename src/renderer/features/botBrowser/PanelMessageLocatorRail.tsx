@@ -63,6 +63,17 @@ const PanelMessageLocatorRail: React.FC<PanelMessageLocatorRailProps> = ({
   const [thumb, setThumb] = useState({ start: 0, size: 1 });
   const [hover, setHover] = useState<RailHover | null>(null);
   const [dragging, setDragging] = useState(false);
+  // Telegram-style presence: the rail is a quiet 2px line at rest and
+  // widens (track + thumb + brighter ticks) while the pointer is anywhere
+  // on it, so it never competes with the content for attention.
+  const [railActive, setRailActive] = useState(false);
+  // Overlay presence (owner design 2026-11-11 00:58/01:15): the rail hides
+  // completely at rest and appears when the conversation scrolls, fading
+  // back out after the scroll idles. Hovering the rail (or the transparent
+  // edge zone) keeps it up for click/drag.
+  const [recentlyScrolled, setRecentlyScrolled] = useState(false);
+  const scrollFadeRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const visible = railActive || dragging || recentlyScrolled;
 
   const rowById = useMemo(() => new Map(rows.map((row) => [row.id, row])), [rows]);
 
@@ -137,8 +148,17 @@ const PanelMessageLocatorRail: React.FC<PanelMessageLocatorRailProps> = ({
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-    container.addEventListener('scroll', scheduleMeasure, { passive: true });
-    return () => container.removeEventListener('scroll', scheduleMeasure);
+    const onScroll = () => {
+      scheduleMeasure();
+      setRecentlyScrolled(true);
+      if (scrollFadeRef.current !== null) clearTimeout(scrollFadeRef.current);
+      scrollFadeRef.current = setTimeout(() => setRecentlyScrolled(false), 1100);
+    };
+    container.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      container.removeEventListener('scroll', onScroll);
+      if (scrollFadeRef.current !== null) clearTimeout(scrollFadeRef.current);
+    };
   }, [containerRef, scheduleMeasure]);
 
   /** Drag mapping: thumb center follows the pointer, container scrolls. */
@@ -238,13 +258,28 @@ const PanelMessageLocatorRail: React.FC<PanelMessageLocatorRailProps> = ({
       onPointerMove={handlePointerMove}
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
-      onPointerLeave={handlePointerLeave}
+      onPointerEnter={() => setRailActive(true)}
+      onPointerLeave={() => {
+        setRailActive(false);
+        handlePointerLeave();
+      }}
       onWheel={handleWheel}
     >
+      {/* The visible layer: hidden at rest (overlay model — appears on
+          scroll, stays while hovered/dragging, fades after idle). */}
+      <div
+        className={`absolute inset-y-0 right-0 w-3.5 transition-opacity duration-300 ${
+          visible ? 'opacity-100' : 'opacity-0 pointer-events-none'
+        }`}
+      >
       {/* The thin track line the ticks and thumb sit on. */}
       <div
         data-slot="panel-locator-track"
-        className="absolute inset-y-0 right-[6px] w-[2px] rounded-full dark:bg-claude-darkBorder/70 bg-claude-border/70"
+        className={`absolute inset-y-0 rounded-full transition-all ${
+          railActive
+            ? 'right-[5px] w-[4px] dark:bg-claude-darkBorder bg-claude-border'
+            : 'right-[6px] w-[2px] dark:bg-claude-darkBorder/70 bg-claude-border/70'
+        }`}
       />
       {/* One tick per message; height follows the message's share of the
           transcript, min 2px keeps single-line messages visible on long
@@ -256,8 +291,9 @@ const PanelMessageLocatorRail: React.FC<PanelMessageLocatorRailProps> = ({
             key={tick.id}
             data-slot="panel-locator-tick"
             data-panel-locator-tick-id={tick.id}
-            className={`absolute right-[4px] w-[6px] rounded-full transition-colors ${
-              hover?.index === index
+            className={`absolute rounded-full transition-colors ${
+              railActive ? 'right-[3px] w-[7px]' : 'right-[4px] w-[6px]'
+            } ${hover?.index === index
                 ? 'dark:bg-claude-darkText bg-claude-text'
                 : isUser
                   ? 'dark:bg-claude-accent/70 bg-claude-accent/60'
@@ -270,8 +306,9 @@ const PanelMessageLocatorRail: React.FC<PanelMessageLocatorRailProps> = ({
       {/* The viewport thumb: draggable, proportional to the visible share. */}
       <div
         data-slot="panel-locator-thumb"
-        className={`absolute right-[5px] w-1 rounded-full transition-colors ${
-          dragging
+        className={`absolute rounded-full transition-all ${
+          railActive ? 'right-[4px] w-[6px]' : 'right-[5px] w-1'
+        } ${dragging
             ? 'dark:bg-claude-darkText bg-claude-text'
             : 'dark:bg-claude-darkTextSecondary bg-claude-textSecondary/80'
         }`}
@@ -294,6 +331,7 @@ const PanelMessageLocatorRail: React.FC<PanelMessageLocatorRailProps> = ({
           ) : null}
         </div>
       ) : null}
+      </div>
     </div>
   );
 };

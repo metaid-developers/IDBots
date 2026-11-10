@@ -785,7 +785,10 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
           the transcript's right edge; the scroller itself stays unpositioned
           so the rail never scrolls with the content. */}
       <div className="relative min-h-0 flex-1">
-        <div ref={listRef} className="h-full space-y-2.5 overflow-y-auto overflow-x-hidden px-1 pb-2">
+        {/* The locator rail is the scroll indicator on this seat: the native
+            scrollbar is hidden (scroll behavior unchanged) so the two rails
+            never overlap or fight for the same edge. */}
+        <div ref={listRef} className="h-full space-y-2.5 overflow-y-auto overflow-x-hidden px-1 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {visibleMessages.length === 0 ? (
           needsTwinBootstrap ? (
             // No Twin on this machine: block the chat with bootstrap guidance

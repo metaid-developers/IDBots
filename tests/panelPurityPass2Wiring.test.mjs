@@ -26,7 +26,9 @@ const i18nSource = read('src/renderer/services/i18n.ts');
 test('③ the rail mounts at the transcript edge inside a relative wrapper', () => {
   // The scroller stays unpositioned so the rail never scrolls with content.
   assert.match(panelSource, /<div className="relative min-h-0 flex-1">/);
-  assert.match(panelSource, /<div ref=\{listRef\} className="h-full space-y-2\.5 overflow-y-auto overflow-x-hidden px-1 pb-2">/);
+  // The locator rail is the seat's scroll indicator, so the native
+  // scrollbar is hidden on this scroller (scroll behavior unchanged).
+  assert.match(panelSource, /<div ref=\{listRef\} className="h-full space-y-2\.5 overflow-y-auto overflow-x-hidden px-1 pb-2 \[scrollbar-width:none\] \[&::-webkit-scrollbar\]:hidden">/);
   assert.match(panelSource, /<PanelMessageLocatorRail/);
   assert.match(panelSource, /containerRef=\{listRef\}/);
   assert.match(panelSource, /rows=\{locatorRows\}/);
