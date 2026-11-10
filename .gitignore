@@ -781,6 +781,7 @@ man_base_data_pebble/
 !tests/followUpTurnEndExtract.test.mjs
 !tests/turnAckPhrases.test.mjs
 !tests/turnAckReply.test.mjs
+!tests/assistantStatusPhrases.test.mjs
 !tests/openAiCompatContent.test.mjs
 !tests/coworkAssistantNarrationSurvival.test.ts
 !tests/coworkAssistantModePromptGate.test.mjs

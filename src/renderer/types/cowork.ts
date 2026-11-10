@@ -100,6 +100,14 @@ export interface CoworkMessageMetadata {
    */
   turnAckReply?: boolean;
   turnAckActivity?: 'search_local' | 'verify_delivery' | 'working';
+  /**
+   * LLM-authored turn-status headline (assistant mode): ONE progressive
+   * clause naming what this turn will do, emitted as a
+   * `sdkRuntimeStatus: 'turnGoal'` system message pre-first-token. Display
+   * only — the activity indicator shows it ahead of the generic phrase pools
+   * until real content or a tool event supersedes it.
+   */
+  turnGoalPhrase?: string;
   finalizationFallback?: boolean;
   isDelegationInternal?: boolean;
   skillIds?: string[];
