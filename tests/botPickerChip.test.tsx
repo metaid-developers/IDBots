@@ -2,38 +2,39 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import TwinSeatChip, {
-  TwinSeatMenuRow,
-  type TwinSeatChipBot,
-} from '../src/renderer/features/botBrowser/TwinSeatChip';
+import BotPickerChip, {
+  BotPickerMenuRow,
+  type BotPickerChipBot,
+} from '../src/renderer/features/botBrowser/BotPickerChip';
 import { bindSeatMenuOutsideDismiss } from '../src/renderer/features/botBrowser/seatMenuDismiss';
 import { i18nService } from '../src/renderer/services/i18n';
 
-// Behavior coverage for the Bot Internet footer chip (owner ruling
-// 2026-11-08 + the outside-click UX gap owner found on the dev screen): the
-// draft state is an appointment control whose menu lists the whole roster with
-// the acting Twin disabled + badged; a live session keeps a display-only
-// identity chip; an open menu closes on an outside pointer but not on a menu
-// row, which still starts its appointment. No real roster is touched.
+// Behavior coverage for the Studio footer bot picker (owner ruling
+// 2026-11-11): the draft state is a PURE selection control whose menu lists
+// the whole roster with every row enabled — picking a bot only decides which
+// bot runs the next conversation, it never writes metabot_type or appoints a
+// Twin (that stays owned by the My Bots editor). A live session keeps a
+// display-only identity chip; an open menu closes on an outside pointer but
+// not on a menu row, which still runs its selection. No real roster is
+// touched.
 
-const twin: TwinSeatChipBot = { id: 1, name: 'Alice', avatar: null, metabot_type: 'twin', role: 'Twin' };
-const worker: TwinSeatChipBot = { id: 2, name: 'Bob', avatar: null, metabot_type: 'worker', role: 'Builder' };
-const idle: TwinSeatChipBot = { id: 3, name: 'Carol', avatar: null, metabot_type: 'worker' };
+const twin: BotPickerChipBot = { id: 1, name: 'Alice', avatar: null, metabot_type: 'twin', role: 'Twin' };
+const worker: BotPickerChipBot = { id: 2, name: 'Bob', avatar: null, metabot_type: 'worker', role: 'Builder' };
+const idle: BotPickerChipBot = { id: 3, name: 'Carol', avatar: null, metabot_type: 'worker' };
 const roster = [twin, worker, idle];
 
 const noop = () => {};
 
-function renderChip(overrides: Partial<React.ComponentProps<typeof TwinSeatChip>> = {}): string {
+function renderChip(overrides: Partial<React.ComponentProps<typeof BotPickerChip>> = {}): string {
   return renderToStaticMarkup(
-    <TwinSeatChip
+    <BotPickerChip
       chipMetabot={twin}
       roster={roster}
       live={false}
-      busy={false}
       menuOpen={false}
       onToggleMenu={noop}
       onDismissMenu={noop}
-      onAppoint={noop}
+      onSelect={noop}
       {...overrides}
     />,
   );
@@ -66,12 +67,12 @@ function fakeContainer(...inside: unknown[]): Element {
   return { contains: (node: unknown) => inside.includes(node) } as unknown as Element;
 }
 
-test('draft chip renders the acting Twin once and is the appointment trigger', () => {
+test('draft chip renders the selected bot once and is the picker trigger', () => {
   const html = renderChip();
 
   assert.match(html, /aria-haspopup="menu"/);
   assert.match(html, /aria-expanded="false"/);
-  assert.match(html, /data-slot="twin-seat-container"/);
+  assert.match(html, /data-slot="bot-picker-container"/);
   assert.equal(
     countOccurrences(html, 'Alice'),
     1,
@@ -79,29 +80,45 @@ test('draft chip renders the acting Twin once and is the appointment trigger', (
   );
   assert.match(html, /data-slot="metabot-twin-badge"/);
   assert.doesNotMatch(html, /role="menu"/);
-  assert.ok(html.includes(i18nService.t('botInternetTwinSeatChip')));
+  assert.ok(html.includes(i18nService.t('botInternetBotPickerChip')));
 });
 
-test('open seat menu lists every bot and disables the acting Twin with a badge', () => {
-  const html = renderChip({ menuOpen: true });
+test('open picker menu lists every bot with no disabled rows', () => {
+  const html = renderChip({ menuOpen: true, chipMetabot: worker });
 
   assert.match(html, /aria-expanded="true"/);
   assert.match(html, /role="menu"/);
-  assert.match(html, /data-slot="twin-seat-menu"/);
+  assert.match(html, /data-slot="bot-picker-menu"/);
   assert.equal(countOccurrences(html, 'role="menuitem"'), roster.length);
   for (const bot of roster) {
     assert.ok(html.includes(bot.name), `menu should list ${bot.name}`);
   }
-  // Only the acting Twin row is disabled; the other rows stay appointable.
-  const disabledRows = html.match(/<button[^>]*role="menuitem"[^>]*disabled=""[^>]*>/g) ?? [];
-  assert.equal(disabledRows.length, 1, 'exactly the acting Twin row is disabled');
+  // A pure selection: NO row may be disabled, not even the Twin — picking a
+  // worker must never be an appointment with gates, it is just a choice.
+  const disabledRows = html.match(/<button[^>]*role="menuitem"[^>]*disabled/g) ?? [];
+  assert.equal(disabledRows.length, 0, 'every roster row stays selectable');
+  // Exactly the currently picked bot is highlighted.
+  assert.equal(
+    countOccurrences(html, 'aria-selected="true"'),
+    1,
+    'exactly the picked bot row is marked selected',
+  );
+  assert.ok(html.includes('aria-selected="false"'), 'the other rows are explicitly unselected');
+  // The Twin is badged on its menu row; the chip itself only carries the
+  // badge when the picked bot IS the Twin.
   assert.equal(
     countOccurrences(html, 'data-slot="metabot-twin-badge"'),
-    2,
-    'the acting Twin is badged on the chip and again on its menu row',
+    1,
+    'with a worker picked, only the Twin menu row is badged',
   );
-  assert.ok(html.includes(i18nService.t('botInternetTwinSeatTitle')));
-  assert.ok(html.includes(i18nService.t('botInternetTwinSeatHint')));
+  const twinPickedHtml = renderChip({ menuOpen: true, chipMetabot: twin });
+  assert.equal(
+    countOccurrences(twinPickedHtml, 'data-slot="metabot-twin-badge"'),
+    2,
+    'with the Twin picked, the chip and its menu row are both badged',
+  );
+  assert.ok(html.includes(i18nService.t('botInternetBotPickerTitle')));
+  assert.ok(html.includes(i18nService.t('botInternetBotPickerHint')));
 });
 
 test('a live session renders a display-only chip with no menu trigger', () => {
@@ -112,12 +129,6 @@ test('a live session renders a display-only chip with no menu trigger', () => {
   assert.doesNotMatch(html, /aria-haspopup/);
   assert.ok(html.includes('Alice'));
   assert.match(html, /data-slot="metabot-twin-badge"/);
-});
-
-test('a busy appointment disables the seat trigger', () => {
-  const html = renderChip({ busy: true });
-
-  assert.match(html, /<button[^>]*disabled=""[^>]*aria-haspopup="menu"/);
 });
 
 test('open menu + pointer outside the chip container => menu closes', () => {
@@ -145,7 +156,7 @@ test('open menu + pointer outside the chip container => menu closes', () => {
   assert.equal(fakeDocument.pointerDownListenerCount, 0, 'unbind removes the listener');
 });
 
-test('open menu + pointer inside a row => no dismiss, and the row still appoints', () => {
+test('open menu + pointer inside a row => no dismiss, and the row still selects', () => {
   const fakeDocument = createFakePointerDocument();
   const rowNode = { name: 'menu-row' };
   let dismissals = 0;
@@ -161,24 +172,24 @@ test('open menu + pointer inside a row => no dismiss, and the row still appoints
   fakeDocument.pointerDown(rowNode);
   assert.equal(dismissals, 0, 'a row click must not be swallowed by outside-dismiss');
 
-  const appointed: TwinSeatChipBot[] = [];
-  const row = TwinSeatMenuRow({
+  const picked: BotPickerChipBot[] = [];
+  const row = BotPickerMenuRow({
     metabot: worker,
-    isActing: false,
-    busy: false,
-    onAppoint: (bot) => appointed.push(bot),
+    isSelected: false,
+    onSelect: (bot) => picked.push(bot),
   });
   assert.ok(row, 'the row renders');
-  assert.equal(row.props.disabled, false);
+  assert.equal(row.props.disabled, undefined, 'no row is ever disabled — selection is pure');
   row.props.onClick();
-  assert.deepEqual(appointed, [worker], 'clicking a non-acting row starts exactly that appointment');
+  assert.deepEqual(picked, [worker], 'clicking a row picks exactly that bot');
 
-  const actingRow = TwinSeatMenuRow({ metabot: twin, isActing: true, busy: false, onAppoint: noop });
-  assert.ok(actingRow);
-  assert.equal(actingRow.props.disabled, true, 'the acting Twin row stays informational');
-  const busyRow = TwinSeatMenuRow({ metabot: idle, isActing: false, busy: true, onAppoint: noop });
-  assert.ok(busyRow);
-  assert.equal(busyRow.props.disabled, true, 'no row may start a second appointment while busy');
+  const twinRow = BotPickerMenuRow({ metabot: twin, isSelected: false, onSelect: noop });
+  assert.ok(twinRow);
+  assert.equal(twinRow.props.disabled, undefined, 'the Twin row is selectable like any other');
+
+  const selectedRow = BotPickerMenuRow({ metabot: worker, isSelected: true, onSelect: noop });
+  assert.ok(selectedRow);
+  assert.equal(selectedRow.props['aria-selected'], true, 'the picked row is marked selected');
 
   off();
 });

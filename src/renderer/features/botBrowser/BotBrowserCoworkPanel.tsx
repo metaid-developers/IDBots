@@ -20,11 +20,11 @@ import { isAssistantModeOwnerChatSession } from '../../components/cowork/assista
 import { AssistantActivityIndicator } from '../../components/cowork/AssistantActivityIndicator';
 import { projectsService } from '../../services/projects';
 import { i18nService } from '../../services/i18n';
-import { dispatchMetabotsChanged, subscribeMetabotsChanged } from '../../services/metabotEvents';
+import { subscribeMetabotsChanged } from '../../services/metabotEvents';
 import { getCompactFolderName } from '../../utils/path';
 import type { CoworkMessage, CoworkWorkspaceSelection } from '../../types/cowork';
-import TwinSeatChip from './TwinSeatChip';
-import { appointTwinSeat } from './twinSeatAppointment';
+import BotPickerChip from './BotPickerChip';
+import { resolveDefaultMetabotId } from '../../services/coworkSessionStart';
 import { elementSelectionsStore } from './elementSelectionsStore';
 import CoworkHistoryPanel from './CoworkHistoryPanel';
 
@@ -191,14 +191,15 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     loadPersistedWorkspaceSelection()
   );
   const [showFolderMenu, setShowFolderMenu] = useState(false);
-  // Twin seat appointment (owner ruling 2026-11-08): the bottom-left identity
-  // chip is a live appointment control, not a decoration. The appoint action
-  // drives the SAME metabot_type the My Bots editor writes (demote the current
-  // Twin → promote the chosen bot), so the seat stays one system-wide fact and
-  // never a second pointer. In a live session the chip is display-only: an
-  // acting transcript never changes actors mid-flight.
-  const [showTwinSeatMenu, setShowTwinSeatMenu] = useState(false);
-  const [twinSeatBusy, setTwinSeatBusy] = useState(false);
+  // Bot picker (owner ruling 2026-11-11): the bottom-left identity chip is the
+  // composer's bot picker in the draft state — picking a bot selects which bot
+  // runs the NEXT conversation, the same pure selection as the BotWorks
+  // new-task bot picker. It never writes metabot_type (the Twin appointment is
+  // owned by the My Bots editor alone), so picking a worker bot never appoints
+  // it Twin, not even temporarily. In a live session the chip is display-only:
+  // an acting transcript never changes actors mid-flight.
+  const [showBotPickerMenu, setShowBotPickerMenu] = useState(false);
+  const [pickedMetabotId, setPickedMetabotId] = useState<number | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const promptInputRef = useRef<CoworkPromptInputRef>(null);
   const folderButtonRef = useRef<HTMLButtonElement>(null);
@@ -224,10 +225,8 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     const result = await window.electron?.metabot?.list?.();
     setMetabotsLoaded(true);
     if (!result?.success || !result.list) return;
-    // The Twin seat menu is a roster-level control (owner ruling 2026-11-08):
-    // it lists every local bot, not just the ones selectable for a chat, so an
-    // appointment can land on any bot the My Bots editor can also flag. The
-    // seat itself stays a single system-wide fact (`metabot_type`).
+    // The picker is a roster-level control (owner ruling 2026-11-11): it lists
+    // every local bot, so any bot can be picked to run the next conversation.
     setMetabots([...result.list].sort((a, b) => a.id - b.id));
   }, []);
 
@@ -243,40 +242,15 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     void loadMetabots();
   }), [loadMetabots]);
 
-  // Twin seat appointment: demote the current Twin, promote the chosen bot,
-  // then re-read the roster. The sequence + rollback live in
-  // twinSeatAppointment.ts so a mock-IPC unit test covers them without
-  // touching the real roster; this handler only wires the effect (IPC,
-  // reload, toast) and owns the busy/menu UI state.
-  const notifyTwinSeat = useCallback((message: string) => {
-    window.dispatchEvent(new CustomEvent('app:showToast', { detail: message }));
+  const closeBotPickerMenu = useCallback(() => setShowBotPickerMenu(false), []);
+
+  // Picking a bot is a pure local selection (owner ruling 2026-11-11): no IPC
+  // write, no toast, no roster change — the next conversation started from
+  // this panel simply runs with that bot.
+  const handlePickBot = useCallback((target: PanelMetabot) => {
+    setPickedMetabotId(target.id);
+    setShowBotPickerMenu(false);
   }, []);
-
-  const closeTwinSeatMenu = useCallback(() => setShowTwinSeatMenu(false), []);
-
-  const handleAppointTwin = useCallback(async (target: PanelMetabot) => {
-    if (twinSeatBusy) return;
-    setTwinSeatBusy(true);
-    try {
-      await appointTwinSeat(target, metabots, {
-        update: (id, patch) => window.electron.metabot.update(id, patch),
-        reload: loadMetabots,
-        // The appointment writes `metabot_type`, which the My Bots pane shows
-        // as badge ownership on its cards: announce both moved ids so an
-        // already-open My Bots pane refetches instead of waiting for a switch.
-        announce: (metabotIds) => dispatchMetabotsChanged({ metabotIds, reason: 'twin-seat' }),
-        notify: notifyTwinSeat,
-        translate: (key) => i18nService.t(key),
-      });
-    } catch (error) {
-      // Transport-level rejection (IPC error): the helper reports outcome
-      // failures itself, but a thrown update must never fail silently.
-      notifyTwinSeat(error instanceof Error ? error.message : 'Twin seat appointment failed');
-    } finally {
-      setShowTwinSeatMenu(false);
-      setTwinSeatBusy(false);
-    }
-  }, [loadMetabots, metabots, notifyTwinSeat, twinSeatBusy]);
 
   // Remember the workspace choice across panel remounts / app restarts.
   useEffect(() => {
@@ -308,19 +282,23 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     };
   }, [selectedProjectId]);
 
-  // Bot Internet is locked to the owner's Twin (owner ruling #2, 2026-11-07):
-  // sessions started here always target the metabot_type === 'twin' bot, and
-  // machines without a Twin get bootstrap guidance instead of a composer.
-  // Legacy (pre-marker) sessions keep showing their own bot in the identity
-  // chip so old transcripts read the same as before.
-  const twinMetabot = metabots.find((m) => m.metabot_type === 'twin') ?? null;
-  const needsTwinBootstrap = metabotsLoaded && !twinMetabot && !currentSession;
-  const legacySessionMetabot = !currentSession?.assistantMode && currentSession?.metabotId != null
+  // Which bot runs the next conversation (owner ruling 2026-11-11): the draft
+  // state follows the picker — an explicit pick wins, else the Twin, else the
+  // first bot (the SAME resolution the BotWorks new-task composer uses, via
+  // the shared resolveDefaultMetabotId). Machines without any bot get
+  // bootstrap guidance instead of a composer. Live sessions always show and
+  // scope to the bot they were started with, so old transcripts read the same
+  // as before.
+  const selectedMetabotId = resolveDefaultMetabotId(metabots, pickedMetabotId);
+  const selectedMetabot = selectedMetabotId != null
+    ? metabots.find((m) => m.id === selectedMetabotId) ?? null
+    : null;
+  const needsBootstrap = metabotsLoaded && metabots.length === 0 && !currentSession;
+  const liveSessionMetabot = currentSession?.metabotId != null
     ? metabots.find((m) => m.id === currentSession.metabotId) ?? null
     : null;
-  const chipMetabot = legacySessionMetabot ?? twinMetabot;
-  const effectiveMetabotId = twinMetabot?.id ?? null;
-  const selectedMetabot = twinMetabot;
+  const chipMetabot = currentSession ? (liveSessionMetabot ?? selectedMetabot) : selectedMetabot;
+  const effectiveMetabotId = selectedMetabotId;
   // Pending model+effort for the session about to start from this panel. The
   // whole state being null = follow the selected bot's brain (its model and
   // effort); inside a pick, effort null is an EXPLICIT "Default" choice.
@@ -354,7 +332,7 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
   }, [visibleMessages.length, isStreaming]);
 
   const handleSubmit = async (prompt: string, skillPrompt?: string) => {
-    if (!currentSession && !twinMetabot) return; // no-Twin machines never start sessions here
+    if (!currentSession && selectedMetabotId == null) return; // botless machines never start sessions here
     setShowHistory(false);
     // Element-picker capture (ABC v0.10.0): when the human marked elements on
     // the page they are talking about, the snapshot rides at the front of the
@@ -487,23 +465,23 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     <div className="relative flex min-h-0 flex-1 flex-col">
       <div ref={listRef} className="min-h-0 flex-1 space-y-2.5 overflow-y-auto overflow-x-hidden px-1 pb-2">
         {visibleMessages.length === 0 ? (
-          needsTwinBootstrap ? (
-            // No Twin on this machine: block the chat with bootstrap guidance
-            // instead of the ordinary empty state (owner ruling #2).
-            // A blocked chat is a real call to action, so it keeps a container
-            // — but a solid hairline card, not the dashed "drop something here"
-            // frame the aesthetic pass retired.
+          needsBootstrap ? (
+            // No bot at all on this machine: block the chat with bootstrap
+            // guidance instead of the ordinary empty state. A blocked chat is
+            // a real call to action, so it keeps a container — but a solid
+            // hairline card, not the dashed "drop something here" frame the
+            // aesthetic pass retired.
             <div
-              data-slot="cowork-needs-twin"
+              data-slot="cowork-needs-bot"
               className="rounded-xl border dark:border-claude-darkBorder/80 border-claude-border/80 dark:bg-claude-darkSurface/50 bg-claude-surface/50 px-3.5 py-4 text-xs leading-5 dark:text-claude-darkTextSecondary text-claude-textSecondary"
             >
-              <p>{i18nService.t('botInternetNeedsTwin')}</p>
+              <p>{i18nService.t('botInternetNeedsBot')}</p>
               <button
                 type="button"
                 onClick={onOpenBotHome}
                 className="mt-3 inline-flex items-center rounded-lg px-2 py-1 -ml-1 text-xs font-medium dark:text-claude-accent text-claude-accent hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
               >
-                {i18nService.t('botInternetGoBotHome')}
+                {i18nService.t('botInternetGoBotWorks')}
               </button>
             </div>
           ) : (
@@ -532,7 +510,9 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
                 {i18nService.t('botBrowserCoworkEmpty')}
               </p>
               <p className="max-w-[16rem] text-xs leading-5 dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                {i18nService.t('botBrowserCoworkEmptySub')}
+                {chipMetabot?.metabot_type === 'twin'
+                  ? i18nService.t('botBrowserCoworkEmptySub')
+                  : i18nService.t('botBrowserCoworkEmptySubWorker')}
               </p>
             </div>
           )
@@ -563,20 +543,19 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
 
       <div className="flex items-center justify-between gap-0.5 pb-1.5">
         {chipMetabot ? (
-          // Twin seat (owner ruling 2026-11-08): the chip is the appointment
-          // control in the draft state — clicking opens the seat menu listing
-          // every bot. In a live session it stays a fixed identity chip (the
-          // transcript always shows the bot it was started with; legacy
-          // sessions keep their own bot).
-          <TwinSeatChip
+          // Bot picker (owner ruling 2026-11-11): in the draft state the chip
+          // opens the bot menu; picking a bot selects it for the next
+          // conversation without ever touching the Twin appointment. In a live
+          // session it stays a fixed identity chip (the transcript always
+          // shows the bot it was started with).
+          <BotPickerChip
             chipMetabot={chipMetabot}
             roster={metabots}
             live={Boolean(currentSession)}
-            busy={twinSeatBusy}
-            menuOpen={showTwinSeatMenu}
-            onToggleMenu={() => setShowTwinSeatMenu((value) => !value)}
-            onDismissMenu={closeTwinSeatMenu}
-            onAppoint={handleAppointTwin}
+            menuOpen={showBotPickerMenu}
+            onToggleMenu={() => setShowBotPickerMenu((value) => !value)}
+            onDismissMenu={closeBotPickerMenu}
+            onSelect={handlePickBot}
           />
         ) : null}
         <div className="flex shrink-0 items-center gap-0.5">
@@ -642,13 +621,19 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
         </div>
       </div>
 
-      {needsTwinBootstrap ? null : (
+      {needsBootstrap ? null : (
         <CoworkPromptInput
           ref={promptInputRef}
           onSubmit={handleSubmit}
           onStop={() => void browserCoworkService.stop()}
           isStreaming={isStreaming}
-          placeholder={i18nService.t('botBrowserCoworkPlaceholder')}
+          // The composer speaks the selected bot's voice: the Twin keeps the
+          // Twin invitation, a picked worker bot gets the assignment wording
+          // (owner ruling 2026-11-11). chipMetabot IS that bot — the draft
+          // selection, or the bot a live session runs with.
+          placeholder={chipMetabot?.metabot_type === 'twin'
+            ? i18nService.t('botBrowserCoworkPlaceholder')
+            : i18nService.t('botBrowserCoworkPlaceholderWorker')}
           size="normal"
           scopeKey="botBrowser"
           showFolderSelector={false}
@@ -656,7 +641,7 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
           onManageSkills={() => onShowSkills?.()}
           commands={browserComposerCommands}
           // Scope the skills picker to the session's bot (live session wins,
-          // draft follows the Twin) so pins stay inside that bot's view.
+          // draft follows the picker) so pins stay inside that bot's view.
           sessionMetabotId={currentSession?.metabotId ?? effectiveMetabotId}
         />
       )}

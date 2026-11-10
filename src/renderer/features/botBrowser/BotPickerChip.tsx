@@ -4,23 +4,22 @@ import { i18nService } from '../../services/i18n';
 import { bindSeatMenuOutsideDismiss } from './seatMenuDismiss';
 
 /**
- * Identity + seat control for the Bot Internet co-work panel footer.
+ * Identity + bot picker for the Studio co-work panel footer (owner ruling
+ * 2026-11-11). Draft state: the chip is the composer's bot picker — clicking
+ * it opens the menu listing every local bot, and picking one selects which bot
+ * runs the NEXT conversation, exactly like the BotWorks new-task bot picker.
+ * It never writes `metabot_type`: the Twin appointment is owned by the My Bots
+ * editor alone. Live state: the chip is a fixed identity label — an acting
+ * transcript never changes actors mid-flight, and sessions keep showing the
+ * bot they were started with.
  *
- * Draft state: the chip is the appointment control (owner ruling 2026-11-08)
- * — clicking it opens the seat menu listing every local bot; the acting Twin
- * row is disabled and carries the Twin badge. Live state: the chip is a fixed
- * identity label — an acting transcript never changes actors mid-flight, and
- * legacy sessions keep showing the bot they were started with.
- *
- * The component is intentionally presentational: the appointment sequence,
- * rollback and toast text live in twinSeatAppointment.ts so they can be
- * covered by mock-IPC unit tests instead of clicking the real roster. The one
- * browser behavior it owns is menu dismissal: a pointer anywhere outside the
- * chip container closes the menu (logic in seatMenuDismiss.ts, unit-tested
- * with a fake pointer target).
+ * The component is intentionally presentational: the selection state and its
+ * wiring live in BotBrowserCoworkPanel.tsx. The one browser behavior it owns
+ * is menu dismissal: a pointer anywhere outside the chip container closes the
+ * menu (logic in seatMenuDismiss.ts, unit-tested with a fake pointer target).
  */
 
-export interface TwinSeatChipBot {
+export interface BotPickerChipBot {
   id: number;
   name: string;
   avatar: string | null;
@@ -28,23 +27,22 @@ export interface TwinSeatChipBot {
   role?: string;
 }
 
-interface TwinSeatChipProps {
-  /** The bot the footer currently shows (acting Twin, or a legacy session bot). */
-  chipMetabot: TwinSeatChipBot;
+interface BotPickerChipProps {
+  /** The bot the footer currently shows (draft selection, or a session bot). */
+  chipMetabot: BotPickerChipBot;
   /** Every local bot, in roster order. */
-  roster: readonly TwinSeatChipBot[];
+  roster: readonly BotPickerChipBot[];
   /** Live session => display-only chip. */
   live: boolean;
-  /** An appointment write is in flight; chip and menu rows are disabled. */
-  busy: boolean;
   menuOpen: boolean;
   onToggleMenu: () => void;
   /** Closes the menu when a pointer lands outside the chip container. */
   onDismissMenu: () => void;
-  onAppoint: (bot: TwinSeatChipBot) => void;
+  /** Picks this bot for the next conversation (a pure selection, no writes). */
+  onSelect: (bot: BotPickerChipBot) => void;
 }
 
-const ChipIdentity: React.FC<{ metabot: TwinSeatChipBot }> = ({ metabot }) => (
+const ChipIdentity: React.FC<{ metabot: BotPickerChipBot }> = ({ metabot }) => (
   <>
     {metabot.avatar && (metabot.avatar.startsWith('data:') || metabot.avatar.startsWith('http')) ? (
       <img src={metabot.avatar} alt="" className="h-5 w-5 rounded-md object-cover flex-shrink-0" />
@@ -61,32 +59,29 @@ const ChipIdentity: React.FC<{ metabot: TwinSeatChipBot }> = ({ metabot }) => (
   </>
 );
 
-export interface TwinSeatMenuRowProps {
-  metabot: TwinSeatChipBot;
-  /** The acting Twin row is informational: it shows what is already seated. */
-  isActing: boolean;
-  /** An appointment is in flight: no row may start another one. */
-  busy: boolean;
-  onAppoint: (bot: TwinSeatChipBot) => void;
+export interface BotPickerMenuRowProps {
+  metabot: BotPickerChipBot;
+  /** The currently selected bot row is highlighted, still re-selectable. */
+  isSelected: boolean;
+  onSelect: (bot: BotPickerChipBot) => void;
 }
 
-/** One row of the seat menu. Exported so its click path is unit-tested directly. */
-export const TwinSeatMenuRow: React.FC<TwinSeatMenuRowProps> = ({
+/** One row of the picker menu. Exported so its click path is unit-tested directly. */
+export const BotPickerMenuRow: React.FC<BotPickerMenuRowProps> = ({
   metabot,
-  isActing,
-  busy,
-  onAppoint,
+  isSelected,
+  onSelect,
 }) => (
   <button
     type="button"
     role="menuitem"
-    disabled={busy || isActing}
-    onClick={() => onAppoint(metabot)}
+    aria-selected={isSelected}
+    onClick={() => onSelect(metabot)}
     className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${
-      isActing
+      isSelected
         ? 'dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover dark:text-claude-darkText text-claude-text'
         : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:text-claude-text dark:hover:text-claude-darkText'
-    } disabled:cursor-default disabled:opacity-70`}
+    }`}
   >
     <span className="h-5 w-5 shrink-0">
       {metabot.avatar && (metabot.avatar.startsWith('data:') || metabot.avatar.startsWith('http')) ? (
@@ -105,19 +100,18 @@ export const TwinSeatMenuRow: React.FC<TwinSeatMenuRowProps> = ({
         {metabot.role}
       </span>
     )}
-    {isActing && <TwinBadge className="shrink-0" />}
+    {metabot.metabot_type === 'twin' && <TwinBadge className="shrink-0" />}
   </button>
 );
 
-const TwinSeatChip: React.FC<TwinSeatChipProps> = ({
+const BotPickerChip: React.FC<BotPickerChipProps> = ({
   chipMetabot,
   roster,
   live,
-  busy,
   menuOpen,
   onToggleMenu,
   onDismissMenu,
-  onAppoint,
+  onSelect,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -135,7 +129,7 @@ const TwinSeatChip: React.FC<TwinSeatChipProps> = ({
   return (
     <div
       ref={containerRef}
-      data-slot="twin-seat-container"
+      data-slot="bot-picker-container"
       className="relative flex min-w-0 max-w-[60%] items-center gap-1.5"
     >
       {live ? (
@@ -147,13 +141,12 @@ const TwinSeatChip: React.FC<TwinSeatChipProps> = ({
         <>
           <button
             type="button"
-            disabled={busy}
-            aria-label={i18nService.t('botInternetTwinSeatChip')}
-            title={i18nService.t('botInternetTwinSeatChip')}
+            aria-label={i18nService.t('botInternetBotPickerChip')}
+            title={i18nService.t('botInternetBotPickerChip')}
             aria-expanded={menuOpen}
             aria-haspopup="menu"
             onClick={onToggleMenu}
-            className="flex min-w-0 items-center gap-1.5 rounded-md px-0.5 py-0.5 transition-colors hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover disabled:opacity-60"
+            className="flex min-w-0 items-center gap-1.5 rounded-md px-0.5 py-0.5 transition-colors hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
           >
             <ChipIdentity metabot={chipMetabot} />
             {chipMetabot.metabot_type === 'twin' && <TwinBadge className="shrink-0" />}
@@ -164,25 +157,24 @@ const TwinSeatChip: React.FC<TwinSeatChipProps> = ({
           {menuOpen && (
             <div
               role="menu"
-              data-slot="twin-seat-menu"
+              data-slot="bot-picker-menu"
               className="absolute bottom-full left-0 z-40 mb-2 w-72 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface p-2 shadow-lg"
             >
               <p className="px-1 pb-1 text-xs font-medium dark:text-claude-darkText text-claude-text">
-                {i18nService.t('botInternetTwinSeatTitle')}
+                {i18nService.t('botInternetBotPickerTitle')}
               </p>
               <div className="max-h-52 overflow-y-auto">
                 {roster.map((metabot) => (
-                  <TwinSeatMenuRow
+                  <BotPickerMenuRow
                     key={metabot.id}
                     metabot={metabot}
-                    isActing={metabot.metabot_type === 'twin'}
-                    busy={busy}
-                    onAppoint={onAppoint}
+                    isSelected={metabot.id === chipMetabot.id}
+                    onSelect={onSelect}
                   />
                 ))}
               </div>
               <p className="px-1 pt-1 text-[10px] leading-4 dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                {i18nService.t('botInternetTwinSeatHint')}
+                {i18nService.t('botInternetBotPickerHint')}
               </p>
             </div>
           )}
@@ -192,4 +184,4 @@ const TwinSeatChip: React.FC<TwinSeatChipProps> = ({
   );
 };
 
-export default TwinSeatChip;
+export default BotPickerChip;
