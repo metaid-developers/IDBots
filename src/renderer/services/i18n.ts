@@ -526,6 +526,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     botBrowserPanelMenuDislike: '踩',
     botBrowserPanelMenuQuoteReply: '引用回复',
     botBrowserPanelMenuCopyText: '复制文本',
+    // 选区感知菜单（第四批 2026-11-10）：气泡内有选中文字时「引用回复/复制
+    // 文本」只作用于选中片段；引用文案复用 coworkQuoteActionLabel。
+    botBrowserPanelMenuCopySelected: '复制所选',
     // 消息定位滚轮（办公室聊天窗纯度优化第二批 2026-11-10）：右缘细轨的
     // 可达性标签；预览卡的发送者名复用 coworkOriginBadgeYou（「你」）。
     botBrowserLocatorRail: '消息定位',
@@ -4273,11 +4276,14 @@ const translations: Record<LanguageType, Record<string, string>> = {
     botBrowserCoworkEmpty: 'So, where would you like to start today?',
     botBrowserCoworkEmptySub: 'Hand your Twin one sentence — the rest of the road is theirs to lay.',
     botInternetNeedsTwin: 'BotHub is a 1:1 space with your Twin bot. You have no Twin on this machine yet — create one in BotWorks first.',
-    // Mirror of the zh context-menu set (purity pass #1, 2026-11-10).
+    // Mirror of the zh context-menu set (purity pass #1, 2026-11-10); the
+    // selected-variant key mirrors zh (pass #4, 2026-11-10) — the quote label
+    // reuses coworkQuoteActionLabel in both locales.
     botBrowserPanelMenuLike: 'Like',
     botBrowserPanelMenuDislike: 'Dislike',
     botBrowserPanelMenuQuoteReply: 'Quote reply',
     botBrowserPanelMenuCopyText: 'Copy text',
+    botBrowserPanelMenuCopySelected: 'Copy selected',
     // Mirror of the zh locator key (purity pass #2, 2026-11-10); the preview
     // sender label for user rows reuses coworkOriginBadgeYou.
     botBrowserLocatorRail: 'Message locator',

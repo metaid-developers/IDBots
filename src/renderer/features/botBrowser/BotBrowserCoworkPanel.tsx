@@ -41,6 +41,7 @@ import PanelMessageContextMenu from './PanelMessageContextMenu';
 import PanelMessageLocatorRail from './PanelMessageLocatorRail';
 import { buildPanelLocatorRows } from './panelMessageLocator';
 import { createMessageQuotedSelection } from '../../components/cowork/coworkQuotedSelections';
+import { resolveBubbleSelectedText } from './panelBubbleSelection';
 
 type PanelMetabot = MetaBotForSelector & { llm_id?: string | null; llm_provider?: string | null; llm_effort?: string | null };
 
@@ -318,6 +319,11 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     message: CoworkMessage;
     x: number;
     y: number;
+    /**
+     * Non-empty text selected INSIDE this bubble at open time (pass #4), else
+     * null. When set, quote-reply and copy act on the fragment; 👍👎 ignore it.
+     */
+    selectedText: string | null;
     /** The bubble element that opened the menu (kept open on re-clicks there). */
     opener: HTMLElement | null;
   }
@@ -343,6 +349,18 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
   }, [sessionId]);
 
   const handlePanelContextMenu = useCallback((event: React.MouseEvent, message: CoworkMessage) => {
+    // Capture the live selection FIRST (pass #4): at contextmenu time Chromium
+    // still holds it (select-then-right-click), and this handler is the only
+    // reliable moment. A selection spanning another bubble, or living outside
+    // this one, resolves to null — the menu then treats the WHOLE message.
+    const bubble = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+    const selection = typeof window !== 'undefined' ? window.getSelection() : null;
+    const selectedText = resolveBubbleSelectedText(
+      selection?.anchorNode ?? null,
+      selection?.focusNode ?? null,
+      selection ? selection.toString() : '',
+      bubble,
+    );
     const placement = resolveContextMenuPlacement(event.clientX, event.clientY, {
       width: typeof window !== 'undefined' ? window.innerWidth : 0,
       height: typeof window !== 'undefined' ? window.innerHeight : 0,
@@ -351,7 +369,8 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
       message,
       x: placement.x,
       y: placement.y,
-      opener: event.currentTarget instanceof HTMLElement ? event.currentTarget : null,
+      selectedText,
+      opener: bubble,
     });
   }, []);
 
@@ -384,11 +403,12 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     });
   }, [sessionId]);
 
-  // Copy the RAW message text (the stored markdown, not the rendered prose).
+  // Copy the selected fragment VERBATIM when the menu opened on one (pass #4),
+  // else the RAW message text (the stored markdown, not the rendered prose).
   const handleMenuCopyText = useCallback(() => {
     const menu = contextMenuRef.current;
     if (!menu) return;
-    const raw = menu.message.content;
+    const raw = menu.selectedText ?? menu.message.content;
     try {
       if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
         void navigator.clipboard.writeText(raw);
@@ -455,9 +475,14 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     const menu = contextMenuRef.current;
     if (!menu) return;
     const { message } = menu;
+    // Selection-aware (pass #4): a fragment captured inside this bubble quotes
+    // the FRAGMENT through the same factory (createQuotedSelection trims and
+    // caps it at QUOTED_SELECTION_MAX_CHARS); no selection quotes the whole
+    // message, as before. The messageRef jump anchor stays the bubble either way.
+    const content = menu.selectedText ?? message.content;
     const ordinal = visibleMessages.findIndex((candidate) => candidate.id === message.id) + 1;
     const fragment = createMessageQuotedSelection({
-      content: message.content,
+      content,
       role: message.type === 'user' ? 'user' : message.type === 'assistant' ? 'assistant' : 'other',
       messageId: message.id,
       ordinal,
@@ -943,6 +968,7 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
           x={contextMenu.x}
           y={contextMenu.y}
           currentReaction={panelReactions[contextMenu.message.id] ?? null}
+          selectionActive={Boolean(contextMenu.selectedText)}
           onReact={handleMenuReact}
           onQuoteReply={handleMenuQuoteReply}
           onCopyText={handleMenuCopyText}
