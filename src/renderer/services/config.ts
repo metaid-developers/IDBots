@@ -133,9 +133,10 @@ const normalizeSingleProviderConfig = (
   providerConfig: NonNullable<AppConfig['providers']>[string],
 ): NonNullable<AppConfig['providers']>[string] => ({
   ...providerConfig,
-  // The free provider's stored name predates the IDBots-Free rename on old
-  // installs ("MetaID Free"); built-ins expose no rename UI, so the canonical
-  // label always wins and name readers see a unified value after migration.
+  // The free provider's stored name predates the current rename on old
+  // installs ("MetaID Free", then "IDBots-Free"); built-ins expose no rename
+  // UI, so the canonical label always wins and name readers see a unified
+  // value after migration.
   name: providerKey === LLM_FREE_PROVIDER_KEY
     ? FREE_PROVIDER_DISPLAY_NAME
     : providerConfig.name,

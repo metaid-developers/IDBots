@@ -12,7 +12,7 @@ const FREE_PROVIDER = {
   enabled: true,
   apiKey: 'relay-key',
   baseUrl: 'https://relay.example.com/v1',
-  name: 'IDBots-Free',
+  name: 'ID.Bots',
   models: [{ id: 'deepseek-4.1-flash' }],
 };
 

@@ -9,12 +9,17 @@
 
 export const LLM_FREE_PROVIDER_KEY = 'metaid-free';
 /**
- * Canonical user-facing label for the built-in free provider. Every surface
+ * Canonical user-facing label for the built-in relay provider. Every surface
  * (Settings providerMeta, onboarding labels, model picker groups, provisioning
  * writes, config normalization) must derive the label from here so installs
- * provisioned before the rename never show the legacy "MetaID Free" name.
+ * provisioned before a rename never show a legacy name ("MetaID Free", then
+ * "IDBots-Free").
+ *
+ * The label is deliberately plan-neutral: the same provider serves every
+ * subscription tier (ID.Free through ID.Scholar), so a "-Free" suffix read as
+ * "you are still on the free tier" to paying subscribers (2026-11-10).
  */
-export const FREE_PROVIDER_DISPLAY_NAME = 'IDBots-Free';
+export const FREE_PROVIDER_DISPLAY_NAME = 'ID.Bots';
 
 /**
  * User-facing display names for free-relay model ids. Relay ids are internal
@@ -34,6 +39,39 @@ export function getFreeProviderModelDisplayName(modelId) {
     return modelId;
   }
   return FREE_PROVIDER_MODEL_DISPLAY_NAMES[modelId] ?? modelId;
+}
+
+/**
+ * Relay wire ids preferred as the DEFAULT model, best first. Both render as
+ * "deepseek-flash" (FREE_PROVIDER_MODEL_DISPLAY_NAMES) and never coexist in
+ * one catalog.
+ */
+const FREE_PROVIDER_PREFERRED_DEFAULT_MODEL_IDS = ['deepseek-4.1-flash', 'deepseek-chat'];
+
+/**
+ * Pick the default model id out of the built-in provider's catalog: the
+ * DeepSeek flash flagship when the catalog carries it, else the first entry;
+ * '' for an empty/unusable catalog.
+ *
+ * New installs must start on deepseek-flash (owner decision 2026-11-10). The
+ * relay directory order is server-owned, so "first entry" alone would let a
+ * reordered directory silently change every new user's out-of-the-box brain.
+ */
+export function pickFreeProviderDefaultModelId(models) {
+  const ids = Array.isArray(models)
+    ? models
+        .map((model) => (typeof model?.id === 'string' ? model.id.trim() : ''))
+        .filter(Boolean)
+    : [];
+  if (ids.length === 0) {
+    return '';
+  }
+  for (const preferred of FREE_PROVIDER_PREFERRED_DEFAULT_MODEL_IDS) {
+    if (ids.includes(preferred)) {
+      return preferred;
+    }
+  }
+  return ids[0];
 }
 
 /**

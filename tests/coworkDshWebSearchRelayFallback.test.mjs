@@ -1,4 +1,4 @@
-// End-to-end: the IDBots-Free relay fallback for web search (owner ruling
+// End-to-end: the ID.Bots relay fallback for web search (owner ruling
 // 2026-10-26). A non-DeepSeek chat provider (zhipu-like) runs a turn that calls
 // web_search; the host web-tools proxy tries the user's DeepSeek Search API
 // first, receives HTTP 402 (out of balance), marks that upstream unusable for
@@ -75,7 +75,7 @@ const RELAY_RESULTS = {
   ],
 }
 
-test('web search relay fallback: a non-DeepSeek turn searches through the proxy; DeepSeek 402 falls back to the IDBots-Free relay',
+test('web search relay fallback: a non-DeepSeek turn searches through the proxy; DeepSeek 402 falls back to the ID.Bots relay',
   { skip: !runtimeReady && 'dsh-runtime node_modules not installed', timeout: 240000 },
   async () => {
     const { DshTurnHub, dshRuntimeConfigFileName, createDshWebToolsProxy } = loadModules()

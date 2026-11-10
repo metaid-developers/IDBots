@@ -20,6 +20,7 @@ import {
   FREE_PROVIDER_DISPLAY_NAME,
   buildFreeProviderRelayModelRow,
   isFreeProviderConfigured,
+  pickFreeProviderDefaultModelId,
   planFreeProviderCatalogSync,
   planFreeQuotaProvisioning,
 } from './llmFreeQuotaGate.js';
@@ -112,7 +113,7 @@ async function provisionProviderConfig(result: LlmRelayBootstrapResult): Promise
     } as AppConfig['providers'],
     model: {
       ...config.model,
-      defaultModel: models[0]?.id ?? config.model.defaultModel,
+      defaultModel: pickFreeProviderDefaultModelId(models) || config.model.defaultModel,
       defaultProvider: LLM_FREE_PROVIDER_KEY,
     },
   });

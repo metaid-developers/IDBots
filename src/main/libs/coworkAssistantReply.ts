@@ -222,12 +222,12 @@ export function buildFreeRelayQuotaNotice(
   const code = relayQuotaCode ?? 'free_quota_exhausted';
   return serverMode
     ? t(
-      `（这不是配置错误：IDBots-Free 免费体验额度已用完。可在「我的」页面充值继续对话。错误代码：${code}。）`,
-      ` (This is not a configuration error: the IDBots-Free starter allowance is used up. Recharge on the Me page to keep chatting. Error code: ${code}.)`,
+      `（这不是配置错误：ID.Bots 免费体验额度已用完。可在「我的」页面充值继续对话。错误代码：${code}。）`,
+      ` (This is not a configuration error: the ID.Bots starter allowance is used up. Recharge on the Me page to keep chatting. Error code: ${code}.)`,
     )
     : t(
-      `（这不是配置错误：IDBots-Free 免费体验额度已用完。请到 设置 > 模型 添加一个自己的模型服务商 API Key 即可继续对话。错误代码：${code}。）`,
-      ` (This is not a configuration error: the IDBots-Free starter allowance is used up. Add your own model provider API key in Settings > Models to keep chatting. Error code: ${code}.)`,
+      `（这不是配置错误：ID.Bots 免费体验额度已用完。请到 设置 > 模型 添加一个自己的模型服务商 API Key 即可继续对话。错误代码：${code}。）`,
+      ` (This is not a configuration error: the ID.Bots starter allowance is used up. Add your own model provider API key in Settings > Models to keep chatting. Error code: ${code}.)`,
     );
 }
 

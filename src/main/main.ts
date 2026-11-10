@@ -21171,7 +21171,7 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
 
     // Loopback web-tools proxy every DSH slot searches through. Must be up
     // before the first runtime boots so the mounted block is stable from
-    // boot #1: user DeepSeek key first, IDBots-Free relay (separate free
+    // boot #1: user DeepSeek key first, ID.Bots relay (separate free
     // search bucket) when that key is missing or answers 401/402/403.
     await startDshWebToolsProxy({
       resolveDeepSeekUpstream: () => resolveDeepSeekWebToolsUpstream(getAppConfigProviders(), isOfficialDeepSeekRoute),

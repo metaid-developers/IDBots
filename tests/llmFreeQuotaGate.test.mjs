@@ -3,11 +3,13 @@ import assert from 'node:assert/strict';
 
 import {
   LLM_FREE_PROVIDER_KEY,
+  FREE_PROVIDER_DISPLAY_NAME,
   buildFreeProviderRelayModelRow,
   getFreeProviderModelCanonical,
   getFreeProviderModelDisplayName,
   getFreeProviderModelLegacyLimitRewrites,
   isFreeProviderConfigured,
+  pickFreeProviderDefaultModelId,
   planFreeProviderCatalogSync,
   planFreeQuotaProvisioning,
 } from '../src/renderer/services/llmFreeQuotaGate.js';
@@ -17,6 +19,14 @@ test('constants stay stable (backend contract)', () => {
   assert.equal(LLM_FREE_PROVIDER_KEY, 'metaid-free');
 });
 
+test('the display label is plan-neutral (never suggests a tier)', () => {
+  // 2026-11-10: a paying ID.Scholar subscriber saw "IDBots-Free" in the model
+  // picker and read it as "still on the free tier". The label must stay
+  // plan-neutral ("ID.Bots") — no "-Free" suffix, ever.
+  assert.equal(FREE_PROVIDER_DISPLAY_NAME, 'ID.Bots');
+  assert.doesNotMatch(FREE_PROVIDER_DISPLAY_NAME, /free/i);
+});
+
 test('getFreeProviderModelDisplayName maps relay wire ids to product names', () => {
   assert.equal(getFreeProviderModelDisplayName('deepseek-chat'), 'deepseek-flash');
   // The 2026-10-16 catalog rename: the public id shows the same product name
@@ -24,6 +34,26 @@ test('getFreeProviderModelDisplayName maps relay wire ids to product names', () 
   assert.equal(getFreeProviderModelDisplayName('deepseek-4.1-flash'), 'deepseek-flash');
   assert.equal(getFreeProviderModelDisplayName('another-relay-model'), 'another-relay-model');
   assert.equal(getFreeProviderModelDisplayName(undefined), undefined);
+});
+
+test('pickFreeProviderDefaultModelId prefers the DeepSeek flash flagship over catalog order', () => {
+  // Owner ruling 2026-11-10: new users start on deepseek-flash regardless of
+  // where the relay directory places it (the order is server-owned).
+  const reordered = [
+    { id: 'glm-5.3-flash' },
+    { id: 'deepseek-4.1-flash' },
+    { id: 'deepseek-chat' },
+  ];
+  assert.equal(pickFreeProviderDefaultModelId(reordered), 'deepseek-4.1-flash');
+  // Legacy catalog carrying only the hidden alias still resolves to a
+  // deepseek-flash wire id.
+  assert.equal(pickFreeProviderDefaultModelId([{ id: 'deepseek-chat' }]), 'deepseek-chat');
+  // Unknown catalogs fall back to the first entry (unchanged legacy behavior).
+  assert.equal(pickFreeProviderDefaultModelId([{ id: 'glm-5.3-flash' }, { id: 'other' }]), 'glm-5.3-flash');
+  // Unusable catalogs yield '' so callers keep their existing default.
+  assert.equal(pickFreeProviderDefaultModelId([]), '');
+  assert.equal(pickFreeProviderDefaultModelId([{ id: '  ' }, undefined]), '');
+  assert.equal(pickFreeProviderDefaultModelId(undefined), '');
 });
 
 test('getFreeProviderModelCanonical pins the upgraded 1M window and the 100K declared output ceiling', () => {

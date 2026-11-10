@@ -321,7 +321,7 @@ const isBuiltInFreeProvider = (provider: string): boolean => provider === LLM_FR
 /**
  * Providers whose Base URL / API format are managed by the app (relay endpoint
  * or the vendor's official fixed endpoint). Their API Key stays user-editable
- * unless relay-provisioned (IDBots-Free).
+ * unless relay-provisioned (ID.Bots).
  */
 const isManagedProvider = (provider: string): boolean => (
   isBuiltInFreeProvider(provider) || provider === 'deepseek' || provider === 'commandcode'

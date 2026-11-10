@@ -1264,7 +1264,7 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
             apiKey: '__redacted__',
             baseUrl: 'https://mock.invalid/relay',
             apiFormat: 'openai',
-            name: 'IDBots-Free',
+            name: 'ID.Bots',
             models: [
               { id: 'deepseek-flash', name: 'DeepSeek Flash', contextWindow: 1000000, maxOutputTokens: 100000 },
               { id: 'glm-flash', name: 'GLM Flash', contextWindow: 128000, maxOutputTokens: 32768 },

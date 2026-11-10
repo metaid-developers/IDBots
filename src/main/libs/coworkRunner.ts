@@ -10660,7 +10660,7 @@ export class CoworkRunner extends EventEmitter {
         extraEntries: this.dshRuntimeExtraEntries,
         extraEntriesProvider: this.dshExtraEntriesProvider,
         // Every slot's web_search/web_fetch rides the host web-tools proxy
-        // (user DeepSeek first, IDBots-Free relay fallback) — see
+        // (user DeepSeek first, ID.Bots relay fallback) — see
         // services/dshWebToolsProxy. Started in main.ts before any turn.
         webToolsProxy: () => getDshWebToolsProxyDescriptor(),
         // Shared DSH runtime: bash skill scripts never see Claude's
@@ -12493,8 +12493,8 @@ export class CoworkRunner extends EventEmitter {
           ? (quotaTerminalDeath
               ? (freeRelayQuotaDeath
                   ? tApp(
-                      `免费额度已用完（IDBots-Free 体验额度耗尽；最后错误码 ${outcome.error?.code ?? 'QUOTA'}）`,
-                      `Free starter quota exhausted (the IDBots-Free allowance is used up; last error code ${outcome.error?.code ?? 'QUOTA'})`
+                      `免费额度已用完（ID.Bots 体验额度耗尽；最后错误码 ${outcome.error?.code ?? 'QUOTA'}）`,
+                      `Free starter quota exhausted (the ID.Bots allowance is used up; last error code ${outcome.error?.code ?? 'QUOTA'})`
                     )
                   : tApp(
                       `模型供应商 ${lastAttemptRoute.provider} 的 ${lastAttemptRoute.model} 额度不足，本轮已终止（最后错误码 ${outcome.error?.code ?? 'QUOTA'}）`,

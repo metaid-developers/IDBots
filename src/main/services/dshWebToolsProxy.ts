@@ -13,7 +13,7 @@
  *   1. the user's own official DeepSeek route (their paid quota) — while it
  *      works;
  *   2. on 401/402/403 (bad or exhausted key) the DeepSeek upstream is marked
- *      unusable for a TTL and the call retries against the IDBots-Free relay
+ *      unusable for a TTL and the call retries against the ID.Bots relay
  *      (mrk_ relay key, separate free search bucket — free even after the
  *      free LLM token pool is spent);
  *   3. 429/5xx/network failures fall through WITHOUT marking (transient);
@@ -103,7 +103,7 @@ export function deepSeekWebToolsRoot(baseUrl: string): string {
 }
 
 /**
- * Derive the IDBots-Free relay's tools base (`<llm root>/v1/tools`, the ABS
+ * Derive the ID.Bots relay's tools base (`<llm root>/v1/tools`, the ABS
  * route `/v2/assist/llm/v1/tools/search|fetch`) from the relay base the client
  * stores. That stored base is the chat base and already ends in `/v1`
  * (`…/v2/assist/llm/v1`, the bootstrap PublicBaseURL), so a naive
@@ -213,7 +213,7 @@ export async function createDshWebToolsProxy(deps: DshWebToolsProxyDeps): Promis
       res.writeHead(503, { 'content-type': 'application/json' });
       res.end(JSON.stringify({
         error: {
-          message: 'web search is unavailable: no DeepSeek API key is configured and the IDBots-Free relay credentials did not resolve. Add a DeepSeek key in Settings > Models, or re-run the free-relay bootstrap.',
+          message: 'web search is unavailable: no DeepSeek API key is configured and the ID.Bots relay credentials did not resolve. Add a DeepSeek key in Settings > Models, or re-run the free-relay bootstrap.',
         },
       }));
       return;
@@ -247,7 +247,7 @@ export async function createDshWebToolsProxy(deps: DshWebToolsProxyDeps): Promis
         deepSeekUnusableUntil = now() + exhaustedTtlMs;
         log(
           `[DshWebToolsProxy] deepseek upstream marked unusable (HTTP ${response.status}) for ` +
-          `${Math.round(exhaustedTtlMs / 60_000)}m — falling back to the IDBots-Free relay`,
+          `${Math.round(exhaustedTtlMs / 60_000)}m — falling back to the ID.Bots relay`,
         );
         if (!isLast) continue;
       }
@@ -313,6 +313,6 @@ export async function createDshWebToolsProxy(deps: DshWebToolsProxyDeps): Promis
     },
   };
   server.unref();
-  log(`[DshWebToolsProxy] listening on 127.0.0.1:${address.port} — slots mount the web seam through this proxy (deepseek-first, IDBots-Free relay fallback)`);
+  log(`[DshWebToolsProxy] listening on 127.0.0.1:${address.port} — slots mount the web seam through this proxy (deepseek-first, ID.Bots relay fallback)`);
   return proxy;
 }

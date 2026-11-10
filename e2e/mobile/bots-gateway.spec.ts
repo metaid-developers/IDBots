@@ -34,7 +34,7 @@ test.describe('gateway Bot lifecycle', () => {
     await row.click();
     await expect(page.getByTestId('me-page-bot-edit')).toBeVisible();
     await page.getByTestId('bot-form').getByTestId('bot-tab-model').click();
-    await page.getByTestId('bot-form').getByLabel('Default model').selectOption({ label: 'IDBots-Free · GLM Flash' });
+    await page.getByTestId('bot-form').getByLabel('Default model').selectOption({ label: 'ID.Bots · GLM Flash' });
     await page.getByTestId('bot-form').getByLabel('Reasoning effort', { exact: true }).first().selectOption('high');
     await page.getByTestId('bot-form').getByTestId('bot-tab-chatSettings').click();
     await page.getByTestId('bot-form').getByTestId('bot-skills-toggle').click();

@@ -3,7 +3,7 @@
  * (2026-10-23 new-user free-quota post-mortem).
  *
  * New users onboard with every bot brain (Twin Bot included) pointing at the
- * built-in IDBots-Free provider and NO fallback brain. When the free allowance
+ * built-in ID.Bots relay provider and NO fallback brain. When the free allowance
  * runs out, the runtime degrade ladder has nothing to switch to and passive
  * scenarios (private chat, group tasks, dreams) start dying — even when the
  * user already configured their own provider key in Settings and simply never
@@ -37,7 +37,7 @@ const API_KEY_EXEMPT_PROVIDERS = new Set(['ollama']);
 export interface BrainFallbackBackfillProvider {
   enabled?: boolean;
   apiKey?: string | null;
-  /** Optional display name (e.g. 'IDBots-Free'); UI falls back to the provider key. */
+  /** Optional display name (e.g. 'ID.Bots'); UI falls back to the provider key. */
   name?: string;
   models?: Array<{ id?: string }>;
 }

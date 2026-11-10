@@ -13,7 +13,7 @@ import { configService } from '../../services/config';
 import { coworkService } from '../../services/cowork';
 import { pickTwinBotName } from './twinBotNames.js';
 import { clearOnboardingEnterPending, markOnboardingEnterPending } from '../../services/viewState';
-import { LLM_FREE_PROVIDER_KEY } from '../../services/llmFreeQuotaGate.js';
+import { LLM_FREE_PROVIDER_KEY, pickFreeProviderDefaultModelId } from '../../services/llmFreeQuotaGate.js';
 import type { Metabot } from '../../types/metabot';
 import { twinBotAvatarUrl } from '../../assets/twinBotAvatar';
 import heroWelcomeImage from '../../assets/onboarding/hero-welcome-v2.png';
@@ -118,7 +118,7 @@ function resolveTwinBrain(): {
 } | null {
   const config = configService.getConfig();
   const freeProvider = config.providers?.[LLM_FREE_PROVIDER_KEY];
-  const freeModelId = freeProvider?.enabled ? freeProvider.models?.[0]?.id : '';
+  const freeModelId = freeProvider?.enabled ? pickFreeProviderDefaultModelId(freeProvider.models) : '';
   if (freeModelId) {
     return { llmId: freeModelId, llmProvider: LLM_FREE_PROVIDER_KEY, ...(resolveTwinBackupBrain(config) ?? {}) };
   }
