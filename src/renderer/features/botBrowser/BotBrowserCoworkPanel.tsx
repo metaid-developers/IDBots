@@ -21,7 +21,7 @@ import { projectsService } from '../../services/projects';
 import { i18nService } from '../../services/i18n';
 import { dispatchMetabotsChanged, subscribeMetabotsChanged } from '../../services/metabotEvents';
 import { getCompactFolderName } from '../../utils/path';
-import type { CoworkMessage, CoworkQuotedSelectionRole, CoworkWorkspaceSelection } from '../../types/cowork';
+import type { CoworkMessage, CoworkWorkspaceSelection } from '../../types/cowork';
 import TwinSeatChip from './TwinSeatChip';
 import { appointTwinSeat } from './twinSeatAppointment';
 import CoworkHistoryPanel from './CoworkHistoryPanel';
@@ -42,30 +42,8 @@ import PanelMessageLocatorRail from './PanelMessageLocatorRail';
 import { buildPanelLocatorRows } from './panelMessageLocator';
 import { createMessageQuotedSelection } from '../../components/cowork/coworkQuotedSelections';
 import { resolveBubbleSelectedText } from './panelBubbleSelection';
-import { buildPanelSentQuoteCardModel } from './panelSentQuoteCard';
 
 type PanelMetabot = MetaBotForSelector & { llm_id?: string | null; llm_provider?: string | null; llm_effort?: string | null };
-
-/**
- * Display-only speaker names for a sent reply quote in this panel (purity
- * pass #5 ②), the Telegram-card vocabulary shared with the pending reply
- * card (CoworkQuotedSelectionTiles): the owner reads 「你」 and the
- * assistant speaks in the session bot's own name — the 「Bot」 fallback only
- * when no bot name is known. The prompt body keeps the generated
- * `#<ordinal> <side>：` label untouched (parseSentQuoteBlock is
- * display-only); only the rendered card shows these names.
- */
-const panelQuoteDisplaySources = (
-  botName: string | null | undefined,
-): Record<CoworkQuotedSelectionRole, string> => {
-  const name = (botName ?? '').trim();
-  const assistantName = name || i18nService.t('coworkQuoteSentReplySourceAssistantFallback');
-  return {
-    user: i18nService.t('coworkQuoteReplyCardSpeakerUser'),
-    assistant: assistantName,
-    other: assistantName,
-  };
-};
 
 /**
  * Minimal rendering contract for the side panel: user messages and final
@@ -108,12 +86,6 @@ export const PanelMessage: React.FC<{
    * hover reveal is retired.
    */
   showTimestamp?: boolean;
-  /**
-   * The session bot's name (purity pass #5 ①②): names the speaker on the
-   * pending reply card and on a sent message's Telegram quote card. Null /
-   * undefined falls back to the i18n 「Bot」 placeholder.
-   */
-  botName?: string | null;
   /** This bubble's stored reaction (local MVP; null = none). */
   currentReaction?: PanelReactionRating | null;
   /** Right-click on the bubble chrome opens the panel context menu. */
@@ -127,7 +99,6 @@ export const PanelMessage: React.FC<{
   resolveLocalFilePath,
   timestampLabel,
   showTimestamp = false,
-  botName = null,
   currentReaction = null,
   onContextMenu,
   onToggleReaction,
@@ -174,50 +145,25 @@ export const PanelMessage: React.FC<{
     </div>
   ) : null;
   if (isUser) {
-    // Sent reply quote (pass #5 ②): a body that opens with the generated
-    // reply block renders as a Telegram-style quote card — accent speaker
-    // line + one-line excerpt, both clamped to the bubble width — with the
-    // owner's instruction underneath. DISPLAY-ONLY: the parsed block is a
-    // render-time view of the stored body; the prompt body keeps the
-    // generated label and the wider excerpt. Plain bodies render exactly
-    // as before.
-    const sentQuoteCard = buildPanelSentQuoteCardModel(
-      message.content,
-      panelQuoteDisplaySources(botName),
-    );
+    // Sent reply quotes keep the ORIGINAL inline style (owner ruling
+    // 2026-11-11: the Telegram quote card read as a separate block — quote
+    // and reply felt disjointed; the generated `> #<ordinal>` block flowing
+    // inside the bubble fits IDBots better). The body renders through the
+    // same pipeline as before pass #5; nothing display-side special-cases
+    // quote bodies anymore.
     const bubbleClassName = "max-w-[90%] min-w-0 whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-[13px] dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text shadow-subtle";
     return (
       // data-panel-message-id lets the locator rail measure this row
       // (purity pass #2 ③) without touching the bubble chrome.
       <div data-panel-message-id={message.id} className="flex flex-col items-end">
-        {sentQuoteCard ? (
-          <div onContextMenu={handleBubbleContextMenu} className={bubbleClassName}>
-            <div
-              data-panel-sent-quote="true"
-              aria-label={i18nService.t('coworkQuoteReplyPreviewLabel')}
-              className="mb-1.5 flex items-start gap-1.5 rounded-lg border border-claude-border border-l-2 border-l-claude-accent dark:border-claude-darkBorder dark:border-l-claude-accent dark:bg-claude-darkSurfaceInset bg-claude-surfaceInset py-1 pl-2 pr-1.5 text-xs"
-            >
-              <div className="min-w-0 flex-1">
-                <div className="truncate font-medium text-claude-accent">{sentQuoteCard.speaker}</div>
-                <div className="mt-0.5 truncate dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                  {sentQuoteCard.excerpt}
-                </div>
-              </div>
-            </div>
-            {sentQuoteCard.rest ? (
-              <UserMessageBody content={sentQuoteCard.rest} resolveLocalFilePath={resolveLocalFilePath} />
-            ) : null}
-          </div>
-        ) : (
-          <div onContextMenu={handleBubbleContextMenu} className={bubbleClassName}>
-            {/* Same display-side body pipeline as the main cowork transcript:
-                the attachment marker lines split out at render time, image
-                files render as the shared thumbnail strip with the in-app
-                lightbox, and the rest renders as markdown. The panel keeps
-                its own bubble chrome. */}
-            <UserMessageBody content={message.content} resolveLocalFilePath={resolveLocalFilePath} />
-          </div>
-        )}
+        <div onContextMenu={handleBubbleContextMenu} className={bubbleClassName}>
+          {/* Same display-side body pipeline as the main cowork transcript:
+              the attachment marker lines split out at render time, image
+              files render as the shared thumbnail strip with the in-app
+              lightbox, and the rest renders as markdown. The panel keeps
+              its own bubble chrome. */}
+          <UserMessageBody content={message.content} resolveLocalFilePath={resolveLocalFilePath} />
+        </div>
         {metaRow}
       </div>
     );
@@ -760,9 +706,6 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
       onOpenUri={handleOpenUri}
       isAssistantMode={isAssistantMode}
       resolveLocalFilePath={resolveLocalFilePath}
-      // The session bot's own name (pass #5 ①②): names the speaker on the
-      // pending reply card and on sent quote cards.
-      botName={chipMetabot?.name ?? null}
       // Quiet per-bubble stamp on the meta line: same-day `HH:mm`, older
       // days `MM-DD HH:mm` (computed at render, local time). Pass #5 ③:
       // assistant group-end rows only, DEFAULT-VISIBLE — the pass #3 hover
