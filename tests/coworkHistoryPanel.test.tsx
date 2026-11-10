@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import CoworkHistoryPanel from '../src/renderer/features/botBrowser/CoworkHistoryPanel';
 import { i18nService } from '../src/renderer/services/i18n';
 import type { CoworkSessionSummary } from '../src/renderer/types/cowork';
+import { copyCoworkSessionLinkToClipboard } from '../src/renderer/components/cowork/coworkSessionLink.js';
 
 const session = (overrides: Partial<CoworkSessionSummary>): CoworkSessionSummary => ({
   id: 'session-1',
@@ -27,6 +28,8 @@ function render(sessions: CoworkSessionSummary[], currentSessionId: string | nul
       currentSessionId={currentSessionId}
       onSelectSession={() => {}}
       onDeleteSession={() => {}}
+      onTogglePin={() => {}}
+      onRenameSession={() => {}}
       onClose={() => {}}
     />,
   );
@@ -54,10 +57,24 @@ test('record rows keep the original IDBots row grammar', () => {
   assert.match(row, /Open the latest on-chain games/);
   assert.match(row, /MetaApp Example/);
   assert.match(row, new RegExp(i18nService.t('coworkSessionTypeBrowser')));
-  // The row action is the shared delete affordance, revealed by hover/focus.
-  assert.match(row, new RegExp(`aria-label="${i18nService.t('delete')}"`));
+  // The row action is the shared BotWorks ellipsis menu, revealed by hover/focus.
+  assert.match(row, new RegExp(`aria-label="${i18nService.t('coworkSessionActions')}"`));
+  assert.doesNotMatch(row, new RegExp(`aria-label="${i18nService.t('delete')}"`));
   assert.match(row, /group-hover:opacity-100/);
   assert.match(row, /group-focus-within:opacity-100/);
+});
+
+test('pinned records move ahead of unpinned records without changing their relative order', () => {
+  const markup = render([
+    session({ id: 'first', title: 'First unpinned' }),
+    session({ id: 'pinned-a', title: 'First pinned', pinned: true }),
+    session({ id: 'second', title: 'Second unpinned' }),
+    session({ id: 'pinned-b', title: 'Second pinned', pinned: true }),
+  ]);
+  const positions = ['First pinned', 'Second pinned', 'First unpinned', 'Second unpinned']
+    .map((title) => markup.indexOf(title));
+  assert.ok(positions.every((position) => position >= 0));
+  assert.deepEqual(positions, [...positions].sort((a, b) => a - b));
 });
 
 test('the empty state is the baseline centred sentence, not a bare line', () => {
@@ -73,4 +90,17 @@ test('assistant-mode titles go through the shared presentation rule', () => {
   ]);
   assert.match(markup, />Long run</);
   assert.doesNotMatch(markup, /\[编排任务\]/);
+});
+
+
+test('copy session id uses the same payload as the BotWorks row action', () => {
+  let copied = '';
+  const copiedSuccessfully = copyCoworkSessionLinkToClipboard('session-1', {
+    writeText(value: string) {
+      copied = value;
+      return Promise.resolve();
+    },
+  });
+  assert.equal(copiedSuccessfully, true);
+  assert.equal(copied, 'IDBots://session-1');
 });
