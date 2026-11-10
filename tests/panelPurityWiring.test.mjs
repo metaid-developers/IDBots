@@ -10,6 +10,12 @@ import path from 'node:path';
 // panelMessageReactions.test.ts and panelContextMenuGeometry.test.ts; this
 // file only pins the panel wiring so a refactor cannot quietly drop a
 // channel, a close path, or re-grow persistent furniture.
+//
+// EXTENDED (pass #4, delegation b05ee0c6 / step 8ee05ab0, 2026-11-10): the
+// menu is selection-aware — test ④ was superseded in place (its two
+// whole-message-only assertions now pin the selection-first precedence), and
+// test ⑥ pins the new capture + label-switch wiring. Behavior lives in
+// panelBubbleSelection.test.ts.
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
 
@@ -22,6 +28,8 @@ const menuComponentSource = read('src/renderer/features/botBrowser/PanelMessageC
 const reactionsSource = read('src/renderer/features/botBrowser/panelMessageReactions.ts');
 const timestampSource = read('src/renderer/features/botBrowser/panelMessageTimestamp.ts');
 const geometrySource = read('src/renderer/features/botBrowser/panelContextMenuGeometry.ts');
+const bubbleSelectionSource = read('src/renderer/features/botBrowser/panelBubbleSelection.ts');
+const quotedSelectionsSource = read('src/renderer/components/cowork/coworkQuotedSelections.ts');
 const i18nSource = read('src/renderer/services/i18n.ts');
 
 test('① every bubble renders a meta line with the formatted timestamp', () => {
@@ -74,15 +82,19 @@ test('③ reactions persist locally under the twinChatReactions key, toggle-canc
   assert.match(panelSource, /data-panel-reaction-chip=\{currentReaction\}/);
 });
 
-test('④ quote reply rides the shared composer slot; copy writes the raw text', () => {
-  // Same entry as CoworkSessionDetail's reply path: whole-message fragment →
-  // composer quote slot → shared chip / removal / send composition.
+test('④ quote reply rides the shared composer slot; copy writes raw text', () => {
+  // Same entry as CoworkSessionDetail's reply path: fragment → composer quote
+  // slot → shared chip / removal / send composition.
   assert.match(panelSource, /import \{ createMessageQuotedSelection \} from '\.\.\/\.\.\/components\/cowork\/coworkQuotedSelections';/);
-  assert.match(panelSource, /createMessageQuotedSelection\(\{\s*content: message\.content,/);
+  // SUPERSEDED in place (pass #4): the content is the captured selection when
+  // one exists, else the whole message — one factory, same truncation cap.
+  assert.match(panelSource, /const content = menu\.selectedText \?\? message\.content;/);
+  assert.match(panelSource, /createMessageQuotedSelection\(\{\s*content,/);
   assert.match(panelSource, /promptInputRef\.current\?\.addQuotedSelection\(fragment\)/);
   assert.match(panelSource, /promptInputRef\.current\?\.focus\(\)/);
-  // Copy text writes the RAW stored content (not a rendered derivative).
-  assert.match(panelSource, /const raw = menu\.message\.content;/);
+  // Copy text writes the RAW stored content (not a rendered derivative) —
+  // with the selection-first precedence (pass #4).
+  assert.match(panelSource, /const raw = menu\.selectedText \?\? menu\.message\.content;/);
   assert.match(panelSource, /navigator\.clipboard\?\.writeText/);
 });
 
@@ -109,4 +121,52 @@ test('the menu component forwardRef contract stays intact', () => {
   assert.match(menuComponentSource, /PanelMessageContextMenu\.displayName = 'PanelMessageContextMenu'/);
   assert.match(panelSource, /ref=\{panelMenuRef\}/);
   assert.match(geometrySource, /export const CONTEXT_MENU_WIDTH = 156/);
+});
+
+test('⑥ selection capture happens in the contextmenu handler with both endpoints contained', () => {
+  // The panel reads window.getSelection() INSIDE handlePanelContextMenu —
+  // the only reliable moment for select-then-right-click (Chromium keeps the
+  // live selection there) — and resolves it through the pure helper.
+  assert.match(panelSource, /import \{ resolveBubbleSelectedText \} from '\.\/panelBubbleSelection';/);
+  assert.match(panelSource, /const selection = typeof window !== 'undefined' \? window\.getSelection\(\) : null;/);
+  assert.match(panelSource, /resolveBubbleSelectedText\(/);
+  // The state carries the captured fragment (null = whole-message fallback).
+  assert.match(panelSource, /selectedText: string \| null;/);
+  assert.match(panelSource, /selectedText,/);
+  // Pure helper: BOTH endpoints must sit inside the bubble — a selection
+  // spanning another bubble (or starting outside it) never harvests foreign
+  // text; whichever bubble was right-clicked falls back to its whole message.
+  assert.match(bubbleSelectionSource, /export const resolveBubbleSelectedText/);
+  assert.match(bubbleSelectionSource, /!bubble\.contains\(anchorNode\) \|\| !bubble\.contains\(focusNode\)/);
+  // Whitespace-only selections resolve to null (whole-message fallback).
+  assert.match(bubbleSelectionSource, /rawText\.trim\(\)\.length === 0/);
+});
+
+test('⑥ menu labels switch with the selection; 👍👎 never do', () => {
+  // The component takes the flag and drives BOTH selected-text variants
+  // through i18n (quote reuses the coworkQuoteActionLabel key).
+  assert.match(menuComponentSource, /selectionActive: boolean;/);
+  assert.match(panelSource, /selectionActive=\{Boolean\(contextMenu\.selectedText\)\}/);
+  assert.match(menuComponentSource, /selectionActive \? 'coworkQuoteActionLabel' : 'botBrowserPanelMenuQuoteReply'/);
+  assert.match(menuComponentSource, /selectionActive \? 'botBrowserPanelMenuCopySelected' : 'botBrowserPanelMenuCopyText'/);
+  // The selection marker rides the DOM for future E2E assertions.
+  assert.match(menuComponentSource, /data-panel-menu-selection=/);
+  // 👍👎 stay whole-bubble: the reactRow body never reads the selection flag.
+  const reactRowBody = menuComponentSource.match(/const reactRow = \(rating: PanelReactionRating\) => \{[\s\S]*?\n  \};/)?.[0] ?? '';
+  assert.ok(reactRowBody, 'reactRow found');
+  assert.ok(!reactRowBody.includes('selectionActive'), 'reaction rows must ignore the selection');
+  // New copy key exists exactly once per dictionary (zh + en); the reused
+  // quote key is pre-existing and equally bilingual.
+  for (const key of ['botBrowserPanelMenuCopySelected', 'coworkQuoteActionLabel']) {
+    const hits = i18nSource.match(new RegExp(`^\\s*${key}:`, 'gm')) ?? [];
+    assert.equal(hits.length, 2, `${key} must exist once in zh and once in en`);
+  }
+});
+
+test('⑥ fragment quoting keeps the shared truncation cap', () => {
+  // QUOTED_SELECTION_MAX_CHARS stays 4000 and the factory still applies it —
+  // the selection path goes through createMessageQuotedSelection, so the cap
+  // must not have been re-implemented or lowered somewhere else.
+  assert.match(quotedSelectionsSource, /export const QUOTED_SELECTION_MAX_CHARS = 4000;/);
+  assert.match(quotedSelectionsSource, /text\.length > QUOTED_SELECTION_MAX_CHARS/);
 });

@@ -19,6 +19,11 @@ import type { PanelReactionRating } from './panelMessageReactions';
  * panelContextMenuGeometry.ts); this component only renders rows and reports
  * actions. React rows show a check when that side is the bubble's current
  * rating; clicking the current rating again cancels it.
+ *
+ * Selection-aware (pass #4): when the panel captured a selection inside the
+ * bubble, the quote/copy rows switch their labels to the selected-text
+ * variants (the actions themselves stay here; the panel resolves WHAT they
+ * act on). 👍👎 never read this flag — they always rate the whole bubble.
  */
 
 export interface PanelMessageContextMenuProps {
@@ -27,6 +32,8 @@ export interface PanelMessageContextMenuProps {
   y: number;
   /** The bubble's current rating, for the check marks and cancel-on-reclick. */
   currentReaction: PanelReactionRating | null;
+  /** A selection was captured inside the bubble: quote/copy act on the fragment. */
+  selectionActive: boolean;
   onReact: (rating: PanelReactionRating) => void;
   onQuoteReply: () => void;
   onCopyText: () => void;
@@ -40,7 +47,7 @@ const MENU_ROW_CLASS = [
 ].join(' ');
 
 const PanelMessageContextMenu = React.forwardRef<HTMLDivElement, PanelMessageContextMenuProps>(
-  ({ x, y, currentReaction, onReact, onQuoteReply, onCopyText, onDismiss }, ref) => {
+  ({ x, y, currentReaction, selectionActive, onReact, onQuoteReply, onCopyText, onDismiss }, ref) => {
   const reactRow = (rating: PanelReactionRating) => {
     const isUp = rating === 'up';
     const Icon = isUp ? HandThumbUpIcon : HandThumbDownIcon;
@@ -74,6 +81,7 @@ const PanelMessageContextMenu = React.forwardRef<HTMLDivElement, PanelMessageCon
       ref={ref}
       role="menu"
       data-slot="panel-message-context-menu"
+      data-panel-menu-selection={selectionActive ? 'true' : 'false'}
       style={{ position: 'fixed', top: y, left: x, width: 156 }}
       className="z-[70] rounded-xl border border-white/10 bg-[#2b2b2d] py-1 shadow-elevated"
     >
@@ -90,7 +98,9 @@ const PanelMessageContextMenu = React.forwardRef<HTMLDivElement, PanelMessageCon
         className={MENU_ROW_CLASS}
       >
         <ChatBubbleLeftRightIcon className="h-4 w-4 shrink-0 text-neutral-300" aria-hidden />
-        <span className="min-w-0 flex-1 truncate">{i18nService.t('botBrowserPanelMenuQuoteReply')}</span>
+        <span className="min-w-0 flex-1 truncate">
+          {i18nService.t(selectionActive ? 'coworkQuoteActionLabel' : 'botBrowserPanelMenuQuoteReply')}
+        </span>
       </button>
       <button
         type="button"
@@ -103,7 +113,9 @@ const PanelMessageContextMenu = React.forwardRef<HTMLDivElement, PanelMessageCon
         className={MENU_ROW_CLASS}
       >
         <ClipboardDocumentIcon className="h-4 w-4 shrink-0 text-neutral-300" aria-hidden />
-        <span className="min-w-0 flex-1 truncate">{i18nService.t('botBrowserPanelMenuCopyText')}</span>
+        <span className="min-w-0 flex-1 truncate">
+          {i18nService.t(selectionActive ? 'botBrowserPanelMenuCopySelected' : 'botBrowserPanelMenuCopyText')}
+        </span>
       </button>
     </div>
   );
