@@ -26,7 +26,7 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
   let fitFeather = 2.0 / max(min(u.size.x, u.size.y), 1.0);
   let fitStart = min(mix(contourRad, fitEnd, 0.5), fitEnd - fitFeather);
   let fit = 1.0 - smoothstep(fitStart, fitEnd, max(abs(q.x), abs(q.y)));
-  return vec4<f32>(c.rgb * fit * c.a, c.a * fit);
+  return vec4<f32>(c.rgb * fit, c.a * fit);
 }`;
 
   const baseParams = {
@@ -59,8 +59,8 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     'browser-action': { style: 23, speed: .74, radius: .73, warp: 3, contourDeform: .025, glassOpacity: .64, edgeGlow: .1 },
     'owner-needed': { style: 21, speed: .5, radius: .71, warp: 2.7, contourDeform: .025, glassOpacity: .62, edgeGlow: .1 },
     problem: { style: 21, speed: .4, radius: .7, warp: 2.4, contourDeform: .02, glassOpacity: .58, edgeGlow: .07 },
-    'report-ready': { style: 20, speed: .24, radius: .7, warp: 2.2, contourDeform: .015, glassOpacity: .66, edgeGlow: .05 },
-    complete: { style: 20, speed: .2, radius: .7, warp: 2, contourDeform: .012, glassOpacity: .64, edgeGlow: .04 }
+    'report-ready': { style: 9, speed: .24, radius: .7, warp: 2.2, contourDeform: .015, glassOpacity: .66, edgeGlow: .05 },
+    complete: { style: 9, speed: .2, radius: .7, warp: 2, contourDeform: .012, glassOpacity: .64, edgeGlow: .04 }
   };
   window.liquidOrbStyleForFamily = (family) => (statePresets[family] || statePresets.received).style;
   const numericKeys = Object.keys(baseParams).filter((key) => typeof baseParams[key] === 'number' && key !== 'style');
