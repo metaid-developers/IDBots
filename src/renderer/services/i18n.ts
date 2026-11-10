@@ -513,13 +513,16 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkTabCountChats: '{count} 个对话',
     coworkTabCountGroup: '{count} 个群任务',
     botBrowserCoworkTitle: 'Co-Work',
-    // Studio 空状态与输入框文案（先生裁定 2026-11-09 文案定版）：朋友对话式
-    // 邀请，不是功能演示导览——主语/副语/轻提示/占位符是同一套的四件（zh 在
-    // 此，en 镜像同一组键；BotBrowserCoworkPanel 欢迎块渲染同键）。
+    // Studio 空状态与输入框文案（2026-11-09 文案定版 + 2026-11-11 Bot 选择器
+    // 裁定）：朋友对话式邀请，不是功能演示导览——主语/副语/轻提示/占位符是
+    // 同一套的四件；Twin 当值时用 Twin 语气，选中 worker 时用 Worker 语气
+    // （zh 在此，en 镜像同一组键；BotBrowserCoworkPanel 欢迎块渲染同键）。
     botBrowserCoworkPlaceholder: '跟你的 Twin 聊聊，或者派个任务给他…',
+    botBrowserCoworkPlaceholderWorker: '直接安排你的 Worker Bot 具体的工作…',
     botBrowserCoworkEmpty: '今天，想从哪儿开始？',
     botBrowserCoworkEmptySub: '把一句话交给你的 Twin——剩下的路，他来铺。',
-    botInternetNeedsTwin: 'Studio 是你和你的 Twin Bot 的一对一空间。本机还没有 Twin Bot——先去 BotWorks 创建一个。',
+    botBrowserCoworkEmptySubWorker: '把一句话交给你的 Worker Bot——剩下的路，他来铺。',
+    botInternetNeedsBot: '本机还没有 Bot——先去 BotWorks 创建一个，再回来这里派活。',
     // 气泡右键上下文菜单（办公室聊天窗纯度优化第一批 2026-11-10）：功能收进
     // 右键菜单，无常驻家具；回应图标行内自带，文字只给动作名。
     botBrowserPanelMenuLike: '赞',
@@ -532,13 +535,12 @@ const translations: Record<LanguageType, Record<string, string>> = {
     // 消息定位滚轮（办公室聊天窗纯度优化第二批 2026-11-10）：右缘细轨的
     // 可达性标签；预览卡的发送者名复用 coworkOriginBadgeYou（「你」）。
     botBrowserLocatorRail: '消息定位',
-    botInternetGoBotHome: '去 BotWorks 创建 Twin',
-    botInternetTwinSeatTitle: '选择当前当值 Twin',
-    botInternetTwinSeatHint: '任命会与「我的 Bot」的 Twin 设定同步：原当值 Twin 回到 worker 岗位，所选 bot 立即上任。',
-    botInternetTwinSeatAppoint: '任命',
-    botInternetTwinSeatChip: 'Twin 当值铭牌（点击任命）',
-    botInternetTwinSeatAppointed: '{name} 已就任 Twin。',
-    botInternetTwinSeatRollbackFailed: '原当值 Twin 未能复原，请到「我的 Bot」手动设置。',
+    botInternetGoBotWorks: '去 BotWorks 创建 Bot',
+    // Bot 选择器（2026-11-11 裁定）：只选接下来干活的 Bot，不碰 Twin 任命——
+    // metabot_type 只归「我的 Bot」编辑器管。
+    botInternetBotPickerTitle: '选择一个 Bot 为你干活',
+    botInternetBotPickerHint: '这里只决定接下来由哪个 Bot 干活，不会改变你的 Twin。',
+    botInternetBotPickerChip: '选择 Bot（点击切换）',
     botBrowserCoworkHistory: '会话记录',
     botBrowserCoworkNew: '新建会话',
     coworkNoSessions: '暂无任务记录',
@@ -4269,11 +4271,14 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkTabCountChats: '{count} chats',
     coworkTabCountGroup: '{count} group tasks',
     botBrowserCoworkTitle: 'Co-Work',
-    // Mirror of the zh finalized set (owner ruling 2026-11-09).
+    // Mirror of the zh finalized set (2026-11-09 ruling + the 2026-11-11 bot
+    // picker ruling).
     botBrowserCoworkPlaceholder: 'Chat with your Twin, or hand them a task…',
+    botBrowserCoworkPlaceholderWorker: 'Assign your Worker Bot specific work directly…',
     botBrowserCoworkEmpty: 'So, where would you like to start today?',
     botBrowserCoworkEmptySub: 'Hand your Twin one sentence — the rest of the road is theirs to lay.',
-    botInternetNeedsTwin: 'Studio is a 1:1 space with your Twin bot. You have no Twin on this machine yet — create one in BotWorks first.',
+    botBrowserCoworkEmptySubWorker: 'Hand your Worker Bot one sentence — the rest of the road is theirs to lay.',
+    botInternetNeedsBot: 'You have no bots on this machine yet — create one in BotWorks first.',
     // Mirror of the zh context-menu set (purity pass #1, 2026-11-10); the
     // selected-variant key mirrors zh (pass #4, 2026-11-10) — the quote label
     // reuses coworkQuoteActionLabel in both locales.
@@ -4285,13 +4290,12 @@ const translations: Record<LanguageType, Record<string, string>> = {
     // Mirror of the zh locator key (purity pass #2, 2026-11-10); the preview
     // sender label for user rows reuses coworkOriginBadgeYou.
     botBrowserLocatorRail: 'Message locator',
-    botInternetGoBotHome: 'Go to BotWorks to create your Twin',
-    botInternetTwinSeatTitle: 'Choose the acting Twin',
-    botInternetTwinSeatHint: 'Appointing stays in sync with the My Bots Twin setting: the previous Twin returns to the worker bench and the chosen bot takes the seat immediately.',
-    botInternetTwinSeatAppoint: 'Appoint',
-    botInternetTwinSeatChip: 'Acting Twin chip (click to appoint)',
-    botInternetTwinSeatAppointed: '{name} is now the acting Twin.',
-    botInternetTwinSeatRollbackFailed: 'The previous Twin could not be restored — set it again in My Bots.',
+    botInternetGoBotWorks: 'Go to BotWorks to create a bot',
+    // Bot picker (2026-11-11 ruling): a pure selection of the working bot —
+    // the Twin appointment stays owned by the My Bots editor.
+    botInternetBotPickerTitle: 'Pick a bot to work for you',
+    botInternetBotPickerHint: 'This only decides which bot works next — your Twin stays unchanged.',
+    botInternetBotPickerChip: 'Pick a bot (click to switch)',
     botBrowserCoworkHistory: 'Session history',
     botBrowserCoworkNew: 'New session',
     coworkNoSessions: 'No tasks yet',
