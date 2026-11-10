@@ -460,6 +460,7 @@ man_base_data_pebble/
 !tests/botBrowserCoworkPanel.test.ts
 !tests/botPickerChip.test.tsx
 !tests/botPickerStatic.test.mjs
+!tests/studioFullTrustStatic.test.mjs
 !tests/botBrowserAbc0101IntegrationStatic.test.mjs
 !tests/botInternetComposerReuse.test.mjs
 !tests/pinnedSkillBackstop.test.mjs
