@@ -535,20 +535,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   const isLarge = size === 'large';
   const minHeight = isLarge ? (singleLine ? 42 : 60) : 24;
   const maxHeight = isLarge ? 336 : 200;
-  // Empty-state caret centering (purity pass #5 ①): an empty composer centers
-  // its single text row; typed content returns to top alignment. Measured
-  // basis (probe, 2026-11-11): the small box is one row (minHeight 24px) but
-  // its leading is `relaxed`, so the glyphs sat 1.3px high and the hint
-  // overlay — positioned against a wrapper inflated by the textarea's
-  // inline-block baseline gap — sat 3px low (a visible 4.3px caret/hint
+  // Empty-state caret centering (purity pass #5 ①, probe-measured): the
+  // small box is one row (minHeight 24px) but the textarea's inline-block
+  // baseline gap sat the caret 3px low (a visible 4.3px caret/hint
   // mismatch). Large branch: symmetric padding of (minHeight − line)/2
-  // replaces the asymmetric pt/pb, and rows drop to 1 so the empty box is
-  // truly one row tall; the hint overlay's `top` follows the same pad. Small
-  // branch: raising the empty row's line height to the box height centers
-  // the glyphs inside the line box, and `block` on the textarea removes the
-  // baseline gap so the wrapper (and the overlay's 50% anchor) equals the
-  // textarea box. Both textareas never change padding on focus, so the
-  // focused caret and the idle hint share one position.
   const isEmptyComposer = !value.trim();
   const emptyPadY = isLarge && isEmptyComposer ? (minHeight - LARGE_LINE_HEIGHT_PX) / 2 : null;
 
@@ -1135,12 +1125,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   //   (the JS clamp in applyTextareaHeight already enforces the height).
   const textareaClass = isLarge
     ? `w-full peer resize-none overflow-y-auto bg-transparent px-4 pt-2.5 pb-2 dark:text-claude-darkText text-claude-text placeholder:text-transparent dark:placeholder:text-transparent focus:outline-none text-[14px] leading-[24px] min-h-[${minHeight}px] max-h-[${maxHeight}px]`
-    : 'w-full peer resize-none overflow-y-auto bg-transparent dark:text-claude-darkText text-claude-text placeholder:text-transparent dark:placeholder:text-transparent focus:outline-none text-sm leading-relaxed min-h-[24px] max-h-[200px] block';
-  // `block` on the small textarea: a textarea is a replaced inline-block, and
-  // its baseline gap inflated the wrapper by ~6px below the box — the hint
-  // overlay's `top-1/2` anchored to that inflated wrapper and drifted 3px
-  // low. As a block the wrapper collapses to the textarea's own height, so
-  // the overlay's 50% anchor is the textarea box's 50% (pass #5 ①).
+    : 'w-full peer resize-none overflow-y-auto bg-transparent dark:text-claude-darkText text-claude-text placeholder:text-transparent dark:placeholder:text-transparent focus:outline-none text-sm leading-relaxed min-h-[24px] max-h-[200px]';
 
   // Claimed-command variant of the large textarea: glyphs transparent (the
   // backdrop layer paints them), caret keeps a visible accent color.
@@ -1550,56 +1535,25 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             anchorRef={composerCardRef}
           />
         )}
+        {attachments.length > 0 && (
+          // WeChat-style attachment strip (purity pass #2 ④): the strip stays
+          // in normal flow ABOVE the input row (never overlays it) and caps
+          // its own height with internal scrolling, so many attachments eat
+          // a bounded slice of the composer instead of unbounded rows.
+          <div className={`relative z-10 flex w-full max-h-24 flex-wrap gap-2 overflow-y-auto ${isLarge ? 'px-3 pt-3' : ''}`}>
+            {attachments.map((attachment) => (
+              <CoworkAttachmentPreview
+                key={attachment.path}
+                attachment={attachment}
+                removeDisabled={!attachmentAdmitted}
+                onRemove={handleRemoveAttachment}
+              />
+            ))}
+          </div>
+        )}
         {isLarge ? (
           <>
-            <div className="flex items-stretch">
-              {/* Two-column card (pass #5 ② redesign #2, owner 00:48): the
-                  LEFT rail stacks attachments (when present, capped with
-                  internal scroll) above the +/emoji buttons pinned to the
-                  rail's bottom — the stack's bottom edge hugs the buttons'
-                  top edge. The RIGHT column keeps the text area untouched
-                  (claim backdrop, textarea, hint overlay, empty-state
-                  centering pad) and sinks the config chips + send button
-                  into its bottom row. The rail keeps a constant width, so
-                  adding/removing attachments never re-wraps the text flow,
-                  and the bottom-docked card still grows upward. */}
-              <div className="mb-1 ml-3 mt-2.5 flex w-[68px] flex-shrink-0 flex-col items-center">
-                {attachments.length > 0 && (
-                  <div className="flex max-h-36 w-full flex-col gap-2 overflow-y-auto">
-                    {attachments.map((attachment) => (
-                      <CoworkAttachmentPreview
-                        key={attachment.path}
-                        attachment={attachment}
-                        removeDisabled={!attachmentAdmitted}
-                        onRemove={handleRemoveAttachment}
-                      />
-                    ))}
-                  </div>
-                )}
-                <div className="mt-auto flex items-center justify-center gap-1">
-                  <PlusMenuButton
-                    open={plusMenuOpen}
-                    showAttachment={showAttachmentButton}
-                    showCommands={commandsEnabled}
-                    buttonRef={plusButtonRef}
-                    menuRef={plusMenuRef}
-                    disabled={!attachmentAdmitted}
-                    onToggle={() => setPlusMenuOpen(!plusMenuOpen)}
-                    onAddAttachment={handlePlusMenuAddAttachment}
-                    onUseSkill={handlePlusMenuUseSkill}
-                    onUseCommand={handlePlusMenuUseCommand}
-                  />
-                  <EmojiMenuButton
-                    open={emojiPickerOpen}
-                    buttonRef={emojiButtonRef}
-                    disabled={emojiPickerDisabled}
-                    onToggle={() => setEmojiPickerOpen(!emojiPickerOpen)}
-                    onPick={handlePickEmoji}
-                  />
-                </div>
-              </div>
-              <div className="flex min-w-0 flex-1 flex-col">
-                <div className="relative min-w-0 flex-1">
+            <div className="relative">
               {/* Mirror-layer command token (DSH port): while a `/name ` claim
                   is live the textarea's glyphs turn transparent and this
                   backdrop paints the token in the command color plus the ghost
@@ -1654,10 +1608,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   the real ellipsis Chromium refuses to draw on a textarea
                   placeholder. Hidden while focused (caret/IME safety) or
                   while text is present; the claim backdrop can never be
-                  active at the same time (it requires non-empty text).
-                  Pass #5 ①: in the empty state its `top` follows the same
-                  centering pad as the textarea, so hint and caret share one
-                  row; with content the box returns to top alignment. */}
+                  active at the same time (it requires non-empty text). */}
               {!composerFocused && !value.trim() ? (
                 <div
                   aria-hidden
@@ -1668,63 +1619,79 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   {effectivePlaceholder}
                 </div>
               ) : null}
-                </div>
-                <div className="flex items-center justify-between px-4 pb-2 pt-1.5">
-                  {/* Model/effort + pinned-skill chips are session
-                      configuration, not message content, so they keep
-                      freezing while a turn streams. The '+' attachment door
-                      itself moved to the left rail's bottom (pass #5 ②
-                      redesign #2); it still follows the same steering gate
-                      via attachmentAdmitted. */}
-                  <fieldset
-                    className="flex items-center gap-2 relative border-0 p-0 m-0 min-w-0"
-                    disabled={disabled || isStreaming}
+            </div>
+            <div className="flex items-center justify-between px-4 pb-2 pt-1.5">
+              <div className="flex items-center gap-2 relative min-w-0">
+                <PlusMenuButton
+                  open={plusMenuOpen}
+                  showAttachment={showAttachmentButton}
+                  showCommands={commandsEnabled}
+                  buttonRef={plusButtonRef}
+                  menuRef={plusMenuRef}
+                  disabled={!attachmentAdmitted}
+                  onToggle={() => setPlusMenuOpen(!plusMenuOpen)}
+                  onAddAttachment={handlePlusMenuAddAttachment}
+                  onUseSkill={handlePlusMenuUseSkill}
+                  onUseCommand={handlePlusMenuUseCommand}
+                />
+                <EmojiMenuButton
+                  open={emojiPickerOpen}
+                  buttonRef={emojiButtonRef}
+                  disabled={emojiPickerDisabled}
+                  onToggle={() => setEmojiPickerOpen(!emojiPickerOpen)}
+                  onPick={handlePickEmoji}
+                />
+                {/* Model/effort + pinned-skill chips are session configuration,
+                    not message content, so they keep freezing while a turn
+                    streams. Only the '+' attachment door follows the steering
+                    gate above. */}
+                <fieldset
+                  className="flex items-center gap-2 relative border-0 p-0 m-0 min-w-0"
+                  disabled={disabled || isStreaming}
+                >
+                  {showModelSelector && (
+                    <ModelEffortPicker
+                      dropdownDirection="up"
+                      value={modelEffortValue ?? { modelId: null, providerKey: null, effort: null }}
+                      onChange={(value) => onModelEffortChange?.(value)}
+                      globalDefaultModel={configService.getConfig().model?.defaultModel ?? null}
+                    />
+                  )}
+                  <ActiveSkillBadge />
+                </fieldset>
+              </div>
+              <div className="flex items-center gap-2">
+                {contextUsage && (
+                  <ContextUsageRing
+                    usedTokens={contextUsage.usedTokens}
+                    contextWindow={contextUsage.contextWindow}
+                    isRealUsage={contextUsage.isRealUsage}
+                    categories={contextUsage.categories}
+                  />
+                )}
+                {/* Composer send/stop: neutral gray circle with dark-gray ink
+                    (owner preference 2026-10-23 — supersedes the old yellow
+                    fill + deep-orange #9A3412 "do not unify" note). */}
+                {showStopButton ? (
+                  <button
+                    type="button"
+                    onClick={handleStopClick}
+                    className="p-2 rounded-full bg-claude-surfaceHover hover:bg-claude-border text-claude-text transition-all shadow-subtle hover:shadow-card active:scale-95"
+                    aria-label={i18nService.t('stop')}
                   >
-                    {showModelSelector && (
-                      <ModelEffortPicker
-                        dropdownDirection="up"
-                        value={modelEffortValue ?? { modelId: null, providerKey: null, effort: null }}
-                        onChange={(value) => onModelEffortChange?.(value)}
-                        globalDefaultModel={configService.getConfig().model?.defaultModel ?? null}
-                      />
-                    )}
-                    <ActiveSkillBadge />
-                  </fieldset>
-                  <div className="flex items-center gap-2">
-                    {contextUsage && (
-                      <ContextUsageRing
-                        usedTokens={contextUsage.usedTokens}
-                        contextWindow={contextUsage.contextWindow}
-                        isRealUsage={contextUsage.isRealUsage}
-                        categories={contextUsage.categories}
-                      />
-                    )}
-                    {/* Composer send/stop: neutral gray circle with dark-gray
-                        ink (owner preference 2026-10-23 — supersedes the old
-                        yellow fill + deep-orange #9A3412 "do not unify"
-                        note). */}
-                    {showStopButton ? (
-                      <button
-                        type="button"
-                        onClick={handleStopClick}
-                        className="p-2 rounded-full bg-claude-surfaceHover hover:bg-claude-border text-claude-text transition-all shadow-subtle hover:shadow-card active:scale-95"
-                        aria-label={i18nService.t('stop')}
-                      >
-                        <StopIcon className="h-5 w-5" />
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => { void handleSubmit(); }}
-                        disabled={!canSubmit}
-                        className="p-2 rounded-full bg-claude-surfaceHover hover:bg-claude-border text-claude-text transition-all shadow-subtle hover:shadow-card active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-                        aria-label={isSteerSubmit ? i18nService.t('coworkSendSteer') : i18nService.t('sendMessage')}
-                      >
-                        <ArrowUpIcon className="h-5 w-5" />
-                      </button>
-                    )}
-                  </div>
-                </div>
+                    <StopIcon className="h-5 w-5" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => { void handleSubmit(); }}
+                    disabled={!canSubmit}
+                    className="p-2 rounded-full bg-claude-surfaceHover hover:bg-claude-border text-claude-text transition-all shadow-subtle hover:shadow-card active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                    aria-label={isSteerSubmit ? i18nService.t('coworkSendSteer') : i18nService.t('sendMessage')}
+                  >
+                    <ArrowUpIcon className="h-5 w-5" />
+                  </button>
+                )}
               </div>
             </div>
           </>
@@ -1749,24 +1716,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               onToggle={() => setEmojiPickerOpen(!emojiPickerOpen)}
               onPick={handlePickEmoji}
             />
-            {attachments.length > 0 && (
-              // Attachment column INSIDE the bubble, left of the text area
-              // (pass #5 ② redesign): the card row's items-end anchors the
-              // column to the bottom so it grows upward, the fixed w-16
-              // width keeps add/remove from re-wrapping the text flow, and
-              // the capped height scrolls internally. No attachments → the
-              // plain text composer returns.
-              <div className="flex max-h-36 w-16 flex-shrink-0 flex-col gap-2 overflow-y-auto">
-                {attachments.map((attachment) => (
-                  <CoworkAttachmentPreview
-                    key={attachment.path}
-                    attachment={attachment}
-                    removeDisabled={!attachmentAdmitted}
-                    onRemove={handleRemoveAttachment}
-                  />
-                ))}
-              </div>
-            )}
             {/* The shrinkable flex item is this wrapper (min-w-0): the
                 textarea itself fills it, so a narrow window compresses the
                 input instead of pushing the buttons out of the card. */}
@@ -1783,23 +1732,16 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 placeholder={effectivePlaceholder}
                 disabled={disabled || (isStreaming && steerDisabled)}
                 rows={1}
-                className={textareaClass}
-                // Pass #5 ①: in the empty state the row's line height rises to
-                // the box height, centering the glyphs (and the caret) inside
-                // the line box; typed content drops back to `leading-relaxed`
-                // top alignment.
+                className={`${textareaClass} block`}
                 style={isEmptyComposer ? { lineHeight: `${minHeight}px` } : undefined}
               />
               {/* Visible idle hint with the real ellipsis glyph (see the
-                  large-branch overlay note). Its line height follows the
-                  textarea's empty-state row height, so hint and caret render
-                  in the same box. */}
+                  large-branch overlay note). */}
               {!composerFocused && !value.trim() ? (
                 <div
                   aria-hidden
                   data-slot="composer-hint-overlay"
                   className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 truncate text-sm leading-relaxed dark:text-claude-darkTextSecondary text-claude-textSecondary"
-                  style={isEmptyComposer ? { lineHeight: `${minHeight}px` } : undefined}
                 >
                   {effectivePlaceholder}
                 </div>

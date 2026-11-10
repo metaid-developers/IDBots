@@ -98,18 +98,21 @@ test('④ the composer textarea adapts: shrink, single-line hint, capped scroll'
   assert.match(composerSource, /composerTextareaHeight\(contentHeight, minHeight, maxHeight\)/);
 });
 
-test('④ the large card is two-column: attachment rail + text column', () => {
-  // Pass #5 ② redesign #2 (owner 00:48): the large card splits into a LEFT
-  // rail (68px: attachment stack, capped with internal scroll, above the
-  // +/emoji buttons pinned to the rail bottom via mt-auto) and a RIGHT text
-  // column. The compact branch keeps its items-end row with the w-16
-  // column. The old in-card horizontal strip (pass #2) and the brief-lived
-  // external bar must not return.
-  assert.match(composerSource, /mb-1 ml-3 mt-2\.5 flex w-\[68px\] flex-shrink-0 flex-col items-center/);
-  assert.match(composerSource, /mt-auto flex items-center justify-center gap-1/);
-  assert.match(composerSource, /flex max-h-36 w-16 flex-shrink-0 flex-col gap-2 overflow-y-auto/);
-  assert.doesNotMatch(composerSource, /relative z-10 flex w-full max-h-24/);
-  assert.doesNotMatch(composerSource, /mb-2 flex w-full max-h-24/);
+test('④ attachments render as the original normal-flow strip (rail reverted)', () => {
+  // Owner ruling 2026-11-11 00:58: after four layout iterations (external
+  // bar → left column beside text → rail with pinned buttons) none matched
+  // his mental image, so the attachment strip returns to its ORIGINAL
+  // normal-flow spot above the input row with the pass #2 cap + internal
+  // scroll. The caret centering from this pass STAYS. The rail forms are
+  // pinned OUT so they cannot quietly regrow.
+  assert.match(composerSource, /relative z-10 flex w-full max-h-24 flex-wrap gap-2 overflow-y-auto/);
+  assert.doesNotMatch(composerSource, /composer-attachment-column/);
+  assert.doesNotMatch(composerSource, /w-\[68px\]/);
+  assert.doesNotMatch(composerSource, /flex items-stretch/);
+  // The empty-state caret centering survives the revert.
+  assert.match(composerSource, /const emptyPadY = isLarge && isEmptyComposer/);
+  assert.match(composerSource, /style=\{isEmptyComposer \? \{ lineHeight: `\$\{minHeight\}px` \} : undefined\}/);
+  assert.match(composerSource, /paddingTop: `\$\{emptyPadY\}px`/);
 });
 
 test('compat the shared composer surface contracts are unchanged', () => {

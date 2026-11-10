@@ -596,47 +596,22 @@ const lightboxSource = fs.readFileSync(
   'utf8',
 );
 
-test('the pending attachments render in the large left rail above the pinned buttons', () => {
-  // Pass #5 ② redesign #2 (owner 00:48, supersedes the side-by-side row):
-  // the large card is two columns. Source order inside the large branch:
-  // two-column container → left rail (68px) → rail's stack block → rail's
-  // pinned +/emoji button row → right text column → right bottom row. The
-  // compact branch keeps its w-16 column in the items-end row. One
-  // attachment block per branch.
+test('the pending attachments render as the original strip above the input row', () => {
+  // Owner ruling 2026-11-11 00:58: four rail layouts never matched his
+  // mental image, so the strip returns to its ORIGINAL normal-flow spot
+  // above the input row (pass #2 cap + internal scroll, one block per
+  // branch). The caret centering from pass #5 stays.
+  const stripIndex = composerSource.indexOf('relative z-10 flex w-full max-h-24 flex-wrap gap-2 overflow-y-auto');
   const cardIndex = composerSource.indexOf('ref={composerCardRef}');
-  const largeIndex = composerSource.indexOf('{isLarge ? (');
-  const railIndex = composerSource.indexOf('flex w-[68px] flex-shrink-0 flex-col items-center');
-  const stackIndex = composerSource.indexOf('flex max-h-36 w-full flex-col gap-2 overflow-y-auto');
-  const railButtonsIndex = composerSource.indexOf('mt-auto flex items-center justify-center gap-1');
-  const rightColIndex = composerSource.indexOf('flex min-w-0 flex-1 flex-col');
-  const firstCol = composerSource.indexOf('{attachments.length > 0 && (');
   const colCount = composerSource.split('{attachments.length > 0 && (').length - 1;
 
+  assert.ok(stripIndex >= 0, 'the restored strip must exist');
   assert.ok(cardIndex >= 0, 'the composer card ref must exist');
-  assert.ok(largeIndex >= 0, 'the large branch must exist');
-  assert.ok(railIndex >= 0, 'the left rail must exist');
-  assert.ok(stackIndex >= 0, 'the attachment stack must exist');
-  assert.ok(railButtonsIndex >= 0, 'the pinned rail button row must exist');
-  assert.ok(rightColIndex >= 0, 'the right text column must exist');
-  assert.ok(firstCol >= 0, 'the attachment block must still be rendered');
-  assert.equal(colCount, 2, 'both composer branches render an attachment block');
-  assert.ok(cardIndex < largeIndex, 'the large branch must render inside the card');
-  assert.ok(
-    largeIndex < railIndex && railIndex < stackIndex,
-    'the stack must live inside the left rail',
-  );
-  assert.ok(
-    stackIndex < railButtonsIndex,
-    'the rail buttons must render below the attachment stack (stack bottom hugs button top)',
-  );
-  assert.ok(
-    railIndex < rightColIndex,
-    'the right text column must render beside (after) the left rail',
-  );
-  assert.ok(
-    /flex max-h-36 w-16 flex-shrink-0 flex-col gap-2 overflow-y-auto/.test(composerSource),
-    'the compact branch keeps its capped w-16 column',
-  );
+  assert.equal(colCount, 1, 'the single original strip serves both branches');
+  assert.ok(stripIndex > cardIndex, 'the strip renders inside the card, above the input row');
+  assert.doesNotMatch(composerSource, /composer-attachment-column/);
+  assert.doesNotMatch(composerSource, /w-\[68px\]/);
+  assert.doesNotMatch(composerSource, /flex items-stretch/);
 });
 
 test('a composer thumbnail opens the picture in-app, and Escape closes it', () => {
