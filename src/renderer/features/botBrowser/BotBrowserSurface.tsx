@@ -16,6 +16,11 @@ import { themeService } from '../../services/theme';
 import { createBrowserEndpointShim, type BrowserEndpointShimResponse } from './browserEndpointShim';
 import { createIdbotsBrowserHostAdapter } from './idbotsBrowserHostAdapter';
 import { injectBrowserIframeBridge } from './browserIframeBridge';
+import {
+  createBrowserElementSelectionsBridge,
+  type BrowserElementSelectionsBridge,
+} from './browserElementSelectionsBridge';
+import { elementSelectionsStore } from './elementSelectionsStore';
 import { useBotBrowserCapture } from './useBotBrowserCapture';
 import type {
   BotBrowserConversationRequest,
@@ -139,6 +144,7 @@ export const BotBrowserSurface = forwardRef<BotBrowserSurfaceHandle, BotBrowserS
       onReady,
     });
     const endpointShimRef = useRef<ReturnType<typeof createBrowserEndpointShim> | null>(null);
+    const selectionsBridgeRef = useRef<BrowserElementSelectionsBridge | null>(null);
     const [srcDoc, setSrcDoc] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
 
@@ -198,6 +204,22 @@ export const BotBrowserSurface = forwardRef<BotBrowserSurfaceHandle, BotBrowserS
         openConversation: (request) => callbacksRef.current.onOpenConversation(request),
       });
       endpointShimRef.current = createBrowserEndpointShim(adapter);
+    }
+
+    if (!selectionsBridgeRef.current) {
+      // ABC element-picker bridge (v0.10.0): request/response envelopes plus
+      // element-selections-changed pushes. Inbound frames are only dispatched
+      // here after the listener's event.source check, matching ABC's own
+      // active-tab-frame-only acceptance on the way in.
+      selectionsBridgeRef.current = createBrowserElementSelectionsBridge({
+        postToFrame: (payload) => {
+          const target = iframeRef.current?.contentWindow;
+          if (!target) return false;
+          target.postMessage(payload, '*');
+          return true;
+        },
+        onSnapshot: (snapshot) => elementSelectionsStore.recordSnapshot(snapshot),
+      });
     }
 
     const postToIframe = useCallback((message: Record<string, unknown>): boolean => {
@@ -341,11 +363,28 @@ export const BotBrowserSurface = forwardRef<BotBrowserSurfaceHandle, BotBrowserS
       });
     }, [postThemeToIframe]);
 
+    // Publish the live read to the shared picker store so the Co-Work panel
+    // can capture marks at send time (elementSelectionsStore.captureForTurn).
+    // The read itself never switches panes or steals focus — it is a plain
+    // postMessage into the already-mounted Browser frame.
+    useEffect(() => {
+      return elementSelectionsStore.registerFetcher((tabId) => {
+        if (!readyRef.current) return Promise.resolve(null);
+        const bridge = selectionsBridgeRef.current;
+        return bridge ? bridge.getElementSelections(tabId) : Promise.resolve(null);
+      });
+    }, []);
+
     useEffect(() => {
       const handleMessage = (event: MessageEvent) => {
         if (event.source !== iframeRef.current?.contentWindow) return;
         const data = event.data as BrowserIframeMessage;
-        if (!data || data.source !== 'idbots-browser-iframe-bridge') return;
+        if (!data) return;
+        // ABC element-picker traffic (element-selections-changed pushes and
+        // the correlated :response envelopes) carries no idbots bridge source
+        // tag — it is consumed here before the source-tagged branches below.
+        if (selectionsBridgeRef.current?.handleMessage(data)) return;
+        if (data.source !== 'idbots-browser-iframe-bridge') return;
 
         if (data.type === 'browser-ready') {
           readyRef.current = true;
@@ -407,6 +446,7 @@ export const BotBrowserSurface = forwardRef<BotBrowserSurfaceHandle, BotBrowserS
 
     useEffect(() => {
       return () => {
+        selectionsBridgeRef.current?.dispose();
         for (const pending of pendingTabResponsesRef.current.values()) {
           window.clearTimeout(pending.timeout);
           pending.reject(new Error('Bot Browser surface was closed.'));
@@ -437,6 +477,26 @@ export const BotBrowserSurface = forwardRef<BotBrowserSurfaceHandle, BotBrowserS
       });
     }, [ensureSrcDoc, postTabCommand]);
 
+    const getElementSelections = useCallback(async (tabId?: number | string) => {
+      if (!readyRef.current) {
+        await ensureSrcDoc().catch(() => {});
+      }
+      try {
+        return await selectionsBridgeRef.current?.getElementSelections(tabId) ?? null;
+      } catch {
+        // Marks are best-effort context: any transport failure (timeout,
+        // closed frame) reads as "no marks", mirroring getTabInfo's null.
+        return null;
+      }
+    }, [ensureSrcDoc]);
+
+    const clearElementSelections = useCallback(async (tabId?: number | string) => {
+      if (!readyRef.current) {
+        await ensureSrcDoc().catch(() => {});
+      }
+      return selectionsBridgeRef.current?.clearElementSelections(tabId) ?? null;
+    }, [ensureSrcDoc]);
+
     useImperativeHandle(ref, () => ({
       async openUri(input: BotBrowserOpenUriInput): Promise<void> {
         if (!readyRef.current) {
@@ -466,7 +526,9 @@ export const BotBrowserSurface = forwardRef<BotBrowserSurfaceHandle, BotBrowserS
         pendingRefreshRuntimeRef.current = true;
         await ensureSrcDoc().catch(() => {});
       },
-    }), [controlTabs, ensureSrcDoc, postOpenUri, postToIframe]);
+      getElementSelections,
+      clearElementSelections,
+    }), [clearElementSelections, controlTabs, ensureSrcDoc, getElementSelections, postOpenUri, postToIframe]);
 
     const showLoading = loading || !srcDoc;
 

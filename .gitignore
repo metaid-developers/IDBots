@@ -509,6 +509,10 @@ man_base_data_pebble/
 !tests/browserNavButtonSync.test.ts
 !tests/botBrowserSurfaceStatic.test.mjs
 !tests/browserIframeBridge.test.mjs
+!tests/browserElementSelectionsBridge.test.ts
+!tests/elementSelectionsStore.test.ts
+!tests/markedElementsPrompt.test.ts
+!tests/botBrowserElementSelectionsWiringStatic.test.mjs
 !tests/sqliteStoreFreshMigrations.test.mjs
 !tests/userIdentityStore.test.mjs
 !tests/userIdentityService.test.mjs

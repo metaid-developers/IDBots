@@ -44,7 +44,7 @@ test('surface does not post open-uri before browser-ready', () => {
 test('surface does not post refresh-runtime before browser-ready', () => {
   const refreshRuntimeSection = getSection(
     'async refreshRuntime(): Promise<void> {',
-    '    }), [controlTabs, ensureSrcDoc, postOpenUri, postToIframe]);',
+    '    }), [clearElementSelections, controlTabs, ensureSrcDoc, getElementSelections, postOpenUri, postToIframe]);',
   );
 
   assert.match(refreshRuntimeSection, /if \(!readyRef\.current\) \{/);
