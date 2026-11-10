@@ -485,6 +485,78 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
     }
   };
 
+  // Double-click on blank space collapses every expanded folder at once:
+  // all bot groups plus the Autonomous and Follow-Up folds. Each piece is
+  // persisted through its own existing single-toggle write (same try/catch
+  // posture: a localStorage failure only loses the memory, the collapse
+  // still applies for this session). This is an explicit collapse, not a
+  // toggle, so a stray second double-click cannot re-open anything.
+  //
+  // Two triggers answer the owner's red-box spot (2026-11-10): the icon
+  // rail's blank stretches — a sibling component with no list state, so
+  // its ask rides the `idbots:collapse-session-folders` window event —
+  // and the list viewport's own blank zones. In the viewport, "blank" is
+  // decided by WHERE the double-click LANDED: the guard rejects actual
+  // content (interactive elements and text/media nodes — titles, avatars,
+  // timestamps), so a row's own empty box, the gaps between sections, and
+  // the space under the last row all count. A double-click on any title,
+  // avatar, or button keeps its own single-click behavior; the row's click
+  // still fires first (two clicks = two selects) — only the folder collapse
+  // rides on top.
+  const collapseAllFolders = () => {
+    if (!botGrouped) return;
+    const next = new Set(collapsedGroupKeys);
+    botGrouped.groups.forEach((group) => next.add(group.key));
+    setCollapsedGroupKeys(next);
+    try {
+      saveCollapsedSessionGroups((storageKey, value) => window.localStorage.setItem(storageKey, value), groupFace, next);
+    } catch {
+      // localStorage unavailable; the groups still collapse for this session.
+    }
+    setIsAutoTasksExpanded(false);
+    try {
+      window.localStorage.setItem(
+        AUTO_TASKS_EXPANDED_STORAGE_KEY,
+        serializeAutoTasksExpandedPreference(false),
+      );
+    } catch {
+      // localStorage unavailable; the fold still collapses for this session.
+    }
+    setIsFollowUpExpanded(false);
+    try {
+      window.localStorage.setItem(
+        FOLLOW_UP_EXPANDED_STORAGE_KEY,
+        serializeFollowUpExpandedPreference(false),
+      );
+    } catch {
+      // localStorage unavailable; the section still collapses for this session.
+    }
+  };
+
+  const handleViewportDoubleClick = (event: MouseEvent) => {
+    const target = event.target as HTMLElement | null;
+    if (!target || !botGrouped) return;
+    if (target.closest('button, a, [role="button"], input, textarea, select, [contenteditable="true"]')) return;
+    if (target.closest('img, svg, span, time, p, h1, h2, h3, h4, h5, h6, label')) return;
+    collapseAllFolders();
+  };
+
+  // The dblclick listener rides on the VIEWPORT — the list's scroll
+  // container, this root's parent element — one level above the rows, so
+  // every blank zone in the list is in one handler's reach. The rail event
+  // rides on window. Both re-attach whenever the collapse inputs change so
+  // the handlers never close over a stale set.
+  useEffect(() => {
+    if (!botGrouped) return;
+    const viewport = rootRef.current?.parentElement;
+    if (viewport) viewport.addEventListener('dblclick', handleViewportDoubleClick);
+    window.addEventListener('idbots:collapse-session-folders', collapseAllFolders as EventListener);
+    return () => {
+      if (viewport) viewport.removeEventListener('dblclick', handleViewportDoubleClick);
+      window.removeEventListener('idbots:collapse-session-folders', collapseAllFolders as EventListener);
+    };
+  }, [botGrouped, collapsedGroupKeys, groupFace]);
+
   // The row takes the session id for every action and one shared clock/language,
   // so that two consecutive renders of an unchanged row produce referentially
   // equal props and the memo on CoworkSessionItem bails out.
