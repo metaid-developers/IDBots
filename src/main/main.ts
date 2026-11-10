@@ -176,6 +176,7 @@ import {
   resumeUserIdentitySetup,
   retryUserIdentitySubsidy,
   updateUserIdentityName,
+  updateUserIdentityAvatar,
 } from './services/userIdentityService';
 import { signOwnerBinding } from './services/ownerBindingService';
 import { listChainBackupStates, runChainBackup } from './services/chainBackupService';
@@ -17017,6 +17018,31 @@ if (!gotTheLock) {
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
       console.error('[UserIdentity] userIdentity:updateName failed:', errMsg);
+      return { success: false, error: errMsg };
+    }
+  });
+
+  // Set/clear the user's avatar. Reuses the create flow's avatar chain logic:
+  // stage the (validated) data URL on the record, republish /info/avatar via
+  // the shared sync, then drop stale human-actor state in live Browser
+  // bridges and tell the renderers the identity changed. Display-only change:
+  // no relay credential closeout needed (relay keys are wallet-derived, same
+  // reason updateName skips it).
+  registerIpcHandler('userIdentity:updateAvatar', async (_event, input: { avatar: string | null }) => {
+    try {
+      const result = await updateUserIdentityAvatar(getUserIdentityStore(), input ?? { avatar: null });
+      if (!result.success) {
+        return { success: false, error: result.error };
+      }
+      onHumanIdentityChanged();
+      return {
+        success: true,
+        identity: toPublicUserIdentity(result.identity ?? null),
+        chainSync: result.chainSync,
+      };
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      console.error('[UserIdentity] userIdentity:updateAvatar failed:', errMsg);
       return { success: false, error: errMsg };
     }
   });

@@ -1320,6 +1320,8 @@ contextBridge.exposeInMainWorld('electron', {
     importFromMnemonic: (input: { mnemonic: string; path?: string }) =>
       ipcRenderer.invoke('userIdentity:import', input),
     updateName: (input: { name: string }) => ipcRenderer.invoke('userIdentity:updateName', input),
+    updateAvatar: (input: { avatar: string | null }) =>
+      ipcRenderer.invoke('userIdentity:updateAvatar', input),
     logout: () => ipcRenderer.invoke('userIdentity:logout'),
     revealMnemonic: () => ipcRenderer.invoke('userIdentity:revealMnemonic'),
     retrySubsidy: () => ipcRenderer.invoke('userIdentity:retrySubsidy'),
