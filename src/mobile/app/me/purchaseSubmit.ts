@@ -41,11 +41,11 @@ export interface MePurchaseOrderResponse {
 }
 
 export interface MeSubscriptionOrderResponse extends MePurchaseOrderResponse {
-  subscriptionOrder?: { orderId: string };
+  subscriptionOrder?: { orderId: string; payAmount?: number };
 }
 
 export interface MeTopupOrderResponse extends MePurchaseOrderResponse {
-  submission?: { order?: { orderId: string } };
+  submission?: { order?: { orderId: string; payAmount?: number } };
 }
 
 /** The two IPC methods the screen drives (structurally satisfied by window.electron.mePoints). */
@@ -57,6 +57,12 @@ export interface MePurchaseSubmitApi {
 export interface MePurchaseSubmitResult {
   ok: boolean;
   orderId: string;
+  /**
+   * The server-priced amount (CNY) when the order response carries one — the
+   * screen prefers it over the locally computed tag so the displayed amount
+   * can never drift from the charged amount.
+   */
+  payAmount?: number;
   error?: string;
   errorCode?: string;
 }
@@ -103,11 +109,23 @@ export async function submitMePurchaseOrder(
   if (request.kind === 'subscribe') {
     const res = await api.submitSubscriptionOrder(request.input);
     return res.success
-      ? { ok: true, orderId: res.subscriptionOrder?.orderId ?? '' }
+      ? {
+          ok: true,
+          orderId: res.subscriptionOrder?.orderId ?? '',
+          ...(typeof res.subscriptionOrder?.payAmount === 'number' && Number.isFinite(res.subscriptionOrder.payAmount)
+            ? { payAmount: res.subscriptionOrder.payAmount }
+            : {}),
+        }
       : { ok: false, orderId: '', error: res.error, errorCode: res.errorCode };
   }
   const res = await api.submitTopupOrder(request.input);
   return res.success
-    ? { ok: true, orderId: res.submission?.order?.orderId ?? '' }
+    ? {
+        ok: true,
+        orderId: res.submission?.order?.orderId ?? '',
+        ...(typeof res.submission?.order?.payAmount === 'number' && Number.isFinite(res.submission.order.payAmount)
+          ? { payAmount: res.submission.order.payAmount }
+          : {}),
+      }
     : { ok: false, orderId: '', error: res.error, errorCode: res.errorCode };
 }

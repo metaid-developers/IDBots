@@ -213,21 +213,30 @@ export function meCurrentPlan(
 
 /**
  * Mobile/cloud price for the chosen period. `priceCny` is the mobile/cloud
- * list price (the desktop card renders `desktopPriceCny`); quarterly applies
- * the server discount percentage, annual uses the server annual price. All
- * inputs are live plan fields — nothing is hardcoded here.
+ * list price (the desktop card renders `desktopPriceCny`); both channels bill
+ * the same uniform monthly-rate model (owner decision 2026-11-07): quarter
+ * bills 3 months at 90% of the monthly price, year bills 12 months at 80%,
+ * and the one-payment total is rounded once to 2dp. This MUST stay in sync
+ * with the server's PriceSubscriptionOrderCny and the desktop tag
+ * (src/renderer/components/me/mePayment.ts mePeriodPricing) — the displayed
+ * amount must equal the charged amount. plan.quarterlyDiscountPct /
+ * plan.annualPriceCny are retired for pricing and no longer read here; after
+ * the order is created the screen prefers the server-quoted payAmount.
  */
+export const ME_QUARTER_DISCOUNT_PCT = 90;
+export const ME_YEAR_DISCOUNT_PCT = 80;
+
+const round2 = (value: number): number => Math.round(value * 100) / 100;
+
 export function mePeriodPrice(plan: MobileMePlan | null, period: MePeriod): number | null {
   if (!plan) return null;
-  const monthly = typeof plan.priceCny === 'number' ? plan.priceCny : null;
+  const monthly = typeof plan.priceCny === 'number' && plan.priceCny > 0 ? plan.priceCny : null;
   if (monthly == null) return null;
   if (period === 'month') return monthly;
   if (period === 'quarter') {
-    const pct = plan.quarterlyDiscountPct;
-    const factor = typeof pct === 'number' && pct > 0 && pct < 100 ? pct / 100 : 1;
-    return Math.round(monthly * 3 * factor);
+    return round2(monthly * 3 * ME_QUARTER_DISCOUNT_PCT / 100);
   }
-  return typeof plan.annualPriceCny === 'number' ? plan.annualPriceCny : Math.round(monthly * 12);
+  return round2(monthly * 12 * ME_YEAR_DISCOUNT_PCT / 100);
 }
 
 /** Period length in days (server periodDays × period multiplier). */
