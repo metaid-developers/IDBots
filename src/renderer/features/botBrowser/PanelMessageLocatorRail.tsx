@@ -52,7 +52,6 @@ const PanelMessageLocatorRail: React.FC<PanelMessageLocatorRailProps> = ({
   ariaLabel,
 }) => {
   const railRef = useRef<HTMLDivElement>(null);
-  const frameRef = useRef<number | null>(null);
   // Scroll content height the current ticks were built for; -1 invalidates.
   const ticksScrollHeightRef = useRef(-1);
   // Row tops in scroll-space px, keyed by message id (click-jump targets).
@@ -104,19 +103,20 @@ const PanelMessageLocatorRail: React.FC<PanelMessageLocatorRailProps> = ({
     setTicks(buildPanelLocatorTicks(boxes, scrollHeight));
   }, [containerRef]);
 
+  // DEBUG(pass5) root cause: the rAF callback never fired in this Electron
+  // window (probe: sync measure ran and detected overflow instantly, while
+  // the rAF-scheduled measure never executed across fresh code and reloads),
+  // so the rail stayed hidden forever. Measure synchronously — cheap at this
+  // scale (the DOM row walk only runs when the content height changed).
   const scheduleMeasure = useCallback(() => {
-    if (frameRef.current !== null) return;
-    frameRef.current = requestAnimationFrame(() => {
-      frameRef.current = null;
-      measure();
-    });
+    measure();
   }, [measure]);
 
   // New rows (messages added/removed/edited) always rebuild the tick map.
   useLayoutEffect(() => {
     ticksScrollHeightRef.current = -1;
-    scheduleMeasure();
-  }, [rows, scheduleMeasure]);
+    measure();
+  }, [rows, measure, scheduleMeasure]);
 
   // Container resize (panel narrow/wide, streaming growth of siblings).
   useEffect(() => {
@@ -140,10 +140,6 @@ const PanelMessageLocatorRail: React.FC<PanelMessageLocatorRailProps> = ({
     container.addEventListener('scroll', scheduleMeasure, { passive: true });
     return () => container.removeEventListener('scroll', scheduleMeasure);
   }, [containerRef, scheduleMeasure]);
-
-  useEffect(() => () => {
-    if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
-  }, []);
 
   /** Drag mapping: thumb center follows the pointer, container scrolls. */
   const scrollToHandle = useCallback((clientY: number) => {
@@ -223,7 +219,7 @@ const PanelMessageLocatorRail: React.FC<PanelMessageLocatorRailProps> = ({
 
   if (!overflowing) return null;
 
-  const hoverTick = hover ? ticks[hover.index] : null;
+    const hoverTick = hover ? ticks[hover.index] : null;
   const hoverRow = hoverTick ? rowById.get(hoverTick.id) ?? null : null;
   const hoverLines = hoverRow ? panelLocatorPreviewLines(hoverRow.content, 2) : [];
 
