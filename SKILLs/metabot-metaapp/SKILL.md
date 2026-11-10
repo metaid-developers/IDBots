@@ -210,3 +210,7 @@ node "$SKILLS_ROOT/metabot-metaapp/scripts/index.js" \
 - 最终 payload 已展示给用户确认
 - 更新/删除/分享时，优先携带 `firstPinId`，避免公开分享 pin 漂到最新 write pin
 - 发布后 handoff 给用户的四件套：URI（`metaapp://<viewPinId>`）、打开（内置浏览器 `bot_browser_open_uri`）、管理（My Apps）、分享（`openagentinternet.org` web2 链接，仅用于发给别人）
+
+## Pin reference format (chain-write preflight)
+
+Every pin reference you put into a chain-write payload — a `pin://`, `metafile://`, or `metaapp://` URI, or a JSON field named like a pin (`pinId`, `coursePinId`, `rootPinId`, …) — must be 64 lowercase hex characters followed by `i` and the output index; pins minted by this host always end in `i0` (e.g. `1e288800fdec1a5911a169e0cb499a3bc63e6083e5f035f5d552f73c601f2cf2i0`), while indexer-read foreign pins may end in `i1`, `i2`, … — copy that suffix verbatim. A 64-hex value WITHOUT the `i` suffix (e.g. `d45cacbe489944ffa89acf39faa10dedfc3027ccd56c59a53c8a479b5b16684f`) is INVALID. Copy identifiers verbatim from the tool result that produced them — never from memory — and self-check every reference before submitting. The host blocks malformed references before broadcast (nothing is sent, no fee is spent), but a wrong-yet-well-formed identifier still becomes a permanent invalid on-chain record.

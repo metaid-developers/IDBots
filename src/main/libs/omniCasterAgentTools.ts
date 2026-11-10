@@ -3,6 +3,7 @@ import path from 'path';
 import { z } from 'zod';
 import type { ChainWriteCreatePin } from './postBuzzAgentTools';
 import { chainWriteFailureDetail, feeAssistReceiptLines } from './chainFeeAssistReceipt';
+import { PIN_REF_TOOL_RULE } from './chainPinRefGuard';
 
 /** Minimal shape of the claude-agent-sdk tool() helper we depend on. */
 type SdkToolFactory = (
@@ -118,6 +119,7 @@ export function buildOmniCasterAgentTools(deps: {
       'Use for protocol writes such as paylike, paycomment, simplenote, metaapp, /file, or any other /protocols/* path. Provide exactly one of payload (inline JSON/text) or payload_file (absolute local path; bytes are read and sent base64, with content_type inferred from the extension when omitted). JSON content types are parsed and re-serialized; for /protocols/simplegroupchat the payload content field is group-encrypted automatically (requires a non-empty groupId).',
       'Do NOT use for simplebuzz posts (use post_buzz), metafile:// file uploads (use upload_file), or group chat messaging (use group_chat).',
       'Writes permanently on-chain and costs transaction fees; omit encoding to auto-detect base64 for binary content types. A payload_file outside the session workspace requires the owner\'s explicit confirmation before it is published. Returns txid, pinId, cost in sats, and a pin:// view link.',
+      PIN_REF_TOOL_RULE,
     ].join(' '),
     {
       path: z.string().min(1).describe('MetaID protocol path, e.g. /protocols/paylike'),

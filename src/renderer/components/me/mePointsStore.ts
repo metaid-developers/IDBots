@@ -37,8 +37,13 @@ export function formatMe(me: number): string {
 /** Signed ledger amount in ME (keeps the sign; negative entries are spends). */
 export function formatMeSigned(milli: number | undefined | null): string {
   const value = typeof milli === 'number' && Number.isFinite(milli) ? milli : 0;
-  const me = Math.trunc(value / 1000);
-  const abs = new Intl.NumberFormat().format(Math.abs(me));
+  // Sub-1-ME metering burns are common (a single sponsored write costs a few
+  // milliME): whole-ME truncation printed every one of them as "-0". Below
+  // 1 ME keep up to three decimals (milliME resolution, mirroring the
+  // per-order formatter); above, two decimals keep milli-ME visible.
+  const decimals = Math.abs(value) >= 1000 ? 2 : 3;
+  const me = value / 1000;
+  const abs = new Intl.NumberFormat(undefined, { maximumFractionDigits: decimals }).format(Math.abs(me));
   return `${me < 0 ? '-' : '+'}${abs}`;
 }
 

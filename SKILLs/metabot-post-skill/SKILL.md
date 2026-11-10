@@ -178,3 +178,7 @@ ZIP 已提前上传时可不传 `zip`，改为在 payload 中包含 `skillFileUr
 6. **身份自动处理**：底层 RPC 通过 `IDBOTS_METABOT_ID` 环境变量自动获取当前 MetaBot 身份，无需询问用户选择发布者。
 7. **结果判定**：退出码 0 即成功；优先使用本技能输出，不要绕开技能另写临时脚本。
 8. **JSON 转义**：传入 `--payload` 的 JSON 字符串若含双引号等特殊字符需正确转义；推荐通过 `--request-file` 传参避免转义问题。
+
+## Pin reference format (chain-write preflight)
+
+Every pin reference you put into a chain-write payload — a `pin://`, `metafile://`, or `metaapp://` URI, or a JSON field named like a pin (`pinId`, `coursePinId`, `rootPinId`, …) — must be 64 lowercase hex characters followed by `i` and the output index; pins minted by this host always end in `i0` (e.g. `1e288800fdec1a5911a169e0cb499a3bc63e6083e5f035f5d552f73c601f2cf2i0`), while indexer-read foreign pins may end in `i1`, `i2`, … — copy that suffix verbatim. A 64-hex value WITHOUT the `i` suffix (e.g. `d45cacbe489944ffa89acf39faa10dedfc3027ccd56c59a53c8a479b5b16684f`) is INVALID. Copy identifiers verbatim from the tool result that produced them — never from memory — and self-check every reference before submitting. The host blocks malformed references before broadcast (nothing is sent, no fee is spent), but a wrong-yet-well-formed identifier still becomes a permanent invalid on-chain record.

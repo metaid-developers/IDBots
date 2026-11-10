@@ -684,3 +684,129 @@ export async function updateUserIdentityName(
     profileSource: 'local',
   };
 }
+
+/**
+ * Set/clear the user's avatar and publish it as /info/avatar (Bot Info
+ * semantics: latest pin wins — the same protocol the MetaBot edit sync uses).
+ *
+ * Set path (image data URL): mirrors the create flow's avatar handling — the
+ * new avatar is staged on the record FIRST with avatar_pin_id cleared, then
+ * the shared chain sync republishes every /info pin still missing (the
+ * cleared avatar_pin_id is what makes the new avatar a sync candidate). A
+ * failed pin leaves the avatar locally staged with sync_state failed/partial
+ * so the existing Retry-chain-sync affordance repushes it: local state may
+ * lead the chain, and the chain catches up idempotently — same retry model
+ * as create. Returns success:true with the chainSync result so the UI can
+ * show the avatar immediately and surface sync failures non-blockingly.
+ *
+ * Clear path (null): wipes the local avatar, and — only when an avatar pin
+ * was previously recorded — publishes the empty /info/avatar pin (text/plain,
+ * empty payload; the Bot Info "clear" convention, identical to
+ * buildEditAvatarSyncStep) so a later mnemonic import does not resurrect the
+ * old on-chain avatar. The clear itself never blocks on chain/subsidy state.
+ */
+export async function updateUserIdentityAvatar(
+  userStore: UserIdentityStore,
+  input: { avatar: string | null },
+  deps: UserIdentityServiceDeps = {},
+): Promise<UserIdentityResult> {
+  const identity = userStore.get();
+  if (!identity) {
+    return { success: false, error: 'USER_IDENTITY_MISSING' };
+  }
+  const avatar = typeof input?.avatar === 'string' ? input.avatar.trim() : '';
+
+  // ── Clear path ──
+  if (!avatar) {
+    const hadPin = Boolean(identity.avatar_pin_id);
+    userStore.update({ avatar: null, avatar_pin_id: null });
+    if (!hadPin) {
+      // Nothing pinned yet: the clear is purely local, no chain write.
+      return {
+        success: true,
+        identity: userStore.get() ?? identity,
+        profileSource: 'local',
+      };
+    }
+    const createPin = deps.createPin ?? createPinForIdentity;
+    try {
+      const result = await createPin({
+        mnemonic: identity.mnemonic,
+        path: identity.path,
+        metaidData: {
+          operation: 'create',
+          path: '/info/avatar',
+          contentType: 'text/plain',
+          payload: '',
+        },
+        options: { feeRate: getGlobalFeeRate('mvc') },
+      });
+      if (!result.txids[0]) {
+        return {
+          success: true,
+          identity: userStore.get() ?? identity,
+          chainSync: {
+            success: false,
+            txids: [],
+            failedSteps: ['avatar'],
+            error: 'avatar clear pin failed: no txid',
+          },
+          profileSource: 'local',
+        };
+      }
+      const pinId = result.pinId ?? `${result.txids[0]}i0`;
+      userStore.update({ avatar_pin_id: pinId });
+      return {
+        success: true,
+        identity: userStore.get() ?? identity,
+        chainSync: { success: true, txids: result.txids, avatarPinId: pinId, failedSteps: [] },
+        profileSource: 'local',
+      };
+    } catch (error) {
+      // Local clear stands; the stale on-chain avatar stays pinned and the
+      // recorded avatar_pin_id keeps pointing at it (honest bookkeeping: a
+      // later import would restore the old avatar until the clear pin lands).
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        success: true,
+        identity: userStore.get() ?? identity,
+        chainSync: { success: false, txids: [], failedSteps: ['avatar'], error: message },
+        profileSource: 'local',
+      };
+    }
+  }
+
+  // ── Set path ──
+  if (!parseDataUrlAvatar(avatar)) {
+    return { success: false, error: 'INVALID_AVATAR' };
+  }
+  if (avatar === identity.avatar && identity.avatar_pin_id) {
+    // Same avatar, already pinned: no-op.
+    return { success: true, identity, profileSource: 'local' };
+  }
+  // Publishing a pin needs gas — same gates as updateUserIdentityName.
+  if (
+    identity.subsidy_state === 'failed' ||
+    (!identity.subsidy_state && !identity.chat_public_key_pin_id)
+  ) {
+    return { success: false, error: 'SUBSIDY_NOT_CLAIMED' };
+  }
+  if (identity.subsidy_state === 'pending') {
+    const subsidy = await claimUserIdentitySubsidy(userStore, identity, deps);
+    if (!subsidy.success) {
+      return { success: false, error: 'SUBSIDY_NOT_CLAIMED' };
+    }
+  }
+
+  // Stage the new avatar and drop the stale pin so the shared sync treats
+  // /info/avatar as missing and republishes it (plus any other missing base
+  // pins, exactly like the create flow's post-insert sync).
+  userStore.update({ avatar, avatar_pin_id: null });
+  const chainSync = await syncUserIdentityToChain(userStore, { includeProfileSteps: true }, deps);
+  return {
+    success: true,
+    identity: userStore.get() ?? identity,
+    chainSync,
+    profileSource: 'local',
+  };
+}

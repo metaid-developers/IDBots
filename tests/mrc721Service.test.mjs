@@ -433,6 +433,34 @@ test('createMrc721Mint auto-generates a non-reserved item path', async () => {
   assert.equal(calls.length, 1);
 });
 
+test('createMrc721Mint preserves the mint receipt when the item_desc broadcast fails (no duplicate re-mint)', async () => {
+  const calls = [];
+  const MINT_PINID = `${'cd'.repeat(32)}i0`;
+  const createPin = async (metabotId, metaidData, options) => {
+    calls.push({ metabotId, metaidData, options });
+    if (calls.length === 1) {
+      return { pinId: MINT_PINID, txids: ['mint-tx1'], totalCost: 500, feeAssist: undefined };
+    }
+    throw new Error('mempool rejected the item_desc pin');
+  };
+  await assert.rejects(
+    () => createMrc721Mint(
+      { createPin },
+      { metabotId: 7, collectionName: 'pixel-cats', itemPath: 'nft-03', name: 'Cat #3', settleDelayMs: 0 },
+    ),
+    (error) => {
+      assert.match(error.message, /MINT SUCCEEDED/);
+      assert.match(error.message, /Do NOT re-run mrc721_mint/, 'the retry must not re-mint a duplicate item');
+      assert.match(error.message, /mrc721_item_desc_batch/, 'the guidance names the backfill tool');
+      assert.match(error.message, new RegExp(`\\(mintPinId: ${MINT_PINID}, mintTxid: mint-tx1\\)`), 'machine-readable mint receipt suffix');
+      assert.match(error.message, /mempool rejected the item_desc pin/, 'the original failure reason rides along');
+      return true;
+    },
+  );
+  assert.equal(calls.length, 2, 'the mint pin went out first, then the failing item_desc pin');
+  assert.equal(calls[0].metaidData.path, '/nft/mrc721/pixel-cats/nft-03');
+});
+
 // ---------------------------------------------------------------------------
 // Transfer orchestration (R3)
 // ---------------------------------------------------------------------------

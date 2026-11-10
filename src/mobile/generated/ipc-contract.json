@@ -3444,6 +3444,14 @@
       "args": []
     },
     {
+      "path": "userIdentity.updateAvatar",
+      "kind": "invoke",
+      "channel": "userIdentity:updateAvatar",
+      "args": [
+        "input"
+      ]
+    },
+    {
       "path": "userIdentity.updateName",
       "kind": "invoke",
       "channel": "userIdentity:updateName",

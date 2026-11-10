@@ -23,6 +23,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import { coworkService } from '../../services/cowork';
+import { refreshUserProfileIdentity } from '../../features/userProfile/userProfileStore';
 import MnemonicWordGrid from './MnemonicWordGrid';
 import UserBackupMnemonicModal from './UserBackupMnemonicModal';
 import ChainBackupRestorePrompt from './ChainBackupRestorePrompt';
@@ -187,6 +188,11 @@ const UserSettings: React.FC = () => {
   const [nameDraft, setNameDraft] = useState('');
   const [nameSaving, setNameSaving] = useState(false);
   const [nameError, setNameError] = useState('');
+  // Avatar update on the existing identity: inline picker under the identity
+  // card avatar; picking a file publishes immediately (no draft submit step).
+  const [avatarEditing, setAvatarEditing] = useState(false);
+  const [avatarSaving, setAvatarSaving] = useState(false);
+  const [avatarError, setAvatarError] = useState('');
   const [backupModalOpen, setBackupModalOpen] = useState(false);
 
   // Logout / switch account — the same confirm modal with different copy and a
@@ -410,6 +416,43 @@ const UserSettings: React.FC = () => {
       setNameError(resolveErrorMessage(error?.message));
     } finally {
       setNameSaving(false);
+    }
+  };
+
+  // Replace/clear the avatar of the existing identity. `dataUrl === ''` is the
+  // AvatarPicker clear affordance → maps to avatar:null on the IPC. Success
+  // updates the local identity AND invalidates the user-center module-level
+  // identity cache (refreshUserProfileIdentity) so the profile card updates
+  // without reopening. A failed chain sync is non-blocking: the staged avatar
+  // shows immediately and the sync warning + Retry button cover the catch-up.
+  const handleAvatarChange = async (dataUrl: string) => {
+    if (avatarSaving) return;
+    setAvatarSaving(true);
+    setAvatarError('');
+    try {
+      const result = await window.electron.userIdentity.updateAvatar({
+        avatar: dataUrl === '' ? null : dataUrl,
+      });
+      if (!result.success || !result.identity) {
+        setAvatarError(resolveErrorMessage(result.error));
+        return;
+      }
+      setIdentity(result.identity);
+      void refreshUserProfileIdentity();
+      if (result.chainSync && !result.chainSync.success) {
+        showToast(i18nService.t('userSettingsAvatarSyncFailed'));
+      } else {
+        showToast(i18nService.t('userSettingsAvatarSaved'));
+      }
+      // Collapse the picker after a clear (nothing left to preview); keep it
+      // open after a replace so the freshly staged avatar is visible.
+      if (dataUrl === '') {
+        setAvatarEditing(false);
+      }
+    } catch (error: any) {
+      setAvatarError(resolveErrorMessage(error?.message));
+    } finally {
+      setAvatarSaving(false);
     }
   };
 
@@ -1023,14 +1066,30 @@ const UserSettings: React.FC = () => {
 
         {/* Identity card with editable name */}
         <div className="flex items-start gap-4">
-          <div className="w-16 h-16 rounded-full dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border overflow-hidden flex-shrink-0 flex items-center justify-center">
-            {avatarUrl ? (
-              <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
-            ) : (
-              <span className="text-xl font-semibold dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                {nameInitial}
-              </span>
-            )}
+          <div className="flex flex-col items-center gap-1.5 flex-shrink-0">
+            <div className="w-16 h-16 rounded-full dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border overflow-hidden flex items-center justify-center">
+              {avatarUrl ? (
+                <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
+              ) : (
+                <span className="text-xl font-semibold dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  {nameInitial}
+                </span>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setAvatarEditing((v) => !v);
+                setAvatarError('');
+              }}
+              disabled={avatarSaving}
+              aria-expanded={avatarEditing}
+              className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-accent dark:hover:text-claude-accent hover:underline disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {avatarEditing
+                ? i18nService.t('userSettingsAvatarChangeClose')
+                : i18nService.t('userSettingsAvatarChange')}
+            </button>
           </div>
           <div className="flex-1 min-w-0 space-y-1.5">
             <label className={labelClass}>
@@ -1064,6 +1123,29 @@ const UserSettings: React.FC = () => {
             )}
           </div>
         </div>
+
+        {/* Inline avatar picker (publishes immediately on file pick) */}
+        {avatarEditing && (
+          <div className="rounded-xl dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/60 bg-claude-surface/60 p-4 space-y-2">
+            <AvatarPicker
+              value={avatarUrl ?? ''}
+              disabled={avatarSaving}
+              onChange={(dataUrl) => { void handleAvatarChange(dataUrl); }}
+              onError={setAvatarError}
+            />
+            {avatarSaving && (
+              <div className="flex items-center gap-2 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                <ArrowPathIcon className="h-3.5 w-3.5 animate-spin shrink-0" />
+                {i18nService.t('userSettingsAvatarSaving')}
+              </div>
+            )}
+            {avatarError && (
+              <div className="text-xs text-red-500 bg-red-500/10 px-3 py-2 rounded-lg">
+                {avatarError}
+              </div>
+            )}
+          </div>
+        )}
 
         {renderIdRow('userSettingsGlobalMetaId', identity.globalmetaid)}
         {renderIdRow('userSettingsMvcAddress', identity.mvc_address)}

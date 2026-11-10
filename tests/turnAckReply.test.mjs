@@ -496,6 +496,14 @@ test('runner: the owner wait heartbeat logs due-but-suppressed outcomes', () => 
   assert.ok(source.includes("'owner wait heartbeat dropped: turn no longer active'"), 'stale-turn drops are logged');
   assert.ok(source.includes("'owner wait heartbeat not armed for this turn'"),
     'an entry-arm early-exit is logged (the session-32a29372 silent-stretch diagnostic)');
+  // Every non-shown exit of emitOwnerWaitHeartbeat (empty generation,
+  // suppressed bubble, thrown error) re-arms the timer — one suppression must
+  // not kill the heartbeat for the rest of a long silent turn.
+  const emitterStart = source.indexOf('private async emitOwnerWaitHeartbeat(');
+  const emitterEnd = source.indexOf('  private emitAssistantOwnerUpdate(', emitterStart);
+  const emitterBody = source.slice(emitterStart, emitterEnd);
+  const rearmCount = (emitterBody.match(/this\.armAssistantOwnerWaitTimer\(sessionId, activeSession\)/g) ?? []).length;
+  assert.ok(rearmCount >= 3, `empty, suppressed and failed exits all re-arm the next window (found ${rearmCount})`);
 });
 
 // ---------------------------------------------------------------------------

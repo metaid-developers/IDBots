@@ -239,8 +239,11 @@ export async function declareMrc721SellIntent(
   // Append-only declaration log (buzz pattern, doc §2.1): every declaration —
   // first, re-declare, or post-cancel re-list — is a CREATE pin on the fixed
   // /protocols/mrc721sell path; per itemPinId the LATEST pin wins.
-  const records = readIntents(input.intents, input.metabotId);
-  const existing = records.findIndex((record) => record.intent.itemPinId === itemPinId);
+  // Only the id-reuse lookup happens before the await; the write-back below
+  // RE-READS the book (a read→write section must not span an await, see the
+  // race-safety note above readIntents).
+  const existingId = readIntents(input.intents, input.metabotId)
+    .find((record) => record.intent.itemPinId === itemPinId)?.id;
 
   const broadcast = await broadcastMrc721Pin(deps.createPin, input.metabotId, {
     operation: 'create',
@@ -252,13 +255,19 @@ export async function declareMrc721SellIntent(
   }, { network: input.network ?? 'mvc', origin: input.origin ?? 'tool:mrc721_sell_intent' });
 
   const record: Mrc721SellIntentRecord = {
-    id: existing >= 0 ? records[existing].id : randomBytes(8).toString('hex'),
+    id: existingId ?? randomBytes(8).toString('hex'),
     metabotId: input.metabotId,
     intent,
     sellPinId: broadcast.pinId,
     status: 'active',
     updatedAt: nowMs,
   };
+  // Re-read AFTER the await: a concurrent tool call may have written the book
+  // while the pin was broadcasting. Merge into the freshest array — replace a
+  // same-item record that appeared meanwhile, else append — and write back
+  // immediately (synchronous read→modify→write).
+  const records = readIntents(input.intents, input.metabotId);
+  const existing = records.findIndex((record) => record.intent.itemPinId === itemPinId);
   if (existing >= 0) records[existing] = record;
   else records.push(record);
   writeIntents(input.intents, input.metabotId, records);

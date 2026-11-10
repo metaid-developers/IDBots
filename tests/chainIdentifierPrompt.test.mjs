@@ -25,7 +25,8 @@ const MEMBERS = [
 ];
 
 test('the rule states the exact identifier formats and forbids truncation', () => {
-  assert.match(CHAIN_IDENTIFIER_VERBATIM_RULE, /64 lowercase hex characters followed by `i0`/);
+  assert.match(CHAIN_IDENTIFIER_VERBATIM_RULE, /64 lowercase hex characters followed by `i` and the output index/);
+  assert.match(CHAIN_IDENTIFIER_VERBATIM_RULE, /pins minted by this host always end in `i0`/);
   assert.match(CHAIN_IDENTIFIER_VERBATIM_RULE, /never truncate/i);
   assert.match(CHAIN_IDENTIFIER_VERBATIM_RULE, /pin:\/\//);
 });

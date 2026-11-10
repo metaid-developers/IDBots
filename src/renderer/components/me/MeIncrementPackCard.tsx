@@ -5,6 +5,7 @@ import {
   formatMe,
   getMeSnapshot,
   meFromMilli,
+  requestMeBalance,
   requestOpenMePurchase,
   requestOpenUsagePage,
   subscribeMeSnapshot,
@@ -63,6 +64,9 @@ const MeIncrementPackCard: React.FC = () => {
         // Re-sync from the server-confirmed snapshot; revert + flag on failure.
         if (res.success && res.settings) {
           setAutoDeduct(res.settings.autoDeductFromPersistent !== false);
+          // The host dropped its balance cache for this toggle — pull the
+          // fresh snapshot so the balance echo shows the post-toggle state.
+          void requestMeBalance({ forceRefresh: true });
         } else {
           setAutoDeduct(!next);
           setSaveFailed(true);

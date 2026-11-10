@@ -24,6 +24,8 @@
  * 并注明来源。
  */
 
+import { i18nService } from '../../services/i18n';
+
 export const ESCROW_CARD_FENCE_TAG = 'escrow-card';
 
 /** Mirrors main-side ESCROW_STATES (doc 03 §3). */
@@ -204,17 +206,18 @@ export const formatEscrowYuan = (cents: number): string => {
   return `${negative ? '-' : ''}￥${yuanInteger}.${frac}`;
 };
 
-const STATE_LABELS: Record<EscrowCardState, string> = {
-  CREATED: '待托管',
-  ITEM_ESCROWED: '货已托管',
-  PAID_EVIDENCE_UPLOADED: '待卖家确认到账',
-  SELLER_CONFIRMED: '已确认到账·待放货',
-  RELEASED: '已成交',
-  DISPUTED: '仲裁中',
-  REFUND_ROLLED_BACK: '已回退',
-  CANCELLED: '已取消',
+const STATE_LABEL_KEYS: Record<EscrowCardState, string> = {
+  CREATED: 'escrowStateCreated',
+  ITEM_ESCROWED: 'escrowStateItemEscrowed',
+  PAID_EVIDENCE_UPLOADED: 'escrowStatePaidEvidence',
+  SELLER_CONFIRMED: 'escrowStateSellerConfirmed',
+  RELEASED: 'escrowStateReleased',
+  DISPUTED: 'escrowStateDisputed',
+  REFUND_ROLLED_BACK: 'escrowStateRefundRolledBack',
+  CANCELLED: 'escrowStateCancelled',
 };
-export const escrowCardStateLabel = (state: EscrowCardState): string => STATE_LABELS[state];
+export const escrowCardStateLabel = (state: EscrowCardState): string =>
+  i18nService.t(STATE_LABEL_KEYS[state]);
 
 const STATE_TONE: Record<EscrowCardState, string> = {
   CREATED: 'text-slate-300 bg-slate-700/60',
@@ -231,8 +234,15 @@ export const escrowCardStateTone = (state: EscrowCardState): string => STATE_TON
 export const ESCROW_GOODS_KIND_LABELS: Record<EscrowCardGoodsKind, string> = {
   mrc721: 'MRC-721',
   metacontract: 'MetaContract',
-  digital: '数字交付物',
-  service: '服务订单',
+  digital: 'Digital deliverable',
+  service: 'Service order',
+};
+
+/** Goods-kind display label: protocol names stay verbatim, the rest via i18n. */
+export const escrowGoodsKindLabel = (kind: EscrowCardGoodsKind): string => {
+  if (kind === 'digital') return i18nService.t('escrowGoodsDigital');
+  if (kind === 'service') return i18nService.t('escrowGoodsService');
+  return ESCROW_GOODS_KIND_LABELS[kind];
 };
 
 /** 剩余时间文案；无计时器态（终态/DISPUTED）返回 null。 */
@@ -243,8 +253,14 @@ export const escrowRemainingTimeText = (data: EscrowCardData, now: number): stri
   if (remainingMs <= 0) return null;
   const hours = Math.floor(remainingMs / 3_600_000);
   const minutes = Math.floor((remainingMs % 3_600_000) / 60_000);
-  if (hours >= 48) return `剩余 ${Math.floor(hours / 24)} 天`;
-  if (hours >= 1) return `剩余 ${hours} 小时 ${minutes} 分`;
-  return `剩余 ${minutes} 分钟`;
+  if (hours >= 48) {
+    return i18nService.t('escrowRemainingDays').replace('{days}', String(Math.floor(hours / 24)));
+  }
+  if (hours >= 1) {
+    return i18nService.t('escrowRemainingHours')
+      .replace('{hours}', String(hours))
+      .replace('{minutes}', String(minutes));
+  }
+  return i18nService.t('escrowRemainingMinutes').replace('{minutes}', String(minutes));
 };
 

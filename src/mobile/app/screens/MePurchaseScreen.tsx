@@ -82,6 +82,8 @@ export default function MePurchaseScreen(props: {
   const [submitError, setSubmitError] = useState('');
   const [errorCode, setErrorCode] = useState('');
   const [orderId, setOrderId] = useState('');
+  /** Server-priced amount from the created order — authoritative over the local tag. */
+  const [serverPayAmount, setServerPayAmount] = useState<number | null>(null);
   const submittingRef = useRef(false);
 
   const paidPlans = useMemo(() => mePaidPlans(snapshot.plans), [snapshot.plans]);
@@ -94,10 +96,19 @@ export default function MePurchaseScreen(props: {
   const selectedPackage = snapshot.topupPackages.find((pkg) => pkg.packageId === selectedPackageId)
     ?? snapshot.topupPackages[0]
     ?? null;
-  const amountDue = section === 'subscribe'
+  const localAmountDue = section === 'subscribe'
     ? mePeriodPrice(selectedPlan, period)
     : (typeof selectedPackage?.priceCny === 'number' ? selectedPackage.priceCny : null);
+  // A submitted order's server-priced amount wins until the subject or period
+  // changes (reset below) — the server charges exactly that number.
+  const amountDue = serverPayAmount ?? localAmountDue;
   const days = mePeriodDays(selectedPlan, period);
+
+  // A stale server amount from a previous order must not leak into a newly
+  // chosen subject/period: the local tag takes over until the next order.
+  useEffect(() => {
+    setServerPayAmount(null);
+  }, [section, effectivePlanId, selectedPackageId, period]);
 
   useEffect(() => {
     setSection(props.section);
@@ -181,6 +192,7 @@ export default function MePurchaseScreen(props: {
       const result = await submitMePurchaseOrder(window.electron.mePoints, request);
       if (result.ok) {
         setOrderId(result.orderId);
+        setServerPayAmount(typeof result.payAmount === 'number' ? result.payAmount : null);
         setPhase('submitted');
         invalidateMeBalance();
         void refreshMeTopupOrders();
@@ -317,6 +329,11 @@ export default function MePurchaseScreen(props: {
             <h2 className="me-usage-title">{t('mobile.me.purchase.submittedTitle')}</h2>
             <p className="me-gate-body">{t('mobile.me.purchase.submittedBody')}</p>
             {orderId ? <p className="me-success-order">{orderId}</p> : null}
+            {serverPayAmount != null ? (
+              <p className="me-success-order" data-testid="me-purchase-server-amount">
+                {t('mobile.me.purchase.submittedAmount', { price: serverPayAmount })}
+              </p>
+            ) : null}
             {props.onOpenUsage ? (
               <button
                 type="button"
