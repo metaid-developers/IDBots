@@ -7,7 +7,7 @@ import path from 'node:path';
 
 const require = Module.createRequire(import.meta.url);
 const { createBotHubLiveStageService } = require('../dist-electron/main/services/botHubLiveStageService.js');
-const { readBotHubLiveStageSettings, writeBotHubLiveStageSettings } = require('../dist-electron/main/services/botHubLiveStageSettings.js');
+const { readBotHubLiveStageSettings, writeBotHubLiveStageSettings, BOT_HUB_LIVE_STAGE_KEY, BOT_HUB_LIVE_STAGE_DIRECTOR_KEY } = require('../dist-electron/main/services/botHubLiveStageSettings.js');
 
 const message = (id, type, metadata = {}) => ({ id, type, content: '', timestamp: 1, metadata });
 
@@ -51,13 +51,18 @@ function fixture(t, directorEnabled = false, initialTabId = 7) {
   return { service, session, projected, patches, calls, settings };
 }
 
-test('settings default off and Director cannot be enabled without Live Stage', () => {
+test('settings default on and Director follows the Live Stage toggle', () => {
   const values = new Map();
   const store = { get: (key) => values.get(key), set: (key, value) => values.set(key, value) };
-  assert.deepEqual(readBotHubLiveStageSettings(store), { enabled: false, directorEnabled: false });
-  assert.deepEqual(writeBotHubLiveStageSettings(store, { directorEnabled: true }), { enabled: false, directorEnabled: false });
-  assert.deepEqual(writeBotHubLiveStageSettings(store, { enabled: true, directorEnabled: true }), { enabled: true, directorEnabled: true });
+  assert.deepEqual(readBotHubLiveStageSettings(store), { enabled: true, directorEnabled: true });
+  assert.deepEqual(writeBotHubLiveStageSettings(store, { directorEnabled: false }), { enabled: true, directorEnabled: true });
   assert.deepEqual(writeBotHubLiveStageSettings(store, { enabled: false }), { enabled: false, directorEnabled: false });
+  assert.equal(values.get(BOT_HUB_LIVE_STAGE_KEY), '0');
+  assert.equal(values.get(BOT_HUB_LIVE_STAGE_DIRECTOR_KEY), '0');
+  assert.deepEqual(readBotHubLiveStageSettings(store), { enabled: false, directorEnabled: false });
+  assert.deepEqual(writeBotHubLiveStageSettings(store, { enabled: true }), { enabled: true, directorEnabled: true });
+  assert.equal(values.get(BOT_HUB_LIVE_STAGE_KEY), '1');
+  assert.equal(values.get(BOT_HUB_LIVE_STAGE_DIRECTOR_KEY), '1');
 });
 
 test('service writes one stage per turn, dedupes messages, and preserves report readiness', async (t) => {
