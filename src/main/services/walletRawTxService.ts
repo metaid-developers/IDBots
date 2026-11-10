@@ -4,6 +4,7 @@ import { app } from 'electron';
 import { mvc } from 'meta-contract';
 import type { MetabotStore } from '../metabotStore';
 import { resolveElectronExecutablePath } from '../libs/runtimePaths';
+import { getMvcSpendSessionSnapshot } from './mvcSpendSessionState';
 import { getMainWorkerCandidatePaths, resolveMainWorkerPath } from './workerPathResolver';
 
 const DEFAULT_PATH = "m/44'/10001'/0'/0/0";
@@ -684,6 +685,16 @@ export async function buildMvcTransferRawTx(
     throw new Error('MetaBot wallet not found');
   }
 
+  // Seed the session's spent-outpoint exclusions into the funding coin
+  // selection (same double-spend guard as the directed buy): the wallet UTXO
+  // list lags behind a just-broadcast tx, so a back-to-back build would
+  // otherwise re-pick the same funding UTXO and the second tx would fail at
+  // broadcast. Caller-provided exclusions keep their include-conflict check.
+  const fundingExclusions = Array.from(new Set([
+    ...excludeOutpoints,
+    ...getMvcSpendSessionSnapshot(params.metabotId).excludeOutpoints,
+  ]));
+
   const runner = deps.runMvcTransferRawTxWorker ?? runMvcTransferRawTxWorker;
   const workerResult = await runner({
     mnemonic: wallet.mnemonic,
@@ -691,7 +702,7 @@ export async function buildMvcTransferRawTx(
     toAddress: params.toAddress.trim(),
     amountSats: params.amountSats,
     feeRate: params.feeRate,
-    excludeOutpoints,
+    excludeOutpoints: fundingExclusions,
     includeOutpoints,
   });
   const summary = summarizeMvcTransferTx({

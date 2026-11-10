@@ -956,3 +956,5 @@ blob-report/
 !tests/chainPinRefGuard.test.ts
 # Mobile ME period pricing (uniform monthly-rate model + desktop drift guard)
 !tests/mobileMePeriodPricing.test.ts
+# ME ledger signed-amount formatting (sub-1-ME milli precision)
+!tests/meLedgerFormatting.test.ts

@@ -82,6 +82,35 @@ test('declare broadcasts a CREATE pin on the fixed unofficial path with a duplic
   });
 });
 
+test('declare re-reads the intent book after the broadcast — a concurrent tool-call write survives', async () => {
+  const calls = { pins: [] };
+  const map = new Map();
+  const intents = { get: (key) => map.get(key), set: (key, value) => map.set(key, value) };
+  const concurrentPinId = `${'cd'.repeat(32)}i0`;
+  const deps = {
+    createPin: async (metabotId, metaidData) => {
+      // A concurrent tool call (a sell intent on another item) writes the
+      // book WHILE this declare awaits the pin broadcast.
+      map.set('mrc721_sell_intents:1', [{
+        id: 'concurrent',
+        metabotId: 1,
+        intent: parseMrc721SellIntent({ itemPinId: concurrentPinId, sellerAddress: BOT_ADDRESS }),
+        sellPinId: 'other-intent-pin',
+        status: 'active',
+        updatedAt: 1,
+      }]);
+      return makeDeps(calls).createPin(metabotId, metaidData);
+    },
+  };
+  await withItemInfo({ itemPinId: PINID, collectionName: 'pixel-cats', ownerAddress: BOT_ADDRESS }, async () => {
+    await declareMrc721SellIntent(deps, { metabotId: 1, itemPinId: PINID, priceHintSats: 30000, store, intents });
+  });
+  const records = map.get('mrc721_sell_intents:1');
+  assert.equal(records.length, 2, 'the concurrent record was not clobbered by the write-back');
+  assert.ok(records.some((record) => record.id === 'concurrent'), 'the concurrent entry survives');
+  assert.ok(records.some((record) => record.intent.itemPinId === PINID), 'the new intent is recorded too');
+});
+
 test('declare refuses an item the bot does not hold — the holder view is the only sell authority', async () => {
   const calls = { pins: [] };
   await withItemInfo({ itemPinId: PINID, ownerAddress: OTHER_ADDRESS }, async () => {

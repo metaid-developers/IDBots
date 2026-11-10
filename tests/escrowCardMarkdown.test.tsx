@@ -18,7 +18,9 @@
  *      group transcript components keep routing content through it.
  *
  * Harness note: renderer tests are server-rendered (no DOM), same as the
- * nft-card suite.
+ * nft-card suite. UI copy goes through i18nService; these assertions pin the
+ * default 'en' locale deck (2026-11-10 release review: the card previously
+ * hardcoded Chinese copy, violating the English-default UI rule).
  */
 
 import test from 'node:test';
@@ -80,32 +82,32 @@ test('escrow-card fence renders an EscrowCard with state / next actor / remainin
   assert.match(markup, /data-escrow-card="true"/);
   assert.match(markup, /data-escrow-state="ITEM_ESCROWED"/);
   assert.match(markup, /data-escrow-order="esc-42"/);
-  assert.match(markup, /担保交易/);
-  assert.match(markup, /货已托管/); // state label
+  assert.match(markup, /Escrow trade/);
+  assert.match(markup, /Item escrowed/); // state label
   assert.match(markup, /星球系列 #3/);
   assert.match(markup, /￥99\.00/);
-  assert.match(markup, /下一步/);
-  assert.match(markup, /买方/);
+  assert.match(markup, /Next</);
+  assert.match(markup, /买方/); // data.next.actor is bot-authored content, not UI chrome
   assert.match(markup, /请点对点付款并上传凭证/);
-  assert.match(markup, /剩余 \d+ 小时/); // Date.now()-relative, generous window
-  assert.match(markup, /在押/);
+  assert.match(markup, /\d+ h \d+ min left/); // Date.now()-relative, generous window
+  assert.match(markup, /in custody/);
   assert.match(markup, /T2/); // current-state timer badge
 });
 
 test('EscrowCard with a fixed now is deterministic (remaining time + terminal states)', () => {
   const live = renderToStaticMarkup(React.createElement(EscrowCard, { data: PAYLOAD, now: NOW }));
-  assert.match(live, /剩余 23 小时/);
+  assert.match(live, /23 h 0 min left/);
 
   const released: EscrowCardData = { ...PAYLOAD, state: 'RELEASED', next: undefined, timerHours: 0 };
   const done = renderToStaticMarkup(React.createElement(EscrowCard, { data: released, now: NOW }));
-  assert.match(done, /已成交/);
-  assert.doesNotMatch(done, /下一步/);
-  assert.doesNotMatch(done, /剩余/);
+  assert.match(done, /Completed/);
+  assert.doesNotMatch(done, /Next</);
+  assert.doesNotMatch(done, /left</);
 
   const disputed: EscrowCardData = { ...PAYLOAD, state: 'DISPUTED', timerHours: 0, next: { actor: '担保人', text: '请调证并裁决' } };
   const inDispute = renderToStaticMarkup(React.createElement(EscrowCard, { data: disputed, now: NOW }));
-  assert.match(inDispute, /仲裁中/);
-  assert.match(inDispute, /担保人调证裁决/);
+  assert.match(inDispute, /In dispute/);
+  assert.match(inDispute, /adjudicates with evidence/);
 });
 
 // ---------------------------------------------------------------------------
@@ -137,7 +139,7 @@ test('the card has no funds buttons — the only control is the appeal entry', (
   assert.equal(buttons.length, 1);
   assert.match(markup, /data-escrow-appeal="toggle"/);
   assert.doesNotMatch(markup, /disabled/);
-  assert.match(markup, /申诉/);
+  assert.match(markup, /Appeal \/ Review/);
   // No release/refund/pay affordances exist in the card at all.
   assert.doesNotMatch(markup, /放款|立即退款|去付款|确认收货/);
 });
@@ -191,9 +193,9 @@ test('formatEscrowYuan is exact to the cent', () => {
 
 test('remaining time text covers >48h, hours+minutes, minutes-only, and never-negative', () => {
   const base: EscrowCardData = { ...PAYLOAD, timerHours: 72 };
-  assert.equal(escrowRemainingTimeText(base, base.stateEnteredAt + 1000), '剩余 2 天');
-  assert.equal(escrowRemainingTimeText(base, base.stateEnteredAt + 47 * 3_600_000), '剩余 25 小时 0 分');
-  assert.equal(escrowRemainingTimeText({ ...base, timerHours: 1 }, base.stateEnteredAt + 59 * 60_000), '剩余 1 分钟');
+  assert.equal(escrowRemainingTimeText(base, base.stateEnteredAt + 1000), '2 d left');
+  assert.equal(escrowRemainingTimeText(base, base.stateEnteredAt + 47 * 3_600_000), '25 h 0 min left');
+  assert.equal(escrowRemainingTimeText({ ...base, timerHours: 1 }, base.stateEnteredAt + 59 * 60_000), '1 min left');
   assert.equal(escrowRemainingTimeText(base, base.stateEnteredAt + 73 * 3_600_000), null);
   assert.equal(escrowRemainingTimeText({ ...base, timerHours: 0 }, base.stateEnteredAt), null);
 });
@@ -218,8 +220,8 @@ test('parse / serialize round-trip is semantic-stable, and hostile payloads are 
     }
   }
   // state labels mirror the design doc's state set
-  assert.equal(escrowCardStateLabel('PAID_EVIDENCE_UPLOADED'), '待卖家确认到账');
-  assert.equal(escrowCardStateLabel('REFUND_ROLLED_BACK'), '已回退');
+  assert.equal(escrowCardStateLabel('PAID_EVIDENCE_UPLOADED'), 'Awaiting seller confirmation');
+  assert.equal(escrowCardStateLabel('REFUND_ROLLED_BACK'), 'Rolled back');
 });
 
 // ---------------------------------------------------------------------------

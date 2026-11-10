@@ -182,7 +182,7 @@ type ScheduledSessionSeat =
  */
 export function buildScheduledSessionContinuityNote(
   input:
-    | { kind: 'reuse' }
+    | { kind: 'reuse'; elsewhereRun?: { excerpt: string } }
     | {
         kind: 'rotate';
         cause: 'budget' | 'retired';
@@ -193,10 +193,20 @@ export function buildScheduledSessionContinuityNote(
       },
 ): string {
   if (input.kind === 'reuse') {
-    return [
+    const lines = [
       '[Standing conversation] Earlier fires of this task ran in this same conversation — their results are above; build on them instead of starting over.',
       'An owner request from an earlier fire that is still unanswered stays open: carry it in this run\'s follow-up tag.',
-    ].join('\n');
+    ];
+    // The latest run may have executed elsewhere (this conversation was busy,
+    // so that fire fell back to a one-off session): its result is NOT in the
+    // context above, so it rides along here instead of being claimed.
+    if (input.elsewhereRun?.excerpt) {
+      lines.push(
+        'The most recent fire ran in a different one-off conversation, so its result is not among the messages above — its tail excerpt:',
+        input.elsewhereRun.excerpt,
+      );
+    }
+    return lines.join('\n');
   }
   const why = input.cause === 'budget'
     ? 'reached its size budget'
@@ -283,6 +293,15 @@ export function buildScheduledTaskLifecyclePreamble(task: ScheduledTask): string
   return lines.join('\n');
 }
 
+/**
+ * Minimum gap between two failure reports of the same recurring task into its
+ * origin session. A flapping task would otherwise queue one full owner LLM
+ * turn per failed fire; one report per window is enough for the owner to
+ * notice and act. One-shot ('at') tasks bypass this — the owner must learn
+ * about a manual run failing immediately.
+ */
+const FAILURE_REPORT_COOLDOWN_MS = 6 * 60 * 60 * 1000;
+
 export class Scheduler {
   private store: ScheduledTaskStore;
   private coworkStore: CoworkStore;
@@ -305,6 +324,10 @@ export class Scheduler {
   private runHeartbeats: Map<string, ReturnType<typeof setInterval>> = new Map();
   // Track cowork session IDs for running tasks so we can stop them
   private taskSessionIds: Map<string, string> = new Map();
+  // Last failure-report timestamp per recurring task, for the origin-chat
+  // cooldown in reportRunToOriginSession. In-memory only: a restart resets
+  // it, which just re-allows one report — the safe direction.
+  private readonly failureReportAt: Map<string, number> = new Map();
   private stopGeneration = 0;
 
   private static readonly MAX_TIMER_INTERVAL_MS = 60_000;
@@ -788,6 +811,10 @@ export class Scheduler {
     // Standing conversation (2026-11-09): a 'series' task — the default —
     // runs every fire in one conversation instead of opening a new session
     // per fire. 'fresh' keeps the old one-off behavior.
+    // A task with no stored seriesSessionId adopts its seat (resolveSeriesSeat
+    // derives it from the latest run's session); remember that here, before
+    // the seat decision, so the busy fallback below can still seat it.
+    const wasAdoption = !(task.seriesSessionId ?? '').trim();
     const seat: ScheduledSessionSeat = task.sessionMode === 'fresh'
       ? { kind: 'fresh' }
       : this.resolveSeriesSeat(task);
@@ -804,10 +831,19 @@ export class Scheduler {
         if (task.seriesSessionId !== seat.sessionId) {
           this.store.setSeriesSessionId?.(task.id, seat.sessionId);
         }
+        // The latest run may have executed in a one-off session (a previous
+        // fire hit a busy standing conversation): its result is not in this
+        // conversation's context, so the continuity note must say so instead
+        // of claiming every earlier result is above. Zero extra LLM turns —
+        // the excerpt rides in the note.
+        const lastRunSessionId = this.store.getLatestRunSessionId?.(task.id) ?? null;
+        const elsewhereRun = lastRunSessionId && lastRunSessionId !== seat.sessionId
+          ? { excerpt: this.readLatestAssistantExcerpt(lastRunSessionId)?.excerpt ?? '' }
+          : undefined;
         return this.runScheduledTurn(
           task,
           seat.sessionId,
-          composePrompt(buildScheduledSessionContinuityNote({ kind: 'reuse' })),
+          composePrompt(buildScheduledSessionContinuityNote({ kind: 'reuse', elsewhereRun })),
           executionGeneration,
         );
       }
@@ -816,6 +852,14 @@ export class Scheduler {
       console.log(
         `[Scheduler] Task ${task.id} standing conversation ${seat.sessionId} stayed busy, running this fire in a one-off session`
       );
+      // An adopted seat has no stored seriesSessionId yet, so this one-off
+      // fire would become the latest run and the next fire would re-derive —
+      // and keep — the WRONG seat, dropping the real standing conversation
+      // from the series for good. Seat it now; established series (stored id
+      // set) keep today's behavior.
+      if (wasAdoption && task.seriesSessionId !== seat.sessionId) {
+        this.store.setSeriesSessionId?.(task.id, seat.sessionId);
+      }
     }
 
     const config = this.coworkStore.getConfig();
@@ -1162,11 +1206,14 @@ export class Scheduler {
    * Report a finished run back into the session that created the task.
    * Delegated one-shot ('at') work reports every run; recurring standing
    * automation reports failures only — a per-fire success ping into the
-   * origin chat recreates the poll-flood failure class. A run that executed
-   * inside the origin chat itself (bound to it) is skipped: that chat just
-   * watched the turn happen. The delivery id is deterministic per run, so
-   * retries dedupe; a run that failed before its session opened attributes
-   * the report to the synthetic `scheduled-task:<taskId>` pseudo-source.
+   * origin chat recreates the poll-flood failure class — and at most one
+   * failure report per FAILURE_REPORT_COOLDOWN_MS window (a flapping task
+   * would otherwise queue a full owner LLM turn per failed fire). A run that
+   * executed inside the origin chat itself (bound to it) is skipped: that
+   * chat just watched the turn happen. The delivery id is deterministic per
+   * run, so retries dedupe; a run that failed before its session opened
+   * attributes the report to the synthetic `scheduled-task:<taskId>`
+   * pseudo-source.
    */
   private reportRunToOriginSession(
     task: ScheduledTask,
@@ -1180,6 +1227,17 @@ export class Scheduler {
     if (!originSessionId) return;
     if (task.schedule.type !== 'at' && success) return;
     if (sessionId && sessionId === originSessionId) return;
+    // A flapping recurring task otherwise burns one owner LLM turn per failed
+    // fire: rate-limit its failure reports to one per cooldown window.
+    // One-shot ('at') tasks keep reporting immediately — the owner must learn
+    // about a manual run failing. The per-run delivery-id dedupe below still
+    // applies on top of this.
+    if (task.schedule.type !== 'at') {
+      const now = Date.now();
+      const lastReportedAt = this.failureReportAt.get(task.id) ?? 0;
+      if (now - lastReportedAt < FAILURE_REPORT_COOLDOWN_MS) return;
+      this.failureReportAt.set(task.id, now);
+    }
 
     let finalReply: string | null = null;
     let finalReplyTruncated = false;
