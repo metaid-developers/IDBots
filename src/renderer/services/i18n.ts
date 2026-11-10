@@ -520,6 +520,12 @@ const translations: Record<LanguageType, Record<string, string>> = {
     botBrowserCoworkEmpty: '今天，想从哪儿开始？',
     botBrowserCoworkEmptySub: '把一句话交给你的 Twin——剩下的路，他来铺。',
     botInternetNeedsTwin: 'BotHub 是你和你的 Twin Bot 的一对一空间。本机还没有 Twin Bot——先去 BotWorks 创建一个。',
+    // 气泡右键上下文菜单（办公室聊天窗纯度优化第一批 2026-11-10）：功能收进
+    // 右键菜单，无常驻家具；回应图标行内自带，文字只给动作名。
+    botBrowserPanelMenuLike: '赞',
+    botBrowserPanelMenuDislike: '踩',
+    botBrowserPanelMenuQuoteReply: '引用回复',
+    botBrowserPanelMenuCopyText: '复制文本',
     botInternetGoBotHome: '去 BotWorks 创建 Twin',
     botInternetTwinSeatTitle: '选择当前当值 Twin',
     botInternetTwinSeatHint: '任命会与「我的 Bot」的 Twin 设定同步：原当值 Twin 回到 worker 岗位，所选 bot 立即上任。',
@@ -4259,6 +4265,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     botBrowserCoworkEmpty: 'So, where would you like to start today?',
     botBrowserCoworkEmptySub: 'Hand your Twin one sentence — the rest of the road is theirs to lay.',
     botInternetNeedsTwin: 'BotHub is a 1:1 space with your Twin bot. You have no Twin on this machine yet — create one in BotWorks first.',
+    // Mirror of the zh context-menu set (purity pass #1, 2026-11-10).
+    botBrowserPanelMenuLike: 'Like',
+    botBrowserPanelMenuDislike: 'Dislike',
+    botBrowserPanelMenuQuoteReply: 'Quote reply',
+    botBrowserPanelMenuCopyText: 'Copy text',
     botInternetGoBotHome: 'Go to BotWorks to create your Twin',
     botInternetTwinSeatTitle: 'Choose the acting Twin',
     botInternetTwinSeatHint: 'Appointing stays in sync with the My Bots Twin setting: the previous Twin returns to the worker bench and the chosen bot takes the seat immediately.',

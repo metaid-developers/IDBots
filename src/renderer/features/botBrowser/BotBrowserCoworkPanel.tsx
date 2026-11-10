@@ -25,6 +25,20 @@ import type { CoworkMessage, CoworkWorkspaceSelection } from '../../types/cowork
 import TwinSeatChip from './TwinSeatChip';
 import { appointTwinSeat } from './twinSeatAppointment';
 import CoworkHistoryPanel from './CoworkHistoryPanel';
+import { formatPanelMessageTimestamp } from './panelMessageTimestamp';
+import {
+  applyPanelReactionToggle,
+  getPanelReactionsStorage,
+  readPanelReactionsForSession,
+  writePanelReaction,
+  type PanelReactionRating,
+} from './panelMessageReactions';
+import {
+  isPointerOutsideContextMenu,
+  resolveContextMenuPlacement,
+} from './panelContextMenuGeometry';
+import PanelMessageContextMenu from './PanelMessageContextMenu';
+import { createMessageQuotedSelection } from '../../components/cowork/coworkQuotedSelections';
 
 type PanelMetabot = MetaBotForSelector & { llm_id?: string | null; llm_provider?: string | null; llm_effort?: string | null };
 
@@ -59,17 +73,72 @@ export const PanelMessage: React.FC<{
   onOpenUri: (uri: string) => void;
   isAssistantMode?: boolean;
   resolveLocalFilePath?: LocalFilePathResolver;
-}> = ({ message, onOpenUri, isAssistantMode = false, resolveLocalFilePath }) => {
-  if (message.type === 'user') {
+  /** Meta-line stamp, pre-formatted (`HH:mm` / `MM-DD HH:mm`, '' = omit). */
+  timestampLabel?: string;
+  /** This bubble's stored reaction (local MVP; null = none). */
+  currentReaction?: PanelReactionRating | null;
+  /** Right-click on the bubble chrome opens the panel context menu. */
+  onContextMenu?: (event: React.MouseEvent, message: CoworkMessage) => void;
+  /** Chip click toggles the reaction (re-click on the active side cancels). */
+  onToggleReaction?: (message: CoworkMessage, current: PanelReactionRating | null) => void;
+}> = ({
+  message,
+  onOpenUri,
+  isAssistantMode = false,
+  resolveLocalFilePath,
+  timestampLabel,
+  currentReaction = null,
+  onContextMenu,
+  onToggleReaction,
+}) => {
+  const isUser = message.type === 'user';
+  const handleBubbleContextMenu = (event: React.MouseEvent) => {
+    if (!onContextMenu) return;
+    // Own menu replaces the browser's; stopPropagation keeps ancestor
+    // surfaces (iframe hosts, transcript chrome) from also opening theirs.
+    event.preventDefault();
+    event.stopPropagation();
+    onContextMenu(event, message);
+  };
+  // Meta line under the bubble: the quiet timestamp plus, once reacted, the
+  // small chip that carries (and cancels) the local reaction. 11px secondary
+  // tone — visible by default but never competing with the content.
+  const metaRow = (
+    <div
+      data-slot="panel-message-meta"
+      className={`flex items-center gap-1.5 px-1 pt-0.5 text-[11px] leading-3 dark:text-claude-darkTextSecondary text-claude-textSecondary ${
+        isUser ? 'justify-end' : 'justify-start'
+      }`}
+    >
+      {timestampLabel ? (
+        <span data-panel-message-timestamp="true">{timestampLabel}</span>
+      ) : null}
+      {currentReaction && onToggleReaction ? (
+        <button
+          type="button"
+          data-panel-reaction-chip={currentReaction}
+          onClick={() => onToggleReaction(message, currentReaction)}
+          className="rounded-full border border-current/20 px-1.5 py-px text-[10px] leading-3 transition-opacity hover:opacity-70"
+        >
+          {currentReaction === 'up' ? '👍' : '👎'}
+        </button>
+      ) : null}
+    </div>
+  );
+  if (isUser) {
     return (
-      <div className="flex justify-end">
+      <div className="flex flex-col items-end">
         {/* Same display-side body pipeline as the main cowork transcript: the
             attachment marker lines split out at render time, image files render
             as the shared thumbnail strip with the in-app lightbox, and the rest
             renders as markdown. The panel keeps its own bubble chrome. */}
-        <div className="max-w-[90%] min-w-0 whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-[13px] dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text shadow-subtle">
+        <div
+          onContextMenu={handleBubbleContextMenu}
+          className="max-w-[90%] min-w-0 whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-[13px] dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text shadow-subtle"
+        >
           <UserMessageBody content={message.content} resolveLocalFilePath={resolveLocalFilePath} />
         </div>
+        {metaRow}
       </div>
     );
   }
@@ -79,16 +148,23 @@ export const PanelMessage: React.FC<{
     // (narration and final alike) sit in the neutral-gray .assistant-bubble
     // instead of bare full-width text, so both surfaces read the same way.
     return (
-      <div className="min-w-0">
-        <div className="assistant-bubble w-fit max-w-[92%] rounded-[22px] px-[16px] py-[10px] text-[13px] leading-5 dark:text-claude-darkText text-claude-text shadow-subtle [&_h1]:text-sm [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h2]:text-[13px] [&_h2]:mt-2.5 [&_h2]:mb-1 [&_h3]:text-[13px] [&_h3]:mt-2 [&_h3]:mb-1 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:break-all [&_a]:break-all">
+      <div className="flex min-w-0 flex-col items-start">
+        <div
+          onContextMenu={handleBubbleContextMenu}
+          className="assistant-bubble w-fit max-w-[92%] rounded-[22px] px-[16px] py-[10px] text-[13px] leading-5 dark:text-claude-darkText text-claude-text shadow-subtle [&_h1]:text-sm [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h2]:text-[13px] [&_h2]:mt-2.5 [&_h2]:mb-1 [&_h3]:text-[13px] [&_h3]:mt-2 [&_h3]:mb-1 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:break-all [&_a]:break-all"
+        >
           <MarkdownContent content={message.content} compact onOpenBotBrowserUri={onOpenUri} emojiImages />
         </div>
+        {metaRow}
       </div>
     );
   }
   return (
-    <div className="min-w-0 text-[13px] leading-5 dark:text-claude-darkText text-claude-text [&_h1]:text-sm [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h2]:text-[13px] [&_h2]:mt-2.5 [&_h2]:mb-1 [&_h3]:text-[13px] [&_h3]:mt-2 [&_h3]:mb-1 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:break-all [&_a]:break-all">
-      <MarkdownContent content={message.content} compact onOpenBotBrowserUri={onOpenUri} emojiImages />
+    <div className="flex min-w-0 flex-col items-start text-[13px] leading-5 dark:text-claude-darkText text-claude-text [&_h1]:text-sm [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h2]:text-[13px] [&_h2]:mt-2.5 [&_h2]:mb-1 [&_h3]:text-[13px] [&_h3]:mt-2 [&_h3]:mb-1 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:break-all [&_a]:break-all">
+      <div onContextMenu={handleBubbleContextMenu} className="min-w-0">
+        <MarkdownContent content={message.content} compact onOpenBotBrowserUri={onOpenUri} emojiImages />
+      </div>
+      {metaRow}
     </div>
   );
 };
@@ -200,6 +276,122 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
   const listRef = useRef<HTMLDivElement>(null);
   const promptInputRef = useRef<CoworkPromptInputRef>(null);
   const folderButtonRef = useRef<HTMLButtonElement>(null);
+
+  // ── Bubble context menu + reactions (purity pass #1, 2026-11-10) ─────────
+  // The chat surface stays clean: no persistent furniture. Everything a bubble
+  // can do lives behind its right-click menu (react up/down, quote reply,
+  // copy text), mounted only while open. Reactions are a localStorage MVP —
+  // no backend model exists yet; the upgrade path is documented in
+  // panelMessageReactions.ts.
+  interface PanelContextMenuState {
+    message: CoworkMessage;
+    x: number;
+    y: number;
+    /** The bubble element that opened the menu (kept open on re-clicks there). */
+    opener: HTMLElement | null;
+  }
+  const [contextMenu, setContextMenu] = useState<PanelContextMenuState | null>(null);
+  const [panelReactions, setPanelReactions] = useState<Record<string, PanelReactionRating>>({});
+  const panelMenuRef = useRef<HTMLDivElement>(null);
+  // Latest-menu mirror for the capture-phase listeners (they close over the
+  // ref, not the state, so re-opening with a new message cannot pin a stale one).
+  const contextMenuRef = useRef<PanelContextMenuState | null>(null);
+  useEffect(() => {
+    contextMenuRef.current = contextMenu;
+  }, [contextMenu]);
+
+  const sessionId = currentSession?.id ?? null;
+  // Sweep the session's stored ratings when the session (or the mount) changes;
+  // runtime menu/chip updates go through setPanelReactions directly.
+  useEffect(() => {
+    if (!sessionId) {
+      setPanelReactions({});
+      return;
+    }
+    setPanelReactions(readPanelReactionsForSession(getPanelReactionsStorage(), sessionId));
+  }, [sessionId]);
+
+  const handlePanelContextMenu = useCallback((event: React.MouseEvent, message: CoworkMessage) => {
+    const placement = resolveContextMenuPlacement(event.clientX, event.clientY, {
+      width: typeof window !== 'undefined' ? window.innerWidth : 0,
+      height: typeof window !== 'undefined' ? window.innerHeight : 0,
+    });
+    setContextMenu({
+      message,
+      x: placement.x,
+      y: placement.y,
+      opener: event.currentTarget instanceof HTMLElement ? event.currentTarget : null,
+    });
+  }, []);
+
+  // Menu react row (chips share the toggle): re-picking the active side
+  // cancels; picking the other side switches. Single-choice, local-only.
+  const handleMenuReact = useCallback((rating: PanelReactionRating) => {
+    const menu = contextMenuRef.current;
+    if (!menu || !sessionId) return;
+    const { id: messageId } = menu.message;
+    setPanelReactions((prev) => {
+      const nextRating = applyPanelReactionToggle(prev[messageId] ?? null, rating);
+      const next = { ...prev };
+      if (nextRating === null) delete next[messageId];
+      else next[messageId] = nextRating;
+      writePanelReaction(getPanelReactionsStorage(), sessionId, messageId, nextRating);
+      return next;
+    });
+  }, [sessionId]);
+
+  // Chip click: the chip only renders while a rating is active, so clicking it
+  // always cancels.
+  const handleToggleReaction = useCallback((message: CoworkMessage) => {
+    if (!sessionId) return;
+    setPanelReactions((prev) => {
+      if (!prev[message.id]) return prev;
+      const next = { ...prev };
+      delete next[message.id];
+      writePanelReaction(getPanelReactionsStorage(), sessionId, message.id, null);
+      return next;
+    });
+  }, [sessionId]);
+
+  // Copy the RAW message text (the stored markdown, not the rendered prose).
+  const handleMenuCopyText = useCallback(() => {
+    const menu = contextMenuRef.current;
+    if (!menu) return;
+    const raw = menu.message.content;
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        void navigator.clipboard.writeText(raw);
+      }
+    } catch {
+      // Clipboard unavailable (permissions): menu still closes; nothing to show.
+    }
+  }, []);
+
+  // Three close channels while the menu is open: a pointerdown outside the
+  // menu AND outside the opening bubble, Escape, and any scroll (capture phase
+  // catches the panel list and ancestor scrollers). Bound only while open.
+  useEffect(() => {
+    if (!contextMenu) return undefined;
+    const dismiss = () => setContextMenu(null);
+    const handlePointerDown = (event: PointerEvent) => {
+      const menu = contextMenuRef.current;
+      if (!menu) return;
+      if (!isPointerOutsideContextMenu(panelMenuRef.current, menu.opener, event.target)) return;
+      dismiss();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') dismiss();
+    };
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    document.addEventListener('keydown', handleKeyDown, true);
+    window.addEventListener('scroll', dismiss, true);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+      document.removeEventListener('keydown', handleKeyDown, true);
+      window.removeEventListener('scroll', dismiss, true);
+    };
+  }, [contextMenu]);
+
   // Twin welcome page (owner rulings 2026-11-09: the BotHub face is the
   // twin's office — its landing invites like a friend, not a feature tour;
   // the copy set is finalized in i18n and mirrored zh/en). The 缩略态定稿
@@ -217,6 +409,33 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     () => filterVisiblePanelMessages(messages),
     [messages]
   );
+
+  // Quote reply goes through the exact CoworkSessionDetail path: a whole-message
+  // quoted fragment into the composer's single-target slot — the chip above the
+  // composer, the remove affordance and the send composition are all the shared
+  // CoworkPromptInput machinery. The ordinal is the panel's own rendered
+  // position (filterVisiblePanelMessages order, 1-based), matching what the
+  // panel actually displayed at capture time. NOTE (MVP boundary): the
+  // quotedMessageIds jump anchor is NOT persisted on this panel's sends —
+  // browserCoworkService.send sits outside this delegation's writable paths;
+  // the quoted TEXT still travels inside the composed prompt exactly as on the
+  // BotWorks side. (Future IPC upgrade: pass quotedMessageIds through send.)
+  const handleMenuQuoteReply = useCallback(() => {
+    const menu = contextMenuRef.current;
+    if (!menu) return;
+    const { message } = menu;
+    const ordinal = visibleMessages.findIndex((candidate) => candidate.id === message.id) + 1;
+    const fragment = createMessageQuotedSelection({
+      content: message.content,
+      role: message.type === 'user' ? 'user' : message.type === 'assistant' ? 'assistant' : 'other',
+      messageId: message.id,
+      ordinal,
+      streaming: message.metadata?.isStreaming === true,
+    });
+    if (!fragment) return;
+    promptInputRef.current?.addQuotedSelection(fragment);
+    promptInputRef.current?.focus();
+  }, [visibleMessages]);
 
   const loadMetabots = useCallback(async () => {
     const result = await window.electron?.metabot?.list?.();
@@ -421,6 +640,12 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
       onOpenUri={handleOpenUri}
       isAssistantMode={isAssistantMode}
       resolveLocalFilePath={resolveLocalFilePath}
+      // Quiet per-bubble stamp on the meta line: same-day `HH:mm`, older
+      // days `MM-DD HH:mm` (computed at render, local time).
+      timestampLabel={formatPanelMessageTimestamp(message.timestamp, Date.now())}
+      currentReaction={panelReactions[message.id] ?? null}
+      onContextMenu={handlePanelContextMenu}
+      onToggleReaction={handleToggleReaction}
     />
   );
 
@@ -649,6 +874,22 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
           onSelectSession={handleSelectHistory}
           onDeleteSession={handleDeleteHistory}
           onClose={() => setShowHistory(false)}
+        />
+      ) : null}
+
+      {contextMenu ? (
+        // Bubble context menu — mounted only while open (no persistent
+        // furniture). Placement was viewport-flipped at open time; the three
+        // close channels live in the effect above.
+        <PanelMessageContextMenu
+          ref={panelMenuRef}
+          x={contextMenu.x}
+          y={contextMenu.y}
+          currentReaction={panelReactions[contextMenu.message.id] ?? null}
+          onReact={handleMenuReact}
+          onQuoteReply={handleMenuQuoteReply}
+          onCopyText={handleMenuCopyText}
+          onDismiss={() => setContextMenu(null)}
         />
       ) : null}
     </div>
