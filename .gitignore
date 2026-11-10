@@ -964,6 +964,8 @@ blob-report/
 !tests/seedreamImageExtension.test.mjs
 # ME subscription checkout backend requirements (assist-base-service)
 !docs/me-subscription-checkout-backend-requirements.md
+# ME plan-aware LLM relay admission quota change request (assist-base-service)
+!docs/me-llm-relay-plan-quota-backend-requirements.md
 # Chain-write pin-reference format guard (pre-broadcast preflight)
 !tests/chainPinRefGuard.test.ts
 # Mobile ME period pricing (uniform monthly-rate model + desktop drift guard)
