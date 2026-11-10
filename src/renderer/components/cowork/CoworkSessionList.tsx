@@ -485,31 +485,26 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
     }
   };
 
-  // Double-click on the by-Bot list viewport's blank space collapses every
-  // expanded folder at once: all bot groups plus the Autonomous and
-  // Follow-Up folds. Each piece is persisted through its own existing
-  // single-toggle write (same try/catch posture: a localStorage failure
-  // only loses the memory, the collapse still applies for this session).
-  // This is an explicit collapse, not a toggle, so a stray second
-  // double-click cannot re-open anything.
+  // Double-click on blank space collapses every expanded folder at once:
+  // all bot groups plus the Autonomous and Follow-Up folds. Each piece is
+  // persisted through its own existing single-toggle write (same try/catch
+  // posture: a localStorage failure only loses the memory, the collapse
+  // still applies for this session). This is an explicit collapse, not a
+  // toggle, so a stray second double-click cannot re-open anything.
   //
-  // "Blank" is decided by WHERE THE DOUBLE-CLICK LANDED, not by which zone
-  // it sits in (owner's red-box test 2026-11-10: the leading strip beside
-  // the rows is the intended target, and those rows are full-width plain
-  // divs — their left margin is visually blank but DOM-wise part of the
-  // row). So the guard rejects only actual content: interactive elements
-  // (buttons, links, inputs) and text/media nodes (titles, avatars,
-  // timestamps). A double-click landing on a row's own empty box, the
-  // gaps between sections, the space under the last row, or the viewport's
-  // gutters all count as blank; a double-click on any title, avatar, or
-  // button keeps its own single-click behavior. Note the row's own click
-  // still fires first (two clicks = two selects) — selecting semantics are
-  // untouched; only the folder collapse rides on top.
-  const collapseAllGroups = (event: MouseEvent) => {
-    const target = event.target as HTMLElement | null;
-    if (!target || !botGrouped) return;
-    if (target.closest('button, a, [role="button"], input, textarea, select, [contenteditable="true"]')) return;
-    if (target.closest('img, svg, span, time, p, h1, h2, h3, h4, h5, h6, label')) return;
+  // Two triggers answer the owner's red-box spot (2026-11-10): the icon
+  // rail's blank stretches — a sibling component with no list state, so
+  // its ask rides the `idbots:collapse-session-folders` window event —
+  // and the list viewport's own blank zones. In the viewport, "blank" is
+  // decided by WHERE the double-click LANDED: the guard rejects actual
+  // content (interactive elements and text/media nodes — titles, avatars,
+  // timestamps), so a row's own empty box, the gaps between sections, and
+  // the space under the last row all count. A double-click on any title,
+  // avatar, or button keeps its own single-click behavior; the row's click
+  // still fires first (two clicks = two selects) — only the folder collapse
+  // rides on top.
+  const collapseAllFolders = () => {
+    if (!botGrouped) return;
     const next = new Set(collapsedGroupKeys);
     botGrouped.groups.forEach((group) => next.add(group.key));
     setCollapsedGroupKeys(next);
@@ -538,18 +533,28 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
     }
   };
 
-  // The listener rides on the VIEWPORT — the list's scroll container, this
-  // root's parent element — one level above the rows. That element is what
-  // the user experiences as "the list", and attaching here covers every
-  // blank zone in one reach: the space under the last row, the gaps between
-  // sections, and the rows' own leading margins. Re-attached whenever the
-  // collapse inputs change so the handler never closes over a stale set.
+  const handleViewportDoubleClick = (event: MouseEvent) => {
+    const target = event.target as HTMLElement | null;
+    if (!target || !botGrouped) return;
+    if (target.closest('button, a, [role="button"], input, textarea, select, [contenteditable="true"]')) return;
+    if (target.closest('img, svg, span, time, p, h1, h2, h3, h4, h5, h6, label')) return;
+    collapseAllFolders();
+  };
+
+  // The dblclick listener rides on the VIEWPORT — the list's scroll
+  // container, this root's parent element — one level above the rows, so
+  // every blank zone in the list is in one handler's reach. The rail event
+  // rides on window. Both re-attach whenever the collapse inputs change so
+  // the handlers never close over a stale set.
   useEffect(() => {
     if (!botGrouped) return;
     const viewport = rootRef.current?.parentElement;
-    if (!viewport) return;
-    viewport.addEventListener('dblclick', collapseAllGroups);
-    return () => viewport.removeEventListener('dblclick', collapseAllGroups);
+    if (viewport) viewport.addEventListener('dblclick', handleViewportDoubleClick);
+    window.addEventListener('idbots:collapse-session-folders', collapseAllFolders as EventListener);
+    return () => {
+      if (viewport) viewport.removeEventListener('dblclick', handleViewportDoubleClick);
+      window.removeEventListener('idbots:collapse-session-folders', collapseAllFolders as EventListener);
+    };
   }, [botGrouped, collapsedGroupKeys, groupFace]);
 
   // The row takes the session id for every action and one shared clock/language,

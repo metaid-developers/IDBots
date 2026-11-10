@@ -211,11 +211,26 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
     onSelectHomeSection(id as BotHomeSection);
   };
 
+  // Double-click on the rail's blank stretches — the icon column's empty
+  // zones around its buttons (owner's red-box spot 2026-11-10) — asks the
+  // records list to collapse every expanded folder at once. The rail is a
+  // sibling of the list's column and holds no list state, so the ask rides
+  // the `idbots:collapse-session-folders` window event, which
+  // CoworkSessionList answers on the by-Bot faces. Rail content (buttons,
+  // icons, the avatar) keeps its own behavior.
+  const handleRailDoubleClick = (event: React.MouseEvent<HTMLElement>) => {
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+    if (target.closest('button, a, [role="button"], input, img, svg, span')) return;
+    window.dispatchEvent(new CustomEvent('idbots:collapse-session-folders'));
+  };
+
   return (
     <aside
       data-slot="workspace-rail"
       data-rail-surface={mode}
       aria-label={i18nService.t('workspaceRailLabel')}
+      onDoubleClick={handleRailDoubleClick}
       className="relative z-30 flex w-16 shrink-0 flex-col items-center dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted"
     >
       {/* Row 1 is the pure traffic-light reservation (52 px on mac — the
