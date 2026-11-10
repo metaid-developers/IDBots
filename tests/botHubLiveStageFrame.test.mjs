@@ -1,0 +1,46 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import Module from 'node:module';
+import path from 'node:path';
+
+const require = Module.createRequire(import.meta.url);
+const { createLiveStageState } = require('../dist-electron/main/services/botHubLiveStageModel.js');
+const { renderLiveStageHtml } = require('../dist-electron/main/services/botHubLiveStageTemplate.js');
+const { buildLiveStagePatchScript, applyBotHubLiveStagePatch } = require('../dist-electron/main/services/botHubLiveStageFrame.js');
+
+const state = () => createLiveStageState({ sessionId: 's', turnId: 't', botName: 'AI_Sunny', language: 'en' });
+
+test('template is self-contained and injects the active Avatar and initial state', () => {
+  const html = renderLiveStageHtml({
+    state: state(),
+    avatarDataUri: 'data:image/jpeg;base64,AA==',
+    assets: { assetRoot: path.resolve('public/live-stage'), fallbackAvatarDataUri: 'data:image/png;base64,BB==' },
+  });
+  assert.match(html, /data:image\/jpeg;base64,AA==/);
+  assert.match(html, /window.__INITIAL_LIVE_STAGE__=/);
+  assert.match(html, /window.__FALLBACK_AVATAR__="data:image\/png;base64,BB=="/);
+  assert.doesNotMatch(html, /=__FALLBACK_AVATAR__/);
+  assert.match(html, /window.LiquidOrbEffectSource/);
+  assert.match(html, /window.IDBotsLiveStage/);
+  assert.doesNotMatch(html, /__AVATAR_DATA_URI__|__STAGE_JS__|__ORB_EFFECT__/);
+});
+
+test('frame patch script JSON-injects state and escapes HTML-significant characters', () => {
+  const current = { ...state(), headline: '</script><script>alert(1)</script>' };
+  const script = buildLiveStagePatchScript(current);
+  assert.doesNotThrow(() => new Function(`return ${script};`));
+  assert.doesNotMatch(script, /<script>/);
+  assert.match(script, /window.IDBotsLiveStage.applyPatch/);
+});
+
+test('frame bridge reaches only the matching local preview frame', async () => {
+  const url = 'http://127.0.0.1:5000/live-stage.html';
+  let executed = null;
+  const frame = { url, frames: [], executeJavaScript: async (script) => { executed = script; return { ok: true }; } };
+  const root = { url: 'http://127.0.0.1:5185', frames: [frame], executeJavaScript: async () => ({}) };
+  await applyBotHubLiveStagePatch({
+    getWindows: () => [{ isDestroyed: () => false, webContents: { isDestroyed: () => false, mainFrame: root } }],
+    executeTabCommand: async () => ({ info: { current: { renderer: { type: 'html-iframe', url } } } }),
+  }, { tabId: 7, state: state() });
+  assert.ok(executed.includes('idbots.live-stage.v1'));
+});

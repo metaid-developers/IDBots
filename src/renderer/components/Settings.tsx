@@ -594,6 +594,9 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
   const [isUpdatingAutoLaunch, setIsUpdatingAutoLaunch] = useState(false);
   const [experimentalAutomation, setExperimentalAutomationState] = useState(true);
   const [isUpdatingExperimentalAutomation, setIsUpdatingExperimentalAutomation] = useState(false);
+  const [liveStageEnabled, setLiveStageEnabled] = useState(false);
+  const [liveStageDirectorEnabled, setLiveStageDirectorEnabled] = useState(false);
+  const [isUpdatingLiveStage, setIsUpdatingLiveStage] = useState(false);
   const [preventDeviceSleep, setPreventDeviceSleepState] = useState(false);
   const [isUpdatingPreventDeviceSleep, setIsUpdatingPreventDeviceSleep] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -808,6 +811,16 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
     });
     return () => unsubscribe();
   }, [loadCoworkSandboxStatus]);
+
+  useEffect(() => {
+    let active = true;
+    window.electron.botHubLiveStage.get().then((settings) => {
+      if (!active) return;
+      setLiveStageEnabled(settings.enabled);
+      setLiveStageDirectorEnabled(settings.directorEnabled);
+    }).catch((loadError) => console.error('Failed to load Live Stage settings:', loadError));
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     try {
@@ -1585,6 +1598,25 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
       ...prev,
       [key]: value
     }));
+  };
+
+  const handleLiveStageSettings = async (updates: { enabled?: boolean; directorEnabled?: boolean }) => {
+    if (isUpdatingLiveStage) return;
+    setIsUpdatingLiveStage(true);
+    try {
+      const result = await window.electron.botHubLiveStage.set(updates);
+      if (result.success) {
+        setLiveStageEnabled(result.enabled === true);
+        setLiveStageDirectorEnabled(result.directorEnabled === true);
+      } else {
+        setError(result.error || 'Failed to update Live Stage settings');
+      }
+    } catch (updateError) {
+      console.error('Failed to update Live Stage settings:', updateError);
+      setError('Failed to update Live Stage settings');
+    } finally {
+      setIsUpdatingLiveStage(false);
+    }
   };
 
   // handleChatExperienceModeChange stays gone (修订条 2026-11-09): the switch
@@ -2596,6 +2628,28 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                       autoLaunch ? 'translate-x-6' : 'translate-x-1'
                     }`}
                   />
+                </button>
+              </label>
+            </div>
+
+            <div>
+              <h4 className="text-sm font-medium dark:text-claude-darkText text-claude-text mb-1">{i18nService.t('botHubLiveStage')}</h4>
+              <p className="text-xs dark:text-claude-darkSecondaryText text-claude-secondaryText mb-3">{i18nService.t('botHubLiveStageDescription')}</p>
+              <label className="flex items-center justify-between cursor-pointer">
+                <span className="text-sm dark:text-claude-darkSecondaryText text-claude-secondaryText">{i18nService.t('botHubLiveStageToggle')}</span>
+                <button type="button" role="switch" aria-checked={liveStageEnabled} onClick={() => void handleLiveStageSettings({ enabled: !liveStageEnabled })} disabled={isUpdatingLiveStage} className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${isUpdatingLiveStage ? 'opacity-50 cursor-not-allowed' : ''} ${liveStageEnabled ? 'bg-claude-accent' : 'bg-gray-300 dark:bg-gray-600'}`}>
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${liveStageEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+              </label>
+            </div>
+
+            <div>
+              <h4 className="text-sm font-medium dark:text-claude-darkText text-claude-text mb-1">{i18nService.t('botHubLiveStageDirector')}</h4>
+              <p className="text-xs dark:text-claude-darkSecondaryText text-claude-secondaryText mb-3">{i18nService.t('botHubLiveStageDirectorDescription')}</p>
+              <label className={`flex items-center justify-between ${liveStageEnabled ? 'cursor-pointer' : 'opacity-50'}`}>
+                <span className="text-sm dark:text-claude-darkSecondaryText text-claude-secondaryText">{i18nService.t('botHubLiveStageDirectorToggle')}</span>
+                <button type="button" role="switch" aria-checked={liveStageDirectorEnabled} onClick={() => void handleLiveStageSettings({ directorEnabled: !liveStageDirectorEnabled })} disabled={isUpdatingLiveStage || !liveStageEnabled} className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${isUpdatingLiveStage || !liveStageEnabled ? 'opacity-50 cursor-not-allowed' : ''} ${liveStageDirectorEnabled ? 'bg-claude-accent' : 'bg-gray-300 dark:bg-gray-600'}`}>
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${liveStageDirectorEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
                 </button>
               </label>
             </div>
