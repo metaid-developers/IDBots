@@ -814,7 +814,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
 
   useEffect(() => {
     let active = true;
-    window.electron.botHubLiveStage.get().then((settings) => {
+    window.electron.studioLiveStage.get().then((settings) => {
       if (!active) return;
       setLiveStageEnabled(settings.enabled);
       setLiveStageDirectorEnabled(settings.directorEnabled);
@@ -1604,7 +1604,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
     if (isUpdatingLiveStage) return;
     setIsUpdatingLiveStage(true);
     try {
-      const result = await window.electron.botHubLiveStage.set(updates);
+      const result = await window.electron.studioLiveStage.set(updates);
       if (result.success) {
         setLiveStageEnabled(result.enabled === true);
         setLiveStageDirectorEnabled(result.directorEnabled === true);
@@ -2491,8 +2491,8 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
               </h4>
               <p className="text-xs dark:text-claude-darkSecondaryText text-claude-secondaryText mb-3">
                 {language === 'en'
-                  ? 'The mode is decided by the surface you are on: BotHub = Assistant, BotWorks = Professional (this switch will be retired soon).'
-                  : '模式已随所在页面自动确定：BotHub＝助手模式，BotWorks＝专业模式（本开关即将退役）'}
+                  ? 'The mode is decided by the surface you are on: Studio = Assistant, BotWorks = Professional (this switch will be retired soon).'
+                  : '模式已随所在页面自动确定：Studio＝助手模式，BotWorks＝专业模式（本开关即将退役）'}
               </p>
               <div className="grid grid-cols-2 gap-4">
                 {([
@@ -2633,10 +2633,10 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
             </div>
 
             <div>
-              <h4 className="text-sm font-medium dark:text-claude-darkText text-claude-text mb-1">{i18nService.t('botHubLiveStage')}</h4>
-              <p className="text-xs dark:text-claude-darkSecondaryText text-claude-secondaryText mb-3">{i18nService.t('botHubLiveStageDescription')}</p>
+              <h4 className="text-sm font-medium dark:text-claude-darkText text-claude-text mb-1">{i18nService.t('studioLiveStage')}</h4>
+              <p className="text-xs dark:text-claude-darkSecondaryText text-claude-secondaryText mb-3">{i18nService.t('studioLiveStageDescription')}</p>
               <label className="flex items-center justify-between cursor-pointer">
-                <span className="text-sm dark:text-claude-darkSecondaryText text-claude-secondaryText">{i18nService.t('botHubLiveStageToggle')}</span>
+                <span className="text-sm dark:text-claude-darkSecondaryText text-claude-secondaryText">{i18nService.t('studioLiveStageToggle')}</span>
                 <button type="button" role="switch" aria-checked={liveStageEnabled} onClick={() => void handleLiveStageSettings({ enabled: !liveStageEnabled })} disabled={isUpdatingLiveStage} className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${isUpdatingLiveStage ? 'opacity-50 cursor-not-allowed' : ''} ${liveStageEnabled ? 'bg-claude-accent' : 'bg-gray-300 dark:bg-gray-600'}`}>
                   <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${liveStageEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
                 </button>
@@ -2644,10 +2644,10 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
             </div>
 
             <div>
-              <h4 className="text-sm font-medium dark:text-claude-darkText text-claude-text mb-1">{i18nService.t('botHubLiveStageDirector')}</h4>
-              <p className="text-xs dark:text-claude-darkSecondaryText text-claude-secondaryText mb-3">{i18nService.t('botHubLiveStageDirectorDescription')}</p>
+              <h4 className="text-sm font-medium dark:text-claude-darkText text-claude-text mb-1">{i18nService.t('studioLiveStageDirector')}</h4>
+              <p className="text-xs dark:text-claude-darkSecondaryText text-claude-secondaryText mb-3">{i18nService.t('studioLiveStageDirectorDescription')}</p>
               <label className={`flex items-center justify-between ${liveStageEnabled ? 'cursor-pointer' : 'opacity-50'}`}>
-                <span className="text-sm dark:text-claude-darkSecondaryText text-claude-secondaryText">{i18nService.t('botHubLiveStageDirectorToggle')}</span>
+                <span className="text-sm dark:text-claude-darkSecondaryText text-claude-secondaryText">{i18nService.t('studioLiveStageDirectorToggle')}</span>
                 <button type="button" role="switch" aria-checked={liveStageDirectorEnabled} onClick={() => void handleLiveStageSettings({ directorEnabled: !liveStageDirectorEnabled })} disabled={isUpdatingLiveStage || !liveStageEnabled} className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${isUpdatingLiveStage || !liveStageEnabled ? 'opacity-50 cursor-not-allowed' : ''} ${liveStageDirectorEnabled ? 'bg-claude-accent' : 'bg-gray-300 dark:bg-gray-600'}`}>
                   <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${liveStageDirectorEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
                 </button>

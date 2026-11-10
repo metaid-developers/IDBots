@@ -6,13 +6,13 @@ import os from 'node:os';
 import path from 'node:path';
 
 const require = Module.createRequire(import.meta.url);
-const { createBotHubLiveStageService } = require('../dist-electron/main/services/botHubLiveStageService.js');
-const { readBotHubLiveStageSettings, writeBotHubLiveStageSettings } = require('../dist-electron/main/services/botHubLiveStageSettings.js');
+const { createStudioLiveStageService } = require('../dist-electron/main/services/studioLiveStageService.js');
+const { readStudioLiveStageSettings, writeStudioLiveStageSettings } = require('../dist-electron/main/services/studioLiveStageSettings.js');
 
 const message = (id, type, metadata = {}) => ({ id, type, content: '', timestamp: 1, metadata });
 
 function fixture(t, directorEnabled = false, initialTabId = 7) {
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'bothub-live-stage-'));
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-live-stage-'));
   const session = {
     cwd,
     sessionType: 'browser',
@@ -23,7 +23,7 @@ function fixture(t, directorEnabled = false, initialTabId = 7) {
   };
   const projected = [], patches = [], calls = [];
   const settings = { enabled: true, directorEnabled };
-  const service = createBotHubLiveStageService({
+  const service = createStudioLiveStageService({
     getSession: (id) => id === 'worker-session' ? { ...session, metabotId: 2, metabotName: 'Builder阿码' } : session,
     getMetabotById: (id) => ({ name: id === 2 ? 'Builder阿码' : 'AI_Sunny', avatar: session.metabotAvatar, llm_id: 'brain', llm_provider: 'test' }),
     getSettings: () => settings,
@@ -54,10 +54,10 @@ function fixture(t, directorEnabled = false, initialTabId = 7) {
 test('settings default off and Director cannot be enabled without Live Stage', () => {
   const values = new Map();
   const store = { get: (key) => values.get(key), set: (key, value) => values.set(key, value) };
-  assert.deepEqual(readBotHubLiveStageSettings(store), { enabled: false, directorEnabled: false });
-  assert.deepEqual(writeBotHubLiveStageSettings(store, { directorEnabled: true }), { enabled: false, directorEnabled: false });
-  assert.deepEqual(writeBotHubLiveStageSettings(store, { enabled: true, directorEnabled: true }), { enabled: true, directorEnabled: true });
-  assert.deepEqual(writeBotHubLiveStageSettings(store, { enabled: false }), { enabled: false, directorEnabled: false });
+  assert.deepEqual(readStudioLiveStageSettings(store), { enabled: false, directorEnabled: false });
+  assert.deepEqual(writeStudioLiveStageSettings(store, { directorEnabled: true }), { enabled: false, directorEnabled: false });
+  assert.deepEqual(writeStudioLiveStageSettings(store, { enabled: true, directorEnabled: true }), { enabled: true, directorEnabled: true });
+  assert.deepEqual(writeStudioLiveStageSettings(store, { enabled: false }), { enabled: false, directorEnabled: false });
 });
 
 test('service writes one stage per turn, dedupes messages, and preserves report readiness', async (t) => {

@@ -2,11 +2,11 @@
 //
 // The assistant transcript form (thinking/tool chrome hidden, replies in
 // .assistant-bubble) belongs to regular interactive owner chats ONLY. The
-// backend gates every assistant-mode behavior on the per-session BotHub
+// backend gates every assistant-mode behavior on the per-session Studio
 // marker rule (isAssistantModeOwnerChatSession in
 // src/main/libs/coworkRunner.ts); the RENDERER derives the form from the
 // FACE-derived chat experience mode (hooks/chatExperienceModeSource.ts,
-// 总裁办公室 ruling 2026-11-09 — BotHub=assistant, BotWorks=professional;
+// 总裁办公室 ruling 2026-11-09 — Studio=assistant, BotWorks=professional;
 // the Settings toggle is retired). Before the session gate existed the
 // renderer derived the form from the GLOBAL mode alone, so opening an
 // orchestration/long-term/worker session while the mode was 'assistant'
@@ -16,9 +16,9 @@
 // Four rendering scenarios are pinned against the real component
 // (renderToStaticMarkup) driving the real gate, with the face set through
 // the same localStorage slot the shell writes:
-//   1. BotHub face + regular interactive session -> assistant form;
-//   2. BotHub face + auto-origin run -> professional transcript;
-//   3. BotHub face + non-standard session type -> professional transcript;
+//   1. Studio face + regular interactive session -> assistant form;
+//   2. Studio face + auto-origin run -> professional transcript;
+//   3. Studio face + non-standard session type -> professional transcript;
 //   4. BotWorks face -> professional transcript for every session shape.
 //
 // Observed markers: i18nService.t('reasoning') is the ThinkingBlock header,
@@ -102,7 +102,7 @@ function renderDetail(surface: 'browser' | 'home', session: CoworkSession): stri
   // their window listeners) never run under renderToStaticMarkup. The FACE
   // rides the same localStorage slot the shell writes
   // (SURFACE_MODE_STORAGE_KEY in useBotBrowserShell.ts) — the mode is derived
-  // from it by hooks/chatExperienceModeSource.ts (BotHub=assistant,
+  // from it by hooks/chatExperienceModeSource.ts (Studio=assistant,
   // BotWorks=professional).
   (globalThis as { window?: unknown }).window = {
     electron: { platform: 'darwin' },
@@ -149,22 +149,22 @@ function assertProfessionalForm(markup: string, label: string): void {
   assert.ok(markup.includes(FINAL_TEXT), `${label}: the reply text still renders`);
 }
 
-test('scenario 1: BotHub face + regular interactive session renders the assistant form', () => {
+test('scenario 1: Studio face + regular interactive session renders the assistant form', () => {
   const markup = renderDetail('browser', fixtureSession());
-  assertAssistantForm(markup, 'BotHub face + standard/no-autoOrigin');
+  assertAssistantForm(markup, 'Studio face + standard/no-autoOrigin');
 });
 
-test('scenario 2: BotHub face + auto-created run renders the professional transcript', () => {
+test('scenario 2: Studio face + auto-created run renders the professional transcript', () => {
   for (const autoOrigin of ['orchestration', 'longterm', 'schedule'] as const) {
     const markup = renderDetail('browser', fixtureSession({ autoOrigin }));
-    assertProfessionalForm(markup, `BotHub face + autoOrigin ${autoOrigin}`);
+    assertProfessionalForm(markup, `Studio face + autoOrigin ${autoOrigin}`);
   }
 });
 
-test('scenario 3: BotHub face + non-standard session type renders the professional transcript', () => {
+test('scenario 3: Studio face + non-standard session type renders the professional transcript', () => {
   for (const sessionType of ['browser', 'group_task', 'longterm'] as const) {
     const markup = renderDetail('browser', fixtureSession({ sessionType }));
-    assertProfessionalForm(markup, `BotHub face + sessionType ${sessionType}`);
+    assertProfessionalForm(markup, `Studio face + sessionType ${sessionType}`);
   }
   // A2A conversations render their own message view (A2AMessageItem), which
   // filters internal status items (thinking, tool chrome) itself — in BOTH

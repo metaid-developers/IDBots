@@ -29,7 +29,7 @@
   };
 
   const greetingReport = {
-    kicker: 'Welcome to BotHub',
+    kicker: 'Welcome to Studio',
     title: 'Hello, I am AI_Sunny',
     summary: 'Bring a goal, a question, or something that needs follow-up. I will work through it and keep the outcome visible here.',
     items: [
@@ -39,7 +39,7 @@
     footer: 'No complex request is needed. A simple “what needs my attention today?” is enough to begin.'
   };
 
-  window.BotHubScenarios = {
+  window.StudioScenarios = {
     decision: {
       label: 'Decision follow-up',
       sessionTitle: '需要你拍板跟进的事项',

@@ -76,7 +76,7 @@ test('the Home face mounts the three-column shell: rail | records column | right
   // a collapsed middle track still leaves the 4px handle + recoverable rail.
   assert.match(appSource, /data-shell-face=\{showHomeSurface \? 'home' : 'browser'\}/);
   // 接缝按钮双向化 2026-11-09: the home face reads its OWN single-direction
-  // seam machine (homeSeamCollapsed) — not the BotHub face's three-state one.
+  // seam machine (homeSeamCollapsed) — not the Studio face's three-state one.
   assert.match(appSource, /const homeShellGridTemplate = homeSeamCollapsed/);
   assert.match(appSource, /\? '64px 0px 4px minmax\(0, 1fr\)'/);
   assert.match(appSource, /: '64px auto 4px minmax\(0, 1fr\)'/);
@@ -86,7 +86,7 @@ test('the Home face mounts the three-column shell: rail | records column | right
   assert.match(homeSidebarSource, /data-slot="mid-column-header"/);
   assert.match(homeSidebarSource, /<BotBrowserModeSwitch/);
   // Owner ruling 2026-11-08 20:59: the full "My ME" panel is retired from the
-  // BotWorks face footer; the BotHub face keeps the compact rail badge.
+  // BotWorks face footer; the Studio face keeps the compact rail badge.
   assert.doesNotMatch(homeSidebarSource, /MeBalanceBadge/);
   assert.match(homeSidebarSource, /i18nService\.t\('coworkHistory'\)/);
 });

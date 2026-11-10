@@ -2,7 +2,7 @@
  * Local copy deck for the "Twin's work" strip (`features/twinWork`).
  *
  * WHY THIS FILE EXISTS — and why the keys are not in `services/i18n.ts`:
- * the A line is actively editing the global i18n table for the BotHub/BotWorks
+ * the A line is actively editing the global i18n table for the Studio/BotWorks
  * surface work. Two independent key blocks landing in that one file is a
  * guaranteed merge collision, so this feature carries its own bilingual deck
  * and reads it directly. When the A line settles, Twin folds these keys into

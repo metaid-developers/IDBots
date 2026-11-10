@@ -2,7 +2,7 @@
  * Local bilingual copy deck for the user profile page (`features/userProfile`).
  *
  * WHY IT LIVES HERE — same reason as `features/twinWork/i18n.ts`: the C line is
- * actively editing the global table in `services/i18n.ts` for the BotHub /
+ * actively editing the global table in `services/i18n.ts` for the Studio /
  * BotWorks work, and two independent key blocks landing in that one file is a
  * guaranteed merge collision. This feature therefore carries its own zh + en
  * deck (both complete — no key exists in one language only) and reads it

@@ -1743,7 +1743,7 @@ interface IElectronAPI {
     get: () => Promise<{ enabled: boolean }>;
     set: (enabled: boolean) => Promise<{ success: boolean; error?: string }>;
   };
-  botHubLiveStage: {
+  studioLiveStage: {
     get: () => Promise<{ enabled: boolean; directorEnabled: boolean }>;
     set: (updates: { enabled?: boolean; directorEnabled?: boolean }) => Promise<{ success: boolean; enabled?: boolean; directorEnabled?: boolean; error?: string }>;
   };

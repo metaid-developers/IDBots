@@ -4,9 +4,9 @@ import Module from 'node:module';
 import path from 'node:path';
 
 const require = Module.createRequire(import.meta.url);
-const { createLiveStageState } = require('../dist-electron/main/services/botHubLiveStageModel.js');
-const { renderLiveStageHtml } = require('../dist-electron/main/services/botHubLiveStageTemplate.js');
-const { buildLiveStagePatchScript, applyBotHubLiveStagePatch } = require('../dist-electron/main/services/botHubLiveStageFrame.js');
+const { createLiveStageState } = require('../dist-electron/main/services/studioLiveStageModel.js');
+const { renderLiveStageHtml } = require('../dist-electron/main/services/studioLiveStageTemplate.js');
+const { buildLiveStagePatchScript, applyStudioLiveStagePatch } = require('../dist-electron/main/services/studioLiveStageFrame.js');
 
 const state = () => createLiveStageState({ sessionId: 's', turnId: 't', botName: 'AI_Sunny', language: 'en' });
 
@@ -38,7 +38,7 @@ test('frame bridge reaches only the matching local preview frame', async () => {
   let executed = null;
   const frame = { url, frames: [], executeJavaScript: async (script) => { executed = script; return { ok: true }; } };
   const root = { url: 'http://127.0.0.1:5185', frames: [frame], executeJavaScript: async () => ({}) };
-  await applyBotHubLiveStagePatch({
+  await applyStudioLiveStagePatch({
     getWindows: () => [{ isDestroyed: () => false, webContents: { isDestroyed: () => false, mainFrame: root } }],
     executeTabCommand: async () => ({ info: { current: { renderer: { type: 'html-iframe', url } } } }),
   }, { tabId: 7, state: state() });

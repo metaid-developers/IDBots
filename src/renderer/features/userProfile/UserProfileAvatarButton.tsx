@@ -13,7 +13,7 @@ import {
  * THE identity entry — owner D-line final ruling 2026-11-09: it lives in the
  * LEFT RAIL's top slot, in the Mac-WeChat form: a rounded-square, PURE avatar
  * with NO visible label. WorkspaceRail gives the slot the band row's exact
- * 52 px height, so the avatar's centerline rides the BotHub | BotWorks
+ * 52 px height, so the avatar's centerline rides the Studio | BotWorks
  * labels' centerline, and the rail's own centerline keeps it on the icon
  * column's X. The click keeps the old entry behaviour (it opens the user
  * profile page), and the label + the user's NAME ride the tooltip, so the

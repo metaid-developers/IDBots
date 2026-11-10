@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import Module from 'node:module';
 
 const require = Module.createRequire(import.meta.url);
-const { createLiveStageState, reduceLiveStageMessage } = require('../dist-electron/main/services/botHubLiveStageModel.js');
-const { validateLiveStageDirectorScene, directLiveStageScene } = require('../dist-electron/main/services/botHubLiveStageDirector.js');
+const { createLiveStageState, reduceLiveStageMessage } = require('../dist-electron/main/services/studioLiveStageModel.js');
+const { validateLiveStageDirectorScene, directLiveStageScene } = require('../dist-electron/main/services/studioLiveStageDirector.js');
 
 const state = () => createLiveStageState({ sessionId: 's', turnId: 't', botName: 'AI_Sunny', language: 'en' });
 const valid = () => JSON.stringify({

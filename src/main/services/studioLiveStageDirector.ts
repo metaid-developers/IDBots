@@ -1,5 +1,5 @@
 import { chatCompletionWithTools, type ChatCompletionOptions, type ChatCompletionResult, type ChatMessage } from './cognitiveChatCompletion';
-import type { LiveStageState } from './botHubLiveStageModel';
+import type { LiveStageState } from './studioLiveStageModel';
 
 export type LiveStageDirectorScene = Pick<LiveStageState, 'headline' | 'caption' | 'composition' | 'motif' | 'motion'>;
 export type LiveStageDirectorUsage = {
@@ -15,7 +15,7 @@ export type LiveStageDirectorResult = {
   usage: LiveStageDirectorUsage;
 };
 
-const DIRECTOR_SYSTEM_PROMPT = `You are the visual director for IDBots BotHub. You receive a small, trusted semantic scene, never the primary agent's full transcript or raw reasoning. Return ONE JSON object only, with no markdown and no explanation.
+const DIRECTOR_SYSTEM_PROMPT = `You are the visual director for IDBots Studio. You receive a small, trusted semantic scene, never the primary agent's full transcript or raw reasoning. Return ONE JSON object only, with no markdown and no explanation.
 
 You may change only headline, caption, composition, motif, and motion. You cannot change task facts, participants, family, topology, completion, errors, or report readiness. Never invent workers, sources, dependencies, results, percentages, or deadlines. Keep the current Bot's presence continuous and make the variation feel alive within the given scene.
 

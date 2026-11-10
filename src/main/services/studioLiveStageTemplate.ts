@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { LiveStageState } from './botHubLiveStageModel';
+import type { LiveStageState } from './studioLiveStageModel';
 
 export type LiveStageTemplateAssets = {
   assetRoot: string;

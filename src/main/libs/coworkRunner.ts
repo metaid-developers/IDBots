@@ -6497,7 +6497,7 @@ export class CoworkRunner extends EventEmitter {
    *
    * Since the 总裁办公室 surface ruling (2026-11-09, superseding the global
    * chatExperienceMode toggle — the persisted setting is retired and read by
-   * nothing any more) assistant mode lives ONLY in the BotHub layer: sessions
+   * nothing any more) assistant mode lives ONLY in the Studio layer: sessions
    * started there carry the persisted per-session assistantMode marker
    * (owner ruling 2026-11-07, locked to the Twin). Everything else chats
    * professional — the BotWorks face runs every bot, twin included, without
@@ -11227,7 +11227,7 @@ export class CoworkRunner extends EventEmitter {
         // are different: the owner still needs an immediate, contextual
         // opening even though insertion is not repeated. The GATE alone
         // decides — it encodes the 2026-11-09 surface ruling (assistant mode
-        // = the per-session BotHub marker; the global Settings toggle is
+        // = the per-session Studio marker; the global Settings toggle is
         // retired), so an outer mode check here would silently strip the
         // first-sentence promise from marker sessions.
         assistantOwnerChatForTurn = this.isAssistantModeOwnerChatSession(sessionId);
@@ -11421,7 +11421,7 @@ export class CoworkRunner extends EventEmitter {
       // the server default. Professional mode keeps the full chain unchanged.
       // The mode is an owner-chat experience decision — the GATE alone
       // decides (2026-11-09 surface ruling: assistant mode = the per-session
-      // BotHub marker; the global Settings toggle is retired, so an outer
+      // Studio marker; the global Settings toggle is retired, so an outer
       // mode check would strip marker sessions of the no-reasoning promise).
       // Group tasks, A2A/IM, long-term and scheduled automation sessions —
       // and every BotWorks owner chat — keep the professional chain.

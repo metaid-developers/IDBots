@@ -38,14 +38,14 @@ import { useStableCallback } from '../utils/useStableCallback';
  * moved to the rail (App.tsx's home-face rail mount, old rows' behavior
  * verbatim), the 「工作区」 section is preserved dormant in
  * ./HomeWorkspaceSection.tsx and mounts nowhere, and the records body sits
- * directly below the shared surface header with the BotHub face's spacing.
+ * directly below the shared surface header with the Studio face's spacing.
  *
  * The restored Bot Home sidebar (owner ruling 2026-11-08 14:22: "Bot home 界面
  * 先恢复到原来的状态，目前的 bot internet 界面的改动不变").
  *
  * This is the baseline (pre-three-column) Home composition, not a new design:
  *
- *   header: band row (用户 pill + BotHub | BotWorks band) + the light
+ *   header: band row (用户 pill + Studio | BotWorks band) + the light
  *     actions row (records search / collapse / update) — the shared-header
  *     shape, same as Sidebar.tsx's on the other face
  *   records block: 任务记录 header + local/online tabs + list
@@ -54,7 +54,7 @@ import { useStableCallback } from '../utils/useStableCallback';
  * OWNER ORDER 2026-11-09 11:16 「两面一致性令」 (supersedes the 14:22 text
  * menu above): the three task entries — 新建任务 / 长期任务 / 多人任务 —
  * moved OUT of this sidebar INTO the left function bar (the SAME
- * WorkspaceRail the BotHub face mounts: same RailButton form, size,
+ * WorkspaceRail the Studio face mounts: same RailButton form, size,
  * spacing and interaction states). Their behavior is unchanged; the
  * re-homed wiring lives in App.tsx's home-face rail mount. This sidebar
  * renders no task rows any more.
@@ -448,7 +448,7 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
           (2026-11-09 12:23): the records search moved into the 按 Bot
           toolbar row and the collapse » toggle is gone (the shell's seam
           tab stays the one collapse control). The three task entries live
-          in the left rail (the same WorkspaceRail the BotHub face mounts,
+          in the left rail (the same WorkspaceRail the Studio face mounts,
           same RailButton form). */}
       <div data-slot="mid-column-header" className="shrink-0">
         <BotBrowserModeSwitch
@@ -462,9 +462,9 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
       {/* The 「工作区」 section does NOT mount here any more (three-column
           final ruling 2026-11-09: no column of the new shell carries it).
           Its code is preserved VERBATIM in ./HomeWorkspaceSection.tsx — a
-          dormant, type-checked component the BotHub-face relocation order
+          dormant, type-checked component the Studio-face relocation order
           will import. The records body starts right below the surface
-          header stack, with the SAME band→content spacing as the BotHub
+          header stack, with the SAME band→content spacing as the Studio
           face's mid column (pt-1, vs Sidebar's `px-2 pt-1` body). */}
       <div className="flex-1 min-h-0 flex flex-col px-2.5 pt-1">
         {/* Fixed header + tabs; only the list below scrolls. */}

@@ -89,7 +89,7 @@ test('assistant chat-experience mode defaults reasoning off behind the auto rung
   // mode pins 'off' and skips the bot brain / persisted global / per-model
   // tail (any reasoning pass would delay the first visible token the mode
   // promises). The professional-mode chain stays intact inside the helper.
-  // 2026-11-09 surface ruling: assistant mode = the per-session BotHub
+  // 2026-11-09 surface ruling: assistant mode = the per-session Studio
   // marker; the effort chain keys on the per-turn GATE, not on any persisted
   // Settings value (the toggle is retired).
   assert.ok(

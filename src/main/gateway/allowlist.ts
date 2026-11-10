@@ -341,8 +341,8 @@ const FEATURES_UTIL_INVOKE: Record<string, AllowlistEntry> = {
   'app:setAutoLaunch': { tier: 'N', note: '`02`: desktop-only.' },
   'app:getExperimentalAutomation': { tier: 'N', note: '`02`: desktop-only.' },
   'app:setExperimentalAutomation': { tier: 'N', note: '`02`: desktop-only.' },
-  'botHubLiveStage:get': { tier: 'N', note: 'BotHub Live Stage settings; desktop-only.' },
-  'botHubLiveStage:set': { tier: 'N', note: 'BotHub Live Stage settings; desktop-only.' },
+  'studioLiveStage:get': { tier: 'N', note: 'Studio Live Stage settings; desktop-only.' },
+  'studioLiveStage:set': { tier: 'N', note: 'Studio Live Stage settings; desktop-only.' },
   'app:getDataDirectory': { tier: 'N', note: 'feat/legacy-data-recovery ②: desktop Settings page data-directory visibility; desktop-only.' },
   'dailyReport:runNow': { tier: 'N', note: '`02`: desktop-only — spawns a local Twin report session.' },
 };

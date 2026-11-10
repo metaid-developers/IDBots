@@ -178,7 +178,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   // tab is visible).
   const [openTeamCollabs, setOpenTeamCollabs] = useState<OpenTeamCollabSummary[]>([]);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
-  // BotHub session-records overlay (owner spec 2026-11-08 21:31, kept by the
+  // Studio session-records overlay (owner spec 2026-11-08 21:31, kept by the
   // 22:19 re-ruling): the toggle lives in the shared surface header bar, so its
   // state is owned here and the panel below is controlled. Switching to
   // BotWorks closes it — the panel unmounts on that face anyway, and a stale
@@ -586,7 +586,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   };
 
   // The shared header's action row, directly below the top-track band. BotWorks
-  // keeps the records search and the shell's live indicators; BotHub carries
+  // keeps the records search and the shell's live indicators; Studio carries
   // the session window's two light actions — new session and session records.
   // Both sets are 28 px controls (aesthetic grid v1).
   const surfaceHeaderActions = mode === 'home' ? (
@@ -656,7 +656,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       {/* The ONE shared surface header (owner red-box order 2026-11-09
           10:58; identity relocated by the D-line final ruling 2026-11-09):
           row 1 = the traffic lights' own 52 px strip, row 2 = the
-          BotHub | BotWorks band ALONE — the identity avatar moved into the
+          Studio | BotWorks band ALONE — the identity avatar moved into the
           rail's top slot (WorkspaceRail), so this header carries no pill.
           The face's light actions sit on the row below the band,
           right-aligned. */}

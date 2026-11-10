@@ -104,7 +104,7 @@ test('the seam keeps its per-face interaction semantics', () => {
     'the handle stays mounted in every collapse state',
   );
   assert.ok(
-    handleBlock.includes("data-seam-state={showHomeSurface ? (homeSeamCollapsed ? 'left' : 'split') : botHubSeamState}"),
+    handleBlock.includes("data-seam-state={showHomeSurface ? (homeSeamCollapsed ? 'left' : 'split') : studioSeamState}"),
     'the seam publishes its per-face state (split/left) for tests and styling',
   );
   assert.ok(
@@ -133,12 +133,12 @@ test('the seam keeps its per-face interaction semantics', () => {
     'the BotWorks face owns its single-direction pair (collapse records ⇄ expand records)',
   );
   assert.ok(
-    handleBlock.includes('onClick={handleCollapseBotHubSeamLeft}') &&
-      handleBlock.includes('onClick={handleExpandBotHubSeam}'),
-    'the BotHub face owns its two transitions (collapse left, recover) — the fill direction is retired',
+    handleBlock.includes('onClick={handleCollapseStudioSeamLeft}') &&
+      handleBlock.includes('onClick={handleExpandStudioSeam}'),
+    'the Studio face owns its two transitions (collapse left, recover) — the fill direction is retired',
   );
   assert.ok(
-    !handleBlock.includes('collapseBotHubSeamRight'),
+    !handleBlock.includes('collapseStudioSeamRight'),
     'the retired fill-direction handler must not come back (平铺态砍掉)',
   );
   assert.ok(

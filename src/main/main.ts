@@ -562,9 +562,9 @@ import {
 import {
   initBotBrowserProjectionService,
 } from './services/botBrowserProjectionService';
-import { createBotHubLiveStageService, type BotHubLiveStageService } from './services/botHubLiveStageService';
-import { applyBotHubLiveStagePatch } from './services/botHubLiveStageFrame';
-import { readBotHubLiveStageSettings, writeBotHubLiveStageSettings } from './services/botHubLiveStageSettings';
+import { createStudioLiveStageService, type StudioLiveStageService } from './services/studioLiveStageService';
+import { applyStudioLiveStagePatch } from './services/studioLiveStageFrame';
+import { readStudioLiveStageSettings, writeStudioLiveStageSettings } from './services/studioLiveStageSettings';
 import {
   executeBotBrowserPreviewAct,
   type BotBrowserPreviewActRequest,
@@ -896,7 +896,7 @@ const sanitizePermissionRequestForIpc = (request: any): any => {
 };
 
 const emitCoworkStreamMessage = (sessionId: string, message: unknown): void => {
-  getBotHubLiveStageService().observeMessage(sessionId, message as any);
+  getStudioLiveStageService().observeMessage(sessionId, message as any);
   const safeMessage = sanitizeCoworkMessageForIpc(message);
   broadcastToRenderers('cowork:stream:message', { sessionId, message: safeMessage });
 };
@@ -7295,7 +7295,7 @@ const getCoworkRunner = () => {
         openUri: (input) => sendBotBrowserOpenUri(input),
         execute: (command) => getBotBrowserTabBridge().execute(command),
         projectReport: async (input) => {
-          const outcome = await getBotHubLiveStageService().projectReport(
+          const outcome = await getStudioLiveStageService().projectReport(
             input,
             () => getBotBrowserProjection().project(input),
           );
@@ -8618,7 +8618,7 @@ const getCoworkRunner = () => {
 
     // Set up event listeners to forward to renderer
     coworkRunner.on('message', (sessionId: string, message: any) => {
-      getBotHubLiveStageService().observeMessage(sessionId, message);
+      getStudioLiveStageService().observeMessage(sessionId, message);
       if (!shouldForwardCoworkStreamEvent(getCoworkStore(), sessionId)) {
         return;
       }
@@ -8696,7 +8696,7 @@ const getCoworkRunner = () => {
     });
 
     coworkRunner.on('complete', (sessionId: string, claudeSessionId: string | null) => {
-      getBotHubLiveStageService().observeComplete(sessionId);
+      getStudioLiveStageService().observeComplete(sessionId);
       // A session finished: recompute the sleep guard so the blocker is
       // released as soon as no other work source is active.
       recomputeSleepGuard();
@@ -8707,7 +8707,7 @@ const getCoworkRunner = () => {
     });
 
     coworkRunner.on('error', (sessionId: string, error: string, metadata?: { errorCode?: string }) => {
-      getBotHubLiveStageService().observeError(sessionId);
+      getStudioLiveStageService().observeError(sessionId);
       recomputeSleepGuard();
       if (!shouldForwardCoworkStreamEvent(getCoworkStore(), sessionId)) {
         return;
@@ -8967,14 +8967,14 @@ const getBotBrowserTabBridge = () => {
 const getBotBrowserProjection = () =>
   initBotBrowserProjectionService({ getTabBridge: getBotBrowserTabBridge });
 
-let botHubLiveStageService: BotHubLiveStageService | null = null;
-const getBotHubLiveStageService = (): BotHubLiveStageService => {
-  if (!botHubLiveStageService) {
+let studioLiveStageService: StudioLiveStageService | null = null;
+const getStudioLiveStageService = (): StudioLiveStageService => {
+  if (!studioLiveStageService) {
     const fallbackAvatarPath = path.join(app.getAppPath(), app.isPackaged ? 'dist/default_metabot.png' : 'public/default_metabot.png');
-    botHubLiveStageService = createBotHubLiveStageService({
+    studioLiveStageService = createStudioLiveStageService({
       getSession: (sessionId) => getCoworkStore().getSession(sessionId),
       getMetabotById: (id) => getMetabotStore().getMetabotById(id),
-      getSettings: () => readBotHubLiveStageSettings(getStoreOrNull()),
+      getSettings: () => readStudioLiveStageSettings(getStoreOrNull()),
       getLanguage: () => getPersistedAppLanguage(),
       project: (input) => getBotBrowserProjection().project(input),
       findStageTab: async (localPath) => {
@@ -8982,7 +8982,7 @@ const getBotHubLiveStageService = (): BotHubLiveStageService => {
         const expectedPrefix = `preview-metaapp://localhost${localPath}`;
         return result.tabs.find((tab) => typeof tab.uri === 'string' && tab.uri.startsWith(expectedPrefix))?.id ?? null;
       },
-      applyPatch: (input) => applyBotHubLiveStagePatch({
+      applyPatch: (input) => applyStudioLiveStagePatch({
         getWindows: () => BrowserWindow.getAllWindows(),
         executeTabCommand: (command) => getBotBrowserTabBridge().execute(command),
       }, input),
@@ -8990,7 +8990,7 @@ const getBotHubLiveStageService = (): BotHubLiveStageService => {
       fallbackAvatarDataUri: `data:image/png;base64,${fs.readFileSync(fallbackAvatarPath).toString('base64')}`,
     });
   }
-  return botHubLiveStageService;
+  return studioLiveStageService;
 };
 
 // Shared act executor for the agent tool and the RPC gateway route: resolves
@@ -11569,8 +11569,8 @@ if (!gotTheLock) {
     }
   });
 
-  registerIpcHandler('botHubLiveStage:get', () => readBotHubLiveStageSettings(getStoreOrNull()));
-  registerIpcHandler('botHubLiveStage:set', (_event, payload: unknown) => {
+  registerIpcHandler('studioLiveStage:get', () => readStudioLiveStageSettings(getStoreOrNull()));
+  registerIpcHandler('studioLiveStage:set', (_event, payload: unknown) => {
     if (typeof payload !== 'object' || payload === null) {
       return { success: false, error: 'Invalid parameter: settings object is required' };
     }
@@ -11580,8 +11580,8 @@ if (!gotTheLock) {
       return { success: false, error: 'Invalid parameter: enabled values must be boolean' };
     }
     try {
-      const settings = writeBotHubLiveStageSettings(getStore(), updates as { enabled?: boolean; directorEnabled?: boolean });
-      getBotHubLiveStageService().updateSettings(settings);
+      const settings = writeStudioLiveStageSettings(getStore(), updates as { enabled?: boolean; directorEnabled?: boolean });
+      getStudioLiveStageService().updateSettings(settings);
       return { success: true, ...settings };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to update Live Stage settings' };

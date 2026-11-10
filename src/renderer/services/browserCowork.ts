@@ -42,7 +42,7 @@ class BrowserCoworkService {
   private applySession(session: CoworkSession | null): void {
     store.dispatch(setBrowserSession(session));
     store.dispatch(setBrowserOpenSessionId(session?.id ?? null));
-    // The BotHub conversation window's last-open session pointer (survives
+    // The Studio conversation window's last-open session pointer (survives
     // restarts); null (draft/archive) clears it and launch falls back to the
     // freshest browser session.
     sessionTabBinding.rememberOpenSession(session?.id ?? null);

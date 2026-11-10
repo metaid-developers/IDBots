@@ -38,14 +38,14 @@ test('the shell dispatches the face-change event from this module', () => {
 });
 
 test('chatExperienceModeForSurface maps the faces per the 2026-11-09 ruling', () => {
-  // BotHub (surface 'browser') -> assistant; BotWorks (surface 'home') ->
+  // Studio (surface 'browser') -> assistant; BotWorks (surface 'home') ->
   // professional.
   assert.equal(chatExperienceModeForSurface('browser'), 'assistant');
   assert.equal(chatExperienceModeForSurface('home'), 'professional');
 });
 
 test('unreadable faces fall back to assistant, matching the shell landing default', () => {
-  // Missing/garbage stored faces must not flip the default BotHub landing
+  // Missing/garbage stored faces must not flip the default Studio landing
   // onto the professional presentation.
   assert.equal(chatExperienceModeForSurface(null), 'assistant');
   assert.equal(chatExperienceModeForSurface(undefined), 'assistant');

@@ -15,7 +15,7 @@ interface CoworkHistoryPanelProps {
 }
 
 /**
- * Session records of the BotHub conversation window, restyled to the ORIGINAL
+ * Session records of the Studio conversation window, restyled to the ORIGINAL
  * IDBots sidebar grammar (owner spec 2026-11-08 21:31; baseline commit
  * 91e2cfd43 `components/Sidebar.tsx` + `CoworkSessionItem`):
  *

@@ -135,11 +135,11 @@ test('recovery never depends on a control inside the collapsible column', () => 
   assert.match(appSource, /data-slot="panel-boundary-handle"/);
   assert.match(appSource, /data-slot="panel-toggle"/);
   // 接缝按钮双向化 2026-11-09: a collapsed face always renders its recover
-  // chevron back to split (BotHub's handleExpandBotHubSeam / BotWorks's
+  // chevron back to split (Studio's handleExpandStudioSeam / BotWorks's
   // handleExpandHomeSeam) — no collapsed state is a dead end.
-  assert.match(appSource, /onClick=\{handleExpandBotHubSeam\}/);
+  assert.match(appSource, /onClick=\{handleExpandStudioSeam\}/);
   assert.match(appSource, /onClick=\{handleExpandHomeSeam\}/);
-  assert.match(appSource, /data-seam-state=\{showHomeSurface \? \(homeSeamCollapsed \? 'left' : 'split'\) : botHubSeamState\}/);
+  assert.match(appSource, /data-seam-state=\{showHomeSurface \? \(homeSeamCollapsed \? 'left' : 'split'\) : studioSeamState\}/);
   assert.match(appSource, /'64px 0px 4px minmax\(0, 1fr\)'/);
   // … and it is NOT duplicated back into the rail or the column it collapses.
   assert.doesNotMatch(railSource, /rail-collapse-toggle/);

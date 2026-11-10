@@ -2,10 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { CoworkMessage, CoworkSession } from '../coworkStore';
 import type { BotBrowserProjectionInput, BotBrowserProjectionOutcome } from './botBrowserProjectionService';
-import type { BotHubLiveStageSettings } from './botHubLiveStageSettings';
-import { completeLiveStage, createLiveStageState, isLiveStageWorkerReport, liveStageError, reduceLiveStageMessage, reportReadyLiveStage, type LiveStageState } from './botHubLiveStageModel';
-import { renderLiveStageHtml } from './botHubLiveStageTemplate';
-import { directLiveStageScene } from './botHubLiveStageDirector';
+import type { StudioLiveStageSettings } from './studioLiveStageSettings';
+import { completeLiveStage, createLiveStageState, isLiveStageWorkerReport, liveStageError, reduceLiveStageMessage, reportReadyLiveStage, type LiveStageState } from './studioLiveStageModel';
+import { renderLiveStageHtml } from './studioLiveStageTemplate';
+import { directLiveStageScene } from './studioLiveStageDirector';
 
 const MAX_DIRECTOR_CALLS_PER_TURN = 8;
 const DIRECTOR_COALESCE_MS = 900;
@@ -33,10 +33,10 @@ type LiveStageRun = {
   directorGeneration: number;
 };
 
-export type BotHubLiveStageServiceDeps = {
+export type StudioLiveStageServiceDeps = {
   getSession(sessionId: string): CoworkSession | null;
   getMetabotById(id: number): MetabotLiveStageIdentity | null;
-  getSettings(): BotHubLiveStageSettings;
+  getSettings(): StudioLiveStageSettings;
   getLanguage(): 'zh' | 'en';
   project(input: BotBrowserProjectionInput): Promise<BotBrowserProjectionOutcome>;
   findStageTab?(localPath: string): Promise<number | null>;
@@ -48,7 +48,7 @@ export type BotHubLiveStageServiceDeps = {
   now?: () => number;
 };
 
-export function createBotHubLiveStageService(deps: BotHubLiveStageServiceDeps) {
+export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
   const runs = new Map<string, LiveStageRun>();
   const now = deps.now ?? Date.now;
   let turnCounter = 0;
@@ -90,7 +90,7 @@ export function createBotHubLiveStageService(deps: BotHubLiveStageServiceDeps) {
 
   function enqueue(run: LiveStageRun, task: () => Promise<void>): void {
     run.queue = run.queue.then(task).catch((error) => {
-      console.warn(`[BotHubLiveStage] ${error instanceof Error ? error.message : String(error)}`);
+      console.warn(`[StudioLiveStage] ${error instanceof Error ? error.message : String(error)}`);
     });
   }
 
@@ -111,7 +111,7 @@ export function createBotHubLiveStageService(deps: BotHubLiveStageServiceDeps) {
         run.tabId = await deps.findStageTab(run.stagePath!);
       }
       if (process.env.NODE_ENV === 'development') {
-        console.warn(`[BotHubLiveStage] stage tab ${run.state.sessionId} outcome=${outcome.tabId} resolved=${run.tabId}`);
+        console.warn(`[StudioLiveStage] stage tab ${run.state.sessionId} outcome=${outcome.tabId} resolved=${run.tabId}`);
       }
       if (run.tabId != null && run.state.enabled) {
         await deps.applyPatch({ tabId: run.tabId, state: run.state }).catch(() => undefined);
@@ -133,7 +133,7 @@ export function createBotHubLiveStageService(deps: BotHubLiveStageServiceDeps) {
     if (!currentSettings.directorEnabled || !run.state.enabled || run.directorCalls >= MAX_DIRECTOR_CALLS_PER_TURN) return;
     run.directorDirty = true;
     if (run.directorInFlight || run.directorTimer) return;
-    console.log(`[BotHubLiveStage] Director scheduled for ${run.state.sessionId} family=${run.state.family}`);
+    console.log(`[StudioLiveStage] Director scheduled for ${run.state.sessionId} family=${run.state.family}`);
     run.directorTimer = setTimeout(() => {
       run.directorTimer = null;
       if (!run.directorDirty || run.directorInFlight || !currentSettings.directorEnabled || !run.state.enabled) return;
@@ -148,7 +148,7 @@ export function createBotHubLiveStageService(deps: BotHubLiveStageServiceDeps) {
       snapshot.metrics.directorCalls += 1;
       run.state.metrics.directorCalls += 1;
       const directScene = deps.directScene ?? directLiveStageScene;
-      console.log(`[BotHubLiveStage] Director call ${run.directorCalls} started for ${run.state.sessionId}`);
+      console.log(`[StudioLiveStage] Director call ${run.directorCalls} started for ${run.state.sessionId}`);
       void directScene(snapshot, brainFor(session)).then(({ scene, usage }) => {
         const metrics = run.state.metrics;
         metrics.inputTokens += usage.inputTokens;
@@ -161,11 +161,11 @@ export function createBotHubLiveStageService(deps: BotHubLiveStageServiceDeps) {
         } else {
           run.state = { ...run.state, ...scene, revision: run.state.revision + 1, metrics };
         }
-        console.log(`[BotHubLiveStage] Director call ${run.directorCalls} finished: input=${usage.inputTokens} output=${usage.outputTokens} latencyMs=${usage.latencyMs}`);
+        console.log(`[StudioLiveStage] Director call ${run.directorCalls} finished: input=${usage.inputTokens} output=${usage.outputTokens} latencyMs=${usage.latencyMs}`);
         schedulePatch(run);
       }).catch((error) => {
         run.state.metrics.fallbackCount += 1;
-        console.log(`[BotHubLiveStage] Director call ${run.directorCalls} failed: ${error instanceof Error ? error.message : String(error)}`);
+        console.log(`[StudioLiveStage] Director call ${run.directorCalls} failed: ${error instanceof Error ? error.message : String(error)}`);
         schedulePatch(run);
       }).finally(() => {
         run.directorInFlight = false;
@@ -203,7 +203,7 @@ export function createBotHubLiveStageService(deps: BotHubLiveStageServiceDeps) {
     };
     runs.set(sessionId, run);
     if (process.env.NODE_ENV === 'development') {
-      console.warn(`[BotHubLiveStage] run created ${sessionId} turn=${turnId} director=${currentSettings.directorEnabled}`);
+      console.warn(`[StudioLiveStage] run created ${sessionId} turn=${turnId} director=${currentSettings.directorEnabled}`);
     }
     projectStage(run);
     return run;
@@ -213,7 +213,7 @@ export function createBotHubLiveStageService(deps: BotHubLiveStageServiceDeps) {
     if (!message?.id) return;
     currentSettings = deps.getSettings();
     if (process.env.NODE_ENV === 'development') {
-      console.warn(`[BotHubLiveStage] observe ${sessionId} type=${message.type} id=${message.id} enabled=${currentSettings.enabled} director=${currentSettings.directorEnabled}`);
+      console.warn(`[StudioLiveStage] observe ${sessionId} type=${message.type} id=${message.id} enabled=${currentSettings.enabled} director=${currentSettings.directorEnabled}`);
     }
     if (!currentSettings.enabled) return;
     const humanOrigin = message.type === 'user' && !isLiveStageWorkerReport(message)
@@ -267,7 +267,7 @@ export function createBotHubLiveStageService(deps: BotHubLiveStageServiceDeps) {
     return project();
   }
 
-  function updateSettings(settings: BotHubLiveStageSettings): void {
+  function updateSettings(settings: StudioLiveStageSettings): void {
     currentSettings = settings;
     for (const run of runs.values()) {
       run.state.enabled = settings.enabled;
@@ -307,4 +307,4 @@ export function createBotHubLiveStageService(deps: BotHubLiveStageServiceDeps) {
   };
 }
 
-export type BotHubLiveStageService = ReturnType<typeof createBotHubLiveStageService>;
+export type StudioLiveStageService = ReturnType<typeof createStudioLiveStageService>;

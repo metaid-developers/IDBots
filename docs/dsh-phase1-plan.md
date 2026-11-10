@@ -12,7 +12,7 @@ kernels coexist during migration. Legacy `claudeSessionId` sessions keep the Cla
 
 ## Non-goals (Phase 2 track)
 
-- Rewriting feature modules (memory, Bothub, group tasks, A2A, IM gateways) as cordis plugins.
+- Rewriting feature modules (memory, Studio, group tasks, A2A, IM gateways) as cordis plugins.
 - Replacing the renderer UI or the `cowork:*` IPC surface (both stay byte-compatible).
 - Sandbox-mode sessions on DSH (stay on the Claude kernel until M5 evaluation).
 - Subagent UI parity beyond transcript reading (M4 verifies feasibility only).

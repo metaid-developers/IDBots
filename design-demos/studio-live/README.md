@@ -1,4 +1,4 @@
-# BotHub Live Stage direction demos
+# Studio Live Stage direction demos
 
 Open `index.html` for the comparison gallery, or open any direction directly:
 
@@ -36,4 +36,4 @@ Useful deterministic URLs:
 
 ## Scope
 
-These are visual direction prototypes only. They do not modify the BotHub product, invoke an LLM, or measure token usage. `architecture.md` defines the proposed production mechanism and the cost targets that an instrumented MVP must verify.
+These are visual direction prototypes only. They do not modify the Studio product, invoke an LLM, or measure token usage. `architecture.md` defines the proposed production mechanism and the cost targets that an instrumented MVP must verify.

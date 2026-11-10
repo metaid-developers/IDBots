@@ -86,7 +86,7 @@ interface CoworkSessionItemProps {
    * the shallow memo compares cleanly; the list subscribes to the mode once.
    */
   assistantMode?: boolean;
-  /** BotHub history keeps the visited page in the metadata line instead of the task status. */
+  /** Studio history keeps the visited page in the metadata line instead of the task status. */
   showBrowserContext?: boolean;
 }
 

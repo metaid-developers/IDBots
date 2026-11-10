@@ -10,9 +10,9 @@ import {
 } from './viewState';
 
 /**
- * Session ↔ tab binding for the BotHub face (owner request 2026-11-10).
+ * Session ↔ tab binding for the Studio face (owner request 2026-11-10).
  *
- * The model: every BotHub Co-Work session owns ONE browser tab. The binding
+ * The model: every Studio Co-Work session owns ONE browser tab. The binding
  * shows up in four flows:
  *
  * 1. 「新对话」 click — if the active tab still shows a page, the upcoming

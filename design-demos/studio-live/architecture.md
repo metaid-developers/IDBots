@@ -1,8 +1,8 @@
-# BotHub live stage architecture proposal
+# Studio live stage architecture proposal
 
 ## Recommendation
 
-Keep the existing primary LLM and left transcript unchanged. Add a read-only visual director in the main process and one persistent Live Stage document per BotHub session. The director receives bounded semantic events, not the primary model's full context. It returns constrained scene patches, not executable HTML or JavaScript. The host owns factual state; the visualization model owns composition, wording within factual limits, motion parameters, and variation.
+Keep the existing primary LLM and left transcript unchanged. Add a read-only visual director in the main process and one persistent Live Stage document per Studio session. The director receives bounded semantic events, not the primary model's full context. It returns constrained scene patches, not executable HTML or JavaScript. The host owns factual state; the visualization model owns composition, wording within factual limits, motion parameters, and variation.
 
 This is the smallest architecture that supports continuous motion, creative variation, predictable cost, and graceful failure without repeatedly reloading the right browser.
 

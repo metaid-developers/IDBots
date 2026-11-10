@@ -20,8 +20,8 @@ import {
 } from './twinWorkModel';
 
 /**
- * "Twin's work" — the strip that sits at the top of the BotHub conversation
- * column (below the BotHub | BotWorks segmented band, above the message list)
+ * "Twin's work" — the strip that sits at the top of the Studio conversation
+ * column (below the Studio | BotWorks segmented band, above the message list)
  * and carries the conversations of the currently seated Twin(s): title row,
  * search disclosure, new-conversation entry, and one group per Twin.
  *
@@ -540,7 +540,7 @@ const TwinWorkPanelRow: React.FC<TwinWorkPanelProps> = ({
 };
 
 /**
- * Memoized like the sidebar list: BotHub re-renders on stream deltas, and the
+ * Memoized like the sidebar list: Studio re-renders on stream deltas, and the
  * strip only has to repaint when its own inputs (roster, sessions, selection,
  * language) change.
  */
