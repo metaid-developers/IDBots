@@ -916,6 +916,7 @@ blob-report/
 !tests/mobileVoiceBackfill.test.ts
 !tests/mobileVoiceProtocol.test.ts
 !tests/mobileVoiceWireup.test.tsx
+!tests/mobileVoiceHoldToSend.test.ts
 !tests/mrc721Service.test.mjs
 !tests/mrc721AgentTools.test.mjs
 !tests/mrc721AtomicSwap.test.mjs
