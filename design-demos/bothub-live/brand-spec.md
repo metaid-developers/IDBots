@@ -9,7 +9,8 @@ The current product already has a recognizable dark shell, a compact BotHub/BotW
 ## Required local assets
 
 - IDBots logo: `assets/logo.png`, copied from `public/logo.png`.
-- TwinBot character: `assets/twinbot.png`, copied from `src/renderer/assets/onboarding/hero-twinbot-v4.png`.
+- Current Twin Avatar: `assets/current-twin-avatar.jpg`, extracted read-only from the active local `AI_Sunny` Twin profile.
+- Generic TwinBot fallback: `assets/twinbot.png`, copied from `src/renderer/assets/onboarding/hero-twinbot-v4.png`.
 - Current UI reference: `assets/current-bothub.jpg`.
 
 No third-party logo is shown. No stock photography is needed because the product interface and motion behavior are the content.
@@ -36,7 +37,7 @@ The application stack is preserved: SF Pro, -apple-system, BlinkMacSystemFont, P
 ## Shape and material
 
 - Existing product shell: compact dark surfaces and restrained rounded controls.
-- Direction A: a fluid membrane is the single expressive material, approximated with CSS and Canvas rather than claiming an official Apple material.
+- Direction A+B: a WebGPU/WGSL liquid-glass shell carries the active Bot Avatar, with a Canvas2D fallback rather than claiming an official Apple material.
 - Direction B: spatial cartography, fine structural lines, flat nodes, and camera movement.
 - Direction C: white-gallery space, physical paper-like layers, soft contact shadows, and the pixel character.
 

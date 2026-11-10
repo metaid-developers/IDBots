@@ -1,5 +1,7 @@
 # BotHub live visualization design spec
 
+This is the initial three-direction study. The selected A+B iteration is defined in `direction-approved.md`; it replaces the Direction A CSS membrane with the MIT-licensed WebGPU/WGSL liquid-glass shell and expands structured topology around the persistent orb.
+
 ## Product and audience
 
 IDBots BotHub is a desktop meeting space between a non-technical owner and their TwinBot. The owner writes a request in the existing bottom-left composer. The left transcript remains the precise textual record. The right browser becomes a continuous visual account of what the Twin is doing, who is involved, what has changed, and when the owner needs to decide something.
@@ -50,6 +52,6 @@ The narrative role is a live companion, not a final infographic. Viewing distanc
 
 ## Constraints and evaluation
 
-All directions preserve the current brand and left-side workflow. No new frontend dependency is required for the prototypes. Motion uses CSS, Canvas, and the Web Animations model only. Reduced-motion mode removes loops and makes state changes immediate. Body text remains at least 14 pixels and supporting labels at least 12 pixels.
+All directions preserve the current brand and left-side workflow. No new npm dependency is required for the prototypes. Initial motion used CSS, Canvas, and the Web Animations model; the selected A+B iteration adds a vendored WebGPU/WGSL renderer with Canvas2D fallback. Reduced-motion mode removes loops and makes state changes immediate. Body text remains at least 14 pixels and supporting labels at least 12 pixels.
 
 The first evaluation is comparative, not a claim of final perfection. We are looking for the strongest direction or hybrid, the states that feel unclear or excessive, and the perceived difference between watching a Bot work and reading a log. Token cost is addressed in the architecture proposal and must be measured in a later instrumented MVP; these local scripted prototypes make no LLM calls and therefore provide no fake cost measurement.

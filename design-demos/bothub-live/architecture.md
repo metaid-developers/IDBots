@@ -104,3 +104,24 @@ Recommended MVP guardrails: a cheaper model route, a stable cached grammar, at m
 The first implementation should prove one visual direction with six high-value families: Received, Reasoning or Speaking, Local or MetaWeb research, Delegation and Worker report, Verification, and Report ready. Browser action and Owner needed are included because the inspected sessions demonstrate them. Web2 uses the same research renderer with a different source label.
 
 Do not begin with voice, a general-purpose animation DSL, free-form generated JavaScript, per-token director calls, or three production themes. The three prototypes are for selecting one direction or hybrid. After selection, implement the event reducer and persistent stage with deterministic scenes first, then enable the visual director behind a default-off setting and compare quality, latency, and measured cost.
+
+## Selected hybrid iteration
+
+The owner selected A+B. The renderer therefore needs a topology dimension in addition to the event family:
+
+```json
+{
+  "family": "delegation",
+  "topology": {
+    "mode": "structured",
+    "nodes": ["twin", "worker:s9", "evidence:anchor-proof"],
+    "edges": [["twin", "worker:s9"], ["worker:s9", "evidence:anchor-proof"]]
+  }
+}
+```
+
+`topology.mode: structured` triggers the B-like expansion. Suitable triggers include a delegation, a multi-agent orchestration, a long-term plan with dependency steps, or verification that joins multiple evidence nodes. Ordinary conversation and unstructured research keep the A-like orb. The orb shrinks and shifts to become the Twin node in the graph rather than being replaced. When the graph resolves, it collapses back into the orb.
+
+The host derives topology from actual task state, not from a visual-model guess. The visual director may choose layout and motion, but cannot create workers, dependencies, or evidence that do not exist.
+
+The selected A treatment uses the MIT-licensed WebGPU/WGSL liquid-glass shader from `LerSent001/orb`, adapted to IDBots brand tokens. The current conversation Bot's Avatar sits inside the orb as its identity. Unsupported WebGPU, device loss, shader failure, or reduced-resource mode falls back to the existing Canvas2D presence. Reduced motion renders a stable frame.

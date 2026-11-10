@@ -25,3 +25,4 @@ Private contact details, invitation codes, access tokens, full tool arguments, r
 
 - The user supplied the Siri-like liquid presence reference. A web check found that the newer Siri treatment moved from the old small orb to an edge-based animation, so direction A borrows the idea of a responsive presence without claiming to reproduce Siri.
 - Active Theory's official site, https://activetheory.net/, describes a studio combining story, art, and technology. Direction B uses that spatial interactive-design standard as a reference, not as an asset source.
+- The selected A+B iteration uses the MIT-licensed WebGPU/WGSL shader from https://github.com/LerSent001/orb. Its license is vendored at `shared/liquid-orb-LICENSE.txt`; the integration adapts brand colors, scene parameters, Avatar identity, and topology transitions.

@@ -49,7 +49,7 @@
         <div class="workspace">
           <aside class="chat-pane" aria-label="Text conversation">
             <div class="chat-header">
-              <img class="chat-avatar" src="assets/twinbot.png" alt="AI_Sunny" />
+              <img class="chat-avatar" src="assets/current-twin-avatar.jpg" onerror="this.onerror=null;this.src='assets/twinbot.png'" alt="AI_Sunny" />
               <div><div class="chat-name">AI_Sunny</div><div class="chat-sub">Your Twin</div></div>
               <span class="live-indicator">Live</span>
             </div>

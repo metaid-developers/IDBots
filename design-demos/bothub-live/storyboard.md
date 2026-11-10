@@ -1,5 +1,7 @@
 # Lightweight motion storyboards
 
+These are the initial direction boards. The selected A+B iteration preserves the continuous protagonist but uses the vendored WebGPU/WGSL liquid-glass shell, the active Bot Avatar, and structured topology expansion instead of the original CSS-only membrane treatment.
+
 Shared reference: 1440 by 900, 30 fps. Each prototype is interactive rather than a fixed-duration film, so timestamps describe the default autoplay pass. The owner can pause and inspect every scene. Each scene keeps one protagonist and at most three active supporting elements.
 
 ## Direction A: Living Core
