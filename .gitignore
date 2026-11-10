@@ -509,6 +509,16 @@ man_base_data_pebble/
 !tests/browserIframeBridgeScript.test.ts
 !tests/browserNavButtonSync.test.ts
 !tests/botBrowserSurfaceStatic.test.mjs
+!tests/panelMessageTimestamp.test.ts
+!tests/panelMessageReactions.test.ts
+!tests/panelContextMenuGeometry.test.ts
+!tests/panelPurityWiring.test.mjs
+!tests/panelMessageLocator.test.ts
+!tests/panelPurityPass2Wiring.test.mjs
+!tests/panelPurityPass3Wiring.test.mjs
+!tests/panelBubbleSelection.test.ts
+!tests/panelPurityPass5Wiring.test.mjs
+!tests/panelPurityPass5Ui.test.tsx
 !tests/browserIframeBridge.test.mjs
 !tests/browserElementSelectionsBridge.test.ts
 !tests/elementSelectionsStore.test.ts

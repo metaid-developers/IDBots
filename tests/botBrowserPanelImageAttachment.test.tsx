@@ -115,10 +115,18 @@ test('the panel renders through the shared body and keeps no splitter copy of it
     /import \{ UserMessageBody \} from '\.\.\/\.\.\/components\/cowork\/UserAttachmentBody';/.test(panelSource),
     'the panel must import the shared body',
   );
-  assert.equal((panelSource.match(/<UserMessageBody/g) ?? []).length, 1, 'the user branch renders exactly one shared body');
+  // Pass #5 ② supersession: the user branch renders the shared body at TWO
+  // source sites now — the plain branch and the quote card's instruction
+  // remainder (sentQuoteCard.rest). Both are the SAME shared component (the
+  // anti-fork assertions below carry the real teeth); no splitter copy.
+  assert.equal((panelSource.match(/<UserMessageBody/g) ?? []).length, 2, 'plain body + quote-card remainder, same shared body');
   assert.ok(
     /<UserMessageBody content=\{message\.content\} resolveLocalFilePath=\{resolveLocalFilePath\} \/>/.test(panelSource),
     'the panel hands its own resolver to the shared body',
+  );
+  assert.ok(
+    /<UserMessageBody content=\{sentQuoteCard\.rest\} resolveLocalFilePath=\{resolveLocalFilePath\} \/>/.test(panelSource),
+    'the quote card hands the same resolver to the shared body',
   );
 
   // Anti-drift: none of the display-side attachment pipeline may be re-declared

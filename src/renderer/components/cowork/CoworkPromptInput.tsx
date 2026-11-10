@@ -58,6 +58,11 @@ import {
 import CoworkAttachmentPreview from './CoworkAttachmentPreview';
 import EmojiMenuButton from '../chat/EmojiPickerPopover';
 
+// Line height of the large-branch textarea (leading-[24px], mirrored by the
+// claim backdrop and the hint overlay). The empty-state centering pad
+// derives from it, so caret row, backdrop and hint stay pixel-locked.
+const LARGE_LINE_HEIGHT_PX = 24;
+
 // The attachment chip shape; the gate/composition rules live in
 // coworkComposerAttachments.ts so paste, drop and the '+' picker share one door.
 type CoworkAttachment = CoworkComposerAttachment;
@@ -443,6 +448,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const [claim, setClaim] = useState<ComposerClaim | null>(null);
     const [commandNotice, setCommandNotice] = useState<string | null>(null);
     const [isDraggingFiles, setIsDraggingFiles] = useState(false);
+    // Whether the composer textarea holds focus. Gates the idle-hint overlay
+    // (the visible ellipsis placeholder) so it never competes with a caret
+    // or IME composition text.
+    const [composerFocused, setComposerFocused] = useState(false);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     // The composer card anchors the '/' command picker (fixed placement).
     const composerCardRef = useRef<HTMLDivElement>(null);
@@ -526,6 +535,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   const isLarge = size === 'large';
   const minHeight = isLarge ? (singleLine ? 42 : 60) : 24;
   const maxHeight = isLarge ? 336 : 200;
+  // Empty-state caret centering (purity pass #5 ①, probe-measured): the
+  // small box is one row (minHeight 24px) but the textarea's inline-block
+  // baseline gap sat the caret 3px low (a visible 4.3px caret/hint
+  // mismatch). Large branch: symmetric padding of (minHeight − line)/2
+  const isEmptyComposer = !value.trim();
+  const emptyPadY = isLarge && isEmptyComposer ? (minHeight - LARGE_LINE_HEIGHT_PX) / 2 : null;
 
   // Load skills on mount
   useEffect(() => {
@@ -1096,13 +1111,25 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     ? 'relative rounded-[22px] border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-card focus-within:shadow-elevated'
     : 'relative flex flex-wrap items-end gap-2 p-3 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface';
 
+  // Adaptive-composer layout fixes (office purity pass #2 ④, 2026-11-10):
+  // - The visible idle hint is an OVERLAY div, not the native placeholder:
+  //   Chromium paints no ellipsis glyph on a textarea placeholder (verified
+  //   in Chromium 157 — text-overflow on ::placeholder computes to clip,
+  //   on the host it is ignored for the placeholder line), so a long hint
+  //   used to wrap and stack inside the capped box. The overlay truncates
+  //   to ONE line with a real "…" via `truncate`; the native placeholder
+  //   stays in the DOM (accessible name) but renders transparent.
+  // - `min-w-0` on the small flex wrapper lets the textarea shrink with the
+  //   window instead of pushing the send button out of the card.
+  // - `overflow-y-auto` states the capped-box internal scroll explicitly
+  //   (the JS clamp in applyTextareaHeight already enforces the height).
   const textareaClass = isLarge
-    ? `w-full resize-none bg-transparent px-4 pt-2.5 pb-2 dark:text-claude-darkText text-claude-text placeholder:dark:text-claude-darkTextSecondary/60 placeholder:text-claude-textSecondary/60 focus:outline-none text-[14px] leading-[24px] min-h-[${minHeight}px] max-h-[${maxHeight}px]`
-    : 'flex-1 resize-none bg-transparent dark:text-claude-darkText text-claude-text placeholder:dark:text-claude-darkTextSecondary placeholder:text-claude-textSecondary focus:outline-none text-sm leading-relaxed min-h-[24px] max-h-[200px]';
+    ? `w-full peer resize-none overflow-y-auto bg-transparent px-4 pt-2.5 pb-2 dark:text-claude-darkText text-claude-text placeholder:text-transparent dark:placeholder:text-transparent focus:outline-none text-[14px] leading-[24px] min-h-[${minHeight}px] max-h-[${maxHeight}px]`
+    : 'w-full peer resize-none overflow-y-auto bg-transparent dark:text-claude-darkText text-claude-text placeholder:text-transparent dark:placeholder:text-transparent focus:outline-none text-sm leading-relaxed min-h-[24px] max-h-[200px]';
 
   // Claimed-command variant of the large textarea: glyphs transparent (the
   // backdrop layer paints them), caret keeps a visible accent color.
-  const claimTextareaClass = 'w-full resize-none bg-transparent px-4 pt-2.5 pb-2 placeholder:dark:text-claude-darkTextSecondary/60 placeholder:text-claude-textSecondary/60 focus:outline-none text-[14px] leading-[24px] text-transparent caret-claude-accent';
+  const claimTextareaClass = 'w-full peer resize-none bg-transparent px-4 pt-2.5 pb-2 placeholder:text-transparent dark:placeholder:text-transparent focus:outline-none text-[14px] leading-[24px] text-transparent caret-claude-accent';
 
   const handleBackdropScrollSync = (event: React.UIEvent<HTMLTextAreaElement>) => {
     if (backdropRef.current) {
@@ -1477,7 +1504,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         selections={quotedSelections}
         onRemove={handleRemoveQuotedSelection}
         botName={botName}
-        disabled={disabled || isStreaming}
+        // No `disabled` hand-off on purpose (purity pass #3 ③): removing a
+        // pending quote is composer-local state mutation, so the slot stays
+        // clickable while the session streams — the former running-state
+        // chain (hard disabled OR isStreaming) tied both surfaces
+        // (CoworkSessionDetail's BotWorks transcript and the office panel
+        // composer) into the cancel control and dead-locked it exactly when
+        // a steer quote was most needed.
       />
       <div
         ref={composerCardRef}
@@ -1503,7 +1536,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           />
         )}
         {attachments.length > 0 && (
-          <div className={`relative z-10 flex w-full flex-wrap gap-2 ${isLarge ? 'px-3 pt-3' : ''}`}>
+          // WeChat-style attachment strip (purity pass #2 ④): the strip stays
+          // in normal flow ABOVE the input row (never overlays it) and caps
+          // its own height with internal scrolling, so many attachments eat
+          // a bounded slice of the composer instead of unbounded rows.
+          <div className={`relative z-10 flex w-full max-h-24 flex-wrap gap-2 overflow-y-auto ${isLarge ? 'px-3 pt-3' : ''}`}>
             {attachments.map((attachment) => (
               <CoworkAttachmentPreview
                 key={attachment.path}
@@ -1545,11 +1582,18 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 onPaste={handlePaste}
                 onContextMenu={handleTextareaContextMenu}
                 onScroll={claimActive ? handleBackdropScrollSync : undefined}
+                onFocus={() => setComposerFocused(true)}
+                onBlur={() => setComposerFocused(false)}
                 placeholder={effectivePlaceholder}
                 disabled={disabled || (isStreaming && steerDisabled)}
-                rows={isLarge && singleLine ? 1 : 2}
+                rows={isLarge && (singleLine || isEmptyComposer) ? 1 : 2}
                 className={claimActive ? claimTextareaClass : textareaClass}
-                style={{ minHeight: `${minHeight}px` }}
+                style={{
+                  minHeight: `${minHeight}px`,
+                  ...(emptyPadY !== null
+                    ? { paddingTop: `${emptyPadY}px`, paddingBottom: `${emptyPadY}px` }
+                    : {}),
+                }}
                 role={commandPickerOpen ? 'combobox' : undefined}
                 aria-expanded={commandPickerOpen || undefined}
                 aria-controls={commandPickerOpen ? COMMAND_PICKER_ID : undefined}
@@ -1560,6 +1604,21 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                     : undefined
                 }
               />
+              {/* The visible idle hint (purity pass #2 ④): `truncate` paints
+                  the real ellipsis Chromium refuses to draw on a textarea
+                  placeholder. Hidden while focused (caret/IME safety) or
+                  while text is present; the claim backdrop can never be
+                  active at the same time (it requires non-empty text). */}
+              {!composerFocused && !value.trim() ? (
+                <div
+                  aria-hidden
+                  data-slot="composer-hint-overlay"
+                  className="pointer-events-none absolute inset-x-4 truncate text-[14px] leading-[24px] dark:text-claude-darkTextSecondary/60 text-claude-textSecondary/60"
+                  style={emptyPadY !== null ? { top: `${emptyPadY}px` } : undefined}
+                >
+                  {effectivePlaceholder}
+                </div>
+              ) : null}
             </div>
             <div className="flex items-center justify-between px-4 pb-2 pt-1.5">
               <div className="flex items-center gap-2 relative min-w-0">
@@ -1657,18 +1716,37 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               onToggle={() => setEmojiPickerOpen(!emojiPickerOpen)}
               onPick={handlePickEmoji}
             />
-            <textarea
-              ref={textareaRef}
-              value={value}
-              onChange={(e) => draftFieldRef.current?.set(e.target.value)}
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              onContextMenu={handleTextareaContextMenu}
-              placeholder={effectivePlaceholder}
-              disabled={disabled || (isStreaming && steerDisabled)}
-              rows={1}
-              className={textareaClass}
-            />
+            {/* The shrinkable flex item is this wrapper (min-w-0): the
+                textarea itself fills it, so a narrow window compresses the
+                input instead of pushing the buttons out of the card. */}
+            <div className="relative min-w-0 flex-1">
+              <textarea
+                ref={textareaRef}
+                value={value}
+                onChange={(e) => draftFieldRef.current?.set(e.target.value)}
+                onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
+                onContextMenu={handleTextareaContextMenu}
+                onFocus={() => setComposerFocused(true)}
+                onBlur={() => setComposerFocused(false)}
+                placeholder={effectivePlaceholder}
+                disabled={disabled || (isStreaming && steerDisabled)}
+                rows={1}
+                className={`${textareaClass} block`}
+                style={isEmptyComposer ? { lineHeight: `${minHeight}px` } : undefined}
+              />
+              {/* Visible idle hint with the real ellipsis glyph (see the
+                  large-branch overlay note). */}
+              {!composerFocused && !value.trim() ? (
+                <div
+                  aria-hidden
+                  data-slot="composer-hint-overlay"
+                  className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 truncate text-sm leading-relaxed dark:text-claude-darkTextSecondary text-claude-textSecondary"
+                >
+                  {effectivePlaceholder}
+                </div>
+              ) : null}
+            </div>
 
             {/* Same neutral gray composer send/stop as the wide layout above. */}
             {showStopButton ? (

@@ -520,6 +520,18 @@ const translations: Record<LanguageType, Record<string, string>> = {
     botBrowserCoworkEmpty: '今天，想从哪儿开始？',
     botBrowserCoworkEmptySub: '把一句话交给你的 Twin——剩下的路，他来铺。',
     botInternetNeedsTwin: 'Studio 是你和你的 Twin Bot 的一对一空间。本机还没有 Twin Bot——先去 BotWorks 创建一个。',
+    // 气泡右键上下文菜单（办公室聊天窗纯度优化第一批 2026-11-10）：功能收进
+    // 右键菜单，无常驻家具；回应图标行内自带，文字只给动作名。
+    botBrowserPanelMenuLike: '赞',
+    botBrowserPanelMenuDislike: '踩',
+    botBrowserPanelMenuQuoteReply: '引用回复',
+    botBrowserPanelMenuCopyText: '复制文本',
+    // 选区感知菜单（第四批 2026-11-10）：气泡内有选中文字时「引用回复/复制
+    // 文本」只作用于选中片段；引用文案复用 coworkQuoteActionLabel。
+    botBrowserPanelMenuCopySelected: '复制所选',
+    // 消息定位滚轮（办公室聊天窗纯度优化第二批 2026-11-10）：右缘细轨的
+    // 可达性标签；预览卡的发送者名复用 coworkOriginBadgeYou（「你」）。
+    botBrowserLocatorRail: '消息定位',
     botInternetGoBotHome: '去 BotWorks 创建 Twin',
     botInternetTwinSeatTitle: '选择当前当值 Twin',
     botInternetTwinSeatHint: '任命会与「我的 Bot」的 Twin 设定同步：原当值 Twin 回到 worker 岗位，所选 bot 立即上任。',
@@ -1325,6 +1337,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkQuoteJumpMissing: '引用的消息不在当前加载的对话中，可向上滚动加载更早的消息后再试',
     coworkQuoteReplyPreviewLabel: '引用消息预览',
     coworkQuoteReplyCancel: '取消回复',
+    // Telegram-style pending reply card (purity pass #3 ②): header line
+    // "回复 {speaker}" — {speaker} is a bare name (no colon), the owner reads
+    // 你 and the assistant speaks in the session bot's own name.
+    coworkQuoteReplyCardReplyingTo: '回复 {speaker}',
+    coworkQuoteReplyCardSpeakerUser: '你',
     coworkQuoteReplyPlaceholder: '回复…',
     coworkQuoteReplyBlockHeader: '回复以下消息：',
     coworkQuoteReplyBlockItem: '#{ordinal} {source}{streaming}：',
@@ -4257,6 +4274,17 @@ const translations: Record<LanguageType, Record<string, string>> = {
     botBrowserCoworkEmpty: 'So, where would you like to start today?',
     botBrowserCoworkEmptySub: 'Hand your Twin one sentence — the rest of the road is theirs to lay.',
     botInternetNeedsTwin: 'Studio is a 1:1 space with your Twin bot. You have no Twin on this machine yet — create one in BotWorks first.',
+    // Mirror of the zh context-menu set (purity pass #1, 2026-11-10); the
+    // selected-variant key mirrors zh (pass #4, 2026-11-10) — the quote label
+    // reuses coworkQuoteActionLabel in both locales.
+    botBrowserPanelMenuLike: 'Like',
+    botBrowserPanelMenuDislike: 'Dislike',
+    botBrowserPanelMenuQuoteReply: 'Quote reply',
+    botBrowserPanelMenuCopyText: 'Copy text',
+    botBrowserPanelMenuCopySelected: 'Copy selected',
+    // Mirror of the zh locator key (purity pass #2, 2026-11-10); the preview
+    // sender label for user rows reuses coworkOriginBadgeYou.
+    botBrowserLocatorRail: 'Message locator',
     botInternetGoBotHome: 'Go to BotWorks to create your Twin',
     botInternetTwinSeatTitle: 'Choose the acting Twin',
     botInternetTwinSeatHint: 'Appointing stays in sync with the My Bots Twin setting: the previous Twin returns to the worker bench and the chosen bot takes the seat immediately.',
@@ -5053,6 +5081,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkQuoteJumpMissing: 'The quoted message is not in the loaded conversation — scroll up to load earlier messages and try again',
     coworkQuoteReplyPreviewLabel: 'Quoted message',
     coworkQuoteReplyCancel: 'Cancel reply',
+    // Telegram-style pending reply card header (see the zh note).
+    coworkQuoteReplyCardReplyingTo: 'Replying to {speaker}',
+    coworkQuoteReplyCardSpeakerUser: 'you',
     coworkQuoteReplyPlaceholder: 'Reply…',
     coworkQuoteReplyBlockHeader: 'Replying to the following messages:',
     coworkQuoteReplyBlockItem: '#{ordinal} {source}{streaming}:',

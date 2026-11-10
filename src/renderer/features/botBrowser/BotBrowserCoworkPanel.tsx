@@ -27,6 +27,24 @@ import TwinSeatChip from './TwinSeatChip';
 import { appointTwinSeat } from './twinSeatAppointment';
 import { elementSelectionsStore } from './elementSelectionsStore';
 import CoworkHistoryPanel from './CoworkHistoryPanel';
+import { formatPanelMessageTimestamp, isPanelMessageGroupEnd } from './panelMessageTimestamp';
+import {
+  applyPanelReactionToggle,
+  getPanelReactionsStorage,
+  readPanelReactionsForSession,
+  writePanelReaction,
+  type PanelReactionRating,
+} from './panelMessageReactions';
+import {
+  isPointerOutsideContextMenu,
+  resolveContextMenuPlacement,
+} from './panelContextMenuGeometry';
+import PanelMessageContextMenu from './PanelMessageContextMenu';
+import PanelMessageLocatorRail from './PanelMessageLocatorRail';
+import { buildPanelLocatorRows } from './panelMessageLocator';
+import { createMessageQuotedSelection, parseSentQuoteBlock, parseSentSelectionQuoteBlock } from '../../components/cowork/coworkQuotedSelections';
+import { buildSentQuoteDisplaySources, buildSentSelectionQuoteLabelSets } from '../../components/cowork/CoworkSessionDetail';
+import { resolveBubbleSelectedText } from './panelBubbleSelection';
 
 type PanelMetabot = MetaBotForSelector & { llm_id?: string | null; llm_provider?: string | null; llm_effort?: string | null };
 
@@ -61,17 +79,112 @@ export const PanelMessage: React.FC<{
   onOpenUri: (uri: string) => void;
   isAssistantMode?: boolean;
   resolveLocalFilePath?: LocalFilePathResolver;
-}> = ({ message, onOpenUri, isAssistantMode = false, resolveLocalFilePath }) => {
-  if (message.type === 'user') {
+  /** Meta-line stamp, pre-formatted (`HH:mm` / `MM-DD HH:mm`, '' = omit). */
+  timestampLabel?: string;
+  /**
+   * Whether this bubble may carry the stamp at all (purity pass #5 ③): the
+   * parent passes (assistant && group-end) — the stamp is the twin side's
+   * group-end line and is DEFAULT-VISIBLE there, no hover involved. A user
+   * row never carries a stamp regardless of this flag, and the pass #3
+   * hover reveal is retired.
+   */
+  showTimestamp?: boolean;
+  /**
+   * The session bot's name: names the speaker on the pending reply card and
+   * in a sent quote's inline display label (main-transcript mapping). Null
+   * falls back to the i18n placeholder.
+   */
+  botName?: string | null;
+  /** This bubble's stored reaction (local MVP; null = none). */
+  currentReaction?: PanelReactionRating | null;
+  /** Right-click on the bubble chrome opens the panel context menu. */
+  onContextMenu?: (event: React.MouseEvent, message: CoworkMessage) => void;
+  /** Chip click toggles the reaction (re-click on the active side cancels). */
+  onToggleReaction?: (message: CoworkMessage, current: PanelReactionRating | null) => void;
+}> = ({
+  message,
+  onOpenUri,
+  isAssistantMode = false,
+  resolveLocalFilePath,
+  timestampLabel,
+  showTimestamp = false,
+  botName = null,
+  currentReaction = null,
+  onContextMenu,
+  onToggleReaction,
+}) => {
+  const isUser = message.type === 'user';
+  const handleBubbleContextMenu = (event: React.MouseEvent) => {
+    if (!onContextMenu) return;
+    // Own menu replaces the browser's; stopPropagation keeps ancestor
+    // surfaces (iframe hosts, transcript chrome) from also opening theirs.
+    event.preventDefault();
+    event.stopPropagation();
+    onContextMenu(event, message);
+  };
+  // Meta line under the bubble (pass #5 ③④, superseding pass #3's hover
+  // reveal): the stamp is the TWIN side's group-end line and reads by
+  // DEFAULT there — no hover gating, no `group` hover proxy, no reserved
+  // invisible slot. The row mounts only when it has content (chip, stamp,
+  // or both) and adapts to the bubble alignment: assistant rows sit
+  // left-aligned under the bubble and read [👍chip][time]; user rows are
+  // right-aligned and carry the chip alone (a user row never shows a
+  // stamp, whatever a caller passes).
+  const showStamp = showTimestamp && !isUser;
+  const hasReactionChip = Boolean(currentReaction && onToggleReaction);
+  const metaRow = showStamp || hasReactionChip ? (
+    <div
+      data-slot="panel-message-meta"
+      className={`flex items-center gap-1.5 px-1 pt-0.5 text-[11px] leading-3 dark:text-claude-darkTextSecondary text-claude-textSecondary ${
+        isUser ? 'justify-end' : 'justify-start'
+      }`}
+    >
+      {currentReaction && onToggleReaction ? (
+        <button
+          type="button"
+          data-panel-reaction-chip={currentReaction}
+          onClick={() => onToggleReaction(message, currentReaction)}
+          className="rounded-full border border-current/20 px-1.5 py-px text-[10px] leading-3 transition-opacity hover:opacity-70"
+        >
+          {currentReaction === 'up' ? '👍' : '👎'}
+        </button>
+      ) : null}
+      {showStamp && timestampLabel ? (
+        <span data-panel-message-timestamp="true">{timestampLabel}</span>
+      ) : null}
+    </div>
+  ) : null;
+  if (isUser) {
+    // Sent quotes keep the ORIGINAL inline style — one bubble, quote flowing
+    // above the reply (owner ruling 2026-11-11, after the Telegram card read
+    // as a separate block) — but the label line shows the REAL speaker via
+    // the main transcript's WeChat-style mapping (`你：` / `Monday：`),
+    // not the machine label ("#152 助手消息："). Display-only: the stored
+    // body stays verbatim for the model; hand-written blockquotes never
+    // match the generated form and render untouched.
+    const sentQuote = parseSentQuoteBlock(message.content, buildSentQuoteDisplaySources(botName));
+    const sentSelectionQuote = sentQuote
+      ? null
+      : parseSentSelectionQuoteBlock(message.content, buildSentSelectionQuoteLabelSets(botName));
+    const sentQuoteBlock = sentQuote?.block ?? sentSelectionQuote?.block ?? null;
+    const sentQuoteRest = sentQuote?.rest ?? sentSelectionQuote?.rest ?? null;
+    const displayContent = sentQuoteBlock
+      ? [sentQuoteBlock, sentQuoteRest].filter(Boolean).join('\n\n')
+      : message.content;
+    const bubbleClassName = "max-w-[90%] min-w-0 whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-[13px] dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text shadow-subtle";
     return (
-      <div className="flex justify-end">
-        {/* Same display-side body pipeline as the main cowork transcript: the
-            attachment marker lines split out at render time, image files render
-            as the shared thumbnail strip with the in-app lightbox, and the rest
-            renders as markdown. The panel keeps its own bubble chrome. */}
-        <div className="max-w-[90%] min-w-0 whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-[13px] dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text shadow-subtle">
-          <UserMessageBody content={message.content} resolveLocalFilePath={resolveLocalFilePath} />
+      // data-panel-message-id lets the locator rail measure this row
+      // (purity pass #2 ③) without touching the bubble chrome.
+      <div data-panel-message-id={message.id} className="flex flex-col items-end">
+        <div onContextMenu={handleBubbleContextMenu} className={bubbleClassName}>
+          {/* Same display-side body pipeline as the main cowork transcript:
+              the attachment marker lines split out at render time, image
+              files render as the shared thumbnail strip with the in-app
+              lightbox, and the rest renders as markdown. The panel keeps
+              its own bubble chrome. */}
+          <UserMessageBody content={displayContent} resolveLocalFilePath={resolveLocalFilePath} />
         </div>
+        {metaRow}
       </div>
     );
   }
@@ -81,16 +194,23 @@ export const PanelMessage: React.FC<{
     // (narration and final alike) sit in the neutral-gray .assistant-bubble
     // instead of bare full-width text, so both surfaces read the same way.
     return (
-      <div className="min-w-0">
-        <div className="assistant-bubble w-fit max-w-[92%] rounded-[22px] px-[16px] py-[10px] text-[13px] leading-5 dark:text-claude-darkText text-claude-text shadow-subtle [&_h1]:text-sm [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h2]:text-[13px] [&_h2]:mt-2.5 [&_h2]:mb-1 [&_h3]:text-[13px] [&_h3]:mt-2 [&_h3]:mb-1 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:break-all [&_a]:break-all">
+      <div data-panel-message-id={message.id} className="flex min-w-0 flex-col items-start">
+        <div
+          onContextMenu={handleBubbleContextMenu}
+          className="assistant-bubble w-fit max-w-[92%] rounded-[22px] px-[16px] py-[10px] text-[13px] leading-5 dark:text-claude-darkText text-claude-text shadow-subtle [&_h1]:text-sm [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h2]:text-[13px] [&_h2]:mt-2.5 [&_h2]:mb-1 [&_h3]:text-[13px] [&_h3]:mt-2 [&_h3]:mb-1 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:break-all [&_a]:break-all"
+        >
           <MarkdownContent content={message.content} compact onOpenBotBrowserUri={onOpenUri} emojiImages />
         </div>
+        {metaRow}
       </div>
     );
   }
   return (
-    <div className="min-w-0 text-[13px] leading-5 dark:text-claude-darkText text-claude-text [&_h1]:text-sm [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h2]:text-[13px] [&_h2]:mt-2.5 [&_h2]:mb-1 [&_h3]:text-[13px] [&_h3]:mt-2 [&_h3]:mb-1 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:break-all [&_a]:break-all">
-      <MarkdownContent content={message.content} compact onOpenBotBrowserUri={onOpenUri} emojiImages />
+    <div data-panel-message-id={message.id} className="flex min-w-0 flex-col items-start text-[13px] leading-5 dark:text-claude-darkText text-claude-text [&_h1]:text-sm [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h2]:text-[13px] [&_h2]:mt-2.5 [&_h2]:mb-1 [&_h3]:text-[13px] [&_h3]:mt-2 [&_h3]:mb-1 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:break-all [&_a]:break-all">
+      <div onContextMenu={handleBubbleContextMenu} className="min-w-0">
+        <MarkdownContent content={message.content} compact onOpenBotBrowserUri={onOpenUri} emojiImages />
+      </div>
+      {metaRow}
     </div>
   );
 };
@@ -202,6 +322,141 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
   const listRef = useRef<HTMLDivElement>(null);
   const promptInputRef = useRef<CoworkPromptInputRef>(null);
   const folderButtonRef = useRef<HTMLButtonElement>(null);
+
+  // ── Bubble context menu + reactions (purity pass #1, 2026-11-10) ─────────
+  // The chat surface stays clean: no persistent furniture. Everything a bubble
+  // can do lives behind its right-click menu (react up/down, quote reply,
+  // copy text), mounted only while open. Reactions are a localStorage MVP —
+  // no backend model exists yet; the upgrade path is documented in
+  // panelMessageReactions.ts.
+  interface PanelContextMenuState {
+    message: CoworkMessage;
+    x: number;
+    y: number;
+    /**
+     * Non-empty text selected INSIDE this bubble at open time (pass #4), else
+     * null. When set, quote-reply and copy act on the fragment; 👍👎 ignore it.
+     */
+    selectedText: string | null;
+    /** The bubble element that opened the menu (kept open on re-clicks there). */
+    opener: HTMLElement | null;
+  }
+  const [contextMenu, setContextMenu] = useState<PanelContextMenuState | null>(null);
+  const [panelReactions, setPanelReactions] = useState<Record<string, PanelReactionRating>>({});
+  const panelMenuRef = useRef<HTMLDivElement>(null);
+  // Latest-menu mirror for the capture-phase listeners (they close over the
+  // ref, not the state, so re-opening with a new message cannot pin a stale one).
+  const contextMenuRef = useRef<PanelContextMenuState | null>(null);
+  useEffect(() => {
+    contextMenuRef.current = contextMenu;
+  }, [contextMenu]);
+
+  const sessionId = currentSession?.id ?? null;
+  // Sweep the session's stored ratings when the session (or the mount) changes;
+  // runtime menu/chip updates go through setPanelReactions directly.
+  useEffect(() => {
+    if (!sessionId) {
+      setPanelReactions({});
+      return;
+    }
+    setPanelReactions(readPanelReactionsForSession(getPanelReactionsStorage(), sessionId));
+  }, [sessionId]);
+
+  const handlePanelContextMenu = useCallback((event: React.MouseEvent, message: CoworkMessage) => {
+    // Capture the live selection FIRST (pass #4): at contextmenu time Chromium
+    // still holds it (select-then-right-click), and this handler is the only
+    // reliable moment. A selection spanning another bubble, or living outside
+    // this one, resolves to null — the menu then treats the WHOLE message.
+    const bubble = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+    const selection = typeof window !== 'undefined' ? window.getSelection() : null;
+    const selectedText = resolveBubbleSelectedText(
+      selection?.anchorNode ?? null,
+      selection?.focusNode ?? null,
+      selection ? selection.toString() : '',
+      bubble,
+    );
+    const placement = resolveContextMenuPlacement(event.clientX, event.clientY, {
+      width: typeof window !== 'undefined' ? window.innerWidth : 0,
+      height: typeof window !== 'undefined' ? window.innerHeight : 0,
+    });
+    setContextMenu({
+      message,
+      x: placement.x,
+      y: placement.y,
+      selectedText,
+      opener: bubble,
+    });
+  }, []);
+
+  // Menu react row (chips share the toggle): re-picking the active side
+  // cancels; picking the other side switches. Single-choice, local-only.
+  const handleMenuReact = useCallback((rating: PanelReactionRating) => {
+    const menu = contextMenuRef.current;
+    if (!menu || !sessionId) return;
+    const { id: messageId } = menu.message;
+    setPanelReactions((prev) => {
+      const nextRating = applyPanelReactionToggle(prev[messageId] ?? null, rating);
+      const next = { ...prev };
+      if (nextRating === null) delete next[messageId];
+      else next[messageId] = nextRating;
+      writePanelReaction(getPanelReactionsStorage(), sessionId, messageId, nextRating);
+      return next;
+    });
+  }, [sessionId]);
+
+  // Chip click: the chip only renders while a rating is active, so clicking it
+  // always cancels.
+  const handleToggleReaction = useCallback((message: CoworkMessage) => {
+    if (!sessionId) return;
+    setPanelReactions((prev) => {
+      if (!prev[message.id]) return prev;
+      const next = { ...prev };
+      delete next[message.id];
+      writePanelReaction(getPanelReactionsStorage(), sessionId, message.id, null);
+      return next;
+    });
+  }, [sessionId]);
+
+  // Copy the selected fragment VERBATIM when the menu opened on one (pass #4),
+  // else the RAW message text (the stored markdown, not the rendered prose).
+  const handleMenuCopyText = useCallback(() => {
+    const menu = contextMenuRef.current;
+    if (!menu) return;
+    const raw = menu.selectedText ?? menu.message.content;
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        void navigator.clipboard.writeText(raw);
+      }
+    } catch {
+      // Clipboard unavailable (permissions): menu still closes; nothing to show.
+    }
+  }, []);
+
+  // Three close channels while the menu is open: a pointerdown outside the
+  // menu AND outside the opening bubble, Escape, and any scroll (capture phase
+  // catches the panel list and ancestor scrollers). Bound only while open.
+  useEffect(() => {
+    if (!contextMenu) return undefined;
+    const dismiss = () => setContextMenu(null);
+    const handlePointerDown = (event: PointerEvent) => {
+      const menu = contextMenuRef.current;
+      if (!menu) return;
+      if (!isPointerOutsideContextMenu(panelMenuRef.current, menu.opener, event.target)) return;
+      dismiss();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') dismiss();
+    };
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    document.addEventListener('keydown', handleKeyDown, true);
+    window.addEventListener('scroll', dismiss, true);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+      document.removeEventListener('keydown', handleKeyDown, true);
+      window.removeEventListener('scroll', dismiss, true);
+    };
+  }, [contextMenu]);
+
   // Twin welcome page (owner rulings 2026-11-09: the Studio face is the
   // twin's office — its landing invites like a friend, not a feature tour;
   // the copy set is finalized in i18n and mirrored zh/en). The 缩略态定稿
@@ -219,6 +474,38 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     () => filterVisiblePanelMessages(messages),
     [messages]
   );
+
+  // Quote reply goes through the exact CoworkSessionDetail path: a whole-message
+  // quoted fragment into the composer's single-target slot — the chip above the
+  // composer, the remove affordance and the send composition are all the shared
+  // CoworkPromptInput machinery. The ordinal is the panel's own rendered
+  // position (filterVisiblePanelMessages order, 1-based), matching what the
+  // panel actually displayed at capture time. NOTE (MVP boundary): the
+  // quotedMessageIds jump anchor is NOT persisted on this panel's sends —
+  // browserCoworkService.send sits outside this delegation's writable paths;
+  // the quoted TEXT still travels inside the composed prompt exactly as on the
+  // BotWorks side. (Future IPC upgrade: pass quotedMessageIds through send.)
+  const handleMenuQuoteReply = useCallback(() => {
+    const menu = contextMenuRef.current;
+    if (!menu) return;
+    const { message } = menu;
+    // Selection-aware (pass #4): a fragment captured inside this bubble quotes
+    // the FRAGMENT through the same factory (createQuotedSelection trims and
+    // caps it at QUOTED_SELECTION_MAX_CHARS); no selection quotes the whole
+    // message, as before. The messageRef jump anchor stays the bubble either way.
+    const content = menu.selectedText ?? message.content;
+    const ordinal = visibleMessages.findIndex((candidate) => candidate.id === message.id) + 1;
+    const fragment = createMessageQuotedSelection({
+      content,
+      role: message.type === 'user' ? 'user' : message.type === 'assistant' ? 'assistant' : 'other',
+      messageId: message.id,
+      ordinal,
+      streaming: message.metadata?.isStreaming === true,
+    });
+    if (!fragment) return;
+    promptInputRef.current?.addQuotedSelection(fragment);
+    promptInputRef.current?.focus();
+  }, [visibleMessages]);
 
   const loadMetabots = useCallback(async () => {
     const result = await window.electron?.metabot?.list?.();
@@ -353,6 +640,17 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     }
   }, [visibleMessages.length, isStreaming]);
 
+  // Locator rail rows (purity pass #2 ③): identity + preview text per
+  // visible message; the rail itself decides visibility from overflow, and
+  // the transcript's auto-scroll-to-bottom effect above stays untouched.
+  const locatorRows = useMemo(
+    () => buildPanelLocatorRows(visibleMessages, {
+      botName: chipMetabot?.name ?? null,
+      userLabel: i18nService.t('coworkOriginBadgeYou'),
+    }),
+    [visibleMessages, chipMetabot?.name],
+  );
+
   const handleSubmit = async (prompt: string, skillPrompt?: string) => {
     if (!currentSession && !twinMetabot) return; // no-Twin machines never start sessions here
     setShowHistory(false);
@@ -433,13 +731,30 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     return (href: string, text: string) => resolveLocalPathAgainstCwd(href, text, { cwd, executionMode });
   }, [currentSession?.cwd, currentSession?.executionMode]);
 
-  const renderMessage = (message: CoworkMessage) => (
+  // (message, index) rides Array.map: the group-end predicate reads the
+  // rendered sequence (visibleMessages), so same-sender bursts collapse to
+  // ONE stamp on their last bubble — and pass #5 ③ scopes that stamp to the
+  // twin side only: showTimestamp is (assistant && group-end), default
+  // visible, no hover.
+  const renderMessage = (message: CoworkMessage, index: number) => (
     <PanelMessage
       key={message.id}
       message={message}
       onOpenUri={handleOpenUri}
       isAssistantMode={isAssistantMode}
       resolveLocalFilePath={resolveLocalFilePath}
+      // Quiet per-bubble stamp on the meta line: same-day `HH:mm`, older
+      // days `MM-DD HH:mm` (computed at render, local time). Pass #5 ③:
+      // assistant group-end rows only, DEFAULT-VISIBLE — the pass #3 hover
+      // reveal is retired.
+      timestampLabel={formatPanelMessageTimestamp(message.timestamp, Date.now())}
+      showTimestamp={message.type === 'assistant' && isPanelMessageGroupEnd(visibleMessages, index)}
+      // The real speaker for the pending card and sent-quote labels (pass
+      // #5 ① + the inline label mapping).
+      botName={chipMetabot?.name ?? null}
+      currentReaction={panelReactions[message.id] ?? null}
+      onContextMenu={handlePanelContextMenu}
+      onToggleReaction={handleToggleReaction}
     />
   );
 
@@ -485,7 +800,14 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
-      <div ref={listRef} className="min-h-0 flex-1 space-y-2.5 overflow-y-auto overflow-x-hidden px-1 pb-2">
+      {/* The relative wrapper hosts the locator rail (purity pass #2 ③) at
+          the transcript's right edge; the scroller itself stays unpositioned
+          so the rail never scrolls with the content. */}
+      <div className="relative min-h-0 flex-1">
+        {/* The locator rail is the scroll indicator on this seat: the native
+            scrollbar is hidden (scroll behavior unchanged) so the two rails
+            never overlap or fight for the same edge. */}
+        <div ref={listRef} className="h-full space-y-2.5 overflow-y-auto overflow-x-hidden px-1 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {visibleMessages.length === 0 ? (
           needsTwinBootstrap ? (
             // No Twin on this machine: block the chat with bootstrap guidance
@@ -559,6 +881,12 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
             </div>
           )
         ) : null}
+        </div>
+        <PanelMessageLocatorRail
+          containerRef={listRef}
+          rows={locatorRows}
+          ariaLabel={i18nService.t('botBrowserLocatorRail')}
+        />
       </div>
 
       <div className="flex items-center justify-between gap-0.5 pb-1.5">
@@ -658,6 +986,9 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
           // Scope the skills picker to the session's bot (live session wins,
           // draft follows the Twin) so pins stay inside that bot's view.
           sessionMetabotId={currentSession?.metabotId ?? effectiveMetabotId}
+          // The pending reply card names the real speaker (pass #5 ①): the
+          // session bot's own name — 「回复 Monday」 instead of 「回复 Bot」.
+          botName={chipMetabot?.name ?? null}
         />
       )}
 
@@ -672,8 +1003,26 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
           onClose={() => setShowHistory(false)}
         />
       ) : null}
+
+      {contextMenu ? (
+        // Bubble context menu — mounted only while open (no persistent
+        // furniture). Placement was viewport-flipped at open time; the three
+        // close channels live in the effect above.
+        <PanelMessageContextMenu
+          ref={panelMenuRef}
+          x={contextMenu.x}
+          y={contextMenu.y}
+          currentReaction={panelReactions[contextMenu.message.id] ?? null}
+          selectionActive={Boolean(contextMenu.selectedText)}
+          onReact={handleMenuReact}
+          onQuoteReply={handleMenuQuoteReply}
+          onCopyText={handleMenuCopyText}
+          onDismiss={() => setContextMenu(null)}
+        />
+      ) : null}
     </div>
   );
 };
 
 export default BotBrowserCoworkPanel;
+

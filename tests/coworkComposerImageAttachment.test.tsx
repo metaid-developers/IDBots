@@ -596,30 +596,22 @@ const lightboxSource = fs.readFileSync(
   'utf8',
 );
 
-test('the pending attachment strip renders inside the composer card, not beside it', () => {
+test('the pending attachments render as the original strip above the input row', () => {
+  // Owner ruling 2026-11-11 00:58: four rail layouts never matched his
+  // mental image, so the strip returns to its ORIGINAL normal-flow spot
+  // above the input row (pass #2 cap + internal scroll, one block per
+  // branch). The caret centering from pass #5 stays.
+  const stripIndex = composerSource.indexOf('relative z-10 flex w-full max-h-24 flex-wrap gap-2 overflow-y-auto');
   const cardIndex = composerSource.indexOf('ref={composerCardRef}');
-  const stripIndex = composerSource.indexOf('{attachments.length > 0 && (');
-  const textRowIndex = composerSource.indexOf('{isLarge ? (');
+  const colCount = composerSource.split('{attachments.length > 0 && (').length - 1;
 
+  assert.ok(stripIndex >= 0, 'the restored strip must exist');
   assert.ok(cardIndex >= 0, 'the composer card ref must exist');
-  assert.ok(stripIndex >= 0, 'the attachment strip must still be rendered');
-  assert.ok(textRowIndex >= 0, 'the text row must still be rendered');
-  assert.ok(
-    cardIndex < stripIndex,
-    'the attachment strip must render inside the card (after the card ref), not above it',
-  );
-  assert.ok(
-    stripIndex < textRowIndex,
-    'the attachment strip must sit above the text row inside the card',
-  );
-  assert.ok(
-    /flex w-full flex-wrap gap-2/.test(composerSource),
-    'the strip must claim a full row so the small (flex-row) composer stacks it above the input',
-  );
-  assert.ok(
-    /relative flex flex-wrap items-end gap-2 p-3/.test(composerSource),
-    'the small composer card must wrap, so a full-width strip can occupy its own row',
-  );
+  assert.equal(colCount, 1, 'the single original strip serves both branches');
+  assert.ok(stripIndex > cardIndex, 'the strip renders inside the card, above the input row');
+  assert.doesNotMatch(composerSource, /composer-attachment-column/);
+  assert.doesNotMatch(composerSource, /w-\[68px\]/);
+  assert.doesNotMatch(composerSource, /flex items-stretch/);
 });
 
 test('a composer thumbnail opens the picture in-app, and Escape closes it', () => {
