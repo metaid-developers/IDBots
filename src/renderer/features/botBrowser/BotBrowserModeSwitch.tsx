@@ -8,7 +8,7 @@ interface BotBrowserModeSwitchProps {
   onSelectBrowser: () => void;
   /**
    * Light actions that belong to the same header stack (new session ✎, session
-   * records ◷ on BotHub; the update badge on BotWorks since the 侧栏微调批单
+   * records ◷ on Studio; the update badge on BotWorks since the 侧栏微调批单
    * 2026-11-09 12:23 — its records search lives in the 按 Bot toolbar row and
    * its collapse control is the shell's seam tab, not this header).
    * They ride the row directly below the band — right-aligned, still inside
@@ -67,7 +67,7 @@ const segmentClass = (active: boolean) => [
  *
  *   [ traffic lights alone ]                          <- row 1: the lights'
  *                                                       own 52 px strip
- *   [ BotHub | BotWorks ]                             <- row 2: the band, BELOW
+ *   [ Studio | BotWorks ]                             <- row 2: the band, BELOW
  *                                                      the lights row — no
  *                                                      identity slot here any
  *                                                      more (the avatar lives
@@ -80,7 +80,7 @@ const segmentClass = (active: boolean) => [
  * the same small column inset. The identity entry does not ride this header
  * at all any more: it is WorkspaceRail's top avatar slot. Text only: no
  * three-ring mark, no chevron, no menu. Labels are the finalized
- * BotHub | BotWorks. Semantics are unchanged: radiogroup + two radios,
+ * Studio | BotWorks. Semantics are unchanged: radiogroup + two radios,
  * aria-checked, one roving tab stop, Arrow/Home/End movement; the same two
  * callbacks drive the switch.
  */

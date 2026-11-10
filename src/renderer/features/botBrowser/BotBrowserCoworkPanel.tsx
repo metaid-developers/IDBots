@@ -202,7 +202,7 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
   const listRef = useRef<HTMLDivElement>(null);
   const promptInputRef = useRef<CoworkPromptInputRef>(null);
   const folderButtonRef = useRef<HTMLButtonElement>(null);
-  // Twin welcome page (owner rulings 2026-11-09: the BotHub face is the
+  // Twin welcome page (owner rulings 2026-11-09: the Studio face is the
   // twin's office — its landing invites like a friend, not a feature tour;
   // the copy set is finalized in i18n and mirrored zh/en). The 缩略态定稿
   // same-day ruling retires the width-derived expanded variant: the welcome
@@ -510,7 +510,7 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
             // Twin welcome page (owner rulings 2026-11-09: landing built on
             // the white-screen fix + the finalized copy set; the 缩略态定稿
             // same-day ruling retires the width-derived expanded variant).
-            // An empty BotHub column is the twin's office greeting — ONE
+            // An empty Studio column is the twin's office greeting — ONE
             // fixed compact form: a small avatar + name row, one invitation
             // line, one sub line. No control pretends to be clickable; the
             // real invitation is the composer below, whose placeholder speaks

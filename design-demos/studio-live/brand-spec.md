@@ -1,17 +1,17 @@
-# IDBots BotHub brand spec
+# IDBots Studio brand spec
 
 ## Existing product audit
 
-Reference screenshot: `assets/current-bothub.jpg`, captured read-only from the running local IDBots application.
+Reference screenshot: `assets/current-studio.jpg`, captured read-only from the running local IDBots application.
 
-The current product already has a recognizable dark shell, a compact BotHub/BotWorks switch, a left session column, and a large right browser canvas. The redesign preserves that structure. The design target is the right-side live process, not a new product identity.
+The current product already has a recognizable dark shell, a compact Studio/BotWorks switch, a left session column, and a large right browser canvas. The redesign preserves that structure. The design target is the right-side live process, not a new product identity.
 
 ## Required local assets
 
 - IDBots logo: `assets/logo.png`, copied from `public/logo.png`.
 - Current Twin Avatar: `assets/current-twin-avatar.jpg`, extracted read-only from the active local `AI_Sunny` Twin profile.
 - Generic TwinBot fallback: `assets/twinbot.png`, copied from `src/renderer/assets/onboarding/hero-twinbot-v4.png`.
-- Current UI reference: `assets/current-bothub.jpg`.
+- Current UI reference: `assets/current-studio.jpg`.
 
 No third-party logo is shown. No stock photography is needed because the product interface and motion behavior are the content.
 

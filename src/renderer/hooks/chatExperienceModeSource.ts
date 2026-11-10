@@ -4,8 +4,8 @@ import type { ChatExperienceMode } from '../config';
  * The chat experience mode is decided by the FACE the user is on
  * (总裁办公室裁定 2026-11-09, superseding the retired Settings toggle):
  *
- *   - BotHub face (surfaceMode 'browser') -> 'assistant'. Assistant mode is
- *     embedded in the BotHub layer itself: sessions started there carry the
+ *   - Studio face (surfaceMode 'browser') -> 'assistant'. Assistant mode is
+ *     embedded in the Studio layer itself: sessions started there carry the
  *     persisted per-session assistantMode marker (owner ruling 2026-11-07),
  *     so the assistant treatment and the professional prompt never disagree.
  *   - BotWorks face (surfaceMode 'home') -> 'professional'. Every bot on the
@@ -37,7 +37,7 @@ export type ChatSurfaceMode = 'browser' | 'home';
 /**
  * The face -> chat experience mode mapping. Missing/unknown faces fall back
  * to 'assistant': that is the shell's own landing default (Bot Internet is
- * the app's default surface), so an unreadable face must not flip BotHub
+ * the app's default surface), so an unreadable face must not flip Studio
  * onto the professional presentation.
  */
 export function chatExperienceModeForSurface(

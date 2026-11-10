@@ -22,8 +22,8 @@
     </article>`;
   }
 
-  window.mountBotHubDemo = function mountBotHubDemo(options) {
-    const scenarios = window.BotHubScenarios;
+  window.mountStudioDemo = function mountStudioDemo(options) {
+    const scenarios = window.StudioScenarios;
     const root = document.getElementById('app');
     const params = new URLSearchParams(window.location.search);
     const initialScenario = scenarios[params.get('scenario')] ? params.get('scenario') : 'decision';
@@ -41,7 +41,7 @@
         <header class="app-top">
           <div class="brand-switch">
             <img class="brand-logo" src="assets/logo.png" alt="IDBots" />
-            <div class="face-switch"><span class="face active">BotHub</span><span class="face">BotWorks</span></div>
+            <div class="face-switch"><span class="face active">Studio</span><span class="face">BotWorks</span></div>
           </div>
           <div class="top-session" data-role="session-title"></div>
           <div class="prototype-tag">${escapeHtml(options.prototypeLabel)}</div>
@@ -121,8 +121,8 @@
       stage.dataset.playing = String(playing);
       $('[data-role="session-title"]').textContent = scenario().sessionTitle;
       $('[data-role="address"]').textContent = reportOpen
-        ? `bothub://report/${scenarioId}`
-        : `bothub://live/${scenarioId}/${current.id}`;
+        ? `studio://report/${scenarioId}`
+        : `studio://live/${scenarioId}/${current.id}`;
       viewport.classList.toggle('report-open', reportOpen);
       viewport.classList.toggle('live-off', !liveEnabled);
       $('[data-role="report"]').innerHTML = reportMarkup(scenario().report);

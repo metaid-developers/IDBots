@@ -8,7 +8,7 @@ const {
   reduceLiveStageMessage,
   completeLiveStage,
   reportReadyLiveStage,
-} = require('../dist-electron/main/services/botHubLiveStageModel.js');
+} = require('../dist-electron/main/services/studioLiveStageModel.js');
 
 const message = (id, type, metadata = {}) => ({ id, type, content: '', timestamp: 1, metadata });
 const initial = () => createLiveStageState({ sessionId: 's', turnId: 't', botName: 'AI_Sunny', language: 'zh' });

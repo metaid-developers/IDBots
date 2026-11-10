@@ -23,7 +23,7 @@ import {
  * reason; this page must not undo it.)
  *
  * The overlay is mounted by whichever face is on screen (Sidebar.tsx on
- * BotWorks, HomeSidebar.tsx on BotHub). App.tsx is untouched, so the Bot
+ * BotWorks, HomeSidebar.tsx on Studio). App.tsx is untouched, so the Bot
  * Browser keep-alive pane is never unmounted by opening or closing the page.
  *
  * 页面嵌套定版 (2026-11-09): the card is a TWO-LEVEL page, not a card plus a

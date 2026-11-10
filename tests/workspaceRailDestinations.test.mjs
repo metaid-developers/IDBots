@@ -220,7 +220,7 @@ test('a collapsed middle column is recoverable from the boundary handle alone', 
   assert.match(handleBlock, /data-slot="panel-toggle"/);
   // 接缝按钮双向化 2026-11-09: the seam publishes its per-face state instead
   // of a boolean toggle, and each face's transitions live on its own chevrons.
-  assert.match(handleBlock, /data-seam-state=\{showHomeSurface \? \(homeSeamCollapsed \? 'left' : 'split'\) : botHubSeamState\}/);
+  assert.match(handleBlock, /data-seam-state=\{showHomeSurface \? \(homeSeamCollapsed \? 'left' : 'split'\) : studioSeamState\}/);
   assert.match(handleBlock, /onClick=\{handleCollapseHomeSeam\}/);
   assert.match(handleBlock, /<PanelToggleIcon/);
   // ... and every destination click re-opens the column, so a collapsed

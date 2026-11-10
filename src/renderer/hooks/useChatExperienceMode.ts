@@ -8,8 +8,8 @@ import {
 
 /**
  * Chat experience mode, decided by the FACE the user is on
- * (总裁办公室裁定 2026-11-09): the BotHub face ('browser' surface) runs
- * 'assistant' — assistant is embedded in the BotHub layer (its sessions carry
+ * (总裁办公室裁定 2026-11-09): the Studio face ('browser' surface) runs
+ * 'assistant' — assistant is embedded in the Studio layer (its sessions carry
  * the per-session assistantMode marker); the BotWorks face ('home' surface)
  * runs 'professional' for every bot, twin included. The old Settings toggle
  * is retired — nothing reads the persisted chatExperienceMode any more; the

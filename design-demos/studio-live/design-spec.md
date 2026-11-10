@@ -1,10 +1,10 @@
-# BotHub live visualization design spec
+# Studio live visualization design spec
 
 This is the initial three-direction study. The selected A+B iteration is defined in `direction-approved.md`; it replaces the Direction A CSS membrane with the MIT-licensed WebGPU/WGSL liquid-glass shell and expands structured topology around the persistent orb.
 
 ## Product and audience
 
-IDBots BotHub is a desktop meeting space between a non-technical owner and their TwinBot. The owner writes a request in the existing bottom-left composer. The left transcript remains the precise textual record. The right browser becomes a continuous visual account of what the Twin is doing, who is involved, what has changed, and when the owner needs to decide something.
+IDBots Studio is a desktop meeting space between a non-technical owner and their TwinBot. The owner writes a request in the existing bottom-left composer. The left transcript remains the precise textual record. The right browser becomes a continuous visual account of what the Twin is doing, who is involved, what has changed, and when the owner needs to decide something.
 
 The target audience is not a developer watching logs. It is an owner who wants confidence, orientation, and a sense of direct presence. The visualization must answer four questions at a glance: did the Twin understand me, what is it doing now, is anyone else involved, and what happens next. Technical tool names, raw arguments, hidden reasoning, and token-level output do not belong on the stage.
 

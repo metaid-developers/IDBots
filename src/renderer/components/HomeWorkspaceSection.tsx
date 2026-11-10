@@ -15,7 +15,7 @@ import type { CoworkWorkspaceSelection } from '../types/cowork';
 
 /**
  * The 「工作区」 section (regression order 2026-11-09 13:00, task 4e86b3e4;
- * relocation to the BotHub face's visible middle column ruled by the
+ * relocation to the Studio face's visible middle column ruled by the
  * orchestrator 13:31: the section mounts INSIDE BotBrowserCoworkPanel, above
  * the composer — the records-column holding form never rendered on screen,
  * so the visible-face ruling supersedes it).

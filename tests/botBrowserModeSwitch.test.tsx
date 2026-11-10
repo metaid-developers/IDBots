@@ -64,7 +64,7 @@ test('the band is ONE shared top-track row with a two-cell radiogroup', () => {
   assert.equal((markup.match(/role="radio"/g) ?? []).length, 2);
   const options = markup.match(/data-slot="surface-switch-option"/g) ?? [];
   assert.equal(options.length, 2);
-  assert.ok(markup.indexOf('BotHub') < markup.indexOf('BotWorks'));
+  assert.ok(markup.indexOf('Studio') < markup.indexOf('BotWorks'));
   assert.match(markup, /data-surface="browser"/);
   assert.match(markup, /data-surface="home"/);
   // No pill residue: no logo, no chevron menu, no haspopup trigger.
@@ -132,7 +132,7 @@ test('both faces land the pill + band at the same column inset, below the lights
 
 test('the group aria-label speaks the new face names', () => {
   const markup = render('browser');
-  assert.match(markup, /role="radiogroup"[^>]*aria-label="[^"]*BotHub[^"]*BotWorks"/);
+  assert.match(markup, /role="radiogroup"[^>]*aria-label="[^"]*Studio[^"]*BotWorks"/);
   // The old hard-coded English label must be gone.
   assert.doesNotMatch(markup, /Bot Internet display mode/);
 });
@@ -179,7 +179,7 @@ test('both faces mount the SAME band; the session actions ride the row below', (
   assert.match(sidebarSource, /data-slot="mid-column-header"[\s\S]{0,320}<BotBrowserModeSwitch/);
   assert.match(sidebarSource, /actions={surfaceHeaderActions}/);
 
-  // The 21:31 action slots stay in the bar: new session / records on BotHub.
+  // The 21:31 action slots stay in the bar: new session / records on Studio.
   // On BotWorks the actions row carries the update badge ONLY since the
   // 侧栏微调批单 (2026-11-09 12:23): the collapse » toggle is gone from the
   // title row — the shell's seam tab (App's floating PanelToggleIcon) stays
@@ -318,7 +318,7 @@ test('mac: the band row starts below the 52 px traffic-light strip on both faces
   // stack via BotBrowserModeSwitch with an `actions` prop — the old merged
   // menu+actions row is gone (its task entries live in the rail), and the
   // records body starts right below the shared header wrapper with the
-  // BotHub face's pt-1 spacing.
+  // Studio face's pt-1 spacing.
   assert.match(homeSidebarSource, /<BotBrowserModeSwitch/);
   assert.match(homeSidebarSource, /actions=\{surfaceHeaderActions\}/);
   assert.match(homeSidebarSource, /data-slot="mid-column-header"/);

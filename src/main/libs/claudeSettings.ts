@@ -763,7 +763,7 @@ export function getPersistedCoworkEffortLevel(): string | null {
 
 // getPersistedChatExperienceMode is RETIRED (总裁办公室 surface ruling
 // 2026-11-09): the chat experience mode is decided by the active face in the
-// renderer (BotHub=assistant, BotWorks=professional) and, on the backend, by
+// renderer (Studio=assistant, BotWorks=professional) and, on the backend, by
 // the per-session assistantMode marker alone — see
 // coworkRunner.isAssistantModeOwnerChatSession. Nothing reads the legacy
 // app_config.chatExperienceMode value any more.

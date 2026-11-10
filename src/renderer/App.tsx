@@ -185,13 +185,13 @@ const App: React.FC = () => {
   const [isNewGroupTaskOpen, setIsNewGroupTaskOpen] = useState(false);
   const [, forceLanguageRefresh] = useState(0);
   // Seam state is PER FACE (总裁办接缝按钮双向化 2026-11-09; 砍平铺态同日令):
-  // the BotHub face (browser surface) runs a TWO-state cycle — split ↔
+  // the Studio face (browser surface) runs a TWO-state cycle — split ↔
   // left(中栏收起·浏览器占满). The 对话框占满 fill state (right, the › pill) is
   // RETIRED — this face's browser must always stay in use, so the seam never
   // hides it. The BotWorks face (home surface) stays single-direction
   // split ↔ left. The two machines never share a variable, so one face's
   // collapse can never leak into the other.
-  const [botHubSeamState, setBotHubSeamState] = useState<'split' | 'left'>('split');
+  const [studioSeamState, setStudioSeamState] = useState<'split' | 'left'>('split');
   const [homeSeamCollapsed, setHomeSeamCollapsed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => loadSidebarWidth((key) => window.localStorage.getItem(key), 'home'));
   const [isSidebarResizing, setIsSidebarResizing] = useState(false);
@@ -684,7 +684,7 @@ const App: React.FC = () => {
   //
   // · BotWorks (home): ONE direction only — split ‹→ left, left ›→ split.
   //   No right-collapsed state exists on this face.
-  // · BotHub (browser): ONE collapse direction — split ‹→ left (browser
+  // · Studio (browser): ONE collapse direction — split ‹→ left (browser
   //   fills), left ›→ split. The › collapse (对话框占满 fill) is retired with
   //   the 平铺态 (same-day ruling) and has no handler anymore.
   const handleCollapseHomeSeam = useCallback(() => {
@@ -693,11 +693,11 @@ const App: React.FC = () => {
   const handleExpandHomeSeam = useCallback(() => {
     setHomeSeamCollapsed(false);
   }, []);
-  const handleCollapseBotHubSeamLeft = useCallback(() => {
-    setBotHubSeamState('left');
+  const handleCollapseStudioSeamLeft = useCallback(() => {
+    setStudioSeamState('left');
   }, []);
-  const handleExpandBotHubSeam = useCallback(() => {
-    setBotHubSeamState('split');
+  const handleExpandStudioSeam = useCallback(() => {
+    setStudioSeamState('split');
   }, []);
 
   // Face-scoped seam helpers. Defined after the shell hook (below) because
@@ -782,7 +782,7 @@ const App: React.FC = () => {
     showToast,
   });
 
-  // Session ↔ tab binding (owner request 2026-11-10): every BotHub Co-Work
+  // Session ↔ tab binding (owner request 2026-11-10): every Studio Co-Work
   // session owns one browser tab. The coordinator gets the shell's SILENT tab
   // control (restore/switch must never yank the active face) plus store-backed
   // session reads so it stays free of app imports. Re-attached on shell
@@ -811,7 +811,7 @@ const App: React.FC = () => {
     // reads module-level services/store, so this only re-runs on shell swaps.
   }, [botBrowserShell.controlTabsSilent]);
 
-  // Launch restore (owner request 2026-11-10): the BotHub conversation window
+  // Launch restore (owner request 2026-11-10): the Studio conversation window
   // opens on the session that was open at quit time, and that session's tab is
   // restored into the freshly booted browser. One-shot; the coordinator is a
   // no-op before attach and queues tab commands behind the surface's
@@ -826,19 +826,19 @@ const App: React.FC = () => {
   // collapsed boolean as before, but its value now comes from the ACTIVE
   // face's own state machine. The two faces' machines never write each other.
   const isHomeSurfaceMode = botBrowserShell.surfaceMode === 'home';
-  // On the BotHub face only `left` (records column collapsed, browser fills)
+  // On the Studio face only `left` (records column collapsed, browser fills)
   // is a real middle-column collapse. The retired `right` fill state (对话
   // 框占满) once mapped to a collapse here and zeroed the Sidebar's own width
-  // inside its 1fr grid track, blanking the whole face — the BotHub
+  // inside its 1fr grid track, blanking the whole face — the Studio
   // white-screen, fixed 2026-11-09. The 平铺态砍掉 ruling (same day) removed
   // that state entirely, so exactly one collapse remains to check.
-  const isSidebarCollapsed = isHomeSurfaceMode ? homeSeamCollapsed : botHubSeamState === 'left';
+  const isSidebarCollapsed = isHomeSurfaceMode ? homeSeamCollapsed : studioSeamState === 'left';
   // Dragging / double-click snap only make sense while the middle column is
-  // its user-resizable self: the BotHub right-collapsed state (browser gone)
+  // its user-resizable self: the Studio right-collapsed state (browser gone)
   // must not arm the middle-column resize grip either.
   const middleColumnResizable = isHomeSurfaceMode
     ? !homeSeamCollapsed
-    : botHubSeamState === 'split';
+    : studioSeamState === 'split';
 
   /**
    * Self-rescue: any rail destination click re-opens the middle column.
@@ -856,7 +856,7 @@ const App: React.FC = () => {
     if (isHomeSurfaceMode) {
       setHomeSeamCollapsed(false);
     } else {
-      setBotHubSeamState('split');
+      setStudioSeamState('split');
     }
   }, [isHomeSurfaceMode]);
 
@@ -1811,13 +1811,13 @@ const App: React.FC = () => {
           // Four tracks in every state: a collapsed column goes to 0 but the
           // boundary handle keeps its 4px track, so the ONE panel toggle stays
           // mounted (and clickable) exactly where it collapsed the column.
-          // BotHub has exactly TWO states after the 平铺态砍掉 (the 对话框占满
+          // Studio has exactly TWO states after the 平铺态砍掉 (the 对话框占满
           // branch that zeroed the browser track is retired): split keeps the
           // middle column user-resizable (`auto`), left hands the whole 1fr
           // to the browser.
           gridTemplateColumns: showHomeSurface
             ? homeShellGridTemplate
-            : botHubSeamState === 'left'
+            : studioSeamState === 'left'
               ? '64px 0px 4px minmax(0, 1fr)'
               : '64px auto 4px minmax(0, 1fr)',
         }}
@@ -1936,7 +1936,7 @@ const App: React.FC = () => {
             接缝按钮双向化 2026-11-09, then the 平铺态砍掉 same-day ruling:
             the chevron(s) always point where the pane on their own side will
             GROW on click. The BotWorks face shows a single chevron (its one
-            direction: collapse records, conversation fills); the BotHub split
+            direction: collapse records, conversation fills); the Studio split
             state keeps ONE chevron — ‹ hugs the browser column's edge (right
             of the seam) — and its collapsed state shows a single recover
             chevron (the › direction is retired with the 平铺态). */}
@@ -1945,7 +1945,7 @@ const App: React.FC = () => {
           aria-orientation="vertical"
           data-slot="panel-boundary-handle"
           data-collapsed={isSidebarCollapsed ? 'true' : 'false'}
-          data-seam-state={showHomeSurface ? (homeSeamCollapsed ? 'left' : 'split') : botHubSeamState}
+          data-seam-state={showHomeSurface ? (homeSeamCollapsed ? 'left' : 'split') : studioSeamState}
           onMouseDown={middleColumnResizable ? handleSidebarResizeStart : undefined}
           onDoubleClick={middleColumnResizable ? handleSidebarResizeSnapToRatio : undefined}
           style={{ gridColumn: 3 }}
@@ -1958,11 +1958,11 @@ const App: React.FC = () => {
           <span aria-hidden="true" className="absolute inset-y-0 -left-0.5 -right-0.5" />
           {/* 接缝铰链分置定版 2026-11-09 (fourth order, supersedes the
               same-spot two-pill pair), then the 平铺态砍掉 same-day ruling:
-              the pills are SLIM bars, and the BotHub split state keeps ONE
+              the pills are SLIM bars, and the Studio split state keeps ONE
               pill — ‹ hugs the browser column's edge (right of the seam, the
               browser grows leftward to fill). The › pill (conversation fills,
               the retired fill state) is gone. The single-pill states (BotWorks
-              both states, BotHub collapsed recover) stay centered on the seam
+              both states, Studio collapsed recover) stay centered on the seam
               as before. */}
           {showHomeSurface ? (
             homeSeamCollapsed ? (
@@ -1996,8 +1996,8 @@ const App: React.FC = () => {
                 <PanelToggleIcon className="h-3 w-3" direction="left" />
               </button>
             )
-          ) : botHubSeamState === 'split' ? (
-            /* BotHub face, split: one pill on the browser's side of the seam —
+          ) : studioSeamState === 'split' ? (
+            /* Studio face, split: one pill on the browser's side of the seam —
                ‹ (the browser grows leftward to fill). The › pill and its
                对话框占满 fill state are retired (平铺态砍掉). */
             <button
@@ -2007,13 +2007,13 @@ const App: React.FC = () => {
               title={i18nService.t('seamCollapseLeftBrowserFace')}
               onMouseDown={(event) => event.stopPropagation()}
               onDoubleClick={(event) => event.stopPropagation()}
-              onClick={handleCollapseBotHubSeamLeft}
+              onClick={handleCollapseStudioSeamLeft}
               className="non-draggable absolute left-full top-1/2 z-40 ml-0.5 flex h-7 w-3.5 -translate-y-1/2 items-center justify-center rounded border transition-colors dark:border-claude-darkBorder/60 border-claude-border/60 dark:bg-claude-darkSurface/80 bg-claude-surface/80 shadow-subtle backdrop-blur-sm dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/50"
             >
               <PanelToggleIcon className="h-3 w-3" direction="left" />
             </button>
           ) : (
-            /* BotHub face, collapsed (browser fills): one chevron pointing
+            /* Studio face, collapsed (browser fills): one chevron pointing
                back to the split state — the seam travels right when the
                middle column re-opens. */
             <button
@@ -2023,7 +2023,7 @@ const App: React.FC = () => {
               title={i18nService.t('seamExpandMiddleFromLeft')}
               onMouseDown={(event) => event.stopPropagation()}
               onDoubleClick={(event) => event.stopPropagation()}
-              onClick={handleExpandBotHubSeam}
+              onClick={handleExpandStudioSeam}
               className="non-draggable absolute left-1/2 top-1/2 z-40 flex h-7 w-3.5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded border transition-colors dark:border-claude-darkBorder/60 border-claude-border/60 dark:bg-claude-darkSurface/80 bg-claude-surface/80 shadow-subtle backdrop-blur-sm dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/50"
             >
               <PanelToggleIcon className="h-3 w-3" direction="right" />

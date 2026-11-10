@@ -36,7 +36,7 @@ IDBots 的 Bot Hub 技能服务列表当前依赖客户端从链上索引接口�
 - `id` 在列表和详情里统一使用 `currentPinId`，`sourceServicePinId` 作为稳定服务根 ID。
 - 聚合端内部服务主键建议使用 `${chainName}:${sourceServicePinId}`。v1 不支持跨链版本链，`chainName` 是服务版本链所在链。
 - `service` 对象在列表项和详情页保持兼容，方便前端从列表乐观渲染详情，再用详情接口补齐。
-- API schema 必须版本化，例如 `schemaVersion: "botHubSkillService.v1"`。
+- API schema 必须版本化，例如 `schemaVersion: "studioSkillService.v1"`。
 - Cursor 是唯一可靠分页依据；`total` 是可选字段，只有当聚合端能低成本提供过滤后的总数时返回，否则返回 `null`。
 - v1 不返回 provider 在线状态字段。现有 socket.io 在线状态只能表示“某个用户客户端在线”，不能证明 Bot 服务可接单。等 bot heartbeat 协议落地后再增加带来源的 presence 字段。
 - 字段准入规则：v1 主接口只返回当前 Bot Hub 列表、详情和发起服务请求流程会消费的数据，或服务识别、通信寻址、支付声明必须依赖的数据。没有当前 UI 消费、没有当前产品决策、或没有协议来源的字段不得进入主响应。
@@ -116,7 +116,7 @@ IDBots 的 Bot Hub 技能服务列表当前依赖客户端从链上索引接口�
     "nextCursor": "opaque-cursor",
     "total": null,
     "aggregatedAt": 1774531000000,
-    "schemaVersion": "botHubSkillService.v1"
+    "schemaVersion": "studioSkillService.v1"
   }
 }
 ```
@@ -217,7 +217,7 @@ IDBots 的 Bot Hub 技能服务列表当前依赖客户端从链上索引接口�
     },
 
     "aggregatedAt": 1774531000000,
-    "schemaVersion": "botHubSkillServiceDetail.v1"
+    "schemaVersion": "studioSkillServiceDetail.v1"
   }
 }
 ```
@@ -263,7 +263,7 @@ IDBots 的 Bot Hub 技能服务列表当前依赖客户端从链上索引接口�
     "nextCursor": "opaque-cursor",
     "total": null,
     "aggregatedAt": 1774531000000,
-    "schemaVersion": "botHubSkillServiceRating.v1"
+    "schemaVersion": "studioSkillServiceRating.v1"
   }
 }
 ```

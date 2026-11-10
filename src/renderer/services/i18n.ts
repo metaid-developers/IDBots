@@ -169,7 +169,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     collapse: '收起',
     expand: '展开',
     featureInDevelopment: '正在开发中',
-    botInternet: 'BotHub',
+    botInternet: 'Studio',
     botBrowser: 'Bot Browser',
     botHome: 'BotWorks',
 
@@ -513,13 +513,13 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkTabCountChats: '{count} 个对话',
     coworkTabCountGroup: '{count} 个群任务',
     botBrowserCoworkTitle: 'Co-Work',
-    // BotHub 空状态与输入框文案（先生裁定 2026-11-09 文案定版）：朋友对话式
+    // Studio 空状态与输入框文案（先生裁定 2026-11-09 文案定版）：朋友对话式
     // 邀请，不是功能演示导览——主语/副语/轻提示/占位符是同一套的四件（zh 在
     // 此，en 镜像同一组键；BotBrowserCoworkPanel 欢迎块渲染同键）。
     botBrowserCoworkPlaceholder: '跟你的 Twin 聊聊，或者派个任务给他…',
     botBrowserCoworkEmpty: '今天，想从哪儿开始？',
     botBrowserCoworkEmptySub: '把一句话交给你的 Twin——剩下的路，他来铺。',
-    botInternetNeedsTwin: 'BotHub 是你和你的 Twin Bot 的一对一空间。本机还没有 Twin Bot——先去 BotWorks 创建一个。',
+    botInternetNeedsTwin: 'Studio 是你和你的 Twin Bot 的一对一空间。本机还没有 Twin Bot——先去 BotWorks 创建一个。',
     botInternetGoBotHome: '去 BotWorks 创建 Twin',
     botInternetTwinSeatTitle: '选择当前当值 Twin',
     botInternetTwinSeatHint: '任命会与「我的 Bot」的 Twin 设定同步：原当值 Twin 回到 worker 岗位，所选 bot 立即上任。',
@@ -1194,7 +1194,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkDescriptionTwin: '你选择的是 TwinBot，你可以和他说出你任何想法，他会帮你搞定一切',
     coworkDescriptionPro: '你选择是专业 Bot，可以让他做其所擅长的工作',
     // 线上对话（a2a）面的英雄区描述（2026-11-09 二改定版，先生裁定首稿「仍僵硬」）：
-    // 与 BotHub 面同族不同句——朋友邀请、串门/伙伴意象；headline 不再分叉，
+    // 与 Studio 面同族不同句——朋友邀请、串门/伙伴意象；headline 不再分叉，
     // 线上/本地两 face 共用 coworkWelcome（开始协作），coworkA2aWelcome 键已退场。
     coworkA2aDescription: '链上住着不少有趣的伙伴——让他去串个门，聊聊天、请个教，说不定还能学到一手。',
     coworkNewSession: '新会话',
@@ -2493,12 +2493,12 @@ const translations: Record<LanguageType, Record<string, string>> = {
     // 通用设置
     autoLaunch: '开机自启动',
     autoLaunchDescription: '系统启动时自动运行应用',
-    botHubLiveStage: 'BotHub 实时可视化舞台',
-    botHubLiveStageDescription: '在右侧用连续液态场景展示 Twin 的工作过程，默认关闭',
-    botHubLiveStageToggle: '启用 Live Stage',
-    botHubLiveStageDirector: '生成式可视化 Director',
-    botHubLiveStageDirectorDescription: '让第二个 LLM 在受约束的场景补丁内调整文案与动效，并显示 token 用量；关闭时使用确定性场景',
-    botHubLiveStageDirectorToggle: '启用第二个 LLM 驱动视觉变化',
+    studioLiveStage: 'Studio 实时可视化舞台',
+    studioLiveStageDescription: '在右侧用连续液态场景展示 Twin 的工作过程，默认关闭',
+    studioLiveStageToggle: '启用 Live Stage',
+    studioLiveStageDirector: '生成式可视化 Director',
+    studioLiveStageDirectorDescription: '让第二个 LLM 在受约束的场景补丁内调整文案与动效，并显示 token 用量；关闭时使用确定性场景',
+    studioLiveStageDirectorToggle: '启用第二个 LLM 驱动视觉变化',
     experimentalAutomation: '实验性自动化（全局开关）',
     experimentalAutomationDescription: '允许各 Bot 开启浏览器自动化与桌面操作（实验）',
     experimentalAutomationTooltip: '允许各 Bot 开启浏览器自动化与桌面操作（实验）。关闭则立即对所有 Bot 一刀切停用，下一轮对话生效。开关位于 Bot 编辑 → 高级。',
@@ -3906,7 +3906,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     collapse: 'Collapse',
     expand: 'Expand',
     featureInDevelopment: 'In development',
-    botInternet: 'BotHub',
+    botInternet: 'Studio',
     botBrowser: 'Bot Browser',
     botHome: 'BotWorks',
 
@@ -4256,7 +4256,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     botBrowserCoworkPlaceholder: 'Chat with your Twin, or hand them a task…',
     botBrowserCoworkEmpty: 'So, where would you like to start today?',
     botBrowserCoworkEmptySub: 'Hand your Twin one sentence — the rest of the road is theirs to lay.',
-    botInternetNeedsTwin: 'BotHub is a 1:1 space with your Twin bot. You have no Twin on this machine yet — create one in BotWorks first.',
+    botInternetNeedsTwin: 'Studio is a 1:1 space with your Twin bot. You have no Twin on this machine yet — create one in BotWorks first.',
     botInternetGoBotHome: 'Go to BotWorks to create your Twin',
     botInternetTwinSeatTitle: 'Choose the acting Twin',
     botInternetTwinSeatHint: 'Appointing stays in sync with the My Bots Twin setting: the previous Twin returns to the worker bench and the chosen bot takes the seat immediately.',
@@ -4932,7 +4932,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkDescriptionTwin: "You've chosen your TwinBot — share any thought with them and they'll take care of everything",
     coworkDescriptionPro: "You've chosen a specialized Bot — let them do the work they're best at",
     // Online (a2a) face's hero description (second-pass finalized copy
-    // 2026-11-09): same family as the BotHub face, different sentences —
+    // 2026-11-09): same family as the Studio face, different sentences —
     // friendly invitation, visit/companion imagery. The headline no longer
     // forks: both faces share coworkWelcome ("Start Collaborating"), and the
     // coworkA2aWelcome key is retired from both packs.
@@ -6215,12 +6215,12 @@ const translations: Record<LanguageType, Record<string, string>> = {
     // General Settings
     autoLaunch: 'Launch at Login',
     autoLaunchDescription: 'Automatically start the app when you log in',
-    botHubLiveStage: 'BotHub Live Stage',
-    botHubLiveStageDescription: 'Show your Twin’s work as a continuous liquid scene in the right browser. Off by default',
-    botHubLiveStageToggle: 'Enable Live Stage',
-    botHubLiveStageDirector: 'Generative visual Director',
-    botHubLiveStageDirectorDescription: 'Let a second LLM vary copy and motion through constrained scene patches with token metering. Off uses deterministic scenes',
-    botHubLiveStageDirectorToggle: 'Use a second LLM for visual variation',
+    studioLiveStage: 'Studio Live Stage',
+    studioLiveStageDescription: 'Show your Twin’s work as a continuous liquid scene in the right browser. Off by default',
+    studioLiveStageToggle: 'Enable Live Stage',
+    studioLiveStageDirector: 'Generative visual Director',
+    studioLiveStageDirectorDescription: 'Let a second LLM vary copy and motion through constrained scene patches with token metering. Off uses deterministic scenes',
+    studioLiveStageDirectorToggle: 'Use a second LLM for visual variation',
     experimentalAutomation: 'Experimental Automation (global)',
     experimentalAutomationDescription: 'Allow bots to opt into browser automation and desktop use',
     experimentalAutomationTooltip: 'Allow bots to opt into browser automation and desktop computer use (experimental). Turning this off disables both for every bot from the next turn. Individual switches are in Bot Edit → Advanced.',

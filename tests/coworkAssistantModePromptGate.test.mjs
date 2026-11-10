@@ -1,6 +1,6 @@
 // Static wiring checks for the assistant-mode system-prompt gate: the
 // ASSISTANT_MODE_PROMPT section may mount only for sessions carrying the
-// per-session assistantMode marker (the BotHub layer, 总裁办公室 surface
+// per-session assistantMode marker (the Studio layer, 总裁办公室 surface
 // ruling 2026-11-09) — group tasks, A2A/IM sessions, Bot Browser pages,
 // long-term sessions, auto-created orchestration runs, and every BotWorks
 // owner chat keep the professional prompt. The retired global
@@ -40,7 +40,7 @@ test('the gate is marker-only under the 2026-11-09 surface ruling', () => {
   const body = gate[0];
   assert.ok(
     body.includes('session.assistantMode && !session.autoOrigin'),
-    'the gate must keep the per-session BotHub marker branch with its autoOrigin guard',
+    'the gate must keep the per-session Studio marker branch with its autoOrigin guard',
   );
   // The retired Settings value must not be read anywhere in the runner —
   // the mode is decided by the face (renderer) and the marker (backend).

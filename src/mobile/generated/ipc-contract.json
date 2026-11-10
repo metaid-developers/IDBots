@@ -341,20 +341,6 @@
       ]
     },
     {
-      "path": "botHubLiveStage.get",
-      "kind": "invoke",
-      "channel": "botHubLiveStage:get",
-      "args": []
-    },
-    {
-      "path": "botHubLiveStage.set",
-      "kind": "invoke",
-      "channel": "botHubLiveStage:set",
-      "args": [
-        "updates"
-      ]
-    },
-    {
       "path": "brainSwitch.switchFreeBrainsTo",
       "kind": "invoke",
       "channel": "brainSwitch:switchFreeBrainsTo",
@@ -3201,6 +3187,20 @@
       "args": [
         "key",
         "value"
+      ]
+    },
+    {
+      "path": "studioLiveStage.get",
+      "kind": "invoke",
+      "channel": "studioLiveStage:get",
+      "args": []
+    },
+    {
+      "path": "studioLiveStage.set",
+      "kind": "invoke",
+      "channel": "studioLiveStage:set",
+      "args": [
+        "updates"
       ]
     },
     {

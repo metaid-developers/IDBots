@@ -2,7 +2,7 @@ import type { BotBrowserTabCommand, BotBrowserTabCommandResult } from './botBrow
 import { collectMatchingFrames, isActableRenderUrl } from './botBrowserPreviewAct';
 import { readRendererFromEnvelope } from './botBrowserSourceLocator';
 import type { ActFrameShape, ActWindowShape } from './botBrowserPreviewAct';
-import type { LiveStageState } from './botHubLiveStageModel';
+import type { LiveStageState } from './studioLiveStageModel';
 
 export type LiveStageFrameDeps = {
   getWindows(): ActWindowShape[];
@@ -19,7 +19,7 @@ export function buildLiveStagePatchScript(state: LiveStageState): string {
 })()`;
 }
 
-export async function applyBotHubLiveStagePatch(
+export async function applyStudioLiveStagePatch(
   deps: LiveStageFrameDeps,
   input: { tabId: number; state: LiveStageState },
 ): Promise<void> {

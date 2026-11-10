@@ -4,9 +4,9 @@
  *
  * Since the 总裁办公室 surface ruling (2026-11-09) the chat experience mode
  * is decided by the FACE the user is on (hooks/chatExperienceModeSource.ts —
- * BotHub=assistant, BotWorks=professional; the Settings toggle is retired),
+ * Studio=assistant, BotWorks=professional; the Settings toggle is retired),
  * but its *effects* are still per-session: the backend applies assistant mode
- * only to sessions carrying the per-session BotHub marker
+ * only to sessions carrying the per-session Studio marker
  * (isAssistantModeOwnerChatSession in src/main/libs/coworkRunner.ts) and runs
  * every unattended / non-marker session — BotWorks owner chats included —
  * with the professional prompt and the unattended effort branch. A renderer

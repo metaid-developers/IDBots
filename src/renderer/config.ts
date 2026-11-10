@@ -12,7 +12,7 @@ export type ModelOptions = {
  * 'assistant' shows brief progress notes and results only.
  *
  * Since the 总裁办公室 surface ruling (2026-11-09) the mode is NOT persisted
- * or chosen any more — it follows the active face (BotHub=assistant,
+ * or chosen any more — it follows the active face (Studio=assistant,
  * BotWorks=professional; see hooks/chatExperienceModeSource.ts). The type
  * remains because MarkdownContent / the session gate still speak in modes.
  */
@@ -215,7 +215,7 @@ export interface AppConfig {
   /**
    * RETIRED (总裁办公室 surface ruling 2026-11-09): kept on the type so old
    * persisted app_config rows still parse, but IGNORED — no reader depends on
-   * this value any more. The mode now follows the active face (BotHub=
+   * this value any more. The mode now follows the active face (Studio=
    * assistant, BotWorks=professional; see hooks/chatExperienceModeSource.ts).
    */
   chatExperienceMode?: ChatExperienceMode;
