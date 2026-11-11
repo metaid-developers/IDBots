@@ -39,3 +39,15 @@ test('Live Stage assets ship through the existing dist bundle and retain the orb
   assert.match(read('public/live-stage/liquid-orb-LICENSE.txt'), /MIT License/);
   assert.match(read('public/live-stage/liquid-orb-LICENSE.txt'), /Copyright \(c\) 2026 LerSent001/);
 });
+
+test('pending permissions present on the Studio stage card and clear on resolution', () => {
+  const main = read('src/main/main.ts');
+  assert.match(main, /getStudioLiveStageService\(\)\.presentInteraction\(sessionId, request\)/);
+  assert.match(main, /getStudioLiveStageService\(\)\.clearInteraction\(sessionId, requestId\)/);
+  assert.match(main, /const stageInteractionQueue = new Map</);
+  assert.match(main, /drainInteractions: \(tabId\) => drainStudioLiveStageInteractions\(/);
+  assert.match(main, /respondToPermission: \(requestId, result\) =>/);
+  const service = read('src/main/services/studioLiveStageService.ts');
+  assert.match(service, /presentInteraction\(sessionId: string, request: unknown\): 'presented' \| 'busy' \| 'declined'/);
+  assert.match(service, /function startInteractionPolling\(run: LiveStageRun\): void/);
+});

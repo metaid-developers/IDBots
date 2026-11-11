@@ -297,8 +297,8 @@ const questionOf = (raw: unknown): LiveStageInteractionQuestion | null => {
 };
 
 export type LiveStageInteractionCandidate = {
-  requestId: unknown;
-  toolName: unknown;
+  requestId?: unknown;
+  toolName?: unknown;
   toolInput?: Record<string, unknown> | null;
   expiresAt?: unknown;
   timeoutDefault?: unknown;

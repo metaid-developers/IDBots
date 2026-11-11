@@ -1,14 +1,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomBytes } from 'node:crypto';
 import type { CoworkMessage, CoworkSession } from '../coworkStore';
 import type { BotBrowserProjectionInput, BotBrowserProjectionOutcome } from './botBrowserProjectionService';
 import type { StudioLiveStageSettings } from './studioLiveStageSettings';
-import { completeLiveStage, createLiveStageState, isLiveStageWorkerReport, liveStageError, reduceLiveStageMessage, reportReadyLiveStage, type LiveStageState } from './studioLiveStageModel';
+import { completeLiveStage, createLiveStageState, buildLiveStageInteraction, dismissLiveStageInteraction, isLiveStageWorkerReport, liveStageError, presentLiveStageInteraction, reduceLiveStageMessage, reportReadyLiveStage, type LiveStageInteraction, type LiveStageState } from './studioLiveStageModel';
 import { renderLiveStageHtml } from './studioLiveStageTemplate';
 import { directLiveStageScene } from './studioLiveStageDirector';
 
 const MAX_DIRECTOR_CALLS_PER_TURN = 8;
 const DIRECTOR_COALESCE_MS = 900;
+const INTERACTION_POLL_MS = 400;
 
 type MetabotLiveStageIdentity = {
   name?: string | null;
@@ -31,6 +33,8 @@ type LiveStageRun = {
   directorInFlight: boolean;
   directorDirty: boolean;
   directorGeneration: number;
+  interactionTimer: NodeJS.Timeout | null;
+  interactionInFlight: boolean;
 };
 
 export type StudioLiveStageServiceDeps = {
@@ -46,6 +50,11 @@ export type StudioLiveStageServiceDeps = {
   reportDelayMs?: number;
   directScene?: typeof directLiveStageScene;
   now?: () => number;
+  /** Pulls queued stage-card clicks over the patch frame channel. */
+  drainInteractions?(tabId: number): Promise<unknown[]>;
+  /** Resolves a pending permission in the cowork runner (main-side sink). */
+  respondToPermission?(requestId: string, result: Record<string, unknown>): void;
+  interactionPollMs?: number;
 };
 
 export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
@@ -205,6 +214,8 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       directorInFlight: false,
       directorDirty: false,
       directorGeneration: 0,
+      interactionTimer: null,
+      interactionInFlight: false,
     };
     runs.set(sessionId, run);
     if (process.env.NODE_ENV === 'development') {
@@ -235,6 +246,10 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       if (run) {
         run.directorGeneration += 1;
         if (run.directorTimer) clearTimeout(run.directorTimer);
+        // The turn's stage file is replaced; a pending card disappears with
+        // it. The permission itself stays pending — the desktop overlay seat
+        // still answers it.
+        stopInteractionPolling(run);
         runs.delete(sessionId);
       }
       run = null;
@@ -263,6 +278,105 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     run.state = liveStageError(run.state);
     run.directorGeneration += 1;
     schedulePatch(run);
+  }
+
+  // Stage interaction card: present → poll-drain → respond, all in-process.
+  // The card is a presentation surface for prompts the runner already gates;
+  // authority never leaves the host (requestId must match a live pending
+  // permission and the drained click must echo the single-use token).
+
+  function stopInteractionPolling(run: LiveStageRun): void {
+    if (run.interactionTimer) {
+      clearInterval(run.interactionTimer);
+      run.interactionTimer = null;
+    }
+    run.interactionInFlight = false;
+  }
+
+  function resultForInteraction(
+    interaction: LiveStageInteraction,
+    record: Record<string, unknown>,
+  ): Record<string, unknown> | null {
+    if (record.behavior === 'deny') return { behavior: 'deny', message: 'Denied on the Live Stage' };
+    if (record.behavior !== 'allow') return null;
+    if (interaction.kind !== 'ask') return { behavior: 'allow' };
+    const raw = record.answers && typeof record.answers === 'object' && !Array.isArray(record.answers)
+      ? record.answers as Record<string, unknown>
+      : {};
+    // Keyed by question text with '|||'-joined segments — the same wire shape
+    // the runner's ask resolve path maps into selected/custom. An empty string
+    // resolves as "declined to answer", mirroring the desktop wizard.
+    const answers: Record<string, string> = {};
+    for (const question of interaction.questions) {
+      const value = raw[question.question];
+      answers[question.question] = typeof value === 'string' ? value : '';
+    }
+    return { behavior: 'allow', updatedInput: { answers } };
+  }
+
+  function handleDrainedItem(run: LiveStageRun, item: unknown): boolean {
+    const interaction = run.state.interaction;
+    if (!interaction || !item || typeof item !== 'object' || Array.isArray(item)) return false;
+    const record = item as Record<string, unknown>;
+    if (record.requestId !== interaction.requestId || record.token !== interaction.token) return false;
+    const result = resultForInteraction(interaction, record);
+    if (!result) return false;
+    deps.respondToPermission?.(interaction.requestId, result);
+    run.state = dismissLiveStageInteraction(run.state, interaction.requestId);
+    stopInteractionPolling(run);
+    schedulePatch(run);
+    return true;
+  }
+
+  function startInteractionPolling(run: LiveStageRun): void {
+    if (run.interactionTimer || !deps.drainInteractions) return;
+    const pollMs = Math.max(10, deps.interactionPollMs ?? INTERACTION_POLL_MS);
+    run.interactionTimer = setInterval(() => {
+      const interaction = run.state.interaction;
+      if (!interaction || !run.state.enabled || run.interactionInFlight || run.tabId == null || !deps.drainInteractions) return;
+      run.interactionInFlight = true;
+      deps.drainInteractions(run.tabId)
+        .then((items) => {
+          run.interactionInFlight = false;
+          for (const item of items) {
+            if (handleDrainedItem(run, item)) break;
+          }
+          if (!run.state.interaction) stopInteractionPolling(run);
+        })
+        .catch(() => {
+          // Frame lost (stage tab closed or navigated): keep the poll alive;
+          // the desktop overlay seat remains the answering fallback.
+          run.interactionInFlight = false;
+        });
+    }, pollMs);
+  }
+
+  function presentInteraction(sessionId: string, request: unknown): 'presented' | 'busy' | 'declined' {
+    currentSettings = deps.getSettings();
+    if (!currentSettings.enabled) return 'declined';
+    const run = runs.get(sessionId);
+    if (!run) return 'declined';
+    if (run.state.interaction) return 'busy';
+    const candidate = request && typeof request === 'object' && !Array.isArray(request)
+      ? request as { requestId?: unknown; toolName?: unknown; toolInput?: Record<string, unknown> | null; expiresAt?: unknown; timeoutDefault?: unknown }
+      : {};
+    const interaction = buildLiveStageInteraction(candidate, randomBytes(16).toString('hex'));
+    if (!interaction) return 'declined';
+    run.state = presentLiveStageInteraction(run.state, interaction);
+    startInteractionPolling(run);
+    schedulePatch(run);
+    return 'presented';
+  }
+
+  function clearInteraction(sessionId: string, requestId: string): void {
+    const run = runs.get(sessionId);
+    if (!run) return;
+    const before = run.state.revision;
+    run.state = dismissLiveStageInteraction(run.state, requestId);
+    if (run.state.revision !== before) {
+      stopInteractionPolling(run);
+      schedulePatch(run);
+    }
   }
 
   async function projectReport(
@@ -297,6 +411,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
   function forget(sessionId: string): void {
     const run = runs.get(sessionId);
     if (run?.directorTimer) clearTimeout(run.directorTimer);
+    if (run) stopInteractionPolling(run);
     runs.delete(sessionId);
   }
 
@@ -305,6 +420,8 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     observeMessage,
     observeComplete,
     observeError,
+    presentInteraction,
+    clearInteraction,
     projectReport,
     updateSettings,
     forget,
@@ -314,6 +431,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       for (const run of runs.values()) {
         run.directorGeneration += 1;
         if (run.directorTimer) clearTimeout(run.directorTimer);
+        stopInteractionPolling(run);
       }
       runs.clear();
     },

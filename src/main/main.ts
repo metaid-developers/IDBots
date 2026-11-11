@@ -563,7 +563,7 @@ import {
   initBotBrowserProjectionService,
 } from './services/botBrowserProjectionService';
 import { createStudioLiveStageService, type StudioLiveStageService } from './services/studioLiveStageService';
-import { applyStudioLiveStagePatch } from './services/studioLiveStageFrame';
+import { applyStudioLiveStagePatch, drainStudioLiveStageInteractions } from './services/studioLiveStageFrame';
 import { readStudioLiveStageSettings, writeStudioLiveStageSettings } from './services/studioLiveStageSettings';
 import {
   executeBotBrowserPreviewAct,
@@ -8633,6 +8633,12 @@ const getCoworkRunner = () => {
       sendCoworkStreamMessageUpdate(sessionId, messageId, { content, metadata });
     });
 
+    // Studio Live Stage presenter queue: prompts the stage accepted but could
+    // not show yet (a card is already up) wait here and surface FIFO when the
+    // current card resolves. Declined prompts (A2A / delete-safety / no stage
+    // run) never enter the queue — their desktop seats handle them.
+    const stageInteractionQueue = new Map<string, Array<{ requestId: string; request: unknown }>>();
+
     coworkRunner.on('permissionRequest', (sessionId: string, request: any) => {
       // Text confirmation is used by private-chat automation, but
       // AskUserQuestion is still a user-facing interaction and must reach the
@@ -8656,6 +8662,15 @@ const getCoworkRunner = () => {
       // Mobile pending mirror (REQ-A-24): record exactly what was broadcast so
       // `mobile:permission:listPending` can resync a reconnecting client.
       trackPendingPermission(sessionId, safeRequest);
+      // Studio Live Stage card — dual seats with the overlay (Phase 1 ruling:
+      // ask + plain approval on the stage; A2A and delete-safety stay
+      // desktop-only). 'busy' queues behind the card that is already showing.
+      const stageOutcome = getStudioLiveStageService().presentInteraction(sessionId, request);
+      if (stageOutcome !== 'declined') {
+        const stageQueue = stageInteractionQueue.get(sessionId) ?? [];
+        stageQueue.push({ requestId: typeof request?.requestId === 'string' ? request.requestId : '', request });
+        stageInteractionQueue.set(sessionId, stageQueue);
+      }
     });
 
     // A permission finalized on ANY path (renderer reply, text relay,
@@ -8668,6 +8683,18 @@ const getCoworkRunner = () => {
     coworkRunner.on('permissionResolved', (sessionId: string, requestId: string) => {
       broadcastToRenderers('cowork:stream:permissionResolved', { sessionId, requestId });
       resolvePendingPermission(sessionId, requestId);
+      getStudioLiveStageService().clearInteraction(sessionId, requestId);
+      const stageQueue = stageInteractionQueue.get(sessionId);
+      if (stageQueue) {
+        const index = stageQueue.findIndex((entry) => entry.requestId === requestId);
+        if (index >= 0) stageQueue.splice(index, 1);
+        while (stageQueue.length > 0) {
+          const outcome = getStudioLiveStageService().presentInteraction(sessionId, stageQueue[0].request);
+          if (outcome === 'declined') stageQueue.shift();
+          else break;
+        }
+        if (stageQueue.length === 0) stageInteractionQueue.delete(sessionId);
+      }
     });
 
     // Owner-question delivery for unattended bridge turns (A2A private chat,
@@ -8986,6 +9013,17 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
         getWindows: () => BrowserWindow.getAllWindows(),
         executeTabCommand: (command) => getBotBrowserTabBridge().execute(command),
       }, input),
+      drainInteractions: (tabId) => drainStudioLiveStageInteractions({
+        getWindows: () => BrowserWindow.getAllWindows(),
+        executeTabCommand: (command) => getBotBrowserTabBridge().execute(command),
+      }, { tabId }),
+      respondToPermission: (requestId, result) => {
+        try {
+          getCoworkRunner().respondToPermission(requestId, result as unknown as PermissionResult);
+        } catch (error) {
+          console.warn(`[StudioLiveStage] stage answer for ${requestId} failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      },
       assetRoot: path.join(app.getAppPath(), app.isPackaged ? 'dist/live-stage' : 'public/live-stage'),
       fallbackAvatarDataUri: `data:image/png;base64,${fs.readFileSync(fallbackAvatarPath).toString('base64')}`,
     });
