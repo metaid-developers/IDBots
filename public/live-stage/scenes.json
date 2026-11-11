@@ -31,7 +31,7 @@
       "motion": { "durationMs": 720, "easing": "emphasized-decelerate", "energy": 0.35, "density": 0.25 }
     },
     "reasoning": {
-      "orb": { "style": 9, "preset": "reasoning" },
+      "orb": { "style": 11, "preset": "reasoning" },
       "composition": "presence",
       "topology": { "mode": "presence" },
       "motion": { "durationMs": 720, "easing": "emphasized-decelerate", "energy": 0.4, "density": 0.28 }
@@ -43,55 +43,55 @@
       "motion": { "durationMs": 720, "easing": "emphasized-decelerate", "energy": 0.4, "density": 0.28 }
     },
     "local-recall": {
-      "orb": { "style": 9, "preset": "local-recall" },
+      "orb": { "style": 23, "preset": "local-recall" },
       "composition": "gather",
       "topology": { "mode": "presence" },
       "motion": { "durationMs": 720, "easing": "emphasized-decelerate", "energy": 0.4, "density": 0.28 }
     },
     "web2-research": {
-      "orb": { "style": 9, "preset": "web2-research" },
+      "orb": { "style": 23, "preset": "web2-research" },
       "composition": "gather",
       "topology": { "mode": "presence" },
       "motion": { "durationMs": 720, "easing": "emphasized-decelerate", "energy": 0.4, "density": 0.28 }
     },
     "metaweb-research": {
-      "orb": { "style": 9, "preset": "metaweb-research" },
+      "orb": { "style": 10, "preset": "metaweb-research" },
       "composition": "gather",
       "topology": { "mode": "presence" },
       "motion": { "durationMs": 720, "easing": "emphasized-decelerate", "energy": 0.4, "density": 0.28 }
     },
     "making": {
-      "orb": { "style": 9, "preset": "making" },
+      "orb": { "style": 21, "preset": "making" },
       "composition": "presence",
       "topology": { "mode": "presence" },
       "motion": { "durationMs": 720, "easing": "emphasized-decelerate", "energy": 0.4, "density": 0.28 }
     },
     "delegation": {
-      "orb": { "style": 9, "preset": "delegation" },
+      "orb": { "style": 10, "preset": "delegation" },
       "composition": "topology",
       "topology": { "mode": "structured" },
       "motion": { "durationMs": 720, "easing": "emphasized-decelerate", "energy": 0.4, "density": 0.55 }
     },
     "waiting": {
-      "orb": { "style": 9, "preset": "waiting" },
+      "orb": { "style": 23, "preset": "waiting" },
       "composition": "presence",
       "topology": { "mode": "presence" },
       "motion": { "durationMs": 720, "easing": "emphasized-decelerate", "energy": 0.4, "density": 0.28 }
     },
     "worker-report": {
-      "orb": { "style": 9, "preset": "worker-report" },
+      "orb": { "style": 10, "preset": "worker-report" },
       "composition": "topology",
       "topology": { "mode": "structured" },
       "motion": { "durationMs": 720, "easing": "emphasized-decelerate", "energy": 0.4, "density": 0.55 }
     },
     "verification": {
-      "orb": { "style": 9, "preset": "verification" },
+      "orb": { "style": 23, "preset": "verification" },
       "composition": "converge",
       "topology": { "mode": "structured" },
       "motion": { "durationMs": 720, "easing": "emphasized-decelerate", "energy": 0.55, "density": 0.55 }
     },
     "browser-action": {
-      "orb": { "style": 9, "preset": "browser-action" },
+      "orb": { "style": 23, "preset": "browser-action" },
       "composition": "topology",
       "topology": { "mode": "structured" },
       "motion": { "durationMs": 720, "easing": "emphasized-decelerate", "energy": 0.4, "density": 0.55 }

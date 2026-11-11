@@ -25,9 +25,9 @@ template.json        host compatibility manifest (validated before enabling)
                      by the runtime)
 scenes.json          declarative scene surface (bounded, presentation-only)
 stage.html           host render template with __PLACEHOLDER__ slots
-stage.css            stage appearance (opaque dark Siri glass, rim, layout)
-stage.js             continuous stage runtime (applyPatch, breathing, handoff)
-liquid-orb.js        WebGPU orb renderer (family styles, breathing)
+stage.css            stage appearance (state motion, text reveals, equalizer)
+stage.js             continuous stage runtime (applyPatch, text pacing, handoff)
+liquid-orb.js        WebGPU orb renderer (family styles, fluidity, breathing)
 liquid-orb-effect.js WGSL orb effect source
 liquid-orb-LICENSE.txt
 default_metabot.png  neutral demo avatar (not user data)
