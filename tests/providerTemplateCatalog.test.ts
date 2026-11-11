@@ -90,10 +90,11 @@ test('models settings page keeps the new layout and visibility anchors', () => {
   assert.equal(settings.includes('isAddingCustomProvider'), false);
 
   // Template picks carry their vendor logo so the left list + detail header
-  // render the real icon (user-created customs keep the generic one).
+  // render the real icon (user-created customs keep the generic one). The
+  // shared ProviderIcon (settings/providerIcons.tsx) resolves the logo.
   assert.match(settings, /logoKey: template\.logo/);
-  assert.match(settings, /getProviderIconWithLogo\(providerKey, config, isDarkTheme\)/);
-  assert.match(settings, /getProviderIconWithLogo\(activeProvider, providers\[activeProvider\], isDarkTheme\)/);
+  assert.match(settings, /<ProviderIcon providerKey=\{providerKey\} config=\{config\} dark=\{isDarkTheme\}/);
+  assert.match(settings, /<ProviderIcon providerKey=\{activeProvider\} config=\{providers\[activeProvider\]\} dark=\{isDarkTheme\}/);
 
   // The third-party group label only renders when the group is non-empty.
   assert.match(settings, /thirdPartyProviderEntries\.length > 0/);

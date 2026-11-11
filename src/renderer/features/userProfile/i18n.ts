@@ -66,15 +66,12 @@ export interface UserProfileCopy {
   meResetSoon: string;
   meResetInHours: string;
   meResetInDays: string;
-  meTopup: string;
-  meBonus: string;
-  meEarned: string;
+  mePack: string;
   meUpgrade: string;
   meRecharge: string;
   meUsage: string;
   meRefresh: string;
   meLoadFailed: string;
-  meNote: string;
 
   /** Settings placeholder card: the block moved to this page. */
   settingsMovedTitle: string;
@@ -98,21 +95,18 @@ const ZH: UserProfileCopy = {
   accountSectionHint: '身份、助记词与链上资料都由本机持有；这里的每一条操作与设置里完全一致。',
 
   meSectionTitle: 'ME 积分',
-  meTotal: '总可用',
+  meTotal: '本周可用',
   meFrozen: '另冻结 {me} ME',
   meWeekly: '本周额度',
   meResetSoon: '即将重置',
   meResetInHours: '{n} 小时后重置',
   meResetInDays: '{n} 天后重置',
-  meTopup: '充值',
-  meBonus: '赠送',
-  meEarned: '收入',
+  mePack: '积分增量包',
   meUpgrade: '开通 / 升级套餐',
   meRecharge: '充值',
   meUsage: '用量明细',
   meRefresh: '刷新余额',
   meLoadFailed: '余额暂时取不到，稍后再试',
-  meNote: '数值全部来自实时接口（milliME → ME），不在客户端硬编码。',
 
   settingsMovedTitle: '用户资料已迁到「我的」页',
   settingsMovedBody:
@@ -135,21 +129,18 @@ const EN: UserProfileCopy = {
   accountSectionTitle: 'Account',
   accountSectionHint: 'The identity, its mnemonic and the on-chain profile stay on this machine; every action here is the same one Settings offered.',
   meSectionTitle: 'ME credits',
-  meTotal: 'Total available',
+  meTotal: 'Available this week',
   meFrozen: '{me} ME frozen',
   meWeekly: 'This week',
   meResetSoon: 'Resets soon',
   meResetInHours: 'Resets in {n}h',
   meResetInDays: 'Resets in {n}d',
-  meTopup: 'Top-up',
-  meBonus: 'Bonus',
-  meEarned: 'Earned',
+  mePack: 'Credit Pack',
   meUpgrade: 'Plans & upgrades',
   meRecharge: 'Top up',
   meUsage: 'Usage & credits',
   meRefresh: 'Refresh balance',
   meLoadFailed: 'The balance is unavailable right now — try again shortly',
-  meNote: 'Every number is the live endpoint value (milliME → ME); nothing is hardcoded client-side.',
 
   settingsMovedTitle: 'The profile moved to My profile',
   settingsMovedBody:

@@ -6,9 +6,10 @@ import { placePopoverAbove, useAnchorMoveWatcher } from '../utils/anchoredPopove
 import {
   buildModelGroupsFromConfig,
   resolveBrainModelInGroups,
-  type CatalogProviderGroup,
   type LlmEffortLevel,
 } from '../services/modelCatalog';
+import { themeService } from '../services/theme';
+import { ProviderIcon } from './settings/providerIcons';
 
 /**
  * Shared "model + reasoning effort" picker (DSH ui-model-selection style).
@@ -138,11 +139,26 @@ const ModelEffortPicker: React.FC<ModelEffortPickerProps> = ({
     return () => window.removeEventListener('app:settingsClosed', handler);
   }, []);
 
-  const groups = useMemo((): CatalogProviderGroup[] => {
+  // Template provider logos ship light/dark variants — track the live theme
+  // exactly like the Settings models page does.
+  const dark = React.useSyncExternalStore(
+    (listener) => themeService.subscribe(listener),
+    () => themeService.getEffectiveTheme() === 'dark',
+    () => false,
+  );
+
+  const catalog = useMemo(() => {
     void isOpen;
     void settingsClosedTrigger;
-    return buildModelGroupsFromConfig(configService.getConfig());
+    const config = configService.getConfig();
+    return {
+      groups: buildModelGroupsFromConfig(config),
+      // Custom/template provider configs, keyed by provider id — only logoKey
+      // is consumed (template logo resolution for the group header icon).
+      providers: (config.providers ?? {}) as Record<string, { logoKey?: string } | undefined>,
+    };
   }, [isOpen, settingsClosedTrigger]);
+  const groups = catalog.groups;
 
   const resolved = useMemo(
     () => resolveBrainModelInGroups(groups, value.modelId, value.providerKey, globalDefaultModel),
@@ -354,8 +370,9 @@ const ModelEffortPicker: React.FC<ModelEffortPickerProps> = ({
               <div className="max-h-72 overflow-y-auto py-1">
                 {groups.map((group) => (
                   <div key={group.id} role="group" aria-label={group.name}>
-                    <div className="px-4 pt-2 pb-1 text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                      {group.name}
+                    <div className="flex items-center gap-1.5 px-4 pt-2 pb-1 text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                      <ProviderIcon providerKey={group.id} config={catalog.providers[group.id]} dark={dark} className="h-4 w-4" />
+                      <span className="truncate">{group.name}</span>
                     </div>
                     {group.models.map((model) => {
                       const selected = resolved?.providerKey === group.id && resolved.model.id === model.id;

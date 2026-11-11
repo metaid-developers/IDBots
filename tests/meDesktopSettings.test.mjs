@@ -67,7 +67,12 @@ test('cerebellum copy names IDBots-JEV and explains ME credit billing and provid
 });
 
 test('IDBots owns the compact plan card inside its provider details', () => {
-  assert.match(settingsSource, /'metaid-free': \{\s*label: 'IDBots'/);
+  const providerIconsSource = read('src/renderer/components/settings/providerIcons.tsx');
+  // The built-in registry (moved out of Settings.tsx into the shared
+  // providerIcons module) labels the free relay IDBots and renders the
+  // IDBots app icon — the yellow avatar from public/logo.png.
+  assert.match(providerIconsSource, /'metaid-free': 'IDBots'/);
+  assert.match(providerIconsSource, /<img src="logo\.png"/);
   assert.match(
     settingsSource,
     /activeProvider === LLM_FREE_PROVIDER_KEY[\s\S]*?<IdbotsPlanCard \/>[\s\S]*?<FreeQuotaCard/,
