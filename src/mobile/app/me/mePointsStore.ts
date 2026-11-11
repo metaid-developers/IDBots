@@ -200,6 +200,36 @@ export function mePaidPlans(plans: readonly MobileMePlan[]): MobileMePlan[] {
   return plans.filter((plan) => plan.tier !== 'free' && plan.planId !== 'me_free');
 }
 
+// ---------------------------------------------------------------------------
+// Tier ladder guard — mirror of the desktop one
+// (src/renderer/components/me/mePayment.ts meTierRank / isMePlanDowngrade,
+// owner policy 2026-11-11). No plan changes DOWNWARD while a subscription is
+// active: a mid-period downgrade would need a refund path the server does
+// not offer. The current paid plan itself stays selectable (renewal path);
+// unknown tiers rank last (-1) and are never treated as downgrades.
+// ---------------------------------------------------------------------------
+
+const ME_TIER_RANK: Record<string, number> = { free: 0, standard: 1, pro: 2, max: 3 };
+
+export function meTierRank(tierKey: string): number {
+  const key = tierKey.trim().toLowerCase().replace(/^me_/, '');
+  return ME_TIER_RANK[key] ?? -1;
+}
+
+export function isMePlanDowngrade(activeTierKey: string, targetTier: string): boolean {
+  const active = meTierRank(activeTierKey);
+  if (active < 0) return false;
+  const target = meTierRank(targetTier);
+  return target >= 0 && target < active;
+}
+
+/** Ladder key of the active tier: the raw subscription tier, else the plan id. */
+export function meActiveTierKey(subscription: MobileMeSubscription | null): string {
+  const rawTier = subscription?.raw?.tier;
+  if (typeof rawTier === 'string' && rawTier.trim()) return rawTier;
+  return meActivePlanId(subscription);
+}
+
 /** The plan row matching the active subscription (falls back to free). */
 export function meCurrentPlan(
   plans: readonly MobileMePlan[],

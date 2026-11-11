@@ -26,6 +26,7 @@ import {
   type MePurchaseSection,
 } from './mePointsStore';
 import {
+  isMePlanDowngrade,
   meDiscountFromPct,
   mePaymentPhase,
   mePeriodPricing,
@@ -141,14 +142,39 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
   const activeRawTier = typeof snapshot.subscription?.raw?.tier === 'string'
     ? (snapshot.subscription.raw as Record<string, unknown>).tier
     : '';
-  // The currently-active tier (free for un-subscribed users, the paid plan
-  // otherwise) renders as "current plan": highlighted but not selectable.
+  // Ladder key of the ACTIVE tier (no-downgrade policy): prefer the raw
+  // subscription tier, fall back to the catalog row matched by plan id so a
+  // raw tier of "me_standard" and a catalog tier of "standard" land equal.
+  const activeTierKey = useMemo(() => {
+    if (!subscribed) return '';
+    if (typeof activeRawTier === 'string' && activeRawTier.trim()) return activeRawTier;
+    const match = snapshot.plans.find((plan) => plan.planId === activePlanId || plan.tier === activePlanId);
+    return match?.tier ?? activePlanId;
+  }, [subscribed, activeRawTier, snapshot.plans, activePlanId]);
+  // The currently-active tier renders as "current plan": highlighted with a
+  // badge, and — since the renewal fix (owner policy 2026-11-11) —
+  // SELECTABLE for the paid tiers: renewing the same tier is the core
+  // repeat flow and must not require letting the subscription lapse to free
+  // first. The free tier stays display-only for un-subscribed users.
   const isCurrentPlan = useCallback((plan: MePlanInfo) => {
     if (!subscribed) return plan.tier === 'free';
     return plan.planId === activePlanId
       || plan.tier === activePlanId
       || (!!activeRawTier && plan.tier === activeRawTier);
   }, [subscribed, activePlanId, activeRawTier]);
+  const isDowngradePlan = useCallback(
+    (plan: MePlanInfo) => subscribed && isMePlanDowngrade(activeTierKey, plan.tier),
+    [subscribed, activeTierKey],
+  );
+  // Order-blocked plans: the free tier has no order until subscribed, and a
+  // LOWER paid tier is locked while a subscription is active (downgrades
+  // would need a refund path the server does not offer). Everything else —
+  // the current tier for renewal, higher tiers for upgrades — stays
+  // orderable.
+  const isPlanBlocked = useCallback((plan: MePlanInfo) => {
+    if (plan.tier === 'free') return !subscribed;
+    return isDowngradePlan(plan);
+  }, [subscribed, isDowngradePlan]);
   // A paying user must not see the free tier at all: no downgrade option —
   // the subscription falls back to free on its own when it expires.
   const planCards = useMemo(() => {
@@ -161,8 +187,8 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
   // ensureMeSnapshot (no TTL) and lands as a fresh plans array, so data-derived
   // deps would re-run the reset mid-panel — flashing a picked 季付/年付 back to
   // 月付 and the gateway back to Alipay.
-  const selectionContextRef = useRef({ isCurrentPlan, planCards, paidPlans });
-  selectionContextRef.current = { isCurrentPlan, planCards, paidPlans };
+  const selectionContextRef = useRef({ isPlanBlocked, planCards, paidPlans });
+  selectionContextRef.current = { isPlanBlocked, planCards, paidPlans };
 
   useEffect(() => {
     if (!open) return;
@@ -189,13 +215,15 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
       });
     }
     setSelectedPlanId((current) => {
-      const { isCurrentPlan, planCards, paidPlans } = selectionContextRef.current;
+      const { isPlanBlocked, planCards, paidPlans } = selectionContextRef.current;
       const stillValid = current
-        && planCards.some((plan) => plan.planId === current && !isCurrentPlan(plan));
+        && planCards.some((plan) => plan.planId === current && !isPlanBlocked(plan));
       if (stillValid) return current;
-      const preferred = paidPlans[Math.min(1, Math.max(0, paidPlans.length - 1))];
-      if (preferred && !isCurrentPlan(preferred)) return preferred.planId;
-      return paidPlans.find((plan) => !isCurrentPlan(plan))?.planId ?? '';
+      // Renewal-friendly default: the first orderable PAID plan — for a
+      // subscriber that is their current tier (renew), otherwise the entry
+      // upgrade tier.
+      const preferred = paidPlans.find((plan) => !isPlanBlocked(plan));
+      return preferred?.planId ?? '';
     });
   }, [open, section]);
 
@@ -210,16 +238,16 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
     return () => window.removeEventListener('me:purchaseSwitchSection', listener);
   }, [onSectionChange]);
 
-  // Effective selection never lands on the current (non-selectable) plan.
+  // Effective selection never lands on a blocked plan (free tier for
+  // un-subscribed users, lower tiers for subscribers).
   const effectivePlanId = useMemo(() => {
     if (selectedPlanId) {
       const selected = planCards.find((plan) => plan.planId === selectedPlanId);
-      if (selected && !isCurrentPlan(selected)) return selectedPlanId;
+      if (selected && !isPlanBlocked(selected)) return selectedPlanId;
     }
-    const preferred = paidPlans[Math.min(1, Math.max(0, paidPlans.length - 1))];
-    if (preferred && !isCurrentPlan(preferred)) return preferred.planId;
-    return paidPlans.find((plan) => !isCurrentPlan(plan))?.planId ?? '';
-  }, [selectedPlanId, planCards, paidPlans, isCurrentPlan]);
+    const preferred = paidPlans.find((plan) => !isPlanBlocked(plan));
+    return preferred?.planId ?? '';
+  }, [selectedPlanId, planCards, paidPlans, isPlanBlocked]);
   const selectedPlan = planCards.find((plan) => plan.planId === effectivePlanId) ?? null;
   const selectedTopup = topupPackages.find((pkg) => pkg.packageId === selectedPackageId) ?? null;
   // The free tier is display-only: it has no order, no period and no CTA.
@@ -367,7 +395,7 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
   if (!open) return null;
 
   const canCreate = section === 'subscribe'
-    ? Boolean(selectedPlan) && !isFreeSelected && !isCurrentPlan(selectedPlan)
+    ? Boolean(selectedPlan) && !isFreeSelected && !isPlanBlocked(selectedPlan!)
     : section === 'topup' && subscribed && Boolean(selectedTopup);
   const paymentUrl = checkout?.approvalUrl || (/^https?:\/\//i.test(checkout?.qrCode ?? '') ? checkout!.qrCode : '');
 
@@ -391,17 +419,19 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
                 <div className="space-y-1.5">
                   {planCards.map((plan) => {
                     const currentPlan = isCurrentPlan(plan);
+                    const blocked = isPlanBlocked(plan);
+                    const downgrade = isDowngradePlan(plan);
                     const selected = effectivePlanId === plan.planId;
                     return (
                       <button
                         key={plan.planId}
                         type="button"
-                        disabled={phase === 'creating' || currentPlan}
+                        disabled={phase === 'creating' || blocked}
                         onClick={() => {
-                          if (!currentPlan) setSelectedPlanId(plan.planId);
+                          if (!blocked) setSelectedPlanId(plan.planId);
                         }}
                         className={`w-full rounded-xl border px-3 py-2 text-left transition-colors ${
-                          currentPlan
+                          blocked
                             // "cannot select" style — deliberately distinct from
                             // the accent selection state
                             ? 'border-claude-border dark:border-claude-darkBorder bg-claude-surfaceHover/50 dark:bg-claude-darkSurfaceHover/30 cursor-not-allowed'
@@ -412,12 +442,12 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
                       >
                         <div className="flex items-center justify-between gap-2">
                           <span className="flex min-w-0 items-center gap-2">
-                            <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${currentPlan ? 'bg-claude-surfaceHover text-claude-textSecondary dark:bg-claude-darkSurfaceHover dark:text-claude-darkTextSecondary' : 'bg-claude-accent/10 text-claude-accent dark:bg-claude-accent/15 dark:text-claude-darkAccent'}`}>
+                            <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${blocked ? 'bg-claude-surfaceHover text-claude-textSecondary dark:bg-claude-darkSurfaceHover dark:text-claude-darkTextSecondary' : 'bg-claude-accent/10 text-claude-accent dark:bg-claude-accent/15 dark:text-claude-darkAccent'}`}>
                               {tierIcon(plan)}
                             </span>
-                            <span className={`truncate text-xs font-semibold ${currentPlan ? 'text-claude-textSecondary dark:text-claude-darkTextSecondary' : 'text-claude-text dark:text-claude-darkText'}`}>{plan.name}</span>
+                            <span className={`truncate text-xs font-semibold ${blocked ? 'text-claude-textSecondary dark:text-claude-darkTextSecondary' : 'text-claude-text dark:text-claude-darkText'}`}>{plan.name}</span>
                           </span>
-                          <span className={`shrink-0 tabular-nums text-xs ${currentPlan ? 'text-claude-textSecondary dark:text-claude-darkTextSecondary' : 'text-claude-text dark:text-claude-darkText'}`}>
+                          <span className={`shrink-0 tabular-nums text-xs ${blocked ? 'text-claude-textSecondary dark:text-claude-darkTextSecondary' : 'text-claude-text dark:text-claude-darkText'}`}>
                             {plan.tier === 'free'
                               ? i18nService.t('mePurchaseFreePrice')
                               : i18nService.t('mePlanPriceMonthly').replace('{price}', priceLabel(plan.desktopPriceCny ?? plan.priceCny))}
@@ -431,6 +461,10 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
                             <span className="shrink-0 rounded-full bg-green-500/10 px-2 py-0.5 text-[10px] font-medium text-green-600 dark:text-green-400">
                               {i18nService.t('meCurrentPlanBadge')}
                             </span>
+                          ) : downgrade ? (
+                            <span className="shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+                              {i18nService.t('mePlanDowngradeBadge')}
+                            </span>
                           ) : plan.tier === 'pro' ? (
                             <span className="shrink-0 text-[10px] text-claude-accent dark:text-claude-darkAccent">
                               {i18nService.t('mePlanPopularBadge')}
@@ -440,6 +474,15 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
                       </button>
                     );
                   })}
+
+                  {/* Top-tier subscriber with nothing orderable below/above:
+                      the cards are all blocked (current) or downgrades — say
+                      so instead of a silently dead panel. */}
+                  {subscribed && !effectivePlanId && (
+                    <p className="px-1 text-[11px] leading-relaxed text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                      {i18nService.t('mePurchaseTopTierNote')}
+                    </p>
+                  )}
 
                   {selectedPlan && !isFreeSelected && (
                     <div className="rounded-xl border border-claude-border dark:border-claude-darkBorder bg-claude-surfaceInset/40 dark:bg-claude-darkSurfaceInset/30 px-3 py-2">

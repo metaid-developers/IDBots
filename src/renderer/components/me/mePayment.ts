@@ -160,6 +160,34 @@ export function mePeriodPricing(input: {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Tier ladder guard (owner policy 2026-11-11): no plan changes DOWNWARD
+// while a subscription is active — a mid-period downgrade would need a
+// refund path the server does not offer. The current paid plan itself stays
+// orderable (that is the renewal path); higher tiers are plain upgrades.
+// ---------------------------------------------------------------------------
+
+/** Ladder rank of the catalog tiers; unknown keys rank last (-1). */
+const ME_TIER_RANK: Record<string, number> = { free: 0, standard: 1, pro: 2, max: 3 };
+
+/** Normalizes plan ids like "me_standard" / raw tiers like "Standard" → ladder key rank. */
+export function meTierRank(tierKey: string): number {
+  const key = tierKey.trim().toLowerCase().replace(/^me_/, '');
+  return ME_TIER_RANK[key] ?? -1;
+}
+
+/**
+ * True when `targetTier` sits BELOW `activeTierKey` on the ladder. Unknown
+ * tiers (rank -1) on either side never count as a downgrade — an unseen
+ * catalog tier must stay purchasable rather than get locked by a guess.
+ */
+export function isMePlanDowngrade(activeTierKey: string, targetTier: string): boolean {
+  const active = meTierRank(activeTierKey);
+  if (active < 0) return false;
+  const target = meTierRank(targetTier);
+  return target >= 0 && target < active;
+}
+
 export interface MeDiscountParts {
   /** zh 折数 as display text: "9", "8.5" (pay/original x10, trailing zeros trimmed). */
   zhe: string;

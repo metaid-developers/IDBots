@@ -1247,6 +1247,16 @@ textarea.twin-input {
   outline-offset: 1px;
 }
 
+/* Downgrade-locked tier (owner policy 2026-11-11): muted, not-allowed. */
+.me-tier-card-locked {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.me-tier-card-locked:disabled {
+  cursor: not-allowed;
+}
+
 .me-tier-badge {
   position: absolute;
   top: -8px;

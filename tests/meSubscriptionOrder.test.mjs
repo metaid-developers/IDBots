@@ -336,23 +336,36 @@ test('a 404 list endpoint surfaces as featureUnavailable (usage page degrades si
   );
 });
 
-test('MePurchaseFlow: current plan is highlighted but unselectable; paid users never see the free tier', () => {
+test('MePurchaseFlow: downgrades locked, current tier orderable for renewal, paid users never see the free tier', () => {
+  // Ladder guard (owner policy 2026-11-11): a LOWER paid tier is locked while
+  // a subscription is active — a mid-period downgrade would need a refund
+  // path the server does not offer.
+  assert.match(flowSource, /const isDowngradePlan = useCallback\(/);
+  assert.match(flowSource, /subscribed && isMePlanDowngrade\(activeTierKey, plan\.tier\)/);
+  assert.match(flowSource, /i18nService\.t\('mePlanDowngradeBadge'\)/);
   // Current-plan resolution mirrors the plan card (subscription active → its
   // tier; otherwise free).
   assert.match(flowSource, /const isCurrentPlan = useCallback\(\(plan: MePlanInfo\) => \{/);
   assert.match(flowSource, /if \(!subscribed\) return plan\.tier === 'free';/);
   // Free tier is filtered out entirely for paying users (no downgrade path).
   assert.match(flowSource, /return subscribed \? cards\.filter\(\(plan\) => plan\.tier !== 'free'\) : cards;/);
-  // The current row renders disabled with the 当前套餐 badge instead of the
-  // popular badge, and keeps the selected styling.
-  assert.match(flowSource, /disabled=\{phase === 'creating' \|\| currentPlan\}/);
+  // Blocking keys off isPlanBlocked (free tier un-subscribed + downgrades);
+  // the current PAID tier is deliberately NOT blocked — it is the renewal
+  // path and stays orderable.
+  assert.match(flowSource, /const isPlanBlocked = useCallback\(\(plan: MePlanInfo\) => \{/);
+  assert.match(flowSource, /if \(plan\.tier === 'free'\) return !subscribed;/);
+  assert.match(flowSource, /return isDowngradePlan\(plan\);/);
+  assert.match(flowSource, /disabled=\{phase === 'creating' \|\| blocked\}/);
   assert.match(flowSource, /i18nService\.t\('meCurrentPlanBadge'\)/);
-  // The default/effective selection must skip the current plan.
-  assert.match(flowSource, /paidPlans\.find\(\(plan\) => !isCurrentPlan\(plan\)\)\?\.planId/);
-  // The current row uses a "cannot select" style — a muted, non-accent row
-  // with a green badge — never the accent selection state.
+  // The default/effective selection must skip blocked plans (renewal default:
+  // the first orderable paid plan — the subscriber's own tier).
+  assert.match(flowSource, /paidPlans\.find\(\(plan\) => !isPlanBlocked\(plan\)\)/);
+  // Blocked rows use a "cannot select" style — muted, never the accent
+  // selection state; the current row keeps the green badge; a top-tier
+  // subscriber with nothing orderable gets an explicit note.
   assert.match(flowSource, /cursor-not-allowed/);
   assert.match(flowSource, /bg-green-500\/10 px-2 py-0\.5/);
+  assert.match(flowSource, /mePurchaseTopTierNote/);
   // Success page: celebratory centered layout.
   assert.match(flowSource, /mePurchaseSuccessTitle/);
 });
@@ -362,7 +375,7 @@ test('MePurchaseFlow reset effect runs only on open/section transitions', () => 
   // open/section transitions. Data-derived deps re-ran it on every plan
   // catalog refetch (ensureMeSnapshot has no TTL), flashing a picked
   // 季付/年付 back to 月付 and the gateway back to Alipay mid-panel.
-  assert.match(flowSource, /selectionContextRef\.current = \{ isCurrentPlan, planCards, paidPlans \};/);
+  assert.match(flowSource, /selectionContextRef\.current = \{ isPlanBlocked, planCards, paidPlans \};/);
   assert.match(flowSource, /setPeriod\('month'\);[\s\S]*?\}, \[open, section\]\);/);
-  assert.equal(flowSource.includes('}, [open, section, isCurrentPlan, planCards, paidPlans]);'), false);
+  assert.equal(flowSource.includes('}, [open, section, isPlanBlocked, planCards, paidPlans]);'), false);
 });

@@ -1,6 +1,7 @@
 import { t } from '../../i18n';
 import {
   formatMe,
+  isMePlanDowngrade,
   meFromMilli,
   mePaidPlans,
   type MobileMePlan,
@@ -11,12 +12,20 @@ import {
  * weekly ME allowance, both read from /v1/me/plans at runtime. The middle
  * server-sorted tier carries the recommendation badge — no tier id is
  * hardcoded, so a backend reshuffle moves the badge with it.
+ *
+ * Downgrade guard (owner policy 2026-11-11): while a subscription is active,
+ * tiers below the active one render locked (no refund path exists for
+ * mid-period downgrades); the current tier stays selectable for renewal.
  */
 export function MeTierCards(props: {
   plans: readonly MobileMePlan[];
   loading: boolean;
   error: string | null;
   activePlanId: string;
+  /** Ladder key of the active tier (raw tier or plan id) for the downgrade guard. */
+  activeTierKey?: string;
+  /** Whether a paid subscription is currently active. */
+  subscribed?: boolean;
   selectedPlanId: string;
   onChoose: (planId: string) => void;
   onRetry: () => void;
@@ -44,6 +53,9 @@ export function MeTierCards(props: {
           const weekly = plan.weeklyAmountMilli ? formatMe(meFromMilli(plan.weeklyAmountMilli)) : '';
           const isRecommended = plan.planId === recommendedId;
           const isCurrent = plan.planId === props.activePlanId;
+          const isLocked = props.subscribed === true
+            && !isCurrent
+            && isMePlanDowngrade(props.activeTierKey ?? props.activePlanId, plan.tier);
           const isSelected = plan.planId === props.selectedPlanId;
           return (
             <button
@@ -51,11 +63,16 @@ export function MeTierCards(props: {
               type="button"
               data-testid={`me-tier-${plan.planId}`}
               data-recommended={isRecommended ? 'true' : undefined}
-              onClick={() => props.onChoose(plan.planId)}
+              data-locked={isLocked ? 'true' : undefined}
+              disabled={isLocked}
+              onClick={() => {
+                if (!isLocked) props.onChoose(plan.planId);
+              }}
               className={[
                 'me-tier-card',
                 isRecommended ? 'me-tier-card-featured' : '',
                 isSelected ? 'me-tier-card-selected' : '',
+                isLocked ? 'me-tier-card-locked' : '',
               ].filter(Boolean).join(' ')}
             >
               {isRecommended ? (
@@ -71,6 +88,11 @@ export function MeTierCards(props: {
                 <span className="me-tier-weekly">{t('mobile.me.points.tierWeekly', { me: weekly })}</span>
               ) : null}
               {isCurrent ? <span className="me-tier-current">{t('mobile.me.points.tierCurrent')}</span> : null}
+              {isLocked ? (
+                <span className="me-tier-current" data-testid={`me-tier-locked-${plan.planId}`}>
+                  {t('mobile.me.points.tierDowngradeLocked')}
+                </span>
+              ) : null}
             </button>
           );
         })}
