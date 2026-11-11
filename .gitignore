@@ -997,3 +997,4 @@ blob-report/
 
 # Studio Live Stage template package (manifest, scenes, fixtures, loader, demo)
 !tests/studioLiveStageTemplate.test.mjs
+!tests/surfaceSessionName.test.ts
