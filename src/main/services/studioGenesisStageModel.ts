@@ -175,7 +175,7 @@ const LIMITS: Record<GenesisLanguage, { max: number; min: number }> = {
   zh: { max: 34, min: 8 },
   en: { max: 110, min: 24 },
 };
-const TRAILING = /[\s"'”’」』)）】\]》。！？!?.~～\u200d\ufe0f]|\p{Extended_Pictographic}|[\u{1F3FB}-\u{1F3FF}]/u;
+const TRAILING = /[\s"'”’」』)）】\]》。！？!?.~～]|\p{Extended_Pictographic}|\u200d|\ufe0f|[\u{1F3FB}-\u{1F3FF}]/u;
 const SOFT_BREAK = /[，、；;：:,…—]/;
 
 /** Raw markdown paragraphs: blank-line blocks, with list items split apart. */

@@ -43,6 +43,31 @@ test('the Studio greeting is a projector session claimed before its first turn',
   assert.match(read('src/renderer/types/electron.d.ts'), /createGreetingSession: \(options: \{[^}]*surface\?: 'studio' \}\)/);
 });
 
+test('first-run users land in Studio with a stage-ready greeting prompt', () => {
+  const flow = read('src/renderer/components/onboarding/WelcomeFlow.tsx');
+  assert.match(flow, /metabotId: twin\.id,\n    surface: 'studio',/);
+
+  const app = read('src/renderer/App.tsx');
+  const start = app.indexOf('const handleWelcomeFlowEnter = useCallback(');
+  const handler = app.slice(start, app.indexOf('}, [botBrowserShell.openBrowserHome]);', start));
+  assert.ok(start > app.indexOf('const botBrowserShell = useBotBrowserShell('), 'declared after the shell it uses');
+  assert.match(handler, /await browserCoworkService\.loadSession\(sessionId\);/);
+  assert.match(handler, /setStudioSeamState\('split'\);/);
+  assert.match(handler, /await botBrowserShell\.openBrowserHome\(\);/);
+  assert.doesNotMatch(handler, /coworkService\.loadSession\(sessionId\)/);
+
+  const i18n = read('src/renderer/services/i18n.ts');
+  const prompts = [...i18n.matchAll(/welcomeFirstSessionSystemPrompt: (".*"),/g)].map((match) => JSON.parse(match[1]));
+  assert.equal(prompts.length, 2);
+  const [zh, en] = prompts;
+  assert.match(zh, /\{name\}/);
+  assert.match(zh, /正好四段，每段一行，格式是「标题：一两句话」/);
+  assert.match(zh, /metabot_update/);
+  assert.match(en, /\{name\}/);
+  assert.match(en, /exactly four paragraphs, one line each, written as "Title: one or two sentences"/);
+  assert.match(en, /Never quote specific numbers or amounts/);
+});
+
 test('the Genesis package ships with the app and has its own test script', () => {
   assert.match(read('electron-builder.json'), /"dist\/\*\*\/\*"/);
   const pkg = JSON.parse(read('package.json'));

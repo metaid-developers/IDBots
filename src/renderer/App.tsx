@@ -602,20 +602,6 @@ const App: React.FC = () => {
     });
   }, [isInitialized, showWelcomeFlow, mainView, currentSessionId]);
 
-  // The Twin Bot chat already exists (one generated greeting): land in it. The
-  // session is pulled into the store before the flag flips, so the shell never
-  // paints the New Task page for a frame; the session list is reloaded so the
-  // sidebar shows the new chat.
-  const handleWelcomeFlowEnter = useCallback(async (sessionId: string) => {
-    try {
-      await coworkService.loadSessions();
-      await coworkService.loadSession(sessionId);
-    } finally {
-      setMainView('cowork');
-      setShowWelcomeFlow(false);
-    }
-  }, []);
-
   // Escape hatch: the user entered without creating a bot (creation failed or
   // they chose to skip). The welcome flow shows again on the next launch
   // because the Twin still does not exist.
@@ -801,6 +787,23 @@ const App: React.FC = () => {
   const botBrowserShell = useBotBrowserShell({
     showToast,
   });
+
+  // The Twin Bot chat already exists (one generated greeting): land in it on
+  // the Studio face — the conversation in the Studio panel, the Genesis Stage
+  // in the browser beside it. The session is pulled into the store before the
+  // flag flips, so the shell never paints an empty Studio for a frame; the
+  // session list is reloaded so the records show the new chat.
+  const handleWelcomeFlowEnter = useCallback(async (sessionId: string) => {
+    try {
+      await coworkService.loadSessions();
+      await browserCoworkService.loadSession(sessionId);
+    } finally {
+      setMainView('cowork');
+      setStudioSeamState('split');
+      await botBrowserShell.openBrowserHome();
+      setShowWelcomeFlow(false);
+    }
+  }, [botBrowserShell.openBrowserHome]);
 
   // Session ↔ tab binding (owner request 2026-11-10): every Studio Co-Work
   // session owns one browser tab. The coordinator gets the shell's SILENT tab
