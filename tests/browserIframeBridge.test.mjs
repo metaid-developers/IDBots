@@ -102,3 +102,55 @@ test('negative control: the sandbox-relaxation guard flags a module that still e
     'the guard must have teeth: it has to detect the retired helper when present',
   );
 });
+
+test('only the active Stage frame can open its own same-directory final report', async () => {
+  const { default: vm } = await import('node:vm');
+  const listeners = [];
+  const navigated = [];
+  const frame = {};
+  const stageUri = 'preview-metaapp://localhost/work/reports/live-stage-turn-1.html';
+  const reportUri = 'preview-metaapp://localhost/work/reports/final-report.html';
+  const context = {
+    URL,
+    Promise,
+    setTimeout,
+    clearTimeout,
+    document: { readyState: 'complete', addEventListener: () => {} },
+    parent: { postMessage: () => {} },
+    addEventListener: (type, listener) => listeners.push({ type, listener }),
+    AgentBrowserTabs: {
+      openTab: () => 1,
+      closeTab: () => {},
+      switchTab: () => {},
+      getTabs: () => [{ id: 1, uri: stageUri, isActive: true }],
+      getActiveTab: () => ({ id: 1, uri: stageUri, isActive: true }),
+    },
+    currentBrowserHtmlFrameWindow: () => frame,
+    loadRuntime: async () => ({}),
+    selectUsingIdentity: async () => {},
+    navigateTo: (uri) => {
+      navigated.push(uri);
+      return Promise.resolve();
+    },
+  };
+  context.window = context;
+  vm.runInNewContext(buildBrowserIframeBridgeScript(), context);
+  const messageListener = listeners.find((entry) => entry.type === 'message').listener;
+  const send = (data, source = frame) => messageListener({ source, data });
+  const action = (overrides = {}) => ({
+    source: 'idbots-live-stage',
+    type: 'open-report',
+    turnId: 'turn-1',
+    uri: reportUri,
+    ...overrides,
+  });
+
+  send(action());
+  send(action(), {});
+  send(action({ turnId: 'turn-2' }));
+  send(action({ uri: 'preview-metaapp://localhost/work/other/final-report.html' }));
+  send(action({ uri: 'https://example.com/report' }));
+  send(action({ uri: 'preview-metaapp://localhost/work/reports/../secret.html' }));
+
+  assert.deepEqual(navigated, [reportUri]);
+});

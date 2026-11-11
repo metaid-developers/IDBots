@@ -416,9 +416,43 @@ export function buildBrowserIframeBridgeScript(): string {
     }
   }
 
+  function localPreviewPath(uri) {
+    var value = textValue(uri);
+    if (value.indexOf('preview-metaapp://localhost/') !== 0) return '';
+    try {
+      return new URL(value).pathname;
+    } catch (error) {
+      return '';
+    }
+  }
+
+  function liveStageReportNavigationAllowed(activeTab, turnId, reportUri) {
+    var stagePath = localPreviewPath(activeTab && activeTab.uri);
+    var reportPath = localPreviewPath(reportUri);
+    var stageSuffix = '/live-stage-' + textValue(turnId) + '.html';
+    if (!stagePath || !reportPath || !textValue(turnId)) return false;
+    if (stagePath.slice(-stageSuffix.length) !== stageSuffix) return false;
+    if (reportPath === stagePath || reportPath.slice(-stageSuffix.length) === stageSuffix) return false;
+    var stageDirectory = stagePath.slice(0, stagePath.lastIndexOf('/') + 1);
+    return reportPath.slice(0, stageDirectory.length) === stageDirectory;
+  }
+
   window.addEventListener('message', function (event) {
-    if (event.source !== window.parent) return;
     var data = event.data || {};
+    if (data.source === 'idbots-live-stage' && data.type === 'open-report') {
+      var reportTab = globalThis.AgentBrowserTabs && globalThis.AgentBrowserTabs.getActiveTab();
+      var reportFrame = typeof globalThis.currentBrowserHtmlFrameWindow === 'function'
+        ? globalThis.currentBrowserHtmlFrameWindow()
+        : null;
+      if (reportFrame && event.source === reportFrame
+        && liveStageReportNavigationAllowed(reportTab, data.turnId, data.uri)) {
+        Promise.resolve(globalThis.navigateTo(textValue(data.uri))).catch(function (error) {
+          toast(error && error.message ? error.message : String(error));
+        });
+      }
+      return;
+    }
+    if (event.source !== window.parent) return;
     if (!data || data.source !== PARENT_SOURCE) return;
     if (data.type === 'endpoint-response') {
       endpointResponse(data);

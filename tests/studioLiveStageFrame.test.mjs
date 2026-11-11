@@ -15,14 +15,16 @@ test('template is self-contained and injects the active Avatar and initial state
     state: state(),
     avatarDataUri: 'data:image/jpeg;base64,AA==',
     assets: { assetRoot: path.resolve('public/live-stage'), fallbackAvatarDataUri: 'data:image/png;base64,BB==' },
+    reportUri: 'preview-metaapp://localhost/tmp/final-report.html',
   });
   assert.match(html, /data:image\/jpeg;base64,AA==/);
   assert.match(html, /window.__INITIAL_LIVE_STAGE__=/);
+  assert.match(html, /window.__LIVE_STAGE_REPORT_URI__="preview-metaapp:\/\/localhost\/tmp\/final-report\.html"/);
   assert.match(html, /window.__FALLBACK_AVATAR__="data:image\/png;base64,BB=="/);
   assert.doesNotMatch(html, /=__FALLBACK_AVATAR__/);
   assert.match(html, /window.LiquidOrbEffectSource/);
   assert.match(html, /window.IDBotsLiveStage/);
-  assert.doesNotMatch(html, /__AVATAR_DATA_URI__|__STAGE_JS__|__ORB_EFFECT__/);
+  assert.doesNotMatch(html, /__AVATAR_DATA_URI__|__STAGE_JS__|__ORB_EFFECT__|__REPORT_URI__/);
 });
 
 test('frame patch script JSON-injects state and escapes HTML-significant characters', () => {

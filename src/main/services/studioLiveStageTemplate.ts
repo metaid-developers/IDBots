@@ -15,11 +15,13 @@ export function renderLiveStageHtml(input: {
   state: LiveStageState;
   avatarDataUri: string;
   assets: LiveStageTemplateAssets;
+  reportUri?: string;
 }): string {
   const read = (name: string): string => fs.readFileSync(path.join(input.assets.assetRoot, name), 'utf8');
   return read('stage.html')
     .replace('__STAGE_CSS__', () => read('stage.css'))
     .replace('__INITIAL_STATE__', () => inlineJson(input.state))
+    .replace('__REPORT_URI__', () => inlineJson(input.reportUri ?? null))
     .replaceAll('__FALLBACK_AVATAR_DATA_URI__', () => inlineJson(input.assets.fallbackAvatarDataUri))
     .replace('__ORB_EFFECT__', () => read('liquid-orb-effect.js'))
     .replace('__ORB_RENDERER__', () => read('liquid-orb.js'))

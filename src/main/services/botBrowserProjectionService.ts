@@ -23,6 +23,8 @@ export type BotBrowserProjectionInput = {
   title?: string;
   /** Leave this projection active after navigation (final owner-facing report). */
   reveal?: boolean;
+  /** The current turn's confirmed Stage tab, used if the cached hint was lost. */
+  tabId?: number;
 };
 
 export type BotBrowserProjectionOutcome = {
@@ -46,23 +48,34 @@ export function createBotBrowserProjectionService(deps: {
 }): BotBrowserProjectionService {
   const projectionTabs = new Map<string, number>();
 
+  const tabExists = async (tabId: number): Promise<boolean> => {
+    try {
+      const info = await deps.getTabBridge().execute(
+        { action: 'get-tab-info', tabId },
+        { focusWindow: false },
+      );
+      return info.info != null;
+    } catch (error) {
+      try {
+        const result = await deps.getTabBridge().execute(
+          { action: 'get-tabs' },
+          { focusWindow: false },
+        );
+        return result.tabs.some((tab) => tab.id === tabId);
+      } catch {
+        throw error;
+      }
+    }
+  };
+
   const project = async (input: BotBrowserProjectionInput): Promise<BotBrowserProjectionOutcome> => {
     const uri = projectionUriForPath(input.localPath);
     const label = input.title?.trim() || undefined;
     const reveal = input.reveal === true;
 
-    const cachedTabId = projectionTabs.get(input.sessionId);
+    const cachedTabId = input.tabId ?? projectionTabs.get(input.sessionId);
     if (cachedTabId != null) {
-      let alive = false;
-      try {
-        const info = await deps.getTabBridge().execute(
-          { action: 'get-tab-info', tabId: cachedTabId },
-          { focusWindow: false },
-        );
-        alive = info.info != null;
-      } catch {
-        alive = false;
-      }
+      const alive = await tabExists(cachedTabId);
       if (alive) {
         const result = await deps.getTabBridge().execute(
           { action: 'navigate-tab', tabId: cachedTabId, uri, activate: reveal },
@@ -71,6 +84,7 @@ export function createBotBrowserProjectionService(deps: {
         if (reveal && result.activeTab?.id !== cachedTabId) {
           throw new Error('The projector tab did not become active.');
         }
+        projectionTabs.set(input.sessionId, cachedTabId);
         return { uri, tabId: cachedTabId, announced: reveal };
       }
       projectionTabs.delete(input.sessionId);
