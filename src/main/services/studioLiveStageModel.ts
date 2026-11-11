@@ -36,7 +36,7 @@ export type LiveStageState = {
   participants: string[];
   topology: {
     mode: 'presence' | 'structured';
-    nodes: Array<{ id: string; label: string; kind: 'twin' | 'source' | 'worker' | 'evidence' | 'owner' }>;
+    nodes: Array<{ id: string; label: string; kind: 'twin' | 'source' | 'worker' | 'evidence' | 'owner'; avatar?: string }>;
     edges: Array<[string, string]>;
   };
   motion: {
@@ -156,7 +156,7 @@ export function isLiveStageWorkerReport(message: CoworkMessage): boolean {
 export function reduceLiveStageMessage(
   state: LiveStageState,
   message: CoworkMessage,
-  options: { workerName?: string } = {},
+  options: { workerName?: string; workerAvatar?: string } = {},
 ): LiveStageState {
   let family = state.family;
   let headline: string | undefined;
@@ -192,8 +192,12 @@ export function reduceLiveStageMessage(
   const scene = sceneFor(family, state.language, state.botName);
   const workerLabel = options.workerName?.trim().slice(0, 80)
     || (state.topology.mode === 'structured' ? state.topology.nodes.find((node) => node.kind === 'worker')?.label : undefined);
+  const workerAvatar = options.workerAvatar
+    || (state.topology.mode === 'structured' ? state.topology.nodes.find((node) => node.kind === 'worker')?.avatar : undefined);
   if (workerLabel && scene.topology.mode === 'structured') {
-    scene.topology.nodes = scene.topology.nodes.map((node) => node.kind === 'worker' ? { ...node, label: workerLabel } : node);
+    scene.topology.nodes = scene.topology.nodes.map((node) => node.kind === 'worker'
+      ? { ...node, label: workerLabel, ...(workerAvatar ? { avatar: workerAvatar } : {}) }
+      : node);
     scene.participants = scene.participants.map((participant, index) => index === 1 ? workerLabel : participant);
   }
   const handoff = family === 'worker-report'

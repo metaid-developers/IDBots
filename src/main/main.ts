@@ -12543,6 +12543,7 @@ if (!gotTheLock) {
         null,
         options.assistantMode === true
       );
+      getStudioLiveStageService().prepareSession(session.id);
       const runner = getCoworkRunner();
 
       // Update session status to 'running' before starting async task
@@ -12629,6 +12630,7 @@ if (!gotTheLock) {
     try {
       const metabotId = typeof input?.metabotId === 'number' ? input.metabotId : null;
       const sessionId = typeof input?.sessionId === 'string' && input.sessionId.trim() ? input.sessionId.trim() : undefined;
+      if (sessionId) getStudioLiveStageService().prepareSession(sessionId);
       // Mirror the session:start cwd chain for bot intents (default root →
       // per-bot dated workspace) so the prewarmed slot's workspace pin matches
       // the turn's and no config diff appears inside it.

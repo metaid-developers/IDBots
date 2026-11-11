@@ -79,16 +79,18 @@ test('real cross-session metadata triggers a bounded return handoff, not a new o
     toolName: 'local_worker_delegate',
     toolUseId: 'call-1',
     toolInput: { workerMetabotId: 2, objective: 'private task body' },
-  }), { workerName: 'Builder阿码' });
+  }), { workerName: 'Builder阿码', workerAvatar: 'data:image/png;base64,BB==' });
   assert.deepEqual(state.handoff, { direction: 'dispatch', eventId: 'call-1' });
+  assert.equal(state.topology.nodes.find((node) => node.kind === 'worker').avatar, 'data:image/png;base64,BB==');
   state = reduceLiveStageMessage(state, message('orch_notify:delivery-1', 'user', {
     sourceChannel: 'idbots_cross_session',
     sourceSessionId: 'worker-session',
     crossSessionDeliveryId: 'delivery-1',
-  }), { workerName: 'Builder阿码' });
+  }), { workerName: 'Builder阿码', workerAvatar: 'data:image/png;base64,BB==' });
   assert.equal(state.family, 'worker-report');
   assert.deepEqual(state.handoff, { direction: 'return', eventId: 'delivery-1' });
   assert.equal(state.topology.nodes.find((node) => node.kind === 'worker').label, 'Builder阿码');
+  assert.equal(state.topology.nodes.find((node) => node.kind === 'worker').avatar, 'data:image/png;base64,BB==');
   assert.doesNotMatch(JSON.stringify(state.eventWindow), /private task body|worker-session/);
   state = reduceLiveStageMessage(state, message('verify', 'tool_use', { toolName: 'twin_task_accept', toolUseId: 'accept-1' }));
   assert.equal(state.family, 'verification');

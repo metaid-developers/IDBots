@@ -64,10 +64,11 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     };
   };
 
+  const safeAvatar = (avatar: unknown): string | undefined => typeof avatar === 'string' && /^(?:data:image\/|https?:\/\/)/i.test(avatar) ? avatar : undefined;
+
   const avatarFor = (session: CoworkSession): string => {
     const metabot = session.metabotId == null ? null : deps.getMetabotById(session.metabotId);
-    const avatar = session.metabotAvatar ?? metabot?.avatar;
-    return typeof avatar === 'string' && /^(?:data:image\/|https?:\/\/)/i.test(avatar) ? avatar : deps.fallbackAvatarDataUri;
+    return safeAvatar(session.metabotAvatar ?? metabot?.avatar) ?? deps.fallbackAvatarDataUri;
   };
 
   const botNameFor = (session: CoworkSession): string => {
@@ -75,17 +76,21 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     return session.metabotName ?? metabot?.name ?? 'Twin';
   };
 
-  const workerNameFor = (message: CoworkMessage): string | undefined => {
+  const workerIdentityFor = (message: CoworkMessage): { name?: string; avatar?: string } => {
     const metadata = message.metadata as { sourceSessionId?: unknown; toolInput?: { workerMetabotId?: unknown } } | undefined;
     if (typeof metadata?.sourceSessionId === 'string') {
       const sourceSession = deps.getSession(metadata.sourceSessionId);
-      if (sourceSession) return botNameFor(sourceSession);
+      if (sourceSession) {
+        const metabot = sourceSession.metabotId == null ? null : deps.getMetabotById(sourceSession.metabotId);
+        return { name: botNameFor(sourceSession), avatar: safeAvatar(sourceSession.metabotAvatar ?? metabot?.avatar) };
+      }
     }
     const workerId = metadata?.toolInput?.workerMetabotId;
     if (typeof workerId === 'number' && Number.isInteger(workerId) && workerId > 0) {
-      return deps.getMetabotById(workerId)?.name?.trim().slice(0, 80) || undefined;
+      const worker = deps.getMetabotById(workerId);
+      return { name: worker?.name?.trim().slice(0, 80) || undefined, avatar: safeAvatar(worker?.avatar) };
     }
-    return undefined;
+    return {};
   };
 
   function enqueue(run: LiveStageRun, task: () => Promise<void>): void {
@@ -209,6 +214,12 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     return run;
   }
 
+  function prepareSession(sessionId: string): void {
+    if (typeof sessionId !== 'string' || !sessionId.trim()) return;
+    currentSettings = deps.getSettings();
+    ensureRun(sessionId);
+  }
+
   function observeMessage(sessionId: string, message: CoworkMessage): void {
     if (!message?.id) return;
     currentSettings = deps.getSettings();
@@ -232,7 +243,8 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     if (!run || run.seen.has(message.id)) return;
     run.seen.add(message.id);
     if (submissionId) run.submissionId = submissionId;
-    run.state = reduceLiveStageMessage(run.state, message, { workerName: workerNameFor(message) });
+    const worker = workerIdentityFor(message);
+    run.state = reduceLiveStageMessage(run.state, message, { workerName: worker.name, workerAvatar: worker.avatar });
     schedulePatch(run);
     scheduleDirector(run);
   }
@@ -289,6 +301,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
   }
 
   return {
+    prepareSession,
     observeMessage,
     observeComplete,
     observeError,

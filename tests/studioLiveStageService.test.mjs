@@ -24,8 +24,8 @@ function fixture(t, directorEnabled = false, initialTabId = 7) {
   const projected = [], patches = [], calls = [];
   const settings = { enabled: true, directorEnabled };
   const service = createStudioLiveStageService({
-    getSession: (id) => id === 'worker-session' ? { ...session, metabotId: 2, metabotName: 'Builder阿码' } : session,
-    getMetabotById: (id) => ({ name: id === 2 ? 'Builder阿码' : 'AI_Sunny', avatar: session.metabotAvatar, llm_id: 'brain', llm_provider: 'test' }),
+    getSession: (id) => id === 'worker-session' ? { ...session, metabotId: 2, metabotName: 'Builder阿码', metabotAvatar: 'data:image/png;base64,BB==' } : session,
+    getMetabotById: (id) => ({ name: id === 2 ? 'Builder阿码' : 'AI_Sunny', avatar: id === 2 ? 'data:image/png;base64,BB==' : session.metabotAvatar, llm_id: 'brain', llm_provider: 'test' }),
     getSettings: () => settings,
     getLanguage: () => 'en',
     project: async (input) => { projected.push(input); return { uri: `preview-metaapp://localhost${input.localPath}`, tabId: initialTabId, announced: true }; },
@@ -155,4 +155,33 @@ test('real worker receipts stay in the same turn and name the source session Bot
   await run.queue;
   assert.equal(service.getState('s').family, 'verification');
   assert.equal(service.getState('s').handoff, null);
+});
+
+
+test('prepareSession starts the stage before the first message without Director work', async (t) => {
+  const { service, projected, calls } = fixture(t);
+  service.prepareSession('s');
+  const run = service.getRunInternals('s');
+  await run.queue;
+  assert.equal(projected.length, 1);
+  assert.equal(run.state.family, 'received');
+  assert.equal(run.state.metrics.directorCalls, 0);
+  assert.equal(calls.length, 0);
+  service.prepareSession('s');
+  await run.queue;
+  assert.equal(projected.length, 1, 'prewarm must be idempotent');
+});
+
+test('worker identity resolves the Avatar from the trusted source session', async (t) => {
+  const { service } = fixture(t);
+  service.prepareSession('s');
+  const run = service.getRunInternals('s');
+  await run.queue;
+  service.observeMessage('s', message('receipt', 'user', {
+    sourceChannel: 'idbots_cross_session',
+    sourceSessionId: 'worker-session',
+    crossSessionDeliveryId: 'delivery-avatar',
+  }));
+  await run.queue;
+  assert.equal(service.getState('s').topology.nodes.find((node) => node.kind === 'worker').avatar, 'data:image/png;base64,BB==');
 });

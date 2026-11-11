@@ -100,7 +100,11 @@ export async function directLiveStageScene(
         composition: state.composition,
         motif: state.motif,
         participants: state.participants,
-        topology: state.topology,
+        topology: {
+          mode: state.topology.mode,
+          nodes: state.topology.nodes.map(({ id, label, kind }) => ({ id, label, kind })),
+          edges: state.topology.edges,
+        },
       },
       recentEvents: state.eventWindow,
       instruction: state.language === 'zh' ? '仅使用中文输出标题和说明。保留事实，只创造视觉表现。' : 'Write the headline and caption in English. Preserve facts and vary only the presentation.',
