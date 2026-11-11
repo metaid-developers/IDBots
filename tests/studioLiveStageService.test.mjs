@@ -343,3 +343,21 @@ test('stage disabled or session without a run never presents', () => {
     try { fs.rmSync(cwd, { recursive: true, force: true }); } catch {}
   }
 });
+
+test('a stage-level skip returns every question as honestly unanswered', async (t) => {
+  const { service, responses, drainQueue } = fixture(t);
+  service.observeMessage('s', message('u1', 'user', { origin: 'user', submissionId: 'sub-1' }));
+  const run = service.getRunInternals('s');
+  await run.queue;
+  service.presentInteraction('s', {
+    requestId: 'ask-3',
+    toolName: 'AskUserQuestion',
+    toolInput: { questions: [{ question: 'Q1', options: [{ label: 'A' }] }, { question: 'Q2', options: [{ label: 'B' }] }] },
+  });
+  drainQueue.push({ requestId: 'ask-3', token: service.getState('s').interaction.token, behavior: 'allow', skip: true });
+  await waitFor(() => responses.length > 0);
+  assert.equal(responses[0].result.behavior, 'allow');
+  assert.deepEqual(responses[0].result.updatedInput.answers, {});
+  assert.deepEqual(responses[0].result.updatedInput.skippedQuestions, ['Q1', 'Q2']);
+  assert.equal(service.getState('s').interaction, null, 'skip clears the card');
+});

@@ -107,3 +107,11 @@ test('ask wizard submit is reachable by the validity gate (2026-11-12 incident p
   // ever lift (no early return that skips the write).
   assert.match(stage, /submit\.disabled = !ready;/);
 });
+
+test('the ask card offers an always-clickable skip that never fabricates an answer', () => {
+  const stage = read('stage.js');
+  assert.match(stage, /interactionCopy\('跳过', 'Skip'\)/);
+  assert.match(stage, /behavior: 'allow', skip: true/);
+  // Skip must not be gated on selections: it queues even with nothing picked.
+  assert.doesNotMatch(stage, /skip\.disabled/);
+});

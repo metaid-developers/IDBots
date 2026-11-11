@@ -391,12 +391,19 @@ const CoworkPermissionPanel: React.FC<CoworkPermissionPanelProps> = ({
           finalAnswers[question.question] = customValue.trim();
         }
       });
+      // Skipped questions travel as an explicit list so main maps them to the
+      // ask protocol's honest "no answer" ({id, selected: []}) instead of the
+      // fabricated declined-to-answer note (2026-11-12 spec: skip ≠ veto).
+      const skippedTexts = Object.entries(skippedQuestions)
+        .filter(([, skipped]) => skipped === true)
+        .map(([question]) => question);
       onRespond({
         behavior: 'allow',
         updatedInput: {
           ...permission.toolInput,
           answers: finalAnswers,
           autoAnswered: Array.from(autoAnsweredRef.current),
+          ...(skippedTexts.length > 0 ? { skippedQuestions: skippedTexts } : {}),
         },
       });
       return;

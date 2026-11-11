@@ -11995,9 +11995,22 @@ export class CoworkRunner extends EventEmitter {
               // options so the user can read what they are approving.
               ...(typeof q.detail === 'string' && q.detail.length > 0 ? { detail: q.detail } : {}),
             }));
-            const wireAnswersFromModal = (modalAnswers: Record<string, unknown> | undefined) =>
-              (ask.questions ?? []).map((q) => {
+            // Skipped questions arrive as an explicit list of question texts
+            // (the desktop wizard's skip action and the stage card's skip
+            // button both send one). They map to {id, selected: []} with NO
+            // custom note — the protocol's honest "no answer". Skip ≠ deny:
+            // nothing is fabricated on the host side (2026-11-12 spec §3.1).
+            const wireAnswersFromModal = (
+              modalAnswers: Record<string, unknown> | undefined,
+              skippedQuestions?: unknown,
+            ) => {
+              const rawSkipped = Array.isArray(skippedQuestions) ? skippedQuestions : [];
+              const skipped = new Set(rawSkipped.filter((value): value is string => typeof value === 'string'));
+              return (ask.questions ?? []).map((q) => {
                 const raw = modalAnswers?.[q.question];
+                if (skipped.has(q.question)) {
+                  return { id: q.id, selected: [] };
+                }
                 if (typeof raw !== 'string' || raw.trim().length === 0) {
                   return {
                     id: q.id,
@@ -12020,6 +12033,7 @@ export class CoworkRunner extends EventEmitter {
                   ? { id: q.id, selected, custom: customParts.join(' ') }
                   : { id: q.id, selected };
               });
+            };
             // Full-trust parity: questions explicitly marked low-risk
             // (single-select, header 'auto-confirm') answer themselves with
             // their first option — same helper the Claude path applies.
@@ -12066,8 +12080,11 @@ export class CoworkRunner extends EventEmitter {
                     .catch(() => undefined);
                   return;
                 }
-                const answers = (result.updatedInput as Record<string, unknown> | undefined)?.answers;
-                void hub.respondAsk(ask.id, wireAnswersFromModal(answers as Record<string, unknown> | undefined))
+                const updatedInput = (result.updatedInput ?? {}) as Record<string, unknown>;
+                void hub.respondAsk(ask.id, wireAnswersFromModal(
+                  (updatedInput.answers ?? {}) as Record<string, unknown>,
+                  updatedInput.skippedQuestions,
+                ))
                   .catch((error) => coworkLog('WARN', 'runDshSessionLocal', 'ask respond failed', { error: String(error) }));
               },
             });

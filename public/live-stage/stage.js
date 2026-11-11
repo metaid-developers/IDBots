@@ -512,6 +512,24 @@
       interactionQueue.push(entry);
       completeInteraction(card, interactionCopy('已发送，等待舞台更新…', 'Answer sent — waiting for the stage…'));
     });
+    let skipButton = null;
+    if (isAsk) {
+      // Skip ≠ deny: every question is returned as unanswered (empty
+      // selection, no fabricated note) so the tool ends skipped instead of
+      // vetoed. Always clickable, even with nothing selected.
+      const skip = document.createElement('button');
+      skip.type = 'button';
+      skip.className = 'interaction-button';
+      skip.style.background = 'transparent';
+      skip.style.color = '#aab6c6';
+      skip.style.border = '1px solid rgba(148,163,184,.26)';
+      skip.textContent = interactionCopy('跳过', 'Skip');
+      skip.addEventListener('click', () => {
+        interactionQueue.push({ requestId: interaction.requestId, token: interaction.token, behavior: 'allow', skip: true });
+        completeInteraction(card, interactionCopy('已跳过，等待舞台更新…', 'Skipped — waiting for the stage…'));
+      });
+      skipButton = skip;
+    }
     const countdown = document.createElement('span');
     countdown.className = 'interaction-countdown';
     countdown.dataset.interactionCountdown = '';
@@ -520,7 +538,9 @@
     done.className = 'interaction-done';
     done.dataset.interactionDone = '';
     done.hidden = true;
-    actions.append(deny, submit, countdown);
+    actions.append(deny);
+    if (skipButton) actions.append(skipButton);
+    actions.append(submit, countdown);
     fragment.append(actions, done);
     return fragment;
   }

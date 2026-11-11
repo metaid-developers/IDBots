@@ -338,6 +338,16 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     if (record.behavior === 'deny') return { behavior: 'deny', message: 'Denied on the Live Stage' };
     if (record.behavior !== 'allow') return null;
     if (interaction.kind !== 'ask') return { behavior: 'allow' };
+    // Stage-level skip: every question is handed back unanswered. The runner
+    // maps skippedQuestions to {id, selected: []} with NO custom note — the
+    // honest "no answer" the ask protocol exposes (skip ≠ veto, nothing
+    // fabricated on the host side).
+    if (record.skip === true) {
+      return {
+        behavior: 'allow',
+        updatedInput: { answers: {}, skippedQuestions: interaction.questions.map((question) => question.question) },
+      };
+    }
     const raw = record.answers && typeof record.answers === 'object' && !Array.isArray(record.answers)
       ? record.answers as Record<string, unknown>
       : {};

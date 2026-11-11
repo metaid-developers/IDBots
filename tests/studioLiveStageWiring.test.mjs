@@ -54,3 +54,14 @@ test('pending permissions present on the Studio stage card and clear on resoluti
   assert.match(service, /presentInteraction\(sessionId: string, request: unknown\): 'presented' \| 'busy' \| 'declined'/);
   assert.match(service, /function startInteractionPolling\(run: LiveStageRun\): void/);
 });
+
+test('skip travels as an explicit honest list through panel, runner, and stage', () => {
+  const runner = read('src/main/libs/coworkRunner.ts');
+  assert.match(runner, /skipped\.has\(q\.question\)/);
+  assert.match(runner, /\{ id: q\.id, selected: \[\] \}/);
+  assert.match(runner, /updatedInput\.skippedQuestions/);
+  const panel = read('src/renderer/components/cowork/CoworkPermissionPanel.tsx');
+  assert.match(panel, /skippedQuestions: skippedTexts/);
+  const service = read('src/main/services/studioLiveStageService.ts');
+  assert.match(service, /skippedQuestions: interaction\.questions\.map\(\(question\) => question\.question\)/);
+});
