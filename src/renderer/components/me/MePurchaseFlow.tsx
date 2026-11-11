@@ -411,7 +411,24 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
         ? ('subscriptionOrder' in res ? res.subscriptionOrder : null)
         : ('submission' in res ? res.submission?.order : null);
       const nextCheckout = normalizeMePaymentCheckout(order, amountDue ?? 0);
-      if (!nextCheckout || (!nextCheckout.approvalUrl && !nextCheckout.qrCode)) {
+      if (!nextCheckout) {
+        setPhase('pick');
+        setOrderError(i18nService.t('mePurchaseUnavailable'));
+        return;
+      }
+      if (!nextCheckout.approvalUrl && !nextCheckout.qrCode) {
+        // Zero-amount upgrade (R6 credit ≥ list, shipped 2026-11-11): the
+        // server credits the order in the same transaction and ships NO
+        // gateway checkout — that is a success, not an unusable order.
+        // Re-entering here with the day-stable key replays the same
+        // credited order, so reporting an error would dead-loop the panel.
+        if (mePaymentPhase(nextCheckout.status) === 'credited') {
+          setCheckout(nextCheckout);
+          setPhase('credited');
+          invalidateMeSnapshot();
+          void requestMeSubscription();
+          return;
+        }
         setPhase('pick');
         setOrderError(i18nService.t('mePurchaseUnavailable'));
         return;
@@ -794,7 +811,9 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
                 {i18nService.t('mePurchaseSuccessTitle')}
               </p>
               <p className="mt-1.5 text-[11px] leading-relaxed text-green-700/80 dark:text-green-300/80">
-                {i18nService.t(section === 'subscribe' ? 'mePurchaseSubscribeCredited' : 'mePurchaseTopupCredited')}
+                {section === 'subscribe' && checkout.payAmount === 0 && !checkout.qrCode && !checkout.approvalUrl
+                  ? i18nService.t('mePurchaseUpgradeZeroPay')
+                  : i18nService.t(section === 'subscribe' ? 'mePurchaseSubscribeCredited' : 'mePurchaseTopupCredited')}
               </p>
               <button
                 type="button"
