@@ -13,9 +13,24 @@ export interface MePaymentCheckout {
    * deadline only when present, never a guessed one.
    */
   expiresAt?: number;
+  /**
+   * Upgrade proration (Amendment v0.4, R6) — the credit the server deducted
+   * from the list price for the previous plan's unused days. Optional until
+   * the server ships it; the paying phase renders the credit line only when
+   * present, and the list price it was deducted from.
+   */
+  listAmountCny?: number;
+  creditAppliedCny?: number;
 }
 
-type PaymentOrder = Partial<MeSubscriptionOrderInfo & MeTopupOrderInfo>;
+/**
+ * Order view plus the Amendment v0.4 proration breakdown — `breakdown` is
+ * not in the wire types yet (server-side pending), so it rides as an
+ * optional extra here instead of being invented into electron.d.ts.
+ */
+type PaymentOrder = Partial<MeSubscriptionOrderInfo & MeTopupOrderInfo> & {
+  breakdown?: Record<string, unknown>;
+};
 
 const recordOf = (value: unknown): Record<string, unknown> | null => (
   value && typeof value === 'object' && !Array.isArray(value)
@@ -94,6 +109,39 @@ export function normalizeMePaymentCheckout(
     payAmount: amountOf(order?.payAmount) ?? amountOf(order?.amountCny) ?? amountOf(order?.priceCny) ?? fallbackAmount,
     payCurrency: textOf(order?.payCurrency) || 'CNY',
     expiresAt: extractMeExpiresAt(order),
+    ...extractMeProration(order),
+  };
+}
+
+/**
+ * Upgrade proration fields (Amendment v0.4 R6) from the order body or its
+ * `breakdown` object. Stays absent until the server ships the amendment —
+ * callers must treat missing fields as "no credit shown", never as 0.
+ */
+export function extractMeProration(order: PaymentOrder | null | undefined): {
+  listAmountCny?: number;
+  creditAppliedCny?: number;
+} {
+  const sources: Array<Record<string, unknown> | null> = [
+    recordOf(order?.breakdown),
+    recordOf(order),
+  ];
+  let listAmountCny: number | undefined;
+  let creditAppliedCny: number | undefined;
+  for (const record of sources) {
+    if (!record) continue;
+    if (listAmountCny === undefined) {
+      const list = amountOf(record.listAmountCny ?? record.list_amount_cny ?? record.listPriceCny);
+      if (list !== undefined) listAmountCny = list;
+    }
+    if (creditAppliedCny === undefined) {
+      const credit = amountOf(record.creditCny ?? record.credit_cny ?? record.prorationCreditCny);
+      if (credit !== undefined) creditAppliedCny = credit;
+    }
+  }
+  return {
+    ...(listAmountCny !== undefined ? { listAmountCny } : {}),
+    ...(creditAppliedCny !== undefined ? { creditAppliedCny } : {}),
   };
 }
 
@@ -158,6 +206,34 @@ export function mePeriodPricing(input: {
     total: round2(monthly * months * discountPct / 100),
     originalMonthly: monthly,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Tier ladder guard (owner policy 2026-11-11): no plan changes DOWNWARD
+// while a subscription is active — a mid-period downgrade would need a
+// refund path the server does not offer. The current paid plan itself stays
+// orderable (that is the renewal path); higher tiers are plain upgrades.
+// ---------------------------------------------------------------------------
+
+/** Ladder rank of the catalog tiers; unknown keys rank last (-1). */
+const ME_TIER_RANK: Record<string, number> = { free: 0, standard: 1, pro: 2, max: 3 };
+
+/** Normalizes plan ids like "me_standard" / raw tiers like "Standard" → ladder key rank. */
+export function meTierRank(tierKey: string): number {
+  const key = tierKey.trim().toLowerCase().replace(/^me_/, '');
+  return ME_TIER_RANK[key] ?? -1;
+}
+
+/**
+ * True when `targetTier` sits BELOW `activeTierKey` on the ladder. Unknown
+ * tiers (rank -1) on either side never count as a downgrade — an unseen
+ * catalog tier must stay purchasable rather than get locked by a guess.
+ */
+export function isMePlanDowngrade(activeTierKey: string, targetTier: string): boolean {
+  const active = meTierRank(activeTierKey);
+  if (active < 0) return false;
+  const target = meTierRank(targetTier);
+  return target >= 0 && target < active;
 }
 
 export interface MeDiscountParts {

@@ -1124,6 +1124,13 @@ textarea.twin-input {
   color: rgba(246, 244, 234, 0.9);
 }
 
+/* Subscription expiry line under the plan row (2026-11-11 hardening). */
+.me-hero-plan-expiry {
+  margin-top: 4px;
+  font-size: 11px;
+  color: rgba(246, 244, 234, 0.55);
+}
+
 .me-hero-plan-used {
   font-size: 11px;
   color: rgba(246, 244, 234, 0.46);
@@ -1245,6 +1252,16 @@ textarea.twin-input {
 .me-tier-card-selected {
   outline: 2px solid var(--twin-accent);
   outline-offset: 1px;
+}
+
+/* Downgrade-locked tier (owner policy 2026-11-11): muted, not-allowed. */
+.me-tier-card-locked {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.me-tier-card-locked:disabled {
+  cursor: not-allowed;
 }
 
 .me-tier-badge {

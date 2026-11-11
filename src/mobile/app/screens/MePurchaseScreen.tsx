@@ -8,9 +8,11 @@ import { QrCanvas } from './recharge/QrCanvas';
 import {
   formatMe,
   invalidateMeBalance,
+  isMePlanDowngrade,
   isMeSubscribed,
   loadMePaymentInfo,
   meActivePlanId,
+  meActiveTierKey,
   meFromMilli,
   mePaidPlans,
   mePeriodDays,
@@ -88,10 +90,20 @@ export default function MePurchaseScreen(props: {
 
   const paidPlans = useMemo(() => mePaidPlans(snapshot.plans), [snapshot.plans]);
   const activePlanId = meActivePlanId(snapshot.subscription);
+  const activeTierKey = meActiveTierKey(snapshot.subscription);
   const subscribed = isMeSubscribed(snapshot.subscription);
 
-  const effectivePlanId = selectedPlanId
-    || (paidPlans.length > 0 ? paidPlans[Math.min(1, paidPlans.length - 1)].planId : '');
+  // Downgrade guard (owner policy 2026-11-11): tiers below the active one
+  // are locked while a subscription is active; the effective selection never
+  // lands on a locked plan — not even as the fallback default. Un-subscribed
+  // users (activeTierKey '' → rank -1) keep every tier selectable.
+  const selectablePlans = useMemo(
+    () => paidPlans.filter((plan) => !isMePlanDowngrade(activeTierKey, plan.tier)),
+    [paidPlans, activeTierKey],
+  );
+  const effectivePlanId = selectedPlanId && selectablePlans.some((plan) => plan.planId === selectedPlanId)
+    ? selectedPlanId
+    : (selectablePlans.length > 0 ? selectablePlans[Math.min(1, selectablePlans.length - 1)].planId : '');
   const selectedPlan = paidPlans.find((plan) => plan.planId === effectivePlanId) ?? null;
   const selectedPackage = snapshot.topupPackages.find((pkg) => pkg.packageId === selectedPackageId)
     ?? snapshot.topupPackages[0]
@@ -236,6 +248,8 @@ export default function MePurchaseScreen(props: {
             loading={snapshot.plansLoading}
             error={snapshot.plansError}
             activePlanId={activePlanId}
+            activeTierKey={activeTierKey}
+            subscribed={subscribed}
             selectedPlanId={effectivePlanId}
             onChoose={(planId) => {
               setSelectedPlanId(planId);
@@ -441,7 +455,10 @@ export default function MePurchaseScreen(props: {
               type="button"
               className="twin-button twin-button-primary twin-button-full"
               data-testid="me-purchase-submit"
-              disabled={phase === 'submitting' || (section === 'subscribe' ? !selectedPlan : !selectedPackage)}
+              disabled={phase === 'submitting'
+                || (section === 'subscribe'
+                  ? (!selectedPlan || isMePlanDowngrade(activeTierKey, selectedPlan.tier))
+                  : !selectedPackage)}
               onClick={() => void submit()}
             >
               {phase === 'submitting' ? t('mobile.me.purchase.submitting') : t('mobile.me.purchase.submit')}

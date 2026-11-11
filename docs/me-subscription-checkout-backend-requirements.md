@@ -223,3 +223,73 @@ Owner-scoped list of the caller's subscription orders, newest first.
 ### Acceptance addendum
 
 8. `GET /v1/me/subscription/orders` signed with action `subscription_order` returns the caller's orders (and only theirs) sorted newest-first; an identity with no orders gets `{code: 0, data: {orders: []}}`; an unsigned request gets the standard JSON auth error.
+
+---
+
+## Amendment v0.4 — plan-change policy: upgrade proration, downgrade guard, renewal semantics (2026-11-11)
+
+**Owner policy 2026-11-11.** The client now ships the matching UI slice on `feat/subscription-credits-hardening` (MePurchaseFlow two-step upgrade confirm, tier-ladder downgrade lock, proration display readiness in `mePayment.ts extractMeProration`). What is missing is server behavior — the items below are **requirements for assist-base-service**, not implemented anywhere yet.
+
+### R6 — Upgrade proration (折抵)
+
+When a signed order's plan ranks **above** the caller's currently-active subscription plan (ladder `free < standard < pro < max`), the server MUST price the order as:
+
+```
+listAmount = PriceSubscriptionOrderCny(newPlan, period)        // v0.2 rule
+remaining  = ceil((activePlan.applicableEnd - now) / 86400000) // clamp to [0, …]
+credit     = round2(activeChannelMonthlyCny × remaining / 30)  // single rounding, generous-to-user ceil on days
+payAmount  = max(0, round2(listAmount - credit))
+```
+
+- `activeChannelMonthlyCny` = the ACTIVE plan's monthly price **for the order's channel** (see R10).
+- The credit applies to every period (month/quarter/year); a credit ≥ listAmount yields `payAmount = 0` and the order flows straight to `credited` without a gateway round-trip (do not create a 0-amount Alipay charge).
+- Response carries the breakdown so clients can render it:
+
+```json
+{
+  "orderId": "…", "planId": "me_pro", "status": "created",
+  "payAmount": 366.15,
+  "breakdown": { "listAmountCny": 402.3, "creditCny": 36.15 },
+  "proration": { "sourcePlanId": "me_standard", "remainingDays": 22 }
+}
+```
+
+- `breakdown`/`proration` are absent (not zero) when no credit applies. The client renders the credit line only from these fields and never computes a credit itself.
+- Idempotency replay (R2.2) must return the original order with its original breakdown — the credit must not re-compute on replay.
+
+**Client status:** display-ready (`extractMeProration` reads `breakdown.listAmountCny/list_amount_cny/listPriceCny` + `creditCny/credit_cny/prorationCreditCny`); until this ships, the client shows a full-price notice before every upgrade order.
+
+### R7 — Downgrade guard (server-side)
+
+An order whose plan ranks **below** the caller's active plan MUST be rejected with the standard JSON envelope, HTTP 400, `data.errorCode: "PLAN_DOWNGRADE_NOT_ALLOWED"`. The client already blocks downgrades in the UI (tier-ladder lock, desktop + mobile); this is the defense-in-depth half. Same-tier orders (renewals) and higher-tier orders are unaffected.
+
+### R8 — Renewal & plan-change activation semantics
+
+Pin the previously undefined behaviors:
+
+1. **Same-plan order while active = 顺延**: the new period extends from the CURRENT expiry (never truncates remaining days, never restarts early).
+2. **Higher-plan order while active = immediate switch**: the new plan activates once the payment is credited; the old plan's remaining value is settled exclusively via the R6 credit (no double-charge, no lost days).
+3. **No mid-period downgrade path exists** (R7). Tier changes downward happen only by letting the subscription lapse to free and subscribing again.
+
+### R9 — `INSUFFICIENT_ME` error code on ME spend paths
+
+Every ME spend path (pay / freeze / burn / metering) MUST return the machine-readable `data.errorCode: "INSUFFICIENT_ME"` when spendable ME is below the required amount (grant-only when `autoDeductFromPersistent=false`, grant+persistent when true). The mobile client ships a dedicated ME-exhausted card keyed on this code today (`src/mobile/app/quotaCodes.ts`) and it is dead code until the server emits it — ME exhaustion currently surfaces as an unspecific error.
+
+### R10 — Per-channel price discipline
+
+Plan rows carry `priceCny` (mobile/cloud list price) and `desktopPriceCny`; `PriceSubscriptionOrderCny` MUST price each order by its OWN channel's monthly price (`channel: "desktop"` → `desktopPriceCny ?? priceCny`, `channel: "mobile"|"cloud"` → `priceCny`). Clients render their channel's price tag (desktop card: `desktopPriceCny ?? priceCny`; mobile cards: `priceCny` — labeled 移动端价). The mobile tag and the mobile QR amount diverging (release-review P1, 2026-11-10) is a symptom of this rule not being pinned; R6's `activeChannelMonthlyCny` inherits the same rule.
+
+### Acceptance addendum (v0.4)
+
+9. An active ID.Pupil (desktop ¥49, 22 days left) ordering ID.Student quarter (list ¥402.3) gets `payAmount = 402.3 − round2(49 × 22 / 30) = 366.4` with `breakdown.creditCny = 36.0`; the client paying page shows the credit line.
+10. An order for a plan below the active tier returns HTTP 400 + `PLAN_DOWNGRADE_NOT_ALLOWED`.
+11. Same-plan renewal extends from the current expiry; replaying the order's idempotencyKey returns the original order and never recomputes the proration.
+12. Any ME spend with insufficient spendable ME returns `INSUFFICIENT_ME`.
+13. Mobile-channel orders are priced by `priceCny`, desktop-channel orders by `desktopPriceCny ?? priceCny` (per-channel tags match the charged amounts on both clients).
+
+### Client reference additions (v0.4)
+
+- `src/renderer/components/me/MePurchaseFlow.tsx` — two-step upgrade confirm (`me-upgrade-confirm`), tier-ladder downgrade lock, paying-phase credit line (`me-proration-credit`).
+- `src/renderer/components/me/mePayment.ts` — `extractMeProration` (breakdown field aliases), `meTierRank`/`isMePlanDowngrade` (ladder).
+- `src/mobile/app/me/mePointsStore.ts` — mobile mirror of the ladder + expiry parsing.
+- `tests/meTierDowngradeGuard.test.ts`, `tests/meSubscriptionExpiry.test.ts`, `tests/meDesktopPayment.test.ts` (proration cases), `tests/meSubscriptionOrder.test.mjs` (flow pins).

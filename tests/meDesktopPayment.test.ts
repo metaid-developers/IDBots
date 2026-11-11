@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   extractMeApprovalUrl,
   extractMeExpiresAt,
+  extractMeProration,
   extractMeQrCode,
   meDiscountFromPct,
   mePaymentPhase,
@@ -112,4 +113,37 @@ test('discount parts derive from the applied percent for zh/en badges', () => {
   // No discount → null (badge hidden).
   assert.equal(meDiscountFromPct(100), null);
   assert.equal(meDiscountFromPct(0), null);
+});
+
+test('proration fields stay absent until the server reports them (never invented)', () => {
+  // No breakdown and no fields → absent (not 0): the UI must not show a
+  // credit line the server did not grant.
+  assert.deepEqual(extractMeProration({ orderId: 'me-order-1' }), {});
+  assert.deepEqual(extractMeProration({ orderId: 'me-order-1', breakdown: {} }), {});
+  assert.deepEqual(extractMeProration(null), {});
+  // Order body and breakdown object, with the field aliases the amendment
+  // may ship under.
+  assert.deepEqual(
+    extractMeProration({ orderId: 'me-order-2', listAmountCny: 132.3, creditCny: 24.5 }),
+    { listAmountCny: 132.3, creditAppliedCny: 24.5 },
+  );
+  assert.deepEqual(
+    extractMeProration({ orderId: 'me-order-3', breakdown: { list_amount_cny: 4310.4, prorationCreditCny: 300 } }),
+    { listAmountCny: 4310.4, creditAppliedCny: 300 },
+  );
+  // Garbage values are ignored, not coerced to 0.
+  assert.deepEqual(extractMeProration({ orderId: 'x', creditCny: 'abc' }), {});
+  // Surfaced on the normalized checkout.
+  const checkout = normalizeMePaymentCheckout({
+    orderId: 'me-order-4',
+    status: 'created',
+    payAmount: 402.3,
+    breakdown: { listAmountCny: 402.3, creditCny: 36.15 },
+  }, 402.3);
+  assert.equal(checkout?.creditAppliedCny, 36.15);
+  assert.equal(checkout?.listAmountCny, 402.3);
+  // And absent when the server sends nothing (deepEqual has no extra keys).
+  const plain = normalizeMePaymentCheckout({ orderId: 'me-order-5', payAmount: 49 }, 49);
+  assert.equal(plain?.creditAppliedCny, undefined);
+  assert.equal(plain?.listAmountCny, undefined);
 });

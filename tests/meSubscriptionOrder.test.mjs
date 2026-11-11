@@ -262,7 +262,7 @@ const flowSource = fs.readFileSync(
 function createOrderBody() {
   const start = flowSource.indexOf('const handleCreateOrder = useCallback(');
   assert.ok(start >= 0, 'MePurchaseFlow must keep a handleCreateOrder callback');
-  const end = flowSource.indexOf('}, [section, selectedPlan, selectedTopup, phase, period, amountDue, gateway]);', start);
+  const end = flowSource.indexOf('}, [section, selectedPlan, selectedTopup, phase, period, amountDue, gateway, isFreeSelected, isUpgradePlan, upgradeConfirmOpen]);', start);
   assert.ok(end > start, 'handleCreateOrder dependency list shape changed — update this slice');
   return flowSource.slice(start, end);
 }
@@ -336,25 +336,75 @@ test('a 404 list endpoint surfaces as featureUnavailable (usage page degrades si
   );
 });
 
-test('MePurchaseFlow: current plan is highlighted but unselectable; paid users never see the free tier', () => {
+test('MePurchaseFlow: downgrades locked, current tier orderable for renewal, paid users never see the free tier', () => {
+  // Ladder guard (owner policy 2026-11-11): a LOWER paid tier is locked while
+  // a subscription is active — a mid-period downgrade would need a refund
+  // path the server does not offer.
+  assert.match(flowSource, /const isDowngradePlan = useCallback\(/);
+  assert.match(flowSource, /subscribed && isMePlanDowngrade\(activeTierKey, plan\.tier\)/);
+  assert.match(flowSource, /i18nService\.t\('mePlanDowngradeBadge'\)/);
   // Current-plan resolution mirrors the plan card (subscription active → its
   // tier; otherwise free).
   assert.match(flowSource, /const isCurrentPlan = useCallback\(\(plan: MePlanInfo\) => \{/);
   assert.match(flowSource, /if \(!subscribed\) return plan\.tier === 'free';/);
   // Free tier is filtered out entirely for paying users (no downgrade path).
   assert.match(flowSource, /return subscribed \? cards\.filter\(\(plan\) => plan\.tier !== 'free'\) : cards;/);
-  // The current row renders disabled with the 当前套餐 badge instead of the
-  // popular badge, and keeps the selected styling.
-  assert.match(flowSource, /disabled=\{phase === 'creating' \|\| currentPlan\}/);
+  // Blocking keys off isPlanBlocked (free tier un-subscribed + downgrades);
+  // the current PAID tier is deliberately NOT blocked — it is the renewal
+  // path and stays orderable.
+  assert.match(flowSource, /const isPlanBlocked = useCallback\(\(plan: MePlanInfo\) => \{/);
+  assert.match(flowSource, /if \(plan\.tier === 'free'\) return !subscribed;/);
+  assert.match(flowSource, /return isDowngradePlan\(plan\);/);
+  assert.match(flowSource, /disabled=\{phase === 'creating' \|\| blocked\}/);
   assert.match(flowSource, /i18nService\.t\('meCurrentPlanBadge'\)/);
-  // The default/effective selection must skip the current plan.
-  assert.match(flowSource, /paidPlans\.find\(\(plan\) => !isCurrentPlan\(plan\)\)\?\.planId/);
-  // The current row uses a "cannot select" style — a muted, non-accent row
-  // with a green badge — never the accent selection state.
+  // The default/effective selection must skip blocked plans (renewal default:
+  // the first orderable paid plan — the subscriber's own tier).
+  assert.match(flowSource, /paidPlans\.find\(\(plan\) => !isPlanBlocked\(plan\)\)/);
+  // Blocked rows use a "cannot select" style — muted, never the accent
+  // selection state; the current row keeps the green badge; a top-tier
+  // subscriber with nothing orderable gets an explicit note.
   assert.match(flowSource, /cursor-not-allowed/);
   assert.match(flowSource, /bg-green-500\/10 px-2 py-0\.5/);
+  assert.match(flowSource, /mePurchaseTopTierNote/);
   // Success page: celebratory centered layout.
   assert.match(flowSource, /mePurchaseSuccessTitle/);
+});
+
+test('MePurchaseFlow: idempotency keys are day-stable (UTC), not per-click', () => {
+  // R2.2-stable keys: same-day re-orders of the same subject collapse into
+  // ONE server order (the dedup response carries the original order +
+  // gatewayParams, so an abandoned checkout resumes) instead of stacking
+  // payable duplicates. The old per-click `Date.now()` key made every tap
+  // create a fresh payable order.
+  const body = createOrderBody();
+  assert.match(body, /const dayStamp = new Date\(\)\.toISOString\(\)\.slice\(0, 10\);/);
+  assert.match(body, /desktop-subscribe-\$\{subjectId\}-\$\{period\}-\$\{gateway\}-\$\{dayStamp\}/);
+  assert.match(body, /desktop-topup-\$\{subjectId\}-\$\{dayStamp\}/);
+  assert.doesNotMatch(body, /Date\.now\(\)`/);
+});
+
+test('MePurchaseFlow: upgrades confirm full-price first (interim until ABS proration ships)', () => {
+  // Owner policy 2026-11-11: the first CTA press on a HIGHER tier opens an
+  // inline full-price notice; only the second press creates the order. When
+  // the server ships proration (Amendment v0.4 R6) the notice text flips to
+  // the credit breakdown — the two-step gate itself stays.
+  assert.match(flowSource, /const isUpgradePlan = useCallback\(/);
+  assert.match(flowSource, /const \[upgradeConfirmOpen, setUpgradeConfirmOpen\] = useState\(false\);/);
+  assert.match(
+    flowSource,
+    /isUpgradePlan\(selectedPlan\)\s*&& !upgradeConfirmOpen/,
+    'first press must only open the confirm, not create the order',
+  );
+  assert.match(flowSource, /data-testid="me-upgrade-confirm"/);
+  assert.match(flowSource, /i18nService\.t\('mePurchaseUpgradeNotice'\)/);
+  assert.match(flowSource, /i18nService\.t\('mePurchaseUpgradeConfirm'\)/);
+  // A selection/period/gateway change dismisses a stale confirm…
+  assert.match(flowSource, /setUpgradeConfirmOpen\(false\);\s*\}, \[effectivePlanId, period, gateway\]\);/);
+  // …and so do panel reopen and back-to-picker.
+  assert.match(flowSource, /setCheckout\(null\);\s*\n\s*setOrderError\(''\);\s*\n\s*setErrorCode\(''\);\s*\n\s*setUpgradeConfirmOpen\(false\);/);
+  // Server-reported proration renders in the paying phase (client-ready for R6).
+  assert.match(flowSource, /data-testid="me-proration-credit"/);
+  assert.match(flowSource, /i18nService\.t\('mePurchaseProrationApplied'\)/);
 });
 
 test('MePurchaseFlow reset effect runs only on open/section transitions', () => {
@@ -362,7 +412,7 @@ test('MePurchaseFlow reset effect runs only on open/section transitions', () => 
   // open/section transitions. Data-derived deps re-ran it on every plan
   // catalog refetch (ensureMeSnapshot has no TTL), flashing a picked
   // 季付/年付 back to 月付 and the gateway back to Alipay mid-panel.
-  assert.match(flowSource, /selectionContextRef\.current = \{ isCurrentPlan, planCards, paidPlans \};/);
+  assert.match(flowSource, /selectionContextRef\.current = \{ isPlanBlocked, planCards, paidPlans \};/);
   assert.match(flowSource, /setPeriod\('month'\);[\s\S]*?\}, \[open, section\]\);/);
-  assert.equal(flowSource.includes('}, [open, section, isCurrentPlan, planCards, paidPlans]);'), false);
+  assert.equal(flowSource.includes('}, [open, section, isPlanBlocked, planCards, paidPlans]);'), false);
 });

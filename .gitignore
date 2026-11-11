@@ -972,6 +972,9 @@ blob-report/
 !tests/meDesktopSettings.test.mjs
 # ME desktop gateway checkout helpers
 !tests/meDesktopPayment.test.ts
+!tests/meTierDowngradeGuard.test.ts
+!tests/meSubscriptionExpiry.test.ts
+!tests/meI18nParity.test.mjs
 # ME history and order payload compatibility
 !tests/mePointsHistory.test.mjs
 # Settings > Models provider template catalog (ZCode port) + layout anchors

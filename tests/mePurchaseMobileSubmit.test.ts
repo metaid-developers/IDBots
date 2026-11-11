@@ -75,11 +75,39 @@ test('subscribe builds a subscription request carrying planId + period + channel
     channel: 'mobile',
     voucherUrl: 'https://gateway/voucher.png',
     voucherRemark: '订阅 Pro / 季度',
-    idempotencyKey: 'mobile-subscribe-plan-pro-1793835740777',
+    // R2.2-stable key: UTC day-stamp, subject + period — abandoned
+    // checkouts resume instead of stacking payable duplicates.
+    idempotencyKey: 'mobile-subscribe-plan-pro-quarter-2026-11-04',
   });
   // The充值 subject must never leak into the subscription request.
   assert.equal('packageId' in request.input, false);
   assert.equal('periodDays' in request.input, false);
+});
+
+test('idempotency keys are stable within a UTC day and differ across subjects/periods/days', () => {
+  const sameDayLater = buildMePurchaseOrderRequest({
+    section: 'subscribe', planId: 'plan-pro', period: 'quarter', now: 1793835740777 + 600_000,
+  });
+  assert.equal(
+    sameDayLater && sameDayLater.kind === 'subscribe' ? sameDayLater.input.idempotencyKey : '',
+    'mobile-subscribe-plan-pro-quarter-2026-11-04',
+    'same subject+period on the same UTC day must reuse the SAME key (server dedup)',
+  );
+  const twoDaysLater = buildMePurchaseOrderRequest({
+    section: 'subscribe', planId: 'plan-pro', period: 'quarter', now: 1793835740777 + 2 * 86_400_000,
+  });
+  assert.equal(
+    twoDaysLater && twoDaysLater.kind === 'subscribe' ? twoDaysLater.input.idempotencyKey : '',
+    'mobile-subscribe-plan-pro-quarter-2026-11-06',
+  );
+  const otherPeriod = buildMePurchaseOrderRequest({
+    section: 'subscribe', planId: 'plan-pro', period: 'year', now: 1793835740777,
+  });
+  assert.notEqual(
+    otherPeriod && otherPeriod.kind === 'subscribe' ? otherPeriod.input.idempotencyKey : '',
+    'mobile-subscribe-plan-pro-quarter-2026-11-04',
+    'a different period is a different product, never the same order',
+  );
 });
 
 test('topup keeps the package channel and never forwards a planId', () => {
@@ -96,7 +124,7 @@ test('topup keeps the package channel and never forwards a planId', () => {
   assert.equal(request.input.packageId, 'pkg-99');
   assert.equal(request.input.periodDays, undefined);
   assert.equal(request.input.voucherRemark, '充值 99');
-  assert.equal(request.input.idempotencyKey, 'mobile-topup-pkg-99-42');
+  assert.equal(request.input.idempotencyKey, 'mobile-topup-pkg-99-1970-01-01');
   assert.equal('planId' in request.input, false);
   assert.equal('channel' in request.input, false);
 });

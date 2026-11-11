@@ -3,6 +3,8 @@ import { t } from '../../i18n';
 import { MeCoinIcon } from './MeCoin';
 import {
   formatMe,
+  formatMeExpiryDate,
+  meExpiryParts,
   meFromMilli,
   meResetParts,
   meWeeklyUsedRatio,
@@ -28,6 +30,26 @@ function planLine(plan: MobileMePlan | null, subscribed: boolean): string {
 }
 
 /**
+ * Expiry line under the plan name (2026-11-11 hardening): the paid period's
+ * end + days left; warning color within a week, once the date is past.
+ * Renders only when the server payload carries an expiry — never a guess.
+ */
+function expiryLine(expiryMs: number | null): { text: string; urgent: boolean } | null {
+  const parts = meExpiryParts(expiryMs);
+  if (!parts || expiryMs === null) return null;
+  if (parts.unit === 'expired') {
+    return { text: t('mobile.me.points.expiredOn', { date: formatMeExpiryDate(expiryMs) }), urgent: true };
+  }
+  if (parts.unit === 'today') {
+    return { text: t('mobile.me.points.expiresToday'), urgent: true };
+  }
+  return {
+    text: t('mobile.me.points.expiresIn', { date: formatMeExpiryDate(expiryMs), n: parts.n }),
+    urgent: parts.n <= 7,
+  };
+}
+
+/**
  * The points hero (S9 §3): merged total, weekly progress, and the four-row
  * ledger breakdown — every figure from the live balance envelope.
  */
@@ -38,6 +60,8 @@ export function MePointsHero(props: {
   featureUnavailable: boolean;
   plan: MobileMePlan | null;
   subscribed: boolean;
+  /** Subscription expiry (epoch ms) from the raw payload; null when absent. */
+  expiryMs?: number | null;
   canPurchase: boolean;
   onUpgrade: () => void;
   onRecharge: () => void;
@@ -144,6 +168,18 @@ export function MePointsHero(props: {
           </span>
         ) : null}
       </div>
+      {props.subscribed && (() => {
+        const line = expiryLine(props.expiryMs ?? null);
+        return line ? (
+          <p
+            className="me-hero-plan-expiry"
+            data-testid="me-points-expiry"
+            style={line.urgent ? { color: 'var(--twin-warning)' } : undefined}
+          >
+            {line.text}
+          </p>
+        ) : null;
+      })()}
 
       <div className="me-hero-actions">
         <button type="button" className="me-hero-button me-hero-button-primary" onClick={props.onUpgrade}>

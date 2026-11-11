@@ -190,6 +190,71 @@ export function meActivePlanId(subscription: MobileMeSubscription | null): strin
   return '';
 }
 
+// ---------------------------------------------------------------------------
+// Subscription expiry — mirror of the desktop parser
+// (src/renderer/components/me/mePointsStore.ts meSubscriptionExpiryMs /
+// meExpiryParts / formatMeExpiryDate, 2026-11-11 hardening). The expiry
+// field name is not contract-pinned, so parse tolerantly; absent → null and
+// the UI shows nothing (never a guessed date).
+// ---------------------------------------------------------------------------
+
+const ME_EXPIRY_KEYS = [
+  'expireAt', 'expiresAt', 'expireTime', 'expiryAt',
+  'expire_at', 'expires_at', 'expire_time', 'expiry_at',
+  'applicableEnd', 'applicable_end',
+  'endDate', 'end_date', 'endTime', 'end_time',
+  'periodEnd', 'period_end', 'currentPeriodEnd', 'current_period_end',
+  'validUntil', 'valid_until',
+] as const;
+
+function meExpiryValueToMs(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    // Seconds → ms when the value is plausibly a second-epoch.
+    return value < 1e12 ? value * 1000 : value;
+  }
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (!text) return null;
+    if (/^\d+(\.\d+)?$/.test(text)) {
+      const n = Number(text);
+      return Number.isFinite(n) && n > 0 ? (n < 1e12 ? n * 1000 : n) : null;
+    }
+    const parsed = Date.parse(text);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+  return null;
+}
+
+export function meSubscriptionExpiryMs(subscription: MobileMeSubscription | null | undefined): number | null {
+  const raw = subscription?.raw;
+  if (!raw) return null;
+  for (const key of ME_EXPIRY_KEYS) {
+    const ms = meExpiryValueToMs(raw[key]);
+    if (ms !== null) return ms;
+  }
+  return null;
+}
+
+export type MeExpiryParts = { unit: 'expired' | 'today' | 'days'; n: number };
+
+export function meExpiryParts(expiryMs: number | null | undefined): MeExpiryParts | null {
+  const expiry = Number(expiryMs);
+  if (!Number.isFinite(expiry) || expiry <= 0) return null;
+  const ms = expiry - Date.now();
+  if (ms <= 0) return { unit: 'expired', n: 0 };
+  const days = Math.floor(ms / 86_400_000);
+  if (days < 1) return { unit: 'today', n: 0 };
+  return { unit: 'days', n: days };
+}
+
+export function formatMeExpiryDate(expiryMs: number): string {
+  try {
+    return new Intl.DateTimeFormat(undefined, { dateStyle: 'short' }).format(expiryMs);
+  } catch {
+    return '—';
+  }
+}
+
 /** The free plan row (tier === 'free'), or null when the catalog hides it. */
 export function meFreePlan(plans: readonly MobileMePlan[]): MobileMePlan | null {
   return plans.find((plan) => plan.tier === 'free' || plan.planId === 'me_free') ?? null;
@@ -198,6 +263,36 @@ export function meFreePlan(plans: readonly MobileMePlan[]): MobileMePlan | null 
 /** Sellable paid tiers (the three cards), in server sort order. */
 export function mePaidPlans(plans: readonly MobileMePlan[]): MobileMePlan[] {
   return plans.filter((plan) => plan.tier !== 'free' && plan.planId !== 'me_free');
+}
+
+// ---------------------------------------------------------------------------
+// Tier ladder guard — mirror of the desktop one
+// (src/renderer/components/me/mePayment.ts meTierRank / isMePlanDowngrade,
+// owner policy 2026-11-11). No plan changes DOWNWARD while a subscription is
+// active: a mid-period downgrade would need a refund path the server does
+// not offer. The current paid plan itself stays selectable (renewal path);
+// unknown tiers rank last (-1) and are never treated as downgrades.
+// ---------------------------------------------------------------------------
+
+const ME_TIER_RANK: Record<string, number> = { free: 0, standard: 1, pro: 2, max: 3 };
+
+export function meTierRank(tierKey: string): number {
+  const key = tierKey.trim().toLowerCase().replace(/^me_/, '');
+  return ME_TIER_RANK[key] ?? -1;
+}
+
+export function isMePlanDowngrade(activeTierKey: string, targetTier: string): boolean {
+  const active = meTierRank(activeTierKey);
+  if (active < 0) return false;
+  const target = meTierRank(targetTier);
+  return target >= 0 && target < active;
+}
+
+/** Ladder key of the active tier: the raw subscription tier, else the plan id. */
+export function meActiveTierKey(subscription: MobileMeSubscription | null): string {
+  const rawTier = subscription?.raw?.tier;
+  if (typeof rawTier === 'string' && rawTier.trim()) return rawTier;
+  return meActivePlanId(subscription);
 }
 
 /** The plan row matching the active subscription (falls back to free). */
