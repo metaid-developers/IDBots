@@ -75,4 +75,17 @@ test('drain script consumes the page queue through the same located frame', asyn
     getWindows: () => [],
   }, { tabId: 7 }).catch((error) => error);
   assert.ok(empty instanceof Error, 'a missing stage frame must surface as an error');
+
+  // A not-ready page must REJECT, not return an empty queue — an empty array
+  // is indistinguishable from "no clicks yet" and the poller would sit
+  // silently forever (2026-11-12 MetaPo retest).
+  const notReady = await drainStudioLiveStageInteractions({
+    ...deps,
+    getWindows: () => [{
+      isDestroyed: () => false,
+      webContents: { isDestroyed: () => false, mainFrame: { url: 'http://127.0.0.1:5185', frames: [{ url, executeJavaScript: async () => ({ ok: false, reason: 'live-stage-not-ready', items: [] }) }] } },
+    }],
+  }, { tabId: 7 }).catch((error) => error);
+  assert.ok(notReady instanceof Error, 'a not-ready stage must surface as an error');
+  assert.match(notReady.message, /live-stage-not-ready/);
 });

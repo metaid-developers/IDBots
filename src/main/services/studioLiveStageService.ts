@@ -373,9 +373,16 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     const interaction = run.state.interaction;
     if (!interaction || !item || typeof item !== 'object' || Array.isArray(item)) return false;
     const record = item as Record<string, unknown>;
-    if (record.requestId !== interaction.requestId || record.token !== interaction.token) return false;
+    if (record.requestId !== interaction.requestId || record.token !== interaction.token) {
+      console.warn(`[StudioLiveStage] drained click rejected for ${run.state.sessionId}: requestId/token mismatch`);
+      return false;
+    }
     const result = resultForInteraction(interaction, record);
-    if (!result) return false;
+    if (!result) {
+      console.warn(`[StudioLiveStage] drained click rejected for ${run.state.sessionId}: unmappable behavior`);
+      return false;
+    }
+    console.log(`[StudioLiveStage] stage answer ${interaction.requestId} (${interaction.kind}) for ${run.state.sessionId}`);
     deps.respondToPermission?.(interaction.requestId, result);
     run.state = dismissLiveStageInteraction(run.state, interaction.requestId);
     stopInteractionPolling(run);
@@ -386,22 +393,51 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
   function startInteractionPolling(run: LiveStageRun): void {
     if (run.interactionTimer || !deps.drainInteractions) return;
     const pollMs = Math.max(10, deps.interactionPollMs ?? INTERACTION_POLL_MS);
+    // Drain observability: the 2026-11-12 MetaPo retest lost a skip click
+    // with ZERO trace — every failure path below used to be silent. Failures
+    // now log rate-limited, and an in-flight drain that never settles (hung
+    // tab-bridge command) is force-released after 10s so the poller
+    // self-heals instead of freezing for the life of the card.
+    let drainFailures = 0;
+    let inFlightSince = 0;
     run.interactionTimer = setInterval(() => {
       const interaction = run.state.interaction;
-      if (!interaction || !run.state.enabled || run.interactionInFlight || run.tabId == null || !deps.drainInteractions) return;
+      if (!interaction || !run.state.enabled || run.tabId == null || !deps.drainInteractions) return;
+      if (run.interactionInFlight) {
+        if (inFlightSince && Date.now() - inFlightSince > 10000) {
+          console.warn(`[StudioLiveStage] drain stuck >10s for ${run.state.sessionId}; releasing the poller`);
+          run.interactionInFlight = false;
+          inFlightSince = 0;
+        }
+        return;
+      }
       run.interactionInFlight = true;
+      inFlightSince = Date.now();
       deps.drainInteractions(run.tabId)
         .then((items) => {
           run.interactionInFlight = false;
+          inFlightSince = 0;
+          if (drainFailures > 0) {
+            console.log(`[StudioLiveStage] drain recovered for ${run.state.sessionId} after ${drainFailures} failure(s)`);
+            drainFailures = 0;
+          }
+          if (items.length > 0) {
+            console.log(`[StudioLiveStage] drained ${items.length} stage click(s) for ${run.state.sessionId}`);
+          }
           for (const item of items) {
             if (handleDrainedItem(run, item)) break;
           }
           if (!run.state.interaction) stopInteractionPolling(run);
         })
-        .catch(() => {
+        .catch((error) => {
           // Frame lost (stage tab closed or navigated): keep the poll alive;
           // the desktop overlay seat remains the answering fallback.
           run.interactionInFlight = false;
+          inFlightSince = 0;
+          drainFailures += 1;
+          if (drainFailures === 1 || drainFailures % 25 === 0) {
+            console.warn(`[StudioLiveStage] stage drain failed ×${drainFailures} for ${run.state.sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+          }
         });
     }, pollMs);
   }
@@ -420,6 +456,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     run.state = presentLiveStageInteraction(run.state, interaction);
     startInteractionPolling(run);
     schedulePatch(run);
+    console.log(`[StudioLiveStage] present ${interaction.kind} ${interaction.requestId} on ${sessionId}'s stage`);
     return 'presented';
   }
 
@@ -431,6 +468,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     if (run.state.revision !== before) {
       stopInteractionPolling(run);
       schedulePatch(run);
+      console.log(`[StudioLiveStage] clear ${requestId} from ${sessionId}'s stage`);
       return 'cleared';
     }
     return 'absent';
