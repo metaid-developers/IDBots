@@ -27,7 +27,9 @@ test('Live Stage settings are wired through IPC, preload, types, allowlist, Sett
   assert.match(settings, /window\.electron\.studioLiveStage\.set\(updates\)/);
   assert.match(settings, /handleLiveStageSettings/);
   const i18n = read('src/renderer/services/i18n.ts');
-  for (const key of ['studioLiveStage', 'studioLiveStageDescription', 'studioLiveStageDirector', 'studioLiveStageDirectorDescription']) {
+  // studioLiveStageDescription was retired with its Settings copy drop
+  // (5d454e66: the Live Stage card now renders title + toggle label only).
+  for (const key of ['studioLiveStage', 'studioLiveStageToggle', 'studioLiveStageDirector', 'studioLiveStageDirectorDescription']) {
     assert.equal((i18n.match(new RegExp(`${key}: '`, 'g')) ?? []).length, 2, `${key} has ZH and EN copy`);
   }
 });

@@ -196,14 +196,14 @@ const CoworkHistoryPanel: React.FC<CoworkHistoryPanelProps> = ({
                 onClick={() => setSelectedDayKey((current) => (current === cell.key ? null : cell.key))}
                 className={`flex h-7 flex-col items-center justify-center gap-0.5 rounded-md text-[10px] leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
                   isSelected
-                    ? 'bg-claude-accent text-white'
+                    ? 'bg-claude-accent text-claude-accentInk'
                     : 'dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
                 }`}
               >
                 <span>{cell.day}</span>
                 <span
                   aria-hidden
-                  className={`h-1 w-1 rounded-full ${isSelected ? 'bg-white' : hasSessions ? 'bg-claude-accent' : 'bg-transparent'}`}
+                  className={`h-1 w-1 rounded-full ${isSelected ? 'bg-claude-accentInk' : hasSessions ? 'bg-claude-accent' : 'bg-transparent'}`}
                 />
               </button>
             );

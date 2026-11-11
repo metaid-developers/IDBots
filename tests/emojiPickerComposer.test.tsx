@@ -239,8 +239,16 @@ test('bot-browser panel bubbles join the Twemoji pipeline (user = shared body, a
   );
   assert.match(
     source,
-    /<UserMessageBody content=\{message\.content\} resolveLocalFilePath=\{resolveLocalFilePath\} \/>/,
+    /<UserMessageBody content=\{displayContent\} resolveLocalFilePath=\{resolveLocalFilePath\} \/>/,
     'bot-browser user bubble must render through the shared body',
+  );
+  // The panel's user branch renders the sent-quote display pass-through
+  // (displayContent falls back to the verbatim message.content when no
+  // generated quote block matches), never a forked plain-text face.
+  assert.match(
+    source,
+    /const displayContent = sentQuoteBlock\s*\?\s*\[sentQuoteBlock, sentQuoteRest\]\.filter\(Boolean\)\.join\('\\n\\n'\)\s*:\s*message\.content;/,
+    'the shared-body input must fall back to the verbatim message content',
   );
   assert.match(
     bodySource,
