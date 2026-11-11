@@ -12,6 +12,10 @@ import { i18nService } from '../src/renderer/services/i18n';
  * (1) the standard permission card, (2) the structured question wizard (real
  * incident payload shape), (3) the unknown/undecodable fallback card which
  * must keep BOTH Allow and Deny available — never a deny-only dead end.
+ * Semantics note: since PR #103 (965d6e50) option-less questions answer
+ * through the wizard's free-text input, so the fallback card is reserved for
+ * payloads with NO question left at all; gateway-crushed sentinel options
+ * are dropped, never rendered as clickable choices.
  */
 
 const requestId = 'req-f17a';
@@ -68,9 +72,15 @@ test('string-only option entries still produce a question instead of the malform
   assert.deepEqual(parsed[0].options.map((option) => option.label), ['Fast path', 'Slow path']);
 });
 
-test('unknown/malformed AskUserQuestion falls back to readable payload with Allow AND Deny', () => {
+test('crushed sentinel options never render as choices — the question stays answerable via free text', () => {
   // Byte-level outcome of the old gateway depth crush: every option object
-  // arrives as the string '[truncated-depth]' so no question survives parsing.
+  // arrives as the string '[truncated-depth]'. Semantics evolution since the
+  // F-17a snapshot: parseQuestions drops sentinel labels (unreadable content,
+  // never clickable choices) while the question itself survives — options are
+  // per-question optional and PR #103 (965d6e50) routes option-less
+  // questions through the wizard's free-text input instead of the malformed
+  // fallback card. The protective intent stands: the broken payload is
+  // visible as a question, and BOTH answering and denying stay available.
   const crushed = {
     questions: [{
       id: 'confirm_create',
@@ -78,12 +88,17 @@ test('unknown/malformed AskUserQuestion falls back to readable payload with Allo
       options: ['[truncated-depth]', '[truncated-depth]', '[truncated-depth]'],
     }],
   };
+  const parsed = parseQuestions({ toolName: 'AskUserQuestion', toolInput: crushed } as never);
+  assert.equal(parsed.length, 1, 'the question survives the crush');
+  assert.deepEqual(parsed[0].options, [], 'sentinel labels are dropped, not offered as choices');
   const markup = renderToStaticMarkup(panel('AskUserQuestion', crushed));
-  assert.ok(markup.includes(i18nService.t('coworkApprovalUnavailableTitle')), 'fallback title rendered');
-  assert.ok(markup.includes('options'), 'raw payload keys are readable, not just a red banner');
-  assert.ok(markup.includes('[truncated-depth]'), 'the crushed payload is shown verbatim');
-  assert.ok(markup.includes(i18nService.t('coworkApprovalAllowOnce')), 'Allow is still available');
-  assert.ok(markup.includes(i18nService.t('coworkDeny')), 'Deny is still available');
+  assert.ok(markup.includes('这张卡可以照着建吗？'), 'question text rendered');
+  assert.ok(!markup.includes('[truncated-depth]'), 'crushed sentinel never rendered as a choice');
+  assert.ok(markup.includes(i18nService.t('coworkApprovalUnavailableTitle')) === false, 'not the malformed fallback');
+  assert.ok(markup.includes(i18nService.t('coworkQuestionWizardOtherPlaceholder')), 'free-text answer path present');
+  assert.ok(markup.includes(i18nService.t('coworkQuestionSkipThis')), 'Skip available');
+  assert.ok(markup.includes(i18nService.t('coworkDeny')), 'Deny available');
+  assert.ok(markup.includes(i18nService.t('coworkQuestionWizardSubmit')), 'Submit available');
 });
 
 test('questions with no usable options drop into the fallback, empty questions never break the card', () => {
