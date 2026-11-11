@@ -3,45 +3,41 @@
 // provider-icons bundle (see services/providerTemplates.ts for provenance).
 // openrouter / opencode ship light+dark variants; every other asset is a
 // single file that reads well on both themes.
-import alibabaModelStudioLogo from '../../assets/providers/alibaba-model-studio.png';
-import anthropicLogo from '../../assets/providers/anthropic.png';
-import bigModelLogo from '../../assets/providers/bigmodel.svg';
-import deepSeekLogo from '../../assets/providers/deepseek.png';
-import miniMaxLogo from '../../assets/providers/minimax.png';
-import moonshotKimiLogo from '../../assets/providers/moonshot-kimi.png';
-import openAiLogo from '../../assets/providers/openai.png';
-import openrouterDarkLogo from '../../assets/providers/openrouter-dark.svg';
-import openrouterLightLogo from '../../assets/providers/openrouter-light.svg';
-import opencodeDarkLogo from '../../assets/providers/opencode-dark.svg';
-import opencodeLightLogo from '../../assets/providers/opencode-light.svg';
-import siliconflowLogo from '../../assets/providers/siliconflow.png';
-import stepfunLogo from '../../assets/providers/stepfun.png';
-import tencentCloudLogo from '../../assets/providers/tencent-cloud.png';
-import volcengineLogo from '../../assets/providers/volcengine.png';
-import xaiLogo from '../../assets/providers/xai.png';
-import xiaomiMimoLogo from '../../assets/providers/xiaomi-mimo.png';
-import zaiLogo from '../../assets/providers/zai.png';
+//
+// Each asset resolves through `new URL('<literal>', import.meta.url)` instead
+// of a static `import logo from './x.png'`: Vite rewrites the fully-literal
+// form at build time (asset still bundled and hashed), while plain Node (tsx
+// test runs that load this chain through ModelEffortPicker) just constructs a
+// URL string without parsing the binary file. The literal must stay inline —
+// a template-literal helper would degrade to a partial-dynamic glob that the
+// bundler cannot fully resolve.
 
 type ProviderTemplateLogoAsset = { light: string; dark?: string };
 
 // Keys mirror the `logo` field of ProviderTemplate (services/providerTemplates.ts).
 const PROVIDER_TEMPLATE_LOGO_ASSETS: Readonly<Record<string, ProviderTemplateLogoAsset>> = {
-  zai: { light: zaiLogo },
-  bigmodel: { light: bigModelLogo },
-  'moonshot-kimi': { light: moonshotKimiLogo },
-  minimax: { light: miniMaxLogo },
-  deepseek: { light: deepSeekLogo },
-  'alibaba-model-studio': { light: alibabaModelStudioLogo },
-  'xiaomi-mimo': { light: xiaomiMimoLogo },
-  openai: { light: openAiLogo },
-  anthropic: { light: anthropicLogo },
-  xai: { light: xaiLogo },
-  openrouter: { light: openrouterLightLogo, dark: openrouterDarkLogo },
-  opencode: { light: opencodeLightLogo, dark: opencodeDarkLogo },
-  'tencent-cloud': { light: tencentCloudLogo },
-  volcengine: { light: volcengineLogo },
-  stepfun: { light: stepfunLogo },
-  siliconflow: { light: siliconflowLogo },
+  zai: { light: new URL('../../assets/providers/zai.png', import.meta.url).href },
+  bigmodel: { light: new URL('../../assets/providers/bigmodel.svg', import.meta.url).href },
+  'moonshot-kimi': { light: new URL('../../assets/providers/moonshot-kimi.png', import.meta.url).href },
+  minimax: { light: new URL('../../assets/providers/minimax.png', import.meta.url).href },
+  deepseek: { light: new URL('../../assets/providers/deepseek.png', import.meta.url).href },
+  'alibaba-model-studio': { light: new URL('../../assets/providers/alibaba-model-studio.png', import.meta.url).href },
+  'xiaomi-mimo': { light: new URL('../../assets/providers/xiaomi-mimo.png', import.meta.url).href },
+  openai: { light: new URL('../../assets/providers/openai.png', import.meta.url).href },
+  anthropic: { light: new URL('../../assets/providers/anthropic.png', import.meta.url).href },
+  xai: { light: new URL('../../assets/providers/xai.png', import.meta.url).href },
+  openrouter: {
+    light: new URL('../../assets/providers/openrouter-light.svg', import.meta.url).href,
+    dark: new URL('../../assets/providers/openrouter-dark.svg', import.meta.url).href,
+  },
+  opencode: {
+    light: new URL('../../assets/providers/opencode-light.svg', import.meta.url).href,
+    dark: new URL('../../assets/providers/opencode-dark.svg', import.meta.url).href,
+  },
+  'tencent-cloud': { light: new URL('../../assets/providers/tencent-cloud.png', import.meta.url).href },
+  volcengine: { light: new URL('../../assets/providers/volcengine.png', import.meta.url).href },
+  stepfun: { light: new URL('../../assets/providers/stepfun.png', import.meta.url).href },
+  siliconflow: { light: new URL('../../assets/providers/siliconflow.png', import.meta.url).href },
 };
 
 /** Resolve a template logo key to an asset URL, honoring the active theme. */
