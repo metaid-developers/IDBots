@@ -501,6 +501,9 @@
     const submit = document.createElement('button');
     submit.type = 'button';
     submit.className = 'interaction-button is-primary';
+    // syncInteractionValidity finds the submit through this attribute; without
+    // it the ask wizard's submit stays disabled forever (2026-11-12 incident).
+    submit.dataset.interactionSubmit = '';
     submit.textContent = isAsk ? interactionCopy('提交', 'Submit') : interactionCopy('允许一次', 'Allow once');
     submit.disabled = isAsk;
     submit.addEventListener('click', () => {
