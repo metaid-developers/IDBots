@@ -333,12 +333,14 @@
   };
   const flashes = [];
 
-  const charRate = () => (isZh() ? 22 : 54);
+  const charRate = () => (isZh() ? 28 : 64);
   const PAUSES = { '，': 160, '、': 140, ',': 120, '；': 220, ';': 200, '：': 180, ':': 160, '。': 360, '！': 360, '？': 360, '.': 300, '!': 300, '?': 300, '…': 260, '—': 160 };
 
+  // The full text is already readable in the chat on the left, so the stage
+  // keeps a brisk subtitle pace rather than full reading time.
   function holdFor(segment) {
     const units = Array.from(segment.text).length;
-    return isZh() ? clamp(units * 95, 1500, 4800) : clamp(units * 34, 1500, 5200);
+    return isZh() ? clamp(units * 70, 1100, 3400) : clamp(units * 26, 1100, 3800);
   }
 
   function startSegment(segment, t, options = {}) {
@@ -1285,12 +1287,33 @@
       onState(performance.now());
       return true;
     },
-    drainActions() {
+    // Session-scoped: after a renderer reload tab ids are reused, so a stale
+    // host run may poll this page; only the owning session drains its clicks.
+    drainActions(sessionId) {
+      if (sessionId !== undefined && sessionId !== state.sessionId) return [];
       return actionQueue.splice(0, actionQueue.length);
     },
     getState: () => state,
   };
   window.__getGenesisState = () => state;
+  // Read-only diagnostics for dev tooling (demo player, E2E probes).
+  window.__genesisDebug = () => {
+    const t = performance.now();
+    return {
+      boot: local.boot,
+      introDone: local.introDone,
+      turnId: local.turnId,
+      played: [...local.played],
+      sceneIndex: local.sceneIndex,
+      inviteAnswered: local.inviteAnswered,
+      blockUntil: local.blockUntil - t,
+      speech: speech.segment ? { id: speech.segment.id, typing: speech.typing, typed: speech.typed, length: speech.chars.length, holdLeft: speech.holdUntil - t } : null,
+      next: nextItem(t),
+      inviteReady: inviteReady(t),
+      look: orb.look,
+      backend: orb.backend,
+    };
+  };
 
   reducedMedia.addEventListener('change', syncReduced);
   document.addEventListener('visibilitychange', () => { lastFrame = null; syncReduced(); });

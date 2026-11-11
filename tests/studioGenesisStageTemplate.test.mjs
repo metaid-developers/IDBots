@@ -55,7 +55,7 @@ test('the stage runtime keeps the host contract and never injects HTML', () => {
   assert.match(runtime, /const PROTOCOL = 'idbots\.genesis-stage\.v1';/);
   assert.match(runtime, /applyPatch\(patch\) \{/);
   assert.match(runtime, /patch\.revision <= state\.revision\) return false;/);
-  assert.match(runtime, /drainActions\(\) \{\n      return actionQueue\.splice\(0, actionQueue\.length\);/);
+  assert.match(runtime, /drainActions\(sessionId\) \{\n      if \(sessionId !== undefined && sessionId !== state\.sessionId\) return \[\];\n      return actionQueue\.splice\(0, actionQueue\.length\);/);
   assert.match(runtime, /actionQueue\.push\(\{ token, choice \}\);/);
   for (const source of [runtime, readGenesis('genesis-fallback-orb.js'), readGenesis('demo.js')]) {
     assert.doesNotMatch(source, /innerHTML|insertAdjacentHTML|document\.write/);

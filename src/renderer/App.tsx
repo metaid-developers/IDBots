@@ -839,10 +839,18 @@ const App: React.FC = () => {
   // restored into the freshly booted browser. One-shot; the coordinator is a
   // no-op before attach and queues tab commands behind the surface's
   // browser-ready handshake.
+  //
+  // A launch that opens on the welcome flow skips the restore: the welcome owns
+  // the landing (the greeting session and its Genesis Stage tab), and a re-offered
+  // welcome on a machine with history must not surface an older session's tab
+  // over it.
+  const launchRestoreDecidedRef = useRef(false);
   useEffect(() => {
-    if (!isInitialized) return;
+    if (!isInitialized || launchRestoreDecidedRef.current) return;
+    launchRestoreDecidedRef.current = true;
+    if (showWelcomeFlow) return;
     void sessionTabBinding.restoreLastSession();
-  }, [isInitialized]);
+  }, [isInitialized, showWelcomeFlow]);
 
   // ---- Face-scoped seam derivation (接缝按钮双向化 2026-11-09) -----------
   // The active face owns the seam: every layout consumer below reads the SAME

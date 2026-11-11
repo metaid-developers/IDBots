@@ -364,6 +364,8 @@ export function segmentText(text: string, options: { language: GenesisLanguage; 
 // ---------------------------------------------------------------------------
 
 const TITLE_MAX: Record<GenesisLanguage, number> = { zh: 24, en: 56 };
+/** Conversational lead-ins ("好的：…", "Sure: …") are never scene titles. */
+const LEAD_IN = /^(?:好的|好呀|好啊|好嘞|当然|没问题|ok(?:ay)?|sure|of course|alright|great|here(?:'s| is| are)?)(?:[，,！!。.\s]|$)/i;
 
 function detectTitle(raw: string, language: GenesisLanguage): { title: string; body: string } | null {
   const text = raw.replace(LIST_LINE, '');
@@ -385,7 +387,7 @@ function detectTitle(raw: string, language: GenesisLanguage): { title: string; b
     body = match[2];
   }
   title = stripMarkdown(title).replace(/[\s：:。.\-—–]+$/, '').trim();
-  if (!title || units(title) > TITLE_MAX[language] || /[。！？!?]/.test(title)) return null;
+  if (!title || units(title) > TITLE_MAX[language] || /[。！？!?]/.test(title) || LEAD_IN.test(title)) return null;
   return { title, body };
 }
 
@@ -402,8 +404,14 @@ export function parseTour(
   const outro: TourBucket = { title: null, paragraphs: [], lastParagraph: -1 };
   const parts: TourBucket[] = [];
   let stage: 'intro' | 'parts' | 'outro' = 'intro';
-  let titledMode = false;
 
+  // Only a titled paragraph opens a scene. Everything untitled before the
+  // first one is intro (assistant-mode turns often lead with an opening
+  // narration), untitled text inside a scene continues it, and anything after
+  // the fourth scene is outro. Each paragraph's role depends only on the text
+  // before it, so the split stays stable while the reply streams; a reply
+  // without any titles keeps its words as intro and the scenes fall back to
+  // the built-in copy.
   paragraphs.forEach((raw, index) => {
     const titled = detectTitle(raw, language);
     const push = (bucket: TourBucket, paragraph: string) => {
@@ -420,7 +428,6 @@ export function parseTour(
         push(outro, raw);
         return;
       }
-      titledMode = true;
       stage = 'parts';
       const bucket: TourBucket = { title: titled.title, paragraphs: [], lastParagraph: index };
       parts.push(bucket);
@@ -428,19 +435,7 @@ export function parseTour(
       return;
     }
     if (stage === 'intro') {
-      if (index === 0) {
-        push(intro, raw);
-        return;
-      }
-      stage = 'parts';
-    }
-    if (titledMode) {
-      if (parts.length >= 4) {
-        stage = 'outro';
-        push(outro, raw);
-      } else {
-        push(parts[parts.length - 1], raw);
-      }
+      push(intro, raw);
       return;
     }
     if (parts.length >= 4) {
@@ -448,9 +443,7 @@ export function parseTour(
       push(outro, raw);
       return;
     }
-    const bucket: TourBucket = { title: null, paragraphs: [], lastParagraph: index };
-    parts.push(bucket);
-    push(bucket, raw);
+    push(parts[parts.length - 1], raw);
   });
 
   const bucketSegments = (bucket: TourBucket, prefix: string): GenesisSegment[] => segmentText(bucket.paragraphs.join('\n\n'), {

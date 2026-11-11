@@ -128,12 +128,31 @@ test('parseTour handles consecutive numbered lines without blank lines', () => {
   assert.deepEqual(texts(tour.intro), ['Here you go:']);
 });
 
-test('parseTour falls back to paragraph order and built-in copy', () => {
+test('parseTour keeps an opening narration as intro (real assistant-mode reply)', () => {
+  const reply = [
+    '好的，我来给你梳理一下 IDBots 和 AI 互联网的整体情况，内容会分几块讲，稍等我整理好就发出来。',
+    '欢迎来到 AI 互联网。\n\n每个 Bot 都有链上永久身份：你的 Bot 有链上永久身份和记忆，AI 真正属于你，而不属于某家公司。\n\n把创作发出去：你和 AI 一起做的东西能发布到 AI 互联网，被全世界的 AI 看见、引用。\n\n和其他 Bot 协作：Bot 之间可以互相沟通、分工，一起完成一个人做不完的复杂任务。\n\n自主进化：Bot 会在 AI 互联网上自己冲浪、学新技能，越用越懂你。\n\n那么，第一件事就交给我吧：你想让我先帮你做什么？',
+  ].join('\n\n');
+  const tour = parseTour(reply, { language: 'zh', complete: true, idPrefix: 't', fallback: genesisCopy('zh').tourFallback });
+  assert.equal(tour.intro.length >= 2, true);
+  assert.equal(texts(tour.intro).at(-1), '欢迎来到 AI 互联网。');
+  assert.deepEqual(tour.parts.map((part) => part.title), ['每个 Bot 都有链上永久身份', '把创作发出去', '和其他 Bot 协作', '自主进化']);
+  assert.deepEqual(texts(tour.parts[3].body), ['Bot 会在 AI 互联网上自己冲浪、学新技能，越用越懂你。']);
+  assert.deepEqual(texts(tour.outro), ['那么，第一件事就交给我吧：你想让我先帮你做什么？']);
+});
+
+test('conversational lead-ins with a colon are not scene titles', () => {
+  const tour = parseTour('好的：下面带你看看。\n\nSure: here it comes.\n\n**Identity**: yours.', { language: 'zh', complete: false, idPrefix: 't', fallback: genesisCopy('zh').tourFallback });
+  assert.deepEqual(texts(tour.intro), ['好的：下面带你看看。', 'Sure: here it comes.']);
+  assert.deepEqual(tour.parts.map((part) => part.title), ['Identity']);
+});
+
+test('parseTour without any titles keeps the words as intro and falls back to built-in scenes', () => {
   const untitled = 'Intro line.\n\nOne.\n\nTwo.\n\nThree.\n\nFour.';
   const tour = parseTour(untitled, { language: 'en', complete: true, idPrefix: 't', fallback: genesisCopy('en').tourFallback });
-  assert.deepEqual(texts(tour.intro), ['Intro line.']);
-  assert.deepEqual(tour.parts.map((part) => texts(part.body)[0]), ['One.', 'Two.', 'Three.', 'Four.']);
+  assert.deepEqual(texts(tour.intro), ['Intro line.', 'One.', 'Two.', 'Three.', 'Four.']);
   assert.deepEqual(tour.parts.map((part) => part.title), genesisCopy('en').tourFallback.map((part) => part.title));
+  assert.ok(tour.parts.every((part) => part.body.length > 0));
 
   const short = parseTour('**Only one**: a single part.', { language: 'en', complete: true, idPrefix: 't', fallback: genesisCopy('en').tourFallback });
   assert.equal(short.parts.length, 4);

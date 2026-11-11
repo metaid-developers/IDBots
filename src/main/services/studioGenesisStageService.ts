@@ -106,20 +106,27 @@ function inlineJson(value: unknown): string {
   return JSON.stringify(value).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
 }
 
+/**
+ * Patch and drain scripts check the page's session first: tab ids are reused
+ * after a renderer reload, so a stale tab id can point at another session's
+ * page. A mismatch reports 'session-mismatch' and the host re-resolves its tab.
+ */
 export function buildGenesisPatchScript(state: GenesisStageState): string {
   return `(() => {
   const stage = window.IDBotsGenesisStage;
   if (!stage || typeof stage.applyPatch !== 'function') return { ok: false, reason: 'genesis-not-ready' };
+  if (stage.getState().sessionId !== ${inlineJson(state.sessionId)}) return { ok: false, reason: 'session-mismatch' };
   stage.applyPatch(${inlineJson(state)});
   return { ok: true };
 })()`;
 }
 
-export function buildGenesisDrainScript(): string {
+export function buildGenesisDrainScript(sessionId: string): string {
   return `(() => {
   const stage = window.IDBotsGenesisStage;
   if (!stage || typeof stage.drainActions !== 'function') return { ok: false, items: [] };
-  const items = stage.drainActions();
+  if (stage.getState().sessionId !== ${inlineJson(sessionId)}) return { ok: false, reason: 'session-mismatch', items: [] };
+  const items = stage.drainActions(${inlineJson(sessionId)});
   return { ok: true, items: Array.isArray(items) ? items : [] };
 })()`;
 }
@@ -181,19 +188,26 @@ export function createStudioGenesisStageService(deps: StudioGenesisStageServiceD
     run.patchInFlight = true;
     run.lastPatchAt = Date.now();
     let applied = false;
+    let reason = '';
     try {
-      const result = await deps.runScript({ tabId: run.tabId, script: buildGenesisPatchScript(run.state) }) as { ok?: boolean } | null;
+      const result = await deps.runScript({ tabId: run.tabId, script: buildGenesisPatchScript(run.state) }) as { ok?: boolean; reason?: string } | null;
       applied = result?.ok === true;
-    } catch {
+      reason = result?.reason ?? '';
+    } catch (error) {
       applied = false;
+      reason = error instanceof Error ? error.message : String(error);
     }
     run.patchInFlight = false;
+    if (reason === 'session-mismatch') run.tabId = null;
     if (applied) {
       run.patchFailures = 0;
     } else {
       // The page is still booting (or its frame is not reachable yet).
       run.patchFailures += 1;
       if (run.patchFailures < MAX_PATCH_FAILURES) run.patchDirty = true;
+      if (process.env.NODE_ENV === 'development' && run.patchFailures % 10 === 1) {
+        console.warn(`[StudioGenesisStage] patch ${run.state.revision} not applied for ${run.sessionId} (tab ${run.tabId}, attempt ${run.patchFailures}): ${reason}`);
+      }
     }
     if (run.patchDirty) schedulePatch(run);
   }
@@ -207,9 +221,15 @@ export function createStudioGenesisStageService(deps: StudioGenesisStageServiceD
       const outcome = await deps.project({ sessionId: run.sessionId, localPath: run.stagePath, title: `${run.state.botName} · Genesis` });
       run.tabId = outcome.tabId ?? (deps.findStageTab ? await deps.findStageTab(run.stagePath).catch(() => null) : null);
       run.projected = true;
+      if (process.env.NODE_ENV === 'development') {
+        console.warn(`[StudioGenesisStage] projected ${run.sessionId} on tab ${run.tabId} (attempt ${run.projectAttempts})`);
+      }
       schedulePatch(run);
       if (run.inviteToken) startPolling(run);
     } catch (error) {
+      if (process.env.NODE_ENV === 'development') {
+        console.warn(`[StudioGenesisStage] projection attempt ${run.projectAttempts} for ${run.sessionId} failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
       if (run.released || run.projectAttempts >= timing.retryLimit) {
         console.warn(`[StudioGenesisStage] projection gave up for ${run.sessionId}: ${error instanceof Error ? error.message : String(error)}`);
         return;
@@ -234,10 +254,13 @@ export function createStudioGenesisStageService(deps: StudioGenesisStageServiceD
 
   async function pollOnce(run: GenesisRun): Promise<void> {
     if (!run.inviteToken || run.released) { stopPolling(run); return; }
-    if (run.pollInFlight || run.tabId == null || !run.projected) return;
+    if (run.pollInFlight || !run.projected) return;
     run.pollInFlight = true;
     try {
-      const result = await deps.runScript({ tabId: run.tabId, script: buildGenesisDrainScript() }) as { items?: unknown[] } | null;
+      if (run.tabId == null && deps.findStageTab) run.tabId = await deps.findStageTab(run.stagePath).catch(() => null);
+      if (run.tabId == null) return;
+      const result = await deps.runScript({ tabId: run.tabId, script: buildGenesisDrainScript(run.sessionId) }) as { items?: unknown[]; reason?: string } | null;
+      if (result?.reason === 'session-mismatch') run.tabId = null;
       for (const item of Array.isArray(result?.items) ? result.items : []) {
         if (handleAction(run, item)) break;
       }

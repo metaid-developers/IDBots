@@ -68,6 +68,20 @@ test('first-run users land in Studio with a stage-ready greeting prompt', () => 
   assert.match(en, /Never quote specific numbers or amounts/);
 });
 
+test('the bot stays off the projector while the Genesis Stage holds it', () => {
+  const main = read('src/main/main.ts');
+  assert.match(main, /isProjectorHeldByStage: \(sessionId: string\) => getStudioGenesisStageService\(\)\.isClaimed\(sessionId\)/);
+  const runner = read('src/main/libs/coworkRunner.ts');
+  assert.match(runner, /text: projectorHeld \? buildProjectorWelcomeHoldPrompt\(\) : buildProjectorModePrompt\(\)/);
+  assert.equal((runner.match(/this\.isProjectorHeldByStage\?\.\(sessionId\) === true/g) ?? []).length, 2, 'both prompt compose paths pass the hold');
+  const prompts = read('src/main/libs/assistantModePrompt.ts');
+  const hold = prompts.slice(prompts.indexOf('export function buildProjectorWelcomeHoldPrompt'));
+  assert.match(hold, /不要调用 projection_begin/);
+  assert.match(hold, /优先于「首轮必须投影」/);
+  assert.match(hold, /Do not call projection_begin/);
+  assert.match(hold, /overrides the first-turn projection rule/);
+});
+
 test('the Genesis package ships with the app and has its own test script', () => {
   assert.match(read('electron-builder.json'), /"dist\/\*\*\/\*"/);
   const pkg = JSON.parse(read('package.json'));

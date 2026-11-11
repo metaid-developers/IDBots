@@ -121,6 +121,13 @@
 
   function streamGreeting() {
     const segments = fixture.greeting.map((line, index) => seg(`greeting:${index}`, line));
+    // ?burst=<ms>: the whole greeting lands at once after a cold start.
+    const burst = Number(params.get('burst'));
+    if (burst > 0) {
+      at(burst, () => push({ turn: { ...state.turn, segments, complete: true } }));
+      at(burst + 40, () => push({ phase: 'invite', invite: { token: 'demo-token' } }));
+      return;
+    }
     segments.forEach((_, index) => at(2600 + index * 650, () => push({ turn: { ...state.turn, segments: segments.slice(0, index + 1) } })));
     at(2600 + segments.length * 650, () => push({ turn: { ...state.turn, segments, complete: true } }));
     at(2900 + segments.length * 650, () => push({ phase: 'invite', invite: { token: 'demo-token' } }));

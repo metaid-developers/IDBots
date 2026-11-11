@@ -8523,6 +8523,7 @@ const getCoworkRunner = () => {
         readSkill: (nameOrId, perspective) =>
           getSkillManager().readSkillCatalogEntry(nameOrId, perspective.metabotId ?? null),
       },
+      isProjectorHeldByStage: (sessionId: string) => getStudioGenesisStageService().isClaimed(sessionId),
       getBrowserContextPrompt: async (sessionId: string): Promise<string | null> => {
         const coworkStoreInstance = getCoworkStore();
         const session = coworkStoreInstance.getSession(sessionId);

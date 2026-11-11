@@ -199,6 +199,46 @@ test('a failed tour submission settles the welcome instead of waiting forever', 
   assert.equal(f.last().phase, 'settled');
 });
 
+test('a reused tab id that shows another session is re-resolved, and its clicks are left alone', async (t) => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-genesis-tabs-'));
+  const session = { cwd, sessionType: 'browser', assistantMode: true, metabotId: 7, metabotName: 'Pixel' };
+  // Tab 11 still shows an older session's Genesis page; tab 12 is ours.
+  const pages = { 11: { session: 'older', queue: [{ token: 'older-token', choice: 'tour' }], patches: [] }, 12: { session: 's1', queue: [], patches: [] } };
+  const service = createStudioGenesisStageService({
+    getSession: () => session,
+    getMetabotById: () => ({ name: 'Pixel' }),
+    getSettings: () => ({ enabled: true, directorEnabled: false }),
+    getLanguage: () => 'en',
+    project: async (input) => ({ uri: `preview-metaapp://localhost${input.localPath}`, tabId: 11, announced: true }),
+    findStageTab: async () => 12,
+    runScript: async ({ tabId, script }) => {
+      const page = pages[tabId];
+      const expected = JSON.parse(script.match(/getState\(\)\.sessionId !== ("[^"]*")/)[1]);
+      if (page.session !== expected) return { ok: false, reason: 'session-mismatch', items: [] };
+      const patch = script.match(/applyPatch\((\{[\s\S]*\})\);\n  return \{ ok: true \}/);
+      if (patch) { page.patches.push(JSON.parse(patch[1])); return { ok: true }; }
+      return { ok: true, items: page.queue.splice(0, page.queue.length) };
+    },
+    submitTurn: async () => true,
+    assets: { genesisRoot: path.resolve('public/genesis-stage'), orbRoot: path.resolve('public/live-stage'), fallbackAvatarDataUri: 'data:image/png;base64,AA==' },
+    fallbackAvatarDataUri: 'data:image/png;base64,AA==',
+    timing: { patchMs: 5, pollMs: 5, retryMs: 5, retryLimit: 5, outroMs: 10 },
+  });
+  t.after(() => {
+    service.dispose();
+    try { fs.rmSync(cwd, { recursive: true, force: true }); } catch { /* OS sweeps temp dirs */ }
+  });
+  service.claimGreeting('s1');
+  await wait(20);
+  service.observeMessage('s1', message('a1', 'assistant', { content: 'Welcome aboard!' }));
+  service.observeComplete('s1');
+  await wait(60);
+  assert.equal(pages[11].patches.length, 0, 'never patches the other session page');
+  assert.ok(pages[12].patches.length > 0, 'patches land on the re-resolved tab');
+  assert.equal(pages[12].patches.at(-1).phase, 'invite');
+  assert.deepEqual(pages[11].queue, [{ token: 'older-token', choice: 'tour' }], 'the other page keeps its clicks');
+});
+
 test('the Live Stage skips claimed sessions and waits for the Genesis outro', async (t) => {
   const g = fixture(t);
   const projected = [];
