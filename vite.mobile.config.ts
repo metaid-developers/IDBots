@@ -115,6 +115,56 @@ function mobileDevEntriesPlugin() {
   return {
     name: 'idbots-mobile-dev-entries',
     configureServer(server: import('vite').ViteDevServer) {
+      const previews = new Map<string, { bytes: Buffer; mime: string }>();
+      server.middlewares.use((req, res, next) => {
+        const url = new URL(req.url ?? '/', 'http://mobile.invalid');
+        if (process.env.VITE_MOBILE_MOCK !== '1' || !url.pathname.startsWith('/__mobile_preview__/')) {
+          next();
+          return;
+        }
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        if (req.method === 'GET' || req.method === 'HEAD') {
+          const preview = previews.get(url.pathname);
+          if (!preview) {
+            res.statusCode = 404;
+            res.end('Preview not found');
+            return;
+          }
+          res.statusCode = 200;
+          res.setHeader('Content-Type', preview.mime);
+          res.setHeader('Content-Length', preview.bytes.byteLength);
+          res.end(req.method === 'HEAD' ? undefined : preview.bytes);
+          return;
+        }
+        if (req.method !== 'POST') {
+          next();
+          return;
+        }
+        const chunks: Buffer[] = [];
+        let size = 0;
+        req.on('data', (chunk: Buffer) => {
+          size += chunk.byteLength;
+          if (size <= 25 * 1024 * 1024) chunks.push(chunk);
+        });
+        req.on('end', () => {
+          if (size > 25 * 1024 * 1024) {
+            res.statusCode = 413;
+            res.end('Preview too large');
+            return;
+          }
+          previews.set(url.pathname, {
+            bytes: Buffer.concat(chunks),
+            mime: req.headers['content-type']?.split(';')[0] || 'application/octet-stream',
+          });
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ url: url.pathname }));
+        });
+        req.on('error', () => {
+          res.statusCode = 500;
+          res.end('Preview upload failed');
+        });
+      });
       server.middlewares.use((req, res, next) => {
         if (process.env.VITE_MOBILE_MOCK !== '1' || (req.method !== 'GET' && req.method !== 'HEAD')) {
           next();

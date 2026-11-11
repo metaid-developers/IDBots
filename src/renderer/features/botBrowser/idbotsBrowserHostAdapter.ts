@@ -64,6 +64,8 @@ const APP_SESSION_METHODS: Partial<Record<BrowserTrustedActionKind, string>> = {
 
 export interface IdBotsBrowserHostAdapterInput {
   listMetabots: () => Promise<Metabot[]>;
+  /** Optional host capability override; desktop keeps the full default set. */
+  features?: Partial<BrowserRuntimeSnapshot['features']> & { nftBuy?: boolean; mrc721Buy?: boolean };
   /**
    * Sanitized local human identity for the Browser runtime Actor list. Must
    * come from the host's trusted path and carry only display fields
@@ -442,6 +444,7 @@ export function createIdbotsBrowserHostAdapter(
           walletLogin: false,
           nftBuy: true,
           mrc721Buy: true,
+          ...input.features,
         },
         labels: {
           actorChip: 'Actor',

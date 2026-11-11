@@ -129,7 +129,7 @@ test.describe('chat', () => {
     await sendMessage(page, 'start work');
     await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible();
     await chooseFiles(page, [{ name: 'follow-up.txt', mimeType: 'text/plain', buffer: Buffer.from('follow up') }]);
-    await expect(page.getByTestId('chat-composer-input')).toBeEnabled();
+    await expect(page.getByTestId('chat-attachment')).toHaveText('follow-up.txt');
     await page.getByTestId('chat-composer-input').press('Enter');
     await expect(page.getByTestId('chat-user-message').last()).toHaveText(
       'Input file: /data/workspace/uploads/mock-1-follow-up.txt',

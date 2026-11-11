@@ -667,7 +667,7 @@ test('ChatScreen source contract: caret insertion wiring, panel flow, display-on
   // TwemojiText, assistant via MarkdownContent's opt-in emojiImages prop).
   assert.match(source, /mapWechatBracketCodesForDisplay\(message\.text\)/);
   assert.match(source, /<TwemojiText text=\{mapWechatBracketCodesForDisplay\(message\.text\)\} \/>/);
-  assert.match(source, /onOpenLocalFile=\{onOpenFile\} emojiImages \/>/);
+  assert.match(source, /onOpenLocalFile=\{onOpenFile\} onOpenBotBrowserUri=\{onOpenUri\} emojiImages \/>/);
   // Error + system bubbles route through the same display pipeline.
   const twemojiTextFaces = source.match(/<TwemojiText text=\{mapWechatBracketCodesForDisplay\(messageText\(message\)\)\} \/>/g) ?? [];
   assert.equal(twemojiTextFaces.length, 2, 'error + system bubbles both route through TwemojiText');

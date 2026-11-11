@@ -20,9 +20,10 @@ import { handleMobileRootBack } from './nativeBack';
 import { useNativeBackHandler } from './hooks/useNativeBackHandler';
 import { isRechargeAllowed } from '../native/rechargePolicy';
 import type { MobileNftMintRequest } from './me/nftMint';
+import type { MobileBrowserRequest } from './browser/MobileBrowserScreen';
 
 /**
- * App shell (REQ-E-11): connection banner on top, three lazy-loaded tabs,
+ * App shell (REQ-E-11): connection banner on top, four lazy-loaded tabs,
  * bottom tab bar with safe-area padding, and the ME purchase/recharge flow
  * pushed as a full-screen overlay. No router dependency: state navigation.
  *
@@ -36,9 +37,10 @@ const TasksScreen = lazy(() => import('./screens/TasksScreen'));
 const MeScreen = lazy(() => import('./screens/MeScreen'));
 const MePurchaseScreen = lazy(() => import('./screens/MePurchaseScreen'));
 const RechargeScreen = lazy(() => import('./screens/RechargeScreen'));
+const MobileBrowserScreen = lazy(() => import('./browser/MobileBrowserScreen'));
 
 const ACTIVE_TAB_STORAGE_KEY = 'idbots.mobile.activeTab.v1';
-const MOBILE_TABS: readonly MobileTab[] = ['chat', 'tasks', 'me'];
+const MOBILE_TABS: readonly MobileTab[] = ['chat', 'browser', 'tasks', 'me'];
 
 type PurchaseSection = 'subscribe' | 'topup';
 
@@ -69,6 +71,18 @@ export default function MobileApp(): JSX.Element {
   } | null>(null);
   const [billingRevision, setBillingRevision] = useState(0);
   const [usageSignal, setUsageSignal] = useState(0);
+  const [browserVisited, setBrowserVisited] = useState(() => tab === 'browser');
+  const [browserRequest, setBrowserRequest] = useState<MobileBrowserRequest | null>(null);
+  const selectTab = useCallback((next: MobileTab) => {
+    if (next === 'browser') setBrowserVisited(true);
+    setTab(next);
+  }, []);
+  const openBrowser = useCallback((uri: string) => {
+    setBrowserRequest((current) => ({ uri, nonce: (current?.nonce ?? 0) + 1, newTab: true }));
+    setBrowserVisited(true);
+    setPurchase(null);
+    setTab('browser');
+  }, []);
   const purchaseAllowed = isRechargeAllowed(window.idbotsMobile);
   const openPurchase = useCallback((section: PurchaseSection, subjectId?: string, orderId?: string) => {
     if (!purchaseAllowed) return;
@@ -185,6 +199,7 @@ export default function MobileApp(): JSX.Element {
               botsError={botsError}
               onReloadBots={() => void reloadBots()}
               onOpenRecharge={openRecharge}
+              onOpenUri={openBrowser}
               rechargeAllowed={purchaseAllowed}
             />
           </Suspense>
@@ -206,12 +221,20 @@ export default function MobileApp(): JSX.Element {
               canPurchase={purchaseAllowed}
               onOpenPurchase={openPurchase}
               onMintNft={openMintNft}
+              onOpenUri={openBrowser}
               usageSignal={usageSignal}
             />
           </Suspense>
         ) : null}
+        {browserVisited ? (
+          <div className="min-h-0 flex-1" style={{ display: tab === 'browser' ? 'flex' : 'none', flexDirection: 'column' }}>
+            <Suspense fallback={<TabFallback />}>
+              <MobileBrowserScreen visible={tab === 'browser'} request={browserRequest} />
+            </Suspense>
+          </div>
+        ) : null}
       </div>
-      <TabBar active={tab} onSelect={setTab} />
+      <TabBar active={tab} onSelect={selectTab} />
       {purchaseAllowed && purchase ? (
         <div className="fixed inset-0 z-50">
           <Suspense fallback={<TabFallback />}>

@@ -3,82 +3,65 @@ import type { Page } from '@playwright/test';
 
 const isGatewayRun = Boolean(process.env.E2E_GATEWAY);
 
-async function installExpiredOrder(page: Page, serverStatus: number): Promise<void> {
-  await page.evaluate((status) => {
-    const orderKey = 'idbots.mobile.bundleOrder.v1';
-    const statusKey = 'idbots.fixture.expiryServerStatus';
-    window.localStorage.setItem(statusKey, String(status));
-    const now = Date.now();
-    window.localStorage.setItem(orderKey, JSON.stringify({
-      orderId: 'gw-expired-order',
-      qrCode: 'https://qr.alipay.com/gateway-expired-order',
-      plan: {
-        planId: 'bundle_basic_cny',
-        name: 'Basic',
-        nameEn: 'Basic',
+async function pendingOrderId(page: Page): Promise<string> {
+  return (await page.locator('.me-checkout-order').innerText()).trim();
+}
+
+async function installMeOrderStatus(page: Page, orderId: string, status: string): Promise<void> {
+  await page.evaluate(({ orderId: id, status: nextStatus }) => {
+    window.electron.mePoints.getSubscriptionOrder = async ({ orderId: requestedId }) => ({
+      success: true,
+      subscriptionOrder: {
+        orderId: requestedId,
+        planId: 'me_pro',
+        period: 'quarter',
+        channel: 'mobile',
+        status: nextStatus,
+        payAmount: 537.3,
         payCurrency: 'CNY',
-        payAmount: '129.00',
-        trafficBytes: 104857600,
-        llmQuota: 2000000,
-        llmQuotaUnit: 'tokens',
-        status: 1,
-        sort: 10,
-        remark: '',
-      },
-      expiresAt: Math.floor(now / 1000) - 60,
-      status: 1,
-      createdAtMs: now,
-    }));
-    window.electron.bundle.getOrder = async ({ orderId }) => {
-      const order = JSON.parse(window.localStorage.getItem(orderKey) ?? '{}');
-      return {
-        success: true,
-        order: {
-          orderId,
-          planId: order.plan.planId,
-          status: Number(window.localStorage.getItem(statusKey)),
-          payAmount: order.plan.payAmount,
-          payCurrency: order.plan.payCurrency,
-          trafficBytes: order.plan.trafficBytes,
-          llmQuota: order.plan.llmQuota,
+        gatewayParams: {
+          approvalUrl: `https://pay.gateway.fixture/${id}`,
+          qrCode: `https://pay.gateway.fixture/${id}`,
+          expiresAt: Date.now() - 60_000,
         },
-      };
-    };
-    window.electron.bundle.createOrder = async () => {
-      throw new Error('unexpected duplicate gateway order creation');
-    };
-  }, serverStatus);
+        createdAt: Math.floor(Date.now() / 1000) - 900,
+      },
+    });
+  }, { orderId, status });
 }
 
 test.describe('gateway account and daily use', () => {
   test.skip(!isGatewayRun, 'requires the gateway harness');
 
-  test('order recovery, exactly-once meters and the next chat use real C2 @gateway', async ({ page }, testInfo) => {
+  test('ME order recovery, exactly-once balance and the next chat use real C2 @gateway', async ({ page }, testInfo) => {
     await page.goto('/app/');
     await page.getByRole('button', { name: 'Me', exact: true }).click();
-    await page.getByRole('button', { name: 'Recharge', exact: true }).click();
-    await page.getByRole('button', { name: /CNY 129\.00/ }).click();
-    await expect(page.getByTestId('recharge-paying')).toHaveAttribute('data-order-id', 'gw-bundle-1');
+    await page.getByTestId('me-tier-me_pro').click();
+    await page.getByTestId('me-purchase-submit').click();
+    await expect(page.getByTestId('me-payment-pending')).toBeVisible();
+    const orderId = await pendingOrderId(page);
+    expect(orderId).toBe('gw-me-subscription-1');
 
     await page.getByRole('button', { name: 'Close' }).click();
-    await page.getByRole('button', { name: 'Recharge', exact: true }).click();
-    await expect(page.getByTestId('recharge-paying')).toHaveAttribute('data-order-id', 'gw-bundle-1');
+    await page.getByTestId('me-tier-me_pro').click();
+    await expect(page.locator('.me-checkout-order')).toHaveText(orderId);
     await page.reload();
     await page.getByRole('button', { name: 'Me', exact: true }).click();
-    await page.getByRole('button', { name: 'Recharge', exact: true }).click();
-    await expect(page.getByTestId('recharge-paying')).toHaveAttribute('data-order-id', 'gw-bundle-1');
+    await page.getByTestId('me-usage-link').click();
+    await page.getByTestId(`usage-resume-${orderId}`).click();
+    await expect(page.locator('.me-checkout-order')).toHaveText(orderId);
 
-    const success = page.getByTestId('recharge-success');
-    await expect(success).toBeVisible({ timeout: 45_000 });
-    await expect(success).toContainText('10.5 GB');
-    await expect(success).toContainText(/51,650,000 tokens/);
-    const before = await page.evaluate(async () => (await window.electron.bundle.getMeters()).meters);
-    await page.evaluate(async () => {
-      await window.electron.bundle.getOrder({ orderId: 'gw-bundle-1' });
-      await window.electron.bundle.getOrder({ orderId: 'gw-bundle-1' });
-    });
-    const after = await page.evaluate(async () => (await window.electron.bundle.getMeters()).meters);
-    expect(after.llm).toEqual(before.llm);
+    await expect(page.getByTestId('me-purchase-submitted')).toBeVisible({ timeout: 45_000 });
+    const before = await page.evaluate(async () => (await window.electron.mePoints.getBalance()).balance);
+    await page.evaluate(async (id) => {
+      await window.electron.mePoints.getSubscriptionOrder({ orderId: id });
+      await window.electron.mePoints.getSubscriptionOrder({ orderId: id });
+    }, orderId);
+    const after = await page.evaluate(async () => (await window.electron.mePoints.getBalance()).balance);
+    expect(after.totalAvailable).toBe(before.totalAvailable);
+    expect(after.weeklyGrant.amountMilli).toBe(before.weeklyGrant.amountMilli);
+    expect(after.weeklyGrant.remainingMilli).toBe(before.weeklyGrant.remainingMilli);
+    expect(after.persistent).toEqual(before.persistent);
 
     await page.getByRole('button', { name: 'Done' }).click();
     await page.getByRole('button', { name: 'Chat', exact: true }).click();
@@ -88,29 +71,38 @@ test.describe('gateway account and daily use', () => {
     await attachScreen(testInfo, page, 'gateway-recharge-next-chat');
   });
 
-  test('an expired unpaid order reconciles to credited before another order is allowed @gateway', async ({ page }) => {
+  test('an expired unpaid ME order reconciles to credited without a duplicate @gateway', async ({ page }) => {
     await page.goto('/app/');
-    await installExpiredOrder(page, 1);
-    await page.reload();
-    await installExpiredOrder(page, 1);
     await page.getByRole('button', { name: 'Me', exact: true }).click();
-    await page.getByRole('button', { name: 'Recharge', exact: true }).click();
-    await expect(page.getByTestId('recharge-uncertain')).toBeVisible();
-    await page.getByRole('button', { name: 'Back to plans' }).click();
-    await expect(page.getByRole('button', { name: /CNY 129\.00/ })).toBeDisabled();
+    await page.getByTestId('me-tier-me_pro').click();
+    await page.getByTestId('me-period-quarter').click();
+    await page.getByTestId('me-purchase-submit').click();
+    await expect(page.getByTestId('me-payment-pending')).toBeVisible();
+    const orderId = await pendingOrderId(page);
 
-    await page.evaluate(() => window.localStorage.setItem('idbots.fixture.expiryServerStatus', '3'));
-    await page.getByRole('button', { name: 'Resume current order' }).click();
-    await expect(page.getByTestId('recharge-success')).toBeVisible();
-    await page.getByRole('button', { name: 'Back to plans' }).click();
-    await expect(page.getByRole('button', { name: /CNY 129\.00/ })).toBeEnabled();
+    await installMeOrderStatus(page, orderId, 'submitted');
+    await page.reload();
+    await installMeOrderStatus(page, orderId, 'submitted');
+    await page.getByRole('button', { name: 'Me', exact: true }).click();
+    await page.getByTestId('me-tier-me_pro').click();
+    await expect(page.locator('.me-checkout-order')).toHaveText(orderId);
+
+    await installMeOrderStatus(page, orderId, 'confirmed');
+    await page.getByTestId('me-payment-check').click();
+    await expect(page.getByTestId('me-purchase-submitted')).toBeVisible();
+    await page.getByRole('button', { name: 'Done' }).click();
+    await expect(page.getByTestId('me-tier-me_pro')).toBeEnabled();
+    const matchingOrders = await page.evaluate(async (id) => {
+      const result = await window.electron.mePoints.getSubscriptionOrders();
+      return result.orders?.filter((order) => order.orderId === id).length ?? 0;
+    }, orderId);
+    expect(matchingOrders).toBe(1);
   });
 
   test('settings and global memory persist without exposing provider secrets @gateway', async ({ page }, testInfo) => {
     try {
       await page.goto('/app/');
       await page.getByRole('button', { name: 'Me', exact: true }).click();
-      // A6: memory toggles live on the memory page, language/theme on general.
       await page.getByTestId('me-entry-memory').click();
       const memory = page.getByRole('switch', { name: 'Enable memory' });
       await memory.click();

@@ -412,7 +412,7 @@ function DiagnosticCopyButton({ message, sessionId }: { message: ChatMessageView
   );
 }
 
-function MessageRow({ message, sessionId, onOpenFile }: { message: ChatMessageView; sessionId: string | null; onOpenFile: (filePath: string) => boolean }): JSX.Element {
+function MessageRow({ message, sessionId, onOpenFile, onOpenUri }: { message: ChatMessageView; sessionId: string | null; onOpenFile: (filePath: string) => boolean; onOpenUri?: (uri: string) => void }): JSX.Element {
   if (message.role === 'user') {
     return (
       <div className="twin-message flex justify-end">
@@ -463,7 +463,7 @@ function MessageRow({ message, sessionId, onOpenFile }: { message: ChatMessageVi
       <div className="twin-message-assistant">
         {/* Display-only mapping (wechatEmojiDisplay.ts); emojiImages renders
             catalog emoji as bundled Twemoji artwork inside the markdown. */}
-        <MarkdownContent content={mapWechatBracketCodesForDisplay(message.text)} chatExperienceMode="assistant" compact onOpenLocalFile={onOpenFile} emojiImages />
+        <MarkdownContent content={mapWechatBracketCodesForDisplay(message.text)} chatExperienceMode="assistant" compact onOpenLocalFile={onOpenFile} onOpenBotBrowserUri={onOpenUri} emojiImages />
         {message.streaming ? <span className="mt-1 inline-block h-4 w-2 animate-pulse bg-[var(--color-primary)]" aria-hidden /> : null}
       </div>
     </div>
@@ -511,6 +511,7 @@ export default function ChatScreen(props: {
   botsError?: string | null;
   onReloadBots?: () => void;
   onOpenRecharge: () => void;
+  onOpenUri?: (uri: string) => void;
   rechargeAllowed?: boolean;
 }): JSX.Element {
   const { chat, bots } = props;
@@ -729,7 +730,7 @@ export default function ChatScreen(props: {
               {!chat.restoring ? <p className="twin-empty-copy">{t('mobile.chat.emptyBody')}</p> : null}
             </div>
           ) : (
-            chat.messages.map((message) => <MessageRow key={message.id} message={message} sessionId={chat.sessionId ?? null} onOpenFile={openPreview} />)
+            chat.messages.map((message) => <MessageRow key={message.id} message={message} sessionId={chat.sessionId ?? null} onOpenFile={openPreview} onOpenUri={props.onOpenUri} />)
           )}
           {turnPhase !== 'idle' && turnPhase !== 'completed' ? (
             <p className="px-2 py-1 text-xs text-[var(--text-secondary)]" data-testid="turn-phase">

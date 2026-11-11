@@ -266,6 +266,7 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
       'Content-Type': mimeForPath(payload.p),
       'Content-Disposition': contentDisposition(payload.d, path.basename(payload.p)),
       'Accept-Ranges': 'bytes',
+      'Access-Control-Allow-Origin': '*',
     };
 
     const rangeHeader = req.headers.range;

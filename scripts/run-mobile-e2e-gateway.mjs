@@ -579,6 +579,49 @@ const bundleMeters = {
 };
 let bundleOrderSeq = 0;
 
+const mePlans = [
+  { planId: 'me_free', tier: 'free', name: 'Free', priceCny: 0, desktopPriceCny: 0, periodDays: 30, weeklyAmountMilli: 2_000_000, saleStatus: 1 },
+  { planId: 'me_standard', tier: 'standard', name: 'ID.Pupil', priceCny: 99, desktopPriceCny: 49, periodDays: 30, weeklyAmountMilli: 10_000_000, saleStatus: 1 },
+  { planId: 'me_pro', tier: 'pro', name: 'ID.Student', priceCny: 199, desktopPriceCny: 149, periodDays: 30, weeklyAmountMilli: 35_000_000, saleStatus: 1 },
+];
+const meTopupPackages = [
+  { packageId: 'me_topup_a', name: 'Top-up Pack A', meMilli: 30_000_000, priceCny: 90, saleStatus: 1 },
+];
+const meSubscriptionOrders = new Map();
+const meTopupOrders = new Map();
+const meState = {
+  subscribed: false,
+  activePlanId: 'me_free',
+  weeklyAmountMilli: 2_000_000,
+  weeklyRemainingMilli: 1_480_000,
+  topupMilli: 0,
+  bonusMilli: 0,
+  earnedMilli: 0,
+};
+let meSubscriptionSeq = 0;
+let meTopupSeq = 0;
+
+function meBalance() {
+  return {
+    identityAddress: 'gateway-identity',
+    weeklyGrant: {
+      amountMilli: meState.weeklyAmountMilli,
+      remainingMilli: meState.weeklyRemainingMilli,
+      cycleStart: Math.floor(Date.now() / 1000) - 86_400,
+      cycleEnd: Math.floor(Date.now() / 1000) + 4 * 86_400,
+      isResidual: false,
+      nextResetAt: Date.now() + 86_400_000,
+    },
+    persistent: {
+      topupMilli: meState.topupMilli,
+      earnedMilli: meState.earnedMilli,
+      bonusMilli: meState.bonusMilli,
+    },
+    frozenMilli: 0,
+    totalAvailable: meState.weeklyRemainingMilli + meState.topupMilli + meState.bonusMilli + meState.earnedMilli,
+  };
+}
+
 async function invokeHandler(channel, clientId, args) {
   if (process.env.GW_FIXTURE_DEBUG) {
     console.log(`[fixture] invoke ${channel} ${JSON.stringify(args)?.slice(0, 120)}`);
@@ -1032,6 +1075,113 @@ async function invokeHandler(channel, clientId, args) {
           llm: { ...bundleMeters.llm },
         },
       };
+    case 'me:getPlans':
+      return { success: true, plans: mePlans.map((plan) => ({ ...plan })) };
+    case 'me:getRates':
+      return { success: true, rates: [
+        { key: 'deepseek-chat', multiplier: 1 },
+        { key: 'cerebellum', multiplier: 1 },
+        { key: 'mvc-traffic', multiplier: 1 },
+      ] };
+    case 'me:getTopupPackages':
+      return { success: true, topupPackages: meTopupPackages.map((pkg) => ({ ...pkg })) };
+    case 'me:getBalance':
+      return { success: true, balance: meBalance() };
+    case 'me:getSubscription':
+      return {
+        success: true,
+        subscription: {
+          statusText: meState.subscribed ? 'active' : 'free',
+          raw: { planId: meState.activePlanId },
+        },
+      };
+    case 'me:getHistory':
+      return { success: true, history: { entries: [], nextCursor: '' } };
+    case 'me:subscriptionOrder': {
+      const input = args[0] ?? {};
+      if (input.orderId) {
+        const order = meSubscriptionOrders.get(input.orderId);
+        return order
+          ? { success: true, subscriptionOrder: { ...order } }
+          : { success: false, error: 'order not found', errorCode: 'ORDER_NOT_FOUND' };
+      }
+      const plan = mePlans.find((entry) => entry.planId === input.planId && entry.tier !== 'free');
+      if (!plan) return { success: false, error: 'plan not found' };
+      const existing = input.idempotencyKey
+        ? [...meSubscriptionOrders.values()].find((order) => order.idempotencyKey === input.idempotencyKey)
+        : null;
+      if (existing) return { success: true, subscriptionOrder: { ...existing } };
+      const orderId = `gw-me-subscription-${++meSubscriptionSeq}`;
+      const multiplier = input.period === 'year' ? 9.6 : input.period === 'quarter' ? 2.7 : 1;
+      const payAmount = Math.round(plan.priceCny * multiplier * 100) / 100;
+      const order = {
+        orderId,
+        planId: plan.planId,
+        period: input.period ?? 'month',
+        channel: 'mobile',
+        status: 'submitted',
+        amountCny: payAmount,
+        payAmount,
+        payCurrency: 'CNY',
+        gatewayParams: {
+          approvalUrl: `https://pay.gateway.fixture/${orderId}`,
+          qrCode: `https://pay.gateway.fixture/${orderId}`,
+          expiresAt: Date.now() + 15 * 60_000,
+        },
+        createdAt: Math.floor(Date.now() / 1000),
+        idempotencyKey: input.idempotencyKey,
+      };
+      meSubscriptionOrders.set(orderId, order);
+      setTimeout(() => {
+        if (order.status === 'confirmed') return;
+        order.status = 'confirmed';
+        order.confirmedAt = Math.floor(Date.now() / 1000);
+        meState.subscribed = true;
+        meState.activePlanId = plan.planId;
+        meState.weeklyAmountMilli = plan.weeklyAmountMilli;
+        meState.weeklyRemainingMilli = Math.round(plan.weeklyAmountMilli * 0.624);
+      }, 8000);
+      return { success: true, subscriptionOrder: { ...order } };
+    }
+    case 'me:getSubscriptionOrders':
+      return { success: true, orders: [...meSubscriptionOrders.values()].map((order) => ({ ...order })) };
+    case 'me:submitTopupOrder': {
+      if (!meState.subscribed) {
+        return { success: false, error: 'an active paid plan is required before top-up', errorCode: 'SUBSCRIPTION_REQUIRED' };
+      }
+      const input = args[0] ?? {};
+      const pkg = meTopupPackages.find((entry) => entry.packageId === input.packageId);
+      if (!pkg) return { success: false, error: 'package not found' };
+      const existing = input.idempotencyKey
+        ? [...meTopupOrders.values()].find((order) => order.idempotencyKey === input.idempotencyKey)
+        : null;
+      if (existing) return { success: true, submission: { order: { ...existing }, applied: false } };
+      const orderId = `gw-me-topup-${++meTopupSeq}`;
+      const order = {
+        orderId,
+        packageId: pkg.packageId,
+        status: 'submitted',
+        createdAt: Math.floor(Date.now() / 1000),
+        meMilli: pkg.meMilli,
+        priceCny: pkg.priceCny,
+        payAmount: pkg.priceCny,
+        payCurrency: 'CNY',
+        gatewayParams: { qrCode: `https://pay.gateway.fixture/${orderId}` },
+        idempotencyKey: input.idempotencyKey,
+      };
+      meTopupOrders.set(orderId, order);
+      setTimeout(() => {
+        if (order.status === 'confirmed') return;
+        order.status = 'confirmed';
+        order.confirmedAt = Math.floor(Date.now() / 1000);
+        meState.topupMilli += pkg.meMilli;
+      }, 8000);
+      return { success: true, submission: { order: { ...order }, applied: false } };
+    }
+    case 'me:getTopupOrders':
+      return { success: true, orders: [...meTopupOrders.values()].map((order) => ({ ...order })) };
+    case 'me:getPaymentInfo':
+      return { success: true, payment: { qrContent: 'https://pay.gateway.fixture/account', payeeHint: 'Gateway fixture payee' } };
     case 'startup:rendererInitialized':
       return { success: true, elapsedMs: 0, startedAt: Date.now() };
     default:
