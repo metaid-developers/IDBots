@@ -1498,6 +1498,7 @@ interface IElectronAPI {
       suggestedName?: string;
     }) => Promise<{ success: boolean; canceled?: boolean; path?: string; error?: string }>;
     respondToPermission: (options: { requestId: string; result: CoworkPermissionResult }) => Promise<{ success: boolean; error?: string }>;
+    submitStageInteractionAnswer: (entry: { requestId: string; token: string; behavior: 'allow' | 'deny'; answers?: unknown; skip?: unknown }) => Promise<{ success: boolean; accepted?: boolean }>;
     listPendingPermissions: () => Promise<{
       success: boolean;
       permissions?: Array<{

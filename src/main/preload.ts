@@ -531,6 +531,10 @@ contextBridge.exposeInMainWorld('electron', {
     // Permission handling
     respondToPermission: (options: { requestId: string; result: any }) =>
       ipcRenderer.invoke('cowork:permission:respond', options),
+    // Live Stage card click relayed by the Bot Browser shell bridge. Main
+    // re-validates requestId + single-use token against the pending card.
+    submitStageInteractionAnswer: (entry: { requestId: string; token: string; behavior: 'allow' | 'deny'; answers?: unknown; skip?: unknown }) =>
+      ipcRenderer.invoke('cowork:stageInteraction:answer', { entry }),
     // Reload replay: still-pending permission requests for a fresh renderer.
     listPendingPermissions: () =>
       ipcRenderer.invoke('cowork:permission:listPending'),

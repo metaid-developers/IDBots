@@ -83,7 +83,7 @@ test('interaction card renders through textContent only and drains clicks exactl
   assert.match(stage, /drainInteractions\(\) \{\n      const items = interactionQueue\.splice\(0, interactionQueue\.length\);\n      return items;\n    \}/);
   assert.match(stage, /data-interaction-question/);
   assert.match(stage, /interaction-custom/);
-  assert.match(stage, /interactionQueue\.push\(\{ requestId: interaction\.requestId, token: interaction\.token/);
+  assert.match(stage, /emitInteraction\(/);
   // The card is a presentation surface: every string reaches the DOM through
   // textContent — no HTML injection point anywhere in the stage script.
   assert.doesNotMatch(stage, /innerHTML|insertAdjacentHTML|document\.write/);
@@ -145,4 +145,13 @@ test('report recovery is a real button that navigates through the constrained St
   const css = read('stage.css');
   assert.match(css, /\.core-report-ready:not\(:disabled\):hover/);
   assert.match(css, /\.core-report-ready:focus-visible/);
+});
+
+test('stage clicks push straight to the shell bridge alongside the poll queue', () => {
+  const stage = read('stage.js');
+  assert.match(stage, /function emitInteraction\(entry\)/);
+  assert.match(stage, /window\.parent\.postMessage\(\{ source: 'idbots-live-stage', type: 'stage-interaction', entry \}, '\*'\)/);
+  assert.match(stage, /emitInteraction\(\{ requestId: interaction\.requestId, token: interaction\.token, behavior: 'deny' \}\)/);
+  assert.match(stage, /emitInteraction\(\{ requestId: interaction\.requestId, token: interaction\.token, behavior: 'allow', skip: true \}\)/);
+  assert.doesNotMatch(stage, /interactionQueue\.push\(\{ requestId: interaction\.requestId, token: interaction\.token, behavior: 'deny'/, 'every click leaves through the emitter');
 });

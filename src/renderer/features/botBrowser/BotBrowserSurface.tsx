@@ -65,6 +65,17 @@ type BrowserIframeMessage =
       type: 'window-drag-move';
       dx?: number;
       dy?: number;
+    }
+  | {
+      source: 'idbots-browser-iframe-bridge';
+      type: 'stage-interaction';
+      entry: {
+        requestId: string;
+        token: string;
+        behavior: 'allow' | 'deny';
+        answers?: unknown;
+        skip?: unknown;
+      };
     };
 
 type PendingTabCommand = {
@@ -425,6 +436,16 @@ export const BotBrowserSurface = forwardRef<BotBrowserSurfaceHandle, BotBrowserS
           if (dx || dy) {
             window.electron.window.moveBy(dx, dy);
           }
+          return;
+        }
+
+        // Live Stage interaction click, relayed by the shell bridge. The
+        // renderer is a pass-through: main re-validates requestId + the
+        // single-use token against the pending card before resolving
+        // anything (2026-11-12: the poll fallback proved fragile, this is
+        // the primary delivery path).
+        if (data.type === 'stage-interaction') {
+          void window.electron.cowork.submitStageInteractionAnswer(data.entry);
           return;
         }
 

@@ -1170,6 +1170,14 @@
       ]
     },
     {
+      "path": "cowork.submitStageInteractionAnswer",
+      "kind": "invoke",
+      "channel": "cowork:stageInteraction:answer",
+      "args": [
+        "entry"
+      ]
+    },
+    {
       "path": "cowork.unarchiveMemoryEntry",
       "kind": "invoke",
       "channel": "cowork:memory:unarchiveEntry",

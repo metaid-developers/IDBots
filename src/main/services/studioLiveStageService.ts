@@ -483,6 +483,31 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     return ids;
   }
 
+  /**
+   * Push delivery for a stage card click (stage → shell bridge → renderer →
+   * main). Primary path alongside the poll fallback: locate the run whose
+   * card matches the entry's requestId + token and run it through the same
+   * validated resolve as the drain. Single-use is preserved — the first
+   * delivery (push or poll) dismisses the card, so the second is rejected.
+   */
+  function acceptPushedInteraction(entry: unknown): boolean {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
+    const record = entry as { requestId?: unknown; token?: unknown };
+    const requestId = typeof record.requestId === 'string' ? record.requestId : '';
+    if (!requestId) return false;
+    for (const run of runs.values()) {
+      const interaction = run.state.interaction;
+      if (!interaction || interaction.requestId !== requestId) continue;
+      if (record.token !== interaction.token) {
+        console.warn(`[StudioLiveStage] pushed click token mismatch for ${requestId}`);
+        return false;
+      }
+      return handleDrainedItem(run, entry);
+    }
+    console.warn(`[StudioLiveStage] pushed click for unknown interaction ${requestId}`);
+    return false;
+  }
+
   async function projectReport(
     input: BotBrowserProjectionInput,
     project: (stageTabId: number | null) => Promise<BotBrowserProjectionOutcome>,
@@ -546,6 +571,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     presentInteraction,
     clearInteraction,
     listPresentedRequestIds,
+    acceptPushedInteraction,
     projectReport,
     updateSettings,
     forget,

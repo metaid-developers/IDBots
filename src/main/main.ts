@@ -14929,6 +14929,17 @@ if (!gotTheLock) {
     }
   });
 
+  // Live Stage card click relayed by the Bot Browser shell bridge (stage →
+  // shell → renderer → here). The primary delivery path for stage answers:
+  // the poll fallback over the tab bridge proved fragile (2026-11-12 MetaPo:
+  // a click sat in the page queue for a full hour while the bridge silently
+  // timed out). Main re-validates requestId + the single-use token against
+  // the pending card before resolving anything.
+  registerIpcHandler('cowork:stageInteraction:answer', async (_event, options: { entry?: unknown }) => {
+    const accepted = getStudioLiveStageService().acceptPushedInteraction(options?.entry);
+    return { success: true, accepted };
+  });
+
   // Renderer-reload replay (2026-10-23 ab67c828 incident follow-up): the
   // permission broadcast is raise-time only, so a window reload while an ask
   // waits (e.g. ask_user_question with timeout:-1, which never self-unwinds)
