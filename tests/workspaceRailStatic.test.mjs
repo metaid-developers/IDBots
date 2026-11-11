@@ -206,6 +206,93 @@ test('the Co-Work face no longer introduces itself in either column', () => {
   assert.match(appSource, /\) : \(\n {4}coworkLandingCard\n {2}\);/);
 });
 
+test('surface header: the open session name is the actions row’s LEFT title; 新建会话/会话记录 keep the right end (owner order 2026-11-11 18:05, item ④ rework — supersedes the 17:37 between-buttons order)', () => {
+  // SUPERSESSION (owner 18:05 screenshot rework): the 17:37 order placed the
+  // name strictly BETWEEN the two buttons; the rework makes it the row's
+  // LEFT title — directly under the Studio label — with the icon buttons
+  // packed at the right end. Sidebar composes the slot as a component tag
+  // (the data-slot attribute itself lives in CoworkSurfaceSessionName.tsx
+  // and is pinned by the next test), so the ORDER anchor here is the tag,
+  // not the rendered attribute.
+  const nameAt = sidebarSource.indexOf('<CoworkSurfaceSessionName');
+  const newSessionAt = sidebarSource.indexOf('data-slot="cowork-new-session"');
+  const historyAt = sidebarSource.indexOf('data-slot="cowork-toggle-history"');
+  assert.ok(nameAt !== -1, 'session-name slot anchor');
+  assert.ok(newSessionAt !== -1, 'new-session button anchor');
+  assert.ok(historyAt !== -1, 'history button anchor');
+  assert.ok(nameAt < newSessionAt, 'name slot must come BEFORE the new-session button (left title lane)');
+  assert.ok(nameAt < historyAt, 'name slot must come BEFORE the history button');
+  assert.ok(newSessionAt < historyAt, 'the two icon buttons keep their relative order');
+  // Exactly one slot mount, still on the SAME actions row (inside the
+  // surfaceHeaderActions branch, before it is handed to the mode switch).
+  assert.equal(sidebarSource.split('<CoworkSurfaceSessionName').length - 1, 1, 'exactly one session-name slot');
+
+  // The slot's title comes from the SHARED sessions list — the store node
+  // updateSessionTitle patches — with the browserCowork slice reduced to a
+  // pointer plus a startup-window fallback. A stale snapshot must never be
+  // the authoritative title.
+  assert.match(sidebarSource, /state\.browserCowork\.currentSession\?\.id \?\? null/);
+  assert.match(
+    sidebarSource,
+    /sessions\.find\(\(session\) => session\.id === browserOpenSessionId\)/,
+  );
+
+  // The slot wires the EXISTING rename channel (coworkService.renameSession
+  // via listOnRenameSession) — never a second IPC path.
+  assert.match(sidebarSource, /onRename=\{listOnRenameSession\}/);
+});
+
+test('surface session-name slot: read-only default, inline editor, empty commit falls back (item ④ contract)', () => {
+  const componentSource = read('src/renderer/features/botBrowser/CoworkSurfaceSessionName.tsx');
+  // Default state is a read-only BUTTON; editing swaps in an inline INPUT.
+  assert.match(componentSource, /data-slot="cowork-surface-session-name"/);
+  assert.match(componentSource, /data-slot="cowork-surface-session-name-input"/);
+  // Enter commits, Escape cancels, blur commits — the transcript header's
+  // rename contract, mirrored here.
+  assert.match(componentSource, /if \(e\.key === 'Enter'\)/);
+  assert.match(componentSource, /if \(e\.key === 'Escape'\)/);
+  assert.match(componentSource, /onBlur=\{handleRenameBlur\}/);
+  // Draft state (no open session) — superseded by the owner 18:54
+  // left-anchor order: the slot renders a non-interactive spacer (same
+  // flex-1 lane) instead of unmounting, so the identity component ahead of
+  // it never drifts right when the name is absent. Intent kept (no name
+  // control in draft) and extended (the spacer slot exists).
+  assert.match(componentSource, /data-slot="cowork-surface-session-name-spacer"/);
+  // The decision math is delegated to the pure module (tested behaviorally
+  // in tests/surfaceSessionName.test.ts).
+  assert.match(componentSource, /decideSurfaceSessionRename\(/);
+  assert.match(componentSource, /resolveSurfaceSessionDisplayTitle\(/);
+  // The pure module pins empty → noop (fallback title, never blank) and the
+  // trim-first fallback.
+  const pureSource = read('src/renderer/features/botBrowser/surfaceSessionName.ts');
+  assert.match(pureSource, /if \(!nextTitle\) return \{ action: 'noop' \};/);
+  assert.match(pureSource, /return trimmed \|\| fallbackTitle;/);
+  // 18:05 rework: the slot is the row's LEFT TITLE. Its root lane grows
+  // (min-w-0 flex-1) so the actions row packs the icon cluster to the right
+  // end; the title reads one level darker + medium at 13 px and the label
+  // truncates with an ellipsis. Extended by the owner 18:54 left-anchor
+  // order: ALL THREE mounts carry the lane classes — the read-only button,
+  // the inline editor, AND the draft spacer — so the row's geometry holds
+  // across every state swap and the identity component stays left-pinned
+  // even with no open session.
+  assert.equal((componentSource.match(/min-w-0 flex-1/g) ?? []).length, 3, 'title lane on all three mounts (read-only + editor + draft spacer)');
+  assert.match(componentSource, /text-\[13px\] font-medium/);
+  assert.match(componentSource, /text-claude-text dark:text-claude-darkText/);
+  // Owner 18:54 frameless-editor order: the inline editor carries NO box —
+  // transparent background, no border, no ring, no shadow; the 13 px medium
+  // metrics stay identical to the display state and only the caret marks
+  // the edit affordance. (The old boxed input broke the title look.)
+  const editorBlock = componentSource.slice(componentSource.indexOf('data-slot="cowork-surface-session-name-input"'));
+  const editorClassName = editorBlock.slice(editorBlock.indexOf('className="'), editorBlock.indexOf('\n', editorBlock.indexOf('className="')));
+  assert.match(editorClassName, /bg-transparent/);
+  assert.match(editorClassName, /border-0/);
+  assert.match(editorClassName, /focus:ring-0/);
+  assert.match(editorClassName, /shadow-none/);
+  assert.match(editorClassName, /text-\[13px\] font-medium/);
+  assert.doesNotMatch(editorClassName, /border-claude|ring-2|ring-claude|bg-claude-darkBg|bg-claude-bg|rounded-lg/);
+  assert.match(componentSource, /className="min-w-0 truncate"/);
+});
+
 test('the rail models are the single source of both surfaces’ entries', () => {
   assert.match(navigationSource, /export function getRailInternetNavModel/);
   assert.match(navigationSource, /export function getRailHomeNavModel/);

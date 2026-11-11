@@ -26,6 +26,7 @@ import BackgroundTasksBadge from './cowork/BackgroundTasksBadge';
 import { SleepGuardBadge } from './SleepGuardBadge';
 import BotBrowserCoworkPanel from '../features/botBrowser/BotBrowserCoworkPanel';
 import BotBrowserModeSwitch from '../features/botBrowser/BotBrowserModeSwitch';
+import CoworkSurfaceSessionName from '../features/botBrowser/CoworkSurfaceSessionName';
 import { UserProfilePage } from '../features/userProfile';
 import { defaultSidebarWidth } from '../utils/sidebarWidth';
 import type { BotBrowserSurfaceMode, BotHomeSection } from '../features/botBrowser/types';
@@ -169,6 +170,15 @@ const Sidebar: React.FC<SidebarProps> = ({
   // history still lists every browser session.
   const homeSessions = sessions;
   const currentSessionId = useSelector((state: RootState) => state.cowork.currentSessionId);
+  // The Bot Internet face's open session pointer + its title fallback (both
+  // primitive selectors — no re-render per streamed message). The pointer
+  // feeds the surface-header name slot (owner order 2026-11-11 17:37, item ④).
+  const browserOpenSessionId = useSelector(
+    (state: RootState) => state.browserCowork.currentSession?.id ?? null,
+  );
+  const browserOpenSessionFallbackTitle = useSelector(
+    (state: RootState) => state.browserCowork.currentSession?.title ?? null,
+  );
   const unreadSessionIds = useSelector((state: RootState) => state.cowork.unreadSessionIds);
   const groupTasks = useSelector((state: RootState) => state.groupTasks.tasks);
   const selectedGroupTaskId = useSelector((state: RootState) => state.groupTasks.selectedTaskId);
@@ -585,10 +595,29 @@ const Sidebar: React.FC<SidebarProps> = ({
     await groupTaskService.archiveTask(taskId);
   };
 
+  // The surface-header name slot's stored title (owner order 2026-11-11
+  // 17:37, item ④). It reads the SHARED sessions list — the store node
+  // updateSessionTitle patches — so a rename from ANY surface (this slot, a
+  // history-drawer row, the transcript header) re-renders it in sync. The
+  // browserCowork slice's own session snapshot is only the pointer plus a
+  // startup-window fallback: it is NOT patched by updateSessionTitle, so its
+  // title goes stale the moment anything renames the session.
+  const browserOpenSessionTitle = useMemo(() => {
+    if (!browserOpenSessionId) return '';
+    const fromList = sessions.find((session) => session.id === browserOpenSessionId);
+    return fromList?.title ?? browserOpenSessionFallbackTitle ?? '';
+  }, [browserOpenSessionId, sessions, browserOpenSessionFallbackTitle]);
+
   // The shared header's action row, directly below the top-track band. BotWorks
   // keeps the records search and the shell's live indicators; Studio carries
-  // the session window's two light actions — new session and session records.
-  // Both sets are 28 px controls (aesthetic grid v1).
+  // the session window's light actions in the owner's 18:21 final layout
+  // (supersedes the 18:05 "name LEFT / badge MIDDLE" split): ONE row, left to
+  // right — ① the identity component (avatar + bot name + Twin badge, with
+  // its existing bot-picker interaction, portaled in by the co-work panel
+  // through the anchor below), ② the open session's name (inline-rename,
+  // ellipsis-truncated), ③ the 新建会话 button, ④ the 会话记录 button. The
+  // name slot keeps its min-w-0 flex-1 lane so the icon cluster stays packed
+  // at the row's right end. All controls are 28 px (aesthetic grid v1).
   const surfaceHeaderActions = mode === 'home' ? (
     <>
       <button
@@ -607,6 +636,21 @@ const Sidebar: React.FC<SidebarProps> = ({
     </>
   ) : (
     <>
+      {/* ① Identity anchor: the panel portals the identity component here —
+          the draft state's interactive BotPickerChip (avatar + name + Twin
+          badge + the draft-state roster menu), or the live session's
+          read-only CoworkSurfaceIdentityBadge — so the identity component
+          keeps ONE owner (the panel's picker state) while riding the header
+          row's first lane. `contents` keeps the portaled component a direct
+          flex child of the actions row; with no anchor mounted (panel-less
+          hosts, tests) nothing renders. */}
+      <div data-slot="cowork-header-identity-anchor" className="contents" />
+      <CoworkSurfaceSessionName
+        sessionId={browserOpenSessionId}
+        title={browserOpenSessionTitle}
+        fallbackTitle={i18nService.t('coworkNewSession')}
+        onRename={listOnRenameSession}
+      />
       <button
         type="button"
         data-slot="cowork-new-session"

@@ -3,11 +3,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
-// Static wiring guard for the Studio footer bot picker (owner ruling
-// 2026-11-11). Behavior is covered by botPickerChip.test.tsx (render); this
-// file pins the panel wiring so a refactor cannot quietly grow the picker
-// back into a Twin appointment: picking a bot is a PURE selection — the only
-// place that writes metabot_type is the My Bots editor.
+// Static wiring guard for the Studio surface-header identity row (owner
+// ruling 2026-11-11; v3 close wiring same day). Behavior is covered by
+// botPickerChip.test.tsx (render) and surfaceIdentityBadge.test.tsx (badge);
+// this file pins the panel wiring so a refactor cannot quietly grow the
+// picker back into a Twin appointment: picking a bot is a PURE selection —
+// the only place that writes metabot_type is the My Bots editor. v3 close
+// supersession: the chip is DRAFT-ONLY — a live session's header identity
+// is the read-only CoworkSurfaceIdentityBadge (the chip's former
+// display-only live branch is retired, not widened).
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
 
@@ -17,21 +21,63 @@ function read(relativePath) {
 
 const panelSource = read('src/renderer/features/botBrowser/BotBrowserCoworkPanel.tsx');
 const chipSource = read('src/renderer/features/botBrowser/BotPickerChip.tsx');
+const badgeSource = read('src/renderer/features/botBrowser/CoworkSurfaceIdentityBadge.tsx');
+const badgePureSource = read('src/renderer/features/botBrowser/surfaceIdentityBadge.ts');
 const dismissSource = read('src/renderer/features/botBrowser/seatMenuDismiss.ts');
 const resolverSource = read('src/renderer/services/coworkSessionStart.ts');
 const managerSource = read('src/renderer/components/metabots/MetabotsManager.tsx');
 const i18nSource = read('src/renderer/services/i18n.ts');
 
-test('the panel renders the picker chip and resolves the draft target like BotWorks', () => {
+test('the panel portals the draft picker chip AND the live identity badge (v3 close wiring)', () => {
   assert.match(panelSource, /import BotPickerChip from '\.\/BotPickerChip';/);
+  assert.match(panelSource, /import CoworkSurfaceIdentityBadge from '\.\/CoworkSurfaceIdentityBadge';/);
   assert.match(panelSource, /import \{ resolveDefaultMetabotId \} from '\.\.\/\.\.\/services\/coworkSessionStart';/);
   // Same resolution as the BotWorks new-task composer: explicit pick wins,
   // else the Twin, else the first bot.
   assert.match(panelSource, /resolveDefaultMetabotId\(metabots, pickedMetabotId\)/);
   assert.match(resolverSource, /const twin = bots\.find\(\(bot\) => bot\.metabot_type === 'twin'\);/);
+  // Draft lane: the interactive picker chip (exactly one mount, test below).
   assert.match(panelSource, /<BotPickerChip/);
-  assert.match(panelSource, /live=\{Boolean\(currentSession\)\}/);
   assert.match(panelSource, /menuOpen=\{showBotPickerMenu\}/);
+  // Live lane (supersedes the chip's `live={Boolean(currentSession)}` form):
+  // the read-only badge resolves from the session's own bot id with the
+  // summary-row identity (metabotName/metabotAvatar) as fallback — never
+  // the draft pick.
+  assert.match(panelSource, /metabotId=\{currentSession\.metabotId \?\? null\}/);
+  assert.match(panelSource, /fallbackName=\{currentSession\.metabotName \?\? null\}/);
+  assert.match(panelSource, /fallbackAvatar=\{currentSession\.metabotAvatar \?\? null\}/);
+});
+
+test('the identity chip rides the surface-header row FIRST (owner 18:21 final ruling; supersedes the 18:05 name-left/badge-middle split)', () => {
+  const sidebarSource = read('src/renderer/components/Sidebar.tsx');
+  // Exactly ONE chip mount, portaled into the header anchor: the DOM
+  // placement moved to the shared surface-header actions row, the picker
+  // state (menu + pick + draft resolution) stays owned by the panel.
+  assert.equal((panelSource.match(/<BotPickerChip/g) ?? []).length, 1, 'the chip mounts exactly once');
+  assert.match(panelSource, /import \{ createPortal \} from 'react-dom';/);
+  assert.match(panelSource, /cowork-header-identity-anchor/);
+  // The header sits at the panel's top edge, so the roster opens DOWN.
+  assert.match(panelSource, /menuDirection="down"/);
+  // The composer's tool row no longer carries an identity line on its left.
+  assert.match(panelSource, /className="flex items-center justify-end gap-0\.5 pb-1\.5"/);
+  assert.match(sidebarSource, /data-slot="cowork-header-identity-anchor"/);
+  // Studio header row order (ONE row, left to right): ① identity anchor →
+  // ② session name → ③ 新建会话 → ④ 会话记录.
+  const rowSpan = sidebarSource.match(
+    /cowork-header-identity-anchor[\s\S]*?data-slot="cowork-toggle-history"/,
+  )?.[0] ?? '';
+  assert.ok(rowSpan, 'the Studio actions branch spans anchor → history toggle');
+  const anchorAt = rowSpan.indexOf('cowork-header-identity-anchor');
+  const nameAt = rowSpan.indexOf('<CoworkSurfaceSessionName');
+  const newAt = rowSpan.indexOf('data-slot="cowork-new-session"');
+  const historyAt = rowSpan.indexOf('data-slot="cowork-toggle-history"');
+  assert.ok(anchorAt !== -1, 'anchor present');
+  assert.ok(nameAt !== -1, 'session-name slot present');
+  assert.ok(newAt !== -1, 'new-session button present');
+  assert.ok(historyAt !== -1, 'history toggle present');
+  assert.ok(anchorAt < nameAt, 'identity anchor sits LEFT of the session name');
+  assert.ok(nameAt < newAt, 'session name sits LEFT of the new-session button');
+  assert.ok(newAt < historyAt, 'new-session button sits LEFT of the history toggle');
 });
 
 test('picking a bot is a pure selection: no metabot_type write, no IPC, no toast', () => {
@@ -48,11 +94,21 @@ test('picking a bot is a pure selection: no metabot_type write, no IPC, no toast
   assert.doesNotMatch(panelSource, /app:showToast/);
 });
 
-test('the chip menu lists the roster with every row enabled and keeps live read-only', () => {
+test('the chip menu lists the roster with every row enabled; live identity is the badge (v3 close supersession)', () => {
   assert.match(chipSource, /\{roster\.map\(\(metabot\) => \(/);
   assert.doesNotMatch(chipSource, /disabled=\{/, 'a pure selection never disables a roster row');
   assert.match(chipSource, /aria-selected=\{isSelected\}/);
-  assert.match(chipSource, /live \? \(/);
+  // Supersession: the chip's display-only live branch moved OUT to the
+  // badge — the chip is draft-only, so a live transcript can never grow a
+  // menu trigger.
+  assert.doesNotMatch(chipSource, /live \? \(/, 'the chip has no live branch anymore');
+  // The badge is the read-only live form: an identity label, not a control.
+  assert.match(badgeSource, /data-slot="cowork-surface-identity-badge"/);
+  assert.doesNotMatch(badgeSource, /<button/, 'the badge renders no click target');
+  // Match the JSX attribute form only: the read-only contract comment says
+  // "no onClick" in prose, which must not self-trigger this guard.
+  assert.doesNotMatch(badgeSource, /onClick=/, 'the badge owns no interaction');
+  assert.match(badgePureSource, /export function resolveSurfaceIdentityBadge/);
 });
 
 test('an open picker menu closes on an outside pointer through the tested helper', () => {

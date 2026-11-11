@@ -587,10 +587,10 @@ const CoworkSessionItemRow: React.FC<CoworkSessionItemProps> = ({
   // A legacy IM direct row may still carry session_type 'a2a'; it must not get
   // the A2A peer avatar/refresh affordances. The mapping channel wins.
   const isA2A = session.sessionType === 'a2a' && !session.imChannel;
-  // Bot Browser co-work sessions are listed in the same home history as local
-  // chats; a small type badge keeps them identifiable at a glance (clicking
-  // one returns to the Bot Browser surface).
-  const isBrowser = session.sessionType === 'browser';
+  // Owner ruling 2026-11-11 17:28: session rows no longer carry a browser
+  // source badge — its label is retired from the row entirely (the
+  // visited-page context line below remains the identity cue for these
+  // sessions). The data-side sessionType is untouched.
   const showA2ADot = !approvalPending && shouldShowCoworkA2ADot({ sessionType: session.sessionType, showStatusIndicator });
   const storedTitle = session.title?.trim() ?? '';
   // A2A rows are stored with a `Private-<peerId prefix>` placeholder title when
@@ -761,14 +761,6 @@ const CoworkSessionItemRow: React.FC<CoworkSessionItemProps> = ({
             {!showBrowserContext && (
               <span className="text-[10px] whitespace-nowrap">
                 {i18nService.t(statusLabels[session.status])}
-              </span>
-            )}
-            {isBrowser && (
-              <span
-                className="shrink-0 rounded px-1 py-px text-[9px] font-medium uppercase leading-none tracking-wider bg-claude-accent/10 text-claude-accent"
-                title={i18nService.t('coworkSessionTypeBrowser')}
-              >
-                {i18nService.t('coworkSessionTypeBrowser')}
               </span>
             )}
             {showBrowserContext && (session.browserTitle || session.browserUri) ? (
