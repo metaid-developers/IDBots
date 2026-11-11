@@ -51,6 +51,7 @@ import {
 } from './metaAppBrowserModel.js';
 import type { BotBrowserConversationRequest } from './types';
 import type { AgentGameSessionResult } from '../../types/agentGame';
+import { withMetafileAvatarResponse } from '../../utils/metafileAvatar';
 
 /** browser.app.session.<method> trusted-action kinds → host session methods. */
 const APP_SESSION_METHODS: Partial<Record<BrowserTrustedActionKind, string>> = {
@@ -508,7 +509,7 @@ export function createIdbotsBrowserHostAdapter(
       const profile = await fetchBotProfileInfo({
         baseUrl: resolvedConfig.metasoP2PBaseUrl,
         globalMetaId,
-        fetch: input.fetch,
+        fetch: withMetafileAvatarResponse(input.fetch),
         metafileContentBaseUrl: resolvedConfig.metafileContentBaseUrl,
       });
       if (!profile) {

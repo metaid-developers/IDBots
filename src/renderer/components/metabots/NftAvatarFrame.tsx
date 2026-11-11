@@ -3,9 +3,9 @@
  *
  * For a plain avatar (data:/http or empty) this renders exactly what the
  * surfaces rendered before — an <img> or the caller's placeholder — so the
- * component is a drop-in wrapper. For an `nft://mrc721/<itemPinId>` avatar
- * reference it resolves the artwork through `metaid:resolveAvatarSource` and
- * decorates the render with:
+ * component is a drop-in wrapper. NFT and MetaFile references resolve their
+ * artwork through `metaid:resolveAvatarSource`. Built-in MetaFile avatars keep
+ * the plain image frame; NFT references additionally decorate the render with:
  *   - a subtle rainbow ring (the "this avatar is an NFT" marking), and
  *   - a blue-check badge when the item's collection is present in the IDBots
  *     NFT CA registry (`idbots:getNftCaRegistry`) — uncertified NFTs get the
@@ -20,6 +20,7 @@ import { CheckIcon } from '@heroicons/react/24/solid';
 import { i18nService } from '../../services/i18n';
 import { getNftCaRegistryCached, isCollectionCertified } from '../../services/nftCaRegistryService';
 import { parseNftAvatarReference } from './nftAvatarPresentation';
+import { isMetafileAvatarReference } from '../../utils/metafileAvatar';
 
 interface NftAvatarState {
   /** Resolved artwork source; null = unresolvable (placeholder fallback). */
@@ -27,7 +28,7 @@ interface NftAvatarState {
   certified: boolean;
 }
 
-// Module-level resolution cache keyed by the full nft:// reference. Failed
+// Module-level resolution cache keyed by the full NFT or MetaFile reference. Failed
 // resolutions are dropped so a transient indexer outage can heal on the next
 // render instead of being frozen for the session.
 const resolutionCache = new Map<string, Promise<NftAvatarState>>();
@@ -103,10 +104,10 @@ export interface NftAvatarFrameProps {
 
 const NftAvatarFrame: React.FC<NftAvatarFrameProps> = ({ avatar, frameClassName, imgClassName, fallback, alt = '' }) => {
   const nftRef = parseNftAvatarReference(avatar ?? null);
-  const resolved = useNftAvatarState(nftRef ? (avatar as string).trim() : null);
+  const metafileRef = isMetafileAvatarReference(avatar);
+  const resolved = useNftAvatarState(nftRef || metafileRef ? (avatar as string).trim() : null);
 
-  if (!nftRef) {
-    // Legacy behavior for non-NFT avatars — unchanged rendering.
+  if (!nftRef && !metafileRef) {
     if (avatar && (avatar.startsWith('data:') || avatar.startsWith('http'))) {
       return <img src={avatar} alt={alt} className={`${frameClassName} object-cover ${imgClassName ?? ''}`} />;
     }
@@ -115,6 +116,10 @@ const NftAvatarFrame: React.FC<NftAvatarFrameProps> = ({ avatar, frameClassName,
 
   if (!resolved?.src) {
     return <>{fallback}</>;
+  }
+
+  if (metafileRef) {
+    return <img src={resolved.src} alt={alt} className={`${frameClassName} object-cover ${imgClassName ?? ''}`} data-metafile-avatar={avatar?.trim()} />;
   }
 
   return (

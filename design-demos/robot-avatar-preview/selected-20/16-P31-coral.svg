@@ -1,0 +1,53 @@
+<?xml version='1.0' encoding='utf-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="360" viewBox="0 0 360 360">
+  <defs>
+    <clipPath id="clip-Robot_0">
+      <rect width="360" height="360" />
+    </clipPath>
+  </defs>
+  <g id="Robot_0" data-name="Robot 0" clip-path="url(#clip-Robot_0)">
+    <rect width="360" height="360" fill="#debfba" />
+    <g id="walker-subject" transform="translate(23.4 25.92) scale(0.87 0.928)" data-generation="walker" data-candidate-id="31" data-avatar-style="neutral">
+      <g id="b0">
+        <path id="line" d="M248-301v-96h8v96ZM56-301v-44h8v44ZM0-301v-72H8v72Zm64-40v-8h8v8Zm-16,0v-4H40v-4H32v-4H24v-4H16v-4H8v-8h8v4h8v4h8v4h8v4h8v4h8v8Zm24-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H120v4Zm32-8v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H184v4ZM8-373v-8h8v8Zm192-4v-8h16v8ZM16-377v-8H32v8Zm16-4v-8H48v8Zm184,0v-8h16v8Zm16-4v-8h16v8ZM48-385v-8H64v-4H80v8H64v4Zm32-8v-8H96v8Zm160-4v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v4H176v-8h16v-4h8v4h8v4h8v4h8v4h8v4h8v4h8v8ZM96-397v-8h16v8Zm16-4v-8h16v-4h16v8H128v4Zm32-8v-8h16v8Zm16-4v-8h16v8Z" transform="translate(56 661)" fill="#303133" />
+        <path id="color" d="M176-341v-84h8v84Zm-8,0h-8v-80h8v-4h8v84Zm-16,0h-8v-76h8v-4h8v80Zm-16,0h-8v-72h8v-4h8v76Zm-16,0h-8v-68h8v-4h8v72Zm-16,0H96v-64h8v-4h8v68Zm-16,0H80v-60h8v-4h8v64Zm-16,0H64v-56h8v-4h8v60Zm-16,0H48v-52h8v-4h8v56Zm-16,0H32v-48h8v-4h8v52Zm-16,0H16v-44h8v-4h8v48ZM8-341v-44h8v44Zm-8,0v-40H8v40Z" transform="translate(120 701)" fill="#ede0de" />
+        <path id="color-2" data-name="color" d="M40-365v-40h8v40Zm-8,0v-44h8v44Zm-8,0v-48h8v48Zm-8,0v-52h8v52Zm-8,0v-56h8v56Zm-8,0v-60H8v60Z" transform="translate(64 725)" fill="#b5776e" />
+        <path id="color-3" data-name="color" d="M48-349v-40h8v40Zm8-4v-40h8v40Zm-16,0v-36h8v36Zm32-4v-40h8v40Zm-8,0v-36h8v36Zm-32,0v-28h8v28Zm56-4v-40h8v40Zm-8,0v-36h8v36Zm-56,0v-24h8v24Zm80-4v-40h8v40Zm-8,0v-36h8v36Zm-80,0v-16h8v16Zm-8-3v-13h8v13Zm112-1h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40ZM0-373v-4H8v4Zm152-4h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40Zm16-4v-40h8v40Zm-8,0v-36h8v36Zm24-4v-28h8v28Zm-8,0v-32h8v32Zm24-4v-16h8v16Zm-8,0v-20h8v20Zm24-4v-4h8v4Zm-8,0v-8h8v8Z" transform="translate(64 665)" fill="#cd9f98" />
+        <rect id="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="c0">
+        <g id="group">
+          <path id="line-2" data-name="line" d="M8-397v-4H0v-8H8v4H24v8Zm16-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-16h8v16Z" transform="translate(168 685)" fill="#303133" />
+          <path id="color-4" data-name="color" d="M0-409v-8H16v8Zm16-4v-8H32v8Zm16-4v-8H48v8Z" transform="translate(176 689)" fill="#ede0de" />
+        </g>
+        <g id="box">
+          <path id="line-3" data-name="line" d="M64-213v-8h8v-4H88v-4h16v-4h16v-4h16v-4h16v-4h16v-4h16v-4h8V-381h-8v-8h8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-8h8v4h8v4h8v4h8v4h8v4h8v8h8v140h-8v8h-8v4H168v4H152v4H136v4H120v4H104v4H88v4H72v4Zm-8,0v-4H48v-4H40v-4H32v-4H24v-4H16v-8h8v4h8v4h8v4h8v4h8V-353H48v-4H40v-4H32v-4H24v-4H16v128H8V-381h8v4h8v4h8v4h8v4h8v4h8v4h8v144Zm8-136v-8h8v8Zm8-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8ZM16-381v-8h8v8Zm8-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-8H72v8Zm16-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h8v8Z" transform="translate(72 497)" fill="#303133" />
+          <path id="color-5" data-name="color" d="M0-265V-393H8v128Zm16-4V-397h8v-4h8v128H24v4Zm-8,0V-397h8v128Zm24-4V-401h8v-4h8v128H40v4Zm16-4V-405h8v-4h8v128H56v4Zm16-4V-409h8v-4h8v128H72v4Zm16-4V-413h8v-4h8v128H88v4Zm16-4V-417h8v-4h8v128h-8v4Zm16-4V-421h8v128Zm8-4V-425h8v128Z" transform="translate(136 541)" fill="#ede0de" />
+          <path id="color-6" data-name="color" d="M32-281V-409h8v128Zm-8-4V-413h8v128Zm-8-4V-417h8v128Zm-8-4V-421h8v128Zm-8-4V-425H8v128Z" transform="translate(88 553)" fill="#b5776e" />
+          <path id="color-7" data-name="color" d="M48-369v-36h8v36Zm-8,0v-36h8v36Zm24-4v-36h8v-4h8v36H72v4Zm-8,0v-36h8v36Zm-24,0v-28h8v28Zm48-4v-36h8v-4h8v36H88v4Zm-56,0v-24h8v24Zm72-4v-36h8v-4h8v36h-8v4Zm-80,0v-16h8v16Zm96-4v-36h8v-4h8v36h-8v4ZM8-385v-12h8v12Zm120-4v-36h8v4h8v28h-8v4ZM0-389v-4H8v4Zm144-4v-24h8v24Zm16-4v-12h8v12Zm-8,0v-16h8v16Zm16-3v-5h8v5Z" transform="translate(88 509)" fill="#cd9f98" />
+          <path id="light" d="M0-409v-8H8v8Zm8-8v-8h8v8Z" transform="translate(144 577)" fill="#f7f3f2" />
+          <path id="shadow" d="M0-389v-20H8v20Zm0-28v-8H8v8Z" transform="translate(256 633)" fill="#d6b3ae" />
+        </g>
+        <rect id="mask-2" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="d0">
+        <rect id="mask-3" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="e0">
+        <path id="line-4" data-name="line" d="M24-2360v-4H16v-4H8v-8h8v4h8v-12H16v-4H8v-8h8v4h8v4h8v28ZM0-2372v-28H8v28Z" transform="translate(92 2576)" fill="#303133" />
+        <rect id="mask-4" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="f0" transform="translate(8 -4)" data-component-source="f1">
+        <path id="line-7" data-name="line" d="M-844-981v-3h-8v-8h-8v-8h8v8h8v3h16v-3h16v8h-16v3Zm32-8v-8h8v8Z" transform="translate(1036 1229)" fill="#303133" />
+        <rect id="mask-5" data-name="mask" width="360" height="360" transform="translate(-8 4)" fill="#fff" opacity="0" />
+      </g>
+      <g id="g0" data-component-source="g13">
+        <path id="color-10" data-name="color" d="M2365-3139v-2h-5v-43h13v-3h2v-1h13v-2h3v-3h24v-4h9v-5h14v40h-9v11h-10v3h-16v3h-15v4h-12v2Zm105-26v-46h14v-4h16v47h-14v3Zm-16,0v-42h16v42Zm-16-2v-40h16v40Zm62-4v-47h9v-2h16v37h-9v12Z" transform="translate(-2238 3357)" fill="#707993" />
+        <path id="line-6" data-name="line" d="M2373-3126v-8h8v-2h8v8h-8v2Zm24-6h-8v-8h16v8Zm-32,0v-8h8v8Zm48-4h-8v-8h16v8Zm16-4h-8v-8h16v8Zm-67,0v-8h8v8Zm72-8v-9h3v-7h8v-4h8v8h-8v4h-3v8Zm-74,0v-8h8v8Zm117-4h-8v-8h16v8Zm16-3h-8v-8h16v8Zm-32-1v-4h-8v-8h8v4h8v8Zm-101,0v-8h8v8Zm149-2h-8v-8h16v-3h8v8h-8v3Zm-149-6v-8h8v8Zm163-5v-8h8v8Zm-158-3v-8h8v-3h8v-4h8v8h-8v4h-8v3Zm163-5v-8h3v-7h8v8h-3v7Zm-139-2v-8h8v-4h8v8h-8v4Zm16-4v-8h8v-4h8v8h-8v4Zm16-4v-8h8v-4h8v8h-8v4Zm16-4v-8h8v-4h8v8h-8v4Zm94-1v-8h8v8Zm-78-3v-8h8v-5h8v8h-8v5Zm78-5v-7h-6v-5h-8v-8h8v5h8v7h6v8Zm-62,0v-8h8v-4h8v8h-8v4Zm16-4v-8h8v-4h8v8h-8v4Zm16-4v-8h8v-4h8v8h-8v4Z" transform="translate(-2245 3351)" fill="#303133" />
+        <path id="color-11" data-name="color" d="M2376-3180v-8h8v8Zm-8,0v-2h-8v-8h8v-6h8v8h0v8Zm16-6v-8h8v8Zm-8-2v-8h8v8Zm81-16v-8h8v8Zm-8,0v-2h-8v-8h8v-6h8v8h0v8Zm16-6v-8h8v8Zm-8-2v-8h8v8Z" transform="translate(-2210 3374)" fill="#fff" />
+        <path id="联合_107" data-name="联合 107" d="M2379-2386v-4h-8v-4h-8v-4h-3v-8h3v4h8v4h8v4h8v8Z" transform="translate(-2272 2577)" fill="#303133" />
+        <rect id="mask-6" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+    </g>
+  </g>
+</svg>

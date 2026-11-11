@@ -1,0 +1,1418 @@
+<?xml version='1.0' encoding='utf-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1500" height="1500" viewBox="0 0 1500 1200"><rect width="1500" height="1200" fill="#f7f7f5" /><text x="14" y="23" fill="#303133" font-family="monospace" font-size="13" letter-spacing="0.3">01 D/ROBOT 0</text><svg x="15" y="30" width="270" height="270" viewBox="0 0 360 360"><defs>
+    <clipPath id="clip-Robot_0">
+      <rect width="360" height="360" />
+    </clipPath>
+  </defs>
+  <g id="Robot_0" data-name="Robot 0" clip-path="url(#clip-Robot_0)">
+    <rect width="360" height="360" fill="#eeeeeb" />
+    <g id="walker-subject" transform="translate(23.4 25.92) scale(0.87 0.928)" data-generation="walker">
+      <g id="b0">
+        <path id="line" d="M248-301v-96h8v96ZM56-301v-44h8v44ZM0-301v-72H8v72Zm64-40v-8h8v8Zm-16,0v-4H40v-4H32v-4H24v-4H16v-4H8v-8h8v4h8v4h8v4h8v4h8v4h8v8Zm24-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H120v4Zm32-8v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H184v4ZM8-373v-8h8v8Zm192-4v-8h16v8ZM16-377v-8H32v8Zm16-4v-8H48v8Zm184,0v-8h16v8Zm16-4v-8h16v8ZM48-385v-8H64v-4H80v8H64v4Zm32-8v-8H96v8Zm160-4v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v4H176v-8h16v-4h8v4h8v4h8v4h8v4h8v4h8v4h8v8ZM96-397v-8h16v8Zm16-4v-8h16v-4h16v8H128v4Zm32-8v-8h16v8Zm16-4v-8h16v8Z" transform="translate(56 661)" fill="#303133" />
+        <path id="color" d="M176-341v-84h8v84Zm-8,0h-8v-80h8v-4h8v84Zm-16,0h-8v-76h8v-4h8v80Zm-16,0h-8v-72h8v-4h8v76Zm-16,0h-8v-68h8v-4h8v72Zm-16,0H96v-64h8v-4h8v68Zm-16,0H80v-60h8v-4h8v64Zm-16,0H64v-56h8v-4h8v60Zm-16,0H48v-52h8v-4h8v56Zm-16,0H32v-48h8v-4h8v52Zm-16,0H16v-44h8v-4h8v48ZM8-341v-44h8v44Zm-8,0v-40H8v40Z" transform="translate(120 701)" fill="#ffdba0" />
+        <path id="color-2" data-name="color" d="M40-365v-40h8v40Zm-8,0v-44h8v44Zm-8,0v-48h8v48Zm-8,0v-52h8v52Zm-8,0v-56h8v56Zm-8,0v-60H8v60Z" transform="translate(64 725)" fill="#f46a27" />
+        <path id="color-3" data-name="color" d="M48-349v-40h8v40Zm8-4v-40h8v40Zm-16,0v-36h8v36Zm32-4v-40h8v40Zm-8,0v-36h8v36Zm-32,0v-28h8v28Zm56-4v-40h8v40Zm-8,0v-36h8v36Zm-56,0v-24h8v24Zm80-4v-40h8v40Zm-8,0v-36h8v36Zm-80,0v-16h8v16Zm-8-3v-13h8v13Zm112-1h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40ZM0-373v-4H8v4Zm152-4h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40Zm16-4v-40h8v40Zm-8,0v-36h8v36Zm24-4v-28h8v28Zm-8,0v-32h8v32Zm24-4v-16h8v16Zm-8,0v-20h8v20Zm24-4v-4h8v4Zm-8,0v-8h8v8Z" transform="translate(64 665)" fill="#feb338" />
+        <rect id="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="c0">
+        <g id="group">
+          <path id="line-2" data-name="line" d="M8-397v-4H0v-8H8v4H24v8Zm16-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-16h8v16Z" transform="translate(168 685)" fill="#303133" />
+          <path id="color-4" data-name="color" d="M0-409v-8H16v8Zm16-4v-8H32v8Zm16-4v-8H48v8Z" transform="translate(176 689)" fill="#ffdba0" />
+        </g>
+        <g id="box">
+          <path id="line-3" data-name="line" d="M64-213v-8h8v-4H88v-4h16v-4h16v-4h16v-4h16v-4h16v-4h16v-4h8V-381h-8v-8h8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-8h8v4h8v4h8v4h8v4h8v4h8v8h8v140h-8v8h-8v4H168v4H152v4H136v4H120v4H104v4H88v4H72v4Zm-8,0v-4H48v-4H40v-4H32v-4H24v-4H16v-8h8v4h8v4h8v4h8v4h8V-353H48v-4H40v-4H32v-4H24v-4H16v128H8V-381h8v4h8v4h8v4h8v4h8v4h8v4h8v144Zm8-136v-8h8v8Zm8-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8ZM16-381v-8h8v8Zm8-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-8H72v8Zm16-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h8v8Z" transform="translate(72 497)" fill="#303133" />
+          <path id="color-5" data-name="color" d="M0-265V-393H8v128Zm16-4V-397h8v-4h8v128H24v4Zm-8,0V-397h8v128Zm24-4V-401h8v-4h8v128H40v4Zm16-4V-405h8v-4h8v128H56v4Zm16-4V-409h8v-4h8v128H72v4Zm16-4V-413h8v-4h8v128H88v4Zm16-4V-417h8v-4h8v128h-8v4Zm16-4V-421h8v128Zm8-4V-425h8v128Z" transform="translate(136 541)" fill="#ffdba0" />
+          <path id="color-6" data-name="color" d="M32-281V-409h8v128Zm-8-4V-413h8v128Zm-8-4V-417h8v128Zm-8-4V-421h8v128Zm-8-4V-425H8v128Z" transform="translate(88 553)" fill="#f46a21" />
+          <path id="color-7" data-name="color" d="M48-369v-36h8v36Zm-8,0v-36h8v36Zm24-4v-36h8v-4h8v36H72v4Zm-8,0v-36h8v36Zm-24,0v-28h8v28Zm48-4v-36h8v-4h8v36H88v4Zm-56,0v-24h8v24Zm72-4v-36h8v-4h8v36h-8v4Zm-80,0v-16h8v16Zm96-4v-36h8v-4h8v36h-8v4ZM8-385v-12h8v12Zm120-4v-36h8v4h8v28h-8v4ZM0-389v-4H8v4Zm144-4v-24h8v24Zm16-4v-12h8v12Zm-8,0v-16h8v16Zm16-3v-5h8v5Z" transform="translate(88 509)" fill="#feb338" />
+          <path id="light" d="M0-409v-8H8v8Zm8-8v-8h8v8Z" transform="translate(144 577)" fill="#ffeed3" />
+          <path id="shadow" d="M0-389v-20H8v20Zm0-28v-8H8v8Z" transform="translate(256 633)" fill="#f7cd8a" />
+        </g>
+        <rect id="mask-2" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="d0">
+        <rect id="mask-3" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="e0">
+        <path id="line-4" data-name="line" d="M24-2360v-4H16v-4H8v-8h8v4h8v-12H16v-4H8v-8h8v4h8v4h8v28ZM0-2372v-28H8v28Z" transform="translate(92 2576)" fill="#303133" />
+        <rect id="mask-4" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="f0">
+        <path id="line-5" data-name="line" d="M0-2368v-16H8v8h8v8Zm16-4v-8H32v8Zm16-4v-16h8v16Zm-32-8v-8H16v8Zm16-4v-8H32v8Zm16-4v-8h8v8Z" transform="translate(192 2608)" fill="#303133" />
+        <rect id="mask-5" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="g0" transform="translate(0 -4)">
+        <path id="line-6" data-name="line" d="M0-2360v-32H8v32Zm8-4v-8H24v-16H8v-8H24v-4h8v32H24v4Z" transform="translate(168 2564)" fill="#303133" />
+        <path id="line-7" data-name="line" d="M0-2360v-32H8v32Zm8-4v-8H24v-16H8v-8H24v-4h8v32H24v4Z" transform="translate(216 2552)" fill="#303133" />
+        <rect id="mask-6" data-name="mask" width="360" height="360" transform="translate(0 4)" fill="#fff" opacity="0" />
+      </g>
+    </g>
+  </g>
+</svg><text x="314" y="23" fill="#303133" font-family="monospace" font-size="13" letter-spacing="0.3">02 T41 SAKURA-LASHES</text><svg x="315" y="30" width="270" height="270" viewBox="0 0 360 360"><defs>
+    <clipPath id="clip-Robot_0">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="g-t41-clip-path">
+      <rect id="mask_360" data-name="mask 360" width="360" height="360" fill="#fff" opacity="0" />
+    </clipPath>
+    <clipPath id="g-t41-clip-Robot_10">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="f-t41-clip-path">
+      <rect id="mask_360" data-name="mask 360" width="360" height="360" fill="#fff" opacity="0" />
+    </clipPath>
+    <clipPath id="f-t41-clip-Robot_1">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="e-t41-clip-Robot_12">
+      <rect width="360" height="360" />
+    </clipPath>
+  </defs>
+  <g id="Robot_0" data-name="Robot 0" clip-path="url(#clip-Robot_0)">
+    <rect width="360" height="360" fill="#e8c7d3" />
+    <g id="walker-subject" transform="translate(23.4 45.92) scale(0.87 0.928)" data-generation="walker" data-candidate-id="T41" data-avatar-style="female">
+      <g id="b0">
+        <path id="line" d="M248-301v-96h8v96ZM56-301v-44h8v44ZM0-301v-72H8v72Zm64-40v-8h8v8Zm-16,0v-4H40v-4H32v-4H24v-4H16v-4H8v-8h8v4h8v4h8v4h8v4h8v4h8v8Zm24-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H120v4Zm32-8v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H184v4ZM8-373v-8h8v8Zm192-4v-8h16v8ZM16-377v-8H32v8Zm16-4v-8H48v8Zm184,0v-8h16v8Zm16-4v-8h16v8ZM48-385v-8H64v-4H80v8H64v4Zm32-8v-8H96v8Zm160-4v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v4H176v-8h16v-4h8v4h8v4h8v4h8v4h8v4h8v4h8v8ZM96-397v-8h16v8Zm16-4v-8h16v-4h16v8H128v4Zm32-8v-8h16v8Zm16-4v-8h16v8Z" transform="translate(56 661)" fill="#303133" />
+        <path id="color" d="M176-341v-84h8v84Zm-8,0h-8v-80h8v-4h8v84Zm-16,0h-8v-76h8v-4h8v80Zm-16,0h-8v-72h8v-4h8v76Zm-16,0h-8v-68h8v-4h8v72Zm-16,0H96v-64h8v-4h8v68Zm-16,0H80v-60h8v-4h8v64Zm-16,0H64v-56h8v-4h8v60Zm-16,0H48v-52h8v-4h8v56Zm-16,0H32v-48h8v-4h8v52Zm-16,0H16v-44h8v-4h8v48ZM8-341v-44h8v44Zm-8,0v-40H8v40Z" transform="translate(120 701)" fill="#f2dee6" />
+        <path id="color-2" data-name="color" d="M40-365v-40h8v40Zm-8,0v-44h8v44Zm-8,0v-48h8v48Zm-8,0v-52h8v52Zm-8,0v-56h8v56Zm-8,0v-60H8v60Z" transform="translate(64 725)" fill="#b77e96" />
+        <path id="color-3" data-name="color" d="M48-349v-40h8v40Zm8-4v-40h8v40Zm-16,0v-36h8v36Zm32-4v-40h8v40Zm-8,0v-36h8v36Zm-32,0v-28h8v28Zm56-4v-40h8v40Zm-8,0v-36h8v36Zm-56,0v-24h8v24Zm80-4v-40h8v40Zm-8,0v-36h8v36Zm-80,0v-16h8v16Zm-8-3v-13h8v13Zm112-1h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40ZM0-373v-4H8v4Zm152-4h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40Zm16-4v-40h8v40Zm-8,0v-36h8v36Zm24-4v-28h8v28Zm-8,0v-32h8v32Zm24-4v-16h8v16Zm-8,0v-20h8v20Zm24-4v-4h8v4Zm-8,0v-8h8v8Z" transform="translate(64 665)" fill="#d2a2b5" />
+        <rect id="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="c0">
+        <g id="group">
+          <path id="line-2" data-name="line" d="M8-397v-4H0v-8H8v4H24v8Zm16-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-16h8v16Z" transform="translate(168 685)" fill="#303133" />
+          <path id="color-4" data-name="color" d="M0-409v-8H16v8Zm16-4v-8H32v8Zm16-4v-8H48v8Z" transform="translate(176 689)" fill="#f2dee6" />
+        </g>
+        <g id="box">
+          <path id="line-3" data-name="line" d="M64-213v-8h8v-4H88v-4h16v-4h16v-4h16v-4h16v-4h16v-4h16v-4h8V-381h-8v-8h8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-8h8v4h8v4h8v4h8v4h8v4h8v8h8v140h-8v8h-8v4H168v4H152v4H136v4H120v4H104v4H88v4H72v4Zm-8,0v-4H48v-4H40v-4H32v-4H24v-4H16v-8h8v4h8v4h8v4h8v4h8V-353H48v-4H40v-4H32v-4H24v-4H16v128H8V-381h8v4h8v4h8v4h8v4h8v4h8v4h8v144Zm8-136v-8h8v8Zm8-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8ZM16-381v-8h8v8Zm8-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-8H72v8Zm16-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h8v8Z" transform="translate(72 497)" fill="#303133" />
+          <path id="color-5" data-name="color" d="M0-265V-393H8v128Zm16-4V-397h8v-4h8v128H24v4Zm-8,0V-397h8v128Zm24-4V-401h8v-4h8v128H40v4Zm16-4V-405h8v-4h8v128H56v4Zm16-4V-409h8v-4h8v128H72v4Zm16-4V-413h8v-4h8v128H88v4Zm16-4V-417h8v-4h8v128h-8v4Zm16-4V-421h8v128Zm8-4V-425h8v128Z" transform="translate(136 541)" fill="#f2dee6" />
+          <path id="color-6" data-name="color" d="M32-281V-409h8v128Zm-8-4V-413h8v128Zm-8-4V-417h8v128Zm-8-4V-421h8v128Zm-8-4V-425H8v128Z" transform="translate(88 553)" fill="#b77e96" />
+          <path id="color-7" data-name="color" d="M48-369v-36h8v36Zm-8,0v-36h8v36Zm24-4v-36h8v-4h8v36H72v4Zm-8,0v-36h8v36Zm-24,0v-28h8v28Zm48-4v-36h8v-4h8v36H88v4Zm-56,0v-24h8v24Zm72-4v-36h8v-4h8v36h-8v4Zm-80,0v-16h8v16Zm96-4v-36h8v-4h8v36h-8v4ZM8-385v-12h8v12Zm120-4v-36h8v4h8v28h-8v4ZM0-389v-4H8v4Zm144-4v-24h8v24Zm16-4v-12h8v12Zm-8,0v-16h8v16Zm16-3v-5h8v5Z" transform="translate(88 509)" fill="#d2a2b5" />
+          <path id="light" d="M0-409v-8H8v8Zm8-8v-8h8v8Z" transform="translate(144 577)" fill="#faf0f4" />
+          <path id="shadow" d="M0-389v-20H8v20Zm0-28v-8H8v8Z" transform="translate(256 633)" fill="#dfbcc9" />
+        </g>
+        <rect id="mask-2" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="d0">
+        <rect id="mask-3" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="e0" transform="translate(0 8)" data-component-source="e12">
+        <path id="line-4" data-name="line" d="M16-1402v-4H8v-4H0v-8H8v4h8v-24H8v-4H0v-8H8v4h8v5h8v39Z" transform="translate(88 1606)" fill="#303133" />
+        <path id="color-8" data-name="color" d="M-1712-980v-4h-8v-24h8v4h8v24Z" transform="translate(1808 1172)" fill="#bfbfbf" />
+        <path id="shadow-2" data-name="shadow" d="M-1712-996v-8h8v8Zm-8-4v-8h8v8Z" transform="translate(1808 1188)" fill="#b4b2b2" />
+        <rect id="mask-4" data-name="mask" width="360" height="360" transform="translate(0 -8)" fill="#fff" opacity="0" />
+      </g>
+      <g id="f0" transform="translate(8 -4)" data-component-source="f1">
+        <path id="line-7" data-name="line" d="M-844-981v-3h-8v-8h-8v-8h8v8h8v3h16v-3h16v8h-16v3Zm32-8v-8h8v8Z" transform="translate(1036 1229)" fill="#303133" />
+        <rect id="mask-5" data-name="mask" width="360" height="360" transform="translate(-8 4)" fill="#fff" opacity="0" />
+      </g>
+      <g id="g0" transform="translate(-3 -4)" data-component-source="g10">
+        <path id="line-10" data-name="line" d="M8-928v-8H4v-36h8v36h4v-4H32v-4H48v8H32v4H16v4Zm40-12v-8H64v8Zm16-4v-8H80v8Zm16-4v-8h8v8Zm0-8v-32H64v-8H80v8h8v32ZM0-972v-8H16v-4H32v-4H48v8H32v4H16v4Zm48-12v-8H64v8Zm32-8v-8h8v8Z" transform="translate(112 1156)" fill="#303133" />
+        <path id="line-11" data-name="line" d="M8-928v-8H4v-36h8v36h4v-4H32v-4H48v8H32v4H16v4Zm40-12v-8H64v8Zm16-4v-8H80v8Zm16-4v-8h8v8Zm0-8v-32H64v-8H80v8h8v32ZM0-972v-8H16v-4H32v-4H48v8H32v4H16v4Zm48-12v-8H64v8Zm32-8v-8h8v8Z" transform="translate(212 1128)" fill="#303133" />
+        <path id="color-8" data-name="color" d="M0-948v-36H4v36Zm12-4v-36h8v-4h8v36H20v4Zm-8,0v-36h8v36Zm24-4v-36h8v-4h8v36H36v4Zm16-4v-36h8v-4h8v36H52v4Zm16-4v-36h8v36Z" transform="translate(124 1168)" fill="#ff4ab2" />
+        <path id="color-9" data-name="color" d="M0-948v-36H4v36Zm12-4v-36h8v-4h8v36H20v4Zm-8,0v-36h8v36Zm24-4v-36h8v-4h8v36H36v4Zm16-4v-36h8v-4h8v36H52v4Zm16-4v-36h8v36Z" transform="translate(224 1140)" fill="#ff4ab2" />
+        <g id="color-10" data-name="color">
+          <rect id="矩形_2132" data-name="矩形 2132" width="8" height="8" transform="translate(176 168)" fill="#4df8ff" />
+          <rect id="矩形_2147" data-name="矩形 2147" width="8" height="8" transform="translate(184 168)" fill="#fe4d4d" />
+          <rect id="矩形_2134" data-name="矩形 2134" width="8" height="8" transform="translate(168 172)" fill="#4df8ff" />
+          <rect id="矩形_2133" data-name="矩形 2133" width="16" height="8" transform="translate(128 180)" fill="#8d39ff" />
+          <rect id="矩形_2140" data-name="矩形 2140" width="16" height="8" transform="translate(176 176)" fill="#8d39ff" />
+          <rect id="矩形_2141" data-name="矩形 2141" width="16" height="8" transform="translate(160 180)" fill="#fe4d4d" />
+          <rect id="矩形_2135" data-name="矩形 2135" width="4" height="8" transform="translate(124 184)" fill="#4df8fe" />
+          <rect id="矩形_2145" data-name="矩形 2145" width="4" height="8" transform="translate(124 212)" fill="#fff84a" />
+          <rect id="矩形_2142" data-name="矩形 2142" width="16" height="8" transform="translate(144 184)" fill="#4df8fe" />
+          <rect id="矩形_2146" data-name="矩形 2146" width="16" height="8" transform="translate(144 200)" fill="#fe4d4d" />
+          <path id="路径_1" data-name="路径 1" d="M0,0H16V8H0Z" transform="translate(128 188)" fill="#fff84a" />
+          <path id="路径_2" data-name="路径 2" d="M0,0H16V8H0Z" transform="translate(128 208)" fill="#8d38f8" />
+          <path id="路径_3" data-name="路径 3" d="M0,0H16V8H0Z" transform="translate(176 184)" fill="#fff84a" />
+          <path id="路径_4" data-name="路径 4" d="M0,0H8V8H0Z" transform="translate(168 192)" fill="#fff84a" />
+          <rect id="矩形_2144" data-name="矩形 2144" width="4" height="8" transform="translate(124 192)" fill="#fff84a" />
+          <rect id="矩形_2137" data-name="矩形 2137" width="8" height="8" transform="translate(152 176)" fill="#fff848" />
+          <rect id="矩形_2139" data-name="矩形 2139" width="8" height="8" transform="translate(144 176)" fill="#fff848" />
+          <rect id="矩形_2138" data-name="矩形 2138" width="8" height="8" transform="translate(160 172)" fill="#fff848" />
+        </g>
+        <g id="color-11" data-name="color" transform="translate(100 -28)">
+          <rect id="矩形_2132-2" data-name="矩形 2132" width="8" height="8" transform="translate(176 168)" fill="#4df8ff" />
+          <rect id="矩形_2147-2" data-name="矩形 2147" width="8" height="8" transform="translate(184 168)" fill="#fe4d4d" />
+          <rect id="矩形_2134-2" data-name="矩形 2134" width="8" height="8" transform="translate(168 172)" fill="#4df8ff" />
+          <rect id="矩形_2133-2" data-name="矩形 2133" width="16" height="8" transform="translate(128 180)" fill="#8d39ff" />
+          <rect id="矩形_2140-2" data-name="矩形 2140" width="16" height="8" transform="translate(176 176)" fill="#8d39ff" />
+          <rect id="矩形_2141-2" data-name="矩形 2141" width="16" height="8" transform="translate(160 180)" fill="#fe4d4d" />
+          <rect id="矩形_2135-2" data-name="矩形 2135" width="4" height="8" transform="translate(124 184)" fill="#4df8fe" />
+          <rect id="矩形_2145-2" data-name="矩形 2145" width="4" height="8" transform="translate(124 212)" fill="#fff84a" />
+          <rect id="矩形_2142-2" data-name="矩形 2142" width="16" height="8" transform="translate(144 184)" fill="#4df8fe" />
+          <rect id="矩形_2146-2" data-name="矩形 2146" width="16" height="8" transform="translate(144 200)" fill="#fe4d4d" />
+          <path id="路径_1-2" data-name="路径 1" d="M0,0H16V8H0Z" transform="translate(128 188)" fill="#fff84a" />
+          <path id="路径_2-2" data-name="路径 2" d="M0,0H16V8H0Z" transform="translate(128 208)" fill="#8d38f8" />
+          <path id="路径_3-2" data-name="路径 3" d="M0,0H16V8H0Z" transform="translate(176 184)" fill="#fff84a" />
+          <path id="路径_4-2" data-name="路径 4" d="M0,0H8V8H0Z" transform="translate(168 192)" fill="#fff84a" />
+          <rect id="矩形_2144-2" data-name="矩形 2144" width="4" height="8" transform="translate(124 192)" fill="#fff84a" />
+          <rect id="矩形_2137-2" data-name="矩形 2137" width="8" height="8" transform="translate(152 176)" fill="#fff848" />
+          <rect id="矩形_2139-2" data-name="矩形 2139" width="8" height="8" transform="translate(144 176)" fill="#fff848" />
+          <rect id="矩形_2138-2" data-name="矩形 2138" width="8" height="8" transform="translate(160 172)" fill="#fff848" />
+        </g>
+        <path id="line-12" data-name="line" d="M863-3934v-8h8v8Zm8-4v-8h8v8Z" transform="translate(-663 4118)" fill="#303133" />
+        <rect id="mask-6" data-name="mask" width="360" height="360" transform="translate(3 4)" fill="#fff" opacity="0" />
+      </g>
+      <g id="h0" data-component-source="h5">
+        <g id="group-5" data-name="group" transform="translate(59 -16)">
+          <path id="color-12" data-name="color" d="M-1290-436v-8h36v4h-16v4Zm36-8v-8h5v8Zm-34,0v-8h34v8Zm3-8v-8h28v8Zm4-8v-8h21v8Zm2-8v-8h15v8Zm4-8v-16h10v8h-4v8Z" transform="translate(1430 564)" fill="#f2d5e4" />
+          <path id="color-13" data-name="color" d="M-1273-448v-4h-9v-4h-8v-4h26v8h-2v4Zm-13-12v-8h25v8Zm8-8v-8h21v8Zm8-8v-8h15v8Zm8-8v-8h11v8Zm8-8v-8h5v8Z" transform="translate(1398 572)" fill="#dda2c0" />
+          <path id="line-14" data-name="line" d="M-1254-428v-8h2v-8h3v-8h4v-8h2v-8h8v8h-2v8h-4v8h-3v8h-2v8Zm41-16v-8h8v8Zm-69,0h-8v-8h8v-4h8v-8h8v-8h8v-8h8v-8h8v-4h16v8h-5v16h-8v-8h2v-8h-5v8h-8v8h-8v8h-8v8h-8v8Zm65-8v-8h8v8Zm-4-8v-8h8v8Zm-4-8v-8h-4v-8h8v8h4v8Z" transform="translate(1386 556)" fill="#303133" />
+        </g>
+        <g id="group-6" data-name="group" transform="translate(0)">
+          <path id="color-14" data-name="color" d="M-1290-436v-8h36v4h-16v4Zm36-8v-8h5v8Zm-34,0v-8h34v8Zm3-8v-8h28v8Zm4-8v-8h21v8Zm2-8v-8h15v8Zm4-8v-16h10v8h-4v8Z" transform="translate(1430 564)" fill="#f2d5e4" />
+          <path id="color-15" data-name="color" d="M-1274-448v-4h-8v-4h-8v-4h26v8h-2v4Zm-12-12v-8h25v8Zm8-8v-8h21v8Zm8-8v-8h15v8Zm8-8v-8h11v8Zm8-8v-8h5v8Z" transform="translate(1398 572)" fill="#dda2c0" />
+          <path id="line-15" data-name="line" d="M-1254-428v-8h2v-8h3v-8h4v-8h2v-8h8v8h-2v8h-4v8h-3v8h-2v8Zm41-16v-8h8v8Zm-69,0h-8v-8h8v-4h8v-8h8v-8h8v-8h8v-8h8v-4h16v8h-5v16h-8v-8h2v-8h-5v8h-8v8h-8v8h-8v8h-8v8Zm65-8v-8h8v8Zm-4-8v-8h8v8Zm-4-8v-8h-4v-8h8v8h4v8Z" transform="translate(1386 556)" fill="#303133" />
+        </g>
+        <path id="shadow-3" data-name="shadow" d="M-1290-2968v-8h4v8Zm8-8v-8h4v8Zm59-16v-8h4v8Z" transform="translate(1418 3064)" fill="#c985a7" />
+        <path id="light-3" data-name="light" d="M-1290-2984v-16h2v8h4v8Z" transform="translate(1504 3056)" fill="#fff" />
+        <path id="light-4" data-name="light" d="M-1290-2976v-8h4v8Zm4-8v-16h2v8h4v8Z" transform="translate(1441 3072)" fill="#fff" />
+        <rect id="mask-7" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="female-blush" fill="#cf8ea4" opacity="0.65">
+        <path d="M160 216h16v4h-16z M240 204h16v4h-16z" />
+      </g>
+    </g>
+  </g>
+</svg><text x="614" y="23" fill="#303133" font-family="monospace" font-size="13" letter-spacing="0.3">03 T45 ORCHID-COOL</text><svg x="615" y="30" width="270" height="270" viewBox="0 0 360 360"><defs>
+    <clipPath id="clip-Robot_0">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="g-t45-clip-Robot_14">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="f-t45-clip-Robot_5">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="e-t45-clip-Robot_13">
+      <rect width="360" height="360" />
+    </clipPath>
+  </defs>
+  <g id="Robot_0" data-name="Robot 0" clip-path="url(#clip-Robot_0)">
+    <rect width="360" height="360" fill="#dcd0e4" />
+    <g id="walker-subject" transform="translate(23.4 45.92) scale(0.87 0.928)" data-generation="walker" data-candidate-id="T45" data-avatar-style="female">
+      <g id="b0">
+        <path id="line" d="M248-301v-96h8v96ZM56-301v-44h8v44ZM0-301v-72H8v72Zm64-40v-8h8v8Zm-16,0v-4H40v-4H32v-4H24v-4H16v-4H8v-8h8v4h8v4h8v4h8v4h8v4h8v8Zm24-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H120v4Zm32-8v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H184v4ZM8-373v-8h8v8Zm192-4v-8h16v8ZM16-377v-8H32v8Zm16-4v-8H48v8Zm184,0v-8h16v8Zm16-4v-8h16v8ZM48-385v-8H64v-4H80v8H64v4Zm32-8v-8H96v8Zm160-4v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v4H176v-8h16v-4h8v4h8v4h8v4h8v4h8v4h8v4h8v8ZM96-397v-8h16v8Zm16-4v-8h16v-4h16v8H128v4Zm32-8v-8h16v8Zm16-4v-8h16v8Z" transform="translate(56 661)" fill="#303133" />
+        <path id="color" d="M176-341v-84h8v84Zm-8,0h-8v-80h8v-4h8v84Zm-16,0h-8v-76h8v-4h8v80Zm-16,0h-8v-72h8v-4h8v76Zm-16,0h-8v-68h8v-4h8v72Zm-16,0H96v-64h8v-4h8v68Zm-16,0H80v-60h8v-4h8v64Zm-16,0H64v-56h8v-4h8v60Zm-16,0H48v-52h8v-4h8v56Zm-16,0H32v-48h8v-4h8v52Zm-16,0H16v-44h8v-4h8v48ZM8-341v-44h8v44Zm-8,0v-40H8v40Z" transform="translate(120 701)" fill="#ebe2ef" />
+        <path id="color-2" data-name="color" d="M40-365v-40h8v40Zm-8,0v-44h8v44Zm-8,0v-48h8v48Zm-8,0v-52h8v52Zm-8,0v-56h8v56Zm-8,0v-60H8v60Z" transform="translate(64 725)" fill="#a087ae" />
+        <path id="color-3" data-name="color" d="M48-349v-40h8v40Zm8-4v-40h8v40Zm-16,0v-36h8v36Zm32-4v-40h8v40Zm-8,0v-36h8v36Zm-32,0v-28h8v28Zm56-4v-40h8v40Zm-8,0v-36h8v36Zm-56,0v-24h8v24Zm80-4v-40h8v40Zm-8,0v-36h8v36Zm-80,0v-16h8v16Zm-8-3v-13h8v13Zm112-1h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40ZM0-373v-4H8v4Zm152-4h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40Zm16-4v-40h8v40Zm-8,0v-36h8v36Zm24-4v-28h8v28Zm-8,0v-32h8v32Zm24-4v-16h8v16Zm-8,0v-20h8v20Zm24-4v-4h8v4Zm-8,0v-8h8v8Z" transform="translate(64 665)" fill="#bfa6c7" />
+        <rect id="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="c0">
+        <g id="group">
+          <path id="line-2" data-name="line" d="M8-397v-4H0v-8H8v4H24v8Zm16-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-16h8v16Z" transform="translate(168 685)" fill="#303133" />
+          <path id="color-4" data-name="color" d="M0-409v-8H16v8Zm16-4v-8H32v8Zm16-4v-8H48v8Z" transform="translate(176 689)" fill="#ebe2ef" />
+        </g>
+        <g id="box">
+          <path id="line-3" data-name="line" d="M64-213v-8h8v-4H88v-4h16v-4h16v-4h16v-4h16v-4h16v-4h16v-4h8V-381h-8v-8h8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-8h8v4h8v4h8v4h8v4h8v4h8v8h8v140h-8v8h-8v4H168v4H152v4H136v4H120v4H104v4H88v4H72v4Zm-8,0v-4H48v-4H40v-4H32v-4H24v-4H16v-8h8v4h8v4h8v4h8v4h8V-353H48v-4H40v-4H32v-4H24v-4H16v128H8V-381h8v4h8v4h8v4h8v4h8v4h8v4h8v144Zm8-136v-8h8v8Zm8-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8ZM16-381v-8h8v8Zm8-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-8H72v8Zm16-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h8v8Z" transform="translate(72 497)" fill="#303133" />
+          <path id="color-5" data-name="color" d="M0-265V-393H8v128Zm16-4V-397h8v-4h8v128H24v4Zm-8,0V-397h8v128Zm24-4V-401h8v-4h8v128H40v4Zm16-4V-405h8v-4h8v128H56v4Zm16-4V-409h8v-4h8v128H72v4Zm16-4V-413h8v-4h8v128H88v4Zm16-4V-417h8v-4h8v128h-8v4Zm16-4V-421h8v128Zm8-4V-425h8v128Z" transform="translate(136 541)" fill="#ebe2ef" />
+          <path id="color-6" data-name="color" d="M32-281V-409h8v128Zm-8-4V-413h8v128Zm-8-4V-417h8v128Zm-8-4V-421h8v128Zm-8-4V-425H8v128Z" transform="translate(88 553)" fill="#a087ae" />
+          <path id="color-7" data-name="color" d="M48-369v-36h8v36Zm-8,0v-36h8v36Zm24-4v-36h8v-4h8v36H72v4Zm-8,0v-36h8v36Zm-24,0v-28h8v28Zm48-4v-36h8v-4h8v36H88v4Zm-56,0v-24h8v24Zm72-4v-36h8v-4h8v36h-8v4Zm-80,0v-16h8v16Zm96-4v-36h8v-4h8v36h-8v4ZM8-385v-12h8v12Zm120-4v-36h8v4h8v28h-8v4ZM0-389v-4H8v4Zm144-4v-24h8v24Zm16-4v-12h8v12Zm-8,0v-16h8v16Zm16-3v-5h8v5Z" transform="translate(88 509)" fill="#bfa6c7" />
+          <path id="light" d="M0-409v-8H8v8Zm8-8v-8h8v8Z" transform="translate(144 577)" fill="#f6f0f8" />
+          <path id="shadow" d="M0-389v-20H8v20Zm0-28v-8H8v8Z" transform="translate(256 633)" fill="#d0bed8" />
+        </g>
+        <rect id="mask-2" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="d0">
+        <rect id="mask-3" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="e0" transform="translate(0 -8)" data-component-source="e13">
+        <path id="line-4" data-name="line" d="M-414-381v-4h-8v-4h-8v-31h8v-5h8v8h8v36Zm0-12v-24h-8v24Z" transform="translate(519 609)" fill="#303133" />
+        <path id="line-5" data-name="line" d="M-430-385v-8h8v-28h8v32h-8v4Zm0-32v-8h8v8Z" transform="translate(702 569)" fill="#303133" />
+        <rect id="color-8" data-name="color" width="8" height="24" transform="translate(97 192)" fill="#ffbdad" />
+        <rect id="color-9" data-name="color" width="8" height="24" transform="translate(272 152)" fill="#ffbdad" />
+        <rect id="light" width="8" height="8" transform="translate(97 192)" fill="#59cde8" />
+        <rect id="light-2" data-name="light" width="8" height="8" transform="translate(272 152)" fill="#59cde8" />
+        <rect id="mask-4" data-name="mask" width="360" height="360" transform="translate(0 8)" fill="#fff" opacity="0" />
+      </g>
+      <g id="f0" transform="translate(-4)" data-component-source="f5">
+        <path id="line-10" data-name="line" d="M-860-3376v-8h12v-16h8v20h-8v4Zm20-10v-8h12v8Z" transform="translate(1064 3620)" fill="#303133" />
+        <rect id="mask-5" data-name="mask" width="360" height="360" transform="translate(4)" fill="#fff" opacity="0" />
+      </g>
+      <g id="g0" transform="translate(-3 -4)" data-component-source="g14">
+        <path id="联合_8" data-name="联合 8" d="M8-928v-8H4v-36h8v36h4v-4H32v-4H48v8H32v4H16v4Zm40-12v-8H64v8Zm16-4v-8H80v8Zm16-4v-8h8v8Zm0-8v-32H64v-8H80v8h8v32ZM0-972v-8H16v-4H32v-4H48v8H32v4H16v4Zm48-12v-8H64v8Zm32-8v-8h8v8Z" transform="translate(112 1156)" fill="#303133" />
+        <path id="联合_9" data-name="联合 9" d="M8-928v-8H4v-36h8v36h4v-4H32v-4H48v8H32v4H16v4Zm40-12v-8H64v8Zm16-4v-8H80v8Zm16-4v-8h8v8Zm0-8v-32H64v-8H80v8h8v32ZM0-972v-8H16v-4H32v-4H48v8H32v4H16v4Zm48-12v-8H64v8Zm32-8v-8h8v8Z" transform="translate(212 1128)" fill="#303133" />
+        <path id="联合_10" data-name="联合 10" d="M0-948v-36H4v36Zm12-4v-36h8v-4h8v36H20v4Zm-8,0v-36h8v36Zm24-4v-36h8v-4h8v36H36v4Zm16-4v-36h8v-4h8v36H52v4Zm16-4v-36h8v36Z" transform="translate(124 1168)" fill="#40f8ff" />
+        <path id="联合_11" data-name="联合 11" d="M0-948v-36H4v36Zm12-4v-36h8v-4h8v36H20v4Zm-8,0v-36h8v36Zm24-4v-36h8v-4h8v36H36v4Zm16-4v-36h8v-4h8v36H52v4Zm16-4v-36h8v36Z" transform="translate(224 1140)" fill="#40f8ff" />
+        <rect id="矩形_2148" data-name="矩形 2148" width="8" height="8" transform="translate(200 176)" fill="#303133" />
+        <rect id="矩形_2149" data-name="矩形 2149" width="8" height="8" transform="translate(208 172)" fill="#303133" />
+        <rect id="矩形_46788" data-name="矩形 46788" width="8" height="8" transform="translate(168 172)" fill="#fff" />
+        <rect id="矩形_46795" data-name="矩形 46795" width="8" height="8" transform="translate(268 144)" fill="#fff" />
+        <rect id="矩形_46791" data-name="矩形 46791" width="8" height="8" transform="translate(176 180)" fill="#fff" />
+        <rect id="矩形_46794" data-name="矩形 46794" width="8" height="8" transform="translate(276 152)" fill="#fff" />
+        <rect id="矩形_46792" data-name="矩形 46792" width="8" height="8" transform="translate(152 176)" fill="#fff" />
+        <rect id="矩形_46793" data-name="矩形 46793" width="8" height="8" transform="translate(252 148)" fill="#fff" />
+        <rect id="矩形_46789" data-name="矩形 46789" width="8" height="8" transform="translate(176 168)" fill="#fff" />
+        <rect id="矩形_46796" data-name="矩形 46796" width="8" height="8" transform="translate(276 140)" fill="#fff" />
+        <rect id="矩形_46790" data-name="矩形 46790" width="8" height="8" transform="translate(184 168)" fill="#fff" />
+        <rect id="矩形_46797" data-name="矩形 46797" width="8" height="8" transform="translate(284 140)" fill="#fff" />
+        <rect id="mask-6" data-name="mask" width="360" height="360" transform="translate(3 4)" fill="#fff" opacity="0" />
+      </g>
+      <g id="h0" data-component-source="h5">
+        <g id="group-5" data-name="group" transform="translate(59 -16)">
+          <path id="color-12" data-name="color" d="M-1290-436v-8h36v4h-16v4Zm36-8v-8h5v8Zm-34,0v-8h34v8Zm3-8v-8h28v8Zm4-8v-8h21v8Zm2-8v-8h15v8Zm4-8v-16h10v8h-4v8Z" transform="translate(1430 564)" fill="#e9d2e4" />
+          <path id="color-13" data-name="color" d="M-1273-448v-4h-9v-4h-8v-4h26v8h-2v4Zm-13-12v-8h25v8Zm8-8v-8h21v8Zm8-8v-8h15v8Zm8-8v-8h11v8Zm8-8v-8h5v8Z" transform="translate(1398 572)" fill="#cda4c2" />
+          <path id="line-14" data-name="line" d="M-1254-428v-8h2v-8h3v-8h4v-8h2v-8h8v8h-2v8h-4v8h-3v8h-2v8Zm41-16v-8h8v8Zm-69,0h-8v-8h8v-4h8v-8h8v-8h8v-8h8v-8h8v-4h16v8h-5v16h-8v-8h2v-8h-5v8h-8v8h-8v8h-8v8h-8v8Zm65-8v-8h8v8Zm-4-8v-8h8v8Zm-4-8v-8h-4v-8h8v8h4v8Z" transform="translate(1386 556)" fill="#303133" />
+        </g>
+        <g id="group-6" data-name="group" transform="translate(0)">
+          <path id="color-14" data-name="color" d="M-1290-436v-8h36v4h-16v4Zm36-8v-8h5v8Zm-34,0v-8h34v8Zm3-8v-8h28v8Zm4-8v-8h21v8Zm2-8v-8h15v8Zm4-8v-16h10v8h-4v8Z" transform="translate(1430 564)" fill="#e9d2e4" />
+          <path id="color-15" data-name="color" d="M-1274-448v-4h-8v-4h-8v-4h26v8h-2v4Zm-12-12v-8h25v8Zm8-8v-8h21v8Zm8-8v-8h15v8Zm8-8v-8h11v8Zm8-8v-8h5v8Z" transform="translate(1398 572)" fill="#cda4c2" />
+          <path id="line-15" data-name="line" d="M-1254-428v-8h2v-8h3v-8h4v-8h2v-8h8v8h-2v8h-4v8h-3v8h-2v8Zm41-16v-8h8v8Zm-69,0h-8v-8h8v-4h8v-8h8v-8h8v-8h8v-8h8v-4h16v8h-5v16h-8v-8h2v-8h-5v8h-8v8h-8v8h-8v8h-8v8Zm65-8v-8h8v8Zm-4-8v-8h8v8Zm-4-8v-8h-4v-8h8v8h4v8Z" transform="translate(1386 556)" fill="#303133" />
+        </g>
+        <path id="shadow-3" data-name="shadow" d="M-1290-2968v-8h4v8Zm8-8v-8h4v8Zm59-16v-8h4v8Z" transform="translate(1418 3064)" fill="#b586a6" />
+        <path id="light-3" data-name="light" d="M-1290-2984v-16h2v8h4v8Z" transform="translate(1504 3056)" fill="#fff" />
+        <path id="light-4" data-name="light" d="M-1290-2976v-8h4v8Zm4-8v-16h2v8h4v8Z" transform="translate(1441 3072)" fill="#fff" />
+        <rect id="mask-7" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+    </g>
+  </g>
+</svg><text x="914" y="23" fill="#303133" font-family="monospace" font-size="13" letter-spacing="0.3">04 T26 LAVENDER</text><svg x="915" y="30" width="270" height="270" viewBox="0 0 360 360"><defs>
+    <clipPath id="clip-Robot_0">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="g-t26-clip-path">
+      <rect id="mask_360" data-name="mask 360" width="360" height="360" fill="#fff" opacity="0" />
+    </clipPath>
+    <clipPath id="g-t26-clip-Robot_10">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="f-t26-clip-path">
+      <rect id="mask_360" data-name="mask 360" width="360" height="360" fill="#fff" opacity="0" />
+    </clipPath>
+    <clipPath id="f-t26-clip-Robot_10">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="e-t26-clip-Robot_11">
+      <rect width="360" height="360" />
+    </clipPath>
+  </defs>
+  <g id="Robot_0" data-name="Robot 0" clip-path="url(#clip-Robot_0)">
+    <rect width="360" height="360" fill="#cfc4de" />
+    <g id="walker-subject" transform="translate(23.4 25.92) scale(0.87 0.928)" data-generation="walker" data-candidate-id="T26" data-avatar-style="neutral">
+      <g id="b0">
+        <path id="line" d="M248-301v-96h8v96ZM56-301v-44h8v44ZM0-301v-72H8v72Zm64-40v-8h8v8Zm-16,0v-4H40v-4H32v-4H24v-4H16v-4H8v-8h8v4h8v4h8v4h8v4h8v4h8v8Zm24-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H120v4Zm32-8v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H184v4ZM8-373v-8h8v8Zm192-4v-8h16v8ZM16-377v-8H32v8Zm16-4v-8H48v8Zm184,0v-8h16v8Zm16-4v-8h16v8ZM48-385v-8H64v-4H80v8H64v4Zm32-8v-8H96v8Zm160-4v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v4H176v-8h16v-4h8v4h8v4h8v4h8v4h8v4h8v4h8v8ZM96-397v-8h16v8Zm16-4v-8h16v-4h16v8H128v4Zm32-8v-8h16v8Zm16-4v-8h16v8Z" transform="translate(56 661)" fill="#303133" />
+        <path id="color" d="M176-341v-84h8v84Zm-8,0h-8v-80h8v-4h8v84Zm-16,0h-8v-76h8v-4h8v80Zm-16,0h-8v-72h8v-4h8v76Zm-16,0h-8v-68h8v-4h8v72Zm-16,0H96v-64h8v-4h8v68Zm-16,0H80v-60h8v-4h8v64Zm-16,0H64v-56h8v-4h8v60Zm-16,0H48v-52h8v-4h8v56Zm-16,0H32v-48h8v-4h8v52Zm-16,0H16v-44h8v-4h8v48ZM8-341v-44h8v44Zm-8,0v-40H8v40Z" transform="translate(120 701)" fill="#eae6ef" />
+        <path id="color-2" data-name="color" d="M40-365v-40h8v40Zm-8,0v-44h8v44Zm-8,0v-48h8v48Zm-8,0v-52h8v52Zm-8,0v-56h8v56Zm-8,0v-60H8v60Z" transform="translate(64 725)" fill="#927cb1" />
+        <path id="color-3" data-name="color" d="M48-349v-40h8v40Zm8-4v-40h8v40Zm-16,0v-36h8v36Zm32-4v-40h8v40Zm-8,0v-36h8v36Zm-32,0v-28h8v28Zm56-4v-40h8v40Zm-8,0v-36h8v36Zm-56,0v-24h8v24Zm80-4v-40h8v40Zm-8,0v-36h8v36Zm-80,0v-16h8v16Zm-8-3v-13h8v13Zm112-1h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40ZM0-373v-4H8v4Zm152-4h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40Zm16-4v-40h8v40Zm-8,0v-36h8v36Zm24-4v-28h8v28Zm-8,0v-32h8v32Zm24-4v-16h8v16Zm-8,0v-20h8v20Zm24-4v-4h8v4Zm-8,0v-8h8v8Z" transform="translate(64 665)" fill="#b4a5cb" />
+        <rect id="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="c0">
+        <g id="group">
+          <path id="line-2" data-name="line" d="M8-397v-4H0v-8H8v4H24v8Zm16-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-16h8v16Z" transform="translate(168 685)" fill="#303133" />
+          <path id="color-4" data-name="color" d="M0-409v-8H16v8Zm16-4v-8H32v8Zm16-4v-8H48v8Z" transform="translate(176 689)" fill="#eae6ef" />
+        </g>
+        <g id="box">
+          <path id="line-3" data-name="line" d="M64-213v-8h8v-4H88v-4h16v-4h16v-4h16v-4h16v-4h16v-4h16v-4h8V-381h-8v-8h8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-8h8v4h8v4h8v4h8v4h8v4h8v8h8v140h-8v8h-8v4H168v4H152v4H136v4H120v4H104v4H88v4H72v4Zm-8,0v-4H48v-4H40v-4H32v-4H24v-4H16v-8h8v4h8v4h8v4h8v4h8V-353H48v-4H40v-4H32v-4H24v-4H16v128H8V-381h8v4h8v4h8v4h8v4h8v4h8v4h8v144Zm8-136v-8h8v8Zm8-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8ZM16-381v-8h8v8Zm8-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-8H72v8Zm16-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h8v8Z" transform="translate(72 497)" fill="#303133" />
+          <path id="color-5" data-name="color" d="M0-265V-393H8v128Zm16-4V-397h8v-4h8v128H24v4Zm-8,0V-397h8v128Zm24-4V-401h8v-4h8v128H40v4Zm16-4V-405h8v-4h8v128H56v4Zm16-4V-409h8v-4h8v128H72v4Zm16-4V-413h8v-4h8v128H88v4Zm16-4V-417h8v-4h8v128h-8v4Zm16-4V-421h8v128Zm8-4V-425h8v128Z" transform="translate(136 541)" fill="#eae6ef" />
+          <path id="color-6" data-name="color" d="M32-281V-409h8v128Zm-8-4V-413h8v128Zm-8-4V-417h8v128Zm-8-4V-421h8v128Zm-8-4V-425H8v128Z" transform="translate(88 553)" fill="#927cb1" />
+          <path id="color-7" data-name="color" d="M48-369v-36h8v36Zm-8,0v-36h8v36Zm24-4v-36h8v-4h8v36H72v4Zm-8,0v-36h8v36Zm-24,0v-28h8v28Zm48-4v-36h8v-4h8v36H88v4Zm-56,0v-24h8v24Zm72-4v-36h8v-4h8v36h-8v4Zm-80,0v-16h8v16Zm96-4v-36h8v-4h8v36h-8v4ZM8-385v-12h8v12Zm120-4v-36h8v4h8v28h-8v4ZM0-389v-4H8v4Zm144-4v-24h8v24Zm16-4v-12h8v12Zm-8,0v-16h8v16Zm16-3v-5h8v5Z" transform="translate(88 509)" fill="#b4a5cb" />
+          <path id="light" d="M0-409v-8H8v8Zm8-8v-8h8v8Z" transform="translate(144 577)" fill="#faf9fb" />
+          <path id="shadow" d="M0-389v-20H8v20Zm0-28v-8H8v8Z" transform="translate(256 633)" fill="#c5b9d5" />
+        </g>
+        <rect id="mask-2" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="d0">
+        <rect id="mask-3" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="e0" transform="translate(116 168)" data-component-source="e11">
+        <path id="line-6" data-name="line" d="M-1382-1140v-16h8v16Zm-24-12v-16h8v16Z" transform="translate(1382 1142)" fill="#333330" />
+        <rect id="mask-4" data-name="mask" width="360" height="360" transform="translate(-116 -168)" fill="#fff" opacity="0" />
+      </g>
+      <g id="f0" transform="translate(0 8)" data-component-source="f10">
+        <path id="line-8" data-name="line" d="M-1768,36V20h8V36Zm16-4V16h8V32Zm16-4V12h8V28Zm16-4V8h8V24Zm16-4V4h8V20Zm16-4V0h8V16Zm16-3V-3h8V13Z" transform="translate(1920 228)" fill="#303133" />
+        <path id="line-9" data-name="line" d="M-844-981v-3h-8v-8h-8v-8h8v8h8v3h16v-3h16v8h-16v3Zm32-8v-8h8v8Z" transform="translate(1036 1208)" fill="#303133" />
+        <rect id="mask-5" data-name="mask" width="360" height="360" transform="translate(0 -8)" fill="#fff" opacity="0" />
+      </g>
+      <g id="g0" transform="translate(-3 -4)" data-component-source="g10">
+        <path id="line-10" data-name="line" d="M8-928v-8H4v-36h8v36h4v-4H32v-4H48v8H32v4H16v4Zm40-12v-8H64v8Zm16-4v-8H80v8Zm16-4v-8h8v8Zm0-8v-32H64v-8H80v8h8v32ZM0-972v-8H16v-4H32v-4H48v8H32v4H16v4Zm48-12v-8H64v8Zm32-8v-8h8v8Z" transform="translate(112 1156)" fill="#303133" />
+        <path id="line-11" data-name="line" d="M8-928v-8H4v-36h8v36h4v-4H32v-4H48v8H32v4H16v4Zm40-12v-8H64v8Zm16-4v-8H80v8Zm16-4v-8h8v8Zm0-8v-32H64v-8H80v8h8v32ZM0-972v-8H16v-4H32v-4H48v8H32v4H16v4Zm48-12v-8H64v8Zm32-8v-8h8v8Z" transform="translate(212 1128)" fill="#303133" />
+        <path id="color-8" data-name="color" d="M0-948v-36H4v36Zm12-4v-36h8v-4h8v36H20v4Zm-8,0v-36h8v36Zm24-4v-36h8v-4h8v36H36v4Zm16-4v-36h8v-4h8v36H52v4Zm16-4v-36h8v36Z" transform="translate(124 1168)" fill="#ff4ab2" />
+        <path id="color-9" data-name="color" d="M0-948v-36H4v36Zm12-4v-36h8v-4h8v36H20v4Zm-8,0v-36h8v36Zm24-4v-36h8v-4h8v36H36v4Zm16-4v-36h8v-4h8v36H52v4Zm16-4v-36h8v36Z" transform="translate(224 1140)" fill="#ff4ab2" />
+        <g id="color-10" data-name="color">
+          <rect id="矩形_2132" data-name="矩形 2132" width="8" height="8" transform="translate(176 168)" fill="#4df8ff" />
+          <rect id="矩形_2147" data-name="矩形 2147" width="8" height="8" transform="translate(184 168)" fill="#fe4d4d" />
+          <rect id="矩形_2134" data-name="矩形 2134" width="8" height="8" transform="translate(168 172)" fill="#4df8ff" />
+          <rect id="矩形_2133" data-name="矩形 2133" width="16" height="8" transform="translate(128 180)" fill="#8d39ff" />
+          <rect id="矩形_2140" data-name="矩形 2140" width="16" height="8" transform="translate(176 176)" fill="#8d39ff" />
+          <rect id="矩形_2141" data-name="矩形 2141" width="16" height="8" transform="translate(160 180)" fill="#fe4d4d" />
+          <rect id="矩形_2135" data-name="矩形 2135" width="4" height="8" transform="translate(124 184)" fill="#4df8fe" />
+          <rect id="矩形_2145" data-name="矩形 2145" width="4" height="8" transform="translate(124 212)" fill="#fff84a" />
+          <rect id="矩形_2142" data-name="矩形 2142" width="16" height="8" transform="translate(144 184)" fill="#4df8fe" />
+          <rect id="矩形_2146" data-name="矩形 2146" width="16" height="8" transform="translate(144 200)" fill="#fe4d4d" />
+          <path id="路径_1" data-name="路径 1" d="M0,0H16V8H0Z" transform="translate(128 188)" fill="#fff84a" />
+          <path id="路径_2" data-name="路径 2" d="M0,0H16V8H0Z" transform="translate(128 208)" fill="#8d38f8" />
+          <path id="路径_3" data-name="路径 3" d="M0,0H16V8H0Z" transform="translate(176 184)" fill="#fff84a" />
+          <path id="路径_4" data-name="路径 4" d="M0,0H8V8H0Z" transform="translate(168 192)" fill="#fff84a" />
+          <rect id="矩形_2144" data-name="矩形 2144" width="4" height="8" transform="translate(124 192)" fill="#fff84a" />
+          <rect id="矩形_2137" data-name="矩形 2137" width="8" height="8" transform="translate(152 176)" fill="#fff848" />
+          <rect id="矩形_2139" data-name="矩形 2139" width="8" height="8" transform="translate(144 176)" fill="#fff848" />
+          <rect id="矩形_2138" data-name="矩形 2138" width="8" height="8" transform="translate(160 172)" fill="#fff848" />
+        </g>
+        <g id="color-11" data-name="color" transform="translate(100 -28)">
+          <rect id="矩形_2132-2" data-name="矩形 2132" width="8" height="8" transform="translate(176 168)" fill="#4df8ff" />
+          <rect id="矩形_2147-2" data-name="矩形 2147" width="8" height="8" transform="translate(184 168)" fill="#fe4d4d" />
+          <rect id="矩形_2134-2" data-name="矩形 2134" width="8" height="8" transform="translate(168 172)" fill="#4df8ff" />
+          <rect id="矩形_2133-2" data-name="矩形 2133" width="16" height="8" transform="translate(128 180)" fill="#8d39ff" />
+          <rect id="矩形_2140-2" data-name="矩形 2140" width="16" height="8" transform="translate(176 176)" fill="#8d39ff" />
+          <rect id="矩形_2141-2" data-name="矩形 2141" width="16" height="8" transform="translate(160 180)" fill="#fe4d4d" />
+          <rect id="矩形_2135-2" data-name="矩形 2135" width="4" height="8" transform="translate(124 184)" fill="#4df8fe" />
+          <rect id="矩形_2145-2" data-name="矩形 2145" width="4" height="8" transform="translate(124 212)" fill="#fff84a" />
+          <rect id="矩形_2142-2" data-name="矩形 2142" width="16" height="8" transform="translate(144 184)" fill="#4df8fe" />
+          <rect id="矩形_2146-2" data-name="矩形 2146" width="16" height="8" transform="translate(144 200)" fill="#fe4d4d" />
+          <path id="路径_1-2" data-name="路径 1" d="M0,0H16V8H0Z" transform="translate(128 188)" fill="#fff84a" />
+          <path id="路径_2-2" data-name="路径 2" d="M0,0H16V8H0Z" transform="translate(128 208)" fill="#8d38f8" />
+          <path id="路径_3-2" data-name="路径 3" d="M0,0H16V8H0Z" transform="translate(176 184)" fill="#fff84a" />
+          <path id="路径_4-2" data-name="路径 4" d="M0,0H8V8H0Z" transform="translate(168 192)" fill="#fff84a" />
+          <rect id="矩形_2144-2" data-name="矩形 2144" width="4" height="8" transform="translate(124 192)" fill="#fff84a" />
+          <rect id="矩形_2137-2" data-name="矩形 2137" width="8" height="8" transform="translate(152 176)" fill="#fff848" />
+          <rect id="矩形_2139-2" data-name="矩形 2139" width="8" height="8" transform="translate(144 176)" fill="#fff848" />
+          <rect id="矩形_2138-2" data-name="矩形 2138" width="8" height="8" transform="translate(160 172)" fill="#fff848" />
+        </g>
+        <path id="line-12" data-name="line" d="M863-3934v-8h8v8Zm8-4v-8h8v8Z" transform="translate(-663 4118)" fill="#303133" />
+        <rect id="mask-6" data-name="mask" width="360" height="360" transform="translate(3 4)" fill="#fff" opacity="0" />
+      </g>
+    </g>
+  </g>
+</svg><text x="1214" y="23" fill="#303133" font-family="monospace" font-size="13" letter-spacing="0.3">05 T03 AMBER</text><svg x="1215" y="30" width="270" height="270" viewBox="0 0 360 360"><defs>
+    <clipPath id="clip-Robot_0">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="g-t03-clip-Robot_2">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="f-t03-clip-Robot_5">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="e-t03-clip-Robot_8">
+      <rect width="360" height="360" />
+    </clipPath>
+  </defs>
+  <g id="Robot_0" data-name="Robot 0" clip-path="url(#clip-Robot_0)">
+    <rect width="360" height="360" fill="#dfcfb4" />
+    <g id="walker-subject" transform="translate(23.4 25.92) scale(0.87 0.928)" data-generation="walker" data-candidate-id="T03" data-avatar-style="neutral">
+      <g id="b0">
+        <path id="line" d="M248-301v-96h8v96ZM56-301v-44h8v44ZM0-301v-72H8v72Zm64-40v-8h8v8Zm-16,0v-4H40v-4H32v-4H24v-4H16v-4H8v-8h8v4h8v4h8v4h8v4h8v4h8v8Zm24-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H120v4Zm32-8v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H184v4ZM8-373v-8h8v8Zm192-4v-8h16v8ZM16-377v-8H32v8Zm16-4v-8H48v8Zm184,0v-8h16v8Zm16-4v-8h16v8ZM48-385v-8H64v-4H80v8H64v4Zm32-8v-8H96v8Zm160-4v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v4H176v-8h16v-4h8v4h8v4h8v4h8v4h8v4h8v4h8v8ZM96-397v-8h16v8Zm16-4v-8h16v-4h16v8H128v4Zm32-8v-8h16v8Zm16-4v-8h16v8Z" transform="translate(56 661)" fill="#303133" />
+        <path id="color" d="M176-341v-84h8v84Zm-8,0h-8v-80h8v-4h8v84Zm-16,0h-8v-76h8v-4h8v80Zm-16,0h-8v-72h8v-4h8v76Zm-16,0h-8v-68h8v-4h8v72Zm-16,0H96v-64h8v-4h8v68Zm-16,0H80v-60h8v-4h8v64Zm-16,0H64v-56h8v-4h8v60Zm-16,0H48v-52h8v-4h8v56Zm-16,0H32v-48h8v-4h8v52Zm-16,0H16v-44h8v-4h8v48ZM8-341v-44h8v44Zm-8,0v-40H8v40Z" transform="translate(120 701)" fill="#ece5d9" />
+        <path id="color-2" data-name="color" d="M40-365v-40h8v40Zm-8,0v-44h8v44Zm-8,0v-48h8v48Zm-8,0v-52h8v52Zm-8,0v-56h8v56Zm-8,0v-60H8v60Z" transform="translate(64 725)" fill="#b79a66" />
+        <path id="color-3" data-name="color" d="M48-349v-40h8v40Zm8-4v-40h8v40Zm-16,0v-36h8v36Zm32-4v-40h8v40Zm-8,0v-36h8v36Zm-32,0v-28h8v28Zm56-4v-40h8v40Zm-8,0v-36h8v36Zm-56,0v-24h8v24Zm80-4v-40h8v40Zm-8,0v-36h8v36Zm-80,0v-16h8v16Zm-8-3v-13h8v13Zm112-1h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40ZM0-373v-4H8v4Zm152-4h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40Zm16-4v-40h8v40Zm-8,0v-36h8v36Zm24-4v-28h8v28Zm-8,0v-32h8v32Zm24-4v-16h8v16Zm-8,0v-20h8v20Zm24-4v-4h8v4Zm-8,0v-8h8v8Z" transform="translate(64 665)" fill="#ceb892" />
+        <rect id="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="c0">
+        <g id="group">
+          <path id="line-2" data-name="line" d="M8-397v-4H0v-8H8v4H24v8Zm16-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-16h8v16Z" transform="translate(168 685)" fill="#303133" />
+          <path id="color-4" data-name="color" d="M0-409v-8H16v8Zm16-4v-8H32v8Zm16-4v-8H48v8Z" transform="translate(176 689)" fill="#ece5d9" />
+        </g>
+        <g id="box">
+          <path id="line-3" data-name="line" d="M64-213v-8h8v-4H88v-4h16v-4h16v-4h16v-4h16v-4h16v-4h16v-4h8V-381h-8v-8h8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-8h8v4h8v4h8v4h8v4h8v4h8v8h8v140h-8v8h-8v4H168v4H152v4H136v4H120v4H104v4H88v4H72v4Zm-8,0v-4H48v-4H40v-4H32v-4H24v-4H16v-8h8v4h8v4h8v4h8v4h8V-353H48v-4H40v-4H32v-4H24v-4H16v128H8V-381h8v4h8v4h8v4h8v4h8v4h8v4h8v144Zm8-136v-8h8v8Zm8-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8ZM16-381v-8h8v8Zm8-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-8H72v8Zm16-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h8v8Z" transform="translate(72 497)" fill="#303133" />
+          <path id="color-5" data-name="color" d="M0-265V-393H8v128Zm16-4V-397h8v-4h8v128H24v4Zm-8,0V-397h8v128Zm24-4V-401h8v-4h8v128H40v4Zm16-4V-405h8v-4h8v128H56v4Zm16-4V-409h8v-4h8v128H72v4Zm16-4V-413h8v-4h8v128H88v4Zm16-4V-417h8v-4h8v128h-8v4Zm16-4V-421h8v128Zm8-4V-425h8v128Z" transform="translate(136 541)" fill="#ece5d9" />
+          <path id="color-6" data-name="color" d="M32-281V-409h8v128Zm-8-4V-413h8v128Zm-8-4V-417h8v128Zm-8-4V-421h8v128Zm-8-4V-425H8v128Z" transform="translate(88 553)" fill="#b79a66" />
+          <path id="color-7" data-name="color" d="M48-369v-36h8v36Zm-8,0v-36h8v36Zm24-4v-36h8v-4h8v36H72v4Zm-8,0v-36h8v36Zm-24,0v-28h8v28Zm48-4v-36h8v-4h8v36H88v4Zm-56,0v-24h8v24Zm72-4v-36h8v-4h8v36h-8v4Zm-80,0v-16h8v16Zm96-4v-36h8v-4h8v36h-8v4ZM8-385v-12h8v12Zm120-4v-36h8v4h8v28h-8v4ZM0-389v-4H8v4Zm144-4v-24h8v24Zm16-4v-12h8v12Zm-8,0v-16h8v16Zm16-3v-5h8v5Z" transform="translate(88 509)" fill="#ceb892" />
+          <path id="light" d="M0-409v-8H8v8Zm8-8v-8h8v8Z" transform="translate(144 577)" fill="#f6f3ef" />
+          <path id="shadow" d="M0-389v-20H8v20Zm0-28v-8H8v8Z" transform="translate(256 633)" fill="#d6c5a8" />
+        </g>
+        <rect id="mask-2" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="d0">
+        <rect id="mask-3" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="e0" data-component-source="e8">
+        <path id="line-5" data-name="line" d="M-1282-464v-8h8v8Zm-8-4v-28h8v28Zm8-24v-8h8v8Z" transform="translate(1386 692)" fill="#303133" />
+        <rect id="mask-4" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="f0" transform="translate(-4)" data-component-source="f5">
+        <path id="line-10" data-name="line" d="M-860-3376v-8h12v-16h8v20h-8v4Zm20-10v-8h12v8Z" transform="translate(1064 3620)" fill="#303133" />
+        <rect id="mask-5" data-name="mask" width="360" height="360" transform="translate(4)" fill="#fff" opacity="0" />
+      </g>
+      <g id="g0" transform="translate(12)" data-component-source="g2">
+        <path id="shape-4" data-name="shape" d="M-1720-3376v-8h0v-8h8v-4h16v8h0v8h-16v4Zm24-8v-8h16v8Zm0-8v-8h16v8Z" transform="translate(1876 3556)" fill="#303133" />
+        <path id="shape-5" data-name="shape" d="M-1720-3376v-8h0v-8h8v-4h16v8h0v8h-16v4Zm24-8v-8h16v8Zm0-8v-8h16v8Z" transform="translate(1924 3544)" fill="#303133" />
+        <path id="shape-6" data-name="shape" d="M-872-2968v-20h8v20Zm40-12v-20h8v20Z" transform="translate(1052 3172)" fill="#303133" />
+        <path id="eye" d="M-872-2980v-8h8v8Zm40-12v-8h8v8Z" transform="translate(1052 3172)" fill="#fff" />
+        <rect id="mask-6" data-name="mask" width="360" height="360" transform="translate(-12)" fill="#fff" opacity="0" />
+      </g>
+    </g>
+  </g>
+</svg><text x="14" y="323" fill="#303133" font-family="monospace" font-size="13" letter-spacing="0.3">06 T04 LEMON</text><svg x="15" y="330" width="270" height="270" viewBox="0 0 360 360"><defs>
+    <clipPath id="clip-Robot_0">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="g-t04-clip-Robot_3">
+      <rect width="360" height="360" />
+    </clipPath>
+    <linearGradient id="f-t04-linear-gradient" x1="0.057" y1="0.354" x2="0.954" y2="0.713" gradientUnits="objectBoundingBox">
+      <stop offset="0" stop-color="#f6ff8d" stop-opacity="0.302" />
+      <stop offset="1" stop-color="#37cc7c" stop-opacity="0.902" />
+    </linearGradient>
+    <linearGradient id="f-t04-linear-gradient-2" y1="0.073" x2="0.898" y2="0.956" gradientUnits="objectBoundingBox">
+      <stop offset="0" stop-color="#a0f87f" />
+      <stop offset="1" stop-color="#3a932e" />
+    </linearGradient>
+    <clipPath id="f-t04-clip-Robot_7">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="e-t04-clip-Robot_12">
+      <rect width="360" height="360" />
+    </clipPath>
+  </defs>
+  <g id="Robot_0" data-name="Robot 0" clip-path="url(#clip-Robot_0)">
+    <rect width="360" height="360" fill="#dfdbbe" />
+    <g id="walker-subject" transform="translate(23.4 25.92) scale(0.87 0.928)" data-generation="walker" data-candidate-id="T04" data-avatar-style="neutral">
+      <g id="b0">
+        <path id="line" d="M248-301v-96h8v96ZM56-301v-44h8v44ZM0-301v-72H8v72Zm64-40v-8h8v8Zm-16,0v-4H40v-4H32v-4H24v-4H16v-4H8v-8h8v4h8v4h8v4h8v4h8v4h8v8Zm24-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H120v4Zm32-8v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H184v4ZM8-373v-8h8v8Zm192-4v-8h16v8ZM16-377v-8H32v8Zm16-4v-8H48v8Zm184,0v-8h16v8Zm16-4v-8h16v8ZM48-385v-8H64v-4H80v8H64v4Zm32-8v-8H96v8Zm160-4v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v4H176v-8h16v-4h8v4h8v4h8v4h8v4h8v4h8v4h8v8ZM96-397v-8h16v8Zm16-4v-8h16v-4h16v8H128v4Zm32-8v-8h16v8Zm16-4v-8h16v8Z" transform="translate(56 661)" fill="#303133" />
+        <path id="color" d="M176-341v-84h8v84Zm-8,0h-8v-80h8v-4h8v84Zm-16,0h-8v-76h8v-4h8v80Zm-16,0h-8v-72h8v-4h8v76Zm-16,0h-8v-68h8v-4h8v72Zm-16,0H96v-64h8v-4h8v68Zm-16,0H80v-60h8v-4h8v64Zm-16,0H64v-56h8v-4h8v60Zm-16,0H48v-52h8v-4h8v56Zm-16,0H32v-48h8v-4h8v52Zm-16,0H16v-44h8v-4h8v48ZM8-341v-44h8v44Zm-8,0v-40H8v40Z" transform="translate(120 701)" fill="#efede1" />
+        <path id="color-2" data-name="color" d="M40-365v-40h8v40Zm-8,0v-44h8v44Zm-8,0v-48h8v48Zm-8,0v-52h8v52Zm-8,0v-56h8v56Zm-8,0v-60H8v60Z" transform="translate(64 725)" fill="#b5ac73" />
+        <path id="color-3" data-name="color" d="M48-349v-40h8v40Zm8-4v-40h8v40Zm-16,0v-36h8v36Zm32-4v-40h8v40Zm-8,0v-36h8v36Zm-32,0v-28h8v28Zm56-4v-40h8v40Zm-8,0v-36h8v36Zm-56,0v-24h8v24Zm80-4v-40h8v40Zm-8,0v-36h8v36Zm-80,0v-16h8v16Zm-8-3v-13h8v13Zm112-1h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40ZM0-373v-4H8v4Zm152-4h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40Zm16-4v-40h8v40Zm-8,0v-36h8v36Zm24-4v-28h8v28Zm-8,0v-32h8v32Zm24-4v-16h8v16Zm-8,0v-20h8v20Zm24-4v-4h8v4Zm-8,0v-8h8v8Z" transform="translate(64 665)" fill="#cdc79d" />
+        <rect id="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="c0">
+        <g id="group">
+          <path id="line-2" data-name="line" d="M8-397v-4H0v-8H8v4H24v8Zm16-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-16h8v16Z" transform="translate(168 685)" fill="#303133" />
+          <path id="color-4" data-name="color" d="M0-409v-8H16v8Zm16-4v-8H32v8Zm16-4v-8H48v8Z" transform="translate(176 689)" fill="#efede1" />
+        </g>
+        <g id="box">
+          <path id="line-3" data-name="line" d="M64-213v-8h8v-4H88v-4h16v-4h16v-4h16v-4h16v-4h16v-4h16v-4h8V-381h-8v-8h8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-8h8v4h8v4h8v4h8v4h8v4h8v8h8v140h-8v8h-8v4H168v4H152v4H136v4H120v4H104v4H88v4H72v4Zm-8,0v-4H48v-4H40v-4H32v-4H24v-4H16v-8h8v4h8v4h8v4h8v4h8V-353H48v-4H40v-4H32v-4H24v-4H16v128H8V-381h8v4h8v4h8v4h8v4h8v4h8v4h8v144Zm8-136v-8h8v8Zm8-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8ZM16-381v-8h8v8Zm8-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-8H72v8Zm16-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h8v8Z" transform="translate(72 497)" fill="#303133" />
+          <path id="color-5" data-name="color" d="M0-265V-393H8v128Zm16-4V-397h8v-4h8v128H24v4Zm-8,0V-397h8v128Zm24-4V-401h8v-4h8v128H40v4Zm16-4V-405h8v-4h8v128H56v4Zm16-4V-409h8v-4h8v128H72v4Zm16-4V-413h8v-4h8v128H88v4Zm16-4V-417h8v-4h8v128h-8v4Zm16-4V-421h8v128Zm8-4V-425h8v128Z" transform="translate(136 541)" fill="#efede1" />
+          <path id="color-6" data-name="color" d="M32-281V-409h8v128Zm-8-4V-413h8v128Zm-8-4V-417h8v128Zm-8-4V-421h8v128Zm-8-4V-425H8v128Z" transform="translate(88 553)" fill="#b5ac73" />
+          <path id="color-7" data-name="color" d="M48-369v-36h8v36Zm-8,0v-36h8v36Zm24-4v-36h8v-4h8v36H72v4Zm-8,0v-36h8v36Zm-24,0v-28h8v28Zm48-4v-36h8v-4h8v36H88v4Zm-56,0v-24h8v24Zm72-4v-36h8v-4h8v36h-8v4Zm-80,0v-16h8v16Zm96-4v-36h8v-4h8v36h-8v4ZM8-385v-12h8v12Zm120-4v-36h8v4h8v28h-8v4ZM0-389v-4H8v4Zm144-4v-24h8v24Zm16-4v-12h8v12Zm-8,0v-16h8v16Zm16-3v-5h8v5Z" transform="translate(88 509)" fill="#cdc79d" />
+          <path id="light" d="M0-409v-8H8v8Zm8-8v-8h8v8Z" transform="translate(144 577)" fill="#f9f9f6" />
+          <path id="shadow" d="M0-389v-20H8v20Zm0-28v-8H8v8Z" transform="translate(256 633)" fill="#d6d2b2" />
+        </g>
+        <rect id="mask-2" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="d0">
+        <rect id="mask-3" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="e0" transform="translate(0 8)" data-component-source="e12">
+        <path id="line-4" data-name="line" d="M16-1402v-4H8v-4H0v-8H8v4h8v-24H8v-4H0v-8H8v4h8v5h8v39Z" transform="translate(88 1606)" fill="#303133" />
+        <path id="color-8" data-name="color" d="M-1712-980v-4h-8v-24h8v4h8v24Z" transform="translate(1808 1172)" fill="#bfbfbf" />
+        <path id="shadow-2" data-name="shadow" d="M-1712-996v-8h8v8Zm-8-4v-8h8v8Z" transform="translate(1808 1188)" fill="#b4b2b2" />
+        <rect id="mask-4" data-name="mask" width="360" height="360" transform="translate(0 -8)" fill="#fff" opacity="0" />
+      </g>
+      <g id="f0" transform="translate(-12 -2)" data-component-source="f7">
+        <path id="color-9" data-name="color" d="M-1672.064-1344.911c-10.825-.332-26.656-8.833-31.417-12.552s-11.745-16.916-15.269-28.177,1.518-25.21,1.518-25.21v-5.612h2.253l.732-1.824,6.791-13.8,10.67-8.716,11.554-4.659,21.955-4.537,28.887,8.249,13.158,12.288,10,26.1.492,11.34-10.494,28.537-17.659,12.537s-21.228,6.048-32.327,6.048C-1671.506-1344.9-1671.789-1344.9-1672.064-1344.911Z" transform="translate(1941.231 1645.463)" fill="url(#f-t04-linear-gradient)" />
+        <path id="light-2" data-name="light" d="M-1704-1430v-4h8v4Zm-8-8v-8h8v8Zm-8-4v-8h8v8Z" transform="translate(2012 1666)" fill="#fff" opacity="0.6" />
+        <path id="shadow-2" data-name="shadow" d="M-1674-1404v-3h8v-7h8v8h-8v2Zm-8-2v-4h8v4Zm24-2v-4h8v4Zm-32,0v-8h8v8Zm40-2v-1h8v1Zm-48,0v-8h8v8Zm-8-4v-5h-8v-8h-4v-15h-2v-8h2v8h4v7h4v8h4v5h8v8Zm24-2v-4h8v4Z" transform="translate(1946 1703)" fill="url(#f-t04-linear-gradient-2)" />
+        <path id="line-6" data-name="line" d="M-1664-1335v-8h8v-2h8v-2h8v-2h8v-4h7v-5h5v-7h8v8h-5v7h-7v5h-8v4h-8v2h-8v2h-8v2Zm-8-2v-2h-8v-2h-8v-4h-8v-5h-7v-7h-5v-8h8v7h5v5h7v4h8v2h8v2h8v8Zm56-28v-8h8v8Zm-96,0v-8h8v8Zm99-8v-8h8v8Zm-102,0v-8h8v8Zm105-8v-8h2v-8h8v8h-2v8Zm-108,0v-8h-2v-8h8v8h2v8Zm108-16v-8h-3v-8h-3v-8h-4v-7h-5v-5h-7v-4h-8v-2h-8v-2h-8v-1h-8v-8h8v1h8v2h8v2h8v4h8v5h7v7h5v8h4v8h3v8h3v8Zm-108,0v-8h8v8Zm6-16v-8h4v-8h5v-7h7v-5h8v-4h8v-2h8v-2h8v8h-8v2h-8v2h-8v4h-7v5h-5v7h-4v8Z" transform="translate(1936 1642)" fill="#303133" />
+        <path id="line-7" data-name="line" d="M-1696-1434h-8v-2h-8v-4h-8v-8h8v4h8v2h16v8Z" transform="translate(1912 1674)" fill="#303133" />
+        <rect id="mask-5" data-name="mask" width="360" height="360" transform="translate(12 2)" fill="#fff" opacity="0" />
+      </g>
+      <g id="g0" transform="translate(0 12)" data-component-source="g3">
+        <path id="shape-5" data-name="shape" d="M-1640-412v-5h-8v-4h-8v-19h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-8h8v4h8v4h8v4h8v4h8v4h8v4h8v4h8v4h8v-4h8v-4h8v40Zm8-4v-40h8v40Zm8-4v-40h8v4h8v4h8v24h-8v6h-8v2Zm24-28v-8h8v8Zm8-8v-8h8v8Zm8-8v-8h8v8Zm8-8v-8h8v8Zm8-8v-8h8v8Zm8-8v-8h8v8Zm8-4v-8h8v8Z" transform="translate(1808 620)" fill="#303133" />
+        <path id="light-2" data-name="light" d="M-1728-484v-8h8v8Zm8-8v-8h8v8Z" transform="translate(1896 676)" fill="#48494d" />
+        <g id="group-2" data-name="group" transform="translate(-4)">
+          <g id="group-3" data-name="group">
+            <rect id="矩形_7691" data-name="矩形 7691" width="8" height="8" transform="translate(240 160)" fill="#303133" />
+            <rect id="矩形_7694" data-name="矩形 7694" width="8" height="8" transform="translate(240 176)" fill="#303133" />
+            <rect id="矩形_7692" data-name="矩形 7692" width="8" height="15" transform="translate(248 163)" fill="#303133" />
+            <rect id="矩形_7693" data-name="矩形 7693" width="8" height="15" transform="translate(232 166)" fill="#303133" />
+          </g>
+          <rect id="eye" width="8" height="8" transform="translate(240 168)" fill="#ff3131" />
+        </g>
+        <image id="light-3" data-name="light" width="132.781" height="127.19" transform="translate(203.227 85.533) rotate(20)" xlink:href="data:image/png;base64,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" />
+        <rect id="mask-6" data-name="mask" width="360" height="360" transform="translate(0 -12)" fill="#fff" opacity="0" />
+      </g>
+    </g>
+  </g>
+</svg><text x="314" y="323" fill="#303133" font-family="monospace" font-size="13" letter-spacing="0.3">07 T01 APRICOT</text><svg x="315" y="330" width="270" height="270" viewBox="0 0 360 360"><defs>
+    <clipPath id="clip-Robot_0">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="g-t01-clip-Robot_0">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="f-t01-clip-path">
+      <rect id="mask_360" data-name="mask 360" width="360" height="360" fill="#fff" opacity="0" />
+    </clipPath>
+    <clipPath id="f-t01-clip-Robot_1">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="e-t01-clip-Robot_0">
+      <rect width="360" height="360" />
+    </clipPath>
+  </defs>
+  <g id="Robot_0" data-name="Robot 0" clip-path="url(#clip-Robot_0)">
+    <rect width="360" height="360" fill="#dfcbb9" />
+    <g id="walker-subject" transform="translate(23.4 25.92) scale(0.87 0.928)" data-generation="walker" data-candidate-id="T01" data-avatar-style="neutral">
+      <g id="b0">
+        <path id="line" d="M248-301v-96h8v96ZM56-301v-44h8v44ZM0-301v-72H8v72Zm64-40v-8h8v8Zm-16,0v-4H40v-4H32v-4H24v-4H16v-4H8v-8h8v4h8v4h8v4h8v4h8v4h8v8Zm24-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H120v4Zm32-8v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H184v4ZM8-373v-8h8v8Zm192-4v-8h16v8ZM16-377v-8H32v8Zm16-4v-8H48v8Zm184,0v-8h16v8Zm16-4v-8h16v8ZM48-385v-8H64v-4H80v8H64v4Zm32-8v-8H96v8Zm160-4v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v4H176v-8h16v-4h8v4h8v4h8v4h8v4h8v4h8v4h8v8ZM96-397v-8h16v8Zm16-4v-8h16v-4h16v8H128v4Zm32-8v-8h16v8Zm16-4v-8h16v8Z" transform="translate(56 661)" fill="#303133" />
+        <path id="color" d="M176-341v-84h8v84Zm-8,0h-8v-80h8v-4h8v84Zm-16,0h-8v-76h8v-4h8v80Zm-16,0h-8v-72h8v-4h8v76Zm-16,0h-8v-68h8v-4h8v72Zm-16,0H96v-64h8v-4h8v68Zm-16,0H80v-60h8v-4h8v64Zm-16,0H64v-56h8v-4h8v60Zm-16,0H48v-52h8v-4h8v56Zm-16,0H32v-48h8v-4h8v52Zm-16,0H16v-44h8v-4h8v48ZM8-341v-44h8v44Zm-8,0v-40H8v40Z" transform="translate(120 701)" fill="#eee5dd" />
+        <path id="color-2" data-name="color" d="M40-365v-40h8v40Zm-8,0v-44h8v44Zm-8,0v-48h8v48Zm-8,0v-52h8v52Zm-8,0v-56h8v56Zm-8,0v-60H8v60Z" transform="translate(64 725)" fill="#b78f6c" />
+        <path id="color-3" data-name="color" d="M48-349v-40h8v40Zm8-4v-40h8v40Zm-16,0v-36h8v36Zm32-4v-40h8v40Zm-8,0v-36h8v36Zm-32,0v-28h8v28Zm56-4v-40h8v40Zm-8,0v-36h8v36Zm-56,0v-24h8v24Zm80-4v-40h8v40Zm-8,0v-36h8v36Zm-80,0v-16h8v16Zm-8-3v-13h8v13Zm112-1h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40ZM0-373v-4H8v4Zm152-4h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40Zm16-4v-40h8v40Zm-8,0v-36h8v36Zm24-4v-28h8v28Zm-8,0v-32h8v32Zm24-4v-16h8v16Zm-8,0v-20h8v20Zm24-4v-4h8v4Zm-8,0v-8h8v8Z" transform="translate(64 665)" fill="#ceb197" />
+        <rect id="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="c0">
+        <g id="group">
+          <path id="line-2" data-name="line" d="M8-397v-4H0v-8H8v4H24v8Zm16-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-16h8v16Z" transform="translate(168 685)" fill="#303133" />
+          <path id="color-4" data-name="color" d="M0-409v-8H16v8Zm16-4v-8H32v8Zm16-4v-8H48v8Z" transform="translate(176 689)" fill="#eee5dd" />
+        </g>
+        <g id="box">
+          <path id="line-3" data-name="line" d="M64-213v-8h8v-4H88v-4h16v-4h16v-4h16v-4h16v-4h16v-4h16v-4h8V-381h-8v-8h8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-8h8v4h8v4h8v4h8v4h8v4h8v8h8v140h-8v8h-8v4H168v4H152v4H136v4H120v4H104v4H88v4H72v4Zm-8,0v-4H48v-4H40v-4H32v-4H24v-4H16v-8h8v4h8v4h8v4h8v4h8V-353H48v-4H40v-4H32v-4H24v-4H16v128H8V-381h8v4h8v4h8v4h8v4h8v4h8v4h8v144Zm8-136v-8h8v8Zm8-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8ZM16-381v-8h8v8Zm8-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-8H72v8Zm16-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h8v8Z" transform="translate(72 497)" fill="#303133" />
+          <path id="color-5" data-name="color" d="M0-265V-393H8v128Zm16-4V-397h8v-4h8v128H24v4Zm-8,0V-397h8v128Zm24-4V-401h8v-4h8v128H40v4Zm16-4V-405h8v-4h8v128H56v4Zm16-4V-409h8v-4h8v128H72v4Zm16-4V-413h8v-4h8v128H88v4Zm16-4V-417h8v-4h8v128h-8v4Zm16-4V-421h8v128Zm8-4V-425h8v128Z" transform="translate(136 541)" fill="#eee5dd" />
+          <path id="color-6" data-name="color" d="M32-281V-409h8v128Zm-8-4V-413h8v128Zm-8-4V-417h8v128Zm-8-4V-421h8v128Zm-8-4V-425H8v128Z" transform="translate(88 553)" fill="#b78f6c" />
+          <path id="color-7" data-name="color" d="M48-369v-36h8v36Zm-8,0v-36h8v36Zm24-4v-36h8v-4h8v36H72v4Zm-8,0v-36h8v36Zm-24,0v-28h8v28Zm48-4v-36h8v-4h8v36H88v4Zm-56,0v-24h8v24Zm72-4v-36h8v-4h8v36h-8v4Zm-80,0v-16h8v16Zm96-4v-36h8v-4h8v36h-8v4ZM8-385v-12h8v12Zm120-4v-36h8v4h8v28h-8v4ZM0-389v-4H8v4Zm144-4v-24h8v24Zm16-4v-12h8v12Zm-8,0v-16h8v16Zm16-3v-5h8v5Z" transform="translate(88 509)" fill="#ceb197" />
+          <path id="light" d="M0-409v-8H8v8Zm8-8v-8h8v8Z" transform="translate(144 577)" fill="#f8f5f2" />
+          <path id="shadow" d="M0-389v-20H8v20Zm0-28v-8H8v8Z" transform="translate(256 633)" fill="#d7c0ad" />
+        </g>
+        <rect id="mask-2" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="d0">
+        <rect id="mask-3" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="e0" data-component-source="e0">
+        <path id="line-4" data-name="line" d="M24-2360v-4H16v-4H8v-8h8v4h8v-12H16v-4H8v-8h8v4h8v4h8v28ZM0-2372v-28H8v28Z" transform="translate(92 2576)" fill="#303133" />
+        <rect id="mask-4" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="f0" transform="translate(8 -4)" data-component-source="f1">
+        <path id="line-7" data-name="line" d="M-844-981v-3h-8v-8h-8v-8h8v8h8v3h16v-3h16v8h-16v3Zm32-8v-8h8v8Z" transform="translate(1036 1229)" fill="#303133" />
+        <rect id="mask-5" data-name="mask" width="360" height="360" transform="translate(-8 4)" fill="#fff" opacity="0" />
+      </g>
+      <g id="g0" transform="translate(0 -4)" data-component-source="g0">
+        <path id="line-6" data-name="line" d="M0-2360v-32H8v32Zm8-4v-8H24v-16H8v-8H24v-4h8v32H24v4Z" transform="translate(168 2564)" fill="#303133" />
+        <path id="line-7" data-name="line" d="M0-2360v-32H8v32Zm8-4v-8H24v-16H8v-8H24v-4h8v32H24v4Z" transform="translate(216 2552)" fill="#303133" />
+        <rect id="mask-6" data-name="mask" width="360" height="360" transform="translate(0 4)" fill="#fff" opacity="0" />
+      </g>
+    </g>
+  </g>
+</svg><text x="614" y="323" fill="#303133" font-family="monospace" font-size="13" letter-spacing="0.3">08 T15 PETROL</text><svg x="615" y="330" width="270" height="270" viewBox="0 0 360 360"><defs>
+    <clipPath id="clip-Robot_0">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="g-t15-clip-Robot_14">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="f-t15-clip-Robot_14">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="e-t15-clip-Robot_11">
+      <rect width="360" height="360" />
+    </clipPath>
+  </defs>
+  <g id="Robot_0" data-name="Robot 0" clip-path="url(#clip-Robot_0)">
+    <rect width="360" height="360" fill="#a5c4cf" />
+    <g id="walker-subject" transform="translate(23.4 25.92) scale(0.87 0.928)" data-generation="walker" data-candidate-id="T15" data-avatar-style="neutral">
+      <g id="b0">
+        <path id="line" d="M248-301v-96h8v96ZM56-301v-44h8v44ZM0-301v-72H8v72Zm64-40v-8h8v8Zm-16,0v-4H40v-4H32v-4H24v-4H16v-4H8v-8h8v4h8v4h8v4h8v4h8v4h8v8Zm24-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H120v4Zm32-8v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H184v4ZM8-373v-8h8v8Zm192-4v-8h16v8ZM16-377v-8H32v8Zm16-4v-8H48v8Zm184,0v-8h16v8Zm16-4v-8h16v8ZM48-385v-8H64v-4H80v8H64v4Zm32-8v-8H96v8Zm160-4v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v4H176v-8h16v-4h8v4h8v4h8v4h8v4h8v4h8v4h8v8ZM96-397v-8h16v8Zm16-4v-8h16v-4h16v8H128v4Zm32-8v-8h16v8Zm16-4v-8h16v8Z" transform="translate(56 661)" fill="#303133" />
+        <path id="color" d="M176-341v-84h8v84Zm-8,0h-8v-80h8v-4h8v84Zm-16,0h-8v-76h8v-4h8v80Zm-16,0h-8v-72h8v-4h8v76Zm-16,0h-8v-68h8v-4h8v72Zm-16,0H96v-64h8v-4h8v68Zm-16,0H80v-60h8v-4h8v64Zm-16,0H64v-56h8v-4h8v60Zm-16,0H48v-52h8v-4h8v56Zm-16,0H32v-48h8v-4h8v52Zm-16,0H16v-44h8v-4h8v48ZM8-341v-44h8v44Zm-8,0v-40H8v40Z" transform="translate(120 701)" fill="#c9d9df" />
+        <path id="color-2" data-name="color" d="M40-365v-40h8v40Zm-8,0v-44h8v44Zm-8,0v-48h8v48Zm-8,0v-52h8v52Zm-8,0v-56h8v56Zm-8,0v-60H8v60Z" transform="translate(64 725)" fill="#5d91a2" />
+        <path id="color-3" data-name="color" d="M48-349v-40h8v40Zm8-4v-40h8v40Zm-16,0v-36h8v36Zm32-4v-40h8v40Zm-8,0v-36h8v36Zm-32,0v-28h8v28Zm56-4v-40h8v40Zm-8,0v-36h8v36Zm-56,0v-24h8v24Zm80-4v-40h8v40Zm-8,0v-36h8v36Zm-80,0v-16h8v16Zm-8-3v-13h8v13Zm112-1h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40ZM0-373v-4H8v4Zm152-4h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40Zm16-4v-40h8v40Zm-8,0v-36h8v36Zm24-4v-28h8v28Zm-8,0v-32h8v32Zm24-4v-16h8v16Zm-8,0v-20h8v20Zm24-4v-4h8v4Zm-8,0v-8h8v8Z" transform="translate(64 665)" fill="#86aebc" />
+        <rect id="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="c0">
+        <g id="group">
+          <path id="line-2" data-name="line" d="M8-397v-4H0v-8H8v4H24v8Zm16-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-16h8v16Z" transform="translate(168 685)" fill="#303133" />
+          <path id="color-4" data-name="color" d="M0-409v-8H16v8Zm16-4v-8H32v8Zm16-4v-8H48v8Z" transform="translate(176 689)" fill="#c9d9df" />
+        </g>
+        <g id="box">
+          <path id="line-3" data-name="line" d="M64-213v-8h8v-4H88v-4h16v-4h16v-4h16v-4h16v-4h16v-4h16v-4h8V-381h-8v-8h8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-8h8v4h8v4h8v4h8v4h8v4h8v8h8v140h-8v8h-8v4H168v4H152v4H136v4H120v4H104v4H88v4H72v4Zm-8,0v-4H48v-4H40v-4H32v-4H24v-4H16v-8h8v4h8v4h8v4h8v4h8V-353H48v-4H40v-4H32v-4H24v-4H16v128H8V-381h8v4h8v4h8v4h8v4h8v4h8v4h8v144Zm8-136v-8h8v8Zm8-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8ZM16-381v-8h8v8Zm8-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-8H72v8Zm16-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h8v8Z" transform="translate(72 497)" fill="#303133" />
+          <path id="color-5" data-name="color" d="M0-265V-393H8v128Zm16-4V-397h8v-4h8v128H24v4Zm-8,0V-397h8v128Zm24-4V-401h8v-4h8v128H40v4Zm16-4V-405h8v-4h8v128H56v4Zm16-4V-409h8v-4h8v128H72v4Zm16-4V-413h8v-4h8v128H88v4Zm16-4V-417h8v-4h8v128h-8v4Zm16-4V-421h8v128Zm8-4V-425h8v128Z" transform="translate(136 541)" fill="#c9d9df" />
+          <path id="color-6" data-name="color" d="M32-281V-409h8v128Zm-8-4V-413h8v128Zm-8-4V-417h8v128Zm-8-4V-421h8v128Zm-8-4V-425H8v128Z" transform="translate(88 553)" fill="#5d91a2" />
+          <path id="color-7" data-name="color" d="M48-369v-36h8v36Zm-8,0v-36h8v36Zm24-4v-36h8v-4h8v36H72v4Zm-8,0v-36h8v36Zm-24,0v-28h8v28Zm48-4v-36h8v-4h8v36H88v4Zm-56,0v-24h8v24Zm72-4v-36h8v-4h8v36h-8v4Zm-80,0v-16h8v16Zm96-4v-36h8v-4h8v36h-8v4ZM8-385v-12h8v12Zm120-4v-36h8v4h8v28h-8v4ZM0-389v-4H8v4Zm144-4v-24h8v24Zm16-4v-12h8v12Zm-8,0v-16h8v16Zm16-3v-5h8v5Z" transform="translate(88 509)" fill="#86aebc" />
+          <path id="light" d="M0-409v-8H8v8Zm8-8v-8h8v8Z" transform="translate(144 577)" fill="#dde6e9" />
+          <path id="shadow" d="M0-389v-20H8v20Zm0-28v-8H8v8Z" transform="translate(256 633)" fill="#9bbbc5" />
+        </g>
+        <rect id="mask-2" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="d0">
+        <rect id="mask-3" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="e0" transform="translate(116 168)" data-component-source="e11">
+        <path id="line-6" data-name="line" d="M-1382-1140v-16h8v16Zm-24-12v-16h8v16Z" transform="translate(1382 1142)" fill="#333330" />
+        <rect id="mask-4" data-name="mask" width="360" height="360" transform="translate(-116 -168)" fill="#fff" opacity="0" />
+      </g>
+      <g id="f0" data-component-source="f14">
+        <path id="联合_116" data-name="联合 116" d="M1930-2382v-8h8v-2h8v8h-8v2Zm16-4v-8h8v-2h8v8h-8v2Zm16-4v-8h8v8Zm8-2v-8h8v8Zm-32,0v-8h8v8Zm8-2v-8h8v8Zm8-2v-8h8v8Zm8-2v-8h8v8Z" transform="translate(-1742 2618)" fill="#3e2d25" />
+        <path id="联合_117" data-name="联合 117" d="M1930-2358v-16h8v4h8v8h-8v4Zm16-4v-8h8v-4h8v8h-8v4Zm16-4v-8h8v-4h8v8h-8v4Zm16-4v-8h8v-2h8v6h-8v4Zm16-4v-8h8v8Zm16-4v0h-8v-12h8v-2h8v2h8v8h-8v4Zm16-4v-8h8v-4h8v8h-8v4Zm16-4v-8h8v8Zm8-4v-16h8v16Z" transform="translate(-1794 2634)" fill="#3e2d25" />
+        <rect id="mask-5" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="g0" transform="translate(-3 -4)" data-component-source="g14">
+        <path id="联合_8" data-name="联合 8" d="M8-928v-8H4v-36h8v36h4v-4H32v-4H48v8H32v4H16v4Zm40-12v-8H64v8Zm16-4v-8H80v8Zm16-4v-8h8v8Zm0-8v-32H64v-8H80v8h8v32ZM0-972v-8H16v-4H32v-4H48v8H32v4H16v4Zm48-12v-8H64v8Zm32-8v-8h8v8Z" transform="translate(112 1156)" fill="#303133" />
+        <path id="联合_9" data-name="联合 9" d="M8-928v-8H4v-36h8v36h4v-4H32v-4H48v8H32v4H16v4Zm40-12v-8H64v8Zm16-4v-8H80v8Zm16-4v-8h8v8Zm0-8v-32H64v-8H80v8h8v32ZM0-972v-8H16v-4H32v-4H48v8H32v4H16v4Zm48-12v-8H64v8Zm32-8v-8h8v8Z" transform="translate(212 1128)" fill="#303133" />
+        <path id="联合_10" data-name="联合 10" d="M0-948v-36H4v36Zm12-4v-36h8v-4h8v36H20v4Zm-8,0v-36h8v36Zm24-4v-36h8v-4h8v36H36v4Zm16-4v-36h8v-4h8v36H52v4Zm16-4v-36h8v36Z" transform="translate(124 1168)" fill="#40f8ff" />
+        <path id="联合_11" data-name="联合 11" d="M0-948v-36H4v36Zm12-4v-36h8v-4h8v36H20v4Zm-8,0v-36h8v36Zm24-4v-36h8v-4h8v36H36v4Zm16-4v-36h8v-4h8v36H52v4Zm16-4v-36h8v36Z" transform="translate(224 1140)" fill="#40f8ff" />
+        <rect id="矩形_2148" data-name="矩形 2148" width="8" height="8" transform="translate(200 176)" fill="#303133" />
+        <rect id="矩形_2149" data-name="矩形 2149" width="8" height="8" transform="translate(208 172)" fill="#303133" />
+        <rect id="矩形_46788" data-name="矩形 46788" width="8" height="8" transform="translate(168 172)" fill="#fff" />
+        <rect id="矩形_46795" data-name="矩形 46795" width="8" height="8" transform="translate(268 144)" fill="#fff" />
+        <rect id="矩形_46791" data-name="矩形 46791" width="8" height="8" transform="translate(176 180)" fill="#fff" />
+        <rect id="矩形_46794" data-name="矩形 46794" width="8" height="8" transform="translate(276 152)" fill="#fff" />
+        <rect id="矩形_46792" data-name="矩形 46792" width="8" height="8" transform="translate(152 176)" fill="#fff" />
+        <rect id="矩形_46793" data-name="矩形 46793" width="8" height="8" transform="translate(252 148)" fill="#fff" />
+        <rect id="矩形_46789" data-name="矩形 46789" width="8" height="8" transform="translate(176 168)" fill="#fff" />
+        <rect id="矩形_46796" data-name="矩形 46796" width="8" height="8" transform="translate(276 140)" fill="#fff" />
+        <rect id="矩形_46790" data-name="矩形 46790" width="8" height="8" transform="translate(184 168)" fill="#fff" />
+        <rect id="矩形_46797" data-name="矩形 46797" width="8" height="8" transform="translate(284 140)" fill="#fff" />
+        <rect id="mask-6" data-name="mask" width="360" height="360" transform="translate(3 4)" fill="#fff" opacity="0" />
+      </g>
+    </g>
+  </g>
+</svg><text x="914" y="323" fill="#303133" font-family="monospace" font-size="13" letter-spacing="0.3">09 T12 TURQUOISE</text><svg x="915" y="330" width="270" height="270" viewBox="0 0 360 360"><defs>
+    <clipPath id="clip-Robot_0">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="g-t12-clip-Robot_11">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="f-t12-clip-Robot_8">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="e-t12-clip-Robot_14">
+      <rect width="360" height="360" />
+    </clipPath>
+  </defs>
+  <g id="Robot_0" data-name="Robot 0" clip-path="url(#clip-Robot_0)">
+    <rect width="360" height="360" fill="#b7dcd9" />
+    <g id="walker-subject" transform="translate(23.4 25.92) scale(0.87 0.928)" data-generation="walker" data-candidate-id="T12" data-avatar-style="neutral">
+      <g id="b0">
+        <path id="line" d="M248-301v-96h8v96ZM56-301v-44h8v44ZM0-301v-72H8v72Zm64-40v-8h8v8Zm-16,0v-4H40v-4H32v-4H24v-4H16v-4H8v-8h8v4h8v4h8v4h8v4h8v4h8v8Zm24-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H120v4Zm32-8v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H184v4ZM8-373v-8h8v8Zm192-4v-8h16v8ZM16-377v-8H32v8Zm16-4v-8H48v8Zm184,0v-8h16v8Zm16-4v-8h16v8ZM48-385v-8H64v-4H80v8H64v4Zm32-8v-8H96v8Zm160-4v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v4H176v-8h16v-4h8v4h8v4h8v4h8v4h8v4h8v4h8v8ZM96-397v-8h16v8Zm16-4v-8h16v-4h16v8H128v4Zm32-8v-8h16v8Zm16-4v-8h16v8Z" transform="translate(56 661)" fill="#303133" />
+        <path id="color" d="M176-341v-84h8v84Zm-8,0h-8v-80h8v-4h8v84Zm-16,0h-8v-76h8v-4h8v80Zm-16,0h-8v-72h8v-4h8v76Zm-16,0h-8v-68h8v-4h8v72Zm-16,0H96v-64h8v-4h8v68Zm-16,0H80v-60h8v-4h8v64Zm-16,0H64v-56h8v-4h8v60Zm-16,0H48v-52h8v-4h8v56Zm-16,0H32v-48h8v-4h8v52Zm-16,0H16v-44h8v-4h8v48ZM8-341v-44h8v44Zm-8,0v-40H8v40Z" transform="translate(120 701)" fill="#dbebea" />
+        <path id="color-2" data-name="color" d="M40-365v-40h8v40Zm-8,0v-44h8v44Zm-8,0v-48h8v48Zm-8,0v-52h8v52Zm-8,0v-56h8v56Zm-8,0v-60H8v60Z" transform="translate(64 725)" fill="#6cb1ab" />
+        <path id="color-3" data-name="color" d="M48-349v-40h8v40Zm8-4v-40h8v40Zm-16,0v-36h8v36Zm32-4v-40h8v40Zm-8,0v-36h8v36Zm-32,0v-28h8v28Zm56-4v-40h8v40Zm-8,0v-36h8v36Zm-56,0v-24h8v24Zm80-4v-40h8v40Zm-8,0v-36h8v36Zm-80,0v-16h8v16Zm-8-3v-13h8v13Zm112-1h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40ZM0-373v-4H8v4Zm152-4h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40Zm16-4v-40h8v40Zm-8,0v-36h8v36Zm24-4v-28h8v28Zm-8,0v-32h8v32Zm24-4v-16h8v16Zm-8,0v-20h8v20Zm24-4v-4h8v4Zm-8,0v-8h8v8Z" transform="translate(64 665)" fill="#96c9c5" />
+        <rect id="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="c0">
+        <g id="group">
+          <path id="line-2" data-name="line" d="M8-397v-4H0v-8H8v4H24v8Zm16-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-16h8v16Z" transform="translate(168 685)" fill="#303133" />
+          <path id="color-4" data-name="color" d="M0-409v-8H16v8Zm16-4v-8H32v8Zm16-4v-8H48v8Z" transform="translate(176 689)" fill="#dbebea" />
+        </g>
+        <g id="box">
+          <path id="line-3" data-name="line" d="M64-213v-8h8v-4H88v-4h16v-4h16v-4h16v-4h16v-4h16v-4h16v-4h8V-381h-8v-8h8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-8h8v4h8v4h8v4h8v4h8v4h8v8h8v140h-8v8h-8v4H168v4H152v4H136v4H120v4H104v4H88v4H72v4Zm-8,0v-4H48v-4H40v-4H32v-4H24v-4H16v-8h8v4h8v4h8v4h8v4h8V-353H48v-4H40v-4H32v-4H24v-4H16v128H8V-381h8v4h8v4h8v4h8v4h8v4h8v4h8v144Zm8-136v-8h8v8Zm8-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8ZM16-381v-8h8v8Zm8-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-8H72v8Zm16-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h8v8Z" transform="translate(72 497)" fill="#303133" />
+          <path id="color-5" data-name="color" d="M0-265V-393H8v128Zm16-4V-397h8v-4h8v128H24v4Zm-8,0V-397h8v128Zm24-4V-401h8v-4h8v128H40v4Zm16-4V-405h8v-4h8v128H56v4Zm16-4V-409h8v-4h8v128H72v4Zm16-4V-413h8v-4h8v128H88v4Zm16-4V-417h8v-4h8v128h-8v4Zm16-4V-421h8v128Zm8-4V-425h8v128Z" transform="translate(136 541)" fill="#dbebea" />
+          <path id="color-6" data-name="color" d="M32-281V-409h8v128Zm-8-4V-413h8v128Zm-8-4V-417h8v128Zm-8-4V-421h8v128Zm-8-4V-425H8v128Z" transform="translate(88 553)" fill="#6cb1ab" />
+          <path id="color-7" data-name="color" d="M48-369v-36h8v36Zm-8,0v-36h8v36Zm24-4v-36h8v-4h8v36H72v4Zm-8,0v-36h8v36Zm-24,0v-28h8v28Zm48-4v-36h8v-4h8v36H88v4Zm-56,0v-24h8v24Zm72-4v-36h8v-4h8v36h-8v4Zm-80,0v-16h8v16Zm96-4v-36h8v-4h8v36h-8v4ZM8-385v-12h8v12Zm120-4v-36h8v4h8v28h-8v4ZM0-389v-4H8v4Zm144-4v-24h8v24Zm16-4v-12h8v12Zm-8,0v-16h8v16Zm16-3v-5h8v5Z" transform="translate(88 509)" fill="#96c9c5" />
+          <path id="light" d="M0-409v-8H8v8Zm8-8v-8h8v8Z" transform="translate(144 577)" fill="#eff5f5" />
+          <path id="shadow" d="M0-389v-20H8v20Zm0-28v-8H8v8Z" transform="translate(256 633)" fill="#acd3d0" />
+        </g>
+        <rect id="mask-2" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="d0">
+        <rect id="mask-3" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="e0" data-component-source="e14">
+        <path id="line-4" data-name="line" d="M37-972v-8h3v8Zm-8-4v-8h8v8Zm-8-4v-8h8v8Zm-8-4v-4H5v-4H0v-8H5v4h8v4h8v8Z" transform="translate(88 1160)" fill="#303133" />
+        <rect id="mask-4" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="f0" data-component-source="f8">
+        <path id="line-6" data-name="line" d="M-1720-2840v-8h8v8Zm8-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-36h8v36Zm48-12v-36h8v28h8v-4h16v8h-16v4Zm32-8v-8h8v8Z" transform="translate(1856 3024)" fill="#303133" />
+        <path id="line-7" data-name="line" d="M-1680-2844v-36h8v36Zm48-12v-28h8v28Zm-88-4v-8h8v-4h16v8h-16v4Zm24-8v-8h16v8Zm64-16v-8h16v-4h16v8h-16v4Zm32-8v-8h8v8Z" transform="translate(1856 3108)" fill="#303133" />
+        <path id="color-8" data-name="color" d="M-1720-2864v-28h8v28Zm8-4v-28h16v28Zm16-4v-28h16v28Z" transform="translate(1856 3040)" fill="#ff5c5c" />
+        <path id="color-9" data-name="color" d="M-1720-2864v-28h8v28Zm8-4v-28h16v28Zm16-4v-28h16v28Z" transform="translate(1856 3140)" fill="#ffdd4e" />
+        <path id="color-10" data-name="color" d="M-1720-2864v-28h8v28Zm8-4v-28h16v-4h8v28h-8v4Z" transform="translate(1952 3016)" fill="#4291fc" />
+        <path id="color-11" data-name="color" d="M-1720-2864v-28h8v28Zm8-4v-28h16v-4h8v28h-8v4Z" transform="translate(1952 3116)" fill="#3bc619" />
+        <rect id="mask-5" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="g0" transform="translate(0 9)" data-component-source="g11">
+        <path id="联合_103" data-name="联合 103" d="M2798-3189v-30h4v30Zm4-1v-30h4v30Zm-12-11v-8h4v8Zm4-1v-8h4v8Zm12-4v-8h4v8Zm4-1v-8h4v8Z" transform="translate(-2632 3391)" fill="#303133" />
+        <path id="联合_104" data-name="联合 104" d="M2798-3189v-30h4v30Zm4-1v-30h4v30Zm-12-11v-8h4v8Zm4-1v-8h4v8Zm12-4v-8h4v8Zm4-1v-8h4v8Z" transform="translate(-2566 3369)" fill="#303133" />
+        <rect id="mask-6" data-name="mask" width="360" height="360" transform="translate(0 -9)" fill="#fff" opacity="0" />
+      </g>
+    </g>
+  </g>
+</svg><text x="1214" y="323" fill="#303133" font-family="monospace" font-size="13" letter-spacing="0.3">10 T35 BLUSH</text><svg x="1215" y="330" width="270" height="270" viewBox="0 0 360 360"><defs>
+    <clipPath id="clip-Robot_0">
+      <rect width="360" height="360" />
+    </clipPath>
+    <linearGradient id="g-t35-linear-gradient" x1="0.5" x2="0.5" y2="1" gradientUnits="objectBoundingBox">
+      <stop offset="0" stop-color="#50f2ff" />
+      <stop offset="1" stop-color="#f449e6" />
+    </linearGradient>
+    <linearGradient id="g-t35-linear-gradient-2" x1="0.119" y1="1.049" x2="0.93" y2="0.085" gradientUnits="objectBoundingBox">
+      <stop offset="0" stop-color="#ff8ef8" />
+      <stop offset="1" stop-color="#b4e7ff" />
+    </linearGradient>
+    <radialGradient id="g-t35-radial-gradient" cx="0.5" cy="0.5" r="0.494" gradientTransform="matrix(0.581, -0.814, 0.493, 0.352, -0.037, 0.731)" gradientUnits="objectBoundingBox">
+      <stop offset="0" stop-color="#52effd" />
+      <stop offset="1" stop-color="#cee7ff" />
+    </radialGradient>
+    <linearGradient id="g-t35-linear-gradient-3" x1="0.339" y1="1.038" x2="0.398" gradientUnits="objectBoundingBox">
+      <stop offset="0" stop-color="#6c00ff" />
+      <stop offset="0.473" stop-color="#9e95fe" />
+      <stop offset="1" stop-color="#5fe2fc" />
+    </linearGradient>
+    <linearGradient id="g-t35-linear-gradient-4" x1="0.846" x2="0.5" y2="1" gradientUnits="objectBoundingBox">
+      <stop offset="0" stop-color="#9e96fa" />
+      <stop offset="1" stop-color="#8ab0fb" />
+    </linearGradient>
+    <linearGradient id="g-t35-linear-gradient-5" x1="0.846" x2="0.5" y2="1" gradientUnits="objectBoundingBox">
+      <stop offset="0" stop-color="#86b1fb" />
+      <stop offset="1" stop-color="#c898ff" />
+    </linearGradient>
+    <linearGradient id="g-t35-linear-gradient-6" x1="0.047" y1="0.017" x2="0.722" y2="1" gradientUnits="objectBoundingBox">
+      <stop offset="0" stop-color="#96caff" />
+      <stop offset="1" stop-color="#89affb" />
+    </linearGradient>
+    <linearGradient id="g-t35-linear-gradient-7" x1="0.078" x2="0.893" y2="1" gradientUnits="objectBoundingBox">
+      <stop offset="0" stop-color="#85b2fb" />
+      <stop offset="1" stop-color="#89affb" />
+    </linearGradient>
+    <clipPath id="g-t35-clip-Robot_4">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="f-t35-clip-Robot_2">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="e-t35-clip-Robot_3">
+      <rect width="360" height="360" />
+    </clipPath>
+  </defs>
+  <g id="Robot_0" data-name="Robot 0" clip-path="url(#clip-Robot_0)">
+    <rect width="360" height="360" fill="#dbc2c6" />
+    <g id="walker-subject" transform="translate(23.4 25.92) scale(0.87 0.928)" data-generation="walker" data-candidate-id="T35" data-avatar-style="neutral">
+      <g id="b0">
+        <path id="line" d="M248-301v-96h8v96ZM56-301v-44h8v44ZM0-301v-72H8v72Zm64-40v-8h8v8Zm-16,0v-4H40v-4H32v-4H24v-4H16v-4H8v-8h8v4h8v4h8v4h8v4h8v4h8v8Zm24-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H120v4Zm32-8v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H184v4ZM8-373v-8h8v8Zm192-4v-8h16v8ZM16-377v-8H32v8Zm16-4v-8H48v8Zm184,0v-8h16v8Zm16-4v-8h16v8ZM48-385v-8H64v-4H80v8H64v4Zm32-8v-8H96v8Zm160-4v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v4H176v-8h16v-4h8v4h8v4h8v4h8v4h8v4h8v4h8v8ZM96-397v-8h16v8Zm16-4v-8h16v-4h16v8H128v4Zm32-8v-8h16v8Zm16-4v-8h16v8Z" transform="translate(56 661)" fill="#303133" />
+        <path id="color" d="M176-341v-84h8v84Zm-8,0h-8v-80h8v-4h8v84Zm-16,0h-8v-76h8v-4h8v80Zm-16,0h-8v-72h8v-4h8v76Zm-16,0h-8v-68h8v-4h8v72Zm-16,0H96v-64h8v-4h8v68Zm-16,0H80v-60h8v-4h8v64Zm-16,0H64v-56h8v-4h8v60Zm-16,0H48v-52h8v-4h8v56Zm-16,0H32v-48h8v-4h8v52Zm-16,0H16v-44h8v-4h8v48ZM8-341v-44h8v44Zm-8,0v-40H8v40Z" transform="translate(120 701)" fill="#ede3e5" />
+        <path id="color-2" data-name="color" d="M40-365v-40h8v40Zm-8,0v-44h8v44Zm-8,0v-48h8v48Zm-8,0v-52h8v52Zm-8,0v-56h8v56Zm-8,0v-60H8v60Z" transform="translate(64 725)" fill="#ad7b83" />
+        <path id="color-3" data-name="color" d="M48-349v-40h8v40Zm8-4v-40h8v40Zm-16,0v-36h8v36Zm32-4v-40h8v40Zm-8,0v-36h8v36Zm-32,0v-28h8v28Zm56-4v-40h8v40Zm-8,0v-36h8v36Zm-56,0v-24h8v24Zm80-4v-40h8v40Zm-8,0v-36h8v36Zm-80,0v-16h8v16Zm-8-3v-13h8v13Zm112-1h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40ZM0-373v-4H8v4Zm152-4h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40Zm16-4v-40h8v40Zm-8,0v-36h8v36Zm24-4v-28h8v28Zm-8,0v-32h8v32Zm24-4v-16h8v16Zm-8,0v-20h8v20Zm24-4v-4h8v4Zm-8,0v-8h8v8Z" transform="translate(64 665)" fill="#c7a3a9" />
+        <rect id="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="c0">
+        <g id="group">
+          <path id="line-2" data-name="line" d="M8-397v-4H0v-8H8v4H24v8Zm16-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-16h8v16Z" transform="translate(168 685)" fill="#303133" />
+          <path id="color-4" data-name="color" d="M0-409v-8H16v8Zm16-4v-8H32v8Zm16-4v-8H48v8Z" transform="translate(176 689)" fill="#ede3e5" />
+        </g>
+        <g id="box">
+          <path id="line-3" data-name="line" d="M64-213v-8h8v-4H88v-4h16v-4h16v-4h16v-4h16v-4h16v-4h16v-4h8V-381h-8v-8h8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-8h8v4h8v4h8v4h8v4h8v4h8v8h8v140h-8v8h-8v4H168v4H152v4H136v4H120v4H104v4H88v4H72v4Zm-8,0v-4H48v-4H40v-4H32v-4H24v-4H16v-8h8v4h8v4h8v4h8v4h8V-353H48v-4H40v-4H32v-4H24v-4H16v128H8V-381h8v4h8v4h8v4h8v4h8v4h8v4h8v144Zm8-136v-8h8v8Zm8-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8ZM16-381v-8h8v8Zm8-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-8H72v8Zm16-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h8v8Z" transform="translate(72 497)" fill="#303133" />
+          <path id="color-5" data-name="color" d="M0-265V-393H8v128Zm16-4V-397h8v-4h8v128H24v4Zm-8,0V-397h8v128Zm24-4V-401h8v-4h8v128H40v4Zm16-4V-405h8v-4h8v128H56v4Zm16-4V-409h8v-4h8v128H72v4Zm16-4V-413h8v-4h8v128H88v4Zm16-4V-417h8v-4h8v128h-8v4Zm16-4V-421h8v128Zm8-4V-425h8v128Z" transform="translate(136 541)" fill="#ede3e5" />
+          <path id="color-6" data-name="color" d="M32-281V-409h8v128Zm-8-4V-413h8v128Zm-8-4V-417h8v128Zm-8-4V-421h8v128Zm-8-4V-425H8v128Z" transform="translate(88 553)" fill="#ad7b83" />
+          <path id="color-7" data-name="color" d="M48-369v-36h8v36Zm-8,0v-36h8v36Zm24-4v-36h8v-4h8v36H72v4Zm-8,0v-36h8v36Zm-24,0v-28h8v28Zm48-4v-36h8v-4h8v36H88v4Zm-56,0v-24h8v24Zm72-4v-36h8v-4h8v36h-8v4Zm-80,0v-16h8v16Zm96-4v-36h8v-4h8v36h-8v4ZM8-385v-12h8v12Zm120-4v-36h8v4h8v28h-8v4ZM0-389v-4H8v4Zm144-4v-24h8v24Zm16-4v-12h8v12Zm-8,0v-16h8v16Zm16-3v-5h8v5Z" transform="translate(88 509)" fill="#c7a3a9" />
+          <path id="light" d="M0-409v-8H8v8Zm8-8v-8h8v8Z" transform="translate(144 577)" fill="#f9f6f6" />
+          <path id="shadow" d="M0-389v-20H8v20Zm0-28v-8H8v8Z" transform="translate(256 633)" fill="#d2b7bb" />
+        </g>
+        <rect id="mask-2" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="d0">
+        <rect id="mask-3" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="e0" data-component-source="e3">
+        <path id="line-5" data-name="line" d="M-1231.379-2952.137l1.014-11.591H-1234v-8h4.335l1.075-12.288,7.97.7-1.014,11.591H-1218v8h-4.335l-1.075,12.289Zm-44.348-8.015,1.712-19.575H-1282v-4h-8v-8h8v4h8v4h.335l1.423-16.272,7.969.7-1.712,19.576H-1258v8h-8v-4h-.334l-1.423,16.273Zm57.728.425v-8h8v8Zm-24-8v-8h8v8Zm-16,0v-8h16v8Z" transform="translate(1378 3207.728)" fill="#303133" />
+        <rect id="mask-4" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="f0" transform="translate(0 -4)" data-component-source="f2">
+        <path id="shape-3" data-name="shape" d="M-1720-948h-8v-32h8v-4h8v-8h16v-4h8v40h-8v4h-16v4Zm32-8v-40h8v40Zm16-4v-36h8v36Zm-8,0v-40h8v40Zm16-4v-28h8v28Z" transform="translate(1904 1216)" fill="#303133" />
+        <path id="line-8" data-name="line" d="M-1720-986v-6h8v6Zm16-4v-6h8v6Zm-8,0v-6h8v6Zm24-4v-6h8v6Zm-8,0v-6h8v6Z" transform="translate(1916 1236)" fill="#fff" />
+        <rect id="mask-5" data-name="mask" width="360" height="360" transform="translate(0 4)" fill="#fff" opacity="0" />
+      </g>
+      <g id="g0" data-component-source="g4">
+        <path id="line-7" data-name="line" d="M-1202-888v-8h8v8Zm-8,0v-48h8v48Zm16-4v-8h16v8Zm-24,0v-4h-8v-4h-8v-4h-8v-48h0v-8h16v-4h16v8h-16v4h8v4h8v8h-8v-4h-8v-4h-8v40h8v4h8v4h8v8Zm40-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm-120,0v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-56h8v4h8v4h8v4h8v4h8v4h8v8h-8v-4h-8v-4h-8v-4h-8v-4h-8v40h8v4h8v4h8v4h8v4h8v8Zm136-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v-52h8v56h-8v4Zm-120-16v-8h8v8Zm-8,0v-8h8v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm-96,0v-8h16v8Zm112-4v-8h16v8Zm-96,0v-8h16v8Zm112-4v-8h8v8Zm-96,0v-8h16v8Zm16-4v-8h16v8Zm88-4v-4h-8v-4h-8v-4h-8v-8h8v4h8v4h8v4h8v8Zm-72,0v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Z" transform="translate(1370 1100)" fill="#303133" />
+        <path id="color-10" data-name="color" d="M-1720-920v-40h8v40Zm16-4v-40h8v-4h8v40h-8v4Zm-8,0v-40h8v40Zm24-4v-40h8v-4h8v40h-8v4Zm16-4v-40h8v-4h8v40h-8v4Zm16-4v-40h8v-4h8v40h-8v4Zm16-4v-40h8v-4h8v40h-8v4Zm16-4v-40h8v-4h8v40h-8v4Zm16-4v-40h8v-4h8v40h-8v4Zm16-4v-48h8v48Z" transform="translate(1888 1124)" fill="url(#g-t35-linear-gradient)" />
+        <path id="color-11" data-name="color" d="M-1656-928v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-40h8v4h8v4h8v4h8v4h8v4h8v40Zm-48-24v-4h-8v-4h-8v-40h8v4h8v4h8v40Z" transform="translate(1808 1128)" fill="#d935db" />
+        <path id="color-12" data-name="color" d="M-1704-956v-4h16v4Zm-8-4v-4h40v4Zm-8-4v-4h16v-4h16v-4h16v-4h16v-4h16v-4h16v-4h16v-4h16v-4h8v4h8v4h8v4h-8v4h-16v4h-16v4h-16v4h-16v4h-16v4Z" transform="translate(1864 1112)" fill="url(#g-t35-linear-gradient-2)" />
+        <path id="shadow-2" data-name="shadow" d="M-1712-980v-12h-8v-8h8v4h8v16Z" transform="translate(1864 1156)" fill="#c924cb" />
+        <path id="light-4" data-name="light" d="M-860-2964v-16h16v16Zm16-4v-16h16v16Zm16-4v-16h16v16Zm16-4v-16h16v16Zm16-4v-16h16v16Zm16-4v-16h16v16Z" transform="translate(1052 3148)" fill="url(#g-t35-radial-gradient)" />
+        <rect id="mask-6" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+    </g>
+  </g>
+</svg><text x="14" y="623" fill="#303133" font-family="monospace" font-size="13" letter-spacing="0.3">11 T32 SALMON</text><svg x="15" y="630" width="270" height="270" viewBox="0 0 360 360"><defs>
+    <clipPath id="clip-Robot_0">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="g-t32-clip-path">
+      <rect id="mask_360" data-name="mask 360" width="360" height="360" fill="#fff" opacity="0" />
+    </clipPath>
+    <clipPath id="g-t32-clip-Robot_1">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="f-t32-clip-Robot_11">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="e-t32-clip-path">
+      <rect id="mask" width="360" height="360" fill="#fff" opacity="0" />
+    </clipPath>
+    <clipPath id="e-t32-clip-Robot_6">
+      <rect width="360" height="360" />
+    </clipPath>
+  </defs>
+  <g id="Robot_0" data-name="Robot 0" clip-path="url(#clip-Robot_0)">
+    <rect width="360" height="360" fill="#dfc5be" />
+    <g id="walker-subject" transform="translate(23.4 25.92) scale(0.87 0.928)" data-generation="walker" data-candidate-id="T32" data-avatar-style="neutral">
+      <g id="b0">
+        <path id="line" d="M248-301v-96h8v96ZM56-301v-44h8v44ZM0-301v-72H8v72Zm64-40v-8h8v8Zm-16,0v-4H40v-4H32v-4H24v-4H16v-4H8v-8h8v4h8v4h8v4h8v4h8v4h8v8Zm24-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H120v4Zm32-8v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H184v4ZM8-373v-8h8v8Zm192-4v-8h16v8ZM16-377v-8H32v8Zm16-4v-8H48v8Zm184,0v-8h16v8Zm16-4v-8h16v8ZM48-385v-8H64v-4H80v8H64v4Zm32-8v-8H96v8Zm160-4v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v4H176v-8h16v-4h8v4h8v4h8v4h8v4h8v4h8v4h8v8ZM96-397v-8h16v8Zm16-4v-8h16v-4h16v8H128v4Zm32-8v-8h16v8Zm16-4v-8h16v8Z" transform="translate(56 661)" fill="#303133" />
+        <path id="color" d="M176-341v-84h8v84Zm-8,0h-8v-80h8v-4h8v84Zm-16,0h-8v-76h8v-4h8v80Zm-16,0h-8v-72h8v-4h8v76Zm-16,0h-8v-68h8v-4h8v72Zm-16,0H96v-64h8v-4h8v68Zm-16,0H80v-60h8v-4h8v64Zm-16,0H64v-56h8v-4h8v60Zm-16,0H48v-52h8v-4h8v56Zm-16,0H32v-48h8v-4h8v52Zm-16,0H16v-44h8v-4h8v48ZM8-341v-44h8v44Zm-8,0v-40H8v40Z" transform="translate(120 701)" fill="#efe4e1" />
+        <path id="color-2" data-name="color" d="M40-365v-40h8v40Zm-8,0v-44h8v44Zm-8,0v-48h8v48Zm-8,0v-52h8v52Zm-8,0v-56h8v56Zm-8,0v-60H8v60Z" transform="translate(64 725)" fill="#b58073" />
+        <path id="color-3" data-name="color" d="M48-349v-40h8v40Zm8-4v-40h8v40Zm-16,0v-36h8v36Zm32-4v-40h8v40Zm-8,0v-36h8v36Zm-32,0v-28h8v28Zm56-4v-40h8v40Zm-8,0v-36h8v36Zm-56,0v-24h8v24Zm80-4v-40h8v40Zm-8,0v-36h8v36Zm-80,0v-16h8v16Zm-8-3v-13h8v13Zm112-1h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40ZM0-373v-4H8v4Zm152-4h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40Zm16-4v-40h8v40Zm-8,0v-36h8v36Zm24-4v-28h8v28Zm-8,0v-32h8v32Zm24-4v-16h8v16Zm-8,0v-20h8v20Zm24-4v-4h8v4Zm-8,0v-8h8v8Z" transform="translate(64 665)" fill="#cda79d" />
+        <rect id="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="c0">
+        <g id="group">
+          <path id="line-2" data-name="line" d="M8-397v-4H0v-8H8v4H24v8Zm16-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-16h8v16Z" transform="translate(168 685)" fill="#303133" />
+          <path id="color-4" data-name="color" d="M0-409v-8H16v8Zm16-4v-8H32v8Zm16-4v-8H48v8Z" transform="translate(176 689)" fill="#efe4e1" />
+        </g>
+        <g id="box">
+          <path id="line-3" data-name="line" d="M64-213v-8h8v-4H88v-4h16v-4h16v-4h16v-4h16v-4h16v-4h16v-4h8V-381h-8v-8h8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-8h8v4h8v4h8v4h8v4h8v4h8v8h8v140h-8v8h-8v4H168v4H152v4H136v4H120v4H104v4H88v4H72v4Zm-8,0v-4H48v-4H40v-4H32v-4H24v-4H16v-8h8v4h8v4h8v4h8v4h8V-353H48v-4H40v-4H32v-4H24v-4H16v128H8V-381h8v4h8v4h8v4h8v4h8v4h8v4h8v144Zm8-136v-8h8v8Zm8-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8ZM16-381v-8h8v8Zm8-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-8H72v8Zm16-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h8v8Z" transform="translate(72 497)" fill="#303133" />
+          <path id="color-5" data-name="color" d="M0-265V-393H8v128Zm16-4V-397h8v-4h8v128H24v4Zm-8,0V-397h8v128Zm24-4V-401h8v-4h8v128H40v4Zm16-4V-405h8v-4h8v128H56v4Zm16-4V-409h8v-4h8v128H72v4Zm16-4V-413h8v-4h8v128H88v4Zm16-4V-417h8v-4h8v128h-8v4Zm16-4V-421h8v128Zm8-4V-425h8v128Z" transform="translate(136 541)" fill="#efe4e1" />
+          <path id="color-6" data-name="color" d="M32-281V-409h8v128Zm-8-4V-413h8v128Zm-8-4V-417h8v128Zm-8-4V-421h8v128Zm-8-4V-425H8v128Z" transform="translate(88 553)" fill="#b58073" />
+          <path id="color-7" data-name="color" d="M48-369v-36h8v36Zm-8,0v-36h8v36Zm24-4v-36h8v-4h8v36H72v4Zm-8,0v-36h8v36Zm-24,0v-28h8v28Zm48-4v-36h8v-4h8v36H88v4Zm-56,0v-24h8v24Zm72-4v-36h8v-4h8v36h-8v4Zm-80,0v-16h8v16Zm96-4v-36h8v-4h8v36h-8v4ZM8-385v-12h8v12Zm120-4v-36h8v4h8v28h-8v4ZM0-389v-4H8v4Zm144-4v-24h8v24Zm16-4v-12h8v12Zm-8,0v-16h8v16Zm16-3v-5h8v5Z" transform="translate(88 509)" fill="#cda79d" />
+          <path id="light" d="M0-409v-8H8v8Zm8-8v-8h8v8Z" transform="translate(144 577)" fill="#f9f6f6" />
+          <path id="shadow" d="M0-389v-20H8v20Zm0-28v-8H8v8Z" transform="translate(256 633)" fill="#d6bab2" />
+        </g>
+        <rect id="mask-2" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="d0">
+        <rect id="mask-3" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="e0" data-component-source="e6">
+        <g id="group-3" data-name="group" transform="translate(0 0)">
+          <path id="line-8" data-name="line" d="M-812-408v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-8h-8v-8h8v8h8v4h8v4h8v4h8v4h8v-44h-8v-8h8v4h8v60Zm-32-32v-8h8v8Zm-8,0v-8h8v8Zm16-4v-8h-4v-8h-4v-8h-4v-8h-4v-8h-4v-8h8v4h4v4h8v8h-4v8h4v8h4v8h4v8Zm8-24v-8h8v8Zm-8-4v-8h8v8Z" transform="translate(916 656)" fill="#303133" />
+          <path id="color-10" data-name="color" d="M-828-444v-4h-8v-4h-8v-4h-8v-4h-8v-4h16v-4h8v-8h-4v-8h-4v-8h-4v-8h4v4h8v4h8v4h8v44Z" transform="translate(924 680)" fill="#ff6464" />
+          <path id="light-2" data-name="light" d="M-860-484v-8h4v-8h4v16Z" transform="translate(956 708)" fill="#ff9a9a" />
+          <path id="shadow-2" data-name="shadow" d="M-852-456v-4h8v4Zm-8-4v-4h8v4Zm24-12v-8h8v8Zm8-8v-4h-8v-4h-8v-4h-4v-8h4v4h8v4h8v4h8v8Z" transform="translate(924 680)" fill="#e63e3e" />
+        </g>
+        <g id="group-4" data-name="group" transform="translate(248 112)">
+          <path id="line-9" data-name="line" d="M4,84V76H8V68h8V80H12v4Zm12-8V68h8v8Zm8-4V64h8v8Zm8-4V60h8v8ZM12,68V60h8v8Zm4-8V52h8v8Zm4-8V44h8v8Zm4-8V36h8v8Zm-8-4V32h8v8ZM8,40V32h8v8ZM0,36V28H8v8Zm8-8V20h8V16h8V12h8V8h8v8H32v4H24v4H16v4Z" transform="translate(56.001 84.001) rotate(180)" fill="#303133" />
+          <path id="color-11" data-name="color" d="M12,56V48h4V40h4V32h4V24H16V20H0V16H8V12h8V8h8V4h8V48H24v4H16v4Z" transform="translate(48.001 72) rotate(180)" fill="#ff6464" />
+          <path id="shadow-3" data-name="shadow" d="M12,44V36h4V32h8V28h8v8H24v4H16v4ZM0,8V4H8V8ZM8,4V0h8V4Z" transform="translate(48.001 60) rotate(180)" fill="#e63e3e" />
+          <path id="light-3" data-name="light" d="M0,0V8H4v8H8V0Z" transform="translate(24 56) rotate(180)" fill="#ff9a9a" />
+          <rect id="line-10" data-name="line" width="8" height="56" transform="translate(16 16)" fill="#303133" />
+        </g>
+        <rect id="mask-5" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="f0" transform="translate(-23 -6.85)" data-component-source="f11">
+        <path id="color-11" data-name="color" d="M19.563,40.487c-4.171-.128-10.271-3.4-12.105-4.836S2.934,29.135,1.577,24.8c-.941-3.006-.3-6.509.186-8.377H1.094V13.257h1.8l.417-1.039L5.927,6.9l4.111-3.358,4.451-1.8L22.948,0,34.078,3.178l5.07,4.735L43,17.969l.19,4.369L39.147,33.332l-6.8,4.83s-8.179,2.33-12.454,2.33Q19.722,40.492,19.563,40.487Z" transform="translate(218.068 193.39)" fill="#f83941" />
+        <path id="light-2" data-name="light" d="M5.333,7V5.6H8V7ZM2.667,4.2V1.4H5.333V4.2ZM0,2.8V0H2.667V2.8Z" transform="translate(246 199.85)" fill="#fff" />
+        <path id="shadow-2" data-name="shadow" d="M18.282,18V16.826h3.179V14.087h3.179v3.13H21.461V18Zm-3.18-.783V15.652h3.18v1.565Zm9.539-.783V14.869h3.18v1.565Zm-12.718,0V13.3H15.1v3.13Zm15.9-.783v-.391H31v.391Zm-19.077,0v-3.13h3.18v3.13ZM5.564,14.087V12.13H2.385V9H.795V3.13H0V0H.795V3.13h1.59V5.87h1.59V9h1.59v1.957H8.743v3.13ZM15.1,13.3V11.739h3.18V13.3Z" transform="translate(219 214.85)" fill="#bc3746" />
+        <path id="line-7" data-name="line" d="M2831-3177.15h-4v-1h-4v-1h-4v-2h-4v-3h-4v-4h-2v-4h-2v-4h-1v-4h1v-4h2v-4h1v-4h2v-4h4v4h-2v4h-1v4h-2v4h-1v4h1v4h2v4h2v3h4v2h4v1h4v1h8v-1h4v-2h4v-2h4v4h-4v2h-4v2h-4v1Zm14-9v-4h4v4Zm2-4v-4h4v4Zm1-4v-4h4v4Zm1-4v-4h4v4Zm-1-4v-4h4v4Zm-2-4v-4h4v4Zm-2-4v-4h4v4Zm-4-3v-4h4v4Zm-24-1v-4h4v4Zm20-1v-4h4v4Zm-4-1v-4h4v4Zm-12,0v-4h4v4Zm8-1h-4v-4h8v4Z" transform="translate(-2590 3413)" fill="#303133" />
+        <path id="联合_105" data-name="联合 105" d="M2835-3152v-8h8v-1h8v-2h8v-2h8v-1h8v-3h8v-6h8v-5h8v8h-8v5h-8v6h-8v3h-8v1h-8v2h-8v2h-8v1Zm-8,0v-8h8v8Zm-8-5v-8h8v8Zm-8-2v-8h8v8Zm-7-8v-8h8v8Zm-6-8v-8h8v8Zm98-5v-8h8v8Zm-106-3v-8h8v8Zm112-5v-8h8v8Zm2-8v-8h8v8Zm3-8v-8h8v8Zm3-8v-8h8v8Z" transform="translate(-2631 3411.85)" fill="#f83941" />
+        <rect id="mask-5" data-name="mask" width="360" height="360" transform="translate(23 6.85)" fill="#fff" opacity="0" />
+      </g>
+      <g id="g0" data-component-source="g1">
+        <path id="b-8" data-name="b" d="M-1290-2846v-48h8v48Zm8-4v-8h8v8Zm8-2v-8h8v8Zm8-4v-16h8v16Zm-16-14v-8h8v8Zm8-2v-8h8v8Zm8-8v-16h8v16Zm-16-10v-8h8v8Zm8-2v-8h8v8Z" transform="translate(1458 3062)" fill="#303133" />
+        <path id="b-9" data-name="b" d="M-1290-2846v-48h8v48Zm8-4v-8h8v8Zm8-2v-8h8v8Zm8-4v-16h8v16Zm-16-14v-8h8v8Zm8-2v-8h8v8Zm8-8v-16h8v16Zm-16-10v-8h8v8Zm8-2v-8h8v8Z" transform="translate(1506 3046)" fill="#303133" />
+        <path id="color-11" data-name="color" d="M-1290-2850v-12h8v12Zm8-2v-12h8v12Zm40-14v-12h8v12Zm8-2v-12h8v12Zm-56-2v-12h8v12Zm8-2v-12h8v12Zm40-14v-12h8v12Zm8-2v-12h8v12Z" transform="translate(1466 3054)" fill="#ffdd4d" />
+        <path id="light-2" data-name="light" d="M-1290-2876v-8h4v8Zm48-16v-8h4v8Z" transform="translate(1478 3058)" fill="#fff3be" />
+        <rect id="mask-6" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+    </g>
+  </g>
+</svg><text x="314" y="623" fill="#303133" font-family="monospace" font-size="13" letter-spacing="0.3">12 T37 TAUPE</text><svg x="315" y="630" width="270" height="270" viewBox="0 0 360 360"><defs>
+    <clipPath id="clip-Robot_0">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="g-t37-clip-path">
+      <rect id="mask" width="360" height="360" fill="#fff" opacity="0" />
+    </clipPath>
+    <clipPath id="g-t37-clip-Robot_6">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="f-t37-clip-path">
+      <rect id="mask" width="360" height="360" fill="#fff" opacity="0" />
+    </clipPath>
+    <clipPath id="f-t37-clip-Robot_6">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="e-t37-clip-Robot_11">
+      <rect width="360" height="360" />
+    </clipPath>
+  </defs>
+  <g id="Robot_0" data-name="Robot 0" clip-path="url(#clip-Robot_0)">
+    <rect width="360" height="360" fill="#ccc2b8" />
+    <g id="walker-subject" transform="translate(23.4 25.92) scale(0.87 0.928)" data-generation="walker" data-candidate-id="T37" data-avatar-style="neutral">
+      <g id="b0">
+        <path id="line" d="M248-301v-96h8v96ZM56-301v-44h8v44ZM0-301v-72H8v72Zm64-40v-8h8v8Zm-16,0v-4H40v-4H32v-4H24v-4H16v-4H8v-8h8v4h8v4h8v4h8v4h8v4h8v8Zm24-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H120v4Zm32-8v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H184v4ZM8-373v-8h8v8Zm192-4v-8h16v8ZM16-377v-8H32v8Zm16-4v-8H48v8Zm184,0v-8h16v8Zm16-4v-8h16v8ZM48-385v-8H64v-4H80v8H64v4Zm32-8v-8H96v8Zm160-4v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v4H176v-8h16v-4h8v4h8v4h8v4h8v4h8v4h8v4h8v8ZM96-397v-8h16v8Zm16-4v-8h16v-4h16v8H128v4Zm32-8v-8h16v8Zm16-4v-8h16v8Z" transform="translate(56 661)" fill="#303133" />
+        <path id="color" d="M176-341v-84h8v84Zm-8,0h-8v-80h8v-4h8v84Zm-16,0h-8v-76h8v-4h8v80Zm-16,0h-8v-72h8v-4h8v76Zm-16,0h-8v-68h8v-4h8v72Zm-16,0H96v-64h8v-4h8v68Zm-16,0H80v-60h8v-4h8v64Zm-16,0H64v-56h8v-4h8v60Zm-16,0H48v-52h8v-4h8v56Zm-16,0H32v-48h8v-4h8v52Zm-16,0H16v-44h8v-4h8v48ZM8-341v-44h8v44Zm-8,0v-40H8v40Z" transform="translate(120 701)" fill="#e0dbd6" />
+        <path id="color-2" data-name="color" d="M40-365v-40h8v40Zm-8,0v-44h8v44Zm-8,0v-48h8v48Zm-8,0v-52h8v52Zm-8,0v-56h8v56Zm-8,0v-60H8v60Z" transform="translate(64 725)" fill="#988776" />
+        <path id="color-3" data-name="color" d="M48-349v-40h8v40Zm8-4v-40h8v40Zm-16,0v-36h8v36Zm32-4v-40h8v40Zm-8,0v-36h8v36Zm-32,0v-28h8v28Zm56-4v-40h8v40Zm-8,0v-36h8v36Zm-56,0v-24h8v24Zm80-4v-40h8v40Zm-8,0v-36h8v36Zm-80,0v-16h8v16Zm-8-3v-13h8v13Zm112-1h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40ZM0-373v-4H8v4Zm152-4h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40Zm16-4v-40h8v40Zm-8,0v-36h8v36Zm24-4v-28h8v28Zm-8,0v-32h8v32Zm24-4v-16h8v16Zm-8,0v-20h8v20Zm24-4v-4h8v4Zm-8,0v-8h8v8Z" transform="translate(64 665)" fill="#b5a89b" />
+        <rect id="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="c0">
+        <g id="group">
+          <path id="line-2" data-name="line" d="M8-397v-4H0v-8H8v4H24v8Zm16-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-16h8v16Z" transform="translate(168 685)" fill="#303133" />
+          <path id="color-4" data-name="color" d="M0-409v-8H16v8Zm16-4v-8H32v8Zm16-4v-8H48v8Z" transform="translate(176 689)" fill="#e0dbd6" />
+        </g>
+        <g id="box">
+          <path id="line-3" data-name="line" d="M64-213v-8h8v-4H88v-4h16v-4h16v-4h16v-4h16v-4h16v-4h16v-4h8V-381h-8v-8h8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-8h8v4h8v4h8v4h8v4h8v4h8v8h8v140h-8v8h-8v4H168v4H152v4H136v4H120v4H104v4H88v4H72v4Zm-8,0v-4H48v-4H40v-4H32v-4H24v-4H16v-8h8v4h8v4h8v4h8v4h8V-353H48v-4H40v-4H32v-4H24v-4H16v128H8V-381h8v4h8v4h8v4h8v4h8v4h8v4h8v144Zm8-136v-8h8v8Zm8-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8ZM16-381v-8h8v8Zm8-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-8H72v8Zm16-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h8v8Z" transform="translate(72 497)" fill="#303133" />
+          <path id="color-5" data-name="color" d="M0-265V-393H8v128Zm16-4V-397h8v-4h8v128H24v4Zm-8,0V-397h8v128Zm24-4V-401h8v-4h8v128H40v4Zm16-4V-405h8v-4h8v128H56v4Zm16-4V-409h8v-4h8v128H72v4Zm16-4V-413h8v-4h8v128H88v4Zm16-4V-417h8v-4h8v128h-8v4Zm16-4V-421h8v128Zm8-4V-425h8v128Z" transform="translate(136 541)" fill="#e0dbd6" />
+          <path id="color-6" data-name="color" d="M32-281V-409h8v128Zm-8-4V-413h8v128Zm-8-4V-417h8v128Zm-8-4V-421h8v128Zm-8-4V-425H8v128Z" transform="translate(88 553)" fill="#988776" />
+          <path id="color-7" data-name="color" d="M48-369v-36h8v36Zm-8,0v-36h8v36Zm24-4v-36h8v-4h8v36H72v4Zm-8,0v-36h8v36Zm-24,0v-28h8v28Zm48-4v-36h8v-4h8v36H88v4Zm-56,0v-24h8v24Zm72-4v-36h8v-4h8v36h-8v4Zm-80,0v-16h8v16Zm96-4v-36h8v-4h8v36h-8v4ZM8-385v-12h8v12Zm120-4v-36h8v4h8v28h-8v4ZM0-389v-4H8v4Zm144-4v-24h8v24Zm16-4v-12h8v12Zm-8,0v-16h8v16Zm16-3v-5h8v5Z" transform="translate(88 509)" fill="#b5a89b" />
+          <path id="light" d="M0-409v-8H8v8Zm8-8v-8h8v8Z" transform="translate(144 577)" fill="#edebe8" />
+          <path id="shadow" d="M0-389v-20H8v20Zm0-28v-8H8v8Z" transform="translate(256 633)" fill="#c2b8ad" />
+        </g>
+        <rect id="mask-2" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="d0">
+        <rect id="mask-3" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="e0" transform="translate(116 168)" data-component-source="e11">
+        <path id="line-6" data-name="line" d="M-1382-1140v-16h8v16Zm-24-12v-16h8v16Z" transform="translate(1382 1142)" fill="#333330" />
+        <rect id="mask-4" data-name="mask" width="360" height="360" transform="translate(-116 -168)" fill="#fff" opacity="0" />
+      </g>
+      <g id="f0" data-component-source="f6">
+        <path id="line-11" data-name="line" d="M-430-932v-8h8v8Zm-8,0v-52h16v8h-8v44Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-16h8v16Zm-8-12v-4h-8v-24h8v8h8v8h-8v4h8v8Zm16-16v-8h8v8Zm16-4v-8h8v8Zm16-4v-8h8v8Zm-72,0v-8h16v8Zm88-4v-8h8v8Zm16-4v-8h8v8Z" transform="translate(566 1216)" fill="#303133" />
+        <path id="color-12" data-name="color" d="M-430-960v-36h8v36Zm16-4v-36h8v36Zm-8,0v-36h8v36Zm24-4v-8h8v8Zm-8,0v-12h8v12Z" transform="translate(566 1236)" fill="#fff" />
+        <path id="shadow-4" data-name="shadow" d="M16-3876v-4h8v4Zm-8-16v-4H0v-4H16v8Z" transform="translate(144 4136)" fill="#d4e1fd" />
+        <rect id="mask-6" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="g0" transform="translate(0 5.246)" data-component-source="g6">
+        <path id="line-12" data-name="line" d="M-804-440v-4h-8v-4h-8v-8h8v4h8v4h8v8Zm8-8v-8h4v-8h4v-12h4v-8h4v-4h-16v-8h16v-4h16v8h-8v8h-4v8h-4v12h-4v8h-4v8Zm-32-4v-12h8v12Zm-8-8v-8h8v8Zm-8-4v-8h8v8Zm-16-8v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Z" transform="matrix(1, -0.026, 0.026, 1, 1032.025, 634.584)" fill="#303133" />
+        <path id="color-13" data-name="color" d="M-820-460v-36h8v36Zm-8-4v-32h8v32Zm16-4v-32h4v32Zm-24,0v-24h8v24Zm28-8v-24h4v24Zm-36,0v-16h8v16Zm-8-4v-8h8v8Zm-8-4v-4h8v4Zm56-4v-12h4v12Zm4-8v-4h4v4Z" transform="matrix(1, -0.026, 0.026, 1, 1048.281, 646.161)" fill="#df36fd" />
+        <path id="shadow-5" data-name="shadow" d="M-844-476v-4h-8v-4h-8v-8h8v-4h8v-4h8v24Zm8-8v-12h4v12Z" transform="matrix(1, -0.026, 0.026, 1, 1072.484, 661.687)" fill="#ff14e4" />
+        <path id="light-4" data-name="light" d="M-908-484v-4h8v4Zm56-12v-4h8v4Z" transform="matrix(1, -0.026, 0.026, 1, 1096.579, 644.901)" fill="#ef86ff" />
+        <rect id="emb-2" data-name="emb" width="8" height="12" transform="matrix(1, -0.026, 0.026, 1, 215.844, 184.107)" fill="#f8b9ff" />
+        <rect id="mask-7" data-name="mask" width="360" height="360" transform="translate(0 -5.246)" fill="#fff" opacity="0" />
+      </g>
+    </g>
+  </g>
+</svg><text x="614" y="623" fill="#303133" font-family="monospace" font-size="13" letter-spacing="0.3">13 T40 CHOCOLATE</text><svg x="615" y="630" width="270" height="270" viewBox="0 0 360 360"><defs>
+    <clipPath id="clip-Robot_0">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="g-t40-clip-Robot_9">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="f-t40-clip-Robot_12">
+      <rect width="360" height="360" />
+    </clipPath>
+    <clipPath id="e-t40-clip-Robot_8">
+      <rect width="360" height="360" />
+    </clipPath>
+  </defs>
+  <g id="Robot_0" data-name="Robot 0" clip-path="url(#clip-Robot_0)">
+    <rect width="360" height="360" fill="#c9b7ab" />
+    <g id="walker-subject" transform="translate(23.4 25.92) scale(0.87 0.928)" data-generation="walker" data-candidate-id="T40" data-avatar-style="neutral">
+      <g id="b0">
+        <path id="line" d="M248-301v-96h8v96ZM56-301v-44h8v44ZM0-301v-72H8v72Zm64-40v-8h8v8Zm-16,0v-4H40v-4H32v-4H24v-4H16v-4H8v-8h8v4h8v4h8v4h8v4h8v4h8v8Zm24-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H120v4Zm32-8v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H184v4ZM8-373v-8h8v8Zm192-4v-8h16v8ZM16-377v-8H32v8Zm16-4v-8H48v8Zm184,0v-8h16v8Zm16-4v-8h16v8ZM48-385v-8H64v-4H80v8H64v4Zm32-8v-8H96v8Zm160-4v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v4H176v-8h16v-4h8v4h8v4h8v4h8v4h8v4h8v4h8v8ZM96-397v-8h16v8Zm16-4v-8h16v-4h16v8H128v4Zm32-8v-8h16v8Zm16-4v-8h16v8Z" transform="translate(56 661)" fill="#303133" />
+        <path id="color" d="M176-341v-84h8v84Zm-8,0h-8v-80h8v-4h8v84Zm-16,0h-8v-76h8v-4h8v80Zm-16,0h-8v-72h8v-4h8v76Zm-16,0h-8v-68h8v-4h8v72Zm-16,0H96v-64h8v-4h8v68Zm-16,0H80v-60h8v-4h8v64Zm-16,0H64v-56h8v-4h8v60Zm-16,0H48v-52h8v-4h8v56Zm-16,0H32v-48h8v-4h8v52Zm-16,0H16v-44h8v-4h8v48ZM8-341v-44h8v44Zm-8,0v-40H8v40Z" transform="translate(120 701)" fill="#dcd2cc" />
+        <path id="color-2" data-name="color" d="M40-365v-40h8v40Zm-8,0v-44h8v44Zm-8,0v-48h8v48Zm-8,0v-52h8v52Zm-8,0v-56h8v56Zm-8,0v-60H8v60Z" transform="translate(64 725)" fill="#997a66" />
+        <path id="color-3" data-name="color" d="M48-349v-40h8v40Zm8-4v-40h8v40Zm-16,0v-36h8v36Zm32-4v-40h8v40Zm-8,0v-36h8v36Zm-32,0v-28h8v28Zm56-4v-40h8v40Zm-8,0v-36h8v36Zm-56,0v-24h8v24Zm80-4v-40h8v40Zm-8,0v-36h8v36Zm-80,0v-16h8v16Zm-8-3v-13h8v13Zm112-1h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40ZM0-373v-4H8v4Zm152-4h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40Zm16-4v-40h8v40Zm-8,0v-36h8v36Zm24-4v-28h8v28Zm-8,0v-32h8v32Zm24-4v-16h8v16Zm-8,0v-20h8v20Zm24-4v-4h8v4Zm-8,0v-8h8v8Z" transform="translate(64 665)" fill="#b49d8d" />
+        <rect id="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="c0">
+        <g id="group">
+          <path id="line-2" data-name="line" d="M8-397v-4H0v-8H8v4H24v8Zm16-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-16h8v16Z" transform="translate(168 685)" fill="#303133" />
+          <path id="color-4" data-name="color" d="M0-409v-8H16v8Zm16-4v-8H32v8Zm16-4v-8H48v8Z" transform="translate(176 689)" fill="#dcd2cc" />
+        </g>
+        <g id="box">
+          <path id="line-3" data-name="line" d="M64-213v-8h8v-4H88v-4h16v-4h16v-4h16v-4h16v-4h16v-4h16v-4h8V-381h-8v-8h8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-8h8v4h8v4h8v4h8v4h8v4h8v8h8v140h-8v8h-8v4H168v4H152v4H136v4H120v4H104v4H88v4H72v4Zm-8,0v-4H48v-4H40v-4H32v-4H24v-4H16v-8h8v4h8v4h8v4h8v4h8V-353H48v-4H40v-4H32v-4H24v-4H16v128H8V-381h8v4h8v4h8v4h8v4h8v4h8v4h8v144Zm8-136v-8h8v8Zm8-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8ZM16-381v-8h8v8Zm8-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-8H72v8Zm16-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h8v8Z" transform="translate(72 497)" fill="#303133" />
+          <path id="color-5" data-name="color" d="M0-265V-393H8v128Zm16-4V-397h8v-4h8v128H24v4Zm-8,0V-397h8v128Zm24-4V-401h8v-4h8v128H40v4Zm16-4V-405h8v-4h8v128H56v4Zm16-4V-409h8v-4h8v128H72v4Zm16-4V-413h8v-4h8v128H88v4Zm16-4V-417h8v-4h8v128h-8v4Zm16-4V-421h8v128Zm8-4V-425h8v128Z" transform="translate(136 541)" fill="#dcd2cc" />
+          <path id="color-6" data-name="color" d="M32-281V-409h8v128Zm-8-4V-413h8v128Zm-8-4V-417h8v128Zm-8-4V-421h8v128Zm-8-4V-425H8v128Z" transform="translate(88 553)" fill="#997a66" />
+          <path id="color-7" data-name="color" d="M48-369v-36h8v36Zm-8,0v-36h8v36Zm24-4v-36h8v-4h8v36H72v4Zm-8,0v-36h8v36Zm-24,0v-28h8v28Zm48-4v-36h8v-4h8v36H88v4Zm-56,0v-24h8v24Zm72-4v-36h8v-4h8v36h-8v4Zm-80,0v-16h8v16Zm96-4v-36h8v-4h8v36h-8v4ZM8-385v-12h8v12Zm120-4v-36h8v4h8v28h-8v4ZM0-389v-4H8v4Zm144-4v-24h8v24Zm16-4v-12h8v12Zm-8,0v-16h8v16Zm16-3v-5h8v5Z" transform="translate(88 509)" fill="#b49d8d" />
+          <path id="light" d="M0-409v-8H8v8Zm8-8v-8h8v8Z" transform="translate(144 577)" fill="#e7e2df" />
+          <path id="shadow" d="M0-389v-20H8v20Zm0-28v-8H8v8Z" transform="translate(256 633)" fill="#c0ada0" />
+        </g>
+        <rect id="mask-2" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="d0">
+        <rect id="mask-3" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="e0" data-component-source="e8">
+        <path id="line-5" data-name="line" d="M-1282-464v-8h8v8Zm-8-4v-28h8v28Zm8-24v-8h8v8Z" transform="translate(1386 692)" fill="#303133" />
+        <rect id="mask-4" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="f0" data-component-source="f12">
+        <path id="shape" d="M-1736-944v-28h8v-8h8v-4h8v-8h16v-4h8v40h-8v4h-16v4h-16v4Zm48-12v-40h8v40Zm16-4v-36h8v36Zm-8,0v-40h8v40Zm16-4v-28h8v28Z" transform="translate(1904 1212)" fill="#bfbaaa" />
+        <path id="line-5" data-name="line" d="M-844-981v-3h-8v-8h-8v-8h8v8h8v3h16v-3h16v8h-16v3Zm32-8v-8h8v8Z" transform="translate(1036 1229)" fill="#303133" />
+        <rect id="mask-5" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="g0" data-component-source="g9">
+        <path id="line-10" data-name="line" d="M-430-942v-8h16v-4h16v8h-16v4Zm32-8v-8h16v8Zm-28,0v-12h4v-8h6v-8h6v-8h8v8h-6v8h-6v8h-4v12Zm44-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm5-8v-12h8v12Zm-5-12v-8h8v8Zm-52,0v-8h8v8Zm44-4v-4h-8v-8h8v4h8v8Zm-36,0v-8h8v8Zm8-4v-8h12v8Zm12-2v-8h8v8Z" transform="translate(590 1150)" fill="#303133" />
+        <path id="color-11" data-name="color" d="M-430-960v-12h4v-8h6v-8h6v-4h8v-4h8v-4h12v-2h8v2h8v4h8v20h-32v8h-16v4h-16v4Zm36-12v-4h16v4Zm32-8v-12h5v12Z" transform="translate(602 1160)" fill="#fff7f7" />
+        <g id="emb-2" data-name="emb">
+          <rect id="矩形_2452" data-name="矩形 2452" width="8" height="16" transform="translate(208 172)" fill="#6addff" />
+          <rect id="矩形_2459" data-name="矩形 2459" width="8" height="14" transform="translate(216 174)" fill="#2b30b9" />
+          <rect id="矩形_2453" data-name="矩形 2453" width="8" height="16" transform="translate(200 176)" fill="#ff2143" />
+          <rect id="矩形_2460" data-name="矩形 2460" width="8" height="8" transform="translate(212 180)" fill="#c1eeff" />
+          <rect id="矩形_2461" data-name="矩形 2461" width="8" height="7" transform="translate(200 185)" fill="#2b30b9" />
+        </g>
+        <rect id="mask-6" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+    </g>
+  </g>
+</svg><text x="914" y="623" fill="#303133" font-family="monospace" font-size="13" letter-spacing="0.3">14 P48 FUCHSIA-CAT</text><svg x="915" y="630" width="270" height="270" viewBox="0 0 360 360"><defs>
+    <clipPath id="clip-Robot_0">
+      <rect width="360" height="360" />
+    </clipPath>
+  </defs>
+  <g id="Robot_0" data-name="Robot 0" clip-path="url(#clip-Robot_0)">
+    <rect width="360" height="360" fill="#deb5cd" />
+    <g id="walker-subject" transform="translate(23.4 45.92) scale(0.87 0.928)" data-generation="walker" data-candidate-id="48" data-avatar-style="female">
+      <g id="b0">
+        <path id="line" d="M248-301v-96h8v96ZM56-301v-44h8v44ZM0-301v-72H8v72Zm64-40v-8h8v8Zm-16,0v-4H40v-4H32v-4H24v-4H16v-4H8v-8h8v4h8v4h8v4h8v4h8v4h8v8Zm24-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H120v4Zm32-8v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H184v4ZM8-373v-8h8v8Zm192-4v-8h16v8ZM16-377v-8H32v8Zm16-4v-8H48v8Zm184,0v-8h16v8Zm16-4v-8h16v8ZM48-385v-8H64v-4H80v8H64v4Zm32-8v-8H96v8Zm160-4v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v4H176v-8h16v-4h8v4h8v4h8v4h8v4h8v4h8v4h8v8ZM96-397v-8h16v8Zm16-4v-8h16v-4h16v8H128v4Zm32-8v-8h16v8Zm16-4v-8h16v8Z" transform="translate(56 661)" fill="#303133" />
+        <path id="color" d="M176-341v-84h8v84Zm-8,0h-8v-80h8v-4h8v84Zm-16,0h-8v-76h8v-4h8v80Zm-16,0h-8v-72h8v-4h8v76Zm-16,0h-8v-68h8v-4h8v72Zm-16,0H96v-64h8v-4h8v68Zm-16,0H80v-60h8v-4h8v64Zm-16,0H64v-56h8v-4h8v60Zm-16,0H48v-52h8v-4h8v56Zm-16,0H32v-48h8v-4h8v52Zm-16,0H16v-44h8v-4h8v48ZM8-341v-44h8v44Zm-8,0v-40H8v40Z" transform="translate(120 701)" fill="#ecdae4" />
+        <path id="color-2" data-name="color" d="M40-365v-40h8v40Zm-8,0v-44h8v44Zm-8,0v-48h8v48Zm-8,0v-52h8v52Zm-8,0v-56h8v56Zm-8,0v-60H8v60Z" transform="translate(64 725)" fill="#b56895" />
+        <path id="color-3" data-name="color" d="M48-349v-40h8v40Zm8-4v-40h8v40Zm-16,0v-36h8v36Zm32-4v-40h8v40Zm-8,0v-36h8v36Zm-32,0v-28h8v28Zm56-4v-40h8v40Zm-8,0v-36h8v36Zm-56,0v-24h8v24Zm80-4v-40h8v40Zm-8,0v-36h8v36Zm-80,0v-16h8v16Zm-8-3v-13h8v13Zm112-1h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40ZM0-373v-4H8v4Zm152-4h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40Zm16-4v-40h8v40Zm-8,0v-36h8v36Zm24-4v-28h8v28Zm-8,0v-32h8v32Zm24-4v-16h8v16Zm-8,0v-20h8v20Zm24-4v-4h8v4Zm-8,0v-8h8v8Z" transform="translate(64 665)" fill="#cc93b5" />
+        <rect id="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="c0">
+        <g id="group">
+          <path id="line-2" data-name="line" d="M8-397v-4H0v-8H8v4H24v8Zm16-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-16h8v16Z" transform="translate(168 685)" fill="#303133" />
+          <path id="color-4" data-name="color" d="M0-409v-8H16v8Zm16-4v-8H32v8Zm16-4v-8H48v8Z" transform="translate(176 689)" fill="#ecdae4" />
+        </g>
+        <g id="box">
+          <path id="line-3" data-name="line" d="M64-213v-8h8v-4H88v-4h16v-4h16v-4h16v-4h16v-4h16v-4h16v-4h8V-381h-8v-8h8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-8h8v4h8v4h8v4h8v4h8v4h8v8h8v140h-8v8h-8v4H168v4H152v4H136v4H120v4H104v4H88v4H72v4Zm-8,0v-4H48v-4H40v-4H32v-4H24v-4H16v-8h8v4h8v4h8v4h8v4h8V-353H48v-4H40v-4H32v-4H24v-4H16v128H8V-381h8v4h8v4h8v4h8v4h8v4h8v4h8v144Zm8-136v-8h8v8Zm8-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8ZM16-381v-8h8v8Zm8-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-8H72v8Zm16-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h8v8Z" transform="translate(72 497)" fill="#303133" />
+          <path id="color-5" data-name="color" d="M0-265V-393H8v128Zm16-4V-397h8v-4h8v128H24v4Zm-8,0V-397h8v128Zm24-4V-401h8v-4h8v128H40v4Zm16-4V-405h8v-4h8v128H56v4Zm16-4V-409h8v-4h8v128H72v4Zm16-4V-413h8v-4h8v128H88v4Zm16-4V-417h8v-4h8v128h-8v4Zm16-4V-421h8v128Zm8-4V-425h8v128Z" transform="translate(136 541)" fill="#ecdae4" />
+          <path id="color-6" data-name="color" d="M32-281V-409h8v128Zm-8-4V-413h8v128Zm-8-4V-417h8v128Zm-8-4V-421h8v128Zm-8-4V-425H8v128Z" transform="translate(88 553)" fill="#b56895" />
+          <path id="color-7" data-name="color" d="M48-369v-36h8v36Zm-8,0v-36h8v36Zm24-4v-36h8v-4h8v36H72v4Zm-8,0v-36h8v36Zm-24,0v-28h8v28Zm48-4v-36h8v-4h8v36H88v4Zm-56,0v-24h8v24Zm72-4v-36h8v-4h8v36h-8v4Zm-80,0v-16h8v16Zm96-4v-36h8v-4h8v36h-8v4ZM8-385v-12h8v12Zm120-4v-36h8v4h8v28h-8v4ZM0-389v-4H8v4Zm144-4v-24h8v24Zm16-4v-12h8v12Zm-8,0v-16h8v16Zm16-3v-5h8v5Z" transform="translate(88 509)" fill="#cc93b5" />
+          <path id="light" d="M0-409v-8H8v8Zm8-8v-8h8v8Z" transform="translate(144 577)" fill="#f6eff3" />
+          <path id="shadow" d="M0-389v-20H8v20Zm0-28v-8H8v8Z" transform="translate(256 633)" fill="#d5a9c3" />
+        </g>
+        <rect id="mask-2" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="d0">
+        <rect id="mask-3" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="e0">
+        <path id="line-4" data-name="line" d="M24-2360v-4H16v-4H8v-8h8v4h8v-12H16v-4H8v-8h8v4h8v4h8v28ZM0-2372v-28H8v28Z" transform="translate(92 2576)" fill="#303133" />
+        <rect id="mask-4" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="f0" transform="translate(-4)" data-component-source="f5">
+        <path id="line-10" data-name="line" d="M-860-3376v-8h12v-16h8v20h-8v4Zm20-10v-8h12v8Z" transform="translate(1064 3620)" fill="#303133" />
+        <rect id="mask-5" data-name="mask" width="360" height="360" transform="translate(4)" fill="#fff" opacity="0" />
+      </g>
+      <g id="g0" data-component-source="g5">
+        <g id="group-3" data-name="group" transform="translate(212 156)">
+          <path id="line-11" data-name="line" d="M15,36V32H8V16h8V28H31v8Zm16-4V24h5V8H32V0H48V8H44V24H39v8ZM4,16V8H16v8Zm12-4V4H32v8Z" transform="translate(48 40) rotate(180)" fill="#303133" />
+          <path id="color-10" data-name="color" d="M-1450-3140v-16h20v12h-16v4Zm5-16v-4h15v4Z" transform="translate(1462 3172)" fill="#fff" />
+          <rect id="eye" width="8" height="12" transform="translate(24 16)" fill="#d9bd72" />
+          <rect id="eye-2" data-name="eye" width="8" height="8" transform="translate(24 16)" fill="#d7869c" />
+        </g>
+        <g id="group-4" data-name="group" transform="translate(160 168)">
+          <path id="line-12" data-name="line" d="M15,36V32H8V16h8V28H31v8Zm16-4V24h5V8H32V0H48V8H44V24H39v8ZM4,16V8H16v8Zm12-4V4H32v8Z" transform="translate(48 40) rotate(180)" fill="#303133" />
+          <path id="color-11" data-name="color" d="M-1450-3140v-16h20v12h-16v4Zm5-16v-4h15v4Z" transform="translate(1462 3172)" fill="#fff" />
+          <rect id="eye-3" data-name="eye" width="8" height="12" transform="translate(24 16)" fill="#d9bd72" />
+          <rect id="eye-4" data-name="eye" width="8" height="8" transform="translate(24 16)" fill="#d7869c" />
+        </g>
+        <rect id="mask-6" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="h0" data-component-source="h5">
+        <g id="group-5" data-name="group" transform="translate(59 -16)">
+          <path id="color-12" data-name="color" d="M-1290-436v-8h36v4h-16v4Zm36-8v-8h5v8Zm-34,0v-8h34v8Zm3-8v-8h28v8Zm4-8v-8h21v8Zm2-8v-8h15v8Zm4-8v-16h10v8h-4v8Z" transform="translate(1430 564)" fill="#ecc9e2" />
+          <path id="color-13" data-name="color" d="M-1273-448v-4h-9v-4h-8v-4h26v8h-2v4Zm-13-12v-8h25v8Zm8-8v-8h21v8Zm8-8v-8h15v8Zm8-8v-8h11v8Zm8-8v-8h5v8Z" transform="translate(1398 572)" fill="#d495c2" />
+          <path id="line-14" data-name="line" d="M-1254-428v-8h2v-8h3v-8h4v-8h2v-8h8v8h-2v8h-4v8h-3v8h-2v8Zm41-16v-8h8v8Zm-69,0h-8v-8h8v-4h8v-8h8v-8h8v-8h8v-8h8v-4h16v8h-5v16h-8v-8h2v-8h-5v8h-8v8h-8v8h-8v8h-8v8Zm65-8v-8h8v8Zm-4-8v-8h8v8Zm-4-8v-8h-4v-8h8v8h4v8Z" transform="translate(1386 556)" fill="#303133" />
+        </g>
+        <g id="group-6" data-name="group" transform="translate(0)">
+          <path id="color-14" data-name="color" d="M-1290-436v-8h36v4h-16v4Zm36-8v-8h5v8Zm-34,0v-8h34v8Zm3-8v-8h28v8Zm4-8v-8h21v8Zm2-8v-8h15v8Zm4-8v-16h10v8h-4v8Z" transform="translate(1430 564)" fill="#ecc9e2" />
+          <path id="color-15" data-name="color" d="M-1274-448v-4h-8v-4h-8v-4h26v8h-2v4Zm-12-12v-8h25v8Zm8-8v-8h21v8Zm8-8v-8h15v8Zm8-8v-8h11v8Zm8-8v-8h5v8Z" transform="translate(1398 572)" fill="#d495c2" />
+          <path id="line-15" data-name="line" d="M-1254-428v-8h2v-8h3v-8h4v-8h2v-8h8v8h-2v8h-4v8h-3v8h-2v8Zm41-16v-8h8v8Zm-69,0h-8v-8h8v-4h8v-8h8v-8h8v-8h8v-8h8v-4h16v8h-5v16h-8v-8h2v-8h-5v8h-8v8h-8v8h-8v8h-8v8Zm65-8v-8h8v8Zm-4-8v-8h8v8Zm-4-8v-8h-4v-8h8v8h4v8Z" transform="translate(1386 556)" fill="#303133" />
+        </g>
+        <path id="shadow-3" data-name="shadow" d="M-1290-2968v-8h4v8Zm8-8v-8h4v8Zm59-16v-8h4v8Z" transform="translate(1418 3064)" fill="#b875a5" />
+        <path id="light-3" data-name="light" d="M-1290-2984v-16h2v8h4v8Z" transform="translate(1504 3056)" fill="#fff" />
+        <path id="light-4" data-name="light" d="M-1290-2976v-8h4v8Zm4-8v-16h2v8h4v8Z" transform="translate(1441 3072)" fill="#fff" />
+        <rect id="mask-7" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="female-lashes" fill="#303133">
+        <path d="M168 168h4v8h-4z M176 160h4v8h-4z M248 148h4v8h-4z M256 152h4v8h-4z" />
+      </g>
+      <g id="female-blush" fill="#c87ea5" opacity="0.65">
+        <path d="M160 216h16v4h-16z M240 204h16v4h-16z" />
+      </g>
+    </g>
+  </g>
+</svg><text x="1214" y="623" fill="#303133" font-family="monospace" font-size="13" letter-spacing="0.3">15 P44 LILAC-PLUS</text><svg x="1215" y="630" width="270" height="270" viewBox="0 0 360 360"><defs>
+    <clipPath id="clip-Robot_0">
+      <rect width="360" height="360" />
+    </clipPath>
+  </defs>
+  <g id="Robot_0" data-name="Robot 0" clip-path="url(#clip-Robot_0)">
+    <rect width="360" height="360" fill="#d5d0e6" />
+    <g id="walker-subject" transform="translate(23.4 45.92) scale(0.87 0.928)" data-generation="walker" data-candidate-id="44" data-avatar-style="female">
+      <g id="b0">
+        <path id="line" d="M248-301v-96h8v96ZM56-301v-44h8v44ZM0-301v-72H8v72Zm64-40v-8h8v8Zm-16,0v-4H40v-4H32v-4H24v-4H16v-4H8v-8h8v4h8v4h8v4h8v4h8v4h8v8Zm24-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H120v4Zm32-8v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H184v4ZM8-373v-8h8v8Zm192-4v-8h16v8ZM16-377v-8H32v8Zm16-4v-8H48v8Zm184,0v-8h16v8Zm16-4v-8h16v8ZM48-385v-8H64v-4H80v8H64v4Zm32-8v-8H96v8Zm160-4v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v4H176v-8h16v-4h8v4h8v4h8v4h8v4h8v4h8v4h8v8ZM96-397v-8h16v8Zm16-4v-8h16v-4h16v8H128v4Zm32-8v-8h16v8Zm16-4v-8h16v8Z" transform="translate(56 661)" fill="#303133" />
+        <path id="color" d="M176-341v-84h8v84Zm-8,0h-8v-80h8v-4h8v84Zm-16,0h-8v-76h8v-4h8v80Zm-16,0h-8v-72h8v-4h8v76Zm-16,0h-8v-68h8v-4h8v72Zm-16,0H96v-64h8v-4h8v68Zm-16,0H80v-60h8v-4h8v64Zm-16,0H64v-56h8v-4h8v60Zm-16,0H48v-52h8v-4h8v56Zm-16,0H32v-48h8v-4h8v52Zm-16,0H16v-44h8v-4h8v48ZM8-341v-44h8v44Zm-8,0v-40H8v40Z" transform="translate(120 701)" fill="#e5e1f0" />
+        <path id="color-2" data-name="color" d="M40-365v-40h8v40Zm-8,0v-44h8v44Zm-8,0v-48h8v48Zm-8,0v-52h8v52Zm-8,0v-56h8v56Zm-8,0v-60H8v60Z" transform="translate(64 725)" fill="#9288ae" />
+        <path id="color-3" data-name="color" d="M48-349v-40h8v40Zm8-4v-40h8v40Zm-16,0v-36h8v36Zm32-4v-40h8v40Zm-8,0v-36h8v36Zm-32,0v-28h8v28Zm56-4v-40h8v40Zm-8,0v-36h8v36Zm-56,0v-24h8v24Zm80-4v-40h8v40Zm-8,0v-36h8v36Zm-80,0v-16h8v16Zm-8-3v-13h8v13Zm112-1h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40ZM0-373v-4H8v4Zm152-4h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40Zm16-4v-40h8v40Zm-8,0v-36h8v36Zm24-4v-28h8v28Zm-8,0v-32h8v32Zm24-4v-16h8v16Zm-8,0v-20h8v20Zm24-4v-4h8v4Zm-8,0v-8h8v8Z" transform="translate(64 665)" fill="#b3a9ca" />
+        <rect id="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="c0">
+        <g id="group">
+          <path id="line-2" data-name="line" d="M8-397v-4H0v-8H8v4H24v8Zm16-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-16h8v16Z" transform="translate(168 685)" fill="#303133" />
+          <path id="color-4" data-name="color" d="M0-409v-8H16v8Zm16-4v-8H32v8Zm16-4v-8H48v8Z" transform="translate(176 689)" fill="#e5e1f0" />
+        </g>
+        <g id="box">
+          <path id="line-3" data-name="line" d="M64-213v-8h8v-4H88v-4h16v-4h16v-4h16v-4h16v-4h16v-4h16v-4h8V-381h-8v-8h8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-8h8v4h8v4h8v4h8v4h8v4h8v8h8v140h-8v8h-8v4H168v4H152v4H136v4H120v4H104v4H88v4H72v4Zm-8,0v-4H48v-4H40v-4H32v-4H24v-4H16v-8h8v4h8v4h8v4h8v4h8V-353H48v-4H40v-4H32v-4H24v-4H16v128H8V-381h8v4h8v4h8v4h8v4h8v4h8v4h8v144Zm8-136v-8h8v8Zm8-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8ZM16-381v-8h8v8Zm8-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-8H72v8Zm16-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h8v8Z" transform="translate(72 497)" fill="#303133" />
+          <path id="color-5" data-name="color" d="M0-265V-393H8v128Zm16-4V-397h8v-4h8v128H24v4Zm-8,0V-397h8v128Zm24-4V-401h8v-4h8v128H40v4Zm16-4V-405h8v-4h8v128H56v4Zm16-4V-409h8v-4h8v128H72v4Zm16-4V-413h8v-4h8v128H88v4Zm16-4V-417h8v-4h8v128h-8v4Zm16-4V-421h8v128Zm8-4V-425h8v128Z" transform="translate(136 541)" fill="#e5e1f0" />
+          <path id="color-6" data-name="color" d="M32-281V-409h8v128Zm-8-4V-413h8v128Zm-8-4V-417h8v128Zm-8-4V-421h8v128Zm-8-4V-425H8v128Z" transform="translate(88 553)" fill="#9288ae" />
+          <path id="color-7" data-name="color" d="M48-369v-36h8v36Zm-8,0v-36h8v36Zm24-4v-36h8v-4h8v36H72v4Zm-8,0v-36h8v36Zm-24,0v-28h8v28Zm48-4v-36h8v-4h8v36H88v4Zm-56,0v-24h8v24Zm72-4v-36h8v-4h8v36h-8v4Zm-80,0v-16h8v16Zm96-4v-36h8v-4h8v36h-8v4ZM8-385v-12h8v12Zm120-4v-36h8v4h8v28h-8v4ZM0-389v-4H8v4Zm144-4v-24h8v24Zm16-4v-12h8v12Zm-8,0v-16h8v16Zm16-3v-5h8v5Z" transform="translate(88 509)" fill="#b3a9ca" />
+          <path id="light" d="M0-409v-8H8v8Zm8-8v-8h8v8Z" transform="translate(144 577)" fill="#f2eff8" />
+          <path id="shadow" d="M0-389v-20H8v20Zm0-28v-8H8v8Z" transform="translate(256 633)" fill="#c4bdd8" />
+        </g>
+        <rect id="mask-2" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="d0">
+        <rect id="mask-3" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="e0">
+        <path id="line-4" data-name="line" d="M24-2360v-4H16v-4H8v-8h8v4h8v-12H16v-4H8v-8h8v4h8v4h8v28ZM0-2372v-28H8v28Z" transform="translate(92 2576)" fill="#303133" />
+        <rect id="mask-4" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="f0" data-component-source="f0">
+        <path id="line-5" data-name="line" d="M0-2368v-16H8v8h8v8Zm16-4v-8H32v8Zm16-4v-16h8v16Zm-32-8v-8H16v8Zm16-4v-8H32v8Zm16-4v-8h8v8Z" transform="translate(192 2608)" fill="#303133" />
+        <rect id="mask-5" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="g0" transform="translate(0 9)" data-component-source="g11">
+        <path id="联合_103" data-name="联合 103" d="M2798-3189v-30h4v30Zm4-1v-30h4v30Zm-12-11v-8h4v8Zm4-1v-8h4v8Zm12-4v-8h4v8Zm4-1v-8h4v8Z" transform="translate(-2632 3391)" fill="#303133" />
+        <path id="联合_104" data-name="联合 104" d="M2798-3189v-30h4v30Zm4-1v-30h4v30Zm-12-11v-8h4v8Zm4-1v-8h4v8Zm12-4v-8h4v8Zm4-1v-8h4v8Z" transform="translate(-2566 3369)" fill="#303133" />
+        <rect id="mask-6" data-name="mask" width="360" height="360" transform="translate(0 -9)" fill="#fff" opacity="0" />
+      </g>
+      <g id="h0" data-component-source="h5">
+        <g id="group-5" data-name="group" transform="translate(59 -16)">
+          <path id="color-12" data-name="color" d="M-1290-436v-8h36v4h-16v4Zm36-8v-8h5v8Zm-34,0v-8h34v8Zm3-8v-8h28v8Zm4-8v-8h21v8Zm2-8v-8h15v8Zm4-8v-16h10v8h-4v8Z" transform="translate(1430 564)" fill="#ded1e9" />
+          <path id="color-13" data-name="color" d="M-1273-448v-4h-9v-4h-8v-4h26v8h-2v4Zm-13-12v-8h25v8Zm8-8v-8h21v8Zm8-8v-8h15v8Zm8-8v-8h11v8Zm8-8v-8h5v8Z" transform="translate(1398 572)" fill="#bda3d0" />
+          <path id="line-14" data-name="line" d="M-1254-428v-8h2v-8h3v-8h4v-8h2v-8h8v8h-2v8h-4v8h-3v8h-2v8Zm41-16v-8h8v8Zm-69,0h-8v-8h8v-4h8v-8h8v-8h8v-8h8v-8h8v-4h16v8h-5v16h-8v-8h2v-8h-5v8h-8v8h-8v8h-8v8h-8v8Zm65-8v-8h8v8Zm-4-8v-8h8v8Zm-4-8v-8h-4v-8h8v8h4v8Z" transform="translate(1386 556)" fill="#303133" />
+        </g>
+        <g id="group-6" data-name="group" transform="translate(0)">
+          <path id="color-14" data-name="color" d="M-1290-436v-8h36v4h-16v4Zm36-8v-8h5v8Zm-34,0v-8h34v8Zm3-8v-8h28v8Zm4-8v-8h21v8Zm2-8v-8h15v8Zm4-8v-16h10v8h-4v8Z" transform="translate(1430 564)" fill="#ded1e9" />
+          <path id="color-15" data-name="color" d="M-1274-448v-4h-8v-4h-8v-4h26v8h-2v4Zm-12-12v-8h25v8Zm8-8v-8h21v8Zm8-8v-8h15v8Zm8-8v-8h11v8Zm8-8v-8h5v8Z" transform="translate(1398 572)" fill="#bda3d0" />
+          <path id="line-15" data-name="line" d="M-1254-428v-8h2v-8h3v-8h4v-8h2v-8h8v8h-2v8h-4v8h-3v8h-2v8Zm41-16v-8h8v8Zm-69,0h-8v-8h8v-4h8v-8h8v-8h8v-8h8v-8h8v-4h16v8h-5v16h-8v-8h2v-8h-5v8h-8v8h-8v8h-8v8h-8v8Zm65-8v-8h8v8Zm-4-8v-8h8v8Zm-4-8v-8h-4v-8h8v8h4v8Z" transform="translate(1386 556)" fill="#303133" />
+        </g>
+        <path id="shadow-3" data-name="shadow" d="M-1290-2968v-8h4v8Zm8-8v-8h4v8Zm59-16v-8h4v8Z" transform="translate(1418 3064)" fill="#a186b7" />
+        <path id="light-3" data-name="light" d="M-1290-2984v-16h2v8h4v8Z" transform="translate(1504 3056)" fill="#fff" />
+        <path id="light-4" data-name="light" d="M-1290-2976v-8h4v8Zm4-8v-16h2v8h4v8Z" transform="translate(1441 3072)" fill="#fff" />
+        <rect id="mask-7" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+    </g>
+  </g>
+</svg><text x="14" y="923" fill="#303133" font-family="monospace" font-size="13" letter-spacing="0.3">16 P31 CORAL</text><svg x="15" y="930" width="270" height="270" viewBox="0 0 360 360"><defs>
+    <clipPath id="clip-Robot_0">
+      <rect width="360" height="360" />
+    </clipPath>
+  </defs>
+  <g id="Robot_0" data-name="Robot 0" clip-path="url(#clip-Robot_0)">
+    <rect width="360" height="360" fill="#debfba" />
+    <g id="walker-subject" transform="translate(23.4 25.92) scale(0.87 0.928)" data-generation="walker" data-candidate-id="31" data-avatar-style="neutral">
+      <g id="b0">
+        <path id="line" d="M248-301v-96h8v96ZM56-301v-44h8v44ZM0-301v-72H8v72Zm64-40v-8h8v8Zm-16,0v-4H40v-4H32v-4H24v-4H16v-4H8v-8h8v4h8v4h8v4h8v4h8v4h8v8Zm24-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H120v4Zm32-8v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H184v4ZM8-373v-8h8v8Zm192-4v-8h16v8ZM16-377v-8H32v8Zm16-4v-8H48v8Zm184,0v-8h16v8Zm16-4v-8h16v8ZM48-385v-8H64v-4H80v8H64v4Zm32-8v-8H96v8Zm160-4v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v4H176v-8h16v-4h8v4h8v4h8v4h8v4h8v4h8v4h8v8ZM96-397v-8h16v8Zm16-4v-8h16v-4h16v8H128v4Zm32-8v-8h16v8Zm16-4v-8h16v8Z" transform="translate(56 661)" fill="#303133" />
+        <path id="color" d="M176-341v-84h8v84Zm-8,0h-8v-80h8v-4h8v84Zm-16,0h-8v-76h8v-4h8v80Zm-16,0h-8v-72h8v-4h8v76Zm-16,0h-8v-68h8v-4h8v72Zm-16,0H96v-64h8v-4h8v68Zm-16,0H80v-60h8v-4h8v64Zm-16,0H64v-56h8v-4h8v60Zm-16,0H48v-52h8v-4h8v56Zm-16,0H32v-48h8v-4h8v52Zm-16,0H16v-44h8v-4h8v48ZM8-341v-44h8v44Zm-8,0v-40H8v40Z" transform="translate(120 701)" fill="#ede0de" />
+        <path id="color-2" data-name="color" d="M40-365v-40h8v40Zm-8,0v-44h8v44Zm-8,0v-48h8v48Zm-8,0v-52h8v52Zm-8,0v-56h8v56Zm-8,0v-60H8v60Z" transform="translate(64 725)" fill="#b5776e" />
+        <path id="color-3" data-name="color" d="M48-349v-40h8v40Zm8-4v-40h8v40Zm-16,0v-36h8v36Zm32-4v-40h8v40Zm-8,0v-36h8v36Zm-32,0v-28h8v28Zm56-4v-40h8v40Zm-8,0v-36h8v36Zm-56,0v-24h8v24Zm80-4v-40h8v40Zm-8,0v-36h8v36Zm-80,0v-16h8v16Zm-8-3v-13h8v13Zm112-1h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40ZM0-373v-4H8v4Zm152-4h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40Zm16-4v-40h8v40Zm-8,0v-36h8v36Zm24-4v-28h8v28Zm-8,0v-32h8v32Zm24-4v-16h8v16Zm-8,0v-20h8v20Zm24-4v-4h8v4Zm-8,0v-8h8v8Z" transform="translate(64 665)" fill="#cd9f98" />
+        <rect id="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="c0">
+        <g id="group">
+          <path id="line-2" data-name="line" d="M8-397v-4H0v-8H8v4H24v8Zm16-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-16h8v16Z" transform="translate(168 685)" fill="#303133" />
+          <path id="color-4" data-name="color" d="M0-409v-8H16v8Zm16-4v-8H32v8Zm16-4v-8H48v8Z" transform="translate(176 689)" fill="#ede0de" />
+        </g>
+        <g id="box">
+          <path id="line-3" data-name="line" d="M64-213v-8h8v-4H88v-4h16v-4h16v-4h16v-4h16v-4h16v-4h16v-4h8V-381h-8v-8h8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-8h8v4h8v4h8v4h8v4h8v4h8v8h8v140h-8v8h-8v4H168v4H152v4H136v4H120v4H104v4H88v4H72v4Zm-8,0v-4H48v-4H40v-4H32v-4H24v-4H16v-8h8v4h8v4h8v4h8v4h8V-353H48v-4H40v-4H32v-4H24v-4H16v128H8V-381h8v4h8v4h8v4h8v4h8v4h8v4h8v144Zm8-136v-8h8v8Zm8-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8ZM16-381v-8h8v8Zm8-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-8H72v8Zm16-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h8v8Z" transform="translate(72 497)" fill="#303133" />
+          <path id="color-5" data-name="color" d="M0-265V-393H8v128Zm16-4V-397h8v-4h8v128H24v4Zm-8,0V-397h8v128Zm24-4V-401h8v-4h8v128H40v4Zm16-4V-405h8v-4h8v128H56v4Zm16-4V-409h8v-4h8v128H72v4Zm16-4V-413h8v-4h8v128H88v4Zm16-4V-417h8v-4h8v128h-8v4Zm16-4V-421h8v128Zm8-4V-425h8v128Z" transform="translate(136 541)" fill="#ede0de" />
+          <path id="color-6" data-name="color" d="M32-281V-409h8v128Zm-8-4V-413h8v128Zm-8-4V-417h8v128Zm-8-4V-421h8v128Zm-8-4V-425H8v128Z" transform="translate(88 553)" fill="#b5776e" />
+          <path id="color-7" data-name="color" d="M48-369v-36h8v36Zm-8,0v-36h8v36Zm24-4v-36h8v-4h8v36H72v4Zm-8,0v-36h8v36Zm-24,0v-28h8v28Zm48-4v-36h8v-4h8v36H88v4Zm-56,0v-24h8v24Zm72-4v-36h8v-4h8v36h-8v4Zm-80,0v-16h8v16Zm96-4v-36h8v-4h8v36h-8v4ZM8-385v-12h8v12Zm120-4v-36h8v4h8v28h-8v4ZM0-389v-4H8v4Zm144-4v-24h8v24Zm16-4v-12h8v12Zm-8,0v-16h8v16Zm16-3v-5h8v5Z" transform="translate(88 509)" fill="#cd9f98" />
+          <path id="light" d="M0-409v-8H8v8Zm8-8v-8h8v8Z" transform="translate(144 577)" fill="#f7f3f2" />
+          <path id="shadow" d="M0-389v-20H8v20Zm0-28v-8H8v8Z" transform="translate(256 633)" fill="#d6b3ae" />
+        </g>
+        <rect id="mask-2" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="d0">
+        <rect id="mask-3" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="e0">
+        <path id="line-4" data-name="line" d="M24-2360v-4H16v-4H8v-8h8v4h8v-12H16v-4H8v-8h8v4h8v4h8v28ZM0-2372v-28H8v28Z" transform="translate(92 2576)" fill="#303133" />
+        <rect id="mask-4" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="f0" transform="translate(8 -4)" data-component-source="f1">
+        <path id="line-7" data-name="line" d="M-844-981v-3h-8v-8h-8v-8h8v8h8v3h16v-3h16v8h-16v3Zm32-8v-8h8v8Z" transform="translate(1036 1229)" fill="#303133" />
+        <rect id="mask-5" data-name="mask" width="360" height="360" transform="translate(-8 4)" fill="#fff" opacity="0" />
+      </g>
+      <g id="g0" data-component-source="g13">
+        <path id="color-10" data-name="color" d="M2365-3139v-2h-5v-43h13v-3h2v-1h13v-2h3v-3h24v-4h9v-5h14v40h-9v11h-10v3h-16v3h-15v4h-12v2Zm105-26v-46h14v-4h16v47h-14v3Zm-16,0v-42h16v42Zm-16-2v-40h16v40Zm62-4v-47h9v-2h16v37h-9v12Z" transform="translate(-2238 3357)" fill="#707993" />
+        <path id="line-6" data-name="line" d="M2373-3126v-8h8v-2h8v8h-8v2Zm24-6h-8v-8h16v8Zm-32,0v-8h8v8Zm48-4h-8v-8h16v8Zm16-4h-8v-8h16v8Zm-67,0v-8h8v8Zm72-8v-9h3v-7h8v-4h8v8h-8v4h-3v8Zm-74,0v-8h8v8Zm117-4h-8v-8h16v8Zm16-3h-8v-8h16v8Zm-32-1v-4h-8v-8h8v4h8v8Zm-101,0v-8h8v8Zm149-2h-8v-8h16v-3h8v8h-8v3Zm-149-6v-8h8v8Zm163-5v-8h8v8Zm-158-3v-8h8v-3h8v-4h8v8h-8v4h-8v3Zm163-5v-8h3v-7h8v8h-3v7Zm-139-2v-8h8v-4h8v8h-8v4Zm16-4v-8h8v-4h8v8h-8v4Zm16-4v-8h8v-4h8v8h-8v4Zm16-4v-8h8v-4h8v8h-8v4Zm94-1v-8h8v8Zm-78-3v-8h8v-5h8v8h-8v5Zm78-5v-7h-6v-5h-8v-8h8v5h8v7h6v8Zm-62,0v-8h8v-4h8v8h-8v4Zm16-4v-8h8v-4h8v8h-8v4Zm16-4v-8h8v-4h8v8h-8v4Z" transform="translate(-2245 3351)" fill="#303133" />
+        <path id="color-11" data-name="color" d="M2376-3180v-8h8v8Zm-8,0v-2h-8v-8h8v-6h8v8h0v8Zm16-6v-8h8v8Zm-8-2v-8h8v8Zm81-16v-8h8v8Zm-8,0v-2h-8v-8h8v-6h8v8h0v8Zm16-6v-8h8v8Zm-8-2v-8h8v8Z" transform="translate(-2210 3374)" fill="#fff" />
+        <path id="联合_107" data-name="联合 107" d="M2379-2386v-4h-8v-4h-8v-4h-3v-8h3v4h8v4h8v4h8v8Z" transform="translate(-2272 2577)" fill="#303133" />
+        <rect id="mask-6" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+    </g>
+  </g>
+</svg><text x="314" y="923" fill="#303133" font-family="monospace" font-size="13" letter-spacing="0.3">17 P03 AMBER</text><svg x="315" y="930" width="270" height="270" viewBox="0 0 360 360"><defs>
+    <clipPath id="clip-Robot_0">
+      <rect width="360" height="360" />
+    </clipPath>
+  </defs>
+  <g id="Robot_0" data-name="Robot 0" clip-path="url(#clip-Robot_0)">
+    <rect width="360" height="360" fill="#dfcfb4" />
+    <g id="walker-subject" transform="translate(23.4 25.92) scale(0.87 0.928)" data-generation="walker" data-candidate-id="3" data-avatar-style="neutral">
+      <g id="b0">
+        <path id="line" d="M248-301v-96h8v96ZM56-301v-44h8v44ZM0-301v-72H8v72Zm64-40v-8h8v8Zm-16,0v-4H40v-4H32v-4H24v-4H16v-4H8v-8h8v4h8v4h8v4h8v4h8v4h8v8Zm24-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H120v4Zm32-8v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H184v4ZM8-373v-8h8v8Zm192-4v-8h16v8ZM16-377v-8H32v8Zm16-4v-8H48v8Zm184,0v-8h16v8Zm16-4v-8h16v8ZM48-385v-8H64v-4H80v8H64v4Zm32-8v-8H96v8Zm160-4v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v4H176v-8h16v-4h8v4h8v4h8v4h8v4h8v4h8v4h8v8ZM96-397v-8h16v8Zm16-4v-8h16v-4h16v8H128v4Zm32-8v-8h16v8Zm16-4v-8h16v8Z" transform="translate(56 661)" fill="#303133" />
+        <path id="color" d="M176-341v-84h8v84Zm-8,0h-8v-80h8v-4h8v84Zm-16,0h-8v-76h8v-4h8v80Zm-16,0h-8v-72h8v-4h8v76Zm-16,0h-8v-68h8v-4h8v72Zm-16,0H96v-64h8v-4h8v68Zm-16,0H80v-60h8v-4h8v64Zm-16,0H64v-56h8v-4h8v60Zm-16,0H48v-52h8v-4h8v56Zm-16,0H32v-48h8v-4h8v52Zm-16,0H16v-44h8v-4h8v48ZM8-341v-44h8v44Zm-8,0v-40H8v40Z" transform="translate(120 701)" fill="#ece5d9" />
+        <path id="color-2" data-name="color" d="M40-365v-40h8v40Zm-8,0v-44h8v44Zm-8,0v-48h8v48Zm-8,0v-52h8v52Zm-8,0v-56h8v56Zm-8,0v-60H8v60Z" transform="translate(64 725)" fill="#b79a66" />
+        <path id="color-3" data-name="color" d="M48-349v-40h8v40Zm8-4v-40h8v40Zm-16,0v-36h8v36Zm32-4v-40h8v40Zm-8,0v-36h8v36Zm-32,0v-28h8v28Zm56-4v-40h8v40Zm-8,0v-36h8v36Zm-56,0v-24h8v24Zm80-4v-40h8v40Zm-8,0v-36h8v36Zm-80,0v-16h8v16Zm-8-3v-13h8v13Zm112-1h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40ZM0-373v-4H8v4Zm152-4h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40Zm16-4v-40h8v40Zm-8,0v-36h8v36Zm24-4v-28h8v28Zm-8,0v-32h8v32Zm24-4v-16h8v16Zm-8,0v-20h8v20Zm24-4v-4h8v4Zm-8,0v-8h8v8Z" transform="translate(64 665)" fill="#ceb892" />
+        <rect id="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="c0">
+        <g id="group">
+          <path id="line-2" data-name="line" d="M8-397v-4H0v-8H8v4H24v8Zm16-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-16h8v16Z" transform="translate(168 685)" fill="#303133" />
+          <path id="color-4" data-name="color" d="M0-409v-8H16v8Zm16-4v-8H32v8Zm16-4v-8H48v8Z" transform="translate(176 689)" fill="#ece5d9" />
+        </g>
+        <g id="box">
+          <path id="line-3" data-name="line" d="M64-213v-8h8v-4H88v-4h16v-4h16v-4h16v-4h16v-4h16v-4h16v-4h8V-381h-8v-8h8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-8h8v4h8v4h8v4h8v4h8v4h8v8h8v140h-8v8h-8v4H168v4H152v4H136v4H120v4H104v4H88v4H72v4Zm-8,0v-4H48v-4H40v-4H32v-4H24v-4H16v-8h8v4h8v4h8v4h8v4h8V-353H48v-4H40v-4H32v-4H24v-4H16v128H8V-381h8v4h8v4h8v4h8v4h8v4h8v4h8v144Zm8-136v-8h8v8Zm8-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8ZM16-381v-8h8v8Zm8-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-8H72v8Zm16-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h8v8Z" transform="translate(72 497)" fill="#303133" />
+          <path id="color-5" data-name="color" d="M0-265V-393H8v128Zm16-4V-397h8v-4h8v128H24v4Zm-8,0V-397h8v128Zm24-4V-401h8v-4h8v128H40v4Zm16-4V-405h8v-4h8v128H56v4Zm16-4V-409h8v-4h8v128H72v4Zm16-4V-413h8v-4h8v128H88v4Zm16-4V-417h8v-4h8v128h-8v4Zm16-4V-421h8v128Zm8-4V-425h8v128Z" transform="translate(136 541)" fill="#ece5d9" />
+          <path id="color-6" data-name="color" d="M32-281V-409h8v128Zm-8-4V-413h8v128Zm-8-4V-417h8v128Zm-8-4V-421h8v128Zm-8-4V-425H8v128Z" transform="translate(88 553)" fill="#b79a66" />
+          <path id="color-7" data-name="color" d="M48-369v-36h8v36Zm-8,0v-36h8v36Zm24-4v-36h8v-4h8v36H72v4Zm-8,0v-36h8v36Zm-24,0v-28h8v28Zm48-4v-36h8v-4h8v36H88v4Zm-56,0v-24h8v24Zm72-4v-36h8v-4h8v36h-8v4Zm-80,0v-16h8v16Zm96-4v-36h8v-4h8v36h-8v4ZM8-385v-12h8v12Zm120-4v-36h8v4h8v28h-8v4ZM0-389v-4H8v4Zm144-4v-24h8v24Zm16-4v-12h8v12Zm-8,0v-16h8v16Zm16-3v-5h8v5Z" transform="translate(88 509)" fill="#ceb892" />
+          <path id="light" d="M0-409v-8H8v8Zm8-8v-8h8v8Z" transform="translate(144 577)" fill="#f6f3ef" />
+          <path id="shadow" d="M0-389v-20H8v20Zm0-28v-8H8v8Z" transform="translate(256 633)" fill="#d6c5a8" />
+        </g>
+        <rect id="mask-2" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="d0">
+        <rect id="mask-3" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="e0">
+        <path id="line-4" data-name="line" d="M24-2360v-4H16v-4H8v-8h8v4h8v-12H16v-4H8v-8h8v4h8v4h8v28ZM0-2372v-28H8v28Z" transform="translate(92 2576)" fill="#303133" />
+        <rect id="mask-4" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="f0" transform="translate(-4)" data-component-source="f5">
+        <path id="line-10" data-name="line" d="M-860-3376v-8h12v-16h8v20h-8v4Zm20-10v-8h12v8Z" transform="translate(1064 3620)" fill="#303133" />
+        <rect id="mask-5" data-name="mask" width="360" height="360" transform="translate(4)" fill="#fff" opacity="0" />
+      </g>
+      <g id="g0" transform="translate(12)" data-component-source="g2">
+        <path id="shape-4" data-name="shape" d="M-1720-3376v-8h0v-8h8v-4h16v8h0v8h-16v4Zm24-8v-8h16v8Zm0-8v-8h16v8Z" transform="translate(1876 3556)" fill="#303133" />
+        <path id="shape-5" data-name="shape" d="M-1720-3376v-8h0v-8h8v-4h16v8h0v8h-16v4Zm24-8v-8h16v8Zm0-8v-8h16v8Z" transform="translate(1924 3544)" fill="#303133" />
+        <path id="shape-6" data-name="shape" d="M-872-2968v-20h8v20Zm40-12v-20h8v20Z" transform="translate(1052 3172)" fill="#303133" />
+        <path id="eye" d="M-872-2980v-8h8v8Zm40-12v-8h8v8Z" transform="translate(1052 3172)" fill="#fff" />
+        <rect id="mask-6" data-name="mask" width="360" height="360" transform="translate(-12)" fill="#fff" opacity="0" />
+      </g>
+    </g>
+  </g>
+</svg><text x="614" y="923" fill="#303133" font-family="monospace" font-size="13" letter-spacing="0.3">18 P06 LIME</text><svg x="615" y="930" width="270" height="270" viewBox="0 0 360 360"><defs>
+    <clipPath id="clip-Robot_0">
+      <rect width="360" height="360" />
+    </clipPath>
+  </defs>
+  <g id="Robot_0" data-name="Robot 0" clip-path="url(#clip-Robot_0)">
+    <rect width="360" height="360" fill="#d3dcbc" />
+    <g id="walker-subject" transform="translate(23.4 25.92) scale(0.87 0.928)" data-generation="walker" data-candidate-id="6" data-avatar-style="neutral">
+      <g id="b0">
+        <path id="line" d="M248-301v-96h8v96ZM56-301v-44h8v44ZM0-301v-72H8v72Zm64-40v-8h8v8Zm-16,0v-4H40v-4H32v-4H24v-4H16v-4H8v-8h8v4h8v4h8v4h8v4h8v4h8v8Zm24-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H120v4Zm32-8v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H184v4ZM8-373v-8h8v8Zm192-4v-8h16v8ZM16-377v-8H32v8Zm16-4v-8H48v8Zm184,0v-8h16v8Zm16-4v-8h16v8ZM48-385v-8H64v-4H80v8H64v4Zm32-8v-8H96v8Zm160-4v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v4H176v-8h16v-4h8v4h8v4h8v4h8v4h8v4h8v4h8v8ZM96-397v-8h16v8Zm16-4v-8h16v-4h16v8H128v4Zm32-8v-8h16v8Zm16-4v-8h16v8Z" transform="translate(56 661)" fill="#303133" />
+        <path id="color" d="M176-341v-84h8v84Zm-8,0h-8v-80h8v-4h8v84Zm-16,0h-8v-76h8v-4h8v80Zm-16,0h-8v-72h8v-4h8v76Zm-16,0h-8v-68h8v-4h8v72Zm-16,0H96v-64h8v-4h8v68Zm-16,0H80v-60h8v-4h8v64Zm-16,0H64v-56h8v-4h8v60Zm-16,0H48v-52h8v-4h8v56Zm-16,0H32v-48h8v-4h8v52Zm-16,0H16v-44h8v-4h8v48ZM8-341v-44h8v44Zm-8,0v-40H8v40Z" transform="translate(120 701)" fill="#e8ecdf" />
+        <path id="color-2" data-name="color" d="M40-365v-40h8v40Zm-8,0v-44h8v44Zm-8,0v-48h8v48Zm-8,0v-52h8v52Zm-8,0v-56h8v56Zm-8,0v-60H8v60Z" transform="translate(64 725)" fill="#9eb172" />
+        <path id="color-3" data-name="color" d="M48-349v-40h8v40Zm8-4v-40h8v40Zm-16,0v-36h8v36Zm32-4v-40h8v40Zm-8,0v-36h8v36Zm-32,0v-28h8v28Zm56-4v-40h8v40Zm-8,0v-36h8v36Zm-56,0v-24h8v24Zm80-4v-40h8v40Zm-8,0v-36h8v36Zm-80,0v-16h8v16Zm-8-3v-13h8v13Zm112-1h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40ZM0-373v-4H8v4Zm152-4h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40Zm16-4v-40h8v40Zm-8,0v-36h8v36Zm24-4v-28h8v28Zm-8,0v-32h8v32Zm24-4v-16h8v16Zm-8,0v-20h8v20Zm24-4v-4h8v4Zm-8,0v-8h8v8Z" transform="translate(64 665)" fill="#bcca9b" />
+        <rect id="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="c0">
+        <g id="group">
+          <path id="line-2" data-name="line" d="M8-397v-4H0v-8H8v4H24v8Zm16-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-16h8v16Z" transform="translate(168 685)" fill="#303133" />
+          <path id="color-4" data-name="color" d="M0-409v-8H16v8Zm16-4v-8H32v8Zm16-4v-8H48v8Z" transform="translate(176 689)" fill="#e8ecdf" />
+        </g>
+        <g id="box">
+          <path id="line-3" data-name="line" d="M64-213v-8h8v-4H88v-4h16v-4h16v-4h16v-4h16v-4h16v-4h16v-4h8V-381h-8v-8h8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-8h8v4h8v4h8v4h8v4h8v4h8v8h8v140h-8v8h-8v4H168v4H152v4H136v4H120v4H104v4H88v4H72v4Zm-8,0v-4H48v-4H40v-4H32v-4H24v-4H16v-8h8v4h8v4h8v4h8v4h8V-353H48v-4H40v-4H32v-4H24v-4H16v128H8V-381h8v4h8v4h8v4h8v4h8v4h8v4h8v144Zm8-136v-8h8v8Zm8-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8ZM16-381v-8h8v8Zm8-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-8H72v8Zm16-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h8v8Z" transform="translate(72 497)" fill="#303133" />
+          <path id="color-5" data-name="color" d="M0-265V-393H8v128Zm16-4V-397h8v-4h8v128H24v4Zm-8,0V-397h8v128Zm24-4V-401h8v-4h8v128H40v4Zm16-4V-405h8v-4h8v128H56v4Zm16-4V-409h8v-4h8v128H72v4Zm16-4V-413h8v-4h8v128H88v4Zm16-4V-417h8v-4h8v128h-8v4Zm16-4V-421h8v128Zm8-4V-425h8v128Z" transform="translate(136 541)" fill="#e8ecdf" />
+          <path id="color-6" data-name="color" d="M32-281V-409h8v128Zm-8-4V-413h8v128Zm-8-4V-417h8v128Zm-8-4V-421h8v128Zm-8-4V-425H8v128Z" transform="translate(88 553)" fill="#9eb172" />
+          <path id="color-7" data-name="color" d="M48-369v-36h8v36Zm-8,0v-36h8v36Zm24-4v-36h8v-4h8v36H72v4Zm-8,0v-36h8v36Zm-24,0v-28h8v28Zm48-4v-36h8v-4h8v36H88v4Zm-56,0v-24h8v24Zm72-4v-36h8v-4h8v36h-8v4Zm-80,0v-16h8v16Zm96-4v-36h8v-4h8v36h-8v4ZM8-385v-12h8v12Zm120-4v-36h8v4h8v28h-8v4ZM0-389v-4H8v4Zm144-4v-24h8v24Zm16-4v-12h8v12Zm-8,0v-16h8v16Zm16-3v-5h8v5Z" transform="translate(88 509)" fill="#bcca9b" />
+          <path id="light" d="M0-409v-8H8v8Zm8-8v-8h8v8Z" transform="translate(144 577)" fill="#f6f7f3" />
+          <path id="shadow" d="M0-389v-20H8v20Zm0-28v-8H8v8Z" transform="translate(256 633)" fill="#c9d3b0" />
+        </g>
+        <rect id="mask-2" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="d0">
+        <rect id="mask-3" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="e0">
+        <path id="line-4" data-name="line" d="M24-2360v-4H16v-4H8v-8h8v4h8v-12H16v-4H8v-8h8v4h8v4h8v28ZM0-2372v-28H8v28Z" transform="translate(92 2576)" fill="#303133" />
+        <rect id="mask-4" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="f0" transform="translate(8 -4)" data-component-source="f1">
+        <path id="line-7" data-name="line" d="M-844-981v-3h-8v-8h-8v-8h8v8h8v3h16v-3h16v8h-16v3Zm32-8v-8h8v8Z" transform="translate(1036 1229)" fill="#303133" />
+        <rect id="mask-5" data-name="mask" width="360" height="360" transform="translate(-8 4)" fill="#fff" opacity="0" />
+      </g>
+      <g id="g0" transform="translate(0 9)" data-component-source="g11">
+        <path id="联合_103" data-name="联合 103" d="M2798-3189v-30h4v30Zm4-1v-30h4v30Zm-12-11v-8h4v8Zm4-1v-8h4v8Zm12-4v-8h4v8Zm4-1v-8h4v8Z" transform="translate(-2632 3391)" fill="#303133" />
+        <path id="联合_104" data-name="联合 104" d="M2798-3189v-30h4v30Zm4-1v-30h4v30Zm-12-11v-8h4v8Zm4-1v-8h4v8Zm12-4v-8h4v8Zm4-1v-8h4v8Z" transform="translate(-2566 3369)" fill="#303133" />
+        <rect id="mask-6" data-name="mask" width="360" height="360" transform="translate(0 -9)" fill="#fff" opacity="0" />
+      </g>
+    </g>
+  </g>
+</svg><text x="914" y="923" fill="#303133" font-family="monospace" font-size="13" letter-spacing="0.3">19 P12 TURQUOISE</text><svg x="915" y="930" width="270" height="270" viewBox="0 0 360 360"><defs>
+    <clipPath id="clip-Robot_0">
+      <rect width="360" height="360" />
+    </clipPath>
+  </defs>
+  <g id="Robot_0" data-name="Robot 0" clip-path="url(#clip-Robot_0)">
+    <rect width="360" height="360" fill="#b7dcd9" />
+    <g id="walker-subject" transform="translate(23.4 25.92) scale(0.87 0.928)" data-generation="walker" data-candidate-id="12" data-avatar-style="neutral">
+      <g id="b0">
+        <path id="line" d="M248-301v-96h8v96ZM56-301v-44h8v44ZM0-301v-72H8v72Zm64-40v-8h8v8Zm-16,0v-4H40v-4H32v-4H24v-4H16v-4H8v-8h8v4h8v4h8v4h8v4h8v4h8v8Zm24-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H120v4Zm32-8v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H184v4ZM8-373v-8h8v8Zm192-4v-8h16v8ZM16-377v-8H32v8Zm16-4v-8H48v8Zm184,0v-8h16v8Zm16-4v-8h16v8ZM48-385v-8H64v-4H80v8H64v4Zm32-8v-8H96v8Zm160-4v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v4H176v-8h16v-4h8v4h8v4h8v4h8v4h8v4h8v4h8v8ZM96-397v-8h16v8Zm16-4v-8h16v-4h16v8H128v4Zm32-8v-8h16v8Zm16-4v-8h16v8Z" transform="translate(56 661)" fill="#303133" />
+        <path id="color" d="M176-341v-84h8v84Zm-8,0h-8v-80h8v-4h8v84Zm-16,0h-8v-76h8v-4h8v80Zm-16,0h-8v-72h8v-4h8v76Zm-16,0h-8v-68h8v-4h8v72Zm-16,0H96v-64h8v-4h8v68Zm-16,0H80v-60h8v-4h8v64Zm-16,0H64v-56h8v-4h8v60Zm-16,0H48v-52h8v-4h8v56Zm-16,0H32v-48h8v-4h8v52Zm-16,0H16v-44h8v-4h8v48ZM8-341v-44h8v44Zm-8,0v-40H8v40Z" transform="translate(120 701)" fill="#dbebea" />
+        <path id="color-2" data-name="color" d="M40-365v-40h8v40Zm-8,0v-44h8v44Zm-8,0v-48h8v48Zm-8,0v-52h8v52Zm-8,0v-56h8v56Zm-8,0v-60H8v60Z" transform="translate(64 725)" fill="#6cb1ab" />
+        <path id="color-3" data-name="color" d="M48-349v-40h8v40Zm8-4v-40h8v40Zm-16,0v-36h8v36Zm32-4v-40h8v40Zm-8,0v-36h8v36Zm-32,0v-28h8v28Zm56-4v-40h8v40Zm-8,0v-36h8v36Zm-56,0v-24h8v24Zm80-4v-40h8v40Zm-8,0v-36h8v36Zm-80,0v-16h8v16Zm-8-3v-13h8v13Zm112-1h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40ZM0-373v-4H8v4Zm152-4h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40Zm16-4v-40h8v40Zm-8,0v-36h8v36Zm24-4v-28h8v28Zm-8,0v-32h8v32Zm24-4v-16h8v16Zm-8,0v-20h8v20Zm24-4v-4h8v4Zm-8,0v-8h8v8Z" transform="translate(64 665)" fill="#96c9c5" />
+        <rect id="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="c0">
+        <g id="group">
+          <path id="line-2" data-name="line" d="M8-397v-4H0v-8H8v4H24v8Zm16-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-16h8v16Z" transform="translate(168 685)" fill="#303133" />
+          <path id="color-4" data-name="color" d="M0-409v-8H16v8Zm16-4v-8H32v8Zm16-4v-8H48v8Z" transform="translate(176 689)" fill="#dbebea" />
+        </g>
+        <g id="box">
+          <path id="line-3" data-name="line" d="M64-213v-8h8v-4H88v-4h16v-4h16v-4h16v-4h16v-4h16v-4h16v-4h8V-381h-8v-8h8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-8h8v4h8v4h8v4h8v4h8v4h8v8h8v140h-8v8h-8v4H168v4H152v4H136v4H120v4H104v4H88v4H72v4Zm-8,0v-4H48v-4H40v-4H32v-4H24v-4H16v-8h8v4h8v4h8v4h8v4h8V-353H48v-4H40v-4H32v-4H24v-4H16v128H8V-381h8v4h8v4h8v4h8v4h8v4h8v4h8v144Zm8-136v-8h8v8Zm8-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8ZM16-381v-8h8v8Zm8-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-8H72v8Zm16-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h8v8Z" transform="translate(72 497)" fill="#303133" />
+          <path id="color-5" data-name="color" d="M0-265V-393H8v128Zm16-4V-397h8v-4h8v128H24v4Zm-8,0V-397h8v128Zm24-4V-401h8v-4h8v128H40v4Zm16-4V-405h8v-4h8v128H56v4Zm16-4V-409h8v-4h8v128H72v4Zm16-4V-413h8v-4h8v128H88v4Zm16-4V-417h8v-4h8v128h-8v4Zm16-4V-421h8v128Zm8-4V-425h8v128Z" transform="translate(136 541)" fill="#dbebea" />
+          <path id="color-6" data-name="color" d="M32-281V-409h8v128Zm-8-4V-413h8v128Zm-8-4V-417h8v128Zm-8-4V-421h8v128Zm-8-4V-425H8v128Z" transform="translate(88 553)" fill="#6cb1ab" />
+          <path id="color-7" data-name="color" d="M48-369v-36h8v36Zm-8,0v-36h8v36Zm24-4v-36h8v-4h8v36H72v4Zm-8,0v-36h8v36Zm-24,0v-28h8v28Zm48-4v-36h8v-4h8v36H88v4Zm-56,0v-24h8v24Zm72-4v-36h8v-4h8v36h-8v4Zm-80,0v-16h8v16Zm96-4v-36h8v-4h8v36h-8v4ZM8-385v-12h8v12Zm120-4v-36h8v4h8v28h-8v4ZM0-389v-4H8v4Zm144-4v-24h8v24Zm16-4v-12h8v12Zm-8,0v-16h8v16Zm16-3v-5h8v5Z" transform="translate(88 509)" fill="#96c9c5" />
+          <path id="light" d="M0-409v-8H8v8Zm8-8v-8h8v8Z" transform="translate(144 577)" fill="#eff5f5" />
+          <path id="shadow" d="M0-389v-20H8v20Zm0-28v-8H8v8Z" transform="translate(256 633)" fill="#acd3d0" />
+        </g>
+        <rect id="mask-2" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="d0">
+        <rect id="mask-3" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="e0">
+        <path id="line-4" data-name="line" d="M24-2360v-4H16v-4H8v-8h8v4h8v-12H16v-4H8v-8h8v4h8v4h8v28ZM0-2372v-28H8v28Z" transform="translate(92 2576)" fill="#303133" />
+        <rect id="mask-4" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="f0" data-component-source="f0">
+        <path id="line-5" data-name="line" d="M0-2368v-16H8v8h8v8Zm16-4v-8H32v8Zm16-4v-16h8v16Zm-32-8v-8H16v8Zm16-4v-8H32v8Zm16-4v-8h8v8Z" transform="translate(192 2608)" fill="#303133" />
+        <rect id="mask-5" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="g0" data-component-source="g5">
+        <g id="group-3" data-name="group" transform="translate(212 156)">
+          <path id="line-11" data-name="line" d="M15,36V32H8V16h8V28H31v8Zm16-4V24h5V8H32V0H48V8H44V24H39v8ZM4,16V8H16v8Zm12-4V4H32v8Z" transform="translate(48 40) rotate(180)" fill="#303133" />
+          <path id="color-10" data-name="color" d="M-1450-3140v-16h20v12h-16v4Zm5-16v-4h15v4Z" transform="translate(1462 3172)" fill="#fff" />
+          <rect id="eye" width="8" height="12" transform="translate(24 16)" fill="#d9bd72" />
+          <rect id="eye-2" data-name="eye" width="8" height="8" transform="translate(24 16)" fill="#d7869c" />
+        </g>
+        <g id="group-4" data-name="group" transform="translate(160 168)">
+          <path id="line-12" data-name="line" d="M15,36V32H8V16h8V28H31v8Zm16-4V24h5V8H32V0H48V8H44V24H39v8ZM4,16V8H16v8Zm12-4V4H32v8Z" transform="translate(48 40) rotate(180)" fill="#303133" />
+          <path id="color-11" data-name="color" d="M-1450-3140v-16h20v12h-16v4Zm5-16v-4h15v4Z" transform="translate(1462 3172)" fill="#fff" />
+          <rect id="eye-3" data-name="eye" width="8" height="12" transform="translate(24 16)" fill="#d9bd72" />
+          <rect id="eye-4" data-name="eye" width="8" height="8" transform="translate(24 16)" fill="#d7869c" />
+        </g>
+        <rect id="mask-6" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+    </g>
+  </g>
+</svg><text x="1214" y="923" fill="#303133" font-family="monospace" font-size="13" letter-spacing="0.3">20 P18 OCEAN</text><svg x="1215" y="930" width="270" height="270" viewBox="0 0 360 360"><defs>
+    <clipPath id="clip-Robot_0">
+      <rect width="360" height="360" />
+    </clipPath>
+  </defs>
+  <g id="Robot_0" data-name="Robot 0" clip-path="url(#clip-Robot_0)">
+    <rect width="360" height="360" fill="#abbed9" />
+    <g id="walker-subject" transform="translate(23.4 25.92) scale(0.87 0.928)" data-generation="walker" data-candidate-id="18" data-avatar-style="neutral">
+      <g id="b0">
+        <path id="line" d="M248-301v-96h8v96ZM56-301v-44h8v44ZM0-301v-72H8v72Zm64-40v-8h8v8Zm-16,0v-4H40v-4H32v-4H24v-4H16v-4H8v-8h8v4h8v4h8v4h8v4h8v4h8v8Zm24-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H120v4Zm32-8v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v-4h16v8H184v4ZM8-373v-8h8v8Zm192-4v-8h16v8ZM16-377v-8H32v8Zm16-4v-8H48v8Zm184,0v-8h16v8Zm16-4v-8h16v8ZM48-385v-8H64v-4H80v8H64v4Zm32-8v-8H96v8Zm160-4v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v4H176v-8h16v-4h8v4h8v4h8v4h8v4h8v4h8v4h8v8ZM96-397v-8h16v8Zm16-4v-8h16v-4h16v8H128v4Zm32-8v-8h16v8Zm16-4v-8h16v8Z" transform="translate(56 661)" fill="#303133" />
+        <path id="color" d="M176-341v-84h8v84Zm-8,0h-8v-80h8v-4h8v84Zm-16,0h-8v-76h8v-4h8v80Zm-16,0h-8v-72h8v-4h8v76Zm-16,0h-8v-68h8v-4h8v72Zm-16,0H96v-64h8v-4h8v68Zm-16,0H80v-60h8v-4h8v64Zm-16,0H64v-56h8v-4h8v60Zm-16,0H48v-52h8v-4h8v56Zm-16,0H32v-48h8v-4h8v52Zm-16,0H16v-44h8v-4h8v48ZM8-341v-44h8v44Zm-8,0v-40H8v40Z" transform="translate(120 701)" fill="#d0d9e7" />
+        <path id="color-2" data-name="color" d="M40-365v-40h8v40Zm-8,0v-44h8v44Zm-8,0v-48h8v48Zm-8,0v-52h8v52Zm-8,0v-56h8v56Zm-8,0v-60H8v60Z" transform="translate(64 725)" fill="#5e80b0" />
+        <path id="color-3" data-name="color" d="M48-349v-40h8v40Zm8-4v-40h8v40Zm-16,0v-36h8v36Zm32-4v-40h8v40Zm-8,0v-36h8v36Zm-32,0v-28h8v28Zm56-4v-40h8v40Zm-8,0v-36h8v36Zm-56,0v-24h8v24Zm80-4v-40h8v40Zm-8,0v-36h8v36Zm-80,0v-16h8v16Zm-8-3v-13h8v13Zm112-1h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40ZM0-373v-4H8v4Zm152-4h-8v-36h8v-4h8v40Zm16-4h-8v-36h8v-4h8v40Zm16-4v-40h8v40Zm-8,0v-36h8v36Zm24-4v-28h8v28Zm-8,0v-32h8v32Zm24-4v-16h8v16Zm-8,0v-20h8v20Zm24-4v-4h8v4Zm-8,0v-8h8v8Z" transform="translate(64 665)" fill="#89a3c8" />
+        <rect id="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="c0">
+        <g id="group">
+          <path id="line-2" data-name="line" d="M8-397v-4H0v-8H8v4H24v8Zm16-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-16h8v16Z" transform="translate(168 685)" fill="#303133" />
+          <path id="color-4" data-name="color" d="M0-409v-8H16v8Zm16-4v-8H32v8Zm16-4v-8H48v8Z" transform="translate(176 689)" fill="#d0d9e7" />
+        </g>
+        <g id="box">
+          <path id="line-3" data-name="line" d="M64-213v-8h8v-4H88v-4h16v-4h16v-4h16v-4h16v-4h16v-4h16v-4h8V-381h-8v-8h8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-4h-8v-8h8v4h8v4h8v4h8v4h8v4h8v8h8v140h-8v8h-8v4H168v4H152v4H136v4H120v4H104v4H88v4H72v4Zm-8,0v-4H48v-4H40v-4H32v-4H24v-4H16v-8h8v4h8v4h8v4h8v4h8V-353H48v-4H40v-4H32v-4H24v-4H16v128H8V-381h8v4h8v4h8v4h8v4h8v4h8v4h8v144Zm8-136v-8h8v8Zm8-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8ZM16-381v-8h8v8Zm8-4v-8H40v8Zm16-4v-8H56v8Zm16-4v-8H72v8Zm16-4v-8H88v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h16v8Zm16-4v-8h8v8Z" transform="translate(72 497)" fill="#303133" />
+          <path id="color-5" data-name="color" d="M0-265V-393H8v128Zm16-4V-397h8v-4h8v128H24v4Zm-8,0V-397h8v128Zm24-4V-401h8v-4h8v128H40v4Zm16-4V-405h8v-4h8v128H56v4Zm16-4V-409h8v-4h8v128H72v4Zm16-4V-413h8v-4h8v128H88v4Zm16-4V-417h8v-4h8v128h-8v4Zm16-4V-421h8v128Zm8-4V-425h8v128Z" transform="translate(136 541)" fill="#d0d9e7" />
+          <path id="color-6" data-name="color" d="M32-281V-409h8v128Zm-8-4V-413h8v128Zm-8-4V-417h8v128Zm-8-4V-421h8v128Zm-8-4V-425H8v128Z" transform="translate(88 553)" fill="#5e80b0" />
+          <path id="color-7" data-name="color" d="M48-369v-36h8v36Zm-8,0v-36h8v36Zm24-4v-36h8v-4h8v36H72v4Zm-8,0v-36h8v36Zm-24,0v-28h8v28Zm48-4v-36h8v-4h8v36H88v4Zm-56,0v-24h8v24Zm72-4v-36h8v-4h8v36h-8v4Zm-80,0v-16h8v16Zm96-4v-36h8v-4h8v36h-8v4ZM8-385v-12h8v12Zm120-4v-36h8v4h8v28h-8v4ZM0-389v-4H8v4Zm144-4v-24h8v24Zm16-4v-12h8v12Zm-8,0v-16h8v16Zm16-3v-5h8v5Z" transform="translate(88 509)" fill="#89a3c8" />
+          <path id="light" d="M0-409v-8H8v8Zm8-8v-8h8v8Z" transform="translate(144 577)" fill="#e5eaf0" />
+          <path id="shadow" d="M0-389v-20H8v20Zm0-28v-8H8v8Z" transform="translate(256 633)" fill="#9fb4d0" />
+        </g>
+        <rect id="mask-2" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="d0">
+        <rect id="mask-3" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="e0">
+        <path id="line-4" data-name="line" d="M24-2360v-4H16v-4H8v-8h8v4h8v-12H16v-4H8v-8h8v4h8v4h8v28ZM0-2372v-28H8v28Z" transform="translate(92 2576)" fill="#303133" />
+        <rect id="mask-4" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+      <g id="f0" data-component-source="custom-flat">
+        <path d="M200 236v-4h8v-4h24v-4h8v8h-24v4h-16z" fill="#303133" />
+      </g>
+      <g id="g0" data-component-source="g1">
+        <path id="b-8" data-name="b" d="M-1290-2846v-48h8v48Zm8-4v-8h8v8Zm8-2v-8h8v8Zm8-4v-16h8v16Zm-16-14v-8h8v8Zm8-2v-8h8v8Zm8-8v-16h8v16Zm-16-10v-8h8v8Zm8-2v-8h8v8Z" transform="translate(1458 3062)" fill="#303133" />
+        <path id="b-9" data-name="b" d="M-1290-2846v-48h8v48Zm8-4v-8h8v8Zm8-2v-8h8v8Zm8-4v-16h8v16Zm-16-14v-8h8v8Zm8-2v-8h8v8Zm8-8v-16h8v16Zm-16-10v-8h8v8Zm8-2v-8h8v8Z" transform="translate(1506 3046)" fill="#303133" />
+        <path id="color-11" data-name="color" d="M-1290-2850v-12h8v12Zm8-2v-12h8v12Zm40-14v-12h8v12Zm8-2v-12h8v12Zm-56-2v-12h8v12Zm8-2v-12h8v12Zm40-14v-12h8v12Zm8-2v-12h8v12Z" transform="translate(1466 3054)" fill="#e0c56f" />
+        <path id="light-2" data-name="light" d="M-1290-2876v-8h4v8Zm48-16v-8h4v8Z" transform="translate(1478 3058)" fill="#fff3be" />
+        <rect id="mask-6" data-name="mask" width="360" height="360" fill="#fff" opacity="0" />
+      </g>
+    </g>
+  </g>
+</svg></svg>

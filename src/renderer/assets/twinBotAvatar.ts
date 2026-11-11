@@ -2,8 +2,8 @@
  * Twin Bot avatar for the first-run onboarding: the same character shown on
  * the welcome flow's second screen, inlined as a data URL because bot creation
  * persists the avatar into the local DB and pins it on-chain as
- * /info/avatar — both require a data URL (see parseDataUrlAvatar in
- * src/main/services/metaidCore.ts).
+ * /info/avatar as image bytes, which requires a data URL (see
+ * parseDataUrlAvatar in src/main/services/metaidCore.ts).
  *
  * Source: the hero-twinbot-v4 artwork (docs/design/onboarding-v2/assets).
  * To replace it: resize the artwork to 256x256, then re-run
