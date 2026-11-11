@@ -230,6 +230,8 @@ Owner-scoped list of the caller's subscription orders, newest first.
 
 **Owner policy 2026-11-11.** The client now ships the matching UI slice on `feat/subscription-credits-hardening` (MePurchaseFlow two-step upgrade confirm, tier-ladder downgrade lock, proration display readiness in `mePayment.ts extractMeProration`). What is missing is server behavior — the items below are **requirements for assist-base-service**, not implemented anywhere yet.
 
+**LANDED (2026-11-11, same day):** assist-base-service commit `ea542da` deployed to production (image `mev04-20261111133634`, rollback point `old-20261111133634`). Acceptance items 9–13 all passed on production via signed E2E with one-shot test identities — including the zero-amount credit path (credit ≥ list → `payAmount: 0`, straight to `credited`, `gatewayParams: null`) and replay-does-not-recompute. Separately confirmed in production: the llm-relay plan quota (`llm_weekly_points`, ABS `b1474d6`) rollout is live (plan seeds 50M/170M/610M online).
+
 ### R6 — Upgrade proration (折抵)
 
 When a signed order's plan ranks **above** the caller's currently-active subscription plan (ladder `free < standard < pro < max`), the server MUST price the order as:
@@ -248,8 +250,8 @@ payAmount  = max(0, round2(listAmount - credit))
 ```json
 {
   "orderId": "…", "planId": "me_pro", "status": "created",
-  "payAmount": 366.15,
-  "breakdown": { "listAmountCny": 402.3, "creditCny": 36.15 },
+  "payAmount": 366.37,
+  "breakdown": { "listAmountCny": 402.3, "creditCny": 35.93 },
   "proration": { "sourcePlanId": "me_standard", "remainingDays": 22 }
 }
 ```
@@ -281,7 +283,7 @@ Plan rows carry `priceCny` (mobile/cloud list price) and `desktopPriceCny`; `Pri
 
 ### Acceptance addendum (v0.4)
 
-9. An active ID.Pupil (desktop ¥49, 22 days left) ordering ID.Student quarter (list ¥402.3) gets `payAmount = 402.3 − round2(49 × 22 / 30) = 366.4` with `breakdown.creditCny = 36.0`; the client paying page shows the credit line.
+9. An active ID.Pupil (desktop ¥49, 22 days left) ordering ID.Student quarter (list ¥402.3) gets `payAmount = 402.3 − round2(49 × 22 / 30) = 402.3 − 35.93 = 366.37` with `breakdown.creditCny = 35.93`; the client paying page shows the credit line. (Production-verified 2026-11-11: exactly 366.37 / 35.93 / {me_standard, 22}.)
 10. An order for a plan below the active tier returns HTTP 400 + `PLAN_DOWNGRADE_NOT_ALLOWED`.
 11. Same-plan renewal extends from the current expiry; replaying the order's idempotencyKey returns the original order and never recomputes the proration.
 12. Any ME spend with insufficient spendable ME returns `INSUFFICIENT_ME`.
