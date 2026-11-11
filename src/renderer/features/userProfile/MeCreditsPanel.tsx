@@ -14,22 +14,23 @@ import {
   subscribeMeSnapshot,
 } from '../../components/me/mePointsStore';
 import { formatUserProfileCount, formatUserProfileFrozen, useUserProfileCopy } from './i18n';
-import { openUserProfilePlansPage } from './userProfileStore';
+import { closeUserProfile, openUserProfilePlansPage } from './userProfileStore';
 
 /**
  * The ME credits panel, IN the profile page (owner ruling 2026-11-09 10:05: the
  * interaction moves from a popover to a page).
  *
  * This is the old sidebar-footer popover's content, laid out for a page instead
- * of a 300 px tray: total available (with the frozen note), the weekly grant
- * with its reset countdown, the three persistent pools, the plan/upgrade and
- * top-up entries, and the usage-details door.
+ * of a 300 px tray: this-week available (with the frozen note), the weekly
+ * grant with its reset countdown, the 积分增量包 row (the persistent
+ * top-up + gift + earning bucket), the plan/upgrade and top-up entries, and
+ * the usage-details door.
  *
  * No new service call and no new endpoint: every number is read from the one
  * shared snapshot store (`components/me/mePointsStore`), and every action
  * routes inside the page — the plan/upgrade and top-up entries open the
  * level-2 plans page of the SAME card (`openUserProfilePlansPage`, 页面嵌套
- * 定版 2026-11-09), and the usage door keeps the existing
+ * 定版 2026-11-09), and the usage door closes this page behind the existing
  * `requestOpenUsagePage` → Settings › 用量 & 积分 routing.
  */
 const MeCreditsPanel: React.FC = () => {
@@ -137,16 +138,10 @@ const MeCreditsPanel: React.FC = () => {
             <p className="mt-1 text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">{resetLine}</p>
 
             <dl className="mt-3 space-y-1.5 border-t border-claude-border/50 pt-2.5 dark:border-claude-darkBorder/50">
-              {[
-                { key: 'topup', label: copy.meTopup, value: balance?.persistent?.topupMilli },
-                { key: 'bonus', label: copy.meBonus, value: balance?.persistent?.bonusMilli },
-                { key: 'earned', label: copy.meEarned, value: balance?.persistent?.earnedMilli },
-              ].map((row) => (
-                <div key={row.key} data-slot="user-profile-me-pool" data-pool={row.key} className="flex items-center justify-between text-xs">
-                  <dt className="text-claude-textSecondary dark:text-claude-darkTextSecondary">{row.label}</dt>
-                  <dd className="tabular-nums text-claude-text dark:text-claude-darkText">{formatMe(meFromMilli(row.value))}</dd>
-                </div>
-              ))}
+              <div data-slot="user-profile-me-pool" className="flex items-center justify-between text-xs">
+                <dt className="text-claude-textSecondary dark:text-claude-darkTextSecondary">{copy.mePack}</dt>
+                <dd className="tabular-nums text-claude-text dark:text-claude-darkText">{formatMe(meFromMilli(persistentMilli))}</dd>
+              </div>
             </dl>
           </div>
 
@@ -177,15 +172,18 @@ const MeCreditsPanel: React.FC = () => {
 
           <button
             type="button"
-            onClick={() => requestOpenUsagePage()}
+            onClick={() => {
+              // The usage door leaves the page: the profile card must not stay
+              // open behind the Settings › 用量 & 积分 sheet it opens.
+              closeUserProfile();
+              requestOpenUsagePage();
+            }}
             data-slot="user-profile-me-usage"
             className="flex w-full items-center justify-between rounded-lg px-1 py-1.5 text-xs text-claude-accent transition-colors hover:underline dark:text-claude-darkAccent"
           >
             <span>{copy.meUsage}</span>
             <ChevronRightIcon className="h-4 w-4" aria-hidden="true" />
           </button>
-
-          <p className="text-[11px] leading-relaxed text-claude-textSecondary dark:text-claude-darkTextSecondary">{copy.meNote}</p>
         </>
       )}
     </section>
