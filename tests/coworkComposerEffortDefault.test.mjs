@@ -63,8 +63,10 @@ test('a configured bot brain outranks the persisted global effort', () => {
   );
   // The per-turn runtime gates the global rung on brain absence inside the
   // auto-fallback helper (behavioral coverage below; primary brain and
-  // fallback-brain takeover alike route through it).
-  const fallbackCalls = coworkRunnerSource.match(/autoEffortRung\s*\?\?\s*resolveAutoEffortFallback\(\{/g) ?? [];
+  // fallback-brain takeover alike route through it). 2026-11-11: the cerebellum
+  // auto verdict is pinned through resolveAssistantModeExpressibleRung first
+  // (GLM-family off→low), so both chains read `pinned[Fallback]AutoEffortRung ?? …`.
+  const fallbackCalls = coworkRunnerSource.match(/pinned(?:Fallback)?AutoEffortRung\s*\?\?\s*resolveAutoEffortFallback\(\{/g) ?? [];
   assert.ok(
     fallbackCalls.length >= 2,
     'coworkRunner: primary and fallback effort chains must resolve the no-verdict fallback through resolveAutoEffortFallback',
@@ -97,7 +99,7 @@ test('assistant chat-experience mode defaults reasoning off behind the auto rung
     'coworkRunner: effort resolution must read the per-turn assistant-mode gate (marker-only under the surface ruling)',
   );
   const overrideFirstChains = coworkRunnerSource.match(
-    /sessionEffortPicked\s*\?\s*toLlmEffortLevel\(effectiveEffortRung\)\s*:\s*(?:unattendedTurn\s*\?\s*resolveUnattendedAutoEffort\(\{[\s\S]*?\}\)\s*:\s*)?autoEffortRung\s*\?\?/g,
+    /sessionEffortPicked\s*\?\s*toLlmEffortLevel\(effectiveEffortRung\)\s*:\s*(?:unattendedTurn\s*\?\s*resolveUnattendedAutoEffort\(\{[\s\S]*?\}\)\s*:\s*)?pinned(?:Fallback)?AutoEffortRung\s*\?\?/g,
   ) ?? [];
   assert.ok(
     overrideFirstChains.length >= 2,
