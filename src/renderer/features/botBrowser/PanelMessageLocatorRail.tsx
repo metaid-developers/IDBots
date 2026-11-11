@@ -24,6 +24,13 @@ interface PanelMessageLocatorRailProps {
   rows: PanelLocatorRow[];
   /** Accessible name of the rail control. */
   ariaLabel: string;
+  /**
+   * Called after a TICK-CLICK jump lands on a message (owner ruling
+   * 2026-11-11, four-item fix ③): the host lights the landing bubble's
+   * transient highlight ring. Drag-thumb scrubbing is viewport navigation,
+   * not message selection, so it never fires this.
+   */
+  onTickJump?: (messageId: string) => void;
 }
 
 interface RailHover {
@@ -50,6 +57,7 @@ const PanelMessageLocatorRail: React.FC<PanelMessageLocatorRailProps> = ({
   containerRef,
   rows,
   ariaLabel,
+  onTickJump,
 }) => {
   const railRef = useRef<HTMLDivElement>(null);
   // Scroll content height the current ticks were built for; -1 invalidates.
@@ -225,7 +233,11 @@ const PanelMessageLocatorRail: React.FC<PanelMessageLocatorRailProps> = ({
     const offset = rowOffsetsRef.current.get(ticks[index].id);
     if (offset == null) return;
     container.scrollTop = panelLocatorScrollForRow(offset, container.scrollHeight, container.clientHeight);
-  }, [containerRef, ticks]);
+    // The tick click selected a message: hand its id to the host so the
+    // landing bubble lights the shared transient ring (fix ③). Fires only
+    // here — drag-thumb scrubbing never counts as a selection.
+    onTickJump?.(ticks[index].id);
+  }, [containerRef, ticks, onTickJump]);
 
   const handlePointerLeave = useCallback(() => {
     if (!dragStateRef.current) setHover(null);

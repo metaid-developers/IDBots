@@ -224,7 +224,10 @@ const STEER_STATUS_TRANSLATION_KEYS: Record<string, string> = {
 // the ring falls back to Tailwind's default blue). `ring-claude-accent` is the
 // only form that renders the intended colour; same token, no new colour or
 // variable.
-const QUOTE_JUMP_HIGHLIGHT_CLASSES = ['ring-1', 'ring-claude-accent'];
+// Exported (owner ruling 2026-11-11, chat-window four-item fix ③): the Bot
+// Internet panel's locator jump lights the SAME ring via the SAME helper —
+// reuse, not a parallel mechanism.
+export const QUOTE_JUMP_HIGHLIGHT_CLASSES = ['ring-1', 'ring-claude-accent'];
 
 // Rail-jump landing cue. Same ring as the quote jump (that cue is right — it is
 // what marks "the message you were sent to"), but the ring target is the message
@@ -232,8 +235,9 @@ const QUOTE_JUMP_HIGHLIGHT_CLASSES = ['ring-1', 'ring-claude-accent'];
 const TURN_NAVIGATOR_HIGHLIGHT_MS = 2500;
 
 // How long the quote-jump ring stays lit. Same 2.5s window as the rail jump:
-// both are "you were taken here" cues, so they age out together.
-const QUOTE_JUMP_HIGHLIGHT_MS = 2500;
+// both are "you were taken here" cues, so they age out together. Exported for
+// the panel locator jump (fix ③), which must age out identically.
+export const QUOTE_JUMP_HIGHLIGHT_MS = 2500;
 
 /**
  * Paint a transient accent ring on `element`, clearing whatever the previous
@@ -252,7 +256,9 @@ const QUOTE_JUMP_HIGHLIGHT_MS = 2500;
  *
  * The ring is a static style, so no reflow trick is needed to make it visible.
  */
-const transientHighlight = (
+// Exported (fix ③): the panel locator jump shares this exact helper so every
+// "you were taken here" ring on either surface follows one contract.
+export const transientHighlight = (
   timerRef: { current: number | null },
   container: HTMLElement,
   element: HTMLElement,

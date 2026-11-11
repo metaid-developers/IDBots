@@ -43,7 +43,7 @@ import PanelMessageContextMenu from './PanelMessageContextMenu';
 import PanelMessageLocatorRail from './PanelMessageLocatorRail';
 import { buildPanelLocatorRows } from './panelMessageLocator';
 import { createMessageQuotedSelection, parseSentQuoteBlock, parseSentSelectionQuoteBlock } from '../../components/cowork/coworkQuotedSelections';
-import { buildSentQuoteDisplaySources, buildSentSelectionQuoteLabelSets } from '../../components/cowork/CoworkSessionDetail';
+import { buildSentQuoteDisplaySources, buildSentSelectionQuoteLabelSets, transientHighlight, QUOTE_JUMP_HIGHLIGHT_MS } from '../../components/cowork/CoworkSessionDetail';
 import { resolveBubbleSelectedText } from './panelBubbleSelection';
 
 type PanelMetabot = MetaBotForSelector & { llm_id?: string | null; llm_provider?: string | null; llm_effort?: string | null };
@@ -82,11 +82,12 @@ export const PanelMessage: React.FC<{
   /** Meta-line stamp, pre-formatted (`HH:mm` / `MM-DD HH:mm`, '' = omit). */
   timestampLabel?: string;
   /**
-   * Whether this bubble may carry the stamp at all (purity pass #5 ③): the
-   * parent passes (assistant && group-end) — the stamp is the twin side's
-   * group-end line and is DEFAULT-VISIBLE there, no hover involved. A user
-   * row never carries a stamp regardless of this flag, and the pass #3
-   * hover reveal is retired.
+   * Contract-stability flag (owner rulings 2026-11-11: fix ② unified, the
+   * 14:07 rework narrowed again). The gate is retired TWICE over: the stamp
+   * decision now lives entirely in `timestampLabel`, which the parent computes
+   * with the same assistant&&group-end expression this flag carries. Kept in
+   * the component contract (the parent still passes it verbatim and the wiring
+   * guards pin the formula); do not read it for stamp decisions.
    */
   showTimestamp?: boolean;
   /**
@@ -107,7 +108,9 @@ export const PanelMessage: React.FC<{
   isAssistantMode = false,
   resolveLocalFilePath,
   timestampLabel,
-  showTimestamp = false,
+  // showTimestamp stays in the contract but is deliberately NOT destructured:
+  // stamp decisions ride timestampLabel alone (the parent gates it with the
+  // assistant&&group-end formula; see the prop doc above).
   botName = null,
   currentReaction = null,
   onContextMenu,
@@ -122,36 +125,49 @@ export const PanelMessage: React.FC<{
     event.stopPropagation();
     onContextMenu(event, message);
   };
-  // Meta line under the bubble (pass #5 ③④, superseding pass #3's hover
-  // reveal): the stamp is the TWIN side's group-end line and reads by
-  // DEFAULT there — no hover gating, no `group` hover proxy, no reserved
-  // invisible slot. The row mounts only when it has content (chip, stamp,
-  // or both) and adapts to the bubble alignment: assistant rows sit
-  // left-aligned under the bubble and read [👍chip][time]; user rows are
-  // right-aligned and carry the chip alone (a user row never shows a
-  // stamp, whatever a caller passes).
-  const showStamp = showTimestamp && !isUser;
+  // In-bubble stamp (owner rulings 2026-11-11: fix ② moved it INSIDE the
+  // bubble's bottom-right corner, superseding pass #5 ③④'s external meta
+  // line; the 14:07 rework narrowed WHO carries it — only the last bubble
+  // of a consecutive assistant group, user rows never). Which bubble
+  // qualifies is the parent's call: it hands down a pre-gated
+  // `timestampLabel`, so an absent label means no stamp at all.
+  // Sixth item (owner ruling 2026-11-11 14:45): the reaction chip moved
+  // INSIDE the bubble too — one in-bubble footer row hugging the bubble's
+  // bottom-right corner, chip LEFT of the stamp; the old external chip row
+  // (the former meta row) is gone for good. The chip's own interactions
+  // (click toggle, hover fade, toggle params) are byte-identical.
   const hasReactionChip = Boolean(currentReaction && onToggleReaction);
-  const metaRow = showStamp || hasReactionChip ? (
-    <div
-      data-slot="panel-message-meta"
-      className={`flex items-center gap-1.5 px-1 pt-0.5 text-[11px] leading-3 dark:text-claude-darkTextSecondary text-claude-textSecondary ${
-        isUser ? 'justify-end' : 'justify-start'
-      }`}
+  // The stamp itself: same `HH:mm` / `MM-DD HH:mm` formatting as before,
+  // right-aligned by the footer row so long content wraps ABOVE it and the
+  // stamp never overlays text. An empty label (non-finite/pre-epoch clock)
+  // renders no stamp at all.
+  const bubbleStamp = timestampLabel ? (
+    <span
+      data-panel-message-timestamp="true"
+      className="select-none text-[10px] leading-3 dark:text-claude-darkTextSecondary text-claude-textSecondary"
     >
+      {timestampLabel}
+    </span>
+  ) : null;
+  // The in-bubble footer: chip left, stamp right, the pair flush with the
+  // bubble's bottom-right corner (`justify-end`; with no chip the stamp
+  // alone keeps the exact pre-sixth-item right-aligned geometry). Mounts
+  // only while at least one of the two exists — no reserved slot.
+  const bubbleFooter = hasReactionChip || bubbleStamp ? (
+    <div data-slot="panel-bubble-footer" className="mt-1 flex items-center justify-end gap-1.5">
+      {/* The inline conditional keeps the reaction wiring literal the
+          reactions guards pin (PurityWiring ③). */}
       {currentReaction && onToggleReaction ? (
         <button
           type="button"
           data-panel-reaction-chip={currentReaction}
           onClick={() => onToggleReaction(message, currentReaction)}
-          className="rounded-full border border-current/20 px-1.5 py-px text-[10px] leading-3 transition-opacity hover:opacity-70"
+          className="rounded-full border border-current/20 px-1.5 py-px text-[10px] leading-3 transition-opacity hover:opacity-70 dark:text-claude-darkTextSecondary text-claude-textSecondary"
         >
           {currentReaction === 'up' ? '👍' : '👎'}
         </button>
       ) : null}
-      {showStamp && timestampLabel ? (
-        <span data-panel-message-timestamp="true">{timestampLabel}</span>
-      ) : null}
+      {bubbleStamp}
     </div>
   ) : null;
   if (isUser) {
@@ -183,8 +199,8 @@ export const PanelMessage: React.FC<{
               lightbox, and the rest renders as markdown. The panel keeps
               its own bubble chrome. */}
           <UserMessageBody content={displayContent} resolveLocalFilePath={resolveLocalFilePath} />
+          {bubbleFooter}
         </div>
-        {metaRow}
       </div>
     );
   }
@@ -200,8 +216,8 @@ export const PanelMessage: React.FC<{
           className="assistant-bubble w-fit max-w-[92%] rounded-[22px] px-[16px] py-[10px] text-[13px] leading-5 dark:text-claude-darkText text-claude-text shadow-subtle [&_h1]:text-sm [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h2]:text-[13px] [&_h2]:mt-2.5 [&_h2]:mb-1 [&_h3]:text-[13px] [&_h3]:mt-2 [&_h3]:mb-1 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:break-all [&_a]:break-all"
         >
           <MarkdownContent content={message.content} compact onOpenBotBrowserUri={onOpenUri} emojiImages />
+          {bubbleFooter}
         </div>
-        {metaRow}
       </div>
     );
   }
@@ -209,8 +225,8 @@ export const PanelMessage: React.FC<{
     <div data-panel-message-id={message.id} className="flex min-w-0 flex-col items-start text-[13px] leading-5 dark:text-claude-darkText text-claude-text [&_h1]:text-sm [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h2]:text-[13px] [&_h2]:mt-2.5 [&_h2]:mb-1 [&_h3]:text-[13px] [&_h3]:mt-2 [&_h3]:mb-1 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:break-all [&_a]:break-all">
       <div onContextMenu={handleBubbleContextMenu} className="min-w-0">
         <MarkdownContent content={message.content} compact onOpenBotBrowserUri={onOpenUri} emojiImages />
+        {bubbleFooter}
       </div>
-      {metaRow}
     </div>
   );
 };
@@ -433,16 +449,28 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     }
   }, []);
 
-  // Three close channels while the menu is open: a pointerdown outside the
-  // menu AND outside the opening bubble, Escape, and any scroll (capture phase
-  // catches the panel list and ancestor scrollers). Bound only while open.
+  // Close channels while the menu is open (capture phase, bound only while
+  // open): a pointerdown outside the menu, Escape, and any scroll (the
+  // scroll listener catches the panel list and ancestor scrollers).
+  //
+  // Opener-bubble demotion (owner ruling 2026-11-11, four-item fix ④): the
+  // geometry helper's contract keeps the OPENING BUBBLE alive on pointerdown;
+  // the ruling demotes it — a plain click anywhere inside the bubble now
+  // dismisses too, while clicks inside the MENU box still keep it alive (the
+  // menu rows dismiss via their own onDismiss after acting). Re-right-clicking
+  // the bubble re-opens/re-positions through the contextmenu channel: button
+  // 2 never reaches the dismiss path, so there is no dismiss-then-open flash.
   useEffect(() => {
     if (!contextMenu) return undefined;
     const dismiss = () => setContextMenu(null);
     const handlePointerDown = (event: PointerEvent) => {
       const menu = contextMenuRef.current;
       if (!menu) return;
-      if (!isPointerOutsideContextMenu(panelMenuRef.current, menu.opener, event.target)) return;
+      if (event.button === 2) return;
+      if (!isPointerOutsideContextMenu(panelMenuRef.current, menu.opener, event.target)) {
+        if (menu.opener?.contains(event.target as Node)) dismiss();
+        return;
+      }
       dismiss();
     };
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -629,6 +657,35 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     [visibleMessages, chipMetabot?.name],
   );
 
+  // Locator tick-jump landing cue (owner ruling 2026-11-11, four-item fix ③):
+  // clicking a rail tick is "you were taken here", so the target BUBBLE lights
+  // the same transient accent ring the main transcript's rail jump and quote
+  // jump use — the shared transientHighlight helper, the same ring classes,
+  // the same 2.5s window, one timer so rapid jumps never stack rings.
+  const locatorHighlightTimerRef = useRef<number | null>(null);
+  // Same hardening as the main transcript: the timer holds the element it
+  // will un-ring, so drop it on unmount and on session switch instead of
+  // letting it fire against a detached node.
+  useEffect(() => () => {
+    if (locatorHighlightTimerRef.current != null) {
+      window.clearTimeout(locatorHighlightTimerRef.current);
+      locatorHighlightTimerRef.current = null;
+    }
+  }, [sessionId]);
+  const handleLocatorTickJump = useCallback((messageId: string) => {
+    const container = listRef.current;
+    if (!container) return;
+    const row = container.querySelector<HTMLElement>(
+      `[data-panel-message-id="${CSS.escape(messageId)}"]`,
+    );
+    // The bubble chrome is always the row wrapper's first child (the meta
+    // row, when present, renders after it), so the ring lands on the bubble
+    // itself — never across the whole transcript row.
+    const bubble = row?.firstElementChild;
+    if (!(bubble instanceof HTMLElement)) return;
+    transientHighlight(locatorHighlightTimerRef, container, bubble, QUOTE_JUMP_HIGHLIGHT_MS);
+  }, []);
+
   const handleSubmit = async (prompt: string, skillPrompt?: string) => {
     if (!currentSession && selectedMetabotId == null) return; // botless machines never start sessions here
     setShowHistory(false);
@@ -709,11 +766,13 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     return (href: string, text: string) => resolveLocalPathAgainstCwd(href, text, { cwd, executionMode });
   }, [currentSession?.cwd, currentSession?.executionMode]);
 
-  // (message, index) rides Array.map: the group-end predicate reads the
-  // rendered sequence (visibleMessages), so same-sender bursts collapse to
-  // ONE stamp on their last bubble — and pass #5 ③ scopes that stamp to the
-  // twin side only: showTimestamp is (assistant && group-end), default
-  // visible, no hover.
+  // (message, index) rides Array.map. Stamp semantics (owner ruling
+  // 2026-11-11 14:07, rework narrowing fix ②'s unify-all-bubbles scope): the
+  // in-bubble stamp rides ONLY the last bubble of a consecutive assistant
+  // group — user bubbles never carry one, and neither does a non-final row
+  // inside a group. The assistant&&group-end expression therefore drives the
+  // stamp label itself; it stays on showTimestamp verbatim too so the wiring
+  // guards keep pinning the same parent formula.
   const renderMessage = (message: CoworkMessage, index: number) => (
     <PanelMessage
       key={message.id}
@@ -721,11 +780,16 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
       onOpenUri={handleOpenUri}
       isAssistantMode={isAssistantMode}
       resolveLocalFilePath={resolveLocalFilePath}
-      // Quiet per-bubble stamp on the meta line: same-day `HH:mm`, older
-      // days `MM-DD HH:mm` (computed at render, local time). Pass #5 ③:
-      // assistant group-end rows only, DEFAULT-VISIBLE — the pass #3 hover
-      // reveal is retired.
-      timestampLabel={formatPanelMessageTimestamp(message.timestamp, Date.now())}
+      // Same-day `HH:mm`, older days `MM-DD HH:mm` (computed at render,
+      // local time) — inside the bubble's bottom-right corner, assistant
+      // group-end rows only (owner ruling 2026-11-11 14:07). An empty or
+      // withheld label means no stamp at all, so user rows and non-final
+      // rows inside a group stay clean.
+      timestampLabel={
+        message.type === 'assistant' && isPanelMessageGroupEnd(visibleMessages, index)
+          ? formatPanelMessageTimestamp(message.timestamp, Date.now())
+          : undefined
+      }
       showTimestamp={message.type === 'assistant' && isPanelMessageGroupEnd(visibleMessages, index)}
       // The real speaker for the pending card and sent-quote labels (pass
       // #5 ① + the inline label mapping).
@@ -784,8 +848,13 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
       <div className="relative min-h-0 flex-1">
         {/* The locator rail is the scroll indicator on this seat: the native
             scrollbar is hidden (scroll behavior unchanged) so the two rails
-            never overlap or fight for the same edge. */}
-        <div ref={listRef} className="h-full space-y-2.5 overflow-y-auto overflow-x-hidden px-1 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            never overlap or fight for the same edge. The scroller also
+            RESERVES the rail's horizontal lane: pl-1 pr-5 keeps bubble
+            content — and the jump ring's 1px outward overhang — a full
+            20px (14px w-3.5 rail lane + 1px ring + 5px gap) clear of the
+            rail's right-edge zone, so a highlighted bubble never paints
+            under the locator rail. */}
+        <div ref={listRef} className="h-full space-y-2.5 overflow-y-auto overflow-x-hidden pl-1 pr-5 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {visibleMessages.length === 0 ? (
           needsBootstrap ? (
             // No bot at all on this machine: block the chat with bootstrap
@@ -866,6 +935,7 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
           containerRef={listRef}
           rows={locatorRows}
           ariaLabel={i18nService.t('botBrowserLocatorRail')}
+          onTickJump={handleLocatorTickJump}
         />
       </div>
 

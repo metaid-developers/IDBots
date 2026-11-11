@@ -20,6 +20,13 @@ import path from 'node:path';
 // retired per the owner's new口径, and the pending card gets the real
 // speaker name from the panel. The two ① tests below pin the pass #5
 // contract; the pass #5 surface itself lives in panelPurityPass5Wiring.test.mjs.
+//
+// SUPERSEDED AGAIN (chat-window four-item fix ②, delegation 3e22c1c3 /
+// step 07807b1a, owner ruling 2026-11-11): the stamp moved INSIDE the
+// bubble, unified across user and assistant rows; the meta row now carries
+// the 👍chip alone and mounts only while that chip exists. The second ①
+// test was rewritten in place to the new shape; the first ① keeps pinning
+// the parent feed, now documented as the retired showTimestamp gate.
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
 
@@ -33,40 +40,56 @@ const tilesSource = read('src/renderer/components/cowork/CoworkQuotedSelectionTi
 const inputSource = read('src/renderer/components/cowork/CoworkPromptInput.tsx');
 const i18nSource = read('src/renderer/services/i18n.ts');
 
-test('① group-end predicate: sender adjacency, no time gap, exported and twin-side-only', () => {
+test('① group-end predicate: sender adjacency, no time gap, exported and parent-fed', () => {
   // The predicate itself: adjacency by message type flip.
   assert.match(timestampSource, /export const isPanelMessageGroupEnd/);
   assert.match(timestampSource, /return !next \|\| next\.type !== current\.type;/);
-  // The panel feeds it the RENDERED sequence with the map index, scoped to
-  // the twin side (pass #5 ③): a user row never carries the stamp.
+  // The panel feeds it the RENDERED sequence with the map index. Gate
+  // history (superseded twice, kept current): pass #3 made it a hover gate,
+  // fix ② (11:19) retired it while unifying the stamp on both sides, and
+  // the 14:07 rework promoted the same expression back to the deciding
+  // gate — it now drives timestampLabel itself (plus rides showTimestamp
+  // verbatim for contract stability). (Supersedes the "retired-only gate"
+  // comment this assertion carried.)
   assert.match(panelSource, /showTimestamp=\{message\.type === 'assistant' && isPanelMessageGroupEnd\(visibleMessages, index\)\}/);
   assert.match(panelSource, /const renderMessage = \(message: CoworkMessage, index: number\) =>/);
 });
 
-test('① the stamp is default-visible on assistant group-end rows (hover reveal retired)', () => {
-  // Pass #5 ③④: no hover gating — the meta row mounts only when it has
-  // content and reads by default. The pass #3 machinery (reserved invisible
-  // slot, visibility toggles, `group` hover proxy) is gone for good.
+test('① stamp + chip share the in-bubble footer (chip left, stamp right); hover reveal stays retired', () => {
+  // Fix ② (owner ruling 2026-11-11) superseded the external meta-line
+  // stamp of pass #5 ③④: the stamp moved INSIDE the bubble. The sixth
+  // item (owner ruling 2026-11-11 14:45) supersedes that again: the
+  // reaction chip moved inside too — one in-bubble footer row per bubble,
+  // chip LEFT of the stamp, flush with the bubble's bottom-right corner;
+  // the old external chip row is gone for good. The pass #3 machinery
+  // (reserved invisible slot, visibility toggles, hover proxy) stays gone
+  // for good.
   assert.doesNotMatch(panelSource, /group-hover:/);
   assert.doesNotMatch(panelSource, /stampOnlyRow/);
   assert.doesNotMatch(panelSource, /className="group /);
-  // Defense-in-depth in the row: a user bubble never carries a stamp,
-  // whatever a caller passes.
-  assert.match(panelSource, /const showStamp = showTimestamp && !isUser;/);
-  // The row mounts only when it has content (stamp or chip)…
-  assert.match(panelSource, /showStamp \|\| hasReactionChip \? \(/);
-  // …aligns with the bubble side (user right, assistant left)…
-  assert.match(panelSource, /isUser \? 'justify-end' : 'justify-start'/);
-  // …and the row reads [👍chip][time] — chip first, stamp second.
-  const metaRowBlock = panelSource.match(/data-slot="panel-message-meta"[\s\S]*?\) : null;/)?.[0] ?? '';
-  assert.ok(metaRowBlock, 'meta row block found');
-  const chipIndex = metaRowBlock.indexOf('data-panel-reaction-chip');
-  const stampIndex = metaRowBlock.indexOf('data-panel-message-timestamp');
-  assert.ok(chipIndex !== -1, 'reaction chip wired in the row');
-  assert.ok(stampIndex !== -1, 'stamp wired in the row');
-  assert.ok(chipIndex < stampIndex, 'assistant rows read [chip][time]');
-  // The stamp renders only when formatting produced one.
-  assert.match(panelSource, /\{showStamp && timestampLabel \? \(/);
+  // The stamp gate is formatting-only: an empty label renders no stamp.
+  assert.match(panelSource, /const bubbleStamp = timestampLabel \? \(/);
+  assert.match(panelSource, /data-panel-message-timestamp="true"/);
+  // SUPERSEDED (sixth item, owner ruling 2026-11-11 14:45): the three
+  // bubble branches close with the in-bubble FOOTER (chip left, stamp
+  // right); the footer composes {bubbleStamp} exactly once.
+  const footerInserts = panelSource.match(/\{bubbleFooter\}/g) ?? [];
+  assert.equal(footerInserts.length, 3, 'all three bubble branches close with the in-bubble footer');
+  assert.equal((panelSource.match(/\{bubbleStamp\}/g) ?? []).length, 1, 'the footer is the only stamp mount point');
+  // SUPERSEDED (sixth item): the external chip row is gone; the chip rides
+  // the in-bubble footer beside the stamp — the alignment no longer
+  // mirrors the bubble side.
+  assert.doesNotMatch(panelSource, /panel-message-meta/);
+  assert.match(panelSource, /const bubbleFooter = hasReactionChip \|\| bubbleStamp \? \(/);
+  const footerBlock = panelSource.match(/data-slot="panel-bubble-footer"[\s\S]*?\) : null;/)?.[0] ?? '';
+  assert.ok(footerBlock, 'bubble footer block found');
+  assert.ok(footerBlock.includes('data-panel-reaction-chip'), 'reaction chip wired in the footer');
+  assert.ok(footerBlock.includes('{bubbleStamp}'), 'the stamp rides the same footer row');
+  assert.ok(
+    footerBlock.indexOf('data-panel-reaction-chip') < footerBlock.indexOf('{bubbleStamp}'),
+    'chip LEFT of the stamp on the footer row',
+  );
+  assert.match(footerBlock, /justify-end/, 'the pair hugs the bubble bottom-right corner');
 });
 
 test('② the pending quote is a Telegram-style card in the sent-quote family', () => {
