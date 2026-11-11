@@ -9,6 +9,20 @@
 
   const body = document.body;
   const $ = (selector) => document.querySelector(selector);
+  const reportOpen = $('[data-report-open]');
+  const reportUri = window.__LIVE_STAGE_REPORT_URI__;
+  const canOpenReport = typeof reportUri === 'string' && reportUri.startsWith('preview-metaapp://localhost/');
+  reportOpen.disabled = !canOpenReport;
+  $('[data-report-open-label]').textContent = canOpenReport ? 'Open report' : 'Opening the final page';
+  reportOpen.addEventListener('click', () => {
+    if (!canOpenReport) return;
+    window.parent.postMessage({
+      source: 'idbots-live-stage',
+      type: 'open-report',
+      turnId: initial.turnId,
+      uri: reportUri
+    }, '*');
+  });
   const canvas = $('.core-canvas');
   const ctx = canvas.getContext('2d');
   const reducedMedia = window.matchMedia('(prefers-reduced-motion: reduce)');

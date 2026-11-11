@@ -7319,7 +7319,11 @@ const getCoworkRunner = () => {
         projectReport: async (input) => {
           const outcome = await getStudioLiveStageService().projectReport(
             input,
-            () => getBotBrowserProjection().project({ ...input, reveal: true }),
+            (stageTabId) => getBotBrowserProjection().project({
+              ...input,
+              reveal: true,
+              ...(stageTabId == null ? {} : { tabId: stageTabId }),
+            }),
           );
           // Projection receipt in the conversation (owner ruling #7 companion):
           // a small host-injected bubble whose link re-opens the projection tab

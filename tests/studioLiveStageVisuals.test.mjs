@@ -93,3 +93,21 @@ test('interaction card renders through textContent only and drains clicks exactl
   assert.match(css, /\.interaction-card\[hidden\]\{display:none\}/);
   assert.match(css, /\.interaction-button\.is-primary\{background:var\(--brand\)/);
 });
+
+test('report recovery is a real button that navigates through the constrained Stage channel', () => {
+  const stage = read('stage.js');
+  assert.match(stage, /reportOpen\.addEventListener\('click'/);
+  assert.match(stage, /source: 'idbots-live-stage'/);
+  assert.match(stage, /type: 'open-report'/);
+  assert.match(stage, /turnId: initial\.turnId/);
+  assert.match(stage, /uri: reportUri/);
+  assert.match(stage, /canOpenReport \? 'Open report' : 'Opening the final page'/);
+  for (const file of ['stage.html', 'index.html']) {
+    const html = read(file);
+    assert.match(html, /<button class="core-report-ready" type="button" data-report-open disabled>/);
+    assert.match(html, /data-report-open-label/);
+  }
+  const css = read('stage.css');
+  assert.match(css, /\.core-report-ready:not\(:disabled\):hover/);
+  assert.match(css, /\.core-report-ready:focus-visible/);
+});

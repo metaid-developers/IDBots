@@ -127,21 +127,28 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     return resolution;
   }
 
+  function writeStage(run: LiveStageRun, reportUri?: string): void {
+    const session = deps.getSession(run.state.sessionId);
+    if (!session) return;
+    // The template resolved at turn start is pinned for the whole turn; a
+    // fallback resolution keeps rendering from the raw built-in assets.
+    const templateAssetRoot = run.template.status === 'ok' ? run.template.template.assetRoot : deps.assetRoot;
+    const html = renderLiveStageHtml({
+      state: run.state,
+      avatarDataUri: avatarFor(session),
+      assets: { assetRoot: templateAssetRoot, fallbackAvatarDataUri: deps.fallbackAvatarDataUri },
+      reportUri,
+    });
+    fs.mkdirSync(path.dirname(run.stagePath!), { recursive: true });
+    fs.writeFileSync(run.stagePath!, html, 'utf8');
+  }
+
   function projectStage(run: LiveStageRun): void {
     enqueue(run, async () => {
       await deps.beforeProjection?.(run.state.sessionId);
       const session = deps.getSession(run.state.sessionId);
       if (!session || !run.state.enabled) return;
-      // The template resolved at turn start is pinned for the whole turn; a
-      // fallback resolution keeps rendering from the raw built-in assets.
-      const templateAssetRoot = run.template.status === 'ok' ? run.template.template.assetRoot : deps.assetRoot;
-      const html = renderLiveStageHtml({
-        state: run.state,
-        avatarDataUri: avatarFor(session),
-        assets: { assetRoot: templateAssetRoot, fallbackAvatarDataUri: deps.fallbackAvatarDataUri },
-      });
-      fs.mkdirSync(path.dirname(run.stagePath!), { recursive: true });
-      fs.writeFileSync(run.stagePath!, html, 'utf8');
+      writeStage(run);
       const outcome = await deps.project({ sessionId: run.state.sessionId, localPath: run.stagePath!, title: `${run.state.botName} · Live Stage` });
       run.tabId = outcome.tabId;
       if (run.tabId == null && deps.findStageTab) {
@@ -419,11 +426,11 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
 
   async function projectReport(
     input: BotBrowserProjectionInput,
-    project: () => Promise<BotBrowserProjectionOutcome>,
+    project: (stageTabId: number | null) => Promise<BotBrowserProjectionOutcome>,
   ): Promise<BotBrowserProjectionOutcome> {
     currentSettings = deps.getSettings();
     const run = runs.get(input.sessionId);
-    if (!currentSettings.enabled || !run) return project();
+    if (!currentSettings.enabled || !run) return project(null);
     run.directorGeneration += 1;
     if (run.directorTimer) {
       clearTimeout(run.directorTimer);
@@ -434,9 +441,14 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     schedulePatch(run);
     await run.queue;
     try {
-      const outcome = await project();
+      const outcome = await project(run.tabId);
       run.reportProjected = true;
       stopInteractionPolling(run);
+      try {
+        writeStage(run, outcome.uri);
+      } catch (error) {
+        console.warn(`[StudioLiveStage] report recovery snapshot failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
       return outcome;
     } catch (error) {
       run.state = liveStageError(run.state);

@@ -101,6 +101,23 @@ test('service writes one stage per turn, dedupes messages, and preserves report 
   assert.equal(patches.length, patchCount, 'late turn events never patch the report frame');
 });
 
+test('final projection passes the confirmed stage tab and persists its recovery action', async (t) => {
+  const { service } = fixture(t);
+  service.observeMessage('s', message('u1', 'user', { origin: 'user', submissionId: 'sub-1' }));
+  const run = service.getRunInternals('s');
+  await run.queue;
+  let stageTabId = null;
+  await service.projectReport({ sessionId: 's', localPath: '/tmp/final-report.html' }, async (tabId) => {
+    stageTabId = tabId;
+    return { uri: 'preview-metaapp://localhost/tmp/final-report.html', tabId: 7, announced: true };
+  });
+  assert.equal(stageTabId, 7);
+  const stage = fs.readFileSync(run.stagePath, 'utf8');
+  assert.match(stage, /window\.__LIVE_STAGE_REPORT_URI__="preview-metaapp:\/\/localhost\/tmp\/final-report\.html"/);
+  assert.match(stage, /data-report-open/);
+  assert.match(stage, /data-report-open-label/);
+});
+
 test('Director coalesces calls and accumulates measured tokens without blocking the scene', async (t) => {
   const { service, calls } = fixture(t, true);
   service.observeMessage('s', message('u1', 'user', { origin: 'user', submissionId: 'sub-1' }));

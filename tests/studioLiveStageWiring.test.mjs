@@ -12,7 +12,9 @@ test('Live Stage settings are wired through IPC, preload, types, allowlist, Sett
   assert.match(main, /getStudioLiveStageService\(\)\.observeMessage\(sessionId, message/);
   assert.match(main, /getStudioLiveStageService\(\)\.observeComplete\(sessionId\)/);
   assert.match(main, /getStudioLiveStageService\(\)\.projectReport/);
-  assert.match(main, /getBotBrowserProjection\(\)\.project\(\{ \.\.\.input, reveal: true \}\)/);
+  assert.match(main, /getBotBrowserProjection\(\)\.project\(\{/);
+  assert.match(main, /reveal: true,/);
+  assert.match(main, /\.\.\.\(stageTabId == null \? \{\} : \{ tabId: stageTabId \}\)/);
   assert.equal((main.match(/\.prepareSession\(/g) ?? []).length, 2);
 
   const preload = read('src/main/preload.ts');

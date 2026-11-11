@@ -34,6 +34,9 @@ function fixture() {
       const tab = tabs.find((entry) => entry.id === command.tabId) ?? null;
       return { ...result(command.action), info: tab ? { ...info(tab), current: { uri: tab.uri } } : null };
     }
+    if (command.action === 'get-tabs') {
+      return result(command.action);
+    }
     if (command.action === 'navigate-tab') {
       const tab = tabs.find((entry) => entry.id === command.tabId);
       if (!tab) throw new Error('missing tab');
@@ -88,6 +91,74 @@ test('Live Stage updates stay background and a missing cached tab opens a confir
   assert.notEqual(replacement.tabId, 99);
   assert.equal(replacement.announced, true);
   assert.equal(bridge.activeTabId, replacement.tabId);
+});
+
+test('a final report reuses the supplied Stage tab after the projection cache is lost', async () => {
+  const bridge = fixture();
+  const service = createBotBrowserProjectionService({ getTabBridge: () => ({ execute: bridge.execute }) });
+  const stage = await service.project({ sessionId: 'session-a', localPath: '/shared/reports/live-stage-a.html' });
+  service.forget('session-a');
+  bridge.activeTabId = 99;
+
+  const report = await service.project({
+    sessionId: 'session-a',
+    localPath: '/shared/reports/final-a.html',
+    reveal: true,
+    tabId: stage.tabId,
+  });
+
+  assert.equal(report.tabId, stage.tabId);
+  assert.equal(bridge.activeTabId, stage.tabId);
+  assert.equal(bridge.commands.filter((command) => command.action === 'open-tab').length, 1);
+  const reopened = await service.project({ sessionId: 'session-a', localPath: '/shared/reports/next-a.html', reveal: true });
+  assert.equal(reopened.tabId, stage.tabId, 'the supplied Stage tab also heals the cache');
+});
+
+test('a transient tab-info failure falls back to the tab list without opening a duplicate', async () => {
+  const bridge = fixture();
+  const original = bridge.execute;
+  let failTabInfo = true;
+  const execute = async (command) => {
+    if (failTabInfo && command.action === 'get-tab-info') throw new Error('temporary bridge failure');
+    return original(command);
+  };
+  const service = createBotBrowserProjectionService({ getTabBridge: () => ({ execute }) });
+  const stage = await service.project({ sessionId: 'session-a', localPath: '/shared/reports/live-stage-a.html' });
+  bridge.activeTabId = 99;
+
+  const report = await service.project({ sessionId: 'session-a', localPath: '/shared/reports/final-a.html', reveal: true });
+
+  assert.equal(report.tabId, stage.tabId);
+  assert.equal(bridge.activeTabId, stage.tabId);
+  assert.equal(bridge.commands.filter((command) => command.action === 'open-tab').length, 1);
+  assert.ok(bridge.commands.some((command) => command.action === 'get-tabs'));
+
+  failTabInfo = false;
+});
+
+test('failed tab reads preserve the binding and never open a speculative replacement', async () => {
+  const bridge = fixture();
+  const original = bridge.execute;
+  let unavailable = true;
+  const execute = async (command) => {
+    if (unavailable && (command.action === 'get-tab-info' || command.action === 'get-tabs')) {
+      throw new Error('bridge unavailable');
+    }
+    return original(command);
+  };
+  const service = createBotBrowserProjectionService({ getTabBridge: () => ({ execute }) });
+  const stage = await service.project({ sessionId: 'session-a', localPath: '/shared/reports/live-stage-a.html' });
+
+  await assert.rejects(
+    service.project({ sessionId: 'session-a', localPath: '/shared/reports/final-a.html', reveal: true }),
+    /bridge unavailable/,
+  );
+  assert.equal(bridge.commands.filter((command) => command.action === 'open-tab').length, 1);
+
+  unavailable = false;
+  const recovered = await service.project({ sessionId: 'session-a', localPath: '/shared/reports/final-a.html', reveal: true });
+  assert.equal(recovered.tabId, stage.tabId);
+  assert.equal(bridge.commands.filter((command) => command.action === 'open-tab').length, 1);
 });
 
 test('a reveal that does not activate the target is reported as a failure', async () => {
