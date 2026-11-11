@@ -1107,7 +1107,10 @@ const App: React.FC = () => {
 
   useEffect(() => {
     return window.electron.botBrowser.onTabCommand(({ requestId, command }) => {
-      void botBrowserShell.controlTabs(command).then(
+      const controlTabs = command.background === true
+        ? botBrowserShell.controlTabsSilent
+        : botBrowserShell.controlTabs;
+      void controlTabs(command).then(
         (result) => {
           window.electron.botBrowser.respondToTabCommand({
             requestId,
@@ -1124,7 +1127,7 @@ const App: React.FC = () => {
         },
       );
     });
-  }, [botBrowserShell.controlTabs]);
+  }, [botBrowserShell.controlTabs, botBrowserShell.controlTabsSilent]);
 
   const handleShowLogin = useCallback(() => {
     showToast(i18nService.t('featureInDevelopment'));

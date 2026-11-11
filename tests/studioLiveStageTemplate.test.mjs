@@ -275,7 +275,6 @@ function serviceFixture(t, { resolveTemplate } = {}) {
     applyPatch: async () => undefined,
     assetRoot: PACKAGE_ROOT,
     fallbackAvatarDataUri: 'data:image/png;base64,AA==',
-    reportDelayMs: 0,
     resolveTemplate: resolveTemplate
       ? () => {
           resolveCalls += 1;

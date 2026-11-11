@@ -43,7 +43,10 @@ test('projection readiness requires a successful matching tool result', () => {
   state = reduceLiveStageMessage(state, message('result', 'tool_result', { toolUseId: 'project-1', isError: false }));
   assert.equal(state.family, 'report-ready');
   assert.deepEqual(state.pendingProjectionIds, []);
-  assert.equal(completeLiveStage(state).family, 'report-ready');
+  const ready = state;
+  assert.equal(reduceLiveStageMessage(state, message('final', 'assistant', { isFinal: true })), ready);
+  assert.equal(reduceLiveStageMessage(state, message('late-thinking', 'assistant', { isThinking: true })), ready);
+  assert.equal(completeLiveStage(state), ready);
 });
 
 test('event window carries semantics only and Director cannot inherit raw arguments', () => {

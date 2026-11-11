@@ -62,10 +62,11 @@ overrides:
 # patch-package writes patched files in place, which would mutate the
 # hard-linked pnpm store; pnpm instead applies the patch to a private store
 # entry, so fresh installs are patched without a postinstall pass. The patch
-# (allow-forms on the MetaApp html-frame sandbox constants/branches) is
-# regenerated per ABC release: `pnpm patch @openagentinternet/agent-browser-ui`
-# + apply the allow-forms edits + `pnpm patch-commit`, then rename the
-# generated file to the patches/<scope>+<name>+<version>.patch convention.
+# carries the MetaApp html-frame allow-forms rules and the background-tab
+# repaint fix. Regenerate it per ABC release: `pnpm patch
+# @openagentinternet/agent-browser-ui` + reapply both changes +
+# `pnpm patch-commit`, then rename the generated file to the
+# patches/<scope>+<name>+<version>.patch convention.
 # Dependencies whose install scripts are allowed to run (pnpm blocks them by
 # default): electron downloads its platform binary, esbuild installs its
 # binary shim, bufferutil/utf-8-validate/fsevents build native addons,

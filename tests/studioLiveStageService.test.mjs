@@ -36,7 +36,6 @@ function fixture(t, directorEnabled = false, initialTabId = 7) {
     interactionPollMs: 10,
     assetRoot: path.resolve('public/live-stage'),
     fallbackAvatarDataUri: 'data:image/png;base64,AA==',
-    reportDelayMs: 0,
     directScene: async (state) => {
       calls.push(state);
       return {
@@ -90,9 +89,16 @@ test('service writes one stage per turn, dedupes messages, and preserves report 
   run = service.getRunInternals('s');
   await run.queue;
   assert.notEqual(run.stagePath, firstStage, 'every turn owns a distinct history file');
-  await service.projectReport({ sessionId: 's', localPath: '/tmp/final-report.html' }, async () => ({ uri: 'preview-metaapp://localhost/tmp/final-report.html', tabId: 7, announced: false }));
+  await service.projectReport({ sessionId: 's', localPath: '/tmp/final-report.html' }, async () => ({ uri: 'preview-metaapp://localhost/tmp/final-report.html', tabId: 7, announced: true }));
   assert.equal(service.getState('s').family, 'report-ready');
   assert.equal(service.getState('s').composition, 'ready');
+  assert.equal(run.reportProjected, true);
+  const patchCount = patches.length;
+  service.observeMessage('s', message('final', 'assistant', { isFinal: true }));
+  service.observeComplete('s');
+  await run.queue;
+  assert.equal(service.getState('s').family, 'report-ready');
+  assert.equal(patches.length, patchCount, 'late turn events never patch the report frame');
 });
 
 test('Director coalesces calls and accumulates measured tokens without blocking the scene', async (t) => {
@@ -111,6 +117,18 @@ test('Director coalesces calls and accumulates measured tokens without blocking 
   assert.equal(state.metrics.cacheCreationTokens, calls.length * 40);
   assert.equal(state.metrics.fallbackCount, 0);
   assert.equal(state.headline, 'Generated scene');
+});
+
+test('projection cancels queued Director work', async (t) => {
+  const { service, calls } = fixture(t, true);
+  service.observeMessage('s', message('u1', 'user', { origin: 'user', submissionId: 'sub-1' }));
+  const run = service.getRunInternals('s');
+  assert.ok(run.directorTimer);
+  await service.projectReport({ sessionId: 's', localPath: '/tmp/final-report.html' }, async () => ({ uri: 'preview-metaapp://localhost/tmp/final-report.html', tabId: 7, announced: true }));
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  assert.equal(calls.length, 0);
+  assert.equal(run.directorTimer, null);
+  assert.equal(run.reportProjected, true);
 });
 
 test('a null first projection tab id is recovered through stage URI lookup', async (t) => {
@@ -299,7 +317,6 @@ test('stage disabled or session without a run never presents', () => {
     applyPatch: async () => {},
     assetRoot: path.resolve('public/live-stage'),
     fallbackAvatarDataUri: 'data:image/png;base64,AA==',
-    reportDelayMs: 0,
   });
   try {
     assert.equal(service.presentInteraction('s', askRequest()), 'declined');

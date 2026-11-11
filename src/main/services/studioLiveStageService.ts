@@ -26,6 +26,7 @@ type LiveStageRun = {
   state: LiveStageState;
   stagePath: string | null;
   tabId: number | null;
+  reportProjected: boolean;
   queue: Promise<void>;
   seen: Set<string>;
   submissionId: string | null;
@@ -49,7 +50,6 @@ export type StudioLiveStageServiceDeps = {
   applyPatch(input: { tabId: number; state: LiveStageState }): Promise<void>;
   assetRoot: string;
   fallbackAvatarDataUri: string;
-  reportDelayMs?: number;
   directScene?: typeof directLiveStageScene;
   now?: () => number;
   /** Pulls queued stage-card clicks over the patch frame channel. */
@@ -151,6 +151,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
 
   function schedulePatch(run: LiveStageRun): void {
     enqueue(run, async () => {
+      if (run.reportProjected) return;
       if (run.tabId == null && deps.findStageTab) {
         run.tabId = await deps.findStageTab(run.stagePath!);
       }
@@ -160,7 +161,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
   }
 
   function scheduleDirector(run: LiveStageRun): void {
-    if (!currentSettings.directorEnabled || !run.state.enabled || run.directorCalls >= MAX_DIRECTOR_CALLS_PER_TURN) return;
+    if (run.state.family === 'report-ready' || !currentSettings.directorEnabled || !run.state.enabled || run.directorCalls >= MAX_DIRECTOR_CALLS_PER_TURN) return;
     run.directorDirty = true;
     if (run.directorInFlight || run.directorTimer) return;
     console.log(`[StudioLiveStage] Director scheduled for ${run.state.sessionId} family=${run.state.family}`);
@@ -222,6 +223,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       state,
       stagePath: path.join(session.cwd, 'reports', `live-stage-${turnId}.html`),
       tabId: null,
+      reportProjected: false,
       queue: Promise.resolve(),
       seen: new Set(),
       submissionId: null,
@@ -279,7 +281,9 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     run.seen.add(message.id);
     if (submissionId) run.submissionId = submissionId;
     const worker = workerIdentityFor(message);
-    run.state = reduceLiveStageMessage(run.state, message, { workerName: worker.name, workerAvatar: worker.avatar });
+    const nextState = reduceLiveStageMessage(run.state, message, { workerName: worker.name, workerAvatar: worker.avatar });
+    if (nextState === run.state) return;
+    run.state = nextState;
     schedulePatch(run);
     scheduleDirector(run);
   }
@@ -287,7 +291,9 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
   function observeComplete(sessionId: string): void {
     const run = runs.get(sessionId);
     if (!run) return;
-    run.state = completeLiveStage(run.state);
+    const nextState = completeLiveStage(run.state);
+    if (nextState === run.state) return;
+    run.state = nextState;
     run.directorGeneration += 1;
     schedulePatch(run);
   }
@@ -406,11 +412,25 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     currentSettings = deps.getSettings();
     const run = runs.get(input.sessionId);
     if (!currentSettings.enabled || !run) return project();
+    run.directorGeneration += 1;
+    if (run.directorTimer) {
+      clearTimeout(run.directorTimer);
+      run.directorTimer = null;
+    }
+    run.directorDirty = false;
     run.state = reportReadyLiveStage(run.state);
     schedulePatch(run);
-    const delayMs = deps.reportDelayMs ?? 1000;
-    if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
-    return project();
+    await run.queue;
+    try {
+      const outcome = await project();
+      run.reportProjected = true;
+      stopInteractionPolling(run);
+      return outcome;
+    } catch (error) {
+      run.state = liveStageError(run.state);
+      schedulePatch(run);
+      throw error;
+    }
   }
 
   function updateSettings(settings: StudioLiveStageSettings): void {

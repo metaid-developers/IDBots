@@ -38,11 +38,10 @@ infographics to carry the same report with far less reading effort.
   change. Small talk, follow-up questions, or turns where the previous page is still
   accurate → no projection; the projector keeps showing the last page.
 - When the turn is about a metaapp that is open in the browser, do not cover it.
-- Projection never steals focus: it always acts on the session's projection tab. If the
-  user has switched to another tab or another internet pane (Bot Hub / Meta Apps), the
-  new page is written into the projection tab silently. Exception: the session's FIRST
-  projection creates the tab and selects it (and switches the internet pane to the
-  browser) so the user actually sees the mode exist.
+- A final report always reveals the session's projection tab and switches the internet
+  pane to Browser, including when the owner had selected another tab or pane. Live Stage
+  progress updates are the exception: they navigate in the background without changing
+  the active tab. Neither flow changes the OS window focus after the initial tab opens.
 
 ### Chat side effects
 
@@ -60,8 +59,8 @@ infographics to carry the same report with far less reading effort.
 2. No-Twin machines are blocked with bootstrap guidance; no fallback to other bots.
 3. Projection transport: extend the existing `bot_browser_preview_local` tool with a
    projection parameter — no new tool surface.
-4. Focus policy: silent write into the projection tab, never steal focus (exception:
-   first projection of a session, see above).
+4. Focus policy: final reports reveal the projection tab; only Live Stage progress
+   updates stay in the background. Neither changes OS focus after the initial open.
 5. Desktop voice input: out of scope for v1; validate the visual-report core first.
 6. Sessions carrying the marker render assistant-style everywhere they appear (Bot Home
    list included) — one shared logic, no per-surface forks.
@@ -111,10 +110,14 @@ infographics to carry the same report with far less reading effort.
 - `bot_browser_preview_local` gains `projection: boolean` and optional `title`.
 - Main keeps a `sessionId → projection tab id` map; the entry is invalidated when the
   tab no longer exists (ABC tabs are in-memory).
-- First projection for a session: open a new tab (announce) and record it.
-- Subsequent projections: navigate that specific tab in place, without switching tabs —
-  the tab bridge gains a navigate action targeting a tab id; ABC re-resolves the URI on
-  history traversal, so back/forward works for free.
+- First projection for a session: open a new tab through the awaited tab bridge, confirm
+  its id, and record it. A missing cached tab opens a confirmed replacement; the service
+  never adopts an unrelated tab by the shared reports-directory prefix.
+- Subsequent Live Stage projections navigate that specific tab in the background. Final
+  reports use the same navigation with `activate: true`, leaving the target active through
+  resolution so ABC paints the report before the tool returns. Background resolutions mark
+  the cleared target pane unpainted so a later reveal rehydrates it instead of showing blank.
+- ABC re-resolves the URI on history traversal, so back/forward works for free.
 - Projection tab title defaults to the provided `title` (e.g. "Turn 3 report") instead of
   the generic "Local Preview".
 
@@ -136,7 +139,7 @@ infographics to carry the same report with far less reading effort.
 ## Acceptance
 
 - `pnpm compile` + relevant test suites green.
-- Real-machine pass: greeting first turn projects a welcome page; a work turn projects an
-  infographic report; back/forward reviews previous turns; projection never steals focus
-  after the user navigates away; no inline embeds in this tab; Bot Home renders marker
-  sessions assistant-style; legacy browser sessions unchanged.
+- Real-machine pass: greeting first turn projects a welcome page; a work turn automatically
+  reveals its infographic report even after the owner selects another tab; Back reviews the
+  Live Stage page; no inline embeds in this tab; Bot Home renders marker sessions
+  assistant-style; legacy browser sessions unchanged.

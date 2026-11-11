@@ -348,13 +348,10 @@ export function buildBrowserIframeBridgeScript(): string {
           ? globalThis.AgentBrowserTabs.openTab(textValue(input.uri) || undefined, { label: openLabel })
           : globalThis.AgentBrowserTabs.openTab(textValue(input.uri) || undefined);
       } else if (action === 'navigate-tab') {
-        // Background projection navigation (Bot Internet projector): resolve
-        // into a SPECIFIC tab without leaving the user's current view. ABC's
-        // resolveUri snapshots the originating tab synchronously and lands the
-        // result on it even after the active tab switches away, so we activate
-        // the target just long enough to start the resolve, then restore the
-        // user's tab immediately — all inside one synchronous block, so the
-        // intermediate active state never paints.
+        // Resolve into a SPECIFIC tab. Background Live Stage updates restore
+        // the user's previous tab synchronously; final reports pass activate
+        // so the target stays active through resolve and paints its content.
+        // ABC's resolveUri snapshots the originating tab synchronously.
         var navTabId = Number(input.tabId);
         var tabsNow = globalThis.AgentBrowserTabs.getTabs();
         var targetExists = false;
@@ -365,12 +362,13 @@ export function buildBrowserIframeBridgeScript(): string {
           throw new Error('Bot Browser tab ' + navTabId + ' does not exist.');
         }
         var previousActive = globalThis.AgentBrowserTabs.getActiveTab();
+        var activateTarget = input.activate === true;
         globalThis.AgentBrowserTabs.switchTab(navTabId);
         var navigation;
         try {
           navigation = globalThis.navigateTo(textValue(input.uri));
         } finally {
-          if (previousActive && previousActive.id !== navTabId) {
+          if (!activateTarget && previousActive && previousActive.id !== navTabId) {
             globalThis.AgentBrowserTabs.switchTab(previousActive.id);
           }
         }

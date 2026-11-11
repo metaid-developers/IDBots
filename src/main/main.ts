@@ -7297,7 +7297,7 @@ const getCoworkRunner = () => {
         projectReport: async (input) => {
           const outcome = await getStudioLiveStageService().projectReport(
             input,
-            () => getBotBrowserProjection().project(input),
+            () => getBotBrowserProjection().project({ ...input, reveal: true }),
           );
           // Projection receipt in the conversation (owner ruling #7 companion):
           // a small host-injected bubble whose link re-opens the projection tab
@@ -8989,8 +8989,8 @@ const getBotBrowserTabBridge = () => {
   return botBrowserTabBridge;
 };
 
-// Bot Internet projector: first projection announces, later ones write the
-// session's projection tab silently (never stealing tab or OS focus).
+// Bot Internet projector: Live Stage updates stay in the background; final
+// reports reveal the session's projection tab without changing the OS focus.
 const getBotBrowserProjection = () =>
   initBotBrowserProjectionService({ getTabBridge: getBotBrowserTabBridge });
 

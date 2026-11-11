@@ -438,6 +438,7 @@ test('static wiring: shell exposes the silent tab path, App attaches + restores 
   const appSource = readSource('../src/renderer/App.tsx');
   assert.match(appSource, /sessionTabBinding\.attach\(/);
   assert.match(appSource, /botBrowserShell\.controlTabsSilent\(command\)/);
+  assert.match(appSource, /command\.background === true/);
   assert.match(appSource, /sessionTabBinding\.restoreLastSession\(\)/);
   assert.match(appSource, /sessionTabBinding\.revealSessionTab\(sessionId\)/);
 
