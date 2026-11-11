@@ -1,0 +1,54 @@
+{
+  "protocol": "idbots.live-stage.v1",
+  "sessionId": "demo-live-stage",
+  "turnId": "demo-turn-1",
+  "revision": 1,
+  "enabled": true,
+  "family": "web2-research",
+  "botName": "Nova",
+  "language": "en",
+  "headline": "Searching the web",
+  "caption": "Finding and checking public web sources.",
+  "participants": [
+    "Nova",
+    "Web"
+  ],
+  "composition": "gather",
+  "motif": "web2-research",
+  "topology": {
+    "mode": "presence",
+    "nodes": [],
+    "edges": []
+  },
+  "motion": {
+    "preset": "web2-research",
+    "seed": 4348,
+    "durationMs": 720,
+    "easing": "emphasized-decelerate",
+    "energy": 0.4,
+    "density": 0.28
+  },
+  "metrics": {
+    "directorEnabled": false,
+    "directorCalls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "cacheReadTokens": 0,
+    "cacheCreationTokens": 0,
+    "rejectedPatches": 0,
+    "fallbackCount": 0,
+    "directorLatencyMs": 0
+  },
+  "handoff": null,
+  "interaction": null,
+  "pendingProjectionIds": [],
+  "eventWindow": [
+    {
+      "family": "received"
+    },
+    {
+      "family": "web2-research",
+      "tool": "web_search"
+    }
+  ]
+}

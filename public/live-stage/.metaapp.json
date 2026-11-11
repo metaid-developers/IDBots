@@ -1,0 +1,15 @@
+{
+  "title": "Studio Live Stage",
+  "appName": "studio-live-stage",
+  "version": "1.0.0",
+  "runtime": "browser",
+  "indexFile": "index.html",
+  "intro": "Official Live Stage template package: a continuous animated stage for agent work phases, with a fictional offline demo player. Ships static assets and demo fixtures only — no live state, no user data.",
+  "tags": [
+    "live-stage",
+    "studio",
+    "template",
+    "demo",
+    "metaapp"
+  ]
+}

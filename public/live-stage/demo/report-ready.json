@@ -1,0 +1,69 @@
+{
+  "protocol": "idbots.live-stage.v1",
+  "sessionId": "demo-live-stage",
+  "turnId": "demo-turn-1",
+  "revision": 6,
+  "enabled": true,
+  "family": "report-ready",
+  "botName": "Nova",
+  "language": "en",
+  "headline": "The report is ready",
+  "caption": "The process is settling into the final report. Back returns to this trace.",
+  "participants": [
+    "Nova",
+    "Final report"
+  ],
+  "composition": "ready",
+  "motif": "report-ready",
+  "topology": {
+    "mode": "presence",
+    "nodes": [],
+    "edges": []
+  },
+  "motion": {
+    "preset": "report-ready",
+    "seed": 33872,
+    "durationMs": 650,
+    "easing": "emphasized-decelerate",
+    "energy": 0.18,
+    "density": 0.55
+  },
+  "metrics": {
+    "directorEnabled": false,
+    "directorCalls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "cacheReadTokens": 0,
+    "cacheCreationTokens": 0,
+    "rejectedPatches": 0,
+    "fallbackCount": 0,
+    "directorLatencyMs": 0
+  },
+  "handoff": null,
+  "interaction": null,
+  "pendingProjectionIds": [],
+  "eventWindow": [
+    {
+      "family": "received"
+    },
+    {
+      "family": "web2-research",
+      "tool": "web_search"
+    },
+    {
+      "family": "metaweb-research",
+      "tool": "omni_reader"
+    },
+    {
+      "family": "delegation",
+      "tool": "local_worker_delegate"
+    },
+    {
+      "family": "worker-report"
+    },
+    {
+      "family": "verification",
+      "tool": "bot_browser_screenshot"
+    }
+  ]
+}

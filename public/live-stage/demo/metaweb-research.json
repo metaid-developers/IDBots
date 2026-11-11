@@ -1,0 +1,58 @@
+{
+  "protocol": "idbots.live-stage.v1",
+  "sessionId": "demo-live-stage",
+  "turnId": "demo-turn-1",
+  "revision": 2,
+  "enabled": true,
+  "family": "metaweb-research",
+  "botName": "Nova",
+  "language": "en",
+  "headline": "Searching MetaWeb",
+  "caption": "Reading on-chain material and MetaWeb evidence.",
+  "participants": [
+    "Nova",
+    "MetaWeb"
+  ],
+  "composition": "gather",
+  "motif": "metaweb-research",
+  "topology": {
+    "mode": "presence",
+    "nodes": [],
+    "edges": []
+  },
+  "motion": {
+    "preset": "metaweb-research",
+    "seed": 27205,
+    "durationMs": 720,
+    "easing": "emphasized-decelerate",
+    "energy": 0.4,
+    "density": 0.28
+  },
+  "metrics": {
+    "directorEnabled": false,
+    "directorCalls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "cacheReadTokens": 0,
+    "cacheCreationTokens": 0,
+    "rejectedPatches": 0,
+    "fallbackCount": 0,
+    "directorLatencyMs": 0
+  },
+  "handoff": null,
+  "interaction": null,
+  "pendingProjectionIds": [],
+  "eventWindow": [
+    {
+      "family": "received"
+    },
+    {
+      "family": "web2-research",
+      "tool": "web_search"
+    },
+    {
+      "family": "metaweb-research",
+      "tool": "omni_reader"
+    }
+  ]
+}

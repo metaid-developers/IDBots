@@ -1,0 +1,103 @@
+{
+  "protocol": "idbots.live-stage.v1",
+  "sessionId": "demo-live-stage",
+  "turnId": "demo-turn-1",
+  "revision": 3,
+  "enabled": true,
+  "family": "delegation",
+  "botName": "Nova",
+  "language": "en",
+  "headline": "Delegating structured work",
+  "caption": "The task graph has expanded and a collaborator is taking a workstream.",
+  "participants": [
+    "Nova",
+    "Pixel"
+  ],
+  "composition": "topology",
+  "motif": "delegation",
+  "topology": {
+    "mode": "structured",
+    "nodes": [
+      {
+        "id": "twin",
+        "label": "Nova",
+        "kind": "twin"
+      },
+      {
+        "id": "source",
+        "label": "MetaWeb",
+        "kind": "source"
+      },
+      {
+        "id": "worker",
+        "label": "Pixel",
+        "kind": "worker"
+      },
+      {
+        "id": "evidence",
+        "label": "Evidence",
+        "kind": "evidence"
+      }
+    ],
+    "edges": [
+      [
+        "twin",
+        "worker"
+      ],
+      [
+        "source",
+        "twin"
+      ],
+      [
+        "worker",
+        "evidence"
+      ],
+      [
+        "evidence",
+        "twin"
+      ]
+    ]
+  },
+  "motion": {
+    "preset": "delegation",
+    "seed": 79586,
+    "durationMs": 720,
+    "easing": "emphasized-decelerate",
+    "energy": 0.4,
+    "density": 0.55
+  },
+  "metrics": {
+    "directorEnabled": false,
+    "directorCalls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "cacheReadTokens": 0,
+    "cacheCreationTokens": 0,
+    "rejectedPatches": 0,
+    "fallbackCount": 0,
+    "directorLatencyMs": 0
+  },
+  "handoff": {
+    "direction": "dispatch",
+    "eventId": "demo-delegate-1"
+  },
+  "interaction": null,
+  "pendingProjectionIds": [],
+  "eventWindow": [
+    {
+      "family": "received"
+    },
+    {
+      "family": "web2-research",
+      "tool": "web_search"
+    },
+    {
+      "family": "metaweb-research",
+      "tool": "omni_reader"
+    },
+    {
+      "family": "delegation",
+      "tool": "local_worker_delegate"
+    }
+  ]
+}
