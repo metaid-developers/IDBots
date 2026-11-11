@@ -26,9 +26,10 @@ const runnerSource = read('src/main/libs/coworkRunner.ts');
 const promptSource = read('src/main/libs/assistantModePrompt.ts');
 const reasoningSource = read('src/main/libs/dshModelReasoning.ts');
 
-test('the kernel client exposes the runtime session/selectModel RPC', () => {
+test('the kernel client re-binds through the mounted session/ensure RPC', () => {
   assert.match(kernelSource, /async selectModel\(input: \{/);
-  assert.match(kernelSource, /this\.client\.request\('session\/selectModel', input\)/);
+  assert.match(kernelSource, /this\.client\.request\('session\/ensure', input\)/);
+  assert.doesNotMatch(kernelSource, /this\.client\.request\('session\/selectModel', input\)/);
 });
 
 test('the hub tracks the live turn route and re-binds its selection to the lowest effort', () => {

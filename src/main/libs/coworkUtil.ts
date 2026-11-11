@@ -1504,9 +1504,10 @@ export async function generateOwnerWaitUpdate(input: OwnerWaitUpdateInput): Prom
  * marginal cost stays at tens of tokens per turn. The renderer shows this
  * headline ahead of its generic phrase pools exactly in the window this call
  * targets (the silent first minutes before the opening bubble or any tool
- * event); '' on any failure means the indicator never changes shape.
+ * event); '' on any failure means the indicator never changes shape. The
+ * optional signal shares the runner's total-budget cancellation with fallback.
  */
-export async function generateTurnStatusGoal(userText: string, sessionTitle?: string | null): Promise<string> {
+export async function generateTurnStatusGoal(userText: string, sessionTitle?: string | null, signal?: AbortSignal): Promise<string> {
   try {
     const brain = turnAckReplyBrainProvider?.() ?? null;
     const effectiveModel =
@@ -1528,6 +1529,7 @@ export async function generateTurnStatusGoal(userText: string, sessionTitle?: st
         throwOnEmptyContent: true,
         webSearch: false,
         attemptTimeoutMs: 4_000,
+        signal,
       }
     );
     const metadata = result.responseMetadata;

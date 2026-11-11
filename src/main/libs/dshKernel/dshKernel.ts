@@ -318,21 +318,19 @@ export class DshKernel {
 
   /**
    * Re-bind one live session's model selection mid-flight (same route, new
-   * effort). The kernel resolves each step's request config from the agent's
-   * CURRENT selection and requires selection changes to land BEFORE the next
-   * step prepares — host tool execution runs exactly between steps, so a host
-   * tool handler can flip the effort for the very next LLM request (the
-   * projection fast path). Omitting reasoningEffort resets the selection to
-   * the adapter default.
+   * effort) through the session/ensure RPC mounted by the Cowork runtime.
+   * session/selectModel belongs to the optional session-controller plugin,
+   * which this composition does not mount. The next step reads the updated
+   * selection after the host tool returns.
    */
   async selectModel(input: {
     sessionId: string
     provider: string
     model: string
     reasoningEffort?: string
-  }): Promise<{ selected: { provider: string; model: string; reasoningEffort?: string } }> {
+  }): Promise<{ resumed: boolean }> {
     this.requireClient()
-    return this.client.request('session/selectModel', input)
+    return this.client.request('session/ensure', input)
   }
 
   async prompt(
