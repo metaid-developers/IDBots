@@ -1404,7 +1404,7 @@ interface IElectronAPI {
     startSession: (options: { prompt: string; cwd?: string; systemPrompt?: string; title?: string; activeSkillIds?: string[]; metabotId?: number | null; sessionType?: 'standard' | 'browser' | 'a2a'; assistantMode?: boolean; model?: string | null; modelProvider?: string | null; effort?: string | null; source?: 'quick_action'; goal?: string }) => Promise<{ success: boolean; session?: CoworkSession; error?: string }>;
     prewarmTurnSlot: (input: { sessionId?: string; metabotId?: number | null; model?: string | null; modelProvider?: string | null; cwd?: string | null }) => Promise<{ success: boolean }>;
     continueSession: (options: { sessionId: string; prompt: string; systemPrompt?: string; activeSkillIds?: string[] }) => Promise<{ success: boolean; session?: CoworkSession; error?: string }>;
-    createGreetingSession: (options: { title?: string; cwd?: string; systemPrompt?: string; fallbackGreeting: string; metabotId?: number | null }) => Promise<{ success: boolean; session?: CoworkSession; error?: string }>;
+    createGreetingSession: (options: { title?: string; cwd?: string; systemPrompt?: string; fallbackGreeting: string; metabotId?: number | null; surface?: 'studio' }) => Promise<{ success: boolean; session?: CoworkSession; error?: string }>;
     submitInput: (input: CoworkSubmitInput) => Promise<CoworkSubmitInputResult>;
     setSessionGoal: (sessionId: string, goal: { text: string; status: 'active' | 'paused' } | null) => Promise<{ success: boolean; goal?: { text: string; status: 'active' | 'paused'; updatedAt: number } | null; error?: string }>;
     stopSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
