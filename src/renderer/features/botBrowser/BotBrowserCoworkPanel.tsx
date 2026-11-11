@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { CpuChipIcon, FolderIcon } from '@heroicons/react/24/outline';
 import MarkdownContent from '../../components/MarkdownContent';
@@ -24,6 +25,7 @@ import { subscribeMetabotsChanged } from '../../services/metabotEvents';
 import { getCompactFolderName } from '../../utils/path';
 import type { CoworkMessage, CoworkWorkspaceSelection } from '../../types/cowork';
 import BotPickerChip from './BotPickerChip';
+import CoworkSurfaceIdentityBadge from './CoworkSurfaceIdentityBadge';
 import { resolveDefaultMetabotId } from '../../services/coworkSessionStart';
 import { elementSelectionsStore } from './elementSelectionsStore';
 import CoworkHistoryPanel from './CoworkHistoryPanel';
@@ -327,15 +329,32 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     loadPersistedWorkspaceSelection()
   );
   const [showFolderMenu, setShowFolderMenu] = useState(false);
-  // Bot picker (owner ruling 2026-11-11): the bottom-left identity chip is the
-  // composer's bot picker in the draft state — picking a bot selects which bot
-  // runs the NEXT conversation, the same pure selection as the BotWorks
-  // new-task bot picker. It never writes metabot_type (the Twin appointment is
-  // owned by the My Bots editor alone), so picking a worker bot never appoints
-  // it Twin, not even temporarily. In a live session the chip is display-only:
-  // an acting transcript never changes actors mid-flight.
+  // Bot picker (owner 18:21 final ruling 2026-11-11, item ⑦ rework): the
+  // identity chip moved UP from this composer's top-left row into the shared
+  // surface-header actions row (Sidebar's Studio branch). The draft chip is
+  // still the bot picker — picking a bot selects which bot runs the NEXT
+  // conversation, the same pure selection as the BotWorks new-task bot
+  // picker. It never writes metabot_type (the Twin appointment is owned by
+  // the My Bots editor alone), so picking a worker bot never appoints it
+  // Twin, not even temporarily. The chip is DRAFT-ONLY: a live session
+  // never changes actors mid-flight, so its header identity is the
+  // read-only CoworkSurfaceIdentityBadge instead (portal below). The picker
+  // state stays owned HERE — only the DOM placement moved (portal).
   const [showBotPickerMenu, setShowBotPickerMenu] = useState(false);
   const [pickedMetabotId, setPickedMetabotId] = useState<number | null>(null);
+  // The surface-header identity anchor (owner 18:21 final ruling): the
+  // Sidebar's Studio actions row mounts
+  // `<div data-slot="cowork-header-identity-anchor">` as the row's FIRST
+  // lane — ahead of the session-name slot — and this panel portals the
+  // identity component into it (draft: BotPickerChip; live session:
+  // CoworkSurfaceIdentityBadge). Queried after mount: the header commits in the
+  // same tree as this panel, so the anchor is in the document by the time
+  // effects run. Standalone mounts (tests, future hosts without the shared
+  // header) find no anchor and simply don't render the chip.
+  const [identityAnchorEl, setIdentityAnchorEl] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    setIdentityAnchorEl(document.querySelector<HTMLElement>('[data-slot="cowork-header-identity-anchor"]'));
+  }, []);
   const listRef = useRef<HTMLDivElement>(null);
   const promptInputRef = useRef<CoworkPromptInputRef>(null);
   const folderButtonRef = useRef<HTMLButtonElement>(null);
@@ -939,23 +958,54 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
         />
       </div>
 
-      <div className="flex items-center justify-between gap-0.5 pb-1.5">
-        {chipMetabot ? (
-          // Bot picker (owner ruling 2026-11-11): in the draft state the chip
-          // opens the bot menu; picking a bot selects it for the next
-          // conversation without ever touching the Twin appointment. In a live
-          // session it stays a fixed identity chip (the transcript always
-          // shows the bot it was started with).
-          <BotPickerChip
-            chipMetabot={chipMetabot}
-            roster={metabots}
-            live={Boolean(currentSession)}
-            menuOpen={showBotPickerMenu}
-            onToggleMenu={() => setShowBotPickerMenu((value) => !value)}
-            onDismissMenu={closeBotPickerMenu}
-            onSelect={handlePickBot}
-          />
-        ) : null}
+      {/* ① Identity component (owner 18:21 final ruling 2026-11-11; v3
+          close wiring, same day): the shared surface-header actions row's
+          FIRST lane (left of the session-name slot, ahead of the
+          新建会话/会话记录 buttons) carries TWO forms, both portaled into
+          Sidebar's cowork-header-identity-anchor by this panel:
+          · draft state → BotPickerChip, the interactive bot picker (the
+            18:21 "keep the existing interaction" clause — picking decides
+            which bot runs the NEXT conversation, a pure selection);
+          · live session → CoworkSurfaceIdentityBadge, the read-only
+            identity label. It resolves roster-authoritative with the
+            session summary row (metabotName/metabotAvatar) as fallback —
+            a live transcript shows the bot it RUNS WITH, never the draft
+            pick, and renders nothing when nothing is resolvable (the
+            same contract as the session-name slot). The former
+            `liveSessionMetabot ?? selectedMetabot` header fallback showed
+            the draft pick for sessions whose bot left the roster; that
+            wrong-identity window is closed here.
+          No anchor mounted (panel-less hosts, tests) = nothing renders. */}
+      {identityAnchorEl ? (
+        createPortal(
+          currentSession ? (
+            <CoworkSurfaceIdentityBadge
+              metabotId={currentSession.metabotId ?? null}
+              fallbackName={currentSession.metabotName ?? null}
+              fallbackAvatar={currentSession.metabotAvatar ?? null}
+            />
+          ) : chipMetabot ? (
+            <BotPickerChip
+              chipMetabot={chipMetabot}
+              roster={metabots}
+              menuOpen={showBotPickerMenu}
+              onToggleMenu={() => setShowBotPickerMenu((value) => !value)}
+              onDismissMenu={closeBotPickerMenu}
+              onSelect={handlePickBot}
+              // The header sits at the panel's top edge: the roster opens DOWN.
+              menuDirection="down"
+            />
+          ) : null,
+          identityAnchorEl,
+        )
+      ) : null}
+
+      {/* The composer tool row keeps only its right cluster (model/effort,
+          active skill, workspace folder) — the identity line that used to
+          sit on this row's LEFT is gone (owner 18:21 final ruling), so the
+          row hugs its tools right and the composer's top edge carries no
+          identity anymore. */}
+      <div className="flex items-center justify-end gap-0.5 pb-1.5">
         <div className="flex shrink-0 items-center gap-0.5">
           <ModelEffortPicker
             dropdownDirection="up"
@@ -1050,6 +1100,11 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
       {showHistory ? (
         <CoworkHistoryPanel
           sessions={browserSessions}
+          // Bot-centered history (owner spec 2026-11-11 17:28 ②): the panel
+          // lists the PRESENTED bot's studio conversations — the chip bot
+          // (live session bot in a live session, draft pick otherwise) — so
+          // switching the picker moves the list with it.
+          botId={chipMetabot?.id ?? null}
           currentSessionId={currentSession?.id ?? null}
           onSelectSession={handleSelectHistory}
           onDeleteSession={handleDeleteHistory}

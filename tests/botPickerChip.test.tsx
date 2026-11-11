@@ -9,13 +9,15 @@ import BotPickerChip, {
 import { bindSeatMenuOutsideDismiss } from '../src/renderer/features/botBrowser/seatMenuDismiss';
 import { i18nService } from '../src/renderer/services/i18n';
 
-// Behavior coverage for the Studio footer bot picker (owner ruling
-// 2026-11-11): the draft state is a PURE selection control whose menu lists
-// the whole roster with every row enabled — picking a bot only decides which
-// bot runs the next conversation, it never writes metabot_type or appoints a
-// Twin (that stays owned by the My Bots editor). A live session keeps a
-// display-only identity chip; an open menu closes on an outside pointer but
-// not on a menu row, which still runs its selection. No real roster is
+// Behavior coverage for the Studio surface-header bot picker (owner ruling
+// 2026-11-11; v3 close wiring same day): the draft state is a PURE selection
+// control whose menu lists the whole roster with every row enabled — picking
+// a bot only decides which bot runs the next conversation, it never writes
+// metabot_type or appoints a Twin (that stays owned by the My Bots editor).
+// The chip is draft-only since the v3 close wiring: a live session's header
+// identity is the read-only CoworkSurfaceIdentityBadge, covered by
+// surfaceIdentityBadge.test.tsx. An open menu closes on an outside pointer
+// but not on a menu row, which still runs its selection. No real roster is
 // touched.
 
 const twin: BotPickerChipBot = { id: 1, name: 'Alice', avatar: null, metabot_type: 'twin', role: 'Twin' };
@@ -30,7 +32,6 @@ function renderChip(overrides: Partial<React.ComponentProps<typeof BotPickerChip
     <BotPickerChip
       chipMetabot={twin}
       roster={roster}
-      live={false}
       menuOpen={false}
       onToggleMenu={noop}
       onDismissMenu={noop}
@@ -121,14 +122,15 @@ test('open picker menu lists every bot with no disabled rows', () => {
   assert.ok(html.includes(i18nService.t('botInternetBotPickerHint')));
 });
 
-test('a live session renders a display-only chip with no menu trigger', () => {
-  const html = renderChip({ live: true, menuOpen: true });
-
-  assert.doesNotMatch(html, /<button/);
-  assert.doesNotMatch(html, /role="menu"/);
-  assert.doesNotMatch(html, /aria-haspopup/);
-  assert.ok(html.includes('Alice'));
-  assert.match(html, /data-slot="metabot-twin-badge"/);
+test('supersession (v3 close wiring): the chip has NO live form — live identity is the badge', () => {
+  // The 18:21 layout kept a display-only live branch on this chip; the v3
+  // close wiring moved that role to CoworkSurfaceIdentityBadge (see
+  // surfaceIdentityBadge.test.tsx), so the chip is draft-only and `live` is
+  // no longer a prop (type-enforced — passing it here would not compile).
+  // The chip ALWAYS renders the picker trigger, even with a menu open:
+  const html = renderChip({ menuOpen: true });
+  assert.match(html, /aria-haspopup="menu"/);
+  assert.match(html, /role="menu"/);
 });
 
 test('open menu + pointer outside the chip container => menu closes', () => {

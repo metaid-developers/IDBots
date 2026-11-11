@@ -1,11 +1,29 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { XMarkIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import type { CoworkSessionSummary } from '../../types/cowork';
 import CoworkSessionItem from '../../components/cowork/CoworkSessionItem';
+import {
+  activeDayKeysOfMonth,
+  calendarCells,
+  filterSessionsByDay,
+  initialMonthView,
+  monthOptionLabel,
+  weekdayHeaderKeys,
+  yearOptions,
+} from './panelHistoryDateFilter';
 
 interface CoworkHistoryPanelProps {
   sessions: CoworkSessionSummary[];
+  /**
+   * The Studio-presented bot (owner spec 2026-11-11 17:28, item ②): the list
+   * is bot-centered — ONLY this bot's studio conversations render, and the
+   * parent's chip bot (draft pick or live session bot) drives the prop, so
+   * switching bots moves the list with it. Strict scoping: legacy rows with
+   * no metabotId stay out (they remain reachable from the office sidebar);
+   * null (no presented bot) renders an empty list.
+   */
+  botId: number | null;
   currentSessionId: string | null;
   onSelectSession: (sessionId: string) => void | Promise<void>;
   onDeleteSession: (sessionId: string) => void | Promise<void>;
@@ -23,10 +41,19 @@ interface CoworkHistoryPanelProps {
  *   dialog title; the count sits beside it as a muted number;
  * - rows use the shared BotWorks session item, including its ellipsis menu,
  *   inline rename, pin toggle, copy action, and reversible archive;
- * - browser page context stays in the second line instead of the task status.
+ * - the browser source badge is retired (owner ruling 2026-11-11 17:28);
+ *   the visited-page context line stays as the row's identity cue;
+ * - bot-centered (owner spec 2026-11-11 17:28 ②): only the presented bot's
+ *   sessions list here;
+ * - an INLINE "browse by date" block (owner spec 2026-11-11 17:28 ③) sits
+ *   between the header and the rows — year/month dropdowns plus a
+ *   Monday-first calendar grid, picking a day narrows the list to that day
+ *   and days with sessions carry a light dot. The math lives in the pure
+ *   panelHistoryDateFilter module; this component only wires state.
  */
 const CoworkHistoryPanel: React.FC<CoworkHistoryPanelProps> = ({
   sessions,
+  botId,
   currentSessionId,
   onSelectSession,
   onDeleteSession,
@@ -34,9 +61,44 @@ const CoworkHistoryPanel: React.FC<CoworkHistoryPanelProps> = ({
   onRenameSession,
   onClose,
 }) => {
-  const orderedSessions = [...sessions].sort(
+  // Bot-centered scope (item ②). The panel mounts fresh per open (the parent
+  // renders it conditionally), so a bot switch re-anchors everything below.
+  const botSessions = useMemo(
+    () => (botId != null ? sessions.filter((session) => session.metabotId === botId) : []),
+    [sessions, botId],
+  );
+
+  // Inline date filter (item ③). The view opens on the scoped list's newest
+  // month (today when the bot has no sessions yet); picking days is
+  // user-driven afterwards. The overlay covers the bot picker while open, so
+  // this state never has to survive a bot switch — remount handles it.
+  const [monthView, setMonthView] = useState(() => initialMonthView(botSessions));
+  const [selectedDayKey, setSelectedDayKey] = useState<string | null>(null);
+
+  const language = i18nService.getLanguage();
+  const cells = useMemo(() => calendarCells(monthView.year, monthView.month), [monthView]);
+  const years = useMemo(
+    () => yearOptions(botSessions, monthView),
+    [botSessions, monthView],
+  );
+  const activeDayKeys = useMemo(
+    () => activeDayKeysOfMonth(botSessions, monthView.year, monthView.month),
+    [botSessions, monthView],
+  );
+
+  // Picking a day filters immediately (no confirm step — the reference form's
+  // 取消/确定 live in popups; this block is inline). The clear affordance
+  // releases the filter; year/month alone never narrow the list.
+  const visibleSessions = useMemo(
+    () => filterSessionsByDay(botSessions, selectedDayKey),
+    [botSessions, selectedDayKey],
+  );
+  const orderedSessions = [...visibleSessions].sort(
     (a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)),
   );
+
+  const selectClass =
+    'rounded-md border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-white px-1.5 py-0.5 text-[11px] dark:text-claude-darkText text-claude-text focus:outline-none focus:ring-2 focus:ring-claude-accent/40';
 
   return (
     <div
@@ -48,9 +110,9 @@ const CoworkHistoryPanel: React.FC<CoworkHistoryPanelProps> = ({
           {i18nService.t('botBrowserCoworkHistory')}
         </span>
         <div className="flex shrink-0 items-center gap-1.5">
-          {sessions.length > 0 ? (
+          {visibleSessions.length > 0 ? (
             <span className="text-[11px] tabular-nums dark:text-claude-darkTextSecondary text-claude-textSecondary">
-              {sessions.length}
+              {visibleSessions.length}
             </span>
           ) : null}
           <button
@@ -63,11 +125,96 @@ const CoworkHistoryPanel: React.FC<CoworkHistoryPanelProps> = ({
           </button>
         </div>
       </div>
+      {/* Inline "browse by date" (item ③): one caption row with the two
+          dropdowns and the clear affordance, then the Monday-first grid.
+          Days holding scoped sessions carry a light accent dot; the picked
+          day fills with the accent. Out-of-month slots are muted and inert. */}
+      <div data-slot="cowork-history-date-filter" className="shrink-0 px-3 pb-2">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[11px] font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
+            {i18nService.t('botBrowserHistoryDateFilter')}
+          </span>
+          <select
+            className={selectClass}
+            value={monthView.year}
+            onChange={(event) => setMonthView((view) => ({ ...view, year: Number(event.target.value) }))}
+            aria-label={`${i18nService.t('botBrowserHistoryDateFilter')} · ${monthView.year}`}
+          >
+            {years.map((year) => (
+              <option key={year} value={year}>{year}</option>
+            ))}
+          </select>
+          <select
+            className={selectClass}
+            value={monthView.month}
+            onChange={(event) => setMonthView((view) => ({ ...view, month: Number(event.target.value) }))}
+            aria-label={`${i18nService.t('botBrowserHistoryDateFilter')} · ${monthOptionLabel(monthView.month, language)}`}
+          >
+            {Array.from({ length: 12 }, (_, month) => (
+              <option key={month} value={month}>{monthOptionLabel(month, language)}</option>
+            ))}
+          </select>
+          {selectedDayKey ? (
+            <button
+              type="button"
+              onClick={() => setSelectedDayKey(null)}
+              className="ml-auto rounded-md px-1.5 py-0.5 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+            >
+              {i18nService.t('clear')}
+            </button>
+          ) : null}
+        </div>
+        <div className="mt-1.5 grid grid-cols-7 gap-y-0.5">
+          {weekdayHeaderKeys.map((key) => (
+            <span
+              key={key}
+              className="text-center text-[10px] leading-4 dark:text-claude-darkTextSecondary text-claude-textSecondary"
+            >
+              {i18nService.t(key)}
+            </span>
+          ))}
+          {cells.map((cell) => {
+            if (!cell.inMonth) {
+              return (
+                <span
+                  key={cell.key}
+                  className="flex h-7 flex-col items-center justify-center text-[10px] leading-none opacity-30 dark:text-claude-darkTextSecondary text-claude-textSecondary"
+                >
+                  {cell.day}
+                </span>
+              );
+            }
+            const isSelected = cell.key === selectedDayKey;
+            const hasSessions = activeDayKeys.has(cell.key);
+            return (
+              <button
+                key={cell.key}
+                type="button"
+                data-slot="cowork-history-day-cell"
+                data-day-key={cell.key}
+                aria-pressed={isSelected}
+                onClick={() => setSelectedDayKey((current) => (current === cell.key ? null : cell.key))}
+                className={`flex h-7 flex-col items-center justify-center gap-0.5 rounded-md text-[10px] leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
+                  isSelected
+                    ? 'bg-claude-accent text-white'
+                    : 'dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
+                }`}
+              >
+                <span>{cell.day}</span>
+                <span
+                  aria-hidden
+                  className={`h-1 w-1 rounded-full ${isSelected ? 'bg-white' : hasSessions ? 'bg-claude-accent' : 'bg-transparent'}`}
+                />
+              </button>
+            );
+          })}
+        </div>
+      </div>
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1.5 pb-2">
-        {sessions.length === 0 ? (
+        {visibleSessions.length === 0 ? (
           <div className="py-8 text-center">
             <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
-              {i18nService.t('coworkNoSessions')}
+              {i18nService.t(botSessions.length === 0 ? 'coworkNoSessions' : 'botBrowserHistoryDateEmpty')}
             </p>
           </div>
         ) : (

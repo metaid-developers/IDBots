@@ -89,12 +89,17 @@ test('a2a grouping is unchanged; browser rows stay out of local; the group bucke
   assert.match(internetCopy, /group:\s*homeSessions\.filter\(\(session\)\s*=>\s*session\.sessionType\s*===\s*'group_task'\)/);
 });
 
-test('browser rows carry a visible type badge', () => {
+test('browser rows retire the type badge (owner ruling 2026-11-11 17:28)', () => {
+  // SUPERSEDES the former "browser rows carry a visible type badge" guard:
+  // the source badge (「浏览器」/ Browser) is retired from the session rows —
+  // its label, its derivation, and both locale entries are gone. The
+  // visited-page context line stays the row's identity cue for these
+  // sessions.
   const source = read('src/renderer/components/cowork/CoworkSessionItem.tsx');
 
-  assert.match(source, /const isBrowser = session\.sessionType === 'browser';/);
-  assert.match(source, /\{isBrowser && \(/);
-  assert.match(source, /i18nService\.t\('coworkSessionTypeBrowser'\)/);
+  assert.doesNotMatch(source, /const isBrowser = session\.sessionType === 'browser';/);
+  assert.doesNotMatch(source, /\{isBrowser && \(/);
+  assert.doesNotMatch(source, /i18nService\.t\('coworkSessionTypeBrowser'\)/);
   // The title/a2a presentation must stay driven by session type only — with the
   // same IM exception: an IM-backed a2a row is a direct-message chat, not a
   // bot-to-bot session, so it must not pick up a2a styling.
@@ -121,10 +126,23 @@ test('Bot Browser panel history still lists ONLY browser sessions', () => {
     /sessions\.filter\(\(session\)\s*=>\s*session\.sessionType\s*===\s*'browser'\)/,
     'the panel history is browser-only and must keep its own filter',
   );
+  // Bot-centered scope (owner spec 2026-11-11 17:28 ②): the parent hands the
+  // panel the PRESENTED bot (the chip bot — live session bot, draft pick
+  // otherwise), and the panel itself narrows to that bot's rows, so switching
+  // bots moves the list with it.
+  assert.match(source, /botId=\{chipMetabot\?\.id \?\? null\}/);
+  const panel = read('src/renderer/features/botBrowser/CoworkHistoryPanel.tsx');
+  assert.match(
+    panel,
+    /botId != null \? sessions\.filter\(\(session\) => session\.metabotId === botId\) : \[\]/,
+    'the history panel scopes its rows strictly to the presented bot',
+  );
 });
 
-test('the browser-session badge label exists in both locales', () => {
+test('the retired badge label is gone from both locales (owner ruling 2026-11-11 17:28)', () => {
+  // SUPERSEDES the former "exists in both locales" guard: the source badge
+  // retired from the rows means its key retires from the dictionary too.
   const source = read('src/renderer/services/i18n.ts');
   const occurrences = source.match(/coworkSessionTypeBrowser:/g) ?? [];
-  assert.equal(occurrences.length, 2, 'zh + en translations for the badge label');
+  assert.equal(occurrences.length, 0, 'the retired badge key must not survive in any locale');
 });
