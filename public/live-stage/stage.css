@@ -27,3 +27,17 @@
 .interaction-countdown[hidden],.interaction-done[hidden]{display:none}
 .interaction-done{color:#9bf4ff;font-size:12px}
 @media(max-width:900px){.interaction-card{width:min(380px,60%)}}
+
+/* Interaction card scrollbar refinement (owner note 2026-11-12: a default
+   scrollbar on the card looks terrible). The card itself rarely scrolls now
+   (78vh headroom); when it must, the bar is a hairline brand-tinted rail. */
+.interaction-card{max-height:78vh;scrollbar-width:thin;scrollbar-color:rgba(155,244,255,.3) transparent}
+.interaction-card::-webkit-scrollbar{width:4px}
+.interaction-card::-webkit-scrollbar-track{background:transparent}
+.interaction-card::-webkit-scrollbar-thumb{background:rgba(155,244,255,.24);border-radius:999px}
+.interaction-card::-webkit-scrollbar-thumb:hover{background:rgba(155,244,255,.42)}
+.interaction-question-detail{max-height:150px;scrollbar-width:thin;scrollbar-color:rgba(148,163,184,.3) transparent}
+.interaction-question-detail::-webkit-scrollbar{width:3px}
+.interaction-question-detail::-webkit-scrollbar-track{background:transparent}
+.interaction-question-detail::-webkit-scrollbar-thumb{background:rgba(148,163,184,.25);border-radius:999px}
+.interaction-custom{scrollbar-width:thin;scrollbar-color:rgba(148,163,184,.3) transparent}

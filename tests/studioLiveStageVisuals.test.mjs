@@ -92,6 +92,11 @@ test('interaction card renders through textContent only and drains clicks exactl
   assert.match(css, /\.interaction-card\{position:absolute;z-index:6/);
   assert.match(css, /\.interaction-card\[hidden\]\{display:none\}/);
   assert.match(css, /\.interaction-button\.is-primary\{background:var\(--brand\)/);
+  // Owner note 2026-11-12: a default scrollbar on the card is unacceptable —
+  // when overflow is unavoidable it renders as a hairline brand-tinted rail.
+  assert.match(css, /\.interaction-card\{max-height:78vh;scrollbar-width:thin;scrollbar-color:rgba\(155,244,255,\.3\) transparent\}/);
+  assert.match(css, /\.interaction-card::-webkit-scrollbar\{width:4px\}/);
+  assert.match(css, /\.interaction-question-detail::-webkit-scrollbar-thumb\{background:rgba\(148,163,184,\.25\);border-radius:999px\}/);
 });
 
 test('ask wizard submit is reachable by the validity gate (2026-11-12 incident pin)', () => {
@@ -106,6 +111,14 @@ test('ask wizard submit is reachable by the validity gate (2026-11-12 incident p
   // The gate must actually flip the flag for the initial disabled state to
   // ever lift (no early return that skips the write).
   assert.match(stage, /submit\.disabled = !ready;/);
+  // The gate itself must NOT bail on the disabled state: the ask submit
+  // STARTS disabled, so a `submit.disabled` guard returns before the write
+  // and the button never lifts (the second half of the incident, MetaPo
+  // retest 2026-11-12). The terminal state is the card-level done flag.
+  assert.match(stage, /if \(!card \|\| card\.dataset\.interactionDone === 'true'\) return;/);
+  assert.doesNotMatch(stage, /if \(!submit \|\| submit\.disabled\) return;/);
+  assert.match(stage, /card\.dataset\.interactionDone = 'true';/, 'completeInteraction marks the card done');
+  assert.match(stage, /card\.dataset\.interactionDone = 'false';/, 'a rebuilt card clears the done flag');
 });
 
 test('the ask card offers an always-clickable skip that never fabricates an answer', () => {
