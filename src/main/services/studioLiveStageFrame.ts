@@ -31,6 +31,18 @@ async function locateLiveStageFrame(deps: LiveStageFrameDeps, tabId: number): Pr
   return frames[0];
 }
 
+/**
+ * Run a script inside a stage tab's locally served preview frame (the same
+ * trusted channel the Live Stage patch uses; the Genesis Stage reuses it).
+ */
+export async function executeStageFrameScript(
+  deps: LiveStageFrameDeps,
+  input: { tabId: number; script: string },
+): Promise<unknown> {
+  const frame = await locateLiveStageFrame(deps, input.tabId);
+  return frame.executeJavaScript(input.script, true);
+}
+
 export function buildLiveStagePatchScript(state: LiveStageState): string {
   const payload = JSON.stringify(state).replace(/</g, '\\u003c');
   return `(() => {
