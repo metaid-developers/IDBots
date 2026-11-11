@@ -8,6 +8,9 @@ const {
   reduceLiveStageMessage,
   completeLiveStage,
   reportReadyLiveStage,
+  buildLiveStageInteraction,
+  presentLiveStageInteraction,
+  dismissLiveStageInteraction,
 } = require('../dist-electron/main/services/studioLiveStageModel.js');
 
 const message = (id, type, metadata = {}) => ({ id, type, content: '', timestamp: 1, metadata });
@@ -97,4 +100,81 @@ test('real cross-session metadata triggers a bounded return handoff, not a new o
   assert.equal(state.handoff, null);
   assert.equal(state.topology.nodes.find((node) => node.kind === 'worker').label, 'Builder阿码');
   assert.equal(completeLiveStage(state).handoff, null);
+});
+
+test('ordinary ask prompts are shaped into a bounded stage interaction', () => {
+  const interaction = buildLiveStageInteraction({
+    requestId: 'ask-1',
+    toolName: 'AskUserQuestion',
+    toolInput: {
+      questions: [
+        { question: 'Which language?', header: 'Language', options: [{ label: '中文', description: 'Simplified' }, { label: 'English' }], multiSelect: false },
+        { question: 'Any extra note?', options: [] },
+      ],
+    },
+    expiresAt: null,
+    timeoutDefault: null,
+  }, 'tok-1');
+  assert.ok(interaction);
+  assert.equal(interaction.kind, 'ask');
+  assert.equal(interaction.token, 'tok-1');
+  assert.equal(interaction.title, 'Which language?');
+  assert.equal(interaction.questions.length, 2);
+  assert.deepEqual(interaction.questions[0].options[0], { label: '中文', description: 'Simplified' });
+  assert.equal(interaction.questions[1].options.length, 0);
+  const state = presentLiveStageInteraction(initial(), interaction);
+  assert.equal(state.interaction?.requestId, 'ask-1');
+  assert.equal(state.revision, initial().revision + 1);
+  const cleared = dismissLiveStageInteraction(state, 'ask-1');
+  assert.equal(cleared.interaction, null);
+  assert.equal(dismissLiveStageInteraction(state, 'other').interaction?.requestId, 'ask-1', 'mismatched ids keep the card');
+});
+
+test('A2A and delete-safety prompts stay off the stage', () => {
+  assert.equal(buildLiveStageInteraction({
+    requestId: 'a2a-1',
+    toolName: 'AskUserQuestion',
+    toolInput: { context: { a2aApproval: true, category: 'payment' }, questions: [{ question: 'Approve?', options: [{ label: 'Yes' }] }] },
+  }, 'tok'), null, 'A2A approvals keep their desktop seat');
+  assert.equal(buildLiveStageInteraction({
+    requestId: 'friend-1',
+    toolName: 'AskUserQuestion',
+    toolInput: { context: { action: 'invite' }, questions: [{ question: 'Add friend?', options: [{ label: 'Yes' }] }] },
+  }, 'tok'), null);
+  assert.equal(buildLiveStageInteraction({
+    requestId: 'safety-1',
+    toolName: 'AskUserQuestion',
+    toolInput: { context: { requestedToolName: 'bash', requestedToolInput: { command: 'rm -rf x' } }, questions: [{ question: 'Allow delete?', options: [{ label: 'Allow' }] }] },
+  }, 'tok'), null, 'delete-safety confirmations are Phase 2');
+});
+
+test('plain tool approvals become allow/deny cards carrying the watchdog deadline', () => {
+  const interaction = buildLiveStageInteraction({
+    requestId: 'perm-1',
+    toolName: 'Bash',
+    toolInput: { reason: 'run the build script' },
+    expiresAt: 1234,
+    timeoutDefault: 'deny',
+  }, 'tok-2');
+  assert.ok(interaction);
+  assert.equal(interaction.kind, 'approval');
+  assert.equal(interaction.title, 'Bash');
+  assert.equal(interaction.detail, 'run the build script');
+  assert.deepEqual(interaction.questions, []);
+  assert.equal(interaction.expiresAt, 1234);
+  assert.equal(interaction.timeoutDefault, 'deny');
+});
+
+test('malformed candidates never reach the stage', () => {
+  assert.equal(buildLiveStageInteraction({ requestId: '', toolName: 'Bash' }, 'tok'), null);
+  assert.equal(buildLiveStageInteraction({ requestId: 'x', toolName: '   ' }, 'tok'), null);
+  assert.equal(buildLiveStageInteraction({ requestId: 'x', toolName: 'AskUserQuestion', toolInput: { questions: [] } }, 'tok'), null);
+  const interaction = buildLiveStageInteraction({
+    requestId: 'x',
+    toolName: 'AskUserQuestion',
+    toolInput: { questions: [{ question: 'Q', options: [{ label: '' }, 'junk', { label: 'Keep', description: 42 }] }] },
+  }, 'tok');
+  assert.ok(interaction);
+  assert.deepEqual(interaction.questions[0].options, [{ label: 'Keep' }], 'unlabeled and junk options are dropped');
+  assert.equal(interaction.questions[0].options[0].description, undefined);
 });
