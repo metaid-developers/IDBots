@@ -190,6 +190,71 @@ export function meActivePlanId(subscription: MobileMeSubscription | null): strin
   return '';
 }
 
+// ---------------------------------------------------------------------------
+// Subscription expiry — mirror of the desktop parser
+// (src/renderer/components/me/mePointsStore.ts meSubscriptionExpiryMs /
+// meExpiryParts / formatMeExpiryDate, 2026-11-11 hardening). The expiry
+// field name is not contract-pinned, so parse tolerantly; absent → null and
+// the UI shows nothing (never a guessed date).
+// ---------------------------------------------------------------------------
+
+const ME_EXPIRY_KEYS = [
+  'expireAt', 'expiresAt', 'expireTime', 'expiryAt',
+  'expire_at', 'expires_at', 'expire_time', 'expiry_at',
+  'applicableEnd', 'applicable_end',
+  'endDate', 'end_date', 'endTime', 'end_time',
+  'periodEnd', 'period_end', 'currentPeriodEnd', 'current_period_end',
+  'validUntil', 'valid_until',
+] as const;
+
+function meExpiryValueToMs(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    // Seconds → ms when the value is plausibly a second-epoch.
+    return value < 1e12 ? value * 1000 : value;
+  }
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (!text) return null;
+    if (/^\d+(\.\d+)?$/.test(text)) {
+      const n = Number(text);
+      return Number.isFinite(n) && n > 0 ? (n < 1e12 ? n * 1000 : n) : null;
+    }
+    const parsed = Date.parse(text);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+  return null;
+}
+
+export function meSubscriptionExpiryMs(subscription: MobileMeSubscription | null | undefined): number | null {
+  const raw = subscription?.raw;
+  if (!raw) return null;
+  for (const key of ME_EXPIRY_KEYS) {
+    const ms = meExpiryValueToMs(raw[key]);
+    if (ms !== null) return ms;
+  }
+  return null;
+}
+
+export type MeExpiryParts = { unit: 'expired' | 'today' | 'days'; n: number };
+
+export function meExpiryParts(expiryMs: number | null | undefined): MeExpiryParts | null {
+  const expiry = Number(expiryMs);
+  if (!Number.isFinite(expiry) || expiry <= 0) return null;
+  const ms = expiry - Date.now();
+  if (ms <= 0) return { unit: 'expired', n: 0 };
+  const days = Math.floor(ms / 86_400_000);
+  if (days < 1) return { unit: 'today', n: 0 };
+  return { unit: 'days', n: days };
+}
+
+export function formatMeExpiryDate(expiryMs: number): string {
+  try {
+    return new Intl.DateTimeFormat(undefined, { dateStyle: 'short' }).format(expiryMs);
+  } catch {
+    return '—';
+  }
+}
+
 /** The free plan row (tier === 'free'), or null when the catalog hides it. */
 export function meFreePlan(plans: readonly MobileMePlan[]): MobileMePlan | null {
   return plans.find((plan) => plan.tier === 'free' || plan.planId === 'me_free') ?? null;

@@ -1124,6 +1124,13 @@ textarea.twin-input {
   color: rgba(246, 244, 234, 0.9);
 }
 
+/* Subscription expiry line under the plan row (2026-11-11 hardening). */
+.me-hero-plan-expiry {
+  margin-top: 4px;
+  font-size: 11px;
+  color: rgba(246, 244, 234, 0.55);
+}
+
 .me-hero-plan-used {
   font-size: 11px;
   color: rgba(246, 244, 234, 0.46);

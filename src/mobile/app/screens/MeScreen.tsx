@@ -16,6 +16,8 @@ import {
   ensureMeOverview,
   isMeSubscribed,
   meActivePlanId,
+  meActiveTierKey,
+  meSubscriptionExpiryMs,
   meCurrentPlan,
   meFromMilli,
   refreshMeBalance,
@@ -153,6 +155,8 @@ export default function MeScreen(props: {
 
   const subscribed = isMeSubscribed(me.subscription);
   const activePlanId = meActivePlanId(me.subscription);
+  const activeTierKey = meActiveTierKey(me.subscription);
+  const expiryMs = meSubscriptionExpiryMs(me.subscription);
   const currentPlan = useMemo(
     () => meCurrentPlan(me.plans, me.subscription),
     [me.plans, me.subscription],
@@ -343,6 +347,7 @@ export default function MeScreen(props: {
           featureUnavailable={me.balanceFeatureUnavailable}
           plan={currentPlan}
           subscribed={subscribed}
+          expiryMs={expiryMs}
           canPurchase={props.canPurchase}
           onUpgrade={() => openUpgrade(activePlanId || undefined)}
           onRecharge={openRecharge}
@@ -354,6 +359,8 @@ export default function MeScreen(props: {
           loading={me.plansLoading}
           error={me.plansError}
           activePlanId={activePlanId}
+          activeTierKey={activeTierKey}
+          subscribed={subscribed}
           selectedPlanId=""
           onChoose={(planId) => openUpgrade(planId)}
           onRetry={() => void refreshMeCatalog()}

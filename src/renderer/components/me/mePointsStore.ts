@@ -121,6 +121,74 @@ export function meActivePlanId(subscription: { statusText: string; raw?: Record<
 }
 
 // ---------------------------------------------------------------------------
+// Subscription expiry — the server payload carries an expiry the UI never
+// showed (2026-11-11 hardening): users could not see how long their paid
+// tier lasts. The field name is not pinned by any contract, so parse
+// tolerantly across the plausible epoch/ISO shapes; absent → null and the
+// UI simply shows nothing (never a guessed date).
+// ---------------------------------------------------------------------------
+
+const ME_EXPIRY_KEYS = [
+  'expireAt', 'expiresAt', 'expireTime', 'expiryAt',
+  'expire_at', 'expires_at', 'expire_time', 'expiry_at',
+  'applicableEnd', 'applicable_end',
+  'endDate', 'end_date', 'endTime', 'end_time',
+  'periodEnd', 'period_end', 'currentPeriodEnd', 'current_period_end',
+  'validUntil', 'valid_until',
+] as const;
+
+function meExpiryValueToMs(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    // Seconds → ms when the value is plausibly a second-epoch.
+    return value < 1e12 ? value * 1000 : value;
+  }
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (!text) return null;
+    if (/^\d+(\.\d+)?$/.test(text)) {
+      const n = Number(text);
+      return Number.isFinite(n) && n > 0 ? (n < 1e12 ? n * 1000 : n) : null;
+    }
+    const parsed = Date.parse(text);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+  return null;
+}
+
+/** Subscription expiry (epoch ms) from the raw payload; null when absent. */
+export function meSubscriptionExpiryMs(subscription: { raw?: Record<string, unknown> } | null | undefined): number | null {
+  const raw = subscription?.raw;
+  if (!raw) return null;
+  for (const key of ME_EXPIRY_KEYS) {
+    const ms = meExpiryValueToMs(raw[key]);
+    if (ms !== null) return ms;
+  }
+  return null;
+}
+
+export type MeExpiryParts = { unit: 'expired' | 'today' | 'days'; n: number };
+
+/** Expiry countdown: past → 'expired', within 24h → 'today', else whole days. */
+export function meExpiryParts(expiryMs: number | null | undefined): MeExpiryParts | null {
+  const expiry = Number(expiryMs);
+  if (!Number.isFinite(expiry) || expiry <= 0) return null;
+  const ms = expiry - Date.now();
+  if (ms <= 0) return { unit: 'expired', n: 0 };
+  const days = Math.floor(ms / 86_400_000);
+  if (days < 1) return { unit: 'today', n: 0 };
+  return { unit: 'days', n: days };
+}
+
+/** Locale date for the expiry line, e.g. "2026/12/8". */
+export function formatMeExpiryDate(expiryMs: number): string {
+  try {
+    return new Intl.DateTimeFormat(undefined, { dateStyle: 'short' }).format(expiryMs);
+  } catch {
+    return '—';
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Snapshot store
 // ---------------------------------------------------------------------------
 

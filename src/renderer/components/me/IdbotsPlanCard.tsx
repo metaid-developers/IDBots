@@ -5,11 +5,14 @@ import type { MePlanInfo } from '../../types/electron';
 import {
   ensureMeSnapshot,
   formatMe,
+  formatMeExpiryDate,
   getMeSnapshot,
   isMeEffectivelySubscribed,
   meActivePlanId,
+  meExpiryParts,
   meFromMilli,
   meResetParts,
+  meSubscriptionExpiryMs,
   requestOpenMePurchase,
   requestOpenUsagePage,
   subscribeMeSnapshot,
@@ -72,6 +75,15 @@ const IdbotsPlanCard: React.FC<IdbotsPlanCardProps> = ({ onUpgrade }) => {
   const currentTier = tierName(activePlan, activePlanId);
   const grantRatio = grantMe > 0 ? Math.max(0, Math.min(100, (remainingMe / grantMe) * 100)) : 0;
   const runningLow = grantMe > 0 && remainingMe / grantMe < 0.2;
+  // Subscription expiry line (2026-11-11 hardening): show the paid period's
+  // end and the days left; amber within a week, red once past. The date
+  // renders only when the server payload actually carries one — never a
+  // guess. The server's statusText stays the source of truth for state; a
+  // payload expiry in the past with an "active" status (clock skew, lagging
+  // renewal) renders as expired-line copy, not as a locked UI.
+  const expiryMs = subscribed ? meSubscriptionExpiryMs(snapshot.subscription) : null;
+  const expiry = meExpiryParts(expiryMs);
+  const expiryUrgent = expiry !== null && (expiry.unit !== 'days' || expiry.n <= 7);
   const resetLine = !reset
     ? ''
     : reset.unit === 'soon'
@@ -90,6 +102,26 @@ const IdbotsPlanCard: React.FC<IdbotsPlanCardProps> = ({ onUpgrade }) => {
           <p className="mt-1 text-xl font-semibold tracking-tight text-claude-text dark:text-claude-darkText">
             {currentTier}
           </p>
+          {expiry && expiryMs !== null && (
+            <p
+              className={`mt-0.5 text-[11px] ${
+                expiry.unit === 'expired'
+                  ? 'text-red-500 dark:text-red-400'
+                  : expiryUrgent
+                    ? 'text-amber-600 dark:text-amber-400'
+                    : 'text-claude-textSecondary dark:text-claude-darkTextSecondary'
+              }`}
+              data-testid="idbots-plan-expiry"
+            >
+              {expiry.unit === 'expired'
+                ? i18nService.t('mePlanExpiredOn').replace('{date}', formatMeExpiryDate(expiryMs))
+                : expiry.unit === 'today'
+                  ? i18nService.t('mePlanExpiresToday')
+                  : i18nService.t('mePlanExpiresIn')
+                      .replace('{date}', formatMeExpiryDate(expiryMs))
+                      .replace('{n}', String(expiry.n))}
+            </p>
+          )}
         </div>
         <button
           type="button"
