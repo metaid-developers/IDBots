@@ -63,7 +63,7 @@ async function startNewChat(page: import('@playwright/test').Page): Promise<void
 
 async function sendMessage(page: import('@playwright/test').Page, text: string): Promise<void> {
   await page.getByPlaceholder('Type a message…').fill(text);
-  await page.getByRole('button', { name: 'Send' }).click();
+  await page.getByTestId('chat-composer-input').press('Enter');
 }
 
 function message(id: string, type: string, content: string, metadata?: Record<string, unknown>): Wp0Message {

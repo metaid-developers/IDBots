@@ -21,7 +21,7 @@ test.describe('gateway permission rendering (F-17a)', () => {
     await page.getByRole('button', { name: 'Sessions' }).click();
     await startNewChatViaPicker(page);
     await page.getByPlaceholder('Type a message…').fill('__f17a_emit_ask__');
-    await page.getByRole('button', { name: 'Send' }).click();
+    await page.getByTestId('chat-composer-input').press('Enter');
 
     const dialog = page.getByRole('dialog', { name: 'Tool permission requested' });
     await expect(dialog).toBeVisible({ timeout: 30_000 });

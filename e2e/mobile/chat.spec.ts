@@ -8,7 +8,7 @@ import { test, expect, attachScreen, startNewChatViaPicker } from './fixtures';
 async function sendMessage(page: import('@playwright/test').Page, text: string): Promise<void> {
   const composer = page.getByPlaceholder('Type a message…');
   await composer.fill(text);
-  await page.getByRole('button', { name: 'Send' }).click();
+  await page.getByTestId('chat-composer-input').press('Enter');
 }
 
 test.describe('chat', () => {
@@ -24,11 +24,48 @@ test.describe('chat', () => {
     await attachScreen(testInfo, page, 'chat-streamed-reply');
   });
 
+  test('composer keeps a wide input, groups emoji under plus, and sends with Enter', async ({ page }, testInfo) => {
+    await page.goto('/app/');
+    const composer = page.getByTestId('chat-composer-input');
+    await expect(composer).toBeVisible();
+    expect(await composer.evaluate((element) => element.getBoundingClientRect().width)).toBeGreaterThan(220);
+    await expect(page.getByRole('button', { name: 'Send', exact: true })).toHaveCount(0);
+    await expect(page.getByTestId('voice-btn-idle')).toBeVisible();
+
+    await page.getByTestId('composer-plus').click();
+    await expect(page.getByTestId('composer-action-sheet')).toBeVisible();
+    await page.getByTestId('composer-action-emoji').click();
+    await expect(page.locator('#mobile-chat-emoji-panel')).toBeVisible();
+    await page.getByRole('option').first().click();
+    await expect(composer).not.toHaveValue('');
+
+    await composer.fill('first line');
+    await composer.press('Shift+Enter');
+    await composer.pressSequentially('second line');
+    await expect(composer).toHaveValue('first line\nsecond line');
+    await attachScreen(testInfo, page, 'chat-wide-composer');
+    await composer.press('Enter');
+    await expect(page.getByTestId('chat-user-message').last()).toHaveText('first line\nsecond line');
+  });
+
+  test('IME confirmation Enter stays in the composer instead of sending', async ({ page }) => {
+    await page.goto('/app/');
+    const composer = page.getByTestId('chat-composer-input');
+    await composer.fill('正在输入');
+    await composer.evaluate((element) => {
+      element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true, cancelable: true }));
+    });
+    await expect(composer).toHaveValue('正在输入');
+    await expect(page.getByTestId('chat-user-message')).toHaveCount(0);
+    await composer.press('Enter');
+    await expect(page.getByTestId('chat-user-message').last()).toHaveText('正在输入');
+  });
+
   test('stop aborts the in-flight stream', async ({ page }, testInfo) => {
     await page.goto('/app/');
     await sendMessage(page, 'hello');
     await page.getByRole('button', { name: 'Stop' }).click();
-    await expect(page.getByRole('button', { name: 'Send' })).toBeVisible();
+    await expect(page.getByTestId('chat-composer-input')).toBeVisible();
     await expect(page.getByText('Every reply in this demo is streamed token by token')).toBeHidden();
     await attachScreen(testInfo, page, 'chat-stopped');
   });
@@ -59,7 +96,7 @@ test.describe('chat', () => {
     await attachScreen(testInfo, page, 'chat-quota-card');
 
     await quotaCard.getByRole('button', { name: 'Recharge' }).click();
-    await expect(page.getByText('Choose a plan')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Choose a plan' })).toBeVisible();
     await attachScreen(testInfo, page, 'chat-recharge-overlay');
 
     await page.getByRole('button', { name: 'Close' }).click();
@@ -79,7 +116,7 @@ test.describe('chat', () => {
     await page.reload();
     await expect(page.getByTestId('chat-attachment')).toHaveText(['notes.txt', 'report.pdf']);
     await expect(page.getByPlaceholder('Type a message…')).toHaveValue('compare documents');
-    await page.getByRole('button', { name: 'Send' }).click();
+    await page.getByTestId('chat-composer-input').press('Enter');
     await expect(page.getByTestId('chat-user-message').last()).toHaveText(
       'compare documents\n\nInput file: /data/workspace/uploads/mock-1-notes.txt\nInput file: /data/workspace/uploads/mock-2-report.pdf',
     );
@@ -92,8 +129,8 @@ test.describe('chat', () => {
     await sendMessage(page, 'start work');
     await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible();
     await chooseFiles(page, [{ name: 'follow-up.txt', mimeType: 'text/plain', buffer: Buffer.from('follow up') }]);
-    await expect(page.getByRole('button', { name: 'Send' })).toBeEnabled();
-    await page.getByRole('button', { name: 'Send' }).click();
+    await expect(page.getByTestId('chat-composer-input')).toBeEnabled();
+    await page.getByTestId('chat-composer-input').press('Enter');
     await expect(page.getByTestId('chat-user-message').last()).toHaveText(
       'Input file: /data/workspace/uploads/mock-1-follow-up.txt',
     );
@@ -114,7 +151,7 @@ test.describe('chat', () => {
     await chooseFiles(page, [{ name: 'fixture-quota.txt', mimeType: 'text/plain', buffer: Buffer.from('quota') }]);
     await expect(page.getByRole('alert')).toContainText('Cloud storage is full');
     await expect(page.getByPlaceholder('Type a message…')).toHaveValue('keep this draft');
-    await expect(page.getByRole('button', { name: 'Send' })).toBeEnabled();
+    await expect(page.getByTestId('chat-composer-input')).toBeEnabled();
   });
 
   test('image preview downloads real bytes and shares the signed URL without leaving chat', async ({ page }, testInfo) => {
@@ -244,7 +281,8 @@ async function chooseFiles(
   files: Array<{ name: string; mimeType: string; buffer: Buffer }>,
 ): Promise<void> {
   const chooserPromise = page.waitForEvent('filechooser');
-  await page.getByRole('button', { name: 'Add photo or file' }).click();
+  await page.getByTestId('composer-plus').click();
+  await page.getByTestId('composer-action-attachment').click();
   const chooser = await chooserPromise;
   await chooser.setFiles(files);
 }

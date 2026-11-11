@@ -11,7 +11,7 @@ test.describe('WP1 gateway regressions', () => {
     await page.getByRole('button', { name: 'Sessions' }).click();
     await startNewChatViaPicker(page);
     await page.getByPlaceholder('Type a message…').fill('restore this running session');
-    await page.getByRole('button', { name: 'Send' }).click();
+    await page.getByTestId('chat-composer-input').press('Enter');
     await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible();
     await page.reload();
     await expect(page.getByRole('heading', { name: 'restore this running session' })).toBeVisible({ timeout: RECOVERY_READY_TIMEOUT_MS });

@@ -689,19 +689,19 @@ textarea.twin-input {
 
 .twin-composer-zone {
   flex-shrink: 0;
-  padding: 8px 12px 9px;
+  padding: 8px 8px 9px;
   border-top: 0;
   background: transparent;
 }
 
 .twin-composer {
-  min-height: 56px;
+  min-height: 54px;
   display: flex;
   align-items: center;
-  gap: 3px;
-  padding: 5px 5px 5px 7px;
+  gap: 2px;
+  padding: 4px;
   border: 1px solid var(--twin-border-strong);
-  border-radius: 999px;
+  border-radius: 26px;
   background: var(--twin-surface);
   box-shadow: var(--twin-shadow);
 }
@@ -709,13 +709,15 @@ textarea.twin-input {
 .twin-composer-input {
   min-width: 0;
   min-height: 44px;
-  flex: 1;
+  flex: 1 1 auto;
+  overflow-y: auto;
   border: 0;
   border-radius: 0;
   background: transparent;
   color: var(--twin-text-primary);
-  padding: 10px 4px;
+  padding: 10px 6px;
   font-size: 16px;
+  line-height: 24px;
   outline: 0;
 }
 
@@ -727,6 +729,19 @@ textarea.twin-input {
   border: 0;
   background: transparent;
   box-shadow: none;
+}
+
+.twin-composer-plus,
+.twin-composer-tail {
+  width: 40px;
+  height: 44px;
+  flex: 0 0 40px;
+}
+
+.twin-composer-tail {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* ---------------------------------------------------------------------------

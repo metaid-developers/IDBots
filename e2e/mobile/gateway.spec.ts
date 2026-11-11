@@ -50,7 +50,7 @@ test.describe('gateway-backed smoke', () => {
 
     await startNewChat(page);
     await page.getByPlaceholder('Type a message…').fill('hello over the gateway');
-    await page.getByRole('button', { name: 'Send' }).click();
+    await page.getByTestId('chat-composer-input').press('Enter');
 
     // The fixture streams the canned reply over cowork:stream:* events.
     await expect(page.getByText('This reply streamed over a real C2 gateway socket.')).toBeVisible({
@@ -76,7 +76,7 @@ test.describe('gateway-backed smoke', () => {
     await page.goto('/app/');
     await startNewChat(page);
     await page.getByPlaceholder('Type a message…').fill('generate a report');
-    await page.getByRole('button', { name: 'Send' }).click();
+    await page.getByTestId('chat-composer-input').press('Enter');
 
     // Wait for the settled turn and the final directory label, not only the artifact list.
     await expect(page.getByRole('link', { name: 'gateway-e2e-refresh.md', exact: true })).toBeVisible({ timeout: 30_000 });
@@ -170,14 +170,14 @@ test.describe('gateway-backed smoke', () => {
     expect(uploads[0].size).toBe(20 * 1024 * 1024);
     await expect(page.getByTestId('chat-attachment')).toHaveText(['twenty-megabytes.pdf', 'notes.txt']);
     await page.getByPlaceholder('Type a message…').fill('review uploaded files');
-    await page.getByRole('button', { name: 'Send' }).click();
+    await page.getByTestId('chat-composer-input').press('Enter');
     await expect(page.getByTestId('chat-user-message').last()).toHaveText(
       `review uploaded files\n\nInput file: ${uploads[0].path}\nInput file: ${uploads[1].path}`,
     );
 
     await chooseFiles(page, [{ name: 'follow-up.txt', mimeType: 'text/plain', buffer: Buffer.from('follow up') }]);
     await waitForUploads(3);
-    await page.getByRole('button', { name: 'Send' }).click();
+    await page.getByTestId('chat-composer-input').press('Enter');
     await expect(page.getByTestId('chat-user-message').last()).toHaveText(`Input file: ${uploads[2].path}`);
     const promptBox = page.getByTestId('chat-user-message').last();
     expect(await promptBox.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
@@ -287,7 +287,7 @@ async function openGatewayArtifact(page: import('@playwright/test').Page, filena
   await page.goto('/app/');
   await startNewChat(page);
   await page.getByPlaceholder('Type a message…').fill('generate a report');
-  await page.getByRole('button', { name: 'Send' }).click();
+  await page.getByTestId('chat-composer-input').press('Enter');
   const link = page.getByRole('link', { name: filename, exact: true });
   await expect(link).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId('turn-phase')).toHaveCount(0, { timeout: 30_000 });
@@ -305,7 +305,8 @@ async function chooseFiles(
   files: Array<{ name: string; mimeType: string; buffer: Buffer }>,
 ): Promise<void> {
   const chooserPromise = page.waitForEvent('filechooser');
-  await page.getByRole('button', { name: 'Add photo or file' }).click();
+  await page.getByTestId('composer-plus').click();
+  await page.getByTestId('composer-action-attachment').click();
   const chooser = await chooserPromise;
   await chooser.setFiles(files);
 }

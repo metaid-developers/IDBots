@@ -83,7 +83,7 @@ test.describe('gateway account and daily use', () => {
     await page.getByRole('button', { name: 'Done' }).click();
     await page.getByRole('button', { name: 'Chat', exact: true }).click();
     await page.getByPlaceholder('Type a message…').fill('next message after gateway recharge');
-    await page.getByRole('button', { name: 'Send' }).click();
+    await page.getByTestId('chat-composer-input').press('Enter');
     await expect(page.getByText('Gateway fixture online.', { exact: true })).toBeVisible({ timeout: 30_000 });
     await attachScreen(testInfo, page, 'gateway-recharge-next-chat');
   });
