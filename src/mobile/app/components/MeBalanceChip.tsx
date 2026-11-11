@@ -1,17 +1,16 @@
 import { MeCoinIcon } from './MeCoin';
-import { formatMe, meFromMilli, type MobileMeBalance } from '../me/mePointsStore';
+import { formatMe, meFromMilli, meSpendableMilli, type MobileMeBalance } from '../me/mePointsStore';
 
 /**
- * Compact ME balance chip for the Me topbar (S9 §3 global balance badge). One number:
- * the merged weekly + persistent balance. Tapping opens the usage & credits
- * page; the full four-row breakdown lives in the hero card below it.
+ * Compact ME balance chip for the Me topbar. The number is what a new official
+ * ME spend can draw now; the ledger-pool breakdown lives in the hero card.
  */
 export function MeBalanceChip(props: {
   balance: MobileMeBalance | null;
   loading: boolean;
   onOpen: () => void;
 }): JSX.Element {
-  const total = props.balance ? meFromMilli(props.balance.totalAvailable) : null;
+  const total = props.balance ? meFromMilli(meSpendableMilli(props.balance)) : null;
   return (
     <button
       type="button"

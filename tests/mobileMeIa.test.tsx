@@ -5,6 +5,9 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import MeScreen from '../src/mobile/app/screens/MeScreen.tsx';
+import { MePointsHero } from '../src/mobile/app/components/MePointsHero.tsx';
+import { MeBalanceChip } from '../src/mobile/app/components/MeBalanceChip.tsx';
+import { meSpendableMilli, type MobileMeBalance } from '../src/mobile/app/me/mePointsStore.ts';
 import {
   ME_ENTRIES,
   ME_ENTRY_GROUPS,
@@ -141,6 +144,56 @@ test('usage & credits page: balance, ledger, orders, rates and compliance sectio
   // The retired traffic surface must not reappear anywhere on this page.
   assert.doesNotMatch(html, /data-testid="me-page-traffic"/);
   assert.doesNotMatch(html, /data-testid="traffic-ledger-empty"/);
+});
+
+const ledgerButNotSpendable: MobileMeBalance = {
+  identityAddress: 'test-identity',
+  weeklyGrant: {
+    amountMilli: 2_000_000,
+    remainingMilli: 0,
+    cycleStart: 0,
+    cycleEnd: 1,
+    isResidual: false,
+    nextResetAt: 0,
+  },
+  persistent: { topupMilli: 500_000, bonusMilli: 200_000, earnedMilli: 164_000 },
+  frozenMilli: 0,
+  totalAvailable: 864_000,
+  spendableMilli: 0,
+  autoDeductFromPersistent: false,
+};
+
+test('ME spendable balance follows the server and the persistent-deduction switch', () => {
+  assert.equal(meSpendableMilli(ledgerButNotSpendable), 0);
+  assert.equal(meSpendableMilli({ ...ledgerButNotSpendable, autoDeductFromPersistent: true }), 0, 'server spendable wins');
+  assert.equal(meSpendableMilli({ ...ledgerButNotSpendable, spendableMilli: undefined }), 0);
+  assert.equal(meSpendableMilli({ ...ledgerButNotSpendable, spendableMilli: undefined, autoDeductFromPersistent: true }), 864_000);
+});
+
+test('ME hero and balance chip render spendable ME instead of the ledger total', () => {
+  const hero = renderToStaticMarkup(React.createElement(MePointsHero, {
+    balance: ledgerButNotSpendable,
+    loading: false,
+    error: null,
+    featureUnavailable: false,
+    plan: null,
+    subscribed: false,
+    canPurchase: true,
+    onUpgrade: () => undefined,
+    onRecharge: () => undefined,
+    onOpenUsage: () => undefined,
+    onRetry: () => undefined,
+  }));
+  assert.match(hero, /data-testid="me-points-total">0</);
+  assert.doesNotMatch(hero, /data-testid="me-points-total">864</);
+
+  const chip = renderToStaticMarkup(React.createElement(MeBalanceChip, {
+    balance: ledgerButNotSpendable,
+    loading: false,
+    onOpen: () => undefined,
+  }));
+  assert.match(chip, /me-chip-value">\s*0\s*<\/span>/);
+  assert.doesNotMatch(chip, /864/);
 });
 
 test('bots page renders the create action and list shell; bot edit page shells', () => {

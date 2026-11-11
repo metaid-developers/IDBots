@@ -92,10 +92,10 @@ test.describe('chat', () => {
 
     const quotaCard = page.getByTestId('quota-card');
     await expect(quotaCard).toBeVisible({ timeout: 30_000 });
-    await expect(quotaCard).toContainText('Free quota used up this week');
+    await expect(quotaCard).toContainText('Not enough ME credits');
     await attachScreen(testInfo, page, 'chat-quota-card');
 
-    await quotaCard.getByRole('button', { name: 'Recharge' }).click();
+    await quotaCard.getByRole('button', { name: 'Top up or upgrade' }).click();
     await expect(page.getByRole('heading', { name: 'Choose a plan' })).toBeVisible();
     await attachScreen(testInfo, page, 'chat-recharge-overlay');
 

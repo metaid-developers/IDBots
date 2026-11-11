@@ -762,28 +762,12 @@ export default function ChatScreen(props: {
 
       {chat.quotaExhausted ? (
         <div className="twin-notice twin-notice-warning mx-3 mb-2" data-testid="quota-card">
-          <p className="text-sm font-semibold">
-            {t(
-              chat.quotaKind === 'me'
-                ? 'mobile.chat.quotaTitleMe'
-                : chat.quotaKind === 'purchased'
-                  ? 'mobile.chat.quotaTitlePurchased'
-                  : 'mobile.chat.quotaTitleFree',
-            )}
-          </p>
-          <p className="mb-2 text-sm">
-            {t(
-              chat.quotaKind === 'me'
-                ? 'mobile.chat.quotaBodyMe'
-                : chat.quotaKind === 'purchased'
-                  ? 'mobile.chat.quotaBodyPurchased'
-                  : 'mobile.chat.quotaBodyFree',
-            )}
-          </p>
+          <p className="text-sm font-semibold">{t('mobile.chat.quotaTitleMe')}</p>
+          <p className="mb-2 text-sm">{t('mobile.chat.quotaBodyMe')}</p>
           <div className="flex gap-2">
             {props.rechargeAllowed !== false ? (
               <button type="button" onClick={props.onOpenRecharge} className="twin-button twin-button-primary flex-1">
-                {t(chat.quotaKind === 'me' ? 'mobile.chat.quotaMeAction' : 'mobile.chat.quotaRecharge')}
+                {t('mobile.chat.quotaMeAction')}
               </button>
             ) : null}
             <button type="button" onClick={chat.dismissQuota} className="twin-button twin-button-secondary">

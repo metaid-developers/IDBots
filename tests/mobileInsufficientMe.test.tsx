@@ -76,5 +76,5 @@ test('chat quota card for ME shows the plan / top-up copy and action', () => {
   assert.ok(html.includes(t('mobile.chat.quotaTitleMe')));
   assert.ok(html.includes(t('mobile.chat.quotaBodyMe')));
   assert.ok(html.includes(t('mobile.chat.quotaMeAction')));
-  assert.ok(!html.includes(t('mobile.chat.quotaBodyFree')));
+  assert.ok(!html.includes('persistent balance are used up'));
 });

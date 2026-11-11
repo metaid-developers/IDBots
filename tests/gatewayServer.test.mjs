@@ -398,6 +398,23 @@ test('ws: P2 channels denied at tier P1 and allowed at tier P2', async (t) => {
   assert.equal(stillDenied.error.code, 'CHANNEL_NOT_ALLOWED');
 });
 
+test('ws: ME settings and traffic capability channels are allowed at P1', async (t) => {
+  const { handle, calls } = await startServer(t);
+  const client = await openClient(handle.port);
+  t.after(() => client.close());
+  await client.welcome();
+  for (const channel of ['me:getPointsSettings', 'me:setPointsSettings', 'traffic:getMeBillingStatus']) {
+    const result = await client.invoke(channel, channel === 'me:setPointsSettings' ? [{ autoDeductFromPersistent: false }] : []);
+    assert.equal(result.ok, true, channel);
+    assert.equal(result.value.channel, channel);
+  }
+  assert.deepEqual(calls.map((call) => call.channel), [
+    'me:getPointsSettings',
+    'me:setPointsSettings',
+    'traffic:getMeBillingStatus',
+  ]);
+});
+
 test('ws: allowlisted channel without a registered handler → CHANNEL_NOT_FOUND', async (t) => {
   const { handle } = await startServer(t, { hasHandler: () => false });
   const client = await openClient(handle.port);

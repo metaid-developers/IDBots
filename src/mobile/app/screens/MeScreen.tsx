@@ -20,6 +20,7 @@ import {
   meSubscriptionExpiryMs,
   meCurrentPlan,
   meFromMilli,
+  meSpendableMilli,
   refreshMeBalance,
   refreshMeCatalog,
   refreshMeSubscription,
@@ -165,7 +166,7 @@ export default function MeScreen(props: {
     () => meCurrentPlan(me.plans, me.subscription),
     [me.plans, me.subscription],
   );
-  const meTotal = me.balance ? meFromMilli(me.balance.totalAvailable) : null;
+  const meTotal = me.balance ? meFromMilli(meSpendableMilli(me.balance)) : null;
 
   const top: MeStackEntry | null = stack.length > 0 ? stack[stack.length - 1] : null;
 
