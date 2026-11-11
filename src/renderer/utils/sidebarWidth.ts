@@ -3,54 +3,78 @@ export type SidebarWidthMode = 'home' | 'browser';
 export const SIDEBAR_WIDTH_HOME_DEFAULT = 320;
 export const SIDEBAR_WIDTH_BROWSER_DEFAULT = 400;
 export const SIDEBAR_WIDTH_MIN = 240;
+// Absolute ceiling for callers that have NO window width (pure callers /
+// tests / SSR-ish use): clampSidebarWidth's one-argument form keeps the
+// fixed-width cap. The live window-aware cap is the 50:50 rule below.
 export const SIDEBAR_WIDTH_MAX = 480;
 
-const LEGACY_STORAGE_KEY = 'idbots.sidebarWidth';
-const STORAGE_KEYS: Record<SidebarWidthMode, string> = {
+// ── Shared-width ruling (2026-11-11 evening, owner order ①) ──
+// Studio (browser face) and BotWorks (home face) share ONE middle-column
+// width: the seam position is a shell-level choice, not a per-face memory,
+// so switching surfaces must never change the column width ("切界面宽度一致
+// 不跳变"). One default, one storage key, one load path. The two per-face
+// constants above survive as named history (imports elsewhere), but they no
+// longer select different values.
+export const SIDEBAR_WIDTH_DEFAULT = SIDEBAR_WIDTH_HOME_DEFAULT;
+
+// The single shared storage key. It reuses the pre-per-mode legacy key so
+// machines that predate the (now also retired) per-face keys restore their
+// oldest remembered width rather than inventing one.
+const SHARED_STORAGE_KEY = 'idbots.sidebarWidth';
+// Retired per-face keys. They are never written again; they survive only as
+// a migration seed — migrateSidebarWidthStorage copies the freshest face's
+// value into the shared key exactly once, before the first read.
+const LEGACY_PER_MODE_KEYS: Record<SidebarWidthMode, string> = {
   home: 'idbots.sidebarWidth.home',
   browser: 'idbots.sidebarWidth.browser',
 };
 
-export function defaultSidebarWidth(mode: SidebarWidthMode): number {
-  return mode === 'browser' ? SIDEBAR_WIDTH_BROWSER_DEFAULT : SIDEBAR_WIDTH_HOME_DEFAULT;
+export function defaultSidebarWidth(_mode: SidebarWidthMode): number {
+  // The mode parameter is kept for call-site compatibility but no longer
+  // selects: both faces restore the same width (shared-width ruling).
+  return SIDEBAR_WIDTH_DEFAULT;
 }
 
-export function sidebarWidthStorageKey(mode: SidebarWidthMode): string {
-  return STORAGE_KEYS[mode];
+export function sidebarWidthStorageKey(_mode: SidebarWidthMode): string {
+  // Both faces read AND write the same key (shared-width ruling).
+  return SHARED_STORAGE_KEY;
 }
 
 export function clampSidebarWidth(width: number, windowWidth?: number): number {
   if (!Number.isFinite(width)) return defaultSidebarWidth('home');
-  // With a window width the cap is "the right pane keeps its minimum width"
-  // (fixed-width ruling below); without one the fixed 480 cap still applies
-  // (pure callers / tests / SSR-ish use).
+  // With a window width the cap is the live 50:50 drag rule (below); without
+  // one the fixed 480 cap still applies (pure callers / tests / SSR-ish use).
   const max = windowWidth == null ? SIDEBAR_WIDTH_MAX : maxSidebarWidthForWindow(windowWidth);
   return Math.min(max, Math.max(SIDEBAR_WIDTH_MIN, Math.round(width)));
 }
 
-// ── Fixed-width ruling (2026-11-11; supersedes the 2026-11-09 3:7 ratio cap
-// for drag/resize behavior) ──
-// The middle column is a FIXED, remembered pixel width per face (BotWorks /
-// Studio persist independently). A window resize flexes ONLY the right pane:
-// the column never re-scales with the window, so a width the user chose (or
-// the per-face default) survives window changes and app restarts verbatim.
-//
-//   · Seam drag cap: the column may grow until the right pane would keep less
-//     than RIGHT_PANE_MIN_WIDTH_PX, bounded above by SIDEBAR_WIDTH_MAX and
-//     floored at SIDEBAR_WIDTH_MIN (the floor wins on very narrow windows —
+// ── 50:50 drag-cap ruling (2026-11-11 evening, owner order ③; supersedes
+// the same-day fixed-width 480px drag cap, which had itself superseded the
+// 2026-11-09 3:7 ratio cap) ──
+// The middle column is still a FIXED, remembered pixel width per the
+// fixed-width ruling: a window resize flexes ONLY the right pane and the
+// column never re-scales with the window. What changes is how far a manual
+// drag may push it: the column may grow until it holds at most HALF the
+// middle+right split (50:50 — "任意一侧最大 50%"). The right-pane minimum
+// stays as the narrow-window safety net: below split 960 the 50% half would
+// leave the right pane under its comfortable minimum, so the right-pane rule
+// binds first and a drag can never push the column into auto-hide territory.
+//   · Floored at SIDEBAR_WIDTH_MIN (the floor wins on very narrow windows —
 //     there the auto-hide rule takes over instead of squeezing further).
-//     This replaces the old 30%-of-window ratio cap, which pinned the column
-//     at the cap on typical window sizes (Studio's 400 default > 3:7 cap at
-//     the 1200 default window) and so made the seam drag one-directional.
-//   · Window too narrow: when the right pane would drop below
-//     RIGHT_PANE_MIN_WIDTH_PX the shell auto-hides the middle column (see
-//     shouldAutoHideSidebar) instead of shrinking it, and restores it once
+//   · Double-click still snaps to the 3:7 baseline (SIDEBAR_MAX_RATIO), which
+//     always sits under the 50:50 cap and is therefore always reachable.
+//   · Window too narrow (right pane would drop below RIGHT_PANE_MIN_WIDTH_PX
+//     with the column at its floor): the shell auto-hides the middle column
+//     (shouldAutoHideSidebar) instead of shrinking it, and restores it once
 //     the window has room again (shouldAutoShowSidebar, with a hysteresis
 //     band so a borderline window does not oscillate hide/show per pixel).
 export const SIDEBAR_RAIL_WIDTH_PX = 64;
 export const SIDEBAR_SEAM_WIDTH_PX = 4;
 export const RIGHT_PANE_MIN_WIDTH_PX = 480;
 export const SIDEBAR_AUTO_SHOW_HYSTERESIS_PX = 96;
+
+/** Manual-drag ceiling as a fraction of the middle+right split (50:50). */
+export const SIDEBAR_MAX_DRAG_RATIO = 0.5;
 
 /** Width of the middle+right area the seam divides, for a window width. */
 export function splitWidthForWindow(windowWidth: number): number {
@@ -65,23 +89,26 @@ export function rightPaneWidthForWindow(windowWidth: number, sidebarWidth: numbe
 }
 
 /**
- * Largest middle-column width a window of this size allows: the split minus
- * the right pane's minimum width, capped at SIDEBAR_WIDTH_MAX, never below
- * the minimum-width floor. On a window too narrow for the right-pane minimum
- * to leave 240px the floor wins (the auto-hide rule handles that case).
+ * Largest middle-column width a window of this size allows: HALF the split
+ * (50:50), tightened by the right pane's minimum width on narrow windows,
+ * floored at the minimum-width floor. On a window too narrow for the
+ * right-pane minimum to leave 240px the floor wins (the auto-hide rule
+ * handles that case).
  */
 export function maxSidebarWidthForWindow(windowWidth: number): number {
-  return Math.max(
-    SIDEBAR_WIDTH_MIN,
-    Math.min(SIDEBAR_WIDTH_MAX, splitWidthForWindow(windowWidth) - RIGHT_PANE_MIN_WIDTH_PX),
-  );
+  const split = splitWidthForWindow(windowWidth);
+  const half = Math.floor(split * SIDEBAR_MAX_DRAG_RATIO);
+  const rightPaneSafe = split - RIGHT_PANE_MIN_WIDTH_PX;
+  return Math.max(SIDEBAR_WIDTH_MIN, Math.min(half, rightPaneSafe));
 }
 
 /**
  * The middle column auto-hides when the right pane would keep less than its
  * minimum comfortable width ("快看不到" — the main area is about to be
  * squeezed away). Hiding beats shrinking: the column's width is remembered,
- * so it must not be re-scaled by window size.
+ * so it must not be re-scaled by window size. A drag can never trigger this
+ * (the 50:50 cap keeps the right pane at its minimum or better); only a
+ * window resize can.
  */
 export function shouldAutoHideSidebar(windowWidth: number, sidebarWidth: number): boolean {
   return rightPaneWidthForWindow(windowWidth, sidebarWidth) < RIGHT_PANE_MIN_WIDTH_PX;
@@ -97,7 +124,7 @@ export function shouldAutoShowSidebar(windowWidth: number, sidebarWidth: number)
 }
 
 // Kept for the double-click snap target only: the snap eases the column to
-// the 3:7 split of the live window (the drag cap no longer uses the ratio).
+// the 3:7 split of the live window (always under the 50:50 drag cap).
 export const SIDEBAR_MAX_RATIO = 0.3;
 
 /**
@@ -111,16 +138,32 @@ export function sidebarSnapWidthForWindow(windowWidth: number): number {
 }
 
 /**
- * Load the persisted width for a surface mode. Bot Home and Bot Internet keep
- * independent widths so each surface restores its own comfortable size on
- * switch. A legacy single-key value (pre per-mode) seeds the home width.
+ * Load the persisted width. Both faces read the SAME shared key (shared-width
+ * ruling 2026-11-11 evening); the retired per-face keys answer only while the
+ * shared key has never been written, so a machine upgrading from the per-face
+ * build still restores its own face's last width until the migration seeds
+ * the shared key. Fresh machines fall back to the one shared default.
  */
 export function loadSidebarWidth(getItem: (key: string) => string | null, mode: SidebarWidthMode): number {
-  const raw = getItem(STORAGE_KEYS[mode]);
-  if (raw != null) return clampSidebarWidth(Number(raw));
-  if (mode === 'home') {
-    const legacy = getItem(LEGACY_STORAGE_KEY);
-    if (legacy != null) return clampSidebarWidth(Number(legacy));
-  }
+  const shared = getItem(SHARED_STORAGE_KEY);
+  if (shared != null) return clampSidebarWidth(Number(shared));
+  const perMode = getItem(LEGACY_PER_MODE_KEYS[mode]);
+  if (perMode != null) return clampSidebarWidth(Number(perMode));
   return defaultSidebarWidth(mode);
+}
+
+/**
+ * One-time migration: seed the shared key from the freshest remembered
+ * per-face width BEFORE the first load, so the very first face switch already
+ * reads one shared state and never jumps. Idempotent — a present shared key
+ * is never overwritten, and a machine with nothing stored invents no seed.
+ * Call this from the width state's initializer (synchronous localStorage).
+ */
+export function migrateSidebarWidthStorage(
+  getItem: (key: string) => string | null,
+  setItem: (key: string, value: string) => void,
+): void {
+  if (getItem(SHARED_STORAGE_KEY) != null) return;
+  const seed = getItem(LEGACY_PER_MODE_KEYS.home) ?? getItem(LEGACY_PER_MODE_KEYS.browser);
+  if (seed != null) setItem(SHARED_STORAGE_KEY, seed);
 }

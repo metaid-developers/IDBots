@@ -17,7 +17,14 @@ import test from 'node:test';
  *   · every exit path must clear BOTH the session ref and the visual flag;
  *   · the one toggle button keeps its semantics: click = collapse/expand,
  *     mousedown stopPropagation isolates it from the resize grip, double
- *     click on the seam = reset width.
+ *     click on the seam = reset width;
+ *   · (owner order ② 2026-11-11 evening) a full-viewport drag shield renders
+ *     only while dragging, so the Bot Browser iframe can never swallow the
+ *     pointer mid-drag, and the double-click snap tween strips the CSS width
+ *     transition exactly like a drag does (the tween stays the single
+ *     animator);
+ *   · (owner order ④ 2026-11-11 evening) all four seam pills share ONE slim,
+ *     low-presence, dead-center style — no per-face placement drift.
  */
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
@@ -70,6 +77,37 @@ test('only the primary button may start a drag', () => {
   assert.ok(
     resizeStartBlock.includes('sidebarResizeRef.current?.active'),
     'an already-live session must not be stacked',
+  );
+});
+
+test('the double-click second press must not start a drag session (3:7 snap lives on dblclick)', () => {
+  // Root cause pinned 2026-11-11 night: a drag session mounts the
+  // full-viewport shield for its whole life, so during a double-click the
+  // second click's mouseup lands on the SHIELD — Chromium then targets
+  // click/dblclick at the down/up common ancestor instead of the seam, and
+  // the seam's onDoubleClick (the 3:7 snap) never fires. The mousedown
+  // handler must refuse the second press (event.detail >= 2) so no shield
+  // exists inside the double-click window.
+  const detailGuardPos = resizeStartBlock.indexOf('if (event.detail >= 2) return;');
+  assert.ok(
+    detailGuardPos >= 0,
+    'the mousedown handler must refuse the double-click second press (event.detail >= 2)',
+  );
+  assert.ok(
+    resizeStartBlock.indexOf('if (event.button !== 0) return;') < detailGuardPos,
+    'the detail guard sits after the primary-button check',
+  );
+  assert.ok(
+    detailGuardPos < resizeStartBlock.indexOf('stopSidebarSnapTween();'),
+    'the detail guard must run BEFORE stopSidebarSnapTween — a rapid second double-click must not kill the still-flying previous snap tween',
+  );
+  assert.ok(
+    detailGuardPos < resizeStartBlock.indexOf('event.preventDefault();'),
+    'the second press must not preventDefault either — nothing about it belongs to a drag',
+  );
+  assert.ok(
+    detailGuardPos < resizeStartBlock.indexOf('startSidebarResizeSession({'),
+    'the second press must never mount a drag session (and with it the full-viewport shield)',
   );
 });
 
@@ -148,5 +186,91 @@ test('the seam keeps its per-face interaction semantics', () => {
   assert.ok(
     handleBlock.includes("direction=\"left\"") && handleBlock.includes("direction=\"right\""),
     'every chevron renders through the direction-mapped PanelToggleIcon (static directions)',
+  );
+});
+
+// ── Owner order ② (2026-11-11 evening): the drag shield + tween isolation ──
+
+test('a full-viewport drag shield renders ONLY while dragging, so the browser iframe cannot swallow the pointer', () => {
+  const shieldRegex = /\{isSidebarResizing \? \(\s*<div\s+aria-hidden="true"\s+data-slot="panel-resize-overlay"\s+className="fixed inset-0 z-50 cursor-col-resize"\s+\/>\s*\) : null\}/;
+  assert.match(
+    appSource,
+    shieldRegex,
+    'the transparent full-viewport shield must be gated on the live drag flag (fixed, above the seam z-40, col-resize cursor)',
+  );
+  assert.equal(
+    (appSource.match(/panel-resize-overlay/g) || []).length,
+    1,
+    'the shield is declared exactly once — it must never shade normal interaction',
+  );
+  assert.ok(
+    appSource.indexOf('panel-resize-overlay') > appSource.indexOf('data-slot="app-right-column"'),
+    'the shield sits at shell level (after the grid), not inside a collapsible column',
+  );
+});
+
+test('the snap tween strips the width transition the same way a drag does', () => {
+  assert.ok(
+    appSource.includes('const [isSidebarTweening, setIsSidebarTweening] = useState(false);'),
+    'the tween owns an explicit animating flag',
+  );
+  assert.ok(
+    appSource.includes('setIsSidebarTweening(true);'),
+    'arming the tween arms the flag',
+  );
+  assert.ok(
+    (appSource.match(/setIsSidebarTweening\(false\)/g) || []).length >= 2,
+    'both stop paths (stopSidebarSnapTween + tween completion) clear the flag',
+  );
+  assert.equal(
+    (appSource.match(/isResizing=\{isSidebarResizing \|\| isSidebarTweening\}/g) || []).length,
+    2,
+    'both columns (HomeSidebar + Sidebar) receive drag+tween transition suppression',
+  );
+});
+
+// ── Owner order ④ (2026-11-11 evening): one slim, low-presence pill ──
+
+test('all four seam pills share one slim dead-center low-presence style', () => {
+  const pills = handleBlock.match(/data-slot="panel-toggle"/g) || [];
+  assert.equal(
+    pills.length,
+    4,
+    'exactly four pill states (BotWorks split/collapsed, Studio split/collapsed)',
+  );
+  assert.ok(
+    appSource.includes('const SEAM_TOGGLE_PILL_CLASS') &&
+      (handleBlock.match(/\$\{SEAM_TOGGLE_PILL_CLASS\}/g) || []).length === 4,
+    'every pill renders through the one shared style constant',
+  );
+  assert.ok(
+    appSource.includes('h-6 w-2'),
+    'the pill is slimmed to h-6 w-2 (was h-7 w-3.5)',
+  );
+  assert.ok(
+    !handleBlock.includes('h-7 w-3.5'),
+    'the old chunky pill size must not survive anywhere on the seam',
+  );
+  assert.ok(
+    (appSource.match(/const SEAM_TOGGLE_PILL_CLASS[^\n]*-translate-x-1\/2 -translate-y-1\/2/) || []).length === 1,
+    'the shared constant pins every pill dead-center on the seam — Studio and BotWorks sit at the SAME spot',
+  );
+  assert.ok(
+    !handleBlock.includes('left-full'),
+    'the Studio split pill no longer hugs the browser edge (supersedes the 2026-11-09 placement)',
+  );
+  assert.ok(
+    appSource.includes('SEAM_TOGGLE_PILL_ON_SEAM_CLASS') &&
+      appSource.includes('SEAM_TOGGLE_PILL_RECOVER_CLASS'),
+    'split pills hover-reveal; collapsed recover pills stay faintly visible (sole affordance)',
+  );
+  assert.ok(
+    !appSource.includes('backdrop-blur-sm') || !handleBlock.includes('backdrop-blur-sm'),
+    'the pills drop the backdrop blur (low presence, plain claude tokens)',
+  );
+  assert.equal(
+    (handleBlock.match(/h-2\.5 w-2\.5/g) || []).length,
+    4,
+    'every chevron shrank to 10px to match the slimmer pill',
   );
 });

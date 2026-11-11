@@ -470,9 +470,15 @@ select::-ms-expand {
   opacity: 0.6;
 }
 
-/* Sidebar width transition - instant toggle, no animation */
+/* Sidebar width transition (owner order ② 2026-11-11 evening, 平滑过渡):
+   width changes that are NOT pointer-driven — seam collapse/expand, the
+   narrow-window auto-hide, a mode-switch restore — glide with a short
+   ease-out. The class is stripped by both columns while the user is DRAGGING
+   (isResizing) or the double-click snap TWEEN is flying (same prop), so the
+   pointer (or the rAF tween) stays the single animator with zero lag: direct
+   follow, no bounce, no transition echo. */
 .sidebar-transition {
-  transition: none;
+  transition: width 180ms ease-out;
 }
 
 /* Subtle separator line */
