@@ -390,7 +390,7 @@ export const PaymentReceivingForm: React.FC = () => {
               type="button"
               onClick={() => { void handleSave(); }}
               disabled={saving}
-              className="px-4 py-1.5 text-xs font-medium rounded-xl bg-claude-accent text-white hover:opacity-90 transition-opacity disabled:opacity-50"
+              className="px-4 py-1.5 text-xs font-medium rounded-xl bg-claude-accent text-claude-accentInk hover:opacity-90 transition-opacity disabled:opacity-50"
             >
               {saving ? i18nService.t('paymentInfoSaving') : i18nService.t('paymentInfoSave')}
             </button>
