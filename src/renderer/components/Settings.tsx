@@ -11,7 +11,7 @@ import { imService } from '../services/im';
 import { APP_ID, EXPORT_FORMAT_TYPE, EXPORT_PASSWORD } from '../constants/app';
 import ErrorMessage from './ErrorMessage';
 import FreeQuotaCard from './FreeQuotaCard';
-import { XMarkIcon, Cog6ToothIcon, PlusCircleIcon, TrashIcon, PencilIcon, SignalIcon, CheckCircleIcon, XCircleIcon, CubeIcon, ChatBubbleLeftIcon, UserCircleIcon, ArchiveBoxIcon, PuzzlePieceIcon, BriefcaseIcon, BoltIcon, ArrowPathIcon, QuestionMarkCircleIcon } from '@heroicons/react/24/outline';
+import { XMarkIcon, Cog6ToothIcon, PlusCircleIcon, TrashIcon, PencilIcon, SignalIcon, CheckCircleIcon, XCircleIcon, CubeIcon, ChatBubbleLeftIcon, ArchiveBoxIcon, PuzzlePieceIcon, BriefcaseIcon, BoltIcon, ArrowPathIcon, QuestionMarkCircleIcon } from '@heroicons/react/24/outline';
 import BrainIcon from './icons/BrainIcon';
 import { fetchProviderModelList, providerSupportsModelListSync } from '../services/providerModels';
 import { testCerebellumConnection } from '../services/cerebellumConnection';
@@ -38,12 +38,6 @@ import EmailSkillConfig from './skills/EmailSkillConfig';
 import MemorySettings from './settings/MemorySettings';
 import SkillMcpManager from './skills/SkillMcpManager';
 import ProjectsManager from './projects/ProjectsManager';
-// The account block no longer renders here: it moved, unchanged, to the
-// standalone user page (`features/userProfile`) opened from the header's
-// top-left avatar entry. This tab keeps the entry and hands the click over.
-// Deep import on purpose: Settings only needs the notice card, not the page
-// shell or its ME panel — this keeps the settings chunk from pulling them in.
-import UserProfileMovedNotice from '../features/userProfile/UserProfileMovedNotice';
 import IdbotsPlanCard from './me/IdbotsPlanCard';
 import MeIncrementPackCard from './me/MeIncrementPackCard';
 import MeUsageAndCredits from './me/MeUsageAndCredits';
@@ -56,7 +50,7 @@ import { type ProviderTemplate } from '../services/providerTemplates';
 import { getBuiltInProviderLabel, isCustomProviderKey, providerKeys, ProviderIcon } from './settings/providerIcons';
 import ProviderTemplatePicker from './settings/ProviderTemplatePicker';
 
-type TabType = 'user' | 'general' | 'model' | 'skills' | 'projects' | 'coworkSandbox' | 'coworkMemory' | 'archivedChats' | 'shortcuts' | 'im' | 'email' | 'paramsConfig' | 'traffic';
+type TabType = 'general' | 'model' | 'skills' | 'projects' | 'coworkSandbox' | 'coworkMemory' | 'archivedChats' | 'shortcuts' | 'im' | 'email' | 'paramsConfig' | 'traffic';
 
 export type SettingsOpenOptions = {
   initialTab?: TabType;
@@ -2287,7 +2281,6 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
 
   // 渲染标签页
   const sidebarTabs: { key: TabType; label: string; icon: React.ReactNode }[] = useMemo(() => [
-    { key: 'user',           label: i18nService.t('userSettingsTab'), icon: <UserCircleIcon className="h-5 w-5" /> },
     { key: 'general',        label: i18nService.t('general'),        icon: <Cog6ToothIcon className="h-5 w-5" /> },
     { key: 'model',          label: i18nService.t('model'),          icon: <CubeIcon className="h-5 w-5" /> },
     { key: 'coworkMemory',   label: i18nService.t('coworkMemoryTitle'), icon: <BrainIcon className="h-5 w-5" /> },
@@ -2304,11 +2297,6 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
 
   const renderTabContent = () => {
     switch(activeTab) {
-      case 'user':
-        // D5: 摘出不删不废 — the block lives on the user page now; this tab is
-        // only the door, never a second copy of the form.
-        return <UserProfileMovedNotice />;
-
       case 'general':
         return (
           <div className="space-y-8">
@@ -2391,8 +2379,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
             </div>
 
             <div>
-              <h4 className="text-sm font-medium dark:text-claude-darkText text-claude-text mb-1">{i18nService.t('studioLiveStage')}</h4>
-              <p className="text-xs dark:text-claude-darkSecondaryText text-claude-secondaryText mb-3">{i18nService.t('studioLiveStageDescription')}</p>
+              <h4 className="text-sm font-medium dark:text-claude-darkText text-claude-text mb-3">{i18nService.t('studioLiveStage')}</h4>
               <label className="flex items-center justify-between cursor-pointer">
                 <span className="text-sm dark:text-claude-darkSecondaryText text-claude-secondaryText">{i18nService.t('studioLiveStageToggle')}</span>
                 <button type="button" role="switch" aria-checked={liveStageEnabled} onClick={() => void handleLiveStageSettings({ enabled: !liveStageEnabled })} disabled={isUpdatingLiveStage} className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${isUpdatingLiveStage ? 'opacity-50 cursor-not-allowed' : ''} ${liveStageEnabled ? 'bg-claude-accent' : 'bg-gray-300 dark:bg-gray-600'}`}>
