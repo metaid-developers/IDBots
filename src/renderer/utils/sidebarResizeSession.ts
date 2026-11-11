@@ -63,7 +63,9 @@ export interface SidebarResizeSessionOptions {
   /** MouseEvent.button of the originating mousedown; only 0 (primary) starts. */
   button?: number;
   /**
-   * Optional per-move width shaper (extreme damping, 3:7 ruling 2026-11-09).
+   * Optional per-move width shaper (extreme damping, introduced with the
+   * 2026-11-09 3:7 ruling; the band math is cap-independent, so it rides the
+   * 2026-11-11 fixed-width drag cap unchanged).
    * Receives the raw uncapped target and the session's current width and
    * returns the width actually pursued; `clamp` still bounds the result, so a
    * shaper can never push the column out of range. Omitted = unchanged
@@ -79,8 +81,9 @@ export interface SidebarResizeSession {
   finish(reason?: SidebarResizeEndReason): void;
 }
 
-// ── Extreme damping (ratio-ruling companion, fourth expansion order
-// 2026-11-09; band math is ratio-independent and unchanged since 40:60) ──
+// ── Extreme damping (drag-cap companion, introduced with the 2026-11-09 3:7
+// ruling; band math is cap-independent, unchanged by the 2026-11-11
+// fixed-width ruling) ──
 // Near either range edge each pointer pixel contributes proportionally less,
 // so the column eases into the cap instead of hitting it with a jerk. The
 // factor floor keeps the column still reachable at extreme proximity (it

@@ -21,21 +21,36 @@ export function sidebarWidthStorageKey(mode: SidebarWidthMode): string {
 
 export function clampSidebarWidth(width: number, windowWidth?: number): number {
   if (!Number.isFinite(width)) return defaultSidebarWidth('home');
-  // With a window width the cap is the 3:7 seam ruling; without one the
-  // legacy fixed 480 cap still applies (pure callers / tests / SSR-ish use).
+  // With a window width the cap is "the right pane keeps its minimum width"
+  // (fixed-width ruling below); without one the fixed 480 cap still applies
+  // (pure callers / tests / SSR-ish use).
   const max = windowWidth == null ? SIDEBAR_WIDTH_MAX : maxSidebarWidthForWindow(windowWidth);
   return Math.min(max, Math.max(SIDEBAR_WIDTH_MIN, Math.round(width)));
 }
 
-// ── 3:7 seam ruling (2026-11-09 fourth expansion order; supersedes the third
-// order's 40:60, which superseded the never-shipped 50:50 wording) ──
-// The seam drag/snap cap is a RATIO, not a fixed pixel cap: the middle column
-// may grow until middle : right = 3 : 7 of the split the seam actually
-// divides — window width minus the 64px icon rail minus the 4px seam track.
-// The minimum-width floor (SIDEBAR_WIDTH_MIN) is untouched by the new cap.
+// ── Fixed-width ruling (2026-11-11; supersedes the 2026-11-09 3:7 ratio cap
+// for drag/resize behavior) ──
+// The middle column is a FIXED, remembered pixel width per face (BotWorks /
+// Studio persist independently). A window resize flexes ONLY the right pane:
+// the column never re-scales with the window, so a width the user chose (or
+// the per-face default) survives window changes and app restarts verbatim.
+//
+//   · Seam drag cap: the column may grow until the right pane would keep less
+//     than RIGHT_PANE_MIN_WIDTH_PX, bounded above by SIDEBAR_WIDTH_MAX and
+//     floored at SIDEBAR_WIDTH_MIN (the floor wins on very narrow windows —
+//     there the auto-hide rule takes over instead of squeezing further).
+//     This replaces the old 30%-of-window ratio cap, which pinned the column
+//     at the cap on typical window sizes (Studio's 400 default > 3:7 cap at
+//     the 1200 default window) and so made the seam drag one-directional.
+//   · Window too narrow: when the right pane would drop below
+//     RIGHT_PANE_MIN_WIDTH_PX the shell auto-hides the middle column (see
+//     shouldAutoHideSidebar) instead of shrinking it, and restores it once
+//     the window has room again (shouldAutoShowSidebar, with a hysteresis
+//     band so a borderline window does not oscillate hide/show per pixel).
 export const SIDEBAR_RAIL_WIDTH_PX = 64;
 export const SIDEBAR_SEAM_WIDTH_PX = 4;
-export const SIDEBAR_MAX_RATIO = 0.3;
+export const RIGHT_PANE_MIN_WIDTH_PX = 480;
+export const SIDEBAR_AUTO_SHOW_HYSTERESIS_PX = 96;
 
 /** Width of the middle+right area the seam divides, for a window width. */
 export function splitWidthForWindow(windowWidth: number): number {
@@ -43,19 +58,56 @@ export function splitWidthForWindow(windowWidth: number): number {
   return Math.max(0, windowWidth - SIDEBAR_RAIL_WIDTH_PX - SIDEBAR_SEAM_WIDTH_PX);
 }
 
-/**
- * Largest middle-column width a window of this size allows: 30% of the split
- * (the 3 side of 3:7), floored, never below the minimum-width floor. On a
- * window too narrow for 30% to reach 240px the floor wins (min-width
- * constraint is preserved).
- */
-export function maxSidebarWidthForWindow(windowWidth: number): number {
-  return Math.max(SIDEBAR_WIDTH_MIN, Math.floor(splitWidthForWindow(windowWidth) * SIDEBAR_MAX_RATIO));
+/** Width the right pane keeps when the middle column shows at this width. */
+export function rightPaneWidthForWindow(windowWidth: number, sidebarWidth: number): number {
+  if (!Number.isFinite(sidebarWidth)) return splitWidthForWindow(windowWidth);
+  return Math.max(0, splitWidthForWindow(windowWidth) - sidebarWidth);
 }
 
-/** Double-click snap target: exactly the 3:7 split for this window. */
+/**
+ * Largest middle-column width a window of this size allows: the split minus
+ * the right pane's minimum width, capped at SIDEBAR_WIDTH_MAX, never below
+ * the minimum-width floor. On a window too narrow for the right-pane minimum
+ * to leave 240px the floor wins (the auto-hide rule handles that case).
+ */
+export function maxSidebarWidthForWindow(windowWidth: number): number {
+  return Math.max(
+    SIDEBAR_WIDTH_MIN,
+    Math.min(SIDEBAR_WIDTH_MAX, splitWidthForWindow(windowWidth) - RIGHT_PANE_MIN_WIDTH_PX),
+  );
+}
+
+/**
+ * The middle column auto-hides when the right pane would keep less than its
+ * minimum comfortable width ("快看不到" — the main area is about to be
+ * squeezed away). Hiding beats shrinking: the column's width is remembered,
+ * so it must not be re-scaled by window size.
+ */
+export function shouldAutoHideSidebar(windowWidth: number, sidebarWidth: number): boolean {
+  return rightPaneWidthForWindow(windowWidth, sidebarWidth) < RIGHT_PANE_MIN_WIDTH_PX;
+}
+
+/**
+ * An auto-hidden column comes back only once the right pane has its minimum
+ * width PLUS the hysteresis band, so a window hovering at the threshold does
+ * not flicker hide/show on every resize pixel.
+ */
+export function shouldAutoShowSidebar(windowWidth: number, sidebarWidth: number): boolean {
+  return rightPaneWidthForWindow(windowWidth, sidebarWidth) >= RIGHT_PANE_MIN_WIDTH_PX + SIDEBAR_AUTO_SHOW_HYSTERESIS_PX;
+}
+
+// Kept for the double-click snap target only: the snap eases the column to
+// the 3:7 split of the live window (the drag cap no longer uses the ratio).
+export const SIDEBAR_MAX_RATIO = 0.3;
+
+/**
+ * Double-click snap target: the 3:7 split for this window, floored at the
+ * minimum width and capped by the live drag cap, so the snap can never land
+ * somewhere a drag could not reach.
+ */
 export function sidebarSnapWidthForWindow(windowWidth: number): number {
-  return maxSidebarWidthForWindow(windowWidth);
+  const ratio = Math.floor(splitWidthForWindow(windowWidth) * SIDEBAR_MAX_RATIO);
+  return Math.min(maxSidebarWidthForWindow(windowWidth), Math.max(SIDEBAR_WIDTH_MIN, ratio));
 }
 
 /**

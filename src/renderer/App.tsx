@@ -71,9 +71,12 @@ import {
   clampSidebarWidth,
   loadSidebarWidth,
   maxSidebarWidthForWindow,
+  shouldAutoHideSidebar,
+  shouldAutoShowSidebar,
   sidebarSnapWidthForWindow,
   sidebarWidthStorageKey,
   SIDEBAR_WIDTH_MIN,
+  type SidebarWidthMode,
 } from './utils/sidebarWidth';
 import {
   dampedSidebarDelta,
@@ -193,6 +196,16 @@ const App: React.FC = () => {
   // collapse can never leak into the other.
   const [studioSeamState, setStudioSeamState] = useState<'split' | 'left'>('split');
   const [homeSeamCollapsed, setHomeSeamCollapsed] = useState(false);
+  // Narrow-window auto-hide (fixed-width ruling 2026-11-11): per face, true
+  // when the CURRENT collapse was triggered by the window running out of room
+  // (not by the user), so a later widening can bring the column back. Any
+  // manual seam interaction clears the face's flag — a manual collapse must
+  // never "restore" on its own.
+  const sidebarAutoHiddenRef = useRef<Record<SidebarWidthMode, boolean>>({ home: false, browser: false });
+  // Crossing guard for the auto-hide threshold: re-armed only once the window
+  // leaves the tight zone, so a manual re-open while the window stays narrow
+  // is not re-hidden by the very next resize event.
+  const sidebarNarrowRef = useRef(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => loadSidebarWidth((key) => window.localStorage.getItem(key), 'home'));
   const [isSidebarResizing, setIsSidebarResizing] = useState(false);
   // The live resize session owns the pointer between its mousedown and the
@@ -680,7 +693,10 @@ const App: React.FC = () => {
 
   // Seam button handlers (接缝按钮双向化 2026-11-09). Each face owns its own
   // transition set; every handler is a pure setter (no face probe), so they
-  // can live above the shell hook without touching its bindings:
+  // can live above the shell hook without touching its bindings. Every manual
+  // transition also clears that face's auto-hide flag (fixed-width ruling
+  // 2026-11-11): from here on the collapse/expand is user-owned, so the
+  // window-resize fit check must not auto-restore it later.
   //
   // · BotWorks (home): ONE direction only — split ‹→ left, left ›→ split.
   //   No right-collapsed state exists on this face.
@@ -688,15 +704,19 @@ const App: React.FC = () => {
   //   fills), left ›→ split. The › collapse (对话框占满 fill) is retired with
   //   the 平铺态 (same-day ruling) and has no handler anymore.
   const handleCollapseHomeSeam = useCallback(() => {
+    sidebarAutoHiddenRef.current.home = false;
     setHomeSeamCollapsed(true);
   }, []);
   const handleExpandHomeSeam = useCallback(() => {
+    sidebarAutoHiddenRef.current.home = false;
     setHomeSeamCollapsed(false);
   }, []);
   const handleCollapseStudioSeamLeft = useCallback(() => {
+    sidebarAutoHiddenRef.current.browser = false;
     setStudioSeamState('left');
   }, []);
   const handleExpandStudioSeam = useCallback(() => {
+    sidebarAutoHiddenRef.current.browser = false;
     setStudioSeamState('split');
   }, []);
 
@@ -854,8 +874,10 @@ const App: React.FC = () => {
    */
   const revealMiddleColumn = useCallback(() => {
     if (isHomeSurfaceMode) {
+      sidebarAutoHiddenRef.current.home = false;
       setHomeSeamCollapsed(false);
     } else {
+      sidebarAutoHiddenRef.current.browser = false;
       setStudioSeamState('split');
     }
   }, [isHomeSurfaceMode]);
@@ -895,12 +917,14 @@ const App: React.FC = () => {
    *   3. onEnd is the ONE exit: mouseup, pointerup, pointercancel, Escape,
    *      window blur, tab hidden, mode switch and unmount all land in it and
    *      clear both the session ref and the visual flag;
-   *   4. 3:7 ruling (2026-11-09 fourth expansion order, superseding 40:60):
-   *      the cap is the middle:right = 3:7 ratio of the live window (live
-   *      innerWidth read, never a stale closure), the drag follows the
-   *      pointer in real time, and shapeNext damps movement near both range
-   *      edges so the column eases into 3:7 / the minimum instead of jerking
-   *      against them.
+   *   4. Fixed-width ruling (2026-11-11, superseding the 3:7 ratio cap): the
+   *      cap is "the right pane keeps at least RIGHT_PANE_MIN_WIDTH_PX of the
+   *      live window" (live innerWidth read, never a stale closure), bounded
+   *      above by the 480px absolute max — so both faces can always drag
+   *      WIDER from their defaults, fixing Studio's one-directional seam.
+   *      The drag follows the pointer in real time, and shapeNext damps
+   *      movement near both range edges so the column eases into the cap /
+   *      the minimum instead of jerking against them.
    */
   const handleSidebarResizeStart = useCallback((event: React.MouseEvent) => {
     if (event.button !== 0) return;
@@ -914,7 +938,8 @@ const App: React.FC = () => {
       startWidth: sidebarWidth,
       mode: botBrowserShell.surfaceMode,
       button: event.button,
-      // Cap = 40% of the live middle+right split, floored at the minimum
+      // Cap = the live middle+right split minus the right pane's minimum
+      // width (bounded by the 480px absolute max), floored at the minimum
       // width; window width is read live per move so a mid-drag window
       // resize cannot be outrun by a captured constant.
       clamp: (width) => clampSidebarWidth(width, window.innerWidth),
@@ -979,27 +1004,59 @@ const App: React.FC = () => {
     stopSidebarSnapTween();
   }, [stopSidebarSnapTween]);
 
-  // The 3:7 cap is window-relative: after a window resize the stored width
-  // may no longer fit under the cap, so re-clamp (persisting happens on the
-  // next drag end / tween end / mode switch, as before). One immediate pass
-  // also heals a width persisted by a larger window in an earlier session.
+  // Fixed-width ruling (2026-11-11; supersedes the 3:7 window-relative
+  // re-clamp): the middle column's width is a remembered pixel value that a
+  // window resize NEVER re-scales — only the right pane flexes. When the
+  // window gets so narrow that the right pane would keep less than its
+  // minimum width (快看不到), the active face's middle column AUTO-HIDES
+  // instead of shrinking, and it comes back once the window has room again
+  // (plus a hysteresis band, so a borderline window does not flicker).
+  // A collapse the USER chose is never auto-restored — the per-face flag
+  // marks only collapses this check itself triggered — and a manual re-open
+  // while the window stays narrow is not re-hidden until the window first
+  // leaves the tight zone (the crossing guard).
   useEffect(() => {
-    const handleWindowResize = () => {
-      setSidebarWidth((current) => {
-        const capped = clampSidebarWidth(current, window.innerWidth);
-        return capped === current ? current : capped;
-      });
+    const fitSidebarToWindow = () => {
+      // A live drag or snap tween owns the column width; never fight it.
+      if (sidebarResizeRef.current?.active || sidebarTweenRafRef.current != null) return;
+      const mode: SidebarWidthMode = botBrowserShell.surfaceMode;
+      const width = sidebarWidthRef.current;
+      const collapsed = mode === 'home' ? homeSeamCollapsed : studioSeamState === 'left';
+      if (shouldAutoHideSidebar(window.innerWidth, width)) {
+        if (!sidebarNarrowRef.current && !collapsed) {
+          sidebarAutoHiddenRef.current[mode] = true;
+          if (mode === 'home') {
+            setHomeSeamCollapsed(true);
+          } else {
+            setStudioSeamState('left');
+          }
+        }
+        sidebarNarrowRef.current = true;
+        return;
+      }
+      sidebarNarrowRef.current = false;
+      if (!shouldAutoShowSidebar(window.innerWidth, width)) return;
+      // Room again: bring back every face THIS check hid (manual collapses
+      // carry no flag and stay collapsed).
+      if (sidebarAutoHiddenRef.current.home && homeSeamCollapsed) {
+        sidebarAutoHiddenRef.current.home = false;
+        setHomeSeamCollapsed(false);
+      }
+      if (sidebarAutoHiddenRef.current.browser && studioSeamState === 'left') {
+        sidebarAutoHiddenRef.current.browser = false;
+        setStudioSeamState('split');
+      }
     };
-    handleWindowResize();
-    window.addEventListener('resize', handleWindowResize);
-    return () => window.removeEventListener('resize', handleWindowResize);
-  }, []);
+    fitSidebarToWindow();
+    window.addEventListener('resize', fitSidebarToWindow);
+    return () => window.removeEventListener('resize', fitSidebarToWindow);
+  }, [botBrowserShell.surfaceMode, homeSeamCollapsed, studioSeamState, sidebarWidth]);
 
   // Bot Home and Bot Internet keep independent widths: restore the surface's own
-  // comfortable width on every mode switch. The load re-clamps against the live
-  // 3:7 cap too — loadSidebarWidth's legacy fixed cap alone would let a width
-  // persisted by a wider window mount past the ratio cap (and would also race
-  // the resize re-clamp effect above, since this effect runs after it).
+  // comfortable width on every mode switch. The load still re-clamps against the
+  // live window — the fixed-width ruling caps the column at "right pane keeps
+  // its minimum width", so a width persisted by a much wider window never
+  // mounts past the drag cap.
   useEffect(() => {
     sidebarResizeRef.current?.finish('mode-change');
     stopSidebarSnapTween();
@@ -1930,9 +1987,10 @@ const App: React.FC = () => {
             state on purpose — a control that lives inside a collapsible
             column is unusable the moment that column is gone, so the toggle
             sits on the seam: same spot to collapse and to bring the column
-            back. Drag caps at the middle:right = 3:7 split with edge damping
-            (2026-11-09 fourth expansion order, superseding 40:60); double-
-            click eases the column to that same 3:7 split with a short tween.
+            back. Drag caps where the right pane would keep less than its
+            minimum width (fixed-width ruling 2026-11-11, superseding the
+            3:7 ratio cap), with edge damping; double-click eases the column
+            to the 3:7 split with a short tween.
             接缝按钮双向化 2026-11-09, then the 平铺态砍掉 same-day ruling:
             the chevron(s) always point where the pane on their own side will
             GROW on click. The BotWorks face shows a single chevron (its one

@@ -307,11 +307,12 @@ test('easeOutCubic is a monotonic 0→1 curve with a soft landing', () => {
 });
 
 test('a shapeNext shaper damps the drag and clamp still bounds it', () => {
-  // Live 3:7 cap for a 1440 window (split 1372 → floor(411.6) = 411); band 96
-  // means the column is ALREADY inside the cap's band at the 320 default —
-  // the very first step is damped and clamped into the cap.
+  // Fixed-width ruling (2026-11-11): the live cap for a 1440 window is the
+  // absolute 480 max (split 1372 − right-pane minimum 480 = 892, capped).
+  // Band 96 means damping kicks in only within 96px of the cap — from the
+  // 320 default the room is 160, so the first +100 step arrives undamped.
   const cap = maxSidebarWidthForWindow(1440);
-  assert.equal(cap, 411, 'the live 3:7 cap on a 1440 window');
+  assert.equal(cap, 480, 'the live drag cap on a 1440 window');
   const { doc, widths, ends } = setup({
     clamp: (width) => clampSidebarWidth(width, 1440),
     shapeNext: (rawNext, current) => current + dampedSidebarDelta(
@@ -321,22 +322,23 @@ test('a shapeNext shaper damps the drag and clamp still bounds it', () => {
       cap,
     ),
   });
-  // +100 steps from the 320 default: the first step lands ON the 3:7 cap
-  // (room 91 < band 96 → damped straight into 411); every later move re-pursues
-  // a rawNext past the cap, the shaper returns delta 0, and the session's
-  // `next === width` gate filters it — exactly ONE frame, not one per move.
+  // +100 steps from the 320 default: the first lands at 420 (room 160 ≥ band
+  // 96 → undamped); the second steps into the band (room 60 < 96 → damped to
+  // exactly the remaining 60) and settles ON the cap at 480; every later move
+  // re-pursues a rawNext past the cap, the shaper returns delta 0, and the
+  // session's `next === width` gate filters it — no one frame per move.
   doc.dispatch('mousemove', { clientX: 400, buttons: 1 });
   doc.dispatch('mousemove', { clientX: 500, buttons: 1 });
   doc.dispatch('mousemove', { clientX: 600, buttons: 1 });
   doc.dispatch('mousemove', { clientX: 700, buttons: 1 });
   doc.dispatch('mouseup');
-  assert.deepEqual(widths, [411], 'first step damps into the 3:7 cap; at-cap moves are filtered as no-ops');
+  assert.deepEqual(widths, [420, 480], 'second step damps into the cap; at-cap moves are filtered as no-ops');
   for (const width of widths) {
-    assert.ok(width <= cap, `every width must respect the 3:7 cap (${width} ≤ ${cap})`);
+    assert.ok(width <= cap, `every width must respect the drag cap (${width} ≤ ${cap})`);
     assert.ok(width >= SIDEBAR_WIDTH_MIN);
   }
   assert.equal(ends[0].reason, 'mouseup');
-  assert.equal(ends[0].width, 411, 'the damped drag settles exactly at the 3:7 cap');
+  assert.equal(ends[0].width, 480, 'the damped drag settles exactly at the cap');
 });
 
 test('a shapeNext shaper still runs on no-delta moves; the session filters the no-op', () => {
@@ -351,18 +353,16 @@ test('a shapeNext shaper still runs on no-delta moves; the session filters the n
   });
   doc.dispatch('mousemove', { clientX: 320, buttons: 1 }); // +20 from startX 300
   assert.equal(shapeCalls, 1);
-  // Under the live 3:7 cap the 320 default sits 91px under it — inside the
-  // 96px damping band, so the +20 arrives damped: factor 91/96 → round(18.96)
-  // = 19 applied → 339 (at the looser 40:60 cap this used to be a full +20).
+  // Under the fixed-width cap (480 at 1440) the 320 default sits 160px under
+  // it — OUTSIDE the 96px damping band, so the +20 arrives undamped → 340.
+  // (Under the old 3:7 cap this same move was damped to +19.)
   assert.deepEqual(widths, [320 + dampedSidebarDelta(20, 320, SIDEBAR_WIDTH_MIN, cap)]);
   doc.dispatch('mousemove', { clientX: 320, buttons: 1 }); // same position
   assert.equal(shapeCalls, 2, 'the shaper still runs');
-  // rawNext is ANCHORED TO startWidth (320 + 20 = 340), so the same-position
-  // move re-pursues 340 from 339: delta +1, damped to +1 (room 72/96 → 0.75
-  // → round(0.75) = 1) → 340. A same-position move is only a filtered no-op
-  // once the width has converged onto its rawNext.
-  assert.deepEqual(widths, [339, 340], 'the second move re-pursues the raw anchor (+1), converging to 340');
+  // rawNext is ANCHORED TO startWidth (320 + 20 = 340) and the width has
+  // already converged onto it, so the same-position move is a filtered no-op.
+  assert.deepEqual(widths, [340], 'converged onto the raw anchor: filtered as a no-op');
   doc.dispatch('mousemove', { clientX: 320, buttons: 1 }); // same position again
   assert.equal(shapeCalls, 3, 'the shaper keeps running');
-  assert.deepEqual(widths, [339, 340], 'now converged onto rawNext: filtered as a no-op');
+  assert.deepEqual(widths, [340], 'still converged: filtered as a no-op');
 });

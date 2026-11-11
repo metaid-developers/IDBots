@@ -224,10 +224,12 @@ test('a collapsed middle column is recoverable from the boundary handle alone', 
   assert.match(handleBlock, /onClick=\{handleCollapseHomeSeam\}/);
   assert.match(handleBlock, /<PanelToggleIcon/);
   // ... and every destination click re-opens the column, so a collapsed
-  // workspace can never be a dead end.
+  // workspace can never be a dead end. (Fixed-width ruling 2026-11-11: the
+  // reveal first clears the face's narrow-window auto-hide flag, so a manual
+  // re-open is user-owned from that point on.)
   assert.match(
     appSource,
-    /const revealMiddleColumn = useCallback\(\(\) => \{\s*if \(isHomeSurfaceMode\) \{\s*setHomeSeamCollapsed\(false\);/,
+    /const revealMiddleColumn = useCallback\(\(\) => \{\s*if \(isHomeSurfaceMode\) \{\s*sidebarAutoHiddenRef\.current\.home = false;\s*setHomeSeamCollapsed\(false\);/,
   );
   assert.match(appSource, /onSelectInternetPane=\{\(pane\) => \{\s*revealMiddleColumn\(\);/);
   assert.match(appSource, /onSelectHomeSection=\{\(section\) => \{\s*revealMiddleColumn\(\);/);

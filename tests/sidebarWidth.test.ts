@@ -6,10 +6,14 @@ import {
   defaultSidebarWidth,
   loadSidebarWidth,
   maxSidebarWidthForWindow,
+  rightPaneWidthForWindow,
+  shouldAutoHideSidebar,
+  shouldAutoShowSidebar,
   sidebarSnapWidthForWindow,
   sidebarWidthStorageKey,
   splitWidthForWindow,
-  SIDEBAR_MAX_RATIO,
+  RIGHT_PANE_MIN_WIDTH_PX,
+  SIDEBAR_AUTO_SHOW_HYSTERESIS_PX,
   SIDEBAR_RAIL_WIDTH_PX,
   SIDEBAR_SEAM_WIDTH_PX,
   SIDEBAR_WIDTH_BROWSER_DEFAULT,
@@ -61,8 +65,8 @@ test('loadSidebarWidth clamps stored values', () => {
   assert.equal(loadSidebarWidth(getItem, 'home'), SIDEBAR_WIDTH_MIN);
 });
 
-// ── 3:7 seam ruling (2026-11-09 fourth expansion order; supersedes the
-// third order's 40:60) ──
+// ── Fixed-width ruling (2026-11-11; supersedes the 2026-11-09 3:7 ratio cap
+// for drag/resize behavior) ──
 
 test('splitWidthForWindow subtracts rail and seam tracks and floors at 0', () => {
   assert.equal(splitWidthForWindow(1440), 1440 - SIDEBAR_RAIL_WIDTH_PX - SIDEBAR_SEAM_WIDTH_PX);
@@ -74,41 +78,77 @@ test('splitWidthForWindow subtracts rail and seam tracks and floors at 0', () =>
   assert.equal(splitWidthForWindow(Number.NaN), 0);
 });
 
-test('maxSidebarWidthForWindow is 30% of the split (the 3 side of 3:7), floored at the min width', () => {
-  const split = splitWidthForWindow(1440);
-  assert.equal(maxSidebarWidthForWindow(1440), Math.floor(split * SIDEBAR_MAX_RATIO));
-  // A window too narrow for 30% to reach 240px: the minimum-width floor wins.
+test('maxSidebarWidthForWindow leaves the right pane its minimum width, capped at 480, floored at the min width', () => {
+  // 1440 → split 1372 → 1372 − 480 = 892 → the absolute 480 cap wins: both
+  // faces can always drag WIDER from their defaults (the Studio one-way seam
+  // fix — the old 30% ratio cap gave only 411 here).
+  assert.equal(maxSidebarWidthForWindow(1440), SIDEBAR_WIDTH_MAX);
+  // Default 1200 window: split 1132 → 652 → capped at 480.
+  assert.equal(maxSidebarWidthForWindow(1200), SIDEBAR_WIDTH_MAX);
+  // 1000 → split 932 → 452: the right-pane minimum rules below the cap.
+  assert.equal(maxSidebarWidthForWindow(1000), 452);
+  // A window too narrow for the right-pane minimum to leave 240px: the
+  // minimum-width floor wins (the auto-hide rule takes over from there).
+  assert.equal(maxSidebarWidthForWindow(700), SIDEBAR_WIDTH_MIN);
   assert.equal(maxSidebarWidthForWindow(300), SIDEBAR_WIDTH_MIN);
   assert.equal(maxSidebarWidthForWindow(SIDEBAR_RAIL_WIDTH_PX + SIDEBAR_SEAM_WIDTH_PX), SIDEBAR_WIDTH_MIN);
-  // Mid-size window: 700 → split 632 → 30% = 189.6 → floor 189, but the
-  // 240px minimum-width floor wins over the ratio (implementation contract:
-  // "never below the minimum-width floor").
-  assert.equal(maxSidebarWidthForWindow(700), SIDEBAR_WIDTH_MIN);
 });
 
-test('clampSidebarWidth caps at the 3:7 ratio when a window width is given', () => {
+test('clampSidebarWidth caps at the right-pane-minimum rule when a window width is given', () => {
   const cap = maxSidebarWidthForWindow(1440);
-  // 1440 → split 1372 → 30% = 411: the 3:7 cap is TIGHTER than the legacy
-  // 480 at this window size (40:60's 548 was looser). On wide windows the
-  // ratio cap is looser again (1920 → 555) — the ratio, not the legacy cap,
-  // always rules the windowed path.
-  assert.equal(cap, 411);
-  assert.ok(cap < SIDEBAR_WIDTH_MAX, 'on a 1440 window the 3:7 cap is tighter than the legacy 480');
+  assert.equal(cap, SIDEBAR_WIDTH_MAX);
   assert.equal(clampSidebarWidth(600, 1440), cap);
-  // 700 → split 632 → 30% = 189, below the 240 floor → the floor wins.
+  // 700 → the right-pane minimum leaves < 240 → the floor wins.
   assert.equal(clampSidebarWidth(600, 700), SIDEBAR_WIDTH_MIN);
-  assert.equal(clampSidebarWidth(600, 1920), 555);
+  // Even on very wide windows the absolute 480 cap holds (1920 → 480, not
+  // the old ratio's 555): the column is a fixed-size records list, the
+  // right pane flexes.
+  assert.equal(clampSidebarWidth(600, 1920), SIDEBAR_WIDTH_MAX);
   assert.equal(clampSidebarWidth(100, 1440), SIDEBAR_WIDTH_MIN);
   // Exactly at the cap passes through unchanged.
   assert.equal(clampSidebarWidth(cap, 1440), cap);
+  // The Studio default (400) fits under the cap at the default 1200 window —
+  // the launch clamp no longer pins it, so the seam drags both ways.
+  assert.ok(SIDEBAR_WIDTH_BROWSER_DEFAULT < maxSidebarWidthForWindow(1200));
+  assert.ok(SIDEBAR_WIDTH_HOME_DEFAULT < maxSidebarWidthForWindow(1200));
 });
 
-test('clampSidebarWidth keeps the legacy 480 cap when no window width is given', () => {
+test('clampSidebarWidth keeps the 480 cap when no window width is given', () => {
   // Back-compat contract for pure callers: one argument = the old behavior.
   assert.equal(clampSidebarWidth(1000), SIDEBAR_WIDTH_MAX);
 });
 
-test('sidebarSnapWidthForWindow is exactly the 3:7 cap', () => {
-  assert.equal(sidebarSnapWidthForWindow(1440), maxSidebarWidthForWindow(1440));
-  assert.equal(sidebarSnapWidthForWindow(700), maxSidebarWidthForWindow(700));
+test('sidebarSnapWidthForWindow is the 3:7 split clamped into the drag range', () => {
+  // 1440 → split 1372 → 30% = 411 (under the 480 cap).
+  assert.equal(sidebarSnapWidthForWindow(1440), 411);
+  // 700 → 30% = 189, below the 240 floor → the floor wins.
+  assert.equal(sidebarSnapWidthForWindow(700), SIDEBAR_WIDTH_MIN);
+  // 1920 → 30% = 555, over the drag cap → the cap wins.
+  assert.equal(sidebarSnapWidthForWindow(1920), SIDEBAR_WIDTH_MAX);
+});
+
+test('rightPaneWidthForWindow subtracts the column from the split, floored at 0', () => {
+  assert.equal(rightPaneWidthForWindow(1200, 400), 1200 - SIDEBAR_RAIL_WIDTH_PX - SIDEBAR_SEAM_WIDTH_PX - 400);
+  assert.equal(rightPaneWidthForWindow(500, 480), 0);
+  assert.equal(rightPaneWidthForWindow(1200, Number.NaN), splitWidthForWindow(1200));
+});
+
+test('shouldAutoHideSidebar fires only when the right pane drops below its minimum width', () => {
+  // Default window, Studio default width: right = 732 — plenty of room.
+  assert.equal(shouldAutoHideSidebar(1200, SIDEBAR_WIDTH_BROWSER_DEFAULT), false);
+  // 948 → split 880 → right exactly 480: NOT hidden (boundary is inclusive).
+  assert.equal(shouldAutoHideSidebar(948, SIDEBAR_WIDTH_BROWSER_DEFAULT), false);
+  // 947 → right 479 < 480 → the column hides instead of shrinking.
+  assert.equal(shouldAutoHideSidebar(947, SIDEBAR_WIDTH_BROWSER_DEFAULT), true);
+  // BotWorks width 320 at an 860 window: right = 792 − 320 = 472 < 480.
+  assert.equal(shouldAutoHideSidebar(860, SIDEBAR_WIDTH_HOME_DEFAULT), true);
+});
+
+test('shouldAutoShowSidebar requires the hysteresis band beyond the hide threshold', () => {
+  const showAt = SIDEBAR_RAIL_WIDTH_PX + SIDEBAR_SEAM_WIDTH_PX + SIDEBAR_WIDTH_BROWSER_DEFAULT
+    + RIGHT_PANE_MIN_WIDTH_PX + SIDEBAR_AUTO_SHOW_HYSTERESIS_PX;
+  // One pixel short of the band: stays hidden (no hide/show flicker).
+  assert.equal(shouldAutoShowSidebar(showAt - 1, SIDEBAR_WIDTH_BROWSER_DEFAULT), false);
+  assert.equal(shouldAutoShowSidebar(showAt, SIDEBAR_WIDTH_BROWSER_DEFAULT), true);
+  assert.equal(shouldAutoShowSidebar(1440, SIDEBAR_WIDTH_HOME_DEFAULT), true);
 });
