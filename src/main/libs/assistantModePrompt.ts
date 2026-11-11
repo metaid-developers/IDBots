@@ -188,3 +188,34 @@ export function buildProjectorModePrompt(): string {
     ].join('\n'),
   );
 }
+
+/**
+ * Projector slot while the first-run Genesis Stage owns the projector
+ * (docs/superpowers/specs/2026-11-11-studio-welcome-genesis-design.md): the
+ * welcome animation already plays every word of the reply, so the bot must
+ * not project a page of its own — this overrides the projector section's
+ * first-turn rule. The host restores the projector section once the welcome
+ * concludes.
+ */
+export function buildProjectorWelcomeHoldPrompt(): string {
+  return tApp(
+    [
+      '## 投影模式 —— 欢迎仪式进行中',
+      '',
+      '这是主人第一次进入 IDBots 的欢迎会话。右侧投影仪此刻由 IDBots 内置的欢迎动画占用：你在聊天里说的每一句话都会自动变成字幕，在动画里一句一句地播放。',
+      '',
+      '**欢迎阶段不投影（硬规则，优先于「首轮必须投影」）。** 不要调用 projection_begin，不要用 projection: true 调用 bot_browser_preview_local，也不要为投影写任何 HTML 页面。直接在聊天里回复，用很短的段落。等主人交给你真正的任务时，宿主会自动恢复正常的投影模式。',
+      '',
+      '**聊天保持干净（硬规则）。** 不要在气泡里内嵌任何东西：不要 `![名字](metaapp://…)`，不要 `[报告](file:///…)`。',
+    ].join('\n'),
+    [
+      '## Projector Mode — welcome in progress',
+      '',
+      'This is the owner\'s very first IDBots session. The projector on the right is currently showing the built-in IDBots welcome animation, and every sentence you write in the chat automatically plays there as a subtitle.',
+      '',
+      '**No projections during the welcome (hard rule, overrides the first-turn projection rule).** Do not call projection_begin, do not call bot_browser_preview_local with projection: true, and do not write HTML pages for the projector. Reply in the chat in short paragraphs. The host restores the normal projector mode as soon as the owner gives you real work.',
+      '',
+      '**Chat stays clean (hard rule).** Never embed anything in a bubble: no `![name](metaapp://…)`, no `[report](file:///…)`.',
+    ].join('\n'),
+  );
+}

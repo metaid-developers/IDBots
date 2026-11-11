@@ -207,7 +207,8 @@ async function ensureTwinBot(): Promise<Metabot> {
  * runs one agent turn (not persisted as a user message) driven by the
  * onboarding system prompt, and seeds `fallbackGreeting` if that turn cannot
  * greet. The name is interpolated so the bot knows the placeholder it must ask
- * the user to replace.
+ * the user to replace. The chat is a Studio session: its first turns play on
+ * the Genesis Stage in the Studio browser.
  */
 async function createTwinGreetingSession(twin: Metabot): Promise<string> {
   const result = await window.electron.cowork.createGreetingSession({
@@ -215,6 +216,7 @@ async function createTwinGreetingSession(twin: Metabot): Promise<string> {
     systemPrompt: i18nService.t('welcomeFirstSessionSystemPrompt').replace('{name}', twin.name),
     fallbackGreeting: i18nService.t('welcomeGreeting'),
     metabotId: twin.id,
+    surface: 'studio',
   });
   const sessionId = result?.session?.id;
   if (!result?.success || !sessionId) {

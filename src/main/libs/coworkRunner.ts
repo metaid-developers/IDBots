@@ -122,7 +122,7 @@ import { isContextWindowExceededError } from './coworkContextBudget';
 import { tryAutoAnswerLowRiskQuestion } from './coworkPermissionRisk';
 import type { CoworkContextUsage, CoworkUsageStats } from './coworkContextUsage';
 import { composePromptSections, PROMPT_SECTION_ORDER } from './promptComposer';
-import { buildAssistantModePrompt, buildProjectorModePrompt } from './assistantModePrompt';
+import { buildAssistantModePrompt, buildProjectorModePrompt, buildProjectorWelcomeHoldPrompt } from './assistantModePrompt';
 import { CHAIN_IDENTIFIER_VERBATIM_RULE } from './chainIdentifierPrompt';
 import { QA_BEHAVIOR_RULE } from './qaBehaviorPrompt';
 import { SOCIAL_TRUST_RULE } from './socialTrustPrompt';
@@ -2338,6 +2338,11 @@ export interface CoworkRunnerOptions {
    */
   getBrowserContextPrompt?: (sessionId: string) => Promise<string | null>;
   /**
+   * True while another stage (the first-run Genesis Stage) owns a projector
+   * session's projector: the bot must not project pages of its own then.
+   */
+  isProjectorHeldByStage?: (sessionId: string) => boolean;
+  /**
    * When set, browser-type sessions get inline MCP tools to control the Bot
    * Browser (open URIs, manage tabs). Implemented in main.ts over the tab
    * bridge and the open-uri broadcast channel.
@@ -2844,6 +2849,7 @@ export class CoworkRunner extends EventEmitter {
   private requestIMSessionReset?: (sessionId: string) => boolean;
   private isIMSessionCallback?: (sessionId: string) => boolean;
   private getBrowserContextPrompt?: (sessionId: string) => Promise<string | null>;
+  private isProjectorHeldByStage?: (sessionId: string) => boolean;
   private controlBotBrowser?: BotBrowserControl;
   private experienceStore?: CoworkExperienceStore;
   private knowledgeStore?: CoworkKnowledgeStore;
@@ -3060,6 +3066,7 @@ export class CoworkRunner extends EventEmitter {
     this.requestIMSessionReset = options?.requestIMSessionReset;
     this.isIMSessionCallback = options?.isIMSession;
     this.getBrowserContextPrompt = options?.getBrowserContextPrompt;
+    this.isProjectorHeldByStage = options?.isProjectorHeldByStage;
     this.controlBotBrowser = options?.controlBotBrowser;
     this.experienceStore = options?.experienceStore;
     this.knowledgeStore = options?.knowledgeStore;
@@ -7088,7 +7095,8 @@ export class CoworkRunner extends EventEmitter {
     skillsSection?: string | null,
     metawebDeepSections = true,
     assistantMode = false,
-    projectorMode = false
+    projectorMode = false,
+    projectorHeld = false
   ): string {
     return composePromptSections([
       { name: 'persona:metabot', order: PROMPT_SECTION_ORDER.PERSONA, text: personaBlock },
@@ -7164,8 +7172,14 @@ export class CoworkRunner extends EventEmitter {
       // for sessions carrying the per-session assistantMode marker from the
       // Bot Internet co-work panel. Replaces the assistant prompt's optional
       // inline HTML/MetaApp clauses with right-pane projection behavior.
+      // While the first-run Genesis Stage holds the projector, the same slot
+      // tells the bot to stay off it (its words already play on the stage).
       ...(projectorMode
-        ? [{ name: 'idbots:projector-mode', order: PROMPT_SECTION_ORDER.PROJECTOR_MODE, text: buildProjectorModePrompt() }]
+        ? [{
+            name: 'idbots:projector-mode',
+            order: PROMPT_SECTION_ORDER.PROJECTOR_MODE,
+            text: projectorHeld ? buildProjectorWelcomeHoldPrompt() : buildProjectorModePrompt(),
+          }]
         : []),
     ]);
   }
@@ -9036,7 +9050,8 @@ export class CoworkRunner extends EventEmitter {
           this.getMetawebPromptTier(sessionId, activeSession),
         ),
         this.isAssistantModeOwnerChatSession(sessionId),
-        this.isProjectorModeSession(sessionId)
+        this.isProjectorModeSession(sessionId),
+        this.isProjectorHeldByStage?.(sessionId) === true
       );
       this.trackSystemPromptHash(activeSession, sessionId, effectiveSystemPrompt);
 
@@ -9187,7 +9202,8 @@ export class CoworkRunner extends EventEmitter {
           this.getMetawebPromptTier(sessionId, activeSession),
         ),
         this.isAssistantModeOwnerChatSession(sessionId),
-        this.isProjectorModeSession(sessionId)
+        this.isProjectorModeSession(sessionId),
+        this.isProjectorHeldByStage?.(sessionId) === true
       );
       this.trackSystemPromptHash(activeSession, sessionId, effectiveSystemPrompt);
 

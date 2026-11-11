@@ -63,9 +63,13 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     complete: { style: 9, speed: .2, radius: .7, warp: 2, contourDeform: .012, glassOpacity: .64, edgeGlow: .04 }
   };
   window.liquidOrbStyleForFamily = (family) => (statePresets[family] || statePresets.received).style;
+  window.liquidOrbBaseParams = () => ({ ...baseParams });
   const numericKeys = Object.keys(baseParams).filter((key) => typeof baseParams[key] === 'number' && key !== 'style');
+  const colorKeys = Object.keys(baseParams).filter((key) => typeof baseParams[key] === 'string' && key !== 'style');
 
+  // Colors are '#RRGGBB' in params; interpolated colors travel as [r, g, b] in 0..1.
   function rgb(hex) {
+    if (Array.isArray(hex)) return [hex[0], hex[1], hex[2], 1];
     const value = hex.slice(1);
     return [0,2,4].map((offset) => Number.parseInt(value.slice(offset, offset + 2), 16) / 255).concat(1);
   }
@@ -139,7 +143,11 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     let current = { ...baseParams, style: statePresets.received.style };
     let target = { ...baseParams, ...statePresets.received };
     const rendered = { ...baseParams };
-    let reduced = false, disposed = false, ready = false, raf = 0, lastFrame = null, phase = 0;
+    const currentColors = Object.fromEntries(colorKeys.map((key) => [key, rgb(current[key]).slice(0, 3)]));
+    // Additive per-frame offsets that bypass interpolation (speech pulses, flashes).
+    let modulation = {};
+    let lerpRate = 5.5;
+    let reduced = false, disposed = false, ready = false, raf = 0, lastFrame = null, phase = Number.isFinite(options.startPhase) ? options.startPhase : 0;
 
     function resize() {
       const ratio = Math.min(window.devicePixelRatio || 1, 2);
@@ -156,12 +164,23 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
         const dt = lastFrame === null ? 0 : Math.min(.08, Math.max(0, (now - lastFrame) / 1000));
         lastFrame = now;
         if (!reduced) phase += dt;
-        const blend = reduced ? 1 : 1 - Math.exp(-dt * 5.5);
+        const blend = reduced ? 1 : 1 - Math.exp(-dt * lerpRate);
         numericKeys.forEach((key) => { current[key] += (target[key] - current[key]) * blend; });
+        colorKeys.forEach((key) => {
+          const to = rgb(target[key]);
+          const from = currentColors[key];
+          for (let channel = 0; channel < 3; channel += 1) from[channel] += (to[channel] - from[channel]) * blend;
+        });
         Object.assign(rendered, current);
+        colorKeys.forEach((key) => { rendered[key] = currentColors[key]; });
         const breath = reduced ? 0 : Math.sin(phase * 1.32);
         rendered.radius = current.radius * (1 + breath * .018);
         rendered.edgeGlow = current.edgeGlow * (1 + breath * .32);
+        if (!reduced) {
+          for (const key in modulation) {
+            if (typeof rendered[key] === 'number' && Number.isFinite(modulation[key])) rendered[key] += modulation[key];
+          }
+        }
         writeUniforms(values, canvas.width, canvas.height, phase, rendered);
         device.queue.writeBuffer(uniformBuffer, 0, values);
         const encoder = device.createCommandEncoder();
@@ -217,6 +236,29 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
         setReduced(reduceMotion);
       },
       setReduced,
+      // Direct parameter control for scripted stages (the Genesis Stage). The
+      // Live Stage drives the orb through setState only.
+      setParams(partial, options = {}) {
+        if (disposed || !partial) return;
+        target = { ...target, ...partial };
+        if (partial.style !== undefined) {
+          current.style = target.style;
+          canvas.dataset.orbStyle = String(target.style);
+        }
+        if (options.immediate) {
+          numericKeys.forEach((key) => { current[key] = target[key]; });
+          colorKeys.forEach((key) => { currentColors[key] = rgb(target[key]).slice(0, 3); });
+        }
+        if (reduced && !raf) raf = requestAnimationFrame(frame);
+      },
+      setModulation(offsets) {
+        if (disposed) return;
+        modulation = offsets && typeof offsets === 'object' ? offsets : {};
+      },
+      setLerpRate(rate) {
+        if (Number.isFinite(rate) && rate > 0) lerpRate = rate;
+      },
+      getPhase() { return phase; },
       getStyle() { return target.style; },
       getSharedResources() { return { device, shader, pipeline }; },
       dispose(destroyDevice = true) {

@@ -602,20 +602,6 @@ const App: React.FC = () => {
     });
   }, [isInitialized, showWelcomeFlow, mainView, currentSessionId]);
 
-  // The Twin Bot chat already exists (one generated greeting): land in it. The
-  // session is pulled into the store before the flag flips, so the shell never
-  // paints the New Task page for a frame; the session list is reloaded so the
-  // sidebar shows the new chat.
-  const handleWelcomeFlowEnter = useCallback(async (sessionId: string) => {
-    try {
-      await coworkService.loadSessions();
-      await coworkService.loadSession(sessionId);
-    } finally {
-      setMainView('cowork');
-      setShowWelcomeFlow(false);
-    }
-  }, []);
-
   // Escape hatch: the user entered without creating a bot (creation failed or
   // they chose to skip). The welcome flow shows again on the next launch
   // because the Twin still does not exist.
@@ -802,6 +788,23 @@ const App: React.FC = () => {
     showToast,
   });
 
+  // The Twin Bot chat already exists (one generated greeting): land in it on
+  // the Studio face — the conversation in the Studio panel, the Genesis Stage
+  // in the browser beside it. The session is pulled into the store before the
+  // flag flips, so the shell never paints an empty Studio for a frame; the
+  // session list is reloaded so the records show the new chat.
+  const handleWelcomeFlowEnter = useCallback(async (sessionId: string) => {
+    try {
+      await coworkService.loadSessions();
+      await browserCoworkService.loadSession(sessionId);
+    } finally {
+      setMainView('cowork');
+      setStudioSeamState('split');
+      await botBrowserShell.openBrowserHome();
+      setShowWelcomeFlow(false);
+    }
+  }, [botBrowserShell.openBrowserHome]);
+
   // Session ↔ tab binding (owner request 2026-11-10): every Studio Co-Work
   // session owns one browser tab. The coordinator gets the shell's SILENT tab
   // control (restore/switch must never yank the active face) plus store-backed
@@ -836,10 +839,18 @@ const App: React.FC = () => {
   // restored into the freshly booted browser. One-shot; the coordinator is a
   // no-op before attach and queues tab commands behind the surface's
   // browser-ready handshake.
+  //
+  // A launch that opens on the welcome flow skips the restore: the welcome owns
+  // the landing (the greeting session and its Genesis Stage tab), and a re-offered
+  // welcome on a machine with history must not surface an older session's tab
+  // over it.
+  const launchRestoreDecidedRef = useRef(false);
   useEffect(() => {
-    if (!isInitialized) return;
+    if (!isInitialized || launchRestoreDecidedRef.current) return;
+    launchRestoreDecidedRef.current = true;
+    if (showWelcomeFlow) return;
     void sessionTabBinding.restoreLastSession();
-  }, [isInitialized]);
+  }, [isInitialized, showWelcomeFlow]);
 
   // ---- Face-scoped seam derivation (接缝按钮双向化 2026-11-09) -----------
   // The active face owns the seam: every layout consumer below reads the SAME

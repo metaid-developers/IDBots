@@ -557,13 +557,15 @@ import { refreshA2APeerProfile } from './services/a2aPeerProfileRefresh';
 import {
   createBotBrowserTabBridge,
   type BotBrowserTabBridge,
+  type BotBrowserTabCommand,
   type BotBrowserTabCommandResponse,
 } from './services/botBrowserTabBridge';
 import {
   initBotBrowserProjectionService,
 } from './services/botBrowserProjectionService';
 import { createStudioLiveStageService, type StudioLiveStageService } from './services/studioLiveStageService';
-import { applyStudioLiveStagePatch, drainStudioLiveStageInteractions } from './services/studioLiveStageFrame';
+import { applyStudioLiveStagePatch, drainStudioLiveStageInteractions, executeStageFrameScript } from './services/studioLiveStageFrame';
+import { createStudioGenesisStageService, type StudioGenesisStageService } from './services/studioGenesisStageService';
 import { readStudioLiveStageSettings, writeStudioLiveStageSettings } from './services/studioLiveStageSettings';
 import {
   executeBotBrowserPreviewAct,
@@ -896,6 +898,7 @@ const sanitizePermissionRequestForIpc = (request: any): any => {
 };
 
 const emitCoworkStreamMessage = (sessionId: string, message: unknown): void => {
+  getStudioGenesisStageService().observeMessage(sessionId, message as any);
   getStudioLiveStageService().observeMessage(sessionId, message as any);
   const safeMessage = sanitizeCoworkMessageForIpc(message);
   broadcastToRenderers('cowork:stream:message', { sessionId, message: safeMessage });
@@ -8520,6 +8523,7 @@ const getCoworkRunner = () => {
         readSkill: (nameOrId, perspective) =>
           getSkillManager().readSkillCatalogEntry(nameOrId, perspective.metabotId ?? null),
       },
+      isProjectorHeldByStage: (sessionId: string) => getStudioGenesisStageService().isClaimed(sessionId),
       getBrowserContextPrompt: async (sessionId: string): Promise<string | null> => {
         const coworkStoreInstance = getCoworkStore();
         const session = coworkStoreInstance.getSession(sessionId);
@@ -8618,6 +8622,9 @@ const getCoworkRunner = () => {
 
     // Set up event listeners to forward to renderer
     coworkRunner.on('message', (sessionId: string, message: any) => {
+      // The Genesis Stage sees every message first: a work tool releases the
+      // session before the Live Stage decides whether to create its run.
+      getStudioGenesisStageService().observeMessage(sessionId, message);
       getStudioLiveStageService().observeMessage(sessionId, message);
       if (!shouldForwardCoworkStreamEvent(getCoworkStore(), sessionId)) {
         return;
@@ -8627,6 +8634,7 @@ const getCoworkRunner = () => {
     });
 
     coworkRunner.on('messageUpdate', (sessionId: string, messageId: string, content: string, metadata?: Record<string, unknown>) => {
+      getStudioGenesisStageService().observeMessageUpdate(sessionId, messageId, content);
       if (!shouldForwardCoworkStreamEvent(getCoworkStore(), sessionId)) {
         return;
       }
@@ -8723,6 +8731,7 @@ const getCoworkRunner = () => {
     });
 
     coworkRunner.on('complete', (sessionId: string, claudeSessionId: string | null) => {
+      getStudioGenesisStageService().observeComplete(sessionId);
       getStudioLiveStageService().observeComplete(sessionId);
       // A session finished: recompute the sleep guard so the blocker is
       // released as soon as no other work source is active.
@@ -8734,6 +8743,7 @@ const getCoworkRunner = () => {
     });
 
     coworkRunner.on('error', (sessionId: string, error: string, metadata?: { errorCode?: string }) => {
+      getStudioGenesisStageService().observeError(sessionId);
       getStudioLiveStageService().observeError(sessionId);
       recomputeSleepGuard();
       if (!shouldForwardCoworkStreamEvent(getCoworkStore(), sessionId)) {
@@ -9026,9 +9036,46 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
       },
       assetRoot: path.join(app.getAppPath(), app.isPackaged ? 'dist/live-stage' : 'public/live-stage'),
       fallbackAvatarDataUri: `data:image/png;base64,${fs.readFileSync(fallbackAvatarPath).toString('base64')}`,
+      isSessionClaimed: (sessionId) => getStudioGenesisStageService().isClaimed(sessionId),
+      beforeProjection: (sessionId) => getStudioGenesisStageService().beforeLiveStageProjection(sessionId),
     });
   }
   return studioLiveStageService;
+};
+
+// First-run welcome (Studio Genesis Stage): owns the greeting session's
+// projector until the welcome concludes, then hands the tab to the Live Stage.
+let studioGenesisStageService: StudioGenesisStageService | null = null;
+const getStudioGenesisStageService = (): StudioGenesisStageService => {
+  if (!studioGenesisStageService) {
+    const publicRoot = path.join(app.getAppPath(), app.isPackaged ? 'dist' : 'public');
+    const fallbackAvatarDataUri = `data:image/png;base64,${fs.readFileSync(path.join(publicRoot, 'default_metabot.png')).toString('base64')}`;
+    const frameDeps = {
+      getWindows: () => BrowserWindow.getAllWindows(),
+      executeTabCommand: (command: BotBrowserTabCommand) => getBotBrowserTabBridge().execute(command),
+    };
+    studioGenesisStageService = createStudioGenesisStageService({
+      getSession: (sessionId) => getCoworkStore().getSession(sessionId),
+      getMetabotById: (id) => getMetabotStore().getMetabotById(id),
+      getSettings: () => readStudioLiveStageSettings(getStoreOrNull()),
+      getLanguage: () => getPersistedAppLanguage(),
+      project: (input) => getBotBrowserProjection().project(input),
+      findStageTab: async (localPath) => {
+        const result = await getBotBrowserTabBridge().execute({ action: 'get-tabs' }, { focusWindow: false });
+        const expectedPrefix = `preview-metaapp://localhost${localPath}`;
+        return result.tabs.find((tab) => typeof tab.uri === 'string' && tab.uri.startsWith(expectedPrefix))?.id ?? null;
+      },
+      runScript: (input) => executeStageFrameScript(frameDeps, input),
+      submitTurn: async (input) => (await getCoworkTurnSubmissionController().submit(input)).success,
+      assets: {
+        genesisRoot: path.join(publicRoot, 'genesis-stage'),
+        orbRoot: path.join(publicRoot, 'live-stage'),
+        fallbackAvatarDataUri,
+      },
+      fallbackAvatarDataUri,
+    });
+  }
+  return studioGenesisStageService;
 };
 
 // Shared act executor for the agent tool and the RPC gateway route: resolves
@@ -12720,6 +12767,12 @@ if (!gotTheLock) {
      */
     fallbackGreeting: string;
     metabotId?: number | null;
+    /**
+     * 'studio': the first-run greeting opens on the Studio face — a projector
+     * (browser + assistantMode) session whose first turns play on the Genesis
+     * Stage. Omitted: the BotWorks standard chat.
+     */
+    surface?: 'studio';
   }) => {
     return withSqliteRecovery('cowork:session:createGreeting', async () => {
       try {
@@ -12729,9 +12782,15 @@ if (!gotTheLock) {
         if (!fallbackGreeting) {
           return { success: false, error: 'A fallback greeting message is required.' };
         }
+        const studio = options.surface === 'studio';
         const coworkStoreInstance = getCoworkStore();
         const config = coworkStoreInstance.getConfig();
-        const baseCwd = (options.cwd || config.workingDirectory || '').trim();
+        let baseCwd = (options.cwd || config.workingDirectory || '').trim();
+        if (!baseCwd && studio) {
+          // Same fallback as Studio sessions started from the panel.
+          baseCwd = path.join(app.getPath('userData'), 'browser-cowork');
+          fs.mkdirSync(baseCwd, { recursive: true });
+        }
         if (!baseCwd) {
           return { success: false, error: 'Please select a task folder before submitting.' };
         }
@@ -12755,17 +12814,22 @@ if (!gotTheLock) {
           config.executionMode || 'local',
           [],
           sessionMetabotId,
-          'standard',
+          studio ? 'browser' : 'standard',
           null,
           null,
           null,
-          'default',
+          studio ? 'bypassPermissions' : 'default',
           null,
           null,
           null,
           null,
           null,
+          null,
+          studio,
         );
+        // Claimed before the turn starts, so the greeting's first words land
+        // on the Genesis Stage and never open a Live Stage run.
+        if (studio) getStudioGenesisStageService().claimGreeting(session.id);
 
         // Fire the greeting turn. Same runner options as cowork:session:start
         // minus the renderer-supplied bits; the session's own systemPrompt (the
@@ -12783,7 +12847,9 @@ if (!gotTheLock) {
           skipInitialUserMessage: true,
           workspaceRoot: baseCwd,
           confirmationMode: 'modal',
-          permissionMode: getPersistedCoworkPermissionMode(),
+          // Studio conversations always run full trust (owner ruling
+          // 2026-11-11), scoped to the surface like cowork:session:start.
+          permissionMode: studio ? 'bypassPermissions' : getPersistedCoworkPermissionMode(),
           autoApproveTools: getPersistedAutoApproveTools(),
         })
           .catch((error) => {

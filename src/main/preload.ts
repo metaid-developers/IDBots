@@ -408,7 +408,7 @@ contextBridge.exposeInMainWorld('electron', {
     continueSession: (options: { sessionId: string; prompt: string; systemPrompt?: string; activeSkillIds?: string[] }) =>
       ipcRenderer.invoke('cowork:session:continue', options),
     /** First-run onboarding: the Twin Bot's first chat session + its generated greeting turn. */
-    createGreetingSession: (options: { title?: string; cwd?: string; systemPrompt?: string; fallbackGreeting: string; metabotId?: number | null }) =>
+    createGreetingSession: (options: { title?: string; cwd?: string; systemPrompt?: string; fallbackGreeting: string; metabotId?: number | null; surface?: 'studio' }) =>
       ipcRenderer.invoke('cowork:session:createGreeting', options),
     submitInput: (input: CoworkSubmitInput): Promise<CoworkSubmitInputResult> =>
       ipcRenderer.invoke('cowork:session:submitInput', input),

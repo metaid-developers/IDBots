@@ -61,6 +61,10 @@ export type StudioLiveStageServiceDeps = {
   interactionPollMs?: number;
   /** Resolve and validate the template package; defaults to the built-in registry. */
   resolveTemplate?: () => StudioLiveStageTemplateResolution;
+  /** Another stage (the first-run Genesis Stage) owns this session's projector. */
+  isSessionClaimed?(sessionId: string): boolean;
+  /** Resolves when the previous stage has played its outro (the handoff). */
+  beforeProjection?(sessionId: string): Promise<void> | null;
 };
 
 export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
@@ -125,6 +129,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
 
   function projectStage(run: LiveStageRun): void {
     enqueue(run, async () => {
+      await deps.beforeProjection?.(run.state.sessionId);
       const session = deps.getSession(run.state.sessionId);
       if (!session || !run.state.enabled) return;
       // The template resolved at turn start is pinned for the whole turn; a
@@ -213,6 +218,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
   function ensureRun(sessionId: string): LiveStageRun | null {
     const session = deps.getSession(sessionId);
     if (!currentSettings.enabled || !session || session.sessionType !== 'browser' || session.assistantMode !== true) return null;
+    if (deps.isSessionClaimed?.(sessionId)) return null;
     const existing = runs.get(sessionId);
     if (existing) return existing;
     turnCounter += 1;
