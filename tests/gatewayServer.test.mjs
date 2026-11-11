@@ -830,6 +830,37 @@ test('F-11: authorized downloads of office/pdf documents carry the correct conte
   }
 });
 
+test('http: inline MetaApp resources render with browser MIME while attachments stay downloads', async (t) => {
+  const { handle, paths } = await startServer(t);
+  const cases = [
+    ['index.html', 'text/html; charset=utf-8'],
+    ['data-entries.js', 'text/javascript; charset=utf-8'],
+    ['styles.css', 'text/css; charset=utf-8'],
+    ['font.woff2', 'font/woff2'],
+  ];
+  for (const [name, expectedMime] of cases) {
+    const filePath = path.join(paths.dataRoot, 'metaapp', name);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, `${name} bytes`);
+    const token = tokens.signFileToken(SECRET, TENANT, filePath, 'inline', Date.now() + 60_000);
+    const res = await httpRequest(handle.port, 'GET', `/gateway/v1/files/${token}`);
+    assert.equal(res.status, 200, name);
+    assert.equal(res.headers.get('content-type'), expectedMime, name);
+    assert.equal(res.headers.get('content-disposition'), `inline; filename="${name}"`);
+  }
+
+  const attachmentToken = tokens.signFileToken(
+    SECRET,
+    TENANT,
+    path.join(paths.dataRoot, 'metaapp', 'index.html'),
+    'attachment',
+    Date.now() + 60_000,
+  );
+  const attachment = await httpRequest(handle.port, 'GET', `/gateway/v1/files/${attachmentToken}`);
+  assert.equal(attachment.headers.get('content-type'), 'application/octet-stream');
+  assert.match(attachment.headers.get('content-disposition'), /^attachment; filename="index\.html"$/);
+});
+
 // ---------------------------------------------------------------------------
 // Upload route
 // ---------------------------------------------------------------------------

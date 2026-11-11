@@ -43,6 +43,21 @@ export const FILE_MIME_BY_EXTENSION: Record<string, string> = {
   '.wav': 'audio/wav',
 };
 
+const INLINE_PREVIEW_MIME_BY_EXTENSION: Record<string, string> = {
+  '.css': 'text/css; charset=utf-8',
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.m4a': 'audio/mp4',
+  '.ts': 'text/plain; charset=utf-8',
+  '.wasm': 'application/wasm',
+  '.webm': 'video/webm',
+  '.webmanifest': 'application/manifest+json',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.xml': 'application/xml',
+};
+
 export const DEFAULT_FILE_MIME = 'application/octet-stream';
 
 export interface SignFileDownloadDeps {
@@ -65,8 +80,13 @@ export interface SignedFileDownload {
   mime: string;
 }
 
-export function mimeForPath(filePath: string): string {
-  return FILE_MIME_BY_EXTENSION[path.extname(filePath).toLowerCase()] ?? DEFAULT_FILE_MIME;
+export function mimeForPath(filePath: string, disposition: FileTokenDisposition = 'attachment'): string {
+  const extension = path.extname(filePath).toLowerCase();
+  if (disposition === 'inline') {
+    const previewMime = INLINE_PREVIEW_MIME_BY_EXTENSION[extension];
+    if (previewMime) return previewMime;
+  }
+  return FILE_MIME_BY_EXTENSION[extension] ?? DEFAULT_FILE_MIME;
 }
 
 /**
@@ -111,7 +131,7 @@ export function signFileDownload(
     url: `${FILE_ROUTE_PATH_PREFIX}/${token}`,
     expiresAt,
     size,
-    mime: mimeForPath(resolved),
+    mime: mimeForPath(resolved, disposition),
   };
 }
 

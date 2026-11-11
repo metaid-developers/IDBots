@@ -31,4 +31,31 @@ test.describe('mobile Agent Browser', () => {
     await expect(frame.locator('.browser-shell')).toBeVisible({ timeout: 30_000 });
     await expect(frame.locator('.browser-address-form input')).toHaveValue(`pin://${'a'.repeat(64)}i0`);
   });
+
+  test('real MetaApp renders inline instead of downloading @gateway', async ({ page }) => {
+    const downloads: string[] = [];
+    page.on('download', (download) => downloads.push(download.suggestedFilename()));
+    await page.goto('/app/');
+    await page.evaluate(() => {
+      window.electron.userIdentity.get = async () => ({
+        success: true,
+        identity: { name: 'Gateway User', globalmetaid: 'idq1gatewayuser' },
+      });
+    });
+    await page.getByRole('button', { name: 'Browser', exact: true }).click();
+    const frame = page.frameLocator('[data-testid="mobile-browser-frame"]');
+    await expect(frame.locator('.browser-shell')).toBeVisible({ timeout: 30_000 });
+    const address = frame.locator('.browser-address-form input');
+    const uri = 'metaapp://7072d9242b5bef351b440b81de35fd087415a48d73e2c2f56931b207d8429aebi0';
+    await address.fill(uri);
+    await expect(address).toHaveValue(uri);
+    await address.press('Enter');
+    await expect.poll(
+      () => page.frames().some((candidate) => candidate.url().includes('/files/')),
+      { timeout: 60_000 },
+    ).toBe(true);
+    const metaApp = page.frames().find((candidate) => candidate.url().includes('/files/'))!;
+    await expect(metaApp.locator('body')).toContainText('人情世故指南');
+    expect(downloads).toEqual([]);
+  });
 });
