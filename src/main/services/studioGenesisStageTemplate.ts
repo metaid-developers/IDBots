@@ -14,7 +14,7 @@ function inlineJson(value: unknown): string {
   return JSON.stringify(value).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
 }
 
-const PLACEHOLDER = /__(GENESIS_CSS|INITIAL_STATE|AVATAR_URI|FALLBACK_AVATAR_URI|ORB_EFFECT|ORB_RENDERER|FALLBACK_ORB|GENESIS_JS)__/g;
+const PLACEHOLDER = /__(GENESIS_CSS|INITIAL_STATE|AVATAR_URI|FALLBACK_AVATAR_URI|ORB_EFFECT|ORB_RENDERER|FALLBACK_ORB|GENESIS_SOUND|GENESIS_JS)__/g;
 
 /**
  * One self-contained HTML file per greeting session. Placeholders are filled
@@ -35,6 +35,7 @@ export function renderGenesisStageHtml(input: {
     ORB_EFFECT: () => readOrb('liquid-orb-effect.js'),
     ORB_RENDERER: () => readOrb('liquid-orb.js'),
     FALLBACK_ORB: () => readGenesis('genesis-fallback-orb.js'),
+    GENESIS_SOUND: () => readGenesis('genesis-sound.js'),
     GENESIS_JS: () => readGenesis('genesis.js'),
   };
   return readGenesis('genesis.html').replace(PLACEHOLDER, (_match, key: string) => values[key]());

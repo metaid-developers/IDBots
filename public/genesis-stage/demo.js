@@ -58,7 +58,7 @@
         inviteQuestion: '想更深入了解 IDBots 和 AI 互联网吗？', inviteHint: '也可以先在左边和我聊聊，比如给我起个名字。',
         inviteAccept: '带我看看', inviteLater: '以后再说', tourUserMessage: '好的，带我了解一下 IDBots 和 AI 互联网吧！',
         tourKicker: 'IDBots × AI 互联网', tourOutro: '这就是 AI 互联网。现在，交给我一件事试试吧。',
-        settledCaption: '有任何事，随时在左边告诉我。', namingKicker: '从现在起，我的名字是', handoffCaption: '开始工作', tourFallback: [],
+        settledCaption: '有任何事，随时在左边告诉我。', namingKicker: '从现在起，我的名字是', handoffCaption: '开始工作', soundOn: '声音已开启，点击静音', soundOff: '声音已关闭，点击开启', tourFallback: [],
       },
     },
     en: {
@@ -86,7 +86,7 @@
         inviteQuestion: 'Want a deeper look at IDBots and the AI Internet?', inviteHint: 'Or just talk to me on the left — you could start by giving me a name.',
         inviteAccept: 'Show me', inviteLater: 'Later', tourUserMessage: 'Sure — show me what IDBots and the AI Internet are about!',
         tourKicker: 'IDBots × The AI Internet', tourOutro: "That's the AI Internet. Now, give me something to do.",
-        settledCaption: 'Whenever you need anything, just tell me on the left.', namingKicker: 'From now on, my name is', handoffCaption: 'Getting to work', tourFallback: [],
+        settledCaption: 'Whenever you need anything, just tell me on the left.', namingKicker: 'From now on, my name is', handoffCaption: 'Getting to work', soundOn: 'Sound on — click to mute', soundOff: 'Sound off — click to turn on', tourFallback: [],
       },
     },
   };

@@ -76,6 +76,16 @@ body[data-boot="done"] .g-hud{opacity:1}
 .g-hud-sep{width:18px;height:1px;background:var(--hairline)}
 .g-hud-pulse{width:6px;height:6px;border-radius:50%;background:var(--cyan);box-shadow:0 0 10px var(--cyan);animation:hud-pulse 2.4s ease-in-out infinite}
 .g-hud-name{color:var(--ink-dim);overflow:hidden;text-overflow:ellipsis;max-width:22vw}
+.g-hud-sound{display:inline-flex;align-items:flex-end;gap:2px;height:14px;padding:0 3px;border:0;background:none;cursor:pointer;pointer-events:none;opacity:.85;transition:opacity .2s}
+.g-hud-sound[hidden]{display:none}
+body[data-boot="done"] .g-hud-sound{pointer-events:auto}
+.g-hud-sound:hover{opacity:1}
+.g-hud-sound:focus-visible{outline:1px solid var(--cyan);outline-offset:3px;border-radius:2px}
+.g-hud-sound i{display:block;width:2px;height:2px;border-radius:1px;background:var(--ink-dim);transition:height .3s ease,background .3s ease}
+.g-hud-sound[data-on="true"] i{background:var(--cyan);box-shadow:0 0 6px rgba(130,244,255,.6);animation:hud-eq 1.3s ease-in-out infinite}
+.g-hud-sound[data-on="true"] i:nth-child(2){animation-delay:-.45s}
+.g-hud-sound[data-on="true"] i:nth-child(3){animation-delay:-.9s}
+@keyframes hud-eq{0%,100%{height:3px}50%{height:11px}}
 @keyframes hud-pulse{0%,100%{opacity:.35}50%{opacity:1}}
 @media(max-width:640px){.g-hud-id,.g-hud-clock{display:none}}
 

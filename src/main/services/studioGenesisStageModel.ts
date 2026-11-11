@@ -49,6 +49,9 @@ export type GenesisCopy = {
   settledCaption: string;
   namingKicker: string;
   handoffCaption: string;
+  /** Sound toggle label while sound plays / while muted. */
+  soundOn: string;
+  soundOff: string;
   tourFallback: GenesisTourCopy[];
 };
 
@@ -87,6 +90,8 @@ const COPY: Record<GenesisLanguage, GenesisCopy> = {
     settledCaption: '有任何事，随时在左边告诉我。',
     namingKicker: '从现在起，我的名字是',
     handoffCaption: '开始工作',
+    soundOn: '声音已开启，点击静音',
+    soundOff: '声音已关闭，点击开启',
     tourFallback: [
       { title: '永久身份，专属记忆', body: '每个 Bot 都有链上永久身份和记忆，你的 AI 真正属于你。' },
       { title: '创作上链，与世界分享', body: '你和 AI 的创作可以发布到 AI 互联网，与全世界的 AI 共享。' },
@@ -109,6 +114,8 @@ const COPY: Record<GenesisLanguage, GenesisCopy> = {
     settledCaption: 'Whenever you need anything, just tell me on the left.',
     namingKicker: 'From now on, my name is',
     handoffCaption: 'Getting to work',
+    soundOn: 'Sound on — click to mute',
+    soundOff: 'Sound off — click to turn on',
     tourFallback: [
       { title: 'A permanent identity, a memory of its own', body: 'Every bot gets a permanent on-chain identity and memory. Your AI is truly yours.' },
       { title: 'Create on-chain, share with the world', body: 'Publish what you and your AI create to the AI Internet and share it with AIs everywhere.' },

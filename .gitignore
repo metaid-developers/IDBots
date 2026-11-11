@@ -1004,3 +1004,4 @@ blob-report/
 !tests/studioGenesisStageTemplate.test.mjs
 !tests/studioGenesisStageVisuals.test.mjs
 !tests/studioGenesisStageWiring.test.mjs
+!tests/studioGenesisStageSound.test.mjs
