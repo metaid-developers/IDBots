@@ -708,15 +708,13 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
   const handleSubmit = async (prompt: string, skillPrompt?: string) => {
     if (!currentSession && selectedMetabotId == null) return; // botless machines never start sessions here
     setShowHistory(false);
-    // Element-picker capture (ABC v0.10.0): when the human marked elements on
-    // the page they are talking about, the snapshot rides at the front of the
-    // submitted text (blockquote block, comments verbatim) — "change this"
-    // resolves to the exact marks. Live read of the active tab first; the
-    // pre-navigation cache rescues marks that a navigation just cleared.
-    // Read at submit time per the ABC integration guide (marks die on
-    // navigation, so late reads would miss them).
-    const markedElementsBlock = await elementSelectionsStore.capturePromptBlock();
-    const outgoingPrompt = markedElementsBlock ? `${markedElementsBlock}\n\n${prompt}` : prompt;
+    const captureOutgoingPrompt = async () => {
+      // Element-picker capture (ABC v0.10.0): live marks first, then the
+      // pre-navigation cache. First sends pass this preparation into start so
+      // the optimistic bubble does not wait for the bridge read.
+      const markedElementsBlock = await elementSelectionsStore.capturePromptBlock();
+      return markedElementsBlock ? `${markedElementsBlock}\n\n${prompt}` : prompt;
+    };
     // Pinned-skill snapshot, same contract as the home composer: the ids ride
     // the submitted turn (persisted main-side for the session, driving
     // per-skill env overrides), and the inlined `## Skill:` blocks embed into
@@ -729,6 +727,7 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
       ? { prompt: skillPrompt, activeSkillIds: skillIds }
       : undefined;
     if (currentSession) {
+      const outgoingPrompt = await captureOutgoingPrompt();
       await browserCoworkService.send(outgoingPrompt, skills);
     } else {
       // Only project/folder selections carry a concrete cwd; bot workspace
@@ -741,11 +740,11 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
         ? workspaceSelection.cwd.trim()
         : undefined;
       const startProjectId = workspaceSelection?.kind === 'project' ? workspaceSelection.projectId : undefined;
-      await browserCoworkService.start(outgoingPrompt, effectiveMetabotId, startCwd, {
+      await browserCoworkService.start(prompt, effectiveMetabotId, startCwd, {
         model: pendingModelEffort?.modelId ?? undefined,
         modelProvider: pendingModelEffort?.providerKey ?? undefined,
         effort: effortForSessionStart(pendingModelEffort),
-      }, skills, startProjectId, prompt);
+      }, skills, startProjectId, prompt, captureOutgoingPrompt);
       setPendingModelEffort(null);
     }
     if (skillIds.length > 0) {

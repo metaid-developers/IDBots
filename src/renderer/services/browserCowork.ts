@@ -1,8 +1,5 @@
 import { store } from '../store';
-import {
-  setBrowserSession,
-  setBrowserStreaming,
-} from '../store/slices/browserCoworkSlice';
+import { setBrowserSession } from '../store/slices/browserCoworkSlice';
 import { setBrowserOpenSessionId } from '../store/slices/coworkSlice';
 import { coworkService } from './cowork';
 import { sessionTabBinding } from './sessionTabBinding';
@@ -28,6 +25,50 @@ export interface BrowserCoworkSkills {
   prompt?: string;
   /** Store ids of the pinned skills. */
   activeSkillIds?: string[];
+}
+
+const OPTIMISTIC_SESSION_PREFIX = 'optimistic-browser-';
+const isOptimisticSession = (session: CoworkSession | null): boolean =>
+  session?.id.startsWith(OPTIMISTIC_SESSION_PREFIX) === true;
+
+function buildOptimisticSession(input: {
+  prompt: string;
+  title: string;
+  metabotId?: number | null;
+  cwd?: string;
+  modelEffort?: { model?: string | null; modelProvider?: string | null; effort?: string | null };
+  skills?: BrowserCoworkSkills;
+  projectId?: string | null;
+}): CoworkSession {
+  const timestamp = Date.now();
+  const id = `${OPTIMISTIC_SESSION_PREFIX}${crypto.randomUUID()}`;
+  return {
+    id,
+    title: input.title,
+    claudeSessionId: null,
+    status: 'running',
+    pinned: false,
+    cwd: input.cwd?.trim() ?? '',
+    systemPrompt: '',
+    executionMode: 'local',
+    activeSkillIds: [...(input.skills?.activeSkillIds ?? [])],
+    messages: [{
+      id: `${id}-first-message`,
+      type: 'user',
+      content: input.prompt,
+      timestamp,
+      metadata: { origin: 'user', optimistic: true },
+    }],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    sessionType: 'browser',
+    assistantMode: true,
+    metabotId: input.metabotId ?? null,
+    projectId: input.projectId ?? null,
+    model: input.modelEffort?.model ?? null,
+    modelProvider: input.modelEffort?.modelProvider ?? null,
+    effort: input.modelEffort?.effort ?? null,
+  };
 }
 
 class BrowserCoworkService {
@@ -74,21 +115,37 @@ class BrowserCoworkService {
      * context block rides inside prompt but must not seed the session title.
      */
     titleSource?: string,
+    preparePrompt?: () => Promise<string>,
   ): Promise<CoworkSession | null> {
     if (this.starting) return null;
     const cowork = window.electron?.cowork;
     if (!cowork) return null;
     this.starting = true;
+    const titlePrompt = titleSource?.trim() ? titleSource : prompt;
+    const fallbackTitle = titlePrompt.split('\n')[0].slice(0, 50) || 'Bot Browser';
+    const optimistic = buildOptimisticSession({
+      prompt,
+      title: fallbackTitle,
+      metabotId,
+      cwd,
+      modelEffort,
+      skills,
+      projectId,
+    });
+    const clearOptimistic = () => {
+      if (store.getState().browserCowork.currentSession?.id === optimistic.id) {
+        store.dispatch(setBrowserSession(null));
+      }
+    };
     try {
-      store.dispatch(setBrowserStreaming(true));
-      const titlePrompt = titleSource?.trim() ? titleSource : prompt;
-      const fallbackTitle = titlePrompt.split('\n')[0].slice(0, 50) || 'Bot Browser';
+      store.dispatch(setBrowserSession(optimistic));
+      const outgoingPrompt = preparePrompt ? await preparePrompt() : prompt;
       const [generatedTitle, systemPrompt] = await Promise.all([
         coworkService.generateSessionTitle(titlePrompt).catch(() => null),
         this.buildCombinedSystemPrompt(skills?.prompt),
       ]);
       const result = await cowork.startSession({
-        prompt,
+        prompt: outgoingPrompt,
         title: generatedTitle?.trim() || fallbackTitle,
         systemPrompt,
         sessionType: 'browser',
@@ -116,9 +173,12 @@ class BrowserCoworkService {
         await coworkService.loadSessions();
         return result.session;
       }
-      store.dispatch(setBrowserStreaming(false));
+      clearOptimistic();
       console.error('Failed to start browser cowork session:', result?.error);
       return null;
+    } catch (error) {
+      clearOptimistic();
+      throw error;
     } finally {
       this.starting = false;
     }
@@ -126,7 +186,7 @@ class BrowserCoworkService {
 
   async send(prompt: string, skills?: BrowserCoworkSkills): Promise<boolean> {
     const session = store.getState().browserCowork.currentSession;
-    if (!session) return false;
+    if (!session || isOptimisticSession(session)) return false;
     // Fresh system prompt only when skills were pinned for this turn;
     // ordinary turns keep the session's persisted prompt so the cacheable
     // head never rewrites mid-session (same policy as the home composer's
@@ -146,7 +206,7 @@ class BrowserCoworkService {
 
   async stop(): Promise<void> {
     const session = store.getState().browserCowork.currentSession;
-    if (!session) return;
+    if (!session || isOptimisticSession(session)) return;
     await coworkService.stopSession(session.id);
   }
 
