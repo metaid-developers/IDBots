@@ -262,7 +262,7 @@ const flowSource = fs.readFileSync(
 function createOrderBody() {
   const start = flowSource.indexOf('const handleCreateOrder = useCallback(');
   assert.ok(start >= 0, 'MePurchaseFlow must keep a handleCreateOrder callback');
-  const end = flowSource.indexOf('}, [section, selectedPlan, selectedTopup, phase, period, amountDue, gateway]);', start);
+  const end = flowSource.indexOf('}, [section, selectedPlan, selectedTopup, phase, period, amountDue, gateway, isFreeSelected, isUpgradePlan, upgradeConfirmOpen]);', start);
   assert.ok(end > start, 'handleCreateOrder dependency list shape changed — update this slice');
   return flowSource.slice(start, end);
 }
@@ -368,6 +368,30 @@ test('MePurchaseFlow: downgrades locked, current tier orderable for renewal, pai
   assert.match(flowSource, /mePurchaseTopTierNote/);
   // Success page: celebratory centered layout.
   assert.match(flowSource, /mePurchaseSuccessTitle/);
+});
+
+test('MePurchaseFlow: upgrades confirm full-price first (interim until ABS proration ships)', () => {
+  // Owner policy 2026-11-11: the first CTA press on a HIGHER tier opens an
+  // inline full-price notice; only the second press creates the order. When
+  // the server ships proration (Amendment v0.4 R6) the notice text flips to
+  // the credit breakdown — the two-step gate itself stays.
+  assert.match(flowSource, /const isUpgradePlan = useCallback\(/);
+  assert.match(flowSource, /const \[upgradeConfirmOpen, setUpgradeConfirmOpen\] = useState\(false\);/);
+  assert.match(
+    flowSource,
+    /isUpgradePlan\(selectedPlan\)\s*&& !upgradeConfirmOpen/,
+    'first press must only open the confirm, not create the order',
+  );
+  assert.match(flowSource, /data-testid="me-upgrade-confirm"/);
+  assert.match(flowSource, /i18nService\.t\('mePurchaseUpgradeNotice'\)/);
+  assert.match(flowSource, /i18nService\.t\('mePurchaseUpgradeConfirm'\)/);
+  // A selection/period/gateway change dismisses a stale confirm…
+  assert.match(flowSource, /setUpgradeConfirmOpen\(false\);\s*\}, \[effectivePlanId, period, gateway\]\);/);
+  // …and so do panel reopen and back-to-picker.
+  assert.match(flowSource, /setCheckout\(null\);\s*\n\s*setOrderError\(''\);\s*\n\s*setErrorCode\(''\);\s*\n\s*setUpgradeConfirmOpen\(false\);/);
+  // Server-reported proration renders in the paying phase (client-ready for R6).
+  assert.match(flowSource, /data-testid="me-proration-credit"/);
+  assert.match(flowSource, /i18nService\.t\('mePurchaseProrationApplied'\)/);
 });
 
 test('MePurchaseFlow reset effect runs only on open/section transitions', () => {

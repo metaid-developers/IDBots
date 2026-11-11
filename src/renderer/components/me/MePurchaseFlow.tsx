@@ -30,6 +30,7 @@ import {
   meDiscountFromPct,
   mePaymentPhase,
   mePeriodPricing,
+  meTierRank,
   normalizeMePaymentCheckout,
   type MePaymentCheckout,
   type MeSubscriptionPeriodOption,
@@ -128,6 +129,11 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
   const [checking, setChecking] = useState(false);
   const [checkout, setCheckout] = useState<MePaymentCheckout | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState('');
+  // Upgrade two-step confirm (owner policy 2026-11-11, interim until ABS
+  // ships proration): the first CTA press on a HIGHER tier opens an inline
+  // notice stating the order is full-price with no credit for the current
+  // plan's remaining days; only the second press creates the order.
+  const [upgradeConfirmOpen, setUpgradeConfirmOpen] = useState(false);
 
   const paidPlans = useMemo(
     () => snapshot.plans.filter((plan) => plan.tier !== 'free'),
@@ -166,6 +172,17 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
     (plan: MePlanInfo) => subscribed && isMePlanDowngrade(activeTierKey, plan.tier),
     [subscribed, activeTierKey],
   );
+  // Upgrade = a HIGHER ladder tier while subscribed. Unknown active rank
+  // (-1) never classifies as an upgrade (no confirm for unverifiable tiers).
+  const isUpgradePlan = useCallback(
+    (plan: MePlanInfo) => {
+      if (!subscribed) return false;
+      const active = meTierRank(activeTierKey);
+      return active >= 0 && meTierRank(plan.tier) > active;
+    },
+    [subscribed, activeTierKey],
+  );
+  const selectedIsUpgrade = section === 'subscribe' && !!selectedPlan && !isFreeSelected && isUpgradePlan(selectedPlan);
   // Order-blocked plans: the free tier has no order until subscribed, and a
   // LOWER paid tier is locked while a subscription is active (downgrades
   // would need a refund path the server does not offer). Everything else —
@@ -199,6 +216,7 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
     setCheckout(null);
     setQrDataUrl('');
     setChecking(false);
+    setUpgradeConfirmOpen(false);
     setPeriod('month');
     setGateway('alipay');
     setTopupPackages([]);
@@ -252,6 +270,12 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
   const selectedTopup = topupPackages.find((pkg) => pkg.packageId === selectedPackageId) ?? null;
   // The free tier is display-only: it has no order, no period and no CTA.
   const isFreeSelected = selectedPlan?.tier === 'free';
+
+  // Any selection/period/gateway change dismisses a stale upgrade confirm —
+  // the notice always describes the CURRENT selection only.
+  useEffect(() => {
+    setUpgradeConfirmOpen(false);
+  }, [effectivePlanId, period, gateway]);
 
   const periodPricing = useMemo(() => {
     if (!selectedPlan || isFreeSelected) return null;
@@ -339,6 +363,18 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
   const handleCreateOrder = useCallback(async () => {
     const subjectId = section === 'subscribe' ? selectedPlan?.planId : selectedTopup?.packageId;
     if (!subjectId || phase === 'creating') return;
+    // Upgrade two-step confirm: first press on a higher tier only opens the
+    // full-price notice; the order is created on the explicit second press.
+    if (
+      section === 'subscribe'
+      && selectedPlan
+      && !isFreeSelected
+      && isUpgradePlan(selectedPlan)
+      && !upgradeConfirmOpen
+    ) {
+      setUpgradeConfirmOpen(true);
+      return;
+    }
     setPhase('creating');
     setOrderError('');
     setErrorCode('');
@@ -383,13 +419,14 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
       setPhase('pick');
       setOrderError(error instanceof Error && error.message ? error.message : i18nService.t('mePurchaseUnavailable'));
     }
-  }, [section, selectedPlan, selectedTopup, phase, period, amountDue, gateway]);
+  }, [section, selectedPlan, selectedTopup, phase, period, amountDue, gateway, isFreeSelected, isUpgradePlan, upgradeConfirmOpen]);
 
   const backToPicker = () => {
     setPhase('pick');
     setCheckout(null);
     setOrderError('');
     setErrorCode('');
+    setUpgradeConfirmOpen(false);
   };
 
   if (!open) return null;
@@ -665,6 +702,24 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
                   {priceLabel(checkout.payAmount)} {i18nService.t('mePurchaseCny')}
                 </span>
               </div>
+              {/* Upgrade proration credit (Amendment v0.4 R6): rendered only
+                  when the server reports one — never a client-computed guess. */}
+              {checkout.creditAppliedCny != null && checkout.creditAppliedCny > 0 && (
+                <div
+                  className="flex items-center justify-between rounded-xl border border-green-200 dark:border-green-800/70 bg-green-50/60 dark:bg-green-950/20 px-3 py-2"
+                  data-testid="me-proration-credit"
+                >
+                  <span className="text-[11px] text-green-700 dark:text-green-300">
+                    {i18nService.t('mePurchaseProrationApplied')}
+                    {checkout.listAmountCny != null && checkout.listAmountCny > 0
+                      ? ` (${i18nService.t('mePurchasePriceTagLabel')} ¥${priceLabel(checkout.listAmountCny)})`
+                      : ''}
+                  </span>
+                  <span className="text-[11px] font-semibold tabular-nums text-green-700 dark:text-green-300">
+                    -¥{priceLabel(checkout.creditAppliedCny)}
+                  </span>
+                </div>
+              )}
               {checkout.qrCode && (
                 <div className="flex flex-col items-center">
                   {qrDataUrl ? (
@@ -797,13 +852,28 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
 
       {(phase === 'pick' || phase === 'creating') && canCreate && (
         <div className="sticky bottom-0 border-t border-claude-border/60 dark:border-claude-darkBorder/60 bg-claude-surface/95 dark:bg-claude-darkSurface/95 px-4 py-3 backdrop-blur">
+          {upgradeConfirmOpen && (
+            <div
+              className="mb-2 rounded-xl border border-amber-200 dark:border-amber-800/70 bg-amber-50/70 dark:bg-amber-950/30 px-3 py-2"
+              data-testid="me-upgrade-confirm"
+            >
+              <p className="text-[11px] leading-relaxed text-amber-800 dark:text-amber-300">
+                <ExclamationTriangleIcon className="mr-1 inline h-3.5 w-3.5" />
+                {i18nService.t('mePurchaseUpgradeNotice')}
+              </p>
+            </div>
+          )}
           <button
             type="button"
             disabled={phase === 'creating'}
             onClick={() => void handleCreateOrder()}
             className="btn-idchat-primary-filled w-full rounded-xl px-3 py-2 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {phase === 'creating' ? i18nService.t('mePurchaseCreating') : i18nService.t('mePurchasePay')}
+            {phase === 'creating'
+              ? i18nService.t('mePurchaseCreating')
+              : upgradeConfirmOpen
+                ? i18nService.t('mePurchaseUpgradeConfirm')
+                : i18nService.t('mePurchasePay')}
           </button>
         </div>
       )}

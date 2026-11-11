@@ -13,6 +13,14 @@ export interface MePaymentCheckout {
    * deadline only when present, never a guessed one.
    */
   expiresAt?: number;
+  /**
+   * Upgrade proration (Amendment v0.4, R6) — the credit the server deducted
+   * from the list price for the previous plan's unused days. Optional until
+   * the server ships it; the paying phase renders the credit line only when
+   * present, and the list price it was deducted from.
+   */
+  listAmountCny?: number;
+  creditAppliedCny?: number;
 }
 
 type PaymentOrder = Partial<MeSubscriptionOrderInfo & MeTopupOrderInfo>;
@@ -94,6 +102,39 @@ export function normalizeMePaymentCheckout(
     payAmount: amountOf(order?.payAmount) ?? amountOf(order?.amountCny) ?? amountOf(order?.priceCny) ?? fallbackAmount,
     payCurrency: textOf(order?.payCurrency) || 'CNY',
     expiresAt: extractMeExpiresAt(order),
+    ...extractMeProration(order),
+  };
+}
+
+/**
+ * Upgrade proration fields (Amendment v0.4 R6) from the order body or its
+ * `breakdown` object. Stays absent until the server ships the amendment —
+ * callers must treat missing fields as "no credit shown", never as 0.
+ */
+export function extractMeProration(order: PaymentOrder | null | undefined): {
+  listAmountCny?: number;
+  creditAppliedCny?: number;
+} {
+  const sources: Array<Record<string, unknown> | null> = [
+    recordOf(order?.breakdown),
+    recordOf(order),
+  ];
+  let listAmountCny: number | undefined;
+  let creditAppliedCny: number | undefined;
+  for (const record of sources) {
+    if (!record) continue;
+    if (listAmountCny === undefined) {
+      const list = amountOf(record.listAmountCny ?? record.list_amount_cny ?? record.listPriceCny);
+      if (list !== undefined) listAmountCny = list;
+    }
+    if (creditAppliedCny === undefined) {
+      const credit = amountOf(record.creditCny ?? record.credit_cny ?? record.prorationCreditCny);
+      if (credit !== undefined) creditAppliedCny = credit;
+    }
+  }
+  return {
+    ...(listAmountCny !== undefined ? { listAmountCny } : {}),
+    ...(creditAppliedCny !== undefined ? { creditAppliedCny } : {}),
   };
 }
 
