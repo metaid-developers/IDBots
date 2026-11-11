@@ -72,7 +72,9 @@
   const hudName = el('span', 'g-hud-name');
   const hudId = el('span', 'g-hud-id');
   const hudClock = el('span', 'g-hud-clock');
-  hudRight.append(el('i', 'g-hud-pulse'), hudName, hudId, hudClock);
+  const hudSound = el('button', 'g-hud-sound', { type: 'button' });
+  hudSound.append(el('i'), el('i'), el('i'));
+  hudRight.append(hudSound, el('i', 'g-hud-pulse'), hudName, hudId, hudClock);
   hud.append(hudLeft, hudRight);
 
   const scene = el('section', 'g-scene');
@@ -106,6 +108,38 @@
 
   stage.append(voidLayer, liveVoid, field, orbBox, fx, avatar, crt, hud, scene, subtitle, naming, invite, progress, el('div', 'g-grain', { 'aria-hidden': 'true' }));
   body.append(stage);
+
+  // ───────────────────────────── sound ─────────────────────────────
+  // Synthesized cues (genesis-sound.js); the owner's mute choice is remembered
+  // for every Genesis page on this origin.
+  const SOUND_KEY = 'idbots.genesis.sound';
+  const readSoundPreference = () => {
+    try { return window.localStorage.getItem(SOUND_KEY) !== 'off'; } catch { return true; }
+  };
+  const sound = typeof window.createGenesisSound === 'function'
+    ? window.createGenesisSound({ enabled: readSoundPreference() })
+    : null;
+  const sfx = (name, params) => { if (sound && !local.handoff) sound.cue(name, params); };
+  function syncSoundButton() {
+    const on = Boolean(sound && sound.isEnabled());
+    const label = on ? (state.copy.soundOn || 'Sound on') : (state.copy.soundOff || 'Sound off');
+    hudSound.hidden = !sound || !sound.getContext();
+    hudSound.dataset.on = on ? 'true' : 'false';
+    hudSound.setAttribute('aria-pressed', String(on));
+    hudSound.setAttribute('aria-label', label);
+    hudSound.title = label;
+  }
+  hudSound.addEventListener('click', () => {
+    if (!sound) return;
+    const next = !sound.isEnabled();
+    sound.setEnabled(next);
+    try { window.localStorage.setItem(SOUND_KEY, next ? 'on' : 'off'); } catch { /* the choice stays this page's */ }
+    syncSoundButton();
+  });
+  // Autoplay is allowed in the IDBots host; elsewhere the first touch unlocks audio.
+  const unlockSound = () => { if (sound) sound.resume(); };
+  window.addEventListener('pointerdown', unlockSound, true);
+  window.addEventListener('keydown', unlockSound, true);
 
   // ───────────────────────────── orb looks ─────────────────────────────
   const BASE = typeof window.liquidOrbBaseParams === 'function' ? window.liquidOrbBaseParams() : {};
@@ -363,6 +397,7 @@
       speech.typing = true;
       speech.nextAt = t + 120;
       speech.holdUntil = Infinity;
+      sfx('segment');
     }
     setStatus('');
     renderLine();
@@ -401,6 +436,7 @@
   }
 
   function triggerCue(kind, t) {
+    sfx('cue', { kind });
     flashes.push({ kind, t0: t });
     if (flashes.length > 6) flashes.shift();
     const palette = CUE_PALETTES[kind];
@@ -521,7 +557,8 @@
     progressBars.forEach((bar, barIndex) => bar.style.setProperty('--fill', barIndex <= index ? '1' : '0'));
     setFieldMode(SCENE_MODES[index], t);
     morph(SCENE_LOOKS[index]);
-    if (index === 3) { local.evolveStep = 0; local.evolveAt = t; }
+    sfx('chapter', { index });
+    if (index === 3) { local.evolveStep = 0; local.evolveAt = t; sfx('warp', { delay: 0.4 }); }
     addRipple(t, PALETTES[SCENE_LOOKS[index]].glowColor, { width: 2.4, life: 1800, speed: 260 });
     bloom(t, PALETTES[SCENE_LOOKS[index]].glowColor);
   }
@@ -535,6 +572,7 @@
     setFieldMode('finale', t);
     morph('finale');
     bloom(t, '#FFDC51');
+    sfx('finale');
     const turn = currentTurn();
     if (turn && turn.tour && turn.tour.outro.length === 0) {
       startSegment({ id: `${turn.id}:outro-fallback`, text: state.copy.tourOutro, cues: [] }, t, { virtual: true });
@@ -588,6 +626,7 @@
       inviteLater.disabled = false;
       local.inviteToken = state.invite.token;
       bloom(t, '#82F4FF');
+      sfx('invite-open');
     }
     invite.classList.toggle('is-on', show);
     const flag = show ? 'on' : 'off';
@@ -607,8 +646,10 @@
     if (choice === 'tour') {
       bloom(now, '#FFDC51');
       setStatus(state.copy.thinking);
+      sfx('invite-accept');
     } else {
       settleLine(state.copy.settledCaption);
+      sfx('invite-later');
     }
   }
   inviteAccept.addEventListener('click', () => answerInvite('tour'));
@@ -637,6 +678,7 @@
     if (state.phase === 'settled' && !state.invite && !speech.typing && (!speech.segment || t >= speech.holdUntil) && !local.settled) {
       local.settled = true;
       settleLine(state.copy.settledCaption);
+      sfx('settle');
     }
   }
 
@@ -694,7 +736,7 @@
   const fieldCtx = field.getContext('2d');
   const fxCtx = fx.getContext('2d');
   let width = 0, height = 0, ratio = 1;
-  const FIELD = { mode: 'void', modeAt: 0, ripples: [], pins: [], pinAt: 0, nodes: [], blooms: [] };
+  const FIELD = { mode: 'void', modeAt: 0, ripples: [], pins: [], pinAt: 0, nodes: [], blooms: [], engraved: 0, packets: {} };
   const dust = Array.from({ length: 150 }, (_, index) => ({
     angle: hash(index) * Math.PI * 2,
     home: 1.35 + hash(index + 11) * 2.4,
@@ -739,6 +781,8 @@
     FIELD.modeAt = t;
     FIELD.pins = [];
     FIELD.pinAt = t;
+    FIELD.engraved = 0;
+    FIELD.packets = {};
     if (mode === 'publish') {
       FIELD.nodes = Array.from({ length: 9 }, (_, index) => ({ angle: (index / 9) * Math.PI * 2 + .3 + (hash(index + 301) - .5) * .4, dist: 2 + hash(index + 311) * .7, litAt: -1e9 }));
     }
@@ -811,6 +855,7 @@
     const radius = g.R * 1.34;
     const reveal = clamp(since / 2600, 0, 1);
     const shown = Math.floor(chars.length * reveal);
+    if (shown > FIELD.engraved) { FIELD.engraved = shown; sfx('engrave'); }
     const step = (Math.PI * 2) / chars.length;
     const spin = t * .00009;
     const fontSize = clamp(g.R * .085, 9, 13);
@@ -874,6 +919,7 @@
       const target = FIELD.pins.length + Math.floor(t / 620);
       FIELD.pins.push({ node: nodes[target % nodes.length], t0: t, rgb: hexToRgb(['#82F4FF', '#FF7BD5', '#FFD86B'][target % 3]) });
       addRipple(t, '#FF9DE6', { width: 1, life: 1100, speed: 140 });
+      sfx('pin');
     }
     for (let index = 0; index < nodes.length; index += 1) {
       const a = nodePoint(nodes[index], g), b = nodePoint(nodes[(index + 1) % nodes.length], g);
@@ -902,7 +948,10 @@
       ctx.save(); ctx.translate(head.x, head.y); ctx.rotate(Math.PI / 4);
       ctx.fillStyle = rgbToCss(pin.rgb, 1); ctx.shadowColor = rgbToCss(pin.rgb, 1); ctx.shadowBlur = 10;
       ctx.fillRect(-3.5, -3.5, 7, 7); ctx.restore();
-      if (p >= 1 && pin.node.litAt < pin.t0) pin.node.litAt = t;
+      if (p >= 1 && pin.node.litAt < pin.t0) {
+        pin.node.litAt = t;
+        sfx('node', { degree: nodes.indexOf(pin.node) % 5 });
+      }
     }
     for (const node of nodes) {
       const point = nodePoint(node, g);
@@ -946,6 +995,9 @@
       ctx.strokeStyle = rgbToCss(satellite.rgb, .32 * emerge); ctx.lineWidth = 1.2; ctx.stroke();
       for (let packet = 0; packet < 2; packet += 1) {
         const raw = (t * .00045 + packet * .5 + satellite.offset) % 1;
+        const packetKey = `${satellite.offset}:${packet}`;
+        if (FIELD.packets[packetKey] !== undefined && raw < FIELD.packets[packetKey]) sfx('packet');
+        FIELD.packets[packetKey] = raw;
         const u = packet === 0 ? raw : 1 - raw;
         const x = (1 - u) * (1 - u) * start.x + 2 * (1 - u) * u * control.x + u * u * satellite.x;
         const y = (1 - u) * (1 - u) * start.y + 2 * (1 - u) * u * control.y + u * u * satellite.y;
@@ -995,6 +1047,7 @@
       local.evolveAt = t;
       setOrbStyle(EVOLVE_STYLES[local.evolveStep]);
       bloom(t, ['#9EF1FF', '#E0A3FF', '#FF9BE2', '#B49BFF'][local.evolveStep]);
+      sfx('evolve', { degree: [0, 2, 4, 1][local.evolveStep] });
       addRipple(t, '#C2A8FF', { width: 2.2, life: 1500, speed: 300 });
     }
   }
@@ -1024,6 +1077,8 @@
     namingFx.particles = [];
     triggerCue('name', t);
     bloom(t, '#FFDC51');
+    sfx('naming-gather');
+    sfx('naming-reveal', { delay: 1.35 });
     if (reduced()) { naming.classList.add('is-on'); setTimeout(() => naming.classList.remove('is-on'), 4200); namingFx.active = false; return; }
     const rect = namingName.getBoundingClientRect();
     const stageRect = stage.getBoundingClientRect();
@@ -1145,10 +1200,16 @@
       morph('home');
       setFieldMode('idle', t);
       replayLatest(t);
+      sound?.setBed(1);
       return;
     }
     local.boot = 'crt';
     body.dataset.boot = 'crt';
+    // Timed to the CSS power-on keyframes (dot .3s, line .95s, flash 1.5s, drop 1.5s).
+    sfx('crt-dot', { delay: 0.32 });
+    sfx('crt-line', { delay: 0.95 });
+    sfx('crt-flash', { delay: 1.52 });
+    sfx('drop', { delay: 1.82 });
     orb.params = lookParams('birth');
     orb.paletteName = 'birth';
     orb.look = 'birth';
@@ -1159,17 +1220,22 @@
 
   function updateBoot(t) {
     if (local.boot === 'crt' && t - local.bootAt >= BOOT.crtEnd) {
-      if (!orb.ready && t - local.bootAt < BOOT.crtEnd + BOOT.orbWait) return;
+      if (!orb.ready && t - local.bootAt < BOOT.crtEnd + BOOT.orbWait) {
+        sfx('drop-wait');
+        return;
+      }
       if (!orb.ready) switchToCanvas(new Error('The WebGPU orb was not ready in time'));
       local.boot = 'birth';
       local.birthAt = t;
       body.dataset.boot = 'birth';
       setFieldMode('birth', t);
       addRipple(t, '#9BE7FF', { width: 2, life: 1600, speed: 320 });
+      sound?.setBed(1);
+      sfx('birth');
     }
     if (local.boot === 'birth') {
-      if (!local.shiftedPlasma && t - local.birthAt >= BOOT.plasmaAt) { local.shiftedPlasma = true; morph('plasma'); }
-      if (!local.shiftedHome && t - local.birthAt >= BOOT.homeAt) { local.shiftedHome = true; morph('home'); bloom(t, '#82F4FF'); }
+      if (!local.shiftedPlasma && t - local.birthAt >= BOOT.plasmaAt) { local.shiftedPlasma = true; morph('plasma'); sfx('morph', { degree: 4 }); }
+      if (!local.shiftedHome && t - local.birthAt >= BOOT.homeAt) { local.shiftedHome = true; morph('home'); bloom(t, '#82F4FF'); sfx('morph', { degree: 2 }); }
       if (t - local.birthAt >= BOOT.birthLength) {
         local.boot = 'done';
         body.dataset.boot = 'done';
@@ -1201,6 +1267,11 @@
   // ───────────────────────────── handoff ─────────────────────────────
   function startHandoff(t) {
     if (local.handoff) return;
+    sfx('handoff');
+    if (sound) {
+      sound.setBed(0);
+      setTimeout(() => sound.fadeOut(1.6), 1300);
+    }
     local.handoff = true;
     invite.classList.remove('is-on');
     scene.classList.remove('is-on');
@@ -1231,6 +1302,7 @@
     local.wasListening = state.listening;
     updateSceneTitle();
     syncReduced();
+    syncSoundButton();
   }
 
   let lastReduced = null;
@@ -1263,6 +1335,7 @@
     updateSpeech(t, dt);
     const { modulation, colors } = computeOrbFrame(t);
     orbFrame(modulation, colors);
+    sound?.frame({ speech: speech.level, glow: Math.min(1, modulation.edgeGlow * 2.5) });
     halo.style.setProperty('--halo', rgbToCss(colors.glowColor || [.58, .42, 1], .34 + Math.min(.3, modulation.edgeGlow)));
     const g = drawField(t, dt);
     drawFx(t, g);
@@ -1312,12 +1385,22 @@
       inviteReady: inviteReady(t),
       look: orb.look,
       backend: orb.backend,
+      sound: sound ? { ...sound.stats(), enabled: sound.isEnabled() } : null,
     };
   };
 
   reducedMedia.addEventListener('change', syncReduced);
-  document.addEventListener('visibilitychange', () => { lastFrame = null; syncReduced(); });
-  window.addEventListener('pagehide', () => { cancelAnimationFrame(raf); clearTimeout(slowTimer); [...orb.layers].forEach((layer) => disposeLayer(layer, true)); });
+  document.addEventListener('visibilitychange', () => {
+    lastFrame = null;
+    syncReduced();
+    if (sound) { if (document.hidden) sound.suspend(); else sound.resume(); }
+  });
+  window.addEventListener('pagehide', () => {
+    cancelAnimationFrame(raf);
+    clearTimeout(slowTimer);
+    [...orb.layers].forEach((layer) => disposeLayer(layer, true));
+    sound?.dispose();
+  });
   new ResizeObserver(resizeCanvases).observe(stage);
   resizeCanvases();
   body.dataset.phase = state.phase;
@@ -1325,6 +1408,7 @@
   lastReduced = reduced();
   body.dataset.motion = lastReduced ? 'reduced' : 'full';
   text(hudName, state.botName);
+  syncSoundButton();
   boot(performance.now());
   onState(performance.now());
   schedule();
