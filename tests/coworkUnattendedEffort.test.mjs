@@ -50,6 +50,30 @@ test('the unattended classifier keys off auto-origin, session type, and source c
   );
 });
 
+test('Studio assistant-mode owner chats are exempt from the unattended classification', () => {
+  // 2026-11-11 production forensics: browser-type Studio sessions carrying the
+  // assistantMode marker classified unattended, so the cerebellum never fired
+  // and every "auto" turn resolved to max (33/33 turns mapped max) — the
+  // assistant mode's no-reasoning promise was unreachable for exactly the
+  // sessions it was built for. The exemption must sit BEFORE the session-type
+  // branch to take effect.
+  const classifier = coworkRunnerSource.match(
+    /private isUnattendedAutomationSession\(sessionId: string\): boolean \{[\s\S]*?\n  \}/,
+  );
+  assert.ok(classifier, 'isUnattendedAutomationSession must exist');
+  const body = classifier[0];
+  const exemptionAt = body.indexOf('this.isAssistantModeOwnerChatSession(sessionId)');
+  assert.ok(
+    exemptionAt >= 0,
+    'the classifier must exempt assistant-mode owner chats from the unattended classification',
+  );
+  const sessionTypeAt = body.indexOf("sessionType ?? 'standard') !== 'standard'");
+  assert.ok(
+    sessionTypeAt >= 0 && exemptionAt < sessionTypeAt,
+    'the assistant-mode exemption must be checked BEFORE the browser session-type branch',
+  );
+});
+
 test('both per-turn effort chains route unattended turns through resolveUnattendedAutoEffort', () => {
   // Primary route reads the brain effort, the GT-02 fallback-brain route the
   // fallback brain effort — both must take the unattended branch before the
@@ -67,6 +91,31 @@ test('both per-turn effort chains route unattended turns through resolveUnattend
   assert.ok(
     brainFeeds.length >= 2,
     'coworkRunner: the unattended branches must feed the primary and fallback brain efforts respectively',
+  );
+});
+
+test('both per-turn effort chains pin an assistant-mode off verdict to the GLM-expressible floor', () => {
+  // A cerebellum 'off' verdict on a GLM route is a lie: the responses/
+  // anthropic wires drop an unrepresentable 'off' and the SERVER default
+  // thinking level takes over — heavier than 'low'. Both effort chains
+  // (primary + fallback-brain resume) must pin the verdict through
+  // resolveAssistantModeExpressibleRung, and the fallback-route
+  // resolveAutoEffortFallback input must carry the fallback route's GLM
+  // family so its no-verdict branch stays honest there too.
+  const pins = coworkRunnerSource.match(
+    /resolveAssistantModeExpressibleRung\(autoEffortRung, \{ assistantMode, glmFamily: isGlmFamilyModelId\((route|routeOverride)\.model\) \}\)/g,
+  ) ?? [];
+  assert.ok(
+    pins.length >= 2,
+    'coworkRunner: primary and fallback effort chains must pin assistant-mode off verdicts for the GLM family',
+  );
+  const fallbackInput = coworkRunnerSource.match(
+    /pinnedFallbackAutoEffortRung \?\? resolveAutoEffortFallback\(\{[\s\S]*?\}\),/,
+  );
+  assert.ok(fallbackInput, 'the fallback effort chain must keep its resolveAutoEffortFallback call');
+  assert.ok(
+    fallbackInput[0].includes('glmFamily: isGlmFamilyModelId(routeOverride.model)'),
+    'the fallback-route no-verdict fallback must read the fallback model GLM family',
   );
 });
 
@@ -118,6 +167,47 @@ test('resolveUnattendedAutoEffort: brain pick first, auto means max, explicit gl
   );
   assert.equal(
     resolveUnattendedAutoEffort({ brainEffort: undefined, hasBrain: false, globalEffort: undefined }),
+    'max',
+  );
+});
+
+// --- behavioral: the assistant-mode GLM floor pin (compiled runner) ---
+
+test('resolveAssistantModeExpressibleRung pins assistant-mode off to low only for the GLM family', async () => {
+  const { resolveAssistantModeExpressibleRung } = await import('../dist-electron/main/libs/coworkRunner.js');
+  // THE trap this pins shut: assistant mode promises off, GLM-5.x always
+  // thinks, and the responses/anthropic wires drop an unrepresentable 'off' —
+  // the server default thinking level would run instead, heavier than low.
+  assert.equal(
+    resolveAssistantModeExpressibleRung('off', { assistantMode: true, glmFamily: true }),
+    'low',
+  );
+  // A non-GLM route can express 'off' — the verdict stands.
+  assert.equal(
+    resolveAssistantModeExpressibleRung('off', { assistantMode: true, glmFamily: false }),
+    'off',
+  );
+  assert.equal(
+    resolveAssistantModeExpressibleRung('off', { assistantMode: true, glmFamily: undefined }),
+    'off',
+  );
+  // Outside assistant mode nothing is pinned (professional off verdicts keep
+  // their existing wire-level behavior).
+  assert.equal(
+    resolveAssistantModeExpressibleRung('off', { assistantMode: false, glmFamily: true }),
+    'off',
+  );
+  // Higher rungs pass through untouched in every combination.
+  assert.equal(
+    resolveAssistantModeExpressibleRung('low', { assistantMode: true, glmFamily: true }),
+    'low',
+  );
+  assert.equal(
+    resolveAssistantModeExpressibleRung('high', { assistantMode: true, glmFamily: true }),
+    'high',
+  );
+  assert.equal(
+    resolveAssistantModeExpressibleRung('max', { assistantMode: false, glmFamily: false }),
     'max',
   );
 });

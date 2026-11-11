@@ -884,6 +884,25 @@ function resolveAutoEffortFallback(input: AutoEffortFallbackInput): LlmEffortLev
 }
 export { resolveAutoEffortFallback };
 
+/**
+ * The assistant-mode 'off' verdict is only honest when the running model can
+ * EXPRESS 'off'. GLM-5.x always thinks, and on the responses/anthropic wires
+ * an unrepresentable 'off' is dropped wholesale, leaving the SERVER default
+ * thinking level in charge — heavier than 'low'. Pin the expressible floor
+ * for that family so a cerebellum 'off' verdict cannot degrade into full
+ * server-default thinking (same carve-out as resolveAutoEffortFallback's
+ * no-verdict branch, extended to verdict results).
+ */
+function resolveAssistantModeExpressibleRung(
+  rung: CerebellumEffortRung,
+  options: { assistantMode: boolean; glmFamily?: boolean },
+): CerebellumEffortRung {
+  return options.assistantMode && rung === 'off' && options.glmFamily
+    ? 'low'
+    : rung;
+}
+export { resolveAssistantModeExpressibleRung };
+
 export interface UnattendedAutoEffortInput {
   /** Bot brain effort (primary brain for the main route, fallback brain's
    * effort on a fallback-route resume). */
@@ -6536,7 +6555,17 @@ export class CoworkRunner extends EventEmitter {
    * resolveUnattendedAutoEffort — the work product is the only output that
    * matters). Mirrors the assistant-mode gate's session read, including its
    * cowork_ui→metaweb_private episode flip, so the two postures never
-   * disagree about the same session.
+   * disagree about the same session — with one explicit exemption: Studio
+   * assistant-mode owner chats (browser-type sessions carrying the
+   * assistantMode marker) are interactive owner conversations, so they take
+   * the attended path (per-message cerebellum classification + the
+   * assistant-mode effort rung) instead of the browser session type's
+   * unattended default. Without this exemption the browser branch below
+   * classifies every Studio turn unattended: the cerebellum never fires and
+   * "auto" resolves to max on every turn, so the assistant mode's
+   * no-reasoning promise was unreachable for exactly the sessions it was
+   * built for (2026-11-11 production forensics: Studio turns mapped 'max'
+   * 33/33 while BotWorks stayed off/low on the same models).
    */
   private isUnattendedAutomationSession(sessionId: string): boolean {
     const session = this.store.getSession(sessionId);
@@ -6547,6 +6576,11 @@ export class CoworkRunner extends EventEmitter {
     // including direct chats, which the IM gateway stores under the 'a2a'
     // session type; check the channel BEFORE the session type.
     if (typeof sourceChannel === 'string' && sourceChannel.startsWith('im:')) return false;
+    // Studio assistant-mode owner chats: a human is waiting on every reply.
+    // Checked before the session-type branch — the assistantMode marker is
+    // the more specific signal (isAssistantModeOwnerChatSession itself
+    // excludes autoOrigin sessions, so forked unattended runs stay here).
+    if (this.isAssistantModeOwnerChatSession(sessionId)) return false;
     if ((session.sessionType ?? 'standard') !== 'standard') return true;
     // getConversationSourceContextBySession defaults to 'cowork_ui' when no
     // mapping row exists (pre-mapping legacy sessions are UI-created chats).
@@ -11427,9 +11461,11 @@ export class CoworkRunner extends EventEmitter {
       // THIS session). Without an override, assistant mode skips the bot
       // brain effort, the persisted global, and the per-model default.
       // GLM-family routes are the carve-out: the family always thinks and
-      // cannot express 'off', so the no-verdict fallback spells 'low'
-      // (resolveAutoEffortFallback) — 'off' would only hand the decision to
-      // the server default. Professional mode keeps the full chain unchanged.
+      // cannot express 'off', so both the cerebellum 'off' verdict
+      // (resolveAssistantModeExpressibleRung) and the no-verdict fallback
+      // (resolveAutoEffortFallback) spell 'low' — 'off' would only hand the
+      // decision to the server default. Professional mode keeps the full
+      // chain unchanged.
       // The mode is an owner-chat experience decision — the GATE alone
       // decides (2026-11-09 surface ruling: assistant mode = the per-session
       // Studio marker; the global Settings toggle is retired, so an outer
@@ -11491,6 +11527,12 @@ export class CoworkRunner extends EventEmitter {
           });
         }
       }
+      // GLM-family floor (see resolveAssistantModeExpressibleRung): a
+      // cerebellum 'off' verdict on a route that cannot express 'off' pins
+      // to 'low' instead of degrading into server-default thinking.
+      const pinnedAutoEffortRung = autoEffortRung != null
+        ? resolveAssistantModeExpressibleRung(autoEffortRung, { assistantMode, glmFamily: isGlmFamilyModelId(route.model) })
+        : null;
       const dshReasoningEffort = mapDshReasoningEffort(
         sessionEffortPicked
           ? toLlmEffortLevel(effectiveEffortRung)
@@ -11500,7 +11542,7 @@ export class CoworkRunner extends EventEmitter {
               hasBrain: automationBrain != null,
               globalEffort: getPersistedCoworkEffortLevel(),
             })
-            : autoEffortRung ?? resolveAutoEffortFallback({
+            : pinnedAutoEffortRung ?? resolveAutoEffortFallback({
               sentinelDefault: effortSentinelDefault,
               assistantMode,
               glmFamily: isGlmFamilyModelId(route.model),
@@ -11509,7 +11551,7 @@ export class CoworkRunner extends EventEmitter {
               globalEffort: getPersistedCoworkEffortLevel(),
               modelDefault: modelOptions?.reasoningEffort,
             }),
-        sessionEffortPicked || autoEffortRung != null || !assistantMode
+        sessionEffortPicked || pinnedAutoEffortRung != null || !assistantMode
           ? activeSession.thinkingOverride ?? modelOptions?.thinking
           : undefined,
         dshEffortDialect,
@@ -11687,6 +11729,11 @@ export class CoworkRunner extends EventEmitter {
           // a fallback resume must not re-introduce a reasoning pass ahead of
           // the first visible token.
           const fallbackModelOptions = resolveModelOptions(routeOverride.model);
+          // Same GLM-family floor as the primary route above, read against
+          // the fallback brain's model (the one now running the turn).
+          const pinnedFallbackAutoEffortRung = autoEffortRung != null
+            ? resolveAssistantModeExpressibleRung(autoEffortRung, { assistantMode, glmFamily: isGlmFamilyModelId(routeOverride.model) })
+            : null;
           turnReasoningEffort = mapDshReasoningEffort(
             sessionEffortPicked
               ? toLlmEffortLevel(effectiveEffortRung)
@@ -11696,15 +11743,16 @@ export class CoworkRunner extends EventEmitter {
                   hasBrain: automationBrain != null,
                   globalEffort: getPersistedCoworkEffortLevel(),
                 })
-                : autoEffortRung ?? resolveAutoEffortFallback({
+                : pinnedFallbackAutoEffortRung ?? resolveAutoEffortFallback({
                   sentinelDefault: effortSentinelDefault,
                   assistantMode,
+                  glmFamily: isGlmFamilyModelId(routeOverride.model),
                   brainEffort: automationBrain?.fallbackEffort,
                   hasBrain: automationBrain != null,
                   globalEffort: getPersistedCoworkEffortLevel(),
                   modelDefault: fallbackModelOptions?.reasoningEffort,
                 }),
-            sessionEffortPicked || autoEffortRung != null || !assistantMode
+            sessionEffortPicked || pinnedFallbackAutoEffortRung != null || !assistantMode
               ? activeSession.thinkingOverride ?? fallbackModelOptions?.thinking
               : undefined,
             turnOfficialDeepSeekNative ? 'deepseek-native' : 'generic',
