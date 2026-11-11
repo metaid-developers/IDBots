@@ -1874,6 +1874,87 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
             },
           },
         })),
+      getMetabotNfts: (input: { metabotId: number; kind: 'mrc721' | 'metacontract' }) =>
+        guardOnline(async () => {
+          const collectionPinId = `${'c'.repeat(64)}i0`;
+          const items = input.kind === 'mrc721'
+            ? [
+                {
+                  kind: 'mrc721',
+                  key: `${'a'.repeat(64)}i0`,
+                  name: 'Genesis Seed',
+                  collectionName: 'IDBots Founders',
+                  imageUrl: 'https://example.com/nft-genesis.png',
+                  number: 1,
+                  createTime: now() - 86_400,
+                  raw: {
+                    itemPinId: `${'a'.repeat(64)}i0`,
+                    collectionPinId,
+                    collectionName: 'IDBots Founders',
+                    desc: 'A founder collectible from the IDBots genesis collection.',
+                    ownerAddress: `mock-mvc-${input.metabotId}`,
+                    genesisChainName: 'mvc',
+                    genesisTx: `${'d'.repeat(64)}`,
+                    contentType: 'image/png',
+                    createTime: now() - 86_400,
+                  },
+                },
+                {
+                  kind: 'mrc721',
+                  key: `${'b'.repeat(64)}i0`,
+                  name: 'Agent Passport',
+                  collectionName: 'IDBots Founders',
+                  imageRef: `${'e'.repeat(64)}i0`,
+                  number: 2,
+                  createTime: now() - 43_200,
+                  raw: {
+                    itemPinId: `${'b'.repeat(64)}i0`,
+                    collectionPinId,
+                    collectionName: 'IDBots Founders',
+                    ownerAddress: `mock-mvc-${input.metabotId}`,
+                    genesisChainName: 'mvc',
+                    createTime: now() - 43_200,
+                  },
+                },
+              ]
+            : [
+                {
+                  kind: 'metacontract',
+                  key: 'mock-metacontract-nft-1',
+                  name: 'Meta Contract Badge',
+                  collectionName: 'Meta Badges',
+                  tokenIndex: '1',
+                  height: 982_104,
+                  raw: {
+                    tokenIndex: '1',
+                    name: 'Meta Contract Badge',
+                    satoshi: 1,
+                    txId: `${'f'.repeat(64)}`,
+                    outputIndex: 0,
+                    height: 982_104,
+                    seriesName: 'Meta Badges',
+                    genesis: `${'1'.repeat(64)}`,
+                    codeHash: `${'2'.repeat(64)}`,
+                  },
+                },
+              ];
+          return { success: true, items };
+        }),
+      getNftCaRegistry: () =>
+        guardOnline(async () => ({
+          success: true,
+          registry: {
+            protocol: 'idbots-nft-ca',
+            version: 1,
+            verified: true,
+            status: 'verified',
+            pinId: `${'3'.repeat(64)}i0`,
+            creatorMetaId: 'idbots-official',
+            officialMetaId: 'idbots-official',
+            collections: [{ collectionPinId: `${'c'.repeat(64)}i0`, collectionName: 'IDBots Founders' }],
+            fetchedAt: now(),
+          },
+        })),
     },
     metabot: metabotImpl,
     userIdentity: {

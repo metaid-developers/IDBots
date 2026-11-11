@@ -19,6 +19,7 @@ import type { MobileTab } from './components/TabBar';
 import { handleMobileRootBack } from './nativeBack';
 import { useNativeBackHandler } from './hooks/useNativeBackHandler';
 import { isRechargeAllowed } from '../native/rechargePolicy';
+import type { MobileNftMintRequest } from './me/nftMint';
 
 /**
  * App shell (REQ-E-11): connection banner on top, three lazy-loaded tabs,
@@ -100,6 +101,13 @@ export default function MobileApp(): JSX.Element {
   const chat = useChat(bots);
   const twinMetabotId = resolveTwinMetabotId(bots);
   const twinName = bots.find((bot) => bot.id === twinMetabotId)?.name ?? 'Twin Bot';
+  const openMintNft = useCallback((request: MobileNftMintRequest, prompt: string) => {
+    chat.setMetabotId(request.botId);
+    chat.newChat();
+    chat.setDraft(prompt);
+    setPurchase(null);
+    setTab('chat');
+  }, [chat.setMetabotId, chat.newChat, chat.setDraft]);
   const openWorkSession = useCallback(async (sessionId: string): Promise<boolean> => {
     try {
       const result = await getMobileElectron().cowork.getSession(sessionId, { messageLimit: 1 });
@@ -197,6 +205,7 @@ export default function MobileApp(): JSX.Element {
               resyncCounter={resyncCounter + billingRevision}
               canPurchase={purchaseAllowed}
               onOpenPurchase={openPurchase}
+              onMintNft={openMintNft}
               usageSignal={usageSignal}
             />
           </Suspense>
