@@ -149,10 +149,13 @@ test('recovery never depends on a control inside the collapsible column', () => 
 
 test('a rail destination click re-opens the middle column (the second recovery path)', () => {
   // Per-face scope (接缝按钮双向化 2026-11-09): the reveal resets ONLY the
-  // active face's seam machine — the other face keeps its own state.
+  // active face's seam machine — the other face keeps its own state. The
+  // fixed-width ruling (2026-11-11) adds one more duty: a manual reveal
+  // clears that face's narrow-window auto-hide flag first, so the fit check
+  // never "restores" a state the user already owns.
   assert.match(
     appSource,
-    /const revealMiddleColumn = useCallback\(\(\) => \{\s*if \(isHomeSurfaceMode\) \{\s*setHomeSeamCollapsed\(false\);/,
+    /const revealMiddleColumn = useCallback\(\(\) => \{\s*if \(isHomeSurfaceMode\) \{\s*sidebarAutoHiddenRef\.current\.home = false;\s*setHomeSeamCollapsed\(false\);\s*\} else \{\s*sidebarAutoHiddenRef\.current\.browser = false;\s*setStudioSeamState\('split'\);/,
   );
   // Scope the search to the rail's own JSX block: the same prop names appear
   // again on <Sidebar> where no reveal is expected.
