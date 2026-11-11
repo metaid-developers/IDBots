@@ -68,6 +68,13 @@ interface CoworkState {
   isCoworkActive: boolean;
   isStreaming: boolean;
   pendingPermissions: CoworkPermissionRequest[];
+  /**
+   * RequestIds whose prompt currently shows as a Studio Live Stage card
+   * (mirrored from main's `cowork:stream:stageInteraction`). The overlay
+   * suppresses its corner duplicate for these while the user is looking at
+   * the stage's session.
+   */
+  stagePresentedRequestIds: string[];
   config: CoworkConfig;
   /** Live subagent/background-task state keyed by task_id (drives SubagentPanel). */
   subagentTasks: Record<string, SubagentTaskState>;
@@ -100,6 +107,7 @@ const initialState: CoworkState = {
   isCoworkActive: false,
   isStreaming: false,
   pendingPermissions: [],
+  stagePresentedRequestIds: [],
   subagentTasks: {},
   isSubagentPanelOpen: false,
   feedbackByMessageId: {},
@@ -620,6 +628,16 @@ const coworkSlice = createSlice({
       state.pendingPermissions = [];
     },
 
+    setStageInteractionPresented(state, action: PayloadAction<{ requestId: string; presented: boolean }>) {
+      const { requestId, presented } = action.payload;
+      if (!requestId) return;
+      if (presented) {
+        if (!state.stagePresentedRequestIds.includes(requestId)) state.stagePresentedRequestIds.push(requestId);
+        return;
+      }
+      state.stagePresentedRequestIds = state.stagePresentedRequestIds.filter((id) => id !== requestId);
+    },
+
     setConfig(state, action: PayloadAction<CoworkConfig>) {
       state.config = action.payload;
     },
@@ -683,6 +701,7 @@ export const {
   enqueuePendingPermission,
   dequeuePendingPermission,
   clearPendingPermissions,
+  setStageInteractionPresented,
   setConfig,
   updateConfig,
   clearCurrentSession,

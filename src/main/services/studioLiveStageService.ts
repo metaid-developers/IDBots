@@ -338,6 +338,16 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     if (record.behavior === 'deny') return { behavior: 'deny', message: 'Denied on the Live Stage' };
     if (record.behavior !== 'allow') return null;
     if (interaction.kind !== 'ask') return { behavior: 'allow' };
+    // Stage-level skip: every question is handed back unanswered. The runner
+    // maps skippedQuestions to {id, selected: []} with NO custom note — the
+    // honest "no answer" the ask protocol exposes (skip ≠ veto, nothing
+    // fabricated on the host side).
+    if (record.skip === true) {
+      return {
+        behavior: 'allow',
+        updatedInput: { answers: {}, skippedQuestions: interaction.questions.map((question) => question.question) },
+      };
+    }
     const raw = record.answers && typeof record.answers === 'object' && !Array.isArray(record.answers)
       ? record.answers as Record<string, unknown>
       : {};
@@ -406,15 +416,26 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     return 'presented';
   }
 
-  function clearInteraction(sessionId: string, requestId: string): void {
+  function clearInteraction(sessionId: string, requestId: string): 'cleared' | 'absent' {
     const run = runs.get(sessionId);
-    if (!run) return;
+    if (!run) return 'absent';
     const before = run.state.revision;
     run.state = dismissLiveStageInteraction(run.state, requestId);
     if (run.state.revision !== before) {
       stopInteractionPolling(run);
       schedulePatch(run);
+      return 'cleared';
     }
+    return 'absent';
+  }
+
+  /** RequestIds whose stage card is currently showing (overlay dedup seed). */
+  function listPresentedRequestIds(): string[] {
+    const ids: string[] = [];
+    for (const run of runs.values()) {
+      if (run.state.interaction) ids.push(run.state.interaction.requestId);
+    }
+    return ids;
   }
 
   async function projectReport(
@@ -474,6 +495,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     observeError,
     presentInteraction,
     clearInteraction,
+    listPresentedRequestIds,
     projectReport,
     updateSettings,
     forget,

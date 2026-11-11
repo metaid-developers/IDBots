@@ -889,6 +889,11 @@
       "channel": "cowork:stream:sessionTitle"
     },
     {
+      "path": "cowork.onStreamStageInteraction",
+      "kind": "on",
+      "channel": "cowork:stream:stageInteraction"
+    },
+    {
       "path": "cowork.prewarmTurnSlot",
       "kind": "invoke",
       "channel": "cowork:session:prewarmTurnSlot",

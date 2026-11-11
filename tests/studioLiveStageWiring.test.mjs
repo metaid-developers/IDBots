@@ -54,3 +54,37 @@ test('pending permissions present on the Studio stage card and clear on resoluti
   assert.match(service, /presentInteraction\(sessionId: string, request: unknown\): 'presented' \| 'busy' \| 'declined'/);
   assert.match(service, /function startInteractionPolling\(run: LiveStageRun\): void/);
 });
+
+test('skip travels as an explicit honest list through panel, runner, and stage', () => {
+  const runner = read('src/main/libs/coworkRunner.ts');
+  assert.match(runner, /skipped\.has\(q\.question\)/);
+  assert.match(runner, /\{ id: q\.id, selected: \[\] \}/);
+  assert.match(runner, /updatedInput\.skippedQuestions/);
+  const panel = read('src/renderer/components/cowork/CoworkPermissionPanel.tsx');
+  assert.match(panel, /skippedQuestions: skippedTexts/);
+  const service = read('src/main/services/studioLiveStageService.ts');
+  assert.match(service, /skippedQuestions: interaction\.questions\.map\(\(question\) => question\.question\)/);
+});
+
+test('stage card presentation state drives the corner-overlay dedup end to end', () => {
+  const main = read('src/main/main.ts');
+  assert.match(main, /'cowork:stream:stageInteraction', \{ sessionId, requestId: stageRequestId, presented: true \}/);
+  assert.match(main, /'cowork:stream:stageInteraction', \{ sessionId, requestId, presented: false \}/);
+  assert.match(main, /stagePresentedRequestIds: getStudioLiveStageService\(\)\.listPresentedRequestIds\(\)/);
+  const allowlist = read('src/main/gateway/allowlist.ts');
+  assert.match(allowlist, /'cowork:stream:stageInteraction': \{ tier: 'P1'/);
+  const preload = read('src/main/preload.ts');
+  assert.match(preload, /onStreamStageInteraction/);
+  const dts = read('src/renderer/types/electron.d.ts');
+  assert.match(dts, /onStreamStageInteraction/);
+  const slice = read('src/renderer/store/slices/coworkSlice.ts');
+  assert.match(slice, /setStageInteractionPresented/);
+  assert.match(slice, /stagePresentedRequestIds: \[\]/);
+  const service = read('src/renderer/services/cowork.ts');
+  assert.match(service, /onStreamStageInteraction/);
+  const app = read('src/renderer/App.tsx');
+  assert.match(app, /stageSessionId=\{botBrowserShell\.isBrowserPaneVisible \? browserSessionId : null\}/);
+  const overlay = read('src/renderer/components/cowork/CoworkPermissionOverlay.tsx');
+  assert.match(overlay, /stageSessionId\?: string \| null/);
+  assert.match(overlay, /stagePresentedRequestIds\.has\(entry\.requestId\)/);
+});

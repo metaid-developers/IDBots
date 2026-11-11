@@ -8694,9 +8694,17 @@ const getCoworkRunner = () => {
       // desktop-only). 'busy' queues behind the card that is already showing.
       const stageOutcome = getStudioLiveStageService().presentInteraction(sessionId, request);
       if (stageOutcome !== 'declined') {
+        const stageRequestId = typeof request?.requestId === 'string' ? request.requestId : '';
         const stageQueue = stageInteractionQueue.get(sessionId) ?? [];
-        stageQueue.push({ requestId: typeof request?.requestId === 'string' ? request.requestId : '', request });
+        stageQueue.push({ requestId: stageRequestId, request });
         stageInteractionQueue.set(sessionId, stageQueue);
+        // The renderer suppresses the corner-overlay duplicate for a prompt
+        // whose stage card is actually showing (2026-11-12 spec defect 2).
+        // Queued ('busy') prompts are NOT broadcast: the corner is their seat
+        // until the stage presents them.
+        if (stageOutcome === 'presented' && stageRequestId) {
+          broadcastToRenderers('cowork:stream:stageInteraction', { sessionId, requestId: stageRequestId, presented: true });
+        }
       }
     });
 
@@ -8710,15 +8718,23 @@ const getCoworkRunner = () => {
     coworkRunner.on('permissionResolved', (sessionId: string, requestId: string) => {
       broadcastToRenderers('cowork:stream:permissionResolved', { sessionId, requestId });
       resolvePendingPermission(sessionId, requestId);
-      getStudioLiveStageService().clearInteraction(sessionId, requestId);
+      if (getStudioLiveStageService().clearInteraction(sessionId, requestId) === 'cleared') {
+        broadcastToRenderers('cowork:stream:stageInteraction', { sessionId, requestId, presented: false });
+      }
       const stageQueue = stageInteractionQueue.get(sessionId);
       if (stageQueue) {
         const index = stageQueue.findIndex((entry) => entry.requestId === requestId);
         if (index >= 0) stageQueue.splice(index, 1);
         while (stageQueue.length > 0) {
           const outcome = getStudioLiveStageService().presentInteraction(sessionId, stageQueue[0].request);
-          if (outcome === 'declined') stageQueue.shift();
-          else break;
+          if (outcome === 'declined') {
+            stageQueue.shift();
+            continue;
+          }
+          if (outcome === 'presented' && stageQueue[0].requestId) {
+            broadcastToRenderers('cowork:stream:stageInteraction', { sessionId, requestId: stageQueue[0].requestId, presented: true });
+          }
+          break;
         }
         if (stageQueue.length === 0) stageInteractionQueue.delete(sessionId);
       }
@@ -14920,7 +14936,9 @@ if (!gotTheLock) {
       sessionId: entry.sessionId,
       ...(entry.request as Record<string, unknown>),
     }));
-    return { success: true, permissions };
+    // Stage-presented prompts so a freshly reloaded renderer can suppress
+    // their corner-overlay duplicates from the first paint (2026-11-12 spec).
+    return { success: true, permissions, stagePresentedRequestIds: getStudioLiveStageService().listPresentedRequestIds() };
   });
 
   registerIpcHandler('cowork:config:get', async () => {

@@ -93,3 +93,25 @@ test('interaction card renders through textContent only and drains clicks exactl
   assert.match(css, /\.interaction-card\[hidden\]\{display:none\}/);
   assert.match(css, /\.interaction-button\.is-primary\{background:var\(--brand\)/);
 });
+
+test('ask wizard submit is reachable by the validity gate (2026-11-12 incident pin)', () => {
+  const stage = read('stage.js');
+  // Writer and reader must reference the SAME attribute: the validity gate
+  // re-enables the submit through [data-interaction-submit]; the 2026-11-12
+  // device incident shipped a submit that never carried it, so the ask
+  // wizard's submit stayed disabled forever while options stayed clickable.
+  assert.match(stage, /submit\.dataset\.interactionSubmit = '';/);
+  assert.match(stage, /card\.querySelector\('\[data-interaction-submit\]'\)/);
+  assert.match(stage, /submit\.disabled = isAsk;/);
+  // The gate must actually flip the flag for the initial disabled state to
+  // ever lift (no early return that skips the write).
+  assert.match(stage, /submit\.disabled = !ready;/);
+});
+
+test('the ask card offers an always-clickable skip that never fabricates an answer', () => {
+  const stage = read('stage.js');
+  assert.match(stage, /interactionCopy\('跳过', 'Skip'\)/);
+  assert.match(stage, /behavior: 'allow', skip: true/);
+  // Skip must not be gated on selections: it queues even with nothing picked.
+  assert.doesNotMatch(stage, /skip\.disabled/);
+});

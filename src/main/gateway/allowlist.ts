@@ -463,6 +463,7 @@ export const EVENT_ALLOWLIST: Record<string, AllowlistEntry> = {
   'cowork:stream:error': { tier: 'P1' },
   'cowork:stream:permission': { tier: 'P1' },
   'cowork:stream:permissionResolved': { tier: 'P1' },
+  'cowork:stream:stageInteraction': { tier: 'P1', note: '`02`: Studio stage card presentation state for corner-overlay dedup.' },
   'cowork:stream:sessionTitle': { tier: 'P1' },
   'cowork:session:profileRefreshed': { tier: 'P1' },
   'cowork:delegation:stateChange': { tier: 'P1' },

@@ -1510,6 +1510,8 @@ interface IElectronAPI {
         expiresAt?: number | null;
         timeoutDefault?: 'allow' | 'deny' | null;
       }>;
+      /** RequestIds whose Studio stage card is showing (overlay dedup seed). */
+      stagePresentedRequestIds?: string[];
       error?: string;
     }>;
     getConfig: () => Promise<{ success: boolean; config?: CoworkConfig; error?: string }>;
@@ -1716,6 +1718,7 @@ interface IElectronAPI {
     getStreamLiveContent: (payload: { sessionId: string; messageId: string }) => Promise<{ success: boolean; content?: string }>;
     onStreamPermission: (callback: (data: { sessionId: string; request: CoworkPermissionRequest }) => void) => () => void;
     onStreamPermissionResolved: (callback: (data: { sessionId: string; requestId: string }) => void) => () => void;
+    onStreamStageInteraction: (callback: (data: { sessionId: string; requestId: string; presented: boolean }) => void) => () => void;
     onStreamComplete: (callback: (data: { sessionId: string; claudeSessionId: string | null }) => void) => () => void;
     onStreamError: (callback: (data: { sessionId: string; error: string }) => void) => () => void;
     onStreamSessionTitle: (callback: (data: { sessionId: string; title: string }) => void) => () => void;
