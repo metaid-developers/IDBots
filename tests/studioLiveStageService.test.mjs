@@ -21,7 +21,7 @@ function fixture(t, directorEnabled = false, initialTabId = 7) {
     metabotName: 'AI_Sunny',
     metabotAvatar: 'data:image/jpeg;base64,AA==',
   };
-  const projected = [], patches = [], calls = [];
+  const projected = [], patches = [], calls = [], drainQueue = [], responses = [];
   const settings = { enabled: true, directorEnabled };
   const service = createStudioLiveStageService({
     getSession: (id) => id === 'worker-session' ? { ...session, metabotId: 2, metabotName: 'Builder阿码', metabotAvatar: 'data:image/png;base64,BB==' } : session,
@@ -31,6 +31,9 @@ function fixture(t, directorEnabled = false, initialTabId = 7) {
     project: async (input) => { projected.push(input); return { uri: `preview-metaapp://localhost${input.localPath}`, tabId: initialTabId, announced: true }; },
     findStageTab: async () => 7,
     applyPatch: async (input) => { patches.push(input); },
+    drainInteractions: async () => drainQueue.splice(0, drainQueue.length),
+    respondToPermission: (requestId, result) => { responses.push({ requestId, result }); },
+    interactionPollMs: 10,
     assetRoot: path.resolve('public/live-stage'),
     fallbackAvatarDataUri: 'data:image/png;base64,AA==',
     reportDelayMs: 0,
@@ -48,7 +51,7 @@ function fixture(t, directorEnabled = false, initialTabId = 7) {
       fs.rmSync(cwd, { recursive: true, force: true });
     } catch {}
   });
-  return { service, session, projected, patches, calls, settings };
+  return { service, session, projected, patches, calls, settings, drainQueue, responses };
 }
 
 test('settings default on and Director follows the Live Stage toggle', () => {
@@ -184,4 +187,125 @@ test('worker identity resolves the Avatar from the trusted source session', asyn
   }));
   await run.queue;
   assert.equal(service.getState('s').topology.nodes.find((node) => node.kind === 'worker').avatar, 'data:image/png;base64,BB==');
+});
+
+const waitFor = async (predicate, ms = 1000) => {
+  const started = Date.now();
+  while (!predicate()) {
+    if (Date.now() - started > ms) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+};
+
+const askRequest = (requestId = 'ask-1') => ({
+  requestId,
+  toolName: 'AskUserQuestion',
+  toolInput: { questions: [{ question: 'Which speed?', options: [{ label: 'Fast' }, { label: 'Slow' }] }] },
+});
+
+test('a presented ask drains a stage answer into the host permission sink', async (t) => {
+  const { service, patches, responses, drainQueue } = fixture(t);
+  service.observeMessage('s', message('u1', 'user', { origin: 'user', submissionId: 'sub-1' }));
+  const run = service.getRunInternals('s');
+  await run.queue;
+
+  assert.equal(service.presentInteraction('s', askRequest()), 'presented');
+  const interaction = service.getState('s').interaction;
+  assert.ok(interaction);
+  assert.match(interaction.token, /^[0-9a-f]{32}$/);
+  await run.queue;
+  assert.ok(patches.some((patch) => patch.state.interaction?.requestId === 'ask-1'), 'the card reached the stage');
+
+  drainQueue.push({ requestId: 'ask-1', token: interaction.token, behavior: 'allow', answers: { 'Which speed?': 'Fast' } });
+  await waitFor(() => responses.length > 0);
+  assert.equal(responses[0].requestId, 'ask-1');
+  assert.equal(responses[0].result.behavior, 'allow');
+  assert.equal(responses[0].result.updatedInput.answers['Which speed?'], 'Fast');
+  assert.equal(service.getState('s').interaction, null, 'the card clears once answered');
+});
+
+test('a stage deny resolves fail-closed and mismatched tokens are dropped', async (t) => {
+  const { service, responses, drainQueue } = fixture(t);
+  service.observeMessage('s', message('u1', 'user', { origin: 'user', submissionId: 'sub-1' }));
+  const run = service.getRunInternals('s');
+  await run.queue;
+  service.presentInteraction('s', askRequest('ask-2'));
+  const token = service.getState('s').interaction.token;
+
+  drainQueue.push({ requestId: 'ask-2', token: 'wrong-token', behavior: 'allow', answers: {} });
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(responses.length, 0, 'a forged token never resolves the prompt');
+
+  drainQueue.push({ requestId: 'ask-2', token, behavior: 'deny' });
+  await waitFor(() => responses.length > 0);
+  assert.equal(responses[0].result.behavior, 'deny');
+});
+
+test('plain approvals answer with a bare allow and watchdog metadata stays intact', async (t) => {
+  const { service, responses, drainQueue } = fixture(t);
+  service.observeMessage('s', message('u1', 'user', { origin: 'user', submissionId: 'sub-1' }));
+  const run = service.getRunInternals('s');
+  await run.queue;
+  service.presentInteraction('s', { requestId: 'perm-1', toolName: 'Bash', toolInput: { reason: 'run tests' }, expiresAt: Date.now() + 60000, timeoutDefault: 'deny' });
+  const interaction = service.getState('s').interaction;
+  assert.equal(interaction.kind, 'approval');
+  assert.equal(interaction.timeoutDefault, 'deny');
+
+  drainQueue.push({ requestId: 'perm-1', token: interaction.token, behavior: 'allow' });
+  await waitFor(() => responses.length > 0);
+  assert.deepEqual(responses[0].result, { behavior: 'allow' });
+});
+
+test('A2A and delete-safety prompts decline the stage and busy cards queue in order', async (t) => {
+  const { service, patches } = fixture(t);
+  service.observeMessage('s', message('u1', 'user', { origin: 'user', submissionId: 'sub-1' }));
+  const run = service.getRunInternals('s');
+  await run.queue;
+
+  assert.equal(service.presentInteraction('s', {
+    requestId: 'a2a-9',
+    toolName: 'AskUserQuestion',
+    toolInput: { context: { a2aApproval: true }, questions: [{ question: 'Pay?', options: [{ label: 'Yes' }] }] },
+  }), 'declined');
+  assert.equal(service.presentInteraction('s', {
+    requestId: 'safety-9',
+    toolName: 'AskUserQuestion',
+    toolInput: { context: { requestedToolName: 'bash', requestedToolInput: {} }, questions: [{ question: 'Delete?', options: [{ label: 'Allow' }] }] },
+  }), 'declined');
+
+  assert.equal(service.presentInteraction('s', askRequest('first')), 'presented');
+  assert.equal(service.presentInteraction('s', askRequest('second')), 'busy', 'one card at a time');
+  service.clearInteraction('s', 'wrong-id');
+  assert.equal(service.getState('s').interaction.requestId, 'first', 'mismatched clear is a no-op');
+  service.clearInteraction('s', 'first');
+  await run.queue;
+  assert.equal(service.getState('s').interaction, null);
+  assert.equal(service.presentInteraction('s', askRequest('second')), 'presented');
+  await run.queue;
+  assert.equal(patches.at(-1).state.interaction.requestId, 'second');
+});
+
+test('stage disabled or session without a run never presents', () => {
+  const values = new Map();
+  const store = { get: (key) => values.get(key), set: (key, value) => values.set(key, value) };
+  writeStudioLiveStageSettings(store, { enabled: false });
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-live-stage-off-'));
+  const service = createStudioLiveStageService({
+    getSession: () => null,
+    getMetabotById: () => null,
+    getSettings: () => readStudioLiveStageSettings(store),
+    getLanguage: () => 'en',
+    project: async () => ({ uri: 'u', tabId: null, announced: false }),
+    applyPatch: async () => {},
+    assetRoot: path.resolve('public/live-stage'),
+    fallbackAvatarDataUri: 'data:image/png;base64,AA==',
+    reportDelayMs: 0,
+  });
+  try {
+    assert.equal(service.presentInteraction('s', askRequest()), 'declined');
+    assert.equal(service.getState('s'), null);
+  } finally {
+    service.dispose();
+    try { fs.rmSync(cwd, { recursive: true, force: true }); } catch {}
+  }
 });

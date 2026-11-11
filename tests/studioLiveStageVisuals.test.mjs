@@ -75,3 +75,21 @@ test('Avatar stays above glass and Worker handoff is a timed curved interaction'
   assert.match(window.LiquidOrbEffectSource, /max\(ballA, emissionAlpha\)/);
   assert.doesNotMatch(window.LiquidOrbEffectSource, /rimAlpha/);
 });
+
+test('interaction card renders through textContent only and drains clicks exactly once', () => {
+  const stage = read('stage.js');
+  assert.match(stage, /function renderInteraction\(\)/);
+  assert.match(stage, /renderInteraction\(\);\n    restartParticles\(\);/);
+  assert.match(stage, /drainInteractions\(\) \{\n      const items = interactionQueue\.splice\(0, interactionQueue\.length\);\n      return items;\n    \}/);
+  assert.match(stage, /data-interaction-question/);
+  assert.match(stage, /interaction-custom/);
+  assert.match(stage, /interactionQueue\.push\(\{ requestId: interaction\.requestId, token: interaction\.token/);
+  // The card is a presentation surface: every string reaches the DOM through
+  // textContent — no HTML injection point anywhere in the stage script.
+  assert.doesNotMatch(stage, /innerHTML|insertAdjacentHTML|document\.write/);
+  assert.match(read('stage.html'), /<section class="interaction-card" data-interaction-card hidden><\/section>/);
+  const css = read('stage.css');
+  assert.match(css, /\.interaction-card\{position:absolute;z-index:6/);
+  assert.match(css, /\.interaction-card\[hidden\]\{display:none\}/);
+  assert.match(css, /\.interaction-button\.is-primary\{background:var\(--brand\)/);
+});

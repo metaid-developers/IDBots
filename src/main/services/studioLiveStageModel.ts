@@ -8,6 +8,32 @@ export type LiveStageFamily =
   | 'verification' | 'browser-action' | 'owner-needed' | 'problem'
   | 'report-ready' | 'complete';
 
+export type LiveStageInteractionQuestion = {
+  question: string;
+  header?: string;
+  options: Array<{ label: string; description?: string }>;
+  multiSelect: boolean;
+  detail?: string;
+};
+
+/**
+ * One owner-facing prompt hosted on the stage. The stage renders it as a card
+ * and queues the click back to the host; the host still owns the decision —
+ * the card is a presentation surface, never the authority.
+ */
+export type LiveStageInteraction = {
+  requestId: string;
+  /** Single-use random echo value; drained clicks must return it. */
+  token: string;
+  kind: 'ask' | 'approval';
+  title: string;
+  detail: string;
+  questions: LiveStageInteractionQuestion[];
+  /** Approval watchdog deadline; asks wait indefinitely (null). */
+  expiresAt: number | null;
+  timeoutDefault: 'allow' | 'deny' | null;
+};
+
 export type LiveStageMetrics = {
   directorEnabled: boolean;
   directorCalls: number;
@@ -49,6 +75,8 @@ export type LiveStageState = {
   };
   metrics: LiveStageMetrics;
   handoff: { direction: 'dispatch' | 'return'; eventId: string } | null;
+  /** Prompt currently hosted on the stage card, if any. */
+  interaction: LiveStageInteraction | null;
   pendingProjectionIds: string[];
   eventWindow: Array<{ family: LiveStageFamily; tool?: string; outcome?: string }>;
 };
@@ -123,6 +151,7 @@ export function createLiveStageState(context: LiveStageSessionContext): LiveStag
     motion: { preset: 'received', seed: seedFor(context.sessionId, context.turnId, 0), durationMs: 720, easing: 'emphasized-decelerate', energy: .35, density: .25 },
     metrics: { directorEnabled: context.directorEnabled === true, directorCalls: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, rejectedPatches: 0, fallbackCount: 0, directorLatencyMs: 0 },
     handoff: null,
+    interaction: null,
     pendingProjectionIds: [],
     eventWindow: [{ family: 'received' }],
   };
@@ -233,4 +262,107 @@ export function reportReadyLiveStage(state: LiveStageState): LiveStageState {
 export function liveStageError(state: LiveStageState): LiveStageState {
   const scene = sceneFor('problem', state.language, state.botName);
   return { ...state, ...scene, family: 'problem', handoff: null, revision: state.revision + 1, motion: { ...state.motion, preset: 'problem', energy: .25 } };
+}
+
+const MAX_INTERACTION_QUESTIONS = 6;
+const MAX_INTERACTION_OPTIONS = 8;
+
+const sliceText = (value: unknown, max: number): string =>
+  typeof value === 'string' ? value.trim().slice(0, max) : '';
+
+const questionOf = (raw: unknown): LiveStageInteractionQuestion | null => {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+  const question = sliceText(record.question, 400);
+  if (!question) return null;
+  const options = (Array.isArray(record.options) ? record.options : [])
+    .slice(0, MAX_INTERACTION_OPTIONS)
+    .map((option): { label: string; description?: string } | null => {
+      if (!option || typeof option !== 'object' || Array.isArray(option)) return null;
+      const label = sliceText((option as Record<string, unknown>).label, 200);
+      if (!label) return null;
+      const description = sliceText((option as Record<string, unknown>).description, 400);
+      return description ? { label, description } : { label };
+    })
+    .filter((option): option is { label: string; description?: string } => option !== null);
+  const header = sliceText(record.header, 60);
+  const detail = sliceText(record.detail, 2000);
+  return {
+    question,
+    options,
+    multiSelect: record.multiSelect === true,
+    ...(header ? { header } : {}),
+    ...(detail ? { detail } : {}),
+  };
+};
+
+export type LiveStageInteractionCandidate = {
+  requestId?: unknown;
+  toolName?: unknown;
+  toolInput?: Record<string, unknown> | null;
+  expiresAt?: unknown;
+  timeoutDefault?: unknown;
+};
+
+/**
+ * Decide whether a pending permission can be hosted on the stage, and shape
+ * the card data if so. Ordinary prompts only — A2A approvals and
+ * delete-safety confirmations keep their desktop seats (Phase 1 ruling:
+ * ask + plain approval, dual seats with the overlay).
+ * Returns null when the request must stay off the stage.
+ */
+export function buildLiveStageInteraction(candidate: LiveStageInteractionCandidate, token: string): LiveStageInteraction | null {
+  const requestId = typeof candidate.requestId === 'string' ? candidate.requestId.trim() : '';
+  if (!requestId) return null;
+  const toolName = typeof candidate.toolName === 'string' ? candidate.toolName.trim() : '';
+  if (!toolName) return null;
+  const input = candidate.toolInput && typeof candidate.toolInput === 'object' && !Array.isArray(candidate.toolInput)
+    ? candidate.toolInput as Record<string, unknown>
+    : {};
+  const expiresAt = typeof candidate.expiresAt === 'number' && Number.isFinite(candidate.expiresAt) ? candidate.expiresAt : null;
+  const timeoutDefault = candidate.timeoutDefault === 'allow' || candidate.timeoutDefault === 'deny' ? candidate.timeoutDefault : null;
+  if (toolName === 'AskUserQuestion') {
+    const context = input.context && typeof input.context === 'object' && !Array.isArray(input.context)
+      ? input.context as Record<string, unknown>
+      : null;
+    if (context) {
+      const action = typeof context.action === 'string' ? context.action : '';
+      if (context.a2aApproval === true || action === 'invite' || action === 'remove') return null;
+      if (sliceText(context.requestedToolName, 200)) return null;
+    }
+    const questions = (Array.isArray(input.questions) ? input.questions : [])
+      .slice(0, MAX_INTERACTION_QUESTIONS)
+      .map(questionOf)
+      .filter((question): question is LiveStageInteractionQuestion => question !== null);
+    if (questions.length === 0) return null;
+    return {
+      requestId,
+      token,
+      kind: 'ask',
+      title: questions[0].question,
+      detail: questions[0].detail ?? '',
+      questions,
+      expiresAt,
+      timeoutDefault,
+    };
+  }
+  return {
+    requestId,
+    token,
+    kind: 'approval',
+    title: toolName,
+    detail: sliceText(input.reason, 400),
+    questions: [],
+    expiresAt,
+    timeoutDefault,
+  };
+}
+
+export function presentLiveStageInteraction(state: LiveStageState, interaction: LiveStageInteraction): LiveStageState {
+  return { ...state, interaction, revision: state.revision + 1 };
+}
+
+export function dismissLiveStageInteraction(state: LiveStageState, requestId: string): LiveStageState {
+  if (!state.interaction || state.interaction.requestId !== requestId) return state;
+  return { ...state, interaction: null, revision: state.revision + 1 };
 }
