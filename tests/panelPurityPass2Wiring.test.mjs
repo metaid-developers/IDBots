@@ -28,7 +28,13 @@ test('③ the rail mounts at the transcript edge inside a relative wrapper', () 
   assert.match(panelSource, /<div className="relative min-h-0 flex-1">/);
   // The locator rail is the seat's scroll indicator, so the native
   // scrollbar is hidden on this scroller (scroll behavior unchanged).
-  assert.match(panelSource, /<div ref=\{listRef\} className="h-full space-y-2\.5 overflow-y-auto overflow-x-hidden px-1 pb-2 \[scrollbar-width:none\] \[&::-webkit-scrollbar\]:hidden">/);
+  // 2026-11-11 14:41 rework (supersedes the bare `px-1` literal this pin
+  // carried; the "preview card dodge" card was cancelled and reverted):
+  // the scroller RESERVES the rail's horizontal lane — pl-1 pr-5 = 20px
+  // clears the 14px (w-3.5) floating rail + the 1px ring-1 overhang + a
+  // 5px safety gap, so bubbles and the jump ring never paint under the
+  // locator rail.
+  assert.match(panelSource, /<div ref=\{listRef\} className="h-full space-y-2\.5 overflow-y-auto overflow-x-hidden pl-1 pr-5 pb-2 \[scrollbar-width:none\] \[&::-webkit-scrollbar\]:hidden">/);
   assert.match(panelSource, /<PanelMessageLocatorRail/);
   assert.match(panelSource, /containerRef=\{listRef\}/);
   assert.match(panelSource, /rows=\{locatorRows\}/);
@@ -82,11 +88,32 @@ test('④ the composer textarea adapts: shrink, single-line hint, capped scroll'
   // Small branch (office panel surface): the shrinkable flex item is the
   // textarea's wrapper, so narrow windows compress the input.
   assert.match(composerSource, /<div className="relative min-w-0 flex-1">/);
-  assert.match(composerSource, /'w-full peer resize-none overflow-y-auto bg-transparent/);
+  // 2026-11-11 14:07 rework (supersedes the bare `overflow-y-auto` prefix
+  // this pin carried): the class string opens with `overflow-x-hidden` so
+  // the now-unwrapped transparent placeholder can never paint a horizontal
+  // scrollbar (user text soft-wraps; only the placeholder could overflow).
+  assert.match(composerSource, /'w-full peer resize-none overflow-x-hidden overflow-y-auto bg-transparent/);
   // Chromium paints no ellipsis on a textarea placeholder, so the visible
   // hint is an overlay div (`truncate` = real "…"); the native placeholder
   // stays for the accessible name but renders transparent. Both branches.
-  assert.match(composerSource, /placeholder:text-transparent dark:placeholder:text-transparent/);
+  // (Supersedes the adjacent `placeholder:text-transparent
+  // dark:placeholder:text-transparent` adjacency pin: the nowrap clamp now
+  // rides between them.)
+  assert.match(composerSource, /placeholder:text-transparent placeholder:whitespace-nowrap dark:placeholder:text-transparent/);
+  // 2026-11-11 14:07 rework, the empty-state height fix itself: Chromium
+  // LAYS OUT the (transparent) placeholder, and a placeholder that wraps
+  // at the narrow panel width inflated the EMPTY textarea's scrollHeight —
+  // the mount-time auto-resize then wrote that height inline (48px instead
+  // of the 24px floor), and the stale-height cache legitimately kept it
+  // through the first keystroke. Clamping the placeholder to one line
+  // makes it height-neutral in every mount form (probe-measured: panel
+  // form empty auto-measure 48px → 24px; large forms keep 42/60 floors).
+  // All three textarea class strings carry the clamp; both scrolling
+  // textareas additionally clip the horizontal axis.
+  const nowrapClamps = composerSource.match(/placeholder:whitespace-nowrap/g) ?? [];
+  assert.equal(nowrapClamps.length, 3, 'textarea large + small + claim variants all clamp the placeholder to one line');
+  const xHidden = composerSource.match(/overflow-x-hidden/g) ?? [];
+  assert.equal(xHidden.length, 2, 'both scrolling textarea variants clip the horizontal axis');
   const overlays = composerSource.match(/data-slot="composer-hint-overlay"/g) ?? [];
   assert.equal(overlays.length, 2, 'large and small branches both carry the hint overlay');
   const gates = composerSource.match(/!composerFocused && !value\.trim\(\)/g) ?? [];
@@ -131,4 +158,35 @@ test('i18n the locator copy is bilingual and the owner label key exists', () => 
   assert.match(i18nSource, /botBrowserLocatorRail: 'Message locator'/);
   assert.match(i18nSource, /coworkOriginBadgeYou: '你'/);
   assert.match(i18nSource, /coworkOriginBadgeYou: 'You'/);
+});
+
+test('⑤ the transcript reserves the rail lane so bubbles and the jump ring never enter it', () => {
+  // Owner rework ruling 2026-11-11 14:40 (supersedes the cancelled
+  // "preview card dodge" guard): that prior guard pinned
+  // panelLocatorPreviewPlacement / PANEL_LOCATOR_PREVIEW_* literals whose
+  // helpers were reverted with the void card. The real defect was the
+  // highlight bubble's right edge — plus the ring-1 outward overhang —
+  // painting under the floating locator rail, so the fix lives on the
+  // scroller as a persistent lane reservation.
+  assert.match(panelSource, /overflow-x-hidden pl-1 pr-5 pb-2/);
+  // Count inside className attributes only — the scroller's explanatory
+  // comment also names the literal, so a bare match would self-bite.
+  const lanePins = panelSource.match(/className="[^"]*\bpr-5\b/g) ?? [];
+  assert.equal(lanePins.length, 1, 'exactly the transcript scroller reserves the rail lane');
+  // The rail itself stays a floating w-3.5 (14px) right-edge overlay —
+  // the reservation lives on the scroller, never on the rail.
+  assert.match(railSource, /bottom-1 right-0 top-1 z-20 w-3\.5/);
+  // The reservation only matters while the jump ring can light at all:
+  // pin the tick-click → host-ring seam (2026-11-11 14:51 restore — the
+  // void-card revert briefly wiped the rail-side onTickJump wiring while
+  // the panel kept calling it, killing the ring and tsc with it).
+  assert.match(railSource, /onTickJump\?\.\(ticks\[index\]\.id\)/);
+  assert.match(panelSource, /onTickJump=\{handleLocatorTickJump\}/);
+  // The reservation must outlive the jump ring: ring-1 paints 1px past the
+  // bubble edge, so 20px − 14px − 1px keeps a visible safety gap while
+  // QUOTE_JUMP_HIGHLIGHT_MS stays the shared 2.5s ring window.
+  assert.match(sessionDetailSource, /QUOTE_JUMP_HIGHLIGHT_CLASSES = \['ring-1', 'ring-claude-accent'\]/);
+  assert.match(sessionDetailSource, /QUOTE_JUMP_HIGHLIGHT_MS = 2500/);
+  // The hover preview card keeps its left-of-rail lane (HEAD behavior).
+  assert.match(railSource, /right-full mr-2 w-56/);
 });

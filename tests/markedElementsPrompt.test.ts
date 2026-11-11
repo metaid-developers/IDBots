@@ -54,9 +54,9 @@ test('block renders header, element descriptor, locator, text, and verbatim comm
   assert.match(block, /^> Marked elements on "Chess App" \(`metaapp:\/\/abc`\)/);
   assert.match(block, /refers to these marks/);
   assert.match(block, /> 1\. Marker 1 — `<button#play-btn\.play-btn\.primary>`/);
-  assert.match(block, />    locator \(document\): `#app > button\.play-btn`/);
-  assert.match(block, />    text: Play game/);
-  assert.match(block, />    comment: Make the label uppercase/);
+  assert.match(block, /> {4}locator \(document\): `#app > button\.play-btn`/);
+  assert.match(block, /> {4}text: Play game/);
+  assert.match(block, /> {4}comment: Make the label uppercase/);
 });
 
 test('human comments stay verbatim including non-English text', () => {
@@ -72,7 +72,7 @@ test('xpath is the fallback locator and cssScope labels come from the snapshot',
       locator: { cssSelector: '', cssScope: 'browser-pane', xpath: '/html[1]/body[1]/div[1]' },
     })],
   }));
-  assert.match(block, />    xpath: `\/html\[1\]\/body\[1\]\/div\[1\]`/);
+  assert.match(block, /> {4}xpath: `\/html\[1\]\/body\[1\]\/div\[1\]`/);
   assert.doesNotMatch(block, /locator \(/);
 });
 

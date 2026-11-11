@@ -12,8 +12,13 @@ import path from 'node:path';
 //    ruled the quote felt disjointed from the reply inside one bubble; sent
 //    quotes keep the ORIGINAL inline generated-block style. This file pins
 //    the ABSENCE of the card machinery so it cannot quietly regrow;
-// ③④ the stamp is the twin side's group-end line, default visible, and the
-//    👍chip shares that row adapting to the bubble alignment side.
+// ③④ SUPERSEDED by the chat-window four-item fix ② (delegation 3e22c1c3 /
+//    step 07807b1a, owner ruling 2026-11-11): the stamp moved INSIDE the
+//    bubble, unified across user and assistant rows; the external meta
+//    line is gone. SUPERSEDED AGAIN by the sixth item (owner ruling
+//    2026-11-11 14:45): the 👍chip moved inside too — one in-bubble footer
+//    row, chip LEFT of the stamp; the external chip row is gone for good.
+//    The ③④ test below was rewritten in place to the newest shape.
 // Timestamp-related pins superseded in the pass #1 and pass #3 guard files
 // live with their own rewrites; this file owns the pass #5 surface.
 
@@ -62,28 +67,44 @@ test('② sent quotes render INLINE with the real speaker (card stays reverted)'
   assert.doesNotMatch(panelSource, /message\.content\s*=[^=]/);
 });
 
-test('③④ the meta row: twin-side default stamp + chip-first alignment', () => {
+test('③④ stamp + chip share the in-bubble footer (chip left, stamp right), gated to assistant group-ends at the parent (sixth item supersession)', () => {
   // No hover gating survives from pass #3: no visibility-toggled reveal, no
-  // reserved-slot machinery, no `group` hover proxy on the row wrappers.
+  // reserved-slot machinery, no hover proxy on the row wrappers.
   assert.doesNotMatch(panelSource, /group-hover:/);
   assert.doesNotMatch(panelSource, /stampOnlyRow/);
   assert.doesNotMatch(panelSource, /className="group /);
-  // The stamp formula lives in the parent: assistant && group-end only.
+  // The parent feeds the assistant&&group-end expression. Gate history
+  // (superseded twice): pass #5's hover gate → fix ② (11:19) retired it →
+  // the 14:07 rework promoted it back as the DECIDING gate: it pre-gates
+  // timestampLabel (only assistant group-end bubbles receive one) and rides
+  // showTimestamp verbatim for contract stability.
   assert.match(panelSource, /showTimestamp=\{message\.type === 'assistant' && isPanelMessageGroupEnd\(visibleMessages, index\)\}/);
-  // Defense-in-depth in the row: a user bubble never carries a stamp.
-  assert.match(panelSource, /const showStamp = showTimestamp && !isUser;/);
-  // The row mounts only when it has content…
-  assert.match(panelSource, /showStamp \|\| hasReactionChip \? \(/);
-  // …aligns with the bubble side (user right, assistant left)…
-  assert.match(panelSource, /isUser \? 'justify-end' : 'justify-start'/);
-  // …and reads [👍chip][time] on assistant rows (chip before stamp).
-  const metaRowBlock = panelSource.match(/data-slot="panel-message-meta"[\s\S]*?\) : null;/)?.[0] ?? '';
-  assert.ok(metaRowBlock, 'meta row block found');
-  const chipIndex = metaRowBlock.indexOf('data-panel-reaction-chip');
-  const stampIndex = metaRowBlock.indexOf('data-panel-message-timestamp');
-  assert.ok(chipIndex !== -1, 'reaction chip wired in the row');
-  assert.ok(stampIndex !== -1, 'stamp wired in the row');
-  assert.ok(chipIndex < stampIndex, 'assistant rows read [chip][time]');
-  // The timestamp guard only renders when formatting produced one.
-  assert.match(panelSource, /\{showStamp && timestampLabel \? \(/);
+  // The stamp: an in-bubble 10px muted span, rendered from the parent-gated
+  // label alone; the footer row right-aligns it — the component re-decides
+  // nothing about WHO carries it (supersedes the "user and assistant
+  // unified, formatting alone" wording).
+  assert.match(panelSource, /const bubbleStamp = timestampLabel \? \(/);
+  assert.match(panelSource, /data-panel-message-timestamp="true"/);
+  // SUPERSEDED (sixth item, owner ruling 2026-11-11 14:45): the three
+  // bubble branches now close with the in-bubble FOOTER (chip left, stamp
+  // right); the footer composes {bubbleStamp} exactly once — no branch
+  // mounts the stamp directly.
+  const footerInserts = panelSource.match(/\{bubbleFooter\}/g) ?? [];
+  assert.equal(footerInserts.length, 3, 'all three bubble branches close with the in-bubble footer');
+  assert.equal((panelSource.match(/\{bubbleStamp\}/g) ?? []).length, 1, 'the footer is the only stamp mount point');
+  // SUPERSEDED (sixth item, owner ruling 2026-11-11 14:45): the external
+  // chip row is gone for good; the chip rides the in-bubble footer beside
+  // the stamp, flush with the bubble's bottom-right corner — the alignment
+  // no longer mirrors the bubble side.
+  assert.doesNotMatch(panelSource, /panel-message-meta/);
+  assert.match(panelSource, /const bubbleFooter = hasReactionChip \|\| bubbleStamp \? \(/);
+  const footerBlock = panelSource.match(/data-slot="panel-bubble-footer"[\s\S]*?\) : null;/)?.[0] ?? '';
+  assert.ok(footerBlock, 'bubble footer block found');
+  assert.ok(footerBlock.includes('data-panel-reaction-chip'), 'reaction chip wired in the footer');
+  assert.ok(footerBlock.includes('{bubbleStamp}'), 'the stamp rides the same footer row');
+  assert.ok(
+    footerBlock.indexOf('data-panel-reaction-chip') < footerBlock.indexOf('{bubbleStamp}'),
+    'chip LEFT of the stamp on the footer row',
+  );
+  assert.match(footerBlock, /justify-end/, 'the pair hugs the bubble bottom-right corner');
 });
