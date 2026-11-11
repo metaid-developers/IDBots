@@ -11,7 +11,7 @@ test.describe('reconnect resync @resync', () => {
     await page.goto('/app/');
     const composer = page.getByPlaceholder('Type a message…');
     await composer.fill('tell me a story');
-    await page.getByRole('button', { name: 'Send' }).click();
+    await page.getByTestId('chat-composer-input').press('Enter');
 
     // Let the stream start, then black out mid-reply.
     await page.waitForTimeout(800);

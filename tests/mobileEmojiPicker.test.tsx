@@ -492,27 +492,28 @@ function chatFixture(overrides: Record<string, unknown> = {}): Chat {
   } as unknown as Chat;
 }
 
-test('composer renders the emoji trigger button with picker aria wiring, adjacent to the attach button', () => {
-  mobileI18n.setLanguage('zh'); // earlier tests may have switched language
+test('composer keeps the text area wide between one plus button and voice, with emoji and attachments in the plus sheet', () => {
+  mobileI18n.setLanguage('zh');
   const markup = renderToStaticMarkup(
     <ChatScreen chat={chatFixture()} bots={[]} onOpenRecharge={() => undefined} />,
   );
-  // Emoji trigger with full aria wiring.
-  const emojiLabel = t('mobile.chat.emojiPicker');
-  const attachLabel = t('mobile.chat.addAttachment');
-  const emojiBtn = markup.match(new RegExp(`<button[^>]*aria-label="${emojiLabel}"[^>]*>`))?.[0] ?? '';
-  assert.ok(emojiBtn, 'emoji trigger button rendered');
-  assert.match(emojiBtn, /aria-expanded="false"/);
-  assert.match(emojiBtn, /aria-haspopup="dialog"/);
-  assert.match(emojiBtn, /aria-controls="mobile-chat-emoji-panel"/);
-  // Closed state renders no panel.
+  const composerLabel = t('mobile.chat.composerActions');
+  const plusButton = markup.match(new RegExp(`<button[^>]*aria-label="${composerLabel}"[^>]*>`))?.[0] ?? '';
+  assert.ok(plusButton, 'composer plus button rendered');
+  assert.match(plusButton, /aria-expanded="false"/);
+  assert.match(plusButton, /aria-haspopup="dialog"/);
   assert.ok(!markup.includes('data-testid="emoji-panel"'));
-  // Attachment button still present and AFTER the emoji trigger (emoji sits
-  // first in the row, WeChat-style).
-  const emojiIdx = markup.indexOf(`aria-label="${emojiLabel}"`);
-  const attachIdx = markup.indexOf(`aria-label="${attachLabel}"`);
-  assert.ok(attachIdx > 0, 'attach button still rendered');
-  assert.ok(emojiIdx >= 0 && emojiIdx < attachIdx, 'emoji trigger precedes the attach button');
+  assert.ok(!markup.includes('data-testid="composer-action-sheet"'));
+  const plusIdx = markup.indexOf('data-testid="composer-plus"');
+  const inputIdx = markup.indexOf('data-testid="chat-composer-input"');
+  const voiceIdx = markup.indexOf('data-testid="voice-btn-idle"');
+  assert.ok(plusIdx >= 0 && plusIdx < inputIdx && inputIdx < voiceIdx, 'plus → wide input → voice layout');
+  assert.ok(!markup.includes('mobile.chat.send'));
+  const source = readSource('../src/mobile/app/screens/ChatScreen.tsx');
+  assert.match(source, /data-testid="composer-action-emoji"/);
+  assert.match(source, /data-testid="composer-action-attachment"/);
+  assert.match(source, /event\.nativeEvent\.isComposing/);
+  assert.match(source, /enterKeyHint="send"/);
 });
 
 test('user bubble renders WeChat bracket codes as Twemoji images (display-only), unknown codes verbatim', () => {
@@ -658,15 +659,15 @@ test('ChatScreen source contract: caret insertion wiring, panel flow, display-on
   // Picking never refocuses the textarea (software keyboard stays hidden).
   assert.match(source, /No refocus \(WeChat-style flow\)\./);
   // Tapping back into the textarea closes the panel (back to text input).
-  assert.match(source, /onFocus=\{\(\) => setEmojiPanelOpen\(false\)\}/);
-  // The panel toggles from the toolbar trigger.
-  assert.match(source, /setEmojiPanelOpen\(\(open\) => !open\)/);
+  assert.match(source, /onFocus=\{\(\) => \{\s*setEmojiPanelOpen\(false\);/);
+  // The plus action sheet opens the panel without crowding the composer.
+  assert.match(source, /setEmojiPanelOpen\(true\)/);
   // All four bubble kinds map at DISPLAY time only — and only the display
   // layer swaps in Twemoji artwork (user/error/system bubbles via
   // TwemojiText, assistant via MarkdownContent's opt-in emojiImages prop).
   assert.match(source, /mapWechatBracketCodesForDisplay\(message\.text\)/);
   assert.match(source, /<TwemojiText text=\{mapWechatBracketCodesForDisplay\(message\.text\)\} \/>/);
-  assert.match(source, /onOpenLocalFile=\{onOpenFile\} emojiImages \/>/);
+  assert.match(source, /onOpenLocalFile=\{onOpenFile\} onOpenBotBrowserUri=\{onOpenUri\} emojiImages \/>/);
   // Error + system bubbles route through the same display pipeline.
   const twemojiTextFaces = source.match(/<TwemojiText text=\{mapWechatBracketCodesForDisplay\(messageText\(message\)\)\} \/>/g) ?? [];
   assert.equal(twemojiTextFaces.length, 2, 'error + system bubbles both route through TwemojiText');

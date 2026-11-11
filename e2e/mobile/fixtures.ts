@@ -18,7 +18,7 @@ export async function expectAppShell(page: Page): Promise<void> {
   await expect(page.getByRole('button', { name: 'Chat', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Sessions' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Tasks' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Me' })).toBeVisible();
+  await expect(page.getByTestId('mobile-tab-me')).toBeVisible();
 }
 
 /**

@@ -1528,10 +1528,60 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
     { key: 'glm-5.3', multiplier: 3 },
     { key: 'mvc-traffic', multiplier: 1 },
   ];
-  const mockMeOrders: Array<Record<string, unknown>> = [
+  const ME_ORDER_STORAGE_KEY = 'idbots.mobile.mock.meOrders.v1';
+  const readPersistedMeOrders = (): {
+    topup: Array<Record<string, unknown>>;
+    subscriptions: Array<Record<string, unknown>>;
+  } | null => {
+    if (typeof window === 'undefined') return null;
+    try {
+      const value = JSON.parse(window.sessionStorage.getItem(ME_ORDER_STORAGE_KEY) ?? 'null') as {
+        topup?: Array<Record<string, unknown>>;
+        subscriptions?: Array<Record<string, unknown>>;
+      } | null;
+      return value && Array.isArray(value.topup) && Array.isArray(value.subscriptions)
+        ? { topup: value.topup, subscriptions: value.subscriptions }
+        : null;
+    } catch {
+      return null;
+    }
+  };
+  const persistedMeOrders = readPersistedMeOrders();
+  const mockMeOrders: Array<Record<string, unknown>> = persistedMeOrders?.topup ?? [
     { orderId: 'me_topup_demo_0001', packageId: 'me_topup_a', status: 'confirmed', createdAt: mockMeNow() - 86_400, confirmedAt: mockMeNow() - 82_800, meMilli: 30_000_000, priceCny: 90 },
     { orderId: 'me_topup_demo_0002', packageId: 'me_topup_b', status: 'submitted', createdAt: mockMeNow() - 3_600, meMilli: 100_000_000, priceCny: 249 },
   ];
+  const mockMeSubscriptionOrders: Array<Record<string, unknown>> = persistedMeOrders?.subscriptions ?? [
+    {
+      orderId: 'me_subscription_demo_0001',
+      planId: 'me_standard',
+      period: 'month',
+      channel: 'mobile',
+      status: 'confirmed',
+      amountCny: 99,
+      payAmount: 99,
+      payCurrency: 'CNY',
+      createdAt: mockMeNow() - 30 * 86_400,
+    },
+  ];
+  const persistMeOrders = () => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.sessionStorage.setItem(ME_ORDER_STORAGE_KEY, JSON.stringify({
+        topup: mockMeOrders,
+        subscriptions: mockMeSubscriptionOrders,
+      }));
+    } catch {
+      return;
+    }
+  };
+  let mockMeActivePlanId = 'me_standard';
+  let mockSubscriptionSeq = 0;
+  const mockGatewayParams = (orderId: string) => ({
+    approvalUrl: `https://example.com/me-pay/demo?order=${encodeURIComponent(orderId)}`,
+    qrCode: `https://example.com/me-pay/demo?order=${encodeURIComponent(orderId)}`,
+    expiresAt: Date.now() + 15 * 60_000,
+  });
   const mockMeHistory = (() => {
     const rows = [
       { type: 'grant', amountMilli: 10_000_000, reason: 'weekly grant', refType: 'weekly' },
@@ -1581,7 +1631,9 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
         success: true,
         subscription: {
           statusText: mockMeSubscribed ? 'active' : 'free',
-          raw: mockMeSubscribed ? { planId: 'me_standard', planName: 'ID.Pupil' } : { planId: 'me_free' },
+          raw: mockMeSubscribed
+            ? { planId: mockMeActivePlanId, planName: mockMePlans.find((plan) => plan.planId === mockMeActivePlanId)?.name }
+            : { planId: 'me_free' },
         },
       })),
     getHistory: (input?: { type?: string }) =>
@@ -1589,31 +1641,78 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
         const rows = input?.type ? mockMeHistory.filter((row) => row.type === input.type) : mockMeHistory;
         return { success: true, history: { entries: rows, nextCursor: '' } };
       }),
-    submitTopupOrder: (input: { packageId?: string }) =>
+    submitTopupOrder: (input: { packageId?: string; gateway?: 'alipay' | 'paypal'; idempotencyKey?: string }) =>
       guardOnline(async () => {
-        const isTopup = String(input?.packageId ?? '').startsWith('me_topup_');
-        // PRD 2.2: top-up requires an active paid plan; subscription orders are
-        // exactly how a free account becomes paid, so they pass.
-        if (isTopup && !mockMeSubscribed) {
+        if (!mockMeSubscribed) {
           return { success: false, error: 'an active paid plan is required before top-up', errorCode: 'SUBSCRIPTION_REQUIRED', featureUnavailable: false };
         }
-        const pkg = isTopup
-          ? mockMeTopupPackages.find((entry) => entry.packageId === input?.packageId)
-          : mockMePlans.find((entry) => entry.planId === input?.packageId);
+        const pkg = mockMeTopupPackages.find((entry) => entry.packageId === input?.packageId);
         if (!pkg) return { success: false, error: 'package not found' };
+        const existing = input.idempotencyKey
+          ? mockMeOrders.find((order) => order.idempotencyKey === input.idempotencyKey)
+          : null;
+        if (existing) return { success: true, submission: { order: existing, applied: false } };
         mockTopupSeq += 1;
+        const orderId = `me_topup_demo_${String(1000 + mockTopupSeq)}`;
         const order = {
-          orderId: `me_topup_demo_${String(1000 + mockTopupSeq)}`,
-          packageId: 'packageId' in pkg ? pkg.packageId : pkg.planId,
+          orderId,
+          packageId: pkg.packageId,
           status: 'submitted',
           createdAt: mockMeNow(),
-          meMilli: 'meMilli' in pkg ? pkg.meMilli : pkg.weeklyAmountMilli,
+          meMilli: pkg.meMilli,
           priceCny: pkg.priceCny,
-          raw: {},
+          payAmount: pkg.priceCny,
+          payCurrency: 'CNY',
+          gatewayParams: mockGatewayParams(orderId),
+          idempotencyKey: input.idempotencyKey,
         };
         mockMeOrders.unshift(order);
+        persistMeOrders();
         return { success: true, submission: { order, applied: false } };
       }),
+    submitSubscriptionOrder: (input: {
+      planId?: string;
+      period?: 'month' | 'quarter' | 'year';
+      gateway?: 'alipay' | 'paypal';
+      idempotencyKey?: string;
+    }) =>
+      guardOnline(async () => {
+        const plan = mockMePlans.find((entry) => entry.planId === input?.planId && entry.tier !== 'free');
+        if (!plan) return { success: false, error: 'plan not found' };
+        const existing = input.idempotencyKey
+          ? mockMeSubscriptionOrders.find((order) => order.idempotencyKey === input.idempotencyKey)
+          : null;
+        if (existing) return { success: true, subscriptionOrder: existing };
+        mockSubscriptionSeq += 1;
+        const orderId = `me_subscription_demo_${String(1000 + mockSubscriptionSeq)}`;
+        const period = input.period ?? 'month';
+        const multiplier = period === 'year' ? 12 * 0.8 : period === 'quarter' ? 3 * 0.9 : 1;
+        const payAmount = Math.round(plan.priceCny * multiplier * 100) / 100;
+        const order = {
+          orderId,
+          planId: plan.planId,
+          period,
+          channel: 'mobile',
+          status: 'submitted',
+          amountCny: payAmount,
+          payAmount,
+          payCurrency: 'CNY',
+          gatewayParams: mockGatewayParams(orderId),
+          createdAt: mockMeNow(),
+          idempotencyKey: input.idempotencyKey,
+        };
+        mockMeSubscriptionOrders.unshift(order);
+        persistMeOrders();
+        return { success: true, subscriptionOrder: order };
+      }),
+    getSubscriptionOrder: (input: { orderId?: string }) =>
+      guardOnline(async () => {
+        const order = mockMeSubscriptionOrders.find((candidate) => candidate.orderId === input?.orderId);
+        return order
+          ? { success: true, subscriptionOrder: order }
+          : { success: false, error: 'order not found', errorCode: 'ORDER_NOT_FOUND' };
+      }),
+    getSubscriptionOrders: () => guardOnline(async () => ({ success: true, orders: mockMeSubscriptionOrders })),
     getTopupOrders: () => guardOnline(async () => ({ success: true, orders: mockMeOrders })),
     getPaymentInfo: () => ({ success: true, payment: { qrContent: 'https://example.com/me-pay/demo', payeeHint: 'Demo payee · ME top-up' } }),
     pickVoucher: () => Promise.resolve({ success: false }),
@@ -1773,6 +1872,87 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
               value: options?.metabotId ? 0.0002 : 0.001,
               unit: 'MVC',
             },
+          },
+        })),
+      getMetabotNfts: (input: { metabotId: number; kind: 'mrc721' | 'metacontract' }) =>
+        guardOnline(async () => {
+          const collectionPinId = `${'c'.repeat(64)}i0`;
+          const items = input.kind === 'mrc721'
+            ? [
+                {
+                  kind: 'mrc721',
+                  key: `${'a'.repeat(64)}i0`,
+                  name: 'Genesis Seed',
+                  collectionName: 'IDBots Founders',
+                  imageUrl: 'https://example.com/nft-genesis.png',
+                  number: 1,
+                  createTime: now() - 86_400,
+                  raw: {
+                    itemPinId: `${'a'.repeat(64)}i0`,
+                    collectionPinId,
+                    collectionName: 'IDBots Founders',
+                    desc: 'A founder collectible from the IDBots genesis collection.',
+                    ownerAddress: `mock-mvc-${input.metabotId}`,
+                    genesisChainName: 'mvc',
+                    genesisTx: `${'d'.repeat(64)}`,
+                    contentType: 'image/png',
+                    createTime: now() - 86_400,
+                  },
+                },
+                {
+                  kind: 'mrc721',
+                  key: `${'b'.repeat(64)}i0`,
+                  name: 'Agent Passport',
+                  collectionName: 'IDBots Founders',
+                  imageRef: `${'e'.repeat(64)}i0`,
+                  number: 2,
+                  createTime: now() - 43_200,
+                  raw: {
+                    itemPinId: `${'b'.repeat(64)}i0`,
+                    collectionPinId,
+                    collectionName: 'IDBots Founders',
+                    ownerAddress: `mock-mvc-${input.metabotId}`,
+                    genesisChainName: 'mvc',
+                    createTime: now() - 43_200,
+                  },
+                },
+              ]
+            : [
+                {
+                  kind: 'metacontract',
+                  key: 'mock-metacontract-nft-1',
+                  name: 'Meta Contract Badge',
+                  collectionName: 'Meta Badges',
+                  tokenIndex: '1',
+                  height: 982_104,
+                  raw: {
+                    tokenIndex: '1',
+                    name: 'Meta Contract Badge',
+                    satoshi: 1,
+                    txId: `${'f'.repeat(64)}`,
+                    outputIndex: 0,
+                    height: 982_104,
+                    seriesName: 'Meta Badges',
+                    genesis: `${'1'.repeat(64)}`,
+                    codeHash: `${'2'.repeat(64)}`,
+                  },
+                },
+              ];
+          return { success: true, items };
+        }),
+      getNftCaRegistry: () =>
+        guardOnline(async () => ({
+          success: true,
+          registry: {
+            protocol: 'idbots-nft-ca',
+            version: 1,
+            verified: true,
+            status: 'verified',
+            pinId: `${'3'.repeat(64)}i0`,
+            creatorMetaId: 'idbots-official',
+            officialMetaId: 'idbots-official',
+            collections: [{ collectionPinId: `${'c'.repeat(64)}i0`, collectionName: 'IDBots Founders' }],
+            fetchedAt: now(),
           },
         })),
     },
@@ -1955,6 +2135,23 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
     getOpenedUrls: () => [...openedUrls],
     setMeSubscribed: (value: boolean) => {
       mockMeSubscribed = value;
+    },
+    confirmMeOrder: (orderId: string) => {
+      const subscriptionOrder = mockMeSubscriptionOrders.find((order) => order.orderId === orderId);
+      if (subscriptionOrder) {
+        subscriptionOrder.status = 'confirmed';
+        subscriptionOrder.confirmedAt = mockMeNow();
+        mockMeActivePlanId = String(subscriptionOrder.planId ?? mockMeActivePlanId);
+        mockMeSubscribed = true;
+        persistMeOrders();
+        return true;
+      }
+      const topupOrder = mockMeOrders.find((order) => order.orderId === orderId);
+      if (!topupOrder) return false;
+      topupOrder.status = 'confirmed';
+      topupOrder.confirmedAt = mockMeNow();
+      persistMeOrders();
+      return true;
     },
     emitCoworkStream: (channel: MobileMockCoworkStreamChannel, payload: unknown) => {
       if (channel === 'permission') {

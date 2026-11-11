@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Bars3Icon, PlusIcon, PaperAirplaneIcon, PaperClipIcon, FaceSmileIcon, StopIcon, EllipsisHorizontalIcon, MagnifyingGlassIcon, PencilSquareIcon, TrashIcon, XMarkIcon, ArrowDownIcon } from '@heroicons/react/24/outline';
+import { Bars3Icon, PlusIcon, PaperClipIcon, FaceSmileIcon, StopIcon, EllipsisHorizontalIcon, MagnifyingGlassIcon, PencilSquareIcon, TrashIcon, XMarkIcon, ArrowDownIcon } from '@heroicons/react/24/outline';
 import MarkdownContent from '@/components/MarkdownContent';
 import MobileArtifactPreview from '../components/MobileArtifactPreview';
 import CoworkPermissionPanel from '@/components/cowork/CoworkPermissionPanel';
@@ -412,7 +412,7 @@ function DiagnosticCopyButton({ message, sessionId }: { message: ChatMessageView
   );
 }
 
-function MessageRow({ message, sessionId, onOpenFile }: { message: ChatMessageView; sessionId: string | null; onOpenFile: (filePath: string) => boolean }): JSX.Element {
+function MessageRow({ message, sessionId, onOpenFile, onOpenUri }: { message: ChatMessageView; sessionId: string | null; onOpenFile: (filePath: string) => boolean; onOpenUri?: (uri: string) => void }): JSX.Element {
   if (message.role === 'user') {
     return (
       <div className="twin-message flex justify-end">
@@ -463,7 +463,7 @@ function MessageRow({ message, sessionId, onOpenFile }: { message: ChatMessageVi
       <div className="twin-message-assistant">
         {/* Display-only mapping (wechatEmojiDisplay.ts); emojiImages renders
             catalog emoji as bundled Twemoji artwork inside the markdown. */}
-        <MarkdownContent content={mapWechatBracketCodesForDisplay(message.text)} chatExperienceMode="assistant" compact onOpenLocalFile={onOpenFile} emojiImages />
+        <MarkdownContent content={mapWechatBracketCodesForDisplay(message.text)} chatExperienceMode="assistant" compact onOpenLocalFile={onOpenFile} onOpenBotBrowserUri={onOpenUri} emojiImages />
         {message.streaming ? <span className="mt-1 inline-block h-4 w-2 animate-pulse bg-[var(--color-primary)]" aria-hidden /> : null}
       </div>
     </div>
@@ -511,12 +511,14 @@ export default function ChatScreen(props: {
   botsError?: string | null;
   onReloadBots?: () => void;
   onOpenRecharge: () => void;
+  onOpenUri?: (uri: string) => void;
   rechargeAllowed?: boolean;
 }): JSX.Element {
   const { chat, bots } = props;
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [attachmentSourceOpen, setAttachmentSourceOpen] = useState(false);
+  const [composerMenuOpen, setComposerMenuOpen] = useState(false);
   const [emojiPanelOpen, setEmojiPanelOpen] = useState(false);
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   // Refs (caret notes: emojiTextInsert.ts).
@@ -668,6 +670,13 @@ export default function ChatScreen(props: {
     textarea.setSelectionRange(caret, caret);
   }, [draft]);
 
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 128)}px`;
+  }, [draft]);
+
   const submit = () => {
     if (!canSubmit) return;
     void chat.send(draft, attachments);
@@ -721,7 +730,7 @@ export default function ChatScreen(props: {
               {!chat.restoring ? <p className="twin-empty-copy">{t('mobile.chat.emptyBody')}</p> : null}
             </div>
           ) : (
-            chat.messages.map((message) => <MessageRow key={message.id} message={message} sessionId={chat.sessionId ?? null} onOpenFile={openPreview} />)
+            chat.messages.map((message) => <MessageRow key={message.id} message={message} sessionId={chat.sessionId ?? null} onOpenFile={openPreview} onOpenUri={props.onOpenUri} />)
           )}
           {turnPhase !== 'idle' && turnPhase !== 'completed' ? (
             <p className="px-2 py-1 text-xs text-[var(--text-secondary)]" data-testid="turn-phase">
@@ -800,53 +809,37 @@ export default function ChatScreen(props: {
         <div className="twin-composer">
           <button
             type="button"
-            onClick={() => setEmojiPanelOpen((open) => !open)}
-            aria-label={t('mobile.chat.emojiPicker')}
-            aria-expanded={emojiPanelOpen}
-            aria-haspopup="dialog"
-            aria-controls="mobile-chat-emoji-panel"
-            className="twin-icon-button twin-composer-accessory"
-          >
-            <FaceSmileIcon className="h-5 w-5" aria-hidden />
-          </button>
-          <button
-            type="button"
             onClick={() => {
-              if (hasNativeAttachmentPicker) {
-                setAttachmentSourceOpen(true);
-              } else {
-                void chat.pickAttachments('files');
-              }
+              setEmojiPanelOpen(false);
+              setComposerMenuOpen(true);
             }}
-            disabled={!canAttach}
-            aria-label={t('mobile.chat.addAttachment')}
-            className="twin-icon-button twin-composer-accessory"
+            aria-label={t('mobile.chat.composerActions')}
+            aria-expanded={composerMenuOpen}
+            aria-haspopup="dialog"
+            className="twin-icon-button twin-composer-accessory twin-composer-plus"
+            data-testid="composer-plus"
           >
-            <PaperClipIcon className="h-5 w-5" aria-hidden />
+            <PlusIcon className="h-6 w-6" aria-hidden />
           </button>
-          <VoiceButton
-            state={voice.state}
-            elapsedSec={voice.elapsedSec}
-            recognizedText={voice.recognizedText}
-            levelRef={voice.levelRef}
-            bottomInset={keyboardInset}
-            onStart={voice.start}
-            onStop={voice.stop}
-            onStartHold={voice.startHold}
-            onEndHold={voice.endHold}
-            onCancelHold={voice.cancelHold}
-            onSalvage={voice.commitToDraft}
-            onDismissError={voice.dismissError}
-            onHoldCancelled={handleVoiceHoldCancelled}
-          />
           <textarea
             ref={textareaRef}
             value={draft}
             onChange={(event) => chat.setDraft(event.target.value)}
-            onFocus={() => setEmojiPanelOpen(false)}
+            onFocus={() => {
+              setEmojiPanelOpen(false);
+              setComposerMenuOpen(false);
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
+              event.preventDefault();
+              if (canSubmit) submit();
+            }}
+            enterKeyHint="send"
             placeholder={t('mobile.chat.composerPlaceholder')}
+            aria-label={t('mobile.chat.composerPlaceholder')}
             rows={1}
             className="twin-composer-input max-h-32 resize-none"
+            data-testid="chat-composer-input"
           />
           {chat.isStreaming ? (
             <button
@@ -854,20 +847,29 @@ export default function ChatScreen(props: {
               onClick={() => void chat.stop()}
               disabled={turnPhase === 'stopping'}
               aria-label={t('mobile.chat.stop')}
-              className="twin-icon-button twin-icon-button-danger"
+              className="twin-icon-button twin-icon-button-danger twin-composer-tail"
             >
               <StopIcon className="h-5 w-5" aria-hidden />
             </button>
-          ) : null}
-          <button
-            type="button"
-            onClick={submit}
-            disabled={!canSubmit}
-            aria-label={t('mobile.chat.send')}
-            className="twin-icon-button twin-icon-button-primary"
-          >
-            <PaperAirplaneIcon className="h-5 w-5" aria-hidden />
-          </button>
+          ) : (
+            <div className="twin-composer-tail">
+              <VoiceButton
+                state={voice.state}
+                elapsedSec={voice.elapsedSec}
+                recognizedText={voice.recognizedText}
+                levelRef={voice.levelRef}
+                bottomInset={keyboardInset}
+                onStart={voice.start}
+                onStop={voice.stop}
+                onStartHold={voice.startHold}
+                onEndHold={voice.endHold}
+                onCancelHold={voice.cancelHold}
+                onSalvage={voice.commitToDraft}
+                onDismissError={voice.dismissError}
+                onHoldCancelled={handleVoiceHoldCancelled}
+              />
+            </div>
+          )}
         </div>
       </div>
 
@@ -887,6 +889,41 @@ export default function ChatScreen(props: {
         open={pickerOpen}
         onClose={() => setPickerOpen(false)}
       />
+      {composerMenuOpen ? (
+        <BottomSheet title={t('mobile.chat.composerActions')} onClose={() => setComposerMenuOpen(false)}>
+          <div className="flex flex-col" data-testid="composer-action-sheet">
+            <button
+              type="button"
+              data-testid="composer-action-emoji"
+              onClick={() => {
+                setComposerMenuOpen(false);
+                setEmojiPanelOpen(true);
+              }}
+              className="flex min-h-[52px] items-center gap-3 border-b border-[var(--border-color)] px-1 text-left text-[15px] text-[var(--text-primary)] active:bg-[var(--bg-hover)]"
+            >
+              <FaceSmileIcon className="h-5 w-5 text-[var(--text-secondary)]" aria-hidden />
+              {t('mobile.chat.emojiPicker')}
+            </button>
+            <button
+              type="button"
+              data-testid="composer-action-attachment"
+              disabled={!canAttach}
+              onClick={() => {
+                setComposerMenuOpen(false);
+                if (hasNativeAttachmentPicker) {
+                  setAttachmentSourceOpen(true);
+                } else {
+                  void chat.pickAttachments('files');
+                }
+              }}
+              className="flex min-h-[52px] items-center gap-3 px-1 text-left text-[15px] text-[var(--text-primary)] active:bg-[var(--bg-hover)] disabled:opacity-40"
+            >
+              <PaperClipIcon className="h-5 w-5 text-[var(--text-secondary)]" aria-hidden />
+              {t('mobile.chat.addAttachment')}
+            </button>
+          </div>
+        </BottomSheet>
+      ) : null}
       {attachmentSourceOpen ? (
         <BottomSheet title={t('mobile.chat.attachmentSourceTitle')} onClose={() => setAttachmentSourceOpen(false)}>
           <div className="flex flex-col" data-testid="attachment-source-sheet">

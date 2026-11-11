@@ -8,24 +8,15 @@ import {
   InformationCircleIcon,
   PuzzlePieceIcon,
   ShieldCheckIcon,
+  Squares2X2Icon,
 } from '@heroicons/react/24/outline';
 import { t } from '../../../i18n';
-
-/**
- * Me-page entry registry (A6 settings IA rework, IA-PLAN v1 §2.4).
- *
- * The primary Me page renders its entry list FROM this table. S9 replaced the
- * old traffic page with the merged Usage & credits page (`usage`), which is now a
- * registry row AND the hero card's bottom link.
- *
- * `profile` is NOT a registry row: it is reached through the user card
- * (IA-PLAN §2.1). It still shares the MeRoute stack with the rows below.
- */
 
 export type MeRoute =
   | 'profile'
   | 'usage'
   | 'bots'
+  | 'nfts'
   | 'weixinBind'
   | 'skills'
   | 'memory'
@@ -35,7 +26,6 @@ export type MeRoute =
 
 export type MeEntryGroup = 'bots' | 'general' | 'account';
 
-/** Everything a summary renderer may need, gathered by the Me screen. */
 export interface MeEntrySummaryInput {
   botCount: number | null;
   skillsEnabledCount: number | null;
@@ -43,7 +33,6 @@ export interface MeEntrySummaryInput {
   languageLabel: string | null;
   themeLabel: string | null;
   appVersion: string | null;
-  /** Merged ME balance in whole ME, or null while the ledger is unavailable. */
   meTotal: number | null;
 }
 
@@ -51,12 +40,9 @@ export interface MeEntry {
   id: MeRoute;
   group: MeEntryGroup;
   icon: ComponentType<{ className?: string; 'aria-hidden'?: boolean | 'true' | 'false' }>;
-  /** i18n key of the row title (also the secondary page title). */
   titleKey: string;
   testId: string;
-  /** Right-side value summary; null (or missing) renders no summary. */
   summary?: (input: MeEntrySummaryInput) => string | null;
-  /** Reserved for red rows (IA-PLAN §2.4); no current entry uses it. */
   danger?: boolean;
 }
 
@@ -69,6 +55,13 @@ export const ME_ENTRIES: readonly MeEntry[] = [
     testId: 'me-entry-bots',
     summary: (input) =>
       input.botCount === null ? null : t('mobile.me.summary.botsCount', { count: input.botCount }),
+  },
+  {
+    id: 'nfts',
+    group: 'bots',
+    icon: Squares2X2Icon,
+    titleKey: 'mobile.nfts.title',
+    testId: 'me-entry-nfts',
   },
   {
     id: 'weixinBind',
@@ -138,9 +131,7 @@ export const ME_ENTRIES: readonly MeEntry[] = [
   },
 ];
 
-/** Group order + titles for the registry renderer (IA-PLAN §4.1). */
 export const ME_ENTRY_GROUPS: ReadonlyArray<{ group: MeEntryGroup; titleKey: string | null }> = [
-  // The bots group has no visible heading (My Bots + WeChat bot rows on top).
   { group: 'bots', titleKey: null },
   { group: 'general', titleKey: 'mobile.me.group.general' },
   { group: 'account', titleKey: 'mobile.me.group.account' },

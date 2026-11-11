@@ -33,6 +33,8 @@ import {
 } from './me/registry';
 import { ProfilePage } from './me/ProfilePage';
 import { UsageCreditsPage } from './me/UsageCreditsPage';
+import { NftGalleryPage } from './me/NftGalleryPage';
+import type { MobileNftMintRequest } from '../me/nftMint';
 import { BotsPage } from './me/BotsPage';
 import { BotEditPage } from './me/BotEditPage';
 import { SkillsPage } from './me/SkillsPage';
@@ -112,7 +114,9 @@ function IosGuidanceSheet(props: { onClose: () => void }): JSX.Element {
 export default function MeScreen(props: {
   resyncCounter?: number;
   canPurchase: boolean;
-  onOpenPurchase: (section: 'subscribe' | 'topup', planId?: string) => void;
+  onOpenPurchase: (section: 'subscribe' | 'topup', subjectId?: string, orderId?: string) => void;
+  onMintNft: (request: MobileNftMintRequest, prompt: string) => void;
+  onOpenUri?: (uri: string) => void;
   /** Bumped by the shell when a submitted order should open Usage & credits. */
   usageSignal?: number;
 }): JSX.Element {
@@ -297,9 +301,25 @@ export default function MeScreen(props: {
           </>
         );
       case 'usage':
-        return <UsageCreditsPage onBack={requestBack} />;
+        return (
+          <UsageCreditsPage
+            onBack={requestBack}
+            canPurchase={props.canPurchase}
+            onResumeOrder={(section, subjectId, orderId) => props.onOpenPurchase(section, subjectId, orderId)}
+          />
+        );
       case 'bots':
         return <BotsPage onBack={requestBack} onOpenEdit={(botId) => pushRoute('botEdit', botId)} />;
+      case 'nfts':
+        return (
+          <NftGalleryPage
+            bots={metabots.bots}
+            botsLoading={metabots.loading}
+            onBack={requestBack}
+            onMint={props.onMintNft}
+            onOpenUri={props.onOpenUri}
+          />
+        );
       case 'weixinBind':
         return <WeixinBindPage onBack={requestBack} />;
       case 'botEdit':

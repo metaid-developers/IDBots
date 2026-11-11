@@ -187,6 +187,8 @@ export interface MobileMockControl {
   emitCoworkStream: (channel: MobileMockCoworkStreamChannel, payload: unknown) => void;
   /** S9 ME points demo: flip the mock subscription between free and active. */
   setMeSubscribed?: (value: boolean) => void;
+  /** Move one subscription/top-up order to the authoritative credited state. */
+  confirmMeOrder?: (orderId: string) => boolean;
 }
 
 /** Timer/scenario knobs; tests shrink these to keep the suite fast. */

@@ -1,6 +1,8 @@
 import { ArrowLeftIcon, ArrowPathIcon, ChevronDownIcon } from '@heroicons/react/24/outline';
 import { useCallback, useEffect, useState } from 'react';
+import { mePaymentPhase } from '@/components/me/mePayment';
 import { t } from '../../../i18n';
+import { getMobileElectron } from '../../appBridge';
 import {
   formatMe,
   formatMeRate,
@@ -16,13 +18,11 @@ import {
   type MobileMeTopupOrder,
 } from '../../me/mePointsStore';
 
-/**
- * Usage & credits (S9 §3.2) - the merged page that replaces the old traffic page:
- * balance snapshot + ME ledger history + topup order states + multiplier notes.
- * No token, traffic-MB or cerebellum-quota vocabulary survives here.
- */
-
 type HistoryFilter = 'all' | 'grant' | 'spend' | 'topup' | 'earned';
+type SubscriptionOrder = NonNullable<
+  Awaited<ReturnType<Window['electron']['mePoints']['getSubscriptionOrders']>>['orders']
+>[number];
+type PurchaseOrder = MobileMeTopupOrder | SubscriptionOrder;
 
 const FILTERS: ReadonlyArray<{ id: HistoryFilter; labelKey: string }> = [
   { id: 'all', labelKey: 'mobile.me.usage.all' },
@@ -52,12 +52,19 @@ function typeLabel(type: string): string {
 
 function statusLabel(status: string): string {
   switch (status.toLowerCase()) {
+    case 'created':
     case 'submitted':
     case 'pending':
       return t('mobile.me.usage.statusSubmitted');
     case 'confirmed':
     case 'credited':
+    case 'active':
+    case 'completed':
+    case 'succeeded':
       return t('mobile.me.usage.statusConfirmed');
+    case 'closed':
+    case 'expired':
+    case 'failed':
     case 'rejected':
       return t('mobile.me.usage.statusRejected');
     default:
@@ -108,43 +115,94 @@ function HistoryRow(props: { entry: MobileMeHistoryEntry }): JSX.Element {
   );
 }
 
-function OrderRow(props: { order: MobileMeTopupOrder }): JSX.Element {
-  const me = props.order.meMilli ? formatMe(meFromMilli(props.order.meMilli)) : '';
-  const status = statusLabel(props.order.status);
-  const rejected = props.order.status.toLowerCase() === 'rejected';
+function OrderRow(props: {
+  order: PurchaseOrder;
+  kind: 'subscribe' | 'topup';
+  canResume: boolean;
+  onResume?: (section: 'subscribe' | 'topup', subjectId: string, orderId: string) => void;
+}): JSX.Element {
+  const { order, kind } = props;
+  const subjectId = kind === 'subscribe'
+    ? (order as SubscriptionOrder).planId
+    : (order as MobileMeTopupOrder).packageId;
+  const detail = kind === 'subscribe'
+    ? [subjectId, (order as SubscriptionOrder).period].filter(Boolean).join(' · ')
+    : [
+        subjectId,
+        (order as MobileMeTopupOrder).meMilli
+          ? t('mobile.me.usage.orderMe', { me: formatMe(meFromMilli((order as MobileMeTopupOrder).meMilli)) })
+          : '',
+      ].filter(Boolean).join(' · ');
+  const amount = order.payAmount
+    ?? ('amountCny' in order ? order.amountCny : undefined)
+    ?? ('priceCny' in order ? order.priceCny : undefined);
+  const rejected = mePaymentPhase(order.status) === 'closed';
+  const pending = mePaymentPhase(order.status) === 'pending';
   return (
-    <div className="me-order-row" data-testid="usage-order-row" data-status={props.order.status}>
+    <div className="me-order-row" data-testid="usage-order-row" data-kind={kind} data-status={order.status}>
       <div className="me-order-main">
-        <span className="me-order-id">{props.order.orderId}</span>
+        <span className="me-order-kind">{t(`mobile.me.usage.orderKind.${kind}`)}</span>
+        <span className="me-order-id">{order.orderId}</span>
         <span className="me-order-meta">
-          {props.order.packageId}
-          {me ? ` · ${t('mobile.me.usage.orderMe', { me })}` : ''}
-          {typeof props.order.priceCny === 'number' ? ` · ¥${props.order.priceCny}` : ''}
+          {detail}
+          {typeof amount === 'number' ? ` · ¥${amount}` : ''}
         </span>
-        {props.order.createdAt ? <span className="me-order-time">{timeLabel(props.order.createdAt)}</span> : null}
-        {rejected && props.order.rejectReason ? (
-          <span className="me-order-reject">{t('mobile.me.usage.rejectReason', { reason: props.order.rejectReason })}</span>
+        {order.createdAt ? <span className="me-order-time">{timeLabel(order.createdAt)}</span> : null}
+        {rejected && order.rejectReason ? (
+          <span className="me-order-reject">{t('mobile.me.usage.rejectReason', { reason: order.rejectReason })}</span>
+        ) : null}
+        {pending && props.canResume && props.onResume ? (
+          <button
+            type="button"
+            className="me-order-resume"
+            data-testid={`usage-resume-${order.orderId}`}
+            onClick={() => props.onResume?.(kind, subjectId, order.orderId)}
+          >
+            {t('mobile.me.usage.resumePayment')}
+          </button>
         ) : null}
       </div>
-      <span className={rejected ? 'me-order-status me-order-status-bad' : 'me-order-status'}>{status}</span>
+      <span className={rejected ? 'me-order-status me-order-status-bad' : 'me-order-status'}>{statusLabel(order.status)}</span>
     </div>
   );
 }
 
-export function UsageCreditsPage(props: { onBack: () => void }): JSX.Element {
+export function UsageCreditsPage(props: {
+  onBack: () => void;
+  canPurchase?: boolean;
+  onResumeOrder?: (section: 'subscribe' | 'topup', subjectId: string, orderId: string) => void;
+}): JSX.Element {
   const snapshot = useMeStore();
   const [filter, setFilter] = useState<HistoryFilter>('all');
   const [ratesOpen, setRatesOpen] = useState(false);
+  const [subscriptionOrders, setSubscriptionOrders] = useState<SubscriptionOrder[]>([]);
+  const [subscriptionOrdersLoading, setSubscriptionOrdersLoading] = useState(false);
+  const [subscriptionOrdersError, setSubscriptionOrdersError] = useState('');
   const balance = snapshot.balance;
   const weekly = balance?.weeklyGrant ?? null;
   const total = balance ? meFromMilli(balance.totalAvailable) : null;
+
+  const loadSubscriptionOrders = useCallback(async () => {
+    setSubscriptionOrdersLoading(true);
+    setSubscriptionOrdersError('');
+    try {
+      const result = await getMobileElectron().mePoints.getSubscriptionOrders();
+      if (!result.success) throw new Error(result.error || t('mobile.me.usage.ordersUnavailable'));
+      setSubscriptionOrders(Array.isArray(result.orders) ? result.orders : []);
+    } catch (error) {
+      setSubscriptionOrdersError(error instanceof Error ? error.message : t('mobile.me.usage.ordersUnavailable'));
+    } finally {
+      setSubscriptionOrdersLoading(false);
+    }
+  }, []);
 
   const loadAll = useCallback(() => {
     void refreshMeBalance();
     void refreshMeCatalog();
     void refreshMeTopupOrders();
     void refreshMeHistory({ reset: true, type: filter === 'all' ? undefined : filter });
-  }, [filter]);
+    void loadSubscriptionOrders();
+  }, [filter, loadSubscriptionOrders]);
 
   useEffect(() => {
     loadAll();
@@ -152,17 +210,8 @@ export function UsageCreditsPage(props: { onBack: () => void }): JSX.Element {
 
   return (
     <div className="twin-page h-full" data-testid="me-page-usage">
-      <div
-        className="twin-topbar twin-topbar-simple shrink-0"
-        style={{ paddingTop: 'calc(env(safe-area-inset-top) + 6px)' }}
-      >
-        <button
-          type="button"
-          onClick={props.onBack}
-          className="me-back"
-          aria-label={t('mobile.common.back')}
-          data-testid="me-secondary-back"
-        >
+      <div className="twin-topbar twin-topbar-simple shrink-0" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 6px)' }}>
+        <button type="button" onClick={props.onBack} className="me-back" aria-label={t('mobile.common.back')} data-testid="me-secondary-back">
           <ArrowLeftIcon className="h-5 w-5" aria-hidden />
           <span>{t('mobile.me.usage.title')}</span>
         </button>
@@ -183,12 +232,8 @@ export function UsageCreditsPage(props: { onBack: () => void }): JSX.Element {
           <div className="me-ledger me-ledger-light">
             <div className="me-ledger-cell">
               <span className="me-ledger-label">{t('mobile.me.points.weekly')}</span>
-              <span className="me-ledger-value">
-                {weekly ? formatMe(meFromMilli(weekly.remainingMilli)) : '—'}
-              </span>
-              {weekly ? (
-                <span className="me-ledger-sub">{`/ ${formatMe(meFromMilli(weekly.amountMilli))}`}</span>
-              ) : null}
+              <span className="me-ledger-value">{weekly ? formatMe(meFromMilli(weekly.remainingMilli)) : '—'}</span>
+              {weekly ? <span className="me-ledger-sub">{`/ ${formatMe(meFromMilli(weekly.amountMilli))}`}</span> : null}
             </div>
             <div className="me-ledger-cell">
               <span className="me-ledger-label">{t('mobile.me.points.topup')}</span>
@@ -209,6 +254,19 @@ export function UsageCreditsPage(props: { onBack: () => void }): JSX.Element {
           ) : null}
         </section>
 
+        <section className="twin-panel twin-panel-padded" data-testid="usage-unified">
+          <h2 className="me-usage-title">{t('mobile.me.usage.unifiedTitle')}</h2>
+          <p className="me-gate-body mt-1">{t('mobile.me.usage.unifiedBody')}</p>
+          <div className="me-unified-grid">
+            {(['officialLlm', 'cerebellum', 'chainTraffic'] as const).map((item) => (
+              <div key={item} className="me-unified-item">
+                <span className="me-unified-dot" aria-hidden />
+                <span>{t(`mobile.me.usage.unified.${item}`)}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+
         <section className="twin-panel twin-panel-padded" data-testid="usage-history">
           <div className="me-usage-head">
             <h2 className="me-usage-title">{t('mobile.me.usage.historyTitle')}</h2>
@@ -216,20 +274,13 @@ export function UsageCreditsPage(props: { onBack: () => void }): JSX.Element {
           </div>
           <div className="me-filter-row">
             {FILTERS.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setFilter(item.id)}
-                className={filter === item.id ? 'me-filter me-filter-active' : 'me-filter'}
-              >
+              <button key={item.id} type="button" onClick={() => setFilter(item.id)} className={filter === item.id ? 'me-filter me-filter-active' : 'me-filter'}>
                 {t(item.labelKey)}
               </button>
             ))}
           </div>
           <div className="me-history-list">
-            {snapshot.history.map((entry) => (
-              <HistoryRow key={entry.id} entry={entry} />
-            ))}
+            {snapshot.history.map((entry) => <HistoryRow key={entry.id} entry={entry} />)}
             {!snapshot.history.length ? (
               <p className="me-empty" data-testid="usage-history-empty">
                 {snapshot.historyLoading ? t('mobile.common.loading') : t('mobile.me.usage.historyEmpty')}
@@ -238,11 +289,7 @@ export function UsageCreditsPage(props: { onBack: () => void }): JSX.Element {
           </div>
           {snapshot.historyError ? <p className="me-inline-error">{snapshot.historyError}</p> : null}
           {snapshot.historyNextCursor ? (
-            <button
-              type="button"
-              className="me-more"
-              onClick={() => void refreshMeHistory({ type: filter === 'all' ? undefined : filter })}
-            >
+            <button type="button" className="me-more" onClick={() => void refreshMeHistory({ type: filter === 'all' ? undefined : filter })}>
               {snapshot.historyLoading ? t('mobile.common.loading') : t('mobile.me.usage.loadMore')}
             </button>
           ) : null}
@@ -251,17 +298,24 @@ export function UsageCreditsPage(props: { onBack: () => void }): JSX.Element {
         <section className="twin-panel twin-panel-padded" data-testid="usage-orders">
           <div className="me-usage-head">
             <h2 className="me-usage-title">{t('mobile.me.usage.ordersTitle')}</h2>
-            <span className="me-usage-count">{snapshot.orders.length}</span>
+            <span className="me-usage-count">{snapshot.orders.length + subscriptionOrders.length}</span>
           </div>
           <div className="me-order-list">
-            {snapshot.orders.map((order) => (
-              <OrderRow key={order.orderId} order={order} />
+            {subscriptionOrders.map((order) => (
+              <OrderRow key={`subscribe-${order.orderId}`} order={order} kind="subscribe" canResume={props.canPurchase !== false} onResume={props.onResumeOrder} />
             ))}
-            {!snapshot.orders.length ? (
-              <p className="me-empty">{snapshot.ordersLoading ? t('mobile.common.loading') : t('mobile.me.usage.ordersEmpty')}</p>
+            {snapshot.orders.map((order) => (
+              <OrderRow key={`topup-${order.orderId}`} order={order} kind="topup" canResume={props.canPurchase !== false} onResume={props.onResumeOrder} />
+            ))}
+            {!snapshot.orders.length && !subscriptionOrders.length ? (
+              <p className="me-empty">
+                {snapshot.ordersLoading || subscriptionOrdersLoading ? t('mobile.common.loading') : t('mobile.me.usage.ordersEmpty')}
+              </p>
             ) : null}
           </div>
-          {snapshot.ordersError ? <p className="me-inline-error">{snapshot.ordersError}</p> : null}
+          {snapshot.ordersError || subscriptionOrdersError ? (
+            <p className="me-inline-error">{snapshot.ordersError || subscriptionOrdersError}</p>
+          ) : null}
         </section>
 
         <section className="twin-panel twin-panel-padded" data-testid="usage-rates">

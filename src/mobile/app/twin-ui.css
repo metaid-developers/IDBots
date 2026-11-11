@@ -528,9 +528,9 @@ textarea.twin-input {
 .twin-tabbar {
   min-height: 65px;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   flex-shrink: 0;
-  padding: 4px 24px 0;
+  padding: 4px 8px 0;
   border-top: 1px solid var(--twin-border);
   background: var(--twin-tabbar);
   backdrop-filter: blur(24px) saturate(140%);
@@ -689,19 +689,19 @@ textarea.twin-input {
 
 .twin-composer-zone {
   flex-shrink: 0;
-  padding: 8px 12px 9px;
+  padding: 8px 8px 9px;
   border-top: 0;
   background: transparent;
 }
 
 .twin-composer {
-  min-height: 56px;
+  min-height: 54px;
   display: flex;
   align-items: center;
-  gap: 3px;
-  padding: 5px 5px 5px 7px;
+  gap: 2px;
+  padding: 4px;
   border: 1px solid var(--twin-border-strong);
-  border-radius: 999px;
+  border-radius: 26px;
   background: var(--twin-surface);
   box-shadow: var(--twin-shadow);
 }
@@ -709,13 +709,15 @@ textarea.twin-input {
 .twin-composer-input {
   min-width: 0;
   min-height: 44px;
-  flex: 1;
+  flex: 1 1 auto;
+  overflow-y: auto;
   border: 0;
   border-radius: 0;
   background: transparent;
   color: var(--twin-text-primary);
-  padding: 10px 4px;
+  padding: 10px 6px;
   font-size: 16px;
+  line-height: 24px;
   outline: 0;
 }
 
@@ -727,6 +729,19 @@ textarea.twin-input {
   border: 0;
   background: transparent;
   box-shadow: none;
+}
+
+.twin-composer-plus,
+.twin-composer-tail {
+  width: 40px;
+  height: 44px;
+  flex: 0 0 40px;
+}
+
+.twin-composer-tail {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* ---------------------------------------------------------------------------
@@ -1895,4 +1910,296 @@ textarea.twin-input {
   font-size: 10px;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
+}
+
+
+.me-segment-two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.me-checkout-summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--twin-text-secondary);
+  font-size: 13px;
+}
+
+.me-checkout-summary strong {
+  color: var(--twin-text-primary);
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.025em;
+}
+
+.me-checkout-order {
+  margin-top: 12px;
+  overflow-wrap: anywhere;
+  color: var(--twin-text-tertiary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+}
+
+.me-checkout-status {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: var(--twin-text-secondary);
+  font-size: 11px;
+  text-align: center;
+}
+
+.me-proration {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--twin-success-bg);
+  color: var(--twin-success);
+  font-size: 11px;
+}
+
+.me-proration strong {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.me-unified-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.me-unified-item {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: var(--twin-surface-inset);
+  color: var(--twin-text-primary);
+  font-size: 12px;
+  font-weight: 560;
+}
+
+.me-unified-dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--twin-accent-foreground);
+}
+
+.me-order-kind {
+  width: fit-content;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: var(--twin-surface-inset);
+  color: var(--twin-text-secondary);
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.me-order-resume {
+  min-height: 36px;
+  margin-top: 5px;
+  padding: 0;
+  color: var(--twin-accent-foreground);
+  font-size: 12px;
+  font-weight: 650;
+  text-align: left;
+}
+
+
+.mobile-nft-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.mobile-nft-tile {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--twin-border);
+  border-radius: 16px;
+  background: var(--twin-surface);
+  color: var(--twin-text-primary);
+  text-align: left;
+  box-shadow: 0 8px 22px rgba(40, 45, 55, 0.05);
+}
+
+.mobile-nft-art {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  background: var(--twin-surface-inset);
+}
+
+.mobile-nft-art-large {
+  max-height: 46vh;
+  border-radius: 14px;
+  object-fit: contain;
+}
+
+.mobile-nft-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--twin-accent-foreground);
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.mobile-nft-tile-copy {
+  display: grid;
+  gap: 3px;
+  padding: 10px 11px 12px;
+}
+
+.mobile-nft-tile-title {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-nft-tile-subtitle {
+  overflow: hidden;
+  color: var(--twin-text-secondary);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-nft-certified {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--twin-surface);
+  color: var(--twin-success);
+  box-shadow: var(--twin-shadow);
+}
+
+.mobile-nft-skeleton {
+  aspect-ratio: 0.82;
+  border-radius: 16px;
+  background: linear-gradient(100deg, var(--twin-surface-inset) 20%, var(--twin-surface) 45%, var(--twin-surface-inset) 70%);
+  background-size: 220% 100%;
+  animation: mobile-nft-loading 1.4s ease infinite;
+}
+
+.mobile-nft-field {
+  display: grid;
+  gap: 6px;
+  color: var(--twin-text-secondary);
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.mobile-nft-check {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 10px;
+  color: var(--twin-text-primary);
+  font-size: 13px;
+}
+
+.mobile-nft-check input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--twin-accent-foreground);
+}
+
+@keyframes mobile-nft-loading {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
+@media (min-width: 560px) {
+  .mobile-nft-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mobile-nft-skeleton {
+    animation: none;
+  }
+}
+
+
+.mobile-browser-surface {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+  background: var(--twin-bg-canvas);
+}
+
+.mobile-browser-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.mobile-browser-loading {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--twin-text-secondary);
+  font-size: 13px;
+}
+
+.mobile-browser-loading-mark {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--twin-border-strong);
+  border-top-color: var(--twin-accent-foreground);
+  border-radius: 50%;
+  animation: mobile-browser-spin 0.8s linear infinite;
+}
+
+.mobile-browser-error {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  left: 8px;
+  z-index: 80;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--twin-danger) 28%, transparent);
+  border-radius: 12px;
+  background: var(--twin-danger-bg);
+  color: var(--twin-danger);
+  font-size: 12px;
+}
+
+@keyframes mobile-browser-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mobile-browser-loading-mark {
+    animation: none;
+  }
 }

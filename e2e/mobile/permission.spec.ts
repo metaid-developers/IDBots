@@ -41,7 +41,7 @@ async function startSession(page: import('@playwright/test').Page): Promise<stri
   await page.getByRole('button', { name: 'Sessions' }).click();
   await startNewChatViaPicker(page);
   await page.getByPlaceholder('Type a message…').fill('start the clarification test');
-  await page.getByRole('button', { name: 'Send' }).click();
+  await page.getByTestId('chat-composer-input').press('Enter');
   await page.waitForFunction(() => Boolean((window as unknown as PermissionWindow).__sessionId));
   return (await page.evaluate(() => (window as unknown as PermissionWindow).__sessionId))!;
 }

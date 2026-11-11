@@ -123,6 +123,9 @@ importers:
       jsqr:
         specifier: 1.4.0
         version: 1.4.0
+      jszip:
+        specifier: 3.10.1
+        version: 3.10.1
       katex:
         specifier: ^0.16.21
         version: 0.16.32

@@ -30,15 +30,15 @@ import type { MobileUserIdentity } from '../src/mobile/app/hooks/useIdentity.ts'
  * (e2e/mobile/me-ia.spec.ts) — renderToStaticMarkup never runs effects.
  */
 
-test('registry: eight list entries in three groups, profile rides the card', () => {
+test('registry: nine list entries in three groups, profile rides the card', () => {
   assert.deepEqual(
     ME_ENTRIES.map((entry) => entry.id),
-    ['bots', 'weixinBind', 'usage', 'skills', 'memory', 'general', 'account', 'about'],
+    ['bots', 'nfts', 'weixinBind', 'usage', 'skills', 'memory', 'general', 'account', 'about'],
   );
   assert.deepEqual(ME_ENTRY_GROUPS.map((group) => group.group), ['bots', 'general', 'account']);
-  // The bots group renders without a heading (My Bots + WeChat bot rows on top).
+  // The bots group renders without a heading (My Bots + NFTs + WeChat bot rows on top).
   assert.equal(ME_ENTRY_GROUPS[0].titleKey, null);
-  assert.deepEqual(meEntriesForGroup('bots').map((entry) => entry.id), ['bots', 'weixinBind']);
+  assert.deepEqual(meEntriesForGroup('bots').map((entry) => entry.id), ['bots', 'nfts', 'weixinBind']);
   assert.deepEqual(meEntriesForGroup('general').map((entry) => entry.id), ['usage', 'skills', 'memory', 'general']);
   assert.deepEqual(meEntriesForGroup('account').map((entry) => entry.id), ['account', 'about']);
   // profile is NOT a registry row (card entry, IA-PLAN §2.1); the retired
@@ -49,7 +49,7 @@ test('registry: eight list entries in three groups, profile rides the card', () 
   const testIds = new Set(ME_ENTRIES.map((entry) => entry.testId));
   assert.equal(testIds.size, ME_ENTRIES.length);
   for (const entry of ME_ENTRIES) {
-    assert.match(entry.titleKey, /^mobile\.me\./);
+    assert.match(entry.titleKey, /^mobile\.(me|nfts)\./);
     assert.notEqual(entry.danger, true);
   }
 });
