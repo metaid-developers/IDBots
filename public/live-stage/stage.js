@@ -15,6 +15,9 @@
   const orbLayers = new Set();
   let orb = null, orbStarting = false, orbFailed = false;
   let handoffKey = '', handoffTimer = 0;
+  let interactionKey = '', interactionTimer = 0;
+  const interactionQueue = [];
+  const interactionSelections = new Map();
   let width = 0, height = 0, raf = 0;
 
   document.querySelectorAll('[data-avatar]').forEach((image) => {
@@ -328,6 +331,221 @@
     }
   }
 
+  // Interaction card: the stage hosts ordinary prompts (asks + plain approvals)
+  // as a presentation surface. The host still owns the decision — clicks are
+  // queued here and drained over the patch channel; the card never resolves
+  // anything by itself. All text goes through textContent (no HTML injection).
+  const interactionCopy = (zh, en) => (state.language === 'zh' ? zh : en);
+
+  function stopInteractionCountdown() {
+    if (interactionTimer) {
+      clearInterval(interactionTimer);
+      interactionTimer = 0;
+    }
+  }
+
+  function interactionOptions(interaction, question, index, block) {
+    const selections = interactionSelections.get(index) ?? new Set();
+    interactionSelections.set(index, selections);
+    const wrap = document.createElement('div');
+    wrap.className = 'interaction-options';
+    question.options.forEach((option) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'interaction-option';
+      const label = document.createElement('span');
+      label.textContent = option.label;
+      button.append(label);
+      if (option.description) {
+        const description = document.createElement('small');
+        description.textContent = option.description;
+        button.append(description);
+      }
+      button.addEventListener('click', () => {
+        if (question.multiSelect) {
+          if (selections.has(option.label)) selections.delete(option.label);
+          else selections.add(option.label);
+          button.classList.toggle('is-selected', selections.has(option.label));
+        } else {
+          selections.clear();
+          selections.add(option.label);
+          wrap.querySelectorAll('.interaction-option').forEach((sibling) => sibling.classList.remove('is-selected'));
+          button.classList.add('is-selected');
+        }
+        syncInteractionValidity(interaction, block.closest('[data-interaction-card]'));
+      });
+      wrap.append(button);
+    });
+    return wrap;
+  }
+
+  function interactionQuestionBlock(interaction, question, index) {
+    const block = document.createElement('div');
+    block.className = 'interaction-question';
+    block.dataset.interactionQuestion = String(index);
+    const label = document.createElement('div');
+    label.className = 'interaction-question-label';
+    label.textContent = interaction.questions.length > 1 ? `${index + 1}. ${question.question}` : question.question;
+    block.append(label);
+    if (question.detail) {
+      const detail = document.createElement('div');
+      detail.className = 'interaction-question-detail';
+      detail.textContent = question.detail;
+      block.append(detail);
+    }
+    if (question.options.length > 0) block.append(interactionOptions(interaction, question, index, block));
+    const custom = document.createElement('textarea');
+    custom.className = 'interaction-custom';
+    custom.rows = 2;
+    custom.placeholder = question.options.length > 0
+      ? interactionCopy('其他想法（可选）', 'Add your own answer (optional)')
+      : interactionCopy('请输入你的回答', 'Type your answer');
+    custom.addEventListener('input', () => syncInteractionValidity(interaction, custom.closest('[data-interaction-card]')));
+    block.append(custom);
+    return block;
+  }
+
+  function syncInteractionValidity(interaction, card) {
+    if (!card) return;
+    const submit = card.querySelector('[data-interaction-submit]');
+    if (!submit || submit.disabled) return;
+    let ready = true;
+    card.querySelectorAll('[data-interaction-question]').forEach((block) => {
+      const index = Number(block.dataset.interactionQuestion);
+      const question = interaction.questions[index];
+      const custom = block.querySelector('.interaction-custom').value.trim();
+      const selections = interactionSelections.get(index);
+      const answered = (selections && selections.size > 0) || (custom.length > 0 && question.options.length === 0);
+      block.classList.toggle('is-invalid', !answered);
+      if (!answered) ready = false;
+    });
+    submit.disabled = !ready;
+  }
+
+  function collectInteractionAnswers(interaction, card) {
+    const answers = {};
+    interaction.questions.forEach((question, index) => {
+      const block = card.querySelector(`[data-interaction-question="${index}"]`);
+      const segments = [...(interactionSelections.get(index) ?? [])];
+      const custom = block ? block.querySelector('.interaction-custom').value.trim() : '';
+      if (custom) segments.push(custom);
+      answers[question.question] = segments.join('|||');
+    });
+    return answers;
+  }
+
+  function completeInteraction(card, message) {
+    const done = card.querySelector('[data-interaction-done]');
+    if (done) {
+      done.textContent = message;
+      done.hidden = false;
+    }
+    card.querySelectorAll('.interaction-button').forEach((button) => { button.disabled = true; });
+  }
+
+  function syncInteractionCountdown(interaction, card) {
+    const countdown = card.querySelector('[data-interaction-countdown]');
+    if (!countdown) return;
+    if (typeof interaction.expiresAt !== 'number' || interaction.expiresAt <= 0) {
+      countdown.hidden = true;
+      return;
+    }
+    const tick = () => {
+      const seconds = Math.max(0, Math.ceil((interaction.expiresAt - Date.now()) / 1000));
+      countdown.hidden = false;
+      countdown.textContent = seconds > 0
+        ? interactionCopy(`约 ${seconds} 秒后自动拒绝`, `auto-denies in ~${seconds}s`)
+        : interactionCopy('已超时，等待宿主确认', 'Expired — waiting for the host watchdog');
+      if (seconds <= 0) {
+        stopInteractionCountdown();
+        card.querySelectorAll('.interaction-button').forEach((button) => { button.disabled = true; });
+      }
+    };
+    tick();
+    interactionTimer = setInterval(tick, 500);
+  }
+
+  function buildInteractionCard(interaction) {
+    const isAsk = interaction.kind === 'ask' && interaction.questions.length > 0;
+    const card = $('[data-interaction-card]');
+    const fragment = document.createDocumentFragment();
+    const kicker = document.createElement('div');
+    kicker.className = 'interaction-kicker';
+    kicker.textContent = isAsk ? interactionCopy('需要你的输入', 'Your input is needed') : interactionCopy('需要你的授权', 'Your approval is needed');
+    const title = document.createElement('h2');
+    title.className = 'interaction-title';
+    title.textContent = interaction.title;
+    fragment.append(kicker, title);
+    if (interaction.detail && !isAsk) {
+      const detail = document.createElement('p');
+      detail.className = 'interaction-detail';
+      detail.textContent = interaction.detail;
+      fragment.append(detail);
+    }
+    if (isAsk) {
+      const questions = document.createElement('div');
+      questions.className = 'interaction-questions';
+      interaction.questions.forEach((question, index) => questions.append(interactionQuestionBlock(interaction, question, index)));
+      fragment.append(questions);
+    }
+    const actions = document.createElement('div');
+    actions.className = 'interaction-actions';
+    const deny = document.createElement('button');
+    deny.type = 'button';
+    deny.className = 'interaction-button is-danger';
+    deny.textContent = interactionCopy('拒绝', 'Deny');
+    deny.addEventListener('click', () => {
+      interactionQueue.push({ requestId: interaction.requestId, token: interaction.token, behavior: 'deny' });
+      completeInteraction(card, interactionCopy('已拒绝，等待舞台更新…', 'Declined — waiting for the stage…'));
+    });
+    const submit = document.createElement('button');
+    submit.type = 'button';
+    submit.className = 'interaction-button is-primary';
+    submit.textContent = isAsk ? interactionCopy('提交', 'Submit') : interactionCopy('允许一次', 'Allow once');
+    submit.disabled = isAsk;
+    submit.addEventListener('click', () => {
+      const entry = { requestId: interaction.requestId, token: interaction.token, behavior: 'allow' };
+      if (isAsk) entry.answers = collectInteractionAnswers(interaction, card);
+      interactionQueue.push(entry);
+      completeInteraction(card, interactionCopy('已发送，等待舞台更新…', 'Answer sent — waiting for the stage…'));
+    });
+    const countdown = document.createElement('span');
+    countdown.className = 'interaction-countdown';
+    countdown.dataset.interactionCountdown = '';
+    countdown.hidden = true;
+    const done = document.createElement('div');
+    done.className = 'interaction-done';
+    done.dataset.interactionDone = '';
+    done.hidden = true;
+    actions.append(deny, submit, countdown);
+    fragment.append(actions, done);
+    return fragment;
+  }
+
+  function renderInteraction() {
+    const card = $('[data-interaction-card]');
+    const interaction = state.interaction;
+    stopInteractionCountdown();
+    if (!interaction) {
+      card.hidden = true;
+      if (interactionKey) {
+        card.replaceChildren();
+        interactionKey = '';
+        interactionSelections.clear();
+      }
+      return;
+    }
+    const key = `${interaction.requestId}:${interaction.token}`;
+    if (key !== interactionKey) {
+      interactionKey = key;
+      interactionSelections.clear();
+      card.replaceChildren(buildInteractionCard(interaction));
+    }
+    card.hidden = false;
+    syncInteractionCountdown(interaction, card);
+    if (interaction.kind === 'ask') syncInteractionValidity(interaction, card);
+  }
+
   function applyState() {
     body.dataset.enabled = String(state.enabled);
     body.dataset.family = state.family;
@@ -351,6 +569,7 @@
     updateParticipants();
     syncOrb(state.family);
     syncHandoff();
+    renderInteraction();
     restartParticles();
   }
 
@@ -363,6 +582,11 @@
       applyState();
       return true;
     },
+    // Host-side pull channel: queued card clicks leave the page exactly once.
+    drainInteractions() {
+      const items = interactionQueue.splice(0, interactionQueue.length);
+      return items;
+    },
     getState: () => state
   };
   window.__getLiveStageState = () => state;
@@ -372,6 +596,7 @@
   window.addEventListener('pagehide', () => {
     disposeAllOrbLayers();
     stopHandoff();
+    stopInteractionCountdown();
     cancelAnimationFrame(raf);
   });
   new ResizeObserver(restartParticles).observe(canvas);
