@@ -23,7 +23,14 @@ export interface MePaymentCheckout {
   creditAppliedCny?: number;
 }
 
-type PaymentOrder = Partial<MeSubscriptionOrderInfo & MeTopupOrderInfo>;
+/**
+ * Order view plus the Amendment v0.4 proration breakdown — `breakdown` is
+ * not in the wire types yet (server-side pending), so it rides as an
+ * optional extra here instead of being invented into electron.d.ts.
+ */
+type PaymentOrder = Partial<MeSubscriptionOrderInfo & MeTopupOrderInfo> & {
+  breakdown?: Record<string, unknown>;
+};
 
 const recordOf = (value: unknown): Record<string, unknown> | null => (
   value && typeof value === 'object' && !Array.isArray(value)

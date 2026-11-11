@@ -182,7 +182,6 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
     },
     [subscribed, activeTierKey],
   );
-  const selectedIsUpgrade = section === 'subscribe' && !!selectedPlan && !isFreeSelected && isUpgradePlan(selectedPlan);
   // Order-blocked plans: the free tier has no order until subscribed, and a
   // LOWER paid tier is locked while a subscription is active (downgrades
   // would need a refund path the server does not offer). Everything else —
@@ -378,7 +377,16 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
     setPhase('creating');
     setOrderError('');
     setErrorCode('');
-    const idempotencyKey = `desktop-${section}-${subjectId}-${period}-${Date.now()}`;
+    // R2.2-stable idempotency key (2026-11-11): the UTC day-stamp collapses
+    // same-day re-orders of the same subject into ONE server order — an
+    // abandoned checkout resumes (the dedup response carries the original
+    // order + gatewayParams) instead of stacking payable duplicates. The
+    // gateway rides in the subscribe key: switching Alipay→PayPal is a
+    // different checkout, not a retry.
+    const dayStamp = new Date().toISOString().slice(0, 10);
+    const idempotencyKey = section === 'subscribe'
+      ? `desktop-subscribe-${subjectId}-${period}-${gateway}-${dayStamp}`
+      : `desktop-topup-${subjectId}-${dayStamp}`;
     try {
       const res = section === 'subscribe'
         ? await window.electron.mePoints.submitSubscriptionOrder({

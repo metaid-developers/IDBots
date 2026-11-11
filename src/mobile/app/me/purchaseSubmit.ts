@@ -84,10 +84,20 @@ export function buildMePurchaseOrderRequest(args: {
 }): MePurchaseOrderRequest | null {
   const subjectId = args.section === 'subscribe' ? args.planId : args.packageId;
   if (!subjectId) return null;
+  // R2.2-stable idempotency key (2026-11-11): the UTC day-stamp collapses
+  // same-day re-orders of the same subject into ONE server order — an
+  // abandoned checkout resumes (the dedup response carries the original
+  // order + gatewayParams) instead of stacking payable duplicates. The
+  // period rides in the subscribe key: quarter and year are different
+  // products, not retries of one another.
+  const dayStamp = new Date(args.now ?? Date.now()).toISOString().slice(0, 10);
+  const idempotencyKey = args.section === 'subscribe'
+    ? `mobile-subscribe-${subjectId}-${args.period}-${dayStamp}`
+    : `mobile-topup-${subjectId}-${dayStamp}`;
   const common = {
     voucherUrl: args.voucherUrl,
     voucherRemark: args.voucherRemark,
-    idempotencyKey: `mobile-${args.section}-${subjectId}-${args.now ?? Date.now()}`,
+    idempotencyKey,
   };
   if (args.section === 'subscribe') {
     return {

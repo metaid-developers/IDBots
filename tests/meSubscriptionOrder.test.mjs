@@ -370,6 +370,19 @@ test('MePurchaseFlow: downgrades locked, current tier orderable for renewal, pai
   assert.match(flowSource, /mePurchaseSuccessTitle/);
 });
 
+test('MePurchaseFlow: idempotency keys are day-stable (UTC), not per-click', () => {
+  // R2.2-stable keys: same-day re-orders of the same subject collapse into
+  // ONE server order (the dedup response carries the original order +
+  // gatewayParams, so an abandoned checkout resumes) instead of stacking
+  // payable duplicates. The old per-click `Date.now()` key made every tap
+  // create a fresh payable order.
+  const body = createOrderBody();
+  assert.match(body, /const dayStamp = new Date\(\)\.toISOString\(\)\.slice\(0, 10\);/);
+  assert.match(body, /desktop-subscribe-\$\{subjectId\}-\$\{period\}-\$\{gateway\}-\$\{dayStamp\}/);
+  assert.match(body, /desktop-topup-\$\{subjectId\}-\$\{dayStamp\}/);
+  assert.doesNotMatch(body, /Date\.now\(\)`/);
+});
+
 test('MePurchaseFlow: upgrades confirm full-price first (interim until ABS proration ships)', () => {
   // Owner policy 2026-11-11: the first CTA press on a HIGHER tier opens an
   // inline full-price notice; only the second press creates the order. When
