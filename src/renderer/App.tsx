@@ -962,6 +962,21 @@ const App: React.FC = () => {
    */
   const handleSidebarResizeStart = useCallback((event: React.MouseEvent) => {
     if (event.button !== 0) return;
+    // Double-click (and any further rapid click) must NOT start a drag
+    // session. A session mounts the full-viewport drag shield for its whole
+    // life, so the second click's mouseup would land on the SHIELD, not the
+    // seam — and Chromium then targets click/dblclick at the mousedown/mouseup
+    // common ancestor instead of the seam, so the seam's onDoubleClick never
+    // fires and the 3:7 snap dies. With no second session the shield is gone
+    // by the second mousedown (the first session ended on its mouseup), both
+    // clicks of the pair hit the seam, and dblclick reaches the snap handler.
+    // This guard must sit BEFORE stopSidebarSnapTween: a rapid second
+    // double-click arrives here while the previous snap tween is still
+    // flying, and killing it mid-flight would freeze the width between
+    // ratios. (The shield itself stays — it is what keeps mid-drag pointer
+    // events out of the Bot Browser iframe; it just must never exist during
+    // a double-click.)
+    if (event.detail >= 2) return;
     if (sidebarResizeRef.current?.active) return;
     // Grabbing the seam mid-tween takes the pointer back: kill the animation
     // first or the frames would fight the drag.
@@ -999,6 +1014,11 @@ const App: React.FC = () => {
    * Double-click the seam → smooth snap to the 3:7 split (2026-11-09 fourth
    * expansion order, supersedes the third order's 40:60 wording and the old
    * "reset to mode default" semantics).
+   * Reaching this handler at all depends on the mousedown guard: the first
+   * click of the pair runs a drag session whose full-viewport shield would
+   * otherwise re-target the pair's click events at a common ancestor, so the
+   * mousedown handler must refuse the second click (event.detail >= 2) and
+   * keep the shield out of the double-click window.
    * A JS rAF tween drives sidebarWidth with an ease-out curve: fast start,
    * soft landing, ~220 ms, no hard jump. Each frame re-clamps against the
    * live window so a resize mid-tween can never overshoot the cap. The

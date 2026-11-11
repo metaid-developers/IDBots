@@ -80,6 +80,37 @@ test('only the primary button may start a drag', () => {
   );
 });
 
+test('the double-click second press must not start a drag session (3:7 snap lives on dblclick)', () => {
+  // Root cause pinned 2026-11-11 night: a drag session mounts the
+  // full-viewport shield for its whole life, so during a double-click the
+  // second click's mouseup lands on the SHIELD — Chromium then targets
+  // click/dblclick at the down/up common ancestor instead of the seam, and
+  // the seam's onDoubleClick (the 3:7 snap) never fires. The mousedown
+  // handler must refuse the second press (event.detail >= 2) so no shield
+  // exists inside the double-click window.
+  const detailGuardPos = resizeStartBlock.indexOf('if (event.detail >= 2) return;');
+  assert.ok(
+    detailGuardPos >= 0,
+    'the mousedown handler must refuse the double-click second press (event.detail >= 2)',
+  );
+  assert.ok(
+    resizeStartBlock.indexOf('if (event.button !== 0) return;') < detailGuardPos,
+    'the detail guard sits after the primary-button check',
+  );
+  assert.ok(
+    detailGuardPos < resizeStartBlock.indexOf('stopSidebarSnapTween();'),
+    'the detail guard must run BEFORE stopSidebarSnapTween — a rapid second double-click must not kill the still-flying previous snap tween',
+  );
+  assert.ok(
+    detailGuardPos < resizeStartBlock.indexOf('event.preventDefault();'),
+    'the second press must not preventDefault either — nothing about it belongs to a drag',
+  );
+  assert.ok(
+    detailGuardPos < resizeStartBlock.indexOf('startSidebarResizeSession({'),
+    'the second press must never mount a drag session (and with it the full-viewport shield)',
+  );
+});
+
 test('every exit path clears the session ref and the visual flag in one funnel', () => {
   assert.ok(
     resizeStartBlock.includes('sidebarResizeRef.current = null;'),
