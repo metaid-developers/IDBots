@@ -38,6 +38,7 @@ import {
 import MetaBotAdvancedActionsSection from './MetaBotAdvancedActionsSection';
 import MetaBotHomepageSection, { composeHomepageForSave } from './MetaBotHomepageSection';
 import AvatarPickerModal, { type AvatarPickerNftItem } from '../avatar/AvatarPickerModal';
+import BuiltinAvatarPickerModal from './BuiltinAvatarPickerModal';
 import NftAvatarFrame from './NftAvatarFrame';
 import { parseNftAvatarReference } from './nftAvatarPresentation.js';
 import KnowledgeBasePanel from './KnowledgeBasePanel';
@@ -261,6 +262,7 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
   onDelete,
 }) => {
   const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
+  const [builtinAvatarPickerOpen, setBuiltinAvatarPickerOpen] = useState(false);
   const [values, setValues] = useState<MetaBotEditValues>(() => buildInitialValues(initialValues));
   const [baseline, setBaseline] = useState<MetaBotEditValues>(() => buildInitialValues(initialValues));
   const [activeTab, setActiveTab] = useState<MetaBotEditTabKey>('basic');  const [savingTab, setSavingTab] = useState<MetaBotEditTabKey | null>(null);
@@ -723,6 +725,14 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
                   className="px-3 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
                 >
                   {i18nService.t('metabotAvatarSet')}
+                </button>
+                <button
+                  type="button"
+                  data-slot="metabot-avatar-pick-builtin"
+                  onClick={() => setBuiltinAvatarPickerOpen(true)}
+                  className="px-3 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+                >
+                  {i18nService.t('metabotAvatarPickBuiltin')}
                 </button>
               </div>
               <p className={hintClass}>
@@ -1457,6 +1467,17 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
             window.dispatchEvent(new CustomEvent('app:showToast', { detail: message }));
           }}
           onClose={() => setAvatarPickerOpen(false)}
+        />
+      )}
+
+      {builtinAvatarPickerOpen && (
+        <BuiltinAvatarPickerModal
+          currentReference={values.avatar}
+          onPick={(reference) => {
+            handleChange('avatar', reference);
+            setBuiltinAvatarPickerOpen(false);
+          }}
+          onClose={() => setBuiltinAvatarPickerOpen(false)}
         />
       )}
 

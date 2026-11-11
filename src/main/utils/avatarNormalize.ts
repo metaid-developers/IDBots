@@ -1,9 +1,10 @@
 /**
  * Avatar source normalization (main process).
  *
- * The on-chain `/info/avatar` step and the stored profile column only accept a
- * base64 image `data:` URL with a supported image MIME (the canonical validator
- * is `parseDataUrlAvatar` in `services/metaidCore.ts`). The metabot agent tools,
+ * Binary `/info/avatar` uploads accept a base64 image `data:` URL with a
+ * supported image MIME (the canonical validator is `parseDataUrlAvatar` in
+ * `services/metaidCore.ts`). Built-in avatars may instead use a MetaFile
+ * reference handled directly by the sync validator. The metabot agent tools,
  * however, advertise and accept an http(s) image URL (and a local image path)
  * and used to forward it verbatim: an http(s) value then either failed
  * `buildEditAvatarSyncStep` with "Invalid avatar data URL" (metabot_update) or

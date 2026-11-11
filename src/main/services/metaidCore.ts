@@ -1074,7 +1074,26 @@ function isProfileSyncStep(step: SyncMetaBotStep): step is 'bio' | 'persona' | '
   return step === 'bio' || step === 'persona' || step === 'llm' || step === 'chatSkills';
 }
 
-function buildAvatarDataUrlSyncStep(avatar: string | null | undefined): MetabotInfoSyncStep | null {
+const METAFILE_AVATAR_PATTERN = /^metafile:\/\/([0-9a-f]{64}i\d+)(\.[a-z0-9][a-z0-9+-]{0,31})?$/i;
+
+export function normalizeMetafileAvatarReference(avatar: string | null | undefined): string | null {
+  const normalized = typeof avatar === 'string' ? avatar.trim() : '';
+  const match = normalized.match(METAFILE_AVATAR_PATTERN);
+  if (!match?.[1]) return null;
+  return `metafile://${match[1].toLowerCase()}${match[2]?.toLowerCase() ?? ''}`;
+}
+
+function buildAvatarSyncStep(avatar: string | null | undefined): MetabotInfoSyncStep | null {
+  const metafileReference = normalizeMetafileAvatarReference(avatar);
+  if (metafileReference) {
+    return {
+      key: 'avatar',
+      path: '/info/avatar',
+      contentType: 'text/plain',
+      payload: metafileReference,
+    };
+  }
+
   const avatarData = parseDataUrlAvatar(avatar);
   if (!avatarData) {
     return null;
@@ -1089,17 +1108,6 @@ function buildAvatarDataUrlSyncStep(avatar: string | null | undefined): MetabotI
   };
 }
 
-/**
- * Build the `/info/avatar` step for an edit sync.
- *
- * Contract (root-cause note): this is the STRICT validator — it accepts only a
- * supported image data URL (`parseDataUrlAvatar`) or an empty value (clear).
- * It deliberately stays strict; the metabot agent tools now normalize an
- * http(s) image URL or an absolute local image path to a data URL *before*
- * calling in (see src/main/utils/avatarNormalize.ts), so their documented
- * "http(s) URL" support is real while this gate keeps rejecting anything that
- * would pin a non-image or malformed payload on-chain.
- */
 function buildNftAvatarDeclarationSyncStep(metabot: any): MetabotInfoSyncStep {
   const parsed = parseNftAvatarReference(metabot?.avatar);
   const ownerAddress = String(metabot?.mvc_address ?? parsed?.ownerAddress ?? '').trim();
@@ -1113,6 +1121,11 @@ function buildNftAvatarDeclarationSyncStep(metabot: any): MetabotInfoSyncStep {
   };
 }
 
+/**
+ * Build the `/info/avatar` step for an edit sync. Binary uploads keep the
+ * original image-byte contract. A valid MetaFile reference is pinned as a
+ * small text payload so built-in avatars never upload duplicate image bytes.
+ */
 function buildEditAvatarSyncStep(metabot: any): MetabotInfoSyncStep {
   const avatarRaw = typeof metabot?.avatar === 'string' ? metabot.avatar.trim() : '';
   const nftReference = parseNftAvatarReference(avatarRaw);
@@ -1126,10 +1139,10 @@ function buildEditAvatarSyncStep(metabot: any): MetabotInfoSyncStep {
       payload: '',
     };
   }
-  const avatarStep = buildAvatarDataUrlSyncStep(imageSource);
+  const avatarStep = buildAvatarSyncStep(imageSource);
   if (!avatarStep) {
     throw new Error(
-      'Invalid avatar data URL: /info/avatar requires a supported image data URL (data:image/png|jpeg|webp|gif;base64,...). Normalize an http(s)/local source to a data URL before syncing.',
+      'Invalid avatar data URL: /info/avatar requires a supported image data URL (data:image/png|jpeg|webp|gif;base64,...) or a valid metafile://<pinId>[.<ext>] reference. Normalize an http(s)/local source to a data URL before syncing.',
     );
   }
   return avatarStep;
@@ -1174,7 +1187,7 @@ export function buildFullMetabotInfoSyncPlan(
   }];
 
   const nftReference = parseNftAvatarReference(metabot?.avatar);
-  const avatarStep = buildAvatarDataUrlSyncStep(nftReference ? metabot?.avatar_fallback : metabot?.avatar);
+  const avatarStep = buildAvatarSyncStep(nftReference ? metabot?.avatar_fallback : metabot?.avatar);
   if (avatarStep) {
     steps.push(avatarStep);
   }

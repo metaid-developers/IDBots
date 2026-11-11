@@ -32,6 +32,7 @@ import type { QaQuestionDetail } from './qaRecallService';
 import type { CommunityMetaAppInstallResult } from './metaAppChainService';
 import { normalizeProfileAvatarUrl } from '../utils/avatarSource';
 import { fetchLatestNftAvatarDeclaration, resolveLatestNftAvatarForIdentity } from './nftAvatarService';
+import { extractPinIdFromReference } from './pinAssetService';
 
 export interface BotBrowserHostService {
   resolveResource(input: BrowserResolveInput): Promise<BrowserCommandResult<BrowserResolveResult>>;
@@ -439,6 +440,35 @@ function resolveFetch(fetchImpl: typeof fetch | undefined): typeof fetch | undef
     : undefined;
 }
 
+export function withMetafileAvatarResponse(fetchImpl: typeof fetch): typeof fetch {
+  return async (input, init) => {
+    const response = await fetchImpl(input, init);
+    const contentType = typeof response.headers?.get === 'function'
+      ? response.headers.get('content-type') ?? ''
+      : 'application/json';
+    if (!contentType.includes('application/json')) {
+      return response;
+    }
+    const jsonResponse = typeof response.clone === 'function' ? response.clone() : response;
+    const payload = await jsonResponse.json().catch(() => null) as {
+      data?: { avatar?: unknown; avatarId?: unknown };
+    } | null;
+    const rawAvatar = payload?.data?.avatar;
+    const pinId = extractPinIdFromReference(typeof rawAvatar === 'string' ? rawAvatar : null);
+    if (!payload?.data || !pinId) {
+      return response;
+    }
+    return new Response(JSON.stringify({
+      ...payload,
+      data: { ...payload.data, avatar: `/content/${pinId}`, avatarId: pinId },
+    }), {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  };
+}
+
 /**
  * Fetch a Bot's latest profile (name/avatar) from the same MetaSO P2P API the
  * Bot Browser profile page uses, with the same config resolution (env vars and
@@ -456,7 +486,7 @@ export async function fetchLatestBotProfileInfo(
   const profile = await fetchBotProfileInfo({
     baseUrl: resolvedConfig.metasoP2PBaseUrl,
     globalMetaId: targetId,
-    fetch: fetchImpl,
+    fetch: withMetafileAvatarResponse(fetchImpl),
     metafileContentBaseUrl: resolvedConfig.metafileContentBaseUrl,
   });
   const nftAvatar = await resolveLatestNftAvatarForIdentity(
@@ -651,7 +681,7 @@ export function createBotBrowserHostService(
       const profile = await fetchBotProfileInfo({
         baseUrl: resolvedConfig.metasoP2PBaseUrl,
         globalMetaId,
-        fetch: fetchImpl,
+        fetch: withMetafileAvatarResponse(fetchImpl),
         metafileContentBaseUrl: resolvedConfig.metafileContentBaseUrl,
       });
       if (!profile) {

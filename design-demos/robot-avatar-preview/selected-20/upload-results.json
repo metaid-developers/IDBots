@@ -1,0 +1,1795 @@
+{
+  "ok": true,
+  "completed": [
+    {
+      "selection": 1,
+      "code": "D0",
+      "file": "01-D0.svg",
+      "png": "01-D0.svg.png",
+      "upload": {
+        "pinId": "940862def1adbc1532e7cd5445beab647d9ebc3d787d16dc795c5ab7d0f3e8f8i0",
+        "txids": [
+          "940862def1adbc1532e7cd5445beab647d9ebc3d787d16dc795c5ab7d0f3e8f8"
+        ],
+        "totalCost": 29692,
+        "network": "mvc",
+        "filePath": "/Users/tusm/.metabot/profiles/bob/idbots-avatar-library/selected-20/01-D0.svg.png",
+        "fileName": "01-D0.svg.png",
+        "contentType": "image/png",
+        "bytes": 29230,
+        "extension": ".png",
+        "metafileUri": "metafile://940862def1adbc1532e7cd5445beab647d9ebc3d787d16dc795c5ab7d0f3e8f8i0.png",
+        "metawebUrl": "https://openagentinternet.org/browser/metafile/940862def1adbc1532e7cd5445beab647d9ebc3d787d16dc795c5ab7d0f3e8f8i0",
+        "globalMetaId": "idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47",
+        "feeAssist": {
+          "attempted": true,
+          "used": true,
+          "mode": "mvc_sponsor_v2",
+          "sponsor": "mvc_sponsor_v2",
+          "stage": "done",
+          "orderId": "7d2bda9ae44600a52e2d93eee70abe9743302284cc544be85359413a87fab7b1",
+          "quotaBefore": {
+            "exists": true,
+            "balance": 9894000,
+            "grantedAmount": 10000000,
+            "reservedAmount": 0,
+            "spentAmount": 106000,
+            "availableAmount": 9894000,
+            "status": "active",
+            "raw": {
+              "exists": true,
+              "address": "1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv",
+              "gasChain": "mvc",
+              "balance": 9894000,
+              "rewardAmount": 10000000,
+              "usedAmount": 106000,
+              "grantedAmount": 10000000,
+              "reservedAmount": 0,
+              "spentAmount": 106000,
+              "availableAmount": 9894000,
+              "grantRequired": false,
+              "sponsorMode": "permissionless",
+              "status": "active",
+              "traffic": {
+                "accountId": "idq1ds5sh3m6nv7d8me5hc4uzh0xjcc9236mckcxns",
+                "balanceBytes": 65857596,
+                "reservedBytes": 0
+              },
+              "me": {
+                "trafficBilling": false,
+                "spendableMilli": 0
+              }
+            }
+          },
+          "quotaAfter": {
+            "exists": true,
+            "balance": 9894000,
+            "grantedAmount": 10000000,
+            "reservedAmount": 0,
+            "spentAmount": 106000,
+            "availableAmount": 9894000,
+            "status": "active",
+            "raw": {
+              "exists": true,
+              "address": "1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv",
+              "gasChain": "mvc",
+              "balance": 9894000,
+              "rewardAmount": 10000000,
+              "usedAmount": 106000,
+              "grantedAmount": 10000000,
+              "reservedAmount": 0,
+              "spentAmount": 106000,
+              "availableAmount": 9894000,
+              "grantRequired": false,
+              "sponsorMode": "permissionless",
+              "status": "active",
+              "traffic": {
+                "accountId": "idq1ds5sh3m6nv7d8me5hc4uzh0xjcc9236mckcxns",
+                "balanceBytes": 65827904,
+                "reservedBytes": 0
+              },
+              "me": {
+                "trafficBilling": false,
+                "spendableMilli": 0
+              }
+            }
+          },
+          "advisoryFeeEstimate": 29692,
+          "sponsoredMinerFee": 29692,
+          "savedFee": 29692
+        },
+        "uploadMode": "direct",
+        "previewUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/content/940862def1adbc1532e7cd5445beab647d9ebc3d787d16dc795c5ab7d0f3e8f8i0",
+        "downloadUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/940862def1adbc1532e7cd5445beab647d9ebc3d787d16dc795c5ab7d0f3e8f8i0",
+        "verification": {
+          "ok": true,
+          "url": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/940862def1adbc1532e7cd5445beab647d9ebc3d787d16dc795c5ab7d0f3e8f8i0",
+          "attempts": 1
+        }
+      }
+    },
+    {
+      "selection": 2,
+      "code": "T41",
+      "file": "02-T41-sakura-lashes.svg",
+      "png": "02-T41-sakura-lashes.svg.png",
+      "upload": {
+        "pinId": "17647d89d8bc69339076834f02ff568247d3299f1b55d312f76a36dbec4e77f6i0",
+        "txids": [
+          "17647d89d8bc69339076834f02ff568247d3299f1b55d312f76a36dbec4e77f6"
+        ],
+        "totalCost": 34715,
+        "network": "mvc",
+        "filePath": "/Users/tusm/.metabot/profiles/bob/idbots-avatar-library/selected-20/02-T41-sakura-lashes.svg.png",
+        "fileName": "02-T41-sakura-lashes.svg.png",
+        "contentType": "image/png",
+        "bytes": 34253,
+        "extension": ".png",
+        "metafileUri": "metafile://17647d89d8bc69339076834f02ff568247d3299f1b55d312f76a36dbec4e77f6i0.png",
+        "metawebUrl": "https://openagentinternet.org/browser/metafile/17647d89d8bc69339076834f02ff568247d3299f1b55d312f76a36dbec4e77f6i0",
+        "globalMetaId": "idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47",
+        "feeAssist": {
+          "attempted": true,
+          "used": true,
+          "mode": "mvc_sponsor_v2",
+          "sponsor": "mvc_sponsor_v2",
+          "stage": "done",
+          "orderId": "6701b33e254d738763aeb785a87d6384375ab07a2ade41bb359977a3d1187bb5",
+          "quotaBefore": {
+            "exists": true,
+            "balance": 9894000,
+            "grantedAmount": 10000000,
+            "reservedAmount": 0,
+            "spentAmount": 106000,
+            "availableAmount": 9894000,
+            "status": "active",
+            "raw": {
+              "exists": true,
+              "address": "1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv",
+              "gasChain": "mvc",
+              "balance": 9894000,
+              "rewardAmount": 10000000,
+              "usedAmount": 106000,
+              "grantedAmount": 10000000,
+              "reservedAmount": 0,
+              "spentAmount": 106000,
+              "availableAmount": 9894000,
+              "grantRequired": false,
+              "sponsorMode": "permissionless",
+              "status": "active",
+              "traffic": {
+                "accountId": "idq1ds5sh3m6nv7d8me5hc4uzh0xjcc9236mckcxns",
+                "balanceBytes": 65827904,
+                "reservedBytes": 0
+              },
+              "me": {
+                "trafficBilling": false,
+                "spendableMilli": 0
+              }
+            }
+          },
+          "quotaAfter": {
+            "exists": true,
+            "balance": 9894000,
+            "grantedAmount": 10000000,
+            "reservedAmount": 0,
+            "spentAmount": 106000,
+            "availableAmount": 9894000,
+            "status": "active",
+            "raw": {
+              "exists": true,
+              "address": "1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv",
+              "gasChain": "mvc",
+              "balance": 9894000,
+              "rewardAmount": 10000000,
+              "usedAmount": 106000,
+              "grantedAmount": 10000000,
+              "reservedAmount": 0,
+              "spentAmount": 106000,
+              "availableAmount": 9894000,
+              "grantRequired": false,
+              "sponsorMode": "permissionless",
+              "status": "active",
+              "traffic": {
+                "accountId": "idq1ds5sh3m6nv7d8me5hc4uzh0xjcc9236mckcxns",
+                "balanceBytes": 65793189,
+                "reservedBytes": 0
+              },
+              "me": {
+                "trafficBilling": false,
+                "spendableMilli": 0
+              }
+            }
+          },
+          "advisoryFeeEstimate": 34715,
+          "sponsoredMinerFee": 34715,
+          "savedFee": 34715
+        },
+        "uploadMode": "direct",
+        "previewUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/content/17647d89d8bc69339076834f02ff568247d3299f1b55d312f76a36dbec4e77f6i0",
+        "downloadUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/17647d89d8bc69339076834f02ff568247d3299f1b55d312f76a36dbec4e77f6i0",
+        "verification": {
+          "ok": true,
+          "url": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/17647d89d8bc69339076834f02ff568247d3299f1b55d312f76a36dbec4e77f6i0",
+          "attempts": 1
+        }
+      }
+    },
+    {
+      "selection": 3,
+      "code": "T45",
+      "file": "03-T45-orchid-cool.svg",
+      "png": "03-T45-orchid-cool.svg.png",
+      "upload": {
+        "pinId": "aab0ceaf3df64d3e0507a85a8d2e12c9b224814fbb64a54ee69d8e8a2b3661e4i0",
+        "txids": [
+          "aab0ceaf3df64d3e0507a85a8d2e12c9b224814fbb64a54ee69d8e8a2b3661e4"
+        ],
+        "totalCost": 33452,
+        "network": "mvc",
+        "filePath": "/Users/tusm/.metabot/profiles/bob/idbots-avatar-library/selected-20/03-T45-orchid-cool.svg.png",
+        "fileName": "03-T45-orchid-cool.svg.png",
+        "contentType": "image/png",
+        "bytes": 32990,
+        "extension": ".png",
+        "metafileUri": "metafile://aab0ceaf3df64d3e0507a85a8d2e12c9b224814fbb64a54ee69d8e8a2b3661e4i0.png",
+        "metawebUrl": "https://openagentinternet.org/browser/metafile/aab0ceaf3df64d3e0507a85a8d2e12c9b224814fbb64a54ee69d8e8a2b3661e4i0",
+        "globalMetaId": "idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47",
+        "feeAssist": {
+          "attempted": true,
+          "used": true,
+          "mode": "mvc_sponsor_v2",
+          "sponsor": "mvc_sponsor_v2",
+          "stage": "done",
+          "orderId": "12c43d2fdb7cba15374daee980ad157ef69d3a9987f092c4262ddddb885b87bf",
+          "quotaBefore": {
+            "exists": true,
+            "balance": 9894000,
+            "grantedAmount": 10000000,
+            "reservedAmount": 0,
+            "spentAmount": 106000,
+            "availableAmount": 9894000,
+            "status": "active",
+            "raw": {
+              "exists": true,
+              "address": "1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv",
+              "gasChain": "mvc",
+              "balance": 9894000,
+              "rewardAmount": 10000000,
+              "usedAmount": 106000,
+              "grantedAmount": 10000000,
+              "reservedAmount": 0,
+              "spentAmount": 106000,
+              "availableAmount": 9894000,
+              "grantRequired": false,
+              "sponsorMode": "permissionless",
+              "status": "active",
+              "traffic": {
+                "accountId": "idq1ds5sh3m6nv7d8me5hc4uzh0xjcc9236mckcxns",
+                "balanceBytes": 65793189,
+                "reservedBytes": 0
+              },
+              "me": {
+                "trafficBilling": false,
+                "spendableMilli": 0
+              }
+            }
+          },
+          "quotaAfter": {
+            "exists": true,
+            "balance": 9894000,
+            "grantedAmount": 10000000,
+            "reservedAmount": 0,
+            "spentAmount": 106000,
+            "availableAmount": 9894000,
+            "status": "active",
+            "raw": {
+              "exists": true,
+              "address": "1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv",
+              "gasChain": "mvc",
+              "balance": 9894000,
+              "rewardAmount": 10000000,
+              "usedAmount": 106000,
+              "grantedAmount": 10000000,
+              "reservedAmount": 0,
+              "spentAmount": 106000,
+              "availableAmount": 9894000,
+              "grantRequired": false,
+              "sponsorMode": "permissionless",
+              "status": "active",
+              "traffic": {
+                "accountId": "idq1ds5sh3m6nv7d8me5hc4uzh0xjcc9236mckcxns",
+                "balanceBytes": 65759737,
+                "reservedBytes": 0
+              },
+              "me": {
+                "trafficBilling": false,
+                "spendableMilli": 0
+              }
+            }
+          },
+          "advisoryFeeEstimate": 33452,
+          "sponsoredMinerFee": 33452,
+          "savedFee": 33452
+        },
+        "uploadMode": "direct",
+        "previewUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/content/aab0ceaf3df64d3e0507a85a8d2e12c9b224814fbb64a54ee69d8e8a2b3661e4i0",
+        "downloadUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/aab0ceaf3df64d3e0507a85a8d2e12c9b224814fbb64a54ee69d8e8a2b3661e4i0",
+        "verification": {
+          "ok": true,
+          "url": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/aab0ceaf3df64d3e0507a85a8d2e12c9b224814fbb64a54ee69d8e8a2b3661e4i0",
+          "attempts": 1
+        }
+      }
+    },
+    {
+      "selection": 4,
+      "code": "T26",
+      "file": "04-T26-lavender.svg",
+      "png": "04-T26-lavender.svg.png",
+      "upload": {
+        "pinId": "231afa08882b353707166340e3f1534723f6af37e8d772b6b872a960f0c50952i0",
+        "txids": [
+          "231afa08882b353707166340e3f1534723f6af37e8d772b6b872a960f0c50952"
+        ],
+        "totalCost": 32548,
+        "network": "mvc",
+        "filePath": "/Users/tusm/.metabot/profiles/bob/idbots-avatar-library/selected-20/04-T26-lavender.svg.png",
+        "fileName": "04-T26-lavender.svg.png",
+        "contentType": "image/png",
+        "bytes": 32086,
+        "extension": ".png",
+        "metafileUri": "metafile://231afa08882b353707166340e3f1534723f6af37e8d772b6b872a960f0c50952i0.png",
+        "metawebUrl": "https://openagentinternet.org/browser/metafile/231afa08882b353707166340e3f1534723f6af37e8d772b6b872a960f0c50952i0",
+        "globalMetaId": "idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47",
+        "feeAssist": {
+          "attempted": true,
+          "used": true,
+          "mode": "mvc_sponsor_v2",
+          "sponsor": "mvc_sponsor_v2",
+          "stage": "done",
+          "orderId": "b9687f0352c08b14143e89b8d2c3711b47677eec783e5489e11af3338fe12f2c",
+          "quotaBefore": {
+            "exists": true,
+            "balance": 9894000,
+            "grantedAmount": 10000000,
+            "reservedAmount": 0,
+            "spentAmount": 106000,
+            "availableAmount": 9894000,
+            "status": "active",
+            "raw": {
+              "exists": true,
+              "address": "1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv",
+              "gasChain": "mvc",
+              "balance": 9894000,
+              "rewardAmount": 10000000,
+              "usedAmount": 106000,
+              "grantedAmount": 10000000,
+              "reservedAmount": 0,
+              "spentAmount": 106000,
+              "availableAmount": 9894000,
+              "grantRequired": false,
+              "sponsorMode": "permissionless",
+              "status": "active",
+              "traffic": {
+                "accountId": "idq1ds5sh3m6nv7d8me5hc4uzh0xjcc9236mckcxns",
+                "balanceBytes": 65759737,
+                "reservedBytes": 0
+              },
+              "me": {
+                "trafficBilling": false,
+                "spendableMilli": 0
+              }
+            }
+          },
+          "quotaAfter": {
+            "exists": true,
+            "balance": 9894000,
+            "grantedAmount": 10000000,
+            "reservedAmount": 0,
+            "spentAmount": 106000,
+            "availableAmount": 9894000,
+            "status": "active",
+            "raw": {
+              "exists": true,
+              "address": "1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv",
+              "gasChain": "mvc",
+              "balance": 9894000,
+              "rewardAmount": 10000000,
+              "usedAmount": 106000,
+              "grantedAmount": 10000000,
+              "reservedAmount": 0,
+              "spentAmount": 106000,
+              "availableAmount": 9894000,
+              "grantRequired": false,
+              "sponsorMode": "permissionless",
+              "status": "active",
+              "traffic": {
+                "accountId": "idq1ds5sh3m6nv7d8me5hc4uzh0xjcc9236mckcxns",
+                "balanceBytes": 65727189,
+                "reservedBytes": 0
+              },
+              "me": {
+                "trafficBilling": false,
+                "spendableMilli": 0
+              }
+            }
+          },
+          "advisoryFeeEstimate": 32548,
+          "sponsoredMinerFee": 32548,
+          "savedFee": 32548
+        },
+        "uploadMode": "direct",
+        "previewUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/content/231afa08882b353707166340e3f1534723f6af37e8d772b6b872a960f0c50952i0",
+        "downloadUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/231afa08882b353707166340e3f1534723f6af37e8d772b6b872a960f0c50952i0",
+        "verification": {
+          "ok": true,
+          "url": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/231afa08882b353707166340e3f1534723f6af37e8d772b6b872a960f0c50952i0",
+          "attempts": 1
+        }
+      }
+    },
+    {
+      "selection": 5,
+      "code": "T03",
+      "file": "05-T03-amber.svg",
+      "png": "05-T03-amber.svg.png",
+      "upload": {
+        "pinId": "a4188f7bc40ba1c6d83c41821cd54ee2751e0801607b38f37d1a83ef83da5543i0",
+        "txids": [
+          "a4188f7bc40ba1c6d83c41821cd54ee2751e0801607b38f37d1a83ef83da5543"
+        ],
+        "totalCost": 29173,
+        "network": "mvc",
+        "filePath": "/Users/tusm/.metabot/profiles/bob/idbots-avatar-library/selected-20/05-T03-amber.svg.png",
+        "fileName": "05-T03-amber.svg.png",
+        "contentType": "image/png",
+        "bytes": 28711,
+        "extension": ".png",
+        "metafileUri": "metafile://a4188f7bc40ba1c6d83c41821cd54ee2751e0801607b38f37d1a83ef83da5543i0.png",
+        "metawebUrl": "https://openagentinternet.org/browser/metafile/a4188f7bc40ba1c6d83c41821cd54ee2751e0801607b38f37d1a83ef83da5543i0",
+        "globalMetaId": "idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47",
+        "feeAssist": {
+          "attempted": true,
+          "used": true,
+          "mode": "mvc_sponsor_v2",
+          "sponsor": "mvc_sponsor_v2",
+          "stage": "done",
+          "orderId": "2b7e35b10b79427a844c9038f79e63653fcfce85e35c1e47a705bdcc564cf3a4",
+          "quotaBefore": {
+            "exists": true,
+            "balance": 9894000,
+            "grantedAmount": 10000000,
+            "reservedAmount": 0,
+            "spentAmount": 106000,
+            "availableAmount": 9894000,
+            "status": "active",
+            "raw": {
+              "exists": true,
+              "address": "1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv",
+              "gasChain": "mvc",
+              "balance": 9894000,
+              "rewardAmount": 10000000,
+              "usedAmount": 106000,
+              "grantedAmount": 10000000,
+              "reservedAmount": 0,
+              "spentAmount": 106000,
+              "availableAmount": 9894000,
+              "grantRequired": false,
+              "sponsorMode": "permissionless",
+              "status": "active",
+              "traffic": {
+                "accountId": "idq1ds5sh3m6nv7d8me5hc4uzh0xjcc9236mckcxns",
+                "balanceBytes": 65727189,
+                "reservedBytes": 0
+              },
+              "me": {
+                "trafficBilling": false,
+                "spendableMilli": 0
+              }
+            }
+          },
+          "quotaAfter": {
+            "exists": true,
+            "balance": 9894000,
+            "grantedAmount": 10000000,
+            "reservedAmount": 0,
+            "spentAmount": 106000,
+            "availableAmount": 9894000,
+            "status": "active",
+            "raw": {
+              "exists": true,
+              "address": "1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv",
+              "gasChain": "mvc",
+              "balance": 9894000,
+              "rewardAmount": 10000000,
+              "usedAmount": 106000,
+              "grantedAmount": 10000000,
+              "reservedAmount": 0,
+              "spentAmount": 106000,
+              "availableAmount": 9894000,
+              "grantRequired": false,
+              "sponsorMode": "permissionless",
+              "status": "active",
+              "traffic": {
+                "accountId": "idq1ds5sh3m6nv7d8me5hc4uzh0xjcc9236mckcxns",
+                "balanceBytes": 65698016,
+                "reservedBytes": 0
+              },
+              "me": {
+                "trafficBilling": false,
+                "spendableMilli": 0
+              }
+            }
+          },
+          "advisoryFeeEstimate": 29173,
+          "sponsoredMinerFee": 29173,
+          "savedFee": 29173
+        },
+        "uploadMode": "direct",
+        "previewUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/content/a4188f7bc40ba1c6d83c41821cd54ee2751e0801607b38f37d1a83ef83da5543i0",
+        "downloadUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/a4188f7bc40ba1c6d83c41821cd54ee2751e0801607b38f37d1a83ef83da5543i0",
+        "verification": {
+          "ok": true,
+          "url": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/a4188f7bc40ba1c6d83c41821cd54ee2751e0801607b38f37d1a83ef83da5543i0",
+          "attempts": 1
+        }
+      }
+    },
+    {
+      "selection": 6,
+      "code": "T04",
+      "file": "06-T04-lemon.svg",
+      "png": "06-T04-lemon.svg.png",
+      "upload": {
+        "pinId": "0a8603d5b46d3d7ef789aea8d740395add39a82b0bfc5ef90ade5c3a829fa20ci0",
+        "txids": [
+          "0a8603d5b46d3d7ef789aea8d740395add39a82b0bfc5ef90ade5c3a829fa20c"
+        ],
+        "totalCost": 141537,
+        "network": "mvc",
+        "filePath": "/Users/tusm/.metabot/profiles/bob/idbots-avatar-library/selected-20/06-T04-lemon.svg.png",
+        "fileName": "06-T04-lemon.svg.png",
+        "contentType": "image/png",
+        "bytes": 141071,
+        "extension": ".png",
+        "metafileUri": "metafile://0a8603d5b46d3d7ef789aea8d740395add39a82b0bfc5ef90ade5c3a829fa20ci0.png",
+        "metawebUrl": "https://openagentinternet.org/browser/metafile/0a8603d5b46d3d7ef789aea8d740395add39a82b0bfc5ef90ade5c3a829fa20ci0",
+        "globalMetaId": "idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47",
+        "feeAssist": {
+          "attempted": true,
+          "used": true,
+          "mode": "mvc_sponsor_v2",
+          "sponsor": "mvc_sponsor_v2",
+          "stage": "done",
+          "orderId": "881ebecfb9ad5cd65df49d4bed32268502d5a9922c383d189e07de6e3b91f21a",
+          "quotaBefore": {
+            "exists": true,
+            "balance": 9894000,
+            "grantedAmount": 10000000,
+            "reservedAmount": 0,
+            "spentAmount": 106000,
+            "availableAmount": 9894000,
+            "status": "active",
+            "raw": {
+              "exists": true,
+              "address": "1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv",
+              "gasChain": "mvc",
+              "balance": 9894000,
+              "rewardAmount": 10000000,
+              "usedAmount": 106000,
+              "grantedAmount": 10000000,
+              "reservedAmount": 0,
+              "spentAmount": 106000,
+              "availableAmount": 9894000,
+              "grantRequired": false,
+              "sponsorMode": "permissionless",
+              "status": "active",
+              "traffic": {
+                "accountId": "idq1ds5sh3m6nv7d8me5hc4uzh0xjcc9236mckcxns",
+                "balanceBytes": 65698016,
+                "reservedBytes": 0
+              },
+              "me": {
+                "trafficBilling": false,
+                "spendableMilli": 0
+              }
+            }
+          },
+          "quotaAfter": {
+            "exists": true,
+            "balance": 9894000,
+            "grantedAmount": 10000000,
+            "reservedAmount": 0,
+            "spentAmount": 106000,
+            "availableAmount": 9894000,
+            "status": "active",
+            "raw": {
+              "exists": true,
+              "address": "1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv",
+              "gasChain": "mvc",
+              "balance": 9894000,
+              "rewardAmount": 10000000,
+              "usedAmount": 106000,
+              "grantedAmount": 10000000,
+              "reservedAmount": 0,
+              "spentAmount": 106000,
+              "availableAmount": 9894000,
+              "grantRequired": false,
+              "sponsorMode": "permissionless",
+              "status": "active",
+              "traffic": {
+                "accountId": "idq1ds5sh3m6nv7d8me5hc4uzh0xjcc9236mckcxns",
+                "balanceBytes": 65556479,
+                "reservedBytes": 0
+              },
+              "me": {
+                "trafficBilling": false,
+                "spendableMilli": 0
+              }
+            }
+          },
+          "advisoryFeeEstimate": 141537,
+          "sponsoredMinerFee": 141537,
+          "savedFee": 141537
+        },
+        "uploadMode": "direct",
+        "previewUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/content/0a8603d5b46d3d7ef789aea8d740395add39a82b0bfc5ef90ade5c3a829fa20ci0",
+        "downloadUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/0a8603d5b46d3d7ef789aea8d740395add39a82b0bfc5ef90ade5c3a829fa20ci0",
+        "verification": {
+          "ok": true,
+          "url": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/0a8603d5b46d3d7ef789aea8d740395add39a82b0bfc5ef90ade5c3a829fa20ci0",
+          "attempts": 1
+        }
+      }
+    },
+    {
+      "selection": 7,
+      "code": "T01",
+      "file": "07-T01-apricot.svg",
+      "png": "07-T01-apricot.svg.png",
+      "upload": {
+        "pinId": "074fd882df613bfc28c24829bd3b1caea687f43398d013c2a1be2624ff92bd8ci0",
+        "txids": [
+          "074fd882df613bfc28c24829bd3b1caea687f43398d013c2a1be2624ff92bd8c"
+        ],
+        "totalCost": 29576,
+        "network": "mvc",
+        "filePath": "/Users/tusm/.metabot/profiles/bob/idbots-avatar-library/selected-20/07-T01-apricot.svg.png",
+        "fileName": "07-T01-apricot.svg.png",
+        "contentType": "image/png",
+        "bytes": 29114,
+        "extension": ".png",
+        "metafileUri": "metafile://074fd882df613bfc28c24829bd3b1caea687f43398d013c2a1be2624ff92bd8ci0.png",
+        "metawebUrl": "https://openagentinternet.org/browser/metafile/074fd882df613bfc28c24829bd3b1caea687f43398d013c2a1be2624ff92bd8ci0",
+        "globalMetaId": "idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47",
+        "feeAssist": {
+          "attempted": true,
+          "used": true,
+          "mode": "mvc_sponsor_v2",
+          "sponsor": "mvc_sponsor_v2",
+          "stage": "done",
+          "orderId": "71053b91d5728a62a0851ae1c52b23fe6118f8cc9dc167e235461ff456f797ef",
+          "quotaBefore": {
+            "exists": true,
+            "balance": 9894000,
+            "grantedAmount": 10000000,
+            "reservedAmount": 0,
+            "spentAmount": 106000,
+            "availableAmount": 9894000,
+            "status": "active",
+            "raw": {
+              "exists": true,
+              "address": "1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv",
+              "gasChain": "mvc",
+              "balance": 9894000,
+              "rewardAmount": 10000000,
+              "usedAmount": 106000,
+              "grantedAmount": 10000000,
+              "reservedAmount": 0,
+              "spentAmount": 106000,
+              "availableAmount": 9894000,
+              "grantRequired": false,
+              "sponsorMode": "permissionless",
+              "status": "active",
+              "traffic": {
+                "accountId": "idq1ds5sh3m6nv7d8me5hc4uzh0xjcc9236mckcxns",
+                "balanceBytes": 65556479,
+                "reservedBytes": 0
+              },
+              "me": {
+                "trafficBilling": false,
+                "spendableMilli": 0
+              }
+            }
+          },
+          "quotaAfter": {
+            "exists": true,
+            "balance": 9894000,
+            "grantedAmount": 10000000,
+            "reservedAmount": 0,
+            "spentAmount": 106000,
+            "availableAmount": 9894000,
+            "status": "active",
+            "raw": {
+              "exists": true,
+              "address": "1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv",
+              "gasChain": "mvc",
+              "balance": 9894000,
+              "rewardAmount": 10000000,
+              "usedAmount": 106000,
+              "grantedAmount": 10000000,
+              "reservedAmount": 0,
+              "spentAmount": 106000,
+              "availableAmount": 9894000,
+              "grantRequired": false,
+              "sponsorMode": "permissionless",
+              "status": "active",
+              "traffic": {
+                "accountId": "idq1ds5sh3m6nv7d8me5hc4uzh0xjcc9236mckcxns",
+                "balanceBytes": 65526903,
+                "reservedBytes": 0
+              },
+              "me": {
+                "trafficBilling": false,
+                "spendableMilli": 0
+              }
+            }
+          },
+          "advisoryFeeEstimate": 29576,
+          "sponsoredMinerFee": 29576,
+          "savedFee": 29576
+        },
+        "uploadMode": "direct",
+        "previewUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/content/074fd882df613bfc28c24829bd3b1caea687f43398d013c2a1be2624ff92bd8ci0",
+        "downloadUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/074fd882df613bfc28c24829bd3b1caea687f43398d013c2a1be2624ff92bd8ci0",
+        "verification": {
+          "ok": true,
+          "url": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/074fd882df613bfc28c24829bd3b1caea687f43398d013c2a1be2624ff92bd8ci0",
+          "attempts": 1
+        }
+      }
+    },
+    {
+      "selection": 8,
+      "code": "T15",
+      "file": "08-T15-petrol.svg",
+      "png": "08-T15-petrol.svg.png",
+      "upload": {
+        "pinId": "2aef8796f27d34457a8bcf35a6f4a06a0988080e3a6f89af9b13b82f7be70859i0",
+        "txids": [
+          "2aef8796f27d34457a8bcf35a6f4a06a0988080e3a6f89af9b13b82f7be70859"
+        ],
+        "totalCost": 31471,
+        "network": "mvc",
+        "filePath": "/Users/tusm/.metabot/profiles/bob/idbots-avatar-library/selected-20/08-T15-petrol.svg.png",
+        "fileName": "08-T15-petrol.svg.png",
+        "contentType": "image/png",
+        "bytes": 31009,
+        "extension": ".png",
+        "metafileUri": "metafile://2aef8796f27d34457a8bcf35a6f4a06a0988080e3a6f89af9b13b82f7be70859i0.png",
+        "metawebUrl": "https://openagentinternet.org/browser/metafile/2aef8796f27d34457a8bcf35a6f4a06a0988080e3a6f89af9b13b82f7be70859i0",
+        "globalMetaId": "idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47",
+        "feeAssist": {
+          "attempted": true,
+          "used": true,
+          "mode": "mvc_sponsor_v2",
+          "sponsor": "mvc_sponsor_v2",
+          "stage": "done",
+          "orderId": "8a16da0f9440dc1e00c404956b5851b0f1524818af060f5ed8d97b17ed683ce4",
+          "quotaBefore": {
+            "exists": true,
+            "balance": 9894000,
+            "grantedAmount": 10000000,
+            "reservedAmount": 0,
+            "spentAmount": 106000,
+            "availableAmount": 9894000,
+            "status": "active",
+            "raw": {
+              "exists": true,
+              "address": "1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv",
+              "gasChain": "mvc",
+              "balance": 9894000,
+              "rewardAmount": 10000000,
+              "usedAmount": 106000,
+              "grantedAmount": 10000000,
+              "reservedAmount": 0,
+              "spentAmount": 106000,
+              "availableAmount": 9894000,
+              "grantRequired": false,
+              "sponsorMode": "permissionless",
+              "status": "active",
+              "traffic": {
+                "accountId": "idq1ds5sh3m6nv7d8me5hc4uzh0xjcc9236mckcxns",
+                "balanceBytes": 65526903,
+                "reservedBytes": 0
+              },
+              "me": {
+                "trafficBilling": false,
+                "spendableMilli": 0
+              }
+            }
+          },
+          "quotaAfter": {
+            "exists": true,
+            "balance": 9894000,
+            "grantedAmount": 10000000,
+            "reservedAmount": 0,
+            "spentAmount": 106000,
+            "availableAmount": 9894000,
+            "status": "active",
+            "raw": {
+              "exists": true,
+              "address": "1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv",
+              "gasChain": "mvc",
+              "balance": 9894000,
+              "rewardAmount": 10000000,
+              "usedAmount": 106000,
+              "grantedAmount": 10000000,
+              "reservedAmount": 0,
+              "spentAmount": 106000,
+              "availableAmount": 9894000,
+              "grantRequired": false,
+              "sponsorMode": "permissionless",
+              "status": "active",
+              "traffic": {
+                "accountId": "idq1ds5sh3m6nv7d8me5hc4uzh0xjcc9236mckcxns",
+                "balanceBytes": 65495432,
+                "reservedBytes": 0
+              },
+              "me": {
+                "trafficBilling": false,
+                "spendableMilli": 0
+              }
+            }
+          },
+          "advisoryFeeEstimate": 31471,
+          "sponsoredMinerFee": 31471,
+          "savedFee": 31471
+        },
+        "uploadMode": "direct",
+        "previewUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/content/2aef8796f27d34457a8bcf35a6f4a06a0988080e3a6f89af9b13b82f7be70859i0",
+        "downloadUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/2aef8796f27d34457a8bcf35a6f4a06a0988080e3a6f89af9b13b82f7be70859i0",
+        "verification": {
+          "ok": true,
+          "url": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/2aef8796f27d34457a8bcf35a6f4a06a0988080e3a6f89af9b13b82f7be70859i0",
+          "attempts": 1
+        }
+      }
+    },
+    {
+      "selection": 9,
+      "code": "T12",
+      "file": "09-T12-turquoise.svg",
+      "png": "09-T12-turquoise.svg.png",
+      "upload": {
+        "pinId": "3192446338307dbbb832282c54154d89816dcaf1ec466381339ef01bdca879bci0",
+        "txids": [
+          "3192446338307dbbb832282c54154d89816dcaf1ec466381339ef01bdca879bc"
+        ],
+        "totalCost": 30245,
+        "network": "mvc",
+        "filePath": "/Users/tusm/.metabot/profiles/bob/idbots-avatar-library/selected-20/09-T12-turquoise.svg.png",
+        "fileName": "09-T12-turquoise.svg.png",
+        "contentType": "image/png",
+        "bytes": 29783,
+        "extension": ".png",
+        "metafileUri": "metafile://3192446338307dbbb832282c54154d89816dcaf1ec466381339ef01bdca879bci0.png",
+        "metawebUrl": "https://openagentinternet.org/browser/metafile/3192446338307dbbb832282c54154d89816dcaf1ec466381339ef01bdca879bci0",
+        "globalMetaId": "idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47",
+        "feeAssist": {
+          "attempted": true,
+          "used": true,
+          "mode": "mvc_sponsor_v2",
+          "sponsor": "mvc_sponsor_v2",
+          "stage": "done",
+          "orderId": "74d9d801d1002f7c4b5c60d843d800d22ca64aa432fac38da51ead755a901b4b",
+          "quotaBefore": {
+            "exists": true,
+            "balance": 9894000,
+            "grantedAmount": 10000000,
+            "reservedAmount": 0,
+            "spentAmount": 106000,
+            "availableAmount": 9894000,
+            "status": "active",
+            "raw": {
+              "exists": true,
+              "address": "1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv",
+              "gasChain": "mvc",
+              "balance": 9894000,
+              "rewardAmount": 10000000,
+              "usedAmount": 106000,
+              "grantedAmount": 10000000,
+              "reservedAmount": 0,
+              "spentAmount": 106000,
+              "availableAmount": 9894000,
+              "grantRequired": false,
+              "sponsorMode": "permissionless",
+              "status": "active",
+              "traffic": {
+                "accountId": "idq1ds5sh3m6nv7d8me5hc4uzh0xjcc9236mckcxns",
+                "balanceBytes": 65495432,
+                "reservedBytes": 0
+              },
+              "me": {
+                "trafficBilling": false,
+                "spendableMilli": 0
+              }
+            }
+          },
+          "quotaAfter": {
+            "exists": true,
+            "balance": 9894000,
+            "grantedAmount": 10000000,
+            "reservedAmount": 0,
+            "spentAmount": 106000,
+            "availableAmount": 9894000,
+            "status": "active",
+            "raw": {
+              "exists": true,
+              "address": "1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv",
+              "gasChain": "mvc",
+              "balance": 9894000,
+              "rewardAmount": 10000000,
+              "usedAmount": 106000,
+              "grantedAmount": 10000000,
+              "reservedAmount": 0,
+              "spentAmount": 106000,
+              "availableAmount": 9894000,
+              "grantRequired": false,
+              "sponsorMode": "permissionless",
+              "status": "active",
+              "traffic": {
+                "accountId": "idq1ds5sh3m6nv7d8me5hc4uzh0xjcc9236mckcxns",
+                "balanceBytes": 65465187,
+                "reservedBytes": 0
+              },
+              "me": {
+                "trafficBilling": false,
+                "spendableMilli": 0
+              }
+            }
+          },
+          "advisoryFeeEstimate": 30245,
+          "sponsoredMinerFee": 30245,
+          "savedFee": 30245
+        },
+        "uploadMode": "direct",
+        "previewUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/content/3192446338307dbbb832282c54154d89816dcaf1ec466381339ef01bdca879bci0",
+        "downloadUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/3192446338307dbbb832282c54154d89816dcaf1ec466381339ef01bdca879bci0",
+        "verification": {
+          "ok": true,
+          "url": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/3192446338307dbbb832282c54154d89816dcaf1ec466381339ef01bdca879bci0",
+          "attempts": 1
+        }
+      }
+    },
+    {
+      "selection": 10,
+      "code": "T35",
+      "file": "10-T35-blush.svg",
+      "png": "10-T35-blush.svg.png",
+      "upload": {
+        "pinId": "cb3c70074676d00a27774c27d0533d4b983262201777efa67f5fe04ecc79e9a1i0",
+        "txids": [
+          "cb3c70074676d00a27774c27d0533d4b983262201777efa67f5fe04ecc79e9a1"
+        ],
+        "totalCost": 81290,
+        "network": "mvc",
+        "filePath": "/Users/tusm/.metabot/profiles/bob/idbots-avatar-library/selected-20/10-T35-blush.svg.png",
+        "fileName": "10-T35-blush.svg.png",
+        "contentType": "image/png",
+        "bytes": 80824,
+        "extension": ".png",
+        "metafileUri": "metafile://cb3c70074676d00a27774c27d0533d4b983262201777efa67f5fe04ecc79e9a1i0.png",
+        "metawebUrl": "https://openagentinternet.org/browser/metafile/cb3c70074676d00a27774c27d0533d4b983262201777efa67f5fe04ecc79e9a1i0",
+        "globalMetaId": "idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47",
+        "feeAssist": {
+          "attempted": true,
+          "used": true,
+          "mode": "mvc_sponsor_v2",
+          "sponsor": "mvc_sponsor_v2",
+          "stage": "done",
+          "orderId": "01b5d0ce297046cde8072fab2729b4c39a91a97334a5ca5c3395692421bf694a",
+          "quotaBefore": {
+            "exists": true,
+            "balance": 9894000,
+            "grantedAmount": 10000000,
+            "reservedAmount": 0,
+            "spentAmount": 106000,
+            "availableAmount": 9894000,
+            "status": "active",
+            "raw": {
+              "exists": true,
+              "address": "1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv",
+              "gasChain": "mvc",
+              "balance": 9894000,
+              "rewardAmount": 10000000,
+              "usedAmount": 106000,
+              "grantedAmount": 10000000,
+              "reservedAmount": 0,
+              "spentAmount": 106000,
+              "availableAmount": 9894000,
+              "grantRequired": false,
+              "sponsorMode": "permissionless",
+              "status": "active",
+              "traffic": {
+                "accountId": "idq1ds5sh3m6nv7d8me5hc4uzh0xjcc9236mckcxns",
+                "balanceBytes": 65465187,
+                "reservedBytes": 0
+              },
+              "me": {
+                "trafficBilling": false,
+                "spendableMilli": 0
+              }
+            }
+          },
+          "quotaAfter": {
+            "exists": true,
+            "balance": 9894000,
+            "grantedAmount": 10000000,
+            "reservedAmount": 0,
+            "spentAmount": 106000,
+            "availableAmount": 9894000,
+            "status": "active",
+            "raw": {
+              "exists": true,
+              "address": "1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv",
+              "gasChain": "mvc",
+              "balance": 9894000,
+              "rewardAmount": 10000000,
+              "usedAmount": 106000,
+              "grantedAmount": 10000000,
+              "reservedAmount": 0,
+              "spentAmount": 106000,
+              "availableAmount": 9894000,
+              "grantRequired": false,
+              "sponsorMode": "permissionless",
+              "status": "active",
+              "traffic": {
+                "accountId": "idq1ds5sh3m6nv7d8me5hc4uzh0xjcc9236mckcxns",
+                "balanceBytes": 65383897,
+                "reservedBytes": 0
+              },
+              "me": {
+                "trafficBilling": false,
+                "spendableMilli": 0
+              }
+            }
+          },
+          "advisoryFeeEstimate": 81290,
+          "sponsoredMinerFee": 81290,
+          "savedFee": 81290
+        },
+        "uploadMode": "direct",
+        "previewUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/content/cb3c70074676d00a27774c27d0533d4b983262201777efa67f5fe04ecc79e9a1i0",
+        "downloadUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/cb3c70074676d00a27774c27d0533d4b983262201777efa67f5fe04ecc79e9a1i0",
+        "verification": {
+          "ok": true,
+          "url": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/cb3c70074676d00a27774c27d0533d4b983262201777efa67f5fe04ecc79e9a1i0",
+          "attempts": 1
+        }
+      }
+    },
+    {
+      "selection": 11,
+      "code": "T32",
+      "file": "11-T32-salmon.svg",
+      "png": "11-T32-salmon.svg.png",
+      "upload": {
+        "pinId": "f005a54c6c238a88e0bab7114f2961ba26aeeb65a8c4389e42a537525a3eee50i0",
+        "txids": [
+          "f005a54c6c238a88e0bab7114f2961ba26aeeb65a8c4389e42a537525a3eee50"
+        ],
+        "totalCost": 35042,
+        "network": "mvc",
+        "filePath": "/Users/tusm/.metabot/profiles/bob/idbots-avatar-library/selected-20/11-T32-salmon.svg.png",
+        "fileName": "11-T32-salmon.svg.png",
+        "contentType": "image/png",
+        "bytes": 34735,
+        "extension": ".png",
+        "metafileUri": "metafile://f005a54c6c238a88e0bab7114f2961ba26aeeb65a8c4389e42a537525a3eee50i0.png",
+        "metawebUrl": "https://openagentinternet.org/browser/metafile/f005a54c6c238a88e0bab7114f2961ba26aeeb65a8c4389e42a537525a3eee50i0",
+        "globalMetaId": "idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47",
+        "feeAssist": {
+          "attempted": true,
+          "used": false,
+          "mode": "self_paid",
+          "sponsor": "mvc_sponsor_v2",
+          "reason": "service_unavailable",
+          "stage": "pre",
+          "quotaBefore": {
+            "exists": true,
+            "balance": 9894000,
+            "grantedAmount": 10000000,
+            "reservedAmount": 0,
+            "spentAmount": 106000,
+            "availableAmount": 9894000,
+            "status": "active",
+            "raw": {
+              "exists": true,
+              "address": "1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv",
+              "gasChain": "mvc",
+              "balance": 9894000,
+              "rewardAmount": 10000000,
+              "usedAmount": 106000,
+              "grantedAmount": 10000000,
+              "reservedAmount": 0,
+              "spentAmount": 106000,
+              "availableAmount": 9894000,
+              "grantRequired": false,
+              "sponsorMode": "permissionless",
+              "status": "active",
+              "traffic": {
+                "accountId": "idq1ds5sh3m6nv7d8me5hc4uzh0xjcc9236mckcxns",
+                "balanceBytes": 65383897,
+                "reservedBytes": 0
+              },
+              "me": {
+                "trafficBilling": false,
+                "spendableMilli": 0
+              }
+            }
+          },
+          "advisoryFeeEstimate": 0
+        },
+        "uploadMode": "direct",
+        "previewUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/content/f005a54c6c238a88e0bab7114f2961ba26aeeb65a8c4389e42a537525a3eee50i0",
+        "downloadUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/f005a54c6c238a88e0bab7114f2961ba26aeeb65a8c4389e42a537525a3eee50i0",
+        "verification": {
+          "ok": true,
+          "url": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/f005a54c6c238a88e0bab7114f2961ba26aeeb65a8c4389e42a537525a3eee50i0",
+          "attempts": 1
+        }
+      }
+    },
+    {
+      "selection": 12,
+      "code": "T37",
+      "file": "12-T37-taupe.svg",
+      "png": "12-T37-taupe.svg.png",
+      "upload": {
+        "pinId": "a07b5b05ffc6c5be231f2adf61ad2717ad5e7354a357cca0bd4a0b02783cbeb1i0",
+        "txids": [
+          "a07b5b05ffc6c5be231f2adf61ad2717ad5e7354a357cca0bd4a0b02783cbeb1"
+        ],
+        "totalCost": 35003,
+        "network": "mvc",
+        "filePath": "/Users/tusm/.metabot/profiles/bob/idbots-avatar-library/selected-20/12-T37-taupe.svg.png",
+        "fileName": "12-T37-taupe.svg.png",
+        "contentType": "image/png",
+        "bytes": 34696,
+        "extension": ".png",
+        "metafileUri": "metafile://a07b5b05ffc6c5be231f2adf61ad2717ad5e7354a357cca0bd4a0b02783cbeb1i0.png",
+        "metawebUrl": "https://openagentinternet.org/browser/metafile/a07b5b05ffc6c5be231f2adf61ad2717ad5e7354a357cca0bd4a0b02783cbeb1i0",
+        "globalMetaId": "idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47",
+        "feeAssist": {
+          "attempted": true,
+          "used": false,
+          "mode": "self_paid",
+          "sponsor": "mvc_sponsor_v2",
+          "reason": "service_unavailable",
+          "stage": "pre",
+          "quotaBefore": {
+            "exists": true,
+            "balance": 9894000,
+            "grantedAmount": 10000000,
+            "reservedAmount": 0,
+            "spentAmount": 106000,
+            "availableAmount": 9894000,
+            "status": "active",
+            "raw": {
+              "exists": true,
+              "address": "1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv",
+              "gasChain": "mvc",
+              "balance": 9894000,
+              "rewardAmount": 10000000,
+              "usedAmount": 106000,
+              "grantedAmount": 10000000,
+              "reservedAmount": 0,
+              "spentAmount": 106000,
+              "availableAmount": 9894000,
+              "grantRequired": false,
+              "sponsorMode": "permissionless",
+              "status": "active",
+              "traffic": {
+                "accountId": "idq1ds5sh3m6nv7d8me5hc4uzh0xjcc9236mckcxns",
+                "balanceBytes": 65383897,
+                "reservedBytes": 0
+              },
+              "me": {
+                "trafficBilling": false,
+                "spendableMilli": 0
+              }
+            }
+          },
+          "advisoryFeeEstimate": 0
+        },
+        "uploadMode": "direct",
+        "previewUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/content/a07b5b05ffc6c5be231f2adf61ad2717ad5e7354a357cca0bd4a0b02783cbeb1i0",
+        "downloadUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/a07b5b05ffc6c5be231f2adf61ad2717ad5e7354a357cca0bd4a0b02783cbeb1i0",
+        "verification": {
+          "ok": true,
+          "url": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/a07b5b05ffc6c5be231f2adf61ad2717ad5e7354a357cca0bd4a0b02783cbeb1i0",
+          "attempts": 1
+        }
+      }
+    },
+    {
+      "selection": 13,
+      "code": "T40",
+      "file": "13-T40-chocolate.svg",
+      "png": "13-T40-chocolate.svg.png",
+      "upload": {
+        "pinId": "8cd7fec6b519dc862819eeb71183fb9b2cdf36e6807ec909b7b1ff0e3c60b6a1i0",
+        "txids": [
+          "8cd7fec6b519dc862819eeb71183fb9b2cdf36e6807ec909b7b1ff0e3c60b6a1"
+        ],
+        "totalCost": 30264,
+        "network": "mvc",
+        "filePath": "/Users/tusm/.metabot/profiles/bob/idbots-avatar-library/selected-20/13-T40-chocolate.svg.png",
+        "fileName": "13-T40-chocolate.svg.png",
+        "contentType": "image/png",
+        "bytes": 29957,
+        "extension": ".png",
+        "metafileUri": "metafile://8cd7fec6b519dc862819eeb71183fb9b2cdf36e6807ec909b7b1ff0e3c60b6a1i0.png",
+        "metawebUrl": "https://openagentinternet.org/browser/metafile/8cd7fec6b519dc862819eeb71183fb9b2cdf36e6807ec909b7b1ff0e3c60b6a1i0",
+        "globalMetaId": "idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47",
+        "feeAssist": {
+          "attempted": true,
+          "used": false,
+          "mode": "self_paid",
+          "sponsor": "mvc_sponsor_v2",
+          "reason": "service_unavailable",
+          "stage": "pre",
+          "quotaBefore": {
+            "exists": true,
+            "balance": 9894000,
+            "grantedAmount": 10000000,
+            "reservedAmount": 0,
+            "spentAmount": 106000,
+            "availableAmount": 9894000,
+            "status": "active",
+            "raw": {
+              "exists": true,
+              "address": "1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv",
+              "gasChain": "mvc",
+              "balance": 9894000,
+              "rewardAmount": 10000000,
+              "usedAmount": 106000,
+              "grantedAmount": 10000000,
+              "reservedAmount": 0,
+              "spentAmount": 106000,
+              "availableAmount": 9894000,
+              "grantRequired": false,
+              "sponsorMode": "permissionless",
+              "status": "active",
+              "traffic": {
+                "accountId": "idq1ds5sh3m6nv7d8me5hc4uzh0xjcc9236mckcxns",
+                "balanceBytes": 65383897,
+                "reservedBytes": 0
+              },
+              "me": {
+                "trafficBilling": false,
+                "spendableMilli": 0
+              }
+            }
+          },
+          "advisoryFeeEstimate": 0
+        },
+        "uploadMode": "direct",
+        "previewUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/content/8cd7fec6b519dc862819eeb71183fb9b2cdf36e6807ec909b7b1ff0e3c60b6a1i0",
+        "downloadUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/8cd7fec6b519dc862819eeb71183fb9b2cdf36e6807ec909b7b1ff0e3c60b6a1i0",
+        "verification": {
+          "ok": true,
+          "url": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/8cd7fec6b519dc862819eeb71183fb9b2cdf36e6807ec909b7b1ff0e3c60b6a1i0",
+          "attempts": 1
+        }
+      }
+    },
+    {
+      "selection": 14,
+      "code": "P48",
+      "file": "14-P48-fuchsia-cat.svg",
+      "png": "14-P48-fuchsia-cat.svg.png",
+      "upload": {
+        "pinId": "188e4d1530271a0db3c0829f1a7fa40b51565fed1617488fcbd12ad4100134bfi0",
+        "txids": [
+          "188e4d1530271a0db3c0829f1a7fa40b51565fed1617488fcbd12ad4100134bf"
+        ],
+        "totalCost": 32369,
+        "network": "mvc",
+        "filePath": "/Users/tusm/.metabot/profiles/bob/idbots-avatar-library/selected-20/14-P48-fuchsia-cat.svg.png",
+        "fileName": "14-P48-fuchsia-cat.svg.png",
+        "contentType": "image/png",
+        "bytes": 32062,
+        "extension": ".png",
+        "metafileUri": "metafile://188e4d1530271a0db3c0829f1a7fa40b51565fed1617488fcbd12ad4100134bfi0.png",
+        "metawebUrl": "https://openagentinternet.org/browser/metafile/188e4d1530271a0db3c0829f1a7fa40b51565fed1617488fcbd12ad4100134bfi0",
+        "globalMetaId": "idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47",
+        "feeAssist": {
+          "attempted": true,
+          "used": false,
+          "mode": "self_paid",
+          "sponsor": "mvc_sponsor_v2",
+          "reason": "service_unavailable",
+          "stage": "pre",
+          "quotaBefore": {
+            "exists": true,
+            "balance": 9894000,
+            "grantedAmount": 10000000,
+            "reservedAmount": 0,
+            "spentAmount": 106000,
+            "availableAmount": 9894000,
+            "status": "active",
+            "raw": {
+              "exists": true,
+              "address": "1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv",
+              "gasChain": "mvc",
+              "balance": 9894000,
+              "rewardAmount": 10000000,
+              "usedAmount": 106000,
+              "grantedAmount": 10000000,
+              "reservedAmount": 0,
+              "spentAmount": 106000,
+              "availableAmount": 9894000,
+              "grantRequired": false,
+              "sponsorMode": "permissionless",
+              "status": "active",
+              "traffic": {
+                "accountId": "idq1ds5sh3m6nv7d8me5hc4uzh0xjcc9236mckcxns",
+                "balanceBytes": 65383897,
+                "reservedBytes": 0
+              },
+              "me": {
+                "trafficBilling": false,
+                "spendableMilli": 0
+              }
+            }
+          },
+          "advisoryFeeEstimate": 0
+        },
+        "uploadMode": "direct",
+        "previewUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/content/188e4d1530271a0db3c0829f1a7fa40b51565fed1617488fcbd12ad4100134bfi0",
+        "downloadUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/188e4d1530271a0db3c0829f1a7fa40b51565fed1617488fcbd12ad4100134bfi0",
+        "verification": {
+          "ok": true,
+          "url": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/188e4d1530271a0db3c0829f1a7fa40b51565fed1617488fcbd12ad4100134bfi0",
+          "attempts": 1
+        }
+      }
+    },
+    {
+      "selection": 15,
+      "code": "P44",
+      "file": "15-P44-lilac-plus.svg",
+      "png": "15-P44-lilac-plus.svg.png",
+      "upload": {
+        "pinId": "3d0ea6bb3f343a714e1d67e06e957b1bb477bbe76e396368352192cb12db8de5i0",
+        "txids": [
+          "3d0ea6bb3f343a714e1d67e06e957b1bb477bbe76e396368352192cb12db8de5"
+        ],
+        "totalCost": 32031,
+        "network": "mvc",
+        "filePath": "/Users/tusm/.metabot/profiles/bob/idbots-avatar-library/selected-20/15-P44-lilac-plus.svg.png",
+        "fileName": "15-P44-lilac-plus.svg.png",
+        "contentType": "image/png",
+        "bytes": 31724,
+        "extension": ".png",
+        "metafileUri": "metafile://3d0ea6bb3f343a714e1d67e06e957b1bb477bbe76e396368352192cb12db8de5i0.png",
+        "metawebUrl": "https://openagentinternet.org/browser/metafile/3d0ea6bb3f343a714e1d67e06e957b1bb477bbe76e396368352192cb12db8de5i0",
+        "globalMetaId": "idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47",
+        "feeAssist": {
+          "attempted": true,
+          "used": false,
+          "mode": "self_paid",
+          "sponsor": "mvc_sponsor_v2",
+          "reason": "service_unavailable",
+          "stage": "pre",
+          "quotaBefore": {
+            "exists": true,
+            "balance": 9894000,
+            "grantedAmount": 10000000,
+            "reservedAmount": 0,
+            "spentAmount": 106000,
+            "availableAmount": 9894000,
+            "status": "active",
+            "raw": {
+              "exists": true,
+              "address": "1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv",
+              "gasChain": "mvc",
+              "balance": 9894000,
+              "rewardAmount": 10000000,
+              "usedAmount": 106000,
+              "grantedAmount": 10000000,
+              "reservedAmount": 0,
+              "spentAmount": 106000,
+              "availableAmount": 9894000,
+              "grantRequired": false,
+              "sponsorMode": "permissionless",
+              "status": "active",
+              "traffic": {
+                "accountId": "idq1ds5sh3m6nv7d8me5hc4uzh0xjcc9236mckcxns",
+                "balanceBytes": 65383897,
+                "reservedBytes": 0
+              },
+              "me": {
+                "trafficBilling": false,
+                "spendableMilli": 0
+              }
+            }
+          },
+          "advisoryFeeEstimate": 0
+        },
+        "uploadMode": "direct",
+        "previewUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/content/3d0ea6bb3f343a714e1d67e06e957b1bb477bbe76e396368352192cb12db8de5i0",
+        "downloadUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/3d0ea6bb3f343a714e1d67e06e957b1bb477bbe76e396368352192cb12db8de5i0",
+        "verification": {
+          "ok": true,
+          "url": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/3d0ea6bb3f343a714e1d67e06e957b1bb477bbe76e396368352192cb12db8de5i0",
+          "attempts": 1
+        }
+      }
+    },
+    {
+      "selection": 16,
+      "code": "P31",
+      "file": "16-P31-coral.svg",
+      "png": "16-P31-coral.svg.png",
+      "upload": {
+        "pinId": "15361a10cb629878c8600091732df3d93c7a368a57dff6c77138469ee3e91ec9i0",
+        "txids": [
+          "15361a10cb629878c8600091732df3d93c7a368a57dff6c77138469ee3e91ec9"
+        ],
+        "totalCost": 31485,
+        "network": "mvc",
+        "filePath": "/Users/tusm/.metabot/profiles/bob/idbots-avatar-library/selected-20/16-P31-coral.svg.png",
+        "fileName": "16-P31-coral.svg.png",
+        "contentType": "image/png",
+        "bytes": 31178,
+        "extension": ".png",
+        "metafileUri": "metafile://15361a10cb629878c8600091732df3d93c7a368a57dff6c77138469ee3e91ec9i0.png",
+        "metawebUrl": "https://openagentinternet.org/browser/metafile/15361a10cb629878c8600091732df3d93c7a368a57dff6c77138469ee3e91ec9i0",
+        "globalMetaId": "idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47",
+        "feeAssist": {
+          "attempted": true,
+          "used": false,
+          "mode": "self_paid",
+          "sponsor": "mvc_sponsor_v2",
+          "reason": "service_unavailable",
+          "stage": "pre",
+          "quotaBefore": {
+            "exists": true,
+            "balance": 9894000,
+            "grantedAmount": 10000000,
+            "reservedAmount": 0,
+            "spentAmount": 106000,
+            "availableAmount": 9894000,
+            "status": "active",
+            "raw": {
+              "exists": true,
+              "address": "1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv",
+              "gasChain": "mvc",
+              "balance": 9894000,
+              "rewardAmount": 10000000,
+              "usedAmount": 106000,
+              "grantedAmount": 10000000,
+              "reservedAmount": 0,
+              "spentAmount": 106000,
+              "availableAmount": 9894000,
+              "grantRequired": false,
+              "sponsorMode": "permissionless",
+              "status": "active",
+              "traffic": {
+                "accountId": "idq1ds5sh3m6nv7d8me5hc4uzh0xjcc9236mckcxns",
+                "balanceBytes": 65383897,
+                "reservedBytes": 0
+              },
+              "me": {
+                "trafficBilling": false,
+                "spendableMilli": 0
+              }
+            }
+          },
+          "advisoryFeeEstimate": 0
+        },
+        "uploadMode": "direct",
+        "previewUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/content/15361a10cb629878c8600091732df3d93c7a368a57dff6c77138469ee3e91ec9i0",
+        "downloadUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/15361a10cb629878c8600091732df3d93c7a368a57dff6c77138469ee3e91ec9i0",
+        "verification": {
+          "ok": true,
+          "url": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/15361a10cb629878c8600091732df3d93c7a368a57dff6c77138469ee3e91ec9i0",
+          "attempts": 1
+        }
+      }
+    },
+    {
+      "selection": 17,
+      "code": "P03",
+      "file": "17-P03-amber.svg",
+      "png": "17-P03-amber.svg.png",
+      "upload": {
+        "pinId": "543dd1fd00c7a6d868dfcadd6c713b5e11f25731703de01a17b2a57110e38660i0",
+        "txids": [
+          "543dd1fd00c7a6d868dfcadd6c713b5e11f25731703de01a17b2a57110e38660"
+        ],
+        "totalCost": 29251,
+        "network": "mvc",
+        "filePath": "/Users/tusm/.metabot/profiles/bob/idbots-avatar-library/selected-20/17-P03-amber.svg.png",
+        "fileName": "17-P03-amber.svg.png",
+        "contentType": "image/png",
+        "bytes": 28944,
+        "extension": ".png",
+        "metafileUri": "metafile://543dd1fd00c7a6d868dfcadd6c713b5e11f25731703de01a17b2a57110e38660i0.png",
+        "metawebUrl": "https://openagentinternet.org/browser/metafile/543dd1fd00c7a6d868dfcadd6c713b5e11f25731703de01a17b2a57110e38660i0",
+        "globalMetaId": "idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47",
+        "feeAssist": {
+          "attempted": true,
+          "used": false,
+          "mode": "self_paid",
+          "sponsor": "mvc_sponsor_v2",
+          "reason": "service_unavailable",
+          "stage": "pre",
+          "quotaBefore": {
+            "exists": true,
+            "balance": 9894000,
+            "grantedAmount": 10000000,
+            "reservedAmount": 0,
+            "spentAmount": 106000,
+            "availableAmount": 9894000,
+            "status": "active",
+            "raw": {
+              "exists": true,
+              "address": "1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv",
+              "gasChain": "mvc",
+              "balance": 9894000,
+              "rewardAmount": 10000000,
+              "usedAmount": 106000,
+              "grantedAmount": 10000000,
+              "reservedAmount": 0,
+              "spentAmount": 106000,
+              "availableAmount": 9894000,
+              "grantRequired": false,
+              "sponsorMode": "permissionless",
+              "status": "active",
+              "traffic": {
+                "accountId": "idq1ds5sh3m6nv7d8me5hc4uzh0xjcc9236mckcxns",
+                "balanceBytes": 65383897,
+                "reservedBytes": 0
+              },
+              "me": {
+                "trafficBilling": false,
+                "spendableMilli": 0
+              }
+            }
+          },
+          "advisoryFeeEstimate": 0
+        },
+        "uploadMode": "direct",
+        "previewUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/content/543dd1fd00c7a6d868dfcadd6c713b5e11f25731703de01a17b2a57110e38660i0",
+        "downloadUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/543dd1fd00c7a6d868dfcadd6c713b5e11f25731703de01a17b2a57110e38660i0",
+        "verification": {
+          "ok": true,
+          "url": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/543dd1fd00c7a6d868dfcadd6c713b5e11f25731703de01a17b2a57110e38660i0",
+          "attempts": 1
+        }
+      }
+    },
+    {
+      "selection": 18,
+      "code": "P06",
+      "file": "18-P06-lime.svg",
+      "png": "18-P06-lime.svg.png",
+      "upload": {
+        "pinId": "ed69bdff4aa11c07fc55d393f32489740fb1a0422f836f9c9a3b9b18bf9a2552i0",
+        "txids": [
+          "ed69bdff4aa11c07fc55d393f32489740fb1a0422f836f9c9a3b9b18bf9a2552"
+        ],
+        "totalCost": 29745,
+        "network": "mvc",
+        "filePath": "/Users/tusm/.metabot/profiles/bob/idbots-avatar-library/selected-20/18-P06-lime.svg.png",
+        "fileName": "18-P06-lime.svg.png",
+        "contentType": "image/png",
+        "bytes": 29438,
+        "extension": ".png",
+        "metafileUri": "metafile://ed69bdff4aa11c07fc55d393f32489740fb1a0422f836f9c9a3b9b18bf9a2552i0.png",
+        "metawebUrl": "https://openagentinternet.org/browser/metafile/ed69bdff4aa11c07fc55d393f32489740fb1a0422f836f9c9a3b9b18bf9a2552i0",
+        "globalMetaId": "idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47",
+        "feeAssist": {
+          "attempted": true,
+          "used": false,
+          "mode": "self_paid",
+          "sponsor": "mvc_sponsor_v2",
+          "reason": "service_unavailable",
+          "stage": "pre",
+          "quotaBefore": {
+            "exists": true,
+            "balance": 9894000,
+            "grantedAmount": 10000000,
+            "reservedAmount": 0,
+            "spentAmount": 106000,
+            "availableAmount": 9894000,
+            "status": "active",
+            "raw": {
+              "exists": true,
+              "address": "1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv",
+              "gasChain": "mvc",
+              "balance": 9894000,
+              "rewardAmount": 10000000,
+              "usedAmount": 106000,
+              "grantedAmount": 10000000,
+              "reservedAmount": 0,
+              "spentAmount": 106000,
+              "availableAmount": 9894000,
+              "grantRequired": false,
+              "sponsorMode": "permissionless",
+              "status": "active",
+              "traffic": {
+                "accountId": "idq1ds5sh3m6nv7d8me5hc4uzh0xjcc9236mckcxns",
+                "balanceBytes": 65383897,
+                "reservedBytes": 0
+              },
+              "me": {
+                "trafficBilling": false,
+                "spendableMilli": 0
+              }
+            }
+          },
+          "advisoryFeeEstimate": 0
+        },
+        "uploadMode": "direct",
+        "previewUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/content/ed69bdff4aa11c07fc55d393f32489740fb1a0422f836f9c9a3b9b18bf9a2552i0",
+        "downloadUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/ed69bdff4aa11c07fc55d393f32489740fb1a0422f836f9c9a3b9b18bf9a2552i0",
+        "verification": {
+          "ok": true,
+          "url": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/ed69bdff4aa11c07fc55d393f32489740fb1a0422f836f9c9a3b9b18bf9a2552i0",
+          "attempts": 1
+        }
+      }
+    },
+    {
+      "selection": 19,
+      "code": "P12",
+      "file": "19-P12-turquoise.svg",
+      "png": "19-P12-turquoise.svg.png",
+      "upload": {
+        "pinId": "ef9cc134678b55d08e1a6df90b0c76ade7a4c5f9ad01e66b7556d3103b902ec1i0",
+        "txids": [
+          "ef9cc134678b55d08e1a6df90b0c76ade7a4c5f9ad01e66b7556d3103b902ec1"
+        ],
+        "totalCost": 29881,
+        "network": "mvc",
+        "filePath": "/Users/tusm/.metabot/profiles/bob/idbots-avatar-library/selected-20/19-P12-turquoise.svg.png",
+        "fileName": "19-P12-turquoise.svg.png",
+        "contentType": "image/png",
+        "bytes": 29574,
+        "extension": ".png",
+        "metafileUri": "metafile://ef9cc134678b55d08e1a6df90b0c76ade7a4c5f9ad01e66b7556d3103b902ec1i0.png",
+        "metawebUrl": "https://openagentinternet.org/browser/metafile/ef9cc134678b55d08e1a6df90b0c76ade7a4c5f9ad01e66b7556d3103b902ec1i0",
+        "globalMetaId": "idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47",
+        "feeAssist": {
+          "attempted": true,
+          "used": false,
+          "mode": "self_paid",
+          "sponsor": "mvc_sponsor_v2",
+          "reason": "service_unavailable",
+          "stage": "pre",
+          "quotaBefore": {
+            "exists": true,
+            "balance": 9894000,
+            "grantedAmount": 10000000,
+            "reservedAmount": 0,
+            "spentAmount": 106000,
+            "availableAmount": 9894000,
+            "status": "active",
+            "raw": {
+              "exists": true,
+              "address": "1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv",
+              "gasChain": "mvc",
+              "balance": 9894000,
+              "rewardAmount": 10000000,
+              "usedAmount": 106000,
+              "grantedAmount": 10000000,
+              "reservedAmount": 0,
+              "spentAmount": 106000,
+              "availableAmount": 9894000,
+              "grantRequired": false,
+              "sponsorMode": "permissionless",
+              "status": "active",
+              "traffic": {
+                "accountId": "idq1ds5sh3m6nv7d8me5hc4uzh0xjcc9236mckcxns",
+                "balanceBytes": 65383897,
+                "reservedBytes": 0
+              },
+              "me": {
+                "trafficBilling": false,
+                "spendableMilli": 0
+              }
+            }
+          },
+          "advisoryFeeEstimate": 0
+        },
+        "uploadMode": "direct",
+        "previewUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/content/ef9cc134678b55d08e1a6df90b0c76ade7a4c5f9ad01e66b7556d3103b902ec1i0",
+        "downloadUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/ef9cc134678b55d08e1a6df90b0c76ade7a4c5f9ad01e66b7556d3103b902ec1i0",
+        "verification": {
+          "ok": true,
+          "url": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/ef9cc134678b55d08e1a6df90b0c76ade7a4c5f9ad01e66b7556d3103b902ec1i0",
+          "attempts": 1
+        }
+      }
+    },
+    {
+      "selection": 20,
+      "code": "P18",
+      "file": "20-P18-ocean.svg",
+      "png": "20-P18-ocean.svg.png",
+      "upload": {
+        "pinId": "bb765a256d6039682b13891b5e64d970e2457b0c2e0a4204fe5450716865f180i0",
+        "txids": [
+          "bb765a256d6039682b13891b5e64d970e2457b0c2e0a4204fe5450716865f180"
+        ],
+        "totalCost": 29991,
+        "network": "mvc",
+        "filePath": "/Users/tusm/.metabot/profiles/bob/idbots-avatar-library/selected-20/20-P18-ocean.svg.png",
+        "fileName": "20-P18-ocean.svg.png",
+        "contentType": "image/png",
+        "bytes": 29684,
+        "extension": ".png",
+        "metafileUri": "metafile://bb765a256d6039682b13891b5e64d970e2457b0c2e0a4204fe5450716865f180i0.png",
+        "metawebUrl": "https://openagentinternet.org/browser/metafile/bb765a256d6039682b13891b5e64d970e2457b0c2e0a4204fe5450716865f180i0",
+        "globalMetaId": "idq1w8ye5psdkqrn6ugxxwvf5p4kkeuzufa6n9tt47",
+        "feeAssist": {
+          "attempted": true,
+          "used": false,
+          "mode": "self_paid",
+          "sponsor": "mvc_sponsor_v2",
+          "reason": "service_unavailable",
+          "stage": "pre",
+          "quotaBefore": {
+            "exists": true,
+            "balance": 9894000,
+            "grantedAmount": 10000000,
+            "reservedAmount": 0,
+            "spentAmount": 106000,
+            "availableAmount": 9894000,
+            "status": "active",
+            "raw": {
+              "exists": true,
+              "address": "1BNesCuvJeW2DAF42xkyCU1ifZVuNZ61mv",
+              "gasChain": "mvc",
+              "balance": 9894000,
+              "rewardAmount": 10000000,
+              "usedAmount": 106000,
+              "grantedAmount": 10000000,
+              "reservedAmount": 0,
+              "spentAmount": 106000,
+              "availableAmount": 9894000,
+              "grantRequired": false,
+              "sponsorMode": "permissionless",
+              "status": "active",
+              "traffic": {
+                "accountId": "idq1ds5sh3m6nv7d8me5hc4uzh0xjcc9236mckcxns",
+                "balanceBytes": 65383897,
+                "reservedBytes": 0
+              },
+              "me": {
+                "trafficBilling": false,
+                "spendableMilli": 0
+              }
+            }
+          },
+          "advisoryFeeEstimate": 0
+        },
+        "uploadMode": "direct",
+        "previewUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/content/bb765a256d6039682b13891b5e64d970e2457b0c2e0a4204fe5450716865f180i0",
+        "downloadUrl": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/bb765a256d6039682b13891b5e64d970e2457b0c2e0a4204fe5450716865f180i0",
+        "verification": {
+          "ok": true,
+          "url": "https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/bb765a256d6039682b13891b5e64d970e2457b0c2e0a4204fe5450716865f180i0",
+          "attempts": 1
+        }
+      }
+    }
+  ]
+}

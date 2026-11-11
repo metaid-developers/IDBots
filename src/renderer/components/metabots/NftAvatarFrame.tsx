@@ -3,6 +3,7 @@ import { CheckIcon } from '@heroicons/react/24/solid';
 import { i18nService } from '../../services/i18n';
 import { getNftCaRegistryCached, isCollectionCertified } from '../../services/nftCaRegistryService';
 import { parseNftAvatarReference, resolveNftAvatarBadgeKind } from './nftAvatarPresentation';
+import { isMetafileAvatarReference } from '../../utils/metafileAvatar';
 
 interface NftAvatarState {
   src: string | null;
@@ -93,13 +94,19 @@ const NftAvatarFrame: React.FC<NftAvatarFrameProps> = ({
   alt = '',
 }) => {
   const nftRef = parseNftAvatarReference(avatar ?? null);
-  const resolved = useNftAvatarState(nftRef ? (avatar as string).trim() : null);
+  const metafileRef = isMetafileAvatarReference(avatar);
+  const resolved = useNftAvatarState(nftRef || metafileRef ? (avatar as string).trim() : null);
 
-  if (!nftRef) {
+  if (!nftRef && !metafileRef) {
     if (avatar && (avatar.startsWith('data:') || avatar.startsWith('http'))) {
       return <img src={avatar} alt={alt} className={`${frameClassName} object-cover ${imgClassName ?? ''}`} />;
     }
     return <>{fallback}</>;
+  }
+
+  if (metafileRef) {
+    if (!resolved?.src) return <>{fallback}</>;
+    return <img src={resolved.src} alt={alt} className={`${frameClassName} object-cover ${imgClassName ?? ''}`} data-metafile-avatar={avatar?.trim()} />;
   }
 
   const src = resolved?.src ?? fallbackSource ?? null;

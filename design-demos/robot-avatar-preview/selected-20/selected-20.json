@@ -1,0 +1,182 @@
+[
+  {
+    "selection": 1,
+    "code": "D0",
+    "file": "01-D0.svg",
+    "png": "01-D0.svg.png",
+    "slug": "robot-0",
+    "sourceBatch": "D / Robot 0 audit",
+    "sourceFile": "Robot 0.svg"
+  },
+  {
+    "selection": 2,
+    "code": "T41",
+    "file": "02-T41-sakura-lashes.svg",
+    "png": "02-T41-sakura-lashes.svg.png",
+    "slug": "sakura-lashes",
+    "sourceBatch": "triple",
+    "sourceFile": "T41-sakura-lashes-rainbow-smile-metal-ear.svg"
+  },
+  {
+    "selection": 3,
+    "code": "T45",
+    "file": "03-T45-orchid-cool.svg",
+    "png": "03-T45-orchid-cool.svg.png",
+    "slug": "orchid-cool",
+    "sourceBatch": "triple",
+    "sourceFile": "T45-orchid-cool-visor-cat-dual-ear.svg"
+  },
+  {
+    "selection": 4,
+    "code": "T26",
+    "file": "04-T26-lavender.svg",
+    "png": "04-T26-lavender.svg.png",
+    "slug": "lavender",
+    "sourceBatch": "triple",
+    "sourceFile": "T26-lavender-rainbow-stubble-slot-ear.svg"
+  },
+  {
+    "selection": 5,
+    "code": "T03",
+    "file": "05-T03-amber.svg",
+    "png": "05-T03-amber.svg.png",
+    "slug": "amber",
+    "sourceBatch": "triple",
+    "sourceFile": "T03-amber-bold-cat-bracket-ear.svg"
+  },
+  {
+    "selection": 6,
+    "code": "T04",
+    "file": "06-T04-lemon.svg",
+    "png": "06-T04-lemon.svg.png",
+    "slug": "lemon",
+    "sourceBatch": "triple",
+    "sourceFile": "T04-lemon-laser-bubble-metal-ear.svg"
+  },
+  {
+    "selection": 7,
+    "code": "T01",
+    "file": "07-T01-apricot.svg",
+    "png": "07-T01-apricot.svg.png",
+    "slug": "apricot",
+    "sourceBatch": "triple",
+    "sourceFile": "T01-apricot-square-smile-classic-ear.svg"
+  },
+  {
+    "selection": 8,
+    "code": "T15",
+    "file": "08-T15-petrol.svg",
+    "png": "08-T15-petrol.svg.png",
+    "slug": "petrol",
+    "sourceBatch": "triple",
+    "sourceFile": "T15-petrol-visor-moustache-slot-ear.svg"
+  },
+  {
+    "selection": 9,
+    "code": "T12",
+    "file": "09-T12-turquoise.svg",
+    "png": "09-T12-turquoise.svg.png",
+    "slug": "turquoise",
+    "sourceBatch": "triple",
+    "sourceFile": "T12-turquoise-plus-pixels-sleek-ear.svg"
+  },
+  {
+    "selection": 10,
+    "code": "T35",
+    "file": "10-T35-blush.svg",
+    "png": "10-T35-blush.svg.png",
+    "slug": "blush",
+    "sourceBatch": "triple",
+    "sourceFile": "T35-blush-cyber-beard-stitches.svg"
+  },
+  {
+    "selection": 11,
+    "code": "T32",
+    "file": "11-T32-salmon.svg",
+    "png": "11-T32-salmon.svg.png",
+    "slug": "salmon",
+    "sourceBatch": "triple",
+    "sourceFile": "T32-salmon-golden-clown-fins.svg"
+  },
+  {
+    "selection": 12,
+    "code": "T37",
+    "file": "12-T37-taupe.svg",
+    "png": "12-T37-taupe.svg.png",
+    "slug": "taupe",
+    "sourceBatch": "triple",
+    "sourceFile": "T37-taupe-triangle-toothy-slot-ear.svg"
+  },
+  {
+    "selection": 13,
+    "code": "T40",
+    "file": "13-T40-chocolate.svg",
+    "png": "13-T40-chocolate.svg.png",
+    "slug": "chocolate",
+    "sourceBatch": "triple",
+    "sourceFile": "T40-chocolate-sleepy-gray-beard-bracket-ear.svg"
+  },
+  {
+    "selection": 14,
+    "code": "P48",
+    "file": "14-P48-fuchsia-cat.svg",
+    "png": "14-P48-fuchsia-cat.svg.png",
+    "slug": "fuchsia-cat",
+    "sourceBatch": "previous",
+    "sourceFile": "48-fuchsia-cat.svg"
+  },
+  {
+    "selection": 15,
+    "code": "P44",
+    "file": "15-P44-lilac-plus.svg",
+    "png": "15-P44-lilac-plus.svg.png",
+    "slug": "lilac-plus",
+    "sourceBatch": "previous",
+    "sourceFile": "44-lilac-plus.svg"
+  },
+  {
+    "selection": 16,
+    "code": "P31",
+    "file": "16-P31-coral.svg",
+    "png": "16-P31-coral.svg.png",
+    "slug": "coral",
+    "sourceBatch": "previous",
+    "sourceFile": "31-coral-cool-smile.svg"
+  },
+  {
+    "selection": 17,
+    "code": "P03",
+    "file": "17-P03-amber.svg",
+    "png": "17-P03-amber.svg.png",
+    "slug": "amber",
+    "sourceBatch": "previous",
+    "sourceFile": "03-amber-bold-cat.svg"
+  },
+  {
+    "selection": 18,
+    "code": "P06",
+    "file": "18-P06-lime.svg",
+    "png": "18-P06-lime.svg.png",
+    "slug": "lime",
+    "sourceBatch": "previous",
+    "sourceFile": "06-lime-plus-smile.svg"
+  },
+  {
+    "selection": 19,
+    "code": "P12",
+    "file": "19-P12-turquoise.svg",
+    "png": "19-P12-turquoise.svg.png",
+    "slug": "turquoise",
+    "sourceBatch": "previous",
+    "sourceFile": "12-turquoise-wide-classic.svg"
+  },
+  {
+    "selection": 20,
+    "code": "P18",
+    "file": "20-P18-ocean.svg",
+    "png": "20-P18-ocean.svg.png",
+    "slug": "ocean",
+    "sourceBatch": "previous",
+    "sourceFile": "18-ocean-golden-flat.svg"
+  }
+]

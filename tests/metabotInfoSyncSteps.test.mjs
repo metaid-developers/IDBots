@@ -152,6 +152,24 @@ test('sync plans publish valid image avatar data URLs as binary', () => {
   assert.ok(editSteps[0].payload.length > 0);
 });
 
+test('sync plans publish built-in MetaFile avatars as references without re-uploading bytes', () => {
+  const reference = 'metafile://940862def1adbc1532e7cd5445beab647d9ebc3d787d16dc795c5ab7d0f3e8f8i0.png';
+  const bot = { ...metabot, avatar: reference, chat_public_key_pin_id: 'chat-pin' };
+
+  const fullAvatarStep = buildFullMetabotInfoSyncPlan(bot).find((step) => step.key === 'avatar');
+  assert.equal(fullAvatarStep.path, '/info/avatar');
+  assert.equal(fullAvatarStep.contentType, 'text/plain');
+  assert.equal(fullAvatarStep.payload, reference);
+  assert.equal(fullAvatarStep.encoding, undefined);
+
+  const editSteps = buildEditMetabotInfoSyncPlan({ metabot: bot, syncAvatar: true });
+  assert.deepEqual(editSteps.map((step) => step.key), ['avatar']);
+  assert.equal(editSteps[0].path, '/info/avatar');
+  assert.equal(editSteps[0].contentType, 'text/plain');
+  assert.equal(editSteps[0].payload, reference);
+  assert.equal(editSteps[0].encoding, undefined);
+});
+
 test('edit sync plan rejects invalid non-empty avatar data', () => {
   assert.throws(
     () => buildEditMetabotInfoSyncPlan({
