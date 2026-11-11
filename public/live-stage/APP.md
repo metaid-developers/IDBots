@@ -20,6 +20,9 @@ source of truth for two renderers:
 
 ```text
 template.json        host compatibility manifest (validated before enabling)
+.metaapp.json        MetaApp publication metadata (title/appName/version/
+                     runtime/indexFile/tags; read by the publish flow, not
+                     by the runtime)
 scenes.json          declarative scene surface (bounded, presentation-only)
 stage.html           host render template with __PLACEHOLDER__ slots
 stage.css            stage appearance (opaque dark Siri glass, rim, layout)

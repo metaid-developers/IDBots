@@ -202,6 +202,35 @@ test('demo fixtures carry fictional data only', () => {
   }
 });
 
+test('.metaapp.json carries publication metadata consistent with the manifest and free of private data', () => {
+  const raw = read('.metaapp.json');
+  const metaapp = JSON.parse(raw);
+  const template = JSON.parse(read('template.json'));
+  assert.equal(metaapp.appName, 'studio-live-stage');
+  assert.equal(metaapp.version, template.templateVersion, 'publication version must match template.json');
+  assert.equal(metaapp.runtime, 'browser');
+  assert.equal(metaapp.indexFile, template.entry, 'indexFile must match the template entry');
+  assert.ok(typeof metaapp.title === 'string' && metaapp.title.trim(), 'title is required');
+  assert.ok(Array.isArray(metaapp.tags) && metaapp.tags.length > 0, 'tags are required');
+  // Publication metadata only: no local paths, credentials, runtime
+  // bookkeeping keys, or identity avatars may leak into it.
+  assert.doesNotMatch(raw, /\/Users\/|C:\\\\|sk-[a-zA-Z0-9]|preview-metaapp:|data:image/);
+  assert.doesNotMatch(raw, /sessionId|turnId|pinId/, 'no runtime bookkeeping in publication metadata');
+});
+
+test('demo player stage DOM carries every data hook the packaged stage.js reads', () => {
+  // stage.js throws inside applyState when a hook is missing (the worker-avatar
+  // drift turned every demo patch into a silent mid-apply crash); keep the
+  // player skeleton in lockstep with the packaged runtime.
+  const html = read('index.html');
+  const stageJs = read('stage.js');
+  const hooks = [...new Set([...stageJs.matchAll(/\$\('\[data-([a-z-]+)\]'\)/g)].map((match) => match[1]))];
+  assert.ok(hooks.length >= 15, 'hook extraction must stay meaningful');
+  for (const hook of hooks) {
+    assert.ok(html.includes(`data-${hook}`), `demo player must carry the data-${hook} element stage.js reads`);
+  }
+});
+
 test('demo player is offline, self-contained, and boots the real stage runtime', () => {
   const html = read('index.html');
   const stageIndex = html.indexOf("stageScript.src = 'stage.js'");
@@ -306,5 +335,10 @@ test('the built-in render path and the loader consume the same package source', 
   assert.doesNotMatch(html, /__STAGE_CSS__|__INITIAL_STATE__|__ORB_EFFECT__|__ORB_RENDERER__|__STAGE_JS__|__AVATAR_DATA_URI__/);
   // The official package and its render output describe the same scene for the same fixture.
   const { scenes } = loadLiveStageScenes(read('scenes.json'));
-  assert.equal(resolveLiveStageScene(scenes, fixture.family).scene.orb.style, 14);
+  const orbWindow = {};
+  vm.runInNewContext(read('liquid-orb.js'), { window: orbWindow });
+  assert.equal(
+    resolveLiveStageScene(scenes, fixture.family).scene.orb.style,
+    orbWindow.liquidOrbStyleForFamily(fixture.family),
+  );
 });
