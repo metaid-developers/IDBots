@@ -34,6 +34,8 @@ test('Director rejects invented topology, terminal readiness, and malformed moti
 
 test('Director uses bounded state and returns real provider token metadata', async () => {
   const current = state();
+  current.topology.mode = 'structured';
+  current.topology.nodes.push({ id: 'worker', label: 'Builder', kind: 'worker', avatar: 'data:image/png;base64,SECRET_AVATAR' });
   let captured;
   const result = await directLiveStageScene(current, { llmId: 'brain', llmProvider: 'test' }, async (messages, options) => {
     captured = { messages, options };
@@ -54,4 +56,5 @@ test('Director uses bounded state and returns real provider token metadata', asy
   assert.equal(result.usage.cacheCreationTokens, 500);
   assert.equal(captured.messages[0].role, 'system');
   assert.doesNotMatch(captured.messages[1].content, /raw reasoning|full transcript/);
+  assert.doesNotMatch(captured.messages[1].content, /SECRET_AVATAR|data:image/);
 });

@@ -36,29 +36,29 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     metalRoughness: .22, metalDepth: .25, particleDensity: .72, ribbonCount: 5,
     ribbonWidth: .42, ribbonTwist: 1.25, ribbonFold: .55, ribbonBreath: .3,
     particleSize: 1.2, particleBloom: .7, zoom: .36, warp: 3.2, ridgeAmt: .5,
-    sharp: 2.2, shade: .12, sheen: .28, gloss: .3, glassOpacity: .62,
-    shellMidAlpha: .22, shellEdgeAlpha: .2, exposure: 1.5, edgeSoftness: .005,
-    edgeGlow: .08, colorA: '#FFDC51', colorB: '#FFF3B0', colorC: '#FF9D55',
-    colorD: '#22D3EE', highlightColor: '#FFFFFF', shellInner: '#FFFFFF',
-    shellMid: '#FFF3B0', shellEdge: '#FFDC51', sheenColor: '#F4F7FA',
-    specColor: '#FFFFFF', canvasColor: '#0A1220', glowColor: '#FFDC51'
+    sharp: 2.2, shade: .12, sheen: .28, gloss: .3, glassOpacity: .44,
+    shellMidAlpha: .18, shellEdgeAlpha: .18, exposure: 1.36, edgeSoftness: .005,
+    edgeGlow: .08, colorA: '#FFD86B', colorB: '#82F4FF', colorC: '#FF7BD5',
+    colorD: '#8E6CFF', highlightColor: '#FFFFFF', shellInner: '#FFFFFF',
+    shellMid: '#9BF4FF', shellEdge: '#C5A9FF', sheenColor: '#EAF4FF',
+    specColor: '#DCEAFF', canvasColor: '#030409', glowColor: '#956CFF'
   };
-  const paletteStops = ['#FFFFFF','#FFF9DB','#FFF3B0','#FFDC51','#FFC247','#FF9D55','#82E7F2','#22D3EE','#22D3EE','#22D3EE','#22D3EE','#22D3EE'];
+  const paletteStops = ['#FFFFFF','#EAF4FF','#9BF4FF','#82F4FF','#C5A9FF','#8E6CFF','#82F4FF','#22D3EE','#22D3EE','#22D3EE','#22D3EE','#22D3EE'];
   const statePresets = {
     received: { style: 9, speed: .82, radius: .72, warp: 3.2, contourDeform: .035, glassOpacity: .62, edgeGlow: .08 },
-    reasoning: { style: 15, speed: .46, radius: .72, warp: 2.5, contourDeform: .025, glassOpacity: .58, edgeGlow: .065 },
+    reasoning: { style: 9, speed: .46, radius: .72, warp: 2.5, contourDeform: .025, glassOpacity: .58, edgeGlow: .065 },
     speaking: { style: 9, speed: 1.05, radius: .72, warp: 3.6, contourDeform: .045, glassOpacity: .64, edgeGlow: .1 },
-    'local-recall': { style: 10, speed: .82, radius: .7, warp: 3.4, contourDeform: .045, glassOpacity: .6, edgeGlow: .1 },
-    'web2-research': { style: 10, speed: 1.08, radius: .7, warp: 4.1, contourDeform: .055, glassOpacity: .62, edgeGlow: .12 },
-    'metaweb-research': { style: 13, speed: .86, radius: .71, warp: 3.8, contourDeform: .045, glassOpacity: .62, edgeGlow: .11 },
-    making: { style: 23, speed: .76, radius: .71, warp: 3.4, contourDeform: .03, glassOpacity: .58, edgeGlow: .08 },
-    delegation: { style: 24, speed: 1.08, radius: .69, warp: 4.3, contourDeform: .06, glassOpacity: .64, edgeGlow: .12 },
-    waiting: { style: 24, speed: .42, radius: .7, warp: 3.2, contourDeform: .025, glassOpacity: .58, edgeGlow: .07 },
-    'worker-report': { style: 14, speed: .88, radius: .69, warp: 3.8, contourDeform: .045, glassOpacity: .62, edgeGlow: .13 },
-    verification: { style: 12, speed: .48, radius: .7, warp: 2.5, contourDeform: .025, glassOpacity: .68, edgeGlow: .07 },
-    'browser-action': { style: 23, speed: .74, radius: .73, warp: 3, contourDeform: .025, glassOpacity: .64, edgeGlow: .1 },
-    'owner-needed': { style: 21, speed: .5, radius: .71, warp: 2.7, contourDeform: .025, glassOpacity: .62, edgeGlow: .1 },
-    problem: { style: 21, speed: .4, radius: .7, warp: 2.4, contourDeform: .02, glassOpacity: .58, edgeGlow: .07 },
+    'local-recall': { style: 9, speed: .82, radius: .7, warp: 3.4, contourDeform: .045, glassOpacity: .6, edgeGlow: .1 },
+    'web2-research': { style: 9, speed: 1.08, radius: .7, warp: 4.1, contourDeform: .055, glassOpacity: .62, edgeGlow: .12 },
+    'metaweb-research': { style: 9, speed: .86, radius: .71, warp: 3.8, contourDeform: .045, glassOpacity: .62, edgeGlow: .11 },
+    making: { style: 9, speed: .76, radius: .71, warp: 3.4, contourDeform: .03, glassOpacity: .58, edgeGlow: .08 },
+    delegation: { style: 9, speed: 1.08, radius: .69, warp: 4.3, contourDeform: .06, glassOpacity: .64, edgeGlow: .12 },
+    waiting: { style: 9, speed: .42, radius: .7, warp: 3.2, contourDeform: .025, glassOpacity: .58, edgeGlow: .07 },
+    'worker-report': { style: 9, speed: .88, radius: .69, warp: 3.8, contourDeform: .045, glassOpacity: .62, edgeGlow: .13 },
+    verification: { style: 9, speed: .48, radius: .7, warp: 2.5, contourDeform: .025, glassOpacity: .68, edgeGlow: .07 },
+    'browser-action': { style: 9, speed: .74, radius: .73, warp: 3, contourDeform: .025, glassOpacity: .64, edgeGlow: .1 },
+    'owner-needed': { style: 9, speed: .5, radius: .71, warp: 2.7, contourDeform: .025, glassOpacity: .62, edgeGlow: .1 },
+    problem: { style: 9, speed: .4, radius: .7, warp: 2.4, contourDeform: .02, glassOpacity: .58, edgeGlow: .07 },
     'report-ready': { style: 9, speed: .24, radius: .7, warp: 2.2, contourDeform: .015, glassOpacity: .66, edgeGlow: .05 },
     complete: { style: 9, speed: .2, radius: .7, warp: 2, contourDeform: .012, glassOpacity: .64, edgeGlow: .04 }
   };
@@ -94,6 +94,7 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     const forcedCanvas = new URLSearchParams(window.location.search).get('orb') === 'canvas';
     if (forcedCanvas) throw new Error('Canvas2D fallback requested');
     if (!navigator.gpu) throw new Error('WebGPU is unavailable');
+    const startedAt = performance.now();
     const sharedResources = options.sharedResources;
     let device = sharedResources?.device;
     if (!device) {
@@ -170,7 +171,11 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
         }] });
         pass.setPipeline(pipeline); pass.setBindGroup(0, bindGroup); pass.draw(3,1,0,0); pass.end();
         device.queue.submit([encoder.finish()]);
-        if (!ready) { ready = true; options.onReady?.(); }
+        if (!ready) {
+          ready = true;
+          canvas.dataset.firstFrameMs = String(Math.round(performance.now() - startedAt));
+          options.onReady?.();
+        }
         if (!reduced) raf = requestAnimationFrame(frame);
       } catch (error) {
         disposed = true;

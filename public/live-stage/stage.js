@@ -63,15 +63,28 @@
         worker: { x: width * .87, y: height * .43 },
         evidence: { x: width * .84, y: height * .7 }
       };
+      const curveFor = (from, to) => ({
+        x: (from.x + to.x) / 2,
+        y: (from.y + to.y) / 2 - Math.min(64, Math.hypot(to.x - from.x, to.y - from.y) * .18)
+      });
+      const pointOnCurve = (from, control, to, progress) => {
+        const inverse = 1 - progress;
+        return {
+          x: inverse * inverse * from.x + 2 * inverse * progress * control.x + progress * progress * to.x,
+          y: inverse * inverse * from.y + 2 * inverse * progress * control.y + progress * progress * to.y
+        };
+      };
       state.topology.edges.forEach(([fromId, toId], index) => {
         if (!nodes[fromId] || !nodes[toId]) return;
         const from = points[fromId], to = points[toId];
         if (!from || !to) return;
-        ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y);
-        ctx.strokeStyle = 'rgba(255,220,81,.3)'; ctx.lineWidth = 1.1; ctx.stroke();
+        const control = curveFor(from, to);
+        ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.quadraticCurveTo(control.x, control.y, to.x, to.y);
+        ctx.strokeStyle = 'rgba(155,244,255,.26)'; ctx.lineWidth = 1; ctx.stroke();
         const progress = reduced ? .6 : (t * .2 + index * .27) % 1;
-        ctx.beginPath(); ctx.arc(from.x + (to.x - from.x) * progress, from.y + (to.y - from.y) * progress, 3.5, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(255,220,81,.9)'; ctx.fill();
+        const point = pointOnCurve(from, control, to, progress);
+        ctx.beginPath(); ctx.arc(point.x, point.y, 3, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(197,169,255,.85)'; ctx.fill();
       });
     }
     particles.forEach((particle, index) => {
@@ -90,7 +103,7 @@
         x = cx + Math.cos(arc) * 190; y = cy + Math.sin(arc) * 125;
       }
       const alpha = state.family === 'report-ready' || state.family === 'complete' ? .18 : .18 + particle.drift * .35;
-      ctx.beginPath(); ctx.fillStyle = index % 7 === 0 ? `rgba(255,220,81,${alpha + .2})` : `rgba(211,222,234,${alpha})`;
+      ctx.beginPath(); ctx.fillStyle = index % 7 === 0 ? `rgba(155,244,255,${alpha + .12})` : `rgba(197,169,255,${alpha})`;
       ctx.arc(x, y, particle.size, 0, Math.PI * 2); ctx.fill();
     });
     if (!reduced) raf = requestAnimationFrame(drawParticles);
@@ -100,6 +113,7 @@
     cancelAnimationFrame(raf);
     resizeParticles();
     drawParticles(performance.now());
+    if (!$('[data-handoff-flow]').hasAttribute('hidden')) layoutHandoff();
   }
 
   function updateParticipants() {
@@ -214,12 +228,67 @@
     else orb.controller?.setState(family, effectiveReduced());
   }
 
+  function layoutHandoff() {
+    const stage = $('.live-stage').getBoundingClientRect();
+    if (stage.width < 1 || stage.height < 1) return;
+    const worker = $('.hybrid-worker').getBoundingClientRect();
+    const orb = $('.membrane').getBoundingClientRect();
+    const from = { x: worker.left + worker.width / 2 - stage.left, y: worker.top + worker.height / 2 - stage.top };
+    const to = { x: orb.left + orb.width / 2 - stage.left, y: orb.top + orb.height / 2 - stage.top };
+    const control = {
+      x: (from.x + to.x) / 2,
+      y: Math.max(24, Math.min(from.y, to.y) - Math.min(72, stage.height * .1))
+    };
+    const path = `M${from.x} ${from.y} Q${control.x} ${control.y} ${to.x} ${to.y}`;
+    $('[data-handoff-flow]').setAttribute('viewBox', `0 0 ${stage.width} ${stage.height}`);
+    $('[data-handoff-track]').setAttribute('d', path);
+    $('[data-handoff-motion]').setAttribute('path', path);
+  }
+
   function stopHandoff() {
     clearTimeout(handoffTimer);
     const motion = $('[data-handoff-motion]');
     try { motion.endElement(); } catch { /* the motion may not have started */ }
-    $('[data-handoff-flow]').setAttribute('hidden', '');
-    $('[data-handoff-label]').hidden = true;
+    const flow = $('[data-handoff-flow]');
+    const label = $('[data-handoff-label]');
+    flow.classList.add('is-leaving');
+    label.classList.add('is-leaving');
+    handoffTimer = setTimeout(() => {
+      flow.setAttribute('hidden', '');
+      label.hidden = true;
+      flow.classList.remove('is-leaving');
+      label.classList.remove('is-leaving');
+    }, 260);
+  }
+
+  function updateWorkerVisual(worker) {
+    const image = $('[data-worker-avatar]');
+    const fallback = $('[data-worker-fallback]');
+    const handoffImage = $('[data-handoff-avatar]');
+    const avatar = typeof worker?.avatar === 'string' && /^(?:data:image\/|https?:\/\/)/i.test(worker.avatar) ? worker.avatar : '';
+    image.onerror = () => {
+      image.hidden = true;
+      fallback.hidden = false;
+      handoffImage.hidden = true;
+    };
+    handoffImage.onerror = () => {
+      handoffImage.hidden = true;
+      image.hidden = true;
+      fallback.hidden = false;
+    };
+    if (avatar) {
+      image.src = avatar;
+      handoffImage.src = avatar;
+      image.hidden = false;
+      handoffImage.hidden = false;
+      fallback.hidden = true;
+    } else {
+      image.removeAttribute('src');
+      handoffImage.removeAttribute('src');
+      image.hidden = true;
+      handoffImage.hidden = true;
+      fallback.hidden = false;
+    }
   }
 
   function syncHandoff() {
@@ -237,6 +306,8 @@
       return;
     }
     clearTimeout(handoffTimer);
+    const flow = $('[data-handoff-flow]');
+    const label = $('[data-handoff-label]');
     const motion = $('[data-handoff-motion]');
     const worker = state.topology.nodes.find((node) => node.kind === 'worker')?.label || 'Worker';
     $('[data-handoff-worker]').textContent = worker;
@@ -244,11 +315,14 @@
       ? (state.language === 'zh' ? '正在交回结果 · 等待 Twin 核验' : 'Returning work · Twin review required')
       : (state.language === 'zh' ? '正在接收获派任务' : 'Receiving the delegated step');
     motion.setAttribute('keyPoints', handoff.direction === 'return' ? '0;1' : '1;0');
-    $('[data-handoff-flow]').removeAttribute('hidden');
-    $('[data-handoff-label]').hidden = false;
+    flow.classList.remove('is-leaving');
+    label.classList.remove('is-leaving');
+    layoutHandoff();
+    flow.removeAttribute('hidden');
+    label.hidden = false;
     try {
       motion.beginElement();
-      handoffTimer = setTimeout(stopHandoff, 2600);
+      handoffTimer = setTimeout(stopHandoff, 5000);
     } catch {
       stopHandoff();
     }
@@ -269,6 +343,7 @@
     $('[data-node-source]').textContent = nodes.source?.label || 'Source';
     $('[data-node-worker]').textContent = nodes.worker?.label || 'Worker';
     $('[data-node-evidence]').textContent = nodes.evidence?.label || 'Evidence';
+    updateWorkerVisual(nodes.worker);
     const metrics = state.metrics;
     $('[data-director-metrics]').textContent = metrics.directorEnabled
       ? `Director ${metrics.directorCalls} calls · ${metrics.inputTokens + metrics.outputTokens} tokens${metrics.fallbackCount ? ` · ${metrics.fallbackCount} fallback` : ''}`
