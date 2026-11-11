@@ -1,21 +1,17 @@
-/**
- * Mobile ME purchase submission (S9 §5).
- *
- * Extracted from MePurchaseScreen's submit() so both branches are unit-testable
- * without a DOM. Subscribe goes to /v1/me/subscription/order with the planId,
- * period and channel=mobile; topup keeps the package channel. Before this split
- * the screen sent a planId to submitTopupOrder, which the backend reads as a
- * packageId — a free tier could never open a subscription.
- */
-
+import {
+  normalizeMePaymentCheckout,
+  type MePaymentCheckout,
+} from '../../../renderer/components/me/mePayment.ts';
 import type { MePeriod } from './mePointsStore';
 
 export type MePurchaseSubmitSection = 'subscribe' | 'topup';
+export type MePaymentGateway = 'alipay' | 'paypal';
 
 export interface MeSubscriptionOrderInput {
   planId: string;
   period: MePeriod;
   channel: 'mobile';
+  gateway?: MePaymentGateway;
   voucherUrl?: string;
   voucherRemark?: string;
   idempotencyKey: string;
@@ -24,6 +20,7 @@ export interface MeSubscriptionOrderInput {
 export interface MeTopupOrderInput {
   packageId: string;
   periodDays?: number;
+  gateway?: MePaymentGateway;
   voucherUrl?: string;
   voucherRemark?: string;
   idempotencyKey: string;
@@ -40,15 +37,32 @@ export interface MePurchaseOrderResponse {
   featureUnavailable?: boolean;
 }
 
+export interface MePaymentOrder {
+  orderId: string;
+  status?: string;
+  packageId?: string;
+  planId?: string;
+  period?: string;
+  channel?: string;
+  createdAt?: number;
+  meMilli?: number;
+  priceCny?: number;
+  amountCny?: number;
+  payAmount?: number;
+  payCurrency?: string;
+  gatewayParams?: unknown;
+  rejectReason?: string;
+  breakdown?: Record<string, unknown>;
+}
+
 export interface MeSubscriptionOrderResponse extends MePurchaseOrderResponse {
-  subscriptionOrder?: { orderId: string; payAmount?: number };
+  subscriptionOrder?: MePaymentOrder;
 }
 
 export interface MeTopupOrderResponse extends MePurchaseOrderResponse {
-  submission?: { order?: { orderId: string; payAmount?: number } };
+  submission?: { order?: MePaymentOrder | null };
 }
 
-/** The two IPC methods the screen drives (structurally satisfied by window.electron.mePoints). */
 export interface MePurchaseSubmitApi {
   submitSubscriptionOrder: (input: MeSubscriptionOrderInput) => Promise<MeSubscriptionOrderResponse>;
   submitTopupOrder: (input: MeTopupOrderInput) => Promise<MeTopupOrderResponse>;
@@ -57,44 +71,32 @@ export interface MePurchaseSubmitApi {
 export interface MePurchaseSubmitResult {
   ok: boolean;
   orderId: string;
-  /**
-   * The server-priced amount (CNY) when the order response carries one — the
-   * screen prefers it over the locally computed tag so the displayed amount
-   * can never drift from the charged amount.
-   */
   payAmount?: number;
+  checkout?: MePaymentCheckout;
   error?: string;
   errorCode?: string;
 }
 
-/**
- * Pick the subject (planId vs packageId) the current section may submit and
- * assemble the matching IPC request. Returns null when no subject is selected,
- * which is the screen's existing early return.
- */
 export function buildMePurchaseOrderRequest(args: {
   section: MePurchaseSubmitSection;
   planId?: string | null;
   packageId?: string | null;
   period: MePeriod;
   periodDays?: number;
+  gateway?: MePaymentGateway;
   voucherUrl?: string;
   voucherRemark?: string;
   now?: number;
 }): MePurchaseOrderRequest | null {
   const subjectId = args.section === 'subscribe' ? args.planId : args.packageId;
   if (!subjectId) return null;
-  // R2.2-stable idempotency key (2026-11-11): the UTC day-stamp collapses
-  // same-day re-orders of the same subject into ONE server order — an
-  // abandoned checkout resumes (the dedup response carries the original
-  // order + gatewayParams) instead of stacking payable duplicates. The
-  // period rides in the subscribe key: quarter and year are different
-  // products, not retries of one another.
+  const gateway = args.gateway ?? 'alipay';
   const dayStamp = new Date(args.now ?? Date.now()).toISOString().slice(0, 10);
   const idempotencyKey = args.section === 'subscribe'
-    ? `mobile-subscribe-${subjectId}-${args.period}-${dayStamp}`
-    : `mobile-topup-${subjectId}-${dayStamp}`;
+    ? `mobile-subscribe-${subjectId}-${args.period}-${gateway}-${dayStamp}`
+    : `mobile-topup-${subjectId}-${gateway}-${dayStamp}`;
   const common = {
+    gateway,
     voucherUrl: args.voucherUrl,
     voucherRemark: args.voucherRemark,
     idempotencyKey,
@@ -108,10 +110,19 @@ export function buildMePurchaseOrderRequest(args: {
   return { kind: 'topup', input: { packageId: subjectId, periodDays: args.periodDays, ...common } };
 }
 
-/**
- * Exactly one IPC call per submission and no retry: a 404 (endpoint absent,
- * featureUnavailable) must surface as-is, never be replayed into a duplicate order.
- */
+function successResult(order: MePaymentOrder | null | undefined): MePurchaseSubmitResult {
+  const orderId = order?.orderId ?? '';
+  const checkout = normalizeMePaymentCheckout(order, 0);
+  return {
+    ok: true,
+    orderId,
+    ...(typeof order?.payAmount === 'number' && Number.isFinite(order.payAmount)
+      ? { payAmount: order.payAmount }
+      : {}),
+    ...(checkout && (checkout.approvalUrl || checkout.qrCode) ? { checkout } : {}),
+  };
+}
+
 export async function submitMePurchaseOrder(
   api: MePurchaseSubmitApi,
   request: MePurchaseOrderRequest,
@@ -119,23 +130,11 @@ export async function submitMePurchaseOrder(
   if (request.kind === 'subscribe') {
     const res = await api.submitSubscriptionOrder(request.input);
     return res.success
-      ? {
-          ok: true,
-          orderId: res.subscriptionOrder?.orderId ?? '',
-          ...(typeof res.subscriptionOrder?.payAmount === 'number' && Number.isFinite(res.subscriptionOrder.payAmount)
-            ? { payAmount: res.subscriptionOrder.payAmount }
-            : {}),
-        }
+      ? successResult(res.subscriptionOrder)
       : { ok: false, orderId: '', error: res.error, errorCode: res.errorCode };
   }
   const res = await api.submitTopupOrder(request.input);
   return res.success
-    ? {
-        ok: true,
-        orderId: res.submission?.order?.orderId ?? '',
-        ...(typeof res.submission?.order?.payAmount === 'number' && Number.isFinite(res.submission.order.payAmount)
-          ? { payAmount: res.submission.order.payAmount }
-          : {}),
-      }
+    ? successResult(res.submission?.order)
     : { ok: false, orderId: '', error: res.error, errorCode: res.errorCode };
 }

@@ -1896,3 +1896,109 @@ textarea.twin-input {
   font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
+
+
+.me-segment-two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.me-checkout-summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--twin-text-secondary);
+  font-size: 13px;
+}
+
+.me-checkout-summary strong {
+  color: var(--twin-text-primary);
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.025em;
+}
+
+.me-checkout-order {
+  margin-top: 12px;
+  overflow-wrap: anywhere;
+  color: var(--twin-text-tertiary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+}
+
+.me-checkout-status {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: var(--twin-text-secondary);
+  font-size: 11px;
+  text-align: center;
+}
+
+.me-proration {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--twin-success-bg);
+  color: var(--twin-success);
+  font-size: 11px;
+}
+
+.me-proration strong {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.me-unified-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.me-unified-item {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: var(--twin-surface-inset);
+  color: var(--twin-text-primary);
+  font-size: 12px;
+  font-weight: 560;
+}
+
+.me-unified-dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--twin-accent-foreground);
+}
+
+.me-order-kind {
+  width: fit-content;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: var(--twin-surface-inset);
+  color: var(--twin-text-secondary);
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.me-order-resume {
+  min-height: 36px;
+  margin-top: 5px;
+  padding: 0;
+  color: var(--twin-accent-foreground);
+  font-size: 12px;
+  font-weight: 650;
+  text-align: left;
+}

@@ -10,6 +10,8 @@ import MePurchaseScreen from './MePurchaseScreen';
  */
 export default function RechargeScreen(props: {
   canPurchase: boolean;
+  initialPackageId?: string;
+  initialOrderId?: string;
   onClose: () => void;
   onOpenSubscribe: (planId?: string) => void;
   onOpenUsage: () => void;
@@ -18,6 +20,8 @@ export default function RechargeScreen(props: {
   return (
     <MePurchaseScreen
       section="topup"
+      initialPackageId={props.initialPackageId}
+      initialOrderId={props.initialOrderId}
       canPurchase={props.canPurchase}
       onClose={props.onClose}
       onSwitchSection={() => props.onOpenSubscribe()}

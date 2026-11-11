@@ -112,7 +112,7 @@ function IosGuidanceSheet(props: { onClose: () => void }): JSX.Element {
 export default function MeScreen(props: {
   resyncCounter?: number;
   canPurchase: boolean;
-  onOpenPurchase: (section: 'subscribe' | 'topup', planId?: string) => void;
+  onOpenPurchase: (section: 'subscribe' | 'topup', subjectId?: string, orderId?: string) => void;
   /** Bumped by the shell when a submitted order should open Usage & credits. */
   usageSignal?: number;
 }): JSX.Element {
@@ -297,7 +297,13 @@ export default function MeScreen(props: {
           </>
         );
       case 'usage':
-        return <UsageCreditsPage onBack={requestBack} />;
+        return (
+          <UsageCreditsPage
+            onBack={requestBack}
+            canPurchase={props.canPurchase}
+            onResumeOrder={(section, subjectId, orderId) => props.onOpenPurchase(section, subjectId, orderId)}
+          />
+        );
       case 'bots':
         return <BotsPage onBack={requestBack} onOpenEdit={(botId) => pushRoute('botEdit', botId)} />;
       case 'weixinBind':

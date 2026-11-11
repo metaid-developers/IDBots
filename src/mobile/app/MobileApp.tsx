@@ -60,13 +60,22 @@ function TabFallback(): JSX.Element {
 
 export default function MobileApp(): JSX.Element {
   const [tab, setTab] = useState<MobileTab>(readActiveTab);
-  const [purchase, setPurchase] = useState<{ section: PurchaseSection; planId?: string } | null>(null);
+  const [purchase, setPurchase] = useState<{
+    section: PurchaseSection;
+    planId?: string;
+    packageId?: string;
+    orderId?: string;
+  } | null>(null);
   const [billingRevision, setBillingRevision] = useState(0);
   const [usageSignal, setUsageSignal] = useState(0);
   const purchaseAllowed = isRechargeAllowed(window.idbotsMobile);
-  const openPurchase = useCallback((section: PurchaseSection, planId?: string) => {
+  const openPurchase = useCallback((section: PurchaseSection, subjectId?: string, orderId?: string) => {
     if (!purchaseAllowed) return;
-    setPurchase({ section, planId });
+    setPurchase({
+      section,
+      ...(section === 'subscribe' ? { planId: subjectId } : { packageId: subjectId }),
+      ...(orderId ? { orderId } : {}),
+    });
   }, [purchaseAllowed]);
   // The chat quota card keeps one jump: free tier → upgrade path, paid → topup.
   const openRecharge = useCallback(() => {
@@ -201,6 +210,7 @@ export default function MobileApp(): JSX.Element {
               <MePurchaseScreen
                 section="subscribe"
                 initialPlanId={purchase.planId}
+                initialOrderId={purchase.orderId}
                 canPurchase={purchaseAllowed}
                 onClose={() => setPurchase(null)}
                 onSwitchSection={(section) => setPurchase({ section })}
@@ -209,6 +219,8 @@ export default function MobileApp(): JSX.Element {
               />
             ) : (
               <RechargeScreen
+                initialPackageId={purchase.packageId}
+                initialOrderId={purchase.orderId}
                 canPurchase={purchaseAllowed}
                 onClose={() => setPurchase(null)}
                 onOpenSubscribe={(planId) => setPurchase({ section: 'subscribe', planId })}
