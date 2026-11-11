@@ -115,18 +115,16 @@ test('the panel renders through the shared body and keeps no splitter copy of it
     /import \{ UserMessageBody \} from '\.\.\/\.\.\/components\/cowork\/UserAttachmentBody';/.test(panelSource),
     'the panel must import the shared body',
   );
-  // Pass #5 ② supersession: the user branch renders the shared body at TWO
-  // source sites now — the plain branch and the quote card's instruction
-  // remainder (sentQuoteCard.rest). Both are the SAME shared component (the
-  // anti-fork assertions below carry the real teeth); no splitter copy.
-  assert.equal((panelSource.match(/<UserMessageBody/g) ?? []).length, 2, 'plain body + quote-card remainder, same shared body');
+  // SUPERSEDED IN PLACE (pass #5 ② revert, owner ruling 2026-11-11): the
+  // Telegram sent-quote card is gone for good, and with it the second
+  // UserMessageBody site. The user branch now renders the shared body at
+  // exactly ONE source site — the inline display body (`displayContent`,
+  // quote block flowing above the reply inside the same bubble). The
+  // anti-fork assertions below carry the real teeth; no splitter copy.
+  assert.equal((panelSource.match(/<UserMessageBody/g) ?? []).length, 1, 'one shared body site: the inline display body');
   assert.ok(
-    /<UserMessageBody content=\{message\.content\} resolveLocalFilePath=\{resolveLocalFilePath\} \/>/.test(panelSource),
-    'the panel hands its own resolver to the shared body',
-  );
-  assert.ok(
-    /<UserMessageBody content=\{sentQuoteCard\.rest\} resolveLocalFilePath=\{resolveLocalFilePath\} \/>/.test(panelSource),
-    'the quote card hands the same resolver to the shared body',
+    /<UserMessageBody content=\{displayContent\} resolveLocalFilePath=\{resolveLocalFilePath\} \/>/.test(panelSource),
+    'the panel hands its own resolver to the shared body (inline display body)',
   );
 
   // Anti-drift: none of the display-side attachment pipeline may be re-declared

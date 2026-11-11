@@ -1123,13 +1123,29 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   //   window instead of pushing the send button out of the card.
   // - `overflow-y-auto` states the capped-box internal scroll explicitly
   //   (the JS clamp in applyTextareaHeight already enforces the height).
+  // - the placeholder nowrap clamp (empty-state height fix, 2026-11-11
+  //   14:07 rework, probe-measured): the native placeholder is transparent
+  //   by design, but Chromium still LAYS IT OUT — a placeholder that wraps
+  //   at a narrow composer width (Bot Browser panel: 252px content width
+  //   wraps the hint to two lines) inflates the EMPTY textarea's
+  //   scrollHeight, and the mount-time auto-resize then writes that
+  //   placeholder-driven height inline (48px instead of the 24px floor).
+  //   The stale-height cache in composerTextareaResize legitimately skips
+  //   the first keystroke, so the inflated box outlives typing until some
+  //   width/clamp change forces a re-measure. Clamping the (invisible)
+  //   placeholder to one line makes it height-neutral in every form: the
+  //   empty box measures exactly one line everywhere, and the skip cache's
+  //   "same row count ⇒ same height" assumption holds again. Verified
+  //   in-vivo: with the rule, the panel form's empty auto-measure returns
+  //   24px (was 48px) and the large forms keep 42/60px floors.
   const textareaClass = isLarge
-    ? `w-full peer resize-none overflow-y-auto bg-transparent px-4 pt-2.5 pb-2 dark:text-claude-darkText text-claude-text placeholder:text-transparent dark:placeholder:text-transparent focus:outline-none text-[14px] leading-[24px] min-h-[${minHeight}px] max-h-[${maxHeight}px]`
-    : 'w-full peer resize-none overflow-y-auto bg-transparent dark:text-claude-darkText text-claude-text placeholder:text-transparent dark:placeholder:text-transparent focus:outline-none text-sm leading-relaxed min-h-[24px] max-h-[200px]';
+    ? `w-full peer resize-none overflow-x-hidden overflow-y-auto bg-transparent px-4 pt-2.5 pb-2 dark:text-claude-darkText text-claude-text placeholder:text-transparent placeholder:whitespace-nowrap dark:placeholder:text-transparent focus:outline-none text-[14px] leading-[24px] min-h-[${minHeight}px] max-h-[${maxHeight}px]`
+    : 'w-full peer resize-none overflow-x-hidden overflow-y-auto bg-transparent dark:text-claude-darkText text-claude-text placeholder:text-transparent placeholder:whitespace-nowrap dark:placeholder:text-transparent focus:outline-none text-sm leading-relaxed min-h-[24px] max-h-[200px]';
 
   // Claimed-command variant of the large textarea: glyphs transparent (the
-  // backdrop layer paints them), caret keeps a visible accent color.
-  const claimTextareaClass = 'w-full peer resize-none bg-transparent px-4 pt-2.5 pb-2 placeholder:text-transparent dark:placeholder:text-transparent focus:outline-none text-[14px] leading-[24px] text-transparent caret-claude-accent';
+  // backdrop layer paints them), caret keeps a visible accent color. The
+  // placeholder gets the same height-neutral nowrap clamp as above.
+  const claimTextareaClass = 'w-full peer resize-none bg-transparent px-4 pt-2.5 pb-2 placeholder:text-transparent placeholder:whitespace-nowrap dark:placeholder:text-transparent focus:outline-none text-[14px] leading-[24px] text-transparent caret-claude-accent';
 
   const handleBackdropScrollSync = (event: React.UIEvent<HTMLTextAreaElement>) => {
     if (backdropRef.current) {

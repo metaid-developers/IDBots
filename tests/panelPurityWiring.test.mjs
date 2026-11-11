@@ -22,6 +22,14 @@ import path from 'node:path';
 // mounts only on the twin side's group-end rows and reads by default (the
 // pass #3 hover reveal is retired); the formula pin lives in the pass #3
 // and pass #5 guard files.
+//
+// SUPERSEDED AGAIN (chat-window four-item fix ②, delegation 3e22c1c3 /
+// step 07807b1a, owner ruling 2026-11-11): the stamp moved INSIDE the
+// bubble's bottom-right corner, unified across user and assistant rows;
+// the external meta line is gone and the meta row now carries the reaction
+// chip alone, mounting only while that chip exists. Test ① was rewritten
+// in place — same intent (the stamp must render, the chip must survive,
+// no persistent furniture), extended to the new shape.
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
 
@@ -38,14 +46,51 @@ const bubbleSelectionSource = read('src/renderer/features/botBrowser/panelBubble
 const quotedSelectionsSource = read('src/renderer/components/cowork/coworkQuotedSelections.ts');
 const i18nSource = read('src/renderer/services/i18n.ts');
 
-test('① the meta line carries the formatted stamp on the twin side (pass #5: default visible)', () => {
-  assert.match(panelSource, /timestampLabel=\{formatPanelMessageTimestamp\(message\.timestamp, Date\.now\(\)\)\}/);
-  // The meta line carries the 11px secondary tone…
+test('① stamp + chip share the in-bubble footer (chip left, stamp right); parent gate decides who carries the stamp (sixth item supersession)', () => {
+  // Parent formula (owner ruling 2026-11-11 14:07, narrowing fix ②'s
+  // unify-all-bubbles scope): the timestampLabel prop is handed down
+  // PRE-GATED by the assistant&&group-end expression — user bubbles and
+  // non-final rows inside a group never receive a label, and an absent
+  // label renders no stamp. The HH:mm/MM-DD formatting call survives
+  // unchanged inside the gate. (Supersedes the 11:19 "label on every
+  // bubble" formula this assertion pinned.)
+  assert.match(
+    panelSource,
+    /timestampLabel=\{\s*\n\s*message\.type === 'assistant' && isPanelMessageGroupEnd\(visibleMessages, index\)\s*\n\s*\? formatPanelMessageTimestamp\(message\.timestamp, Date\.now\(\)\)\s*\n\s*: undefined\s*\n\s*\}/,
+    'the label is pre-gated by the assistant&&group-end expression at the parent',
+  );
+  assert.match(panelSource, /showTimestamp=\{message\.type === 'assistant' && isPanelMessageGroupEnd\(visibleMessages, index\)\}/);
+  // The stamp is an in-bubble 10px muted span, rendered from the
+  // (parent-gated) label alone; the footer row right-aligns it — the
+  // component renders whatever gated label it is handed and must not
+  // re-decide WHO carries it (supersedes the external meta-line stamp of
+  // pass #5; the who-decision lives at the parent gate since 14:07).
+  assert.match(panelSource, /const bubbleStamp = timestampLabel \? \(/);
+  assert.match(panelSource, /data-panel-message-timestamp="true"/);
+  // SUPERSEDED (sixth item, owner ruling 2026-11-11 14:45): the three
+  // bubble branches close with the in-bubble FOOTER (chip left, stamp
+  // right); the footer composes {bubbleStamp} exactly once.
+  const footerInserts = panelSource.match(/\{bubbleFooter\}/g) ?? [];
+  assert.equal(footerInserts.length, 3, 'all three bubble branches close with the in-bubble footer');
+  assert.equal((panelSource.match(/\{bubbleStamp\}/g) ?? []).length, 1, 'the footer is the only stamp mount point');
+  // SUPERSEDED (sixth item, owner ruling 2026-11-11 14:45): the external
+  // chip row is gone; its 11px secondary tone survives verbatim on the
+  // streaming indicator, while the in-bubble chip keeps the SAME muted
+  // secondary tone at 10px.
   assert.match(panelSource, /text-\[11px\][^`]*dark:text-claude-darkTextSecondary text-claude-textSecondary/);
-  // …and the stamp renders only when the row may show it AND formatting
-  // produced one (pass #5 ③: assistant group-end rows, no hover gating;
-  // user rows never render a stamp).
-  assert.match(panelSource, /\{showStamp && timestampLabel \? \(/);
+  assert.match(panelSource, /text-\[10px\][^`]*dark:text-claude-darkTextSecondary text-claude-textSecondary/);
+  assert.doesNotMatch(panelSource, /panel-message-meta/);
+  assert.match(panelSource, /const bubbleFooter = hasReactionChip \|\| bubbleStamp \? \(/);
+  const footerBlock = panelSource.match(/data-slot="panel-bubble-footer"[\s\S]*?\) : null;/)?.[0] ?? '';
+  assert.ok(footerBlock, 'bubble footer block found');
+  assert.ok(footerBlock.includes('data-panel-reaction-chip'), 'the chip is wired in the footer');
+  assert.ok(footerBlock.includes('{bubbleStamp}'), 'the stamp rides the same footer row');
+  assert.ok(
+    footerBlock.indexOf('data-panel-reaction-chip') < footerBlock.indexOf('{bubbleStamp}'),
+    'chip LEFT of the stamp on the footer row',
+  );
+  assert.match(footerBlock, /justify-end/, 'the pair hugs the bubble bottom-right corner');
+  // The stamp renders only when formatting produced one.
   assert.match(timestampSource, /sameDay \? clock : `\$\{formatPanelDate\(stamp\)\} \$\{clock\}`/);
 });
 
@@ -160,7 +205,7 @@ test('⑥ menu labels switch with the selection; 👍👎 never do', () => {
   // The selection marker rides the DOM for future E2E assertions.
   assert.match(menuComponentSource, /data-panel-menu-selection=/);
   // 👍👎 stay whole-bubble: the reactRow body never reads the selection flag.
-  const reactRowBody = menuComponentSource.match(/const reactRow = \(rating: PanelReactionRating\) => \{[\s\S]*?\n  \};/)?.[0] ?? '';
+  const reactRowBody = menuComponentSource.match(/const reactRow = \(rating: PanelReactionRating\) => \{[\s\S]*?\n {2}\};/)?.[0] ?? '';
   assert.ok(reactRowBody, 'reactRow found');
   assert.ok(!reactRowBody.includes('selectionActive'), 'reaction rows must ignore the selection');
   // New copy key exists exactly once per dictionary (zh + en); the reused
