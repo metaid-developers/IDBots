@@ -103,11 +103,13 @@ test('panel captures picker marks at submit time and prepends the block', () => 
     'if (skillIds.length > 0) {',
   );
   assert.match(submit, /elementSelectionsStore\.capturePromptBlock\(\)/);
-  assert.match(submit, /const outgoingPrompt = markedElementsBlock \? `\$\{markedElementsBlock\}\\n\\n\$\{prompt\}` : prompt;/);
+  assert.match(submit, /return markedElementsBlock \? `\$\{markedElementsBlock\}\\n\\n\$\{prompt\}` : prompt;/);
+  assert.match(submit, /const outgoingPrompt = await captureOutgoingPrompt\(\);/);
   assert.match(submit, /browserCoworkService\.send\(outgoingPrompt, skills\)/);
-  assert.match(submit, /browserCoworkService\.start\(outgoingPrompt/);
-  // The session title is seeded from the owner's words, not the context block.
-  assert.match(submit, /}, skills, startProjectId, prompt\);/);
+  assert.match(submit, /browserCoworkService\.start\(prompt/);
+  // First-send enrichment runs after the optimistic bubble; the title still
+  // comes from the owner's words rather than the context block.
+  assert.match(submit, /}, skills, startProjectId, prompt, captureOutgoingPrompt\);/);
 });
 
 test('browserCowork start keeps the title source separate from the prompt body', () => {

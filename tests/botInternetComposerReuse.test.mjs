@@ -80,13 +80,13 @@ test('Bot Browser panel forwards pinned skills like the home composer', () => {
   // Snapshot + clear semantics, and the payload rides both submit paths.
   assert.ok(panelSource.includes('clearActiveSkills'), 'pins must clear after submitting');
   assert.ok(
-    panelSource.includes('browserCoworkService.send(prompt, skills)'),
+    panelSource.includes('browserCoworkService.send(outgoingPrompt, skills)'),
     'send path must forward the skills payload',
   );
   assert.match(
     panelSource,
-    /browserCoworkService\.start\(prompt, effectiveMetabotId, startCwd, \{[\s\S]*?\}, skills, startProjectId\)/,
-    'start path must forward the skills payload and the project binding',
+    /browserCoworkService\.start\(prompt, effectiveMetabotId, startCwd, \{[\s\S]*?\}, skills, startProjectId, prompt, captureOutgoingPrompt\)/,
+    'start path must forward the skills payload, project binding, and deferred prompt enrichment',
   );
   // Service side: pinned `## Skill:` blocks embed into the base prompt and
   // the ids ride startSession/submitInput (persisted main-side).
