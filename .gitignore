@@ -462,7 +462,7 @@ man_base_data_pebble/
 !tests/botPickerStatic.test.mjs
 !tests/studioFullTrustStatic.test.mjs
 !tests/studioProjectionFastModeStatic.test.mjs
-!tests/botBrowserAbc0101IntegrationStatic.test.mjs
+!tests/botBrowserAbc0102IntegrationStatic.test.mjs
 !tests/botInternetComposerReuse.test.mjs
 !tests/pinnedSkillBackstop.test.mjs
 !tests/releaseRunbook.test.mjs

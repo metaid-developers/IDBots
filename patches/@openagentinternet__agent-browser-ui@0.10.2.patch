@@ -1,0 +1,106 @@
+diff --git a/dist/browser/app.js b/dist/browser/app.js
+index 0031e2b1e3aeafbf4c3356251c6ec0a4fb280bc2..acfedfb333ee7a31c54f6ae6a8653d8174d07a1c 100644
+--- a/dist/browser/app.js
++++ b/dist/browser/app.js
+@@ -9354,12 +9354,12 @@ function htmlFrameSandbox(url) {
+   // safe only because it is NOT the Browser page origin, so the app can never
+   // script the UI or call its same-origin API — plus downloads. Frames served
+   // same-origin with the page stay fully opaque (no allow-same-origin).
+-  var base = 'allow-scripts allow-downloads';
++  var base = 'allow-scripts allow-downloads allow-forms';
+   var origin = window.location && window.location.origin ? window.location.origin : '';
+   if (!origin) return base;
+   try {
+     var frameOrigin = new URL(url, window.location.href || undefined).origin;
+-    return frameOrigin === origin ? base : 'allow-scripts allow-same-origin allow-downloads';
++    return frameOrigin === origin ? base : 'allow-scripts allow-same-origin allow-downloads allow-forms';
+   } catch (error) {
+     return base;
+   }
+diff --git a/dist/browserClientScript.js b/dist/browserClientScript.js
+index a47038833ba822f62dd4871b5428d67d4da16a1f..69faaf5600a390a14303aeccf13df0b983f35e9b 100644
+--- a/dist/browserClientScript.js
++++ b/dist/browserClientScript.js
+@@ -83,12 +83,12 @@ export function buildBrowserClientScript(input) {
+     // safe only because it is NOT the Browser page origin, so the app can never
+     // script the UI or call its same-origin API — plus downloads. Frames served
+     // same-origin with the page stay fully opaque (no allow-same-origin).
+-    const base = 'allow-scripts allow-downloads';
++    const base = 'allow-scripts allow-downloads allow-forms';
+     const origin = window.location && window.location.origin ? window.location.origin : '';
+     if (!origin) return base;
+     try {
+       const frameOrigin = new URL(url, window.location.href || undefined).origin;
+-      return frameOrigin === origin ? base : 'allow-scripts allow-same-origin allow-downloads';
++      return frameOrigin === origin ? base : 'allow-scripts allow-same-origin allow-downloads allow-forms';
+     } catch {
+       return base;
+     }
+diff --git a/dist/renderers.js b/dist/renderers.js
+index 425639da3c5ef82b534e2dfee41d840016866bca..b231cfbbfdbdf99d9aa3e9024c0f9e1b0cfe9e7d 100644
+--- a/dist/renderers.js
++++ b/dist/renderers.js
+@@ -93,8 +93,8 @@ export function renderBotPageHtml(resource) {
+ // frame served from its own real origin (different from the Browser page
+ // origin) keeps allow-same-origin — it still cannot script the page or call
+ // its same-origin API. Frames that resolve to the page origin stay opaque.
+-const HTML_FRAME_OPAQUE_SANDBOX = 'allow-scripts allow-downloads';
+-const HTML_FRAME_CROSS_ORIGIN_SANDBOX = 'allow-scripts allow-same-origin allow-downloads';
++const HTML_FRAME_OPAQUE_SANDBOX = 'allow-scripts allow-downloads allow-forms';
++const HTML_FRAME_CROSS_ORIGIN_SANDBOX = 'allow-scripts allow-same-origin allow-downloads allow-forms';
+ export function htmlFrameSandboxAttributeValue(frameUrl, pageOrigin) {
+     const origin = text(pageOrigin);
+     if (!origin)
+diff --git a/dist-cjs/browser/app.js b/dist-cjs/browser/app.js
+index e67e0f9c1c03ea3087decffc4b1d2bc07feec0b7..bf6a5e94accaa9b4b14754343e633c5a8e2836c3 100644
+--- a/dist-cjs/browser/app.js
++++ b/dist-cjs/browser/app.js
+@@ -9357,12 +9357,12 @@ function htmlFrameSandbox(url) {
+   // safe only because it is NOT the Browser page origin, so the app can never
+   // script the UI or call its same-origin API — plus downloads. Frames served
+   // same-origin with the page stay fully opaque (no allow-same-origin).
+-  var base = 'allow-scripts allow-downloads';
++  var base = 'allow-scripts allow-downloads allow-forms';
+   var origin = window.location && window.location.origin ? window.location.origin : '';
+   if (!origin) return base;
+   try {
+     var frameOrigin = new URL(url, window.location.href || undefined).origin;
+-    return frameOrigin === origin ? base : 'allow-scripts allow-same-origin allow-downloads';
++    return frameOrigin === origin ? base : 'allow-scripts allow-same-origin allow-downloads allow-forms';
+   } catch (error) {
+     return base;
+   }
+diff --git a/dist-cjs/browserClientScript.js b/dist-cjs/browserClientScript.js
+index 8a43c7fc12ff45b60315c40bc57cd555b8c87c13..f7d2d1697123775ac5e1d25a0e478e965fa33c09 100644
+--- a/dist-cjs/browserClientScript.js
++++ b/dist-cjs/browserClientScript.js
+@@ -86,12 +86,12 @@ function buildBrowserClientScript(input) {
+     // safe only because it is NOT the Browser page origin, so the app can never
+     // script the UI or call its same-origin API — plus downloads. Frames served
+     // same-origin with the page stay fully opaque (no allow-same-origin).
+-    const base = 'allow-scripts allow-downloads';
++    const base = 'allow-scripts allow-downloads allow-forms';
+     const origin = window.location && window.location.origin ? window.location.origin : '';
+     if (!origin) return base;
+     try {
+       const frameOrigin = new URL(url, window.location.href || undefined).origin;
+-      return frameOrigin === origin ? base : 'allow-scripts allow-same-origin allow-downloads';
++      return frameOrigin === origin ? base : 'allow-scripts allow-same-origin allow-downloads allow-forms';
+     } catch {
+       return base;
+     }
+diff --git a/dist-cjs/renderers.js b/dist-cjs/renderers.js
+index c5d63259917a72c5e72c8644dff0a88dea1f808a..832520ea3c85e0f5c2c80b1c734d05f3dcf4e06e 100644
+--- a/dist-cjs/renderers.js
++++ b/dist-cjs/renderers.js
+@@ -101,8 +101,8 @@ function renderBotPageHtml(resource) {
+ // frame served from its own real origin (different from the Browser page
+ // origin) keeps allow-same-origin — it still cannot script the page or call
+ // its same-origin API. Frames that resolve to the page origin stay opaque.
+-const HTML_FRAME_OPAQUE_SANDBOX = 'allow-scripts allow-downloads';
+-const HTML_FRAME_CROSS_ORIGIN_SANDBOX = 'allow-scripts allow-same-origin allow-downloads';
++const HTML_FRAME_OPAQUE_SANDBOX = 'allow-scripts allow-downloads allow-forms';
++const HTML_FRAME_CROSS_ORIGIN_SANDBOX = 'allow-scripts allow-same-origin allow-downloads allow-forms';
+ function htmlFrameSandboxAttributeValue(frameUrl, pageOrigin) {
+     const origin = text(pageOrigin);
+     if (!origin)
