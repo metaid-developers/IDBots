@@ -4,6 +4,8 @@ import { ChevronDownIcon, ChevronRightIcon, DocumentDuplicateIcon, ShareIcon } f
 import { i18nService } from '../../services/i18n';
 import { getDefaultMetabotAvatarUrl } from '../../utils/rendererAssetPaths';
 import { pickRenderableAvatarSource as pickSharedRenderableAvatarSource } from '../../utils/avatarSource';
+import NftAvatarFrame from '../metabots/NftAvatarFrame';
+import { parseNftAvatarReference } from '../metabots/nftAvatarPresentation.js';
 import MarkdownContent from '../MarkdownContent';
 import FriendBadge from './FriendBadge';
 import { mapWechatBracketCodesForDisplay } from '../chat/wechatEmojiDisplay';
@@ -400,11 +402,17 @@ const Avatar: React.FC<{
   onOpenInBrowser,
 }) => {
   const image = (
-    <img
-      src={src || DEFAULT_METABOT_AVATAR}
+    <NftAvatarFrame
+      avatar={src}
+      frameClassName="h-full w-full rounded-full"
+      fallback={(
+        <img
+          src={DEFAULT_METABOT_AVATAR}
+          alt={name || ''}
+          className="h-full w-full rounded-full object-cover"
+        />
+      )}
       alt={name || ''}
-      className="h-full w-full rounded-full object-cover"
-      onError={(e) => { (e.currentTarget as HTMLImageElement).src = DEFAULT_METABOT_AVATAR; }}
     />
   );
 
@@ -418,7 +426,7 @@ const Avatar: React.FC<{
         title={label}
         onClick={onOpenInBrowser}
         style={{ width: size, height: size }}
-        className="rounded-full flex-shrink-0 overflow-hidden transition-shadow hover:ring-2 hover:ring-claude-accent/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/60"
+        className="rounded-full flex-shrink-0 transition-shadow hover:ring-2 hover:ring-claude-accent/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/60"
       >
         {image}
       </button>
@@ -426,13 +434,9 @@ const Avatar: React.FC<{
   }
 
   return (
-    <img
-      src={src || DEFAULT_METABOT_AVATAR}
-      alt={name || ''}
-      style={{ width: size, height: size }}
-      className="rounded-full object-cover flex-shrink-0"
-      onError={(e) => { (e.currentTarget as HTMLImageElement).src = DEFAULT_METABOT_AVATAR; }}
-    />
+    <span style={{ width: size, height: size }} className="relative block flex-shrink-0">
+      {image}
+    </span>
   );
 };
 
@@ -772,9 +776,12 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
     ? (metabotName || 'MetaBot')
     : ((peerName || (message.metadata?.senderName as string | undefined)) || 'Peer');
   const senderAvatar = message.metadata?.senderAvatar as string | undefined;
-  const fromAvatar = isLocal
-    ? pickRenderableAvatarSource(metabotAvatar)
-    : pickRenderableAvatarSource(peerAvatar, senderAvatar);
+  const rawFromAvatar = isLocal ? metabotAvatar : (peerAvatar || senderAvatar);
+  const fromAvatar = parseNftAvatarReference(rawFromAvatar)
+    ? rawFromAvatar
+    : isLocal
+      ? pickRenderableAvatarSource(metabotAvatar)
+      : pickRenderableAvatarSource(peerAvatar, senderAvatar);
   const fromGlobalMetaId = isLocal
     ? normalizeA2ABotGlobalMetaId(localGlobalMetaId)
     : (

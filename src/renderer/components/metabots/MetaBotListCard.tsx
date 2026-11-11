@@ -88,6 +88,7 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
             >
               <NftAvatarFrame
                 avatar={metabot.avatar}
+                fallbackSource={metabot.avatar_fallback}
                 frameClassName="w-12 h-12 rounded-xl"
                 alt=""
                 fallback={(

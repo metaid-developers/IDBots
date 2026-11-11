@@ -1,7 +1,7 @@
 # 02 — IPC Allowlist v1 (Mobile API v1)
 
-Allowlist version: **1.0.1** (CR-WSA-001 + CR-WSA-002, 2026-11-08: two
-read-only MRC-721 channels N → P1; the me:* family registered), originally
+Allowlist version: **1.0.2** (CR-WSA-001 + CR-WSA-002 + CR-WSA-004, 2026-11-11: two
+read-only MRC-721 channels N → P1; the me:* family registered; user-wallet MRC-721 holdings added), originally
 frozen at **1.0.0** by the owner on 2026-10-15 (M1); changes
 follow the change-request process in `00`. This is the complete list
 of IPC channels a gateway client may invoke and the main-process events it
@@ -94,7 +94,8 @@ after that date so it gets a tier here.
 | `idbots:verifyMrc721Listing` | P1 | Read-only pre-buy MRC-721 listing check (indexer/node reads, no funds); split from the trade channels by CR-WSA-001. |
 | `idbots:getMetaBotMnemonic` | H | C2 sensitive route. |
 | `idbots:restoreMetaBotFromMnemonic` | N | Mnemonic input over the socket; later release. |
-| `userIdentity:get`, `userIdentity:updateName`, `userIdentity:retryChainSync`, `userIdentity:retrySubsidy` | P1 | |
+| `userIdentity:get`, `userIdentity:updateName`, `userIdentity:updateAvatar`, `userIdentity:retryChainSync`, `userIdentity:retrySubsidy` | P1 | |
+| `userIdentity:getNfts` | P1 | Read-only MRC-721 holdings of the signed-in user's MVC wallet; no keys or fund movement (CR-WSA-004). |
 | `userIdentity:revealMnemonic` | H | C2 sensitive route. |
 | `userIdentity:create` | N | Server bootstrap creates the identity. |
 | `userIdentity:import`, `userIdentity:logout` | N | Account changes go through the control plane. |

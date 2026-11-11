@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { stripLoneSurrogates, truncateUtf16Units } from './llmSafeText';
 import { describeAvatarFailure, isAvatarNormalizeFailure, normalizeAvatarToDataUrl } from '../utils/avatarNormalize';
+import { parseNftAvatarReference } from '../services/nftAvatarService';
 import {
   applyChatSkillOp,
   type CreateMetaBotOnChainResult,
@@ -426,7 +427,7 @@ export function buildMetabotManageAgentTools(deps: {
     {
       metabot_id: z.number().int().positive().describe('id of the bot to update (from metabot_list, or the current bot\'s id).'),
       name: z.string().optional().describe('New display name.'),
-      avatar: z.string().optional().describe('New avatar: a supported image data URL (data:image/png|jpeg|webp|gif;base64,...), an http(s) image URL, or an absolute local image path (non-data-URL sources are fetched/read with an 8s timeout and a 200KB cap, then normalized to a data URL). Empty string clears the avatar. If normalization fails the avatar is left unchanged and the note reports why.'),
+      avatar: z.string().optional().describe('New avatar: a supported image data URL (data:image/png|jpeg|webp|gif;base64,...), an http(s) image URL, an absolute local image path (non-NFT sources are normalized to a data URL with an 8s timeout and 200KB cap), or nft://mrc721/<itemPinId> for an MRC-721 item currently held by THIS bot wallet (ownership is re-verified before saving and before publishing). Empty string clears the avatar. If validation fails the avatar is left unchanged and the note reports why.'),
       bio: z.string().optional().describe('New public bio.'),
       enabled: z.boolean().optional().describe('Enable or disable the bot.'),
       metabot_type: z
@@ -526,6 +527,8 @@ export function buildMetabotManageAgentTools(deps: {
           avatarNotice = 'Note: avatar was NOT changed (unsupported value — expected a string).';
         } else if (!args.avatar.trim()) {
           avatarValue = ''; // explicit clear
+        } else if (parseNftAvatarReference(args.avatar)) {
+          avatarValue = args.avatar.trim();
         } else {
           const normalized = await normalizeAvatarToDataUrl(args.avatar);
           if (isAvatarNormalizeFailure(normalized)) {

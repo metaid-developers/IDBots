@@ -21,7 +21,7 @@
  * keeping unsaved edits in the other tabs intact.
  */
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { PhotoIcon, PlusIcon, QuestionMarkCircleIcon, WrenchScrewdriverIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import { configService } from '../../services/config';
@@ -37,7 +37,7 @@ import {
 } from './allowChatSkills.ts';
 import MetaBotAdvancedActionsSection from './MetaBotAdvancedActionsSection';
 import MetaBotHomepageSection, { composeHomepageForSave } from './MetaBotHomepageSection';
-import MetaBotNftAvatarPickerModal from './MetaBotNftAvatarPickerModal';
+import AvatarPickerModal, { type AvatarPickerNftItem } from '../avatar/AvatarPickerModal';
 import NftAvatarFrame from './NftAvatarFrame';
 import { parseNftAvatarReference } from './nftAvatarPresentation.js';
 import KnowledgeBasePanel from './KnowledgeBasePanel';
@@ -260,14 +260,18 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
   metabot,
   onDelete,
 }) => {
-  const avatarInputRef = useRef<HTMLInputElement>(null);
-  const [nftAvatarPickerOpen, setNftAvatarPickerOpen] = useState(false);
+  const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
   const [values, setValues] = useState<MetaBotEditValues>(() => buildInitialValues(initialValues));
   const [baseline, setBaseline] = useState<MetaBotEditValues>(() => buildInitialValues(initialValues));
   const [activeTab, setActiveTab] = useState<MetaBotEditTabKey>('basic');  const [savingTab, setSavingTab] = useState<MetaBotEditTabKey | null>(null);
   const [tabErrors, setTabErrors] = useState<Partial<Record<MetaBotEditTabKey, string>>>({});
   const [nameDuplicate, setNameDuplicate] = useState(false);
   const [selectedAllowChatSkillId, setSelectedAllowChatSkillId] = useState('');
+  const loadAvatarNfts = useCallback(async (): Promise<AvatarPickerNftItem[]> => {
+    const response = await window.electron.idbots.getMetabotNfts({ metabotId, kind: 'mrc721' });
+    if (!response.success) throw new Error(response.error || i18nService.t('metabotNftLoadFailed'));
+    return (response.items ?? []) as unknown as AvatarPickerNftItem[];
+  }, [metabotId]);
   // The OpenTeam remote-collaboration switch lives in the metabot_settings kv
   // store (not in the metabot:update column whitelist), so it applies
   // immediately on toggle instead of joining this tab's dirty/save flow.
@@ -406,25 +410,6 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
     } catch {
       window.dispatchEvent(new CustomEvent('app:showToast', { detail: i18nService.t('metabotOwnerNeedUserIdentity') }));
     }
-  };
-
-  const handleAvatarFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (file.size > AVATAR_MAX_SIZE_BYTES) {
-      setTabError('basic', i18nService.t('metabotAvatarSizeError'));
-      window.dispatchEvent(new CustomEvent('app:showToast', { detail: i18nService.t('metabotAvatarSizeError') }));
-      e.target.value = '';
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUri = reader.result as string;
-      setValues((prev) => ({ ...prev, avatar: dataUri }));
-      setTabError('basic', '');
-    };
-    reader.readAsDataURL(file);
-    e.target.value = '';
   };
 
   // Assignment model: bundled skills are implicitly available to every bot,
@@ -719,6 +704,7 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
             <div className="w-16 h-16 flex-shrink-0">
               <NftAvatarFrame
                 avatar={values.avatar}
+                fallbackSource={values.avatar === metabot?.avatar ? metabot?.avatar_fallback : null}
                 frameClassName="w-16 h-16 rounded-xl"
                 imgClassName="border dark:border-claude-darkBorder border-claude-border"
                 fallback={(
@@ -729,28 +715,14 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
               />
             </div>
             <div className="flex-1 min-w-0">
-              <input
-                ref={avatarInputRef}
-                type="file"
-                accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
-                className="hidden"
-                onChange={handleAvatarFileChange}
-              />
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => avatarInputRef.current?.click()}
+                  data-slot="metabot-avatar-set"
+                  onClick={() => setAvatarPickerOpen(true)}
                   className="px-3 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
                 >
-                  {i18nService.t('metabotAvatarUpload')}
-                </button>
-                <button
-                  type="button"
-                  data-slot="metabot-avatar-pick-nft"
-                  onClick={() => setNftAvatarPickerOpen(true)}
-                  className="px-3 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
-                >
-                  {i18nService.t('metabotAvatarPickNft')}
+                  {i18nService.t('metabotAvatarSet')}
                 </button>
               </div>
               <p className={hintClass}>
@@ -758,7 +730,7 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
               </p>
               {parseNftAvatarReference(values.avatar) && (
                 <p className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                  {i18nService.t('metabotNftAvatarLocalOnlyHint')}
+                  {i18nService.t('metabotNftAvatarSyncHint')}
                 </p>
               )}
               {values.avatar && (
@@ -1466,16 +1438,25 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
         </div>
       )}
 
-      {/* NFT avatar picker — display-only local decoration, sets an
-          nft://mrc721/<itemPinId> reference into the avatar field. */}
-      {nftAvatarPickerOpen && metabotId && (
-        <MetaBotNftAvatarPickerModal
-          metabotId={metabotId}
+      {avatarPickerOpen && (
+        <AvatarPickerModal
+          ownerAddress={metabot?.mvc_address ?? ''}
+          ownerGlobalMetaId={metabot?.globalmetaid}
+          loadNfts={loadAvatarNfts}
+          maxLocalBytes={AVATAR_MAX_SIZE_BYTES}
           onPick={(reference) => {
             handleChange('avatar', reference);
-            setNftAvatarPickerOpen(false);
+            setAvatarPickerOpen(false);
           }}
-          onClose={() => setNftAvatarPickerOpen(false)}
+          onPickLocal={(dataUrl) => {
+            handleChange('avatar', dataUrl);
+            setAvatarPickerOpen(false);
+          }}
+          onError={(message) => {
+            setTabError('basic', message);
+            window.dispatchEvent(new CustomEvent('app:showToast', { detail: message }));
+          }}
+          onClose={() => setAvatarPickerOpen(false)}
         />
       )}
 

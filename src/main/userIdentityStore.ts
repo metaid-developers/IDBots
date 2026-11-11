@@ -23,6 +23,9 @@ interface UserIdentityRow {
   globalmetaid: string | null;
   name: string;
   avatar: string | null;
+  avatar_fallback: string | null;
+  nft_avatar_pin_id: string | null;
+  nft_avatar_synced_reference: string | null;
   subsidy_state: string | null;
   subsidy_error: string | null;
   name_pin_id: string | null;
@@ -48,6 +51,9 @@ function rowToUserIdentity(row: UserIdentityRow): UserIdentity {
     globalmetaid: row.globalmetaid ?? null,
     name: row.name,
     avatar: row.avatar ?? null,
+    avatar_fallback: row.avatar_fallback ?? null,
+    nft_avatar_pin_id: row.nft_avatar_pin_id ?? null,
+    nft_avatar_synced_reference: row.nft_avatar_synced_reference ?? null,
     subsidy_state: (row.subsidy_state as UserIdentity['subsidy_state']) ?? null,
     subsidy_error: row.subsidy_error ?? null,
     name_pin_id: row.name_pin_id ?? null,
@@ -99,9 +105,10 @@ export class UserIdentityStore {
       `INSERT INTO user_identity (
         id, mnemonic, path, mvc_address, btc_address, doge_address, public_key,
         chat_public_key, chat_public_key_pin_id, metaid, globalmetaid, name, avatar,
+        avatar_fallback, nft_avatar_pin_id, nft_avatar_synced_reference,
         subsidy_state, subsidy_error, name_pin_id, avatar_pin_id, sync_state, sync_error,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         USER_IDENTITY_ROW_ID,
         data.mnemonic,
@@ -116,6 +123,9 @@ export class UserIdentityStore {
         data.globalmetaid ?? null,
         data.name,
         data.avatar ?? null,
+        data.avatar_fallback ?? null,
+        data.nft_avatar_pin_id ?? null,
+        data.nft_avatar_synced_reference ?? null,
         data.subsidy_state ?? null,
         data.subsidy_error ?? null,
         data.name_pin_id ?? null,
@@ -139,6 +149,12 @@ export class UserIdentityStore {
     const next = {
       name: patch.name ?? existing.name,
       avatar: patch.avatar === undefined ? existing.avatar : patch.avatar,
+      avatar_fallback: patch.avatar_fallback === undefined ? existing.avatar_fallback ?? null : patch.avatar_fallback,
+      nft_avatar_pin_id: patch.nft_avatar_pin_id === undefined ? existing.nft_avatar_pin_id ?? null : patch.nft_avatar_pin_id,
+      nft_avatar_synced_reference:
+        patch.nft_avatar_synced_reference === undefined
+          ? existing.nft_avatar_synced_reference ?? null
+          : patch.nft_avatar_synced_reference,
       chat_public_key_pin_id:
         patch.chat_public_key_pin_id === undefined
           ? existing.chat_public_key_pin_id
@@ -160,13 +176,16 @@ export class UserIdentityStore {
     };
     this.db.run(
       `UPDATE user_identity
-       SET name = ?, avatar = ?, chat_public_key_pin_id = ?, globalmetaid = ?,
-           subsidy_state = ?, subsidy_error = ?, name_pin_id = ?, avatar_pin_id = ?,
-           sync_state = ?, sync_error = ?, updated_at = ?
+       SET name = ?, avatar = ?, avatar_fallback = ?, nft_avatar_pin_id = ?, nft_avatar_synced_reference = ?,
+           chat_public_key_pin_id = ?, globalmetaid = ?, subsidy_state = ?, subsidy_error = ?,
+           name_pin_id = ?, avatar_pin_id = ?, sync_state = ?, sync_error = ?, updated_at = ?
        WHERE id = ?`,
       [
         next.name,
         next.avatar,
+        next.avatar_fallback,
+        next.nft_avatar_pin_id,
+        next.nft_avatar_synced_reference,
         next.chat_public_key_pin_id,
         next.globalmetaid,
         next.subsidy_state,

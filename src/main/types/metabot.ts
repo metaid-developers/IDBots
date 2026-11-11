@@ -17,8 +17,11 @@ export interface Metabot {
   chat_public_key: string;
   chat_public_key_pin_id: string | null;
   name: string;
-  /** Avatar: data URL or URL string for display; stored as BLOB on-chain aligned in DB */
+  /** Plain image source or identity-bound nft:// reference. */
   avatar: string | null;
+  avatar_fallback?: string | null;
+  nft_avatar_pin_id?: string | null;
+  nft_avatar_synced_reference?: string | null;
   /** Whether this MetaBot is currently available */
   enabled: boolean;
   metaid: string;
@@ -81,6 +84,10 @@ export interface MetabotInsert {
   chat_public_key_pin_id?: string | null;
   name: string;
   avatar?: string | null;
+  /** Resolved NFT cover used as the legacy /info/avatar image and display fallback. */
+  avatar_fallback?: string | null;
+  nft_avatar_pin_id?: string | null;
+  nft_avatar_synced_reference?: string | null;
   enabled?: boolean;
   metaid: string;
   globalmetaid?: string | null;
@@ -125,6 +132,10 @@ export interface MetabotUpdate {
   chat_public_key_pin_id?: string | null;
   name?: string;
   avatar?: string | null;
+  /** Resolved NFT cover used as the legacy /info/avatar image and display fallback. */
+  avatar_fallback?: string | null;
+  nft_avatar_pin_id?: string | null;
+  nft_avatar_synced_reference?: string | null;
   enabled?: boolean;
   metaid?: string;
   globalmetaid?: string | null;

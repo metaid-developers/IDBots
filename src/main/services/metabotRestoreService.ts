@@ -6,6 +6,7 @@ import type { Metabot, MetabotType } from '../types/metabot';
 import { createMetaBotWallet } from './metabotWalletService';
 import { assertCanCreateMetabot, normalizeMetabotLlmEffort } from './metabotManageService';
 import { fetchContentWithFallback, fetchJsonWithFallbackOnMiss } from './localIndexerProxy';
+import { resolveLatestNftAvatarForIdentity } from './nftAvatarService';
 
 /** Restored Bot wallets must be 12-word BIP39 phrases (same rule as the IPC restore flow). */
 const RESTORE_MNEMONIC_WORDS = 12;
@@ -71,6 +72,8 @@ export interface MetaidBioProfile {
 export interface MetaidRestoreProfile {
   name: string;
   avatarDataUrl: string | null;
+  nftAvatarReference?: string | null;
+  nftAvatarPinId?: string | null;
   /** Latest useful profile pin id among Bot Info profile paths; stored as local metabot_info_pinid. */
   metabotInfoPinId: string | null;
   chatpubkeyPinId: string | null;
@@ -467,9 +470,15 @@ export const fetchMetaidRestoreProfile = async (address: string): Promise<Metaid
       console.warn('[MetaBot] restore avatar fetch failed', err instanceof Error ? err.message : String(err));
     }
   }
+  const nftAvatar = await resolveLatestNftAvatarForIdentity({
+    ownerAddress: address,
+    globalMetaId: info.globalMetaId,
+  });
   return {
     name,
-    avatarDataUrl,
+    avatarDataUrl: nftAvatar?.avatarUrl ?? avatarDataUrl,
+    nftAvatarReference: nftAvatar?.reference ?? null,
+    nftAvatarPinId: nftAvatar?.nft.declarationPinId ?? null,
     metabotInfoPinId: parsed.metabotInfoPinId,
     chatpubkeyPinId: parsed.chatpubkeyPinId,
     bio: parsed.bio,
@@ -586,7 +595,10 @@ export const restoreMetabotFromMnemonicCore = async (
       chat_public_key: walletResult.chat_public_key,
       chat_public_key_pin_id: profile.chatpubkeyPinId ?? null,
       name,
-      avatar: profile.avatarDataUrl ?? null,
+      avatar: profile.nftAvatarReference ?? profile.avatarDataUrl ?? null,
+      avatar_fallback: profile.avatarDataUrl ?? null,
+      nft_avatar_pin_id: profile.nftAvatarPinId ?? null,
+      nft_avatar_synced_reference: profile.nftAvatarReference ?? '',
       enabled: true,
       metaid: walletResult.metaid,
       globalmetaid: walletResult.globalmetaid,

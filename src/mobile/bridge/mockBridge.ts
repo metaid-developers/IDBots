@@ -1159,6 +1159,9 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
     globalmetaid: 'idq1mock0user0meta0id000000000000000000',
     name: 'Mock User',
     avatar: null,
+    avatar_fallback: null,
+    nft_avatar_pin_id: null,
+    nft_avatar_synced_reference: null,
     subsidy_state: 'claimed',
     subsidy_error: null,
     name_pin_id: null,
@@ -1963,6 +1966,39 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
           success: true,
           identity: { ...mockIdentity },
         })),
+      getNfts: () =>
+        guardOnline(async () => ({
+          success: true,
+          items: [{
+            kind: 'mrc721',
+            key: `${'a'.repeat(64)}i0`,
+            name: 'Genesis Seed',
+            collectionName: 'IDBots Founders',
+            imageUrl: 'https://example.com/nft-genesis.png',
+            number: 1,
+            raw: {
+              itemPinId: `${'a'.repeat(64)}i0`,
+              collectionPinId: `${'c'.repeat(64)}i0`,
+              collectionName: 'IDBots Founders',
+              ownerAddress: mockIdentity.mvc_address,
+            },
+          }],
+        })),
+      updateAvatar: (input: { avatar: string | null }) =>
+        guardOnline(async () => {
+          const avatar = typeof input?.avatar === 'string' && input.avatar.trim() ? input.avatar.trim() : null;
+          mockIdentity.avatar = avatar;
+          mockIdentity.avatar_fallback = avatar?.startsWith('nft://') ? 'https://example.com/nft-genesis.png' : avatar;
+          mockIdentity.nft_avatar_synced_reference = avatar?.startsWith('nft://') ? avatar : '';
+          mockIdentity.nft_avatar_pin_id = avatar?.startsWith('nft://') ? `mock-nft-avatar-pin-${now()}` : null;
+          mockIdentity.avatar_pin_id = avatar ? `mock-avatar-pin-${now()}` : null;
+          mockIdentity.updated_at = now();
+          return {
+            success: true,
+            identity: { ...mockIdentity },
+            chainSync: { success: true, txids: [`mock-avatar-${now()}`], failedSteps: [] },
+          };
+        }),
       // A6 mock parity (IA-PLAN §5): the profile page drives updateName and
       // the two retry channels; all three are in the real IPC contract.
       updateName: (input: { name: string }) =>
@@ -1985,6 +2021,33 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
           identity: { ...mockIdentity },
           subsidy: { success: true },
           chainSync: { success: true, txids: [`mock-sync-${now()}`] },
+        })),
+    },
+    p2p: {
+      resolveAvatarSource: (params: { reference: string }) =>
+        guardOnline(async () => {
+          const itemPinId = params.reference.includes('a'.repeat(64))
+            ? `${'a'.repeat(64)}i0`
+            : `${'b'.repeat(64)}i0`;
+          return {
+            success: true,
+            avatarUrl: itemPinId.startsWith('a') ? 'https://example.com/nft-genesis.png' : 'https://example.com/nft-passport.png',
+            nft: {
+              itemPinId,
+              collectionPinId: `${'c'.repeat(64)}i0`,
+              collectionName: 'IDBots Founders',
+              ownershipVerified: true,
+            },
+          };
+        }),
+      getUserInfo: (params: { globalMetaId?: string; address?: string }) =>
+        guardOnline(async () => ({
+          code: 1,
+          data: {
+            name: 'Mock User',
+            globalMetaId: params.globalMetaId,
+            address: params.address,
+          },
         })),
     },
     skills: {
@@ -2104,7 +2167,7 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
   }
   // Wrap the implemented namespaces too, so even they reject (never TypeError)
   // on methods the mock did not implement.
-  for (const name of ['store', 'cowork', 'scheduledTasks', 'bundle', 'mobile', 'gateway', 'metabot', 'skills', 'traffic', 'llmRelay', 'startup', 'window', 'dialog', 'shell', 'appInfo', 'userIdentity'] as const) {
+  for (const name of ['store', 'cowork', 'scheduledTasks', 'bundle', 'mobile', 'gateway', 'metabot', 'skills', 'traffic', 'llmRelay', 'startup', 'window', 'dialog', 'shell', 'appInfo', 'userIdentity', 'p2p'] as const) {
     electron[name] = stubNamespace(name, (electron[name] as Record<string, unknown>) ?? {});
   }
 

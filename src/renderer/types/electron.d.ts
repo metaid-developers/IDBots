@@ -484,6 +484,9 @@ interface PublicUserIdentity {
   globalmetaid: string | null;
   name: string;
   avatar: string | null;
+  avatar_fallback?: string | null;
+  nft_avatar_pin_id?: string | null;
+  nft_avatar_synced_reference?: string | null;
   subsidy_state: 'pending' | 'claimed' | 'failed' | null;
   subsidy_error: string | null;
   name_pin_id: string | null;
@@ -500,7 +503,8 @@ interface UserIdentityChainSyncResult {
   chatPublicKeyPinId?: string;
   namePinId?: string;
   avatarPinId?: string;
-  failedSteps: Array<'name' | 'avatar' | 'chatpubkey'>;
+  nftAvatarPinId?: string;
+  failedSteps: Array<'name' | 'avatar' | 'nftAvatar' | 'chatpubkey'>;
   error?: string;
 }
 
@@ -954,6 +958,9 @@ interface Metabot {
   metabot_info_pinid?: string | null;
   name: string;
   avatar: string | null;
+  avatar_fallback?: string | null;
+  nft_avatar_pin_id?: string | null;
+  nft_avatar_synced_reference?: string | null;
   enabled: boolean;
   globalmetaid: string | null;
   metabot_type: 'twin' | 'worker' | 'welcome';
@@ -2271,6 +2278,7 @@ interface IElectronAPI {
       metabotId: number;
       syncName?: boolean;
       syncAvatar?: boolean;
+      syncNftAvatar?: boolean;
       syncBio?: boolean;
       syncPersona?: boolean;
       syncLlm?: boolean;
@@ -2282,7 +2290,7 @@ interface IElectronAPI {
       error?: string;
       metabotInfoPinId?: string;
       txids?: string[];
-      syncedSteps?: Array<'name' | 'avatar' | 'bio' | 'persona' | 'llm' | 'chatSkills' | 'homepage' | 'owner'>;
+      syncedSteps?: Array<'name' | 'avatar' | 'nftAvatar' | 'bio' | 'persona' | 'llm' | 'chatSkills' | 'homepage' | 'owner'>;
     }>;
     /** Create-fallback resume: retry the gas subsidy, or broadcast with the bot's own funds. */
     resumeMetabotSetup: (input: { metabotId: number; mode: 'subsidized' | 'self-funded' }) => Promise<{
@@ -2352,6 +2360,7 @@ interface IElectronAPI {
   };
   userIdentity: {
     get: () => Promise<{ success: boolean; identity?: PublicUserIdentity | null; error?: string }>;
+    getNfts: () => Promise<{ success: boolean; items?: ElectronMetabotNftListItem[]; error?: string }>;
     create: (input: { name: string; avatar?: string | null }) => Promise<{
       success: boolean;
       identity?: PublicUserIdentity | null;
@@ -2516,7 +2525,7 @@ interface IElectronAPI {
         error?: string;
         txids?: string[];
         syncedSteps?: string[];
-        attemptedStepKeys?: Array<'name' | 'avatar' | 'bio' | 'persona' | 'llm' | 'chatSkills' | 'homepage' | 'owner'>;
+        attemptedStepKeys?: Array<'name' | 'avatar' | 'nftAvatar' | 'bio' | 'persona' | 'llm' | 'chatSkills' | 'homepage' | 'owner'>;
         remainingSyncInput?: Record<string, unknown>;
       };
       error?: string;

@@ -1,123 +1,234 @@
-import { fetchMrc721ItemInfo } from './mrc721Service';
+import { fetchFromLocalOrFallback } from './localIndexerProxy';
+import { fetchMrc721ItemInfo, type Mrc721ItemSummary } from './mrc721Service';
 import { resolvePinAssetSource } from './pinAssetService';
+import { parseProtocolPinContent } from './protocolPinContent';
 
-/**
- * MetaBot NFT avatar reference resolution.
- *
- * Reference format (stored in the metabots.avatar TEXT column, no schema
- * change): `nft://mrc721/<itemPinId>` where itemPinId is the MRC-721 item
- * pin (`<64hex>i<n>`) as listed by `idbots:getMetabotNfts` (kind 'mrc721').
- * The reference is a local display-only decoration — the /info/avatar chain
- * protocol pins image bytes, so NFT references are never published on-chain
- * (see buildEditAvatarSyncStep in metaidCore.ts).
- *
- * Resolution (wired into the `metaid:resolveAvatarSource` IPC): item info is
- * read through the standard mrc721 remote-first indexer route for the cover,
- * and the cover reference is then turned into a data URL through the same
- * pin-asset chain every other avatar uses (local-first content routes).
- * Unresolvable → null avatarUrl → the renderer falls back to its existing
- * placeholder. Facts (collectionPinId/collectionName) ride along so the
- * renderer can match the item's collection against the IDBots NFT CA
- * registry for the certified badge.
- *
- * Every path is fail-soft: this module never throws.
- */
+export const NFT_AVATAR_PATH = '/info/nftAvatar';
+export const NFT_AVATAR_VERIFICATION_TTL_MS = 30_000;
 
-/** `nft://mrc721/<itemPinId>` — the only supported NFT avatar reference form. */
-const NFT_AVATAR_PATTERN = /^nft:\/\/mrc721\/([0-9a-f]{64}i\d+)$/i;
+const NFT_AVATAR_PATTERN = /^nft:\/\/mrc721\/([0-9a-f]{64}i\d+)(?:\?([^#]*))?$/i;
+const RAW_PIN_BASE = 'https://manapi.metaid.io';
 
-export function parseNftAvatarReference(reference: string | null | undefined): { itemPinId: string } | null {
-  const normalized = typeof reference === 'string' ? reference.trim() : '';
-  if (!normalized) {
-    return null;
-  }
-  const match = normalized.match(NFT_AVATAR_PATTERN);
-  if (!match?.[1]) {
-    return null;
-  }
-  return { itemPinId: match[1].toLowerCase() };
+export interface NftAvatarReference {
+  itemPinId: string;
+  ownerAddress?: string;
+  globalMetaId?: string;
+}
+
+export interface NftAvatarDeclaration {
+  itemPinId: string;
+  ownerAddress: string;
+  declarationPinId: string;
 }
 
 export interface NftAvatarFacts {
   itemPinId: string;
   collectionPinId?: string;
   collectionName?: string;
+  ownerAddress?: string;
+  declarationPinId?: string;
+  ownershipVerified: boolean;
 }
 
 export interface NftAvatarResolution {
-  /** Renderable artwork source (data URL), or null when unresolvable. */
   avatarUrl: string | null;
   nft: NftAvatarFacts;
 }
 
-interface NftItemFacts {
-  cover?: string;
-  collectionPinId?: string;
-  collectionName?: string;
+export interface PreparedNftAvatar {
+  reference: string;
+  avatarUrl: string;
+  declarationPayload: string;
+  nft: NftAvatarFacts;
 }
 
-/**
- * Process-lifetime cache of item facts per itemPinId. Artwork bytes ride the
- * separate resolvePinAssetSource promise cache (keyed by the cover
- * reference). Failed lookups are not cached so a transient indexer outage
- * can heal on the next render. Capped (FIFO eviction) so a long session
- * browsing many avatars cannot grow it without bound.
- */
-const NFT_ITEM_FACTS_CACHE_MAX = 200;
-const nftItemFactsCache = new Map<string, NftItemFacts | null>();
-
-export function clearNftAvatarItemFactsCache(): void {
-  nftItemFactsCache.clear();
+interface NftAvatarServiceDeps {
+  fetchItemInfo?: (pinId: string) => Promise<Mrc721ItemSummary | null>;
+  fetchDeclaration?: (identity: { ownerAddress?: string; globalMetaId?: string }) => Promise<NftAvatarDeclaration | null>;
+  resolveArtwork?: (reference: string) => Promise<string | null>;
 }
 
-async function getNftItemFacts(itemPinId: string): Promise<NftItemFacts | null> {
-  const cached = nftItemFactsCache.get(itemPinId);
-  if (cached !== undefined) {
-    return cached;
+export function parseNftAvatarReference(reference: string | null | undefined): NftAvatarReference | null {
+  const normalized = typeof reference === 'string' ? reference.trim() : '';
+  if (!normalized) return null;
+  const match = normalized.match(NFT_AVATAR_PATTERN);
+  if (!match?.[1]) return null;
+  const params = new URLSearchParams(match[2] ?? '');
+  const ownerAddress = (params.get('owner') ?? '').trim();
+  const globalMetaId = (params.get('metaid') ?? '').trim();
+  return {
+    itemPinId: match[1].toLowerCase(),
+    ...(ownerAddress ? { ownerAddress } : {}),
+    ...(globalMetaId ? { globalMetaId } : {}),
+  };
+}
+
+export function buildNftAvatarReference(input: NftAvatarReference): string {
+  const itemPinId = input.itemPinId.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}i\d+$/.test(itemPinId)) throw new Error('Invalid MRC-721 item pin id');
+  const params = new URLSearchParams();
+  if (input.ownerAddress?.trim()) params.set('owner', input.ownerAddress.trim());
+  if (input.globalMetaId?.trim()) params.set('metaid', input.globalMetaId.trim());
+  const query = params.toString();
+  return `nft://mrc721/${itemPinId}${query ? `?${query}` : ''}`;
+}
+
+export function buildNftAvatarDeclarationPayload(input: { itemPinId: string; ownerAddress: string }): string {
+  const itemPinId = input.itemPinId.trim().toLowerCase();
+  const ownerAddress = input.ownerAddress.trim();
+  if (!/^[0-9a-f]{64}i\d+$/.test(itemPinId) || !ownerAddress) {
+    throw new Error('NFT avatar declaration requires an item pin id and owner address');
   }
-  let facts: NftItemFacts | null = null;
+  return JSON.stringify({ protocol: 'mrc721', itemPinId, ownerAddress });
+}
+
+function extractPinRows(payload: unknown): Record<string, unknown>[] {
+  const envelope = payload as { data?: unknown } | null;
+  const data = envelope?.data ?? payload;
+  if (Array.isArray(data)) return data.filter((row) => row && typeof row === 'object');
+  if (!data || typeof data !== 'object') return [];
+  const record = data as Record<string, unknown>;
+  const list = record.list ?? record.pins ?? record.rows;
+  return Array.isArray(list) ? list.filter((row) => row && typeof row === 'object') : [];
+}
+
+export async function fetchLatestNftAvatarDeclaration(
+  identity: { ownerAddress?: string; globalMetaId?: string },
+  fetchImpl: typeof fetch = fetch,
+): Promise<NftAvatarDeclaration | null> {
+  const globalMetaId = identity.globalMetaId?.trim();
+  const ownerAddress = identity.ownerAddress?.trim();
+  if (!globalMetaId && !ownerAddress) return null;
+  const subject = globalMetaId || ownerAddress;
+  const route = globalMetaId
+    ? `/api/metaid/pin/list/${encodeURIComponent(subject)}`
+    : `/api/address/pin/list/${encodeURIComponent(subject)}`;
+  const query = `?path=${encodeURIComponent(NFT_AVATAR_PATH)}&size=1`;
+  const remoteUrl = `${RAW_PIN_BASE}${route}${query}`;
+  const response = fetchImpl === fetch
+    ? await fetchFromLocalOrFallback(`${route}${query}`, remoteUrl)
+    : await fetchImpl(remoteUrl);
+  if (!response.ok) return null;
+  const row = extractPinRows(await response.json().catch(() => null))[0];
+  if (!row) return null;
+  const declarationPinId = String(row.pinId ?? row.id ?? row.pinid ?? '').trim().toLowerCase();
+  const body = parseProtocolPinContent(row);
+  if (!body) return null;
+  if (body.protocol !== 'mrc721') return null;
+  const itemPinId = String(body.itemPinId ?? '').trim().toLowerCase();
+  const declaredOwner = String(body.ownerAddress ?? '').trim();
+  if (!/^[0-9a-f]{64}i\d+$/.test(itemPinId) || !declaredOwner || !declarationPinId) return null;
+  const signerAddress = String(row.address ?? row.createAddress ?? row.create_address ?? '').trim();
+  if (signerAddress && signerAddress !== declaredOwner) return null;
+  if (ownerAddress && declaredOwner !== ownerAddress) return null;
+  return { itemPinId, ownerAddress: declaredOwner, declarationPinId };
+}
+
+function defaultItemInfo(pinId: string): Promise<Mrc721ItemSummary | null> {
+  return fetchMrc721ItemInfo({ pinId });
+}
+
+async function resolveDeclaration(
+  parsed: NftAvatarReference,
+  deps: NftAvatarServiceDeps,
+): Promise<NftAvatarDeclaration | null> {
+  if (!parsed.ownerAddress && !parsed.globalMetaId) return null;
+  const fetchDeclaration = deps.fetchDeclaration ?? fetchLatestNftAvatarDeclaration;
+  return fetchDeclaration({ ownerAddress: parsed.ownerAddress, globalMetaId: parsed.globalMetaId });
+}
+
+export async function resolveNftAvatar(
+  parsed: NftAvatarReference,
+  deps: NftAvatarServiceDeps = {},
+): Promise<NftAvatarResolution> {
+  const nft: NftAvatarFacts = { itemPinId: parsed.itemPinId, ownershipVerified: false };
   try {
-    const item = await fetchMrc721ItemInfo({ pinId: itemPinId });
-    const cover = item?.cover?.trim();
-    const collectionPinId = item?.collectionPinId?.trim();
-    const collectionName = item?.collectionName?.trim();
-    if (item) {
-      facts = {
-        ...(cover ? { cover } : {}),
-        ...(collectionPinId ? { collectionPinId } : {}),
-        ...(collectionName ? { collectionName } : {}),
-      };
+    const fetchItemInfo = deps.fetchItemInfo ?? defaultItemInfo;
+    const item = await fetchItemInfo(parsed.itemPinId);
+    if (!item || item.burned) return { avatarUrl: null, nft };
+    if (item.collectionPinId?.trim()) nft.collectionPinId = item.collectionPinId.trim();
+    if (item.collectionName?.trim()) nft.collectionName = item.collectionName.trim();
+    if (item.ownerAddress?.trim()) nft.ownerAddress = item.ownerAddress.trim();
+    const declaration = await resolveDeclaration(parsed, deps);
+    if (
+      declaration
+      && declaration.itemPinId === parsed.itemPinId
+      && declaration.ownerAddress === parsed.ownerAddress
+      && item.ownerAddress === parsed.ownerAddress
+    ) {
+      nft.ownershipVerified = true;
+      nft.declarationPinId = declaration.declarationPinId;
     }
-  } catch {
-    facts = null; // transient — leave uncached so the next render retries
-  }
-  if (facts) {
-    nftItemFactsCache.set(itemPinId, facts);
-    if (nftItemFactsCache.size > NFT_ITEM_FACTS_CACHE_MAX) {
-      const oldest = nftItemFactsCache.keys().next().value;
-      if (oldest !== undefined) nftItemFactsCache.delete(oldest);
-    }
-  }
-  return facts;
-}
-
-/**
- * Resolve an already-parsed nft://mrc721/<itemPinId> reference. Never
- * throws; a missing item, missing cover, or failed artwork fetch yields
- * avatarUrl:null with whatever facts the item info carried.
- */
-export async function resolveNftAvatar(parsed: { itemPinId: string }): Promise<NftAvatarResolution> {
-  const nft: NftAvatarFacts = { itemPinId: parsed.itemPinId };
-  try {
-    const facts = await getNftItemFacts(parsed.itemPinId);
-    if (facts?.collectionPinId) nft.collectionPinId = facts.collectionPinId;
-    if (facts?.collectionName) nft.collectionName = facts.collectionName;
-    if (!facts?.cover) {
-      return { avatarUrl: null, nft };
-    }
-    const avatarUrl = await resolvePinAssetSource(facts.cover);
+    const cover = item.cover?.trim();
+    const avatarUrl = cover ? await (deps.resolveArtwork ?? resolvePinAssetSource)(cover) : null;
     return { avatarUrl: avatarUrl ?? null, nft };
   } catch {
-    return { avatarUrl: null, nft };
+    return { avatarUrl: null, nft: { ...nft, ownershipVerified: false } };
   }
+}
+
+export async function prepareNftAvatarForIdentity(
+  input: { reference: string; ownerAddress: string; globalMetaId?: string | null },
+  deps: NftAvatarServiceDeps = {},
+): Promise<PreparedNftAvatar> {
+  const parsed = parseNftAvatarReference(input.reference);
+  const ownerAddress = input.ownerAddress.trim();
+  const globalMetaId = input.globalMetaId?.trim() || undefined;
+  if (!parsed || !ownerAddress) throw new Error('NFT_AVATAR_INVALID_REFERENCE');
+  try {
+    const fetchItemInfo = deps.fetchItemInfo ?? defaultItemInfo;
+    const item = await fetchItemInfo(parsed.itemPinId);
+    if (!item || item.burned) throw new Error('NFT_AVATAR_ITEM_UNAVAILABLE');
+    if (!item.ownerAddress || item.ownerAddress !== ownerAddress) {
+      throw new Error('NFT_AVATAR_NOT_OWNED');
+    }
+    const cover = item.cover?.trim();
+    if (!cover) throw new Error('NFT_AVATAR_ARTWORK_UNAVAILABLE');
+    const avatarUrl = await (deps.resolveArtwork ?? resolvePinAssetSource)(cover);
+    if (!avatarUrl) throw new Error('NFT_AVATAR_ARTWORK_UNAVAILABLE');
+    const reference = buildNftAvatarReference({ itemPinId: parsed.itemPinId, ownerAddress, globalMetaId });
+    return {
+      reference,
+      avatarUrl,
+      declarationPayload: buildNftAvatarDeclarationPayload({ itemPinId: parsed.itemPinId, ownerAddress }),
+      nft: {
+        itemPinId: parsed.itemPinId,
+        ...(item.collectionPinId ? { collectionPinId: item.collectionPinId } : {}),
+        ...(item.collectionName ? { collectionName: item.collectionName } : {}),
+        ownerAddress,
+        ownershipVerified: true,
+      },
+    };
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('NFT_AVATAR_')) throw error;
+    throw new Error('NFT_AVATAR_OWNERSHIP_UNAVAILABLE');
+  }
+}
+
+export async function resolveLatestNftAvatarForIdentity(
+  identity: { ownerAddress?: string; globalMetaId?: string },
+  deps: NftAvatarServiceDeps = {},
+): Promise<NftAvatarResolution & { reference: string } | null> {
+  try {
+    const declaration = await (deps.fetchDeclaration ?? fetchLatestNftAvatarDeclaration)(identity);
+    if (!declaration) return null;
+    const reference = buildNftAvatarReference({
+      itemPinId: declaration.itemPinId,
+      ownerAddress: declaration.ownerAddress,
+      globalMetaId: identity.globalMetaId,
+    });
+    const resolved = await resolveNftAvatar(parseNftAvatarReference(reference)!, {
+      ...deps,
+      fetchDeclaration: async () => declaration,
+    });
+    if (!resolved.nft.ownershipVerified) return null;
+    return { ...resolved, reference };
+  } catch {
+    return null;
+  }
+}
+
+export function clearNftAvatarItemFactsCache(): void {
+  // Kept for compatibility with the existing test/IPC cache reset seam. Item
+  // ownership and declarations are deliberately read fresh instead of cached.
 }

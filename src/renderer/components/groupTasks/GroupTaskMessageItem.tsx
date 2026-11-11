@@ -4,6 +4,8 @@ import { i18nService } from '../../services/i18n';
 import { resolveMetaidAvatarSource } from '../../services/metabotInfoService';
 import { getDefaultMetabotAvatarUrl } from '../../utils/rendererAssetPaths';
 import { isRenderableAvatarSource as isSharedRenderableAvatarSource } from '../../utils/avatarSource';
+import NftAvatarFrame from '../metabots/NftAvatarFrame';
+import { parseNftAvatarReference } from '../metabots/nftAvatarPresentation.js';
 import MarkdownContent from '../MarkdownContent';
 import {
   messengerBubbleClassName,
@@ -36,7 +38,7 @@ const isRenderableAvatarSource = (value: string | null | undefined): boolean =>
  */
 function useSenderAvatar(message: GroupChatTranscriptMessage): string {
   const raw = message.senderAvatar?.trim() ?? '';
-  const direct = isRenderableAvatarSource(raw) ? raw : null;
+  const direct = parseNftAvatarReference(raw) ? raw : (isRenderableAvatarSource(raw) ? raw : null);
   const reference = direct ? null : (raw || message.senderGlobalMetaId?.trim() || null);
   const [resolved, setResolved] = useState<string | null>(
     reference ? avatarResolutionCache.get(reference) ?? null : null,
@@ -223,23 +225,21 @@ const GroupTaskMessageItem = React.memo(({
             event.preventDefault();
             openBotPageInBotBrowser(senderGlobalMetaId);
           }}
-          className="rounded-full flex-shrink-0 overflow-hidden transition-shadow hover:ring-2 hover:ring-claude-accent/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/60"
+          className="rounded-full flex-shrink-0 transition-shadow hover:ring-2 hover:ring-claude-accent/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/60"
         >
-          <img
-            src={avatarSrc}
+          <NftAvatarFrame
+            avatar={avatarSrc}
+            frameClassName="h-8 w-8 rounded-full"
+            fallback={<img src={DEFAULT_AVATAR} alt={senderName} className="h-8 w-8 rounded-full object-cover" />}
             alt={senderName}
-            style={{ width: 32, height: 32 }}
-            className="rounded-full object-cover"
-            onError={(e) => { (e.currentTarget as HTMLImageElement).src = DEFAULT_AVATAR; }}
           />
         </button>
       ) : (
-        <img
-          src={avatarSrc}
+        <NftAvatarFrame
+          avatar={avatarSrc}
+          frameClassName="h-8 w-8 rounded-full"
+          fallback={<img src={DEFAULT_AVATAR} alt={senderName} className="h-8 w-8 rounded-full object-cover" />}
           alt={senderName}
-          style={{ width: 32, height: 32 }}
-          className="rounded-full object-cover flex-shrink-0"
-          onError={(e) => { (e.currentTarget as HTMLImageElement).src = DEFAULT_AVATAR; }}
         />
       )}
 

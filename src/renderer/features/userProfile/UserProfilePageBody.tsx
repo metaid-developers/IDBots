@@ -22,8 +22,8 @@ import { readTwinDailyMessage, resolveSessionFallbackMessage } from './twinDaily
  *
  * What the page carries:
  *  1. the identity header — the local user's avatar through the shared
- *     `NftAvatarFrame` public export (plain data/http avatar unchanged, the NFT
- *     frame + certified badge when the stored value is `nft://mrc721/…`) and
+ *     `NftAvatarFrame` public export (plain data/http avatar unchanged, a subtle
+ *     verified-NFT badge, or the certified-collection frame) and
  *     the name, both FOLLOWING the account block below (the block owns the
  *     writes; `app:metabots-changed` re-reads the identity) — the wallet
  *     address line is retired and its place is the twin 每日寄语 slot
@@ -78,6 +78,7 @@ const UserProfilePageBody: React.FC = () => {
       <div data-slot="user-profile-identity" className="flex items-center gap-4">
         <NftAvatarFrame
           avatar={identity?.avatar ?? null}
+          fallbackSource={identity?.avatar_fallback}
           frameClassName="h-16 w-16 rounded-2xl"
           imgClassName="border dark:border-claude-darkBorder border-claude-border"
           fallback={

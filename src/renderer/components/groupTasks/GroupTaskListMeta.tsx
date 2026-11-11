@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import { CheckIcon, ClipboardDocumentIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import { isRenderableAvatarSource } from '../../utils/avatarSource';
+import NftAvatarFrame from '../metabots/NftAvatarFrame';
+import { parseNftAvatarReference } from '../metabots/nftAvatarPresentation.js';
 import { buildBotPageBrowserUri } from '../../features/botBrowser/botBrowserIntent';
 import type { GroupTaskMemberPreview, GroupTaskSummary } from '../../types/groupTask';
 import {
@@ -70,7 +72,14 @@ export const GroupTaskTinyAvatar: React.FC<{
   const showImage = isRenderableAvatarSource(src) && !imageFailed;
   const box = size === 'hover' ? 'h-5 w-5 text-[10px]' : 'h-4 w-4 text-[9px]';
   const displayName = name?.trim() || '';
-  const body = (
+  const body = parseNftAvatarReference(src) ? (
+    <NftAvatarFrame
+      avatar={src}
+      frameClassName={`${box} rounded-full`}
+      fallback={<span className="text-[9px] font-semibold text-claude-textSecondary">{avatarInitial(name)}</span>}
+      alt={displayName}
+    />
+  ) : (
     <span
       className={`flex ${box} flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-claude-surfaceHover font-semibold text-claude-textSecondary dark:bg-claude-darkSurfaceHover dark:text-claude-darkTextSecondary`}
       title={browserGlobalMetaId ? undefined : (displayName || undefined)}

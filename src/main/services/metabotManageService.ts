@@ -17,6 +17,7 @@ import { getMetabotLimitError } from '../shared/metabotLimit';
 import { normalizeMetabotLlmId } from './llmFallback';
 import { stripLoneSurrogates, truncateUtf16Units } from '../libs/llmSafeText';
 import { toLlmEffortLevel } from '../libs/llmEffort';
+import { parseNftAvatarReference, prepareNftAvatarForIdentity } from './nftAvatarService';
 
 // ---------------------------------------------------------------------------
 // Input shapes (mirror the IPC handler payloads; local to avoid cross-module coupling)
@@ -50,6 +51,9 @@ export interface CreateMetaBotOnChainInput {
 export interface UpdateMetaBotInput {
   name?: string;
   avatar?: string | null;
+  avatar_fallback?: string | null;
+  nft_avatar_pin_id?: string | null;
+  nft_avatar_synced_reference?: string | null;
   enabled?: boolean;
   metabot_type?: 'twin' | 'worker';
   role?: string;
@@ -111,6 +115,7 @@ export interface EditSyncInput {
   metabotId: number;
   syncName?: boolean;
   syncAvatar?: boolean;
+  syncNftAvatar?: boolean;
   syncBio?: boolean;
   syncPersona?: boolean;
   syncLlm?: boolean;
@@ -137,6 +142,7 @@ export interface MetabotManageDeps {
   ) => Promise<ChainSyncResult>;
   /** Edit-sync used on updates; publishes only the changed info pins. */
   syncEditChanges: (store: MetabotStore, input: EditSyncInput) => Promise<ChainSyncResult>;
+  prepareNftAvatar?: typeof prepareNftAvatarForIdentity;
   /** Refresh P2P runtime config after a create/delete (best-effort). */
   onAfterMutation?: () => Promise<void> | void;
   /** Optional post-delete hook receiving the deleted bot (e.g. cleanup side-effects). */
@@ -1039,6 +1045,11 @@ export function buildEditSyncFlags(
     metabotId: before.id,
     syncName,
     syncAvatar,
+    syncNftAvatar: syncAvatar && Boolean(
+      parseNftAvatarReference(nextAvatar)
+      || parseNftAvatarReference(before.avatar)
+      || before.nft_avatar_synced_reference,
+    ),
     syncBio,
     syncPersona,
     syncLlm,
@@ -1052,6 +1063,7 @@ export function buildEditSyncFlags(
 export type SyncStepKey =
   | 'name'
   | 'avatar'
+  | 'nftAvatar'
   | 'bio'
   | 'persona'
   | 'llm'
@@ -1066,6 +1078,7 @@ type EditSyncFlagKey = Exclude<keyof EditSyncInput, 'metabotId' | 'ownerBindingP
 const STEP_TO_FLAG: ReadonlyArray<readonly [SyncStepKey, EditSyncFlagKey]> = [
   ['name', 'syncName'],
   ['avatar', 'syncAvatar'],
+  ['nftAvatar', 'syncNftAvatar'],
   ['bio', 'syncBio'],
   ['persona', 'syncPersona'],
   ['llm', 'syncLlm'],
@@ -1162,6 +1175,24 @@ export async function updateMetaBotCore(
       );
     }
     input = { ...input, allow_chat_skills: resolvedSkillIds };
+  }
+
+  if (input.avatar !== undefined) {
+    if (parseNftAvatarReference(input.avatar)) {
+      if (!deps.prepareNftAvatar) return { success: false, error: 'NFT_AVATAR_NOT_SUPPORTED' };
+      try {
+        const prepared = await deps.prepareNftAvatar({
+          reference: input.avatar!,
+          ownerAddress: before.mvc_address,
+          globalMetaId: before.globalmetaid,
+        });
+        input = { ...input, avatar: prepared.reference, avatar_fallback: prepared.avatarUrl };
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : String(error) };
+      }
+    } else {
+      input = { ...input, avatar_fallback: null };
+    }
   }
 
   const local = applyMetabotUpdateLocal(store, id, input, deps);

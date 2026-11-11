@@ -1,5 +1,5 @@
 // IPC allowlist data — encodes docs/cloud-mobile/02-ipc-allowlist-v1.md
-// (allowlist version 1.0.1 per CR-WSA-001 + CR-WSA-002; frozen at 1.0.0 on
+// (allowlist version 1.0.2 per CR-WSA-001 + CR-WSA-002 + CR-WSA-004; frozen at 1.0.0 on
 // 2026-10-15) as data, per REQ-A-17.
 //
 // Every tier/restriction/timeout assignment in the FROZEN sections of this
@@ -33,8 +33,8 @@ export interface AllowlistEntry {
   note?: string;
 }
 
-/** Allowlist version from `02` (frozen at 1.0.0 on 2026-10-15; 1.0.1 = CR-WSA-001). */
-export const ALLOWLIST_VERSION = '1.0.1';
+/** Allowlist version from `02` (frozen at 1.0.0 on 2026-10-15; 1.0.2 = CR-WSA-004). */
+export const ALLOWLIST_VERSION = '1.0.2';
 
 /** C2 Limits: default invoke timeout. Channel-specific overrides live on entries. */
 export const DEFAULT_INVOKE_TIMEOUT_MS = 120_000;
@@ -170,6 +170,7 @@ const IDENTITY_INVOKE: Record<string, AllowlistEntry> = {
   'idbots:getMetaBotMnemonic': { tier: 'H', note: '`02`: C2 sensitive route only, never over the WebSocket.' },
   'idbots:restoreMetaBotFromMnemonic': { tier: 'N', note: '`02`: mnemonic input over the socket; later release.' },
   'userIdentity:get': { tier: 'P1' },
+  'userIdentity:getNfts': { tier: 'P1', note: 'CR-WSA-004: read-only MRC-721 holdings of the signed-in user wallet; no keys or fund movement.' },
   'social:getPairRelationship': { tier: 'P1', note: '`S5`: friend badge pair state; read-only, cached.' },
   'userIdentity:updateName': { tier: 'P1' },
   'userIdentity:updateAvatar': { tier: 'P1' },

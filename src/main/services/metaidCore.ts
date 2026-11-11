@@ -47,6 +47,12 @@ import {
   type TrafficSettingsReader,
 } from './trafficSettings';
 import { resolveCreatePinFeeRate } from './feeRateStore';
+import {
+  buildNftAvatarDeclarationPayload,
+  NFT_AVATAR_PATH,
+  parseNftAvatarReference,
+  prepareNftAvatarForIdentity,
+} from './nftAvatarService';
 
 const MANAPI_BASE = 'https://manapi.metaid.io';
 
@@ -1018,13 +1024,14 @@ export interface SyncMetaBotResult {
   syncedSteps?: SyncMetaBotStep[];
 }
 
-export type SyncMetaBotStep = 'name' | 'avatar' | 'chatpubkey' | 'bio' | 'persona' | 'llm' | 'chatSkills' | 'homepage' | 'owner';
+export type SyncMetaBotStep = 'name' | 'avatar' | 'nftAvatar' | 'chatpubkey' | 'bio' | 'persona' | 'llm' | 'chatSkills' | 'homepage' | 'owner';
 export type SyncMetaBotEditStep = Exclude<SyncMetaBotStep, 'chatpubkey'>;
 
 export interface SyncMetaBotEditChangesInput {
   metabotId: number;
   syncName?: boolean;
   syncAvatar?: boolean;
+  syncNftAvatar?: boolean;
   syncBio?: boolean;
   syncPersona?: boolean;
   syncLlm?: boolean;
@@ -1046,11 +1053,13 @@ export interface SyncMetaBotEditChangesResult {
 type SyncMetaBotEditChangesDeps = {
   createPin?: typeof createPin;
   sleep?: typeof sleep;
+  prepareNftAvatar?: typeof prepareNftAvatarForIdentity;
 };
 
 type SyncMetaBotToChainDeps = {
   createPin?: typeof createPin;
   sleep?: typeof sleep;
+  prepareNftAvatar?: typeof prepareNftAvatarForIdentity;
 };
 
 export interface MetabotInfoSyncStep {
@@ -1091,9 +1100,25 @@ function buildAvatarDataUrlSyncStep(avatar: string | null | undefined): MetabotI
  * "http(s) URL" support is real while this gate keeps rejecting anything that
  * would pin a non-image or malformed payload on-chain.
  */
-function buildEditAvatarSyncStep(avatar: string | null | undefined): MetabotInfoSyncStep {
-  const avatarRaw = typeof avatar === 'string' ? avatar.trim() : '';
-  if (!avatarRaw) {
+function buildNftAvatarDeclarationSyncStep(metabot: any): MetabotInfoSyncStep {
+  const parsed = parseNftAvatarReference(metabot?.avatar);
+  const ownerAddress = String(metabot?.mvc_address ?? parsed?.ownerAddress ?? '').trim();
+  return {
+    key: 'nftAvatar',
+    path: NFT_AVATAR_PATH,
+    contentType: 'application/json',
+    payload: parsed
+      ? buildNftAvatarDeclarationPayload({ itemPinId: parsed.itemPinId, ownerAddress })
+      : '',
+  };
+}
+
+function buildEditAvatarSyncStep(metabot: any): MetabotInfoSyncStep {
+  const avatarRaw = typeof metabot?.avatar === 'string' ? metabot.avatar.trim() : '';
+  const nftReference = parseNftAvatarReference(avatarRaw);
+  const imageSource = nftReference ? metabot?.avatar_fallback : avatarRaw;
+  if (!imageSource) {
+    if (nftReference) throw new Error('NFT avatar cover is unavailable; retry the avatar sync after the cover resolves.');
     return {
       key: 'avatar',
       path: '/info/avatar',
@@ -1101,22 +1126,7 @@ function buildEditAvatarSyncStep(avatar: string | null | undefined): MetabotInfo
       payload: '',
     };
   }
-
-  // NFT avatar references (nft://mrc721/<itemPinId>) are a local display-only
-  // decoration: the /info/avatar protocol pins image bytes, so an NFT
-  // reference is published as a clear (empty) avatar instead of pinning a
-  // non-image value the protocol cannot carry. The step still runs so the
-  // edit-sync step bookkeeping stays complete.
-  if (/^nft:\/\//i.test(avatarRaw)) {
-    return {
-      key: 'avatar',
-      path: '/info/avatar',
-      contentType: 'text/plain',
-      payload: '',
-    };
-  }
-
-  const avatarStep = buildAvatarDataUrlSyncStep(avatarRaw);
+  const avatarStep = buildAvatarDataUrlSyncStep(imageSource);
   if (!avatarStep) {
     throw new Error(
       'Invalid avatar data URL: /info/avatar requires a supported image data URL (data:image/png|jpeg|webp|gif;base64,...). Normalize an http(s)/local source to a data URL before syncing.',
@@ -1163,9 +1173,16 @@ export function buildFullMetabotInfoSyncPlan(
     payload: metabot?.name || 'MetaBot',
   }];
 
-  const avatarStep = buildAvatarDataUrlSyncStep(metabot?.avatar);
+  const nftReference = parseNftAvatarReference(metabot?.avatar);
+  const avatarStep = buildAvatarDataUrlSyncStep(nftReference ? metabot?.avatar_fallback : metabot?.avatar);
   if (avatarStep) {
     steps.push(avatarStep);
+  }
+  const syncedNftReference = typeof metabot?.nft_avatar_synced_reference === 'string'
+    ? metabot.nft_avatar_synced_reference
+    : '';
+  if ((nftReference && metabot.avatar !== syncedNftReference) || (!nftReference && syncedNftReference)) {
+    steps.push(buildNftAvatarDeclarationSyncStep(metabot));
   }
 
   const chatPubKey = typeof metabot?.chat_public_key === 'string'
@@ -1231,12 +1248,19 @@ export function buildEditMetabotInfoSyncPlan(
   const steps = buildFullMetabotInfoSyncPlan({
     ...input.metabot,
     chat_public_key_pin_id: input.metabot?.chat_public_key_pin_id || 'skip-edit-chatpubkey',
-  }).filter((step) => step.key !== 'avatar' && step.key !== 'chatpubkey' && wanted.has(step.key));
+  }).filter((step) => step.key !== 'avatar' && step.key !== 'nftAvatar' && step.key !== 'chatpubkey' && wanted.has(step.key));
 
   if (input.syncAvatar) {
-    const avatarStep = buildEditAvatarSyncStep(input.metabot?.avatar);
+    const avatarStep = buildEditAvatarSyncStep(input.metabot);
     const insertIndex = input.syncName ? 1 : 0;
     steps.splice(insertIndex, 0, avatarStep);
+  }
+  const needsNftDeclaration = parseNftAvatarReference(input.metabot?.avatar)
+    || input.metabot?.nft_avatar_synced_reference
+    || input.syncNftAvatar;
+  if ((input.syncAvatar || input.syncNftAvatar) && needsNftDeclaration) {
+    const insertIndex = (input.syncName ? 1 : 0) + (input.syncAvatar ? 1 : 0);
+    steps.splice(insertIndex, 0, buildNftAvatarDeclarationSyncStep(input.metabot));
   }
 
   // Owner binding (signed payload, or '' to unbind) is published as an
@@ -1302,7 +1326,22 @@ export async function syncMetaBotToChain(
     logErr('Missing chat public key; continuing with skippable profile sync');
   }
 
-  const plannedSteps = buildFullMetabotInfoSyncPlan(metabot, { ...options, skipEmptyInfoSteps: true });
+  let metabotForSync = metabot;
+  if (parseNftAvatarReference(metabot.avatar)) {
+    try {
+      const prepared = await (deps.prepareNftAvatar ?? prepareNftAvatarForIdentity)({
+        reference: metabot.avatar!,
+        ownerAddress: metabot.mvc_address,
+        globalMetaId: metabot.globalmetaid,
+      });
+      metabotStore.updateMetabot(metabot_id, { avatar: prepared.reference, avatar_fallback: prepared.avatarUrl });
+      metabotForSync = { ...metabot, avatar: prepared.reference, avatar_fallback: prepared.avatarUrl };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message, canSkip: true, plannedSteps: [], syncedSteps };
+    }
+  }
+  const plannedSteps = buildFullMetabotInfoSyncPlan(metabotForSync, { ...options, skipEmptyInfoSteps: true });
   log('Prepared full sync plan', { plannedSteps: plannedSteps.map((step) => step.key) });
 
   for (let index = 0; index < plannedSteps.length; index += 1) {
@@ -1339,6 +1378,11 @@ export async function syncMetaBotToChain(
           chatPublicKeyPinId = result.pinId ?? `${txid}i0`;
         } else if (isProfileSyncStep(step.key)) {
           metabotInfoPinId = result.pinId ?? `${txid}i0`;
+        } else if (step.key === 'nftAvatar') {
+          metabotStore.updateMetabot(metabot_id, {
+            nft_avatar_pin_id: result.pinId ?? `${txid}i0`,
+            nft_avatar_synced_reference: metabotForSync.avatar ?? '',
+          });
         } else if (step.key === 'owner') {
           ownerBindingPinId = result.pinId ?? `${txid}i0`;
         }
@@ -1459,9 +1503,19 @@ export async function syncMetaBotEditChangesToChain(
     return { success: false, error: `MetaBot ${metabotId} not found` };
   }
 
+  let metabotForSync = metabot;
   let plannedSteps: MetabotInfoSyncStep[];
   try {
-    plannedSteps = buildEditMetabotInfoSyncPlan({ ...input, metabot });
+    if ((input.syncAvatar || input.syncNftAvatar) && parseNftAvatarReference(metabot.avatar)) {
+      const prepared = await (deps.prepareNftAvatar ?? prepareNftAvatarForIdentity)({
+        reference: metabot.avatar!,
+        ownerAddress: metabot.mvc_address,
+        globalMetaId: metabot.globalmetaid,
+      });
+      metabotStore.updateMetabot(metabotId, { avatar: prepared.reference, avatar_fallback: prepared.avatarUrl });
+      metabotForSync = { ...metabot, avatar: prepared.reference, avatar_fallback: prepared.avatarUrl };
+    }
+    plannedSteps = buildEditMetabotInfoSyncPlan({ ...input, metabot: metabotForSync });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     logErr('Failed to build edit sync plan', { error: msg });
@@ -1527,6 +1581,12 @@ export async function syncMetaBotEditChangesToChain(
             metabotInfoPinId,
           };
         }
+      }
+      if (step.key === 'nftAvatar') {
+        metabotStore.updateMetabot(metabotId, {
+          nft_avatar_pin_id: result.pinId ?? `${txid}i0`,
+          nft_avatar_synced_reference: metabotForSync.avatar ?? '',
+        });
       }
       if (step.key === 'owner') {
         // '' payload = unbind: clear the stored binding pin id.

@@ -3,6 +3,8 @@ import { i18nService } from '../../services/i18n';
 import type { CoworkMessage } from '../../types/cowork';
 import { getDefaultMetabotAvatarUrl } from '../../utils/rendererAssetPaths';
 import { isRenderableAvatarSource } from '../../utils/avatarSource';
+import NftAvatarFrame from '../metabots/NftAvatarFrame';
+import { parseNftAvatarReference } from '../metabots/nftAvatarPresentation.js';
 import { splitThinkTaggedContent } from './ThinkingBlock';
 import { drawTurnAckPhrase, findTailTurnAck } from './turnAckPhrases';
 import {
@@ -381,7 +383,9 @@ export const AssistantActivityIndicator: React.FC<{
     });
   };
 
-  const avatarSrc = isRenderableAvatarSource(avatar) ? avatar! : DEFAULT_BOT_AVATAR;
+  const avatarSrc = parseNftAvatarReference(avatar)
+    ? avatar
+    : (isRenderableAvatarSource(avatar) ? avatar! : DEFAULT_BOT_AVATAR);
 
   const row = (
     // pt-2 keeps the ring's breathing room below the bubble above it; the
@@ -389,11 +393,10 @@ export const AssistantActivityIndicator: React.FC<{
     // transcript's last row and the composer should sit close under it.
     <div className="flex items-center gap-2.5 pt-2 pb-1">
       <div className="assistant-activity-avatar-ring relative h-8 w-8 shrink-0">
-        <img
-          src={avatarSrc}
-          alt=""
-          className="h-8 w-8 rounded-full object-cover border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
-          onError={(e) => { (e.currentTarget as HTMLImageElement).src = DEFAULT_BOT_AVATAR; }}
+        <NftAvatarFrame
+          avatar={avatarSrc}
+          frameClassName="h-8 w-8 rounded-full"
+          fallback={<img src={DEFAULT_BOT_AVATAR} alt="" className="h-8 w-8 rounded-full object-cover" />}
         />
       </div>
       {/* The status line gets a calm light-sweep shimmer (CSS class in

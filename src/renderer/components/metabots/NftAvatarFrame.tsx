@@ -1,64 +1,49 @@
-/**
- * Shared NFT avatar frame for MetaBot avatar surfaces.
- *
- * For a plain avatar (data:/http or empty) this renders exactly what the
- * surfaces rendered before — an <img> or the caller's placeholder — so the
- * component is a drop-in wrapper. For an `nft://mrc721/<itemPinId>` avatar
- * reference it resolves the artwork through `metaid:resolveAvatarSource` and
- * decorates the render with:
- *   - a subtle rainbow ring (the "this avatar is an NFT" marking), and
- *   - a blue-check badge when the item's collection is present in the IDBots
- *     NFT CA registry (`idbots:getNftCaRegistry`) — uncertified NFTs get the
- *     ring only.
- *
- * Fail-soft by construction: resolution failure or an unresolvable reference
- * degrades to the caller's placeholder, never a broken image.
- */
-
 import React, { useEffect, useState } from 'react';
 import { CheckIcon } from '@heroicons/react/24/solid';
 import { i18nService } from '../../services/i18n';
 import { getNftCaRegistryCached, isCollectionCertified } from '../../services/nftCaRegistryService';
-import { parseNftAvatarReference } from './nftAvatarPresentation';
+import { parseNftAvatarReference, resolveNftAvatarBadgeKind } from './nftAvatarPresentation';
 
 interface NftAvatarState {
-  /** Resolved artwork source; null = unresolvable (placeholder fallback). */
   src: string | null;
+  ownershipVerified: boolean;
   certified: boolean;
 }
 
-// Module-level resolution cache keyed by the full nft:// reference. Failed
-// resolutions are dropped so a transient indexer outage can heal on the next
-// render instead of being frozen for the session.
-const resolutionCache = new Map<string, Promise<NftAvatarState>>();
+const RESOLUTION_TTL_MS = 30_000;
+const resolutionCache = new Map<string, { createdAt: number; pending: Promise<NftAvatarState> }>();
 
 function loadNftAvatarState(reference: string): Promise<NftAvatarState> {
   const cached = resolutionCache.get(reference);
-  if (cached) return cached;
+  if (cached && Date.now() - cached.createdAt < RESOLUTION_TTL_MS) return cached.pending;
   const pending = (async (): Promise<NftAvatarState> => {
     try {
       const result = await window.electron.p2p.resolveAvatarSource({ reference });
       const json = result as {
         success?: boolean;
         avatarUrl?: string | null;
-        nft?: { itemPinId: string; collectionPinId?: string; collectionName?: string };
+        nft?: {
+          itemPinId: string;
+          collectionPinId?: string;
+          collectionName?: string;
+          ownershipVerified?: boolean;
+        };
       };
       const src = json?.success !== false && typeof json?.avatarUrl === 'string' && json.avatarUrl
         ? json.avatarUrl
         : null;
+      const ownershipVerified = json?.nft?.ownershipVerified === true;
       let certified = false;
-      if (src && json?.nft?.collectionPinId) {
+      if (src && ownershipVerified && json?.nft?.collectionPinId) {
         const registry = await getNftCaRegistryCached();
         certified = isCollectionCertified(registry, json.nft.collectionPinId);
       }
-      return { src, certified };
+      return { src, ownershipVerified, certified };
     } catch {
-      return { src: null, certified: false };
+      return { src: null, ownershipVerified: false, certified: false };
     }
   })();
-  resolutionCache.set(reference, pending);
-  // Never cache a failed resolution: only keep promises that yielded art, so
-  // a transient outage heals on the next render.
+  resolutionCache.set(reference, { createdAt: Date.now(), pending });
   void pending.then((state) => {
     if (!state.src) resolutionCache.delete(reference);
   }).catch(() => {
@@ -80,7 +65,7 @@ function useNftAvatarState(reference: string | null): NftAvatarState | null {
         if (!cancelled) setState(next);
       })
       .catch(() => {
-        if (!cancelled) setState({ src: null, certified: false });
+        if (!cancelled) setState({ src: null, ownershipVerified: false, certified: false });
       });
     return () => {
       cancelled = true;
@@ -90,43 +75,56 @@ function useNftAvatarState(reference: string | null): NftAvatarState | null {
 }
 
 export interface NftAvatarFrameProps {
-  /** Raw avatar value from the metabot record (may be an nft:// reference). */
   avatar: string | null | undefined;
-  /** Size/shape classes applied to both the plain-img path and the NFT frame, e.g. "w-12 h-12 rounded-xl". */
+  /** Stored NFT cover that keeps the image visible while verification is unavailable. */
+  fallbackSource?: string | null;
   frameClassName: string;
-  /** Extra classes for the plain-img path only (e.g. the legacy border). */
   imgClassName?: string;
-  /** Placeholder content when there is no (or an unresolvable) avatar. */
   fallback: React.ReactNode;
   alt?: string;
 }
 
-const NftAvatarFrame: React.FC<NftAvatarFrameProps> = ({ avatar, frameClassName, imgClassName, fallback, alt = '' }) => {
+const NftAvatarFrame: React.FC<NftAvatarFrameProps> = ({
+  avatar,
+  fallbackSource,
+  frameClassName,
+  imgClassName,
+  fallback,
+  alt = '',
+}) => {
   const nftRef = parseNftAvatarReference(avatar ?? null);
   const resolved = useNftAvatarState(nftRef ? (avatar as string).trim() : null);
 
   if (!nftRef) {
-    // Legacy behavior for non-NFT avatars — unchanged rendering.
     if (avatar && (avatar.startsWith('data:') || avatar.startsWith('http'))) {
       return <img src={avatar} alt={alt} className={`${frameClassName} object-cover ${imgClassName ?? ''}`} />;
     }
     return <>{fallback}</>;
   }
 
-  if (!resolved?.src) {
-    return <>{fallback}</>;
+  const src = resolved?.src ?? fallbackSource ?? null;
+  const badgeKind = resolveNftAvatarBadgeKind({
+    src,
+    ownershipVerified: resolved?.ownershipVerified === true,
+    certified: resolved?.certified === true,
+  });
+  if (badgeKind === 'fallback') return <>{fallback}</>;
+  if (badgeKind === 'plain') {
+    return <img src={src} alt={alt} className={`${frameClassName} object-cover ${imgClassName ?? ''}`} />;
   }
 
-  return (
-    <div
-      className={`relative ${frameClassName} shrink-0 p-[2px]`}
-      style={{ background: 'conic-gradient(from 0deg, #f87171, #fbbf24, #34d399, #60a5fa, #a78bfa, #f472b6, #f87171)' }}
-      data-nft-avatar={nftRef.itemPinId}
-    >
-      <div className="h-full w-full overflow-hidden rounded-[inherit] dark:bg-claude-darkSurface bg-claude-surface">
-        <img src={resolved.src} alt={alt} className="h-full w-full object-cover" />
-      </div>
-      {resolved.certified && (
+  if (badgeKind === 'certified') {
+    return (
+      <div
+        className={`relative ${frameClassName} shrink-0 p-[2px]`}
+        style={{ background: 'conic-gradient(from 0deg, #f87171, #fbbf24, #34d399, #60a5fa, #a78bfa, #f472b6, #f87171)' }}
+        data-nft-avatar={nftRef.itemPinId}
+        data-nft-ownership="verified"
+        data-nft-certified="true"
+      >
+        <div className="h-full w-full overflow-hidden rounded-[inherit] dark:bg-claude-darkSurface bg-claude-surface">
+          <img src={src} alt={alt} className="h-full w-full object-cover" />
+        </div>
         <span
           className="absolute -bottom-0.5 -right-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-blue-500 ring-2 ring-white dark:ring-[#1a1d21]"
           title={i18nService.t('metabotNftAvatarCertifiedBadge')}
@@ -134,7 +132,24 @@ const NftAvatarFrame: React.FC<NftAvatarFrameProps> = ({ avatar, frameClassName,
         >
           <CheckIcon className="h-2.5 w-2.5 text-white" />
         </span>
-      )}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={`relative ${frameClassName} shrink-0`}
+      data-nft-avatar={nftRef.itemPinId}
+      data-nft-ownership="verified"
+    >
+      <img src={src} alt={alt} className={`h-full w-full rounded-[inherit] object-cover ${imgClassName ?? ''}`} />
+      <span
+        className="absolute -bottom-0.5 -right-0.5 rounded-[3px] bg-black/55 px-0.5 text-[6px] font-medium leading-3 tracking-[0.04em] text-white/80 ring-1 ring-white/40 dark:ring-black/40"
+        title={i18nService.t('metabotNftAvatarVerifiedBadge')}
+        aria-label={i18nService.t('metabotNftAvatarVerifiedBadge')}
+      >
+        NFT
+      </span>
     </div>
   );
 };

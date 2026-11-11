@@ -33,7 +33,7 @@ const PRELOAD_PATH = path.join(ROOT, 'src', 'main', 'preload.ts');
 const OVERRIDES_PATH = path.join(ROOT, 'scripts', 'ipc-contract-overrides.json');
 const OUTPUT_PATH = path.join(ROOT, 'src', 'mobile', 'generated', 'ipc-contract.json');
 const CONTRACT_VERSION = '1.0.0';
-const ALLOWLIST_VERSION = '1.0.1';
+const ALLOWLIST_VERSION = '1.0.2';
 
 const CHECK = process.argv.includes('--check');
 const STDOUT = process.argv.includes('--stdout');

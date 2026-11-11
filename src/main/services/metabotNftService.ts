@@ -149,6 +149,24 @@ export function buildMetaContractNftItems(collections: MvcNftCollection[]): Meta
     });
 }
 
+export async function getMrc721NftItemsForAddress(
+  mvcAddress: string,
+  deps: MetabotNftServiceDeps = defaultDeps,
+): Promise<MetabotNftListItem[]> {
+  if (!mvcAddress.trim()) throw new Error('an MVC address is required');
+  const collected: Mrc721ItemSummary[] = [];
+  let cursor: string | number | undefined;
+  for (let page = 0; page * MRC721_PAGE_SIZE < METABOT_NFT_MRC721_MAX_ITEMS; page += 1) {
+    const result = await deps.fetchAddressItemsPage({ address: mvcAddress, cursor, size: MRC721_PAGE_SIZE });
+    collected.push(...result.items);
+    if (!result.cursor || collected.length >= METABOT_NFT_MRC721_MAX_ITEMS) break;
+    const nextCursor = result.cursor;
+    if (nextCursor === cursor) break;
+    cursor = nextCursor;
+  }
+  return buildMrc721NftItems(collected);
+}
+
 /**
  * Aggregate one bot's NFT holdings for the wallet view. Throws when the bot
  * has no MVC address (nothing to query) or when the upstream read fails —
@@ -172,23 +190,7 @@ export async function getMetabotNftItems(
   }
 
   if (input.kind === 'mrc721') {
-    // Page through the holder endpoint; the loop stops on a missing cursor or
-    // the cap, whichever comes first (cursor advance failure must not spin).
-    const collected: Mrc721ItemSummary[] = [];
-    let cursor: string | number | undefined;
-    for (let page = 0; page * MRC721_PAGE_SIZE < METABOT_NFT_MRC721_MAX_ITEMS; page += 1) {
-      const result = await deps.fetchAddressItemsPage({
-        address: mvcAddress,
-        cursor,
-        size: MRC721_PAGE_SIZE,
-      });
-      collected.push(...result.items);
-      if (!result.cursor || collected.length >= METABOT_NFT_MRC721_MAX_ITEMS) break;
-      const nextCursor = result.cursor;
-      if (nextCursor === cursor) break;
-      cursor = nextCursor;
-    }
-    return buildMrc721NftItems(collected);
+    return getMrc721NftItemsForAddress(mvcAddress, deps);
   }
 
   const balance = await deps.fetchMvcNftBalance(mvcAddress);

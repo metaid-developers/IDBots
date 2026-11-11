@@ -70,3 +70,13 @@ test('the cap stays a hard bound for runaway nesting', () => {
   const sanitized = sanitizeIpcPayload(node);
   assert.ok(JSON.stringify(sanitized).includes('[truncated-depth]'), 'cap still truncates deep chains');
 });
+
+
+test('image data URLs survive the mobile gateway while ordinary strings keep the 4000-char cap', () => {
+  const image = `data:image/png;base64,${'A'.repeat(6000)}`;
+  assert.equal(sanitizeIpcPayload({ image }).image, image);
+  const ordinary = 'x'.repeat(6000);
+  assert.notEqual(sanitizeIpcPayload({ ordinary }).ordinary, ordinary);
+  const oversizedImage = `data:image/png;base64,${'A'.repeat(300_001)}`;
+  assert.match(sanitizeIpcPayload({ image: oversizedImage }).image, /truncated in main IPC forwarding/);
+});

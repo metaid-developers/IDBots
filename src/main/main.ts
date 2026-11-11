@@ -244,13 +244,14 @@ import {
 import { registerMetabotWalletIpcHandlers } from './services/metabotWalletIpc';
 import {
   getMetabotNftItems,
+  getMrc721NftItemsForAddress,
   transferMetabotMrc721,
   transferMetabotMvcNft,
 } from './services/metabotNftService';
 import { registerMetabotNftIpcHandlers } from './services/metabotNftIpc';
 import { healNftCard } from './services/nftCardHealService';
 import { getNftCaRegistry } from './services/nftCaService';
-import { parseNftAvatarReference, resolveNftAvatar } from './services/nftAvatarService';
+import { parseNftAvatarReference, prepareNftAvatarForIdentity, resolveLatestNftAvatarForIdentity, resolveNftAvatar } from './services/nftAvatarService';
 import { initTrafficAccountService, registerTrafficAccountIpcHandlers } from './services/trafficAccountService';
 import { initMePointsService, registerMePointsIpcHandlers } from './services/mePointsService';
 import { initBundleService, registerBundleIpcHandlers } from './services/bundleService';
@@ -2159,6 +2160,15 @@ async function fetchMetaidUserInfoByGlobalMetaId(globalMetaId: string): Promise<
     if (avatarUrl) {
       data.avatarUrl = avatarUrl;
     }
+    const nftAvatar = await resolveLatestNftAvatarForIdentity({
+      globalMetaId: normalizedGlobalMetaId,
+      ownerAddress: typeof data.address === 'string' ? data.address : undefined,
+    });
+    if (nftAvatar) {
+      data.nftAvatar = nftAvatar.reference;
+      data.nftAvatarOwnershipVerified = true;
+      if (nftAvatar.avatarUrl) data.avatarUrl = nftAvatar.avatarUrl;
+    }
     payload.data = data;
   }
   return payload;
@@ -2192,6 +2202,15 @@ async function fetchMetaidUserInfoByAddress(address: string): Promise<{
     const avatarUrl = await resolveMetaidAvatarSource(data);
     if (avatarUrl) {
       data.avatarUrl = avatarUrl;
+    }
+    const nftAvatar = await resolveLatestNftAvatarForIdentity({
+      ownerAddress: normalizedAddress,
+      globalMetaId: typeof data.globalMetaId === 'string' ? data.globalMetaId : undefined,
+    });
+    if (nftAvatar) {
+      data.nftAvatar = nftAvatar.reference;
+      data.nftAvatarOwnershipVerified = true;
+      if (nftAvatar.avatarUrl) data.avatarUrl = nftAvatar.avatarUrl;
     }
     payload.data = data;
   }
@@ -9803,6 +9822,7 @@ function getMetabotManageDeps(): MetabotManageDeps {
     signOwnerBinding: signOwnerBindingForLocalUser,
     syncToChain: (store, metabotId, options) => syncMetaBotToChain(store, metabotId, {}, options),
     syncEditChanges: (store, input) => syncMetaBotEditChangesToChain(store, input),
+    prepareNftAvatar: (input) => prepareNftAvatarForIdentity(input),
     onAfterDelete: (deletedMetabot) => {
       // The Welcome Bot's onboarding guide (Bootstrap.md) is only meaningful
       // during initial setup; drop it once the Welcome Bot retires.
@@ -17053,6 +17073,17 @@ if (!gotTheLock) {
     }
   });
 
+  registerIpcHandler('userIdentity:getNfts', async () => {
+    try {
+      const identity = getUserIdentityStore().get();
+      if (!identity) return { success: false, error: 'USER_IDENTITY_MISSING' };
+      const items = await getMrc721NftItemsForAddress(identity.mvc_address);
+      return { success: true, items };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
   // Every path that writes a user_identity row (create/import) must run the
   // relay identity closeout before reporting success: the free-relay
   // credential caches otherwise keep serving the PREVIOUS identity's key (the
@@ -17436,6 +17467,7 @@ if (!gotTheLock) {
     metabotId: number;
     syncName?: boolean;
     syncAvatar?: boolean;
+    syncNftAvatar?: boolean;
     syncBio?: boolean;
     syncPersona?: boolean;
     syncLlm?: boolean;
