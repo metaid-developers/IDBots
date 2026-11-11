@@ -120,6 +120,16 @@ test("tenant images require the PWA build and expose exact commit provenance", (
   assert.match(dockerfile, /^ENV IDBOTS_COMMIT=\$\{GIT_COMMIT\}$/m);
 });
 
+test("runtime stage ships assets required by unpackaged Studio services", () => {
+  for (const asset of ["default_metabot.png", "live-stage", "genesis-stage"]) {
+    assert.ok(statSync(resolve(import.meta.dirname, "../public", asset)), `missing source asset ${asset}`);
+    assert.ok(
+      dockerfile.includes(`COPY --from=build /app/public/${asset} ./public/${asset}`),
+      `runtime image must copy public/${asset}`,
+    );
+  }
+});
+
 test("cloud image CI requires the control-plane and conformance legs", () => {
   const workflow = readFileSync(resolve(import.meta.dirname, "../.github/workflows/cloud-images.yml"), "utf8");
   assert.doesNotMatch(workflow, /hashFiles\('cloud\/control-plane\/Dockerfile'\)/);

@@ -177,6 +177,10 @@ COPY --from=prod-deps /app/package.json ./package.json
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/dist-electron ./dist-electron
+# Unpackaged Electron resolves Studio assets from public/ rather than dist/.
+COPY --from=build /app/public/default_metabot.png ./public/default_metabot.png
+COPY --from=build /app/public/live-stage ./public/live-stage
+COPY --from=build /app/public/genesis-stage ./public/genesis-stage
 # Mobile/PWA bundle (build:mobile output): the gateway serves /app/* from it
 # in server mode (gateway wiring looks next to the app path); absent → 404.
 COPY --from=build /app/dist-mobile ./dist-mobile
