@@ -49,6 +49,14 @@ function loadModules() {
   }
 }
 
+test('idle runtime reap shortens under memory pressure without disturbing healthy or active-slot policy', () => {
+  const { resolveDshRuntimeIdleTtlMsForMemory } = loadModules()
+  assert.equal(resolveDshRuntimeIdleTtlMsForMemory(30 * 60_000, 2048), 30 * 60_000)
+  assert.equal(resolveDshRuntimeIdleTtlMsForMemory(30 * 60_000, 512), 2 * 60_000)
+  assert.equal(resolveDshRuntimeIdleTtlMsForMemory(60_000, 512), 60_000, 'pressure never extends a shorter custom TTL')
+  assert.equal(resolveDshRuntimeIdleTtlMsForMemory(0, 512), 0, 'zero keeps idle reaping disabled')
+})
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const waitFor = async (predicate, timeoutMs = 25000, what = 'condition') => {
   const deadline = Date.now() + timeoutMs
@@ -78,8 +86,8 @@ test('a model joining the provider union boots a successor runtime; the in-fligh
     // process is not settled by the grace path alone — the idle-slot reap is
     // the eventual closer, and it closes draining kernels with the slot.
     // The test shrinks both windows (500ms grace, 2s reap TTL) so the "no
-    // leaked process" invariant is observable inside the test; the production
-    // defaults are 10 minutes / 30 minutes.
+    // leaked process" invariant is observable inside the test; production uses
+    // 10/30 minutes while healthy and a 2-minute idle TTL under memory pressure.
     kernelActivityGraceMs: 500,
     runtimeIdleTtlMs: 2000,
     // Bridge the mock's `bash` tool call as a genuinely long host tool so the

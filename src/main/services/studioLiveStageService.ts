@@ -9,7 +9,8 @@ import { renderLiveStageHtml } from './studioLiveStageTemplate';
 import { resolveStudioLiveStageTemplate, type StudioLiveStageTemplateResolution } from './studioLiveStageTemplateRegistry';
 import { directLiveStageScene } from './studioLiveStageDirector';
 
-const MAX_DIRECTOR_CALLS_PER_TURN = 8;
+const MAX_DIRECTOR_CALLS_PER_TURN = 4;
+const MAX_DIRECTOR_CONSECUTIVE_FAILURES = 2;
 const DIRECTOR_COALESCE_MS = 900;
 const INTERACTION_POLL_MS = 400;
 
@@ -31,6 +32,7 @@ type LiveStageRun = {
   seen: Set<string>;
   submissionId: string | null;
   directorCalls: number;
+  directorConsecutiveFailures: number;
   directorTimer: NodeJS.Timeout | null;
   directorInFlight: boolean;
   directorDirty: boolean;
@@ -161,13 +163,13 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
   }
 
   function scheduleDirector(run: LiveStageRun): void {
-    if (run.state.family === 'report-ready' || !currentSettings.directorEnabled || !run.state.enabled || run.directorCalls >= MAX_DIRECTOR_CALLS_PER_TURN) return;
+    if (run.state.family === 'report-ready' || run.directorConsecutiveFailures >= MAX_DIRECTOR_CONSECUTIVE_FAILURES || !currentSettings.directorEnabled || !run.state.enabled || run.directorCalls >= MAX_DIRECTOR_CALLS_PER_TURN) return;
     run.directorDirty = true;
     if (run.directorInFlight || run.directorTimer) return;
     console.log(`[StudioLiveStage] Director scheduled for ${run.state.sessionId} family=${run.state.family}`);
     run.directorTimer = setTimeout(() => {
       run.directorTimer = null;
-      if (!run.directorDirty || run.directorInFlight || !currentSettings.directorEnabled || !run.state.enabled) return;
+      if (!run.directorDirty || run.directorInFlight || run.directorConsecutiveFailures >= MAX_DIRECTOR_CONSECUTIVE_FAILURES || !currentSettings.directorEnabled || !run.state.enabled) return;
       run.directorDirty = false;
       run.directorInFlight = true;
       run.directorCalls += 1;
@@ -181,6 +183,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       const directScene = deps.directScene ?? directLiveStageScene;
       console.log(`[StudioLiveStage] Director call ${run.directorCalls} started for ${run.state.sessionId}`);
       void directScene(snapshot, brainFor(session)).then(({ scene, usage }) => {
+        run.directorConsecutiveFailures = 0;
         const metrics = run.state.metrics;
         metrics.inputTokens += usage.inputTokens;
         metrics.outputTokens += usage.outputTokens;
@@ -195,7 +198,9 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
         console.log(`[StudioLiveStage] Director call ${run.directorCalls} finished: input=${usage.inputTokens} output=${usage.outputTokens} latencyMs=${usage.latencyMs}`);
         schedulePatch(run);
       }).catch((error) => {
+        run.directorConsecutiveFailures += 1;
         run.state.metrics.fallbackCount += 1;
+        if (run.directorConsecutiveFailures >= MAX_DIRECTOR_CONSECUTIVE_FAILURES) run.directorDirty = false;
         console.log(`[StudioLiveStage] Director call ${run.directorCalls} failed: ${error instanceof Error ? error.message : String(error)}`);
         schedulePatch(run);
       }).finally(() => {
@@ -228,6 +233,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       seen: new Set(),
       submissionId: null,
       directorCalls: 0,
+      directorConsecutiveFailures: 0,
       directorTimer: null,
       directorInFlight: false,
       directorDirty: false,
