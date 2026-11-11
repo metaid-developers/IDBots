@@ -2513,7 +2513,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     autoLaunch: '开机自启动',
     autoLaunchDescription: '系统启动时自动运行应用',
     studioLiveStage: 'Studio 实时可视化舞台',
-    studioLiveStageDescription: '在右侧用连续液态场景展示 Twin 的工作过程，默认开启',
     studioLiveStageToggle: '启用 Live Stage',
     studioLiveStageDirector: '生成式可视化 Director',
     studioLiveStageDirectorDescription: '让第二个 LLM 在受约束的场景补丁内调整文案与动效，并显示 token 用量；关闭时使用确定性场景',
@@ -3210,7 +3209,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     botOffline: '离线',
 
     // User Settings (human identity)
-    userSettingsTab: '用户',
     paymentInfoTitle: '收款信息',
     paymentInfoDescription: '配置支付宝收款方式，用于在聊天卡片/订单中接收法币付款；买家转账直接进入你的支付宝账户，平台不经手资金。',
     paymentInfoNeverOnChain: '加密保存·绝不上链',
@@ -6261,7 +6259,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     autoLaunch: 'Launch at Login',
     autoLaunchDescription: 'Automatically start the app when you log in',
     studioLiveStage: 'Studio Live Stage',
-    studioLiveStageDescription: 'Show your Twin’s work as a continuous liquid scene in the right browser. On by default',
     studioLiveStageToggle: 'Enable Live Stage',
     studioLiveStageDirector: 'Generative visual Director',
     studioLiveStageDirectorDescription: 'Let a second LLM vary copy and motion through constrained scene patches with token metering. Off uses deterministic scenes',
@@ -6959,7 +6956,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     botOffline: 'Offline',
 
     // User Settings (human identity)
-    userSettingsTab: 'User',
     paymentInfoTitle: 'Receiving Info',
     paymentInfoDescription: 'Configure how you receive Alipay payments in chat cards/orders. Buyers pay directly into your Alipay account; the platform never touches the funds.',
     paymentInfoNeverOnChain: 'Encrypted · never on-chain',
