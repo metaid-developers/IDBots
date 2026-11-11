@@ -416,15 +416,26 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     return 'presented';
   }
 
-  function clearInteraction(sessionId: string, requestId: string): void {
+  function clearInteraction(sessionId: string, requestId: string): 'cleared' | 'absent' {
     const run = runs.get(sessionId);
-    if (!run) return;
+    if (!run) return 'absent';
     const before = run.state.revision;
     run.state = dismissLiveStageInteraction(run.state, requestId);
     if (run.state.revision !== before) {
       stopInteractionPolling(run);
       schedulePatch(run);
+      return 'cleared';
     }
+    return 'absent';
+  }
+
+  /** RequestIds whose stage card is currently showing (overlay dedup seed). */
+  function listPresentedRequestIds(): string[] {
+    const ids: string[] = [];
+    for (const run of runs.values()) {
+      if (run.state.interaction) ids.push(run.state.interaction.requestId);
+    }
+    return ids;
   }
 
   async function projectReport(
@@ -484,6 +495,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     observeError,
     presentInteraction,
     clearInteraction,
+    listPresentedRequestIds,
     projectReport,
     updateSettings,
     forget,

@@ -361,3 +361,15 @@ test('a stage-level skip returns every question as honestly unanswered', async (
   assert.deepEqual(responses[0].result.updatedInput.skippedQuestions, ['Q1', 'Q2']);
   assert.equal(service.getState('s').interaction, null, 'skip clears the card');
 });
+
+test('listPresentedRequestIds mirrors exactly the cards on stage', async (t) => {
+  const { service } = fixture(t);
+  assert.deepEqual(service.listPresentedRequestIds(), []);
+  service.observeMessage('s', message('u1', 'user', { origin: 'user', submissionId: 'sub-1' }));
+  const run = service.getRunInternals('s');
+  await run.queue;
+  service.presentInteraction('s', askRequest('presented-1'));
+  assert.deepEqual(service.listPresentedRequestIds(), ['presented-1']);
+  service.clearInteraction('s', 'presented-1');
+  assert.deepEqual(service.listPresentedRequestIds(), [], 'cleared cards leave the mirror');
+});

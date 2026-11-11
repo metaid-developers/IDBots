@@ -292,6 +292,9 @@ const App: React.FC = () => {
   const dispatch = useDispatch();
   const selectedModel = useSelector((state: RootState) => state.model.selectedModel);
   const currentSessionId = useSelector((state: RootState) => state.cowork.currentSessionId);
+  // The Studio chat's live session (browserCowork slice) — drives the stage
+  // card's overlay-dedup seat below.
+  const browserSessionId = useSelector((state: RootState) => state.browserCowork.currentSession?.id ?? null);
 
   // Register cowork stream listeners at app level: permission prompts can
   // arrive while the user is in Bot Browser or any non-cowork view, and they
@@ -1912,6 +1915,7 @@ const App: React.FC = () => {
       />
       <CoworkPermissionOverlay
         inlineSessionId={mainView === 'cowork' && showHomeSurface ? currentSessionId : null}
+        stageSessionId={botBrowserShell.isBrowserPaneVisible ? browserSessionId : null}
       />
       {isNewGroupTaskOpen && (
         <Suspense fallback={null}>

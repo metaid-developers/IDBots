@@ -25,6 +25,7 @@ import {
   setSubagentTasks,
   enqueuePendingPermission,
   dequeuePendingPermission,
+  setStageInteractionPresented,
   setConfig,
   clearCurrentSession,
 } from '../store/slices/coworkSlice';
@@ -324,8 +325,17 @@ class CoworkService {
     // relay, watchdog timeout, auto-allow, abort) leave no stale overlay.
     const permissionResolvedCleanup = cowork.onStreamPermissionResolved(({ requestId }) => {
       store.dispatch(dequeuePendingPermission({ requestId }));
+      store.dispatch(setStageInteractionPresented({ requestId, presented: false }));
     });
     this.streamListenerCleanups.push(permissionResolvedCleanup);
+
+    // Studio stage card presentation state: the overlay suppresses its
+    // duplicate corner card while the stage is showing the prompt for the
+    // session the user is looking at (2026-11-12 spec defect 2).
+    const stageInteractionCleanup = cowork.onStreamStageInteraction(({ requestId, presented }) => {
+      store.dispatch(setStageInteractionPresented({ requestId, presented }));
+    });
+    this.streamListenerCleanups.push(stageInteractionCleanup);
 
     // Renderer-reload replay (2026-10-23 ab67c828 incident): the permission
     // broadcast is raise-time only, so a window reload while an ask waits
@@ -335,6 +345,15 @@ class CoworkService {
     // idempotent with entries the live broadcast already delivered.
     void window.electron?.cowork?.listPendingPermissions?.().then((response) => {
       if (!response?.success || !Array.isArray(response.permissions)) return;
+      // Seed the stage-presentation set so reload-time replayed prompts do
+      // not flash their corner duplicates while the stage card shows them.
+      if (Array.isArray(response.stagePresentedRequestIds)) {
+        for (const requestId of response.stagePresentedRequestIds) {
+          if (typeof requestId === 'string' && requestId) {
+            store.dispatch(setStageInteractionPresented({ requestId, presented: true }));
+          }
+        }
+      }
       for (const entry of response.permissions) {
         if (typeof entry?.requestId !== 'string' || !entry.requestId) continue;
         store.dispatch(enqueuePendingPermission({

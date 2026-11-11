@@ -19,6 +19,14 @@ interface CoworkPermissionOverlayProps {
    * surfacing here because the A2A view has no composer takeover.
    */
   inlineSessionId: string | null;
+  /**
+   * Session whose Studio Live Stage is on screen with its browser pane
+   * visible. Prompts whose stage card is actually showing (per
+   * stagePresentedRequestIds, mirrored from main) are suppressed here while
+   * this session is in view — switching away nulls the seat and the corner
+   * card returns (2026-11-12 spec defect 2).
+   */
+  stageSessionId?: string | null;
 }
 
 const OVERLAY_TOP_PX = 56;
@@ -78,6 +86,8 @@ export const permissionsForOverlay = (
   inlineSessionId: string | null,
   sessionsById: Map<string, CoworkSessionSummary>,
   currentSession: { id: string; sessionType?: string } | null,
+  stageSessionId: string | null = null,
+  stagePresentedRequestIds: ReadonlySet<string> = new Set<string>(),
 ): CoworkPermissionRequest[] => {
   const inlineType = inlineSessionId
     ? sessionTypeOf(inlineSessionId, sessionsById, currentSession)
@@ -85,6 +95,15 @@ export const permissionsForOverlay = (
   let composerTaken = false;
   const visible: CoworkPermissionRequest[] = [];
   for (const entry of pendingPermissions) {
+    // The Studio stage card is the seat for prompts it is actually showing;
+    // the corner duplicate only returns when the user leaves that view (the
+    // stage seat nulls) or main reports the prompt as not presented (stage
+    // off, queued, A2A/delete-safety declined — those never present).
+    if (stageSessionId != null
+      && entry.sessionId === stageSessionId
+      && stagePresentedRequestIds.has(entry.requestId)) {
+      continue;
+    }
     if (entry.sessionId === inlineSessionId && inlineType === 'a2a' && a2aApprovalOf(entry)) {
       continue;
     }
@@ -216,10 +235,11 @@ const PermissionOverlayCard: React.FC<{
  * and open a new column to the left when the column is full. Each timed card
  * shows the remaining seconds on the button the watchdog will press.
  */
-const CoworkPermissionOverlay: React.FC<CoworkPermissionOverlayProps> = ({ inlineSessionId }) => {
+const CoworkPermissionOverlay: React.FC<CoworkPermissionOverlayProps> = ({ inlineSessionId, stageSessionId = null }) => {
   const pendingPermissions = useSelector((state: RootState) => state.cowork.pendingPermissions);
   const sessions = useSelector((state: RootState) => state.cowork.sessions);
   const currentSession = useSelector((state: RootState) => state.cowork.currentSession);
+  const stagePresentedRequestIds = useSelector((state: RootState) => state.cowork.stagePresentedRequestIds);
   const cardNodes = useRef(new Map<string, HTMLDivElement>());
   const [heights, setHeights] = useState<Record<string, number>>({});
   const [viewportHeight, setViewportHeight] = useState(() => (
@@ -229,9 +249,10 @@ const CoworkPermissionOverlay: React.FC<CoworkPermissionOverlayProps> = ({ inlin
     () => new Map(sessions.map((session) => [session.id, session])),
     [sessions],
   );
+  const stagePresentedSet = useMemo(() => new Set(stagePresentedRequestIds), [stagePresentedRequestIds]);
   const permissions = useMemo(
-    () => permissionsForOverlay(pendingPermissions, inlineSessionId, sessionsById, currentSession),
-    [pendingPermissions, inlineSessionId, sessionsById, currentSession],
+    () => permissionsForOverlay(pendingPermissions, inlineSessionId, sessionsById, currentSession, stageSessionId, stagePresentedSet),
+    [pendingPermissions, inlineSessionId, sessionsById, currentSession, stageSessionId, stagePresentedSet],
   );
   const heightMap = useMemo(() => new Map(Object.entries(heights)), [heights]);
   const availableHeight = Math.max(120, viewportHeight - OVERLAY_TOP_PX - OVERLAY_BOTTOM_PX);
