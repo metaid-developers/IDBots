@@ -14,6 +14,13 @@
 /** Hard display cap: an ack is 1-2 sentences, never a paragraph. */
 export const TURN_ACK_REPLY_MAX_CHARS = 160;
 
+/** Shared wall-clock ceiling across primary, fallback, and one retry. */
+export const TURN_ACK_TOTAL_BUDGET_MS = 6_000;
+
+export function remainingTurnAckBudgetMs(startedAt: number, now = Date.now()): number {
+  return Math.max(0, TURN_ACK_TOTAL_BUDGET_MS - Math.max(0, now - startedAt));
+}
+
 /**
  * CJK script detector for the ack language guard: ideographs (unified, ext-A,
  * compatibility) and kana. CJK punctuation (U+3000-U+303F, fullwidth forms)

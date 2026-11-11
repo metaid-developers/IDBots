@@ -14,6 +14,10 @@ export type BotBrowserTabCommand = {
   tabId?: number;
   /** Display label for a newly opened tab (open-tab only). */
   label?: string;
+  /** Keep the target tab active after navigate-tab resolves. */
+  activate?: boolean;
+  /** Renderer-only routing flag: preserve the current app surface. */
+  background?: boolean;
 };
 
 export type BotBrowserTabInfo = {
@@ -123,8 +127,16 @@ export function createBotBrowserTabBridge(options: {
     });
 
     try {
-      // desktop-only: addressed to a specific window (not a broadcast)
-      targetWindow.webContents.send('botBrowser:tab-command', { requestId, command });
+      // desktop-only: addressed to a specific window (not a broadcast).
+      // focusWindow:false also preserves the current app surface, except for
+      // an explicit activate:true final-report reveal.
+      targetWindow.webContents.send('botBrowser:tab-command', {
+        requestId,
+        command: {
+          ...command,
+          background: opts?.focusWindow === false && command.activate !== true,
+        },
+      });
       // Background writes (Bot Internet projections into a non-active tab)
       // pass focusWindow: false so they never steal the OS focus.
       if (opts?.focusWindow !== false) {

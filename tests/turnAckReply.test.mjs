@@ -12,6 +12,7 @@ import {
   buildTurnStatusGoalMessages,
   containsCjk,
   resolveTurnAckActivity,
+  remainingTurnAckBudgetMs,
   sanitizeTurnAckReply,
   sanitizeTurnAckReplyForInput,
   sanitizeTurnStatusGoal,
@@ -86,6 +87,13 @@ test('turnAckReply: no phrase pool survives anywhere in the module', () => {
     'the LLM ack prompt pins the human, non-boilerplate voice');
   assert.ok(source.includes('a greeting gets a greeting back'),
     'greetings are answered like a person would');
+});
+
+test('turn ack total budget uses wall-clock time and clamps at zero', () => {
+  assert.equal(remainingTurnAckBudgetMs(1000, 2000), 5000);
+  assert.equal(remainingTurnAckBudgetMs(1000, 7000), 0);
+  assert.equal(remainingTurnAckBudgetMs(1000, 20000), 0);
+  assert.equal(remainingTurnAckBudgetMs(1000, 500), 6000, 'a clock adjustment cannot create negative elapsed time');
 });
 
 test('sanitizeTurnAckReply: passes clean text through, strips wrapping noise', () => {
@@ -248,7 +256,7 @@ test('runner: the LLM first sentence CREATES the bubble once, gated on identity/
     'a first sentence landing after real visible text (model, owner_update or an earlier opening) is dropped');
   assert.ok(body.includes('turn.dshTurnAckOpeningEmitted'),
     'at most one opening bubble per turn');
-  assert.ok(body.includes('generateTurnAckReply(userPrompt, sessionTitle)'),
+  assert.ok(body.includes('generateTurnAckReply(userPrompt, sessionTitle, ackAbort.signal)'),
     'the first sentence rides the one-shot cognitive path with session-title context');
   assert.ok(body.includes("metadata: { turnAckReply: true, isFinal: true }"),
     'the bubble is a final assistant message tagged turnAckReply');
@@ -406,7 +414,7 @@ test('runner: the cerebellum ack gate races the ack call; a direct-reply verdict
   const start = source.indexOf('private async emitTurnAckReplyBubble(');
   const body = source.slice(start, source.indexOf('private emitSdkRuntimeStatus(', start));
   const gateKick = body.indexOf('this.cerebellumTurnAckGate({ currentUserText: userPrompt })');
-  const ackCall = body.indexOf('generateTurnAckReply(userPrompt, sessionTitle)');
+  const ackCall = body.indexOf('generateTurnAckReply(userPrompt, sessionTitle, ackAbort.signal)');
   assert.ok(gateKick > 0, 'the gate is consulted inside the ack path');
   assert.ok(ackCall > 0, 'the ack generation still starts immediately');
   assert.ok(gateKick < ackCall, 'the gate is KICKED before the ack call — both run in parallel');
@@ -415,8 +423,9 @@ test('runner: the cerebellum ack gate races the ack call; a direct-reply verdict
   // stall — the gate must not be awaited before generation starts.
   const gateAwait = body.indexOf('const needsAck = await gatePromise');
   assert.ok(gateAwait > ackCall, 'the verdict is awaited only at emission time, after generation');
-  assert.ok(!body.includes('ackAbort.abort()'),
-    'a direct-reply verdict no longer cancels the ack that may be needed as the rescue');
+  const directVerdictBranch = body.slice(body.indexOf('if (needsAck === false)'), body.indexOf('if (!generatedReply)'));
+  assert.ok(!directVerdictBranch.includes('ackAbort.abort()'),
+    'a direct-reply verdict itself does not cancel the ack; only the total-budget timer may abort it');
   assert.ok(body.includes('if (needsAck === false)'),
     'only an explicit false verdict defers; true and null both emit immediately (fail-open)');
   assert.ok(body.includes('TURN_ACK_DIRECT_REPLY_GRACE_MS'),
@@ -472,18 +481,20 @@ test('runner: owner_update opening suppression keys on a real delivered opening,
     'a delivered owner_update opening marks the slot (second opening still rejected)');
 });
 
-test('runner: an empty first ack attempt gets exactly one retry, gates re-applied across the wait', () => {
+test('runner: an empty first ack attempt gets one retry inside the shared total budget', () => {
   const source = read('src/main/libs/coworkRunner.ts');
   const start = source.indexOf('private async emitTurnAckReplyBubble(');
   const body = source.slice(start, source.indexOf('private emitSdkRuntimeStatus(', start));
-  // A stall kills both attempts in one tick (their 4s timeout timers fire late
-  // together); one retry on the recovered loop completes the fail-open posture.
   assert.ok(body.includes('if (!generatedReply) {'), 'the retry branch keys on an empty first attempt');
   assert.ok(body.includes("coworkLog('INFO', 'turn:ack', 'retrying first sentence after an empty first attempt'"),
     'the retry logs itself');
-  assert.ok(body.includes('setTimeout(resolve, 1500)'), 'the retry waits 1.5s for the loop to recover');
-  assert.ok(body.includes('generatedReply = await generateTurnAckReply(userPrompt, sessionTitle)'),
-    'the retry is a fresh call without the gate abort signal');
+  assert.ok(body.includes('Math.min(1500, remainingTurnAckBudgetMs(startedAt))'),
+    'the retry wait is capped by the remaining total budget');
+  assert.ok(body.includes('generatedReply = await generateTurnAckReply(userPrompt, sessionTitle, ackAbort.signal)'),
+    'the retry shares the same total-budget abort signal');
+  assert.ok(body.includes('setTimeout(() => ackAbort.abort(), TURN_ACK_TOTAL_BUDGET_MS)'),
+    'primary, fallback and retry share one wall-clock abort timer');
+  assert.ok(body.includes('budgetExpired()'), 'an expired budget prevents any further retry or emission');
   assert.equal(body.split('generateTurnAckReply(userPrompt').length - 1, 2,
     'at most two ack calls per turn (first attempt + one retry)');
   // A direct-reply verdict can still need this retry when its held generation

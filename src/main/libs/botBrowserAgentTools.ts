@@ -53,9 +53,9 @@ export type BotBrowserControl = {
   execute(command: BotBrowserTabCommand): Promise<BotBrowserTabCommandResult>;
   /**
    * Bot Internet projector (owner ruling 2026-11-07): open or navigate the
-   * session's projection tab to a preview-metaapp URI. The session's FIRST
-   * projection announces (pane reveal + window focus); later ones write the
-   * tab silently, never stealing the tab or the OS focus.
+   * session's projection tab to a preview-metaapp URI. Live Stage updates stay
+   * in the background; final reports reveal the projector without changing
+   * the OS focus.
    */
   projectReport?(input: { sessionId: string; localPath: string; title?: string }): Promise<{
     uri: string;
@@ -497,7 +497,7 @@ export function buildBotBrowserAgentTools(deps: {
 
   const botBrowserPreviewLocal = tool(
     'bot_browser_preview_local',
-    'Preview a local HTML app (directory containing index.html, or a single html/pdf/image/video/audio file) in the Bot Browser via preview-metaapp://. Use this to preview a MetaApp you are building or editing locally BEFORE publishing it on-chain. Requires an absolute path. The preview reads live from disk, so the user can reload to see your latest edits. With projection=true, this is a BOT INTERNET PROJECTOR call: the file becomes the session\'s projected report page (first projection opens and announces the projector tab; later ones replace the page in the same tab silently, and the owner can go Back through previous pages). When NOT to use: to open an already-published ON-CHAIN app use bot_browser_open_uri with metaapp://<pinId>; this tool is only for local files/directories, and it always needs an absolute path.',
+    'Preview a local HTML app (directory containing index.html, or a single html/pdf/image/video/audio file) in the Bot Browser via preview-metaapp://. Use this to preview a MetaApp you are building or editing locally BEFORE publishing it on-chain. Requires an absolute path. The preview reads live from disk, so the user can reload to see your latest edits. With projection=true, this is a BOT INTERNET PROJECTOR call: the file becomes the session\'s projected report page and the projector tab is automatically revealed (the owner can go Back through previous pages). When NOT to use: to open an already-published ON-CHAIN app use bot_browser_open_uri with metaapp://<pinId>; this tool is only for local files/directories, and it always needs an absolute path.',
     {
       path: z.string().min(1),
       newTab: z.boolean().optional(),
@@ -528,8 +528,8 @@ export function buildBotBrowserAgentTools(deps: {
             title: args.title?.trim() || undefined,
           });
           const how = outcome.announced
-            ? "Opened the session's projector tab (announced — the owner can see it now)."
-            : "Replaced the page in the session's projector tab (written silently; the owner's current view was not disturbed).";
+            ? "Opened the session's projector tab (the owner can see it now)."
+            : "Replaced and revealed the page in the session's projector tab.";
           return textResult(`Projected ${localPath} onto the Bot Internet projector. ${how} The owner can press Back in the projector to revisit earlier turns' pages.`);
         } catch (error) {
           return textResult(`Failed to project ${localPath} onto the projector: ${error instanceof Error ? error.message : String(error)}. ${SURFACE_HINT}`, true);

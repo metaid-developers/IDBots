@@ -49,6 +49,17 @@ test('bridge opens user-clicked URIs in a new tab and keeps agent opens in place
   );
 });
 
+test('final report navigation keeps the projector active while background updates restore the previous tab', () => {
+  const script = buildBrowserIframeBridgeScript();
+  const navigateBody = script.slice(
+    script.indexOf("} else if (action === 'navigate-tab')"),
+    script.indexOf("} else if (action === 'close-tab')"),
+  );
+  assert.match(navigateBody, /var activateTarget = input\.activate === true;/);
+  assert.match(navigateBody, /if \(!activateTarget && previousActive && previousActive\.id !== navTabId\)/);
+  assert.match(navigateBody, /await navigation;/);
+});
+
 test('bridge clears failed runtime readiness state so later intents can retry', () => {
   const script = buildBrowserIframeBridgeScript();
 

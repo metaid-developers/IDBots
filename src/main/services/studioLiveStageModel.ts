@@ -187,6 +187,9 @@ export function reduceLiveStageMessage(
   message: CoworkMessage,
   options: { workerName?: string; workerAvatar?: string } = {},
 ): LiveStageState {
+  if (state.family === 'report-ready' && (message.type !== 'user' || isLiveStageWorkerReport(message))) {
+    return state;
+  }
   let family = state.family;
   let headline: string | undefined;
   let caption: string | undefined;

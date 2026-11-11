@@ -80,6 +80,10 @@ export interface BotBrowserTabCommand {
   tabId?: number;
   /** Display label for a newly opened tab (open-tab only). */
   label?: string;
+  /** Keep the target tab active after navigate-tab resolves. */
+  activate?: boolean;
+  /** Preserve the current app surface instead of revealing Bot Browser. */
+  background?: boolean;
 }
 
 export interface BotBrowserTabInfo {

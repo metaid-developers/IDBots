@@ -14,9 +14,9 @@ import { buildBrowserPageDefinition } from '@openagentinternet/agent-browser-ui/
  * re-breaking Back/Forward.
  */
 function extractFunctionBody(script: string, name: string): string {
-  const start = script.indexOf(`function ${name}() {`);
+  const start = script.indexOf(`function ${name}(`);
   assert.notEqual(start, -1, `function ${name} not found in ABC bundle`);
-  const bodyStart = start + `function ${name}() {`.length;
+  const bodyStart = script.indexOf('{', start) + 1;
   let depth = 1;
   for (let i = bodyStart; i < script.length; i += 1) {
     if (script[i] === '{') depth += 1;
@@ -37,4 +37,11 @@ test('shipped ABC page script re-syncs the toolbar after every history mutation'
     'applyActiveTabState must call syncToolbarForActiveTab so Back/Forward ' +
       'stay correct after in-tab navigation (regressed upstream?)',
   );
+});
+
+test('shipped ABC background navigation repaints the cleared target pane on the next reveal', () => {
+  const definition = buildBrowserPageDefinition();
+  const body = extractFunctionBody(definition.script || '', 'resolveUri');
+  assert.match(body, /resolvedTab\.loading = false;\s+resolvedTab\.painted = false;/);
+  assert.match(body, /errorTab\.loading = false;\s+errorTab\.painted = false;/);
 });

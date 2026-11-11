@@ -21,7 +21,7 @@ overrides:
   rimraf: 2.7.1
 
 patchedDependencies:
-  '@openagentinternet/agent-browser-ui@0.10.2': 22cd478b36e486658afd7cf861197e01ff70acb40d815c36f463986b05395b4e
+  '@openagentinternet/agent-browser-ui@0.10.2': 8c854a6bcf34ee790f286f08aa23b327990508e03f658fecd33be7d07d34bb22
 
 importers:
 
@@ -65,7 +65,7 @@ importers:
         version: 0.10.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.3.6)
       '@openagentinternet/agent-browser-ui':
         specifier: 0.10.2
-        version: 0.10.2(patch_hash=22cd478b36e486658afd7cf861197e01ff70acb40d815c36f463986b05395b4e)
+        version: 0.10.2(patch_hash=8c854a6bcf34ee790f286f08aa23b327990508e03f658fecd33be7d07d34bb22)
       '@reduxjs/toolkit':
         specifier: ^2.2.1
         version: 2.11.2(react-redux@9.2.0(@types/react@18.3.28)(react@18.3.1)(redux@5.0.1))(react@18.3.1)
@@ -5489,7 +5489,7 @@ snapshots:
       '@openagentinternet/agent-browser-host-contract': 0.10.2
       marked: 18.0.13
 
-  '@openagentinternet/agent-browser-ui@0.10.2(patch_hash=22cd478b36e486658afd7cf861197e01ff70acb40d815c36f463986b05395b4e)':
+  '@openagentinternet/agent-browser-ui@0.10.2(patch_hash=8c854a6bcf34ee790f286f08aa23b327990508e03f658fecd33be7d07d34bb22)':
     dependencies:
       '@openagentinternet/agent-browser-core': 0.10.2
       '@openagentinternet/agent-browser-host-contract': 0.10.2

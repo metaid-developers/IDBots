@@ -1,5 +1,5 @@
 diff --git a/dist/browser/app.js b/dist/browser/app.js
-index 0031e2b1e3aeafbf4c3356251c6ec0a4fb280bc2..acfedfb333ee7a31c54f6ae6a8653d8174d07a1c 100644
+index 0031e2b1e3aeafbf4c3356251c6ec0a4fb280bc2..61a2f5531cf28df103c81337f81823271d3e15fc 100644
 --- a/dist/browser/app.js
 +++ b/dist/browser/app.js
 @@ -9354,12 +9354,12 @@ function htmlFrameSandbox(url) {
@@ -17,6 +17,26 @@ index 0031e2b1e3aeafbf4c3356251c6ec0a4fb280bc2..acfedfb333ee7a31c54f6ae6a8653d81
    } catch (error) {
      return base;
    }
+@@ -9465,6 +9465,10 @@ async function resolveUri(uri, options) {
+     // tab is still the one the user is looking at. Otherwise, leave the active
+     // tab's mirrors and viewport untouched (switchTab re-renders from cache).
+     if (originTabId !== state.activeTabId) {
++      // showLoadingState cleared this tab's pane. Mark it unpainted so the next
++      // switchTab rehydrates the resolved content instead of revealing a blank.
++      resolvedTab.loading = false;
++      resolvedTab.painted = false;
+       clearLoadingState();
+       return result;
+     }
+@@ -9497,6 +9501,8 @@ async function resolveUri(uri, options) {
+     errorTab.errorCode = state.lastResolveError.code;
+     // Only sync mirrors + render when the originating tab is still active.
+     if (originTabId !== state.activeTabId) {
++      errorTab.loading = false;
++      errorTab.painted = false;
+       return null;
+     }
+     applyActiveTabState();
 diff --git a/dist/browserClientScript.js b/dist/browserClientScript.js
 index a47038833ba822f62dd4871b5428d67d4da16a1f..69faaf5600a390a14303aeccf13df0b983f35e9b 100644
 --- a/dist/browserClientScript.js
@@ -52,7 +72,7 @@ index 425639da3c5ef82b534e2dfee41d840016866bca..b231cfbbfdbdf99d9aa3e9024c0f9e1b
      const origin = text(pageOrigin);
      if (!origin)
 diff --git a/dist-cjs/browser/app.js b/dist-cjs/browser/app.js
-index e67e0f9c1c03ea3087decffc4b1d2bc07feec0b7..bf6a5e94accaa9b4b14754343e633c5a8e2836c3 100644
+index e67e0f9c1c03ea3087decffc4b1d2bc07feec0b7..6144f708dfbd551e479885d84200dcd19cc5e7fc 100644
 --- a/dist-cjs/browser/app.js
 +++ b/dist-cjs/browser/app.js
 @@ -9357,12 +9357,12 @@ function htmlFrameSandbox(url) {
@@ -70,6 +90,26 @@ index e67e0f9c1c03ea3087decffc4b1d2bc07feec0b7..bf6a5e94accaa9b4b14754343e633c5a
    } catch (error) {
      return base;
    }
+@@ -9468,6 +9468,10 @@ async function resolveUri(uri, options) {
+     // tab is still the one the user is looking at. Otherwise, leave the active
+     // tab's mirrors and viewport untouched (switchTab re-renders from cache).
+     if (originTabId !== state.activeTabId) {
++      // showLoadingState cleared this tab's pane. Mark it unpainted so the next
++      // switchTab rehydrates the resolved content instead of revealing a blank.
++      resolvedTab.loading = false;
++      resolvedTab.painted = false;
+       clearLoadingState();
+       return result;
+     }
+@@ -9500,6 +9504,8 @@ async function resolveUri(uri, options) {
+     errorTab.errorCode = state.lastResolveError.code;
+     // Only sync mirrors + render when the originating tab is still active.
+     if (originTabId !== state.activeTabId) {
++      errorTab.loading = false;
++      errorTab.painted = false;
+       return null;
+     }
+     applyActiveTabState();
 diff --git a/dist-cjs/browserClientScript.js b/dist-cjs/browserClientScript.js
 index 8a43c7fc12ff45b60315c40bc57cd555b8c87c13..f7d2d1697123775ac5e1d25a0e478e965fa33c09 100644
 --- a/dist-cjs/browserClientScript.js

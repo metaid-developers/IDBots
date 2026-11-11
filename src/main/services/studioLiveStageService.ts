@@ -9,7 +9,8 @@ import { renderLiveStageHtml } from './studioLiveStageTemplate';
 import { resolveStudioLiveStageTemplate, type StudioLiveStageTemplateResolution } from './studioLiveStageTemplateRegistry';
 import { directLiveStageScene } from './studioLiveStageDirector';
 
-const MAX_DIRECTOR_CALLS_PER_TURN = 8;
+const MAX_DIRECTOR_CALLS_PER_TURN = 4;
+const MAX_DIRECTOR_CONSECUTIVE_FAILURES = 2;
 const DIRECTOR_COALESCE_MS = 900;
 const INTERACTION_POLL_MS = 400;
 
@@ -26,10 +27,12 @@ type LiveStageRun = {
   state: LiveStageState;
   stagePath: string | null;
   tabId: number | null;
+  reportProjected: boolean;
   queue: Promise<void>;
   seen: Set<string>;
   submissionId: string | null;
   directorCalls: number;
+  directorConsecutiveFailures: number;
   directorTimer: NodeJS.Timeout | null;
   directorInFlight: boolean;
   directorDirty: boolean;
@@ -49,7 +52,6 @@ export type StudioLiveStageServiceDeps = {
   applyPatch(input: { tabId: number; state: LiveStageState }): Promise<void>;
   assetRoot: string;
   fallbackAvatarDataUri: string;
-  reportDelayMs?: number;
   directScene?: typeof directLiveStageScene;
   now?: () => number;
   /** Pulls queued stage-card clicks over the patch frame channel. */
@@ -151,6 +153,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
 
   function schedulePatch(run: LiveStageRun): void {
     enqueue(run, async () => {
+      if (run.reportProjected) return;
       if (run.tabId == null && deps.findStageTab) {
         run.tabId = await deps.findStageTab(run.stagePath!);
       }
@@ -160,13 +163,13 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
   }
 
   function scheduleDirector(run: LiveStageRun): void {
-    if (!currentSettings.directorEnabled || !run.state.enabled || run.directorCalls >= MAX_DIRECTOR_CALLS_PER_TURN) return;
+    if (run.state.family === 'report-ready' || run.directorConsecutiveFailures >= MAX_DIRECTOR_CONSECUTIVE_FAILURES || !currentSettings.directorEnabled || !run.state.enabled || run.directorCalls >= MAX_DIRECTOR_CALLS_PER_TURN) return;
     run.directorDirty = true;
     if (run.directorInFlight || run.directorTimer) return;
     console.log(`[StudioLiveStage] Director scheduled for ${run.state.sessionId} family=${run.state.family}`);
     run.directorTimer = setTimeout(() => {
       run.directorTimer = null;
-      if (!run.directorDirty || run.directorInFlight || !currentSettings.directorEnabled || !run.state.enabled) return;
+      if (!run.directorDirty || run.directorInFlight || run.directorConsecutiveFailures >= MAX_DIRECTOR_CONSECUTIVE_FAILURES || !currentSettings.directorEnabled || !run.state.enabled) return;
       run.directorDirty = false;
       run.directorInFlight = true;
       run.directorCalls += 1;
@@ -180,6 +183,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       const directScene = deps.directScene ?? directLiveStageScene;
       console.log(`[StudioLiveStage] Director call ${run.directorCalls} started for ${run.state.sessionId}`);
       void directScene(snapshot, brainFor(session)).then(({ scene, usage }) => {
+        run.directorConsecutiveFailures = 0;
         const metrics = run.state.metrics;
         metrics.inputTokens += usage.inputTokens;
         metrics.outputTokens += usage.outputTokens;
@@ -194,7 +198,9 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
         console.log(`[StudioLiveStage] Director call ${run.directorCalls} finished: input=${usage.inputTokens} output=${usage.outputTokens} latencyMs=${usage.latencyMs}`);
         schedulePatch(run);
       }).catch((error) => {
+        run.directorConsecutiveFailures += 1;
         run.state.metrics.fallbackCount += 1;
+        if (run.directorConsecutiveFailures >= MAX_DIRECTOR_CONSECUTIVE_FAILURES) run.directorDirty = false;
         console.log(`[StudioLiveStage] Director call ${run.directorCalls} failed: ${error instanceof Error ? error.message : String(error)}`);
         schedulePatch(run);
       }).finally(() => {
@@ -222,10 +228,12 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       state,
       stagePath: path.join(session.cwd, 'reports', `live-stage-${turnId}.html`),
       tabId: null,
+      reportProjected: false,
       queue: Promise.resolve(),
       seen: new Set(),
       submissionId: null,
       directorCalls: 0,
+      directorConsecutiveFailures: 0,
       directorTimer: null,
       directorInFlight: false,
       directorDirty: false,
@@ -279,7 +287,9 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     run.seen.add(message.id);
     if (submissionId) run.submissionId = submissionId;
     const worker = workerIdentityFor(message);
-    run.state = reduceLiveStageMessage(run.state, message, { workerName: worker.name, workerAvatar: worker.avatar });
+    const nextState = reduceLiveStageMessage(run.state, message, { workerName: worker.name, workerAvatar: worker.avatar });
+    if (nextState === run.state) return;
+    run.state = nextState;
     schedulePatch(run);
     scheduleDirector(run);
   }
@@ -287,7 +297,9 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
   function observeComplete(sessionId: string): void {
     const run = runs.get(sessionId);
     if (!run) return;
-    run.state = completeLiveStage(run.state);
+    const nextState = completeLiveStage(run.state);
+    if (nextState === run.state) return;
+    run.state = nextState;
     run.directorGeneration += 1;
     schedulePatch(run);
   }
@@ -406,11 +418,25 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     currentSettings = deps.getSettings();
     const run = runs.get(input.sessionId);
     if (!currentSettings.enabled || !run) return project();
+    run.directorGeneration += 1;
+    if (run.directorTimer) {
+      clearTimeout(run.directorTimer);
+      run.directorTimer = null;
+    }
+    run.directorDirty = false;
     run.state = reportReadyLiveStage(run.state);
     schedulePatch(run);
-    const delayMs = deps.reportDelayMs ?? 1000;
-    if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
-    return project();
+    await run.queue;
+    try {
+      const outcome = await project();
+      run.reportProjected = true;
+      stopInteractionPolling(run);
+      return outcome;
+    } catch (error) {
+      run.state = liveStageError(run.state);
+      schedulePatch(run);
+      throw error;
+    }
   }
 
   function updateSettings(settings: StudioLiveStageSettings): void {

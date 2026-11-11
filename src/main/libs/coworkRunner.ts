@@ -58,7 +58,7 @@ import {
 } from './coworkSteerChannel';
 import { getEnhancedEnv, getSkillHostEnv, getSkillsRoot, ensureCoworkTempDir, generateSessionTitle, generateTurnAckReply, generateOwnerWaitUpdate, generateTurnStatusGoal } from './coworkUtil';
 import type { OwnerWaitUpdateInput } from './turnAckReply';
-import { buildDeterministicTurnAckOpening, resolveTurnAckActivity } from './turnAckReply';
+import { buildDeterministicTurnAckOpening, remainingTurnAckBudgetMs, resolveTurnAckActivity, TURN_ACK_TOTAL_BUDGET_MS } from './turnAckReply';
 import { rewriteWin32McpStdioServer } from './win32StdioCommand';
 import { ensurePythonRuntimeReady } from './pythonRuntime';
 import { resolveBundledSkillsRoot } from './skillRoots';
@@ -10757,8 +10757,8 @@ export class CoworkRunner extends EventEmitter {
             : false
         ),
         log: (level, message, detail) => coworkLog(level.toUpperCase() as 'INFO' | 'WARN' | 'ERROR', 'dshTurnHub', message, detail as Record<string, unknown> | undefined),
-        // REQ-A-31: desktop keeps the 30-min idle reap; server mode reclaims
-        // the idle runtime (and its playwright MCP) within 10 minutes.
+        // REQ-A-31: desktop keeps a 30-min healthy idle reap; server mode uses
+        // 10 minutes. Either slot drops to 2 minutes under host memory pressure.
         runtimeIdleTtlMs: resolveDshRuntimeIdleTtlMs(DSH_RUNTIME_IDLE_TTL_MS),
       });
     }
@@ -17385,6 +17385,8 @@ export class CoworkRunner extends EventEmitter {
    * composed answer or tool-bound turn cannot leave the owner watching only
    * status phrases (session fb70ac99, 83s without visible text). A null
    * verdict (unconfigured/timeout/malformed) fails open to immediate emitting.
+   * Primary, fallback, and the empty-output retry share one 6-second wall-clock
+   * budget so a stalled loop cannot restart another full retry chain on resume.
    * Dropped entirely when the model's own visible text beat it, a newer turn
    * started, or the output was unusable — no bubble beats a canned or wrong
    * one.
@@ -17396,24 +17398,26 @@ export class CoworkRunner extends EventEmitter {
     turnSerial: number,
   ): Promise<void> {
     if (resolveTurnAckActivity(userPrompt) === 'verify_delivery') return;
+    const ackAbort = new AbortController();
+    const budgetTimer = setTimeout(() => ackAbort.abort(), TURN_ACK_TOTAL_BUDGET_MS);
+    budgetTimer.unref?.();
     try {
       const startedAt = Date.now();
+      const budgetExpired = () => ackAbort.signal.aborted || remainingTurnAckBudgetMs(startedAt) <= 0;
       const gatePromise = this.cerebellumTurnAckGate
         ? this.cerebellumTurnAckGate({ currentUserText: userPrompt }).catch(() => null)
         : null;
       const sessionTitle = this.store.getSession(sessionId)?.title ?? null;
-      let generatedReply = await generateTurnAckReply(userPrompt, sessionTitle);
+      let generatedReply = await generateTurnAckReply(userPrompt, sessionTitle, ackAbort.signal);
       let deferredForDirectReply = false;
       if (gatePromise) {
-        // Emission latency is max(ack call, gate budget) — the gate settles
-        // within its own 1.5s abort window, long before the ack's 4s attempt
-        // timeout, so a healthy turn pays nothing for the gate.
         const needsAck = await gatePromise;
+        if (budgetExpired()) return;
         if (needsAck === false) {
           deferredForDirectReply = true;
-          const graceMs = Math.max(
-            0,
-            CoworkRunner.TURN_ACK_DIRECT_REPLY_GRACE_MS - (Date.now() - startedAt),
+          const graceMs = Math.min(
+            remainingTurnAckBudgetMs(startedAt),
+            Math.max(0, CoworkRunner.TURN_ACK_DIRECT_REPLY_GRACE_MS - (Date.now() - startedAt)),
           );
           coworkLog('INFO', 'turn:ack', 'direct reply expected; first sentence held for the visible-reply grace window', {
             sessionId,
@@ -17422,33 +17426,39 @@ export class CoworkRunner extends EventEmitter {
           if (graceMs > 0) {
             await new Promise((resolve) => setTimeout(resolve, graceMs));
           }
-          if (this.activeSessions.get(sessionId) !== turn
+          if (budgetExpired()
+            || this.activeSessions.get(sessionId) !== turn
             || turn.dshTurnAckSerial !== turnSerial
             || turn.dshTurnAckVisibleTextSeen
             || turn.dshTurnAckOpeningEmitted) return;
         }
       }
       if (!generatedReply) {
-        // 2026-11-03 session 32a29372: a main-process stall kills BOTH attempts
-        // in one tick — their 4s timeout timers fire late and simultaneously —
-        // leaving the turn with no first sentence even though the gate failed
-        // open. One retry on the recovered loop completes the fail-open
-        // posture; the identity/visible-text drop gates re-apply across the
-        // wait, so a retry never lands on a settled or superseded turn.
+        const retryDelayMs = Math.min(1500, remainingTurnAckBudgetMs(startedAt));
+        if (budgetExpired() || retryDelayMs <= 0) {
+          coworkLog('INFO', 'turn:ack', 'first sentence abandoned after the total time budget', {
+            sessionId,
+            budgetMs: TURN_ACK_TOTAL_BUDGET_MS,
+            elapsedMs: Date.now() - startedAt,
+          });
+          return;
+        }
         if (this.activeSessions.get(sessionId) !== turn
           || turn.dshTurnAckSerial !== turnSerial
           || turn.dshTurnAckVisibleTextSeen
           || turn.dshTurnAckOpeningEmitted) return;
-        await new Promise((resolve) => setTimeout(resolve, 1500));
-        if (this.activeSessions.get(sessionId) !== turn
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+        if (budgetExpired()
+          || this.activeSessions.get(sessionId) !== turn
           || turn.dshTurnAckSerial !== turnSerial
           || turn.dshTurnAckVisibleTextSeen
           || turn.dshTurnAckOpeningEmitted) return;
         coworkLog('INFO', 'turn:ack', 'retrying first sentence after an empty first attempt', { sessionId });
-        generatedReply = await generateTurnAckReply(userPrompt, sessionTitle);
+        generatedReply = await generateTurnAckReply(userPrompt, sessionTitle, ackAbort.signal);
         if (!generatedReply) return;
       }
-      if (this.activeSessions.get(sessionId) !== turn
+      if (budgetExpired()
+        || this.activeSessions.get(sessionId) !== turn
         || turn.dshTurnAckSerial !== turnSerial
         || turn.dshTurnAckVisibleTextSeen
         || turn.dshTurnAckOpeningEmitted) return;
@@ -17473,6 +17483,8 @@ export class CoworkRunner extends EventEmitter {
         sessionId,
         message: error instanceof Error ? error.message : String(error),
       });
+    } finally {
+      clearTimeout(budgetTimer);
     }
   }
 
@@ -17494,10 +17506,13 @@ export class CoworkRunner extends EventEmitter {
     turn: ActiveSession,
     turnSerial: number,
   ): Promise<void> {
+    const statusGoalAbort = new AbortController();
+    const budgetTimer = setTimeout(() => statusGoalAbort.abort(), TURN_ACK_TOTAL_BUDGET_MS);
+    budgetTimer.unref?.();
     try {
       const sessionTitle = this.store.getSession(sessionId)?.title ?? null;
-      const phrase = await generateTurnStatusGoal(userPrompt, sessionTitle);
-      if (!phrase) return;
+      const phrase = await generateTurnStatusGoal(userPrompt, sessionTitle, statusGoalAbort.signal);
+      if (statusGoalAbort.signal.aborted || !phrase) return;
       if (this.activeSessions.get(sessionId) !== turn
         || turn.dshTurnAckSerial !== turnSerial
         || turn.dshTurnAckVisibleTextSeen
@@ -17517,6 +17532,8 @@ export class CoworkRunner extends EventEmitter {
         sessionId,
         message: error instanceof Error ? error.message : String(error),
       });
+    } finally {
+      clearTimeout(budgetTimer);
     }
   }
 

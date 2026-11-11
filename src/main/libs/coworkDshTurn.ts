@@ -19,6 +19,7 @@
 // actions → turn end, with native steer/cancel and approval bridging.
 
 import { app } from 'electron'
+import os from 'node:os'
 import { join } from 'path'
 import {
   getMetaidRpcToken,
@@ -441,9 +442,22 @@ export const DSH_KERNEL_ACTIVITY_GRACE_MS = 10 * 60_000
  * has seen no in-flight turns for this long is reaped — kernel, subprocesses
  * and the playwright MCP it pre-starts all exit, and the next turn on the
  * slot cold-starts from disk. Server mode overrides this to 10 minutes via
- * resolveDshRuntimeIdleTtlMs (src/main/server/serverMode.ts).
+ * resolveDshRuntimeIdleTtlMs (src/main/server/serverMode.ts). Under host
+ * memory pressure the effective TTL drops to two minutes for idle slots.
  */
 export const DSH_RUNTIME_IDLE_TTL_MS = 30 * 60_000
+export const DSH_RUNTIME_PRESSURE_IDLE_TTL_MS = 2 * 60_000
+export const DSH_RUNTIME_LOW_FREE_MEMORY_MB = 1024
+
+export function resolveDshRuntimeIdleTtlMsForMemory(
+  baseTtlMs: number,
+  freeMemoryMb = os.freemem() / 1024 / 1024,
+): number {
+  if (baseTtlMs <= 0) return baseTtlMs
+  return freeMemoryMb < DSH_RUNTIME_LOW_FREE_MEMORY_MB
+    ? Math.min(baseTtlMs, DSH_RUNTIME_PRESSURE_IDLE_TTL_MS)
+    : baseTtlMs
+}
 
 const DSH_WARMUP_CALLBACKS: DshTurnCallbacks = {
   onMessage: () => 'dsh-warmup',
@@ -1475,8 +1489,10 @@ export class DshTurnHub {
   }
 
   private async reapIdleSlots(): Promise<void> {
-    const ttl = this.opts.runtimeIdleTtlMs ?? DSH_RUNTIME_IDLE_TTL_MS
-    if (ttl <= 0) return
+    const baseTtl = this.opts.runtimeIdleTtlMs ?? DSH_RUNTIME_IDLE_TTL_MS
+    if (baseTtl <= 0) return
+    const freeMemoryMb = os.freemem() / 1024 / 1024
+    const ttl = resolveDshRuntimeIdleTtlMsForMemory(baseTtl, freeMemoryMb)
     const now = Date.now()
     for (const [key, slot] of [...this.slots]) {
       // Retire drained kernels whose turns have all settled, even when the
@@ -1487,7 +1503,7 @@ export class DshTurnHub {
       // the slot's processes alive through the reap the same way.
       if (slot.kernel.hasRecentActivity(this.kernelActivityGraceMs)) continue
       if (now - slot.lastUsedAt < ttl) continue
-      this.opts.log?.('info', 'dshTurnHub.reapIdleRuntime', { runtime: key })
+      this.opts.log?.('info', 'dshTurnHub.reapIdleRuntime', { runtime: key, idleTtlMs: ttl, sysFreeMB: Math.round(freeMemoryMb) })
       await slot.kernel.close().catch(() => undefined)
       for (const kernel of slot.drainingKernels) await kernel.close().catch(() => undefined)
       this.slots.delete(key)

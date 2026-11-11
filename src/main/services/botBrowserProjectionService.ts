@@ -3,20 +3,16 @@
  * docs/design/bot-internet-projector-mode.md): per-session projection-tab
  * bookkeeping for bot-authored HTML reports.
  *
- * Each projector session owns ONE projection tab in the Bot Browser. The first
- * projection ANNOUNCES (openUri broadcast switches the internet pane to the
- * browser and focuses the window, so the owner sees the projector light up);
- * every further projection navigates that same tab in place via the tab
- * bridge's navigate-tab action with focusWindow: false — the page is written
- * silently, never stealing the tab or the OS focus. ABC's per-tab history
- * stack makes previous turns' pages reachable with the back button for free.
+ * Each projector session owns ONE projection tab in the Bot Browser. Live
+ * Stage updates navigate that tab in the background; a finished report sets
+ * `reveal` so the same navigation also leaves the projector tab active. ABC's
+ * per-tab history stack makes earlier pages reachable with Back.
  *
  * The sessionId → tabId map is a hint, not truth: ABC tabs are in-memory, so
  * every projection re-validates the entry against the live tab list and falls
  * back to opening (announcing) again when the tab is gone.
  */
 
-import { sendBotBrowserOpenUri } from './botBrowserOpenUriService';
 import type { BotBrowserTabBridge } from './botBrowserTabBridge';
 
 export type BotBrowserProjectionInput = {
@@ -25,13 +21,15 @@ export type BotBrowserProjectionInput = {
   localPath: string;
   /** Short display label for the projection tab (used when the tab opens). */
   title?: string;
+  /** Leave this projection active after navigation (final owner-facing report). */
+  reveal?: boolean;
 };
 
 export type BotBrowserProjectionOutcome = {
   uri: string;
   /** The projection tab id, when it could be confirmed. */
   tabId: number | null;
-  /** true when this projection opened the session's tab (first projection). */
+  /** true when this projection opened or revealed the session's tab. */
   announced: boolean;
 };
 
@@ -48,66 +46,45 @@ export function createBotBrowserProjectionService(deps: {
 }): BotBrowserProjectionService {
   const projectionTabs = new Map<string, number>();
 
-  const findTabByUriPrefix = async (uriPrefix: string): Promise<number | null> => {
-    const result = await deps.getTabBridge().execute({ action: 'get-tabs' }, { focusWindow: false });
-    const match = (result.tabs ?? []).find((tab) => typeof tab.uri === 'string' && tab.uri.startsWith(uriPrefix));
-    return match ? match.id : null;
-  };
-
   const project = async (input: BotBrowserProjectionInput): Promise<BotBrowserProjectionOutcome> => {
     const uri = projectionUriForPath(input.localPath);
     const label = input.title?.trim() || undefined;
+    const reveal = input.reveal === true;
 
-    // 1) Cached tab: verify it is still alive, then navigate it in place,
-    //    silently (no window focus, no tab switch visible to the user).
     const cachedTabId = projectionTabs.get(input.sessionId);
     if (cachedTabId != null) {
+      let alive = false;
       try {
         const info = await deps.getTabBridge().execute(
           { action: 'get-tab-info', tabId: cachedTabId },
           { focusWindow: false },
         );
-        if (info.info) {
-          await deps.getTabBridge().execute(
-            { action: 'navigate-tab', tabId: cachedTabId, uri },
-            { focusWindow: false },
-          );
-          return { uri, tabId: cachedTabId, announced: false };
-        }
+        alive = info.info != null;
       } catch {
-        // Tab gone (user closed it, renderer rebuilt) — fall through.
+        alive = false;
+      }
+      if (alive) {
+        const result = await deps.getTabBridge().execute(
+          { action: 'navigate-tab', tabId: cachedTabId, uri, activate: reveal },
+          { focusWindow: false },
+        );
+        if (reveal && result.activeTab?.id !== cachedTabId) {
+          throw new Error('The projector tab did not become active.');
+        }
+        return { uri, tabId: cachedTabId, announced: reveal };
       }
       projectionTabs.delete(input.sessionId);
     }
 
-    // 2) Orphan recovery: another tab already shows this report directory
-    //    (e.g. the user re-opened it via the chat chip after a restart of the
-    //    map only). Re-adopt it instead of stacking a second projector tab.
-    const reportsDirPrefix = `${uri.slice(0, uri.lastIndexOf('/') + 1)}`;
-    try {
-      const orphanTabId = await findTabByUriPrefix(reportsDirPrefix);
-      if (orphanTabId != null) {
-        projectionTabs.set(input.sessionId, orphanTabId);
-        await deps.getTabBridge().execute(
-          { action: 'navigate-tab', tabId: orphanTabId, uri },
-          { focusWindow: false },
-        );
-        return { uri, tabId: orphanTabId, announced: false };
-      }
-    } catch {
-      // No window / bridge unavailable — the open path below reports honestly.
+    // Never adopt a tab by reports-directory prefix: sibling Studio sessions
+    // share that directory, so prefix matching can silently hijack another
+    // session's projector. ABC open-tab still dedupes an exact URI match.
+    const opened = await deps.getTabBridge().execute({ action: 'open-tab', uri, label });
+    const tabId = opened.openedTabId ?? opened.activeTab?.id ?? null;
+    if (tabId == null || opened.activeTab?.id !== tabId) {
+      throw new Error('The projector tab could not be opened and confirmed.');
     }
-
-    // 3) First projection for this session: open the tab AND announce it
-    //    (pane reveal + window focus) so the owner sees the projector light up.
-    sendBotBrowserOpenUri({ uri, newTab: true, label });
-    let tabId: number | null = null;
-    try {
-      tabId = await findTabByUriPrefix(uri);
-    } catch {
-      // Tab confirmation is best-effort; the projection itself went out.
-    }
-    if (tabId != null) projectionTabs.set(input.sessionId, tabId);
+    projectionTabs.set(input.sessionId, tabId);
     return { uri, tabId, announced: true };
   };
 
