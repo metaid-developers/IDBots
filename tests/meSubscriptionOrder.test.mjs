@@ -258,6 +258,10 @@ const flowSource = fs.readFileSync(
   path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../src/renderer/components/me/MePurchaseFlow.tsx'),
   'utf8',
 );
+const i18nSource = fs.readFileSync(
+  path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../src/renderer/services/i18n.ts'),
+  'utf8',
+);
 
 function createOrderBody() {
   const start = flowSource.indexOf('const handleCreateOrder = useCallback(');
@@ -383,11 +387,12 @@ test('MePurchaseFlow: idempotency keys are day-stable (UTC), not per-click', () 
   assert.doesNotMatch(body, /Date\.now\(\)`/);
 });
 
-test('MePurchaseFlow: upgrades confirm full-price first (interim until ABS proration ships)', () => {
+test('MePurchaseFlow: upgrades confirm first, notice reflects shipped proration, zero-amount lands on credited', () => {
   // Owner policy 2026-11-11: the first CTA press on a HIGHER tier opens an
-  // inline full-price notice; only the second press creates the order. When
-  // the server ships proration (Amendment v0.4 R6) the notice text flips to
-  // the credit breakdown — the two-step gate itself stays.
+  // inline notice; only the second press creates the order. With ABS R6
+  // shipped (2026-11-11) the notice no longer claims "not credited yet" —
+  // it defers to the payment step's actual amount, and the paying phase
+  // renders the server-reported credit line.
   assert.match(flowSource, /const isUpgradePlan = useCallback\(/);
   assert.match(flowSource, /const \[upgradeConfirmOpen, setUpgradeConfirmOpen\] = useState\(false\);/);
   assert.match(
@@ -398,13 +403,34 @@ test('MePurchaseFlow: upgrades confirm full-price first (interim until ABS prora
   assert.match(flowSource, /data-testid="me-upgrade-confirm"/);
   assert.match(flowSource, /i18nService\.t\('mePurchaseUpgradeNotice'\)/);
   assert.match(flowSource, /i18nService\.t\('mePurchaseUpgradeConfirm'\)/);
+  // The interim "not credited yet" copy must be gone — the server credits now.
+  assert.doesNotMatch(flowSource, /暂不折抵/);
+  assert.doesNotMatch(flowSource, /not credited yet/);
   // A selection/period/gateway change dismisses a stale confirm…
   assert.match(flowSource, /setUpgradeConfirmOpen\(false\);\s*\}, \[effectivePlanId, period, gateway\]\);/);
   // …and so do panel reopen and back-to-picker.
   assert.match(flowSource, /setCheckout\(null\);\s*\n\s*setOrderError\(''\);\s*\n\s*setErrorCode\(''\);\s*\n\s*setUpgradeConfirmOpen\(false\);/);
-  // Server-reported proration renders in the paying phase (client-ready for R6).
+  // Server-reported proration renders in the paying phase.
   assert.match(flowSource, /data-testid="me-proration-credit"/);
   assert.match(flowSource, /i18nService\.t\('mePurchaseProrationApplied'\)/);
+});
+
+test('MePurchaseFlow: zero-amount upgrade (credit ≥ list) lands on credited, never an error', () => {
+  // ABS R6 (shipped 2026-11-11): credit ≥ list credits the order in the
+  // same transaction and ships gatewayParams:null — the old "no checkout →
+  // unavailable" branch dead-looped those, because the day-stable
+  // idempotency key replays the same credited (QR-less) order forever.
+  const body = createOrderBody();
+  assert.match(body, /if \(!nextCheckout\.approvalUrl && !nextCheckout\.qrCode\) \{/);
+  assert.match(body, /mePaymentPhase\(nextCheckout\.status\) === 'credited'/);
+  assert.match(body, /void requestMeSubscription\(\);/);
+  // The credited page tells the zero-pay story instead of "payment successful".
+  assert.match(flowSource, /mePurchaseUpgradeZeroPay/);
+  assert.match(flowSource, /checkout\.payAmount === 0 && !checkout\.qrCode && !checkout\.approvalUrl/);
+  // Copy exists in BOTH locales (meI18nParity guards the namespace; this pins the key).
+  assert.match(i18nSource, /mePurchaseUpgradeZeroPay: '/);
+  const zhZero = i18nSource.indexOf("mePurchaseUpgradeZeroPay: '");
+  assert.ok(i18nSource.indexOf("mePurchaseUpgradeZeroPay: '", zhZero + 1) > 0, 'en zero-pay key missing');
 });
 
 test('MePurchaseFlow reset effect runs only on open/section transitions', () => {
