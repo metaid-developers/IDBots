@@ -4,6 +4,7 @@ import {
   ensureMeSnapshot,
   formatMe,
   getMeSnapshot,
+  isMeEffectivelySubscribed,
   meFromMilli,
   requestMeBalance,
   requestOpenMePurchase,
@@ -79,11 +80,25 @@ const MeIncrementPackCard: React.FC = () => {
   };
 
   const balance = snapshot.balance;
+  const subscribed = isMeEffectivelySubscribed(snapshot.subscription);
   const persistent = balance?.persistent;
   const topupMe = meFromMilli(persistent?.topupMilli);
   const earnedMe = meFromMilli(persistent?.earnedMilli);
   const bonusMe = meFromMilli(persistent?.bonusMilli);
   const packTotalMe = topupMe + earnedMe + bonusMe;
+  // Exhausted-grant hint (2026-11-11 hardening): with auto-deduct OFF the
+  // server gates every ME spend to the weekly grant — when the grant is out
+  // but the pack holds credit, spending fails with an unspecific error and
+  // the user never learns the switch is why. Say it here, next to the
+  // switch that fixes it.
+  const grantExhaustedPackUsable = Boolean(
+    balance
+    && subscribed
+    && (balance.weeklyGrant?.remainingMilli ?? 0) <= 0
+    && packTotalMe > 0
+    && !autoDeduct
+    && settingsReady,
+  );
 
   return (
     <section
@@ -149,6 +164,15 @@ const MeIncrementPackCard: React.FC = () => {
       <p className="mt-2 text-[10px] leading-relaxed text-claude-textSecondary dark:text-claude-darkTextSecondary">
         {i18nService.t('meIncrementPackNote')}
       </p>
+      {grantExhaustedPackUsable && (
+        <p
+          className="mt-1 text-[10px] leading-relaxed text-amber-600 dark:text-amber-400"
+          role="alert"
+          data-testid="me-increment-pack-exhausted-hint"
+        >
+          {i18nService.t('meIncrementPackExhaustedHint')}
+        </p>
+      )}
       {saveFailed && (
         <p className="mt-1 text-[10px] leading-relaxed text-red-500" role="alert">
           {i18nService.t('meIncrementPackToggleFailed')}

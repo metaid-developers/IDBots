@@ -80,11 +80,13 @@ test('the old ID.Bots top-up pseudo-entry is fully retired', () => {
 });
 
 test('credit pack card shows the persistent bucket with buy/details entry points', () => {
-  // Persistent bucket only (never the weekly grant).
+  // Persistent bucket only (never the weekly grant) — the pack total must
+  // never mix the weekly grant in; the grant is read solely by the
+  // exhausted-grant hint (2026-11-11).
   assert.match(packCardSource, /persistent\?\.topupMilli/);
   assert.match(packCardSource, /persistent\?\.earnedMilli/);
   assert.match(packCardSource, /persistent\?\.bonusMilli/);
-  assert.equal(packCardSource.includes('weeklyGrant'), false);
+  assert.doesNotMatch(packCardSource, /packTotalMe = [^;]*weeklyGrant/);
   // Sources breakdown reuses the shared panel labels.
   assert.match(packCardSource, /mePanelTopup/);
   assert.match(packCardSource, /mePanelBonus/);
@@ -95,6 +97,14 @@ test('credit pack card shows the persistent bucket with buy/details entry points
   assert.match(packCardSource, /requestOpenUsagePage\(\)/);
   // Copy says the pack never resets / is never weekly-cleared.
   assert.match(packCardSource, /meIncrementPackNote/);
+  // Exhausted-grant hint: grant out + pack holds credit + auto-deduct OFF —
+  // say why spending fails, next to the switch that fixes it.
+  assert.match(packCardSource, /grantExhaustedPackUsable/);
+  assert.match(packCardSource, /meIncrementPackExhaustedHint/);
+  assert.match(packCardSource, /data-testid="me-increment-pack-exhausted-hint"/);
+  const zh = i18nSource.indexOf("meIncrementPackExhaustedHint: '");
+  assert.ok(zh > 0, 'zh hint key missing');
+  assert.ok(i18nSource.indexOf("meIncrementPackExhaustedHint: '", zh + 1) > 0, 'en hint key missing');
 });
 
 test('auto-deduct toggle is server-authoritative with a kvStore mirror fallback', () => {
