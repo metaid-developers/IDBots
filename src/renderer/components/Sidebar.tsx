@@ -77,7 +77,7 @@ interface SidebarProps {
   isCollapsed: boolean;
   /** Expanded middle-column width in px (resizable by the user). */
   width?: number;
-  /** True while the user is dragging the resize handle; disables the width transition for lag-free dragging. */
+  /** True while the shell animates the width (seam drag OR the double-click snap tween); strips the width transition so the pointer/tween stays the single animator. */
   isResizing?: boolean;
 }
 

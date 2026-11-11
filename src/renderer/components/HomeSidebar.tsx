@@ -144,7 +144,7 @@ interface HomeSidebarProps {
   isCollapsed: boolean;
   /** Expanded sidebar width in px (resizable by the user). */
   width?: number;
-  /** True while the user drags the resize handle; disables the width transition. */
+  /** True while the shell animates the width (seam drag OR the double-click snap tween); strips the width transition so the pointer/tween stays the single animator. */
   isResizing?: boolean;
   updateBadge?: React.ReactNode;
 }

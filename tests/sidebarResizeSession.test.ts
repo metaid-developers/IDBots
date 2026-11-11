@@ -250,12 +250,13 @@ test('explicit finish(reason) tears down and reports the reason once', () => {
   assert.equal(ends.length, 1, 'finish is idempotent');
 });
 
-// ── Extreme damping (ratio-ruling companion; the band math is ratio-
-// independent, so the pure tests below exercise it against REPRESENTATIVE
-// bounds 240/548 — the retired 40:60 cap on a 1440 window. The live 3:7 cap
-// on that window is 411, a 171px range: narrower than 2× the 96px band, so
-// no identity zone exists there and the integration test further down covers
-// the live cap end to end instead.) ──
+// ── Extreme damping (drag-cap companion; the band math is cap-independent,
+// so the pure tests below exercise it against REPRESENTATIVE bounds 240/548
+// — the retired 40:60 cap on a 1440 window. The live cap on that window is
+// the 50:50 half-split 686 (2026-11-11 evening ruling); the double-click
+// 3:7 baseline is 411. The range is far wider than 2× the 96px band, so the
+// identity zone exists and the integration test further down covers the live
+// cap end to end.) ──
 
 test('dampedSidebarDelta is the identity far from both edges', () => {
   // Representative bounds min 240 / max 548 (needs a range wider than the two
@@ -307,12 +308,15 @@ test('easeOutCubic is a monotonic 0→1 curve with a soft landing', () => {
 });
 
 test('a shapeNext shaper damps the drag and clamp still bounds it', () => {
-  // Fixed-width ruling (2026-11-11): the live cap for a 1440 window is the
-  // absolute 480 max (split 1372 − right-pane minimum 480 = 892, capped).
+  // 50:50 drag-cap ruling (2026-11-11 evening; supersedes the same-day
+  // fixed-width 480px cap on this assertion — the damping-band math itself
+  // is cap-independent and unchanged): the live cap for a 1440 window is
+  // HALF the split (1372 / 2 = 686; the right-pane rule 892 is looser).
   // Band 96 means damping kicks in only within 96px of the cap — from the
-  // 320 default the room is 160, so the first +100 step arrives undamped.
+  // 320 default the room is 366, so the first three +100 steps arrive
+  // undamped and only the last one damps.
   const cap = maxSidebarWidthForWindow(1440);
-  assert.equal(cap, 480, 'the live drag cap on a 1440 window');
+  assert.equal(cap, 686, 'the live 50:50 drag cap on a 1440 window');
   const { doc, widths, ends } = setup({
     clamp: (width) => clampSidebarWidth(width, 1440),
     shapeNext: (rawNext, current) => current + dampedSidebarDelta(
@@ -322,23 +326,25 @@ test('a shapeNext shaper damps the drag and clamp still bounds it', () => {
       cap,
     ),
   });
-  // +100 steps from the 320 default: the first lands at 420 (room 160 ≥ band
-  // 96 → undamped); the second steps into the band (room 60 < 96 → damped to
-  // exactly the remaining 60) and settles ON the cap at 480; every later move
-  // re-pursues a rawNext past the cap, the shaper returns delta 0, and the
-  // session's `next === width` gate filters it — no one frame per move.
+  // +100 steps from the 320 default: 420 (room 366 ≥ band 96 → undamped),
+  // 520 (room 266 → undamped), 620 (room 166 → undamped), then the fourth
+  // step enters the band (room 66 < 96 → damped to exactly the remaining 66)
+  // and settles ON the cap at 686; every later move re-pursues a rawNext
+  // past the cap, the shaper returns delta 0, and the session's
+  // `next === width` gate filters it — no one frame per move.
   doc.dispatch('mousemove', { clientX: 400, buttons: 1 });
   doc.dispatch('mousemove', { clientX: 500, buttons: 1 });
   doc.dispatch('mousemove', { clientX: 600, buttons: 1 });
   doc.dispatch('mousemove', { clientX: 700, buttons: 1 });
+  doc.dispatch('mousemove', { clientX: 800, buttons: 1 });
   doc.dispatch('mouseup');
-  assert.deepEqual(widths, [420, 480], 'second step damps into the cap; at-cap moves are filtered as no-ops');
+  assert.deepEqual(widths, [420, 520, 620, 686], 'third step still undamped; fourth damps into the cap; at-cap moves are filtered as no-ops');
   for (const width of widths) {
     assert.ok(width <= cap, `every width must respect the drag cap (${width} ≤ ${cap})`);
     assert.ok(width >= SIDEBAR_WIDTH_MIN);
   }
   assert.equal(ends[0].reason, 'mouseup');
-  assert.equal(ends[0].width, 480, 'the damped drag settles exactly at the cap');
+  assert.equal(ends[0].width, 686, 'the damped drag settles exactly at the 50:50 cap');
 });
 
 test('a shapeNext shaper still runs on no-delta moves; the session filters the no-op', () => {
@@ -353,8 +359,8 @@ test('a shapeNext shaper still runs on no-delta moves; the session filters the n
   });
   doc.dispatch('mousemove', { clientX: 320, buttons: 1 }); // +20 from startX 300
   assert.equal(shapeCalls, 1);
-  // Under the fixed-width cap (480 at 1440) the 320 default sits 160px under
-  // it — OUTSIDE the 96px damping band, so the +20 arrives undamped → 340.
+  // Under the 50:50 cap (686 at 1440) the 320 default sits 366px under it —
+  // OUTSIDE the 96px damping band, so the +20 arrives undamped → 340.
   // (Under the old 3:7 cap this same move was damped to +19.)
   assert.deepEqual(widths, [320 + dampedSidebarDelta(20, 320, SIDEBAR_WIDTH_MIN, cap)]);
   doc.dispatch('mousemove', { clientX: 320, buttons: 1 }); // same position

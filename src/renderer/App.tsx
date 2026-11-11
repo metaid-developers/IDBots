@@ -71,6 +71,7 @@ import {
   clampSidebarWidth,
   loadSidebarWidth,
   maxSidebarWidthForWindow,
+  migrateSidebarWidthStorage,
   shouldAutoHideSidebar,
   shouldAutoShowSidebar,
   sidebarSnapWidthForWindow,
@@ -161,6 +162,21 @@ const providerDisplayLabel = (providerKey: string): string => (
     : providerKey.charAt(0).toUpperCase() + providerKey.slice(1)
 );
 
+// Seam toggle pills (owner order ④, 2026-11-11 evening): ONE slim,
+// low-presence style shared by every face and every state. 细长 = h-6 w-2
+// with a 10px chevron (was h-7 w-3.5 with 12px); 低存在感 = no border, no
+// shadow, no backdrop blur, muted claude text tokens at reduced opacity;
+// Studio and BotWorks sit at the SAME spot — dead-center on the seam — in
+// every state (supersedes the Studio split pill hugging the browser edge).
+// The two split-state pills stay invisible until the seam itself is hovered
+// (or keyboard-focused); the two collapsed-state recover pills stay faintly
+// visible because when the column is gone they are the ONLY affordance.
+const SEAM_TOGGLE_PILL_CLASS = 'non-draggable absolute left-1/2 top-1/2 z-40 flex h-6 w-2 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-sm transition-[opacity,background-color,color] duration-150 text-claude-textSecondary/70 dark:text-claude-darkTextSecondary/70 hover:bg-claude-surfaceHover/70 dark:hover:bg-claude-darkSurfaceHover/70 hover:text-claude-text dark:hover:text-claude-darkText focus-visible:outline-none focus-visible:text-claude-text dark:focus-visible:text-claude-darkText focus-visible:ring-1 focus-visible:ring-claude-accent/40';
+// Split-state pills: reveal on seam hover / keyboard focus only.
+const SEAM_TOGGLE_PILL_ON_SEAM_CLASS = 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100';
+// Collapsed-state recover pills: faintly visible, strengthen on hover.
+const SEAM_TOGGLE_PILL_RECOVER_CLASS = 'opacity-80 hover:opacity-100 bg-claude-surface/70 dark:bg-claude-darkSurface/70';
+
 // Update phases: idle = none / silent download failed; downloading / applying =
 // silent background work (badge + modal stay in sync); ready = downloaded,
 // waiting for install; restartReady = macOS silent apply done, waiting restart.
@@ -206,8 +222,24 @@ const App: React.FC = () => {
   // leaves the tight zone, so a manual re-open while the window stays narrow
   // is not re-hidden by the very next resize event.
   const sidebarNarrowRef = useRef(false);
-  const [sidebarWidth, setSidebarWidth] = useState(() => loadSidebarWidth((key) => window.localStorage.getItem(key), 'home'));
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    // Shared-width ruling (2026-11-11 evening, owner order ①): seed the ONE
+    // shared storage key from the freshest remembered per-face width BEFORE
+    // the first read, so both faces restore the same width from the first
+    // paint — switching surfaces never changes the column width. The read
+    // itself stays pure (loadSidebarWidth) and synchronous.
+    migrateSidebarWidthStorage(
+      (key) => window.localStorage.getItem(key),
+      (key, value) => window.localStorage.setItem(key, value),
+    );
+    return loadSidebarWidth((key) => window.localStorage.getItem(key), 'home');
+  });
   const [isSidebarResizing, setIsSidebarResizing] = useState(false);
+  // True while the double-click snap tween is animating the width. Like the
+  // drag flag it strips the CSS width transition (both are passed into the
+  // columns as `isResizing`), so the rAF tween stays the single animator and
+  // the tween frames never fight a transition delay.
+  const [isSidebarTweening, setIsSidebarTweening] = useState(false);
   // The live resize session owns the pointer between its mousedown and the
   // single finish() funnel; only a session can move the column.
   const sidebarResizeRef = useRef<SidebarResizeSession | null>(null);
@@ -224,6 +256,7 @@ const App: React.FC = () => {
       window.cancelAnimationFrame(sidebarTweenRafRef.current);
       sidebarTweenRafRef.current = null;
     }
+    setIsSidebarTweening(false);
   }, []);
   const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
@@ -917,11 +950,12 @@ const App: React.FC = () => {
    *   3. onEnd is the ONE exit: mouseup, pointerup, pointercancel, Escape,
    *      window blur, tab hidden, mode switch and unmount all land in it and
    *      clear both the session ref and the visual flag;
-   *   4. Fixed-width ruling (2026-11-11, superseding the 3:7 ratio cap): the
-   *      cap is "the right pane keeps at least RIGHT_PANE_MIN_WIDTH_PX of the
-   *      live window" (live innerWidth read, never a stale closure), bounded
-   *      above by the 480px absolute max — so both faces can always drag
-   *      WIDER from their defaults, fixing Studio's one-directional seam.
+   *   4. 50:50 drag-cap ruling (2026-11-11 evening, superseding the same-day
+   *      fixed-width 480px cap): the cap is HALF the live middle+right split,
+   *      tightened by the right pane's minimum width on narrow windows and
+   *      floored at the minimum width — window width is read live per move so
+   *      a mid-drag window resize cannot be outrun by a captured constant.
+   *      Double-click stays the 3:7 baseline, always under this cap.
    *      The drag follows the pointer in real time, and shapeNext damps
    *      movement near both range edges so the column eases into the cap /
    *      the minimum instead of jerking against them.
@@ -938,8 +972,8 @@ const App: React.FC = () => {
       startWidth: sidebarWidth,
       mode: botBrowserShell.surfaceMode,
       button: event.button,
-      // Cap = the live middle+right split minus the right pane's minimum
-      // width (bounded by the 480px absolute max), floored at the minimum
+      // Cap = HALF the live middle+right split (50:50), tightened by the
+      // right pane's minimum width on narrow windows, floored at the minimum
       // width; window width is read live per move so a mid-drag window
       // resize cannot be outrun by a captured constant.
       clamp: (width) => clampSidebarWidth(width, window.innerWidth),
@@ -980,6 +1014,10 @@ const App: React.FC = () => {
     const target = clampSidebarWidth(sidebarSnapWidthForWindow(window.innerWidth), window.innerWidth);
     const from = sidebarWidthRef.current;
     if (from === target) return;
+    // The tween is the single animator while it runs: flag it so both columns
+    // strip their CSS width transition for the whole flight (see the
+    // isSidebarTweening state).
+    setIsSidebarTweening(true);
     const startedAt = performance.now();
     let last = from;
     const step = () => {
@@ -990,6 +1028,7 @@ const App: React.FC = () => {
         sidebarTweenRafRef.current = window.requestAnimationFrame(step);
       } else {
         sidebarTweenRafRef.current = null;
+        setIsSidebarTweening(false);
         window.localStorage.setItem(sidebarWidthStorageKey(mode), String(last));
       }
     };
@@ -1052,11 +1091,10 @@ const App: React.FC = () => {
     return () => window.removeEventListener('resize', fitSidebarToWindow);
   }, [botBrowserShell.surfaceMode, homeSeamCollapsed, studioSeamState, sidebarWidth]);
 
-  // Bot Home and Bot Internet keep independent widths: restore the surface's own
-  // comfortable width on every mode switch. The load still re-clamps against the
-  // live window — the fixed-width ruling caps the column at "right pane keeps
-  // its minimum width", so a width persisted by a much wider window never
-  // mounts past the drag cap.
+  // Shared-width ruling (2026-11-11 evening): both faces read the ONE shared
+  // storage key, so this restore is a same-value re-clamp on every switch —
+  // the seam never jumps between faces. The finish('mode-change') still ends
+  // a live drag or tween owned by the outgoing face before the width settles.
   useEffect(() => {
     sidebarResizeRef.current?.finish('mode-change');
     stopSidebarSnapTween();
@@ -1935,7 +1973,7 @@ const App: React.FC = () => {
               onSelectBrowserSession={handleSelectBrowserSession}
               isCollapsed={isSidebarCollapsed}
               width={sidebarWidth}
-              isResizing={isSidebarResizing}
+              isResizing={isSidebarResizing || isSidebarTweening}
               updateBadge={isSidebarCollapsed ? null : updateBadge}
             />
           </>
@@ -1981,7 +2019,7 @@ const App: React.FC = () => {
               onSelectBrowserSession={handleSelectBrowserSession}
               isCollapsed={isSidebarCollapsed}
               width={sidebarWidth}
-              isResizing={isSidebarResizing}
+              isResizing={isSidebarResizing || isSidebarTweening}
             />
           </>
         )}
@@ -1990,17 +2028,19 @@ const App: React.FC = () => {
             state on purpose — a control that lives inside a collapsible
             column is unusable the moment that column is gone, so the toggle
             sits on the seam: same spot to collapse and to bring the column
-            back. Drag caps where the right pane would keep less than its
-            minimum width (fixed-width ruling 2026-11-11, superseding the
-            3:7 ratio cap), with edge damping; double-click eases the column
-            to the 3:7 split with a short tween.
-            接缝按钮双向化 2026-11-09, then the 平铺态砍掉 same-day ruling:
-            the chevron(s) always point where the pane on their own side will
-            GROW on click. The BotWorks face shows a single chevron (its one
-            direction: collapse records, conversation fills); the Studio split
-            state keeps ONE chevron — ‹ hugs the browser column's edge (right
-            of the seam) — and its collapsed state shows a single recover
-            chevron (the › direction is retired with the 平铺态). */}
+            back. Drag caps at HALF the middle+right split (50:50 ruling
+            2026-11-11 evening, superseding the same-day fixed-width 480px cap
+            and the earlier 3:7 ratio cap), with edge damping; double-click
+            eases the column to the 3:7 split with a short tween.
+            接缝按钮双向化 2026-11-09, then the 平铺态砍掉 same-day ruling,
+            then the ④ pill unification 2026-11-11 evening: the chevron(s)
+            always point where the pane on their own side will GROW on click,
+            every pill shares one slim centered style, and the pills reveal on
+            seam hover (recover pills stay faintly visible). The BotWorks face
+            shows a single chevron (its one direction: collapse records,
+            conversation fills); the Studio split state keeps ONE chevron (‹)
+            and its collapsed state shows a single recover chevron (the ›
+            direction is retired with the 平铺态). */}
         <div
           role="separator"
           aria-orientation="vertical"
@@ -2017,14 +2057,16 @@ const App: React.FC = () => {
           {/* Painted line is 4px; the draggable band is 8px so grabbing the
               seam never requires pixel-hunting a 4px target. */}
           <span aria-hidden="true" className="absolute inset-y-0 -left-0.5 -right-0.5" />
-          {/* 接缝铰链分置定版 2026-11-09 (fourth order, supersedes the
-              same-spot two-pill pair), then the 平铺态砍掉 same-day ruling:
-              the pills are SLIM bars, and the Studio split state keeps ONE
-              pill — ‹ hugs the browser column's edge (right of the seam, the
-              browser grows leftward to fill). The › pill (conversation fills,
-              the retired fill state) is gone. The single-pill states (BotWorks
-              both states, Studio collapsed recover) stay centered on the seam
-              as before. */}
+          {/* 接缝铰链 pill 定版 2026-11-11 evening (owner order ④, supersedes
+              the 接缝铰链分置定版 2026-11-09 placement): ALL pills share ONE
+              slim, low-presence style (SEAM_TOGGLE_PILL_CLASS) and ONE spot —
+              dead-center on the seam — on both faces and in every state. The
+              split-state pills reveal on seam hover; the collapsed-state
+              recover pills stay faintly visible (sole affordance). Chevrons
+              still point where the pane on their own side will GROW on click:
+              BotWorks single direction (collapse records ⇄ expand records),
+              Studio split ‹ + collapsed › recover (the 平铺态 fill state
+              stays retired). */}
           {showHomeSurface ? (
             homeSeamCollapsed ? (
               /* BotWorks face, collapsed: the records column re-opens to the
@@ -2037,9 +2079,9 @@ const App: React.FC = () => {
                 onMouseDown={(event) => event.stopPropagation()}
                 onDoubleClick={(event) => event.stopPropagation()}
                 onClick={handleExpandHomeSeam}
-                className="non-draggable absolute left-1/2 top-1/2 z-40 flex h-7 w-3.5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded border transition-colors dark:border-claude-darkBorder/60 border-claude-border/60 dark:bg-claude-darkSurface/80 bg-claude-surface/80 shadow-subtle backdrop-blur-sm dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/50"
+                className={`${SEAM_TOGGLE_PILL_CLASS} ${SEAM_TOGGLE_PILL_RECOVER_CLASS}`}
               >
-                <PanelToggleIcon className="h-3 w-3" direction="right" />
+                <PanelToggleIcon className="h-2.5 w-2.5" direction="right" />
               </button>
             ) : (
               /* BotWorks face, split: collapse the records column left — the
@@ -2052,15 +2094,16 @@ const App: React.FC = () => {
                 onMouseDown={(event) => event.stopPropagation()}
                 onDoubleClick={(event) => event.stopPropagation()}
                 onClick={handleCollapseHomeSeam}
-                className="non-draggable absolute left-1/2 top-1/2 z-40 flex h-7 w-3.5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded border transition-colors dark:border-claude-darkBorder/60 border-claude-border/60 dark:bg-claude-darkSurface/80 bg-claude-surface/80 shadow-subtle backdrop-blur-sm dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/50"
+                className={`${SEAM_TOGGLE_PILL_CLASS} ${SEAM_TOGGLE_PILL_ON_SEAM_CLASS}`}
               >
-                <PanelToggleIcon className="h-3 w-3" direction="left" />
+                <PanelToggleIcon className="h-2.5 w-2.5" direction="left" />
               </button>
             )
           ) : studioSeamState === 'split' ? (
-            /* Studio face, split: one pill on the browser's side of the seam —
-               ‹ (the browser grows leftward to fill). The › pill and its
-               对话框占满 fill state are retired (平铺态砍掉). */
+            /* Studio face, split: one pill, centered on the seam like the
+               BotWorks split pill — ‹ (the browser grows leftward to fill).
+               The › pill and its 对话框占满 fill state are retired (平铺态
+               砍掉). */
             <button
               type="button"
               data-slot="panel-toggle"
@@ -2069,9 +2112,9 @@ const App: React.FC = () => {
               onMouseDown={(event) => event.stopPropagation()}
               onDoubleClick={(event) => event.stopPropagation()}
               onClick={handleCollapseStudioSeamLeft}
-              className="non-draggable absolute left-full top-1/2 z-40 ml-0.5 flex h-7 w-3.5 -translate-y-1/2 items-center justify-center rounded border transition-colors dark:border-claude-darkBorder/60 border-claude-border/60 dark:bg-claude-darkSurface/80 bg-claude-surface/80 shadow-subtle backdrop-blur-sm dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/50"
+              className={`${SEAM_TOGGLE_PILL_CLASS} ${SEAM_TOGGLE_PILL_ON_SEAM_CLASS}`}
             >
-              <PanelToggleIcon className="h-3 w-3" direction="left" />
+              <PanelToggleIcon className="h-2.5 w-2.5" direction="left" />
             </button>
           ) : (
             /* Studio face, collapsed (browser fills): one chevron pointing
@@ -2085,9 +2128,9 @@ const App: React.FC = () => {
               onMouseDown={(event) => event.stopPropagation()}
               onDoubleClick={(event) => event.stopPropagation()}
               onClick={handleExpandStudioSeam}
-              className="non-draggable absolute left-1/2 top-1/2 z-40 flex h-7 w-3.5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded border transition-colors dark:border-claude-darkBorder/60 border-claude-border/60 dark:bg-claude-darkSurface/80 bg-claude-surface/80 shadow-subtle backdrop-blur-sm dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/50"
+              className={`${SEAM_TOGGLE_PILL_CLASS} ${SEAM_TOGGLE_PILL_RECOVER_CLASS}`}
             >
-              <PanelToggleIcon className="h-3 w-3" direction="right" />
+              <PanelToggleIcon className="h-2.5 w-2.5" direction="right" />
             </button>
           )}
         </div>
@@ -2138,6 +2181,25 @@ const App: React.FC = () => {
         ) : null}
       </div>
       </div>
+
+      {/* Seam drag shield (owner order ②, 2026-11-11 evening): while a drag
+          session is live this transparent full-viewport layer keeps every
+          pointer event inside THIS document. The Bot Browser pane is a real
+          iframe — dragging the seam across it used to swallow mousemove/
+          mouseup mid-flight ("拖拽中丢失目标", dead zone then a jump when the
+          pointer re-emerged). The session's document-level listeners never
+          change; the shield just guarantees the events reach that document.
+          Same pattern as the CoworkSessionDetail markdown-viewer splitter's
+          drag overlay. It exists only while dragging, so normal clicks are
+          never intercepted, and it carries the col-resize cursor so the
+          pointer language stays continuous over the iframe region. */}
+      {isSidebarResizing ? (
+        <div
+          aria-hidden="true"
+          data-slot="panel-resize-overlay"
+          className="fixed inset-0 z-50 cursor-col-resize"
+        />
+      ) : null}
 
       {/* 设置窗口显示在所有主内容之上，但不影响主界面的交互 */}
       {showSettings && (
