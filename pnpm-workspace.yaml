@@ -34,6 +34,8 @@ enablePrePostScripts: true
 overrides:
   '@protobufjs/utf8': 1.1.2
   axios: 1.19.0
+  # CVE-2026-107846 (CRITICAL, fixed): transitive through @metalet/utxo-wallet-sdk.
+  bitcoinjs-lib: 6.1.8
   'bn.js': 4.12.5
   elliptic: 6.6.1
   follow-redirects: 1.16.0

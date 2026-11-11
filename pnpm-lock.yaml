@@ -7,6 +7,7 @@ settings:
 overrides:
   '@protobufjs/utf8': 1.1.2
   axios: 1.19.0
+  bitcoinjs-lib: 6.1.8
   bn.js: 4.12.5
   elliptic: 6.6.1
   follow-redirects: 1.16.0
@@ -1740,8 +1741,8 @@ packages:
   bip39@3.1.0:
     resolution: {integrity: sha512-c9kiwdk45Do5GL0vJMe7tS95VjCii65mYAH7DfWl3uW8AVzXKQVUm64i3hzVybBDMp9r7j9iNxR85+ul8MdN/A==}
 
-  bitcoinjs-lib@6.1.7:
-    resolution: {integrity: sha512-tlf/r2DGMbF7ky1MgUqXHzypYHakkEnm0SZP23CJKIqNY/5uNAnMbFhMJdhjrL/7anfb/U8+AlpdjPWjPnAalg==}
+  bitcoinjs-lib@6.1.8:
+    resolution: {integrity: sha512-A6o+yq7BvwlmLj4F0NC5f3XX109rRe5evxi368S9zil5voOtUfiqfiMCzZYKHk4k7iIJ3+NmcQW05Ar4CBlKyg==}
     engines: {node: '>=8.0.0'}
 
   bitcore-lib@10.10.7:
@@ -5299,7 +5300,7 @@ snapshots:
       assert: 2.1.0
       bip32: 4.0.0
       bip39: 3.1.0
-      bitcoinjs-lib: 6.1.7
+      bitcoinjs-lib: 6.1.8
       bitcore-lib: 10.10.7
       decimal.js: 10.6.0
       ecpair: 2.1.0
@@ -6173,7 +6174,7 @@ snapshots:
     dependencies:
       '@noble/hashes': 1.8.0
 
-  bitcoinjs-lib@6.1.7:
+  bitcoinjs-lib@6.1.8:
     dependencies:
       '@noble/hashes': 1.8.0
       bech32: 2.0.0
