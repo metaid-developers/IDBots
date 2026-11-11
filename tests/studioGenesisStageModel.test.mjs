@@ -84,9 +84,9 @@ test('segmentText is prefix-stable while text streams in', () => {
 
 test('findCues locates content keywords in zh and en', () => {
   assert.deepEqual(findCues('欢迎来到 AI 互联网，给我起个名字'), [
-    { at: 0, kind: 'welcome' },
-    { at: 5, kind: 'internet' },
-    { at: 16, kind: 'name' },
+    { at: 0, length: 2, kind: 'welcome' },
+    { at: 5, length: 6, kind: 'internet' },
+    { at: 16, length: 2, kind: 'name' },
   ]);
   assert.deepEqual(findCues('Bots collaborate on-chain and keep evolving.').map((cue) => cue.kind), ['collab', 'chain', 'learn']);
   assert.ok(findCues('x'.repeat(10)).length === 0);

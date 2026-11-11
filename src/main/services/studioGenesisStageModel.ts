@@ -15,7 +15,8 @@ export type GenesisPhase = 'greeting' | 'invite' | 'tour' | 'settled' | 'handoff
 export type GenesisTurnKind = 'greeting' | 'tour' | 'chat';
 export type GenesisCueKind = 'welcome' | 'internet' | 'chain' | 'name' | 'collab' | 'learn' | 'create' | 'memory';
 
-export type GenesisCue = { at: number; kind: GenesisCueKind };
+/** A keyword at `at` (UTF-16 offset) spanning `length` code units. */
+export type GenesisCue = { at: number; length: number; kind: GenesisCueKind };
 export type GenesisSegment = { id: string; text: string; cues: GenesisCue[] };
 export type GenesisTourPart = { id: string; title: string; body: GenesisSegment[] };
 export type GenesisTour = { intro: GenesisSegment[]; parts: GenesisTourPart[]; outro: GenesisSegment[] };
@@ -326,7 +327,7 @@ export function findCues(text: string): GenesisCue[] {
   let reached = -1;
   for (const match of matches) {
     if (match.at < reached) continue;
-    cues.push({ at: match.at, kind: match.kind });
+    cues.push({ at: match.at, length: match.end - match.at, kind: match.kind });
     reached = match.end;
     if (cues.length >= MAX_CUES_PER_SEGMENT) break;
   }

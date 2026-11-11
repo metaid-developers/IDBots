@@ -147,7 +147,7 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     // Additive per-frame offsets that bypass interpolation (speech pulses, flashes).
     let modulation = {};
     let lerpRate = 5.5;
-    let reduced = false, disposed = false, ready = false, raf = 0, lastFrame = null, phase = 0;
+    let reduced = false, disposed = false, ready = false, raf = 0, lastFrame = null, phase = Number.isFinite(options.startPhase) ? options.startPhase : 0;
 
     function resize() {
       const ratio = Math.min(window.devicePixelRatio || 1, 2);
@@ -258,6 +258,7 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
       setLerpRate(rate) {
         if (Number.isFinite(rate) && rate > 0) lerpRate = rate;
       },
+      getPhase() { return phase; },
       getStyle() { return target.style; },
       getSharedResources() { return { device, shader, pipeline }; },
       dispose(destroyDevice = true) {
