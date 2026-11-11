@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
 import { t } from '../../i18n';
 import type { MobileMetabot } from '../../bridge/types';
 import type { BotOperationResult, MobileBotInput } from '../hooks/useMetabots';
 import { BotAvatar } from './BotAvatar';
 import { fileToAvatarDataUrl } from '../avatarUpload';
+import AvatarPickerModal, { type AvatarPickerNftItem } from '../../../renderer/components/avatar/AvatarPickerModal';
 import {
   A2A_BYE_COOLDOWN_MS_OPTIONS,
   A2A_MAX_INCOMING_TURNS_OPTIONS,
@@ -267,27 +268,37 @@ function FallbackBrainBlock(props: {
   );
 }
 
-/** Avatar picker: preview + file input; data URLs are downscaled to 256px. */
 function AvatarField(props: {
+  botId: number | null;
+  ownerAddress: string;
+  ownerGlobalMetaId?: string | null;
   name: string;
   avatar: string | null;
+  fallbackSource?: string | null;
   busy: boolean;
-  onPick: (dataUrl: string) => void;
+  onPick: (value: string) => void;
   onRemove: () => void;
 }): JSX.Element {
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const loadNfts = useCallback(async (): Promise<AvatarPickerNftItem[]> => {
+    if (!props.botId) return [];
+    const response = await window.electron.idbots.getMetabotNfts({ metabotId: props.botId, kind: 'mrc721' });
+    if (!response.success) throw new Error(response.error || 'NFT load failed');
+    return (response.items ?? []) as unknown as AvatarPickerNftItem[];
+  }, [props.botId]);
   return (
     <div className="flex items-center gap-3 twin-panel twin-panel-flat p-3">
-      <BotAvatar name={props.name} avatar={props.avatar} testId="bot-avatar-preview" />
+      <BotAvatar name={props.name} avatar={props.avatar} fallbackSource={props.fallbackSource} testId="bot-avatar-preview" />
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <button
           type="button"
           data-testid="bot-avatar-change"
           disabled={props.busy}
-          onClick={() => inputRef.current?.click()}
+          onClick={() => setPickerOpen(true)}
           className="min-h-[36px] self-start rounded-lg border border-[var(--border-color)] px-3 text-sm text-[var(--text-primary)] active:bg-[var(--bg-hover)] disabled:opacity-40"
         >
-          {t('mobile.me.botAvatarChange')}
+          {t('mobile.me.botAvatarSet')}
         </button>
         {props.avatar ? (
           <button
@@ -301,20 +312,28 @@ function AvatarField(props: {
           </button>
         ) : null}
         <p className="text-[11px] text-[var(--text-secondary)]">{t('mobile.me.botAvatarNote')}</p>
+        {error ? <p className="text-[11px] text-red-600">{error}</p> : null}
       </div>
-      <input
-        ref={inputRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        data-testid="bot-avatar-input"
-        onChange={(event) => {
-          const file = event.target.files?.[0];
-          event.target.value = '';
-          if (!file) return;
-          void fileToAvatarDataUrl(file).then(props.onPick).catch(() => undefined);
-        }}
-      />
+      {pickerOpen ? (
+        <AvatarPickerModal
+          ownerAddress={props.ownerAddress}
+          ownerGlobalMetaId={props.ownerGlobalMetaId}
+          loadNfts={loadNfts}
+          maxLocalBytes={200 * 1024}
+          allowNft={Boolean(props.botId)}
+          readLocalFile={fileToAvatarDataUrl}
+          onPick={(reference) => {
+            props.onPick(reference);
+            setPickerOpen(false);
+          }}
+          onPickLocal={(dataUrl) => {
+            props.onPick(dataUrl);
+            setPickerOpen(false);
+          }}
+          onError={setError}
+          onClose={() => setPickerOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -505,8 +524,12 @@ export function BotEditorForm(props: {
               identity pair above; metabot_type/boss stay desktop-only). */}
           <div data-testid="bot-panel-basic" className={TAB_PANEL_CLASS} style={panelHidden('basic')}>
             <AvatarField
+              botId={bot?.id ?? null}
+              ownerAddress={bot?.mvc_address ?? ''}
+              ownerGlobalMetaId={bot?.globalmetaid}
               name={name}
               avatar={avatar}
+              fallbackSource={bot?.avatar_fallback}
               busy={busy}
               onPick={(dataUrl) => {
                 setAvatar(dataUrl);

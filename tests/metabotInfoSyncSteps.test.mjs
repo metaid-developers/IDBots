@@ -493,3 +493,100 @@ test('edit sync plan still publishes cleared (empty) profile values', () => {
   assert.deepEqual(steps.map((step) => step.key), ['bio', 'persona', 'chatSkills', 'homepage']);
   assert.equal(steps.find((step) => step.key === 'bio').payload, '');
 });
+
+
+const NFT_ITEM_PIN = `${'ab'.repeat(32)}i0`;
+const NFT_OWNER = '1BoatSLRHtKNngkdXEeobR76b53LETtpyT';
+const NFT_REFERENCE = `nft://mrc721/${NFT_ITEM_PIN}?owner=${encodeURIComponent(NFT_OWNER)}&metaid=idq1nftavatar0owner0example`;
+const NFT_IMAGE_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
+
+test('NFT avatar edit publishes the cover before its declaration; ordinary images add no declaration', () => {
+  const nftSteps = buildEditMetabotInfoSyncPlan({
+    metabot: {
+      ...metabot,
+      mvc_address: NFT_OWNER,
+      avatar: NFT_REFERENCE,
+      avatar_fallback: NFT_IMAGE_DATA_URL,
+      chat_public_key_pin_id: 'chat-pin',
+      nft_avatar_synced_reference: '',
+    },
+    syncAvatar: true,
+    syncNftAvatar: true,
+  });
+  assert.deepEqual(nftSteps.map((step) => step.key), ['avatar', 'nftAvatar']);
+  assert.equal(nftSteps[0].contentType, 'image/png;binary');
+  assert.equal(nftSteps[1].path, '/info/nftAvatar');
+  assert.deepEqual(JSON.parse(nftSteps[1].payload), {
+    protocol: 'mrc721',
+    itemPinId: NFT_ITEM_PIN,
+    ownerAddress: NFT_OWNER,
+  });
+
+  const ordinarySteps = buildEditMetabotInfoSyncPlan({
+    metabot: { ...metabot, avatar: NFT_IMAGE_DATA_URL, chat_public_key_pin_id: 'chat-pin' },
+    syncAvatar: true,
+  });
+  assert.deepEqual(ordinarySteps.map((step) => step.key), ['avatar']);
+
+  const clearedSteps = buildEditMetabotInfoSyncPlan({
+    metabot: {
+      ...metabot,
+      avatar: '',
+      chat_public_key_pin_id: 'chat-pin',
+      nft_avatar_synced_reference: NFT_REFERENCE,
+    },
+    syncAvatar: true,
+    syncNftAvatar: true,
+  });
+  assert.deepEqual(clearedSteps.map((step) => step.key), ['avatar', 'nftAvatar']);
+  assert.equal(clearedSteps[1].payload, '');
+});
+
+test('NFT edit sync revalidates ownership and persists declaration state after both pins land', async () => {
+  const createPinPaths = [];
+  const updateCalls = [];
+  const stored = {
+    ...metabot,
+    id: 7,
+    mvc_address: NFT_OWNER,
+    globalmetaid: 'idq1nftavatar0owner0example',
+    avatar: NFT_REFERENCE,
+    avatar_fallback: NFT_IMAGE_DATA_URL,
+    chat_public_key_pin_id: 'chat-pin',
+    nft_avatar_synced_reference: '',
+  };
+  const fakeStore = {
+    getMetabotById: () => stored,
+    updateMetabot: (id, input) => {
+      updateCalls.push({ id, input });
+      return { ...stored, ...input };
+    },
+  };
+  let preparations = 0;
+  const result = await syncMetaBotEditChangesToChain(
+    fakeStore,
+    { metabotId: 7, syncAvatar: true, syncNftAvatar: true },
+    {
+      prepareNftAvatar: async () => {
+        preparations += 1;
+        return {
+          reference: NFT_REFERENCE,
+          avatarUrl: NFT_IMAGE_DATA_URL,
+          declarationPayload: JSON.stringify({ protocol: 'mrc721', itemPinId: NFT_ITEM_PIN, ownerAddress: NFT_OWNER }),
+          nft: { itemPinId: NFT_ITEM_PIN, ownerAddress: NFT_OWNER, ownershipVerified: true },
+        };
+      },
+      createPin: async (_store, _id, payload) => {
+        createPinPaths.push(payload.path);
+        return { txids: [`tx-${createPinPaths.length}`], pinId: `pin-${createPinPaths.length}`, totalCost: 1 };
+      },
+      sleep: async () => {},
+    },
+  );
+  assert.equal(result.success, true);
+  assert.equal(preparations, 1);
+  assert.deepEqual(createPinPaths, ['/info/avatar', '/info/nftAvatar']);
+  assert.deepEqual(result.syncedSteps, ['avatar', 'nftAvatar']);
+  assert.equal(updateCalls.at(-1).input.nft_avatar_pin_id, 'pin-2');
+  assert.equal(updateCalls.at(-1).input.nft_avatar_synced_reference, NFT_REFERENCE);
+});

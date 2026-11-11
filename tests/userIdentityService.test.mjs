@@ -17,6 +17,7 @@ const {
   retryUserIdentitySubsidy,
   syncUserIdentityToChain,
   buildUserInfoSyncSteps,
+  updateUserIdentityAvatar,
   updateUserIdentityName,
 } = await import('../dist-electron/main/services/userIdentityService.js');
 
@@ -30,9 +31,15 @@ const makeTempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-user-ide
 const makeStores = async () => {
   const { SqliteStore } = require('../dist-electron/main/sqliteStore.js');
   const { UserIdentityStore } = require('../dist-electron/main/userIdentityStore.js');
-  const store = await SqliteStore.create(makeTempDir());
+  const tempDir = makeTempDir();
+  const store = await SqliteStore.create(tempDir);
   const userStore = new UserIdentityStore(store.getDatabase(), () => store.save());
-  return { store, userStore };
+  return { store, userStore, tempDir };
+};
+
+const disposeStores = ({ store, tempDir }) => {
+  try { store.close(); } catch { /* best-effort cleanup */ }
+  try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* OS sweeps leftovers */ }
 };
 
 const makePinMock = (behavior) => {
@@ -663,4 +670,123 @@ test('updateUserIdentityName stays partial when the chat-key pin of a deferred i
   assert.equal(saved.chat_public_key_pin_id, null);
   assert.equal(saved.sync_state, 'partial', 'Settings keeps the retry path for the missing chat-key pin');
   store.close();
+});
+
+
+const USER_NFT_ITEM = `${'cd'.repeat(32)}i0`;
+const USER_NFT_OWNER = '1BoatSLRHtKNngkdXEeobR76b53LETtpyT';
+const USER_NFT_REFERENCE = `nft://mrc721/${USER_NFT_ITEM}?owner=${encodeURIComponent(USER_NFT_OWNER)}&metaid=idq1usernft0example`;
+
+function insertIdentityForAvatar(userStore) {
+  return userStore.insert({
+    mnemonic: TEST_MNEMONIC,
+    mvc_address: USER_NFT_OWNER,
+    btc_address: 'btc-user',
+    doge_address: 'doge-user',
+    public_key: 'public-key',
+    chat_public_key: 'chat-key',
+    chat_public_key_pin_id: 'chat-pin',
+    metaid: 'metaid-user',
+    globalmetaid: 'idq1usernft0example',
+    name: 'NFT User',
+    avatar: null,
+    subsidy_state: 'claimed',
+    name_pin_id: 'name-pin',
+    avatar_pin_id: null,
+    sync_state: 'synced',
+  });
+}
+
+test('user NFT avatar publishes cover + declaration once, then clears the declaration for a plain avatar', async () => {
+  const context = await makeStores();
+  const { userStore } = context;
+  try {
+    insertIdentityForAvatar(userStore);
+    const pinMock = makePinMock();
+    const prepared = {
+      reference: USER_NFT_REFERENCE,
+      avatarUrl: AVATAR_DATA_URL,
+      declarationPayload: JSON.stringify({ protocol: 'mrc721', itemPinId: USER_NFT_ITEM, ownerAddress: USER_NFT_OWNER }),
+      nft: { itemPinId: USER_NFT_ITEM, ownerAddress: USER_NFT_OWNER, ownershipVerified: true },
+    };
+    const deps = { ...baseDeps(pinMock), prepareNftAvatar: async () => prepared };
+
+    const result = await updateUserIdentityAvatar(userStore, { avatar: USER_NFT_REFERENCE }, deps);
+    assert.equal(result.success, true);
+    assert.deepEqual(pinMock.calls.map((call) => call.metaidData.path), ['/info/avatar', '/info/nftAvatar']);
+    assert.equal(userStore.get().avatar, USER_NFT_REFERENCE);
+    assert.equal(userStore.get().avatar_fallback, AVATAR_DATA_URL);
+    assert.equal(userStore.get().nft_avatar_synced_reference, USER_NFT_REFERENCE);
+    assert.equal(userStore.get().nft_avatar_pin_id, 'pin-2');
+
+    const noOp = await updateUserIdentityAvatar(userStore, { avatar: USER_NFT_REFERENCE }, deps);
+    assert.equal(noOp.success, true);
+    assert.equal(pinMock.calls.length, 2, 'an already synced NFT avatar must not republish');
+
+    const plain = await updateUserIdentityAvatar(userStore, { avatar: AVATAR_DATA_URL }, deps);
+    assert.equal(plain.success, true);
+    assert.deepEqual(pinMock.calls.slice(2).map((call) => call.metaidData.path), ['/info/avatar', '/info/nftAvatar']);
+    assert.equal(pinMock.calls[3].metaidData.payload, '');
+    assert.equal(userStore.get().avatar, AVATAR_DATA_URL);
+    assert.equal(userStore.get().nft_avatar_synced_reference, '');
+  } finally {
+    disposeStores(context);
+  }
+});
+
+test('user NFT avatar rejects a failed ownership check before staging or publishing', async () => {
+  const context = await makeStores();
+  const { userStore } = context;
+  try {
+    const before = insertIdentityForAvatar(userStore);
+    const pinMock = makePinMock();
+    const result = await updateUserIdentityAvatar(
+      userStore,
+      { avatar: USER_NFT_REFERENCE },
+      {
+        ...baseDeps(pinMock),
+        prepareNftAvatar: async () => { throw new Error('NFT_AVATAR_NOT_OWNED'); },
+      },
+    );
+    assert.equal(result.success, false);
+    assert.equal(result.error, 'NFT_AVATAR_NOT_OWNED');
+    assert.equal(pinMock.calls.length, 0);
+    assert.equal(userStore.get().avatar, before.avatar);
+  } finally {
+    disposeStores(context);
+  }
+});
+
+test('user identity import restores NFT reference, cover fallback, and declaration sync state', async () => {
+  const context = await makeStores();
+  const { userStore } = context;
+  try {
+    const wallet = await createMetaBotWallet({ mnemonic: TEST_MNEMONIC });
+    const pinMock = makePinMock();
+    const result = await importUserIdentity(
+      userStore,
+      { mnemonic: TEST_MNEMONIC },
+      {
+        ...baseDeps(pinMock),
+        fetchProfile: async () => ({
+          name: 'NFT User',
+          avatarDataUrl: AVATAR_DATA_URL,
+          nftAvatarReference: USER_NFT_REFERENCE,
+          nftAvatarPinId: 'nft-declaration-pin',
+          metabotInfoPinId: null,
+          chatpubkeyPinId: 'chat-pin',
+          bio: {},
+          raw: { chatpubkey: wallet.chat_public_key },
+        }),
+      },
+    );
+    assert.equal(result.success, true);
+    assert.equal(result.identity.avatar, USER_NFT_REFERENCE);
+    assert.equal(result.identity.avatar_fallback, AVATAR_DATA_URL);
+    assert.equal(result.identity.nft_avatar_pin_id, 'nft-declaration-pin');
+    assert.equal(result.identity.nft_avatar_synced_reference, USER_NFT_REFERENCE);
+    assert.equal(pinMock.calls.length, 0);
+  } finally {
+    disposeStores(context);
+  }
 });

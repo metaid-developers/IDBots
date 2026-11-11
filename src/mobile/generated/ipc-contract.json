@@ -1,6 +1,6 @@
 {
   "contractVersion": "1.0.0",
-  "allowlistVersion": "1.0.1",
+  "allowlistVersion": "1.0.2",
   "source": "src/main/preload.ts",
   "methods": [
     {
@@ -3423,6 +3423,12 @@
       "path": "userIdentity.get",
       "kind": "invoke",
       "channel": "userIdentity:get",
+      "args": []
+    },
+    {
+      "path": "userIdentity.getNfts",
+      "kind": "invoke",
+      "channel": "userIdentity:getNfts",
       "args": []
     },
     {

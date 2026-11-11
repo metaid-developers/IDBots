@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ClipboardDocumentIcon } from '@heroicons/react/24/outline';
 import { t } from '../../../i18n';
 import type { MobileUserIdentity } from '../../hooks/useIdentity';
 import { getMobileElectron } from '../../appBridge';
 import { formatDateTime } from '../../format';
 import { BotAvatar } from '../../components/BotAvatar';
+import AvatarPickerModal, { type AvatarPickerNftItem } from '../../../../renderer/components/avatar/AvatarPickerModal';
+import { fileToAvatarDataUrl } from '../../avatarUpload';
 import { SecondaryPageShell } from './SecondaryPageShell';
 
 const inputClass = 'twin-input';
@@ -12,11 +14,8 @@ const inputClass = 'twin-input';
 /**
  * profile secondary page (IA-PLAN v1 §4.3): explicit-save name editing,
  * read-only identity card with copy actions, and the sync status area whose
- * retry buttons only appear in an abnormal state.
- *
- * Avatar editing is display-only this cycle (IA-PLAN §5 gap 1: the IPC
- * contract has no `userIdentity.updateAvatar` channel; a contract change
- * request is required before this can be built).
+ * retry buttons only appear in an abnormal state. Avatar changes publish
+ * immediately through userIdentity.updateAvatar, then re-read the identity.
  */
 export function ProfilePage(props: {
   identity: MobileUserIdentity | null;
@@ -34,6 +33,30 @@ export function ProfilePage(props: {
   const [retryState, setRetryState] = useState<'idle' | 'sync' | 'subsidy'>('idle');
   const [retryFeedback, setRetryFeedback] = useState<{ ok: boolean; message: string } | null>(null);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
+  const loadUserNfts = useCallback(async (): Promise<AvatarPickerNftItem[]> => {
+    const response = await getMobileElectron().userIdentity.getNfts();
+    if (!response.success) throw new Error(response.error || 'NFT load failed');
+    return (response.items ?? []) as unknown as AvatarPickerNftItem[];
+  }, []);
+
+  const saveAvatar = async (avatar: string | null) => {
+    if (avatarBusy) return;
+    setAvatarBusy(true);
+    setAvatarError(null);
+    try {
+      const result = await getMobileElectron().userIdentity.updateAvatar({ avatar });
+      if (!result.success) throw new Error(result.error || 'Avatar update failed');
+      await props.onNameSaved?.();
+      setAvatarPickerOpen(false);
+    } catch (error) {
+      setAvatarError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAvatarBusy(false);
+    }
+  };
 
   const dirty = name !== initialName && name.trim().length > 0;
 
@@ -107,19 +130,52 @@ export function ProfilePage(props: {
 
   return (
     <SecondaryPageShell title={t('mobile.me.entry.profile')} onBack={props.onBack} testId="me-page-profile">
-      {/* Avatar area: display-only this cycle (contract gap, IA-PLAN §5.1). */}
       <div className="flex flex-col items-center gap-2 twin-panel twin-panel-padded">
-        <BotAvatar name={props.identity?.name} avatar={props.identity?.avatar} size={80} testId="profile-avatar" />
-        <button
-          type="button"
-          disabled
-          className="min-h-[44px] px-2 text-sm text-[var(--text-secondary)]"
-          title={t('mobile.me.profile.avatarComingSoon')}
-        >
-          {t('mobile.me.profile.changeAvatar')}
-        </button>
-        <p className="text-xs text-[var(--text-secondary)]">{t('mobile.me.profile.avatarComingSoon')}</p>
+        <BotAvatar
+          name={props.identity?.name}
+          avatar={props.identity?.avatar}
+          fallbackSource={props.identity?.avatar_fallback}
+          size={80}
+          testId="profile-avatar"
+        />
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            data-testid="profile-avatar-change"
+            disabled={avatarBusy}
+            onClick={() => setAvatarPickerOpen(true)}
+            className="min-h-[44px] px-2 text-sm text-[var(--text-secondary)] disabled:opacity-40"
+          >
+            {t('mobile.me.botAvatarSet')}
+          </button>
+          {props.identity?.avatar ? (
+            <button
+              type="button"
+              data-testid="profile-avatar-remove"
+              disabled={avatarBusy}
+              onClick={() => void saveAvatar(null)}
+              className="min-h-[44px] px-2 text-xs text-red-600 disabled:opacity-40"
+            >
+              {t('mobile.me.botAvatarRemove')}
+            </button>
+          ) : null}
+        </div>
+        <p className="text-xs text-[var(--text-secondary)]">{t('mobile.me.profile.avatarHint')}</p>
+        {avatarError ? <p className="break-words text-center text-xs text-red-600">{avatarError}</p> : null}
       </div>
+      {avatarPickerOpen ? (
+        <AvatarPickerModal
+          ownerAddress={props.identity?.mvc_address ?? ''}
+          ownerGlobalMetaId={props.identity?.globalmetaid}
+          loadNfts={loadUserNfts}
+          maxLocalBytes={200 * 1024}
+          readLocalFile={fileToAvatarDataUrl}
+          onPick={(reference) => { void saveAvatar(reference); }}
+          onPickLocal={(dataUrl) => { void saveAvatar(dataUrl); }}
+          onError={setAvatarError}
+          onClose={() => setAvatarPickerOpen(false)}
+        />
+      ) : null}
 
       {/* Name: explicit save, dirty-gated (IA-PLAN §2.5 rule 1). */}
       <div className="twin-panel twin-panel-padded">

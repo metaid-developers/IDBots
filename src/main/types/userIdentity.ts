@@ -28,8 +28,11 @@ export interface UserIdentity {
   metaid: string;
   globalmetaid: string | null;
   name: string;
-  /** Avatar as data URL string for display; null = no avatar. */
+  /** Plain image data URL or identity-bound nft:// reference. */
   avatar: string | null;
+  avatar_fallback?: string | null;
+  nft_avatar_pin_id?: string | null;
+  nft_avatar_synced_reference?: string | null;
   /** MVC gas subsidy lifecycle. */
   subsidy_state: UserSubsidyState | null;
   subsidy_error: string | null;
@@ -57,6 +60,9 @@ export interface UserIdentityInsert {
   globalmetaid?: string | null;
   name: string;
   avatar?: string | null;
+  avatar_fallback?: string | null;
+  nft_avatar_pin_id?: string | null;
+  nft_avatar_synced_reference?: string | null;
   subsidy_state?: UserSubsidyState | null;
   subsidy_error?: string | null;
   name_pin_id?: string | null;
@@ -69,6 +75,9 @@ export interface UserIdentityInsert {
 export interface UserIdentityUpdate {
   name?: string;
   avatar?: string | null;
+  avatar_fallback?: string | null;
+  nft_avatar_pin_id?: string | null;
+  nft_avatar_synced_reference?: string | null;
   chat_public_key_pin_id?: string | null;
   globalmetaid?: string | null;
   subsidy_state?: UserSubsidyState | null;

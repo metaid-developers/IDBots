@@ -6,6 +6,8 @@ import { getCoworkSessionTitleClassName, getAssistantSessionDisplayTitle, should
 import { copyCoworkSessionLinkToClipboard } from './coworkSessionLink.js';
 import TradeActivityBadge from '../chat/TradeActivityBadge';
 import { isRenderableAvatarSource } from '../../utils/avatarSource';
+import NftAvatarFrame from '../metabots/NftAvatarFrame';
+import { parseNftAvatarReference } from '../metabots/nftAvatarPresentation.js';
 import { resolveSessionSidebarSection } from '../../utils/sessionAutoGrouping';
 import type { SessionSidebarSection } from '../../utils/sessionAutoGrouping';
 import { scrollEventMovesAnchor } from '../../utils/anchoredPopover';
@@ -201,6 +203,18 @@ export const SessionAvatarCircle: React.FC<{
     setImageFailed(false);
   }, [src]);
   const showImage = initiallyRenderable && !imageFailed;
+  if (parseNftAvatarReference(src)) {
+    return (
+      <span className={`flex ${sizeClass} flex-shrink-0 items-center justify-center rounded-full ${className}`} title={name?.trim() || undefined}>
+        <NftAvatarFrame
+          avatar={src}
+          frameClassName={`${sizeClass} rounded-full`}
+          fallback={<span className="text-[11px] font-semibold text-claude-textSecondary">{avatarInitial(name)}</span>}
+          alt={name?.trim() || ''}
+        />
+      </span>
+    );
+  }
   return (
     <span
       className={`flex ${sizeClass} flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-claude-surfaceHover text-[11px] font-semibold text-claude-textSecondary dark:bg-claude-darkSurfaceHover dark:text-claude-darkTextSecondary ${className}`}

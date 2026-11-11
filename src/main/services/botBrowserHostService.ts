@@ -31,6 +31,7 @@ import type { MetaAppRecord } from '../metaAppManager';
 import type { QaQuestionDetail } from './qaRecallService';
 import type { CommunityMetaAppInstallResult } from './metaAppChainService';
 import { normalizeProfileAvatarUrl } from '../utils/avatarSource';
+import { fetchLatestNftAvatarDeclaration, resolveLatestNftAvatarForIdentity } from './nftAvatarService';
 
 export interface BotBrowserHostService {
   resolveResource(input: BrowserResolveInput): Promise<BrowserCommandResult<BrowserResolveResult>>;
@@ -458,9 +459,13 @@ export async function fetchLatestBotProfileInfo(
     fetch: fetchImpl,
     metafileContentBaseUrl: resolvedConfig.metafileContentBaseUrl,
   });
-  if (!profile) return null;
-  const rawName = typeof profile.name === 'string' ? profile.name.trim() : '';
-  const rawAvatar = typeof profile.avatar === 'string' ? profile.avatar.trim() : '';
+  const nftAvatar = await resolveLatestNftAvatarForIdentity(
+    { globalMetaId: targetId },
+    { fetchDeclaration: (identity) => fetchLatestNftAvatarDeclaration(identity, fetchImpl) },
+  );
+  if (!profile && !nftAvatar) return null;
+  const rawName = typeof profile?.name === 'string' ? profile.name.trim() : '';
+  const rawAvatar = typeof profile?.avatar === 'string' ? profile.avatar.trim() : '';
   return {
     // fetchBotProfileInfo falls back to the raw globalMetaId when no name is
     // published; treat that as "no name" so callers keep their own fallbacks.
@@ -468,7 +473,7 @@ export async function fetchLatestBotProfileInfo(
     // fetchBotProfileInfo turns the on-chain "no avatar" marker `/content/`
     // into an absolute URL against the P2P base (e.g. `https://so.metaid.io/content/`,
     // a 404). Drop such markers so we never store a broken avatar.
-    avatar: normalizeProfileAvatarUrl(rawAvatar),
+    avatar: nftAvatar?.reference ?? normalizeProfileAvatarUrl(rawAvatar),
   };
 }
 

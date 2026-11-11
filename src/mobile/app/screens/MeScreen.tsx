@@ -75,7 +75,7 @@ function UserCard(props: {
       onClick={props.onOpen}
       className="twin-panel twin-panel-padded flex min-h-[64px] w-full items-center gap-3 text-left"
     >
-      <BotAvatar name={identity?.name} avatar={identity?.avatar} size={48} testId="user-card-avatar" />
+      <BotAvatar name={identity?.name} avatar={identity?.avatar} fallbackSource={identity?.avatar_fallback} size={48} testId="user-card-avatar" />
       <div className="min-w-0 flex-1">
         <p className="twin-list-title truncate">{identity?.name ?? ''}</p>
         {shortId ? <p className="twin-list-subtitle truncate">{shortId}</p> : null}

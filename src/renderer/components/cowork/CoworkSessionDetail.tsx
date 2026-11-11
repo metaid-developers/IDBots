@@ -3031,7 +3031,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const [renameValue, setRenameValue] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
   const ignoreNextBlurRef = useRef(false);
-  const [sessionMetabot, setSessionMetabot] = useState<{ name: string; avatar: string | null; llm_id: string | null; llm_provider?: string | null; llm_effort?: string | null; fallback_llm_id?: string | null; globalmetaid: string | null; metabot_type: string } | null>(null);
+  const [sessionMetabot, setSessionMetabot] = useState<{ name: string; avatar: string | null; avatar_fallback?: string | null; llm_id: string | null; llm_provider?: string | null; llm_effort?: string | null; fallback_llm_id?: string | null; globalmetaid: string | null; metabot_type: string } | null>(null);
   // MetaApps embedded in this session's assistant bubbles act as the session
   // Bot (idbots-metabot-<id>, the actor id botBrowserBridgeService resolves to
   // that Bot's wallet). Name/globalMetaId ride along for the app's
@@ -4635,6 +4635,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
             <div className="non-draggable flex items-center gap-2 shrink-0">
               <NftAvatarFrame
                 avatar={sessionMetabot.avatar}
+                fallbackSource={sessionMetabot.avatar_fallback}
                 frameClassName="w-7 h-7 rounded-full"
                 imgClassName="border dark:border-claude-darkBorder border-claude-border"
                 alt=""

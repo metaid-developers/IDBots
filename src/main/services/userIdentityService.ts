@@ -28,8 +28,14 @@ import {
   type MvcCreatePinSessionSnapshot,
 } from './metaidCore';
 import { getRate as getGlobalFeeRate } from './feeRateStore';
+import {
+  buildNftAvatarDeclarationPayload,
+  NFT_AVATAR_PATH,
+  parseNftAvatarReference,
+  prepareNftAvatarForIdentity,
+} from './nftAvatarService';
 
-export type UserInfoSyncStep = 'name' | 'avatar' | 'chatpubkey';
+export type UserInfoSyncStep = 'name' | 'avatar' | 'nftAvatar' | 'chatpubkey';
 
 export interface UserInfoSyncStepPlan {
   key: UserInfoSyncStep;
@@ -45,6 +51,7 @@ export interface UserChainSyncResult {
   chatPublicKeyPinId?: string;
   namePinId?: string;
   avatarPinId?: string;
+  nftAvatarPinId?: string;
   failedSteps: UserInfoSyncStep[];
   error?: string;
 }
@@ -72,6 +79,7 @@ export interface UserIdentityServiceDeps {
   createPin?: typeof createPinForIdentity;
   requestSubsidy?: typeof requestMvcGasSubsidy;
   fetchProfile?: typeof fetchMetaidRestoreProfile;
+  prepareNftAvatar?: typeof prepareNftAvatarForIdentity;
   sleep?: (ms: number) => Promise<void>;
 }
 
@@ -106,22 +114,26 @@ async function requestSubsidySafe(
 export function buildUserInfoSyncSteps(
   identity: Pick<
     UserIdentity,
-    'name' | 'avatar' | 'chat_public_key' | 'chat_public_key_pin_id' | 'name_pin_id' | 'avatar_pin_id'
+    | 'name'
+    | 'avatar'
+    | 'avatar_fallback'
+    | 'mvc_address'
+    | 'nft_avatar_synced_reference'
+    | 'chat_public_key'
+    | 'chat_public_key_pin_id'
+    | 'name_pin_id'
+    | 'avatar_pin_id'
   >,
-  options: { includeProfileSteps: boolean },
+  options: { includeProfileSteps: boolean; forceAvatarClear?: boolean },
 ): UserInfoSyncStepPlan[] {
   const steps: UserInfoSyncStepPlan[] = [];
 
   if (options.includeProfileSteps) {
     if (!identity.name_pin_id && identity.name.trim()) {
-      steps.push({
-        key: 'name',
-        path: '/info/name',
-        contentType: 'text/plain',
-        payload: identity.name,
-      });
+      steps.push({ key: 'name', path: '/info/name', contentType: 'text/plain', payload: identity.name });
     }
-    const avatarData = parseDataUrlAvatar(identity.avatar);
+    const nftReference = parseNftAvatarReference(identity.avatar);
+    const avatarData = parseDataUrlAvatar(nftReference ? identity.avatar_fallback : identity.avatar);
     if (!identity.avatar_pin_id && avatarData) {
       steps.push({
         key: 'avatar',
@@ -130,19 +142,26 @@ export function buildUserInfoSyncSteps(
         payload: avatarData.buffer,
         encoding: 'base64',
       });
+    } else if (options.forceAvatarClear && !identity.avatar_pin_id && !identity.avatar) {
+      steps.push({ key: 'avatar', path: '/info/avatar', contentType: 'text/plain', payload: '' });
+    }
+    const currentNftReference = nftReference ? identity.avatar!.trim() : '';
+    if (currentNftReference !== (identity.nft_avatar_synced_reference ?? '')) {
+      steps.push({
+        key: 'nftAvatar',
+        path: NFT_AVATAR_PATH,
+        contentType: 'application/json',
+        payload: nftReference
+          ? buildNftAvatarDeclarationPayload({ itemPinId: nftReference.itemPinId, ownerAddress: identity.mvc_address })
+          : '',
+      });
     }
   }
 
   const chatPubKey = typeof identity.chat_public_key === 'string' ? identity.chat_public_key.trim() : '';
   if (!identity.chat_public_key_pin_id && chatPubKey) {
-    steps.push({
-      key: 'chatpubkey',
-      path: '/info/chatpubkey',
-      contentType: 'text/plain',
-      payload: chatPubKey,
-    });
+    steps.push({ key: 'chatpubkey', path: '/info/chatpubkey', contentType: 'text/plain', payload: chatPubKey });
   }
-
   return steps;
 }
 
@@ -151,10 +170,15 @@ function persistStepPin(
   userStore: UserIdentityStore,
   stepKey: UserInfoSyncStep,
   pinId: string,
+  nftReference = '',
 ): void {
   const patch: Parameters<UserIdentityStore['update']>[0] = {};
   if (stepKey === 'name') patch.name_pin_id = pinId;
   if (stepKey === 'avatar') patch.avatar_pin_id = pinId;
+  if (stepKey === 'nftAvatar') {
+    patch.nft_avatar_pin_id = pinId;
+    patch.nft_avatar_synced_reference = nftReference;
+  }
   if (stepKey === 'chatpubkey') patch.chat_public_key_pin_id = pinId;
   userStore.update(patch);
 }
@@ -167,7 +191,7 @@ function persistStepPin(
  */
 export async function syncUserIdentityToChain(
   userStore: UserIdentityStore,
-  options: { includeProfileSteps: boolean },
+  options: { includeProfileSteps: boolean; forceAvatarClear?: boolean },
   deps: UserIdentityServiceDeps = {},
 ): Promise<UserChainSyncResult> {
   const createPin = deps.createPin ?? createPinForIdentity;
@@ -178,7 +202,25 @@ export async function syncUserIdentityToChain(
     return { success: false, txids: [], failedSteps: [], error: 'USER_IDENTITY_MISSING' };
   }
 
-  const steps = buildUserInfoSyncSteps(identity, options);
+  let identityForSteps = identity;
+  const nftNeedsSync = parseNftAvatarReference(identity.avatar)
+    && (identity.avatar !== (identity.nft_avatar_synced_reference ?? '') || !identity.avatar_pin_id || !identity.avatar_fallback);
+  if (options.includeProfileSteps && nftNeedsSync) {
+    try {
+      const prepared = await (deps.prepareNftAvatar ?? prepareNftAvatarForIdentity)({
+        reference: identity.avatar!,
+        ownerAddress: identity.mvc_address,
+        globalMetaId: identity.globalmetaid,
+      });
+      identityForSteps = { ...identity, avatar: prepared.reference, avatar_fallback: prepared.avatarUrl };
+      userStore.update({ avatar: prepared.reference, avatar_fallback: prepared.avatarUrl });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      userStore.update({ sync_state: 'failed', sync_error: message });
+      return { success: false, txids: [], failedSteps: ['avatar', 'nftAvatar'], error: message };
+    }
+  }
+  const steps = buildUserInfoSyncSteps(identityForSteps, options);
   const txids: string[] = [];
   const failedSteps: UserInfoSyncStep[] = [];
   let lastError = '';
@@ -189,7 +231,7 @@ export async function syncUserIdentityToChain(
 
   for (let index = 0; index < steps.length; index += 1) {
     const step = steps[index];
-    const current = userStore.get() ?? identity;
+    const current = userStore.get() ?? identityForSteps;
     try {
       const result = await createPin({
         mnemonic: current.mnemonic,
@@ -211,7 +253,12 @@ export async function syncUserIdentityToChain(
       } else {
         txids.push(txid);
         const pinId = result.pinId ?? `${txid}i0`;
-        persistStepPin(userStore, step.key, pinId);
+        persistStepPin(
+          userStore,
+          step.key,
+          pinId,
+          parseNftAvatarReference(identityForSteps.avatar) ? identityForSteps.avatar! : '',
+        );
         if (Array.isArray(result.spentOutpoints) && result.spentOutpoints.length > 0) {
           sessionSnapshot.excludeOutpoints.push(...result.spentOutpoints);
         }
@@ -241,6 +288,7 @@ export async function syncUserIdentityToChain(
     chatPublicKeyPinId: latest?.chat_public_key_pin_id ?? undefined,
     namePinId: latest?.name_pin_id ?? undefined,
     avatarPinId: latest?.avatar_pin_id ?? undefined,
+    nftAvatarPinId: latest?.nft_avatar_pin_id ?? undefined,
     failedSteps,
     error: failedSteps.length > 0 ? lastError : undefined,
   };
@@ -415,7 +463,7 @@ export async function importUserIdentity(
       return { success: false, error: 'CHAT_PUBKEY_MISMATCH' };
     }
     name = profile.name;
-    avatar = profile.avatarDataUrl ?? null;
+    avatar = profile.nftAvatarReference ?? profile.avatarDataUrl ?? null;
     chatPublicKeyPinId = profile.chatpubkeyPinId ?? null;
     profileSource = 'chain';
   } else {
@@ -448,6 +496,9 @@ export async function importUserIdentity(
     globalmetaid: wallet.globalmetaid,
     name,
     avatar,
+    avatar_fallback: profile?.avatarDataUrl ?? null,
+    nft_avatar_pin_id: profile?.nftAvatarPinId ?? null,
+    nft_avatar_synced_reference: profile?.nftAvatarReference ?? '',
     subsidy_state: subsidyState,
     subsidy_error: subsidy.success ? null : (subsidy.error ?? 'Traffic subsidy request failed.'),
     sync_state: subsidy.success ? 'pending' : 'failed',
@@ -685,124 +736,67 @@ export async function updateUserIdentityName(
   };
 }
 
-/**
- * Set/clear the user's avatar and publish it as /info/avatar (Bot Info
- * semantics: latest pin wins — the same protocol the MetaBot edit sync uses).
- *
- * Set path (image data URL): mirrors the create flow's avatar handling — the
- * new avatar is staged on the record FIRST with avatar_pin_id cleared, then
- * the shared chain sync republishes every /info pin still missing (the
- * cleared avatar_pin_id is what makes the new avatar a sync candidate). A
- * failed pin leaves the avatar locally staged with sync_state failed/partial
- * so the existing Retry-chain-sync affordance repushes it: local state may
- * lead the chain, and the chain catches up idempotently — same retry model
- * as create. Returns success:true with the chainSync result so the UI can
- * show the avatar immediately and surface sync failures non-blockingly.
- *
- * Clear path (null): wipes the local avatar, and — only when an avatar pin
- * was previously recorded — publishes the empty /info/avatar pin (text/plain,
- * empty payload; the Bot Info "clear" convention, identical to
- * buildEditAvatarSyncStep) so a later mnemonic import does not resurrect the
- * old on-chain avatar. The clear itself never blocks on chain/subsidy state.
- */
+/** Set a plain or wallet-owned NFT avatar, or clear both avatar declarations. */
 export async function updateUserIdentityAvatar(
   userStore: UserIdentityStore,
   input: { avatar: string | null },
   deps: UserIdentityServiceDeps = {},
 ): Promise<UserIdentityResult> {
   const identity = userStore.get();
-  if (!identity) {
-    return { success: false, error: 'USER_IDENTITY_MISSING' };
-  }
+  if (!identity) return { success: false, error: 'USER_IDENTITY_MISSING' };
   const avatar = typeof input?.avatar === 'string' ? input.avatar.trim() : '';
+  const nftReference = parseNftAvatarReference(avatar);
+  let stagedAvatar = avatar;
+  let avatarFallback: string | null = null;
 
-  // ── Clear path ──
-  if (!avatar) {
-    const hadPin = Boolean(identity.avatar_pin_id);
-    userStore.update({ avatar: null, avatar_pin_id: null });
-    if (!hadPin) {
-      // Nothing pinned yet: the clear is purely local, no chain write.
-      return {
-        success: true,
-        identity: userStore.get() ?? identity,
-        profileSource: 'local',
-      };
-    }
-    const createPin = deps.createPin ?? createPinForIdentity;
+  if (nftReference) {
     try {
-      const result = await createPin({
-        mnemonic: identity.mnemonic,
-        path: identity.path,
-        metaidData: {
-          operation: 'create',
-          path: '/info/avatar',
-          contentType: 'text/plain',
-          payload: '',
-        },
-        options: { feeRate: getGlobalFeeRate('mvc') },
+      const prepared = await (deps.prepareNftAvatar ?? prepareNftAvatarForIdentity)({
+        reference: avatar,
+        ownerAddress: identity.mvc_address,
+        globalMetaId: identity.globalmetaid,
       });
-      if (!result.txids[0]) {
-        return {
-          success: true,
-          identity: userStore.get() ?? identity,
-          chainSync: {
-            success: false,
-            txids: [],
-            failedSteps: ['avatar'],
-            error: 'avatar clear pin failed: no txid',
-          },
-          profileSource: 'local',
-        };
-      }
-      const pinId = result.pinId ?? `${result.txids[0]}i0`;
-      userStore.update({ avatar_pin_id: pinId });
-      return {
-        success: true,
-        identity: userStore.get() ?? identity,
-        chainSync: { success: true, txids: result.txids, avatarPinId: pinId, failedSteps: [] },
-        profileSource: 'local',
-      };
+      stagedAvatar = prepared.reference;
+      avatarFallback = prepared.avatarUrl;
     } catch (error) {
-      // Local clear stands; the stale on-chain avatar stays pinned and the
-      // recorded avatar_pin_id keeps pointing at it (honest bookkeeping: a
-      // later import would restore the old avatar until the clear pin lands).
-      const message = error instanceof Error ? error.message : String(error);
-      return {
-        success: true,
-        identity: userStore.get() ?? identity,
-        chainSync: { success: false, txids: [], failedSteps: ['avatar'], error: message },
-        profileSource: 'local',
-      };
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
-  }
-
-  // ── Set path ──
-  if (!parseDataUrlAvatar(avatar)) {
+  } else if (avatar && !parseDataUrlAvatar(avatar)) {
     return { success: false, error: 'INVALID_AVATAR' };
   }
-  if (avatar === identity.avatar && identity.avatar_pin_id) {
-    // Same avatar, already pinned: no-op.
+
+  const declarationAlreadySynced = (identity.nft_avatar_synced_reference ?? '') === (nftReference ? stagedAvatar : '');
+  if (
+    stagedAvatar === (identity.avatar ?? '')
+    && identity.avatar_pin_id
+    && declarationAlreadySynced
+  ) {
     return { success: true, identity, profileSource: 'local' };
   }
-  // Publishing a pin needs gas — same gates as updateUserIdentityName.
-  if (
-    identity.subsidy_state === 'failed' ||
-    (!identity.subsidy_state && !identity.chat_public_key_pin_id)
-  ) {
-    return { success: false, error: 'SUBSIDY_NOT_CLAIMED' };
+  if (!stagedAvatar && !identity.avatar && !identity.avatar_pin_id && !identity.nft_avatar_synced_reference) {
+    return { success: true, identity, profileSource: 'local' };
   }
-  if (identity.subsidy_state === 'pending') {
-    const subsidy = await claimUserIdentitySubsidy(userStore, identity, deps);
-    if (!subsidy.success) {
+
+  if (stagedAvatar) {
+    if (identity.subsidy_state === 'failed' || (!identity.subsidy_state && !identity.chat_public_key_pin_id)) {
       return { success: false, error: 'SUBSIDY_NOT_CLAIMED' };
+    }
+    if (identity.subsidy_state === 'pending') {
+      const subsidy = await claimUserIdentitySubsidy(userStore, identity, deps);
+      if (!subsidy.success) return { success: false, error: 'SUBSIDY_NOT_CLAIMED' };
     }
   }
 
-  // Stage the new avatar and drop the stale pin so the shared sync treats
-  // /info/avatar as missing and republishes it (plus any other missing base
-  // pins, exactly like the create flow's post-insert sync).
-  userStore.update({ avatar, avatar_pin_id: null });
-  const chainSync = await syncUserIdentityToChain(userStore, { includeProfileSteps: true }, deps);
+  userStore.update({
+    avatar: stagedAvatar || null,
+    avatar_fallback: avatarFallback,
+    avatar_pin_id: null,
+  });
+  const chainSync = await syncUserIdentityToChain(
+    userStore,
+    { includeProfileSteps: true, forceAvatarClear: !stagedAvatar },
+    deps,
+  );
   return {
     success: true,
     identity: userStore.get() ?? identity,

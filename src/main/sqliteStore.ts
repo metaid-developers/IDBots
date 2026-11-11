@@ -2292,6 +2292,9 @@ export class SqliteStore {
         a2a_bye_cooldown_ms INTEGER,
         a2a_auto_reply_enabled INTEGER,
         homepage TEXT,
+        nft_avatar TEXT,
+        nft_avatar_pin_id TEXT,
+        nft_avatar_synced_reference TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         FOREIGN KEY (wallet_id) REFERENCES metabot_wallets(id) ON DELETE RESTRICT,
@@ -2337,6 +2340,9 @@ export class SqliteStore {
         globalmetaid TEXT,
         name TEXT NOT NULL,
         avatar TEXT,
+        avatar_fallback TEXT,
+        nft_avatar_pin_id TEXT,
+        nft_avatar_synced_reference TEXT,
         subsidy_state TEXT,
         subsidy_error TEXT,
         name_pin_id TEXT,
@@ -2484,6 +2490,7 @@ export class SqliteStore {
     // reasoning effort for both brains). Runs after every table-rebuilding
     // migration so the ALTERs always land on the final metabots table.
     this.migrateMetabotLlmBrainColumns();
+    this.migrateNftAvatarColumns();
     // Migration: persist user-identity bootstrap state (subsidy + per-pin sync status)
     // so chain setup can be resumed/retried idempotently after failures.
     this.migrateUserIdentitySetupColumns();
@@ -4349,12 +4356,36 @@ export class SqliteStore {
     }
   }
 
+  private migrateNftAvatarColumns(): void {
+    try {
+      const colsResult = this.db.exec('PRAGMA table_info(metabots);');
+      const columns = (colsResult[0]?.values?.map((row) => row[1]) || []) as string[];
+      const needsBackfill = !columns.includes('nft_avatar');
+      let changed = false;
+      for (const col of ['nft_avatar', 'nft_avatar_pin_id', 'nft_avatar_synced_reference']) {
+        if (!columns.includes(col)) {
+          this.db.run(`ALTER TABLE metabots ADD COLUMN ${col} TEXT;`);
+          changed = true;
+        }
+      }
+      if (needsBackfill && columns.includes('avatar')) {
+        this.db.run("UPDATE metabots SET nft_avatar = avatar WHERE nft_avatar IS NULL AND avatar LIKE 'nft://mrc721/%';");
+      }
+      if (changed) this.save();
+    } catch (error) {
+      console.warn('migrateNftAvatarColumns:', error);
+    }
+  }
+
   /** Idempotently add user-identity bootstrap-state columns to user_identity. */
   private migrateUserIdentitySetupColumns(): void {
     try {
       const colsResult = this.db.exec('PRAGMA table_info(user_identity);');
       const columns = (colsResult[0]?.values?.map((row) => row[1]) || []) as string[];
       const additions: Array<[string, string]> = [
+        ['avatar_fallback', 'TEXT'],
+        ['nft_avatar_pin_id', 'TEXT'],
+        ['nft_avatar_synced_reference', 'TEXT'],
         ['subsidy_state', 'TEXT'],
         ['subsidy_error', 'TEXT'],
         ['name_pin_id', 'TEXT'],

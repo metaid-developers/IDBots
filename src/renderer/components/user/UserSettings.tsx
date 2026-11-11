@@ -7,7 +7,7 @@
  * the mnemonic import view; "Log Out" removes it and lands on the empty view.
  */
 
-import React, { useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
   UserCircleIcon,
   UserPlusIcon,
@@ -32,6 +32,8 @@ import PaymentReceivingSettingsModal, {
   initialPaymentModalState,
   paymentModalReducer,
 } from '../settings/PaymentReceivingSettings';
+import AvatarPickerModal, { type AvatarPickerNftItem } from '../avatar/AvatarPickerModal';
+import NftAvatarFrame from '../metabots/NftAvatarFrame';
 
 type ViewState = 'loading' | 'empty' | 'create' | 'backup' | 'import' | 'profile';
 
@@ -43,6 +45,7 @@ interface UserIdentity {
   id: number;
   name: string;
   avatar: string | null;
+  avatar_fallback?: string | null;
   metaid: string;
   globalmetaid: string | null;
   mvc_address: string;
@@ -188,12 +191,15 @@ const UserSettings: React.FC = () => {
   const [nameDraft, setNameDraft] = useState('');
   const [nameSaving, setNameSaving] = useState(false);
   const [nameError, setNameError] = useState('');
-  // Avatar update on the existing identity: inline picker under the identity
-  // card avatar; picking a file publishes immediately (no draft submit step).
   const [avatarEditing, setAvatarEditing] = useState(false);
   const [avatarSaving, setAvatarSaving] = useState(false);
   const [avatarError, setAvatarError] = useState('');
   const [backupModalOpen, setBackupModalOpen] = useState(false);
+  const loadUserNfts = useCallback(async (): Promise<AvatarPickerNftItem[]> => {
+    const response = await window.electron.userIdentity.getNfts();
+    if (!response.success) throw new Error(response.error || i18nService.t('metabotNftLoadFailed'));
+    return (response.items ?? []) as unknown as AvatarPickerNftItem[];
+  }, []);
 
   // Logout / switch account — the same confirm modal with different copy and a
   // different landing view ('switch' lands directly on the mnemonic import).
@@ -425,17 +431,19 @@ const UserSettings: React.FC = () => {
   // identity cache (refreshUserProfileIdentity) so the profile card updates
   // without reopening. A failed chain sync is non-blocking: the staged avatar
   // shows immediately and the sync warning + Retry button cover the catch-up.
-  const handleAvatarChange = async (dataUrl: string) => {
-    if (avatarSaving) return;
+  const handleAvatarChange = async (value: string): Promise<boolean> => {
+    if (avatarSaving) return false;
     setAvatarSaving(true);
     setAvatarError('');
     try {
       const result = await window.electron.userIdentity.updateAvatar({
-        avatar: dataUrl === '' ? null : dataUrl,
+        avatar: value === '' ? null : value,
       });
       if (!result.success || !result.identity) {
-        setAvatarError(resolveErrorMessage(result.error));
-        return;
+        const message = resolveErrorMessage(result.error);
+        setAvatarError(message);
+        showToast(message);
+        return false;
       }
       setIdentity(result.identity);
       void refreshUserProfileIdentity();
@@ -444,13 +452,13 @@ const UserSettings: React.FC = () => {
       } else {
         showToast(i18nService.t('userSettingsAvatarSaved'));
       }
-      // Collapse the picker after a clear (nothing left to preview); keep it
-      // open after a replace so the freshly staged avatar is visible.
-      if (dataUrl === '') {
-        setAvatarEditing(false);
-      }
+      setAvatarEditing(false);
+      return true;
     } catch (error: any) {
-      setAvatarError(resolveErrorMessage(error?.message));
+      const message = resolveErrorMessage(error?.message);
+      setAvatarError(message);
+      showToast(message);
+      return false;
     } finally {
       setAvatarSaving(false);
     }
@@ -1007,7 +1015,6 @@ const UserSettings: React.FC = () => {
 
   const renderProfile = () => {
     if (!identity) return null;
-    const avatarUrl = identity.avatar && identity.avatar.startsWith('data:') ? identity.avatar : null;
     const nameMissing = !identity.name.trim();
     const nameInitial = identity.name.trim().charAt(0).toUpperCase() || '?';
     const chatPubkeyPinned = Boolean(identity.chat_public_key_pin_id);
@@ -1067,29 +1074,42 @@ const UserSettings: React.FC = () => {
         {/* Identity card with editable name */}
         <div className="flex items-start gap-4">
           <div className="flex flex-col items-center gap-1.5 flex-shrink-0">
-            <div className="w-16 h-16 rounded-full dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border overflow-hidden flex items-center justify-center">
-              {avatarUrl ? (
-                <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
-              ) : (
-                <span className="text-xl font-semibold dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                  {nameInitial}
-                </span>
+            <NftAvatarFrame
+              avatar={identity.avatar}
+              fallbackSource={identity.avatar_fallback}
+              frameClassName="w-16 h-16 rounded-full"
+              imgClassName="border dark:border-claude-darkBorder border-claude-border"
+              fallback={(
+                <div className="flex w-16 h-16 items-center justify-center rounded-full dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border">
+                  <span className="text-xl font-semibold dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    {nameInitial}
+                  </span>
+                </div>
               )}
-            </div>
+            />
             <button
               type="button"
+              data-slot="user-avatar-set"
               onClick={() => {
-                setAvatarEditing((v) => !v);
+                setAvatarEditing(true);
                 setAvatarError('');
               }}
               disabled={avatarSaving}
               aria-expanded={avatarEditing}
               className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-accent dark:hover:text-claude-accent hover:underline disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              {avatarEditing
-                ? i18nService.t('userSettingsAvatarChangeClose')
-                : i18nService.t('userSettingsAvatarChange')}
+              {i18nService.t('metabotAvatarSet')}
             </button>
+            {identity.avatar && (
+              <button
+                type="button"
+                onClick={() => { void handleAvatarChange(''); }}
+                disabled={avatarSaving}
+                className="text-xs text-red-500 hover:underline disabled:opacity-50"
+              >
+                {i18nService.t('userSettingsAvatarClear')}
+              </button>
+            )}
           </div>
           <div className="flex-1 min-w-0 space-y-1.5">
             <label className={labelClass}>
@@ -1124,26 +1144,27 @@ const UserSettings: React.FC = () => {
           </div>
         </div>
 
-        {/* Inline avatar picker (publishes immediately on file pick) */}
         {avatarEditing && (
-          <div className="rounded-xl dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/60 bg-claude-surface/60 p-4 space-y-2">
-            <AvatarPicker
-              value={avatarUrl ?? ''}
-              disabled={avatarSaving}
-              onChange={(dataUrl) => { void handleAvatarChange(dataUrl); }}
-              onError={setAvatarError}
-            />
-            {avatarSaving && (
-              <div className="flex items-center gap-2 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                <ArrowPathIcon className="h-3.5 w-3.5 animate-spin shrink-0" />
-                {i18nService.t('userSettingsAvatarSaving')}
-              </div>
-            )}
-            {avatarError && (
-              <div className="text-xs text-red-500 bg-red-500/10 px-3 py-2 rounded-lg">
-                {avatarError}
-              </div>
-            )}
+          <AvatarPickerModal
+            ownerAddress={identity.mvc_address}
+            ownerGlobalMetaId={identity.globalmetaid}
+            loadNfts={loadUserNfts}
+            maxLocalBytes={AVATAR_MAX_SIZE_BYTES}
+            onPick={(reference) => { void handleAvatarChange(reference); }}
+            onPickLocal={(dataUrl) => { void handleAvatarChange(dataUrl); }}
+            onError={setAvatarError}
+            onClose={() => setAvatarEditing(false)}
+          />
+        )}
+        {avatarSaving && (
+          <div className="flex items-center gap-2 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+            <ArrowPathIcon className="h-3.5 w-3.5 animate-spin shrink-0" />
+            {i18nService.t('userSettingsAvatarSaving')}
+          </div>
+        )}
+        {avatarError && !avatarEditing && (
+          <div className="text-xs text-red-500 bg-red-500/10 px-3 py-2 rounded-lg">
+            {avatarError}
           </div>
         )}
 

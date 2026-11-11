@@ -9,6 +9,8 @@
 export interface MetaidInfoResult {
   name?: string;
   avatarUrl?: string | null;
+  nftAvatar?: string | null;
+  nftAvatarOwnershipVerified?: boolean;
   chatpubkey?: string | null;
   globalMetaId?: string;
   metaid?: string;
@@ -50,6 +52,8 @@ async function fetchMetaidInfo(
   return {
     name,
     avatarUrl: avatarUrl || undefined,
+    nftAvatar: typeof data.nftAvatar === 'string' ? data.nftAvatar : null,
+    nftAvatarOwnershipVerified: data.nftAvatarOwnershipVerified === true,
     chatpubkey: chatpubkey || undefined,
     globalMetaId:
       typeof data.globalMetaId === 'string'

@@ -235,3 +235,13 @@ test('metabot_update: a non-string avatar value is never treated as an explicit 
   assert.equal('avatar' in calls.update[0].input, false);
   assert.match(textOf(res), /avatar was NOT changed \(unsupported value/);
 });
+
+
+test('metabot_update forwards an NFT reference to the ownership-checked core without image normalization', async () => {
+  const { byName, calls } = makeHarness();
+  const reference = `nft://mrc721/${'aa'.repeat(32)}i0`;
+  const result = await byName.metabot_update.handler({ metabot_id: 1, avatar: reference });
+  assert.equal(result.isError, undefined);
+  assert.equal(calls.update.length, 1);
+  assert.equal(calls.update[0].input.avatar, reference);
+});

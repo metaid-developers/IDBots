@@ -1281,6 +1281,7 @@ contextBridge.exposeInMainWorld('electron', {
       metabotId: number;
       syncName?: boolean;
       syncAvatar?: boolean;
+      syncNftAvatar?: boolean;
       syncBio?: boolean;
       syncPersona?: boolean;
       syncLlm?: boolean;
@@ -1319,6 +1320,7 @@ contextBridge.exposeInMainWorld('electron', {
   },
   userIdentity: {
     get: () => ipcRenderer.invoke('userIdentity:get'),
+    getNfts: () => ipcRenderer.invoke('userIdentity:getNfts'),
     create: (input: { name: string; avatar?: string | null }) =>
       ipcRenderer.invoke('userIdentity:create', input),
     importFromMnemonic: (input: { mnemonic: string; path?: string }) =>

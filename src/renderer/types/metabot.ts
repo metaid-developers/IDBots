@@ -9,6 +9,9 @@ export interface Metabot {
   metabot_info_pinid?: string | null;
   name: string;
   avatar: string | null;
+  avatar_fallback?: string | null;
+  nft_avatar_pin_id?: string | null;
+  nft_avatar_synced_reference?: string | null;
   enabled: boolean;
   globalmetaid: string | null;
   metabot_type: 'twin' | 'worker' | 'welcome';

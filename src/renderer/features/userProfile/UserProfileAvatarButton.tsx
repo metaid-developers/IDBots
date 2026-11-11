@@ -31,8 +31,8 @@ import {
  * The avatar is rendered by the EXISTING shared frame component
  * (`components/metabots/NftAvatarFrame`) — the same public export the Bot list,
  * the Bot editor and the Co-Work transcript use. It renders a plain data/http
- * avatar exactly as before and grows the rainbow NFT frame + certified badge
- * when the stored avatar is an `nft://mrc721/<itemPinId>` reference, so no
+ * avatar exactly as before, adds a subtle badge for a wallet-verified NFT,
+ * and reserves the rainbow frame for a certified collection, so no
  * second avatar stack is introduced here.
  */
 const UserProfileAvatarButton: React.FC = () => {
@@ -81,6 +81,7 @@ const UserProfileAvatarButton: React.FC = () => {
           「this place is kept for your NFT avatar」, not a plain button. */}
       <NftAvatarFrame
         avatar={identity?.avatar ?? null}
+        fallbackSource={identity?.avatar_fallback}
         frameClassName="w-12 h-12 rounded-xl"
         fallback={
           <div

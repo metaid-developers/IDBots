@@ -38,6 +38,7 @@ interface EditSyncRemaining {
   metabotId: number;
   syncName: boolean;
   syncAvatar: boolean;
+  syncNftAvatar: boolean;
   syncBio: boolean;
   syncPersona: boolean;
   syncLlm: boolean;
@@ -51,6 +52,7 @@ const EDIT_SYNC_STEP_FLAG_PAIRS: ReadonlyArray<
 > = [
   ['name', 'syncName'],
   ['avatar', 'syncAvatar'],
+  ['nftAvatar', 'syncNftAvatar'],
   ['bio', 'syncBio'],
   ['persona', 'syncPersona'],
   ['llm', 'syncLlm'],
@@ -930,6 +932,7 @@ const MetabotsManager: React.FC<MetabotsManagerProps> = ({
         metabotId: remaining.metabotId,
         syncName: remaining.syncName,
         syncAvatar: remaining.syncAvatar,
+        syncNftAvatar: remaining.syncNftAvatar,
         syncBio: remaining.syncBio,
         syncPersona: remaining.syncPersona,
         syncLlm: remaining.syncLlm,
@@ -1030,6 +1033,7 @@ const MetabotsManager: React.FC<MetabotsManagerProps> = ({
           metabotId: metabot.id,
           syncName: steps.includes('name'),
           syncAvatar: steps.includes('avatar'),
+          syncNftAvatar: steps.includes('nftAvatar'),
           syncBio: steps.includes('bio'),
           syncPersona: steps.includes('persona'),
           syncLlm: steps.includes('llm'),

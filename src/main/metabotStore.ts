@@ -45,6 +45,9 @@ interface MetabotRow {
   name: string;
   avatar: string | null;
   avatar_blob?: Uint8Array | null;
+  nft_avatar?: string | null;
+  nft_avatar_pin_id?: string | null;
+  nft_avatar_synced_reference?: string | null;
   enabled: number;
   metaid: string;
   globalmetaid: string | null;
@@ -95,7 +98,7 @@ function avatarFromRow(row: MetabotRow): string | null {
     const b64 = Buffer.from(blob).toString('base64');
     return `data:image/png;base64,${b64}`;
   }
-  if (typeof row.avatar === 'string' && row.avatar) return row.avatar;
+  if (typeof row.avatar === 'string' && row.avatar && !row.avatar.startsWith('nft://')) return row.avatar;
   return null;
 }
 
@@ -112,6 +115,9 @@ function avatarToDb(value: string | null | undefined): Buffer | string | null {
 
 function rowToMetabot(row: MetabotRow): Metabot {
   const bio = row.bio ?? row.background ?? null;
+  const avatarFallback = avatarFromRow(row);
+  const legacyNftReference = typeof row.avatar === 'string' && row.avatar.startsWith('nft://') ? row.avatar : null;
+  const nftReference = row.nft_avatar?.trim() || legacyNftReference;
   return {
     id: row.id,
     wallet_id: row.wallet_id,
@@ -122,7 +128,10 @@ function rowToMetabot(row: MetabotRow): Metabot {
     chat_public_key: row.chat_public_key,
     chat_public_key_pin_id: row.chat_public_key_pin_id ?? null,
     name: row.name,
-    avatar: avatarFromRow(row),
+    avatar: nftReference ?? avatarFallback,
+    ...(nftReference ? { avatar_fallback: avatarFallback } : {}),
+    nft_avatar_pin_id: row.nft_avatar_pin_id ?? null,
+    nft_avatar_synced_reference: row.nft_avatar_synced_reference ?? null,
     enabled: (row.enabled ?? 1) === 1,
     metaid: row.metaid,
     globalmetaid: row.globalmetaid ?? null,
@@ -485,67 +494,33 @@ export class MetabotStore {
     const bio = input.bio !== undefined ? input.bio : (input.background ?? null);
     const deprecatedBackground = input.background ?? null;
     const enabled = input.enabled !== false ? 1 : 0;
-    const avatarDb = avatarToDb(input.avatar ?? null);
+    const nftReference = input.avatar?.trim().startsWith('nft://') ? input.avatar.trim() : null;
+    const avatarDb = avatarToDb(nftReference ? input.avatar_fallback : input.avatar);
     const useBlob = this.hasAvatarBlobColumn();
     const bossId = this.normalizeBossIdForWrite(input.boss_id ?? null);
     const homepage = input.homepage ?? null;
-
+    const columns = [
+      'wallet_id', 'mvc_address', 'btc_address', 'doge_address', 'public_key', 'chat_public_key', 'chat_public_key_pin_id',
+      'name', useBlob ? 'avatar_blob' : 'avatar', 'enabled', 'metaid', 'globalmetaid', 'metabot_info_pinid', 'metabot_type', 'created_by',
+      'role', 'soul', 'goal', 'bio', 'background', 'boss_id', 'boss_global_metaid', 'owner_binding_pinid', 'llm_id', 'fallback_llm_id',
+      'llm_provider', 'llm_effort', 'fallback_llm_provider', 'fallback_llm_effort', 'tools', 'skills', 'allow_chat_skills', 'homepage',
+      'nft_avatar', 'nft_avatar_pin_id', 'nft_avatar_synced_reference', 'created_at', 'updated_at',
+    ];
     const params = sanitizeBindParams([
-      input.wallet_id,
-      input.mvc_address,
-      input.btc_address,
-      input.doge_address,
-      input.public_key,
-      input.chat_public_key,
-      input.chat_public_key_pin_id ?? null,
-      input.name,
+      input.wallet_id, input.mvc_address, input.btc_address, input.doge_address, input.public_key, input.chat_public_key,
+      input.chat_public_key_pin_id ?? null, input.name,
       useBlob ? (avatarDb instanceof Buffer ? avatarDb : null) : avatarDb,
-      enabled,
-      input.metaid,
-      input.globalmetaid ?? null,
-      input.metabot_info_pinid ?? null,
-      input.metabot_type,
-      input.created_by,
-      input.role,
-      input.soul,
-      input.goal ?? null,
-      bio,
-      deprecatedBackground,
-      bossId,
-      input.boss_global_metaid ?? null,
-      input.owner_binding_pinid ?? null,
-      input.llm_id ?? null,
-      input.fallback_llm_id ?? null,
-      input.llm_provider ?? null,
-      input.llm_effort ?? null,
-      input.fallback_llm_provider ?? null,
-      input.fallback_llm_effort ?? null,
-      toolsJson,
-      skillsJson,
-      allowChatSkillsJson,
-      homepage,
-      now,
-      now,
+      enabled, input.metaid, input.globalmetaid ?? null, input.metabot_info_pinid ?? null, input.metabot_type, input.created_by,
+      input.role, input.soul, input.goal ?? null, bio, deprecatedBackground, bossId, input.boss_global_metaid ?? null,
+      input.owner_binding_pinid ?? null, input.llm_id ?? null, input.fallback_llm_id ?? null, input.llm_provider ?? null,
+      input.llm_effort ?? null, input.fallback_llm_provider ?? null, input.fallback_llm_effort ?? null,
+      toolsJson, skillsJson, allowChatSkillsJson, homepage, nftReference,
+      input.nft_avatar_pin_id ?? null, input.nft_avatar_synced_reference ?? null, now, now,
     ]);
-    if (useBlob) {
-      this.db.run(
-        `INSERT INTO metabots (
-          wallet_id, mvc_address, btc_address, doge_address, public_key, chat_public_key, chat_public_key_pin_id,
-          name, avatar_blob, enabled, metaid, globalmetaid, metabot_info_pinid, metabot_type, created_by,
-          role, soul, goal, bio, background, boss_id, boss_global_metaid, owner_binding_pinid, llm_id, fallback_llm_id, llm_provider, llm_effort, fallback_llm_provider, fallback_llm_effort, tools, skills, allow_chat_skills, homepage, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        params
-      );
-    } else {
-      this.db.run(
-        `INSERT INTO metabots (
-          wallet_id, mvc_address, btc_address, doge_address, public_key, chat_public_key, chat_public_key_pin_id,
-          name, avatar, enabled, metaid, globalmetaid, metabot_info_pinid, metabot_type, created_by,
-          role, soul, goal, bio, background, boss_id, boss_global_metaid, owner_binding_pinid, llm_id, fallback_llm_id, llm_provider, llm_effort, fallback_llm_provider, fallback_llm_effort, tools, skills, allow_chat_skills, homepage, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        params
-      );
-    }
+    this.db.run(
+      `INSERT INTO metabots (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
+      params,
+    );
     const result = this.db.exec('SELECT last_insert_rowid() as id');
     const rawId = result[0]?.values?.[0]?.[0];
     const id = typeof rawId === 'number' ? rawId : Number(rawId) || 0;
@@ -553,13 +528,11 @@ export class MetabotStore {
       throw new Error(`createMetabot failed: last_insert_rowid returned invalid id (raw=${JSON.stringify(rawId)})`);
     }
     if (input.metabot_type === 'twin') {
-      // Machine-wide unique Twin: creating a new twin demotes the previous one.
       this.demoteOtherTwins(id);
     }
     this.saveDb();
 
-    // Build return object from input (avoid getMetabotById which may fail if db.exec does not bind params)
-    const metabot: Metabot = {
+    return {
       id,
       wallet_id: input.wallet_id,
       mvc_address: input.mvc_address,
@@ -570,6 +543,9 @@ export class MetabotStore {
       chat_public_key_pin_id: input.chat_public_key_pin_id ?? null,
       name: input.name,
       avatar: input.avatar ?? null,
+      avatar_fallback: input.avatar_fallback ?? null,
+      nft_avatar_pin_id: input.nft_avatar_pin_id ?? null,
+      nft_avatar_synced_reference: input.nft_avatar_synced_reference ?? null,
       enabled: input.enabled !== false,
       metaid: input.metaid,
       globalmetaid: input.globalmetaid ?? null,
@@ -597,7 +573,6 @@ export class MetabotStore {
       created_at: now,
       updated_at: now,
     };
-    return metabot;
   }
 
   updateMetabot(id: number, input: MetabotUpdate): Metabot | null {
@@ -627,7 +602,12 @@ export class MetabotStore {
           : existing.background;
 
     const enabled = input.enabled !== undefined ? (input.enabled ? 1 : 0) : (existing.enabled ? 1 : 0);
-    const avatarVal = input.avatar !== undefined ? input.avatar : existing.avatar;
+    const nextNftReference = input.avatar !== undefined
+      ? (input.avatar?.trim().startsWith('nft://') ? input.avatar.trim() : null)
+      : (existing.avatar?.startsWith('nft://') ? existing.avatar : null);
+    const avatarVal = nextNftReference
+      ? (input.avatar_fallback !== undefined ? input.avatar_fallback : existing.avatar_fallback)
+      : (input.avatar !== undefined ? input.avatar : existing.avatar);
     const avatarDb = avatarToDb(avatarVal ?? null);
     const useBlob = this.hasAvatarBlobColumn();
     const bossId =
@@ -681,103 +661,40 @@ export class MetabotStore {
       this.demoteOtherTwins(id);
     }
 
-    if (useBlob) {
-      this.db.run(
-        `UPDATE metabots SET
-          wallet_id = ?, mvc_address = ?, btc_address = ?, doge_address = ?, public_key = ?, chat_public_key = ?, chat_public_key_pin_id = ?,
-          name = ?, avatar_blob = ?, enabled = ?, metaid = ?, globalmetaid = ?, metabot_info_pinid = ?, metabot_type = ?, created_by = ?,
-          role = ?, soul = ?, goal = ?, bio = ?, background = ?, boss_id = ?, boss_global_metaid = ?, owner_binding_pinid = ?, llm_id = ?, fallback_llm_id = ?, llm_provider = ?, llm_effort = ?, fallback_llm_provider = ?, fallback_llm_effort = ?, tools = ?, skills = ?, allow_chat_skills = ?, a2a_max_incoming_turns = ?, a2a_bye_cooldown_ms = ?, a2a_auto_reply_enabled = ?, homepage = ?, updated_at = ?
-        WHERE id = ?`,
-        [
-          input.wallet_id ?? existing.wallet_id,
-          input.mvc_address ?? existing.mvc_address,
-          input.btc_address ?? existing.btc_address,
-          input.doge_address ?? existing.doge_address,
-          input.public_key ?? existing.public_key,
-          input.chat_public_key ?? existing.chat_public_key,
-          input.chat_public_key_pin_id !== undefined ? input.chat_public_key_pin_id : existing.chat_public_key_pin_id,
-          input.name ?? existing.name,
-          avatarDb instanceof Buffer ? avatarDb : null,
-          enabled,
-          input.metaid ?? existing.metaid,
-          input.globalmetaid !== undefined ? input.globalmetaid : existing.globalmetaid,
-          input.metabot_info_pinid !== undefined ? input.metabot_info_pinid : existing.metabot_info_pinid,
-          nextMetabotType,
-          input.created_by ?? existing.created_by,
-          input.role ?? existing.role,
-          input.soul ?? existing.soul,
-          input.goal !== undefined ? input.goal : existing.goal,
-          nextBio,
-          nextDeprecatedBackground,
-          bossId,
-          input.boss_global_metaid !== undefined ? input.boss_global_metaid : existing.boss_global_metaid,
-          input.owner_binding_pinid !== undefined ? input.owner_binding_pinid : existing.owner_binding_pinid,
-          input.llm_id !== undefined ? input.llm_id : existing.llm_id,
-          fallbackLlmId,
-          llmProvider,
-          llmEffort,
-          fallbackLlmProvider,
-          fallbackLlmEffort,
-          toolsJson,
-          skillsJson,
-          allowChatSkillsJson,
-          a2aMaxIncomingTurns,
-          a2aByeCooldownMs,
-          a2aAutoReplyEnabled,
-          homepage,
-          now,
-          id,
-        ]
-      );
-    } else {
-      this.db.run(
-        `UPDATE metabots SET
-          wallet_id = ?, mvc_address = ?, btc_address = ?, doge_address = ?, public_key = ?, chat_public_key = ?, chat_public_key_pin_id = ?,
-          name = ?, avatar = ?, enabled = ?, metaid = ?, globalmetaid = ?, metabot_info_pinid = ?, metabot_type = ?, created_by = ?,
-          role = ?, soul = ?, goal = ?, bio = ?, background = ?, boss_id = ?, boss_global_metaid = ?, owner_binding_pinid = ?, llm_id = ?, fallback_llm_id = ?, llm_provider = ?, llm_effort = ?, fallback_llm_provider = ?, fallback_llm_effort = ?, tools = ?, skills = ?, allow_chat_skills = ?, a2a_max_incoming_turns = ?, a2a_bye_cooldown_ms = ?, a2a_auto_reply_enabled = ?, homepage = ?, updated_at = ?
-        WHERE id = ?`,
-        [
-          input.wallet_id ?? existing.wallet_id,
-          input.mvc_address ?? existing.mvc_address,
-          input.btc_address ?? existing.btc_address,
-          input.doge_address ?? existing.doge_address,
-          input.public_key ?? existing.public_key,
-          input.chat_public_key ?? existing.chat_public_key,
-          input.chat_public_key_pin_id !== undefined ? input.chat_public_key_pin_id : existing.chat_public_key_pin_id,
-          input.name ?? existing.name,
-          avatarDb,
-          enabled,
-          input.metaid ?? existing.metaid,
-          input.globalmetaid !== undefined ? input.globalmetaid : existing.globalmetaid,
-          input.metabot_info_pinid !== undefined ? input.metabot_info_pinid : existing.metabot_info_pinid,
-          nextMetabotType,
-          input.created_by ?? existing.created_by,
-          input.role ?? existing.role,
-          input.soul ?? existing.soul,
-          input.goal !== undefined ? input.goal : existing.goal,
-          nextBio,
-          nextDeprecatedBackground,
-          bossId,
-          input.boss_global_metaid !== undefined ? input.boss_global_metaid : existing.boss_global_metaid,
-          input.owner_binding_pinid !== undefined ? input.owner_binding_pinid : existing.owner_binding_pinid,
-          input.llm_id !== undefined ? input.llm_id : existing.llm_id,
-          fallbackLlmId,
-          llmProvider,
-          llmEffort,
-          fallbackLlmProvider,
-          fallbackLlmEffort,
-          toolsJson,
-          skillsJson,
-          allowChatSkillsJson,
-          a2aMaxIncomingTurns,
-          a2aByeCooldownMs,
-          a2aAutoReplyEnabled,
-          homepage,
-          now,
-          id,
-        ]
-      );
-    }
+    const avatarColumn = useBlob ? 'avatar_blob' : 'avatar';
+    const assignments = [
+      'wallet_id = ?', 'mvc_address = ?', 'btc_address = ?', 'doge_address = ?', 'public_key = ?',
+      'chat_public_key = ?', 'chat_public_key_pin_id = ?', 'name = ?', `${avatarColumn} = ?`, 'enabled = ?',
+      'metaid = ?', 'globalmetaid = ?', 'metabot_info_pinid = ?', 'metabot_type = ?', 'created_by = ?',
+      'role = ?', 'soul = ?', 'goal = ?', 'bio = ?', 'background = ?', 'boss_id = ?', 'boss_global_metaid = ?',
+      'owner_binding_pinid = ?', 'llm_id = ?', 'fallback_llm_id = ?', 'llm_provider = ?', 'llm_effort = ?',
+      'fallback_llm_provider = ?', 'fallback_llm_effort = ?', 'tools = ?', 'skills = ?', 'allow_chat_skills = ?',
+      'a2a_max_incoming_turns = ?', 'a2a_bye_cooldown_ms = ?', 'a2a_auto_reply_enabled = ?', 'homepage = ?',
+      'nft_avatar = ?', 'nft_avatar_pin_id = ?', 'nft_avatar_synced_reference = ?', 'updated_at = ?',
+    ];
+    const params = sanitizeBindParams([
+      input.wallet_id ?? existing.wallet_id, input.mvc_address ?? existing.mvc_address,
+      input.btc_address ?? existing.btc_address, input.doge_address ?? existing.doge_address,
+      input.public_key ?? existing.public_key, input.chat_public_key ?? existing.chat_public_key,
+      input.chat_public_key_pin_id !== undefined ? input.chat_public_key_pin_id : existing.chat_public_key_pin_id,
+      input.name ?? existing.name, useBlob ? (avatarDb instanceof Buffer ? avatarDb : null) : avatarDb, enabled,
+      input.metaid ?? existing.metaid,
+      input.globalmetaid !== undefined ? input.globalmetaid : existing.globalmetaid,
+      input.metabot_info_pinid !== undefined ? input.metabot_info_pinid : existing.metabot_info_pinid,
+      nextMetabotType, input.created_by ?? existing.created_by, input.role ?? existing.role, input.soul ?? existing.soul,
+      input.goal !== undefined ? input.goal : existing.goal, nextBio, nextDeprecatedBackground, bossId,
+      input.boss_global_metaid !== undefined ? input.boss_global_metaid : existing.boss_global_metaid,
+      input.owner_binding_pinid !== undefined ? input.owner_binding_pinid : existing.owner_binding_pinid,
+      input.llm_id !== undefined ? input.llm_id : existing.llm_id, fallbackLlmId, llmProvider, llmEffort,
+      fallbackLlmProvider, fallbackLlmEffort, toolsJson, skillsJson, allowChatSkillsJson,
+      a2aMaxIncomingTurns, a2aByeCooldownMs, a2aAutoReplyEnabled, homepage, nextNftReference,
+      input.nft_avatar_pin_id !== undefined ? input.nft_avatar_pin_id : existing.nft_avatar_pin_id ?? null,
+      input.nft_avatar_synced_reference !== undefined
+        ? input.nft_avatar_synced_reference
+        : existing.nft_avatar_synced_reference ?? null,
+      now, id,
+    ]);
+    this.db.run(`UPDATE metabots SET ${assignments.join(', ')} WHERE id = ?`, params);
     this.saveDb();
     return this.getMetabotById(id);
   }

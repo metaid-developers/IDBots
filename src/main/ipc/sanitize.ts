@@ -9,6 +9,7 @@
  */
 
 export const IPC_STRING_MAX_CHARS = 4_000;
+export const IPC_IMAGE_DATA_URL_MAX_CHARS = 300_000;
 // Depth budget notes (2026-10-28 F-17a): the gateway re-sanitizes payloads that
 // main handlers have already sanitized, and the extra wrapper levels (event
 // {sessionId, request/message} + the parent object) shift every nested value
@@ -39,7 +40,8 @@ export const sanitizeIpcPayload = (value: unknown, depth = 0, seen?: WeakSet<obj
     return value;
   }
   if (typeof value === 'string') {
-    return truncateIpcString(value, IPC_STRING_MAX_CHARS);
+    const maxChars = value.startsWith('data:image/') ? IPC_IMAGE_DATA_URL_MAX_CHARS : IPC_STRING_MAX_CHARS;
+    return truncateIpcString(value, maxChars);
   }
   if (typeof value === 'bigint') {
     return value.toString();

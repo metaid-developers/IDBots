@@ -25,6 +25,7 @@ export interface UserProfileIdentity {
   id: number;
   name: string;
   avatar: string | null;
+  avatar_fallback?: string | null;
   metaid: string;
   globalmetaid: string | null;
   mvc_address: string;
@@ -67,6 +68,7 @@ const pickIdentity = (identity: Record<string, unknown>): UserProfileIdentity =>
   id: typeof identity.id === 'number' ? identity.id : 0,
   name: typeof identity.name === 'string' ? identity.name : '',
   avatar: typeof identity.avatar === 'string' ? identity.avatar : null,
+  avatar_fallback: typeof identity.avatar_fallback === 'string' ? identity.avatar_fallback : null,
   metaid: typeof identity.metaid === 'string' ? identity.metaid : '',
   globalmetaid: typeof identity.globalmetaid === 'string' ? identity.globalmetaid : null,
   mvc_address: typeof identity.mvc_address === 'string' ? identity.mvc_address : '',

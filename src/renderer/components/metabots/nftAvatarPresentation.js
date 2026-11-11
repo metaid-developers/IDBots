@@ -3,21 +3,27 @@
  * reference parsing and CA-badge decision stay unit testable — same pattern
  * as metabotNftPresentation.js).
  *
- * Reference format: `nft://mrc721/<itemPinId>` stored in the metabots.avatar
- * TEXT column. It is a local display-only decoration; the main process
- * resolves it (metaid:resolveAvatarSource) to the item's artwork plus the
- * collection facts needed for the IDBots-certified badge.
+ * Identity-bound `nft://mrc721/<itemPinId>?owner=…&metaid=…` references
+ * resolve to cover art, live ownership facts, and the collection facts needed
+ * for the optional IDBots-certified frame.
  */
 
-const NFT_AVATAR_PATTERN = /^nft:\/\/mrc721\/([0-9a-f]{64}i\d+)$/i;
+const NFT_AVATAR_PATTERN = /^nft:\/\/mrc721\/([0-9a-f]{64}i\d+)(?:\?([^#]*))?$/i;
 
-/** Parse an nft:// avatar reference; null for anything else. */
+/** Parse an identity-bound nft:// avatar reference; null for anything else. */
 export function parseNftAvatarReference(avatar) {
   const normalized = typeof avatar === 'string' ? avatar.trim() : '';
   if (!normalized) return null;
   const match = normalized.match(NFT_AVATAR_PATTERN);
   if (!match || !match[1]) return null;
-  return { itemPinId: match[1].toLowerCase() };
+  const params = new URLSearchParams(match[2] || '');
+  const ownerAddress = (params.get('owner') || '').trim();
+  const globalMetaId = (params.get('metaid') || '').trim();
+  return {
+    itemPinId: match[1].toLowerCase(),
+    ...(ownerAddress ? { ownerAddress } : {}),
+    ...(globalMetaId ? { globalMetaId } : {}),
+  };
 }
 
 /**
@@ -31,4 +37,11 @@ export function isCollectionCertified(registry, collectionPinId) {
   if (!registry || registry.verified !== true) return false;
   const collections = Array.isArray(registry.collections) ? registry.collections : [];
   return collections.some((entry) => String(entry?.collectionPinId || '').trim().toLowerCase() === pinId);
+}
+
+
+export function resolveNftAvatarBadgeKind({ src, ownershipVerified, certified }) {
+  if (!src) return 'fallback';
+  if (!ownershipVerified) return 'plain';
+  return certified ? 'certified' : 'nft';
 }

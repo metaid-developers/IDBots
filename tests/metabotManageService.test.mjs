@@ -30,7 +30,15 @@ const makeTempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-metabot-
 const openStore = async () => {
   const tempDir = makeTempDir();
   const sqlite = await SqliteStore.create(tempDir);
-  return new MetabotStore(sqlite.getDatabase(), sqlite.getSaveFunction());
+  const store = new MetabotStore(sqlite.getDatabase(), sqlite.getSaveFunction());
+  store.__sqlite = sqlite;
+  store.__tempDir = tempDir;
+  return store;
+};
+
+const closeStore = (store) => {
+  try { store.__sqlite?.close(); } catch { /* best-effort cleanup */ }
+  try { fs.rmSync(store.__tempDir, { recursive: true, force: true }); } catch { /* OS sweeps leftovers */ }
 };
 
 const fakeWallet = (n) => ({
@@ -72,6 +80,7 @@ const seedMetabot = (store, { name, type = 'worker', llm_id = 'deepseek', n = Ma
 const STEP_FLAG_PAIRS = [
   ['name', 'syncName'],
   ['avatar', 'syncAvatar'],
+  ['nftAvatar', 'syncNftAvatar'],
   ['bio', 'syncBio'],
   ['persona', 'syncPersona'],
   ['llm', 'syncLlm'],
@@ -100,6 +109,7 @@ const mockDeps = (store, overrides = {}) => ({
       txids: ['tx-edit-1'],
       syncedSteps: stepsFromInput(input),
     })),
+  ...(overrides.prepareNftAvatar ? { prepareNftAvatar: overrides.prepareNftAvatar } : {}),
   onAfterMutation: overrides.onAfterMutation ?? (() => {}),
   getOwnerGlobalMetaId: overrides.getOwnerGlobalMetaId ?? (() => 'owner_gmid'),
   // Default: provider catalog unavailable -> the legacy provider-key guard is skipped.
@@ -926,4 +936,61 @@ test('updateMetaBotCore: no removals -> removedChatSkills absent', async () => {
   const res = await updateMetaBotCore(m.id, { allow_chat_skills: ['skill-a', 'skill-b'] }, deps);
   assert.equal(res.success, true);
   assert.equal(res.removedChatSkills, undefined);
+});
+
+
+test('updateMetaBotCore: a failed NFT ownership check rejects before local write or chain sync', async () => {
+  const store = await openStore();
+  try {
+    const m = seedMetabot(store, { name: 'Owner gated' });
+    const before = store.getMetabotById(m.id).avatar;
+    let syncCalls = 0;
+    const reference = `nft://mrc721/${'aa'.repeat(32)}i0`;
+    const result = await updateMetaBotCore(
+      m.id,
+      { avatar: reference },
+      mockDeps(store, {
+        prepareNftAvatar: async () => { throw new Error('NFT_AVATAR_NOT_OWNED'); },
+        syncEditChanges: async () => { syncCalls += 1; return { success: true, syncedSteps: [] }; },
+      }),
+    );
+    assert.equal(result.success, false);
+    assert.equal(result.error, 'NFT_AVATAR_NOT_OWNED');
+    assert.equal(syncCalls, 0);
+    assert.equal(store.getMetabotById(m.id).avatar, before);
+  } finally {
+    closeStore(store);
+  }
+});
+
+test('updateMetaBotCore: a verified NFT stores its bound reference and cover before dual-pin sync', async () => {
+  const store = await openStore();
+  try {
+    const m = seedMetabot(store, { name: 'NFT update' });
+    const reference = `nft://mrc721/${'aa'.repeat(32)}i0?owner=${encodeURIComponent(m.mvc_address)}&metaid=${m.globalmetaid}`;
+    let captured = null;
+    const result = await updateMetaBotCore(
+      m.id,
+      { avatar: `nft://mrc721/${'aa'.repeat(32)}i0` },
+      mockDeps(store, {
+        prepareNftAvatar: async () => ({
+          reference,
+          avatarUrl: 'data:image/png;base64,AAAA',
+          declarationPayload: '{}',
+          nft: { itemPinId: `${'aa'.repeat(32)}i0`, ownershipVerified: true },
+        }),
+        syncEditChanges: async (_store, input) => {
+          captured = input;
+          return { success: true, syncedSteps: stepsFromInput(input) };
+        },
+      }),
+    );
+    assert.equal(result.success, true);
+    assert.equal(captured.syncAvatar, true);
+    assert.equal(captured.syncNftAvatar, true);
+    assert.equal(result.metabot.avatar, reference);
+    assert.equal(result.metabot.avatar_fallback, 'data:image/png;base64,AAAA');
+  } finally {
+    closeStore(store);
+  }
 });
