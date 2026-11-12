@@ -191,7 +191,6 @@ def decompose(obj, body_len, per_array=True, caliber=True):
     caliber_shift = 0
     if not caliber:
         caliber_shift = len(obj.get("caliber", "")) - CALIBER_BASE
-    explained = ids_shift + caliber_shift
     return {
         "residual": r,
         "ids": -ids_shift,
@@ -416,7 +415,11 @@ def fixture_check(fixtures_dir):
             want = item["expected_residual"][variant]
             readings[variant] = got
             ok = ok and got == want
-        if obj.get("caliber", "") != item.get("caliber", obj.get("caliber", "")):
+        if obj.get("caliber") != item.get("caliber"):
+            ok = False
+        if len(payload) != item.get("body_len"):
+            ok = False
+        if len(obj.get("truncation_points") or []) != item.get("k"):
             ok = False
         checked = {
             "file": item["file"],
