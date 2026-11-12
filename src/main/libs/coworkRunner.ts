@@ -21,6 +21,7 @@ import { buildDispatchReportMessage, tailDispatchReportExcerpt } from './coworkC
 import { formatHostToolSchemaGuardWarning, guardHostToolSchemas, normalizeHostToolParameters } from './hostToolSchemaGuard';
 import { DshTurnHub, dshSessionRootFor, isNativeDeepSeekChatRoute, DSH_RUNTIME_IDLE_TTL_MS, type DshTurnProviderRoute } from './coworkDshTurn';
 import { getDshWebToolsProxyDescriptor } from '../services/dshWebToolsProxy';
+import { getMeBalance } from '../services/mePointsService';
 import { noteOwnerAskCancelled } from '../services/pendingOwnerAskBridge';
 import { filterServerModeAgentTools, resolveDshRuntimeIdleTtlMs } from '../server/serverMode';
 import { isDshShutdownError } from './dshShutdownError';
@@ -70,7 +71,7 @@ import {
   parseFollowUpDeclaration,
   resolveFollowUpAction,
 } from '../cerebellum/sessionFollowUpGate';
-import { CONFIG_HARD_FALLBACK_RESUME_PROMPT, CONTINUE_TURN_REASONING_EFFORT, DEEPSEEK_RESPONSES_REASONING_PLACEHOLDER, EMPTY_TERMINAL_TURN_CONTINUE_PROMPT, FINALIZATION_TURN_CONTINUE_PROMPT, isEmptyTerminalSdkResult, isAuthDshTurnError, isBodyLimitDshTurnError, isConfigModelMissingDshTurnError, isMalformedToolCallDshTurnError, isModelSwitchCompactionFailedDshTurnError, isOverflowDshTurnError, isQuotaDshTurnError, isRuntimeBootDshTurnError, isTransientDshTurnError, isWontHealDshTurnError, shouldAutoReviewDshToolCall, MALFORMED_TOOL_CALL_TURN_CONTINUE_PROMPT, OVERFLOW_TURN_RESUME_PROMPT, relayQuotaErrorMetadata, extractRelayQuotaExhaustedCode, TRANSIENT_TURN_RESUME_PROMPT, TRUNCATED_TURN_CONTINUE_PROMPT, buildFreeRelayQuotaNotice } from './coworkAssistantReply';
+import { CONFIG_HARD_FALLBACK_RESUME_PROMPT, CONTINUE_TURN_REASONING_EFFORT, DEEPSEEK_RESPONSES_REASONING_PLACEHOLDER, EMPTY_TERMINAL_TURN_CONTINUE_PROMPT, FINALIZATION_TURN_CONTINUE_PROMPT, isEmptyTerminalSdkResult, isAuthDshTurnError, isBodyLimitDshTurnError, isConfigModelMissingDshTurnError, isMalformedToolCallDshTurnError, isModelSwitchCompactionFailedDshTurnError, isOverflowDshTurnError, isQuotaDshTurnError, isRuntimeBootDshTurnError, isTransientDshTurnError, isWontHealDshTurnError, shouldAutoReviewDshToolCall, MALFORMED_TOOL_CALL_TURN_CONTINUE_PROMPT, OVERFLOW_TURN_RESUME_PROMPT, relayQuotaErrorMetadata, extractRelayQuotaExhaustedCode, TRANSIENT_TURN_RESUME_PROMPT, TRUNCATED_TURN_CONTINUE_PROMPT, buildFreeRelayQuotaNotice, meBalanceSpendableMilli } from './coworkAssistantReply';
 import {
   filterSdkInternalDiagnostics,
   isSdkInternalDiagnostic,
@@ -12524,15 +12525,21 @@ export class CoworkRunner extends EventEmitter {
           && isTransientDshTurnError(outcome);
         const runtimeBootTerminalDeath = ladderNoTargetKind === 'no-alternative'
           && isRuntimeBootDshTurnError(outcome);
-        // REQ-A-25: the relay signals an exhausted identity quota with TWO
-        // machine codes — free_quota_exhausted (never had purchased quota)
-        // and the new C4 quota_exhausted (purchased pool used up). Match
-        // both; the wording below stays free-relay specific only when the
-        // failing route is the built-in free provider.
-        const relayQuotaCode = extractRelayQuotaExhaustedCode(outcome.error?.message);
-        const relayQuotaExhausted = relayQuotaCode !== null;
+        const legacyRelayQuotaCode = extractRelayQuotaExhaustedCode(outcome.error?.message);
+        const relayQuotaCode = legacyRelayQuotaCode
+          ?? (/INSUFFICIENT_ME/i.test(outcome.error?.message ?? '') ? 'INSUFFICIENT_ME' : null);
         const freeRelayQuotaDeath = quotaTerminalDeath
-          && (isFreeQuotaProvider(lastAttemptRoute.provider) || relayQuotaExhausted);
+          && (isFreeQuotaProvider(lastAttemptRoute.provider) || relayQuotaCode !== null);
+        let officialRelayMeBalance: Awaited<ReturnType<typeof getMeBalance>> | undefined;
+        if (isServerMode() && freeRelayQuotaDeath && isFreeQuotaProvider(lastAttemptRoute.provider)) {
+          try {
+            officialRelayMeBalance = await getMeBalance({ forceRefresh: true });
+          } catch {
+            officialRelayMeBalance = undefined;
+          }
+        }
+        const relayMeAdmissionMismatch = officialRelayMeBalance !== undefined
+          && meBalanceSpendableMilli(officialRelayMeBalance) > 0;
         const noModelConfiguredNotice = ladderNoTargetKind === 'no-alternative'
           && !quotaTerminalDeath && !transportTerminalDeath && !runtimeBootTerminalDeath
           ? ` ${tApp(
@@ -12540,15 +12547,8 @@ export class CoworkRunner extends EventEmitter {
               ` (No usable model configured: the session's bound model is unavailable and neither the bot fallback nor the current-default ladder has a valid target — this is a configuration error, not a transient rate limit. Configure a usable default model in Settings > Models, or top up the provider.)`
             )}`
           : '';
-        // Free starter allowance exhausted. Desktop's actionable fix is the
-        // user's own provider (Settings > Models exists there); in server
-        // mode the phone has no Settings > Models page, so the notice points
-        // at recharge instead (REQ-A-25). The literal upstream quota code is
-        // preserved verbatim in both modes (free_quota_exhausted or the new
-        // C4 quota_exhausted): the renderer's quota banner
-        // (CoworkSessionDetail) keys off it, so message and banner agree.
         const freeRelayQuotaNotice = freeRelayQuotaDeath
-          ? ` ${buildFreeRelayQuotaNotice(relayQuotaCode, isServerMode(), tApp)}`
+          ? ` ${buildFreeRelayQuotaNotice(relayQuotaCode, isServerMode(), tApp, officialRelayMeBalance)}`
           : '';
         // Quota death is not retryable on the same route and the raw provider
         // body names no culprit: append an actionable notice naming the route
@@ -12631,10 +12631,19 @@ export class CoworkRunner extends EventEmitter {
         const ladderSemantics = ladderNoTargetKind === 'no-alternative'
           ? (quotaTerminalDeath
               ? (freeRelayQuotaDeath
-                  ? tApp(
-                      `免费额度已用完（ID.Bots 体验额度耗尽；最后错误码 ${outcome.error?.code ?? 'QUOTA'}）`,
-                      `Free starter quota exhausted (the ID.Bots allowance is used up; last error code ${outcome.error?.code ?? 'QUOTA'})`
-                    )
+                  ? (relayMeAdmissionMismatch
+                      ? tApp(
+                          `官方模型服务配额状态与 ME 余额不一致（您的 ME 余额仍可用；最后错误码 ${outcome.error?.code ?? 'QUOTA'}）`,
+                          `The official model service quota state disagrees with your ME balance (your ME credits are still spendable; last error code ${outcome.error?.code ?? 'QUOTA'})`
+                        )
+                      : tApp(
+                          isServerMode()
+                            ? `当前可用 ME 积分不足（最后错误码 ${outcome.error?.code ?? 'QUOTA'}）`
+                            : `免费额度已用完（ID.Bots 体验额度耗尽；最后错误码 ${outcome.error?.code ?? 'QUOTA'}）`,
+                          isServerMode()
+                            ? `Your currently spendable ME credits are insufficient (last error code ${outcome.error?.code ?? 'QUOTA'})`
+                            : `Free starter quota exhausted (the ID.Bots allowance is used up; last error code ${outcome.error?.code ?? 'QUOTA'})`
+                        ))
                   : tApp(
                       `模型供应商 ${lastAttemptRoute.provider} 的 ${lastAttemptRoute.model} 额度不足，本轮已终止（最后错误码 ${outcome.error?.code ?? 'QUOTA'}）`,
                       `Provider ${lastAttemptRoute.provider} model ${lastAttemptRoute.model} is out of credits and the turn was aborted (last error code ${outcome.error?.code ?? 'QUOTA'})`
