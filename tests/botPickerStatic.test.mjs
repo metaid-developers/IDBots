@@ -28,21 +28,16 @@ const resolverSource = read('src/renderer/services/coworkSessionStart.ts');
 const managerSource = read('src/renderer/components/metabots/MetabotsManager.tsx');
 const i18nSource = read('src/renderer/services/i18n.ts');
 
-test('the panel portals the draft picker chip AND the live identity badge (v3 close wiring)', () => {
+test('the panel centers the draft picker in the welcome page and portals only live identity', () => {
   assert.match(panelSource, /import BotPickerChip from '\.\/BotPickerChip';/);
   assert.match(panelSource, /import CoworkSurfaceIdentityBadge from '\.\/CoworkSurfaceIdentityBadge';/);
   assert.match(panelSource, /import \{ resolveDefaultMetabotId \} from '\.\.\/\.\.\/services\/coworkSessionStart';/);
-  // Same resolution as the BotWorks new-task composer: explicit pick wins,
-  // else the Twin, else the first bot.
   assert.match(panelSource, /resolveDefaultMetabotId\(metabots, pickedMetabotId\)/);
   assert.match(resolverSource, /const twin = bots\.find\(\(bot\) => bot\.metabot_type === 'twin'\);/);
-  // Draft lane: the interactive picker chip (exactly one mount, test below).
+  assert.match(panelSource, /data-slot="cowork-draft-bot-picker"/);
   assert.match(panelSource, /<BotPickerChip/);
   assert.match(panelSource, /menuOpen=\{showBotPickerMenu\}/);
-  // Live lane (supersedes the chip's `live={Boolean(currentSession)}` form):
-  // the read-only badge resolves from the session's own bot id with the
-  // summary-row identity (metabotName/metabotAvatar) as fallback — never
-  // the draft pick.
+  assert.match(panelSource, /identityAnchorEl && currentSession/);
   assert.match(panelSource, /metabotId=\{currentSession\.metabotId \?\? null\}/);
   assert.match(panelSource, /fallbackName=\{currentSession\.metabotName \?\? null\}/);
   assert.match(panelSource, /fallbackAvatar=\{currentSession\.metabotAvatar \?\? null\}/);

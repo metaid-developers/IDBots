@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
-import { CpuChipIcon, FolderIcon } from '@heroicons/react/24/outline';
+import { FolderIcon } from '@heroicons/react/24/outline';
 import MarkdownContent from '../../components/MarkdownContent';
 import CoworkPromptInput, { type CoworkPromptInputRef } from '../../components/cowork/CoworkPromptInput';
 import { UserMessageBody } from '../../components/cowork/UserAttachmentBody';
@@ -351,14 +351,11 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     loadPersistedWorkspaceSelection()
   );
   const [showFolderMenu, setShowFolderMenu] = useState(false);
-  // The draft chip selects which bot runs the next conversation without
-  // writing metabot_type. Live sessions keep their own actor and render the
-  // read-only CoworkSurfaceIdentityBadge instead. Picker state stays here;
-  // only the component's DOM placement moves through the header portal.
+  // The central welcome picker selects the next conversation's bot without
+  // writing metabot_type. Live sessions keep their own actor in the header.
   const [showBotPickerMenu, setShowBotPickerMenu] = useState(false);
   const [pickedMetabotId, setPickedMetabotId] = useState<number | null>(null);
-  // Sidebar mounts the identity anchor in the centered lane above the Studio
-  // session title. Standalone panel mounts without that anchor render no chip.
+  // Only live identity uses the header portal; standalone mounts omit it.
   const [identityAnchorEl, setIdentityAnchorEl] = useState<HTMLElement | null>(null);
   useEffect(() => {
     setIdentityAnchorEl(document.querySelector<HTMLElement>('[data-slot="cowork-header-identity-anchor"]'));
@@ -847,27 +844,6 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     />
   );
 
-  // Welcome-page avatar: same img/fallback rule as the home welcome
-  // (CoworkView) — data:/http avatars render, everything else falls back to
-  // the shared CpuChipIcon placeholder on a muted tile.
-  const renderWelcomeAvatar = (boxClass: string, iconClass: string) => {
-    if (chipMetabot?.avatar
-      && (chipMetabot.avatar.startsWith('data:') || chipMetabot.avatar.startsWith('http'))) {
-      return (
-        <img
-          src={chipMetabot.avatar}
-          alt={chipMetabot.name}
-          className={`${boxClass} shrink-0 object-cover`}
-        />
-      );
-    }
-    return (
-      <span className={`${boxClass} flex shrink-0 items-center justify-center dark:bg-claude-darkSurface bg-claude-surface`}>
-        <CpuChipIcon aria-hidden className={`${iconClass} dark:text-claude-darkTextSecondary text-claude-textSecondary`} />
-      </span>
-    );
-  };
-
   const workspaceLabel = workspaceSelection
     ? (workspaceSelection.kind === 'project'
         ? workspaceSelection.name
@@ -923,25 +899,30 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
               </button>
             </div>
           ) : (
-            // Twin welcome page (owner rulings 2026-11-09: landing built on
-            // the white-screen fix + the finalized copy set; the 缩略态定稿
-            // same-day ruling retires the width-derived expanded variant).
-            // An empty Studio column is the twin's office greeting — ONE
-            // fixed compact form: a small avatar + name row, one invitation
-            // line, one sub line. No control pretends to be clickable; the
-            // real invitation is the composer below, whose placeholder speaks
-            // the same voice.
+            // The draft bot picker is the welcome page's primary identity
+            // control, directly beside the invitation and composer.
             <div
               data-slot="cowork-empty"
               data-welcome-state="compact"
               className="flex h-full min-h-[180px] flex-col items-center justify-center gap-2.5 px-6 text-center"
             >
-              {chipMetabot ? (
-                <div className="flex items-center gap-1.5">
-                  {renderWelcomeAvatar('h-6 w-6 rounded-md', 'h-3.5 w-3.5')}
-                  <span className="text-xs font-medium dark:text-claude-darkText text-claude-text">
-                    {chipMetabot.name}
-                  </span>
+              {currentSession ? (
+                <CoworkSurfaceIdentityBadge
+                  metabotId={currentSession.metabotId ?? null}
+                  fallbackName={currentSession.metabotName ?? null}
+                  fallbackAvatar={currentSession.metabotAvatar ?? null}
+                />
+              ) : chipMetabot ? (
+                <div data-slot="cowork-draft-bot-picker" className="relative z-20 flex justify-center">
+                  <BotPickerChip
+                    chipMetabot={chipMetabot}
+                    roster={metabots}
+                    menuOpen={showBotPickerMenu}
+                    onToggleMenu={() => setShowBotPickerMenu((value) => !value)}
+                    onDismissMenu={closeBotPickerMenu}
+                    onSelect={handlePickBot}
+                    menuDirection="down"
+                  />
                 </div>
               ) : null}
               <p className="text-base font-semibold tracking-tight dark:text-claude-darkText text-claude-text">
@@ -988,29 +969,15 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
         />
       </div>
 
-      {/* Portal the centered identity above the Studio session title: drafts
-          use the interactive picker; live sessions use their own read-only
-          roster/summary identity, never the draft pick. */}
-      {identityAnchorEl ? (
+      {/* Live sessions keep their read-only identity in the header. The draft
+          picker lives directly in the welcome page above. */}
+      {identityAnchorEl && currentSession ? (
         createPortal(
-          currentSession ? (
-            <CoworkSurfaceIdentityBadge
-              metabotId={currentSession.metabotId ?? null}
-              fallbackName={currentSession.metabotName ?? null}
-              fallbackAvatar={currentSession.metabotAvatar ?? null}
-            />
-          ) : chipMetabot ? (
-            <BotPickerChip
-              chipMetabot={chipMetabot}
-              roster={metabots}
-              menuOpen={showBotPickerMenu}
-              onToggleMenu={() => setShowBotPickerMenu((value) => !value)}
-              onDismissMenu={closeBotPickerMenu}
-              onSelect={handlePickBot}
-              // The header sits at the panel's top edge: the roster opens DOWN.
-              menuDirection="down"
-            />
-          ) : null,
+          <CoworkSurfaceIdentityBadge
+            metabotId={currentSession.metabotId ?? null}
+            fallbackName={currentSession.metabotName ?? null}
+            fallbackAvatar={currentSession.metabotAvatar ?? null}
+          />,
           identityAnchorEl,
         )
       ) : null}
