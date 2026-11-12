@@ -161,11 +161,12 @@ test('the actions ride the row directly below the band', () => {
   assert.match(markup, /data-slot="surface-header-actions"/);
   const bar = markup.slice(markup.indexOf('data-slot="surface-header-bar"'));
   assert.ok(bar.indexOf('surface-header-actions') > bar.indexOf('bot-browser-mode-segments'));
-  // The action row is its own row (after the 52 px band row), right-aligned.
+  // The default action area stays compact and right-aligned; its minimum
+  // height also lets Studio supply the taller task header.
   const actionsStart = markup.indexOf('data-slot="surface-header-actions"');
   const actionsRow = markup.slice(actionsStart, markup.indexOf('>', actionsStart));
   assert.match(actionsRow, /justify-end/);
-  assert.match(actionsRow, /h-7/);
+  assert.match(actionsRow, /min-h-7/);
   assert.match(bar, /aria-label="new session"/);
 });
 

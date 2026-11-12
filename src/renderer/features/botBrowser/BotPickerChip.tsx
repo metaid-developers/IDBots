@@ -4,27 +4,12 @@ import { i18nService } from '../../services/i18n';
 import { bindSeatMenuOutsideDismiss } from './seatMenuDismiss';
 
 /**
- * Draft-state bot picker for the Studio surface header row (owner 18:21
- * final ruling 2026-11-11, item ⑦ rework: the chip moved UP from the
- * composer's top-left row into the shared surface-header actions row,
- * leftmost, ahead of the session name). Clicking the chip opens the menu
- * listing every local bot, and picking one selects which bot runs the NEXT
- * conversation, exactly like the BotWorks new-task bot picker. It never
- * writes `metabot_type`: the Twin appointment is owned by the My Bots
- * editor alone.
+ * Centered draft-state bot picker above the Studio session title. Picking a
+ * bot selects who runs the next conversation without writing `metabot_type`;
+ * live sessions use the read-only CoworkSurfaceIdentityBadge instead.
  *
- * Supersession note (v3 close wiring, same day): this component used to
- * also carry the live session's display-only identity branch. That role
- * now belongs to CoworkSurfaceIdentityBadge (roster-authoritative
- * resolution with the session summary row as fallback) — the panel renders
- * the badge for live sessions and this chip for drafts, so a live
- * transcript can never grow a menu trigger.
- *
- * The component is intentionally presentational: the selection state and its
- * wiring live in BotBrowserCoworkPanel.tsx (which portals this chip into the
- * header anchor). The one browser behavior it owns is menu dismissal: a
- * pointer anywhere outside the chip container closes the menu (logic in
- * seatMenuDismiss.ts, unit-tested with a fake pointer target).
+ * Selection state lives in BotBrowserCoworkPanel.tsx. This presentational
+ * component owns only outside-pointer dismissal for its roster menu.
  */
 
 export interface BotPickerChipBot {
@@ -36,7 +21,7 @@ export interface BotPickerChipBot {
 }
 
 interface BotPickerChipProps {
-  /** The bot the footer currently shows (the draft pick). */
+  /** The bot selected for the next conversation. */
   chipMetabot: BotPickerChipBot;
   /** Every local bot, in roster order. */
   roster: readonly BotPickerChipBot[];
@@ -57,15 +42,15 @@ interface BotPickerChipProps {
 const ChipIdentity: React.FC<{ metabot: BotPickerChipBot }> = ({ metabot }) => (
   <>
     {metabot.avatar && (metabot.avatar.startsWith('data:') || metabot.avatar.startsWith('http')) ? (
-      <img src={metabot.avatar} alt="" className="h-5 w-5 rounded-md object-cover flex-shrink-0" />
+      <img src={metabot.avatar} alt="" className="h-8 w-8 shrink-0 rounded-full object-cover ring-1 ring-black/10 dark:ring-white/10" />
     ) : (
-      <div className="h-5 w-5 rounded-md dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover flex items-center justify-center flex-shrink-0">
-        <span className="text-[8px] font-semibold dark:text-claude-darkText text-claude-text uppercase">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full ring-1 ring-black/10 dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover dark:ring-white/10">
+        <span className="text-[10px] font-semibold uppercase dark:text-claude-darkText text-claude-text">
           {metabot.name.slice(0, 2) || '?'}
         </span>
       </div>
     )}
-    <span className="truncate text-xs font-medium dark:text-claude-darkText text-claude-text">
+    <span className="min-w-0 truncate text-sm font-medium dark:text-claude-darkText text-claude-text">
       {metabot.name}
     </span>
   </>
@@ -142,7 +127,7 @@ const BotPickerChip: React.FC<BotPickerChipProps> = ({
     <div
       ref={containerRef}
       data-slot="bot-picker-container"
-      className="relative flex min-w-0 max-w-[60%] items-center gap-1.5"
+      className="relative flex min-w-0 max-w-full items-center"
     >
       <button
         type="button"
@@ -151,7 +136,7 @@ const BotPickerChip: React.FC<BotPickerChipProps> = ({
         aria-expanded={menuOpen}
         aria-haspopup="menu"
         onClick={onToggleMenu}
-        className="flex min-w-0 items-center gap-1.5 rounded-md px-0.5 py-0.5 transition-colors hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+        className="flex h-9 min-w-0 items-center gap-2 rounded-lg px-1.5 transition-colors hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
       >
         <ChipIdentity metabot={chipMetabot} />
         {chipMetabot.metabot_type === 'twin' && <TwinBadge className="shrink-0" />}

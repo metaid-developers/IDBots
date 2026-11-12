@@ -48,36 +48,32 @@ test('the panel portals the draft picker chip AND the live identity badge (v3 cl
   assert.match(panelSource, /fallbackAvatar=\{currentSession\.metabotAvatar \?\? null\}/);
 });
 
-test('the identity chip rides the surface-header row FIRST (owner 18:21 final ruling; supersedes the 18:05 name-left/badge-middle split)', () => {
+test('the Studio task header centers the identity above the session title', () => {
   const sidebarSource = read('src/renderer/components/Sidebar.tsx');
-  // Exactly ONE chip mount, portaled into the header anchor: the DOM
-  // placement moved to the shared surface-header actions row, the picker
-  // state (menu + pick + draft resolution) stays owned by the panel.
   assert.equal((panelSource.match(/<BotPickerChip/g) ?? []).length, 1, 'the chip mounts exactly once');
   assert.match(panelSource, /import \{ createPortal \} from 'react-dom';/);
   assert.match(panelSource, /cowork-header-identity-anchor/);
-  // The header sits at the panel's top edge, so the roster opens DOWN.
   assert.match(panelSource, /menuDirection="down"/);
-  // The composer's tool row no longer carries an identity line on its left.
   assert.match(panelSource, /className="flex items-center justify-end gap-0\.5 pb-1\.5"/);
-  assert.match(sidebarSource, /data-slot="cowork-header-identity-anchor"/);
-  // Studio header row order (ONE row, left to right): ① identity anchor →
-  // ② session name → ③ 新建会话 → ④ 会话记录.
-  const rowSpan = sidebarSource.match(
-    /cowork-header-identity-anchor[\s\S]*?data-slot="cowork-toggle-history"/,
-  )?.[0] ?? '';
-  assert.ok(rowSpan, 'the Studio actions branch spans anchor → history toggle');
-  const anchorAt = rowSpan.indexOf('cowork-header-identity-anchor');
-  const nameAt = rowSpan.indexOf('<CoworkSurfaceSessionName');
-  const newAt = rowSpan.indexOf('data-slot="cowork-new-session"');
-  const historyAt = rowSpan.indexOf('data-slot="cowork-toggle-history"');
-  assert.ok(anchorAt !== -1, 'anchor present');
-  assert.ok(nameAt !== -1, 'session-name slot present');
-  assert.ok(newAt !== -1, 'new-session button present');
-  assert.ok(historyAt !== -1, 'history toggle present');
-  assert.ok(anchorAt < nameAt, 'identity anchor sits LEFT of the session name');
-  assert.ok(nameAt < newAt, 'session name sits LEFT of the new-session button');
-  assert.ok(newAt < historyAt, 'new-session button sits LEFT of the history toggle');
+
+  const headerStart = sidebarSource.indexOf('data-slot="studio-task-header"');
+  const headerTagEnd = sidebarSource.indexOf('>', headerStart);
+  const headerTag = sidebarSource.slice(headerStart, headerTagEnd);
+  assert.match(headerTag, /h-16/);
+  assert.match(headerTag, /flex-col/);
+  assert.match(headerTag, /items-center/);
+
+  const headerSpan = sidebarSource.slice(
+    headerStart,
+    sidebarSource.indexOf('data-slot="cowork-toggle-history"', headerStart),
+  );
+  const anchorAt = headerSpan.indexOf('cowork-header-identity-anchor');
+  const nameAt = headerSpan.indexOf('<CoworkSurfaceSessionName');
+  const newAt = headerSpan.indexOf('data-slot="cowork-new-session"');
+  assert.ok(anchorAt !== -1, 'identity anchor present');
+  assert.ok(nameAt > anchorAt, 'session title sits below the centered identity');
+  assert.ok(newAt > nameAt, 'session actions remain in the same header');
+  assert.match(headerSpan, /absolute right-0 top-0/);
 });
 
 test('picking a bot is a pure selection: no metabot_type write, no IPC, no toast', () => {
@@ -102,11 +98,12 @@ test('the chip menu lists the roster with every row enabled; live identity is th
   // badge — the chip is draft-only, so a live transcript can never grow a
   // menu trigger.
   assert.doesNotMatch(chipSource, /live \? \(/, 'the chip has no live branch anymore');
-  // The badge is the read-only live form: an identity label, not a control.
+  // The live and draft identities share the enlarged centered avatar grammar.
   assert.match(badgeSource, /data-slot="cowork-surface-identity-badge"/);
+  assert.match(badgeSource, /h-8 w-8 shrink-0 rounded-full/);
+  assert.match(badgeSource, /gap-2/);
+  assert.match(chipSource, /h-8 w-8 shrink-0 rounded-full/);
   assert.doesNotMatch(badgeSource, /<button/, 'the badge renders no click target');
-  // Match the JSX attribute form only: the read-only contract comment says
-  // "no onClick" in prose, which must not self-trigger this guard.
   assert.doesNotMatch(badgeSource, /onClick=/, 'the badge owns no interaction');
   assert.match(badgePureSource, /export function resolveSurfaceIdentityBadge/);
 });

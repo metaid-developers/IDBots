@@ -74,6 +74,9 @@ test('draft chip renders the selected bot once and is the picker trigger', () =>
   assert.match(html, /aria-haspopup="menu"/);
   assert.match(html, /aria-expanded="false"/);
   assert.match(html, /data-slot="bot-picker-container"/);
+  assert.match(html, /h-8 w-8 shrink-0[^"]*rounded-full/);
+  assert.match(html, /gap-2/);
+  assert.match(html, /text-sm font-medium/);
   assert.equal(
     countOccurrences(html, 'Alice'),
     1,

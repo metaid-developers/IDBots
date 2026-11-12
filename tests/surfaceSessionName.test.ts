@@ -9,10 +9,8 @@ import {
   resolveSurfaceSessionDisplayTitle,
 } from '../src/renderer/features/botBrowser/surfaceSessionName';
 
-// Surface-header session-name slot (owner order 2026-11-11 17:37, item ④;
-// reworked 18:05): the Bot Internet face's open session name is the actions
-// row's LEFT title — the Studio label's own lane — and renames in place.
-// These tests pin the DECISION MATH — the
+// Studio centers the session title below the bot identity and renames it in
+// place. These tests pin the DECISION MATH — the
 // same contract the two existing rename implementations share
 // (CoworkSessionItem rows, CoworkSessionDetail header):
 //   - empty/whitespace input commits NOTHING (the display falls back to the
@@ -60,10 +58,7 @@ test('rename decision: padding-only edits do not write', () => {
 });
 
 // Render smoke (renderToStaticMarkup, Node — no DOM, no store): the default
-// state is a read-only BUTTON carrying the resolved display title. The
-// inline editor's Enter/Escape/blur wiring is event-driven and therefore
-// pinned by the static guards (workspaceRailStatic.test.mjs), not by static
-// markup; its frameless styling is pinned there too.
+// state is a centered read-only BUTTON carrying the resolved display title.
 test('render: default state is a read-only button showing the display title', () => {
   const markup = renderToStaticMarkup(
     React.createElement(CoworkSurfaceSessionName, {
@@ -75,6 +70,9 @@ test('render: default state is a read-only button showing the display title', ()
   );
   assert.match(markup, /data-slot="cowork-surface-session-name"/);
   assert.match(markup, /抓周/);
+  assert.match(markup, /h-6 w-full/);
+  assert.match(markup, /items-center justify-center/);
+  assert.match(markup, /text-center/);
   assert.doesNotMatch(markup, /<input/);
 });
 
@@ -90,13 +88,7 @@ test('render: blank stored title displays the default title', () => {
   assert.match(markup, /新会话/);
 });
 
-// Supersession (owner 18:54 left-anchor order, supersedes the 18:05
-// "renders nothing" contract): the draft state no longer unmounts — it
-// renders a NON-interactive spacer riding the same flex-1 lane, so the
-// identity component ahead of the slot never drifts right when the name is
-// absent. The intent survives (draft shows no name CONTROL: no button, no
-// input, no ink) and the assertion extends to pin the left-anchor spacer.
-test('render: draft state renders only the non-interactive left-anchor spacer', () => {
+test('render: draft state preserves the title row with a non-interactive spacer', () => {
   const markup = renderToStaticMarkup(
     React.createElement(CoworkSurfaceSessionName, {
       sessionId: null,
@@ -106,6 +98,7 @@ test('render: draft state renders only the non-interactive left-anchor spacer', 
     }),
   );
   assert.match(markup, /data-slot="cowork-surface-session-name-spacer"/);
+  assert.match(markup, /h-6 w-full/);
   assert.doesNotMatch(markup, /data-slot="cowork-surface-session-name"/);
   assert.doesNotMatch(markup, /<input/);
   assert.doesNotMatch(markup, /<button/);
