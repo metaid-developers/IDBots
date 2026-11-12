@@ -1,5 +1,5 @@
 import { ArrowLeftIcon, ArrowPathIcon, ChevronDownIcon } from '@heroicons/react/24/outline';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { mePaymentPhase } from '@/components/me/mePayment';
 import { t } from '../../../i18n';
 import { getMobileElectron } from '../../appBridge';
@@ -72,9 +72,14 @@ function statusLabel(status: string): string {
   }
 }
 
+function epochMs(value: number | undefined): number {
+  if (!value || !Number.isFinite(value)) return 0;
+  return value > 1e12 ? value : value * 1000;
+}
+
 function timeLabel(value: number | undefined): string {
-  if (!value || !Number.isFinite(value)) return '';
-  const ms = value > 1e12 ? value : value * 1000;
+  const ms = epochMs(value);
+  if (!ms) return '';
   try {
     return new Date(ms).toLocaleString();
   } catch {
@@ -208,6 +213,16 @@ export function UsageCreditsPage(props: {
     loadAll();
   }, [loadAll]);
 
+  // Merged payment records (subscription + topup) newest first — a missing
+  // createdAt sorts to the bottom instead of splitting the two blocks.
+  const mergedOrders = useMemo(
+    () => [
+      ...subscriptionOrders.map((order) => ({ kind: 'subscribe' as const, order })),
+      ...snapshot.orders.map((order) => ({ kind: 'topup' as const, order })),
+    ].sort((a, b) => epochMs(b.order.createdAt) - epochMs(a.order.createdAt)),
+    [subscriptionOrders, snapshot.orders],
+  );
+
   return (
     <div className="twin-page h-full" data-testid="me-page-usage">
       <div className="twin-topbar twin-topbar-simple shrink-0" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 6px)' }}>
@@ -301,11 +316,8 @@ export function UsageCreditsPage(props: {
             <span className="me-usage-count">{snapshot.orders.length + subscriptionOrders.length}</span>
           </div>
           <div className="me-order-list">
-            {subscriptionOrders.map((order) => (
-              <OrderRow key={`subscribe-${order.orderId}`} order={order} kind="subscribe" canResume={props.canPurchase !== false} onResume={props.onResumeOrder} />
-            ))}
-            {snapshot.orders.map((order) => (
-              <OrderRow key={`topup-${order.orderId}`} order={order} kind="topup" canResume={props.canPurchase !== false} onResume={props.onResumeOrder} />
+            {mergedOrders.map(({ kind, order }) => (
+              <OrderRow key={`${kind}-${order.orderId}`} order={order} kind={kind} canResume={props.canPurchase !== false} onResume={props.onResumeOrder} />
             ))}
             {!snapshot.orders.length && !subscriptionOrders.length ? (
               <p className="me-empty">
