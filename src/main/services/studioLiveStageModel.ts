@@ -105,7 +105,7 @@ function sceneFor(family: LiveStageFamily, language: 'zh' | 'en', botName: strin
     'worker-report': { headline: text(language, '协作结果已返回', 'A worker has reported back'), caption: text(language, '回执已经到达，还需要核对证据才能验收。', 'A receipt has arrived and still needs evidence verification.'), participants: [botName, text(language, '协作 Bot', 'Worker'), text(language, '回执', 'Report')] },
     verification: { headline: text(language, '正在独立核验', 'Checking the evidence'), caption: text(language, '正在把回执、原始资料和实际结果逐项对照。', 'Comparing claims with original material and observed results.'), participants: [botName, text(language, '证据', 'Evidence')] },
     'browser-action': { headline: text(language, '正在操作大屏幕', 'Working on the big screen'), caption: text(language, '正在打开、检查或验证右侧浏览器中的页面。', 'Opening, inspecting, or verifying a page in the right browser.'), participants: [botName, text(language, '投影页', 'Projection')] },
-    'owner-needed': { headline: text(language, '需要你的决定', 'Your decision is needed'), caption: text(language, '当前工作已来到需要你拍板的位置。', 'The work has reached a decision that belongs to you.'), participants: [botName, text(language, '主人', 'Owner')] },
+    'owner-needed': { headline: text(language, '需要你的决定', 'Your decision is needed'), caption: text(language, 'Bot 已暂停推进，正在等待你的回答。', 'The Bot is paused until you answer.'), participants: [botName, text(language, '主人', 'Owner')] },
     problem: { headline: text(language, '遇到一个问题', 'A problem needs attention'), caption: text(language, '现场正在保留真实错误与恢复状态，不会包装成成功。', 'The stage preserves the real error and recovery state instead of claiming success.'), participants: [botName] },
     'report-ready': { headline: text(language, '汇报已生成', 'The report is ready'), caption: text(language, '本轮过程已经收束，即将打开最终结果页；后退可回到这里。', 'The process is settling into the final report. Back returns to this trace.'), participants: [botName, text(language, '最终汇报', 'Final report')] },
     complete: { headline: text(language, '本轮工作已完成', 'This run is complete'), caption: text(language, '过程已经收束，左侧保留完整文字记录。', 'The process has settled and the left transcript remains available.'), participants: [botName] },
@@ -187,9 +187,6 @@ export function reduceLiveStageMessage(
   message: CoworkMessage,
   options: { workerName?: string; workerAvatar?: string } = {},
 ): LiveStageState {
-  if (state.family === 'report-ready' && (message.type !== 'user' || isLiveStageWorkerReport(message))) {
-    return state;
-  }
   let family = state.family;
   let headline: string | undefined;
   let caption: string | undefined;
@@ -220,6 +217,11 @@ export function reduceLiveStageMessage(
       family = message.metadata.isError ? 'problem' : 'report-ready';
       pendingProjectionIds = pendingProjectionIds.filter((pendingId) => pendingId !== id);
     }
+  }
+  if (state.interaction) {
+    family = 'owner-needed';
+    headline = undefined;
+    caption = undefined;
   }
   const scene = sceneFor(family, state.language, state.botName);
   const workerLabel = options.workerName?.trim().slice(0, 80)
@@ -362,7 +364,16 @@ export function buildLiveStageInteraction(candidate: LiveStageInteractionCandida
 }
 
 export function presentLiveStageInteraction(state: LiveStageState, interaction: LiveStageInteraction): LiveStageState {
-  return { ...state, interaction, revision: state.revision + 1 };
+  const scene = sceneFor('owner-needed', state.language, state.botName);
+  return {
+    ...state,
+    ...scene,
+    family: 'owner-needed',
+    interaction,
+    revision: state.revision + 1,
+    handoff: null,
+    motion: { ...state.motion, preset: 'owner-needed', energy: .12 },
+  };
 }
 
 export function dismissLiveStageInteraction(state: LiveStageState, requestId: string): LiveStageState {

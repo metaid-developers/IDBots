@@ -296,7 +296,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       run = null;
     }
     run ??= ensureRun(sessionId);
-    if (!run || run.seen.has(message.id)) return;
+    if (!run || run.seen.has(message.id) || run.reportProjected) return;
     run.seen.add(message.id);
     if (submissionId) run.submissionId = submissionId;
     const worker = workerIdentityFor(message);
@@ -446,7 +446,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     currentSettings = deps.getSettings();
     if (!currentSettings.enabled) return 'declined';
     const run = runs.get(sessionId);
-    if (!run) return 'declined';
+    if (!run || run.reportProjected) return 'declined';
     if (run.state.interaction) return 'busy';
     const candidate = request && typeof request === 'object' && !Array.isArray(request)
       ? request as { requestId?: unknown; toolName?: unknown; toolInput?: Record<string, unknown> | null; expiresAt?: unknown; timeoutDefault?: unknown }

@@ -323,6 +323,9 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
   const dispatch = useDispatch();
   const currentSession = useSelector((state: RootState) => state.browserCowork.currentSession);
   const isStreaming = useSelector((state: RootState) => state.browserCowork.isStreaming);
+  const waitingForOwner = useSelector((state: RootState) => Boolean(
+    currentSession && state.cowork.pendingPermissions.some((permission) => permission.sessionId === currentSession.id),
+  ));
   const sessions = useSelector((state: RootState) => state.cowork.sessions);
   const activeSkillIds = useSelector((state: RootState) => state.skill.activeSkillIds);
   // Controlled by the shared surface header bar when the parent passes it; a
@@ -972,6 +975,8 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
               inline
               messages={messages}
               avatar={currentSession?.metabotAvatar ?? selectedMetabot?.avatar ?? null}
+              sessionId={currentSession?.id ?? null}
+              waitingForOwner={waitingForOwner}
             />
           ) : (
             <div className="flex items-center gap-1 px-1 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">

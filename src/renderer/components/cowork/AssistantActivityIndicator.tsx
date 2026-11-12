@@ -19,6 +19,7 @@ import {
   buildRetryStatusLine,
   describeToolUseStatus,
   drawAssistantStatusPhrase,
+  findCurrentTurnProjection,
   formatWaitSuffix,
   isResumeSpliceContent,
   type AssistantStatusLanguage,
@@ -28,9 +29,6 @@ const DEFAULT_BOT_AVATAR = getDefaultMetabotAvatarUrl();
 
 /** 1s tick drives the waiting-phase elapsed suffix ("· 已 45 秒"). */
 const TICK_INTERVAL_MS = 1000;
-
-/** The projection tool whose landed result means the artifact is on screen. */
-const PROJECT_TOOL = 'bot_browser_preview_local';
 
 /** Subagent events that mean a delegation is LIVE right now. */
 const LIVE_SUBAGENT_EVENTS = new Set(['task_started', 'task_progress', 'tool_progress']);
@@ -49,11 +47,11 @@ const LIVE_SUBAGENT_EVENTS = new Set(['task_started', 'task_progress', 'tool_pro
  *     instance (only the waiting-phase elapsed suffix ticks).
  *   - Completion words exist ONLY in the writing pool (visible text actually
  *     streaming); no other state may promise or imply "almost done".
- *   - Phase precedence, most specific wins: retry counters → writing →
- *     pending tool (its own object) → live delegation (subagent events /
- *     worker tools) → projected artifact → turn-goal headline → heuristic
- *     activity → ack tier → resume-from-interruption → thinking → digesting
- *     (inter-step gap) → neutral continue fallback.
+ *   - Phase precedence, most specific wins: owner answer → retry counters →
+ *     writing → pending tool (its own object) → live delegation (subagent
+ *     events / worker tools) → turn-goal headline → current-turn projected
+ *     artifact → heuristic activity → ack tier → resume-from-interruption →
+ *     thinking → digesting (inter-step gap) → neutral continue fallback.
  *
  * Single placement: `inline` inside the transcript at the reply position,
  * where it is assistant mode's only activity indicator. Professional mode
@@ -67,7 +65,9 @@ export const AssistantActivityIndicator: React.FC<{
   inline?: boolean;
   /** Shuffle-bag scope: phrases rotate without repeats per session. */
   sessionId?: string | null;
-}> = ({ messages, avatar, fallbackText, inline = false, sessionId = null }) => {
+  /** A live permission/question is waiting for a person, not model work. */
+  waitingForOwner?: boolean;
+}> = ({ messages, avatar, fallbackText, inline = false, sessionId = null, waitingForOwner = false }) => {
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -145,29 +145,8 @@ export const AssistantActivityIndicator: React.FC<{
     return { active: false, taskId: '' };
   }, [messages]);
 
-  // Projection state: the newest ANSWERED bot_browser_preview_local call —
-  // the artifact is on the big screen and the turn is still going. The
-  // status must acknowledge what the owner can see.
-  const projected = useMemo(() => {
-    const toolResultIds = new Set<string>();
-    for (const msg of messages) {
-      const id = msg.metadata?.toolUseId;
-      if (typeof id === 'string' && msg.type === 'tool_result') {
-        toolResultIds.add(id);
-      }
-    }
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const msg = messages[i];
-      if (msg.type === 'tool_use'
-        && msg.metadata?.toolName === PROJECT_TOOL) {
-        const id = msg.metadata?.toolUseId;
-        if (typeof id === 'string' && toolResultIds.has(id)) {
-          return { messageId: id };
-        }
-      }
-    }
-    return null;
-  }, [messages]);
+  // Only a successful projection in THIS owner turn can describe the screen.
+  const projectedMessageId = useMemo(() => findCurrentTurnProjection(messages), [messages]);
 
   // Inter-step gap: the newest CONCRETE transcript message (skipping the
   // runtime-status system run) is a tool_result — its answer landed and no
@@ -272,6 +251,9 @@ export const AssistantActivityIndicator: React.FC<{
   const phaseClock = useRef<{ key: string; startedAt: number }>({ key: '', startedAt: 0 });
 
   const getStatusText = (): string => {
+    // A pending person-owned answer is never model/tool work. This outranks
+    // stale streaming markers, retry tails, and every previous projection.
+    if (waitingForOwner) return i18nService.t('assistantStatusWaitingForOwner');
     // 1. Retry — the counter is the whole point; the runtime payload already
     //    carries attempt/max, the old wording just hid them.
     if (tailSignals.retryMessageId !== null) {
@@ -326,9 +308,9 @@ export const AssistantActivityIndicator: React.FC<{
     }
     // 6. Projected artifact — the owner can SEE the deliverable; the status
     //    acknowledges it instead of rotating generic waiting words.
-    if (projected !== null) {
+    if (projectedMessageId !== null) {
       return drawAssistantStatusPhrase({
-        key: `projected:${scope}|${language}|${projected.messageId}`,
+        key: `projected:${scope}|${language}|${projectedMessageId}`,
         bagScope: `${scope}|${language}|projected`,
         pool: ASSISTANT_PROJECTED_POOLS[language],
         language,
@@ -391,19 +373,15 @@ export const AssistantActivityIndicator: React.FC<{
     // pt-2 keeps the ring's breathing room below the bubble above it; the
     // bottom edge is slimmer (pb-1) because inline placement is always the
     // transcript's last row and the composer should sit close under it.
-    <div className="flex items-center gap-2.5 pt-2 pb-1">
-      <div className="assistant-activity-avatar-ring relative h-8 w-8 shrink-0">
+    <div className="flex items-center gap-2.5 pt-2 pb-1" role="status" aria-live="polite" data-activity={waitingForOwner ? 'waiting-owner' : 'working'}>
+      <div className={`assistant-activity-avatar-ring${waitingForOwner ? ' is-waiting' : ''} relative h-8 w-8 shrink-0`}>
         <NftAvatarFrame
           avatar={avatarSrc}
           frameClassName="h-8 w-8 rounded-full"
           fallback={<img src={DEFAULT_BOT_AVATAR} alt="" className="h-8 w-8 rounded-full object-cover" />}
         />
       </div>
-      {/* The status line gets a calm light-sweep shimmer (CSS class in
-          index.css, gated on prefers-reduced-motion: no-preference); the
-          glyphs themselves never move. Size back to text-sm per owner
-          feedback 2026-11-11 — the 15px bump read as too loud. */}
-      <span className="assistant-status-shimmer min-w-0 truncate text-sm dark:text-claude-darkText text-claude-text">
+      <span className={`${waitingForOwner ? 'text-amber-700 dark:text-amber-300' : 'assistant-status-shimmer dark:text-claude-darkText text-claude-text'} min-w-0 truncate text-sm`}>
         {getStatusText()}
       </span>
     </div>
