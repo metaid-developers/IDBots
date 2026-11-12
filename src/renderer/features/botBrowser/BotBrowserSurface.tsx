@@ -29,15 +29,18 @@ import type {
   BotBrowserTabCommand,
   BotBrowserTabCommandResult,
 } from './types';
+import type { SessionBrowserEvent } from '../../services/sessionTabBinding';
 
 export interface BotBrowserSurfaceProps {
   visible: boolean;
   onOpenConversation(request: BotBrowserConversationRequest): Promise<void>;
   onError(message: string): void;
   onReady?: () => void;
+  onBrowserEvent?: (message: SessionBrowserEvent) => void;
 }
 
 type BrowserIframeMessage =
+  | (SessionBrowserEvent & { source?: undefined })
   | {
       source: 'idbots-browser-iframe-bridge';
       type: 'browser-ready';
@@ -137,6 +140,7 @@ export const BotBrowserSurface = forwardRef<BotBrowserSurfaceHandle, BotBrowserS
       onOpenConversation,
       onError,
       onReady,
+      onBrowserEvent,
     },
     ref,
   ) {
@@ -153,6 +157,7 @@ export const BotBrowserSurface = forwardRef<BotBrowserSurfaceHandle, BotBrowserS
       onOpenConversation,
       onError,
       onReady,
+      onBrowserEvent,
     });
     const endpointShimRef = useRef<ReturnType<typeof createBrowserEndpointShim> | null>(null);
     const selectionsBridgeRef = useRef<BrowserElementSelectionsBridge | null>(null);
@@ -163,6 +168,7 @@ export const BotBrowserSurface = forwardRef<BotBrowserSurfaceHandle, BotBrowserS
       onOpenConversation,
       onError,
       onReady,
+      onBrowserEvent,
     };
 
     // Handle screenshot capture requests from the main-process capture bridge.
@@ -404,6 +410,10 @@ export const BotBrowserSurface = forwardRef<BotBrowserSurfaceHandle, BotBrowserS
         // the correlated :response envelopes) carries no idbots bridge source
         // tag — it is consumed here before the source-tagged branches below.
         if (selectionsBridgeRef.current?.handleMessage(data)) return;
+        if (data.type === 'agent-browser:event') {
+          callbacksRef.current.onBrowserEvent?.(data);
+          return;
+        }
         if (data.source !== 'idbots-browser-iframe-bridge') return;
         if (data.type === 'browser-ready') {
           readyRef.current = true;

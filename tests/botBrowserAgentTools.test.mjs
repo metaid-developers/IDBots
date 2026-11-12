@@ -127,11 +127,11 @@ test('bot_browser_tabs switch/close pass tabId through to the bridge', async () 
   assert.deepEqual(calls.execute[1], { action: 'close-tab', uri: undefined, tabId: 2 });
 });
 
-test('bot_browser_open_uri navigates the active tab by default', async () => {
+test('bot_browser_open_uri navigates the session tab by default', async () => {
   const { calls, byName } = makeHarness();
   const result = await byName.bot_browser_open_uri.handler({ uri: 'metaid://abc' });
-  assert.deepEqual(calls.openUri, [{ uri: 'metaid://abc' }]);
-  assert.equal(calls.execute.length, 0);
+  assert.deepEqual(calls.execute, [{ action: 'navigate-tab', uri: 'metaid://abc', sessionId: 'session-1', activate: true }]);
+  assert.equal(calls.openUri.length, 0);
   assert.match(result.content[0].text, /metaid:\/\/abc/);
 });
 
@@ -156,7 +156,7 @@ test('bridge failures degrade to a friendly error result', async () => {
 
   const openResult = await byName.bot_browser_open_uri.handler({ uri: 'metaid://abc' });
   assert.equal(openResult.isError, true);
-  assert.match(openResult.content[0].text, /No IDBots window/);
+  assert.match(openResult.content[0].text, /timed out/);
 });
 
 test('formatBotBrowserTabs handles an empty tab set', () => {
@@ -171,11 +171,11 @@ test('bot_browser_preview_local opens preview-metaapp URI in a new tab by defaul
   assert.match(result.content[0].text, /preview-metaapp|preview/i);
 });
 
-test('bot_browser_preview_local newTab=false navigates the active tab', async () => {
+test('bot_browser_preview_local newTab=false navigates the session tab', async () => {
   const { calls, byName } = makeHarness();
   await byName.bot_browser_preview_local.handler({ path: process.cwd(), newTab: false });
-  assert.deepEqual(calls.openUri, [{ uri: `preview-metaapp://localhost${process.cwd()}` }]);
-  assert.equal(calls.execute.length, 0);
+  assert.deepEqual(calls.execute, [{ action: 'navigate-tab', uri: `preview-metaapp://localhost${process.cwd()}`, sessionId: 'session-1', activate: true }]);
+  assert.equal(calls.openUri.length, 0);
 });
 
 test('bot_browser_preview_local rejects relative and missing paths before touching the bridge', async () => {
@@ -478,10 +478,11 @@ test('bot_browser_screenshot rejects out-of-range quality before capturing', asy
   assert.equal(calls.screenshot.length, 0);
 });
 
-test('bot_browser_screenshot navigates by uri then captures', async () => {
+test('bot_browser_screenshot navigates the session tab by uri then captures', async () => {
   const { calls, byName } = makeScreenshotHarness();
   await byName.bot_browser_screenshot.handler({ uri: 'metaapp://xyz', waitMs: 0 });
-  assert.deepEqual(calls.openUri, [{ uri: 'metaapp://xyz' }]);
+  assert.deepEqual(calls.execute, [{ action: 'navigate-tab', uri: 'metaapp://xyz', sessionId: 'session-1', activate: true }]);
+  assert.equal(calls.openUri.length, 0);
   assert.equal(calls.screenshot.length, 1);
 });
 

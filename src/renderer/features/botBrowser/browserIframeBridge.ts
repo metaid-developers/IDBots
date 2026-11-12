@@ -344,8 +344,11 @@ export function buildBrowserIframeBridgeScript(): string {
 
       if (action === 'open-tab') {
         var openLabel = textValue(input.label);
-        openedTabId = openLabel
-          ? globalThis.AgentBrowserTabs.openTab(textValue(input.uri) || undefined, { label: openLabel })
+        var openOptions = {};
+        if (openLabel) openOptions.label = openLabel;
+        if (input.dedupe === false) openOptions.dedupe = false;
+        openedTabId = Object.keys(openOptions).length
+          ? globalThis.AgentBrowserTabs.openTab(textValue(input.uri) || undefined, openOptions)
           : globalThis.AgentBrowserTabs.openTab(textValue(input.uri) || undefined);
       } else if (action === 'navigate-tab') {
         // Resolve into a SPECIFIC tab. Background Live Stage updates restore

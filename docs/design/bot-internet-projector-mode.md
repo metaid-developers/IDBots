@@ -49,8 +49,9 @@ infographics to carry the same report with far less reading effort.
   projector). Metaapp embeds and local HTML report links render as ordinary Bot Browser
   links.
 - After each successful projection, a small chip appears in the bubble flow ("report
-  projected"), clickable to focus the projection tab. It is also the persistent recovery
-  entry after an app restart (ABC tab history is in-memory only).
+  projected"), clickable to focus the projection tab. It remains an additional recovery
+  entry; the Session ↔ Tab binding separately restores the last URI after an app restart
+  (ABC tab history is in-memory only).
 
 ## Decisions (owner rulings, 2026-11-07)
 
@@ -108,18 +109,20 @@ infographics to carry the same report with far less reading effort.
 ### Projection protocol (host side)
 
 - `bot_browser_preview_local` gains `projection: boolean` and optional `title`.
-- Main keeps a `sessionId → projection tab id` map; the entry is invalidated only when the
-  tab is confirmed missing (ABC tabs are in-memory). A final report also carries the current
-  turn's confirmed Stage tab id, so a lost map entry cannot fork the projection onto a new tab.
-- First projection for a session: open a new tab through the awaited tab bridge, confirm
-  its id, and record it. A missing cached tab opens a confirmed replacement; the service
-  never adopts an unrelated tab by the shared reports-directory prefix. A transient tab-info
-  bridge failure falls back to the tab list; if both reads fail, the projection fails without
-  deleting the binding or opening a duplicate tab.
-- Subsequent Live Stage projections navigate that specific tab in the background. Final
-  reports use the same navigation with `activate: true`, leaving the target active through
-  resolution so ABC paints the report before the tool returns. Background resolutions mark
-  the cleared target pane unpainted so a later reveal rehydrates it instead of showing blank.
+- The renderer's Session ↔ Tab binding is the single owner of live `sessionId → tabId`
+  associations. Main sends every projection through that binding with the session id and the
+  current Stage tab id as hints, rather than keeping a second projection-only tab map.
+- The first projection reuses the session's draft/blank tab or opens a confirmed replacement.
+  A closed tab is recreated from the session's last URI; an unrelated tab is never adopted by
+  the shared reports-directory prefix. Two sessions may intentionally own different tabs for
+  the same URI, so the binding disables ABC's URI dedupe for that case.
+- Subsequent Live Stage projections navigate the bound tab in the background. Final reports
+  use the same binding with `activate: true`, leaving the target active through resolution so
+  ABC paints the report before the tool returns. Background resolutions mark the cleared target
+  pane unpainted so a later reveal rehydrates it instead of showing blank.
+- ABC `navigation-committed` events persist the bound tab's last URI and title per session.
+  Selecting a session activates its live tab or recreates it from that URI; launch restores the
+  last open session and page. Runtime tab ids are deliberately not reused across restarts.
 - ABC re-resolves the URI on history traversal, so back/forward works for free. A successful
   report also writes its URI into the frozen Stage snapshot. Back then exposes an **Open
   report** button whose in-page navigation is accepted only from the active Stage frame,

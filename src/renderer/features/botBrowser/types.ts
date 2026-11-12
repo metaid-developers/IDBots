@@ -78,10 +78,14 @@ export interface BotBrowserTabCommand {
   action: BotBrowserTabAction;
   uri?: string;
   tabId?: number;
+  /** Studio session whose live tab should own this command. */
+  sessionId?: string;
   /** Display label for a newly opened tab (open-tab only). */
   label?: string;
   /** Keep the target tab active after navigate-tab resolves. */
   activate?: boolean;
+  /** Allow a second session to open the same URI in its own tab. */
+  dedupe?: boolean;
   /** Preserve the current app surface instead of revealing Bot Browser. */
   background?: boolean;
 }
@@ -115,6 +119,8 @@ export interface BotBrowserTabCommandResult {
   openedTabId?: number;
   tabs: BotBrowserTabInfo[];
   activeTab: BotBrowserTabInfo | null;
+  /** The tab bound to command.sessionId, independent of the active tab. */
+  sessionTab?: BotBrowserTabInfo | null;
   content?: BotBrowserTabContent | null;
   info?: BotBrowserTabEnvelope | null;
 }

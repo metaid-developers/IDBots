@@ -16,6 +16,7 @@ import { RootState } from '../../store';
 import { clearActiveSkills } from '../../store/slices/skillSlice';
 import { browserCoworkService } from '../../services/browserCowork';
 import { coworkService } from '../../services/cowork';
+import { sessionTabBinding } from '../../services/sessionTabBinding';
 import { useChatExperienceMode } from '../../hooks/useChatExperienceMode';
 import { isAssistantModeOwnerChatSession } from '../../components/cowork/assistantModeSessionGate';
 import { AssistantActivityIndicator } from '../../components/cowork/AssistantActivityIndicator';
@@ -755,6 +756,7 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
   const handleSelectHistory = async (sessionId: string) => {
     setShowHistory(false);
     await browserCoworkService.loadSession(sessionId);
+    await sessionTabBinding.revealSessionTab(sessionId);
   };
 
   const handleDeleteHistory = async (sessionId: string) => {

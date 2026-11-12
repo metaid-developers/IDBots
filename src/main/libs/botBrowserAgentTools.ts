@@ -487,7 +487,7 @@ export function buildBotBrowserAgentTools(deps: {
           const result = await controlBotBrowser.execute({ action: 'open-tab', uri });
           return textResult(`Opened ${uri} in a new tab. Current tabs (* = active):\n${formatBotBrowserTabs(result)}`);
         }
-        await controlBotBrowser.openUri({ uri });
+        await controlBotBrowser.execute({ action: 'navigate-tab', uri, sessionId, activate: true });
         return textResult(`Navigated the active Bot Browser tab to ${uri}.`);
       } catch (error) {
         return textResult(`Failed to open ${uri} in Bot Browser: ${error instanceof Error ? error.message : String(error)}. ${SURFACE_HINT}`, true);
@@ -537,7 +537,7 @@ export function buildBotBrowserAgentTools(deps: {
       }
       try {
         if (args.newTab === false) {
-          await controlBotBrowser.openUri({ uri });
+          await controlBotBrowser.execute({ action: 'navigate-tab', uri, sessionId, activate: true });
           return textResult(`Navigated the active Bot Browser tab to preview ${localPath}. Tell the user to reload the tab after you make further edits.`);
         }
         const result = await controlBotBrowser.execute({ action: 'open-tab', uri });
@@ -750,7 +750,7 @@ export function buildBotBrowserScreenshotTool(deps: {
   controlBotBrowser: BotBrowserControl;
   sessionId: string;
 }): unknown[] {
-  const { tool, controlBotBrowser } = deps;
+  const { tool, controlBotBrowser, sessionId } = deps;
 
   return [
     tool(
@@ -811,7 +811,7 @@ export function buildBotBrowserScreenshotTool(deps: {
             if (args.newTab) {
               await controlBotBrowser.execute({ action: 'open-tab', uri });
             } else {
-              await controlBotBrowser.openUri({ uri });
+              await controlBotBrowser.execute({ action: 'navigate-tab', uri, sessionId, activate: true });
             }
             navigated = true;
           } else if (typeof args.tabId === 'number') {
