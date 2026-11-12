@@ -36,12 +36,16 @@
 //    ever opens the thinking slot, and converts at `block-start tool-call`
 //    (textRidesThinking) instead of at assistant/message finalize.
 //  - Assistant chat-experience mode (DshEventMapperOptions.assistantMode):
-//    every model family and phase label gets the same tool-ride hold and fold,
-//    so ordinary process text cannot bypass owner_update. Substantial answers
-//    followed by more tools enter a bounded finalization step with the full
-//    candidate preserved as fallback instead of publishing a short addendum.
-//    The flag is a getter evaluated per decision, never cached: the mapper is
-//    a long-lived per-session instance and the mode can flip mid-session.
+//    every model family and phase label gets the same tool-ride fold, so
+//    process text that rode with tool calls cannot bypass owner_update.
+//    Text streaming itself follows the SAME family-trait gates as
+//    professional mode (owner ruling 2026-11-12: Studio must feel like
+//    BotWorks — text appears as soon as it streams instead of popping as
+//    milestones). Substantial answers followed by more tools still enter a
+//    bounded finalization step with the full candidate preserved as fallback
+//    instead of publishing a short addendum. The flag is a getter evaluated
+//    per decision, never cached: the mapper is a long-lived per-session
+//    instance and the mode can flip mid-session.
 //
 // Think rows are SEGMENTED PER TOOL ROUND (deepseek-harness web parity): each
 // assistant step's thinking is finalized as its own settled Think message at
@@ -178,11 +182,13 @@ const replayTextPhasesOf = (message: {
 
 export interface DshEventMapperOptions {
   /**
-   * Assistant chat-experience mode getter, evaluated at every stream-hold
-   * decision (never cached): the mapper is a long-lived per-session instance
-   * while the global mode can flip mid-session. Commentary folds into thinking
-   * in both modes; assistant mode additionally holds short effort-off text so
-   * it cannot flash a visible bubble before a tool call classifies it.
+   * Assistant chat-experience mode getter, evaluated at every fold decision
+   * (never cached): the mapper is a long-lived per-session instance while the
+   * global mode can flip mid-session. Commentary folds into thinking in both
+   * modes at tool-call boundaries; text STREAMING follows the same
+   * family-trait gates in both modes (2026-11-12 ruling — Studio streams like
+   * BotWorks), while round-end deferral and terminal promotion stay
+   * assistant-only as the clean-chat guarantee.
    */
   assistantMode?: () => boolean
 }
@@ -534,13 +540,20 @@ export class DshEventMapper {
     actions.push({ kind: 'messageUpdate', slot: 'thinking', content: this.thinkingBuf })
   }
 
-  /** Assistant mode applies the same bounded hold to every model family. */
+  /**
+   * Identical text-streaming policy for both surfaces (owner ruling
+   * 2026-11-12: Studio must feel like BotWorks — text appears as soon as it
+   * streams, not as popped milestones). Assistant mode used to hold text on
+   * EVERY family until the 160-unit window cleared, which turned every
+   * Studio reply into a single end-of-turn pop; the family-trait rules below
+   * now govern both modes and the existing tool-call folds still retract
+   * commentary that streamed optimistically. Round-end deferral and terminal
+   * promotion (deferToolRideText / finalizationRequired) are unchanged —
+   * they remain the assistant mode's clean-chat guarantee for rounds whose
+   * text rode with tool calls.
+   */
   private postReasoningTextMayStream(text: string): boolean {
     if (this.textOpen) return true
-    if (this.assistantMode()) {
-      if (this.reasoningBlockLive) return false
-      return text.length >= POST_REASONING_TEXT_HOLD_UNITS
-    }
     if (!this.toolRideTextFolds()) return true
     if (this.reasoningBlockLive) return false
     if (!this.reasoningSeenThisStep) return true
