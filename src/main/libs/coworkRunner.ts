@@ -12605,11 +12605,22 @@ export class CoworkRunner extends EventEmitter {
         // terminal notice WITHOUT the fallback ladder (the serving route never
         // overflowed; silently switching brains would override the operator's
         // explicit model choice). The fix is to pick a larger-window target or
-        // compact first.
+        // compact first. One cause needs its own wording: `no adapter
+        // registered for provider …` means the PREVIOUS model's runtime
+        // component was missing (2026-11-12 cw-4b78a0fd incident — a
+        // cross-provider re-pin onto a slot that never mounted the old
+        // provider; since fixed by mounting it, this text now only fires for
+        // stale cases like the previous provider being unconfigured after a
+        // restart), where "the target window is too small" would mislead.
+        const modelSwitchAdapterMissing = String(outcome.error?.message ?? '').includes('no adapter registered for provider')
         const modelSwitchNotice = isModelSwitchCompactionFailedDshTurnError(outcome)
           ? ` ${tApp(
-              `（模型切换未生效：切换前压缩历史失败，会话已保留原模型继续。目标模型的上下文窗口装不下当前历史：请选择上下文更大的目标模型后重试，或先点击顶部压缩按钮手动压缩历史。）`,
-              ` (The model switch did not take effect: pre-switch history compaction failed and the session stays on the previous model. The target model's context window cannot hold the current history: pick a target with a larger window and retry, or run the manual compact button in the header first.)`
+              modelSwitchAdapterMissing
+                ? `（模型切换未生效：切换前压缩历史失败，会话已保留原模型继续。本轮压缩需要通过会话上一次使用的模型服务完成，但它在当前运行时中不可用（常见于更换模型后重启应用、且原模型已停用）。请先切回原模型继续对话，或重新启用原模型后重试。）`
+                : `（模型切换未生效：切换前压缩历史失败，会话已保留原模型继续。目标模型的上下文窗口装不下当前历史：请选择上下文更大的目标模型后重试，或先点击顶部压缩按钮手动压缩历史。）`,
+              modelSwitchAdapterMissing
+                ? ` (The model switch did not take effect: pre-switch history compaction failed and the session stays on the previous model. This compaction must run through the model service the session last used, which is unavailable in the current runtime (typically after changing models and restarting while the previous model is disabled). Switch back to the previous model to continue, or re-enable it and retry.)`
+                : ` (The model switch did not take effect: pre-switch history compaction failed and the session stays on the previous model. The target model's context window cannot hold the current history: pick a target with a larger window and retry, or run the manual compact button in the header first.)`
             )}`
           : '';
         // Ring-④ rewrites strip the native 429/limit body from the
