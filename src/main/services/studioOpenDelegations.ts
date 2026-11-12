@@ -67,11 +67,25 @@ const firstLine = (value: string | null | undefined, max: number): string => {
 
 const clipTitle = (value: string | null | undefined): string => firstLine(value, 40);
 
+export type StudioOpenDelegationsOptions = {
+  /**
+   * Projection-gate mode (2026-11-12 owner ruling): count ONLY attempts whose
+   * own status is queued/running. The timed_out-with-running-worker-session
+   * heuristic stays OFF here — twinOrchestrationService marks the attempt
+   * completed before it notifies the Twin, and a timed-out attempt can still
+   * recover, so neither should hold a projection hostage. Live Stage and the
+   * panel keep the default (heuristic included).
+   */
+  activeAttemptsOnly?: boolean;
+};
+
 export function listStudioOpenDelegations(
   deps: StudioOpenDelegationsDeps,
   sessionId: string,
   now: number = Date.now(),
+  options?: StudioOpenDelegationsOptions,
 ): StudioOpenDelegation[] {
+  const activeAttemptsOnly = options?.activeAttemptsOnly === true;
   const attempts = deps.listAttemptsForSourceSessions([sessionId]) ?? [];
   const entries: StudioOpenDelegation[] = [];
   for (const attempt of attempts) {
@@ -79,7 +93,7 @@ export function listStudioOpenDelegations(
     if (!Number.isFinite(queuedMs) || queuedMs > now + 60_000 || now - queuedMs > MAX_ATTEMPT_AGE_MS) continue;
     const status = String(attempt.status ?? '');
     let open = OPEN_ATTEMPT_STATUSES.has(status);
-    if (!open && status === 'timed_out') {
+    if (!open && !activeAttemptsOnly && status === 'timed_out') {
       const workerSession = attempt.workerSessionId ? deps.getSession(attempt.workerSessionId) : null;
       open = workerSession?.status === 'running';
     }

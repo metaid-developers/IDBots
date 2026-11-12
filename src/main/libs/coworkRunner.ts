@@ -2713,6 +2713,14 @@ export interface CoworkRunnerOptions {
    */
   ownerWaitUpdateGenerator?: (input: OwnerWaitUpdateInput) => Promise<string>;
   /**
+   * Projection discipline gate (2026-11-12 owner ruling): projection_begin
+   * consults this before engaging fast mode — while delegated work is still
+   * out it returns the refusal text the tool hands back verbatim (plain
+   * guidance, never an error), and null lets the normal fast-mode path run.
+   * Optional: hosts without it keep the old behavior. Tests inject a stub.
+   */
+  projectionBlockedReason?: (sessionId: string) => string | null;
+  /**
    * Optional cerebellum (小脑) turn-end classifier behind the "Follow-Up
    * Tasks" (待跟进任务) bucket: one Noul over the session title + the turn's
    * final assistant message decides whether a completed turn on an
@@ -2909,6 +2917,7 @@ export class CoworkRunner extends EventEmitter {
   private cerebellumEffortSelector?: CoworkRunnerOptions['cerebellumEffortSelector'];
   private cerebellumTurnAckGate?: CoworkRunnerOptions['cerebellumTurnAckGate'];
   private ownerWaitUpdateGenerator?: CoworkRunnerOptions['ownerWaitUpdateGenerator'];
+  private projectionBlockedReason?: CoworkRunnerOptions['projectionBlockedReason'];
   private cerebellumSessionFollowUpGate?: CoworkRunnerOptions['cerebellumSessionFollowUpGate'];
   /**
    * Per-session sticky state for the auto effort rung: the last escalated
@@ -3130,6 +3139,7 @@ export class CoworkRunner extends EventEmitter {
     this.cerebellumEffortSelector = options?.cerebellumEffortSelector;
     this.cerebellumTurnAckGate = options?.cerebellumTurnAckGate;
     this.ownerWaitUpdateGenerator = options?.ownerWaitUpdateGenerator;
+    this.projectionBlockedReason = options?.projectionBlockedReason;
     this.cerebellumSessionFollowUpGate = options?.cerebellumSessionFollowUpGate;
     this.localTurnStallTimeoutMs = Math.max(
       0,
@@ -12915,6 +12925,13 @@ export class CoworkRunner extends EventEmitter {
         'Signal that you are about to write the projection page (the reports/*.html file you will preview with bot_browser_preview_local). Call it ONCE, immediately before writing that file — never for ordinary files. It puts this session into fast mode: the next reasoning steps run with minimal thinking so the large HTML write finishes as fast as possible. Takes no parameters and returns immediately.',
         {},
         async () => {
+          // Projection discipline (2026-11-12 owner ruling): while delegated
+          // work is still out there is nothing to project — hand back the
+          // host's guidance verbatim and do NOT engage fast mode.
+          const blockedReason = this.projectionBlockedReason?.(sessionId)
+          if (blockedReason) {
+            return { content: [{ type: 'text', text: blockedReason }] } as any
+          }
           const result = await this.dshTurnHub?.forceProjectionFastMode(sessionId)
           const text = result?.ok
             ? `Fast mode engaged (reasoning effort: ${result.effort}). Write the projection page now.`

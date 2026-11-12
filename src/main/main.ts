@@ -566,6 +566,7 @@ import {
 } from './services/botBrowserProjectionService';
 import { createStudioLiveStageService, type StudioLiveStageService } from './services/studioLiveStageService';
 import { listStudioOpenDelegations } from './services/studioOpenDelegations';
+import { describeStudioProjectionBlock } from './services/studioProjectionGate';
 import { applyStudioLiveStagePatch, drainStudioLiveStageInteractions, executeStageFrameScript } from './services/studioLiveStageFrame';
 import { createStudioGenesisStageService, type StudioGenesisStageService } from './services/studioGenesisStageService';
 import { readStudioLiveStageSettings, writeStudioLiveStageSettings } from './services/studioLiveStageSettings';
@@ -7315,9 +7316,14 @@ const getCoworkRunner = () => {
           return imGatewayManager.sendImOutbound(request);
         },
       },
+      // Projection discipline gate (2026-11-12 owner ruling): while delegated
+      // work is still out, projection_begin hands back the section-6 guidance
+      // instead of engaging fast mode for a progress page.
+      projectionBlockedReason: (sessionId: string) => studioProjectionBlockedReason(sessionId, 'begin'),
       controlBotBrowser: {
         openUri: (input) => sendBotBrowserOpenUri(input),
         execute: (command) => getBotBrowserTabBridge().execute(command),
+        projectionBlockedReason: (sessionId: string) => studioProjectionBlockedReason(sessionId, 'preview'),
         projectReport: async (input) => {
           const outcome = await getStudioLiveStageService().projectReport(
             input,
@@ -9057,13 +9063,28 @@ const getBotBrowserProjection = () =>
 // Open delegated work for a Studio session, read from the orchestration
 // store. Shared by the Live Stage's delegation-aware completion and any
 // other surface that needs "is a teammate bot still working on this".
-const listOpenStudioDelegations = (sessionId: string) => listStudioOpenDelegations({
-  listAttemptsForSourceSessions: (ids) => getOrchestrationStore().listAttemptsForSourceSessions(ids),
-  getStep: (id) => getOrchestrationStore().getStep(id),
-  getTaskForStep: (id) => getOrchestrationStore().getTaskForStep(id),
-  getSession: (id) => getCoworkStore().getSession(id),
-  getMetabotById: (id) => getMetabotStore().getMetabotById(id),
-}, sessionId);
+const studioDelegationLookupDeps = {
+  listAttemptsForSourceSessions: (ids: string[]) => getOrchestrationStore().listAttemptsForSourceSessions(ids),
+  getStep: (id: string) => getOrchestrationStore().getStep(id),
+  getTaskForStep: (id: string) => getOrchestrationStore().getTaskForStep(id),
+  getSession: (id: string) => getCoworkStore().getSession(id),
+  getMetabotById: (id: number) => getMetabotStore().getMetabotById(id),
+};
+const listOpenStudioDelegations = (sessionId: string) => listStudioOpenDelegations(studioDelegationLookupDeps, sessionId);
+// Projection discipline (2026-11-12 owner ruling): the gate counts ONLY
+// attempts whose own status is queued/running — a timed-out attempt is
+// already marked completed before the Twin is notified and can still
+// recover, so it must not hold a projection hostage.
+const listBlockingStudioDelegations = (sessionId: string) => listStudioOpenDelegations(
+  studioDelegationLookupDeps,
+  sessionId,
+  Date.now(),
+  { activeAttemptsOnly: true },
+);
+// Shared by both projection entries: bot_browser_preview_local(projection)
+// asks for the 'preview' text, projection_begin for the 'begin' text.
+const studioProjectionBlockedReason = (sessionId: string, kind: 'preview' | 'begin'): string | null =>
+  describeStudioProjectionBlock(listBlockingStudioDelegations(sessionId), kind);
 
 let studioLiveStageService: StudioLiveStageService | null = null;
 const getStudioLiveStageService = (): StudioLiveStageService => {

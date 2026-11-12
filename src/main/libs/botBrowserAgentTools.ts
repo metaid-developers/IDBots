@@ -64,6 +64,14 @@ export type BotBrowserControl = {
     announced: boolean;
   }>;
   /**
+   * Projection discipline gate (2026-11-12 owner ruling): a projection is a
+   * report to the owner, so it waits until delegated work is back and
+   * verified. Returns the refusal text the tool should hand back verbatim
+   * (plain guidance, not a "Failed to project" error), or null when the
+   * projection may proceed. Optional: hosts without it keep the old behavior.
+   */
+  projectionBlockedReason?(sessionId: string): string | null;
+  /**
    * Capture the active (or a specified) Bot Browser tab as an image. Resolves
    * with the base64 image bytes, mimeType, and dimensions. Rejects (or the
    * renderer reports an error) when the Bot Browser surface is not visible.
@@ -548,6 +556,14 @@ export function buildBotBrowserAgentTools(deps: {
         uri = `preview-file://localhost${encodeLocalPreviewPath(localPath)}`;
       }
       if (args.projection === true) {
+        // Projection discipline (2026-11-12 owner ruling): while delegated
+        // work is still out, the host refuses with plain guidance — the same
+        // refusal shape as the validation failures above (isError result),
+        // but the text itself tells the model what to do instead.
+        const blockedReason = controlBotBrowser.projectionBlockedReason?.(sessionId);
+        if (blockedReason) {
+          return textResult(blockedReason, true);
+        }
         if (!controlBotBrowser.projectReport) {
           return textResult('Projection is not available in this host; the preview opened as an ordinary preview instead.', true);
         }
