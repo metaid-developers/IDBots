@@ -157,7 +157,10 @@ test('describeToolUseStatus: session/web/memory/todo/onchain surfaces', () => {
   assert.equal(describeToolUseStatus('todo_write', {}, 'zh'), '正在更新任务清单');
   assert.match(describeToolUseStatus('memory_search', {}, 'zh'), /记忆和知识库/);
   assert.match(describeToolUseStatus('omni_read', { action: 'indexer_stats' }, 'zh'), /链上数据/);
-  assert.match(describeToolUseStatus('owner_update', {}, 'zh'), /汇报进展/);
+  // owner_update / projection_begin are host bookkeeping: their visible
+  // output is the narration bubble / the projected page, never a status line.
+  assert.equal(describeToolUseStatus('owner_update', {}, 'zh'), null);
+  assert.equal(describeToolUseStatus('projection_begin', {}, 'zh'), null);
 });
 
 test('describeToolUseStatus: unknown tools fall back to the object, then null', () => {

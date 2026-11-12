@@ -46,6 +46,9 @@ import {
 import PanelMessageContextMenu from './PanelMessageContextMenu';
 import PanelMessageLocatorRail from './PanelMessageLocatorRail';
 import { buildPanelLocatorRows } from './panelMessageLocator';
+import { describePanelTurnFailure, isPanelTurnFailureMessage, panelTurnFailureKind } from './panelTurnFailure';
+import { PanelDelegationStatusRow } from './PanelDelegationStatusRow';
+import type { PanelOpenDelegation } from './panelDelegationStatus';
 import { createMessageQuotedSelection, parseSentQuoteBlock, parseSentSelectionQuoteBlock } from '../../components/cowork/coworkQuotedSelections';
 import { buildSentQuoteDisplaySources, buildSentSelectionQuoteLabelSets, transientHighlight, QUOTE_JUMP_HIGHLIGHT_MS } from '../../components/cowork/CoworkSessionDetail';
 import { resolveBubbleSelectedText } from './panelBubbleSelection';
@@ -62,6 +65,10 @@ export function filterVisiblePanelMessages(messages: CoworkMessage[]): CoworkMes
     if (message.metadata?.isDelegationInternal) return false;
     if (message.type === 'user') return true;
     if (message.type === 'assistant') return !message.metadata?.isThinking;
+    // Turn-level failures (final turn error + the three turn-death flags)
+    // render as an assistant-side card; every other system row — compaction
+    // checkpoints, SDK notices, fallback banners — stays hidden.
+    if (message.type === 'system') return isPanelTurnFailureMessage(message);
     return false;
   });
 }
@@ -108,6 +115,12 @@ export const PanelMessage: React.FC<{
   onContextMenu?: (event: React.MouseEvent, message: CoworkMessage) => void;
   /** Chip click toggles the reaction (re-click on the active side cancels). */
   onToggleReaction?: (message: CoworkMessage, current: PanelReactionRating | null) => void;
+  /**
+   * Turn-failure card only: the parent shows Continue solely on the newest
+   * card when it is the last visible message and the session is not running.
+   */
+  showTurnFailureContinue?: boolean;
+  onTurnFailureContinue?: () => void;
 }> = ({
   message,
   onOpenUri,
@@ -122,6 +135,8 @@ export const PanelMessage: React.FC<{
   currentReaction = null,
   onContextMenu,
   onToggleReaction,
+  showTurnFailureContinue = false,
+  onTurnFailureContinue,
 }) => {
   const isUser = message.type === 'user';
   const handleBubbleContextMenu = (event: React.MouseEvent) => {
@@ -207,6 +222,41 @@ export const PanelMessage: React.FC<{
               its own bubble chrome. */}
           <UserMessageBody content={displayContent} resolveLocalFilePath={resolveLocalFilePath} />
           {bubbleFooter}
+        </div>
+      </div>
+    );
+  }
+  // Turn-level failure rows render as an assistant-side card: muted amber
+  // accent, plain-language reason + hint, raw error behind a Details
+  // disclosure, and a Continue shortcut on the newest card only. The card
+  // deliberately carries no context menu or reaction chip — it is a status
+  // surface, not quotable conversation.
+  if (panelTurnFailureKind(message)) {
+    const copy = describePanelTurnFailure(message, i18nService.getLanguage());
+    return (
+      <div data-panel-message-id={message.id} className="flex min-w-0 flex-col items-start">
+        <div className="w-fit max-w-[92%] rounded-[22px] border dark:border-amber-500/30 border-amber-500/40 dark:bg-amber-500/5 bg-amber-50 px-[16px] py-[10px] text-[13px] leading-5 dark:text-claude-darkText text-claude-text shadow-subtle">
+          <div className="font-medium dark:text-amber-600 text-amber-700">{copy.title}</div>
+          <div className="mt-1 dark:text-claude-darkTextSecondary text-claude-textSecondary">{copy.body}</div>
+          {copy.details ? (
+            <details className="mt-2">
+              <summary className="cursor-pointer select-none text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary hover:underline">
+                {i18nService.t('panelTurnFailureDetails')}
+              </summary>
+              <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md dark:bg-black/20 bg-black/5 p-2 font-mono text-[11px] leading-4 dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                {copy.details}
+              </pre>
+            </details>
+          ) : null}
+          {showTurnFailureContinue && onTurnFailureContinue ? (
+            <button
+              type="button"
+              onClick={onTurnFailureContinue}
+              className="mt-2 rounded-lg px-2.5 py-1 text-xs font-medium dark:bg-claude-accent/15 dark:text-claude-accent text-claude-accent bg-claude-accent/10 hover:bg-claude-accent/20 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+            >
+              {i18nService.t('panelTurnFailureContinue')}
+            </button>
+          ) : null}
         </div>
       </div>
     );
@@ -684,6 +734,50 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     [visibleMessages, chipMetabot?.name],
   );
 
+  // Open delegated work for the idle-session status row: one fetch on
+  // mount/session change (which is also the fetch right after a stream
+  // ends), then a 15s poll only while the panel shows an assistant-mode
+  // browser session that is not streaming.
+  const [openDelegations, setOpenDelegations] = useState<PanelOpenDelegation[]>([]);
+  const delegationSessionId = currentSession?.id ?? null;
+  const delegationPollingActive = Boolean(currentSession && isAssistantMode && !isStreaming);
+  useEffect(() => {
+    const fetchOpenDelegations = window.electron?.cowork?.getStudioOpenDelegations;
+    if (!delegationSessionId || typeof fetchOpenDelegations !== 'function') {
+      setOpenDelegations([]);
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const result = await fetchOpenDelegations(delegationSessionId);
+        if (!cancelled) setOpenDelegations(result?.success ? result.delegations ?? [] : []);
+      } catch {
+        if (!cancelled) setOpenDelegations([]);
+      }
+    };
+    void load();
+    if (!delegationPollingActive) {
+      return () => { cancelled = true; };
+    }
+    const timer = window.setInterval(() => { void load(); }, 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [delegationSessionId, delegationPollingActive]);
+
+  // The status row opens the worker's own session in BotWorks through the
+  // same load-then-switch-home path the A2A navigation adapter uses.
+  const handleOpenWorkerSession = useCallback(async (workerSessionId: string) => {
+    try {
+      await coworkService.loadSession(workerSessionId);
+      onOpenBotHome?.();
+    } catch {
+      // A failed open leaves the row in place; nothing else to surface here.
+    }
+  }, [onOpenBotHome]);
+
   // Locator tick-jump landing cue (owner ruling 2026-11-11, four-item fix ③):
   // clicking a rail tick is "you were taken here", so the target BUBBLE lights
   // the same transient accent ring the main transcript's rail jump and quote
@@ -837,6 +931,10 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
       currentReaction={panelReactions[message.id] ?? null}
       onContextMenu={handlePanelContextMenu}
       onToggleReaction={handleToggleReaction}
+      // Continue rides ONLY the last visible row while the session is idle —
+      // an older failure card or a streaming turn never offers it.
+      showTurnFailureContinue={!isStreaming && index === visibleMessages.length - 1}
+      onTurnFailureContinue={() => { void handleSubmit(i18nService.t('panelTurnFailureContinue')); }}
     />
   );
 
@@ -971,6 +1069,14 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
               <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current [animation-delay:300ms]" />
             </div>
           )
+        ) : openDelegations.length > 0 ? (
+          // Idle turn, working teammate: the reply position carries the
+          // worker status row instead of going blank (C2).
+          <PanelDelegationStatusRow
+            delegations={openDelegations}
+            twinName={chipMetabot?.name ?? null}
+            onOpenWorkerSession={handleOpenWorkerSession}
+          />
         ) : null}
         </div>
         <PanelMessageLocatorRail

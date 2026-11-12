@@ -1725,6 +1725,18 @@ interface IElectronAPI {
     onStreamSessionTitle: (callback: (data: { sessionId: string; title: string }) => void) => () => void;
     isDelegationBlocking: (sessionId: string) => Promise<boolean>;
     getDelegationInfo: (sessionId: string) => Promise<{ orderId: string } | null>;
+    getStudioOpenDelegations: (sessionId: string) => Promise<{
+      success: boolean;
+      delegations: Array<{
+        attemptId: string;
+        workerMetabotId: number;
+        workerName?: string;
+        workerAvatar?: string;
+        workerSessionId?: string;
+        title: string;
+        startedAt: number;
+      }>;
+    }>;
     onDelegationStateChange: (callback: (data: { sessionId: string; blocking: boolean; orderId?: string; message?: string }) => void) => () => void;
     onSessionProfileRefreshed: (callback: (data: { sessionId: string }) => void) => () => void;
   };

@@ -15012,6 +15012,20 @@ if (!gotTheLock) {
     }
   });
 
+  // Studio panel worker-status row: open delegated work for a session,
+  // shared with the Live Stage's delegation-aware completion (C1).
+  registerIpcHandler('cowork:studio:openDelegations', async (_event, payload: string | { sessionId?: unknown }) => {
+    try {
+      const sessionId = typeof payload === 'string'
+        ? payload.trim()
+        : toSafeString(payload?.sessionId).trim();
+      if (!sessionId) return { success: true, delegations: [] };
+      return { success: true, delegations: listOpenStudioDelegations(sessionId) };
+    } catch {
+      return { success: false, delegations: [] };
+    }
+  });
+
   registerIpcHandler('cowork:sandbox:status', async () => {
     return getSandboxStatus();
   });

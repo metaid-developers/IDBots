@@ -46,7 +46,9 @@ test('③ the rail mounts at the transcript edge inside a relative wrapper', () 
 
 test('③ every PanelMessage root carries the measurable row id', () => {
   const hits = panelSource.match(/data-panel-message-id=\{message\.id\}/g) ?? [];
-  assert.equal(hits.length, 3, 'user, assistant-mode and professional roots all tagged');
+  // user, assistant-mode, professional, and the turn-failure card roots are
+  // all tagged — the locator rail jumps to failure rows like any other row.
+  assert.equal(hits.length, 4, 'user, assistant-mode, professional and failure-card roots all tagged');
 });
 
 test('③ the transcript auto-scroll-to-bottom behavior is untouched', () => {

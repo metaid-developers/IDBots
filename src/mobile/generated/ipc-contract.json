@@ -706,6 +706,14 @@
       ]
     },
     {
+      "path": "cowork.getStudioOpenDelegations",
+      "kind": "invoke",
+      "channel": "cowork:studio:openDelegations",
+      "args": [
+        "sessionId"
+      ]
+    },
+    {
       "path": "cowork.getSubagentMessages",
       "kind": "invoke",
       "channel": "cowork:session:getSubagentMessages",

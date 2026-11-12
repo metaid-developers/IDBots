@@ -718,6 +718,19 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('cowork:isDelegationBlocking', sessionId) as Promise<boolean>,
     getDelegationInfo: (sessionId: string) =>
       ipcRenderer.invoke('cowork:getDelegationInfo', sessionId) as Promise<{ orderId: string } | null>,
+    getStudioOpenDelegations: (sessionId: string) =>
+      ipcRenderer.invoke('cowork:studio:openDelegations', { sessionId }) as Promise<{
+        success: boolean;
+        delegations: Array<{
+          attemptId: string;
+          workerMetabotId: number;
+          workerName?: string;
+          workerAvatar?: string;
+          workerSessionId?: string;
+          title: string;
+          startedAt: number;
+        }>;
+      }>,
     getSandboxStatus: () =>
       ipcRenderer.invoke('cowork:sandbox:status'),
     installSandbox: () =>

@@ -116,6 +116,9 @@ const COWORK_INVOKE: Record<string, AllowlistEntry> = {
   'cowork:metafile:download': { tier: 'N', note: '`02`: opens a save dialog; the phone opens the public metafile URL instead.' },
   'cowork:sandbox:install': { tier: 'N', note: '`02`: sandbox execution is disabled in server mode.' },
   'cowork:sandbox:status': { tier: 'N', note: '`02`: sandbox execution is disabled in server mode.' },
+  // Studio left-panel worker-status poll (desktop surface only); not in `02`
+  // v1.0.0 — denied by default-deny pending a change request.
+  'cowork:studio:openDelegations': { tier: 'N', note: 'Studio panel worker-status row; desktop-only surface, not in `02` v1.0.0 — denied by default-deny pending a change request.' },
 };
 
 // ---------------------------------------------------------------------------
