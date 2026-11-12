@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import { createBotBrowserHostService } from '../src/main/services/botBrowserHostService.ts';
@@ -408,4 +411,109 @@ test('metaapp:// URIs bypass the Q&A probe entirely', async () => {
   const { calls, service } = createQaHarness();
   await service.resolveResource({ uri: 'metaapp://pin123i0' });
   assert.deepEqual(calls.question, []);
+});
+
+function createLocalPreviewHarness(files) {
+  const sessions = [];
+  return {
+    sessions,
+    createLocalPreviewSession: async (input) => {
+      sessions.push(input);
+      const previewId = `local-preview-test-${sessions.length}`;
+      return {
+        previewId,
+        localPreviewUrl: `http://127.0.0.1:49999/browser-cache/metaapp-preview/${previewId}/${input.indexFile}`,
+      };
+    },
+  };
+}
+
+test('resolveResource previews a markdown file via preview-file with a viewer session', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'bot-browser-preview-file-'));
+  try {
+    const filePath = path.join(dir, 'note.md');
+    await writeFile(filePath, '# hello', 'utf8');
+    const harness = createLocalPreviewHarness();
+    const service = createHostService(harness);
+
+    const result = await service.resolveResource({ uri: `preview-file://localhost${filePath}` });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.data.renderer.type, 'file-viewer');
+    assert.equal(result.data.renderer.contentType, 'text/markdown; charset=utf-8');
+    assert.match(result.data.renderer.url, /\?abc-viewer=1$/);
+    assert.equal(result.data.resourceType, 'document');
+    assert.equal(result.data.title, 'note.md');
+    assert.equal(harness.sessions.length, 1);
+    assert.equal(harness.sessions[0].viewer, true);
+    assert.equal(harness.sessions[0].indexFile, 'note.md');
+    assert.equal(harness.sessions[0].artifactDir, dir);
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  }
+});
+
+test('resolveResource previews a pdf via preview-file without a viewer flag', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'bot-browser-preview-file-'));
+  try {
+    const filePath = path.join(dir, 'paper.pdf');
+    await writeFile(filePath, '%PDF-1.4', 'utf8');
+    const harness = createLocalPreviewHarness();
+    const service = createHostService(harness);
+
+    const result = await service.resolveResource({ uri: `preview-file://localhost${filePath}` });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.data.renderer.type, 'pdf');
+    assert.equal(result.data.renderer.contentType, 'application/pdf');
+    assert.equal(result.data.resourceType, 'pdf');
+    assert.doesNotMatch(result.data.renderer.url, /abc-viewer/);
+    assert.equal(harness.sessions.length, 1);
+    assert.equal(harness.sessions[0].viewer, undefined);
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  }
+});
+
+test('resolveResource rejects a preview-file directory and an unsupported extension', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'bot-browser-preview-file-'));
+  try {
+    const docxPath = path.join(dir, 'report.docx');
+    await writeFile(docxPath, 'x', 'utf8');
+    const harness = createLocalPreviewHarness();
+    const service = createHostService(harness);
+
+    const dirResult = await service.resolveResource({ uri: `preview-file://localhost${dir}` });
+    assert.equal(dirResult.ok, false);
+    assert.match(dirResult.message, /preview-metaapp:\/\/ for directories/);
+
+    const docxResult = await service.resolveResource({ uri: `preview-file://localhost${docxPath}` });
+    assert.equal(docxResult.ok, true);
+    assert.equal(docxResult.data.renderer.type, 'unsupported');
+    assert.equal(docxResult.data.status.state, 'error');
+    assert.equal(docxResult.data.renderer.url, undefined);
+    // Unsupported kinds never reach the filesystem callback.
+    assert.equal(harness.sessions.length, 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  }
+});
+
+test('resolveResource serves a single-file preview-metaapp with its classified MIME', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'bot-browser-preview-file-'));
+  try {
+    const filePath = path.join(dir, 'paper.pdf');
+    await writeFile(filePath, '%PDF-1.4', 'utf8');
+    const harness = createLocalPreviewHarness();
+    const service = createHostService(harness);
+
+    const result = await service.resolveResource({ uri: `preview-metaapp://localhost${filePath}` });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.data.renderer.contentType, 'application/pdf');
+    assert.equal(harness.sessions.length, 1);
+    assert.equal(harness.sessions[0].viewer, undefined);
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  }
 });

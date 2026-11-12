@@ -27,7 +27,7 @@ MetaApp 现在的主模型很简单：它就是一个能在 Bot Browser 里运�
 1. 开发新的 MetaApp，或改一个现有静态站点的 Agent Internet 接入方式：
    先读 `references/agent-browser-metaapp.md`；新应用同时读 `references/app-md.md` 并给应用写好包根的 `APP.md`
 2. 预览一个还没发布的项目：
-   用 `bot_browser_preview_local`（构造 `preview-metaapp://localhost<absPath>`），见 `references/publish-manage.md` §9
+   用 `bot_browser_preview_local`（可运行应用/HTML 构造 `preview-metaapp://localhost<absPath>`；md、代码、pdf、图片、音视频等非应用文件构造 `preview-file://localhost<absPath>`），见 `references/publish-manage.md` §9
 3. 发布、修改、删除、分享 MetaApp：
    先读 `references/publish-manage.md`，默认走 §6 Publish Wizard，再用 `scripts/index.js`
 4. 做 Bot homepage / Bot Page：
@@ -194,7 +194,7 @@ node "$SKILLS_ROOT/metabot-metaapp/scripts/index.js" \
 
 - 项目是浏览器可运行的静态站点
 - 发布前已用 `bot_browser_preview_local` 预览，应用在内置浏览器里可运行
-- 预览用的是 `preview-metaapp://localhost<absPath>`，不是 `file://`、不是手拼 localhost URL、也不是内部 `localPreviewUrl` 直接交给用户
+- 预览用的是 `preview-metaapp://localhost<absPath>`（应用/HTML）或 `preview-file://localhost<absPath>`（md、代码、pdf、图片、音视频等文档），不是 `file://`、不是手拼 localhost URL、也不是内部 `localPreviewUrl` 直接交给用户
 - 包内资源路径是相对路径，不是站点根路径
 - 包根有 `APP.md`（纯自然语言的应用自述），且与当前代码一致
 - 面向人类的界面型 MetaApp：已调用 `preference_lessons_search`，`APP.md` 记录了参考的 lesson pinId（或写明「无」/ explorer 分组）

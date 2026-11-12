@@ -5,6 +5,7 @@ import http from 'http';
 import path from 'path';
 import AdmZip from 'adm-zip';
 import {
+  classifyLocalFile,
   createDefaultBrowserConfig,
   resolveBrowserConfig,
   resolveMetaAppPinToRecord,
@@ -31,6 +32,11 @@ export function metaAppPreviewHtmlPreparationAvailable(): boolean {
   return preparePreviewHtml !== undefined;
 }
 import {
+  LOCAL_FILE_VIEWER_MAX_BYTES,
+  renderLocalFileViewerHtml,
+} from '@openagentinternet/agent-browser-renderers/local-file-viewer';
+import {
+  FILE_VIEWER_THEME_QUERY_PARAM,
   browserFailure,
   browserSuccess,
   type BrowserCacheClearInput,
@@ -99,14 +105,18 @@ type PreviewSession = {
   indexFile: string;
   createdAt: number;
   expiresAt: number;
+  // preview-file:// viewer sessions (markdown/text/code/csv): the index file
+  // is rendered as a sanitized viewer document under ?abc-viewer=1.
+  viewer?: boolean;
 };
 
 export type BotBrowserMetaAppCacheService = {
   resolveMetaAppPin(pinId: string): Promise<CoreBrowserCommandResult<MetaAppGalleryRecord>>;
-  /** Preview session for an arbitrary local directory/file (preview-metaapp://localhost). */
+  /** Preview session for an arbitrary local directory/file (preview-metaapp://localhost, preview-file://localhost). */
   createLocalPreviewSession(input: {
     artifactDir: string;
     indexFile: string;
+    viewer?: boolean;
   }): Promise<{ previewId: string; localPreviewUrl: string }>;
   /** Local extracted source directory of a chain MetaApp, when already cached. */
   getMetaAppArtifactDir(pinId: string): Promise<{ artifactDir: string; indexFile: string } | null>;
@@ -146,6 +156,93 @@ const MIME_TYPES: Record<string, string> = {
   '.wasm': 'application/wasm',
   '.webp': 'image/webp',
 };
+
+const LOCAL_FILE_VIEWER_CSP =
+  "default-src 'none'; img-src 'self' data: blob: http: https:; media-src 'self'; style-src 'unsafe-inline'";
+
+/**
+ * Single-range `Range: bytes=a-b` (open-ended and suffix forms) against the
+ * real file size. Multi-range requests are ignored (full 200) per common
+ * static-server behavior; a syntactically valid but unsatisfiable range
+ * reports back so the caller answers 416.
+ */
+function parseByteRange(
+  header: string | undefined,
+  size: number,
+): { start: number; end: number } | 'unsatisfiable' | null {
+  const match = /^bytes=(\d*)-(\d*)$/iu.exec(text(header));
+  if (!match) return null;
+  const [, rawStart, rawEnd] = match;
+  if (rawStart === '' && rawEnd === '') return null;
+  let start: number;
+  let end: number;
+  if (rawStart === '') {
+    const suffixLength = Number(rawEnd);
+    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) return 'unsatisfiable';
+    start = Math.max(0, size - suffixLength);
+    end = size - 1;
+  } else {
+    start = Number(rawStart);
+    if (!Number.isSafeInteger(start)) return 'unsatisfiable';
+    end = rawEnd === '' ? size - 1 : Math.min(Number(rawEnd), size - 1);
+  }
+  if (size === 0 || start > end || start >= size) return 'unsatisfiable';
+  return { start, end };
+}
+
+/**
+ * Serve a raw preview asset from disk. Non-HTML bodies stream instead of
+ * `fs.readFile` and honor a single byte range (206 / 416 / Accept-Ranges) so
+ * large local videos never load into memory and seeking works.
+ */
+function writeRawFileResponse(
+  res: http.ServerResponse,
+  method: string,
+  filePath: string,
+  size: number,
+  contentType: string,
+  rangeHeader: string | undefined,
+): void {
+  const range = parseByteRange(rangeHeader, size);
+  if (range === 'unsatisfiable') {
+    writeHttpResponse(res, method, 416, 'Range Not Satisfiable', {
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Content-Range': `bytes */${size}`,
+      'Accept-Ranges': 'bytes',
+    });
+    return;
+  }
+
+  const start = range ? range.start : 0;
+  const end = range ? range.end : Math.max(0, size - 1);
+  const contentLength = size === 0 ? 0 : end - start + 1;
+  const headers: Record<string, string> = {
+    'Content-Type': contentType,
+    'Accept-Ranges': 'bytes',
+    'Content-Length': String(contentLength),
+  };
+  if (range) {
+    headers['Content-Range'] = `bytes ${start}-${end}/${size}`;
+  }
+  res.writeHead(range ? 206 : 200, {
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+    ...headers,
+  });
+  if (method === 'HEAD' || contentLength === 0) {
+    res.end();
+    return;
+  }
+  const stream = fsSync.createReadStream(filePath, { start, end });
+  // Headers are already sent, so a mid-stream read error (file removed or
+  // permission changed between stat and read) can only end the response —
+  // swallowing it would leave an unhandled 'error' crash in the main process.
+  stream.on('error', () => {
+    if (!res.destroyed) res.destroy();
+  });
+  res.on('close', () => stream.destroy());
+  stream.pipe(res);
+}
 
 function text(value: unknown): string {
   return typeof value === 'string' ? value.trim() : value == null ? '' : String(value).trim();
@@ -685,17 +782,62 @@ export function createBotBrowserMetaAppCacheService(
 
     try {
       const filePath = await resolveAssetPath(session, requestPath.assetPath);
-      let body: Buffer | string = await fs.readFile(filePath);
-      const contentType = MIME_TYPES[path.extname(filePath).toLowerCase()] ?? 'application/octet-stream';
-      if (preparePreviewHtml && /^text\/html\b/iu.test(contentType)) {
-        const prepared = preparePreviewHtml({
-          body,
-          contentType,
-          metafileContentBaseUrl: await resolveMetafileContentBaseUrl(),
-        });
-        body = typeof prepared === 'string' ? prepared : prepared.toString('utf8');
+      const fileClass = classifyLocalFile(filePath);
+      const contentType = MIME_TYPES[path.extname(filePath).toLowerCase()] ?? fileClass.contentType;
+      const indexRealPath = await fs.realpath(path.join(session.artifactDir, session.indexFile))
+        .catch(() => path.resolve(session.artifactDir, session.indexFile));
+      const isSessionIndexFile = filePath === indexRealPath;
+
+      // preview-file:// viewer sessions: ?abc-viewer=1 on the session's index
+      // file renders the sanitized viewer document (markdown/code/csv …)
+      // instead of serving the raw bytes.
+      if (
+        session.viewer
+        && isSessionIndexFile
+        && parsed.searchParams.get('abc-viewer') === '1'
+        && fileClass.viewer
+      ) {
+        const stats = await fs.stat(filePath);
+        const readable = Math.min(stats.size, LOCAL_FILE_VIEWER_MAX_BYTES);
+        const handle = await fs.open(filePath, 'r');
+        try {
+          const buffer = Buffer.alloc(readable);
+          await handle.read(buffer, 0, readable, 0);
+          const theme = parsed.searchParams.get(FILE_VIEWER_THEME_QUERY_PARAM);
+          const viewerHtml = renderLocalFileViewerHtml({
+            fileName: path.basename(filePath),
+            kind: fileClass.kind as 'markdown' | 'text' | 'code' | 'csv',
+            ...(fileClass.language ? { language: fileClass.language } : {}),
+            text: buffer.toString('utf8'),
+            ...(theme === 'light' || theme === 'dark' ? { theme } : {}),
+            truncated: stats.size > LOCAL_FILE_VIEWER_MAX_BYTES,
+          });
+          writeHttpResponse(res, method, 200, viewerHtml, {
+            'Content-Type': 'text/html; charset=utf-8',
+            'Content-Security-Policy': LOCAL_FILE_VIEWER_CSP,
+          });
+          return;
+        } finally {
+          await handle.close();
+        }
       }
-      writeHttpResponse(res, method, 200, body, { 'Content-Type': contentType });
+
+      if (/^text\/html\b/iu.test(contentType)) {
+        let body: Buffer | string = await fs.readFile(filePath);
+        if (preparePreviewHtml) {
+          const prepared = preparePreviewHtml({
+            body,
+            contentType,
+            metafileContentBaseUrl: await resolveMetafileContentBaseUrl(),
+          });
+          body = typeof prepared === 'string' ? prepared : prepared.toString('utf8');
+        }
+        writeHttpResponse(res, method, 200, body, { 'Content-Type': contentType });
+        return;
+      }
+
+      const stats = await fs.stat(filePath);
+      writeRawFileResponse(res, method, filePath, stats.size, contentType, req.headers.range);
     } catch {
       writeHttpResponse(res, method, 404, 'Not Found', { 'Content-Type': 'text/plain; charset=utf-8' });
     }
@@ -814,6 +956,7 @@ export function createBotBrowserMetaAppCacheService(
   const createLocalPreviewSession = async (input: {
     artifactDir: string;
     indexFile: string;
+    viewer?: boolean;
   }): Promise<{ previewId: string; localPreviewUrl: string }> => {
     const serverBaseUrl = await ensurePreviewServer();
     const createdAt = now();
@@ -824,6 +967,7 @@ export function createBotBrowserMetaAppCacheService(
       indexFile: input.indexFile,
       createdAt,
       expiresAt: createdAt + PREVIEW_SESSION_TTL_MS,
+      ...(input.viewer ? { viewer: true } : {}),
     };
     sessions.set(previewId, session);
     return {

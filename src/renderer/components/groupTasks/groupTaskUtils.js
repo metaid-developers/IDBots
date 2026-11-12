@@ -51,7 +51,7 @@ export function selectAcceptanceChecklist(deliverables) {
   return { items: withBody, omittedProcessCount: list.length - withBody.length };
 }
 
-const BOT_BROWSER_URI_PROTOCOL_RE = /^(metaid|metaapp|map|metafile|pin|preview-metaapp):/i;
+const BOT_BROWSER_URI_PROTOCOL_RE = /^(metaid|metaapp|map|metafile|pin|preview-metaapp|preview-file):/i;
 
 /** R3: whether a URI opens inside the Bot Browser (vs the external browser). */
 export function isBotBrowserUri(uri) {

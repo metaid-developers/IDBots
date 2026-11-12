@@ -192,6 +192,82 @@ test('bot_browser_preview_local rejects relative and missing paths before touchi
   assert.equal(calls.openUri.length, 0);
 });
 
+test('bot_browser_preview_local previews a markdown file via preview-file', async () => {
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'bot-browser-preview-local-'));
+  try {
+    const filePath = path.join(dir, 'note.md');
+    await fs.promises.writeFile(filePath, '# hello', 'utf8');
+    const { calls, byName } = makeHarness();
+    const result = await byName.bot_browser_preview_local.handler({ path: filePath });
+    assert.deepEqual(calls.execute, [{ action: 'open-tab', uri: `preview-file://localhost${filePath}` }]);
+    assert.equal(calls.openUri.length, 0);
+    assert.match(result.content[0].text, /preview/i);
+  } finally {
+    await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  }
+});
+
+test('bot_browser_preview_local keeps html files and directories on preview-metaapp', async () => {
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'bot-browser-preview-local-'));
+  try {
+    const filePath = path.join(dir, 'report.html');
+    await fs.promises.writeFile(filePath, '<!doctype html>', 'utf8');
+    const { calls, byName } = makeHarness();
+    await byName.bot_browser_preview_local.handler({ path: filePath });
+    assert.deepEqual(calls.execute, [{ action: 'open-tab', uri: `preview-metaapp://localhost${filePath}` }]);
+  } finally {
+    await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  }
+});
+
+test('bot_browser_preview_local percent-encodes path segments', async () => {
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'bot-browser-preview-local-'));
+  try {
+    const filePath = path.join(dir, 'a b#c.md');
+    await fs.promises.writeFile(filePath, '# hello', 'utf8');
+    const { calls, byName } = makeHarness();
+    await byName.bot_browser_preview_local.handler({ path: filePath });
+    assert.deepEqual(calls.execute, [
+      { action: 'open-tab', uri: `preview-file://localhost${dir}/${encodeURIComponent('a b#c.md')}` },
+    ]);
+  } finally {
+    await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  }
+});
+
+test('bot_browser_preview_local reports unsupported file types', async () => {
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'bot-browser-preview-local-'));
+  try {
+    const filePath = path.join(dir, 'report.docx');
+    await fs.promises.writeFile(filePath, 'x', 'utf8');
+    const { calls, byName } = makeHarness();
+    const result = await byName.bot_browser_preview_local.handler({ path: filePath });
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /\.docx/);
+    assert.match(result.content[0].text, /not previewable/i);
+    assert.equal(calls.execute.length, 0);
+    assert.equal(calls.openUri.length, 0);
+  } finally {
+    await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  }
+});
+
+test('bot_browser_preview_local projection requires self-contained HTML', async () => {
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'bot-browser-preview-local-'));
+  try {
+    const filePath = path.join(dir, 'note.md');
+    await fs.promises.writeFile(filePath, '# hello', 'utf8');
+    const { calls, byName } = makeHarness();
+    const result = await byName.bot_browser_preview_local.handler({ path: filePath, projection: true });
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /self-contained HTML/);
+    assert.equal(calls.execute.length, 0);
+    assert.equal(calls.openUri.length, 0);
+  } finally {
+    await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  }
+});
+
 test('bot_browser_fork_current_app forks an explicit metaapp URI', async () => {
   const { calls, byName } = makeHarness();
   const result = await byName.bot_browser_fork_current_app.handler({ uri: 'metaapp://bbb' });

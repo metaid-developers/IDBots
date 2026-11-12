@@ -259,21 +259,25 @@ homepage 选中与普通 publish 分开。推荐顺序是：
 
 ### 预览方式
 
-用 `bot_browser_preview_local` 工具，传一个**绝对路径**（指向含 `index.html` 的目录，或单个 html/pdf/图片/视频/音频文件）：
+用 `bot_browser_preview_local` 工具，传一个**绝对路径**（指向含 `index.html` 的目录，或单个 html/pdf/图片/视频/音频/md/代码/CSV 文件）：
 
 ```
 bot_browser_preview_local(path: "/absolute/path/to/app-dir")
 bot_browser_preview_local(path: "/absolute/path/to/app-dir", newTab: true)
 ```
 
-工具内部构造 `preview-metaapp://localhost<absolutePath>` URI，交给内置浏览器打开。
+工具内部按文件类型构造预览 URI，交给内置浏览器打开：
+
+- 目录或 `.html`/`.htm` 文件 → `preview-metaapp://localhost<absolutePath>`（可运行应用 / HTML 页面）
+- 其他可预览文件（markdown、text、代码、csv、pdf、图片、视频、音频）→ `preview-file://localhost<absolutePath>`（文档在内置浏览器右侧标签页里渲染，不会变成下载）
+- 不可预览的类型（如 docx、xlsx、zip）→ 工具返回错误，需先转成 md/html/pdf
 
 ### 预览 URI 规范
 
-- scheme 是 `preview-metaapp://`
+- scheme 是 `preview-metaapp://`（应用/HTML）或 `preview-file://`（非应用文件）
 - host 永远是字面量 `localhost`
 - path 是项目目录或入口文件的绝对路径
-- 示例：`preview-metaapp://localhost/Users/name/projects/my-app`
+- 示例：`preview-metaapp://localhost/Users/name/projects/my-app`、`preview-file://localhost/Users/name/notes/report.md`
 
 ### 禁止的做法
 
@@ -281,7 +285,7 @@ bot_browser_preview_local(path: "/absolute/path/to/app-dir", newTab: true)
 - **不要**手拼 `http://localhost` URL
 - **不要**把 preview 服务器内部返回的 `localPreviewUrl`（`/browser-cache/metaapp-preview/...`）直接交给用户——那是内部资源地址，绕过了内置浏览器的 Agent Internet 链接语义
 
-正确的预览入口只有 `bot_browser_preview_local`（等价于 `preview-metaapp://localhost<absPath>`）。
+正确的预览入口只有 `bot_browser_preview_local`（按类型等价于 `preview-metaapp://localhost<absPath>` 或 `preview-file://localhost<absPath>`）。
 
 ### 静态项目入口布局
 
