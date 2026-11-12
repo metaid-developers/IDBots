@@ -235,3 +235,43 @@ headers → upstream first byte → client first byte) and either fix the
 size-proportional component or re-point the DeepSeek route at the official
 API. Acceptance stays as §5 R3: success-path TTFB ≤ official + 300 ms for the
 same body, tiny and ~4 K-token alike.
+
+## 9. Verification log — round 3 (2026-11-12 ~11:06–11:30 +08:00, after the second ABS fix)
+
+Same suite, same machine/network, e2e identity key again. Official baselines
+stable across all rounds (tiny 174–509 ms, big-prompt 239–400 ms medians).
+
+### 9.1 Acceptance ① — SSE passthrough: still PASS
+
+`deepseek` pair ~130-token answers: 73–104 network chunks, gap P50 = 0 ms,
+gap P95 104–115 ms. No regression vs round 2.
+
+### 9.2 Acceptance ② — first-token floor: improved again, NOT yet accepted
+
+Same-window interleaved medians (round 4 of the day, 11:25):
+
+| body | ABS | official | delta | acceptance ≤+300 ms |
+|---|---|---|---|---|
+| tiny | 721 ms | 226 ms | **+495 ms** | fail (round 2: +453 ms) |
+| ~4 K-token | 916 ms | 271 ms | **+645 ms** | fail (round 2: +1010 ms — halved, real progress) |
+
+### 9.3 New finding — high backend variance during this window
+
+Identical request bodies swing widely minute-to-minute while official
+gateways hold steady, e.g. the same ~4 K-token body measured
+2412 / 2289 / 2681 / 2194 ms at 11:06, then 923 / 712 / 745 / 857 ms at
+~11:15, then 1912 / 1188 / 1529 / 802 ms at ~11:20. GLM probes spiked to
+9.4 s in the same window. This is consistent with a rollout still in
+progress or a mixed cold/warm upstream pool — it makes any single-pass
+acceptance number unreliable.
+
+### 9.4 Status
+
+- R1 holds. R2 residual roughly halved vs round 2 but above the +300 ms line
+  in both size classes, with high variance on top.
+- **Cannot certify acceptance from this window.** Final re-verification will
+  run once ABS confirms the rollout is complete and stable (and, for the
+  reporter's primary identity, after the 2026-11-15 quota reset).
+- Ask for ABS: confirm rollout completion + whether upstream nodes are pooled
+  behind uneven cold/warm latencies; then hold the backend steady for a
+  15-minute window while the client runs the interleaved acceptance pass.
