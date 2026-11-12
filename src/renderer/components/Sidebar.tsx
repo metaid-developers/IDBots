@@ -608,16 +608,9 @@ const Sidebar: React.FC<SidebarProps> = ({
     return fromList?.title ?? browserOpenSessionFallbackTitle ?? '';
   }, [browserOpenSessionId, sessions, browserOpenSessionFallbackTitle]);
 
-  // The shared header's action row, directly below the top-track band. BotWorks
-  // keeps the records search and the shell's live indicators; Studio carries
-  // the session window's light actions in the owner's 18:21 final layout
-  // (supersedes the 18:05 "name LEFT / badge MIDDLE" split): ONE row, left to
-  // right — ① the identity component (avatar + bot name + Twin badge, with
-  // its existing bot-picker interaction, portaled in by the co-work panel
-  // through the anchor below), ② the open session's name (inline-rename,
-  // ellipsis-truncated), ③ the 新建会话 button, ④ the 会话记录 button. The
-  // name slot keeps its min-w-0 flex-1 lane so the icon cluster stays packed
-  // at the row's right end. All controls are 28 px (aesthetic grid v1).
+  // BotWorks keeps a compact action row. Studio uses a taller task header:
+  // the bot identity is centered above the inline-renamable session title,
+  // while session actions stay anchored to the upper-right corner.
   const surfaceHeaderActions = mode === 'home' ? (
     <>
       <button
@@ -635,57 +628,55 @@ const Sidebar: React.FC<SidebarProps> = ({
       <SleepGuardBadge />
     </>
   ) : (
-    <>
-      {/* ① Identity anchor: the panel portals the identity component here —
-          the draft state's interactive BotPickerChip (avatar + name + Twin
-          badge + the draft-state roster menu), or the live session's
-          read-only CoworkSurfaceIdentityBadge — so the identity component
-          keeps ONE owner (the panel's picker state) while riding the header
-          row's first lane. `contents` keeps the portaled component a direct
-          flex child of the actions row; with no anchor mounted (panel-less
-          hosts, tests) nothing renders. */}
-      <div data-slot="cowork-header-identity-anchor" className="contents" />
+    <div data-slot="studio-task-header" className="relative flex h-16 w-full min-w-0 flex-col items-center gap-1">
+      <div className="flex h-9 w-full min-w-0 items-center justify-center">
+        <div className="flex min-w-0 max-w-[calc(100%_-_8rem)] items-center justify-center">
+          <div data-slot="cowork-header-identity-anchor" className="contents" />
+        </div>
+      </div>
       <CoworkSurfaceSessionName
         sessionId={browserOpenSessionId}
         title={browserOpenSessionTitle}
         fallbackTitle={i18nService.t('coworkNewSession')}
         onRename={listOnRenameSession}
       />
-      <button
-        type="button"
-        data-slot="cowork-new-session"
-        onClick={() => {
-          setPanelHistoryOpen(false);
-          browserCoworkService.startNewDraft();
-          // The upcoming session owns one tab (owner request 2026-11-10): a
-          // page-carrying active tab gets a fresh blank sibling; a blank
-          // active tab is reused. Best-effort — no tab when the bridge is down.
-          void sessionTabBinding.prepareDraftTab();
-        }}
-        className="non-draggable inline-flex h-7 w-7 items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
-        aria-label={i18nService.t('botBrowserCoworkNew')}
-        title={i18nService.t('botBrowserCoworkNew')}
-      >
-        <ComposeIcon className="h-4 w-4" />
-      </button>
-      <button
-        type="button"
-        data-slot="cowork-toggle-history"
-        aria-expanded={panelHistoryOpen}
-        onClick={() => setPanelHistoryOpen((value) => !value)}
-        className={`non-draggable inline-flex h-7 w-7 items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
-          panelHistoryOpen
-            ? 'dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover dark:text-claude-darkText text-claude-text'
-            : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text'
-        }`}
-        aria-label={i18nService.t('botBrowserCoworkHistory')}
-        title={i18nService.t('botBrowserCoworkHistory')}
-      >
-        <ClockIcon className="h-4 w-4" />
-      </button>
-      <BackgroundTasksBadge onShowGroupTasks={onShowGroupTasks} />
-      <SleepGuardBadge />
-    </>
+      <div className="absolute right-0 top-0 flex h-9 items-center gap-0.5">
+        <button
+          type="button"
+          data-slot="cowork-new-session"
+          onClick={() => {
+            setPanelHistoryOpen(false);
+            browserCoworkService.startNewDraft();
+            // The upcoming session owns one tab (owner request 2026-11-10): a
+            // page-carrying active tab gets a fresh blank sibling; a blank
+            // active tab is reused. Best-effort — no tab when the bridge is down.
+            void sessionTabBinding.prepareDraftTab();
+          }}
+          className="non-draggable inline-flex h-7 w-7 items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+          aria-label={i18nService.t('botBrowserCoworkNew')}
+          title={i18nService.t('botBrowserCoworkNew')}
+        >
+          <ComposeIcon className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          data-slot="cowork-toggle-history"
+          aria-expanded={panelHistoryOpen}
+          onClick={() => setPanelHistoryOpen((value) => !value)}
+          className={`non-draggable inline-flex h-7 w-7 items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
+            panelHistoryOpen
+              ? 'dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover dark:text-claude-darkText text-claude-text'
+              : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text'
+          }`}
+          aria-label={i18nService.t('botBrowserCoworkHistory')}
+          title={i18nService.t('botBrowserCoworkHistory')}
+        >
+          <ClockIcon className="h-4 w-4" />
+        </button>
+        <BackgroundTasksBadge onShowGroupTasks={onShowGroupTasks} />
+        <SleepGuardBadge />
+      </div>
+    </div>
   );
 
   return (
@@ -697,13 +688,9 @@ const Sidebar: React.FC<SidebarProps> = ({
       }`}
       style={{ width: isCollapsed ? 0 : width }}
     >
-      {/* The ONE shared surface header (owner red-box order 2026-11-09
-          10:58; identity relocated by the D-line final ruling 2026-11-09):
-          row 1 = the traffic lights' own 52 px strip, row 2 = the
-          Studio | BotWorks band ALONE — the identity avatar moved into the
-          rail's top slot (WorkspaceRail), so this header carries no pill.
-          The face's light actions sit on the row below the band,
-          right-aligned. */}
+      {/* The traffic-light strip and Studio | BotWorks band stay shared.
+          BotWorks renders compact actions below them; Studio renders the
+          taller centered bot identity and session-title header. */}
       <div data-slot="mid-column-header" className="shrink-0">
         <BotBrowserModeSwitch
           mode={mode}

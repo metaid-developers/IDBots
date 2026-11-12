@@ -7,12 +7,8 @@ interface BotBrowserModeSwitchProps {
   onSelectHome: () => void;
   onSelectBrowser: () => void;
   /**
-   * Light actions that belong to the same header stack (new session ✎, session
-   * records ◷ on Studio; the update badge on BotWorks since the 侧栏微调批单
-   * 2026-11-09 12:23 — its records search lives in the 按 Bot toolbar row and
-   * its collapse control is the shell's seam tab, not this header).
-   * They ride the row directly below the band — right-aligned, still inside
-   * the same shared header.
+   * Content below the surface band. BotWorks supplies a compact right-aligned
+   * action row; Studio supplies its taller identity-and-session-title header.
    */
   actions?: React.ReactNode;
   /**
@@ -176,7 +172,7 @@ const BotBrowserModeSwitch: React.FC<BotBrowserModeSwitchProps> = ({
       {actions ? (
         <div
           data-slot="surface-header-actions"
-          className="non-draggable flex h-7 w-full items-center justify-end gap-0.5 px-2.5"
+          className="non-draggable flex min-h-7 w-full items-center justify-end gap-0.5 px-2.5"
         >
           {actions}
         </div>

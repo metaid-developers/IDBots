@@ -1,12 +1,6 @@
 /**
- * Surface-header identity badge: pure resolution helpers for the Studio
- * face's read-only LIVE-SESSION identity label (v3 close wiring of the 18:21
- * final layout, 2026-11-11 — this module's original 18:19 card, a read-only
- * badge parked between the session name and the icon cluster, never shipped
- * and is superseded by the shipped split: interactive draft picker + this
- * read-only live badge). The live identity rides the surface-header actions
- * row's FIRST lane, left of the session-name slot; the composer top edge
- * goes back to being the controls row alone.
+ * Pure resolution helpers for the read-only live-session identity centered
+ * above the Studio session title. Drafts use the interactive picker instead.
  *
  * Extracted from the JSX so the resolution contract is testable in plain Node
  * without a DOM, mirroring the surfaceSessionName pattern. Resolution order:
