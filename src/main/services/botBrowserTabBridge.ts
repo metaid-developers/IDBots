@@ -134,13 +134,13 @@ export function createBotBrowserTabBridge(options: {
 
     try {
       // desktop-only: addressed to a specific window (not a broadcast).
-      // focusWindow:false also preserves the current app surface, except for
-      // an explicit activate:true final-report reveal.
+      // focusWindow:false preserves the current app surface even when the
+      // command activates a tab inside Studio.
       targetWindow.webContents.send('botBrowser:tab-command', {
         requestId,
         command: {
           ...command,
-          background: opts?.focusWindow === false && command.activate !== true,
+          background: opts?.focusWindow === false,
         },
       });
       // Background writes (Bot Internet projections into a non-active tab)
