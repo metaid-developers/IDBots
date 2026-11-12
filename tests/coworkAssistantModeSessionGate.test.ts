@@ -5,14 +5,15 @@
  * Since the 总裁办公室 surface ruling (2026-11-09) the chat experience mode
  * is decided by the FACE the user is on (hooks/chatExperienceModeSource.ts —
  * Studio=assistant, BotWorks=professional; the Settings toggle is retired),
- * but its *effects* are still per-session: the backend applies assistant mode
+ * and since the owner ruling 2026-11-12 the BotWorks face renders EVERY
+ * session shape professionally — Studio projector marker sessions included,
+ * which is how their transcripts show the thinking process there. EXECUTION
+ * stays session-owned: the backend applies the assistant prompt/effort chain
  * only to sessions carrying the per-session Studio marker
- * (isAssistantModeOwnerChatSession in src/main/libs/coworkRunner.ts) and runs
- * every unattended / non-marker session — BotWorks owner chats included —
- * with the professional prompt and the unattended effort branch. A renderer
- * that keyed the transcript chrome on anything but (face mode, session)
- * would show assistant chrome on a professional-running run again — the
- * exact defect this gate exists to prevent.
+ * (isAssistantModeOwnerChatSession in src/main/libs/coworkRunner.ts). A
+ * renderer that keyed the transcript chrome on anything but (face mode,
+ * session) would show assistant chrome on a professional-running run again —
+ * the exact defect this gate exists to prevent.
  *
  * Coverage:
  *  1. behavioural — the gate's truth table, imported and called for real;
@@ -70,16 +71,24 @@ test('gate: non-standard session types (a2a / browser / group) never take assist
   }
 });
 
-test('gate: Bot Internet projector sessions carry their own assistant marker past the face mode', () => {
+test('gate: Bot Internet projector sessions keep assistant chrome on the Studio face only', () => {
   // Owner ruling 2026-11-07: the Bot Internet tab always chats assistant-side,
-  // locked to the Twin — marker sessions keep that treatment on every face
-  // (and the Settings toggle that used to govern the global mode is retired).
+  // locked to the Twin — marker sessions keep that treatment on the STUDIO
+  // face. Owner ruling 2026-11-12: on the BotWorks face ('professional') the
+  // same marker session renders PROFESSIONALLY — that face is where the owner
+  // reads its full thinking transcript — while its turns keep running the
+  // assistant prompt (backend marker rule, session-owned execution).
   // Legacy browser sessions stay unmarked (assistant_mode = 0) and keep the
   // professional treatment everywhere.
   assert.equal(
-    isAssistantModeOwnerChatSession('professional', { sessionType: 'browser', autoOrigin: null, assistantMode: true }),
+    isAssistantModeOwnerChatSession('assistant', { sessionType: 'browser', autoOrigin: null, assistantMode: true }),
     true,
-    'the per-session marker overrides the global professional mode',
+    'the per-session marker keeps the assistant presentation on the Studio face',
+  );
+  assert.equal(
+    isAssistantModeOwnerChatSession('professional', { sessionType: 'browser', autoOrigin: null, assistantMode: true }),
+    false,
+    'the BotWorks face renders even marker sessions professionally (owner ruling 2026-11-12)',
   );
   assert.equal(
     isAssistantModeOwnerChatSession('professional', { sessionType: 'browser', autoOrigin: 'orchestration', assistantMode: true }),
@@ -93,6 +102,7 @@ test('gate: professional mode is professional for every session shape', () => {
     { sessionType: 'standard', autoOrigin: null },
     { sessionType: 'standard', autoOrigin: 'orchestration' as const },
     { sessionType: 'browser', autoOrigin: null },
+    { sessionType: 'browser', autoOrigin: null, assistantMode: true },
   ]) {
     assert.equal(isAssistantModeOwnerChatSession('professional', session), false);
   }
@@ -166,10 +176,11 @@ test('wiring: the gate names its backend counterpart so the two rules cannot dri
 test('wiring: the draft state in the browser panel resolves assistant via the projector identity', () => {
   // The next session from this panel is a Bot Internet projector session
   // (assistantMode marker), so the panel passes the projector draft identity
-  // instead of a missing session; a genuinely missing session still degrades
-  // to professional.
+  // instead of a missing session; the panel itself lives on the STUDIO face
+  // (mode 'assistant'), where the draft resolves assistant. A genuinely
+  // missing session still degrades to professional.
   assert.equal(
-    isAssistantModeOwnerChatSession('professional', { sessionType: 'browser', autoOrigin: null, assistantMode: true }),
+    isAssistantModeOwnerChatSession('assistant', { sessionType: 'browser', autoOrigin: null, assistantMode: true }),
     true,
   );
   assert.equal(isAssistantModeOwnerChatSession('assistant', null), false);

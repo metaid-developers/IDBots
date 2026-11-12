@@ -187,6 +187,13 @@ test('scenario 4: BotWorks face renders the professional transcript for every se
     renderDetail('home', fixtureSession({ sessionType: 'browser' })),
     'BotWorks face + non-standard session',
   );
+  // The owner ruling 2026-11-12 case: a Studio projector MARKER session
+  // (browser + assistantMode) opened in BotWorks renders the professional
+  // transcript — its thinking is the whole reason the row is listed there.
+  assertProfessionalForm(
+    renderDetail('home', fixtureSession({ sessionType: 'browser', assistantMode: true })),
+    'BotWorks face + Studio marker session (thinking visible, 2026-11-12)',
+  );
 });
 
 test('the gate mirrors the backend rule on the two renderer-visible signals', () => {

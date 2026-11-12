@@ -90,6 +90,14 @@ interface CoworkSessionItemProps {
   assistantMode?: boolean;
   /** Studio history keeps the visited page in the metadata line instead of the task status. */
   showBrowserContext?: boolean;
+  /**
+   * Show the 浏览器 source badge on browser-type rows. Opt-in per surface
+   * (owner ruling 2026-11-12, restoring the pre-2026-11-11 badge): the
+   * BotWorks local list shows it so Studio sessions stay identifiable; the
+   * Studio panel history (bot-centered, owner ruling 2026-11-11 17:28) keeps
+   * its rows badge-free and does not pass the flag.
+   */
+  showBrowserBadge?: boolean;
 }
 
 const statusLabels: Record<CoworkSessionStatus, string> = {
@@ -320,6 +328,7 @@ const CoworkSessionItemRow: React.FC<CoworkSessionItemProps> = ({
   decisionPending = false,
   assistantMode = false,
   showBrowserContext = false,
+  showBrowserBadge = false,
 }) => {
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(session.title);
@@ -587,10 +596,11 @@ const CoworkSessionItemRow: React.FC<CoworkSessionItemProps> = ({
   // A legacy IM direct row may still carry session_type 'a2a'; it must not get
   // the A2A peer avatar/refresh affordances. The mapping channel wins.
   const isA2A = session.sessionType === 'a2a' && !session.imChannel;
-  // Owner ruling 2026-11-11 17:28: session rows no longer carry a browser
-  // source badge — its label is retired from the row entirely (the
-  // visited-page context line below remains the identity cue for these
-  // sessions). The data-side sessionType is untouched.
+  // Browser source badge: retired 2026-11-11 17:28, then RESTORED 2026-11-12
+  // (owner order) as a per-surface opt-in (showBrowserBadge) — the BotWorks
+  // local list badges its browser rows again, the Studio panel history stays
+  // badge-free. The visited-page context line (showBrowserContext) remains
+  // the Studio history's identity cue.
   const showA2ADot = !approvalPending && shouldShowCoworkA2ADot({ sessionType: session.sessionType, showStatusIndicator });
   const storedTitle = session.title?.trim() ?? '';
   // A2A rows are stored with a `Private-<peerId prefix>` placeholder title when
@@ -763,6 +773,18 @@ const CoworkSessionItemRow: React.FC<CoworkSessionItemProps> = ({
                 {i18nService.t(statusLabels[session.status])}
               </span>
             )}
+            {showBrowserBadge && session.sessionType === 'browser' ? (
+              // 浏览器 source badge, restored 2026-11-12 (owner order): the
+              // BotWorks local list shows Studio/browser rows with the badge
+              // they carried before the 2026-11-11 retirement — that ruling
+              // stays in force on the Studio panel history (no badge there).
+              <span
+                className="shrink-0 rounded px-1 py-px text-[9px] font-medium uppercase leading-none tracking-wider bg-claude-accent/10 text-claude-accent"
+                title={i18nService.t('coworkSessionTypeBrowser')}
+              >
+                {i18nService.t('coworkSessionTypeBrowser')}
+              </span>
+            ) : null}
             {showBrowserContext && (session.browserTitle || session.browserUri) ? (
               <span
                 className="min-w-0 truncate"
