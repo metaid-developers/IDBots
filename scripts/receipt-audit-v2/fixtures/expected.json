@@ -1,0 +1,132 @@
+{
+  "corpus_snapshot": "2026-11-12T04:40:00+08:00",
+  "model": "265 + (len(caliber)-64) + sum(digits of seven counts) + (4 if truncated else 5) + sum(178 + digits(4 numbers) + (len(reason)-7) + (len(unit)-10)) + max(k-1,0) + U; U per id array = sum(len(id)+2) + max(n-1,0)",
+  "fixtures": [
+    {
+      "file": "discriminating_omitted12_unreadable1.txt",
+      "source": "session-ca6f6ae31ec2/49cc10a1402c-read_metaweb_pins_batch.txt:3",
+      "body_len": 3443,
+      "k": 12,
+      "truncated": true,
+      "caliber_len": 64,
+      "omitted_n": 12,
+      "unreadable_n": 1,
+      "count_digits": 15,
+      "caliber": "api/metaweb/pins:batch;text-cap=8000runes;host-budget=18000chars",
+      "expected_residual": {
+        "per_array_caliber": 0,
+        "per_array_no_caliber": 0,
+        "merged_caliber": -1,
+        "merged_no_caliber": -1
+      }
+    },
+    {
+      "file": "caliber_len66_a.txt",
+      "source": "session-d0a5dd082a61/ef69822a9898-read_metaweb_pin.txt:109",
+      "body_len": 2604,
+      "k": 12,
+      "truncated": true,
+      "caliber_len": 66,
+      "omitted_n": 0,
+      "unreadable_n": 0,
+      "count_digits": 15,
+      "caliber": "api/metaweb/pins:batch;text-cap=8000 runes;host-budget=18000 chars",
+      "expected_residual": {
+        "per_array_caliber": 0,
+        "per_array_no_caliber": 2,
+        "merged_caliber": 0,
+        "merged_no_caliber": 2
+      }
+    },
+    {
+      "file": "caliber_len66_b.txt",
+      "source": "session-0b88e469304c/56f971cd2d01-read_metaweb_pin.txt:109",
+      "body_len": 2604,
+      "k": 12,
+      "truncated": true,
+      "caliber_len": 66,
+      "omitted_n": 0,
+      "unreadable_n": 0,
+      "count_digits": 15,
+      "caliber": "api/metaweb/pins:batch;text-cap=8000 runes;host-budget=18000 chars",
+      "expected_residual": {
+        "per_array_caliber": 0,
+        "per_array_no_caliber": 2,
+        "merged_caliber": 0,
+        "merged_no_caliber": 2
+      }
+    },
+    {
+      "file": "caliber_len66_c.txt",
+      "source": "session-de24bcff0559/b36c53026316-read_metaweb_pin.txt:109",
+      "body_len": 2604,
+      "k": 12,
+      "truncated": true,
+      "caliber_len": 66,
+      "omitted_n": 0,
+      "unreadable_n": 0,
+      "count_digits": 15,
+      "caliber": "api/metaweb/pins:batch;text-cap=8000 runes;host-budget=18000 chars",
+      "expected_residual": {
+        "per_array_caliber": 0,
+        "per_array_no_caliber": 2,
+        "merged_caliber": 0,
+        "merged_no_caliber": 2
+      }
+    },
+    {
+      "file": "caliber_len66_d.txt",
+      "source": "session-5638eee1ac92/2a1c6d928b99-read_metaweb_pin.txt:109",
+      "body_len": 2604,
+      "k": 12,
+      "truncated": true,
+      "caliber_len": 66,
+      "omitted_n": 0,
+      "unreadable_n": 0,
+      "count_digits": 15,
+      "caliber": "api/metaweb/pins:batch;text-cap=8000 runes;host-budget=18000 chars",
+      "expected_residual": {
+        "per_array_caliber": 0,
+        "per_array_no_caliber": 2,
+        "merged_caliber": 0,
+        "merged_no_caliber": 2
+      }
+    },
+    {
+      "file": "control_k0.txt",
+      "source": "session-3cc943e00e51/34d8a1cc8d1f-read_metaweb_pins_batch.txt:3",
+      "body_len": 281,
+      "k": 0,
+      "truncated": false,
+      "caliber_len": 64,
+      "omitted_n": 0,
+      "unreadable_n": 0,
+      "count_digits": 11,
+      "caliber": "api/metaweb/pins:batch;text-cap=8000runes;host-budget=18000chars",
+      "expected_residual": {
+        "per_array_caliber": 0,
+        "per_array_no_caliber": 0,
+        "merged_caliber": 0,
+        "merged_no_caliber": 0
+      }
+    },
+    {
+      "file": "control_k12.txt",
+      "source": "session-ae01766a358a/c2241776ecaf-read_metaweb_pins_batch.txt:3",
+      "body_len": 2593,
+      "k": 12,
+      "truncated": true,
+      "caliber_len": 64,
+      "omitted_n": 0,
+      "unreadable_n": 0,
+      "count_digits": 15,
+      "caliber": "api/metaweb/pins:batch;text-cap=8000runes;host-budget=18000chars",
+      "expected_residual": {
+        "per_array_caliber": 0,
+        "per_array_no_caliber": 0,
+        "merged_caliber": 0,
+        "merged_no_caliber": 0
+      }
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+- RECEIPT read_metaweb_pins_batch: {"requested":2,"readable_upstream":2,"returned":2,"truncated":false,"omitted":0,"omitted_ids":[],"unreadable":0,"unreadable_ids":[],"truncation_point_count":0,"truncation_points":[],"caliber":"api/metaweb/pins:batch;text-cap=8000runes;host-budget=18000chars","bytes_written":13209}
