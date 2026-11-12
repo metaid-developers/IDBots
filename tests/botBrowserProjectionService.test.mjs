@@ -6,180 +6,140 @@ const require = Module.createRequire(import.meta.url);
 const { createBotBrowserProjectionService } = require('../dist-electron/main/services/botBrowserProjectionService.js');
 const { createBotBrowserTabBridge } = require('../dist-electron/main/services/botBrowserTabBridge.js');
 
-function fixture() {
-  let activeTabId = 99;
-  let nextTabId = 1;
-  const tabs = [{ id: 99, uri: 'preview-metaapp://localhost/shared/reports/other-session.html' }];
+function projectionFixture() {
   const commands = [];
-
-  const info = (tab) => ({ ...tab, title: null, isActive: tab.id === activeTabId });
-  const result = (action, openedTabId) => ({
+  const records = [];
+  let activeTabId = 99;
+  let openedTabId = 7;
+  let includeOpenedTabId = true;
+  const tabs = [
+    { id: 99, uri: 'metaapp://other', title: 'Other', isActive: true },
+    { id: 7, uri: null, title: null, isActive: false },
+  ];
+  const result = (action) => ({
     action,
-    ...(openedTabId == null ? {} : { openedTabId }),
-    tabs: tabs.map(info),
-    activeTab: tabs.find((tab) => tab.id === activeTabId) ? info(tabs.find((tab) => tab.id === activeTabId)) : null,
+    ...(includeOpenedTabId ? { openedTabId } : {}),
+    tabs: tabs.map((tab) => ({ ...tab, isActive: tab.id === activeTabId })),
+    activeTab: tabs.find((tab) => tab.id === activeTabId) ?? null,
+    sessionTab: tabs.find((tab) => tab.id === openedTabId) ?? null,
   });
   const execute = async (command) => {
     commands.push(command);
-    if (command.action === 'open-tab') {
-      let tab = tabs.find((entry) => entry.uri === command.uri);
-      if (!tab) {
-        tab = { id: nextTabId++, uri: command.uri };
-        tabs.push(tab);
-      }
-      activeTabId = tab.id;
-      return result(command.action, tab.id);
-    }
-    if (command.action === 'get-tab-info') {
-      const tab = tabs.find((entry) => entry.id === command.tabId) ?? null;
-      return { ...result(command.action), info: tab ? { ...info(tab), current: { uri: tab.uri } } : null };
-    }
-    if (command.action === 'get-tabs') {
-      return result(command.action);
-    }
-    if (command.action === 'navigate-tab') {
-      const tab = tabs.find((entry) => entry.id === command.tabId);
-      if (!tab) throw new Error('missing tab');
-      tab.uri = command.uri;
-      if (command.activate === true) activeTabId = tab.id;
-      return result(command.action);
-    }
-    throw new Error(`Unexpected command: ${command.action}`);
+    if (command.activate === true) activeTabId = openedTabId;
+    return result(command.action);
   };
-
+  const recordProjection = (input) => records.push(input);
   return {
     commands,
-    tabs,
+    records,
     execute,
-    get activeTabId() { return activeTabId; },
+    recordProjection,
+    result,
     set activeTabId(value) { activeTabId = value; },
+    set openedTabId(value) { openedTabId = value; },
+    set includeOpenedTabId(value) { includeOpenedTabId = value; },
   };
 }
 
-test('a final report reveals only its own session tab, never a same-directory sibling', async () => {
-  const bridge = fixture();
-  const service = createBotBrowserProjectionService({ getTabBridge: () => ({ execute: bridge.execute }) });
+test('projection routes stage and report through the same session binding', async () => {
+  const fixture = projectionFixture();
+  const service = createBotBrowserProjectionService({
+    getTabBridge: () => ({ execute: fixture.execute }),
+    recordProjection: fixture.recordProjection,
+  });
 
-  const stage = await service.project({ sessionId: 'session-a', localPath: '/shared/reports/live-stage-a.html' });
-  assert.equal(stage.announced, true);
-  assert.notEqual(stage.tabId, 99);
-  assert.equal(bridge.activeTabId, stage.tabId);
-
-  bridge.activeTabId = 99;
-  const report = await service.project({ sessionId: 'session-a', localPath: '/shared/reports/final-a.html', reveal: true });
-  assert.equal(report.tabId, stage.tabId);
-  assert.equal(report.announced, true);
-  assert.equal(bridge.activeTabId, stage.tabId);
-  assert.equal(bridge.tabs.find((tab) => tab.id === 99).uri, 'preview-metaapp://localhost/shared/reports/other-session.html');
-  assert.equal(bridge.commands.at(-1).activate, true);
-});
-
-test('Live Stage updates stay background and a missing cached tab opens a confirmed replacement', async () => {
-  const bridge = fixture();
-  const service = createBotBrowserProjectionService({ getTabBridge: () => ({ execute: bridge.execute }) });
-  const first = await service.project({ sessionId: 'session-a', localPath: '/shared/reports/stage-1.html' });
-
-  bridge.activeTabId = 99;
-  const background = await service.project({ sessionId: 'session-a', localPath: '/shared/reports/stage-2.html' });
-  assert.equal(background.announced, false);
-  assert.equal(bridge.activeTabId, 99);
-  assert.equal(bridge.commands.at(-1).activate, false);
-
-  bridge.tabs.splice(bridge.tabs.findIndex((tab) => tab.id === first.tabId), 1);
-  const replacement = await service.project({ sessionId: 'session-a', localPath: '/shared/reports/final.html', reveal: true });
-  assert.notEqual(replacement.tabId, first.tabId);
-  assert.notEqual(replacement.tabId, 99);
-  assert.equal(replacement.announced, true);
-  assert.equal(bridge.activeTabId, replacement.tabId);
-});
-
-test('a final report reuses the supplied Stage tab after the projection cache is lost', async () => {
-  const bridge = fixture();
-  const service = createBotBrowserProjectionService({ getTabBridge: () => ({ execute: bridge.execute }) });
-  const stage = await service.project({ sessionId: 'session-a', localPath: '/shared/reports/live-stage-a.html' });
-  service.forget('session-a');
-  bridge.activeTabId = 99;
+  const stage = await service.project({ sessionId: 'session-a', localPath: '/reports/live-stage-a.html' });
+  assert.equal(stage.tabId, 7);
+  assert.equal(stage.announced, false);
+  assert.deepEqual(fixture.commands[0], {
+    action: 'open-tab',
+    uri: 'preview-metaapp://localhost/reports/live-stage-a.html',
+    label: undefined,
+    sessionId: 'session-a',
+    tabId: undefined,
+    activate: false,
+  });
 
   const report = await service.project({
     sessionId: 'session-a',
-    localPath: '/shared/reports/final-a.html',
+    localPath: '/reports/final-a.html',
+    title: 'Final report',
     reveal: true,
     tabId: stage.tabId,
   });
-
-  assert.equal(report.tabId, stage.tabId);
-  assert.equal(bridge.activeTabId, stage.tabId);
-  assert.equal(bridge.commands.filter((command) => command.action === 'open-tab').length, 1);
-  const reopened = await service.project({ sessionId: 'session-a', localPath: '/shared/reports/next-a.html', reveal: true });
-  assert.equal(reopened.tabId, stage.tabId, 'the supplied Stage tab also heals the cache');
+  assert.equal(report.tabId, 7);
+  assert.equal(report.announced, true);
+  assert.equal(fixture.commands[1].sessionId, 'session-a');
+  assert.equal(fixture.commands[1].tabId, 7);
+  assert.equal(fixture.commands[1].activate, true);
+  assert.deepEqual(fixture.records, [
+    { sessionId: 'session-a', uri: stage.uri, title: null },
+    { sessionId: 'session-a', uri: report.uri, title: 'Final report' },
+  ]);
 });
 
-test('a transient tab-info failure falls back to the tab list without opening a duplicate', async () => {
-  const bridge = fixture();
-  const original = bridge.execute;
-  let failTabInfo = true;
-  const execute = async (command) => {
-    if (failTabInfo && command.action === 'get-tab-info') throw new Error('temporary bridge failure');
-    return original(command);
-  };
-  const service = createBotBrowserProjectionService({ getTabBridge: () => ({ execute }) });
-  const stage = await service.project({ sessionId: 'session-a', localPath: '/shared/reports/live-stage-a.html' });
-  bridge.activeTabId = 99;
+test('a background projection can use the sessionTab result when openedTabId is absent', async () => {
+  const fixture = projectionFixture();
+  fixture.includeOpenedTabId = false;
+  const service = createBotBrowserProjectionService({ getTabBridge: () => ({ execute: fixture.execute }) });
 
-  const report = await service.project({ sessionId: 'session-a', localPath: '/shared/reports/final-a.html', reveal: true });
+  const outcome = await service.project({ sessionId: 'session-a', localPath: '/reports/stage.html' });
 
-  assert.equal(report.tabId, stage.tabId);
-  assert.equal(bridge.activeTabId, stage.tabId);
-  assert.equal(bridge.commands.filter((command) => command.action === 'open-tab').length, 1);
-  assert.ok(bridge.commands.some((command) => command.action === 'get-tabs'));
-
-  failTabInfo = false;
+  assert.equal(outcome.tabId, 7);
+  assert.equal(outcome.announced, false);
 });
 
-test('failed tab reads preserve the binding and never open a speculative replacement', async () => {
-  const bridge = fixture();
-  const original = bridge.execute;
-  let unavailable = true;
-  const execute = async (command) => {
-    if (unavailable && (command.action === 'get-tab-info' || command.action === 'get-tabs')) {
-      throw new Error('bridge unavailable');
-    }
-    return original(command);
-  };
-  const service = createBotBrowserProjectionService({ getTabBridge: () => ({ execute }) });
-  const stage = await service.project({ sessionId: 'session-a', localPath: '/shared/reports/live-stage-a.html' });
+test('a new active projection is announced even when reveal was not requested', async () => {
+  const fixture = projectionFixture();
+  fixture.activeTabId = 7;
+  const service = createBotBrowserProjectionService({ getTabBridge: () => ({ execute: fixture.execute }) });
+
+  const outcome = await service.project({ sessionId: 'session-a', localPath: '/reports/stage.html' });
+
+  assert.equal(outcome.announced, true);
+});
+
+test('a missing tab confirmation fails the projection', async () => {
+  const fixture = projectionFixture();
+  fixture.includeOpenedTabId = false;
+  const service = createBotBrowserProjectionService({
+    getTabBridge: () => ({
+      execute: async (command) => ({ ...fixture.result(command), sessionTab: null }),
+    }),
+  });
 
   await assert.rejects(
-    service.project({ sessionId: 'session-a', localPath: '/shared/reports/final-a.html', reveal: true }),
-    /bridge unavailable/,
+    service.project({ sessionId: 'session-a', localPath: '/reports/stage.html' }),
+    /could not be opened and confirmed/,
   );
-  assert.equal(bridge.commands.filter((command) => command.action === 'open-tab').length, 1);
-
-  unavailable = false;
-  const recovered = await service.project({ sessionId: 'session-a', localPath: '/shared/reports/final-a.html', reveal: true });
-  assert.equal(recovered.tabId, stage.tabId);
-  assert.equal(bridge.commands.filter((command) => command.action === 'open-tab').length, 1);
 });
 
-test('a reveal that does not activate the target is reported as a failure', async () => {
-  const bridge = fixture();
-  const service = createBotBrowserProjectionService({ getTabBridge: () => ({ execute: bridge.execute }) });
-  await service.project({ sessionId: 'session-a', localPath: '/shared/reports/stage.html' });
-  bridge.activeTabId = 99;
-  const original = bridge.execute;
-  const brokenExecute = async (command) => {
-    if (command.action === 'navigate-tab') {
-      return original({ ...command, activate: false });
-    }
-    return original(command);
-  };
-  const broken = createBotBrowserProjectionService({ getTabBridge: () => ({ execute: brokenExecute }) });
-  await broken.project({ sessionId: 'session-a', localPath: '/shared/reports/stage.html' });
-  bridge.activeTabId = 99;
+test('a reveal that does not activate the bound tab is reported as a failure', async () => {
+  const fixture = projectionFixture();
+  const service = createBotBrowserProjectionService({
+    getTabBridge: () => ({
+      execute: async (command) => ({
+        ...fixture.result(command),
+        activeTab: { id: 99, uri: 'metaapp://other', title: 'Other', isActive: true },
+      }),
+    }),
+  });
+
   await assert.rejects(
-    broken.project({ sessionId: 'session-a', localPath: '/shared/reports/final.html', reveal: true }),
-    /did not become active/,
+    service.project({ sessionId: 'session-a', localPath: '/reports/final.html', reveal: true }),
+    /could not be opened and confirmed/,
   );
+});
+
+test('a durable-record failure does not undo a successful projection', async () => {
+  const fixture = projectionFixture();
+  const service = createBotBrowserProjectionService({
+    getTabBridge: () => ({ execute: fixture.execute }),
+    recordProjection: () => { throw new Error('database unavailable'); },
+  });
+
+  const outcome = await service.project({ sessionId: 'session-a', localPath: '/reports/stage.html' });
+  assert.equal(outcome.tabId, 7);
 });
 
 test('background tab commands preserve the app surface except for an activated report reveal', async (t) => {

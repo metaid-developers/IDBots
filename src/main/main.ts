@@ -7328,9 +7328,9 @@ const getCoworkRunner = () => {
           // Projection receipt in the conversation (owner ruling #7 companion):
           // a small host-injected bubble whose link re-opens the projection tab
           // (openTab dedupes by URI, so the click focuses the existing tab).
-          // This is also the only persistent recovery entry after an app
-          // restart — ABC tab history is in-memory. Best-effort: a failed
-          // receipt must not fail the projection itself.
+          // This remains an additional persistent recovery entry alongside the
+          // session binding's last-URI restore. Best-effort: a failed receipt
+          // must not fail the projection itself.
           try {
             const label = input.title?.trim() || tApp('本轮汇报', 'Turn report');
             const content = outcome.announced
@@ -8557,8 +8557,8 @@ const getCoworkRunner = () => {
         // opted-in bots, so the prompt must follow the same per-session flag.
         const browserAutomationOn = isCoworkBrowserAutomationEnabled(getMetabotStore(), session?.metabotId);
         try {
-          const result = await getBotBrowserTabBridge().execute({ action: 'get-tabs' });
-          const active = result.activeTab;
+          const result = await getBotBrowserTabBridge().execute({ action: 'get-tabs', sessionId });
+          const active = result.sessionTab ?? null;
           if (active?.uri) {
             coworkStoreInstance.updateSession(sessionId, {
               browserUri: active.uri,
@@ -9041,7 +9041,14 @@ const getBotBrowserTabBridge = () => {
 // Bot Internet projector: Live Stage updates stay in the background; final
 // reports reveal the session's projection tab without changing the OS focus.
 const getBotBrowserProjection = () =>
-  initBotBrowserProjectionService({ getTabBridge: getBotBrowserTabBridge });
+  initBotBrowserProjectionService({
+    getTabBridge: getBotBrowserTabBridge,
+    recordProjection: ({ sessionId, uri, title }) => {
+      const store = getCoworkStore();
+      if (store.getSession(sessionId)?.sessionType !== 'browser') return;
+      store.updateSession(sessionId, { browserUri: uri, browserTitle: title });
+    },
+  });
 
 let studioLiveStageService: StudioLiveStageService | null = null;
 const getStudioLiveStageService = (): StudioLiveStageService => {

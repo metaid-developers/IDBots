@@ -1,16 +1,7 @@
 /**
- * Bot Internet projector (owner ruling 2026-11-07, spec
- * docs/design/bot-internet-projector-mode.md): per-session projection-tab
- * bookkeeping for bot-authored HTML reports.
- *
- * Each projector session owns ONE projection tab in the Bot Browser. Live
- * Stage updates navigate that tab in the background; a finished report sets
- * `reveal` so the same navigation also leaves the projector tab active. ABC's
- * per-tab history stack makes earlier pages reachable with Back.
- *
- * The sessionId → tabId map is a hint, not truth: ABC tabs are in-memory, so
- * every projection re-validates the entry against the live tab list and falls
- * back to opening (announcing) again when the tab is gone.
+ * Routes every Studio projection through the renderer's session-tab binding.
+ * The main process supplies the session id and its Stage tab as hints; the
+ * binding owns live tab identity, background activation, and last-URI recovery.
  */
 
 import type { BotBrowserTabBridge } from './botBrowserTabBridge';
@@ -23,7 +14,7 @@ export type BotBrowserProjectionInput = {
   title?: string;
   /** Leave this projection active after navigation (final owner-facing report). */
   reveal?: boolean;
-  /** The current turn's confirmed Stage tab, used if the cached hint was lost. */
+  /** The current turn's confirmed Stage tab, used as a binding hint. */
   tabId?: number;
 };
 
@@ -37,7 +28,7 @@ export type BotBrowserProjectionOutcome = {
 
 export type BotBrowserProjectionService = {
   project(input: BotBrowserProjectionInput): Promise<BotBrowserProjectionOutcome>;
-  /** Drop the session's projection-tab hint (session archived/deleted). */
+  /** Kept for the stage services' archive/delete lifecycle. */
   forget(sessionId: string): void;
 };
 
@@ -45,68 +36,41 @@ const projectionUriForPath = (localPath: string): string => `preview-metaapp://l
 
 export function createBotBrowserProjectionService(deps: {
   getTabBridge: () => BotBrowserTabBridge;
+  recordProjection?: (input: { sessionId: string; uri: string; title: string | null }) => void;
 }): BotBrowserProjectionService {
-  const projectionTabs = new Map<string, number>();
-
-  const tabExists = async (tabId: number): Promise<boolean> => {
-    try {
-      const info = await deps.getTabBridge().execute(
-        { action: 'get-tab-info', tabId },
-        { focusWindow: false },
-      );
-      return info.info != null;
-    } catch (error) {
-      try {
-        const result = await deps.getTabBridge().execute(
-          { action: 'get-tabs' },
-          { focusWindow: false },
-        );
-        return result.tabs.some((tab) => tab.id === tabId);
-      } catch {
-        throw error;
-      }
-    }
-  };
-
   const project = async (input: BotBrowserProjectionInput): Promise<BotBrowserProjectionOutcome> => {
     const uri = projectionUriForPath(input.localPath);
     const label = input.title?.trim() || undefined;
     const reveal = input.reveal === true;
-
-    const cachedTabId = input.tabId ?? projectionTabs.get(input.sessionId);
-    if (cachedTabId != null) {
-      const alive = await tabExists(cachedTabId);
-      if (alive) {
-        const result = await deps.getTabBridge().execute(
-          { action: 'navigate-tab', tabId: cachedTabId, uri, activate: reveal },
-          { focusWindow: false },
-        );
-        if (reveal && result.activeTab?.id !== cachedTabId) {
-          throw new Error('The projector tab did not become active.');
-        }
-        projectionTabs.set(input.sessionId, cachedTabId);
-        return { uri, tabId: cachedTabId, announced: reveal };
-      }
-      projectionTabs.delete(input.sessionId);
-    }
-
-    // Never adopt a tab by reports-directory prefix: sibling Studio sessions
-    // share that directory, so prefix matching can silently hijack another
-    // session's projector. ABC open-tab still dedupes an exact URI match.
-    const opened = await deps.getTabBridge().execute({ action: 'open-tab', uri, label });
-    const tabId = opened.openedTabId ?? opened.activeTab?.id ?? null;
-    if (tabId == null || opened.activeTab?.id !== tabId) {
+    const result = await deps.getTabBridge().execute({
+      action: 'open-tab',
+      uri,
+      label,
+      sessionId: input.sessionId,
+      tabId: input.tabId,
+      activate: reveal,
+    }, { focusWindow: false });
+    const tabId = result.openedTabId ?? result.sessionTab?.id
+      ?? (reveal ? result.activeTab?.id ?? null : null);
+    if (tabId == null || (reveal && result.activeTab?.id !== tabId)) {
       throw new Error('The projector tab could not be opened and confirmed.');
     }
-    projectionTabs.set(input.sessionId, tabId);
-    return { uri, tabId, announced: true };
+    const outcome = {
+      uri,
+      tabId,
+      announced: reveal || result.activeTab?.id === tabId,
+    };
+    try {
+      deps.recordProjection?.({ sessionId: input.sessionId, uri, title: label ?? null });
+    } catch {
+      // The projection succeeded; a durable recovery hint is best-effort.
+    }
+    return outcome;
   };
 
   return {
     project,
-    forget: (sessionId: string) => {
-      projectionTabs.delete(sessionId);
-    },
+    forget: () => {},
   };
 }
 
@@ -114,6 +78,7 @@ let singleton: BotBrowserProjectionService | null = null;
 
 export function initBotBrowserProjectionService(deps: {
   getTabBridge: () => BotBrowserTabBridge;
+  recordProjection?: (input: { sessionId: string; uri: string; title: string | null }) => void;
 }): BotBrowserProjectionService {
   if (!singleton) {
     singleton = createBotBrowserProjectionService(deps);

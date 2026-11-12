@@ -840,6 +840,7 @@ const App: React.FC = () => {
       setMainView('cowork');
       setStudioSeamState('split');
       await botBrowserShell.openBrowserHome();
+      await sessionTabBinding.revealSessionTab(sessionId);
       setShowWelcomeFlow(false);
     }
   }, [botBrowserShell.openBrowserHome]);
@@ -1182,10 +1183,19 @@ const App: React.FC = () => {
 
   useEffect(() => {
     return window.electron.botBrowser.onTabCommand(({ requestId, command }) => {
-      const controlTabs = command.background === true
-        ? botBrowserShell.controlTabsSilent
-        : botBrowserShell.controlTabs;
-      void controlTabs(command).then(
+      const execute = async () => {
+        if (command.sessionId) {
+          if (command.background !== true) await botBrowserShell.openBrowserHome();
+          return sessionTabBinding.controlSessionTab(
+            command as typeof command & { sessionId: string },
+          );
+        }
+        const controlTabs = command.background === true
+          ? botBrowserShell.controlTabsSilent
+          : botBrowserShell.controlTabs;
+        return controlTabs(command);
+      };
+      void execute().then(
         (result) => {
           window.electron.botBrowser.respondToTabCommand({
             requestId,
@@ -1202,7 +1212,7 @@ const App: React.FC = () => {
         },
       );
     });
-  }, [botBrowserShell.controlTabs, botBrowserShell.controlTabsSilent]);
+  }, [botBrowserShell.controlTabs, botBrowserShell.controlTabsSilent, botBrowserShell.openBrowserHome]);
 
   const handleShowLogin = useCallback(() => {
     showToast(i18nService.t('featureInDevelopment'));
@@ -2213,6 +2223,7 @@ const App: React.FC = () => {
                   onOpenConversation={handleBrowserOpenConversation}
                   onError={showToast}
                   onReady={botBrowserShell.onBrowserReady}
+                  onBrowserEvent={sessionTabBinding.handleBrowserEvent}
                 />
               </Suspense>
             </div>

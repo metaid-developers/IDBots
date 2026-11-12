@@ -116,9 +116,14 @@ contextBridge.exposeInMainWorld('electron', {
     onTabCommand: (callback: (input: {
       requestId: string;
       command: {
-        action: 'open-tab' | 'close-tab' | 'switch-tab' | 'get-tabs' | 'get-active-tab';
+        action: 'open-tab' | 'close-tab' | 'switch-tab' | 'navigate-tab' | 'get-tabs' | 'get-active-tab' | 'get-content' | 'get-tab-info';
         uri?: string;
         tabId?: number;
+        sessionId?: string;
+        label?: string;
+        activate?: boolean;
+        dedupe?: boolean;
+        background?: boolean;
       };
     }) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, input: Parameters<typeof callback>[0]) => callback(input);

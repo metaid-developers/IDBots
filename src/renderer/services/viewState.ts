@@ -108,24 +108,88 @@ export function isOnboardingEnterPending(): boolean {
  * window survive a restart instead of falling back to the Twin welcome page.
  */
 const BROWSER_VIEW_STATE_KEY = 'idbots.botBrowser.viewState';
+const MAX_BROWSER_SESSION_PAGES = 200;
 
-export function loadPersistedBrowserSessionId(): string | null {
+export interface PersistedBrowserSessionPage {
+  uri: string;
+  title: string | null;
+}
+
+type BrowserViewState = {
+  sessionId: string | null;
+  sessionPages: Record<string, PersistedBrowserSessionPage>;
+};
+
+function loadBrowserViewState(): BrowserViewState {
   try {
     const raw = window.localStorage.getItem(BROWSER_VIEW_STATE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { sessionId?: unknown };
-    return typeof parsed?.sessionId === 'string' && parsed.sessionId.trim()
-      ? parsed.sessionId.trim()
-      : null;
+    if (!raw) return { sessionId: null, sessionPages: {} };
+    const parsed = JSON.parse(raw) as { sessionId?: unknown; sessionPages?: unknown };
+    const sessionPages: Record<string, PersistedBrowserSessionPage> = {};
+    const entries = parsed?.sessionPages && typeof parsed.sessionPages === 'object' && !Array.isArray(parsed.sessionPages)
+      ? Object.entries(parsed.sessionPages)
+      : [];
+    for (const [sessionId, value] of entries) {
+      if (!sessionId.trim() || !value || typeof value !== 'object' || Array.isArray(value)) continue;
+      const page = value as { uri?: unknown; title?: unknown };
+      if (typeof page.uri !== 'string' || !page.uri.trim()) continue;
+      sessionPages[sessionId] = {
+        uri: page.uri.trim(),
+        title: typeof page.title === 'string' && page.title.trim() ? page.title.trim() : null,
+      };
+    }
+    return {
+      sessionId: typeof parsed?.sessionId === 'string' && parsed.sessionId.trim()
+        ? parsed.sessionId.trim()
+        : null,
+      sessionPages,
+    };
   } catch {
-    return null;
+    return { sessionId: null, sessionPages: {} };
   }
 }
 
-export function savePersistedBrowserSessionId(sessionId: string | null): void {
+function saveBrowserViewState(state: BrowserViewState): void {
   try {
-    window.localStorage.setItem(BROWSER_VIEW_STATE_KEY, JSON.stringify({ sessionId }));
+    const hasPages = Object.keys(state.sessionPages).length > 0;
+    window.localStorage.setItem(BROWSER_VIEW_STATE_KEY, JSON.stringify({
+      sessionId: state.sessionId,
+      ...(hasPages ? { sessionPages: state.sessionPages } : {}),
+    }));
   } catch {
     // Best effort, same as the view state above.
   }
+}
+
+export function loadPersistedBrowserSessionId(): string | null {
+  return loadBrowserViewState().sessionId;
+}
+
+export function savePersistedBrowserSessionId(sessionId: string | null): void {
+  saveBrowserViewState({ ...loadBrowserViewState(), sessionId });
+}
+
+export function loadPersistedBrowserSessionPages(): Record<string, PersistedBrowserSessionPage> {
+  return loadBrowserViewState().sessionPages;
+}
+
+export function savePersistedBrowserSessionPage(
+  sessionId: string,
+  page: PersistedBrowserSessionPage,
+): void {
+  const normalizedSessionId = sessionId.trim();
+  const uri = page.uri.trim();
+  if (!normalizedSessionId || !uri) return;
+  const state = loadBrowserViewState();
+  delete state.sessionPages[normalizedSessionId];
+  state.sessionPages[normalizedSessionId] = {
+    uri,
+    title: page.title?.trim() || null,
+  };
+  const sessionIds = Object.keys(state.sessionPages);
+  while (sessionIds.length > MAX_BROWSER_SESSION_PAGES) {
+    const oldest = sessionIds.shift();
+    if (oldest) delete state.sessionPages[oldest];
+  }
+  saveBrowserViewState(state);
 }
