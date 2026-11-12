@@ -120,11 +120,13 @@
       }
     }
     body.dataset.voice = !effectiveReduced() && now < textMotion.voiceUntil ? 'on' : 'off';
+    const activity = window.liquidOrbActivityForFamily(state.family);
+    const quiet = activity === 'speaking' || activity === 'resting';
     const modulation = {
       radius: textMotion.energy * .008,
       contourDeform: textMotion.energy * .025,
-      edgeGlow: textMotion.energy * .07,
-      exposure: textMotion.energy * .08,
+      edgeGlow: quiet ? textMotion.energy * .07 : 0,
+      exposure: quiet ? textMotion.energy * .08 : 0,
     };
     orbLayers.forEach((layer) => layer.controller?.setModulation(modulation));
   }
