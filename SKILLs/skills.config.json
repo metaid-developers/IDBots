@@ -178,7 +178,7 @@
       "enabled": true
     },
     "metabot-publish-nft": {
-      "order": 22,
+      "order": 19,
       "version": "2.2.0",
       "creator-metaid": "",
       "installedAt": 1740969600000,
