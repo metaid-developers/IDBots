@@ -355,11 +355,11 @@ test('the list renders one Follow-Up section below the fold, collapsed by defaul
   // Nothing is rendered when nothing is pending.
   assert.match(src, /sortedFollowUpSessions\.length > 0 && \(/);
   // An empty human list still renders the section (decisions must not hide
-  // behind an empty state). The section is gated on the caller-supplied bucket
-  // alone — the old `!showBotSelector` clause left with the bot dropdown (owner
-  // ruling 2026-11-09); the a2a face passes no bucket, so it stays off there
-  // without a selector flag.
-  assert.match(src, /hasFollowUpTasks = sortedFollowUpSessions\.length > 0;/);
+  // behind an empty state). The section is gated on the caller-supplied
+  // bucket, with the online face's restored bot filter (owner request
+  // 2026-11-13) keeping both folds off while its selector control shows — a
+  // filtered list must not report sections an empty state would hide anyway.
+  assert.match(src, /hasFollowUpTasks = sortedFollowUpSessions\.length > 0 && !showBotSelector;/);
 });
 
 test('the follow-up header carries label + unread count + latest activity, and no total count', () => {

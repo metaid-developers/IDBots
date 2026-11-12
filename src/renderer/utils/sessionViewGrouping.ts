@@ -321,3 +321,58 @@ export const groupSessionsByBot = (
   }
   return { pinned, groups };
 };
+
+/**
+ * Per-bot conversation counts for the online-chats Bot selector's option rows
+ * (restored 2026-11-13 with the dropdown the owner asked back). Every bot id
+ * in `botIds` is pre-seeded at 0 so each option row shows a count, and 'all'
+ * carries the list's total (legacy rows without a metabotId have no bot entry
+ * but still count toward it — they only render under 全部 Bot).
+ */
+export type BotSessionCounts = Partial<Record<number | 'all', number>>;
+
+export const buildBotSessionCounts = (
+  sessions: CoworkSessionSummary[],
+  botIds: readonly number[],
+): BotSessionCounts => {
+  const counts: Record<number, number> = {};
+  for (const id of botIds) {
+    counts[id] = 0;
+  }
+  let total = 0;
+  for (const session of sessions) {
+    if (session.metabotId != null) {
+      counts[session.metabotId] = (counts[session.metabotId] ?? 0) + 1;
+    }
+    total += 1;
+  }
+  return { ...counts, all: total };
+};
+
+/**
+ * Per-bot unread counts for the selector's option unread indicators (yellow
+ * dots), same seeding rule as the conversation counts; 'all' carries the
+ * list's total unread count.
+ */
+export type BotUnreadCounts = Partial<Record<number | 'all', number>>;
+
+export const buildBotUnreadCounts = (
+  sessions: CoworkSessionSummary[],
+  botIds: readonly number[],
+  unreadSessionIds: ReadonlySet<string>,
+): BotUnreadCounts => {
+  const unreads: Record<number, number> = {};
+  for (const id of botIds) {
+    unreads[id] = 0;
+  }
+  let total = 0;
+  for (const session of sessions) {
+    if (unreadSessionIds.has(session.id)) {
+      if (session.metabotId != null) {
+        unreads[session.metabotId] = (unreads[session.metabotId] ?? 0) + 1;
+      }
+      total += 1;
+    }
+  }
+  return { ...unreads, all: total };
+};

@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  buildBotSessionCounts,
+  buildBotUnreadCounts,
   DEFAULT_SESSION_VIEW_MODE,
   formatMonthLabel,
   groupSessionsByBot,
@@ -394,10 +396,9 @@ test('every i18n key the session list still renders exists in both language pack
     return hits.length < 2; // one entry per pack: zh + en
   });
   assert.deepEqual(missing, [], 'no key is left behind in one language only');
-  // The two keys that DID leave this file still belong to live callers, so the
-  // dropdown removal orphaned nothing: no key was deleted, and zh/en stay level.
-  assert.equal(unique.includes('coworkMetaBotLabel'), false);
-  assert.equal(unique.includes('coworkMetaBotPlaceholder'), false);
+  // The composer-side selector keys are shared by the online face's bot filter
+  // (back since 2026-11-13) and CoworkView — no key was deleted, and zh/en
+  // stay level.
   const view = readSource('renderer/components/cowork/CoworkView.tsx');
   for (const key of ['coworkMetaBotLabel', 'coworkMetaBotPlaceholder']) {
     assert.ok(view.includes(`i18nService.t('${key}')`), `${key} is still rendered by CoworkView`);
@@ -423,15 +424,10 @@ test('the card strip is gone: no dead symbol survives anywhere in src', () => {
     // The "Bot:" caption was dropped when the native <select> became the
     // avatar-led popover; its i18n key must not come back.
     'sessionBotSelectorCaption',
-    // The dropdown's remaining tail: its loading row, its above-the-list block,
-    // and the two per-bot count builders it fed (deleted from
-    // utils/sessionViewGrouping.ts — nothing else ever read them).
-    'botSelectorRow',
-    'selectorBlock',
-    'showBotSelector',
-    'pickedBotId',
-    'buildBotSessionCounts',
-    'buildBotUnreadCounts',
+    // NOTE: the online face's dropdown tail (botSelectorRow / selectorBlock /
+    // showBotSelector / pickedBotId / the two count builders) was in this list
+    // while the 2026-11-09 removal ruling held; the owner asked the filter
+    // back (2026-11-13), so those names live again and left this list.
     // The self-drawn popover was replaced by the shared MetaBotSelector, so
     // its component and its session-derived option builder are gone for good.
     'BotSelectorPopover',
@@ -459,26 +455,31 @@ test('the card strip is gone: no dead symbol survives anywhere in src', () => {
   assert.deepEqual(hits, []);
 });
 
-test('the online list has no bot dropdown: the by-Bot groups are the only bot selector', () => {
+test('the online list carries the bot filter dropdown again, opening on 全部 Bot', () => {
   const list = readSource('renderer/components/cowork/CoworkSessionList.tsx');
-  // Owner ruling 2026-11-09: the 按 Bot dropdown on the 线上对话 face is gone —
-  // it duplicated the very grouping that sits under it. The list renders no
-  // MetaBotSelector at all (not even a loading shell), and none of the
-  // dropdown's state survives: no pick, no filter, no per-bot count props.
-  assert.equal(list.includes('<MetaBotSelector'), false, 'the list no longer renders the dropdown');
-  assert.equal(list.includes('botSelector'), false, 'the botSelector prop is gone, call sites included');
-  assert.equal(list.includes('allowAll'), false, 'the All Bots entry left with the dropdown');
-  assert.equal(list.includes('selectorBlock'), false, 'no control block is stacked above the rows');
-  assert.equal(list.includes('pickedBotId'), false, 'no picked-bot state survives');
-  assert.equal(list.includes('sessionCounts'), false, 'no per-bot conversation counts are computed');
-  assert.equal(list.includes('unreadCounts'), false, 'no per-bot unread counts are computed');
-  assert.equal(list.includes('ALL_METABOTS_SELECTOR_ID'), false, 'the All Bots sentinel is gone');
-  // The list never scopes itself to a bot any more: every row of the face
-  // reaches the groups, legacy rows whose bot is gone included.
-  assert.match(list, /const visibleSessions = sessions;/);
+  // Owner request 2026-11-13 SUPERSEDES the 2026-11-09 removal ruling: the
+  // MetaBotSelector filter is back above the online face's rows — the shared
+  // component (never a re-implementation), with the All Bots entry, per-bot
+  // conversation counts, unread dots, and the fixed dropdown that escapes the
+  // sidebar's scroll container.
+  assert.ok(list.includes('<MetaBotSelector'), 'the list renders the shared dropdown');
+  assert.ok(list.includes('allowAll'), 'the All Bots entry is on');
+  assert.ok(list.includes('ALL_METABOTS_SELECTOR_ID'), 'the All Bots sentinel is in use');
+  assert.ok(list.includes('botSelector'), 'the botSelector prop gates the control');
+  assert.ok(list.includes('selectorBlock'), 'one control block sits above the rows');
+  assert.ok(list.includes('pickedBotId'), 'an explicit pick is remembered');
+  assert.ok(list.includes('sessionCounts'), 'per-bot conversation counts feed the options');
+  assert.ok(list.includes('unreadCounts'), 'per-bot unread dots feed the options');
+  assert.ok(list.includes('data-testid="bot-selector-row"'), 'the control row is reachable for tests');
+  assert.ok(list.includes('data-pending="true"'), 'the loading shell holds the row open');
+  // 全部 Bot is the DEFAULT: the face opens unfiltered, a bot pick is a
+  // deliberate narrowing, and a pick of a since-deleted bot falls back to all.
+  assert.match(list, /const defaultBotId = ALL_METABOTS_SELECTOR_ID;/);
+  assert.match(list, /activeBotId === ALL_METABOTS_SELECTOR_ID\s*\?\s*sessions\s*:\s*sessions\.filter/);
+  assert.match(list, /session\.metabotId === activeBotId/);
   // The bots still come from the live metabot list (enabled bots, Twin first),
-  // so a deleted bot can never linger as a group.
-  assert.ok(list.includes('getMetaBots'), 'the groups read the live metabot roster');
+  // so a deleted bot can never linger as a filter option or a group.
+  assert.ok(list.includes('getMetaBots'), 'the list reads the live metabot roster');
   assert.ok(list.includes("metabot_type === 'twin'"), 'the roster still marks the Twin');
   // The grouping itself is untouched: same collapsible headers, same template.
   const groupedBranch = list.slice(list.indexOf('if (botGrouped)'));
@@ -487,19 +488,18 @@ test('the online list has no bot dropdown: the by-Bot groups are the only bot se
   assert.ok(groupedBranch.includes('onQuickCreateTask'), 'the trailing + survives');
 });
 
-test('removing the dropdown leaves no filter state behind', () => {
-  const list = readSource('renderer/components/cowork/CoworkSessionList.tsx');
-  // Nothing in the list can narrow `sessions` before it reaches the groups:
-  // the old activeBotId/pickedBotId pipeline is gone, so timelime, by-Bot and
-  // flat views all read the same full list.
-  assert.equal(list.includes('activeBotId'), false, 'the bot filter is gone');
-  assert.equal(list.includes('defaultBotId'), false, 'the All Bots default is gone');
-  const visible = list.slice(
-    list.indexOf('const visibleSessions'),
-    list.indexOf('const sortedSessions'),
+test('the bot filter only narrows when the owner picked a bot', () => {
+  const counts = buildBotSessionCounts(
+    [mkSession({ id: 's1', metabotId: 2 }), mkSession({ id: 's2', metabotId: 2 }), mkSession({ id: 's3' })],
+    [1, 2],
   );
-  assert.ok(visible.includes('= sessions'), 'the visible list is the full list');
-  assert.equal(visible.includes('filter('), false, 'no bot scope filter remains');
+  assert.deepEqual(counts, { 1: 0, 2: 2, all: 3 });
+  const unreads = buildBotUnreadCounts(
+    [mkSession({ id: 's1', metabotId: 2 }), mkSession({ id: 's3' })],
+    [1, 2],
+    new Set(['s1', 's3']),
+  );
+  assert.deepEqual(unreads, { 1: 0, 2: 1, all: 2 });
 });
 
 test('the A2A title fallback is untouched by the selector change', () => {
@@ -541,29 +541,34 @@ test('the by-Bot grouping is shared: empty bots only on the local face', () => {
   assert.deepEqual(legacy.groups.map((group) => group.key), ['other']);
 });
 
-test('both faces default to 按 Bot and never share one memory', () => {
+test('per-face view-mode defaults (local 按 Bot, online 按时间线) and never one shared memory', () => {
   assert.equal(DEFAULT_SESSION_VIEW_MODE, 'bot');
 
   const store = new Map<string, string>();
   const getItem = (key: string) => store.get(key) ?? null;
   const setItem = (key: string, value: string) => void store.set(key, value);
 
-  // Fresh install: both faces open on 按 Bot.
+  // Fresh install: the local face opens on 按 Bot, the online a2a face on
+  // 按时间线 (owner request 2026-11-13 — the online face's primary reading is
+  // the timeline now that the bot filter dropdown returned above the list).
   assert.equal(loadSessionViewMode(getItem, 'local'), 'bot');
-  assert.equal(loadSessionViewMode(getItem, 'a2a'), 'bot');
+  assert.equal(loadSessionViewMode(getItem, 'a2a'), 'timeline');
   assert.equal(sessionViewModeStorageKey('local'), 'idbots.sessionViewMode.local');
   assert.equal(sessionViewModeStorageKey('a2a'), 'idbots.sessionViewMode.a2a');
 
   // A stored choice wins, per face only.
   saveSessionViewMode(setItem, 'local', 'timeline');
   assert.equal(loadSessionViewMode(getItem, 'local'), 'timeline');
-  assert.equal(loadSessionViewMode(getItem, 'a2a'), 'bot', 'the online face did not inherit it');
+  assert.equal(loadSessionViewMode(getItem, 'a2a'), 'timeline', 'the online face default is its own');
+  saveSessionViewMode(setItem, 'a2a', 'bot');
+  assert.equal(loadSessionViewMode(getItem, 'a2a'), 'bot', 'an explicit online choice wins over its default');
+  assert.equal(loadSessionViewMode(getItem, 'local'), 'timeline', 'the local face did not inherit it');
 
   // The pre-per-face key seeds the LOCAL face only (sidebarWidth's legacy rule).
   store.clear();
   store.set(LEGACY_SESSION_VIEW_MODE_STORAGE_KEY, 'timeline');
   assert.equal(loadSessionViewMode(getItem, 'local'), 'timeline');
-  assert.equal(loadSessionViewMode(getItem, 'a2a'), 'bot');
+  assert.equal(loadSessionViewMode(getItem, 'a2a'), 'timeline');
   // 'project' was the retired directory view; its successor is by-Bot.
   store.clear();
   store.set(LEGACY_SESSION_VIEW_MODE_STORAGE_KEY, 'project');

@@ -14,9 +14,12 @@
  *
  * Two independent memories live here:
  *
- *  - VIEW MODE (按 Bot / 按时间线). The default is 按 Bot on BOTH faces: the
- *    owner's grouping ruling makes the per-bot groups the primary reading, and
- *    the timeline is the secondary one. A stored choice always wins.
+ *  - VIEW MODE (按 Bot / 按时间线). Per-face defaults (owner request
+ *    2026-11-13): the local face opens on 按 Bot — the per-bot groups are the
+ *    primary reading there — while the online a2a face opens on 按时间线, its
+ *    primary reading now that the bot filter dropdown returned above the list
+ *    (supersedes the 2026-11-08 both-faces-按-Bot ruling for a2a only). A
+ *    stored choice always wins over either default.
  *  - COLLAPSED BOT GROUPS. Only the collapsed keys are persisted; everything
  *    else is expanded. The preference is per face and fail-open: an unreadable
  *    value means "nothing collapsed", never "hide everything".
@@ -59,10 +62,17 @@ const normalizeViewMode = (stored: string | null): SessionViewMode | null => {
   return null;
 };
 
+/** Per-face default view mode (owner request 2026-11-13): 按 Bot locally,
+ * 按时间线 on the online face. A stored choice always wins over these. */
+const DEFAULT_FACE_VIEW_MODE: Record<SessionGroupFace, SessionViewMode> = {
+  local: 'bot',
+  a2a: 'timeline',
+};
+
 /**
- * Load one face's view mode. Default: 按 Bot (both faces). A legacy
- * unprefixed value seeds the local face; a corrupt value falls back to the
- * default rather than throwing.
+ * Load one face's view mode. Default: 按 Bot on the local face, 按时间线 on
+ * the online a2a face. A legacy unprefixed value seeds the local face; a
+ * corrupt value falls back to the default rather than throwing.
  */
 export function loadSessionViewMode(
   getItem: (key: string) => string | null,
@@ -74,7 +84,7 @@ export function loadSessionViewMode(
     const legacy = normalizeViewMode(getItem(LEGACY_SESSION_VIEW_MODE_STORAGE_KEY));
     if (legacy) return legacy;
   }
-  return 'bot';
+  return DEFAULT_FACE_VIEW_MODE[face];
 }
 
 /** Persist one face's view mode (best effort — storage may be unavailable). */

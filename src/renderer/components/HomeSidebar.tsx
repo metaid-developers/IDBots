@@ -618,11 +618,15 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
             selectionMode={isBatchArchiveMode}
             selectedSessionIds={batchSelectedIds}
             onToggleSessionSelected={listOnToggleSessionSelected}
-            /** Both faces render the SAME by-Bot grouped template and
-             * default to 按 Bot; each keeps its own remembered choice. */
+            /** Both faces render the SAME grouped template; each keeps its
+             * own remembered view mode (defaults: 按 Bot locally, 按时间线
+             * on the online face). */
             viewMode={faceViewMode}
             sortMode={sessionSortMode}
             groupFace={taskRecordTab}
+            /** The online face's bot filter (全部 Bot default); the local
+             * face has none — its by-Bot groups are the bot reading. */
+            botSelector={taskRecordTab === 'a2a'}
             language={language}
             /** Local chats: machine-started runs fold into one collapsed
              * "Autonomous Tasks" folder below the Follow-Up section. */
