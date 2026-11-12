@@ -4,12 +4,8 @@ import { i18nService } from '../../services/i18n';
 import { bindSeatMenuOutsideDismiss } from './seatMenuDismiss';
 
 /**
- * Centered draft-state bot picker above the Studio session title. Picking a
- * bot selects who runs the next conversation without writing `metabot_type`;
- * live sessions use the read-only CoworkSurfaceIdentityBadge instead.
- *
- * Selection state lives in BotBrowserCoworkPanel.tsx. This presentational
- * component owns only outside-pointer dismissal for its roster menu.
+ * Shared Studio bot picker for the draft welcome and history filter. The host
+ * owns the selection's meaning; this component owns roster-menu dismissal.
  */
 
 export interface BotPickerChipBot {
@@ -21,7 +17,7 @@ export interface BotPickerChipBot {
 }
 
 interface BotPickerChipProps {
-  /** The bot selected for the next conversation. */
+  /** The currently presented bot. */
   chipMetabot: BotPickerChipBot;
   /** Every local bot, in roster order. */
   roster: readonly BotPickerChipBot[];
@@ -29,13 +25,9 @@ interface BotPickerChipProps {
   onToggleMenu: () => void;
   /** Closes the menu when a pointer lands outside the chip container. */
   onDismissMenu: () => void;
-  /** Picks this bot for the next conversation (a pure selection, no writes). */
+  /** Hands the picked bot to the host without writing metabot_type. */
   onSelect: (bot: BotPickerChipBot) => void;
-  /**
-   * Which way the roster menu opens. The composer row (historical host)
-   * opens UP (`bottom-full`, the default); the surface-header host opens
-   * DOWN (`top-full`) so the roster never climbs over the band row.
-   */
+  /** Which way the roster menu opens from its host. */
   menuDirection?: 'up' | 'down';
   size?: 'default' | 'compact';
   ariaLabel?: string;

@@ -3,15 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
-// Static wiring guard for the Studio surface-header identity row (owner
-// ruling 2026-11-11; v3 close wiring same day). Behavior is covered by
-// botPickerChip.test.tsx (render) and surfaceIdentityBadge.test.tsx (badge);
-// this file pins the panel wiring so a refactor cannot quietly grow the
-// picker back into a Twin appointment: picking a bot is a PURE selection —
-// the only place that writes metabot_type is the My Bots editor. v3 close
-// supersession: the chip is DRAFT-ONLY — a live session's header identity
-// is the read-only CoworkSurfaceIdentityBadge (the chip's former
-// display-only live branch is retired, not widened).
+// Static wiring guard for Studio bot selection: the draft picker lives in the
+// welcome page, live identity stays read-only in the header, and no selection
+// path can grow into a Twin appointment.
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
 

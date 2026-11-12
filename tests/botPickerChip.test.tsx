@@ -9,16 +9,9 @@ import BotPickerChip, {
 import { bindSeatMenuOutsideDismiss } from '../src/renderer/features/botBrowser/seatMenuDismiss';
 import { i18nService } from '../src/renderer/services/i18n';
 
-// Behavior coverage for the Studio surface-header bot picker (owner ruling
-// 2026-11-11; v3 close wiring same day): the draft state is a PURE selection
-// control whose menu lists the whole roster with every row enabled — picking
-// a bot only decides which bot runs the next conversation, it never writes
-// metabot_type or appoints a Twin (that stays owned by the My Bots editor).
-// The chip is draft-only since the v3 close wiring: a live session's header
-// identity is the read-only CoworkSurfaceIdentityBadge, covered by
-// surfaceIdentityBadge.test.tsx. An open menu closes on an outside pointer
-// but not on a menu row, which still runs its selection. No real roster is
-// touched.
+// Behavior coverage for the shared Studio bot picker: roster rows stay enabled,
+// selection never writes metabot_type, compact history presentation is supported,
+// and outside-pointer dismissal does not swallow menu-row selection.
 
 const twin: BotPickerChipBot = { id: 1, name: 'Alice', avatar: null, metabot_type: 'twin', role: 'Twin' };
 const worker: BotPickerChipBot = { id: 2, name: 'Bob', avatar: null, metabot_type: 'worker', role: 'Builder' };

@@ -47,10 +47,8 @@ const CoworkHistoryPanel: React.FC<CoworkHistoryPanelProps> = ({
     [sessions, botId],
   );
 
-  // Inline date filter (item ③). The view opens on the scoped list's newest
-  // month (today when the bot has no sessions yet); picking days is
-  // user-driven afterwards. The overlay covers the bot picker while open, so
-  // this state never has to survive a bot switch — remount handles it.
+  // The view opens on the scoped list's newest month. The parent remounts the
+  // panel by bot id, so switching bots also resets the month and picked day.
   const [monthView, setMonthView] = useState(() => initialMonthView(botSessions));
   const [selectedDayKey, setSelectedDayKey] = useState<string | null>(null);
 
