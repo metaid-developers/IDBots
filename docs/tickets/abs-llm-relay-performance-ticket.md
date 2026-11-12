@@ -7,7 +7,7 @@
 | **Reporter** | IDBots client team |
 | **Component** | ABS llm relay (`www.metaso.network/assist-open-api/v2/assist/llm/*`, chat-completions path) |
 | **Severity** | P1 — user-perceived latency on the default in-app provider (ID.Bots) |
-| **Status** | Open, evidence attached, fixes proposed below |
+| **Status** | Partially verified (see §8): R1 PASS, R2 PARTIAL — one residual open |
 | **Related client doc** | `docs/me-llm-relay-plan-quota-backend-requirements.md` |
 
 ## 1. Summary
@@ -173,3 +173,65 @@ as the upstream sends them.
 - Tiny-prompt GLM through ABS already beats Zhipu direct on first content
   (4.5 s vs 6.7 s medians) — evidence the upstream itself is competitive; the
   fixed floor and batching are what drag it down.
+
+## 8. Verification log — 2026-11-12 (ABS fix deployed)
+
+Client-side re-run of the same benchmark suite against production
+(2026-11-12 ~10:12 +08:00, same machine/network, interleaved with official
+baselines). The reporter's primary identity free pool was exhausted
+(quota reset 2026-11-15 12:43 +08:00), so the run used a separate fresh
+e2e identity relay key (5 M chat quota) — same relay, same wire.
+
+### 8.1 Acceptance ① — SSE passthrough (R1): **PASS**
+
+~130-token answer (thinking off, `deepseek` pair), per network-chunk cadence:
+
+| | chunks | gap P50 | gap P95 |
+|---|---|---|---|
+| ABS before fix | 4–5 | 160–275 ms | 281 ms |
+| **ABS after fix (3 rounds)** | **83 / 94 / 87** | **0 ms** | 88–179 ms |
+| official baseline (same run) | 60–69 | 10–14 ms | 91–103 ms |
+
+Acceptance line: >40 chunks with gap P50 ≤ 50 ms — met with margin; ABS now
+streams finer-grained than the official gateway. The bursty "text arrives in
+chunks" feel is gone. (Response headers still show plain
+`server: nginx/1.23.3` with no `X-Accel-Buffering` header — the buffering
+appears disabled at the config level; behavior is what counts.)
+
+### 8.2 Acceptance ② — first-token floor (R2): **PARTIAL**
+
+Tiny request (`"Hi"`, `max_tokens=8`), TTFB medians:
+
+| | before fix | after fix | official (same run) | acceptance |
+|---|---|---|---|---|
+| streaming gen (`bench_thru`) | 1200 ms | **685 ms** | 232 ms | ≤ official+300 = 532 ms → **~+453 ms, still above line** |
+| sequential probes (n=5) | 935 ms | 841 ms | — | improved ~100 ms |
+| 4× parallel | ~1120 ms | 558–845 ms | — | improved ~300–450 ms |
+
+~4 K-token prompt (~6 KB body), TTFB medians:
+
+| | before fix | after fix | official (same run) | acceptance |
+|---|---|---|---|---|
+| deepseek pair | 1252 ms | **1280 ms (916–1525)** | 270 ms | ≤ official+300 = 570 ms → **+1010 ms, FAIL / unchanged** |
+| glm-5.3-flash pair (first event) | +1805 ms vs Zhipu | **+595 ms vs Zhipu** (3126 vs 2531; small-n noisy) | — | improved |
+
+Error paths unchanged and fast (401 242 ms / 404 20 ms / upstream-relayed 400
+630 ms, single noisy sample). Upstream identity unchanged
+(`deepseek-v4.1-flash-1017` snapshot; GLM → Zhipu).
+
+**Reading**: the fix removed the buffering/first-byte floor (~400–500 ms off
+small requests, streaming cadence restored) — but the **size-growing
+component is still there**: a ~4 K-token body costs ABS ~+1.0 s over official,
+essentially unchanged from before the fix. That residual sits between request
+accept and upstream first byte and scales with input size, pointing at either
+(a) the upstream snapshot deployment's prefill being slower than the official
+edge, or (b) a per-byte relay cost (body scan/rewrite/line-buffered upload).
+This is now the dominant user-visible gap on long-context turns.
+
+### 8.3 Remaining ask (supersedes R3)
+
+Instrument per-request phases for one ~4 K-token request (auth → upstream
+headers → upstream first byte → client first byte) and either fix the
+size-proportional component or re-point the DeepSeek route at the official
+API. Acceptance stays as §5 R3: success-path TTFB ≤ official + 300 ms for the
+same body, tiny and ~4 K-token alike.
