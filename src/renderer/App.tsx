@@ -662,11 +662,14 @@ const App: React.FC = () => {
   }, [isInitialized, selectedModel?.id, selectedModel?.providerKey]);
 
   const handleShowSettings = useCallback((options?: SettingsOpenOptions) => {
-    setSettingsOptions({
+    setSettingsOptions((prev) => ({
       initialTab: options?.initialTab,
       notice: options?.notice,
       openNewProjectForm: options?.openNewProjectForm,
-    });
+      // Bump on every request: an identical initialTab must still re-fire the
+      // mounted Settings tab effect (the second click used to be a no-op).
+      requestNonce: (prev?.requestNonce ?? 0) + 1,
+    }));
     setShowSettings(true);
   }, []);
 
@@ -1778,6 +1781,7 @@ const App: React.FC = () => {
                 initialTab={settingsOptions.initialTab}
                 notice={settingsOptions.notice}
                 openNewProjectForm={settingsOptions.openNewProjectForm}
+                requestNonce={settingsOptions.requestNonce}
               />
             </Suspense>
           )}
@@ -2244,6 +2248,7 @@ const App: React.FC = () => {
             initialTab={settingsOptions.initialTab}
             notice={settingsOptions.notice}
             openNewProjectForm={settingsOptions.openNewProjectForm}
+            requestNonce={settingsOptions.requestNonce}
           />
         </Suspense>
       )}
