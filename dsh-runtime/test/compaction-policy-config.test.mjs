@@ -106,3 +106,51 @@ const sessionRoot = () => fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-compact-pol
   fs.rmSync(root, { recursive: true, force: true })
   console.log('PASS  models without a context window get no policy entry')
 }
+
+// ID.Bots relay (metaid-free / metaso.network) × DeepSeek-family: the relay
+// enforces a ~256K real request window under a 1M catalog declaration
+// (2026-11-12 cw-4b78a0fd: a 259,414-token request was accepted, the next one
+// rejected with CONTEXT_WINDOW_EXCEEDED) — the proactive threshold pins to
+// 22% so it fires below the real line, mirroring the Command Code GLM tier.
+{
+  const root = sessionRoot()
+  const config = generateRuntimeConfig({
+    sessionRoot: root,
+    providers: [
+      {
+        key: 'metaid-free', apiFormat: 'openai',
+        baseUrl: 'https://www.metaso.network/assist-open-api/v2/assist/llm/v1', apiKeyEnv: 'K1',
+        models: [
+          { id: 'deepseek-4.1-flash', contextWindow: 1048576, maxOutputTokens: 256000 },
+          { id: 'glm-5.3-flash', contextWindow: 1048576, maxOutputTokens: 131072 },
+        ],
+      },
+      { key: 'deepseek', native: true, apiFormat: 'openai', baseUrl: 'https://api.deepseek.com', apiKeyEnv: 'K2', models: [{ id: 'deepseek-flash', contextWindow: 1000000, maxOutputTokens: 256000 }] },
+      { key: 'other-relay', apiFormat: 'openai', baseUrl: 'https://metaso.network.evil.example/v1', apiKeyEnv: 'K3', models: [{ id: 'deepseek-4.1-flash', contextWindow: 1000000, maxOutputTokens: 256000 }] },
+    ],
+    sections: [],
+  })
+  const policies = compactionEntry(config).config.modelPolicies
+  assert.deepEqual(
+    policies.find((p) => p.provider === 'metaid-free' && p.model === 'deepseek-4.1-flash'),
+    { provider: 'metaid-free', model: 'deepseek-4.1-flash', thresholdRatio: 0.22, headroomTokens: 41943 },
+    'relay×DeepSeek pins the 22% threshold',
+  )
+  assert.equal(
+    policies.find((p) => p.provider === 'metaid-free' && p.model === 'glm-5.3-flash').thresholdRatio,
+    0.8,
+    'relay×GLM keeps the default tier — no such observation on the relay yet',
+  )
+  assert.equal(
+    policies.find((p) => p.provider === 'deepseek-official' && p.model === 'deepseek-flash').thresholdRatio,
+    0.8,
+    'official DeepSeek keeps the default tier',
+  )
+  assert.equal(
+    policies.find((p) => p.provider === 'other-relay' && p.model === 'deepseek-4.1-flash').thresholdRatio,
+    0.8,
+    'lookalike hosts do not trigger the scoped tier',
+  )
+  fs.rmSync(root, { recursive: true, force: true })
+  console.log('PASS  ID.Bots relay×DeepSeek pins 22%; GLM/official/lookalike hosts keep the default tier')
+}
