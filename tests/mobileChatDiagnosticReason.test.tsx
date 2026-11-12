@@ -50,6 +50,7 @@ function message(
 function chatFixture(overrides: Partial<Chat> = {}): Chat {
   return {
     messages: [],
+    activityMessages: [],
     sessions: [],
     sessionId: null,
     sessionTitle: null,

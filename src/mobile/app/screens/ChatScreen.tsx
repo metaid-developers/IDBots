@@ -3,6 +3,7 @@ import { Bars3Icon, PlusIcon, PaperClipIcon, FaceSmileIcon, StopIcon, EllipsisHo
 import MarkdownContent from '@/components/MarkdownContent';
 import MobileArtifactPreview from '../components/MobileArtifactPreview';
 import CoworkPermissionPanel from '@/components/cowork/CoworkPermissionPanel';
+import { AssistantActivityIndicator } from '@/components/cowork/AssistantActivityIndicator';
 import { coworkAttachmentAdmission } from '@/components/cowork/coworkComposerAttachments';
 import ChatComposerAttachments from '../components/ChatComposerAttachments';
 import { EmojiPickerPanel, rememberRecentEmoji } from '../components/EmojiPickerPanel';
@@ -471,34 +472,24 @@ function MessageRow({ message, sessionId, onOpenFile, onOpenUri }: { message: Ch
 }
 
 function SubmissionStatus({ chat }: { chat: Chat }): JSX.Element | null {
-  const attempts = chat.attempts ?? [];
+  const attempts = (chat.attempts ?? []).filter((attempt) => attempt.status !== 'sending' && attempt.status !== 'verified');
   if (attempts.length === 0 && !chat.actionError) return null;
   return (
     <div className="mx-3 mb-2 rounded-xl border border-[var(--border-color)] bg-[var(--bg-panel)] p-3" data-testid="chat-action-status">
       {chat.actionError ? <p className="mb-2 whitespace-pre-wrap break-words text-xs text-red-600">{chat.actionError}</p> : null}
       {attempts.map((attempt) => (
-        <div key={attempt.submissionId} className="flex flex-wrap items-center gap-2 py-1">
-          <span className="min-w-0 flex-1 text-xs text-[var(--text-secondary)]">
-            {t(`mobile.chat.submission.${attempt.status}`)}
-            {attempt.status === 'verified' && attempt.error ? (
-              <span className="block whitespace-pre-wrap break-words">{attempt.error}</span>
-            ) : null}
-          </span>
-          {attempt.status !== 'sending' ? (
-            <>
-              <button type="button" onClick={() => void chat.reconcileSubmission(attempt.submissionId)} disabled={attempt.status === 'reconciling'} className="min-h-[36px] px-2 text-xs text-[var(--text-primary)] disabled:opacity-40">
-                {t('mobile.chat.reconcile')}
-              </button>
-              {attempt.kind === 'submit' || attempt.status === 'failed' ? (
-                <button type="button" onClick={() => void chat.retrySubmission(attempt.submissionId)} disabled={attempt.status === 'reconciling' || attempt.status === 'verified'} className="min-h-[36px] px-2 text-xs text-[var(--text-primary)] disabled:opacity-40">
-                  {t('mobile.common.retry')}
-                </button>
-              ) : null}
-              <button type="button" onClick={() => chat.discardSubmission(attempt.submissionId)} disabled={attempt.status === 'reconciling'} className="min-h-[36px] px-2 text-xs text-[var(--text-secondary)] disabled:opacity-40">
-                {t('mobile.chat.discard')}
-              </button>
-            </>
+        <div key={attempt.submissionId} className="flex flex-wrap items-center gap-2 py-1" data-attempt-status={attempt.status}>
+          <button type="button" onClick={() => void chat.reconcileSubmission(attempt.submissionId)} disabled={attempt.status === 'reconciling'} className="min-h-[36px] px-2 text-xs text-[var(--text-primary)] disabled:opacity-40">
+            {t('mobile.chat.reconcile')}
+          </button>
+          {attempt.kind === 'submit' || attempt.status === 'failed' ? (
+            <button type="button" onClick={() => void chat.retrySubmission(attempt.submissionId)} disabled={attempt.status === 'reconciling'} className="min-h-[36px] px-2 text-xs text-[var(--text-primary)] disabled:opacity-40">
+              {t('mobile.common.retry')}
+            </button>
           ) : null}
+          <button type="button" onClick={() => chat.discardSubmission(attempt.submissionId)} disabled={attempt.status === 'reconciling'} className="min-h-[36px] px-2 text-xs text-[var(--text-secondary)] disabled:opacity-40">
+            {t('mobile.chat.discard')}
+          </button>
         </div>
       ))}
     </div>
@@ -732,10 +723,16 @@ export default function ChatScreen(props: {
           ) : (
             chat.messages.map((message) => <MessageRow key={message.id} message={message} sessionId={chat.sessionId ?? null} onOpenFile={openPreview} onOpenUri={props.onOpenUri} />)
           )}
-          {turnPhase !== 'idle' && turnPhase !== 'completed' ? (
-            <p className="px-2 py-1 text-xs text-[var(--text-secondary)]" data-testid="turn-phase">
-              {t(`mobile.chat.phase.${turnPhase}`)}
-            </p>
+          {['starting', 'running', 'steering', 'stopping', 'waiting_permission', 'offline_unknown'].includes(turnPhase) ? (
+            <div className="px-2" data-testid="turn-phase">
+              <AssistantActivityIndicator
+                messages={chat.activityMessages}
+                avatar={headerBot.avatar}
+                fallbackText={t(`mobile.chat.phase.${turnPhase}`)}
+                inline
+                sessionId={chat.sessionId}
+              />
+            </div>
           ) : null}
         </div>
         {showNewMessages ? (

@@ -670,6 +670,24 @@ export class CoworkSessionController {
     }
   }
 
+  private optimisticUserMessage(attempt: CoworkSubmissionAttempt): CoworkMessage {
+    return {
+      id: `local-${attempt.submissionId}`,
+      type: 'user',
+      content: attempt.text,
+      timestamp: attempt.createdAt,
+      metadata: { submissionId: attempt.submissionId, origin: 'user', optimistic: true },
+    };
+  }
+
+  private removeOptimisticMessage(attempt: CoworkSubmissionAttempt): void {
+    const sessionId = attempt.sessionId ?? 'new';
+    const state = this.stateFor(sessionId);
+    const id = `local-${attempt.submissionId}`;
+    if (!state.messages.some((message) => message.id === id)) return;
+    this.setState({ ...state, messages: state.messages.filter((message) => message.id !== id) });
+  }
+
   private updateAttempt(attempt: CoworkSubmissionAttempt): void {
     this.attempts = this.attempts.map((entry) => (
       entry.submissionId === attempt.submissionId ? attempt : entry
@@ -678,6 +696,7 @@ export class CoworkSessionController {
   }
 
   private finishAttempt(attempt: CoworkSubmissionAttempt): void {
+    if (attempt.kind === 'submit') this.removeOptimisticMessage(attempt);
     this.attempts = this.attempts.filter((entry) => entry.submissionId !== attempt.submissionId);
     this.clearReconcilePin(attempt.submissionId);
     this.draftStore.clearIfUnchanged(attempt.draftToken, attempt.draftText, attempt.draftAttachments);
@@ -737,6 +756,7 @@ export class CoworkSessionController {
   ): CoworkActionResult {
     const errorKey = attempt.sessionId ?? 'new';
     this.actionErrors = { ...this.actionErrors, [errorKey]: this.actionErrors[errorKey] ?? error };
+    if (status === 'failed') this.removeOptimisticMessage(attempt);
     this.updateAttempt({ ...attempt, status, error });
     if (status === 'uncertain') this.scheduleAutoReconcile(attempt);
     return { status, error, submissionId: attempt.submissionId, sessionId: attempt.sessionId };
@@ -783,12 +803,17 @@ export class CoworkSessionController {
       delete remainingStreamErrors[sessionId];
       this.streamErrors = remainingStreamErrors;
     }
+    this.dispatch({
+      type: 'message',
+      sessionId: attempt.sessionId ?? 'new',
+      message: this.optimisticUserMessage(attempt),
+    });
     this.publish();
     let outcome: CoworkActionResult | undefined;
     try {
       await submitCoworkComposerDraft({
-        draftField: this.draftStore.field(draftToken, 'text', text, { clearOnTake: false }),
-        attachmentField: this.draftStore.field(draftToken, 'attachments', draftAttachments, { clearOnTake: false }),
+        draftField: this.draftStore.field(draftToken, 'text', text),
+        attachmentField: this.draftStore.field(draftToken, 'attachments', draftAttachments),
         onSubmit: async () => {
           outcome = sessionId ? await this.submitAttempt(attempt) : await this.startAttempt(attempt);
           return outcome.status === 'accepted';
@@ -810,6 +835,7 @@ export class CoworkSessionController {
         text: attempt.text,
       });
       if (result?.success && result.message) {
+        this.removeOptimisticMessage(attempt);
         this.dispatch({ type: 'message', sessionId, message: result.message });
         this.finishAttempt(attempt);
         void this.reloadSessions();
@@ -837,7 +863,19 @@ export class CoworkSessionController {
       });
       if (result?.success && result.session) {
         const session = result.session;
+        this.removeOptimisticMessage(attempt);
         this.ingestSessionSnapshot(session, {});
+        const hasUserMessage = this.stateFor(session.id).messages.some((message) => (
+          message.type === 'user'
+          && (message.metadata?.submissionId === attempt.submissionId || message.content === attempt.text)
+        ));
+        if (!hasUserMessage) {
+          this.dispatch({
+            type: 'message',
+            sessionId: session.id,
+            message: this.optimisticUserMessage(attempt),
+          });
+        }
         if (this.currentSessionId === null && this.generation === generation) {
           this.generation += 1;
           this.currentSessionId = session.id;
@@ -897,7 +935,7 @@ export class CoworkSessionController {
     }
     const messages = this.stateFor(sessionId).messages;
     const landed = messages.some(
-      (message) => message.metadata?.submissionId === submissionId,
+      (message) => message.metadata?.optimistic !== true && message.metadata?.submissionId === submissionId,
     );
     if (landed) {
       this.finishAttempt(attempt);
@@ -921,7 +959,9 @@ export class CoworkSessionController {
   }
 
   discardSubmission(submissionId: string): void {
-    this.attempts = this.attempts.filter((attempt) => attempt.submissionId !== submissionId);
+    const attempt = this.attempts.find((entry) => entry.submissionId === submissionId);
+    if (attempt?.status === 'failed') this.removeOptimisticMessage(attempt);
+    this.attempts = this.attempts.filter((entry) => entry.submissionId !== submissionId);
     this.clearReconcilePin(submissionId);
     this.publish();
   }

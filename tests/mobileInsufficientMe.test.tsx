@@ -22,6 +22,7 @@ type Chat = ReturnType<typeof useChat>;
 function chatFixture(kind: 'me' | 'free'): Chat {
   return {
     messages: [],
+    activityMessages: [],
     sessions: [],
     sessionId: null,
     sessionTitle: null,

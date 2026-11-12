@@ -200,6 +200,7 @@ export function useChat(bots: MockMetabot[] = []) {
   const attachmentUploads = useChatAttachments(controller, sessionId);
   const state = sessionId ? snapshot.states.get(sessionId) : undefined;
   const messages = useMemo(() => projectChatMessages(state?.messages ?? []), [state?.messages]);
+  const activityMessages = state?.messages ?? [];
   const attempts = useMemo(
     () => snapshot.attempts.filter((attempt) => attempt.sessionId === sessionId),
     [snapshot.attempts, sessionId],
@@ -346,6 +347,7 @@ export function useChat(bots: MockMetabot[] = []) {
 
   return {
     messages,
+    activityMessages,
     sessions: snapshot.sessions,
     sessionId,
     sessionTitle: state?.title ?? null,

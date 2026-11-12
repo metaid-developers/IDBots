@@ -45,6 +45,7 @@ type Chat = ReturnType<typeof useChat>;
 function chatFixture(overrides: Partial<Chat> = {}): Chat {
   return {
     messages: [],
+    activityMessages: [],
     sessions: [],
     sessionId: null,
     sessionTitle: null,
@@ -338,4 +339,34 @@ test('ChatScreen renders terminal error rows as an inline notice instead of drop
   );
   assert.ok(markup.includes('error-bubble'), 'error notice test id present');
   assert.ok(markup.includes('free_quota_exhausted'), 'the relay machine code is visible in the transcript');
+});
+
+test('ChatScreen shows Bot activity instead of mechanical submission copy', () => {
+  mobileI18n.setLanguage('en');
+  const html = renderToStaticMarkup(
+    <ChatScreen
+      chat={chatFixture({
+        turnPhase: 'steering',
+        attempts: [{
+          submissionId: 'attempt-1',
+          kind: 'submit',
+          sessionId: 'session-1',
+          text: 'Follow up',
+          draftToken: 'session-1',
+          draftText: 'Follow up',
+          draftAttachments: [],
+          status: 'sending',
+          error: null,
+          createdAt: 0,
+          startOptions: null,
+        }],
+      })}
+      bots={[]}
+      onOpenRecharge={() => undefined}
+    />,
+  );
+  assert.ok(html.includes('assistant-status-shimmer'), 'desktop Bot activity indicator is reused');
+  assert.ok(html.includes('Understanding your follow-up'), 'natural activity copy is rendered');
+  assert.ok(!html.includes('Sending and waiting for tenant confirmation'), 'mechanical submission copy is removed');
+  assert.ok(!html.includes('Sending your follow-up'), 'transport-oriented follow-up copy is removed');
 });

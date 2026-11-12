@@ -13,6 +13,7 @@ type Chat = ReturnType<typeof useChat>;
 function chatFixture(): Chat {
   return {
     messages: [],
+    activityMessages: [],
     sessions: [],
     sessionId: null,
     sessionTitle: null,
