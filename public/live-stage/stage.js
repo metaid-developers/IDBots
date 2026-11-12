@@ -45,6 +45,90 @@
     return reducedMedia.matches || !state.enabled || document.hidden;
   }
 
+  const textChannels = [
+    { element: $('[data-core-title]'), value: '', chars: [], typed: 0, nextAt: 0, typing: false, renderedTyped: -1, delay: 80, zhRate: 30, enRate: 58 },
+    { element: $('[data-core-caption]'), value: '', chars: [], typed: 0, nextAt: 0, typing: false, renderedTyped: -1, delay: 220, zhRate: 38, enRate: 72 },
+  ];
+  const textMotion = { energy: 0, voiceUntil: 0, lastFrameAt: 0 };
+  const TEXT_PAUSES = { '，': 160, '、': 140, ',': 120, '；': 220, ';': 200, '：': 180, ':': 160, '。': 360, '！': 360, '？': 360, '.': 300, '!': 300, '?': 300, '…': 260, '—': 160 };
+
+  function renderTextChannel(channel) {
+    if (channel.renderedTyped === channel.typed) return;
+    channel.renderedTyped = channel.typed;
+    const freshFrom = channel.typing ? Math.max(0, channel.typed - 2) : channel.typed;
+    const nodes = [];
+    const settled = channel.chars.slice(0, freshFrom).join('');
+    if (settled) nodes.push(document.createTextNode(settled));
+    if (freshFrom < channel.typed) {
+      const fresh = document.createElement('span');
+      fresh.className = 'core-fresh';
+      fresh.textContent = channel.chars.slice(freshFrom, channel.typed).join('');
+      nodes.push(fresh);
+    }
+    if (channel.typing) {
+      const caret = document.createElement('span');
+      caret.className = 'core-caret';
+      caret.setAttribute('aria-hidden', 'true');
+      nodes.push(caret);
+    }
+    channel.element.replaceChildren(...nodes);
+    channel.element.dataset.typing = String(channel.typing);
+  }
+
+  function setTextChannel(channel, value, now) {
+    const next = typeof value === 'string' ? value : '';
+    if (channel.value === next) return;
+    channel.value = next;
+    channel.chars = Array.from(next);
+    channel.typing = !effectiveReduced() && channel.chars.length > 0;
+    channel.typed = channel.typing ? 0 : channel.chars.length;
+    channel.nextAt = now + channel.delay;
+    channel.renderedTyped = -1;
+    renderTextChannel(channel);
+  }
+
+  function finishTextChannels() {
+    for (const channel of textChannels) {
+      channel.typed = channel.chars.length;
+      channel.typing = false;
+      renderTextChannel(channel);
+    }
+  }
+
+  function updateTextMotion(now) {
+    const dt = textMotion.lastFrameAt === 0 ? 0 : Math.min(.08, Math.max(0, (now - textMotion.lastFrameAt) / 1000));
+    textMotion.lastFrameAt = now;
+    textMotion.energy *= Math.exp(-dt * 7.5);
+    if (effectiveReduced()) {
+      finishTextChannels();
+      textMotion.energy = 0;
+      textMotion.voiceUntil = 0;
+    } else {
+      for (const channel of textChannels) {
+        if (!channel.typing) continue;
+        let changed = false;
+        while (channel.typing && now >= channel.nextAt) {
+          const char = channel.chars[channel.typed];
+          channel.typed += 1;
+          changed = true;
+          if (/[\p{L}\p{N}]/u.test(char)) textMotion.energy = Math.min(1, textMotion.energy + (state.language === 'zh' ? .42 : .24));
+          textMotion.voiceUntil = now + 150;
+          channel.nextAt += 1000 / (state.language === 'zh' ? channel.zhRate : channel.enRate) + (TEXT_PAUSES[char] || 0);
+          if (channel.typed >= channel.chars.length) channel.typing = false;
+        }
+        if (changed) renderTextChannel(channel);
+      }
+    }
+    body.dataset.voice = !effectiveReduced() && now < textMotion.voiceUntil ? 'on' : 'off';
+    const modulation = {
+      radius: textMotion.energy * .008,
+      contourDeform: textMotion.energy * .025,
+      edgeGlow: textMotion.energy * .07,
+      exposure: textMotion.energy * .08,
+    };
+    orbLayers.forEach((layer) => layer.controller?.setModulation(modulation));
+  }
+
   function resizeParticles() {
     const ratio = Math.min(window.devicePixelRatio || 1, 2);
     width = canvas.clientWidth; height = canvas.clientHeight;
@@ -63,13 +147,15 @@
 
   function drawParticles(time = 0) {
     if (!state || !width || !height) return;
+    const now = time || performance.now();
+    updateTextMotion(now);
     ctx.clearRect(0, 0, width, height);
     const reduced = effectiveReduced();
     if (reduced !== (body.dataset.motion === 'reduced')) {
       applyState();
       return;
     }
-    const t = reduced ? state.motion.seed * .01 : time / 1000;
+    const t = reduced ? state.motion.seed * .01 : now / 1000;
     const structured = state.topology.mode === 'structured';
     const cx = width * (structured ? .56 : .67), cy = height * .45;
     if (structured) {
@@ -194,17 +280,21 @@
   function mountOrb(family) {
     if (orbStarting || orbFailed || !state.enabled || document.hidden) return;
     const previous = orb;
-    const style = window.liquidOrbStyleForFamily(family);
+    const params = window.liquidOrbParamsForFamily(family);
+    const style = params.style;
     const layerCanvas = document.createElement('canvas');
     layerCanvas.className = 'liquid-orb-canvas';
     layerCanvas.dataset.orbStyle = String(style);
     layerCanvas.setAttribute('aria-hidden', 'true');
     $('.membrane').append(layerCanvas);
-    const layer = { canvas: layerCanvas, controller: null, style, family, fadeTimer: 0 };
+    const layer = { canvas: layerCanvas, controller: null, style, family, speed: params.speed, fadeTimer: 0 };
     orbLayers.add(layer);
     orb = layer;
     orbStarting = true;
+    const previousPhase = previous?.controller?.getPhase();
     window.createLiquidOrbRenderer(layerCanvas, {
+      initialFamily: family,
+      startPhase: Number.isFinite(previousPhase) ? previousPhase * ((previous?.speed || 1) / (params.speed || 1)) : undefined,
       sharedResources: previous?.controller?.getSharedResources(),
       onReady: () => {
         if (orb !== layer) return;
@@ -238,10 +328,10 @@
       mountOrb(family);
       return;
     }
-    if (effectiveReduced()) return;
     orb.family = family;
+    orb.speed = window.liquidOrbParamsForFamily(family).speed;
     if (orbStarting) return;
-    if (orb.controller && orb.controller.getStyle() !== window.liquidOrbStyleForFamily(family)) mountOrb(family);
+    if (!effectiveReduced() && orb.controller && orb.controller.getStyle() !== window.liquidOrbStyleForFamily(family)) mountOrb(family);
     else orb.controller?.setState(family, effectiveReduced());
   }
 
@@ -609,14 +699,16 @@
   function applyState() {
     body.dataset.enabled = String(state.enabled);
     body.dataset.family = state.family;
+    body.dataset.activity = window.liquidOrbActivityForFamily(state.family);
     body.dataset.topology = state.topology.mode;
     body.dataset.motion = effectiveReduced() ? 'reduced' : 'full';
     document.title = `${state.botName} · Live Stage`;
     $('[data-bot-name]').textContent = `${state.botName} · Twin presence`;
     $('[data-core-family]').textContent = state.family;
     $('[data-core-verb]').textContent = state.family;
-    $('[data-core-title]').textContent = state.headline;
-    $('[data-core-caption]').textContent = state.caption;
+    const now = performance.now();
+    setTextChannel(textChannels[0], state.headline, now);
+    setTextChannel(textChannels[1], state.caption, now);
     const nodes = Object.fromEntries(state.topology.nodes.map((node) => [node.id, node]));
     $('[data-node-source]').textContent = nodes.source?.label || 'Source';
     $('[data-node-worker]').textContent = nodes.worker?.label || 'Worker';
@@ -650,6 +742,14 @@
     getState: () => state
   };
   window.__getLiveStageState = () => state;
+  window.__liveStageMotion = () => ({
+    activity: body.dataset.activity || '',
+    voice: body.dataset.voice || 'off',
+    energy: textMotion.energy,
+    orbFamily: orb?.family || state.family,
+    orbStyle: orb?.style ?? window.liquidOrbStyleForFamily(state.family),
+    text: textChannels.map((channel) => ({ value: channel.value, typed: channel.typed, length: channel.chars.length, typing: channel.typing })),
+  });
   window.__liveStageBackend = 'loading';
   reducedMedia.addEventListener('change', applyState);
   document.addEventListener('visibilitychange', applyState);
