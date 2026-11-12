@@ -61,11 +61,32 @@ export function dshRuntimeConfigFileName(runtimeId?: string): string {
   return `cordis.runtime.${safe || 'default'}.json`
 }
 
+/** Handshake budget for a plain provider runtime. */
+export const DSH_INITIALIZE_TIMEOUT_MS = 20_000
+/**
+ * Browser and desktop slots load Playwright and cua-driver before `initialize`
+ * returns. That boot was measured at 11–38s (coworkRunner warmup notes), so
+ * the plain 20s budget failed the turn on slower hosts. The runtime tests for
+ * those compositions already allow 60s.
+ */
+export const DSH_AUTOMATION_INITIALIZE_TIMEOUT_MS = 60_000
+
+export function dshInitializeTimeoutMs(
+  config: Pick<DshRuntimeConfigInput, 'browserUse' | 'computerUse'>,
+): number {
+  if (config.browserUse !== undefined || config.computerUse === true) {
+    return DSH_AUTOMATION_INITIALIZE_TIMEOUT_MS
+  }
+  return DSH_INITIALIZE_TIMEOUT_MS
+}
+
 export interface DshKernelOptions {
   /** Directory containing bin.mjs + node_modules (defaults: repo dsh-runtime/). */
   runtimeDir?: string
   /** Node executable override (tests). Defaults to resolveElectronExecutablePath(). */
   nodePath?: string
+  /** Handshake budget override (tests). Production uses {@link dshInitializeTimeoutMs}. */
+  initializeTimeoutMs?: number
   handlers: DshKernelHandlers
   log?: (level: 'info' | 'warn' | 'error', message: string, detail?: unknown) => void
   /**
@@ -258,7 +279,7 @@ export class DshKernel {
       args: [binPath, configPath],
       environment: () => mergeDshRuntimeProcessEnv({ configEnv: config.env }),
       description: 'idbots-dsh-runtime',
-      initializeTimeoutMs: 20_000,
+      initializeTimeoutMs: this.opts.initializeTimeoutMs ?? dshInitializeTimeoutMs(config),
     })
     client.start()
     const first = config.providers[0]
@@ -271,8 +292,11 @@ export class DshKernel {
     } catch (error) {
       // Keep the provider and SDK diagnostics intact; the typed error lets the
       // turn runner retry the original prompt on its fallback brain.
+      // this.client is only assigned after a successful handshake, so a timed-out
+      // child would otherwise keep running and the next turn would spawn another.
       const runtimeKey = config.runtimeId ?? first?.key ?? 'unknown'
       const detail = error instanceof Error ? error.message : String(error)
+      await client.close().catch(() => undefined)
       throw new DshRuntimeBootError(
         `DSH runtime for provider "${runtimeKey}" failed to boot. This is usually a provider/model configuration problem (a reasoning or compat setting this wire rejects) or broken runtime dependencies, not a transient network issue. Original error: ${detail}`,
       )
