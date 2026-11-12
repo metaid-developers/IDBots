@@ -35,6 +35,7 @@ CLAUDE.md
 localdocs/
 docs/*
 !docs/twin-bot-orchestration.md
+!docs/s3-fiat-closure-report.md
 !docs/social-read-resilience.md
 !docs/nft-trade-protocol-draft.md
 !docs/nft-indexer-requirements.md
@@ -956,6 +957,8 @@ blob-report/
 !tests/paymentCardSyntax.test.ts
 !tests/paymentLaunchWatchdog.test.ts
 !tests/paymentPendingRecords.test.ts
+!tests/paymentLaunchUrl.test.ts
+!tests/pendingPaymentRecordsPanel.test.tsx
 
 # AX-first desktop locate (feat/agent-desktop-ax)
 !tests/desktopAxLiveHarness.mjs

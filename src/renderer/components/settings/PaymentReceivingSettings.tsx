@@ -25,6 +25,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import jsQR from 'jsqr';
 import { PhotoIcon, TrashIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
+import PendingPaymentRecordsPanel from './PendingPaymentRecordsPanel';
 
 interface ReceivingFormState {
   payeeDisplayName: string;
@@ -77,7 +78,7 @@ async function decodeQrFromDataUrl(dataUrl: string): Promise<string | null> {
 // drive the real module, then pin the wiring in source).
 // ---------------------------------------------------------------------------
 
-export type PaymentSettingsTab = 'alipay';
+export type PaymentSettingsTab = 'alipay' | 'pending';
 
 export interface PaymentModalState {
   open: boolean;
@@ -90,9 +91,11 @@ export type PaymentModalAction =
   | { type: 'switch-tab'; tab: PaymentSettingsTab };
 
 /** Tabs of the receiving-settings modal. New payment methods add rows here —
- * the tab bar renders whatever lives in this list. */
+ * the tab bar renders whatever lives in this list. 'pending' is the read side
+ * of「我已支付」: the local verification list + seller confirmation. */
 export const PAYMENT_SETTINGS_TABS: { key: PaymentSettingsTab; labelKey: string }[] = [
   { key: 'alipay', labelKey: 'paymentSettingsTabAlipay' },
+  { key: 'pending', labelKey: 'paymentSettingsTabPending' },
 ];
 
 export const initialPaymentModalState: PaymentModalState = { open: false, activeTab: 'alipay' };
@@ -475,9 +478,8 @@ const PaymentReceivingSettingsModal: React.FC<{
 
       {/* body: one panel per tab; the Alipay panel is the original form */}
       <div className="px-6 py-5 max-h-[70vh] overflow-y-auto">
-        {state.activeTab === 'alipay' ? (
-          <PaymentReceivingForm />
-        ) : null}
+        {state.activeTab === 'alipay' ? <PaymentReceivingForm /> : null}
+        {state.activeTab === 'pending' ? <PendingPaymentRecordsPanel /> : null}
       </div>
 
       <div className="flex justify-end px-6 py-4 border-t dark:border-claude-darkBorder border-claude-border">
