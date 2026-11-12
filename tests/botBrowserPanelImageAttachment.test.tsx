@@ -145,7 +145,15 @@ test('the panel renders through the shared body and keeps no splitter copy of it
   );
 
   // Assistant branches are untouched: still two markdown renders (assistant
-  // mode bubble + plain final answer), and the old plain-text bubble pass is gone.
-  assert.equal((panelSource.match(/<MarkdownContent content=\{message\.content\}/g) ?? []).length, 2);
+  // mode bubble + plain final answer), and the old plain-text bubble pass is
+  // gone. \s+ keeps the count honest across prop formatting: the two renders
+  // used to sit on one line each, and the onOpenLocalFile/emojiImages props
+  // (studio-experience line) wrapped them multi-line without changing a thing
+  // about the two-site contract.
+  assert.equal(
+    (panelSource.match(/<MarkdownContent\s+content=\{message\.content\}/g) ?? []).length,
+    2,
+    'still exactly two assistant markdown renders',
+  );
   assert.equal(panelSource.includes('TwemojiText'), false, 'the user bubble no longer uses the plain-text pass');
 });
