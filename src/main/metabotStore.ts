@@ -427,8 +427,10 @@ export class MetabotStore {
    * Returns enabled MetaBots with minimal fields for picker/selector UI.
    * Twin is ordered first for default selection. `created_at` drives the
    * by-Bot session view's group order (Twin first, then oldest bot first).
+   * `globalmetaid` is the observer identity the Memory settings contacts
+   * tab resolves its per-bot contact list against — keep it in the payload.
    */
-  getAllMetaBots(): Array<{ id: number; name: string; avatar: string | null; metabot_type: string; created_at: number; role: string }> {
+  getAllMetaBots(): Array<{ id: number; name: string; avatar: string | null; globalmetaid: string | null; metabot_type: string; created_at: number; role: string }> {
     const rows = this.getAll<MetabotRow>(
       "SELECT * FROM metabots WHERE enabled = 1 ORDER BY metabot_type = 'twin' DESC, id ASC"
     );
@@ -436,6 +438,7 @@ export class MetabotStore {
       id: row.id,
       name: row.name,
       avatar: avatarFromRow(row),
+      globalmetaid: row.globalmetaid ?? null,
       metabot_type: row.metabot_type,
       created_at: row.created_at,
       role: row.role,

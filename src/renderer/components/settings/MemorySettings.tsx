@@ -257,12 +257,14 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       // Use idbots:getMetaBots which returns sorted list (twin first, then by creation time)
       const result = await window.electron?.idbots?.getMetaBots?.();
       const list: MetabotOption[] = result?.success && Array.isArray(result.list)
-        ? result.list.map((item) => ({
+          ? result.list.map((item) => ({
             id: item.id,
             name: item.name,
             avatar: item.avatar ?? null,
             metabot_type: item.metabot_type,
-            globalmetaid: null, // idbots:getMetaBots doesn't include globalmetaid, but we don't need it for the selector
+            // Observer identity for the contacts tab — null here silently
+            // empties the whole contact-impression list.
+            globalmetaid: item.globalmetaid ?? null,
             created_at: item.created_at,
           }))
         : [];
