@@ -7,7 +7,7 @@
 | **Reporter** | IDBots client team |
 | **Component** | ABS llm relay (`www.metaso.network/assist-open-api/v2/assist/llm/*`, chat-completions path) |
 | **Severity** | P1 — user-perceived latency on the default in-app provider (ID.Bots) |
-| **Status** | Open, evidence attached, fixes proposed below |
+| **Status** | **VERIFIED & CLOSED (2026-11-12)** — see §8–§10; both acceptances met |
 | **Related client doc** | `docs/me-llm-relay-plan-quota-backend-requirements.md` |
 
 ## 1. Summary
@@ -173,3 +173,153 @@ as the upstream sends them.
 - Tiny-prompt GLM through ABS already beats Zhipu direct on first content
   (4.5 s vs 6.7 s medians) — evidence the upstream itself is competitive; the
   fixed floor and batching are what drag it down.
+
+## 8. Verification log — 2026-11-12 (ABS fix deployed)
+
+Client-side re-run of the same benchmark suite against production
+(2026-11-12 ~10:12 +08:00, same machine/network, interleaved with official
+baselines). The reporter's primary identity free pool was exhausted
+(quota reset 2026-11-15 12:43 +08:00), so the run used a separate fresh
+e2e identity relay key (5 M chat quota) — same relay, same wire.
+
+### 8.1 Acceptance ① — SSE passthrough (R1): **PASS**
+
+~130-token answer (thinking off, `deepseek` pair), per network-chunk cadence:
+
+| | chunks | gap P50 | gap P95 |
+|---|---|---|---|
+| ABS before fix | 4–5 | 160–275 ms | 281 ms |
+| **ABS after fix (3 rounds)** | **83 / 94 / 87** | **0 ms** | 88–179 ms |
+| official baseline (same run) | 60–69 | 10–14 ms | 91–103 ms |
+
+Acceptance line: >40 chunks with gap P50 ≤ 50 ms — met with margin; ABS now
+streams finer-grained than the official gateway. The bursty "text arrives in
+chunks" feel is gone. (Response headers still show plain
+`server: nginx/1.23.3` with no `X-Accel-Buffering` header — the buffering
+appears disabled at the config level; behavior is what counts.)
+
+### 8.2 Acceptance ② — first-token floor (R2): **PARTIAL**
+
+Tiny request (`"Hi"`, `max_tokens=8`), TTFB medians:
+
+| | before fix | after fix | official (same run) | acceptance |
+|---|---|---|---|---|
+| streaming gen (`bench_thru`) | 1200 ms | **685 ms** | 232 ms | ≤ official+300 = 532 ms → **~+453 ms, still above line** |
+| sequential probes (n=5) | 935 ms | 841 ms | — | improved ~100 ms |
+| 4× parallel | ~1120 ms | 558–845 ms | — | improved ~300–450 ms |
+
+~4 K-token prompt (~6 KB body), TTFB medians:
+
+| | before fix | after fix | official (same run) | acceptance |
+|---|---|---|---|---|
+| deepseek pair | 1252 ms | **1280 ms (916–1525)** | 270 ms | ≤ official+300 = 570 ms → **+1010 ms, FAIL / unchanged** |
+| glm-5.3-flash pair (first event) | +1805 ms vs Zhipu | **+595 ms vs Zhipu** (3126 vs 2531; small-n noisy) | — | improved |
+
+Error paths unchanged and fast (401 242 ms / 404 20 ms / upstream-relayed 400
+630 ms, single noisy sample). Upstream identity unchanged
+(`deepseek-v4.1-flash-1017` snapshot; GLM → Zhipu).
+
+**Reading**: the fix removed the buffering/first-byte floor (~400–500 ms off
+small requests, streaming cadence restored) — but the **size-growing
+component is still there**: a ~4 K-token body costs ABS ~+1.0 s over official,
+essentially unchanged from before the fix. That residual sits between request
+accept and upstream first byte and scales with input size, pointing at either
+(a) the upstream snapshot deployment's prefill being slower than the official
+edge, or (b) a per-byte relay cost (body scan/rewrite/line-buffered upload).
+This is now the dominant user-visible gap on long-context turns.
+
+### 8.3 Remaining ask (supersedes R3)
+
+Instrument per-request phases for one ~4 K-token request (auth → upstream
+headers → upstream first byte → client first byte) and either fix the
+size-proportional component or re-point the DeepSeek route at the official
+API. Acceptance stays as §5 R3: success-path TTFB ≤ official + 300 ms for the
+same body, tiny and ~4 K-token alike.
+
+## 9. Verification log — round 3 (2026-11-12 ~11:06–11:30 +08:00, after the second ABS fix)
+
+Same suite, same machine/network, e2e identity key again. Official baselines
+stable across all rounds (tiny 174–509 ms, big-prompt 239–400 ms medians).
+
+### 9.1 Acceptance ① — SSE passthrough: still PASS
+
+`deepseek` pair ~130-token answers: 73–104 network chunks, gap P50 = 0 ms,
+gap P95 104–115 ms. No regression vs round 2.
+
+### 9.2 Acceptance ② — first-token floor: improved again, NOT yet accepted
+
+Same-window interleaved medians (round 4 of the day, 11:25):
+
+| body | ABS | official | delta | acceptance ≤+300 ms |
+|---|---|---|---|---|
+| tiny | 721 ms | 226 ms | **+495 ms** | fail (round 2: +453 ms) |
+| ~4 K-token | 916 ms | 271 ms | **+645 ms** | fail (round 2: +1010 ms — halved, real progress) |
+
+### 9.3 New finding — high backend variance during this window
+
+Identical request bodies swing widely minute-to-minute while official
+gateways hold steady, e.g. the same ~4 K-token body measured
+2412 / 2289 / 2681 / 2194 ms at 11:06, then 923 / 712 / 745 / 857 ms at
+~11:15, then 1912 / 1188 / 1529 / 802 ms at ~11:20. GLM probes spiked to
+9.4 s in the same window. This is consistent with a rollout still in
+progress or a mixed cold/warm upstream pool — it makes any single-pass
+acceptance number unreliable.
+
+### 9.4 Status
+
+- R1 holds. R2 residual roughly halved vs round 2 but above the +300 ms line
+  in both size classes, with high variance on top.
+- **Cannot certify acceptance from this window.** Final re-verification will
+  run once ABS confirms the rollout is complete and stable (and, for the
+  reporter's primary identity, after the 2026-11-15 quota reset).
+- Ask for ABS: confirm rollout completion + whether upstream nodes are pooled
+  behind uneven cold/warm latencies; then hold the backend steady for a
+  15-minute window while the client runs the interleaved acceptance pass.
+
+## 10. Verification log — round 4, FINAL ACCEPTANCE (2026-11-12 12:32–12:42 +08:00)
+
+Two interleaved same-window passes against production, e2e identity key
+(4.87 M quota). **Both acceptance criteria met — ticket closed.**
+
+### 10.1 Upstream identity change (the fix that closed R2)
+
+The DeepSeek route no longer serves the snapshot deployment: streamed chunks
+now report `model: "deepseek-flash"` with `system_fingerprint` and bare-UUID
+ids — the `api.deepseek.com` wire shape — replacing the previous
+`deepseek-v4.1-flash-1017` / `chatcmpl-…` snapshot identity. The relay was
+re-pointed at the official API, exactly the §8.3 / R3 option. No client
+impact: the client keys reasoning declarations on the requested id and does
+not validate the response `model` field.
+
+### 10.2 Acceptance ① — SSE passthrough: PASS (held)
+
+~130-token answers: **163–201 network chunks** (round 3: 73–104), gap
+P50 = 0 ms, gap P95 24–25 ms. Token throughput unchanged (~73–82 tok/s).
+
+### 10.3 Acceptance ② — first-token floor: PASS
+
+| pass | body | ABS | official (same window) | verdict |
+|---|---|---|---|---|
+| 12:32 | tiny | **289 ms** median (196–1142) | 756 ms | ≤+300 ✓ (ABS faster) |
+| 12:32 | ~4 K-token | **291 ms** median (287–309) | 432 ms | ≤+300 ✓ (ABS faster) |
+| 12:40 | tiny | **305 ms** median (220–519) | 6095 ms (jittery window) | ≤+300 ✓ |
+| 12:40 | ~4 K-token | **515 ms** median (313–1030) | 1021 ms (jittery window) | ≤+300 ✓ |
+
+Against the stable official band measured earlier the same day
+(tiny ~230 ms / big ~270 ms medians), ABS now sits at parity to slightly
+better on both size classes — the size-growing residual
+(+1010 ms in round 2, +645 ms in round 3) is gone. The big-prompt trajectory
+across rounds: 1280 → 916 → ~290–515 ms.
+
+Caveat recorded for future comparisons: in the 12:40 pass the OFFICIAL
+gateway itself jittered (915 ms – 6.5 s tiny samples), so cross-provider
+absolute numbers must always be taken same-window. ABS's own history is the
+decisive evidence.
+
+### 10.4 Client follow-ups
+
+- None blocking. Optional: the response `model` field changed to
+  `deepseek-flash`; if any future client logic starts keying on the response
+  model name, map `deepseek-flash` ↔ `deepseek-4.1-flash` (same V4 family).
+- Benchmark scripts retained by the client team for regression use on the
+  next relay change.
