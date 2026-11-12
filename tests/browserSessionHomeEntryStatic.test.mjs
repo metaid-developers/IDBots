@@ -133,11 +133,10 @@ test('Bot Browser panel history still lists ONLY browser sessions', () => {
     /sessions\.filter\(\(session\)\s*=>\s*session\.sessionType\s*===\s*'browser'\)/,
     'the panel history is browser-only and must keep its own filter',
   );
-  // Bot-centered scope (owner spec 2026-11-11 17:28 ②): the parent hands the
-  // panel the PRESENTED bot (the chip bot — live session bot, draft pick
-  // otherwise), and the panel itself narrows to that bot's rows, so switching
-  // bots moves the list with it.
-  assert.match(source, /botId=\{chipMetabot\?\.id \?\? null\}/);
+  // The parent owns an independent history filter and hands the selected bot
+  // to the panel; selecting another bot does not change the conversation.
+  assert.match(source, /bot=\{historyMetabot\}/);
+  assert.match(source, /onSelectBot=\{\(nextBot\) => setHistoryBotId\(nextBot\.id\)\}/);
   const panel = read('src/renderer/features/botBrowser/CoworkHistoryPanel.tsx');
   assert.match(
     panel,

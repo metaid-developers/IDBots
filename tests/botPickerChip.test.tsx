@@ -9,16 +9,9 @@ import BotPickerChip, {
 import { bindSeatMenuOutsideDismiss } from '../src/renderer/features/botBrowser/seatMenuDismiss';
 import { i18nService } from '../src/renderer/services/i18n';
 
-// Behavior coverage for the Studio surface-header bot picker (owner ruling
-// 2026-11-11; v3 close wiring same day): the draft state is a PURE selection
-// control whose menu lists the whole roster with every row enabled — picking
-// a bot only decides which bot runs the next conversation, it never writes
-// metabot_type or appoints a Twin (that stays owned by the My Bots editor).
-// The chip is draft-only since the v3 close wiring: a live session's header
-// identity is the read-only CoworkSurfaceIdentityBadge, covered by
-// surfaceIdentityBadge.test.tsx. An open menu closes on an outside pointer
-// but not on a menu row, which still runs its selection. No real roster is
-// touched.
+// Behavior coverage for the shared Studio bot picker: roster rows stay enabled,
+// selection never writes metabot_type, compact history presentation is supported,
+// and outside-pointer dismissal does not swallow menu-row selection.
 
 const twin: BotPickerChipBot = { id: 1, name: 'Alice', avatar: null, metabot_type: 'twin', role: 'Twin' };
 const worker: BotPickerChipBot = { id: 2, name: 'Bob', avatar: null, metabot_type: 'worker', role: 'Builder' };
@@ -74,7 +67,7 @@ test('draft chip renders the selected bot once and is the picker trigger', () =>
   assert.match(html, /aria-haspopup="menu"/);
   assert.match(html, /aria-expanded="false"/);
   assert.match(html, /data-slot="bot-picker-container"/);
-  assert.match(html, /h-8 w-8 shrink-0[^"]*rounded-full/);
+  assert.match(html, /h-8 w-8[^"]*rounded-full/);
   assert.match(html, /gap-2/);
   assert.match(html, /text-sm font-medium/);
   assert.equal(
@@ -85,6 +78,20 @@ test('draft chip renders the selected bot once and is the picker trigger', () =>
   assert.match(html, /data-slot="metabot-twin-badge"/);
   assert.doesNotMatch(html, /role="menu"/);
   assert.ok(html.includes(i18nService.t('botInternetBotPickerChip')));
+});
+
+test('compact picker supports history-specific copy and avatar sizing', () => {
+  const html = renderChip({
+    size: 'compact',
+    ariaLabel: 'Filter session history by bot',
+    menuHint: 'Only filters history',
+    menuOpen: true,
+  });
+  assert.match(html, /h-5 w-5 rounded-md/);
+  assert.match(html, /h-7 gap-1.5/);
+  assert.ok(html.includes('aria-label="Filter session history by bot"'));
+  assert.ok(html.includes('Only filters history'));
+  assert.doesNotMatch(html, new RegExp(i18nService.t('botInternetBotPickerHint')));
 });
 
 test('open picker menu lists every bot with no disabled rows', () => {

@@ -8,15 +8,13 @@ import {
   type SurfaceIdentityRosterEntry,
 } from './surfaceIdentityBadge';
 
-/**
- * Read-only live-session identity: a 32 px avatar with the bot name to its
- * right and an optional Twin mark, centered above the session title.
- */
+/** Read-only live identity; hover or keyboard focus previews the session title. */
 export const SurfaceIdentityBadgeView: React.FC<{ identity: ResolvedSurfaceIdentity }> = ({ identity }) => (
   <div
     data-slot="cowork-surface-identity-badge"
     title={identity.name}
-    className="flex h-9 min-w-0 max-w-full items-center justify-center gap-2 px-1"
+    tabIndex={0}
+    className="flex h-9 min-w-0 max-w-full items-center justify-center gap-2 rounded-lg px-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
   >
     {identity.avatar && isRenderableAvatarSource(identity.avatar) ? (
       <img

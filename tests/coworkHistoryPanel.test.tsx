@@ -32,11 +32,18 @@ const session = (overrides: Partial<CoworkSessionSummary>): CoworkSessionSummary
   ...overrides,
 });
 
+const historyBots = [
+  { id: 7, name: 'Friday', avatar: null, metabot_type: 'twin' },
+  { id: 9, name: 'Builder', avatar: null, metabot_type: 'worker' },
+];
+
 function render(sessions: CoworkSessionSummary[], currentSessionId: string | null = null, botId: number | null = 7) {
   return renderToStaticMarkup(
     <CoworkHistoryPanel
       sessions={sessions}
-      botId={botId}
+      bot={historyBots.find((bot) => bot.id === botId) ?? null}
+      bots={historyBots}
+      onSelectBot={() => {}}
       currentSessionId={currentSessionId}
       onSelectSession={() => {}}
       onDeleteSession={() => {}}
@@ -55,6 +62,18 @@ test('the records panel opens with the baseline section label and a count', () =
   // The count keeps its muted tabular-nums slot (anchored, so the calendar's
   // day numbers can never satisfy it).
   assert.match(markup, /tabular-nums[^>]*>2</, 'the record count is shown as a muted number');
+});
+
+test('the bot selector sits beside the history label and above the calendar', () => {
+  const markup = render([session({ id: 'a' })]);
+  const historyLabelAt = markup.indexOf(i18nService.t('botBrowserCoworkHistory'));
+  const botFilterAt = markup.indexOf('data-slot="cowork-history-bot-filter"');
+  const dateFilterAt = markup.indexOf('data-slot="cowork-history-date-filter"');
+  assert.ok(historyLabelAt >= 0 && historyLabelAt < botFilterAt, 'selector follows the history label');
+  assert.ok(botFilterAt < dateFilterAt, 'selector stays above the calendar');
+  assert.ok(markup.includes(i18nService.t('botBrowserHistoryBotFilter')));
+  assert.match(markup, /h-5 w-5 rounded-md/);
+  assert.match(markup, /Friday/);
 });
 
 test('record rows keep the original IDBots row grammar', () => {

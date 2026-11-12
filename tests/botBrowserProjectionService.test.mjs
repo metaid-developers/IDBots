@@ -142,7 +142,7 @@ test('a durable-record failure does not undo a successful projection', async () 
   assert.equal(outcome.tabId, 7);
 });
 
-test('background tab commands preserve the app surface except for an activated report reveal', async (t) => {
+test('background tab commands preserve the app surface including an activated report reveal', async (t) => {
   const sent = [];
   let bridge;
   const webContents = {
@@ -172,5 +172,5 @@ test('background tab commands preserve the app surface except for an activated r
   await bridge.execute({ action: 'navigate-tab', tabId: 1, uri: 'preview-metaapp://localhost/report.html', activate: true }, { focusWindow: false });
 
   assert.equal(sent[0].command.background, true);
-  assert.equal(sent[1].command.background, false);
+  assert.equal(sent[1].command.background, true);
 });

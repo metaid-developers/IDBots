@@ -194,6 +194,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   // BotWorks closes it — the panel unmounts on that face anyway, and a stale
   // "open" must not greet the next visit.
   const [panelHistoryOpen, setPanelHistoryOpen] = useState(false);
+  const [studioTitlePreviewOpen, setStudioTitlePreviewOpen] = useState(false);
   const dispatch = useDispatch();
   // Which task-record category the home history list shows. Persisted across
   // app restarts; the header + tabs stay fixed while only the list scrolls.
@@ -607,10 +608,11 @@ const Sidebar: React.FC<SidebarProps> = ({
     const fromList = sessions.find((session) => session.id === browserOpenSessionId);
     return fromList?.title ?? browserOpenSessionFallbackTitle ?? '';
   }, [browserOpenSessionId, sessions, browserOpenSessionFallbackTitle]);
+  useEffect(() => setStudioTitlePreviewOpen(false), [browserOpenSessionId]);
+  const showStudioTitle = Boolean(browserOpenSessionId && studioTitlePreviewOpen);
 
-  // BotWorks keeps a compact action row. Studio uses a taller task header:
-  // the bot identity is centered above the inline-renamable session title,
-  // while session actions stay anchored to the upper-right corner.
+  // Studio rests at identity height. Hovering or focusing the identity reveals
+  // the session title; the header stays open while the title is being edited.
   const surfaceHeaderActions = mode === 'home' ? (
     <>
       <button
@@ -628,18 +630,47 @@ const Sidebar: React.FC<SidebarProps> = ({
       <SleepGuardBadge />
     </>
   ) : (
-    <div data-slot="studio-task-header" className="relative flex h-16 w-full min-w-0 flex-col items-center gap-1">
-      <div className="flex h-9 w-full min-w-0 items-center justify-center">
+    <div
+      data-slot="studio-task-header"
+      className={`relative flex w-full min-w-0 flex-col items-center gap-1 transition-[height] duration-150 ${showStudioTitle ? 'h-16' : 'h-9'}`}
+      onMouseLeave={(event) => {
+        if (!event.currentTarget.contains(document.activeElement)) setStudioTitlePreviewOpen(false);
+      }}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setStudioTitlePreviewOpen(false);
+      }}
+    >
+      <div
+        className="flex h-9 w-full min-w-0 shrink-0 items-center justify-center"
+        onMouseEnter={() => {
+          if (browserOpenSessionId) setStudioTitlePreviewOpen(true);
+        }}
+        onFocus={() => {
+          if (browserOpenSessionId) setStudioTitlePreviewOpen(true);
+        }}
+      >
         <div className="flex min-w-0 max-w-[calc(100%_-_8rem)] items-center justify-center">
           <div data-slot="cowork-header-identity-anchor" className="contents" />
         </div>
       </div>
-      <CoworkSurfaceSessionName
-        sessionId={browserOpenSessionId}
-        title={browserOpenSessionTitle}
-        fallbackTitle={i18nService.t('coworkNewSession')}
-        onRename={listOnRenameSession}
-      />
+      {browserOpenSessionId ? (
+        <div
+          data-slot="studio-title-preview"
+          aria-hidden={!showStudioTitle}
+          className={`h-6 w-full shrink-0 transition-[opacity,transform] duration-150 ${
+            showStudioTitle
+              ? 'visible translate-y-0 opacity-100'
+              : 'invisible pointer-events-none -translate-y-1 opacity-0'
+          }`}
+        >
+          <CoworkSurfaceSessionName
+            sessionId={browserOpenSessionId}
+            title={browserOpenSessionTitle}
+            fallbackTitle={i18nService.t('coworkNewSession')}
+            onRename={listOnRenameSession}
+          />
+        </div>
+      ) : null}
       <div className="absolute right-0 top-0 flex h-9 items-center gap-0.5">
         <button
           type="button"
@@ -689,8 +720,8 @@ const Sidebar: React.FC<SidebarProps> = ({
       style={{ width: isCollapsed ? 0 : width }}
     >
       {/* The traffic-light strip and Studio | BotWorks band stay shared.
-          BotWorks renders compact actions below them; Studio renders the
-          taller centered bot identity and session-title header. */}
+          BotWorks renders compact actions; Studio renders a centered identity
+          header that expands only for a title preview. */}
       <div data-slot="mid-column-header" className="shrink-0">
         <BotBrowserModeSwitch
           mode={mode}

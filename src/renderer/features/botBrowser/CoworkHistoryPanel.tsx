@@ -3,6 +3,7 @@ import { XMarkIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import type { CoworkSessionSummary } from '../../types/cowork';
 import CoworkSessionItem from '../../components/cowork/CoworkSessionItem';
+import BotPickerChip, { type BotPickerChipBot } from './BotPickerChip';
 import {
   activeDayKeysOfMonth,
   calendarCells,
@@ -15,15 +16,9 @@ import {
 
 interface CoworkHistoryPanelProps {
   sessions: CoworkSessionSummary[];
-  /**
-   * The Studio-presented bot (owner spec 2026-11-11 17:28, item ②): the list
-   * is bot-centered — ONLY this bot's studio conversations render, and the
-   * parent's chip bot (draft pick or live session bot) drives the prop, so
-   * switching bots moves the list with it. Strict scoping: legacy rows with
-   * no metabotId stay out (they remain reachable from the office sidebar);
-   * null (no presented bot) renders an empty list.
-   */
-  botId: number | null;
+  bot: BotPickerChipBot | null;
+  bots: readonly BotPickerChipBot[];
+  onSelectBot: (bot: BotPickerChipBot) => void;
   currentSessionId: string | null;
   onSelectSession: (sessionId: string) => void | Promise<void>;
   onDeleteSession: (sessionId: string) => void | Promise<void>;
@@ -32,28 +27,12 @@ interface CoworkHistoryPanelProps {
   onClose: () => void;
 }
 
-/**
- * Session records of the Studio conversation window, restyled to the ORIGINAL
- * IDBots sidebar grammar (owner spec 2026-11-08 21:31; baseline commit
- * 91e2cfd43 `components/Sidebar.tsx` + `CoworkSessionItem`):
- *
- * - the block opens with the baseline's quiet 12 px section label, not a
- *   dialog title; the count sits beside it as a muted number;
- * - rows use the shared BotWorks session item, including its ellipsis menu,
- *   inline rename, pin toggle, copy action, and reversible archive;
- * - the browser source badge is retired (owner ruling 2026-11-11 17:28);
- *   the visited-page context line stays as the row's identity cue;
- * - bot-centered (owner spec 2026-11-11 17:28 ②): only the presented bot's
- *   sessions list here;
- * - an INLINE "browse by date" block (owner spec 2026-11-11 17:28 ③) sits
- *   between the header and the rows — year/month dropdowns plus a
- *   Monday-first calendar grid, picking a day narrows the list to that day
- *   and days with sessions carry a light dot. The math lives in the pure
- *   panelHistoryDateFilter module; this component only wires state.
- */
+/** Studio session records with independent bot and date filters. */
 const CoworkHistoryPanel: React.FC<CoworkHistoryPanelProps> = ({
   sessions,
-  botId,
+  bot,
+  bots,
+  onSelectBot,
   currentSessionId,
   onSelectSession,
   onDeleteSession,
@@ -61,17 +40,15 @@ const CoworkHistoryPanel: React.FC<CoworkHistoryPanelProps> = ({
   onRenameSession,
   onClose,
 }) => {
-  // Bot-centered scope (item ②). The panel mounts fresh per open (the parent
-  // renders it conditionally), so a bot switch re-anchors everything below.
+  const [showBotMenu, setShowBotMenu] = useState(false);
+  const botId = bot?.id ?? null;
   const botSessions = useMemo(
     () => (botId != null ? sessions.filter((session) => session.metabotId === botId) : []),
     [sessions, botId],
   );
 
-  // Inline date filter (item ③). The view opens on the scoped list's newest
-  // month (today when the bot has no sessions yet); picking days is
-  // user-driven afterwards. The overlay covers the bot picker while open, so
-  // this state never has to survive a bot switch — remount handles it.
+  // The view opens on the scoped list's newest month. The parent remounts the
+  // panel by bot id, so switching bots also resets the month and picked day.
   const [monthView, setMonthView] = useState(() => initialMonthView(botSessions));
   const [selectedDayKey, setSelectedDayKey] = useState<string | null>(null);
 
@@ -105,10 +82,29 @@ const CoworkHistoryPanel: React.FC<CoworkHistoryPanelProps> = ({
       data-slot="cowork-history-panel"
       className="absolute inset-0 z-10 flex flex-col overflow-hidden rounded-lg border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted shadow-lg"
     >
-      <div className="flex shrink-0 items-center justify-between gap-2 px-3 pb-1.5 pt-2.5">
-        <span className="min-w-0 truncate text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
+      <div className="flex shrink-0 items-center gap-2 px-3 pb-1.5 pt-2.5">
+        <span className="shrink-0 text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
           {i18nService.t('botBrowserCoworkHistory')}
         </span>
+        {bot ? (
+          <div data-slot="cowork-history-bot-filter" className="min-w-0 flex-1">
+            <BotPickerChip
+              chipMetabot={bot}
+              roster={bots}
+              menuOpen={showBotMenu}
+              onToggleMenu={() => setShowBotMenu((open) => !open)}
+              onDismissMenu={() => setShowBotMenu(false)}
+              onSelect={(nextBot) => {
+                onSelectBot(nextBot);
+                setShowBotMenu(false);
+              }}
+              menuDirection="down"
+              size="compact"
+              ariaLabel={i18nService.t('botBrowserHistoryBotFilter')}
+              menuHint={i18nService.t('botBrowserHistoryBotFilterHint')}
+            />
+          </div>
+        ) : <div className="min-w-0 flex-1" />}
         <div className="flex shrink-0 items-center gap-1.5">
           {visibleSessions.length > 0 ? (
             <span className="text-[11px] tabular-nums dark:text-claude-darkTextSecondary text-claude-textSecondary">
