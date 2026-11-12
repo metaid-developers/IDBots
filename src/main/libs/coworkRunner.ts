@@ -10550,9 +10550,30 @@ export class CoworkRunner extends EventEmitter {
       // isolated — a dead route degrades out of the list (next row), never
       // voids the warmup.
       const rows = this.store.listSessions?.() ?? [];
+      // Headstart the session the owner will actually resume. The store's
+      // rank leads with pinned rows and background automation (auto-created
+      // orchestration/schedule runs rank by their own activity), but
+      // session-tab restore reopens the last ATTENDED chat, and that is the
+      // turn whose cold start the owner feels. Partition attended rows ahead
+      // of automation/hidden rows, each half keeping the store's recency
+      // rank, so the headstart combo and clean routes warm a same-day chat
+      // instead of a stale pinned planner or an overnight orchestration row
+      // (2026-11-12: the headstart combo warmed a release-planner session
+      // last active 10-23 while the owner's same-day Studio session queued
+      // behind it). Unattended surfaces keep booting on demand — their turns
+      // are machine-driven, where conversational latency is not the scarce
+      // resource (same posture as the effort chain).
+      const warmActivityOf = (row: { activityAt?: number | null; updatedAt?: number | null }): number =>
+        Number(row?.activityAt ?? row?.updatedAt ?? 0) || 0;
+      const warmAttended = (row: { autoOrigin?: unknown; hiddenFromSessionList?: unknown }): boolean =>
+        !row?.autoOrigin && !row?.hiddenFromSessionList;
+      const rowsAttendedFirst = [...rows].sort((a, b) => {
+        const attendedDiff = Number(warmAttended(b)) - Number(warmAttended(a));
+        return attendedDiff !== 0 ? attendedDiff : warmActivityOf(b) - warmActivityOf(a);
+      });
       let sessionRoute: ReturnType<typeof resolveDshProviderRoute> = null;
       let sessionRow: { id: string; cwd?: string | null } | null = null;
-      for (const row of rows) {
+      for (const row of rowsAttendedFirst) {
         if (!row?.id) continue;
         try {
           const route = this.resolveSessionDshRoute(row.id);
@@ -10622,7 +10643,7 @@ export class CoworkRunner extends EventEmitter {
         row: { id: string; cwd?: string | null };
         route: ReturnType<typeof resolveDshProviderRoute>;
       }> = [];
-      for (const row of rows) {
+      for (const row of rowsAttendedFirst) {
         if (comboWarm.length >= COWORK_WARMUP_COMBO_LIMIT) break;
         if (!row?.id) continue;
         try {

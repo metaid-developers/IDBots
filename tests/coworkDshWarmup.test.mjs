@@ -417,3 +417,103 @@ test('prewarmDshRuntime warms only the top combo at app start; other combos defe
     `the non-top automation combo must NOT boot at app start (boots: ${JSON.stringify(boots)})`,
   )
 })
+
+test('prewarmDshRuntime headstarts the most-recent ATTENDED session over stale pinned/background rows', {
+  skip: !runtimeReady ? 'dsh-runtime node_modules not installed' : false,
+}, async (t) => {
+  const { coworkRunner, claudeSettings } = (() => {
+    const originalLoad = Module._load
+    Module._load = function patchedLoad(request, parent, isMain) {
+      if (request === 'electron') {
+        return {
+          app: {
+            isPackaged: false,
+            getAppPath: () => process.cwd(),
+            getPath: (name) => path.join(process.cwd(), '.cowork-temp', `dsh-warmup-${name}`),
+          },
+        }
+      }
+      return originalLoad.apply(this, arguments)
+    }
+    try {
+      return {
+        coworkRunner: require('../dist-electron/main/libs/coworkRunner.js'),
+        claudeSettings: require('../dist-electron/main/libs/claudeSettings.js'),
+      }
+    } finally {
+      Module._load = originalLoad
+    }
+  })()
+  const { startMockServer } = await import(path.join(runtimeDir, 'test', 'fixtures', 'mock-openai.mjs'))
+  const { server } = await startMockServer(48827)
+
+  const now = Date.now()
+  const fakeConfigStore = {
+    get: (key) => {
+      if (key !== 'app_config') return undefined
+      return {
+        api: { key: 'sk-a', baseUrl: 'http://127.0.0.1:48827/v1' },
+        model: { availableModels: [{ id: 'mock-1', name: 'mock-1' }], defaultModel: 'mock-1', defaultProvider: 'mockgw' },
+        providers: {
+          mockgw: { enabled: true, apiKey: 'sk-a', baseUrl: 'http://127.0.0.1:48827/v1', apiFormat: 'openai', models: [{ id: 'mock-1', name: 'mock-1', contextWindow: 32768 }] },
+        },
+        dshKernelEnabled: true,
+      }
+    },
+  }
+  claudeSettings.setStoreGetter(() => fakeConfigStore)
+
+  const store = {
+    // Raw store rank leads with a stale PINNED planner row (last active three
+    // weeks ago) and a fresh background orchestration run — under the old
+    // headstart pick both outranked the owner's same-day chat.
+    listSessions: () => [
+      { id: 'warm-attended-stale-pin', pinned: true, activityAt: now - 21 * 86_400_000, updatedAt: now - 21 * 86_400_000 },
+      { id: 'warm-background-run', autoOrigin: 'orchestration', activityAt: now, updatedAt: now },
+      { id: 'warm-attended-fresh', activityAt: now, updatedAt: now },
+    ],
+    getSession: (id) => ({
+      id,
+      executionMode: 'local',
+      model: 'mock-1',
+      modelProvider: 'mockgw',
+      cwd: process.cwd(),
+      messages: [],
+    }),
+    getSessionWithoutMessages: (id) => store.getSession(id),
+    getConfig: () => ({ workingDirectory: process.cwd() }),
+  }
+  const runner = new coworkRunner.CoworkRunner(store, {
+    browserAutomationProvider: () => undefined,
+    computerUseProvider: () => false,
+  })
+  t.after(async () => {
+    await runner.dshTurnHub?.close().catch(() => undefined)
+    server.close()
+    claudeSettings.setStoreGetter(() => null)
+  })
+
+  const comboLogPath = path.join(process.cwd(), '.cowork-temp', 'dsh-warmup-userData', 'logs', 'cowork.log')
+  const logSizeBefore = fs.existsSync(comboLogPath) ? fs.statSync(comboLogPath).size : 0
+
+  await runner.prewarmDshRuntime()
+  const fd = fs.openSync(comboLogPath, 'r')
+  const tail = Buffer.alloc(Math.max(0, fs.statSync(comboLogPath).size - logSizeBefore))
+  fs.readSync(fd, tail, 0, tail.length, logSizeBefore)
+  fs.closeSync(fd)
+  const comboLog = tail.toString('utf8')
+  const boots = [...comboLog.matchAll(/prewarmTurnSlot\.boot\n  runtime: ([^\n]+)\n  sessionId: ([^\n]+)/g)]
+    .map((m) => ({ runtime: m[1].trim(), sessionId: m[2].trim() }))
+  assert.ok(
+    boots.some((entry) => entry.sessionId === 'warm-attended-fresh'),
+    `the attended same-day session's slot is the headstart boot (boots: ${JSON.stringify(boots)})`,
+  )
+  assert.ok(
+    !boots.some((entry) => entry.sessionId === 'warm-attended-stale-pin'),
+    `a stale pinned row must not take the headstart boot (boots: ${JSON.stringify(boots)})`,
+  )
+  assert.ok(
+    !boots.some((entry) => entry.sessionId === 'warm-background-run'),
+    `a background orchestration row must not take the headstart boot (boots: ${JSON.stringify(boots)})`,
+  )
+})
