@@ -6,7 +6,8 @@
 // contract-pinned, so both mirrors (desktop renderer store + mobile store)
 // parse tolerantly across epoch s/ms and ISO shapes. These tests pin:
 //   1. the parser on both mirrors + a drift guard between them;
-//   2. the countdown units (expired / today / whole days);
+//   2. the countdown units (expired / whole hours / days+hours — hour
+//      precision since 2026-11-13: a plan bought at noon expires at noon);
 //   3. the wiring: desktop plan card + mobile hero render the line, both
 //      locales carry the copy, and no date is ever guessed when absent.
 //
@@ -53,12 +54,22 @@ test('expiry parses epoch seconds, epoch ms and ISO strings from the raw payload
   }
 });
 
-test('countdown units: expired in the past, today within 24h, whole days beyond', () => {
+test('countdown units: expired in the past, whole hours inside the last day, days+hours beyond', () => {
   const now = Date.now();
   for (const parts of [desktopParts, mobileParts]) {
     assert.deepEqual(parts(now - 1_000), { unit: 'expired', n: 0 });
-    assert.deepEqual(parts(now + 5 * 3_600_000), { unit: 'today', n: 0 });
-    assert.deepEqual(parts(now + 90 * 3_600_000), { unit: 'days', n: 3 });
+    // Inside the last day the countdown rounds UP to whole hours (never "0
+    // 小时" while time is left); test points sit safely inside each band so
+    // the few ms between `now` and the helper's own Date.now() cannot flip
+    // the bucket.
+    assert.deepEqual(parts(now + 5 * 3_600_000), { unit: 'hours', n: 5 });
+    assert.deepEqual(parts(now + 23 * 3_600_000), { unit: 'hours', n: 23 });
+    assert.deepEqual(parts(now + 30 * 60_000), { unit: 'hours', n: 1 });
+    // Beyond a day: whole days + whole hours, both floored. 90.5h → 3d 18.5h.
+    assert.deepEqual(parts(now + 90.5 * 3_600_000), { unit: 'days', n: 3, hours: 18 });
+    // 72.5h → 3 days and a 30-minute remainder: the hours slot reads 0.
+    assert.deepEqual(parts(now + 72.5 * 3_600_000), { unit: 'days', n: 3, hours: 0 });
+    assert.deepEqual(parts(now + 48.5 * 3_600_000), { unit: 'days', n: 2, hours: 0 });
     assert.deepEqual(parts(null), null);
     assert.deepEqual(parts(0), null);
   }

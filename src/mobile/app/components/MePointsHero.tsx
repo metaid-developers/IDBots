@@ -32,8 +32,10 @@ function planLine(plan: MobileMePlan | null, subscribed: boolean): string {
 
 /**
  * Expiry line under the plan name (2026-11-11 hardening): the paid period's
- * end + days left; warning color within a week, once the date is past.
- * Renders only when the server payload carries an expiry — never a guess.
+ * end + time left, hour precision since 2026-11-13 (mirror of the desktop
+ * plan card) — "剩余 {n} 天 {h} 小时", or whole hours inside the last day;
+ * warning color within a week, once the date is past. Renders only when the
+ * server payload carries an expiry — never a guess.
  */
 function expiryLine(expiryMs: number | null): { text: string; urgent: boolean } | null {
   const parts = meExpiryParts(expiryMs);
@@ -41,11 +43,11 @@ function expiryLine(expiryMs: number | null): { text: string; urgent: boolean } 
   if (parts.unit === 'expired') {
     return { text: t('mobile.me.points.expiredOn', { date: formatMeExpiryDate(expiryMs) }), urgent: true };
   }
-  if (parts.unit === 'today') {
-    return { text: t('mobile.me.points.expiresToday'), urgent: true };
+  if (parts.unit === 'hours') {
+    return { text: t('mobile.me.points.expiresToday', { n: parts.n }), urgent: true };
   }
   return {
-    text: t('mobile.me.points.expiresIn', { date: formatMeExpiryDate(expiryMs), n: parts.n }),
+    text: t('mobile.me.points.expiresIn', { date: formatMeExpiryDate(expiryMs), n: parts.n, h: parts.hours }),
     urgent: parts.n <= 7,
   };
 }

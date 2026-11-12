@@ -249,7 +249,15 @@ export function meSubscriptionExpiryMs(subscription: MobileMeSubscription | null
   return null;
 }
 
-export type MeExpiryParts = { unit: 'expired' | 'today' | 'days'; n: number };
+/**
+ * Hour-precision expiry parts (owner request 2026-11-13), mirror of the
+ * desktop one (src/renderer/components/me/mePointsStore.ts) — a drift-guard
+ * test pins the two together.
+ */
+export type MeExpiryParts =
+  | { unit: 'expired'; n: number }
+  | { unit: 'hours'; n: number }
+  | { unit: 'days'; n: number; hours: number };
 
 export function meExpiryParts(expiryMs: number | null | undefined): MeExpiryParts | null {
   const expiry = Number(expiryMs);
@@ -257,8 +265,12 @@ export function meExpiryParts(expiryMs: number | null | undefined): MeExpiryPart
   const ms = expiry - Date.now();
   if (ms <= 0) return { unit: 'expired', n: 0 };
   const days = Math.floor(ms / 86_400_000);
-  if (days < 1) return { unit: 'today', n: 0 };
-  return { unit: 'days', n: days };
+  if (days < 1) {
+    // Under a day: round up so the line never says "0 小时" while time is
+    // left (anything below the hour reads as "1 小时内").
+    return { unit: 'hours', n: Math.max(1, Math.ceil(ms / 3_600_000)) };
+  }
+  return { unit: 'days', n: days, hours: Math.floor((ms % 86_400_000) / 3_600_000) };
 }
 
 export function formatMeExpiryDate(expiryMs: number): string {
