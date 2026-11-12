@@ -19,8 +19,9 @@
 // actions → turn end, with native steer/cancel and approval bridging.
 
 import { app } from 'electron'
+import fs from 'node:fs'
 import os from 'node:os'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import {
   getMetaidRpcToken,
   getMetaidRpcTokenFilePath,
@@ -492,6 +493,14 @@ interface DshEnsureKernelOptions {
    *  (composer bot pick): presence is authoritative — an empty array mounts
    *  nothing and the session-keyed provider is never consulted. */
   mcpServers?: DshMcpServerDefinition[]
+  /** Extra provider routes to mount into the slot's composition even though
+   *  this turn runs on a different one — the cross-provider re-pin support
+   *  (see previousRouteForRepin): a session whose kernel history was last
+   *  routed on another provider needs that provider's adapter registered in
+   *  THIS slot's runtime, or the kernel's pre-switch compaction (which
+   *  summarizes through the previous routed model) dies with
+   *  `no adapter registered for provider "…"` and kills the whole turn. */
+  mountProviders?: DshTurnProviderRoute[]
 }
 
 /** One DSH subprocess and the composition state it was last spawned with. */
@@ -692,6 +701,11 @@ export class DshTurnHub {
     }, {
       automation,
       ...(input.mcpServers !== undefined ? { mcpServers: input.mcpServers } : {}),
+      // Boot the slot with the cross-provider re-pin mount included, so the
+      // prewarm's composition matches the turn's own ensure (otherwise the
+      // prewarmed process boots without the previous provider and the turn's
+      // ensure pays a synchronous successor boot for the providers diff).
+      mountProviders: this.previousRouteForRepin(`cw-${input.sessionId}`, input.provider.key),
     })
     this.opts.log?.(
       'info',
@@ -748,7 +762,12 @@ export class DshTurnHub {
       sections: input.sections,
       workspace: input.workspace,
       callbacks: DSH_WARMUP_CALLBACKS,
-    }, { automation })
+    }, {
+      automation,
+      // Same cross-provider re-pin mount as prewarmTurnSlot — the agent
+      // prewarm must boot the exact composition the turn will ensure.
+      mountProviders: this.previousRouteForRepin(input.dshSessionId, input.provider.key),
+    })
     if (this.closed) return
     // Never re-bind a session whose agent is mid-turn (host turn queued behind
     // a kernel-initiated one, scheduled nudge): the route bind applies to the
@@ -832,7 +851,15 @@ export class DshTurnHub {
       await this.disposeSessionOnSlot(prevKey, input.dshSessionId)
     }
     this.runtimeKeyByDsh.set(input.dshSessionId, nextKey)
-    let kernel = await this.ensureKernel(input, { automation })
+    // Captured BEFORE the turn's own route registration overwrites it: the
+    // provider the kernel session was last routed on (in-memory or the
+    // restart-surviving route hint). A different key means this turn
+    // re-pins the session across providers, so the new slot's composition
+    // must ALSO mount the previous route — the kernel's pre-switch
+    // compaction summarizes through it (see previousRouteForRepin).
+    const repinPrevious = this.routeByDsh.get(input.dshSessionId) ?? this.readRouteHint(input.dshSessionId)
+    const mountProviders = repinPrevious && repinPrevious.key !== input.provider.key ? [repinPrevious] : []
+    let kernel = await this.ensureKernel(input, { automation, mountProviders })
     // The session's live agent may sit on a superseded (draining) kernel when
     // this turn starts — release it there first so exactly one process owns
     // the JSONL (same contract as the cross-provider re-pin above).
@@ -847,6 +874,10 @@ export class DshTurnHub {
     // overwrite of an in-flight turn.
     this.controllersByDsh.set(input.dshSessionId, controller)
     this.routeByDsh.set(input.dshSessionId, input.provider)
+    // The attempted route becomes the restart-surviving hint; the
+    // MODEL_SWITCH_COMPACTION_FAILED outcome check below restores the
+    // previous value when the kernel preserves its old route.
+    this.writeRouteHint(input.dshSessionId, input.provider)
     this.dshByCowork.set(input.sessionId, input.dshSessionId)
     this.coworkByDsh.set(input.dshSessionId, input.sessionId)
     this.pinnedDshIds.set(input.sessionId, input.dshSessionId)
@@ -931,7 +962,22 @@ export class DshTurnHub {
         }
       }
       try {
-        return await controller.done()
+        const outcome = await controller.done()
+        // A model switch aborted by pre-switch compaction leaves the kernel
+        // session routed on the PREVIOUS provider ("the previous request
+        // model is preserved") — mirror that back into routeByDsh and the
+        // route hint so the next turn re-mounts the previous provider's
+        // adapter (previousRouteForRepin) instead of trusting the route this
+        // failed turn attempted.
+        if (
+          repinPrevious
+          && outcome.kind === 'error'
+          && String(outcome.error?.code ?? '').toUpperCase() === 'MODEL_SWITCH_COMPACTION_FAILED'
+        ) {
+          this.routeByDsh.set(input.dshSessionId, repinPrevious)
+          this.writeRouteHint(input.dshSessionId, repinPrevious)
+        }
+        return outcome
       } catch (error) {
         // Same reclassification for the streaming stage: the runtime was
         // closed out from under the turn by app shutdown, not by the turn.
@@ -1618,6 +1664,78 @@ export class DshTurnHub {
     return count
   }
 
+  /**
+   * Cross-provider re-pin compaction support (2026-11-12 session
+   * cw-4b78a0fd incident). Runtime slots are keyed per provider
+   * (dshRuntimeKeyOf), so a session whose kernel history was last routed on
+   * provider A and whose next turn runs on provider B lands on B's slot —
+   * where A's adapter is NOT registered. The kernel's model-switch pricing
+   * (dsh-compaction-basic `agent/request`) compacts before honoring the
+   * switch and resolves its summarizer from the session's LAST routed
+   * request (A), so the very first request on B died with `no adapter
+   * registered for provider "A"` (MODEL_SWITCH_COMPACTION_FAILED) — no
+   * compaction, no switch, no reply, and the manual compact button hit the
+   * same wall. The hub therefore mounts the previous provider's route into
+   * the new slot's composition (options.mountProviders →
+   * rememberTurnInputs), which is exactly what the kernel needs: A is alive
+   * and usually holds the LARGER window, so it is the correct summarizer.
+   *
+   * The previous route is remembered per DSH session id — in memory for the
+   * running app (routeByDsh) and in a tiny JSON hint file under the session
+   * root's parent so the first cross-provider turn after an app restart
+   * (the state this incident shipped in) mounts the right provider too.
+   * The hint stores the full route including its API key — the same
+   * plaintext-under-userData exposure class as the provider settings
+   * themselves, never wider.
+   */
+  private previousRouteForRepin(dshSessionId: string, currentProviderKey: string): DshTurnProviderRoute[] {
+    const known = this.routeByDsh.get(dshSessionId) ?? this.readRouteHint(dshSessionId)
+    return known && known.key !== currentProviderKey ? [known] : []
+  }
+
+  /** Host-owned hint directory, a sibling of the versioned session root so
+   *  kernel session-root migrations never touch it. */
+  private routeHintDir(): string {
+    return join(dirname(this.opts.sessionRoot), 'route-hints')
+  }
+
+  /** Best-effort read of a session's last routed provider route hint.
+   *  Malformed/absent files resolve to undefined — a hint is an
+   *  optimization, never a precondition. */
+  private readRouteHint(dshSessionId: string): DshTurnProviderRoute | undefined {
+    try {
+      const raw = fs.readFileSync(join(this.routeHintDir(), `${dshSessionId.replace(/[^A-Za-z0-9._-]/g, '_')}.json`), 'utf8')
+      const parsed = JSON.parse(raw) as Partial<DshTurnProviderRoute>
+      if (
+        typeof parsed.key !== 'string' || parsed.key.length === 0
+        || typeof parsed.apiFormat !== 'string'
+        || typeof parsed.baseUrl !== 'string' || parsed.baseUrl.length === 0
+        || typeof parsed.apiKey !== 'string'
+        || typeof parsed.model !== 'string' || parsed.model.length === 0
+      ) return undefined
+      return parsed as DshTurnProviderRoute
+    } catch {
+      return undefined
+    }
+  }
+
+  /** Best-effort write of the route hint; failures are logged and swallowed. */
+  private writeRouteHint(dshSessionId: string, route: DshTurnProviderRoute): void {
+    try {
+      const dir = this.routeHintDir()
+      fs.mkdirSync(dir, { recursive: true })
+      fs.writeFileSync(
+        join(dir, `${dshSessionId.replace(/[^A-Za-z0-9._-]/g, '_')}.json`),
+        JSON.stringify(route),
+      )
+    } catch (error) {
+      this.opts.log?.('warn', 'dshTurnHub.routeHintWriteFailed', {
+        dshSessionId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+
   /** Resolve this turn's automation opt-in from the host providers. Warmup's
    *  synthetic session resolves to both-off, so warmup always lands on (and
    *  pre-warms) the clean slot — the automation slots cold-start on the
@@ -1638,6 +1756,24 @@ export class DshTurnHub {
       envName: dshProviderApiKeyEnv(input.provider.key),
       apiKey: input.provider.apiKey,
     })
+    // Cross-provider re-pin support (options.mountProviders): union the
+    // session's PREVIOUS provider route into this slot's composition so the
+    // kernel's pre-switch compaction can summarize through it. Same merge
+    // semantics as the turn's own route — models union per key, credential
+    // under the route's own env name. The turn's provider never appears here
+    // (previousRouteForRepin only names a DIFFERENT key), so a stale hint can
+    // never clobber the fresh credential a same-key turn just recorded.
+    for (const extra of options?.mountProviders ?? []) {
+      if (!extra?.key || extra.key === input.provider.key) continue
+      slot.providersSeen.set(
+        extra.key,
+        mergeProviderRoute(slot.providersSeen.get(extra.key), providerRouteOf(extra)),
+      )
+      slot.routeApiKeys.set(extra.key, {
+        envName: dshProviderApiKeyEnv(extra.key),
+        apiKey: extra.apiKey,
+      })
+    }
     if (options?.mcpServers !== undefined) {
       // Explicit union from an intent prewarm (no session record exists yet,
       // so the session-keyed provider could not answer anyway).

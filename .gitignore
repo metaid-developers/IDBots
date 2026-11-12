@@ -219,6 +219,7 @@ tests/*
 !tests/coworkDshWebSearchRelayFallback.test.mjs
 !tests/dshWebToolsProxy.test.mjs
 !tests/coworkDshModelSwitch.test.mjs
+!tests/coworkDshCrossProviderCompaction.test.mjs
 !tests/turnNavigator.test.mjs
 !tests/llmSafeText.test.mjs
 !tests/skillImageProviderEnv.test.mjs
