@@ -6,28 +6,15 @@ import vm from 'node:vm';
 
 const read = (relative) => fs.readFileSync(path.resolve('public/live-stage', relative), 'utf8');
 
-test('orb families pair curated motion presets with continuous breathing parameters', () => {
+test('orb families keep one dark-glass material with calm-only autonomous breathing', () => {
   const window = {};
   vm.runInNewContext(read('liquid-orb.js'), { window });
-  const expected = {
-    received: 9,
-    reasoning: 11,
-    speaking: 9,
-    'web2-research': 23,
-    'metaweb-research': 10,
-    making: 21,
-    delegation: 10,
-    waiting: 23,
-    'worker-report': 10,
-    verification: 23,
-    'owner-needed': 9,
-    problem: 9,
-    'report-ready': 9,
-    complete: 9,
-  };
-  for (const [family, style] of Object.entries(expected)) {
-    assert.equal(window.liquidOrbStyleForFamily(family), style, family);
-  }
+  const families = [
+    'received', 'reasoning', 'speaking', 'local-recall', 'web2-research',
+    'metaweb-research', 'making', 'delegation', 'waiting', 'worker-report',
+    'verification', 'browser-action', 'owner-needed', 'problem', 'report-ready', 'complete',
+  ];
+  for (const family of families) assert.equal(window.liquidOrbStyleForFamily(family), 9, family);
   const source = read('liquid-orb.js');
   assert.match(source, /colorA: '#FFD86B'/);
   assert.match(source, /shellEdge: '#C5A9FF'/);
@@ -37,17 +24,28 @@ test('orb families pair curated motion presets with continuous breathing paramet
   assert.match(source, /params\.exposure, params\.style, params\.edgeSoftness/);
   assert.match(source, /c\.rgb \* fit, c\.a \* fit/);
   assert.match(source, /const breath = reduced \? 0 : Math\.sin\(phase \* 1\.32\)/);
-  assert.match(source, /rendered\.radius = current\.radius \* \(1 \+ breath \* \(\.018 \+ fluidity \* \.014\)/);
+  assert.match(source, /const breathWeight = Math\.max\(0, Math\.min\(1, \(\.12 - current\.contourDeform\) \/ \.06\)\)/);
+  assert.match(source, /rendered\.radius = current\.radius \* \(1 \+ breath \* \.018 \* breathWeight\)/);
+  assert.match(source, /rendered\.edgeGlow = current\.edgeGlow \* \(1 \+ breath \* \.32 \* breathWeight\)/);
   assert.match(source, /setReduced,/);
   assert.match(source, /getSharedResources\(\) \{ return \{ device, shader, pipeline \}; \}/);
   assert.match(source, /canvas\.dataset\.firstFrameMs/);
 });
 
-test('thinking stays richly fluid while speaking and terminal states settle into a circle', () => {
+test('active states deform the quiet material without autonomous size or exposure pulses', () => {
   const window = {};
   vm.runInNewContext(read('liquid-orb.js'), { window });
-  const reasoning = window.liquidOrbParamsForFamily('reasoning');
   const speaking = window.liquidOrbParamsForFamily('speaking');
+  const active = [
+    'received', 'reasoning', 'local-recall', 'web2-research', 'metaweb-research',
+    'making', 'delegation', 'waiting', 'worker-report', 'verification', 'browser-action',
+  ];
+  const shared = ['style', 'radius', 'glassOpacity', 'edgeGlow', 'exposure', 'colorA', 'colorB', 'colorC', 'colorD', 'glowColor', 'shellMid', 'shellEdge'];
+  for (const family of active) {
+    const params = window.liquidOrbParamsForFamily(family);
+    for (const key of shared) assert.equal(params[key], speaking[key], `${family} ${key}`);
+  }
+  const reasoning = window.liquidOrbParamsForFamily('reasoning');
   const complete = window.liquidOrbParamsForFamily('complete');
   assert.ok(reasoning.contourDeform >= .9);
   assert.ok(reasoning.speed > speaking.speed);
@@ -59,9 +57,19 @@ test('thinking stays richly fluid while speaking and terminal states settle into
   assert.equal(window.liquidOrbActivityForFamily('complete'), 'resting');
   const source = read('liquid-orb.js');
   assert.match(source, /rendered\.contourDeform = Math\.max\(0, current\.contourDeform \+ fluidity/);
+  assert.doesNotMatch(source, /familyPalettes|exposure: 1\.42/);
   const stage = read('stage.js');
   assert.match(stage, /initialFamily: family/);
   assert.match(stage, /startPhase: Number\.isFinite\(previousPhase\)/);
+  assert.match(stage, /radius: textMotion\.energy \* \.008/);
+  assert.match(stage, /edgeGlow: quiet \? textMotion\.energy \* \.07 : 0/);
+  assert.match(stage, /exposure: quiet \? textMotion\.energy \* \.08 : 0/);
+  const css = read('stage.css');
+  assert.match(css, /body\[data-activity="working"\] \.membrane-wrap,body\[data-activity="thinking"\] \.membrane-wrap\{animation:none;translate:0 0;scale:1;filter:none\}/);
+  assert.match(css, /body\[data-activity="speaking"\] \.membrane-wrap,body\[data-activity="resting"\] \.membrane-wrap\{animation:core-breathe/);
+  const liquid = css.match(/@keyframes membrane-liquid\{([^}]*\}){3}/);
+  assert.ok(liquid);
+  assert.doesNotMatch(liquid[0], /scale\(/);
 });
 
 test('text pacing and the equalizer follow actual character updates only', () => {

@@ -44,28 +44,21 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     specColor: '#DCEAFF', canvasColor: '#030409', glowColor: '#956CFF'
   };
   const paletteStops = ['#FFFFFF','#EAF4FF','#9BF4FF','#82F4FF','#C5A9FF','#8E6CFF','#82F4FF','#22D3EE','#22D3EE','#22D3EE','#22D3EE','#22D3EE'];
-  const familyPalettes = {
-    cool: { colorA: '#9EF1FF', colorB: '#6EA8FF', colorC: '#C5A9FF', colorD: '#5E7CFF', glowColor: '#6C8CFF', shellMid: '#9BF4FF', shellEdge: '#C5A9FF' },
-    research: { colorA: '#82F4FF', colorB: '#2FD3C6', colorC: '#9BF4FF', colorD: '#3A8BFF', glowColor: '#43E0FF', shellMid: '#9BF4FF', shellEdge: '#7FD4FF' },
-    create: { colorA: '#FF7BD5', colorB: '#FF9DE6', colorC: '#FFD86B', colorD: '#C86BFF', glowColor: '#FF6FCF', shellMid: '#FFC9E8', shellEdge: '#FF9DE6' },
-    proof: { colorA: '#F2F5FF', colorB: '#C9D8FF', colorC: '#FFE7A3', colorD: '#8FA3C7', glowColor: '#D8E4FF', shellMid: '#DCE4F7', shellEdge: '#E8CF7A' },
-    problem: { colorA: '#FFC37B', colorB: '#FF7BD5', colorC: '#8E6CFF', colorD: '#82F4FF', glowColor: '#C56CFF', shellMid: '#FFC9E8', shellEdge: '#C5A9FF' },
-  };
   const statePresets = {
-    received: { style: 9, speed: 1.05, radius: .72, warp: 3.8, contourDeform: .55, glassOpacity: .62, edgeGlow: .12 },
-    reasoning: { ...familyPalettes.cool, style: 11, speed: 1.18, radius: .7, warp: 4.4, contourDeform: .95, glassOpacity: .54, edgeGlow: .18, exposure: 1.42, zoom: .42 },
+    received: { style: 9, speed: 1.05, radius: .72, warp: 3.6, contourDeform: .55, glassOpacity: .64, edgeGlow: .08 },
+    reasoning: { style: 9, speed: 1.05, radius: .72, warp: 4, contourDeform: .95, glassOpacity: .64, edgeGlow: .08 },
     speaking: { style: 9, speed: .82, radius: .72, warp: 3.2, contourDeform: .045, glassOpacity: .64, edgeGlow: .08 },
-    'local-recall': { ...familyPalettes.cool, style: 23, speed: .85, radius: .71, warp: 3.8, contourDeform: .55, glassOpacity: .58, edgeGlow: .13 },
-    'web2-research': { ...familyPalettes.research, style: 23, speed: 1.05, radius: .71, warp: 4.2, contourDeform: .65, glassOpacity: .6, edgeGlow: .15 },
-    'metaweb-research': { ...familyPalettes.research, style: 10, speed: .95, radius: .71, warp: 3.9, contourDeform: .6, glassOpacity: .6, edgeGlow: .15 },
-    making: { ...familyPalettes.create, style: 21, speed: .95, radius: .71, warp: 4.1, contourDeform: .7, glassOpacity: .56, edgeGlow: .16, exposure: 1.42 },
-    delegation: { ...familyPalettes.research, style: 10, speed: 1.05, radius: .69, warp: 4.1, contourDeform: .65, glassOpacity: .6, edgeGlow: .16 },
-    waiting: { ...familyPalettes.cool, style: 23, speed: .5, radius: .7, warp: 3.2, contourDeform: .28, glassOpacity: .6, edgeGlow: .09 },
-    'worker-report': { ...familyPalettes.research, style: 10, speed: .95, radius: .69, warp: 3.8, contourDeform: .5, glassOpacity: .62, edgeGlow: .14 },
-    verification: { ...familyPalettes.proof, style: 23, speed: .72, radius: .7, warp: 3.4, contourDeform: .38, glassOpacity: .64, edgeGlow: .12, exposure: 1.2 },
-    'browser-action': { ...familyPalettes.research, style: 23, speed: .92, radius: .72, warp: 3.7, contourDeform: .48, glassOpacity: .62, edgeGlow: .13 },
+    'local-recall': { style: 9, speed: .85, radius: .72, warp: 3.5, contourDeform: .55, glassOpacity: .64, edgeGlow: .08 },
+    'web2-research': { style: 9, speed: 1, radius: .72, warp: 3.8, contourDeform: .65, glassOpacity: .64, edgeGlow: .08 },
+    'metaweb-research': { style: 9, speed: .95, radius: .72, warp: 3.7, contourDeform: .6, glassOpacity: .64, edgeGlow: .08 },
+    making: { style: 9, speed: .9, radius: .72, warp: 3.8, contourDeform: .7, glassOpacity: .64, edgeGlow: .08 },
+    delegation: { style: 9, speed: 1, radius: .72, warp: 3.8, contourDeform: .65, glassOpacity: .64, edgeGlow: .08 },
+    waiting: { style: 9, speed: .5, radius: .72, warp: 3.2, contourDeform: .28, glassOpacity: .64, edgeGlow: .08 },
+    'worker-report': { style: 9, speed: .9, radius: .72, warp: 3.6, contourDeform: .5, glassOpacity: .64, edgeGlow: .08 },
+    verification: { style: 9, speed: .72, radius: .72, warp: 3.4, contourDeform: .38, glassOpacity: .64, edgeGlow: .08 },
+    'browser-action': { style: 9, speed: .92, radius: .72, warp: 3.6, contourDeform: .48, glassOpacity: .64, edgeGlow: .08 },
     'owner-needed': { style: 9, speed: .45, radius: .71, warp: 2.8, contourDeform: .06, glassOpacity: .62, edgeGlow: .1 },
-    problem: { ...familyPalettes.problem, style: 9, speed: .38, radius: .7, warp: 2.4, contourDeform: .04, glassOpacity: .58, edgeGlow: .07 },
+    problem: { style: 9, speed: .38, radius: .7, warp: 2.4, contourDeform: .04, glassOpacity: .58, edgeGlow: .07 },
     'report-ready': { style: 9, speed: .28, radius: .7, warp: 2.2, contourDeform: .015, glassOpacity: .66, edgeGlow: .05 },
     complete: { style: 9, speed: .22, radius: .7, warp: 2, contourDeform: .01, glassOpacity: .64, edgeGlow: .04 }
   };
@@ -189,12 +182,13 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
         Object.assign(rendered, current);
         colorKeys.forEach((key) => { rendered[key] = currentColors[key]; });
         const fluidity = Math.min(1, current.contourDeform / .6);
+        const breathWeight = Math.max(0, Math.min(1, (.12 - current.contourDeform) / .06));
         const breath = reduced ? 0 : Math.sin(phase * 1.32);
         const drift = reduced ? 0 : Math.sin(phase * .73 + Math.sin(phase * .21));
-        rendered.radius = current.radius * (1 + breath * (.018 + fluidity * .014) + drift * fluidity * .018);
+        rendered.radius = current.radius * (1 + breath * .018 * breathWeight);
         rendered.contourDeform = Math.max(0, current.contourDeform + fluidity * (Math.sin(phase * .91) * .12 + Math.sin(phase * 1.37 + 1.8) * .08));
         rendered.warp = current.warp + drift * fluidity * .28;
-        rendered.edgeGlow = current.edgeGlow * (1 + breath * .32) + fluidity * .018 * (1 + Math.sin(phase * .57));
+        rendered.edgeGlow = current.edgeGlow * (1 + breath * .32 * breathWeight);
         if (!reduced) {
           for (const key in modulation) {
             if (typeof rendered[key] === 'number' && Number.isFinite(modulation[key])) rendered[key] += modulation[key];
