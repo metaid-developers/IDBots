@@ -281,6 +281,31 @@ function pickNumber(record: Record<string, unknown>, ...keys: string[]): number 
   return 0;
 }
 
+/**
+ * Wire timestamps arrive as epoch seconds, epoch milliseconds, or an ISO-8601
+ * string depending on the ABS release — accept all three so a populated order
+ * time never collapses to 0 (which would sink it to the bottom of the
+ * newest-first payment-records sort).
+ */
+function pickEpoch(record: Record<string, unknown>, ...keys: string[]): number {
+  for (const key of keys) {
+    const value = record[key];
+    if (value === undefined || value === null) continue;
+    const n = toNumber(value);
+    if (n > 0) return n;
+    if (typeof value === 'string') {
+      const parsed = Date.parse(value);
+      if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    }
+  }
+  return 0;
+}
+
+/** Epoch sort key: createdAt may be seconds or ms — normalize to ms. */
+function epochSortMs(ts: number | undefined): number {
+  return ts && Number.isFinite(ts) ? (ts > 1e11 ? ts : ts * 1000) : 0;
+}
+
 function pickErrorCode(payload: unknown): string {
   if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
     return pickText(payload as Record<string, unknown>, 'errorCode', 'error_code');
@@ -683,7 +708,7 @@ export async function getMeHistory(input: { type?: string; beforeId?: string; li
       refType: pickText(record, 'refType', 'ref_type') || undefined,
       refId: pickText(record, 'refId', 'ref_id') || undefined,
       reason: pickText(record, 'reason', 'remark') || undefined,
-      createdAt: pickNumber(record, 'createdAt', 'created_at', 'createTime', 'create_time', 'timestamp', 'ts') || undefined,
+      createdAt: pickEpoch(record, 'createdAt', 'created_at', 'createTime', 'create_time', 'timestamp', 'ts') || undefined,
       raw: record,
     });
   }
@@ -822,6 +847,7 @@ export async function getMeTopupOrders(): Promise<MeTopupOrder[]> {
     if (!orderId) continue;
     orders.push(normalizeMeTopupOrder(record, orderId));
   }
+  orders.sort((a, b) => epochSortMs(b.createdAt) - epochSortMs(a.createdAt));
   return orders;
 }
 
@@ -845,6 +871,7 @@ export async function getMeSubscriptionOrders(): Promise<MeSubscriptionOrder[]> 
     if (!pickText(record, 'orderId', 'order_id')) continue;
     orders.push(normalizeMeSubscriptionOrder(record));
   }
+  orders.sort((a, b) => epochSortMs(b.createdAt) - epochSortMs(a.createdAt));
   return orders;
 }
 
@@ -853,8 +880,8 @@ function normalizeMeTopupOrder(record: Record<string, unknown>, orderIdFallback?
     orderId: pickText(record, 'orderId', 'order_id') || orderIdFallback || '',
     packageId: pickText(record, 'packageId', 'package_id'),
     status: pickText(record, 'statusText', 'status_text', 'status'),
-    createdAt: pickNumber(record, 'createdAt', 'created_at') || undefined,
-    confirmedAt: pickNumber(record, 'confirmedAt', 'confirmed_at') || undefined,
+    createdAt: pickEpoch(record, 'createdAt', 'created_at', 'createTime', 'create_time', 'submittedAt', 'submitted_at', 'timestamp', 'ts') || undefined,
+    confirmedAt: pickEpoch(record, 'confirmedAt', 'confirmed_at', 'confirmTime', 'confirm_time') || undefined,
     meMilli: pickNumber(record, 'meMilli', 'me_milli') || undefined,
     priceCny: pickNumber(record, 'priceCny', 'price_cny') || undefined,
     payAmount: pickNumber(record, 'payAmount', 'pay_amount', 'amountCny', 'amount_cny', 'priceCny', 'price_cny') || undefined,
@@ -876,7 +903,7 @@ function normalizeMeSubscriptionOrder(record: Record<string, unknown>): MeSubscr
     payAmount: pickNumber(record, 'payAmount', 'pay_amount', 'amountCny', 'amount_cny', 'priceCny', 'price_cny') || undefined,
     payCurrency: pickText(record, 'payCurrency', 'pay_currency') || undefined,
     gatewayParams: record.gatewayParams ?? record.gateway_params,
-    createdAt: pickNumber(record, 'createdAt', 'created_at') || undefined,
+    createdAt: pickEpoch(record, 'createdAt', 'created_at', 'createTime', 'create_time', 'submittedAt', 'submitted_at', 'timestamp', 'ts') || undefined,
     rejectReason: pickText(record, 'rejectReason', 'reject_reason') || undefined,
     raw: record,
   };

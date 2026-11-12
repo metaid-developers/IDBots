@@ -196,6 +196,19 @@ test('ME hero and balance chip render spendable ME instead of the ledger total',
   assert.doesNotMatch(chip, /864/);
 });
 
+test('usage & credits page: payment records merge subscription+topup orders, newest first', () => {
+  // Regression pin: the two order kinds used to render as two server-ordered
+  // blocks (subscriptions, then topups), so a newer topup row could land under
+  // an older subscription row. The page now merges and sorts by createdAt desc.
+  const source = readFileSync(
+    new URL('../src/mobile/app/screens/me/UsageCreditsPage.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /const mergedOrders = useMemo\(/);
+  assert.match(source, /\.sort\(\(a, b\) => epochMs\(b\.order\.createdAt\) - epochMs\(a\.order\.createdAt\)\)/);
+  assert.match(source, /\{mergedOrders\.map\(\(\{ kind, order \}\) =>/);
+});
+
 test('bots page renders the create action and list shell; bot edit page shells', () => {
   const bots = renderToStaticMarkup(
     React.createElement(BotsPage, { onBack: () => undefined, onOpenEdit: () => undefined }),

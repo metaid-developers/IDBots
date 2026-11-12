@@ -325,9 +325,31 @@ test('getMeSubscriptionOrders signs the checkout action and parses the orders ar
   assert.equal(call.init.method, 'GET');
   assert.equal(call.init.headers['X-Identity-Address'], IDENTITY_ADDRESS);
   assert.ok(verifyMessage(IDENTITY_ADDRESS, `me:subscription_order:${secondsOf(call)}`, call.init.headers['X-Signature']));
-  assert.deepEqual(orders.map((order) => order.orderId), ['mso_1', 'mso_2']);
-  assert.equal(orders[0].amountCny, 132.3);
-  assert.equal(orders[1].status, 'created');
+  // The service sorts newest-first on createdAt — the stub's wire order is
+  // ascending, so mso_2 (later) must come back first.
+  assert.deepEqual(orders.map((order) => order.orderId), ['mso_2', 'mso_1']);
+  assert.equal(orders[1].amountCny, 132.3);
+  assert.equal(orders[0].status, 'created');
+});
+
+test('getMeSubscriptionOrders returns newest-first and tolerates time aliases', async () => {
+  // The 支付记录 merged list sorts by createdAt — the service enforces the
+  // same desc contract and accepts the alternate timestamp keys ABS releases
+  // have shipped, so no release can scramble or sink timed rows.
+  const fetchImpl = createFetchStub(() => ({
+    orders: [
+      { orderId: 'old', planId: 'me_standard', period: 'month', status: 'credited', createdAt: 1762500000 }, // seconds
+      { orderId: 'new', planId: 'me_pro', period: 'year', status: 'credited', createdAt: '2026-11-09T04:05:40Z' },
+      { orderId: 'mid', planId: 'me_standard', period: 'quarter', status: 'credited', createTime: 1762550000000 },
+    ],
+  }));
+  initService(fetchImpl);
+
+  const orders = await getMeSubscriptionOrders();
+  assert.deepEqual(orders.map((order) => order.orderId), ['new', 'mid', 'old']);
+  assert.equal(orders[0].createdAt, Date.parse('2026-11-09T04:05:40Z'));
+  assert.equal(orders[1].createdAt, 1762550000000);
+  assert.equal(orders[2].createdAt, 1762500000);
 });
 
 test('a 404 list endpoint surfaces as featureUnavailable (usage page degrades silently)', async () => {
