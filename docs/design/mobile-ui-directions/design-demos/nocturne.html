@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IDBots Mobile UI Direction D - Nocturne</title>
+<!--
+  Assumptions: this is a standalone visual and UE direction, not production code.
+  Reasoning: a private late-night companion should use quiet content, warm accents,
+  and physical navigation layers rather than a luminous developer dashboard.
+  Sample data: the Hangzhou conversation and itinerary are fictional design content.
+  Placeholders: attachments and voice only demonstrate local feedback. No backend,
+  microphone, native API, or model request is connected. The iPhone chrome below
+  reproduces the supplied ios_frame.jsx asset values without inventing new chrome.
+-->
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "PingFang SC", "Segoe UI", sans-serif;
+    color: #1d1d1f;
+    background: #e8e8eb;
+    font-synthesis: none;
+  }
+  body { margin: 0; min-height: 100dvh; display: flex; flex-direction: column; align-items: center; padding: 26px 16px 36px; }
+  button, input { font: inherit; }
+  button { -webkit-tap-highlight-color: transparent; }
+  button:focus-visible, input:focus-visible { outline: 3px solid rgba(194, 155, 20, .5); outline-offset: 2px; }
+  [hidden] { display: none !important; }
+  .review-head { width: 417px; max-width: 100%; display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+  .review-kicker { margin: 0 0 4px; font-size: 12px; font-weight: 650; letter-spacing: .04em; color: #6b6b70; }
+  .review-title { margin: 0; font-size: 23px; line-height: 1.15; letter-spacing: -.03em; }
+  .review-copy { margin: 7px 0 0; max-width: 250px; font-size: 13px; line-height: 1.45; color: #626267; }
+  .appearance-toggle { min-height: 44px; flex: 0 0 auto; border: 1px solid #c9c9ce; border-radius: 999px; background: #f8f8fa; color: #2b2b2e; padding: 0 15px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .appearance-toggle:active { transform: scale(.97); }
+
+  /* Exact dimensions and chrome values from the supplied ios_frame.jsx. */
+  .ios-wrapper { display: inline-block; padding: 12px; background: #000; border-radius: 60px; box-shadow: 0 0 0 2px #1f2937, 0 20px 60px rgba(0,0,0,.3); position: relative; }
+  .phone-screen {
+    --status: #f5f5f4;
+    --home: rgba(255,255,255,.5);
+    --canvas: #111112;
+    --canvas-elevated: #19191b;
+    --header: rgba(17,17,18,.9);
+    --text: #f4f3ef;
+    --secondary: #aaa9a4;
+    --tertiary: #7e7d79;
+    --line: rgba(255,255,255,.09);
+    --bubble-assistant: #232326;
+    --composer: #2b2b2e;
+    --composer-border: #49494d;
+    --tab: rgba(24,24,26,.88);
+    --sheet: #f2f2ed;
+    --sheet-text: #262624;
+    --sheet-secondary: #65655f;
+    --accent: #ffdc51;
+    --accent-foreground: #ffdc51;
+    --accent-ink: #2c290f;
+    --shadow-user: 0 3px 10px rgba(0,0,0,.12);
+    --shadow-result: 0 16px 36px rgba(0,0,0,.22), inset 0 1px 0 rgba(255,255,255,.5);
+    --shadow-composer: 0 10px 24px rgba(0,0,0,.22), inset 0 1px 0 rgba(255,255,255,.07);
+    position: relative; width: 393px; height: 852px; border-radius: 48px; overflow: hidden;
+    background: var(--canvas); color: var(--text); transition: background-color .25s ease, color .25s ease;
+  }
+  .phone-screen[data-appearance="light"] {
+    --status: #111111;
+    --home: rgba(0,0,0,.3);
+    --canvas: #f2f3f5;
+    --canvas-elevated: #ffffff;
+    --header: rgba(248,249,250,.88);
+    --text: #242425;
+    --secondary: #626267;
+    --tertiary: #76767c;
+    --line: rgba(20,20,25,.09);
+    --bubble-assistant: #ffffff;
+    --composer: #ffffff;
+    --composer-border: #d7d9de;
+    --tab: rgba(250,251,252,.9);
+    --sheet: #ffffff;
+    --sheet-text: #262624;
+    --sheet-secondary: #626267;
+    --accent: #ffdc51;
+    --accent-foreground: #6b5200;
+    --accent-ink: #2c290f;
+    --shadow-user: 0 3px 10px rgba(100,80,10,.1);
+    --shadow-result: 0 14px 32px rgba(40,45,55,.1), inset 0 1px 0 rgba(255,255,255,.7);
+    --shadow-composer: 0 8px 20px rgba(45,50,60,.1), inset 0 1px 0 rgba(255,255,255,.85);
+  }
+  .status-bar { position: absolute; top: 0; left: 0; right: 0; height: 54px; display: flex; align-items: center; justify-content: space-between; padding: 0 32px; font-size: 16px; font-weight: 600; color: var(--status); z-index: 20; pointer-events: none; }
+  .status-icons { display: flex; align-items: center; gap: 6px; }
+  .signal { display: flex; align-items: flex-end; gap: 2px; height: 12px; }
+  .signal i { display: block; width: 3px; background: currentColor; border-radius: 1px; }
+  .battery { width: 26px; height: 12px; border: 1.5px solid currentColor; border-radius: 3px; padding: 1px; position: relative; opacity: .8; }
+  .battery::before { content: ""; display: block; width: 85%; height: 100%; background: currentColor; border-radius: 1px; opacity: .9; }
+  .battery::after { content: ""; position: absolute; top: 3px; right: -3px; width: 2px; height: 6px; background: currentColor; border-radius: 0 1px 1px 0; }
+  .dynamic-island { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); width: 124px; height: 36px; background: #000; border-radius: 999px; z-index: 30; }
+  .ios-content { position: absolute; top: 54px; left: 0; right: 0; bottom: 34px; overflow: hidden; }
+  .home-indicator { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); width: 140px; height: 5px; background: var(--home); border-radius: 999px; z-index: 10; }
+
+  .app { height: 100%; display: flex; flex-direction: column; background: var(--canvas); }
+  .screen { min-height: 0; flex: 1; display: flex; flex-direction: column; }
+  .topbar { min-height: 68px; display: grid; grid-template-columns: 76px 1fr 76px; align-items: center; padding: 4px 10px; background: var(--header); border-bottom: 1px solid var(--line); backdrop-filter: blur(22px) saturate(130%); -webkit-backdrop-filter: blur(22px) saturate(130%); z-index: 2; }
+  .topbar.simple { grid-template-columns: 1fr auto; padding: 8px 20px; }
+  .nav-action { min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 2px; border: 0; border-radius: 14px; background: transparent; color: var(--text); font-size: 14px; cursor: pointer; }
+  .nav-action:active, .icon-button:active, .tab:active { transform: scale(.95); }
+  .nav-action svg { width: 19px; height: 19px; }
+  .identity { display: flex; align-items: center; justify-content: center; gap: 9px; min-width: 0; text-align: left; }
+  .identity img { width: 34px; height: 34px; border-radius: 11px; image-rendering: pixelated; }
+  .identity-copy { min-width: 0; }
+  .identity-name { display: block; font-size: 16px; font-weight: 650; letter-spacing: -.015em; }
+  .identity-status { display: block; margin-top: 1px; color: var(--secondary); font-size: 12px; }
+  .page-title { margin: 0; font-size: 23px; line-height: 1.2; letter-spacing: -.035em; }
+  .page-subtitle { margin: 3px 0 0; color: var(--secondary); font-size: 12px; }
+
+  .transcript { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 14px 17px 18px; scrollbar-width: none; }
+  .transcript::-webkit-scrollbar { display: none; }
+  .day-label { margin: 0 0 15px; text-align: center; color: var(--tertiary); font-size: 12px; }
+  .message { margin-bottom: 15px; font-size: 15.5px; line-height: 1.52; letter-spacing: -.006em; }
+  .user-message { max-width: 308px; margin-left: auto; padding: 11px 15px; border-radius: 21px 21px 6px 21px; background: var(--accent); color: var(--accent-ink); box-shadow: var(--shadow-user); }
+  .user-message p { margin: 0; }
+  .assistant-message { padding: 0 4px 0 0; }
+  .assistant-message p { margin: 0; }
+  .work-summary { display: flex; align-items: center; gap: 7px; margin: -3px 0 14px; color: var(--secondary); font-size: 12.5px; }
+  .work-summary svg { width: 16px; height: 16px; color: var(--accent-foreground); flex: 0 0 auto; }
+  .result-sheet { padding: 18px; border-radius: 24px; background: var(--sheet); color: var(--sheet-text); box-shadow: var(--shadow-result); }
+  .result-eyebrow { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; color: var(--sheet-secondary); font-size: 12px; font-weight: 600; }
+  .result-eyebrow img { width: 20px; height: 20px; border-radius: 6px; image-rendering: pixelated; }
+  .result-title { margin: 0; font-size: 24px; line-height: 1.15; font-weight: 680; letter-spacing: -.035em; }
+  .result-copy { margin: 7px 0 14px; color: var(--sheet-secondary); font-size: 14px; line-height: 1.48; }
+  .route { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px; }
+  .route-stop { padding-top: 10px; border-top: 1px solid rgba(30,30,30,.12); }
+  .route-day { display: block; color: var(--sheet-secondary); font-size: 11px; font-weight: 700; letter-spacing: .07em; }
+  .route-place { display: block; margin-top: 2px; font-size: 14px; font-weight: 650; }
+  .plan-button { width: 100%; min-height: 46px; border: 0; border-radius: 15px; background: #292927; color: #f8f8f4; font-size: 14px; font-weight: 650; cursor: pointer; }
+  .plan-button:active { transform: scale(.98); background: #111; }
+  .local-message { animation: message-in .22s ease-out; }
+  @keyframes message-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+  .suggestions { display: flex; gap: 8px; overflow-x: auto; padding: 2px 16px 9px; scrollbar-width: none; }
+  .suggestions::-webkit-scrollbar { display: none; }
+  .suggestion { min-height: 38px; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--text); padding: 0 13px; font-size: 12.5px; cursor: pointer; }
+  .suggestion:last-child { border-color: rgba(171,135,12,.38); color: var(--accent-foreground); }
+  .suggestion:active { transform: scale(.97); background: var(--canvas-elevated); }
+  .composer-zone { position: relative; padding: 0 12px 7px; }
+  .voice-feedback { display: flex; align-items: center; justify-content: center; gap: 9px; min-height: 30px; color: var(--accent-foreground); font-size: 12px; }
+  .voice-bars { display: flex; align-items: center; gap: 2px; height: 14px; }
+  .voice-bars i { width: 2px; height: 5px; border-radius: 2px; background: currentColor; }
+  .voice-bars i:nth-child(2), .voice-bars i:nth-child(4) { height: 11px; }
+  .voice-bars i:nth-child(3) { height: 14px; }
+  .composer { min-height: 56px; display: flex; align-items: center; gap: 3px; padding: 5px 5px 5px 7px; border: 1px solid var(--composer-border); border-radius: 999px; background: var(--composer); box-shadow: var(--shadow-composer); }
+  .icon-button { width: 40px; height: 44px; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 999px; background: transparent; color: var(--secondary); cursor: pointer; }
+  .icon-button svg { width: 21px; height: 21px; }
+  .icon-button[aria-pressed="true"] { color: var(--accent-foreground); background: rgba(255,220,81,.1); }
+  .composer input { min-width: 0; min-height: 44px; flex: 1; border: 0; outline: 0; background: transparent; color: var(--text); font-size: 15px; }
+  .composer input::placeholder { color: var(--secondary); opacity: 1; }
+  .send-button { width: 44px; height: 44px; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 50%; background: var(--accent); color: var(--accent-ink); cursor: pointer; box-shadow: inset 0 1px 0 rgba(255,255,255,.35); }
+  .send-button svg { width: 20px; height: 20px; }
+  .send-button:active { transform: scale(.92); }
+  .tabbar { min-height: 65px; display: grid; grid-template-columns: repeat(3, 1fr); padding: 4px 24px 0; border-top: 1px solid var(--line); background: var(--tab); backdrop-filter: blur(24px) saturate(140%); -webkit-backdrop-filter: blur(24px) saturate(140%); }
+  .tab { min-height: 56px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; border: 0; border-radius: 14px; background: transparent; color: var(--secondary); font-size: 11px; cursor: pointer; }
+  .tab svg { width: 22px; height: 22px; }
+  .tab[aria-selected="true"] { color: var(--accent-foreground); }
+  .tab[aria-selected="true"] svg { stroke-width: 2; }
+
+  .tasks-content, .me-content { min-height: 0; flex: 1; overflow-y: auto; padding: 16px 18px 22px; }
+  .section-label { margin: 4px 2px 9px; color: var(--secondary); font-size: 12px; font-weight: 650; }
+  .task-list, .settings-list { overflow: hidden; border: 1px solid var(--line); border-radius: 22px; background: var(--canvas-elevated); }
+  .task-row, .settings-row { width: 100%; min-height: 68px; display: flex; align-items: center; gap: 12px; padding: 12px 15px; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--text); text-align: left; }
+  .task-row:last-child, .settings-row:last-child { border-bottom: 0; }
+  button.task-row, button.settings-row { cursor: pointer; }
+  button.task-row:active, button.settings-row:active { background: var(--composer); }
+  .task-copy, .settings-copy { min-width: 0; flex: 1; }
+  .task-name, .settings-name { display: block; font-size: 15px; font-weight: 620; }
+  .task-meta, .settings-meta { display: block; margin-top: 3px; color: var(--secondary); font-size: 12px; }
+  .task-state { color: var(--accent-foreground); font-size: 12px; font-weight: 600; }
+  .settings-row svg { width: 17px; height: 17px; color: var(--secondary); }
+  .profile { display: flex; align-items: center; gap: 13px; margin-bottom: 20px; padding: 8px 3px 16px; }
+  .profile img { width: 54px; height: 54px; border-radius: 17px; image-rendering: pixelated; }
+  .profile-name { margin: 0; font-size: 20px; letter-spacing: -.025em; }
+  .profile-copy { margin: 3px 0 0; color: var(--secondary); font-size: 12.5px; }
+
+  .toast { position: absolute; left: 50%; bottom: 142px; z-index: 45; max-width: 320px; transform: translateX(-50%); padding: 10px 14px; border: 1px solid var(--composer-border); border-radius: 999px; background: var(--composer); color: var(--text); box-shadow: 0 10px 26px rgba(0,0,0,.28); font-size: 12.5px; text-align: center; }
+  .sheet-layer { position: absolute; inset: 0; z-index: 40; display: flex; align-items: flex-end; }
+  .sheet-backdrop { position: absolute; inset: 0; border: 0; background: rgba(0,0,0,.52); opacity: 0; transition: opacity .22s ease; }
+  .detail-sheet { position: relative; width: 100%; max-height: 82%; overflow-y: auto; padding: 10px 20px 24px; border-radius: 28px 28px 0 0; background: var(--sheet); color: var(--sheet-text); transform: translateY(102%); transition: transform .26s cubic-bezier(.2,.8,.2,1); }
+  .sheet-layer.open .sheet-backdrop { opacity: 1; }
+  .sheet-layer.open .detail-sheet { transform: translateY(0); }
+  .grabber { width: 36px; height: 5px; margin: 0 auto 12px; border-radius: 999px; background: rgba(80,80,75,.25); }
+  .sheet-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+  .sheet-title { margin: 0; font-size: 26px; line-height: 1.16; letter-spacing: -.035em; }
+  .sheet-close { width: 44px; height: 44px; flex: 0 0 auto; border: 0; border-radius: 50%; background: rgba(40,40,38,.08); color: var(--sheet-text); font-size: 22px; cursor: pointer; }
+  .sheet-intro { margin: 8px 0 18px; color: var(--sheet-secondary); font-size: 14px; line-height: 1.5; }
+  .itinerary-day { padding: 14px 0; border-top: 1px solid rgba(40,40,35,.12); }
+  .itinerary-day h3 { margin: 0 0 8px; font-size: 17px; }
+  .itinerary-day p { margin: 5px 0; color: var(--sheet-secondary); font-size: 14px; line-height: 1.45; }
+  .save-task { width: 100%; min-height: 48px; margin-top: 12px; border: 0; border-radius: 16px; background: var(--accent); color: var(--accent-ink); font-size: 15px; font-weight: 650; cursor: pointer; }
+  .save-task:disabled { opacity: .72; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .voice-feedback:not([hidden]) .voice-bars i { animation: voice .8s ease-in-out infinite alternate; }
+    .voice-feedback:not([hidden]) .voice-bars i:nth-child(2) { animation-delay: -.3s; }
+    .voice-feedback:not([hidden]) .voice-bars i:nth-child(3) { animation-delay: -.5s; }
+    .voice-feedback:not([hidden]) .voice-bars i:nth-child(4) { animation-delay: -.15s; }
+    @keyframes voice { to { transform: scaleY(.45); } }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+  <header class="review-head">
+    <div>
+      <p class="review-kicker">DIRECTION D</p>
+      <h1 class="review-title" id="reviewTitle">Nocturne</h1>
+      <p class="review-copy" id="reviewCopy">A quiet, low-light companion with warm handoffs and floating controls.</p>
+    </div>
+    <button class="appearance-toggle" id="appearanceToggle" type="button" aria-pressed="false">Light appearance</button>
+  </header>
+
+  <div class="ios-wrapper">
+    <div class="phone-screen" id="phone" data-appearance="dark">
+      <div class="status-bar">
+        <span>9:41</span>
+        <div class="status-icons">
+          <span class="signal" aria-hidden="true"><i style="height:4px"></i><i style="height:6px"></i><i style="height:9px"></i><i style="height:11px"></i></span>
+          <svg width="16" height="12" viewBox="0 0 16 12" fill="none" aria-hidden="true"><path d="M8 11.5a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" fill="currentColor"/><path d="M3 7.5a7 7 0 0 1 10 0M1 4.5a11 11 0 0 1 14 0" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+          <span class="battery" aria-hidden="true"></span>
+        </div>
+      </div>
+      <div class="dynamic-island"></div>
+      <div class="ios-content">
+        <main class="app">
+          <section class="screen" data-screen="chat" aria-label="Chat">
+            <header class="topbar">
+              <button class="nav-action" type="button" data-toast="Conversation list is outside this style preview">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                <span>Chats</span>
+              </button>
+              <div class="identity">
+                <img src="data:image/png;base64,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" alt="Twin Bot">
+                <span class="identity-copy"><span class="identity-name">Twin Bot</span><span class="identity-status">Weekend in Hangzhou</span></span>
+              </div>
+              <button class="nav-action" type="button" data-toast="New conversation is outside this style preview" aria-label="New conversation">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.5v15m7.5-7.5h-15"/></svg>
+              </button>
+            </header>
+
+            <div class="transcript" id="transcript">
+              <p class="day-label">Today 10:24</p>
+              <div class="message user-message"><p>I want a relaxed two-day trip to Hangzhou this weekend. Tea houses, walking, and no early starts.</p></div>
+              <div class="message assistant-message"><p>I would keep Saturday around West Lake and save Longjing for Sunday. Here is a calm plan with late starts and time to stop for tea.</p></div>
+              <div class="work-summary">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m4.5 12.75 6 6 9-13.5"/></svg>
+                <span>I compared tea houses and kept the route compact.</span>
+              </div>
+              <article class="result-sheet">
+                <div class="result-eyebrow"><img src="data:image/png;base64,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" alt="IDBots">YOUR PLAN</div>
+                <h2 class="result-title">A slower weekend</h2>
+                <p class="result-copy">West Lake on Saturday, Longjing on Sunday. No alarms required.</p>
+                <div class="route">
+                  <div class="route-stop"><span class="route-day">SATURDAY</span><span class="route-place">West Lake</span></div>
+                  <div class="route-stop"><span class="route-day">SUNDAY</span><span class="route-place">Longjing</span></div>
+                </div>
+                <button class="plan-button" type="button" data-open-plan>View plan</button>
+              </article>
+            </div>
+
+            <div class="suggestions" aria-label="Suggested follow-ups">
+              <button class="suggestion" type="button" data-suggestion="Make it food-focused">Make it food-focused</button>
+              <button class="suggestion" type="button" data-suggestion="Add a museum">Add a museum</button>
+              <button class="suggestion" type="button" data-suggestion="Save as a task">Save as a task</button>
+            </div>
+            <div class="composer-zone">
+              <div class="voice-feedback" id="voiceFeedback" hidden><span class="voice-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><span>Voice input preview</span></div>
+              <div class="composer">
+                <button class="icon-button" id="attachmentButton" type="button" aria-label="Add attachment">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m18.375 12.739-7.693 7.693a4.5 4.5 0 0 1-6.364-6.364l10.94-10.94a3 3 0 1 1 4.242 4.243L8.552 18.32a1.5 1.5 0 0 1-2.122-2.122l9.546-9.546"/></svg>
+                </button>
+                <input id="messageInput" type="text" placeholder="Message Twin" aria-label="Message Twin" autocomplete="off">
+                <button class="icon-button" id="voiceButton" type="button" aria-label="Voice input" aria-pressed="false">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z"/></svg>
+                </button>
+                <button class="send-button" id="sendButton" type="button" aria-label="Send message">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19.5v-15m0 0-6 6m6-6 6 6"/></svg>
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <section class="screen" data-screen="tasks" aria-label="Tasks" hidden>
+            <header class="topbar simple"><div><h1 class="page-title">Tasks</h1><p class="page-subtitle">Your Bot keeps things moving</p></div></header>
+            <div class="tasks-content">
+              <p class="section-label">IN PROGRESS</p>
+              <div class="task-list">
+                <button class="task-row" type="button" data-open-plan><span class="task-copy"><span class="task-name">Weekend in Hangzhou</span><span class="task-meta">A two-day itinerary is ready</span></span><span class="task-state">Review</span></button>
+                <div class="task-row"><span class="task-copy"><span class="task-name">Tea house reminder</span><span class="task-meta">Saturday at 14:30</span></span><span class="task-state">Scheduled</span></div>
+              </div>
+              <p class="section-label" style="margin-top:22px">UP NEXT</p>
+              <div class="task-list"><div class="task-row"><span class="task-copy"><span class="task-name">Sunday route check</span><span class="task-meta">Longjing village and tea gardens</span></span><span class="task-state">Queued</span></div></div>
+            </div>
+          </section>
+
+          <section class="screen" data-screen="me" aria-label="Me" hidden>
+            <header class="topbar simple"><div><h1 class="page-title">Me</h1><p class="page-subtitle">Your identity and preferences</p></div></header>
+            <div class="me-content">
+              <div class="profile"><img src="data:image/png;base64,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" alt="IDBots"><div><h2 class="profile-name">Your IDBots</h2><p class="profile-copy">Personal identity and settings</p></div></div>
+              <div class="settings-list">
+                <button class="settings-row" type="button" data-toast="Bot management is outside this style preview"><span class="settings-copy"><span class="settings-name">My Bots</span><span class="settings-meta">Twin Bot and your worker Bots</span></span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></button>
+                <button class="settings-row" type="button" data-toast="Memory settings are outside this style preview"><span class="settings-copy"><span class="settings-name">Memory</span><span class="settings-meta">Choose what your companion remembers</span></span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></button>
+                <button class="settings-row" type="button" data-toast="General settings are outside this style preview"><span class="settings-copy"><span class="settings-name">General</span><span class="settings-meta">Language, theme, and traffic</span></span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></button>
+              </div>
+            </div>
+          </section>
+
+          <nav class="tabbar" aria-label="Main navigation">
+            <button class="tab" type="button" data-tab="chat" aria-selected="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20.25c4.97 0 9-3.694 9-8.25s-4.03-8.25-9-8.25-9 3.694-9 8.25c0 2.023.856 3.883 2.303 5.34-.202 1.319-.834 2.453-1.803 3.16 1.787-.028 3.494-.57 4.977-1.551 1.098.392 2.292.601 3.523.601Z"/></svg>
+              <span>Chat</span>
+            </button>
+            <button class="tab" type="button" data-tab="tasks" aria-selected="false">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"/></svg>
+              <span>Tasks</span>
+            </button>
+            <button class="tab" type="button" data-tab="me" aria-selected="false">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.5 20.25a7.5 7.5 0 0 1 15 0"/></svg>
+              <span>Me</span>
+            </button>
+          </nav>
+        </main>
+      </div>
+      <div class="home-indicator"></div>
+
+      <div class="toast" id="toast" role="status" hidden></div>
+      <div class="sheet-layer" id="planLayer" hidden>
+        <button class="sheet-backdrop" type="button" aria-label="Close plan" data-close-plan></button>
+        <section class="detail-sheet" role="dialog" aria-modal="true" aria-labelledby="planTitle">
+          <div class="grabber"></div>
+          <div class="sheet-header"><h2 class="sheet-title" id="planTitle">A slower weekend</h2><button class="sheet-close" type="button" aria-label="Close" data-close-plan>×</button></div>
+          <p class="sheet-intro">Two gentle days with late mornings, short transfers, and time for tea.</p>
+          <section class="itinerary-day"><h3>Saturday · West Lake</h3><p>Start at 10:30 with a lakeside walk from Broken Bridge to Solitary Hill.</p><p>Pause for tea at 15:00 and keep the evening free near the water.</p></section>
+          <section class="itinerary-day"><h3>Sunday · Longjing</h3><p>Take a late morning walk through the tea gardens.</p><p>Have lunch in Longjing village, then return before dinner.</p></section>
+          <button class="save-task" id="saveTask" type="button">Save as a task</button>
+        </section>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const phone = document.getElementById('phone');
+  const appearanceToggle = document.getElementById('appearanceToggle');
+  const transcript = document.getElementById('transcript');
+  const input = document.getElementById('messageInput');
+  const planLayer = document.getElementById('planLayer');
+  const toast = document.getElementById('toast');
+  let toastTimer;
+  let sheetTimer;
+
+  function showToast(message) {
+    clearTimeout(toastTimer);
+    toast.textContent = message;
+    toast.hidden = false;
+    toastTimer = setTimeout(() => { toast.hidden = true; }, 2200);
+  }
+
+  function sendText(text) {
+    const value = text.trim();
+    if (!value) return;
+    const message = document.createElement('div');
+    message.className = 'message user-message local-message';
+    const copy = document.createElement('p');
+    copy.textContent = value;
+    message.appendChild(copy);
+    transcript.appendChild(message);
+    input.value = '';
+    transcript.scrollTop = transcript.scrollHeight;
+  }
+
+  function openPlan() {
+    clearTimeout(sheetTimer);
+    planLayer.hidden = false;
+    requestAnimationFrame(() => planLayer.classList.add('open'));
+    planLayer.querySelector('[data-close-plan]').focus({ preventScroll: true });
+  }
+
+  function closePlan() {
+    planLayer.classList.remove('open');
+    sheetTimer = setTimeout(() => { planLayer.hidden = true; }, 260);
+  }
+
+  function setAppearance(mode) {
+    const light = mode === 'light';
+    phone.dataset.appearance = light ? 'light' : 'dark';
+    appearanceToggle.textContent = light ? 'Dark appearance' : 'Light appearance';
+    appearanceToggle.setAttribute('aria-pressed', String(light));
+    document.getElementById('reviewTitle').textContent = light ? 'Daylight' : 'Nocturne';
+    document.getElementById('reviewCopy').textContent = light
+      ? 'A quiet, bright companion with crisp surfaces and floating controls.'
+      : 'A quiet, low-light companion with warm handoffs and floating controls.';
+  }
+
+  appearanceToggle.addEventListener('click', () => {
+    setAppearance(phone.dataset.appearance === 'light' ? 'dark' : 'light');
+  });
+  const requestedAppearance = new URLSearchParams(window.location.search).get('appearance');
+  setAppearance(requestedAppearance === 'light' ? 'light' : 'dark');
+
+  document.querySelectorAll('[data-tab]').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      const target = tab.dataset.tab;
+      document.querySelectorAll('[data-screen]').forEach((screen) => { screen.hidden = screen.dataset.screen !== target; });
+      document.querySelectorAll('[data-tab]').forEach((item) => item.setAttribute('aria-selected', String(item === tab)));
+      closePlan();
+    });
+  });
+  document.querySelectorAll('[data-open-plan]').forEach((button) => button.addEventListener('click', openPlan));
+  document.querySelectorAll('[data-close-plan]').forEach((button) => button.addEventListener('click', closePlan));
+  document.querySelectorAll('[data-suggestion]').forEach((button) => button.addEventListener('click', () => sendText(button.dataset.suggestion)));
+  document.querySelectorAll('[data-toast]').forEach((button) => button.addEventListener('click', () => showToast(button.dataset.toast)));
+  document.getElementById('sendButton').addEventListener('click', () => sendText(input.value));
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      sendText(input.value);
+    }
+  });
+  document.getElementById('attachmentButton').addEventListener('click', () => showToast('Attachment picker is a prototype action'));
+  document.getElementById('voiceButton').addEventListener('click', (event) => {
+    const button = event.currentTarget;
+    const active = button.getAttribute('aria-pressed') !== 'true';
+    button.setAttribute('aria-pressed', String(active));
+    document.getElementById('voiceFeedback').hidden = !active;
+    if (!active) showToast('Voice input preview stopped');
+  });
+  document.getElementById('saveTask').addEventListener('click', (event) => {
+    event.currentTarget.textContent = 'Saved to Tasks';
+    event.currentTarget.disabled = true;
+    showToast('Added to your local task preview');
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !planLayer.hidden) closePlan();
+  });
+  window.__ready = true;
+</script>
+</body>
+</html>
