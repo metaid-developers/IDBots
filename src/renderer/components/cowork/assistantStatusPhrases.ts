@@ -311,6 +311,52 @@ const SEARCH_SESSION_TOOLS = new Set([
   'conversation_search', 'idbots_session_read_all', 'idbots_session_read_latest', 'session_search',
 ]);
 const PROJECT_TOOL = 'bot_browser_preview_local';
+
+type ProjectionStatusMessage = {
+  type: string;
+  metadata?: {
+    toolName?: string;
+    toolUseId?: string | null;
+    isError?: boolean;
+    origin?: string;
+    sourceChannel?: string;
+  };
+};
+
+/** Return the latest successful projection in the current owner turn. */
+export function findCurrentTurnProjection(messages: readonly ProjectionStatusMessage[]): string | null {
+  let turnStart = 0;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    const origin = message.metadata?.origin;
+    if (message.type === 'user'
+      && message.metadata?.sourceChannel !== 'idbots_cross_session'
+      && (!origin || origin === 'user' || origin === 'quick_action')) {
+      turnStart = index + 1;
+      break;
+    }
+  }
+  const successfulResultIds = new Set<string>();
+  for (let index = turnStart; index < messages.length; index += 1) {
+    const message = messages[index];
+    const id = message.metadata?.toolUseId;
+    if (message.type === 'tool_result' && message.metadata?.isError !== true && typeof id === 'string') {
+      successfulResultIds.add(id);
+    }
+  }
+  for (let index = messages.length - 1; index >= turnStart; index -= 1) {
+    const message = messages[index];
+    const id = message.metadata?.toolUseId;
+    if (message.type === 'tool_use'
+      && message.metadata?.toolName === PROJECT_TOOL
+      && typeof id === 'string'
+      && successfulResultIds.has(id)) {
+      return id;
+    }
+  }
+  return null;
+}
+
 const COORDINATE_TOOLS = new Set([
   'local_worker_delegate', 'worker_delegate', 'twin_task_create', 'send_group_message',
 ]);

@@ -43,10 +43,10 @@ test('projection readiness requires a successful matching tool result', () => {
   state = reduceLiveStageMessage(state, message('result', 'tool_result', { toolUseId: 'project-1', isError: false }));
   assert.equal(state.family, 'report-ready');
   assert.deepEqual(state.pendingProjectionIds, []);
-  const ready = state;
-  assert.equal(reduceLiveStageMessage(state, message('final', 'assistant', { isFinal: true })), ready);
-  assert.equal(reduceLiveStageMessage(state, message('late-thinking', 'assistant', { isThinking: true })), ready);
-  assert.equal(completeLiveStage(state), ready);
+  state = reduceLiveStageMessage(state, message('next', 'assistant', { isThinking: true }));
+  assert.equal(state.family, 'reasoning', 'a projected draft does not freeze later live-stage activity');
+  state = reduceLiveStageMessage(state, message('write', 'tool_use', { toolName: 'write', toolUseId: 'write-1' }));
+  assert.equal(state.family, 'making');
 });
 
 test('event window carries semantics only and Director cannot inherit raw arguments', () => {
@@ -127,7 +127,13 @@ test('ordinary ask prompts are shaped into a bounded stage interaction', () => {
   assert.equal(interaction.questions[1].options.length, 0);
   const state = presentLiveStageInteraction(initial(), interaction);
   assert.equal(state.interaction?.requestId, 'ask-1');
+  assert.equal(state.family, 'owner-needed');
+  assert.equal(state.headline, '需要你的决定');
+  assert.equal(state.motion.energy, .12);
   assert.equal(state.revision, initial().revision + 1);
+  const lateUpdate = reduceLiveStageMessage(state, message('late', 'assistant', { isFinal: true }));
+  assert.equal(lateUpdate.family, 'owner-needed', 'late transcript events cannot disguise a pending ask as active work');
+  assert.equal(lateUpdate.headline, '需要你的决定');
   const cleared = dismissLiveStageInteraction(state, 'ask-1');
   assert.equal(cleared.interaction, null);
   assert.equal(dismissLiveStageInteraction(state, 'other').interaction?.requestId, 'ask-1', 'mismatched ids keep the card');

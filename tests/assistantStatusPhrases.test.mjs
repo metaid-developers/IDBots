@@ -15,6 +15,7 @@ import {
   describeToolUseStatus,
   drawAssistantStatusPhrase,
   formatWaitSuffix,
+  findCurrentTurnProjection,
   isResumeSpliceContent,
   resetAssistantStatusDrawing,
 } from '../src/renderer/components/cowork/assistantStatusPhrases.ts';
@@ -97,6 +98,20 @@ test('drawAssistantStatusPhrase: a shared bag of N draws N distinct phrases befo
   }
   assert.equal(seen.size, pool.length, 'one full bag cycle never repeats');
   resetAssistantStatusDrawing(undefined, true);
+});
+
+test('projection status belongs to the current owner turn and requires success', () => {
+  const projection = (id) => ({ type: 'tool_use', metadata: { toolName: 'bot_browser_preview_local', toolUseId: id } });
+  const result = (id, isError = false) => ({ type: 'tool_result', metadata: { toolUseId: id, isError } });
+  const user = (origin = 'user') => ({ type: 'user', metadata: { origin } });
+  assert.equal(findCurrentTurnProjection([projection('old'), result('old'), user()]), null, 'a previous turn never describes the current Live Stage');
+  assert.equal(findCurrentTurnProjection([projection('failed'), result('failed', true)]), null, 'a failed projection is not on screen');
+  assert.equal(findCurrentTurnProjection([projection('pending')]), null, 'an unanswered call is still projecting, not projected');
+  assert.equal(findCurrentTurnProjection([user(), projection('current'), result('current')]), 'current');
+  assert.equal(findCurrentTurnProjection([
+    projection('current'), result('current'),
+    { type: 'user', metadata: { origin: 'cross_session' } },
+  ]), 'current', 'worker receipts do not reset the owner turn');
 });
 
 // ---------------------------------------------------------------------------

@@ -99,6 +99,9 @@ test('service writes one stage per turn, dedupes messages, and preserves report 
   await run.queue;
   assert.equal(service.getState('s').family, 'report-ready');
   assert.equal(patches.length, patchCount, 'late turn events never patch the report frame');
+  assert.equal(service.presentInteraction('s', askRequest('after-report')), 'declined', 'a projected report leaves the prompt on its visible desktop seat');
+  assert.equal(service.getState('s').interaction, null);
+  assert.deepEqual(service.listPresentedRequestIds(), [], 'the overlay is never suppressed for an invisible stage card');
 });
 
 test('final projection passes the confirmed stage tab and persists its recovery action', async (t) => {
@@ -262,6 +265,7 @@ test('a presented ask drains a stage answer into the host permission sink', asyn
   await run.queue;
 
   assert.equal(service.presentInteraction('s', askRequest()), 'presented');
+  assert.equal(service.getState('s').family, 'owner-needed');
   const interaction = service.getState('s').interaction;
   assert.ok(interaction);
   assert.match(interaction.token, /^[0-9a-f]{32}$/);

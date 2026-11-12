@@ -551,7 +551,8 @@ select::-ms-expand {
 /* Assistant activity indicator: soft breathing ring around the bot avatar.
    The ring gently expands and fades in/out (2.6s) so the "bot is working"
    state reads as alive without the professional mode's sliding bar. Ring
-   color follows the cyan accent tokens (#06B6D4 light / #22D3EE dark). */
+   color follows the cyan accent tokens (#06B6D4 light / #22D3EE dark).
+   Owner-waiting uses a static amber ring instead. */
 .assistant-activity-avatar-ring {
   position: relative;
 }
@@ -566,6 +567,15 @@ select::-ms-expand {
 }
 .dark .assistant-activity-avatar-ring::after {
   border-color: rgba(34,211,238,0.4);
+}
+.assistant-activity-avatar-ring.is-waiting::after {
+  animation: none;
+  border-color: rgba(217,119,6,0.65);
+  opacity: 1;
+  transform: scale(1);
+}
+.dark .assistant-activity-avatar-ring.is-waiting::after {
+  border-color: rgba(251,191,36,0.65);
 }
 @keyframes assistant-activity-breathe {
   0%, 100% {
