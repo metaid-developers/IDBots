@@ -10626,9 +10626,10 @@ export class CoworkRunner extends EventEmitter {
       }
       const hub = this.ensureDshTurnHub();
       // Automation-slot warm (first-sentence latency work, 2026-10-15 +
-      // 2026-10-16 follow-up): browser/computer automation is default-ON for
-      // bots, so bot chats ride the .auto-* runtime slots the clean prewarm
-      // never touches, and their first turn after app start paid the full
+      // 2026-10-16 follow-up): opted-in bots (per-bot switches default OFF
+      // since 2026-11-12; legacy bots keep a pinned '1') ride the .auto-*
+      // runtime slots the clean prewarm never touches, and their first turn
+      // after app start paid the full
       // slot boot (process + Playwright/cua plugin load, ~11-38s measured)
       // before the first token. Warming only the MOST-recent session's combo
       // still left every other bot cold (session 70fa10aa: warmup warmed

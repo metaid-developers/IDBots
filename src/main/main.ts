@@ -7143,7 +7143,8 @@ const getCoworkRunner = () => {
         if (!isCoworkMcpMountEnabled(getMetabotStore(), metabotId)) return [];
         return getMcpStore().getEnabledServers();
       },
-      // Per-bot switch (default ON since 2026-09-28, explicit '0' opts out)
+      // Per-bot switch (default OFF since 2026-11-12, explicit '1' opts in;
+      // pre-existing bots carry a pinned '1' from the legacy migration)
       // behind the app-level kill-switch (automation.experimentalEnabled,
       // default allow): 0.1.7 experimental browser automation (Playwright
       // MCP) launches one headless Chromium per DSH session. Prefer the
@@ -7153,7 +7154,7 @@ const getCoworkRunner = () => {
         const metabotId = getCoworkStore().getSession(coworkSessionId)?.metabotId;
         return metabotAutomationProviders.browser(metabotId ?? null);
       },
-      // Per-bot switch (default ON since 2026-09-28, explicit '0' opts out):
+      // Per-bot switch (default OFF since 2026-11-12, explicit '1' opts in):
       // 0.1.7 experimental desktop computer use (cua-driver native,
       // in-process). Requires the app to hold the macOS Accessibility/Screen
       // Recording grants — the OS prompts on first use.
@@ -8552,9 +8553,10 @@ const getCoworkRunner = () => {
         const session = coworkStoreInstance.getSession(sessionId);
         if (session?.sessionType !== 'browser') return null;
         // The Playwright MCP guidance is truthful only when this bot's switch
-        // is actually on (default ON since 2026-09-28; explicit opt-outs
-        // excluded): slot isolation guarantees the tools exist exactly for
-        // opted-in bots, so the prompt must follow the same per-session flag.
+        // is actually on (default OFF since 2026-11-12; pre-existing bots
+        // carry a pinned '1' from the legacy migration): slot isolation
+        // guarantees the tools exist exactly for opted-in bots, so the prompt
+        // must follow the same per-session flag.
         const browserAutomationOn = isCoworkBrowserAutomationEnabled(getMetabotStore(), session?.metabotId);
         try {
           const result = await getBotBrowserTabBridge().execute({ action: 'get-tabs', sessionId });

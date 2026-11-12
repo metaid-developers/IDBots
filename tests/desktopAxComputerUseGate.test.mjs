@@ -5,7 +5,7 @@
 // behind the unconditional registration the read-only screenshot tool uses.
 // Two levels must both hold:
 //   1. app-wide kill switch  automation.experimentalEnabled
-//   2. per-bot switch        cowork.computerUse ('0' opts out; missing means on)
+//   2. per-bot switch        cowork.computerUse ('1' opts in; missing means off)
 //
 // This test wires the REAL gate functions, the REAL runtime-config generator and
 // the REAL plugin, then asserts what actually reaches a session's tool list.
@@ -80,8 +80,8 @@ function toolsForSession(computerUse) {
 
 const AX_ACTION_TOOL = 'desktop_ax'
 
-test('per-bot switch on (default) + app switch allowed: the AX tool IS in the session list', () => {
-  const stores = makeStores({ killSwitch: undefined, perBot: {} })
+test("per-bot '1' (explicit opt-in) + app switch allowed: the AX tool IS in the session list", () => {
+  const stores = makeStores({ killSwitch: undefined, perBot: { [`7:${COWORK_COMPUTER_USE_KEY}`]: '1' } })
   const computer = computerProvider(stores)
   const computerUse = computer(7) === true
   const session = toolsForSession(computerUse)
@@ -89,6 +89,17 @@ test('per-bot switch on (default) + app switch allowed: the AX tool IS in the se
   assert.equal(computerUse, true)
   assert.equal(session.mounted, true)
   assert.ok(session.tools.includes(AX_ACTION_TOOL), `expected ${AX_ACTION_TOOL} in ${JSON.stringify(session.tools)}`)
+})
+
+test("per-bot switch missing (default off): the AX tool is NOT in the session list", () => {
+  const stores = makeStores({ killSwitch: undefined, perBot: {} })
+  const computer = computerProvider(stores)
+  const computerUse = computer(7) === true
+  const session = toolsForSession(computerUse)
+
+  assert.equal(computerUse, false)
+  assert.equal(session.mounted, false)
+  assert.deepEqual(session.tools, [], 'a bot that never opted in must see no desktop_ax at all')
 })
 
 test("per-bot '0' (explicit opt-out): the AX tool is NOT in the session list", () => {
