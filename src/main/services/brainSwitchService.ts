@@ -24,6 +24,8 @@
 
 import {
   FREE_PROVIDER_KEY,
+  FREE_PROVIDER_LEGACY_KEY,
+  canonicalFreeProviderKey,
   isFreePrimaryBrain,
   isUsableProviderKey,
   resolveProviderSeedModel,
@@ -80,7 +82,7 @@ export async function switchFreePrimaryBrainsToProvider(
     return result;
   }
   const targetKey = providerKey.trim();
-  if (!targetKey || targetKey.toLowerCase() === FREE_PROVIDER_KEY || !isUsableProviderKey(appConfig, targetKey)) {
+  if (!targetKey || canonicalFreeProviderKey(targetKey) === FREE_PROVIDER_KEY || !isUsableProviderKey(appConfig, targetKey)) {
     result.error = `Provider '${providerKey}' is not usable (disabled, missing API key, or no models).`;
     return result;
   }
@@ -92,7 +94,7 @@ export async function switchFreePrimaryBrainsToProvider(
   result.modelId = modelId;
 
   const providers = appConfig.providers ?? {};
-  const freeFallbackModelId = (providers[FREE_PROVIDER_KEY]?.models ?? [])
+  const freeFallbackModelId = ((providers[FREE_PROVIDER_KEY] ?? providers[FREE_PROVIDER_LEGACY_KEY])?.models ?? [])
     .find((model) => typeof model?.id === 'string' && model.id)?.id ?? null;
 
   const bots = deps.listMetabots();
@@ -131,10 +133,10 @@ export async function switchFreePrimaryBrainsToProvider(
   // model only the free relay serves) — otherwise every NEW session would
   // still default to the exhausted route the owner just switched away from.
   const modelConfig = appConfig.model ?? {};
-  const defaultProvider = (modelConfig.defaultProvider ?? '').trim().toLowerCase();
+  const defaultProvider = canonicalFreeProviderKey(modelConfig.defaultProvider);
   const defaultModel = (modelConfig.defaultModel ?? '').trim();
   const freeServesDefault = !!defaultModel
-    && (providers[FREE_PROVIDER_KEY]?.models ?? []).some((model) => model?.id === defaultModel);
+    && ((providers[FREE_PROVIDER_KEY] ?? providers[FREE_PROVIDER_LEGACY_KEY])?.models ?? []).some((model) => model?.id === defaultModel);
   const defaultRidesFree = defaultProvider === FREE_PROVIDER_KEY || (!defaultProvider && freeServesDefault);
   if (defaultRidesFree) {
     try {

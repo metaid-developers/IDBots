@@ -71,7 +71,8 @@ test('IDBots owns the compact plan card inside its provider details', () => {
   // The built-in registry (moved out of Settings.tsx into the shared
   // providerIcons module) labels the free relay IDBots and renders the
   // IDBots app icon — the yellow avatar from public/logo.png.
-  assert.match(providerIconsSource, /'metaid-free': 'IDBots'/);
+  assert.match(providerIconsSource, /\[LLM_FREE_PROVIDER_KEY\]: 'IDBots'/);
+  assert.match(providerIconsSource, /\[LLM_FREE_PROVIDER_LEGACY_KEY\]: 'IDBots'/);
   assert.match(providerIconsSource, /<img src="logo\.png"/);
   assert.match(
     settingsSource,

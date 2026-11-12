@@ -320,11 +320,13 @@ test('normalizeDeepSeekAppConfig falls a vanished metaid-free default back to th
     model: {
       ...defaultConfig.model,
       defaultModel: 'deepseek-chat',
+      // Pre-rename stored value: normalizeDeepSeekAppConfig canonicalizes it
+      // to 'idbots' when matching the provider catalog.
       defaultProvider: 'metaid-free',
     },
     providers: {
       ...defaultConfig.providers!,
-      'metaid-free': {
+      'idbots': {
         enabled: true,
         apiKey: 'mrk_legacy-install',
         baseUrl: 'https://www.metaso.network/assist-open-api/v2/assist/llm/v1',
@@ -335,10 +337,12 @@ test('normalizeDeepSeekAppConfig falls a vanished metaid-free default back to th
   });
 
   assert.equal(normalized.model.defaultModel, 'deepseek-4.1-flash');
+  // The legacy defaultProvider is persisted back under the canonical key.
+  assert.equal(normalized.model.defaultProvider, 'idbots');
   // The free provider's catalog itself is untouched by the deepseek
-  // normalization (cross-provider migration never rewrites metaid-free rows).
+  // normalization (cross-provider migration never rewrites free-provider rows).
   assert.deepEqual(
-    normalized.providers?.['metaid-free']?.models?.map(({ id }) => id),
+    normalized.providers?.['idbots']?.models?.map(({ id }) => id),
     ['deepseek-4.1-flash', 'glm-5.3-flash', 'cat-jam-free'],
   );
 });
@@ -435,14 +439,14 @@ test('mergeProvidersConfig rewrites the stale metaid-free 1M-context entry to th
 
   const merged = mergeProvidersConfig(staleProvisioned, undefined);
 
-  const model = merged?.['metaid-free']?.models?.find(({ id }) => id === 'deepseek-chat');
+  const model = merged?.['idbots']?.models?.find(({ id }) => id === 'deepseek-chat');
   assert.ok(model);
   assert.equal(model.contextWindow, 1_000_000);
   assert.equal(model.maxOutputTokens, 100_000);
   // Everything the canonical table does not own stays untouched.
   assert.equal(model.name, 'deepseek-flash');
   assert.deepEqual(model.options, { reasoningEffort: 'max', thinking: { type: 'enabled' } });
-  assert.equal(merged?.['metaid-free']?.apiKey, 'mrk_stale-install');
+  assert.equal(merged?.['idbots']?.apiKey, 'mrk_stale-install');
 });
 
 test('mergeProvidersConfig bumps the 2026-10-04 64000/4096 pin to 1M/100K but keeps user-tuned free-model limits', () => {
@@ -481,7 +485,7 @@ test('mergeProvidersConfig bumps the 2026-10-04 64000/4096 pin to 1M/100K but ke
 
   const merged = mergeProvidersConfig(undefined, stored);
 
-  const models = merged?.['metaid-free']?.models ?? [];
+  const models = merged?.['idbots']?.models ?? [];
   const pinned = models.find(({ id }) => id === 'deepseek-chat');
   assert.ok(pinned);
   assert.equal(pinned.contextWindow, 1_000_000);
@@ -536,7 +540,7 @@ test('mergeProvidersConfig flips the round-1 supportsImage:false era on deepseek
 
   const merged = mergeProvidersConfig(undefined, stored);
 
-  const models = merged?.['metaid-free']?.models ?? [];
+  const models = merged?.['idbots']?.models ?? [];
   const flagship = models.find(({ id }) => id === 'deepseek-4.1-flash');
   assert.ok(flagship);
   assert.equal(flagship.supportsImage, true, 'round-1 machine era flips to the verified vision flag');
@@ -561,7 +565,7 @@ test('mergeProvidersConfig flips the round-1 supportsImage:false era on deepseek
     },
   };
   const aliasMerged = mergeProvidersConfig(undefined, aliasStored);
-  assert.equal(aliasMerged?.['metaid-free']?.models?.[0]?.supportsImage, false);
+  assert.equal(aliasMerged?.['idbots']?.models?.[0]?.supportsImage, false);
 });
 
 test('mergeProvidersConfig keeps user-tuned limits on the known free-relay id untouched', () => {
@@ -590,7 +594,7 @@ test('mergeProvidersConfig keeps user-tuned limits on the known free-relay id un
 
   const merged = mergeProvidersConfig(undefined, stored);
 
-  const model = merged?.['metaid-free']?.models?.find(({ id }) => id === 'deepseek-chat');
+  const model = merged?.['idbots']?.models?.find(({ id }) => id === 'deepseek-chat');
   assert.ok(model);
   assert.equal(model.contextWindow, 100_000);
   assert.equal(model.maxOutputTokens, 50_000);

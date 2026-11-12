@@ -17,6 +17,7 @@ import { configService } from './config';
 import type { AppConfig } from '../config';
 import {
   LLM_FREE_PROVIDER_KEY,
+  LLM_FREE_PROVIDER_LEGACY_KEY,
   FREE_PROVIDER_DISPLAY_NAME,
   buildFreeProviderRelayModelRow,
   isFreeProviderConfigured,
@@ -50,7 +51,8 @@ export async function syncFreeProviderCatalogFromQuota(
   quota: { models?: RelayCatalogModel[] } | null | undefined,
 ): Promise<boolean> {
   try {
-    const provider = configService.getConfig().providers?.[LLM_FREE_PROVIDER_KEY];
+    const provider = configService.getConfig().providers?.[LLM_FREE_PROVIDER_KEY]
+      ?? configService.getConfig().providers?.[LLM_FREE_PROVIDER_LEGACY_KEY];
     if (!isFreeProviderConfigured(provider)) {
       return false;
     }
@@ -131,7 +133,8 @@ async function provisionProviderConfig(result: LlmRelayBootstrapResult): Promise
  */
 export async function ensureFreeQuotaProvisioning(): Promise<void> {
   try {
-    const provider = configService.getConfig().providers?.[LLM_FREE_PROVIDER_KEY];
+    const provider = configService.getConfig().providers?.[LLM_FREE_PROVIDER_KEY]
+      ?? configService.getConfig().providers?.[LLM_FREE_PROVIDER_LEGACY_KEY];
     let metabotCount: number | null = null;
     try {
       const metabotResult = await window.electron.metabot.list();

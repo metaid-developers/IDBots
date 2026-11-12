@@ -23,6 +23,7 @@
 
 import {
   FREE_PROVIDER_KEY,
+  FREE_PROVIDER_LEGACY_KEY,
   collectUsablePaidProviderKeys,
   isFreePrimaryBrain,
   resolveProviderSeedModel,
@@ -143,7 +144,7 @@ export async function computeQuotaNudgeState(deps: QuotaNudgeDeps): Promise<Quot
   if (freeBrainBotCount === 0) {
     return { level: 'none', reason: 'no-free-brain-bots', ...base };
   }
-  const freeProvider = providers[FREE_PROVIDER_KEY];
+  const freeProvider = providers[FREE_PROVIDER_KEY] ?? providers[FREE_PROVIDER_LEGACY_KEY];
   const freeApiKey = (freeProvider?.apiKey ?? '').trim();
   if (!freeProvider?.enabled || !freeApiKey) {
     return { level: 'none', reason: 'quota-unavailable', ...base };

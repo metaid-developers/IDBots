@@ -31,13 +31,13 @@ import {
   XiaomiIcon,
   ZhipuIcon,
 } from '../icons/providers';
-import { LLM_FREE_PROVIDER_KEY } from '../../services/llmFreeQuotaGate.js';
+import { canonicalFreeProviderKey, LLM_FREE_PROVIDER_KEY, LLM_FREE_PROVIDER_LEGACY_KEY } from '../../services/llmFreeQuotaGate.js';
 import { PROVIDER_TEMPLATES } from '../../services/providerTemplates';
 import { resolveProviderTemplateLogo } from './providerTemplateLogos';
 
 /** Built-in provider keys, in settings-list order (the free relay first). */
 export const providerKeys = [
-  'metaid-free',
+  LLM_FREE_PROVIDER_KEY,
   'deepseek',
   'opencode',
   'commandcode',
@@ -61,7 +61,9 @@ export const isCustomProviderKey = (key: string): boolean => (
 
 /** Display labels for the built-in providers (the free relay's label is i18n-driven in Settings). */
 const BUILT_IN_PROVIDER_LABELS: Record<string, string> = {
-  'metaid-free': 'IDBots',
+  [LLM_FREE_PROVIDER_KEY]: 'IDBots',
+  // Pre-rename stored key: same provider, keep a label so legacy rows never echo the raw key.
+  [LLM_FREE_PROVIDER_LEGACY_KEY]: 'IDBots',
   deepseek: 'DeepSeek',
   opencode: 'OpenCode',
   commandcode: 'Command Code',
@@ -139,15 +141,15 @@ export interface ProviderIconProps {
 
 export const ProviderIcon: React.FC<ProviderIconProps> = ({ providerKey, config, dark, className = 'h-6 w-6' }) => {
   let icon: React.ReactNode;
-  if (isCustomProviderKey(providerKey)) {
+  if (canonicalFreeProviderKey(providerKey) === LLM_FREE_PROVIDER_KEY) {
+    // The IDBots app icon (public/logo.png — the yellow avatar).
+    icon = <img src="logo.png" alt="" aria-hidden className="h-full w-full rounded-[22%] object-cover" />;
+  } else if (isCustomProviderKey(providerKey)) {
     const logoKey = getProviderTemplateLogoKey(providerKey, config);
     const src = logoKey ? resolveProviderTemplateLogo(logoKey, dark) : null;
     icon = src
       ? <img src={src} alt="" aria-hidden className="h-full w-full object-contain" />
       : <CustomProviderIcon className="h-full w-full" />;
-  } else if (providerKey === LLM_FREE_PROVIDER_KEY) {
-    // The IDBots app icon (public/logo.png — the yellow avatar).
-    icon = <img src="logo.png" alt="" aria-hidden className="h-full w-full rounded-[22%] object-cover" />;
   } else {
     const VendorIcon = BUILT_IN_PROVIDER_ICONS[providerKey];
     icon = VendorIcon ? <VendorIcon className="h-full w-full" /> : <CustomProviderIcon className="h-full w-full" />;

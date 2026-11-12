@@ -14,6 +14,7 @@ import { isServerMode } from '../server/serverMode';
 import type { CoworkStore, CoworkMessage, CoworkExecutionMode, CoworkSessionStatus, CoworkPermissionMode } from '../coworkStore';
 import type { CrossSessionDeliveryStore, CrossSessionDeliveryReliabilitySnapshot } from '../crossSessionDeliveryStore';
 import { getCurrentApiConfig, resolveCurrentModelLimits, resolveModelOptions, getPersistedAutoApproveTools, getPersistedCoworkEffortLevel, resolveDshProviderRoute, resolveSystemRescueBrain, isFreeQuotaProvider, ModelProviderSelectionError, type DshProviderRouteInfo } from './claudeSettings';
+import { FREE_PROVIDER_DISPLAY_NAME } from '../../renderer/services/llmFreeQuotaGate.js';
 import { resolveCoworkExecutionMode } from './coworkExecutionMode';
 import { buildGoalPromptSection, type CoworkSessionGoal } from './coworkSessionGoal';
 import { buildDispatchReportMessage, tailDispatchReportExcerpt } from './coworkCrossSessionReport';
@@ -12412,27 +12413,31 @@ export class CoworkRunner extends EventEmitter {
           // in cowork.log — a group-task post-mortem reads the worker session.
           const switchTargetZh = fallbackIsSystemRescue ? '系统兜底模型' : fallbackIsCurrentDefault ? '当前默认模型' : '该 Bot 的备用模型';
           const switchTargetEn = fallbackIsSystemRescue ? 'the system rescue model' : fallbackIsCurrentDefault ? 'the current default' : "the bot's fallback model";
+          // User-facing provider labels: the built-in relay shows its product
+          // name ('ID.Bots'), never the internal provider key.
+          const routeProviderLabel = isFreeQuotaProvider(route.provider) ? FREE_PROVIDER_DISPLAY_NAME : route.provider;
+          const fallbackProviderLabel = isFreeQuotaProvider(fallbackRoute.provider) ? FREE_PROVIDER_DISPLAY_NAME : fallbackRoute.provider;
           this.addSystemMessage(
             sessionId,
             tApp(
               gateQuota
-                ? `主模型 ${route.model}（${route.provider}）额度不足，本轮已切换到${switchTargetZh} ${fallbackRoute.model}（${fallbackRoute.provider}）继续。`
+                ? `主模型 ${route.model}（${routeProviderLabel}）额度不足，本轮已切换到${switchTargetZh} ${fallbackRoute.model}（${fallbackProviderLabel}）继续。`
                 : gateOverflow
-                  ? `主模型 ${route.model}（${route.provider}）上下文超限，本轮已切换到该 Bot 的备用模型 ${fallbackRoute.model}（${fallbackRoute.provider}）继续。`
+                  ? `主模型 ${route.model}（${routeProviderLabel}）上下文超限，本轮已切换到该 Bot 的备用模型 ${fallbackRoute.model}（${fallbackProviderLabel}）继续。`
                   : gateRuntimeBoot
-                    ? `主模型 ${route.model}（${route.provider}）运行时启动失败，本轮已切换到${switchTargetZh} ${fallbackRoute.model}（${fallbackRoute.provider}）重试原始任务。`
+                    ? `主模型 ${route.model}（${routeProviderLabel}）运行时启动失败，本轮已切换到${switchTargetZh} ${fallbackRoute.model}（${fallbackProviderLabel}）重试原始任务。`
                     : gateConfigHard
-                      ? `主模型 ${route.model}（${route.provider}）配置类错误（鉴权被拒或模型不存在），本轮已降级到${switchTargetZh} ${fallbackRoute.model}（${fallbackRoute.provider}）继续；请检查原供应商的 API key 或模型配置。`
-                      : `主模型路由持续不可用，本轮已切换到${switchTargetZh} ${fallbackRoute.model}（${fallbackRoute.provider}）继续。`,
+                      ? `主模型 ${route.model}（${routeProviderLabel}）配置类错误（鉴权被拒或模型不存在），本轮已降级到${switchTargetZh} ${fallbackRoute.model}（${fallbackProviderLabel}）继续；请检查原供应商的 API key 或模型配置。`
+                      : `主模型路由持续不可用，本轮已切换到${switchTargetZh} ${fallbackRoute.model}（${fallbackProviderLabel}）继续。`,
               gateQuota
-                ? `The primary model ${route.model} (${route.provider}) ran out of credit; this turn switched to the ${switchTargetEn} model ${fallbackRoute.model} (${fallbackRoute.provider}).`
+                ? `The primary model ${route.model} (${routeProviderLabel}) ran out of credit; this turn switched to the ${switchTargetEn} model ${fallbackRoute.model} (${fallbackProviderLabel}).`
                 : gateOverflow
-                  ? `The primary model ${route.model} (${route.provider}) exceeded its context window; this turn switched to the bot's fallback model ${fallbackRoute.model} (${fallbackRoute.provider}).`
+                  ? `The primary model ${route.model} (${routeProviderLabel}) exceeded its context window; this turn switched to the bot's fallback model ${fallbackRoute.model} (${fallbackProviderLabel}).`
                   : gateRuntimeBoot
-                    ? `The primary model ${route.model} (${route.provider}) runtime failed to boot; this turn switched to the ${switchTargetEn} model ${fallbackRoute.model} (${fallbackRoute.provider}) to retry the original task.`
+                    ? `The primary model ${route.model} (${routeProviderLabel}) runtime failed to boot; this turn switched to the ${switchTargetEn} model ${fallbackRoute.model} (${fallbackProviderLabel}) to retry the original task.`
                     : gateConfigHard
-                      ? `The primary model ${route.model} (${route.provider}) failed with a configuration-level error (auth rejected or model not found); this turn degraded to the ${switchTargetEn} model ${fallbackRoute.model} (${fallbackRoute.provider}). Check the original provider's API key or model configuration.`
-                      : `The primary model route kept failing; this turn switched to the ${switchTargetEn} model ${fallbackRoute.model} (${fallbackRoute.provider}).`
+                      ? `The primary model ${route.model} (${routeProviderLabel}) failed with a configuration-level error (auth rejected or model not found); this turn degraded to the ${switchTargetEn} model ${fallbackRoute.model} (${fallbackProviderLabel}). Check the original provider's API key or model configuration.`
+                      : `The primary model route kept failing; this turn switched to the ${switchTargetEn} model ${fallbackRoute.model} (${fallbackProviderLabel}).`
             ),
             {
               dshRouteFallback: true,

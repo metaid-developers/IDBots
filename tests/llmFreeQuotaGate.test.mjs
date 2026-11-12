@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   LLM_FREE_PROVIDER_KEY,
+  LLM_FREE_PROVIDER_LEGACY_KEY,
   FREE_PROVIDER_DISPLAY_NAME,
   buildFreeProviderRelayModelRow,
   getFreeProviderModelCanonical,
@@ -16,7 +17,8 @@ import {
 import { getDefaultOnboardingProvider } from '../src/renderer/components/onboarding/onboardingDefaults.js';
 
 test('constants stay stable (backend contract)', () => {
-  assert.equal(LLM_FREE_PROVIDER_KEY, 'metaid-free');
+  assert.equal(LLM_FREE_PROVIDER_KEY, 'idbots');
+  assert.equal(LLM_FREE_PROVIDER_LEGACY_KEY, 'metaid-free');
 });
 
 test('the display label is plan-neutral (never suggests a tier)', () => {
@@ -239,10 +241,15 @@ test('plan: degenerate inputs fall back safely', () => {
 });
 
 test('onboarding default: provisioned free provider wins, else legacy defaults', () => {
-  const provisioned = { 'metaid-free': { enabled: true, apiKey: 'mrk_x', baseUrl: 'https://relay' } };
-  assert.equal(getDefaultOnboardingProvider('zh', provisioned), 'metaid-free');
-  assert.equal(getDefaultOnboardingProvider('en', provisioned), 'metaid-free');
-  const unprovisioned = { 'metaid-free': { enabled: false, apiKey: '', baseUrl: '' } };
+  const provisioned = { 'idbots': { enabled: true, apiKey: 'mrk_x', baseUrl: 'https://relay' } };
+  assert.equal(getDefaultOnboardingProvider('zh', provisioned), 'idbots');
+  assert.equal(getDefaultOnboardingProvider('en', provisioned), 'idbots');
+  // Pre-rename stored key still counts as provisioned and resolves to the
+  // canonical key.
+  const legacyProvisioned = { 'metaid-free': { enabled: true, apiKey: 'mrk_x', baseUrl: 'https://relay' } };
+  assert.equal(getDefaultOnboardingProvider('zh', legacyProvisioned), 'idbots');
+  assert.equal(getDefaultOnboardingProvider('en', legacyProvisioned), 'idbots');
+  const unprovisioned = { 'idbots': { enabled: false, apiKey: '', baseUrl: '' } };
   assert.equal(getDefaultOnboardingProvider('zh', unprovisioned), 'deepseek');
   assert.equal(getDefaultOnboardingProvider('en', unprovisioned), 'openai');
   assert.equal(getDefaultOnboardingProvider('zh'), 'deepseek');

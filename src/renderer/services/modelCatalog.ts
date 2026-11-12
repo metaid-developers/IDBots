@@ -13,7 +13,7 @@
 
 import type { AppConfig } from '../config';
 import { providerRequiresApiKey } from './llmConnection';
-import { FREE_PROVIDER_DISPLAY_NAME, LLM_FREE_PROVIDER_KEY } from './llmFreeQuotaGate.js';
+import { canonicalFreeProviderKey, FREE_PROVIDER_DISPLAY_NAME, LLM_FREE_PROVIDER_KEY } from './llmFreeQuotaGate.js';
 
 export type LlmEffortLevel = 'off' | 'low' | 'high' | 'max';
 
@@ -81,7 +81,7 @@ export function buildModelGroupsFromConfig(config: Pick<AppConfig, 'providers'>)
       id: key,
       // Built-in free provider always shows the canonical label; installs
       // provisioned before the rename still carry "MetaID Free" in storage.
-      name: key === LLM_FREE_PROVIDER_KEY
+      name: canonicalFreeProviderKey(key) === LLM_FREE_PROVIDER_KEY
         ? FREE_PROVIDER_DISPLAY_NAME
         : ((provider.name ?? '').trim() || capitalizeKey(key)),
       models,

@@ -350,7 +350,8 @@ function readFreeRelayApiKey(): string {
     const appConfig = depsRef?.getStore()?.get('app_config') as
       | { providers?: Record<string, { apiKey?: unknown } | undefined> }
       | null;
-    const apiKey = appConfig?.providers?.['metaid-free']?.apiKey;
+    const provider = appConfig?.providers?.['idbots'] ?? appConfig?.providers?.['metaid-free'];
+    const apiKey = provider?.apiKey;
     return typeof apiKey === 'string' ? apiKey.trim() : '';
   } catch {
     return '';

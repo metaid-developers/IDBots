@@ -121,7 +121,7 @@ const metabots = [
     boss_id: null,
     boss_global_metaid: null,
     llm_id: 'deepseek-flash',
-    llm_provider: 'metaid-free',
+    llm_provider: 'idbots',
     llm_effort: null,
     mvc_address: 'gw-mvc-bot',
     metabot_info_pinid: 'gw-info-bot',
@@ -150,7 +150,7 @@ const metabots = [
     boss_id: null,
     boss_global_metaid: null,
     llm_id: 'deepseek-flash',
-    llm_provider: 'metaid-free',
+    llm_provider: 'idbots',
     llm_effort: null,
     mvc_address: 'gw-mvc-bot',
     metabot_info_pinid: 'gw-info-bot',
@@ -511,7 +511,7 @@ const appConfigStore = {
     language: 'en',
     theme: 'system',
     providers: {
-      'metaid-free': {
+      'idbots': {
         enabled: true,
         apiKey: 'gateway-fixture-relay-key',
         baseUrl: 'https://gateway.fixture/relay',
@@ -523,7 +523,7 @@ const appConfigStore = {
         ],
       },
     },
-    model: { defaultProvider: 'metaid-free', defaultModel: 'deepseek-flash' },
+    model: { defaultProvider: 'idbots', defaultModel: 'deepseek-flash' },
     bootstrap: { workspace: paths.workspaceRoot, languageInitialized: true },
     memoryEnabled: true,
   },
