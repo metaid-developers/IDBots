@@ -102,7 +102,7 @@ test('the chip menu lists the roster with every row enabled; live identity is th
   assert.match(badgeSource, /data-slot="cowork-surface-identity-badge"/);
   assert.match(badgeSource, /h-8 w-8 shrink-0 rounded-full/);
   assert.match(badgeSource, /gap-2/);
-  assert.match(chipSource, /h-8 w-8 shrink-0 rounded-full/);
+  assert.match(chipSource, /h-8 w-8 rounded-full/);
   assert.doesNotMatch(badgeSource, /<button/, 'the badge renders no click target');
   assert.doesNotMatch(badgeSource, /onClick=/, 'the badge owns no interaction');
   assert.match(badgePureSource, /export function resolveSurfaceIdentityBadge/);

@@ -37,20 +37,27 @@ interface BotPickerChipProps {
    * DOWN (`top-full`) so the roster never climbs over the band row.
    */
   menuDirection?: 'up' | 'down';
+  size?: 'default' | 'compact';
+  ariaLabel?: string;
+  menuHint?: string;
 }
 
-const ChipIdentity: React.FC<{ metabot: BotPickerChipBot }> = ({ metabot }) => (
+const ChipIdentity: React.FC<{ metabot: BotPickerChipBot; compact: boolean }> = ({ metabot, compact }) => (
   <>
     {metabot.avatar && (metabot.avatar.startsWith('data:') || metabot.avatar.startsWith('http')) ? (
-      <img src={metabot.avatar} alt="" className="h-8 w-8 shrink-0 rounded-full object-cover ring-1 ring-black/10 dark:ring-white/10" />
+      <img
+        src={metabot.avatar}
+        alt=""
+        className={`${compact ? 'h-5 w-5 rounded-md' : 'h-8 w-8 rounded-full'} shrink-0 object-cover ring-1 ring-black/10 dark:ring-white/10`}
+      />
     ) : (
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full ring-1 ring-black/10 dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover dark:ring-white/10">
-        <span className="text-[10px] font-semibold uppercase dark:text-claude-darkText text-claude-text">
+      <div className={`${compact ? 'h-5 w-5 rounded-md' : 'h-8 w-8 rounded-full'} flex shrink-0 items-center justify-center ring-1 ring-black/10 dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover dark:ring-white/10`}>
+        <span className={`${compact ? 'text-[8px]' : 'text-[10px]'} font-semibold uppercase dark:text-claude-darkText text-claude-text`}>
           {metabot.name.slice(0, 2) || '?'}
         </span>
       </div>
     )}
-    <span className="min-w-0 truncate text-sm font-medium dark:text-claude-darkText text-claude-text">
+    <span className={`min-w-0 truncate ${compact ? 'text-xs' : 'text-sm'} font-medium dark:text-claude-darkText text-claude-text`}>
       {metabot.name}
     </span>
   </>
@@ -109,8 +116,13 @@ const BotPickerChip: React.FC<BotPickerChipProps> = ({
   onDismissMenu,
   onSelect,
   menuDirection = 'up',
+  size = 'default',
+  ariaLabel,
+  menuHint,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const compact = size === 'compact';
+  const resolvedAriaLabel = ariaLabel ?? i18nService.t('botInternetBotPickerChip');
 
   // Outside-pointer dismissal (owner UX finding 2026-11-08). The listener is
   // bound only while the menu is open; a pointer on a menu row is inside the
@@ -127,18 +139,20 @@ const BotPickerChip: React.FC<BotPickerChipProps> = ({
     <div
       ref={containerRef}
       data-slot="bot-picker-container"
-      className="relative flex min-w-0 max-w-full items-center"
+      className={`relative flex min-w-0 items-center ${compact ? 'max-w-[160px]' : 'max-w-full'}`}
     >
       <button
         type="button"
-        aria-label={i18nService.t('botInternetBotPickerChip')}
-        title={i18nService.t('botInternetBotPickerChip')}
+        aria-label={resolvedAriaLabel}
+        title={resolvedAriaLabel}
         aria-expanded={menuOpen}
         aria-haspopup="menu"
         onClick={onToggleMenu}
-        className="flex h-9 min-w-0 items-center gap-2 rounded-lg px-1.5 transition-colors hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+        className={`flex min-w-0 max-w-full items-center transition-colors hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover ${
+          compact ? 'h-7 gap-1.5 rounded-md px-1' : 'h-9 gap-2 rounded-lg px-1.5'
+        }`}
       >
-        <ChipIdentity metabot={chipMetabot} />
+        <ChipIdentity metabot={chipMetabot} compact={compact} />
         {chipMetabot.metabot_type === 'twin' && <TwinBadge className="shrink-0" />}
         <svg viewBox="0 0 12 12" aria-hidden className="h-3 w-3 shrink-0 dark:text-claude-darkTextSecondary text-claude-textSecondary">
           <path d="M2 7.5 6 3.5l4 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
@@ -166,9 +180,11 @@ const BotPickerChip: React.FC<BotPickerChipProps> = ({
               />
             ))}
           </div>
-          <p className="px-1 pt-1 text-[10px] leading-4 dark:text-claude-darkTextSecondary text-claude-textSecondary">
-            {i18nService.t('botInternetBotPickerHint')}
-          </p>
+          {menuHint !== '' ? (
+            <p className="px-1 pt-1 text-[10px] leading-4 dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              {menuHint ?? i18nService.t('botInternetBotPickerHint')}
+            </p>
+          ) : null}
         </div>
       )}
     </div>

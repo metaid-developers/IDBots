@@ -641,6 +641,13 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     : null;
   const chipMetabot = currentSession ? (liveSessionMetabot ?? selectedMetabot) : selectedMetabot;
   const effectiveMetabotId = selectedMetabotId;
+  const [historyBotId, setHistoryBotId] = useState<number | null>(null);
+  useEffect(() => {
+    if (showHistory) setHistoryBotId(chipMetabot?.id ?? null);
+  }, [showHistory, chipMetabot?.id]);
+  const historyMetabot = historyBotId === chipMetabot?.id
+    ? chipMetabot
+    : metabots.find((metabot) => metabot.id === historyBotId) ?? null;
   // Pending model+effort for the session about to start from this panel. The
   // whole state being null = follow the selected bot's brain (its model and
   // effort); inside a pick, effort null is an EXPLICIT "Default" choice.
@@ -1107,12 +1114,11 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
 
       {showHistory ? (
         <CoworkHistoryPanel
+          key={historyBotId ?? 'no-bot'}
           sessions={browserSessions}
-          // Bot-centered history (owner spec 2026-11-11 17:28 ②): the panel
-          // lists the PRESENTED bot's studio conversations — the chip bot
-          // (live session bot in a live session, draft pick otherwise) — so
-          // switching the picker moves the list with it.
-          botId={chipMetabot?.id ?? null}
+          bot={historyMetabot}
+          bots={metabots}
+          onSelectBot={(nextBot) => setHistoryBotId(nextBot.id)}
           currentSessionId={currentSession?.id ?? null}
           onSelectSession={handleSelectHistory}
           onDeleteSession={handleDeleteHistory}

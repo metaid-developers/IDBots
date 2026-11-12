@@ -74,7 +74,7 @@ test('draft chip renders the selected bot once and is the picker trigger', () =>
   assert.match(html, /aria-haspopup="menu"/);
   assert.match(html, /aria-expanded="false"/);
   assert.match(html, /data-slot="bot-picker-container"/);
-  assert.match(html, /h-8 w-8 shrink-0[^"]*rounded-full/);
+  assert.match(html, /h-8 w-8[^"]*rounded-full/);
   assert.match(html, /gap-2/);
   assert.match(html, /text-sm font-medium/);
   assert.equal(
@@ -85,6 +85,20 @@ test('draft chip renders the selected bot once and is the picker trigger', () =>
   assert.match(html, /data-slot="metabot-twin-badge"/);
   assert.doesNotMatch(html, /role="menu"/);
   assert.ok(html.includes(i18nService.t('botInternetBotPickerChip')));
+});
+
+test('compact picker supports history-specific copy and avatar sizing', () => {
+  const html = renderChip({
+    size: 'compact',
+    ariaLabel: 'Filter session history by bot',
+    menuHint: 'Only filters history',
+    menuOpen: true,
+  });
+  assert.match(html, /h-5 w-5 rounded-md/);
+  assert.match(html, /h-7 gap-1.5/);
+  assert.ok(html.includes('aria-label="Filter session history by bot"'));
+  assert.ok(html.includes('Only filters history'));
+  assert.doesNotMatch(html, new RegExp(i18nService.t('botInternetBotPickerHint')));
 });
 
 test('open picker menu lists every bot with no disabled rows', () => {
