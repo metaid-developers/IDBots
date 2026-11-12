@@ -183,7 +183,7 @@ test('report recovery is a real button that navigates through the constrained St
   assert.match(stage, /type: 'open-report'/);
   assert.match(stage, /turnId: initial\.turnId/);
   assert.match(stage, /uri: reportUri/);
-  assert.match(stage, /canOpenReport \? 'Open report' : 'Opening the final page'/);
+  assert.match(stage, /canOpenReport \? tr\('打开汇报', 'Open report'\) : tr\('正在打开最终页面', 'Opening the final page'\)/);
   for (const file of ['stage.html', 'index.html']) {
     const html = read(file);
     assert.match(html, /<button class="core-report-ready" type="button" data-report-open disabled>/);

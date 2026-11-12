@@ -7,12 +7,13 @@
   "family": "verification",
   "botName": "Nova",
   "language": "en",
-  "headline": "Checking the evidence",
-  "caption": "Comparing claims with original material and observed results.",
+  "headline": "Working on the big screen",
+  "caption": "I'll only report back once it's verified.",
   "participants": [
     "Nova",
     "Pixel"
   ],
+  "kicker": "Checking",
   "composition": "converge",
   "motif": "verification",
   "topology": {
@@ -24,18 +25,13 @@
         "kind": "twin"
       },
       {
-        "id": "source",
-        "label": "Source",
-        "kind": "source"
-      },
-      {
         "id": "worker",
         "label": "Pixel",
         "kind": "worker"
       },
       {
         "id": "evidence",
-        "label": "Evidence",
+        "label": "Check",
         "kind": "evidence"
       }
     ],
@@ -43,10 +39,6 @@
       [
         "twin",
         "worker"
-      ],
-      [
-        "source",
-        "twin"
       ],
       [
         "worker",
@@ -58,6 +50,8 @@
       ]
     ]
   },
+  "captionSource": "default",
+  "phaseStartedAt": 1760000000000,
   "motion": {
     "preset": "verification",
     "seed": 33872,

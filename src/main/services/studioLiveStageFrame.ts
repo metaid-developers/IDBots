@@ -16,19 +16,66 @@ export type DrainedLiveStageInteraction = {
   answers?: unknown;
 };
 
-async function locateLiveStageFrame(deps: LiveStageFrameDeps, tabId: number): Promise<ActFrameShape> {
-  const info = await deps.executeTabCommand({ action: 'get-tab-info', tabId });
+/**
+ * Frame-location failure with a machine-readable `reason` so the service can
+ * pick retry vs. self-heal without parsing messages:
+ *  - 'tab-not-found' / 'frame-not-found' / 'not-ready' → transient, retry
+ *  - 'turn-mismatch' → the page belongs to another turn, re-project
+ */
+export class LiveStageFrameError extends Error {
+  readonly reason: string;
+  constructor(reason: string, message: string) {
+    super(message);
+    this.name = 'LiveStageFrameError';
+    this.reason = reason;
+  }
+}
+
+export function liveStageFrameErrorReason(error: unknown): string {
+  const reason = (error as { reason?: unknown } | null | undefined)?.reason;
+  return typeof reason === 'string' && reason ? reason : 'unknown';
+}
+
+const STAGE_TURN_PROBE_SCRIPT = `(() => {
+  const bridge = window.IDBotsLiveStage;
+  if (!bridge || typeof bridge.getState !== 'function') return { bridge: false, turnId: null };
+  const state = bridge.getState();
+  return { bridge: true, turnId: state && typeof state.turnId === 'string' ? state.turnId : null };
+})()`;
+
+async function locateLiveStageFrame(deps: LiveStageFrameDeps, tabId: number, expectedTurnId?: string): Promise<ActFrameShape> {
+  let info: BotBrowserTabCommandResult;
+  try {
+    info = await deps.executeTabCommand({ action: 'get-tab-info', tabId });
+  } catch {
+    throw new LiveStageFrameError('tab-not-found', 'The Live Stage tab is not reachable');
+  }
   const renderer = readRendererFromEnvelope(info.info?.current);
   if (renderer.type !== 'html-iframe' || !renderer.url || !isActableRenderUrl(renderer.url)) {
-    throw new Error('The Live Stage tab is not a locally served preview');
+    throw new LiveStageFrameError('tab-not-found', 'The Live Stage tab is not a locally served preview');
   }
   const frames: ActFrameShape[] = [];
   for (const window of deps.getWindows()) {
     if (window.isDestroyed() || window.webContents.isDestroyed()) continue;
     frames.push(...collectMatchingFrames(window.webContents.mainFrame, renderer.url));
   }
-  if (!frames.length) throw new Error('The Live Stage frame is not ready');
-  return frames[0];
+  if (!frames.length) throw new LiveStageFrameError('frame-not-found', 'The Live Stage frame is not ready');
+  if (expectedTurnId == null) return frames[0];
+  // Several frames can match the renderer URL (stale pages, sibling
+  // previews): probe each bridge and deliver to the one showing THIS turn.
+  const probed = await Promise.all(frames.map(async (frame) => {
+    try {
+      const result = await frame.executeJavaScript(STAGE_TURN_PROBE_SCRIPT, true) as { bridge?: boolean; turnId?: unknown } | null;
+      return { frame, bridge: result?.bridge === true, turnId: typeof result?.turnId === 'string' ? result.turnId : null };
+    } catch {
+      return { frame, bridge: false, turnId: null };
+    }
+  }));
+  const bridged = probed.filter((entry) => entry.bridge);
+  if (!bridged.length) throw new LiveStageFrameError('not-ready', 'The Live Stage frame is not ready');
+  const match = bridged.find((entry) => entry.turnId === expectedTurnId);
+  if (!match) throw new LiveStageFrameError('turn-mismatch', 'The Live Stage frame belongs to a different turn');
+  return match.frame;
 }
 
 /**
@@ -46,10 +93,14 @@ export async function executeStageFrameScript(
 export function buildLiveStagePatchScript(state: LiveStageState): string {
   const payload = JSON.stringify(state).replace(/</g, '\\u003c');
   return `(() => {
-  if (!window.IDBotsLiveStage || typeof window.IDBotsLiveStage.applyPatch !== 'function') {
-    return { ok: false, reason: 'live-stage-not-ready' };
+  const bridge = window.IDBotsLiveStage;
+  if (!bridge || typeof bridge.applyPatch !== 'function') {
+    return { ok: false, reason: 'not-ready' };
   }
-  return { ok: window.IDBotsLiveStage.applyPatch(${payload}) === true };
+  const applied = bridge.applyPatch(${payload});
+  if (applied === true) return { ok: true };
+  const reason = applied && typeof applied === 'object' && typeof applied.reason === 'string' ? applied.reason : 'protocol';
+  return { ok: false, reason };
 })()`;
 }
 
@@ -57,9 +108,11 @@ export async function applyStudioLiveStagePatch(
   deps: LiveStageFrameDeps,
   input: { tabId: number; state: LiveStageState },
 ): Promise<void> {
-  const frame = await locateLiveStageFrame(deps, input.tabId);
+  const frame = await locateLiveStageFrame(deps, input.tabId, input.state.turnId);
   const result = await frame.executeJavaScript(buildLiveStagePatchScript(input.state), true) as { ok?: boolean; reason?: string } | null;
-  if (!result?.ok) throw new Error(result?.reason || 'Live Stage patch was rejected');
+  if (result?.ok === true) return;
+  const reason = typeof result?.reason === 'string' && result.reason ? result.reason : 'rejected';
+  throw new LiveStageFrameError(reason, `Live Stage patch was rejected: ${reason}`);
 }
 
 export function buildLiveStageDrainScript(): string {

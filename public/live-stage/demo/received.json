@@ -7,11 +7,12 @@
   "family": "received",
   "botName": "Nova",
   "language": "en",
-  "headline": "Request received",
-  "caption": "Nova has the request and is establishing this run.",
+  "headline": "Got it — on it",
+  "caption": "On it.",
   "participants": [
     "Nova"
   ],
+  "kicker": "Received",
   "composition": "presence",
   "motif": "received",
   "topology": {
@@ -19,6 +20,8 @@
     "nodes": [],
     "edges": []
   },
+  "captionSource": "default",
+  "phaseStartedAt": 1760000000000,
   "motion": {
     "preset": "received",
     "seed": 41967,

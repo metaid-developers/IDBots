@@ -74,9 +74,9 @@
     },
     "waiting": {
       "orb": { "style": 9, "preset": "waiting" },
-      "composition": "presence",
-      "topology": { "mode": "presence" },
-      "motion": { "durationMs": 720, "easing": "emphasized-decelerate", "energy": 0.4, "density": 0.28 }
+      "composition": "topology",
+      "topology": { "mode": "structured" },
+      "motion": { "durationMs": 720, "easing": "emphasized-decelerate", "energy": 0.4, "density": 0.55 }
     },
     "worker-report": {
       "orb": { "style": 9, "preset": "worker-report" },

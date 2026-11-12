@@ -7,12 +7,12 @@
   "family": "report-ready",
   "botName": "Nova",
   "language": "en",
-  "headline": "The report is ready",
-  "caption": "The process is settling into the final report. Back returns to this trace.",
+  "headline": "The report is on the big screen",
+  "caption": "Press Back to return to the previous view.",
   "participants": [
-    "Nova",
-    "Final report"
+    "Nova"
   ],
+  "kicker": "Report ready",
   "composition": "ready",
   "motif": "report-ready",
   "topology": {
@@ -20,6 +20,8 @@
     "nodes": [],
     "edges": []
   },
+  "captionSource": "default",
+  "phaseStartedAt": 1760000000000,
   "motion": {
     "preset": "report-ready",
     "seed": 33872,

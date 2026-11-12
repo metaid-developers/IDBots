@@ -565,6 +565,7 @@ import {
   initBotBrowserProjectionService,
 } from './services/botBrowserProjectionService';
 import { createStudioLiveStageService, type StudioLiveStageService } from './services/studioLiveStageService';
+import { listStudioOpenDelegations } from './services/studioOpenDelegations';
 import { applyStudioLiveStagePatch, drainStudioLiveStageInteractions, executeStageFrameScript } from './services/studioLiveStageFrame';
 import { createStudioGenesisStageService, type StudioGenesisStageService } from './services/studioGenesisStageService';
 import { readStudioLiveStageSettings, writeStudioLiveStageSettings } from './services/studioLiveStageSettings';
@@ -8660,6 +8661,7 @@ const getCoworkRunner = () => {
 
     coworkRunner.on('messageUpdate', (sessionId: string, messageId: string, content: string, metadata?: Record<string, unknown>) => {
       getStudioGenesisStageService().observeMessageUpdate(sessionId, messageId, content);
+      getStudioLiveStageService().observeMessageUpdate(sessionId, messageId, content, metadata);
       if (!shouldForwardCoworkStreamEvent(getCoworkStore(), sessionId)) {
         return;
       }
@@ -8785,7 +8787,7 @@ const getCoworkRunner = () => {
 
     coworkRunner.on('error', (sessionId: string, error: string, metadata?: { errorCode?: string }) => {
       getStudioGenesisStageService().observeError(sessionId);
-      getStudioLiveStageService().observeError(sessionId);
+      getStudioLiveStageService().observeError(sessionId, error);
       recomputeSleepGuard();
       if (!shouldForwardCoworkStreamEvent(getCoworkStore(), sessionId)) {
         return;
@@ -9052,6 +9054,17 @@ const getBotBrowserProjection = () =>
     },
   });
 
+// Open delegated work for a Studio session, read from the orchestration
+// store. Shared by the Live Stage's delegation-aware completion and any
+// other surface that needs "is a teammate bot still working on this".
+const listOpenStudioDelegations = (sessionId: string) => listStudioOpenDelegations({
+  listAttemptsForSourceSessions: (ids) => getOrchestrationStore().listAttemptsForSourceSessions(ids),
+  getStep: (id) => getOrchestrationStore().getStep(id),
+  getTaskForStep: (id) => getOrchestrationStore().getTaskForStep(id),
+  getSession: (id) => getCoworkStore().getSession(id),
+  getMetabotById: (id) => getMetabotStore().getMetabotById(id),
+}, sessionId);
+
 let studioLiveStageService: StudioLiveStageService | null = null;
 const getStudioLiveStageService = (): StudioLiveStageService => {
   if (!studioLiveStageService) {
@@ -9059,6 +9072,7 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
     studioLiveStageService = createStudioLiveStageService({
       getSession: (sessionId) => getCoworkStore().getSession(sessionId),
       getMetabotById: (id) => getMetabotStore().getMetabotById(id),
+      listOpenDelegations: listOpenStudioDelegations,
       getSettings: () => readStudioLiveStageSettings(getStoreOrNull()),
       getLanguage: () => getPersistedAppLanguage(),
       project: (input) => getBotBrowserProjection().project(input),
@@ -9066,6 +9080,10 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
         const result = await getBotBrowserTabBridge().execute({ action: 'get-tabs' }, { focusWindow: false });
         const expectedPrefix = `preview-metaapp://localhost${localPath}`;
         return result.tabs.find((tab) => typeof tab.uri === 'string' && tab.uri.startsWith(expectedPrefix))?.id ?? null;
+      },
+      getTabUri: async (tabId) => {
+        const result = await getBotBrowserTabBridge().execute({ action: 'get-tabs' }, { focusWindow: false });
+        return result.tabs.find((tab) => tab.id === tabId)?.uri ?? null;
       },
       applyPatch: (input) => applyStudioLiveStagePatch({
         getWindows: () => BrowserWindow.getAllWindows(),

@@ -4,7 +4,9 @@ import { randomBytes } from 'node:crypto';
 import type { CoworkMessage, CoworkSession } from '../coworkStore';
 import type { BotBrowserProjectionInput, BotBrowserProjectionOutcome } from './botBrowserProjectionService';
 import type { StudioLiveStageSettings } from './studioLiveStageSettings';
-import { completeLiveStage, createLiveStageState, buildLiveStageInteraction, dismissLiveStageInteraction, isLiveStageWorkerReport, liveStageError, presentLiveStageInteraction, reduceLiveStageMessage, reportReadyLiveStage, type LiveStageInteraction, type LiveStageState } from './studioLiveStageModel';
+import { applyLiveStageSpeech, completeLiveStage, createLiveStageState, buildLiveStageInteraction, dismissLiveStageInteraction, isLiveStageWorkerReport, liveStageError, presentLiveStageInteraction, reduceLiveStageMessage, reportReadyLiveStage, waitingLiveStage, type LiveStageInteraction, type LiveStageState } from './studioLiveStageModel';
+import { describeStudioTurnError } from '../shared/studioTurnErrorCopy';
+import type { StudioOpenDelegation } from './studioOpenDelegations';
 import { renderLiveStageHtml } from './studioLiveStageTemplate';
 import { resolveStudioLiveStageTemplate, type StudioLiveStageTemplateResolution } from './studioLiveStageTemplateRegistry';
 import { directLiveStageScene } from './studioLiveStageDirector';
@@ -13,6 +15,25 @@ const MAX_DIRECTOR_CALLS_PER_TURN = 4;
 const MAX_DIRECTOR_CONSECUTIVE_FAILURES = 2;
 const DIRECTOR_COALESCE_MS = 900;
 const INTERACTION_POLL_MS = 400;
+/** Patch delivery retries after a transient frame/page failure. */
+const PATCH_RETRY_BACKOFF_MS = [200, 400, 800, 1600, 3000, 5000] as const;
+/** Stage re-projections allowed per run when the page cannot be reached. */
+const MAX_STAGE_SELF_HEALS = 2;
+/** Re-check open delegations once a minute while the stage waits on workers. */
+const DELEGATION_RECHECK_MS = 60_000;
+/** Minimum gap between speech-streaming patches. */
+const SPEECH_PATCH_THROTTLE_MS = 600;
+/** Stage files always live under <cwd>/reports/live-stage-<turn>.html. */
+const LIVE_STAGE_URI_MARKER = '/reports/live-stage-';
+/** Failure reasons worth retrying against the same tab before self-healing. */
+const RETRYABLE_PATCH_REASONS = new Set(['not-ready', 'frame-not-found', 'tab-not-found']);
+/** Failure reasons that mean the page belongs to another turn/protocol. */
+const SELF_HEAL_PATCH_REASONS = new Set(['turn-mismatch', 'protocol']);
+/** Families the Director may restyle; terminal and owner-facing scenes are off limits. */
+const DIRECTOR_FAMILIES = new Set([
+  'local-recall', 'web2-research', 'metaweb-research', 'making',
+  'delegation', 'verification', 'browser-action',
+]);
 
 type MetabotLiveStageIdentity = {
   name?: string | null;
@@ -31,6 +52,30 @@ type LiveStageRun = {
   queue: Promise<void>;
   seen: Set<string>;
   submissionId: string | null;
+  /** Highest state revision confirmed on the stage page. */
+  deliveredRevision: number;
+  patchRetries: number;
+  patchFailures: Record<string, number>;
+  retryTimer: NodeJS.Timeout | null;
+  selfHeals: number;
+  /** A re-projection is already queued; concurrent failures share it. */
+  healPending: boolean;
+  /**
+   * The stage tab was found showing a page the Twin or owner deliberately
+   * opened (not a Live Stage). Patches keep failing there, so delivery is
+   * parked: no retries, no self-heal — the next state change tries once more
+   * and heals only if the tab is back on a stage page (or gone).
+   */
+  tabParked: boolean;
+  /** Newest non-thinking assistant message id — the only id stream updates may touch. */
+  latestSpeakingId: string | null;
+  lastSpeechPatchAt: number;
+  finished: boolean;
+  errored: boolean;
+  awaitingDelegation: boolean;
+  delegationTimer: NodeJS.Timeout | null;
+  delegationStartedAt: number | null;
+  waitingSignature: string;
   directorCalls: number;
   directorConsecutiveFailures: number;
   directorTimer: NodeJS.Timeout | null;
@@ -49,16 +94,22 @@ export type StudioLiveStageServiceDeps = {
   getLanguage(): 'zh' | 'en';
   project(input: BotBrowserProjectionInput): Promise<BotBrowserProjectionOutcome>;
   findStageTab?(localPath: string): Promise<number | null>;
+  /** Current URI of a browser tab; null when the tab no longer exists. */
+  getTabUri?(tabId: number): Promise<string | null>;
   applyPatch(input: { tabId: number; state: LiveStageState }): Promise<void>;
   assetRoot: string;
   fallbackAvatarDataUri: string;
   directScene?: typeof directLiveStageScene;
   now?: () => number;
+  /** Open cross-session delegations for a session (orchestration store). */
+  listOpenDelegations?(sessionId: string): StudioOpenDelegation[];
   /** Pulls queued stage-card clicks over the patch frame channel. */
   drainInteractions?(tabId: number): Promise<unknown[]>;
   /** Resolves a pending permission in the cowork runner (main-side sink). */
   respondToPermission?(requestId: string, result: Record<string, unknown>): void;
   interactionPollMs?: number;
+  /** Open-delegation recheck cadence while the stage waits on workers. */
+  delegationRecheckMs?: number;
   /** Resolve and validate the template package; defaults to the built-in registry. */
   resolveTemplate?: () => StudioLiveStageTemplateResolution;
   /** Another stage (the first-run Genesis Stage) owns this session's projector. */
@@ -143,6 +194,196 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     fs.writeFileSync(run.stagePath!, html, 'utf8');
   }
 
+  // Commit a produced state: phaseStartedAt resets whenever the family
+  // changes, except a 'waiting' reached while a delegation is in flight —
+  // that clock measures from when the delegation started, not from now.
+  function commitRunState(run: LiveStageRun, nextState: LiveStageState): LiveStageState {
+    if (nextState === run.state) return nextState;
+    let state = nextState;
+    if (state.family !== run.state.family) {
+      const startedAt = state.family === 'waiting' && run.delegationStartedAt != null
+        ? run.delegationStartedAt
+        : now();
+      state = { ...state, phaseStartedAt: startedAt };
+    }
+    if (state.family === 'delegation' && state.phaseStartedAt != null) {
+      run.delegationStartedAt = state.phaseStartedAt;
+    }
+    run.state = state;
+    return state;
+  }
+
+  function clearPatchRetry(run: LiveStageRun): void {
+    if (run.retryTimer) {
+      clearTimeout(run.retryTimer);
+      run.retryTimer = null;
+    }
+  }
+
+  function clearDelegationTimer(run: LiveStageRun): void {
+    if (run.delegationTimer) {
+      clearInterval(run.delegationTimer);
+      run.delegationTimer = null;
+    }
+  }
+
+  function patchFailureReason(error: unknown): string {
+    const reason = (error as { reason?: unknown } | null | undefined)?.reason;
+    return typeof reason === 'string' && reason ? reason : 'unknown';
+  }
+
+  function notePatchFailure(run: LiveStageRun, reason: string): void {
+    const count = (run.patchFailures[reason] ?? 0) + 1;
+    run.patchFailures[reason] = count;
+    if (count === 1 || count % 10 === 0) {
+      console.warn(`[StudioLiveStage] patch delivery failed reason=${reason} count=${count} session=${run.state.sessionId}`);
+    }
+  }
+
+  async function attemptPatchDelivery(run: LiveStageRun): Promise<void> {
+    if (run.reportProjected || !run.state.enabled) return;
+    if (run.state.revision <= run.deliveredRevision) return;
+    if (run.tabId == null && run.stagePath && deps.findStageTab) {
+      run.tabId = await deps.findStageTab(run.stagePath);
+    }
+    if (run.tabId == null) {
+      const error = new Error('The Live Stage tab is not resolved') as Error & { reason?: string };
+      error.reason = 'tab-not-found';
+      throw error;
+    }
+    const revision = run.state.revision;
+    await deps.applyPatch({ tabId: run.tabId, state: run.state });
+    run.deliveredRevision = Math.max(run.deliveredRevision, revision);
+    run.patchRetries = 0;
+    run.tabParked = false;
+  }
+
+  async function handlePatchFailure(run: LiveStageRun, error: unknown): Promise<void> {
+    const reason = patchFailureReason(error);
+    // A stale-revision rejection means the page already shows something newer.
+    if (reason === 'stale-revision') {
+      run.deliveredRevision = Math.max(run.deliveredRevision, run.state.revision);
+      run.patchRetries = 0;
+      return;
+    }
+    notePatchFailure(run, reason);
+    if (SELF_HEAL_PATCH_REASONS.has(reason)) {
+      await requestStageHeal(run);
+      return;
+    }
+    if (run.tabParked) {
+      // Parked on a page the Twin or owner opened on purpose: each state
+      // change earns exactly one cheap delivery attempt — never a retry
+      // timer, and a heal only if the tab is back on a stage page.
+      await requestStageHeal(run);
+      return;
+    }
+    if (RETRYABLE_PATCH_REASONS.has(reason) || reason === 'unknown') {
+      if (run.patchRetries < PATCH_RETRY_BACKOFF_MS.length) {
+        schedulePatchRetry(run);
+        return;
+      }
+      await requestStageHeal(run);
+      return;
+    }
+    // Unclassified rejection: same recovery budget as a transient failure.
+    if (run.patchRetries < PATCH_RETRY_BACKOFF_MS.length) {
+      schedulePatchRetry(run);
+      return;
+    }
+    await requestStageHeal(run);
+  }
+
+  function schedulePatchRetry(run: LiveStageRun): void {
+    if (run.retryTimer || run.reportProjected) return;
+    const delay = PATCH_RETRY_BACKOFF_MS[Math.min(run.patchRetries, PATCH_RETRY_BACKOFF_MS.length - 1)];
+    run.patchRetries += 1;
+    run.retryTimer = setTimeout(() => {
+      run.retryTimer = null;
+      deliverPatch(run);
+    }, delay);
+    run.retryTimer.unref?.();
+  }
+
+  function deliverPatch(run: LiveStageRun): void {
+    enqueue(run, async () => {
+      try {
+        await attemptPatchDelivery(run);
+      } catch (error) {
+        await handlePatchFailure(run, error);
+      }
+    });
+  }
+
+  /**
+   * The stage tab's current URI. Returns undefined when the lookup itself
+   * failed — an unknown page is treated like a foreign one (never heal).
+   */
+  async function stageTabUri(run: LiveStageRun): Promise<string | null | undefined> {
+    if (run.tabId == null || !deps.getTabUri) return null;
+    try {
+      return await deps.getTabUri(run.tabId);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * A self-heal rewrites the stage file and re-projects it — that must never
+   * land on a tab the Twin or owner deliberately navigated (e.g. the Twin
+   * opened a MetaApp page and is reading it). Heal only when the tab still
+   * shows a Live Stage page of any turn, or when the tab is gone entirely.
+   */
+  async function requestStageHeal(run: LiveStageRun): Promise<void> {
+    if (run.healPending) return;
+    if (run.selfHeals >= MAX_STAGE_SELF_HEALS) {
+      notePatchFailure(run, 'self-heal-exhausted');
+      return;
+    }
+    const uri = await stageTabUri(run);
+    if (uri === undefined || (uri != null && !uri.includes(LIVE_STAGE_URI_MARKER))) {
+      if (!run.tabParked) notePatchFailure(run, uri === undefined ? 'tab-uri-unknown' : 'tab-parked');
+      run.tabParked = true;
+      return;
+    }
+    run.tabParked = false;
+    selfHealStage(run);
+  }
+
+  function selfHealStage(run: LiveStageRun): void {
+    if (run.healPending) return;
+    if (run.selfHeals >= MAX_STAGE_SELF_HEALS) {
+      notePatchFailure(run, 'self-heal-exhausted');
+      return;
+    }
+    run.selfHeals += 1;
+    run.healPending = true;
+    run.patchRetries = 0;
+    clearPatchRetry(run);
+    console.warn(`[StudioLiveStage] self-heal ${run.selfHeals}/${MAX_STAGE_SELF_HEALS} for ${run.state.sessionId}`);
+    enqueue(run, async () => {
+      try {
+        const session = deps.getSession(run.state.sessionId);
+        if (!session || !run.state.enabled || run.stagePath == null) return;
+        // Rewrite the stage file with the LATEST state so the reloaded page
+        // boots straight into it, then re-project and re-resolve the tab.
+        writeStage(run);
+        const outcome = await deps.project({ sessionId: run.state.sessionId, localPath: run.stagePath, title: `${run.state.botName} · Live Stage` });
+        run.tabId = outcome.tabId;
+        if (run.tabId == null && deps.findStageTab) {
+          run.tabId = await deps.findStageTab(run.stagePath);
+        }
+        try {
+          await attemptPatchDelivery(run);
+        } catch (error) {
+          await handlePatchFailure(run, error);
+        }
+      } finally {
+        run.healPending = false;
+      }
+    });
+  }
+
   function projectStage(run: LiveStageRun): void {
     enqueue(run, async () => {
       await deps.beforeProjection?.(run.state.sessionId);
@@ -157,31 +398,93 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       if (process.env.NODE_ENV === 'development') {
         console.warn(`[StudioLiveStage] stage tab ${run.state.sessionId} outcome=${outcome.tabId} resolved=${run.tabId}`);
       }
-      if (run.tabId != null && run.state.enabled) {
-        await deps.applyPatch({ tabId: run.tabId, state: run.state }).catch(() => undefined);
-      }
+      deliverPatch(run);
     });
   }
 
   function schedulePatch(run: LiveStageRun): void {
-    enqueue(run, async () => {
-      if (run.reportProjected) return;
-      if (run.tabId == null && deps.findStageTab) {
-        run.tabId = await deps.findStageTab(run.stagePath!);
-      }
-      if (run.tabId == null) return;
-      await deps.applyPatch({ tabId: run.tabId, state: run.state });
+    deliverPatch(run);
+  }
+
+  function openDelegationsFor(run: LiveStageRun): StudioOpenDelegation[] {
+    if (!deps.listOpenDelegations) return [];
+    try {
+      return deps.listOpenDelegations(run.state.sessionId) ?? [];
+    } catch (error) {
+      console.warn(`[StudioLiveStage] delegation lookup failed for ${run.state.sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      return [];
+    }
+  }
+
+  function applyDelegationWait(run: LiveStageRun, delegations: StudioOpenDelegation[]): void {
+    const first = delegations[0];
+    const startedAt = delegations.reduce((min, entry) => Math.min(min, entry.startedAt), first.startedAt);
+    const signature = JSON.stringify([delegations.length, first.workerName ?? '', first.title ?? '', startedAt]);
+    if (run.state.family === 'waiting' && run.waitingSignature === signature) return;
+    run.waitingSignature = signature;
+    // The delegation clock starts at the earliest worker start, not at the
+    // moment the turn ended — commitRunState picks this up for 'waiting'.
+    run.delegationStartedAt = startedAt;
+    const nextState = waitingLiveStage(run.state, {
+      workerName: first.workerName,
+      workerAvatar: first.workerAvatar,
+      title: first.title,
+      total: delegations.length,
+      startedAt,
+      nowMs: now(),
     });
+    commitRunState(run, nextState);
+  }
+
+  function clearDelegationWait(run: LiveStageRun): void {
+    run.awaitingDelegation = false;
+    run.waitingSignature = '';
+    clearDelegationTimer(run);
+  }
+
+  function scheduleDelegationRecheck(run: LiveStageRun): void {
+    clearDelegationTimer(run);
+    const recheckMs = Math.max(10, deps.delegationRecheckMs ?? DELEGATION_RECHECK_MS);
+    run.delegationTimer = setInterval(() => {
+      if (!run.awaitingDelegation || run.errored) {
+        clearDelegationTimer(run);
+        return;
+      }
+      const delegations = openDelegationsFor(run);
+      if (delegations.length === 0) {
+        clearDelegationWait(run);
+        if (!run.errored) {
+          const nextState = completeLiveStage(run.state, now());
+          if (nextState !== run.state) {
+            commitRunState(run, nextState);
+            run.directorGeneration += 1;
+            schedulePatch(run);
+          }
+        }
+        return;
+      }
+      applyDelegationWait(run, delegations);
+      schedulePatch(run);
+    }, recheckMs);
+    run.delegationTimer.unref?.();
   }
 
   function scheduleDirector(run: LiveStageRun): void {
-    if (run.state.family === 'report-ready' || run.directorConsecutiveFailures >= MAX_DIRECTOR_CONSECUTIVE_FAILURES || !currentSettings.directorEnabled || !run.state.enabled || run.directorCalls >= MAX_DIRECTOR_CALLS_PER_TURN) return;
+    if (!DIRECTOR_FAMILIES.has(run.state.family)) return;
+    // The Director only restyles family-default captions; a caption carrying
+    // real message content is never overwritten.
+    if (run.state.captionSource !== 'default') return;
+    if (run.directorConsecutiveFailures >= MAX_DIRECTOR_CONSECUTIVE_FAILURES || !currentSettings.directorEnabled || !run.state.enabled || run.directorCalls >= MAX_DIRECTOR_CALLS_PER_TURN) return;
     run.directorDirty = true;
     if (run.directorInFlight || run.directorTimer) return;
     console.log(`[StudioLiveStage] Director scheduled for ${run.state.sessionId} family=${run.state.family}`);
     run.directorTimer = setTimeout(() => {
       run.directorTimer = null;
       if (!run.directorDirty || run.directorInFlight || run.directorConsecutiveFailures >= MAX_DIRECTOR_CONSECUTIVE_FAILURES || !currentSettings.directorEnabled || !run.state.enabled) return;
+      if (!DIRECTOR_FAMILIES.has(run.state.family) || run.state.captionSource !== 'default') {
+        run.directorDirty = false;
+        return;
+      }
       run.directorDirty = false;
       run.directorInFlight = true;
       run.directorCalls += 1;
@@ -205,7 +508,17 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
         if (generation !== run.directorGeneration || run.state.family !== snapshot.family || !run.state.enabled) {
           metrics.rejectedPatches += 1;
         } else {
-          run.state = { ...run.state, ...scene, revision: run.state.revision + 1, metrics };
+          // The Director restyles caption + composition/motif/motion only —
+          // the headline always stays host-owned.
+          run.state = commitRunState(run, {
+            ...run.state,
+            caption: scene.caption,
+            composition: scene.composition,
+            motif: scene.motif,
+            motion: scene.motion,
+            revision: run.state.revision + 1,
+            metrics,
+          });
         }
         console.log(`[StudioLiveStage] Director call ${run.directorCalls} finished: input=${usage.inputTokens} output=${usage.outputTokens} latencyMs=${usage.latencyMs}`);
         schedulePatch(run);
@@ -236,6 +549,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       botName: botNameFor(session),
       language: deps.getLanguage(),
       directorEnabled: currentSettings.directorEnabled,
+      nowMs: now(),
     });
     const run: LiveStageRun = {
       state,
@@ -245,6 +559,21 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       queue: Promise.resolve(),
       seen: new Set(),
       submissionId: null,
+      deliveredRevision: state.revision,
+      patchRetries: 0,
+      patchFailures: {},
+      retryTimer: null,
+      selfHeals: 0,
+      healPending: false,
+      tabParked: false,
+      latestSpeakingId: null,
+      lastSpeechPatchAt: 0,
+      finished: false,
+      errored: false,
+      awaitingDelegation: false,
+      delegationTimer: null,
+      delegationStartedAt: null,
+      waitingSignature: '',
       directorCalls: 0,
       directorConsecutiveFailures: 0,
       directorTimer: null,
@@ -266,6 +595,17 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     return run;
   }
 
+  function teardownRun(run: LiveStageRun): void {
+    run.directorGeneration += 1;
+    if (run.directorTimer) clearTimeout(run.directorTimer);
+    clearPatchRetry(run);
+    clearDelegationTimer(run);
+    // The turn's stage file is replaced; a pending card disappears with
+    // it. The permission itself stays pending — the desktop overlay seat
+    // still answers it.
+    stopInteractionPolling(run);
+  }
+
   function prepareSession(sessionId: string): void {
     if (typeof sessionId !== 'string' || !sessionId.trim()) return;
     currentSettings = deps.getSettings();
@@ -285,42 +625,102 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     const submissionId = humanOrigin ? String(message.metadata?.submissionId ?? message.id) : null;
     if (humanOrigin && submissionId && run?.submissionId !== submissionId) {
       if (run) {
-        run.directorGeneration += 1;
-        if (run.directorTimer) clearTimeout(run.directorTimer);
-        // The turn's stage file is replaced; a pending card disappears with
-        // it. The permission itself stays pending — the desktop overlay seat
-        // still answers it.
-        stopInteractionPolling(run);
+        teardownRun(run);
         runs.delete(sessionId);
       }
       run = null;
     }
+    // A finished run (complete or error) belongs to the previous turn: real
+    // activity starts a fresh stage so the projector leaves the old screen.
+    // System runtime-status noise and redelivered human submissions of the
+    // same turn do not count.
+    const runtimeNoise = typeof message.metadata?.sdkRuntimeStatus === 'string';
+    const sameSubmission = humanOrigin && submissionId != null && run?.submissionId === submissionId;
+    if (run && run.finished) {
+      if (runtimeNoise || sameSubmission) return;
+      teardownRun(run);
+      runs.delete(sessionId);
+      run = null;
+    } else if (run && run.reportProjected && isLiveStageWorkerReport(message)) {
+      // A cross-session worker report arriving after the report was projected
+      // belongs to a new beat on the stage, not to the finished projection.
+      teardownRun(run);
+      runs.delete(sessionId);
+      run = null;
+    }
     run ??= ensureRun(sessionId);
-    if (!run || run.seen.has(message.id) || run.reportProjected) return;
+    if (!run || run.seen.has(message.id) || run.reportProjected || run.finished) return;
     run.seen.add(message.id);
     if (submissionId) run.submissionId = submissionId;
+    if (message.type === 'assistant' && !message.metadata?.isThinking) {
+      run.latestSpeakingId = message.id;
+    }
     const worker = workerIdentityFor(message);
-    const nextState = reduceLiveStageMessage(run.state, message, { workerName: worker.name, workerAvatar: worker.avatar });
+    const nextState = reduceLiveStageMessage(run.state, message, { workerName: worker.name, workerAvatar: worker.avatar, nowMs: now() });
     if (nextState === run.state) return;
-    run.state = nextState;
+    commitRunState(run, nextState);
     schedulePatch(run);
     scheduleDirector(run);
   }
 
+  /**
+   * Streamed assistant text for the newest non-thinking assistant message the
+   * run saw — usually the final reply, which arrives as an empty bubble right
+   * after the last tool call and only fills in through updates. Older message
+   * ids are ignored, and so is anything while an owner card is up.
+   */
+  function observeMessageUpdate(sessionId: string, messageId: string, content: string, metadata?: Record<string, unknown>): void {
+    const run = runs.get(sessionId);
+    if (!run || run.finished || run.reportProjected || run.errored) return;
+    if (!messageId || messageId !== run.latestSpeakingId || typeof content !== 'string') return;
+    if (run.state.interaction) return;
+    const nowMs = now();
+    const isFinal = metadata?.isFinal === true || metadata?.isStreaming === false;
+    if (!isFinal && run.lastSpeechPatchAt > 0 && nowMs - run.lastSpeechPatchAt < SPEECH_PATCH_THROTTLE_MS) return;
+    run.lastSpeechPatchAt = nowMs;
+    const nextState = applyLiveStageSpeech(run.state, content, nowMs);
+    if (nextState === run.state) return;
+    commitRunState(run, nextState);
+    schedulePatch(run);
+  }
+
   function observeComplete(sessionId: string): void {
     const run = runs.get(sessionId);
-    if (!run) return;
-    const nextState = completeLiveStage(run.state);
+    if (!run || run.finished) return;
+    run.finished = true;
+    clearDelegationWait(run);
+    const delegations = openDelegationsFor(run);
+    if (!run.errored && delegations.length > 0) {
+      // The twin's turn ended but delegated workers are still running: the
+      // stage waits on them honestly instead of claiming completion.
+      run.awaitingDelegation = true;
+      applyDelegationWait(run, delegations);
+      schedulePatch(run);
+      scheduleDelegationRecheck(run);
+      return;
+    }
+    const nextState = completeLiveStage(run.state, now());
     if (nextState === run.state) return;
-    run.state = nextState;
+    commitRunState(run, nextState);
     run.directorGeneration += 1;
     schedulePatch(run);
   }
 
-  function observeError(sessionId: string): void {
+  function observeError(sessionId: string, error?: string): void {
     const run = runs.get(sessionId);
     if (!run) return;
-    run.state = liveStageError(run.state);
+    run.finished = true;
+    run.errored = true;
+    clearDelegationWait(run);
+    const language = run.state.language;
+    const { reason, hint } = describeStudioTurnError(typeof error === 'string' ? error : '', language);
+    const copy = {
+      headline: language === 'zh' ? '这一轮没能完成' : "This run didn't finish",
+      caption: language === 'zh' ? `${reason}。${hint}` : `${reason}. ${hint}`,
+    };
+    const nextState = liveStageError(run.state, copy, now());
+    if (nextState === run.state) return;
+    commitRunState(run, nextState);
     run.directorGeneration += 1;
     schedulePatch(run);
   }
@@ -453,7 +853,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       : {};
     const interaction = buildLiveStageInteraction(candidate, randomBytes(16).toString('hex'));
     if (!interaction) return 'declined';
-    run.state = presentLiveStageInteraction(run.state, interaction);
+    run.state = presentLiveStageInteraction(run.state, interaction, now());
     startInteractionPolling(run);
     schedulePatch(run);
     console.log(`[StudioLiveStage] present ${interaction.kind} ${interaction.requestId} on ${sessionId}'s stage`);
@@ -521,7 +921,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       run.directorTimer = null;
     }
     run.directorDirty = false;
-    run.state = reportReadyLiveStage(run.state);
+    commitRunState(run, reportReadyLiveStage(run.state, now()));
     schedulePatch(run);
     await run.queue;
     try {
@@ -535,7 +935,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       }
       return outcome;
     } catch (error) {
-      run.state = liveStageError(run.state);
+      commitRunState(run, liveStageError(run.state, undefined, now()));
       schedulePatch(run);
       throw error;
     }
@@ -558,14 +958,14 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
 
   function forget(sessionId: string): void {
     const run = runs.get(sessionId);
-    if (run?.directorTimer) clearTimeout(run.directorTimer);
-    if (run) stopInteractionPolling(run);
+    if (run) teardownRun(run);
     runs.delete(sessionId);
   }
 
   return {
     prepareSession,
     observeMessage,
+    observeMessageUpdate,
     observeComplete,
     observeError,
     presentInteraction,
@@ -579,9 +979,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     getRunInternals: (sessionId: string) => runs.get(sessionId) ?? null,
     dispose: () => {
       for (const run of runs.values()) {
-        run.directorGeneration += 1;
-        if (run.directorTimer) clearTimeout(run.directorTimer);
-        stopInteractionPolling(run);
+        teardownRun(run);
       }
       runs.clear();
     },

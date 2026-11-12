@@ -11,7 +11,7 @@ test('main sends every stream event to the Genesis Stage before the Live Stage',
     ['getStudioGenesisStageService().observeMessage(sessionId, message as any);', 'getStudioLiveStageService().observeMessage(sessionId, message as any);'],
     ['getStudioGenesisStageService().observeMessage(sessionId, message);', 'getStudioLiveStageService().observeMessage(sessionId, message);'],
     ['getStudioGenesisStageService().observeComplete(sessionId);', 'getStudioLiveStageService().observeComplete(sessionId);'],
-    ['getStudioGenesisStageService().observeError(sessionId);', 'getStudioLiveStageService().observeError(sessionId);'],
+    ['getStudioGenesisStageService().observeError(sessionId);', 'getStudioLiveStageService().observeError(sessionId, error);'],
   ];
   for (const [genesis, live] of pairs) {
     const at = main.indexOf(genesis);

@@ -8,11 +8,11 @@
   "botName": "Nova",
   "language": "en",
   "headline": "Searching the web",
-  "caption": "Finding and checking public web sources.",
+  "caption": "",
   "participants": [
-    "Nova",
-    "Web"
+    "Nova"
   ],
+  "kicker": "Searching the web",
   "composition": "gather",
   "motif": "web2-research",
   "topology": {
@@ -20,6 +20,8 @@
     "nodes": [],
     "edges": []
   },
+  "captionSource": "default",
+  "phaseStartedAt": 1760000000000,
   "motion": {
     "preset": "web2-research",
     "seed": 4348,
