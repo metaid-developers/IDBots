@@ -48,7 +48,7 @@ test('the panel portals the draft picker chip AND the live identity badge (v3 cl
   assert.match(panelSource, /fallbackAvatar=\{currentSession\.metabotAvatar \?\? null\}/);
 });
 
-test('the Studio task header centers the identity above the session title', () => {
+test('the Studio header rests at identity height and previews the title on hover or focus', () => {
   const sidebarSource = read('src/renderer/components/Sidebar.tsx');
   assert.equal((panelSource.match(/<BotPickerChip/g) ?? []).length, 1, 'the chip mounts exactly once');
   assert.match(panelSource, /import \{ createPortal \} from 'react-dom';/);
@@ -59,9 +59,8 @@ test('the Studio task header centers the identity above the session title', () =
   const headerStart = sidebarSource.indexOf('data-slot="studio-task-header"');
   const headerTagEnd = sidebarSource.indexOf('>', headerStart);
   const headerTag = sidebarSource.slice(headerStart, headerTagEnd);
-  assert.match(headerTag, /h-16/);
-  assert.match(headerTag, /flex-col/);
-  assert.match(headerTag, /items-center/);
+  assert.match(headerTag, /showStudioTitle \? 'h-16' : 'h-9'/);
+  assert.match(headerTag, /transition-\[height\]/);
 
   const headerSpan = sidebarSource.slice(
     headerStart,
@@ -73,6 +72,12 @@ test('the Studio task header centers the identity above the session title', () =
   assert.ok(anchorAt !== -1, 'identity anchor present');
   assert.ok(nameAt > anchorAt, 'session title sits below the centered identity');
   assert.ok(newAt > nameAt, 'session actions remain in the same header');
+  assert.match(headerSpan, /onMouseEnter/);
+  assert.match(headerSpan, /onMouseLeave/);
+  assert.match(headerSpan, /onFocus/);
+  assert.match(headerSpan, /onBlur/);
+  assert.match(headerSpan, /aria-hidden=\{!showStudioTitle\}/);
+  assert.match(headerSpan, /invisible pointer-events-none/);
   assert.match(headerSpan, /absolute right-0 top-0/);
 });
 
