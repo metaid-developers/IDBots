@@ -139,8 +139,6 @@ interface HomeSidebarProps {
   onSelectHome: () => void;
   /** Switch surface (the switcher's two transitions). */
   onSelectSurface: (mode: BotBrowserSurfaceMode) => void;
-  /** Open a browser-type session back in the Bot Browser co-work surface. */
-  onSelectBrowserSession?: (sessionId: string) => void | Promise<void>;
   isCollapsed: boolean;
   /** Expanded sidebar width in px (resizable by the user). */
   width?: number;
@@ -155,7 +153,6 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
   mode,
   onSelectHome,
   onSelectSurface,
-  onSelectBrowserSession,
   isCollapsed,
   width = defaultSidebarWidth('home'),
   isResizing = false,
@@ -181,10 +178,12 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
   const [isViewMenuOpen, setIsViewMenuOpen] = useState(false);
   const viewMenuButtonRef = useRef<HTMLButtonElement>(null);
 
-  // Bot Home history is backed by the full session list (search spans it);
-  // browser co-work sessions are filtered out of the local bucket below and
-  // remain reachable from the Bot Internet panel + from search rows, which
-  // route back to that surface.
+  // BotWorks history lists EVERY cowork session, including the Studio
+  // (Bot Internet) browser co-work sessions — owner ruling 2026-11-12,
+  // restoring the pre-2026-11-08 listing. They appear in the local bucket
+  // with a 浏览器 badge (CoworkSessionItem) and open in the BotWorks chat
+  // view in the professional presentation (thinking transcript), NOT by
+  // routing back to the Studio surface.
   const homeSessions = sessions;
 
   const handleSetSessionViewMode = (next: SessionViewMode) => {
@@ -229,11 +228,12 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
     }
   };
 
-  // Sessions grouped by category: local (human↔MetaBot chats, EXCLUDING both
-  // browser co-work sessions and group-task channels) and a2a (MetaBot↔MetaBot).
-  // IM rows belong to the LOCAL list even when an older row is still stored as
-  // 'a2a' — the mapping channel is the display source of truth, so this is a
-  // render-time reclassification.
+  // Sessions grouped by category: local (human↔MetaBot chats, INCLUDING the
+  // Studio browser co-work sessions per the owner ruling 2026-11-12 — they
+  // carry a 浏览器 badge and open in the professional BotWorks transcript) and
+  // a2a (MetaBot↔MetaBot). IM rows belong to the LOCAL list even when an older
+  // row is still stored as 'a2a' — the mapping channel is the display source
+  // of truth, so this is a render-time reclassification.
   //
   // There is deliberately NO `group` bucket any more (owner ruling 15:46: the
   // 群任务 sign is retired). Nothing was deleted: group_task sessions stay in
@@ -243,7 +243,6 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
     const isImSession = (session: CoworkSessionSummary) => Boolean(session.imChannel);
     const isLocal = (session: CoworkSessionSummary) =>
       session.sessionType !== 'group_task'
-      && session.sessionType !== 'browser'
       && (session.sessionType !== 'a2a' || isImSession(session));
     return {
       local: homeSessions.filter(isLocal),
@@ -317,15 +316,11 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
   }, [isCollapsed]);
 
   const handleSelectSession = async (sessionId: string) => {
-    // Browser sessions run in the Bot Browser co-work panel, so "coming back"
-    // to one means returning to that surface with the session loaded there —
-    // not the home chat view. Fall back to the home view when the host did not
-    // wire the browser route (keeps the row usable either way).
-    const target = sessions.find((session) => session.id === sessionId);
-    if (target?.sessionType === 'browser' && onSelectBrowserSession) {
-      await onSelectBrowserSession(sessionId);
-      return;
-    }
+    // Every session on this face — Studio browser sessions included (owner
+    // ruling 2026-11-12) — opens in the BotWorks chat view. A browser session
+    // renders there with the professional presentation (full thinking
+    // transcript); its turns still run with the Studio assistant prompt
+    // (session-owned execution, see assistantModeSessionGate).
     onShowCowork();
     await coworkService.loadSession(sessionId);
   };

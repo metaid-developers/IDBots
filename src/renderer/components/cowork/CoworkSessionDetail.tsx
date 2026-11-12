@@ -2669,16 +2669,15 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     const timer = window.setTimeout(() => setIsRespondingToPermission(false), 15000);
     return () => window.clearTimeout(timer);
   }, [isRespondingToPermission, pendingPermission?.requestId]);
-  // Chat experience mode (Settings > General), scoped per session: the
-  // assistant form ('assistant' hides raw thinking and tool-call chrome;
-  // explicit owner_update progress arrives as ordinary chat bubbles) applies only while
-  // THIS session is a regular interactive owner chat — the same
-  // isAssistantModeOwnerChatSession rule the backend enforces
-  // (src/main/libs/coworkRunner.ts), so the transcript can never render
-  // assistant chrome while the session's turns run the professional prompt.
-  // Auto-created runs (orchestration/long-term/schedule) and non-standard
-  // sessions (A2A/browser/group) keep the professional chrome. See
-  // useChatExperienceMode for the cross-window reactivity contract.
+  // Chat experience mode, FACE-scoped (总裁办公室裁定 2026-11-09 + owner
+  // ruling 2026-11-12): 'assistant' (hides raw thinking and tool-call chrome;
+  // explicit owner_update progress arrives as ordinary chat bubbles) applies
+  // only on the Studio face for what it lists; the BotWorks face renders EVERY
+  // session professionally — Studio projector sessions included (they open
+  // here with their full thinking transcript). The turns of a marker session
+  // still run the assistant prompt/effort chain (backend session-owned
+  // execution, see assistantModeSessionGate). See useChatExperienceMode for
+  // the cross-window reactivity contract.
   const chatExperienceMode = useChatExperienceMode();
   const isAssistantMode = isAssistantModeOwnerChatSession(chatExperienceMode, currentSession);
   // Legacy IM direct rows can still be stored as 'a2a'. The conversation

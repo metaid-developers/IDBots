@@ -39,25 +39,35 @@ export interface AssistantModeSessionIdentity {
  * EXECUTION. On the Studio face this gate reports assistant chrome for
  * anything listed there — including a BotWorks-created standard chat, whose
  * turns run the professional prompt — because the ruling makes the face the
- * mode's source of truth (Studio 面=助手模式). On the BotWorks face the same
- * chat renders professional. Do not "fix" this by keying the renderer on
- * session shape again: the face decides, and a renderer-side
- * conversation-source probe (the old sourceChannel divergence) has no
- * renderer-visible payload.
+ * mode's source of truth (Studio 面=助手模式). Symmetrically (owner ruling
+ * 2026-11-12) the BotWorks face reports professional chrome for EVERYTHING it
+ * lists — including a Studio projector marker session, whose turns keep
+ * running the assistant prompt and effort chain (backend marker rule) while
+ * its transcript renders with full thinking there. That is the whole point of
+ * the ruling: BotWorks is where the owner reads the professional transcript.
+ * Do not "fix" either direction by keying the renderer on session shape
+ * again: the face decides, and a renderer-side conversation-source probe (the
+ * old sourceChannel divergence) has no renderer-visible payload.
  */
 export function isAssistantModeOwnerChatSession(
   mode: ChatExperienceMode,
   session: AssistantModeSessionIdentity | null | undefined,
 ): boolean {
   if (!session) return false;
-  // Bot Internet projector sessions carry a persisted per-session marker and
-  // run assistant mode on every face — mirror of the backend branch in
-  // coworkRunner.isAssistantModeOwnerChatSession (marker-only, 2026-11-09).
-  if (session.assistantMode && !session.autoOrigin) return true;
-  // Face-owned presentation: the BotWorks face ('professional') renders every
-  // session shape professionally; the Studio face ('assistant') renders the
-  // assistant presentation for what it lists.
+  // Face-owned presentation FIRST (owner ruling 2026-11-12): the BotWorks
+  // face ('professional') renders EVERY session shape professionally — Studio
+  // projector sessions included. They re-entered the BotWorks local list with
+  // a 浏览器 badge and open there precisely so the owner can read their full
+  // thinking transcript; the presentation gate must not claw them back into
+  // assistant chrome. The Studio face ('assistant') is decided below.
   if (mode !== 'assistant') return false;
+  // Bot Internet projector sessions carry a persisted per-session marker and
+  // run the assistant presentation on the Studio face — mirror of the backend
+  // branch in coworkRunner.isAssistantModeOwnerChatSession (marker-only,
+  // 2026-11-09), which still owns EXECUTION on every face: the marker
+  // session's turns keep running the assistant prompt and effort chain even
+  // while its transcript renders professionally on the BotWorks face.
+  if (session.assistantMode && !session.autoOrigin) return true;
   if ((session.sessionType ?? 'standard') !== 'standard' || session.autoOrigin) return false;
   return true;
 }

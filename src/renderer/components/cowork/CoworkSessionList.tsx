@@ -116,6 +116,14 @@ interface CoworkSessionListProps {
    * conversation). Callers that render flat (search modal) omit it.
    */
   groupFace?: SessionGroupFace;
+  /**
+   * Badge browser-type rows with the 浏览器 source label (owner ruling
+   * 2026-11-12). Defaults ON: both sidebars' lists (and the search modal)
+   * show it wherever a browser row renders. The Studio panel history renders
+   * CoworkSessionItem directly without the flag and stays badge-free (its
+   * own 2026-11-11 17:28 ruling).
+   */
+  showBrowserBadge?: boolean;
 }
 
 const groupHeaderLabelClass =
@@ -238,6 +246,7 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
   language: languageProp,
   onQuickCreateTask,
   groupFace = 'local',
+  showBrowserBadge = true,
 }) => {
   // Same summary objects for the rows whose fields did not change (see the
   // hook); everything below reads these instead of the raw props.
@@ -589,6 +598,7 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
         nowMs={nowMs}
         language={language}
         assistantMode={isAssistantModeOwnerChatSession(chatExperienceMode, session)}
+        showBrowserBadge={showBrowserBadge}
         onSelect={selectSession}
         onDelete={deleteSession}
         onTogglePin={togglePin}

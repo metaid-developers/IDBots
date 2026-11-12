@@ -5,16 +5,16 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import CoworkSessionItem from '../src/renderer/components/cowork/CoworkSessionItem';
 import type { CoworkSessionSummary } from '../src/renderer/types/cowork';
 
-// Render-layer guard for the Bot Home history rows. SUPERSEDED 2026-11-11
-// 17:28 (owner ruling): the browser sessions' source badge is RETIRED — the
-// row must never render its label in either locale, whatever the session
-// type. The visited-page context line (showBrowserContext) stays the row's
-// identity cue for these sessions; the data-side sessionType is untouched.
-// The retired probe is the label copy itself (the old i18n key
-// coworkSessionTypeBrowser is gone from both locales — pinned by the static
-// guard in browserSessionHomeEntryStatic.test.mjs).
+// Render-layer guard for the 浏览器 source badge. RESTORED 2026-11-12 (owner
+// order, superseding the 2026-11-11 17:28 retirement): browser-type rows carry
+// the badge again on the surfaces that opt in — the BotWorks local list and
+// the search modal both render through CoworkSessionList with
+// showBrowserBadge=true. The badge is a per-row PROP so the Studio panel
+// history (bot-centered, its own 2026-11-11 17:28 ruling) keeps badge-free
+// rows by not passing the flag.
 
-const retiredBadgeLabels = ['浏览器', 'Browser'];
+const badgeLabel = '浏览器';
+const badgeLabelEn = 'Browser';
 
 const baseSession = (overrides: Partial<CoworkSessionSummary> = {}): CoworkSessionSummary => ({
   id: 'session-1',
@@ -28,7 +28,10 @@ const baseSession = (overrides: Partial<CoworkSessionSummary> = {}): CoworkSessi
 
 const noop = () => {};
 
-const renderItem = (session: CoworkSessionSummary): string =>
+const renderItem = (
+  session: CoworkSessionSummary,
+  extraProps: Partial<React.ComponentProps<typeof CoworkSessionItem>> = {},
+): string =>
   renderToStaticMarkup(
     <CoworkSessionItem
       session={session}
@@ -38,31 +41,28 @@ const renderItem = (session: CoworkSessionSummary): string =>
       onDelete={noop}
       onTogglePin={noop}
       onRename={noop}
+      {...extraProps}
     />,
   );
 
-const assertNoRetiredBadge = (html: string, context: string) => {
-  for (const label of retiredBadgeLabels) {
-    assert.ok(!html.includes(label), `${context} must not render the retired "${label}" badge`);
-  }
-};
+test('a browser row with showBrowserBadge renders the 浏览器 badge', () => {
+  const html = renderItem(
+    baseSession({ sessionType: 'browser', title: 'Chat about metaapp://x' }),
+    { showBrowserBadge: true },
+  );
+  assert.ok(html.includes(badgeLabel) || html.includes(badgeLabelEn), 'the badge label must render');
+});
 
-test('browser session rows no longer carry the retired browser badge', () => {
+test('a browser row WITHOUT the flag stays badge-free (Studio panel history default)', () => {
   const html = renderItem(baseSession({ sessionType: 'browser', title: 'Chat about metaapp://x' }));
-  assertNoRetiredBadge(html, 'browser row');
+  assert.ok(!html.includes(badgeLabel), 'no zh badge without the opt-in');
+  assert.ok(!html.includes(badgeLabelEn), 'no en badge without the opt-in');
 });
 
-test('standard sessions do not carry the browser badge', () => {
-  const html = renderItem(baseSession({ sessionType: 'standard' }));
-  assertNoRetiredBadge(html, 'standard row');
-});
-
-test('a2a sessions keep their own presentation and get no browser badge', () => {
-  const html = renderItem(baseSession({ sessionType: 'a2a', peerName: 'Remote Bot' }));
-  assertNoRetiredBadge(html, 'a2a row');
-});
-
-test('group_task sessions get no browser badge', () => {
-  const html = renderItem(baseSession({ sessionType: 'group_task' }));
-  assertNoRetiredBadge(html, 'group_task row');
+test('non-browser rows never get the badge, flag or not', () => {
+  for (const sessionType of ['standard', 'a2a', 'group_task'] as const) {
+    const flagged = renderItem(baseSession({ sessionType }), { showBrowserBadge: true });
+    assert.ok(!flagged.includes(badgeLabel), `${sessionType} row must not render the zh badge`);
+    assert.ok(!flagged.includes(badgeLabelEn), `${sessionType} row must not render the en badge`);
+  }
 });

@@ -1521,11 +1521,13 @@ const App: React.FC = () => {
     });
   }, [botBrowserShell.switchToHome, handleShowCowork, showToast]);
 
-  // A browser-type session listed in the Bot Home history opens back in the Bot
-  // Browser co-work panel: switch to that surface first, then point the panel at
-  // the selected session. (Home history shows browser chats so they always have
-  // an entry point; the panel is still where they run.) The session's browser
-  // tab is revealed too — one session, one tab.
+  // A browser-type session reached from the STUDIO face's sidebar (its search
+  // rows — the face's own list keeps browser chats on the panel history)
+  // opens back in the Bot Browser co-work panel: switch to that surface first,
+  // then point the panel at the selected session. The session's browser tab is
+  // revealed too — one session, one tab. (The BotWorks face no longer routes
+  // browser rows here: owner ruling 2026-11-12, they open in the BotWorks
+  // chat view with the professional transcript instead.)
   const handleSelectBrowserSession = useCallback(async (sessionId: string) => {
     await botBrowserShell.openBrowserHome();
     await browserCoworkService.loadSession(sessionId);
@@ -2019,7 +2021,6 @@ const App: React.FC = () => {
                   void botBrowserShell.openBrowserHome();
                 }
               }}
-              onSelectBrowserSession={handleSelectBrowserSession}
               isCollapsed={isSidebarCollapsed}
               width={sidebarWidth}
               isResizing={isSidebarResizing || isSidebarTweening}
