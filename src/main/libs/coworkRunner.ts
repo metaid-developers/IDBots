@@ -59,7 +59,7 @@ import {
 } from './coworkSteerChannel';
 import { getEnhancedEnv, getSkillHostEnv, getSkillsRoot, ensureCoworkTempDir, generateSessionTitle, generateTurnAckReply, generateOwnerWaitUpdate, generateTurnStatusGoal } from './coworkUtil';
 import type { OwnerWaitUpdateInput } from './turnAckReply';
-import { buildDeterministicTurnAckOpening, remainingTurnAckBudgetMs, resolveTurnAckActivity, TURN_ACK_TOTAL_BUDGET_MS } from './turnAckReply';
+import { buildDeterministicTurnAckOpening, describeOwnerWaitActivity, remainingTurnAckBudgetMs, resolveTurnAckActivity, TURN_ACK_TOTAL_BUDGET_MS } from './turnAckReply';
 import { rewriteWin32McpStdioServer } from './win32StdioCommand';
 import { ensurePythonRuntimeReady } from './pythonRuntime';
 import { resolveBundledSkillsRoot } from './skillRoots';
@@ -1618,6 +1618,20 @@ interface ActiveSession {
   assistantOwnerLastVisibleAt?: number;
   assistantOwnerHeartbeatCount?: number;
   assistantOwnerWaitingForTool?: boolean;
+  /**
+   * Session 09bb4098: the turn's visible final reply already finalized, so a
+   * later owner-wait heartbeat would only promise "soon" AFTER the answer was
+   * delivered. Set in onMessageFinalize for a non-thinking, non-narration,
+   * non-turnAckReply assistant text message; cleared when a later tool_use
+   * starts (the turn is working again).
+   */
+  assistantOwnerFinalReplyDelivered?: boolean;
+  /**
+   * The last tool_use this turn started — the wait heartbeat's
+   * currentActivity phrase (describeOwnerWaitActivity) names it so the
+   * "still working" line says what is actually happening.
+   */
+  assistantOwnerCurrentTool?: { name: string; input?: Record<string, unknown> } | null;
   /**
    * The current turn's user message, captured at turn entry — the wait
    * heartbeat's LLM line (emitOwnerWaitHeartbeat) reads it for language and
@@ -8963,6 +8977,8 @@ export class CoworkRunner extends EventEmitter {
       assistantOwnerLastVisibleAt: Date.now(),
       assistantOwnerHeartbeatCount: 0,
       assistantOwnerWaitingForTool: false,
+      assistantOwnerFinalReplyDelivered: false,
+      assistantOwnerCurrentTool: null,
       delegationRequestEmitted: false,
       staleResumeDetected: false,
       staleResumeRetryAllowed: true,
@@ -11660,8 +11676,28 @@ export class CoworkRunner extends EventEmitter {
       const dshInFlightToolCallCount = () => dshInFlightToolUses.size + dshAnonInFlightToolStarts.length;
       const trackDshToolActivity = (message: unknown) => {
         const type = (message as { type?: string } | null)?.type;
-        const toolUseId = (message as { metadata?: { toolUseId?: string | null } } | null)?.metadata?.toolUseId ?? null;
+        const messageMeta = (message as {
+          metadata?: { toolUseId?: string | null; toolName?: string; toolInput?: unknown } | null;
+        } | null)?.metadata ?? null;
+        const toolUseId = messageMeta?.toolUseId ?? null;
         if (type === 'tool_use') {
+          // A fresh tool start means the turn is working again: lift the
+          // post-final-reply heartbeat suppression and remember this tool as
+          // the wait heartbeat's current activity. When the suppression was
+          // already consumed (the dropped heartbeat never re-arms), arm the
+          // timer again so continued tool silence still gets an honest line.
+          const replyWasDelivered = activeSession.assistantOwnerFinalReplyDelivered === true;
+          activeSession.assistantOwnerFinalReplyDelivered = false;
+          const toolName = typeof messageMeta?.toolName === 'string' ? messageMeta.toolName.trim() : '';
+          activeSession.assistantOwnerCurrentTool = toolName
+            ? {
+                name: toolName,
+                input: messageMeta?.toolInput && typeof messageMeta.toolInput === 'object'
+                  ? messageMeta.toolInput as Record<string, unknown>
+                  : undefined,
+              }
+            : null;
+          if (replyWasDelivered) this.armAssistantOwnerWaitTimer(sessionId, activeSession);
           if (toolUseId) {
             if (!dshInFlightToolUses.has(toolUseId)) dshInFlightToolUses.set(toolUseId, Date.now());
           } else {
@@ -11907,6 +11943,13 @@ export class CoworkRunner extends EventEmitter {
             if (metadata?.isThinking !== true && content.trim().length > 0) {
               activeSession.dshTurnAckVisibleTextSeen = true;
               this.noteAssistantOwnerVisible(sessionId, activeSession);
+              // Session 09bb4098: this finalized visible text IS the delivered
+              // reply — narration bubbles and the host ack are progress, not
+              // the answer, so they must not suppress the wait heartbeat.
+              const finalizeMeta = metadata as Record<string, unknown> | undefined;
+              if (finalizeMeta?.narration !== true && finalizeMeta?.turnAckReply !== true) {
+                activeSession.assistantOwnerFinalReplyDelivered = true;
+              }
             }
             this.dshStreamUi.onFinalize(sessionId, messageId, content, metadata);
           },
@@ -13190,6 +13233,14 @@ export class CoworkRunner extends EventEmitter {
         coworkLog('DEBUG', 'turn:ack', 'owner wait heartbeat dropped: turn no longer active', { sessionId })
         return
       }
+      // Session 09bb4098: the final reply already reached the owner — a
+      // "still working, answer soon" heartbeat now would be a lie. Drop it
+      // and do NOT re-arm; a later tool_use clears the flag and re-arms via
+      // noteAssistantOwnerVisible.
+      if (activeSession.assistantOwnerFinalReplyDelivered === true) {
+        coworkLog('DEBUG', 'turn:ack', 'owner wait heartbeat dropped: final reply already delivered', { sessionId })
+        return
+      }
       if (activeSession.pendingPermission) {
         coworkLog('DEBUG', 'turn:ack', 'owner wait heartbeat deferred: permission prompt pending', { sessionId })
         activeSession.assistantOwnerLastVisibleAt = Date.now()
@@ -13213,12 +13264,29 @@ export class CoworkRunner extends EventEmitter {
     try {
       const waitedMs = Date.now() - (activeSession.assistantOwnerLastVisibleAt ?? Date.now())
       const generator = this.ownerWaitUpdateGenerator ?? generateOwnerWaitUpdate
+      // Name the real activity: the last tool this turn started, phrased for
+      // the prompt. Worker names resolve through the runner's metabot lookup;
+      // unresolvable ids degrade to the generic "a worker bot" inside the
+      // describer.
+      const currentTool = activeSession.assistantOwnerCurrentTool
+      let currentActivity: string | undefined
+      if (currentTool?.name) {
+        const workerMetabotId = typeof currentTool.input?.workerMetabotId === 'number'
+          && Number.isFinite(currentTool.input.workerMetabotId)
+          ? Math.floor(currentTool.input.workerMetabotId)
+          : null
+        const workerName = workerMetabotId != null
+          ? this.getMetabotById?.(workerMetabotId)?.name ?? undefined
+          : undefined
+        currentActivity = describeOwnerWaitActivity(currentTool.name, currentTool.input, workerName) || undefined
+      }
       const text = await generator({
         userText: activeSession.assistantOwnerTurnUserText ?? '',
         sessionTitle: this.store.getSession(sessionId)?.title ?? null,
         waitedMs,
         waitingForTool: activeSession.assistantOwnerWaitingForTool === true,
         priorCount: activeSession.assistantOwnerHeartbeatCount ?? 0,
+        currentActivity,
       }).catch(() => '')
       if (!text) {
         coworkLog('DEBUG', 'turn:ack', 'owner wait heartbeat suppressed', { sessionId, reason: 'generator returned empty' })

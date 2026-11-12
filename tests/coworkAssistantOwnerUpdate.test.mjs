@@ -306,6 +306,50 @@ test('a real owner update resets the five-minute visible-message window', async 
   t.mock.timers.reset()
 })
 
+test('a delivered final reply suppresses the wait heartbeat and it does not re-arm', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const { runner, store } = setup({ waitTimeoutMs: 300_000 })
+  const active = runner.activeSessions.get('s1')
+  // Session 09bb4098 shape: the visible final reply finalized, then the turn
+  // stayed active with no new tool — the heartbeat must stay silent.
+  active.assistantOwnerFinalReplyDelivered = true
+  runner.armAssistantOwnerWaitTimer('s1', active)
+
+  t.mock.timers.tick(300_000)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(store.messages.length, 0, 'no "still working" bubble after the answer was delivered')
+  assert.equal(active.assistantOwnerHeartbeatTimer, null, 'the dropped heartbeat does not re-arm')
+  t.mock.timers.tick(900_000)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(store.messages.length, 0, 'later windows stay silent too')
+  t.mock.timers.reset()
+})
+
+test('the wait heartbeat names the last started tool as currentActivity', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const inputs = []
+  const { runner, store } = setup({
+    waitTimeoutMs: 300_000,
+    waitGenerator: async (input) => { inputs.push(input); return '我还在等 Builder阿码 交回结果。' },
+  })
+  runner.getMetabotById = (id) => (id === 7 ? { id: 7, name: 'Builder阿码' } : null)
+  const active = runner.activeSessions.get('s1')
+  active.assistantOwnerCurrentTool = { name: 'local_worker_delegate', input: { workerMetabotId: 7 } }
+  runner.armAssistantOwnerWaitTimer('s1', active)
+
+  t.mock.timers.tick(300_000)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(inputs.length, 1, 'the generator fired once')
+  assert.equal(
+    inputs[0].currentActivity,
+    'delegated work to Builder阿码 and is waiting for it to report back',
+    'the worker name resolves through the metabot lookup',
+  )
+  assert.equal(store.messages.length, 1)
+  clearTimeout(active.assistantOwnerHeartbeatTimer)
+  t.mock.timers.reset()
+})
+
 test('turn teardown clears the waiting timer so it cannot leak into the next submission', (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
   const { runner, store } = setup({ waitTimeoutMs: 1_000 })
