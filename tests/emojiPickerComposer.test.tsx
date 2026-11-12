@@ -255,8 +255,21 @@ test('bot-browser panel bubbles join the Twemoji pipeline (user = shared body, a
     /<MarkdownContent[\s\S]{0,200}?emojiImages/,
     'the shared user body must pass emojiImages (bundled Twemoji, not system glyphs)',
   );
-  const wired = (source.match(/<MarkdownContent content=\{message\.content\} compact onOpenBotBrowserUri=\{onOpenUri\} emojiImages \/>/g) ?? []).length;
-  assert.equal(wired, 2, 'both bot-browser assistant branches (bubble + bare) must pass emojiImages');
+  // Pin the CONTRACT, not one historic formatting: both assistant markdown
+  // sites in the panel pass emojiImages. The prop list has grown since
+  // (resolveLocalFilePath / onOpenLocalFile joined via studio-experience) and
+  // the JSX wrapped multi-line, so an exact single-line literal would break on
+  // every prop addition without anything actually drifting.
+  assert.equal(
+    (source.match(/<MarkdownContent/g) ?? []).length,
+    2,
+    'two assistant markdown sites (bubble + bare)',
+  );
+  assert.equal(
+    (source.match(/emojiImages/g) ?? []).length,
+    2,
+    'both bot-browser assistant branches (bubble + bare) must pass emojiImages',
+  );
 });
 
 test('emoji picker copy resolves in both shipped locales', () => {

@@ -52,6 +52,7 @@ async function main() {
       pin_id TEXT UNIQUE NOT NULL,
       group_id TEXT NOT NULL,
       sender_metaid TEXT,
+      sender_global_metaid TEXT,
       sender_name TEXT,
       content TEXT,
       mention TEXT,

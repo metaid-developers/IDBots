@@ -155,6 +155,11 @@ test('CoworkRunner DSH integration', { skip: runtimeReady ? false : 'dsh-runtime
     localTurnState: 'none',
   }
   runner.activeSessions.set(sessionId, activeSession)
+  // The assistant-mode gate reads the PERSISTED session record (bad5dfe3
+  // retired the sourceChannel==='cowork_ui' fallback): owner_update only
+  // registers for a session whose store row carries the assistantMode
+  // marker, so seed it here — the live Studio surface stamps the same field.
+  store.updateSession(sessionId, { assistantMode: true })
 
   const events = { messages: [], updates: [], completes: [], permissions: [], steerSettled: [] }
   runner.on('message', (sid, message) => { if (sid === sessionId) events.messages.push(message) })

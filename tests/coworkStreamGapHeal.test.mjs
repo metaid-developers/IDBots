@@ -109,6 +109,7 @@ const startHarness = async (t) => {
         onStreamMessageUpdate: stub('messageUpdate'),
         onStreamPermission: stub('permission'),
         onStreamPermissionResolved: stub('permissionResolved'),
+        onStreamStageInteraction: stub('stageInteraction'),
         onStreamComplete: stub('complete'),
         onStreamError: stub('error'),
         onStreamSessionTitle: stub('sessionTitle'),

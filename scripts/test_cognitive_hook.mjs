@@ -208,7 +208,15 @@ async function main() {
     performChatCompletion,
     broadcastGroupChat,
     {
-      getSkillsPromptForIds,
+      // The orchestrator routes the tool loop through the per-bot assignment
+      // model: getChatSkillsRoutingPrompt({ metabotId, widened }) returns
+      // { prompt, activeSkillIds }. The legacy getSkillsPromptForIds hook is
+      // gone (the task.allowed_skills fallback was removed), so the fixture
+      // provides the routing hook directly and reuses the same fixture prompt.
+      getChatSkillsRoutingPrompt: () => ({
+        prompt: getSkillsPromptForIds([TEST_SKILL_ID]),
+        activeSkillIds: [TEST_SKILL_ID],
+      }),
       skillsRoots: [SKILLS_ROOT],
       runSkillTurnViaCowork,
       chatWithToolsOverride,

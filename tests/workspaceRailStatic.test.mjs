@@ -267,15 +267,17 @@ test('surface session-name slot: read-only default, inline editor, empty commit 
   const pureSource = read('src/renderer/features/botBrowser/surfaceSessionName.ts');
   assert.match(pureSource, /if \(!nextTitle\) return \{ action: 'noop' \};/);
   assert.match(pureSource, /return trimmed \|\| fallbackTitle;/);
-  // 18:05 rework: the slot is the row's LEFT TITLE. Its root lane grows
-  // (min-w-0 flex-1) so the actions row packs the icon cluster to the right
-  // end; the title reads one level darker + medium at 13 px and the label
-  // truncates with an ellipsis. Extended by the owner 18:54 left-anchor
-  // order: ALL THREE mounts carry the lane classes — the read-only button,
-  // the inline editor, AND the draft spacer — so the row's geometry holds
-  // across every state swap and the identity component stays left-pinned
-  // even with no open session.
-  assert.equal((componentSource.match(/min-w-0 flex-1/g) ?? []).length, 3, 'title lane on all three mounts (read-only + editor + draft spacer)');
+  // 18:05 rework: the slot is the row's title. Originally a left-packed
+  // growing lane (min-w-0 flex-1); the "enlarge and center Studio task
+  // header" order (18ee742a) reworked the geometry into a full-width
+  // centered lane. The invariant that survives: ALL THREE mounts — the
+  // read-only button, the inline editor, AND the draft spacer — carry the
+  // same lane classes (h-6 w-full min-w-0 flex-none), so the row's geometry
+  // holds across every state swap, and the two interactive mounts center
+  // their text identically.
+  assert.equal((componentSource.match(/min-w-0 flex-none/g) ?? []).length, 3, 'title lane on all three mounts (read-only + editor + draft spacer)');
+  assert.equal((componentSource.match(/w-full min-w-0 flex-none/g) ?? []).length, 3, 'the lane is full-width on every mount');
+  assert.equal((componentSource.match(/text-center/g) ?? []).length, 2, 'both interactive mounts center the title');
   assert.match(componentSource, /text-\[13px\] font-medium/);
   assert.match(componentSource, /text-claude-text dark:text-claude-darkText/);
   // Owner 18:54 frameless-editor order: the inline editor carries NO box —
