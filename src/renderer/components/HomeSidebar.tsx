@@ -181,9 +181,10 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
   // BotWorks history lists EVERY cowork session, including the Studio
   // (Bot Internet) browser co-work sessions — owner ruling 2026-11-12,
   // restoring the pre-2026-11-08 listing. They appear in the local bucket
-  // with a 浏览器 badge (CoworkSessionItem) and open in the BotWorks chat
-  // view in the professional presentation (thinking transcript), NOT by
-  // routing back to the Studio surface.
+  // with a Studio badge (CoworkSessionItem; copy renamed 浏览器→Studio the
+  // same day) and open in the BotWorks chat view in the professional
+  // presentation (thinking transcript), NOT by routing back to the Studio
+  // surface.
   const homeSessions = sessions;
 
   const handleSetSessionViewMode = (next: SessionViewMode) => {
@@ -230,7 +231,7 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
 
   // Sessions grouped by category: local (human↔MetaBot chats, INCLUDING the
   // Studio browser co-work sessions per the owner ruling 2026-11-12 — they
-  // carry a 浏览器 badge and open in the professional BotWorks transcript) and
+  // carry a Studio badge and open in the professional BotWorks transcript) and
   // a2a (MetaBot↔MetaBot). IM rows belong to the LOCAL list even when an older
   // row is still stored as 'a2a' — the mapping channel is the display source
   // of truth, so this is a render-time reclassification.
