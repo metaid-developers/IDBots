@@ -27,6 +27,7 @@ function verifyCall(call, action) {
 }
 
 const settingsSource = read('src/renderer/components/Settings.tsx');
+const appSource = read('src/renderer/App.tsx');
 const packCardSource = read('src/renderer/components/me/MeIncrementPackCard.tsx');
 const purchaseFlowSource = read('src/renderer/components/me/MePurchaseFlow.tsx');
 const usageSource = read('src/renderer/components/me/MeUsageAndCredits.tsx');
@@ -105,6 +106,20 @@ test('credit pack card shows the persistent bucket with buy/details entry points
   const zh = i18nSource.indexOf("meIncrementPackExhaustedHint: '");
   assert.ok(zh > 0, 'zh hint key missing');
   assert.ok(i18nSource.indexOf("meIncrementPackExhaustedHint: '", zh + 1) > 0, 'en hint key missing');
+});
+
+test('usage-page re-requests re-fire the tab effect while Settings stays mounted', () => {
+  // Regression pin: 查看获得详情 died after its first jump — the Settings tab
+  // effect watched [initialTab] only, so a second me:openUsage request set the
+  // same prop value and never re-fired while Settings sat on the 模型 tab.
+  // The host now bumps a requestNonce on EVERY open request and the effect
+  // depends on [initialTab, requestNonce]; both Settings render sites pass it.
+  assert.match(appSource, /requestNonce: \(prev\?\.requestNonce \?\? 0\) \+ 1/);
+  assert.ok(
+    appSource.split('requestNonce={settingsOptions.requestNonce}').length - 1 >= 2,
+    'every <Settings> mount must receive requestNonce',
+  );
+  assert.match(settingsSource, /\}, \[initialTab, requestNonce\]\);/);
 });
 
 test('auto-deduct toggle is server-authoritative with a kvStore mirror fallback', () => {

@@ -57,6 +57,12 @@ export type SettingsOpenOptions = {
   notice?: string;
   /** Auto-open the Settings > Projects "New Project" form. */
   openNewProjectForm?: boolean;
+  /**
+   * Host-internal: bumped on every open request so a repeat request for the
+   * SAME initialTab still re-fires the tab effect while Settings stays
+   * mounted (e.g. the increment-pack 查看获得详情 button inside Settings).
+   */
+  requestNonce?: number;
 };
 
 interface SettingsProps extends SettingsOpenOptions {
@@ -424,7 +430,7 @@ const contextWindowClampHint = (raw: string): string | null => {
   return i18nService.t('contextWindowOutputClampHint').replace('{value}', formatContextWindowSize(effective));
 };
 
-const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNewProjectForm }) => {
+const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNewProjectForm, requestNonce }) => {
   const dispatch = useDispatch();
   // Sandbox settings are temporarily hidden; fall back to general.
   const resolvedInitialTab: TabType = initialTab === 'coworkSandbox' ? 'general' : (initialTab ?? 'general');
@@ -855,7 +861,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
       return;
     }
     setActiveTab(initialTab);
-  }, [initialTab]);
+  }, [initialTab, requestNonce]);
 
   // Subscribe to language changes
   useEffect(() => {
