@@ -74,9 +74,11 @@ import {
 } from '../services/trafficAccountService';
 import {
   buildFreeProviderRelayModelRow,
+  canonicalFreeProviderKey,
   FREE_PROVIDER_DISPLAY_NAME,
   isFreeProviderConfigured,
   LLM_FREE_PROVIDER_KEY,
+  LLM_FREE_PROVIDER_LEGACY_KEY,
   pickFreeProviderDefaultModelId,
 } from '../../renderer/services/llmFreeQuotaGate.js';
 import { pickTwinBotName } from '../../renderer/components/onboarding/twinBotNames.js';
@@ -217,7 +219,7 @@ export function createServerBootstrapStepExecutors(
     fallbackLlmProvider?: string;
   } | null => {
     const config = (deps.getSqliteStore()?.get<AppConfigRow>('app_config') ?? {}) as AppConfigRow;
-    const freeProvider = config.providers?.[LLM_FREE_PROVIDER_KEY];
+    const freeProvider = config.providers?.[LLM_FREE_PROVIDER_KEY] ?? config.providers?.[LLM_FREE_PROVIDER_LEGACY_KEY];
     const freeModelId = freeProvider?.enabled ? pickFreeProviderDefaultModelId(freeProvider.models) : '';
     if (freeModelId) {
       const defaultModel = String(config.model?.defaultModel ?? '').trim();
@@ -233,7 +235,7 @@ export function createServerBootstrapStepExecutors(
     }
     const fallbackModelId = String(config.model?.defaultModel ?? '').trim();
     if (!fallbackModelId) return null;
-    const fallbackProvider = String(config.model?.defaultProvider ?? '').trim();
+    const fallbackProvider = canonicalFreeProviderKey(config.model?.defaultProvider);
     return { llmId: fallbackModelId, ...(fallbackProvider ? { llmProvider: fallbackProvider } : {}) };
   };
 
@@ -260,7 +262,7 @@ export function createServerBootstrapStepExecutors(
     // Step 2 — Metaso free relay (`metaid-free`) + default provider write.
     llmProvider: async () => {
       const config = (deps.getSqliteStore()?.get<AppConfigRow>('app_config') ?? {}) as AppConfigRow;
-      const provider = config.providers?.[LLM_FREE_PROVIDER_KEY];
+      const provider = config.providers?.[LLM_FREE_PROVIDER_KEY] ?? config.providers?.[LLM_FREE_PROVIDER_LEGACY_KEY];
       if (isFreeProviderConfigured(provider)) return;
       const result = await bootstrapLlmRelay();
       const models = (result.models ?? []).map((model) => buildFreeProviderRelayModelRow(model));

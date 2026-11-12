@@ -1262,7 +1262,7 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
         language: 'en',
         theme: 'system',
         providers: {
-          'metaid-free': {
+          'idbots': {
             enabled: true,
             apiKey: '__redacted__',
             baseUrl: 'https://mock.invalid/relay',
@@ -1274,7 +1274,7 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
             ],
           },
         },
-        model: { defaultProvider: 'metaid-free', defaultModel: 'deepseek-flash' },
+        model: { defaultProvider: 'idbots', defaultModel: 'deepseek-flash' },
         memoryEnabled: true,
       },
     ],
@@ -1343,7 +1343,7 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
       boss_id: null,
       boss_global_metaid: null,
       llm_id: 'deepseek-flash',
-      llm_provider: 'metaid-free',
+      llm_provider: 'idbots',
       llm_effort: null,
       mvc_address: 'mock-mvc-twin',
       metabot_info_pinid: 'mock-info-twin',
@@ -1372,7 +1372,7 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
       boss_id: null,
       boss_global_metaid: null,
       llm_id: 'deepseek-flash',
-      llm_provider: 'metaid-free',
+      llm_provider: 'idbots',
       llm_effort: null,
       mvc_address: 'mock-mvc-worker',
       metabot_info_pinid: 'mock-info-worker',

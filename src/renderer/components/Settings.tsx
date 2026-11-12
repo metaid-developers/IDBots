@@ -45,7 +45,7 @@ import TrafficSettings from './traffic/TrafficSettings';
 import { findMeRateForModel } from './me/meRates';
 import { ensureMeSnapshot, getMeSnapshot, subscribeMeSnapshot } from './me/mePointsStore';
 import { defaultConfig, type AppConfig } from '../config';
-import { LLM_FREE_PROVIDER_KEY, getFreeProviderModelDisplayName } from '../services/llmFreeQuotaGate.js';
+import { LLM_FREE_PROVIDER_KEY, canonicalFreeProviderKey, getFreeProviderModelDisplayName } from '../services/llmFreeQuotaGate.js';
 import { type ProviderTemplate } from '../services/providerTemplates';
 import { getBuiltInProviderLabel, isCustomProviderKey, providerKeys, ProviderIcon } from './settings/providerIcons';
 import ProviderTemplatePicker from './settings/ProviderTemplatePicker';
@@ -210,7 +210,7 @@ const providerSwitchableDefaultBaseUrls: Partial<Record<ProviderType, { anthropi
 
 const providerRequiresApiKey = (provider: ProviderType) => provider !== 'ollama';
 /** The built-in free-quota provider is relay-managed: its credentials and API shape are hidden from the UI. */
-const isBuiltInFreeProvider = (provider: string): boolean => provider === LLM_FREE_PROVIDER_KEY;
+const isBuiltInFreeProvider = (provider: string): boolean => canonicalFreeProviderKey(provider) === LLM_FREE_PROVIDER_KEY;
 /**
  * Providers whose Base URL / API format are managed by the app (relay endpoint
  * or the vendor's official fixed endpoint). Their API Key stays user-editable

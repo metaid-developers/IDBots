@@ -116,11 +116,12 @@ test('models settings page keeps the new layout and visibility anchors', () => {
 test('template catalog and default config stay disjoint from the free provider', () => {
   // The subscription relay keeps its own key; templates must never shadow it.
   for (const template of PROVIDER_TEMPLATES) {
+    assert.notEqual(template.templateId, 'idbots');
     assert.notEqual(template.templateId, 'metaid-free');
     assert.match(template.baseUrl, /^https:/, `${template.templateId}: template base URLs must be https`);
   }
   // And the app still boots with the full built-in provider registry.
-  for (const key of ['metaid-free', 'deepseek', 'opencode', 'commandcode', 'zhipu']) {
+  for (const key of ['idbots', 'deepseek', 'opencode', 'commandcode', 'zhipu']) {
     assert.ok((defaultConfig.providers as Record<string, unknown>)[key], `missing built-in provider ${key}`);
   }
 });

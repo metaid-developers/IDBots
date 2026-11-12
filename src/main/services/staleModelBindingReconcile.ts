@@ -37,6 +37,7 @@
 
 import type { Metabot, MetabotUpdate } from '../types/metabot';
 import { tApp } from '../libs/appLanguage';
+import { canonicalFreeProviderKey, FREE_PROVIDER_DISPLAY_NAME, LLM_FREE_PROVIDER_KEY } from '../../renderer/services/llmFreeQuotaGate.js';
 
 export interface StaleBindingProvider {
   enabled?: boolean;
@@ -154,8 +155,13 @@ function buildFlagReason(
 }
 
 function buildSessionNotice(flag: StaleBindingFlag): string {
-  const providerPart = flag.provider
-    ? tApp(`（供应商 ${flag.provider}）`, ` (provider ${flag.provider})`)
+  // User-facing provider label: the built-in relay shows its product name,
+  // never the internal provider key (canonical or pre-rename legacy).
+  const providerLabel = flag.provider && canonicalFreeProviderKey(flag.provider) === LLM_FREE_PROVIDER_KEY
+    ? FREE_PROVIDER_DISPLAY_NAME
+    : flag.provider;
+  const providerPart = providerLabel
+    ? tApp(`（供应商 ${providerLabel}）`, ` (provider ${providerLabel})`)
     : '';
   const reasonPart = flag.reason.startsWith('ambiguous')
     ? tApp(

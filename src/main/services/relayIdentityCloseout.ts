@@ -62,7 +62,9 @@ import {
 } from './visionRelayService';
 
 /** Provider key of the built-in free relay provider (renderer: LLM_FREE_PROVIDER_KEY). */
-export const METAID_FREE_PROVIDER_KEY = 'metaid-free';
+export const METAID_FREE_PROVIDER_KEY = 'idbots';
+/** Pre-rename provider key still present in stored configs; read as a fallback. */
+const METAID_FREE_PROVIDER_LEGACY_KEY = 'metaid-free';
 
 export type RelayIdentityChangeReason =
   | 'import'
@@ -143,9 +145,16 @@ function readAppConfig(): AppConfigRecord | null {
   }
 }
 
-function readMetaIdFreeProviderEntry(appConfig: AppConfigRecord | null): ProviderRecord | null {
-  const provider = appConfig?.providers?.[METAID_FREE_PROVIDER_KEY];
-  return provider && typeof provider === 'object' && !Array.isArray(provider) ? provider : null;
+function readMetaIdFreeProviderEntry(
+  appConfig: AppConfigRecord | null,
+): { key: string; provider: ProviderRecord } | null {
+  for (const key of [METAID_FREE_PROVIDER_KEY, METAID_FREE_PROVIDER_LEGACY_KEY]) {
+    const provider = appConfig?.providers?.[key];
+    if (provider && typeof provider === 'object' && !Array.isArray(provider)) {
+      return { key, provider };
+    }
+  }
+  return null;
 }
 
 /** mvc address of the local user identity, '' when logged out or unreadable. */
@@ -162,7 +171,7 @@ function readCachedRelayKey(): string {
   try {
     const store = getStoreSafe();
     if (!store) return '';
-    const providerKey = normalizeText(readMetaIdFreeProviderEntry(readAppConfig())?.apiKey);
+    const providerKey = normalizeText(readMetaIdFreeProviderEntry(readAppConfig())?.provider.apiKey);
     if (providerKey) return providerKey;
     const jevKey = normalizeText(store.get(JEV_RELAY_API_KEY_KV));
     if (jevKey) return jevKey;
@@ -213,8 +222,9 @@ function writeMetaIdFreeProviderCredentials(apiKey: string, baseUrl: string): bo
     const store = getStoreSafe();
     if (!store || typeof (store as { set?: unknown }).set !== 'function') return false;
     const appConfig = readAppConfig();
-    const provider = readMetaIdFreeProviderEntry(appConfig);
-    if (!appConfig || !provider) return false;
+    const entry = readMetaIdFreeProviderEntry(appConfig);
+    if (!appConfig || !entry) return false;
+    const { key: providerKey, provider } = entry;
     const currentKey = typeof provider.apiKey === 'string' ? provider.apiKey : '';
     const currentBase = typeof provider.baseUrl === 'string' ? provider.baseUrl : '';
     if (currentKey === apiKey && currentBase === baseUrl) return false;
@@ -222,7 +232,7 @@ function writeMetaIdFreeProviderCredentials(apiKey: string, baseUrl: string): bo
       ...appConfig,
       providers: {
         ...appConfig.providers,
-        [METAID_FREE_PROVIDER_KEY]: { ...provider, apiKey, baseUrl },
+        [providerKey]: { ...provider, apiKey, baseUrl },
       },
     });
     depsRef?.onAppConfigChanged?.();

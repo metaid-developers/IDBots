@@ -1,4 +1,5 @@
 import type { CoworkPermissionMode } from './types/cowork';
+import { canonicalFreeProviderKey } from './services/llmFreeQuotaGate.js';
 
 export type ModelOptions = {
   reasoningEffort?: 'low' | 'medium' | 'high' | 'max';
@@ -519,10 +520,10 @@ export function normalizeDeepSeekAppConfig(config: AppConfig): AppConfig {
   // metaid-free relay serving deepseek-chat) gets its default rewritten to
   // the deepseek default on every config write, producing a defaultModel /
   // defaultProvider pair that can never resolve.
-  const defaultProviderKey = config.model.defaultProvider?.trim().toLowerCase();
+  const defaultProviderKey = canonicalFreeProviderKey(config.model.defaultProvider) || undefined;
   const defaultProvider = defaultProviderKey
     ? Object.entries(normalizedProvidersWithLegacyApi ?? {}).find(
-        ([providerKey]) => providerKey.toLowerCase() === defaultProviderKey,
+        ([providerKey]) => canonicalFreeProviderKey(providerKey) === defaultProviderKey,
       )?.[1]
     : undefined;
   const defaultProviderModels = defaultProvider?.enabled ? (defaultProvider.models ?? []) : [];
@@ -541,6 +542,10 @@ export function normalizeDeepSeekAppConfig(config: AppConfig): AppConfig {
       ...config.model,
       availableModels: normalizedAvailableModels,
       defaultModel: nextDefaultModel,
+      // Persist the canonical provider key: pre-rename installs store
+      // 'metaid-free', which every reader canonicalizes but which should not
+      // survive in storage once a load+save cycle runs.
+      defaultProvider: canonicalFreeProviderKey(config.model.defaultProvider) || config.model.defaultProvider,
     },
     providers: normalizedProvidersWithLegacyApi,
   };
@@ -559,7 +564,7 @@ export const defaultConfig: AppConfig = {
   providers: {
     // Built-in free-quota relay provider (assist-base-service llm relay).
     // Stays inert until the first-run bootstrap provisions baseUrl+apiKey+models.
-    'metaid-free': {
+    'idbots': {
       enabled: false,
       apiKey: '',
       baseUrl: '',
@@ -848,5 +853,5 @@ export const EN_PRIORITY_PROVIDERS = ['openai', 'anthropic', 'gemini'] as const;
  * no longer lists them unconditionally (visibility is config-driven there),
  * but the registry stays the source of truth for built-in keys. */
 export const ALL_PROVIDER_KEYS = [
-  'metaid-free', 'deepseek', 'opencode', 'commandcode', 'zhipu', 'openai', 'gemini', 'anthropic', 'moonshot', 'minimax', 'qwen', 'xiaomi', 'openrouter', 'ollama',
+  'idbots', 'deepseek', 'opencode', 'commandcode', 'zhipu', 'openai', 'gemini', 'anthropic', 'moonshot', 'minimax', 'qwen', 'xiaomi', 'openrouter', 'ollama',
 ] as const;

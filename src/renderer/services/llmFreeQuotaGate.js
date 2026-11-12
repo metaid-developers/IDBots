@@ -1,13 +1,29 @@
 /**
  * Free-quota first-run provisioning gates (pure logic, node-test friendly).
  *
- * The built-in `metaid-free` provider is provisioned silently on fresh
+ * The built-in `idbots` provider is provisioned silently on fresh
  * installs so new users can chat with the Twin Bot they create during the
  * welcome flow without configuring an LLM API key. Existing installs (already
  * have MetaBots) are never touched.
  */
 
-export const LLM_FREE_PROVIDER_KEY = 'metaid-free';
+export const LLM_FREE_PROVIDER_KEY = 'idbots';
+/**
+ * Provider key written by installs provisioned before the ID.Bots rename.
+ * Stored configs, bot brain hints and relay caches may still carry it, so
+ * every read/compare path must canonicalize through canonicalFreeProviderKey.
+ */
+export const LLM_FREE_PROVIDER_LEGACY_KEY = 'metaid-free';
+
+/**
+ * Map a stored provider key onto the canonical free-provider key: the legacy
+ * 'metaid-free' (any casing) collapses to LLM_FREE_PROVIDER_KEY; every other
+ * value passes through lowercased+trimmed. Returns '' for empty input.
+ */
+export function canonicalFreeProviderKey(key) {
+  const normalized = typeof key === 'string' ? key.trim().toLowerCase() : '';
+  return normalized === LLM_FREE_PROVIDER_LEGACY_KEY ? LLM_FREE_PROVIDER_KEY : normalized;
+}
 /**
  * Canonical user-facing label for the built-in relay provider. Every surface
  * (Settings providerMeta, onboarding labels, model picker groups, provisioning
@@ -245,7 +261,7 @@ export function isFreeProviderConfigured(provider) {
  *                install (has MetaBots) whose configuration must stay
  *                untouched.
  * - 'bootstrap': fresh install — claim the relay key and write it into the
- *                `metaid-free` provider before the Twin Bot is created, so the
+ *                `idbots` provider before the Twin Bot is created, so the
  *                new bot has a brain to run on.
  *
  * No bot is ever created here: the user's Twin Bot comes from the welcome

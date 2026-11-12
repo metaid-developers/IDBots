@@ -4250,7 +4250,16 @@ export class SqliteStore {
       addColumn('llm_effort');
       addColumn('fallback_llm_provider');
       addColumn('fallback_llm_effort');
-      if (changed) {
+      // Provider-key rename (metaid-free -> idbots): rewrite stored brain
+      // hints in place so pre-rename installs keep resolving the built-in
+      // free relay. Idempotent — a second run matches zero rows.
+      const llmProviderRename = this.db.run(
+        `UPDATE metabots SET llm_provider = 'idbots' WHERE LOWER(TRIM(llm_provider)) = 'metaid-free'`,
+      ) as { changes?: number } | undefined;
+      const fallbackProviderRename = this.db.run(
+        `UPDATE metabots SET fallback_llm_provider = 'idbots' WHERE LOWER(TRIM(fallback_llm_provider)) = 'metaid-free'`,
+      ) as { changes?: number } | undefined;
+      if (changed || (llmProviderRename?.changes ?? 0) > 0 || (fallbackProviderRename?.changes ?? 0) > 0) {
         this.save();
       }
     } catch (error) {

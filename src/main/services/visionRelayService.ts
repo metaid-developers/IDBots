@@ -187,7 +187,7 @@ function readMetaIdFreeProviderCredentials(): { apiKey: string; baseUrl: string 
     const appConfig = store?.get('app_config') as
       | { providers?: Record<string, { apiKey?: unknown; baseUrl?: unknown } | undefined> }
       | null;
-    const provider = appConfig?.providers?.['metaid-free'];
+    const provider = appConfig?.providers?.['idbots'] ?? appConfig?.providers?.['metaid-free'];
     const apiKey = typeof provider?.apiKey === 'string' ? provider.apiKey.trim() : '';
     const baseUrl = typeof provider?.baseUrl === 'string' ? provider.baseUrl.trim() : '';
     if (apiKey && baseUrl) return { apiKey, baseUrl };

@@ -62,7 +62,7 @@ test('switch seeds the free relay as fallback only when the bot had none', async
   const result = await switchFreePrimaryBrainsToProvider(deps, 'deepseek');
   assert.equal(deps.updates[0].input.llm_provider, 'deepseek');
   assert.equal(deps.updates[0].input.fallback_llm_id, 'deepseek-4.1-flash');
-  assert.equal(deps.updates[0].input.fallback_llm_provider, 'metaid-free');
+  assert.equal(deps.updates[0].input.fallback_llm_provider, 'idbots');
   assert.ok(result.success);
 
   // A bot with an existing fallback keeps it untouched.
@@ -110,7 +110,7 @@ test('switch leaves a paid global default route untouched', async () => {
 
 test('switch rejects an unusable or free target provider without writes', async () => {
   const deps = makeDeps();
-  const free = await switchFreePrimaryBrainsToProvider(deps, 'metaid-free');
+  const free = await switchFreePrimaryBrainsToProvider(deps, 'idbots');
   assert.equal(free.success, false);
   const disabled = await switchFreePrimaryBrainsToProvider(deps, 'deepseek-disabled');
   assert.equal(disabled.success, false);

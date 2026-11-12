@@ -148,10 +148,46 @@ function providerRequiresApiKey(providerName: string): boolean {
 const DEEPSEEK_PROVIDER_KEY = 'deepseek';
 const DEEPSEEK_AUTOMATION_MODEL_ID = 'deepseek-flash';
 /** Built-in free-quota relay. Must not silently substitute for a paid bot brain. */
-export const LLM_FREE_PROVIDER_KEY = 'metaid-free';
+export const LLM_FREE_PROVIDER_KEY = 'idbots';
+/**
+ * Provider key written by installs provisioned before the ID.Bots rename.
+ * Stored configs, bot brain hints (metabots.llm_provider /
+ * fallback_llm_provider), bundle exports and relay caches may still carry
+ * it; every read/compare path must canonicalize through
+ * canonicalFreeProviderKey. Mirrors renderer/services/llmFreeQuotaGate.js.
+ */
+export const LLM_FREE_PROVIDER_LEGACY_KEY = 'metaid-free';
+
+/**
+ * Map a stored provider key onto the canonical free-provider key: the legacy
+ * 'metaid-free' (any casing) collapses to LLM_FREE_PROVIDER_KEY; every other
+ * value passes through lowercased+trimmed. Returns '' for empty input.
+ */
+export function canonicalFreeProviderKey(key?: string | null): string {
+  const normalized = (key ?? '').trim().toLowerCase();
+  return normalized === LLM_FREE_PROVIDER_LEGACY_KEY ? LLM_FREE_PROVIDER_KEY : normalized;
+}
 
 export function isFreeQuotaProvider(name?: string | null): boolean {
-  return (name ?? '').trim().toLowerCase() === LLM_FREE_PROVIDER_KEY;
+  return canonicalFreeProviderKey(name) === LLM_FREE_PROVIDER_KEY && (name ?? '').trim() !== '';
+}
+
+/**
+ * The providers-map entry backing the built-in free relay, under EITHER the
+ * canonical 'idbots' key or the legacy 'metaid-free' key (pre-rename stored
+ * configs). Returns the [storedKey, config] pair so callers can read AND
+ * rewrite the entry in place; null when neither key exists.
+ */
+export function getFreeProviderEntry(
+  appConfig: { providers?: Record<string, ProviderConfig | undefined> } | null | undefined,
+): [string, ProviderConfig] | undefined {
+  const providers = appConfig?.providers ?? {};
+  for (const [key, provider] of Object.entries(providers)) {
+    if (canonicalFreeProviderKey(key) === LLM_FREE_PROVIDER_KEY && provider) {
+      return [key, provider];
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -211,13 +247,13 @@ function resolveMatchedProvider(
   // own and must NOT be overridden by the global default provider.
   const defaultProviderKey = requestedOverride
     ? null
-    : appConfig.model?.defaultProvider?.trim().toLowerCase() || null;
+    : canonicalFreeProviderKey(appConfig.model?.defaultProvider) || null;
   let providerEntry: [string, ProviderConfig] | undefined;
   // Model-level brain with an explicit provider hint: prefer that provider's
   // exact model match over the config-order scan below (model ids can collide
   // across providers, e.g. a custom relay mirroring an official catalog).
   const providerHintKey = requestedOverride && providerHint?.trim()
-    ? providerHint.trim().toLowerCase()
+    ? canonicalFreeProviderKey(providerHint)
     : null;
   if (context?.requireProviderDisambiguation && requestedOverride && !providerHintKey && !defaultProviderKey) {
     const matchingProviders = Object.entries(providers).filter(
@@ -234,7 +270,7 @@ function resolveMatchedProvider(
   if (providerHintKey) {
     providerEntry = Object.entries(providers).find(
       ([name, provider]) =>
-        name.toLowerCase() === providerHintKey
+        canonicalFreeProviderKey(name) === providerHintKey
         && provider?.enabled
         && provider.models?.some((model) => model.id === modelId)
     ) as [string, ProviderConfig] | undefined;
@@ -248,7 +284,7 @@ function resolveMatchedProvider(
   if (defaultProviderKey) {
     providerEntry = Object.entries(providers).find(
       ([name, provider]) =>
-        name.toLowerCase() === defaultProviderKey
+        canonicalFreeProviderKey(name) === defaultProviderKey
         && provider?.enabled
         && provider.models?.some((model) => model.id === modelId)
     ) as [string, ProviderConfig] | undefined;
@@ -272,7 +308,7 @@ function resolveMatchedProvider(
   if (!providerEntry && defaultProviderKey) {
     const byDefaultProvider = Object.entries(providers).find(
       ([name, provider]) =>
-        name.toLowerCase() === defaultProviderKey && provider?.enabled && provider.models?.length
+        canonicalFreeProviderKey(name) === defaultProviderKey && provider?.enabled && provider.models?.length
     ) as [string, ProviderConfig] | undefined;
     if (byDefaultProvider) {
       const [providerName, providerConfig] = byDefaultProvider;
@@ -285,10 +321,10 @@ function resolveMatchedProvider(
   // When overrideModelId is given (e.g. MetaBot llm_id "deepseek"), exact model id may not match.
   // Fallback 1: treat as provider key (e.g. "deepseek" -> provider "deepseek", use its first or default model).
   if (!providerEntry && requestedOverride && !isDeepSeekAutomationProviderKey) {
-    const key = requestedOverride.toLowerCase();
+    const key = canonicalFreeProviderKey(requestedOverride);
     const byProviderKey = Object.entries(providers).find(
       ([name, provider]) =>
-        name.toLowerCase() === key && provider?.enabled && provider?.models?.length
+        canonicalFreeProviderKey(name) === key && provider?.enabled && provider?.models?.length
     ) as [string, ProviderConfig] | undefined;
     if (byProviderKey) {
       const [providerName, providerConfig] = byProviderKey;

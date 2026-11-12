@@ -30,7 +30,19 @@
 import type { Metabot, MetabotUpdate } from '../types/metabot';
 
 /** Mirror of claudeSettings.LLM_FREE_PROVIDER_KEY, kept literal so this module stays store-free. */
-export const FREE_PROVIDER_KEY = 'metaid-free';
+export const FREE_PROVIDER_KEY = 'idbots';
+/** Pre-rename provider key still present in stored configs/hints; canonicalized on read. */
+export const FREE_PROVIDER_LEGACY_KEY = 'metaid-free';
+
+/**
+ * Map a stored provider key onto the canonical free-provider key (legacy
+ * 'metaid-free' collapses to FREE_PROVIDER_KEY); other values pass through
+ * lowercased+trimmed. Returns '' for empty input.
+ */
+export function canonicalFreeProviderKey(key?: string | null): string {
+  const normalized = (key ?? '').trim().toLowerCase();
+  return normalized === FREE_PROVIDER_LEGACY_KEY ? FREE_PROVIDER_KEY : normalized;
+}
 /** Providers exempt from the apiKey requirement (local daemons). */
 const API_KEY_EXEMPT_PROVIDERS = new Set(['ollama']);
 
@@ -96,7 +108,7 @@ export function collectUsablePaidProviderKeys(
 ): string[] {
   const providers = appConfig?.providers ?? {};
   return Object.entries(providers)
-    .filter(([key, provider]) => key.trim().toLowerCase() !== FREE_PROVIDER_KEY && isUsableProvider(key, provider))
+    .filter(([key, provider]) => canonicalFreeProviderKey(key) !== FREE_PROVIDER_KEY && isUsableProvider(key, provider))
     .map(([key]) => key);
 }
 
@@ -134,11 +146,11 @@ export function isFreePrimaryBrain(
   bot: Pick<Metabot, 'llm_id' | 'llm_provider'>,
   appConfig: BrainFallbackBackfillAppConfig,
 ): boolean {
-  const providerHint = (bot.llm_provider ?? '').trim().toLowerCase();
+  const providerHint = canonicalFreeProviderKey(bot.llm_provider);
   if (providerHint) return providerHint === FREE_PROVIDER_KEY;
   const llmId = (bot.llm_id ?? '').trim();
   if (!llmId) return false;
-  const freeProvider = appConfig.providers?.[FREE_PROVIDER_KEY];
+  const freeProvider = appConfig.providers?.[FREE_PROVIDER_KEY] ?? appConfig.providers?.[FREE_PROVIDER_LEGACY_KEY];
   return (freeProvider?.models ?? []).some((model) => model?.id === llmId);
 }
 

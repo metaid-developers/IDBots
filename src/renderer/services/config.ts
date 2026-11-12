@@ -1,6 +1,6 @@
 import { AppConfig, CONFIG_KEYS, defaultConfig, normalizeDeepSeekAppConfig } from '../config';
 import { localStore } from './store';
-import { getFreeProviderModelCanonical, getFreeProviderModelDisplayName, getFreeProviderModelLegacyLimitRewrites, FREE_PROVIDER_DISPLAY_NAME, LLM_FREE_PROVIDER_KEY } from './llmFreeQuotaGate.js';
+import { getFreeProviderModelCanonical, getFreeProviderModelDisplayName, getFreeProviderModelLegacyLimitRewrites, FREE_PROVIDER_DISPLAY_NAME, LLM_FREE_PROVIDER_KEY, LLM_FREE_PROVIDER_LEGACY_KEY } from './llmFreeQuotaGate.js';
 
 const getFixedProviderApiFormat = (providerKey: string): 'anthropic' | 'openai' | null => {
   if (providerKey === 'openai' || providerKey === 'gemini') {
@@ -180,6 +180,41 @@ const shouldPreserveExistingProviderConfig = (
     && buildProviderSignature(incomingProvider.models) === buildProviderSignature(defaultProvider.models);
 };
 
+/**
+ * Rename the pre-ID.Bots provider key ('metaid-free') to the canonical
+ * LLM_FREE_PROVIDER_KEY ('idbots') inside a providers map. Stored configs
+ * from older installs carry the legacy key; merging must see ONE free
+ * provider or the defaults would resurrect a second, empty entry next to
+ * the provisioned one. When both keys somehow exist, the canonical entry
+ * wins and only fills gaps (apiKey/baseUrl/models) from the legacy row.
+ */
+const canonicalizeFreeProviderKey = (
+  providers: AppConfig['providers'],
+): AppConfig['providers'] => {
+  if (!providers) {
+    return providers;
+  }
+  const legacy = providers[LLM_FREE_PROVIDER_LEGACY_KEY];
+  if (!legacy) {
+    return providers;
+  }
+  const { [LLM_FREE_PROVIDER_LEGACY_KEY]: _legacyEntry, ...rest } = providers;
+  const canonical = rest[LLM_FREE_PROVIDER_KEY];
+  if (!canonical) {
+    return { ...rest, [LLM_FREE_PROVIDER_KEY]: legacy } as AppConfig['providers'];
+  }
+  return {
+    ...rest,
+    [LLM_FREE_PROVIDER_KEY]: {
+      ...legacy,
+      ...canonical,
+      apiKey: canonical.apiKey || legacy.apiKey,
+      baseUrl: canonical.baseUrl || legacy.baseUrl,
+      models: canonical.models?.length ? canonical.models : legacy.models,
+    },
+  } as AppConfig['providers'];
+};
+
 export const mergeProvidersConfig = (
   currentProviders?: AppConfig['providers'],
   incomingProviders?: AppConfig['providers'],
@@ -187,20 +222,22 @@ export const mergeProvidersConfig = (
   const defaultProviders = getDefaultProvidersConfig();
   const keys = new Set([
     ...Object.keys(defaultProviders),
-    ...Object.keys(currentProviders ?? {}),
-    ...Object.keys(incomingProviders ?? {}),
+    ...Object.keys(canonicalizeFreeProviderKey(currentProviders) ?? {}),
+    ...Object.keys(canonicalizeFreeProviderKey(incomingProviders) ?? {}),
   ]);
+  const currentProvidersCanonical = canonicalizeFreeProviderKey(currentProviders);
+  const incomingProvidersCanonical = canonicalizeFreeProviderKey(incomingProviders);
 
   return Object.fromEntries(
     Array.from(keys).map((providerKey) => {
       const defaultProvider = defaultProviders[providerKey];
-      const currentProvider = currentProviders?.[providerKey]
-        ? normalizeSingleProviderConfig(providerKey, currentProviders[providerKey])
+      const currentProvider = currentProvidersCanonical?.[providerKey]
+        ? normalizeSingleProviderConfig(providerKey, currentProvidersCanonical[providerKey])
         : defaultProvider;
-      const incomingProvider = incomingProviders?.[providerKey]
+      const incomingProvider = incomingProvidersCanonical?.[providerKey]
         ? normalizeSingleProviderConfig(providerKey, {
             ...defaultProvider,
-            ...incomingProviders[providerKey],
+            ...incomingProvidersCanonical[providerKey],
           })
         : undefined;
 
