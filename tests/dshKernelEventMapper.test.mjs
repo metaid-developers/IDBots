@@ -987,24 +987,28 @@ test('explicit DeepSeek route keeps the narration fold', () => {
 
 const assistantMapper = () => new DshEventMapper({ assistantMode: () => true })
 
-test('assistant mode: short streamed commentary stays held and folds silently into the thinking row', () => {
+test('assistant mode: short streamed commentary streams optimistically and folds silently into the thinking row', () => {
   const mapper = assistantMapper()
-  // Phase-tagged commentary (DeepSeek Responses): under the hold window the
-  // text opens NO body bubble — assistant mode gates short text exactly like
-  // post-reasoning commentary instead of streaming it optimistically.
+  // 2026-11-12 ruling: assistant mode streams text under the SAME gates as
+  // professional mode — the bubble opens on the first delta even when the
+  // text is short (no reasoning seen this step). When the tool call proves
+  // the text was commentary, the bubble folds into the hidden Think row.
   const opened = mapper.consume({
     type: 'assistant/chunk',
     data: { turn: 3, step: 1, chunk: { type: 'text-delta', index: 0, text: '让我先查一下配置。' } },
   })
-  assert.deepEqual(opened, [], 'short commentary opens no visible slot in assistant mode')
+  assert.deepEqual(kinds(opened), ['message', 'messageUpdate'], 'assistant mode streams short text exactly like professional mode')
+  assert.equal(opened[0].slot, 'text')
 
-  // The tool-call block-start arrives with nothing held open: no conversion,
-  // no retraction — the fold completes silently at assistant/message.
+  // The tool-call block-start proves the bet wrong: the streamed bubble
+  // converts in place into the thinking display.
   const atTool = mapper.consume({
     type: 'assistant/chunk',
     data: { turn: 3, step: 1, chunk: { type: 'block-start', index: 1, blockType: 'tool-call' } },
   })
-  assert.deepEqual(atTool, [])
+  const converted = atTool.find((a) => a.kind === 'messageFinalize' && a.slot === 'text')
+  assert.equal(converted.content, '让我先查一下配置。', 'the fold keeps the text the user watched stream')
+  assert.equal(converted.metadata.isThinking, true)
 
   const done = mapper.consume({
     type: 'assistant/message',
@@ -1026,10 +1030,9 @@ test('assistant mode: short streamed commentary stays held and folds silently in
       },
     },
   })
-  assert.equal(done.some((a) => a.slot === 'text'), false, 'no visible bubble ever opened')
-  const thinking = done.find((a) => a.kind === 'messageFinalize' && a.slot === 'thinking')
-  assert.equal(thinking.content, '让我先查一下配置。', 'commentary settles into the hidden Think row')
-  assert.equal(thinking.metadata, undefined)
+  const ride = done.find((a) => a.kind === 'messageFinalize' && a.slot === 'text')
+  assert.equal(ride.metadata.isThinking, true, 'the round settles its own Think row')
+  assert.equal(ride.metadata.isStreaming, undefined, 'the settled row stops streaming')
   assert.equal(done.some((a) => a.message?.metadata?.narration === true), false, 'the mapper never mints narration rows')
 
   // A commentary-only step followed by its tool call must not look empty.
@@ -1210,18 +1213,24 @@ test('assistant mode: a turn aborted mid possible-answer stream settles the bubb
   assert.equal(ended.some((a) => a.kind === 'turnEnd'), true)
 })
 
-test('assistant mode: short GLM tool-ride commentary stays hidden and is not promoted at turn end', () => {
+test('assistant mode: short GLM tool-ride commentary streams then folds at the tool call, never promoted', () => {
   const mapper = assistantMapper()
   glmHeader(mapper)
-  mapper.consume({
+  // GLM is a non-folding family: the delta streams optimistically exactly
+  // like professional GLM — and assistant mode still folds it the moment the
+  // tool call proves it was commentary.
+  const opened = mapper.consume({
     type: 'assistant/chunk',
     data: { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: '先看仓库结构。' } },
   })
+  assert.deepEqual(kinds(opened), ['message', 'messageUpdate'], 'GLM riding text streams like professional GLM')
+  assert.equal(opened[0].slot, 'text')
   const atTool = mapper.consume({
     type: 'assistant/chunk',
     data: { chunk: { type: 'block-start', index: 1, blockType: 'tool-call' } },
   })
-  assert.deepEqual(atTool, [], 'short GLM commentary is held like every other family')
+  const converted = atTool.find((a) => a.kind === 'messageFinalize' && a.slot === 'text')
+  assert.equal(converted.metadata.isThinking, true, 'assistant mode folds the riding commentary at the tool call')
   const done = mapper.consume({
     type: 'assistant/message',
     data: {
@@ -1234,10 +1243,14 @@ test('assistant mode: short GLM tool-ride commentary stays hidden and is not pro
       },
     },
   })
-  assert.equal(done.some((a) => a.slot === 'text'), false)
-  assert.match(done.find((a) => a.kind === 'messageFinalize' && a.slot === 'thinking').content, /先看仓库结构/)
+  const ride = done.find((a) => a.kind === 'messageFinalize' && a.slot === 'text')
+  assert.match(ride.content, /先看仓库结构/)
+  assert.equal(ride.metadata.isThinking, true)
+  mapper.consume({ type: 'tool/call', data: { callId: 'c1', name: 'bash', arguments: '{}' } })
   const ended = mapper.consume({ type: 'turn/end', data: { turn: 1, reason: { kind: 'stop' } } })
-  assert.equal(ended.some((a) => a.slot === 'text'), false, 'a short process note never becomes the final answer')
+  const turnEnd = ended.find((a) => a.kind === 'turnEnd')
+  assert.equal(turnEnd.finalizationRequired, true, 'a commentary-only GLM turn still flags finalization')
+  assert.equal(turnEnd.fallbackFinalText, undefined, 'a short process note is never promoted to the final answer')
 })
 
 test('assistant mode: a substantive GLM deliverable beside the terminal tool call enters finalizing with the full report as fallback', () => {
@@ -1352,7 +1365,18 @@ test('assistant mode: twenty GLM commentary rounds produce only the final answer
       },
     }))
   }
-  assert.equal(allActions.some((a) => a.slot === 'text'), false, 'no GLM process round opens a visible text slot')
+  // 2026-11-12 parity: each round's commentary now streams optimistically and
+  // folds at the tool call — every in-round text-slot FINALIZE is a thinking
+  // fold, and none publishes as a visible reply.
+  const plainInRoundFinals = allActions.filter(
+    (a) => a.kind === 'messageFinalize' && a.slot === 'text' && !a.metadata?.isThinking,
+  )
+  assert.equal(plainInRoundFinals.length, 0, 'no GLM process round publishes a visible reply beside its tool call')
+  assert.equal(
+    allActions.some((a) => a.kind === 'messageFinalize' && a.slot === 'text' && a.metadata?.isThinking),
+    true,
+    'the streamed commentary bubbles fold into the hidden Think row',
+  )
   const final = mapper.consume({
     type: 'assistant/message',
     data: { message: { role: 'assistant', content: [{ type: 'text', text: '## 汇总\n全部完成。' }] } },
@@ -1361,34 +1385,53 @@ test('assistant mode: twenty GLM commentary rounds produce only the final answer
   assert.equal(textFinal.content, '## 汇总\n全部完成。')
 })
 
-test('the assistant-mode getter is evaluated per decision (a mid-stream flip degrades to professional streaming)', () => {
+test('the assistant-mode getter is evaluated per decision (round-end deferral follows the live getter)', () => {
+  // Since the 2026-11-12 streaming parity, text STREAMS identically in both
+  // modes; the getter still governs the round-END deferral and terminal
+  // promotion — so a mid-stream flip must change exactly that decision.
   let assistant = true
   const mapper = new DshEventMapper({ assistantMode: () => assistant })
-  // Short effort-off text: assistant mode holds it inside the window…
-  const held = mapper.consume({
-    type: 'assistant/chunk',
-    data: { turn: 3, step: 1, chunk: { type: 'text-delta', index: 0, text: '先看配置。' } },
-  })
-  assert.deepEqual(held, [], 'assistant mode holds short text — no bubble opens')
-  // …the user flips to professional mode mid-step: the SAME in-flight stream
-  // now behaves professionally (effort-off text streams immediately), proving
-  // the getter is re-evaluated at every stream decision, never cached at
-  // step or turn start.
+  glmHeader(mapper)
+  const report = `## 汇总\n${'完整交付与验证结果。'.repeat(30)}`
+  const toolRound = (callId) => {
+    const opened = mapper.consume({
+      type: 'assistant/chunk',
+      data: { chunk: { type: 'text-delta', index: 0, text: report } },
+    })
+    assert.deepEqual(kinds(opened), ['message', 'messageUpdate'], 'both modes stream the deliverable optimistically')
+    mapper.consume({
+      type: 'assistant/chunk',
+      data: { chunk: { type: 'block-start', index: 1, blockType: 'tool-call' } },
+    })
+    const done = mapper.consume({
+      type: 'assistant/message',
+      data: { message: { role: 'assistant', content: [
+        { type: 'text', text: report },
+        { type: 'tool-call', id: callId, name: 'todo_write', arguments: '{}' },
+      ] } },
+    })
+    mapper.consume({ type: 'tool/call', data: { callId, name: 'todo_write', arguments: '{}' } })
+    return done
+  }
+  // Turn 1 (assistant): the deliverable rode with a terminal tool call — the
+  // round-end deferral holds it and terminal promotion publishes the FULL
+  // candidate at turn end.
+  toolRound('c1')
+  const end1 = mapper.consume({ type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } })
+  const t1 = end1.find((a) => a.kind === 'turnEnd')
+  assert.equal(t1.finalizationRequired, true)
+  assert.equal(t1.fallbackFinalText, report, 'assistant mode promotes the full deferred candidate at the terminal')
+  // Turn 2 (professional, getter flipped mid-session): the SAME wire shape —
+  // professional GLM publishes riding text as a visible reply beside the tool
+  // call, so nothing defers and nothing promotes.
   assistant = false
-  const opened = mapper.consume({
-    type: 'assistant/chunk',
-    data: { turn: 3, step: 1, chunk: { type: 'text-delta', index: 0, text: '继续查。' } },
-  })
-  assert.deepEqual(kinds(opened), ['message', 'messageUpdate'], 'professional mode opens the bubble on the very next delta')
-  assert.equal(opened[0].slot, 'text')
-  assert.equal(opened[1].content, '先看配置。继续查。', 'the bubble carries the accumulated in-flight buffer')
-  const atTool = mapper.consume({
-    type: 'assistant/chunk',
-    data: { chunk: { type: 'block-start', index: 1, blockType: 'tool-call' } },
-  })
-  const converted = atTool.find((a) => a.kind === 'messageFinalize' && a.slot === 'text')
-  assert.equal(converted.metadata.isThinking, true, 'the professional-mode conversion then folds the commentary')
-  assert.equal(converted.metadata.narration, undefined)
+  const done2 = toolRound('c2')
+  const plain2 = done2.find((a) => a.kind === 'messageFinalize' && a.slot === 'text' && !a.metadata?.isThinking)
+  assert.equal(plain2.content, report, 'professional mode publishes the riding text as a visible reply')
+  const end2 = mapper.consume({ type: 'turn/end', data: { turn: 2, reason: { kind: 'completed' } } })
+  const t2 = end2.find((a) => a.kind === 'turnEnd')
+  assert.ok(!t2.finalizationRequired, 'the turn already produced final text — no promotion flag is raised')
+  assert.equal(t2.fallbackFinalText, undefined)
 })
 
 test('assistant mode: twenty DeepSeek commentary rounds mint no narration rows and the final answer stays plain', () => {
@@ -1458,13 +1501,21 @@ test('assistant mode: twenty DeepSeek commentary rounds mint no narration rows a
         },
       },
     })
-    const settled = done.find((a) => a.kind === 'messageFinalize' && a.slot === 'thinking')
+    // 2026-11-12 parity: the commentary streams first, so the fold rides the
+    // TEXT slot (converted at block-start) instead of minting a thinking slot.
+    const settled = done.find((a) => a.kind === 'messageFinalize' && a.slot === 'text' && a.metadata?.isThinking === true)
     assert.ok(settled, `round ${round} settles its own Think row`)
     assert.ok(settled.content.includes(commentaryOf(round)), `round ${round}'s commentary folds into the hidden Think row`)
   }
 
-  // Across all twenty rounds: no visible text slot EVER opens…
-  assert.equal(allActions.some((a) => a.slot === 'text'), false, 'short commentary never opens a visible text slot in assistant mode')
+  // Across all twenty rounds (2026-11-12 parity): commentary streams
+  // optimistically like professional mode and folds at each tool call —
+  // every in-round text-slot FINALIZE is a thinking fold, none publishes as
+  // a visible reply…
+  const plainInRoundFinals = allActions.filter(
+    (a) => a.kind === 'messageFinalize' && a.slot === 'text' && !a.metadata?.isThinking,
+  )
+  assert.equal(plainInRoundFinals.length, 0, 'short commentary never publishes as a visible reply in assistant mode')
   // …and no mapper action mints a narration row.
   assert.equal(
     allActions.some((a) => (a.message?.metadata?.narration ?? a.metadata?.narration) === true),
