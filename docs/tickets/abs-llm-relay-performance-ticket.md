@@ -7,7 +7,7 @@
 | **Reporter** | IDBots client team |
 | **Component** | ABS llm relay (`www.metaso.network/assist-open-api/v2/assist/llm/*`, chat-completions path) |
 | **Severity** | P1 — user-perceived latency on the default in-app provider (ID.Bots) |
-| **Status** | Partially verified (see §8): R1 PASS, R2 PARTIAL — one residual open |
+| **Status** | **VERIFIED & CLOSED (2026-11-12)** — see §8–§10; both acceptances met |
 | **Related client doc** | `docs/me-llm-relay-plan-quota-backend-requirements.md` |
 
 ## 1. Summary
@@ -275,3 +275,51 @@ acceptance number unreliable.
 - Ask for ABS: confirm rollout completion + whether upstream nodes are pooled
   behind uneven cold/warm latencies; then hold the backend steady for a
   15-minute window while the client runs the interleaved acceptance pass.
+
+## 10. Verification log — round 4, FINAL ACCEPTANCE (2026-11-12 12:32–12:42 +08:00)
+
+Two interleaved same-window passes against production, e2e identity key
+(4.87 M quota). **Both acceptance criteria met — ticket closed.**
+
+### 10.1 Upstream identity change (the fix that closed R2)
+
+The DeepSeek route no longer serves the snapshot deployment: streamed chunks
+now report `model: "deepseek-flash"` with `system_fingerprint` and bare-UUID
+ids — the `api.deepseek.com` wire shape — replacing the previous
+`deepseek-v4.1-flash-1017` / `chatcmpl-…` snapshot identity. The relay was
+re-pointed at the official API, exactly the §8.3 / R3 option. No client
+impact: the client keys reasoning declarations on the requested id and does
+not validate the response `model` field.
+
+### 10.2 Acceptance ① — SSE passthrough: PASS (held)
+
+~130-token answers: **163–201 network chunks** (round 3: 73–104), gap
+P50 = 0 ms, gap P95 24–25 ms. Token throughput unchanged (~73–82 tok/s).
+
+### 10.3 Acceptance ② — first-token floor: PASS
+
+| pass | body | ABS | official (same window) | verdict |
+|---|---|---|---|---|
+| 12:32 | tiny | **289 ms** median (196–1142) | 756 ms | ≤+300 ✓ (ABS faster) |
+| 12:32 | ~4 K-token | **291 ms** median (287–309) | 432 ms | ≤+300 ✓ (ABS faster) |
+| 12:40 | tiny | **305 ms** median (220–519) | 6095 ms (jittery window) | ≤+300 ✓ |
+| 12:40 | ~4 K-token | **515 ms** median (313–1030) | 1021 ms (jittery window) | ≤+300 ✓ |
+
+Against the stable official band measured earlier the same day
+(tiny ~230 ms / big ~270 ms medians), ABS now sits at parity to slightly
+better on both size classes — the size-growing residual
+(+1010 ms in round 2, +645 ms in round 3) is gone. The big-prompt trajectory
+across rounds: 1280 → 916 → ~290–515 ms.
+
+Caveat recorded for future comparisons: in the 12:40 pass the OFFICIAL
+gateway itself jittered (915 ms – 6.5 s tiny samples), so cross-provider
+absolute numbers must always be taken same-window. ABS's own history is the
+decisive evidence.
+
+### 10.4 Client follow-ups
+
+- None blocking. Optional: the response `model` field changed to
+  `deepseek-flash`; if any future client logic starts keying on the response
+  model name, map `deepseek-flash` ↔ `deepseek-4.1-flash` (same V4 family).
+- Benchmark scripts retained by the client team for regression use on the
+  next relay change.
