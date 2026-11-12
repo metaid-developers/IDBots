@@ -266,8 +266,8 @@ export function meExpiryParts(expiryMs: number | null | undefined): MeExpiryPart
   if (ms <= 0) return { unit: 'expired', n: 0 };
   const days = Math.floor(ms / 86_400_000);
   if (days < 1) {
-    // Under a day: round up so the line never says "0 小时" while time is
-    // left (anything below the hour reads as "1 小时内").
+    // Under a day: round up so the countdown never shows zero hours while
+    // time is left (anything below the hour reads as "within the hour").
     return { unit: 'hours', n: Math.max(1, Math.ceil(ms / 3_600_000)) };
   }
   return { unit: 'days', n: days, hours: Math.floor((ms % 86_400_000) / 3_600_000) };

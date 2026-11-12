@@ -33,9 +33,9 @@ function planLine(plan: MobileMePlan | null, subscribed: boolean): string {
 /**
  * Expiry line under the plan name (2026-11-11 hardening): the paid period's
  * end + time left, hour precision since 2026-11-13 (mirror of the desktop
- * plan card) — "剩余 {n} 天 {h} 小时", or whole hours inside the last day;
- * warning color within a week, once the date is past. Renders only when the
- * server payload carries an expiry — never a guess.
+ * plan card) — the days+hours countdown, or whole hours inside the last
+ * day; warning color within a week, once the date is past. Renders only when
+ * the server payload carries an expiry — never a guess.
  */
 function expiryLine(expiryMs: number | null): { text: string; urgent: boolean } | null {
   const parts = meExpiryParts(expiryMs);
