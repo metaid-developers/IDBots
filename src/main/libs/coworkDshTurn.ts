@@ -659,11 +659,12 @@ export class DshTurnHub {
    *    build instead of stacking after it. The follow-up runTurn's
    *    ensureKernel joins the same kernelEnsureChain, finds the config
    *    unchanged, and reuses the booted process.
-   *  - APP-START WARMUP (runDshRuntimeWarmup): browser/computer automation is
-   *    default-ON for bots, so bot chats land on the .auto-* slots the clean
-   *    prewarm() above never touches — warming the most-recent session's real
-   *    combo moves that boot out of the first turn after app start. The idle
-   *    reap retires the slot if no turn ever arrives.
+   *  - APP-START WARMUP (runDshRuntimeWarmup): opted-in bots (default OFF
+   *    since 2026-11-12; legacy bots keep a pinned '1') land on the .auto-*
+   *    slots the clean prewarm() above never touches — warming the
+   *    most-recent session's real combo moves that boot out of the first
+   *    turn after app start. The idle reap retires the slot if no turn
+   *    ever arrives.
    */
   async prewarmTurnSlot(input: {
     sessionId: string

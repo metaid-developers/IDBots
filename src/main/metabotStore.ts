@@ -16,6 +16,12 @@ const DEFAULT_WALLET_PATH = "m/44'/10001'/0'/0/0";
 const SURF_BEFORE_DREAM_ENABLED_KEY = 'surf_before_dream_enabled';
 const SURF_LEGACY_PIN_MARKER_KEY = '_migrated_surf_before_dream_legacy_pin';
 
+// Same local-definition pattern as the surf keys above: the strings are the
+// stable kv contract shared with services/coworkAutomationPreference.ts.
+const COWORK_BROWSER_AUTOMATION_KEY = 'cowork.browserAutomation';
+const COWORK_COMPUTER_USE_KEY = 'cowork.computerUse';
+const COWORK_AUTOMATION_LEGACY_PIN_MARKER_KEY = '_migrated_cowork_automation_legacy_pin';
+
 /** sql.js rejects undefined in bind params; normalize to null. */
 function sanitizeBindParams(params: unknown[]): (string | number | Buffer | Uint8Array | null)[] {
   return params.map((v) =>
@@ -182,15 +188,24 @@ export class MetabotStore {
   constructor(db: Database, saveDb: () => void) {
     this.db = db;
     this.saveDb = saveDb;
-    // One-time data migration (see ensureSurfBeforeDreamLegacyPin): pins the
-    // pre-flip surf default onto bots that existed before it, so the
-    // twin-only default only touches bots created afterwards. Never blocks
-    // construction — a schema race just retries on the next launch.
+    // One-time data migrations (see ensureSurfBeforeDreamLegacyPin and
+    // ensureCoworkAutomationLegacyPin): pin the pre-flip defaults onto bots
+    // that existed before each flip, so the new defaults only touch bots
+    // created afterwards. Never blocks construction — a schema race just
+    // retries on the next launch.
     try {
       this.ensureSurfBeforeDreamLegacyPin();
     } catch (error) {
       console.warn(
         '[MetabotStore] surf_before_dream legacy pin migration deferred:',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    try {
+      this.ensureCoworkAutomationLegacyPin();
+    } catch (error) {
+      console.warn(
+        '[MetabotStore] cowork automation legacy pin migration deferred:',
         error instanceof Error ? error.message : String(error),
       );
     }
@@ -222,6 +237,38 @@ export class MetabotStore {
     this.db.run(
       'INSERT OR REPLACE INTO metabot_settings (metabot_id, key, value, updated_at) VALUES (0, ?, ?, ?)',
       [SURF_LEGACY_PIN_MARKER_KEY, new Date().toISOString(), Date.now()],
+    );
+    this.saveDb();
+  }
+
+  /**
+   * Owner decision 2026-11-12: the cowork browser-automation and
+   * desktop-computer-use defaults flipped from "every bot ON" to "opt-in
+   * (OFF)". To keep existing users exactly where they were, this one-time
+   * migration writes an explicit '1' for every pre-existing bot that has no
+   * value yet for either key. Bots created after the flip carry no row and
+   * therefore ride the new default-OFF read. Idempotent via a marker row at
+   * metabot_id = 0 (getMetabotSetting refuses non-positive ids, so the
+   * marker is unreachable through the public readers).
+   */
+  private ensureCoworkAutomationLegacyPin(): void {
+    this.ensureMetabotSettingsTable();
+    const marker = this.getOne<{ value: string }>(
+      'SELECT value FROM metabot_settings WHERE metabot_id = 0 AND key = ? LIMIT 1',
+      [COWORK_AUTOMATION_LEGACY_PIN_MARKER_KEY],
+    );
+    if (marker) return;
+    for (const key of [COWORK_BROWSER_AUTOMATION_KEY, COWORK_COMPUTER_USE_KEY]) {
+      this.db.run(
+        `INSERT INTO metabot_settings (metabot_id, key, value, updated_at)
+         SELECT id, ?, '1', ? FROM metabots
+         WHERE id NOT IN (SELECT metabot_id FROM metabot_settings WHERE key = ?)`,
+        [key, Date.now(), key],
+      );
+    }
+    this.db.run(
+      'INSERT OR REPLACE INTO metabot_settings (metabot_id, key, value, updated_at) VALUES (0, ?, ?, ?)',
+      [COWORK_AUTOMATION_LEGACY_PIN_MARKER_KEY, new Date().toISOString(), Date.now()],
     );
     this.saveDb();
   }

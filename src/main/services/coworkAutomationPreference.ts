@@ -4,12 +4,15 @@
  * headless Chromium per session, tools surface as mcp__playwright-mcp__*)
  * and desktop computer use (cua-driver native provider).
  *
- * Default ON for both (owner decision, 2026-09-28 — flips the original
- * per-bot opt-in): browser automation launches a real browser process per
- * DSH session and its tool schemas ride every request; computer use operates
- * the user's actual desktop and needs OS permission grants held by the host
- * app. An explicit '0' opts a bot out, and the app-scoped kill-switch below
- * remains the one-flip containment gate.
+ * Default OFF for both (owner decision, 2026-11-12 — flips the 2026-09-28
+ * default-ON rollout): browser automation launches a real browser process
+ * per DSH session and its tool schemas ride every request; computer use
+ * operates the user's actual desktop and needs OS permission grants held by
+ * the host app — so from now on a bot opts in with an explicit '1', and a
+ * missing record means off. Bots that existed before the flip keep their
+ * effective ON state: the MetabotStore constructor pins an explicit '1' for
+ * every pre-existing bot without a record (one-time legacy-pin migration).
+ * The app-scoped kill-switch below remains the one-flip containment gate.
  *
  * Slot isolation: the backends mount at composition scope (runtime-wide), so
  * the DSH turn hub keys runtime slots by provider + automation combo
@@ -20,14 +23,16 @@
 
 import type { MetabotStore } from '../metabotStore';
 
-/** metabot_settings keys; values are '1' (on, the default) / '0' (opt-out). */
+/** metabot_settings keys; values are '1' (explicit opt-in) / '0' (off, the
+ * default for bots created after the 2026-11-12 flip). Pre-existing bots
+ * carry a pinned '1' from the legacy migration. */
 export const COWORK_BROWSER_AUTOMATION_KEY = 'cowork.browserAutomation';
 export const COWORK_COMPUTER_USE_KEY = 'cowork.computerUse';
 
 /** App-scoped kv key for the fleet-wide kill-switch: '0'/false disables BOTH
  * backends for every bot regardless of the per-bot switches. Missing or
- * unparsable means allowed — with the per-bot defaults now ON, this gate is
- * the fleet-wide containment for a backend incident in one flip. */
+ * unparsable means allowed — this gate is the fleet-wide containment for a
+ * backend incident in one flip. */
 export const EXPERIMENTAL_AUTOMATION_GLOBAL_KEY = 'automation.experimentalEnabled';
 
 /** Minimal kv reader/writer shape shared by SqliteStore and test doubles. */
@@ -58,13 +63,13 @@ export function setExperimentalAutomationAllowed(
   }
 }
 
-/** Missing or unparsable records mean on — an explicit '0' opts the bot out. */
+/** Missing or unparsable records mean off — an explicit '1' opts the bot in. */
 export function isCoworkBrowserAutomationEnabled(
   metabotStore: MetabotStore,
   metabotId: number | null | undefined,
 ): boolean {
   if (metabotId === null || metabotId === undefined) return false;
-  return metabotStore.getMetabotSetting(metabotId, COWORK_BROWSER_AUTOMATION_KEY) !== '0';
+  return metabotStore.getMetabotSetting(metabotId, COWORK_BROWSER_AUTOMATION_KEY) === '1';
 }
 
 export function isCoworkComputerUseEnabled(
@@ -72,5 +77,5 @@ export function isCoworkComputerUseEnabled(
   metabotId: number | null | undefined,
 ): boolean {
   if (metabotId === null || metabotId === undefined) return false;
-  return metabotStore.getMetabotSetting(metabotId, COWORK_COMPUTER_USE_KEY) !== '0';
+  return metabotStore.getMetabotSetting(metabotId, COWORK_COMPUTER_USE_KEY) === '1';
 }

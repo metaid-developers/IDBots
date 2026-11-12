@@ -281,16 +281,17 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
   const [openTeamRemoteCollabLoaded, setOpenTeamRemoteCollabLoaded] = useState(false);
   const [openTeamRemoteCollabSaving, setOpenTeamRemoteCollabSaving] = useState(false);
   // Cowork capability switches: same metabot_settings kv channel as OpenTeam.
-  // Defaults mirror the main process: MCP mounting is per-bot opt-in (no
-  // record = OFF), while browser automation and desktop computer use ship
-  // enabled (no record = ON; an explicit '0' opts the bot out).
+  // Defaults mirror the main process: all three are per-bot opt-in (no
+  // record = OFF; an explicit '1' turns the switch on). Pre-existing bots
+  // carry a pinned '1' from the MetabotStore legacy migration, so only bots
+  // created after the default flip start off.
   const [coworkMcpTools, setCoworkMcpTools] = useState(false);
   const [coworkMcpToolsLoaded, setCoworkMcpToolsLoaded] = useState(false);
   const [coworkMcpToolsSaving, setCoworkMcpToolsSaving] = useState(false);
-  const [coworkBrowserAutomation, setCoworkBrowserAutomation] = useState(true);
+  const [coworkBrowserAutomation, setCoworkBrowserAutomation] = useState(false);
   const [coworkBrowserAutomationLoaded, setCoworkBrowserAutomationLoaded] = useState(false);
   const [coworkBrowserAutomationSaving, setCoworkBrowserAutomationSaving] = useState(false);
-  const [coworkComputerUse, setCoworkComputerUse] = useState(true);
+  const [coworkComputerUse, setCoworkComputerUse] = useState(false);
   const [coworkComputerUseLoaded, setCoworkComputerUseLoaded] = useState(false);
   const [coworkComputerUseSaving, setCoworkComputerUseSaving] = useState(false);
   const [twinDemoteConfirmOpen, setTwinDemoteConfirmOpen] = useState(false);
@@ -334,14 +335,14 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
 
   // Load the cowork MCP-tools / browser-automation / computer-use switches
   // for the bot being edited. A missing or failed read falls back to the
-  // per-switch default, matching the main process: MCP mounting off, browser
-  // automation and computer use on. An explicit '1'/'0' always wins.
+  // per-switch default, matching the main process: all three are per-bot
+  // opt-in (no record = OFF). An explicit '1'/'0' always wins.
   useEffect(() => {
     let cancelled = false;
     const resetters = [
       [setCoworkMcpTools, setCoworkMcpToolsLoaded, setCoworkMcpToolsSaving, COWORK_MOUNT_MCP_TOOLS_KEY, false],
-      [setCoworkBrowserAutomation, setCoworkBrowserAutomationLoaded, setCoworkBrowserAutomationSaving, COWORK_BROWSER_AUTOMATION_KEY, true],
-      [setCoworkComputerUse, setCoworkComputerUseLoaded, setCoworkComputerUseSaving, COWORK_COMPUTER_USE_KEY, true],
+      [setCoworkBrowserAutomation, setCoworkBrowserAutomationLoaded, setCoworkBrowserAutomationSaving, COWORK_BROWSER_AUTOMATION_KEY, false],
+      [setCoworkComputerUse, setCoworkComputerUseLoaded, setCoworkComputerUseSaving, COWORK_COMPUTER_USE_KEY, false],
     ] as const;
     for (const [setValue, setLoaded, setSaving, key, fallback] of resetters) {
       setValue(fallback);
