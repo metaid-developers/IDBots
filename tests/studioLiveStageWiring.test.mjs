@@ -90,3 +90,18 @@ test('stage card presentation state drives the corner-overlay dedup end to end',
   assert.match(overlay, /stageSessionId\?: string \| null/);
   assert.match(overlay, /stagePresentedRequestIds\.has\(entry\.requestId\)/);
 });
+
+test('pushed stage answers ride the shell bridge relay into main', () => {
+  const bridge = read('src/renderer/features/botBrowser/browserIframeBridge.ts');
+  assert.match(bridge, /type: 'stage-interaction'/);
+  assert.match(bridge, /entryShapeOk/);
+  const surface = read('src/renderer/features/botBrowser/BotBrowserSurface.tsx');
+  assert.match(surface, /submitStageInteractionAnswer\(data\.entry\)/);
+  const allowlist = read('src/main/gateway/allowlist.ts');
+  assert.match(allowlist, /'cowork:stageInteraction:answer': \{ tier: 'P1'/);
+  const main = read('src/main/main.ts');
+  assert.match(main, /registerIpcHandler\('cowork:stageInteraction:answer'/);
+  assert.match(main, /acceptPushedInteraction\(options\?\.entry\)/);
+  const service = read('src/main/services/studioLiveStageService.ts');
+  assert.match(service, /function acceptPushedInteraction\(entry: unknown\): boolean/);
+});

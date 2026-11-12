@@ -390,3 +390,18 @@ test('listPresentedRequestIds mirrors exactly the cards on stage', async (t) => 
   service.clearInteraction('s', 'presented-1');
   assert.deepEqual(service.listPresentedRequestIds(), [], 'cleared cards leave the mirror');
 });
+
+test('a pushed click resolves through the same validated path as the drain', async (t) => {
+  const { service, responses } = fixture(t);
+  service.observeMessage('s', message('u1', 'user', { origin: 'user', submissionId: 'sub-1' }));
+  const run = service.getRunInternals('s');
+  await run.queue;
+  service.presentInteraction('s', askRequest('push-1'));
+  const token = service.getState('s').interaction.token;
+  assert.equal(service.acceptPushedInteraction({ requestId: 'push-1', token, behavior: 'allow', answers: { 'Which speed?': 'Fast' } }), true);
+  assert.equal(responses[0].result.behavior, 'allow');
+  assert.equal(service.getState('s').interaction, null, 'push dismisses the card');
+  assert.equal(service.acceptPushedInteraction({ requestId: 'push-1', token, behavior: 'deny' }), false, 'single-use: the second delivery is rejected');
+  assert.equal(service.acceptPushedInteraction({ requestId: 'push-1', token: 'wrong', behavior: 'deny' }), false);
+  assert.equal(service.acceptPushedInteraction({ requestId: 'ghost', token: 'x', behavior: 'deny' }), false);
+});

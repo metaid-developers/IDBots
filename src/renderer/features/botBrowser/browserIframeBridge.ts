@@ -452,6 +452,29 @@ export function buildBrowserIframeBridgeScript(): string {
       }
       return;
     }
+    // Live Stage interaction click relay: the stage card hands its answer to
+    // the shell; the shell forwards it to the host renderer, which submits it
+    // to main. Main re-validates requestId + single-use token against the
+    // pending card, so a relayed entry is a hint, not an authority. Only the
+    // current html frame's posts are eligible, and only well-shaped entries.
+    if (data.source === 'idbots-live-stage' && data.type === 'stage-interaction') {
+      var stageFrame = typeof globalThis.currentBrowserHtmlFrameWindow === 'function'
+        ? globalThis.currentBrowserHtmlFrameWindow()
+        : null;
+      var entry = data.entry;
+      var entryShapeOk = entry && typeof entry === 'object'
+        && typeof entry.requestId === 'string' && entry.requestId
+        && typeof entry.token === 'string' && entry.token
+        && (entry.behavior === 'allow' || entry.behavior === 'deny');
+      if (stageFrame && event.source === stageFrame && entryShapeOk) {
+        window.parent.postMessage({
+          source: PARENT_SOURCE,
+          type: 'stage-interaction',
+          entry: entry
+        }, '*');
+      }
+      return;
+    }
     if (event.source !== window.parent) return;
     if (!data || data.source !== PARENT_SOURCE) return;
     if (data.type === 'endpoint-response') {

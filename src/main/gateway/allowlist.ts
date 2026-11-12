@@ -80,6 +80,7 @@ const COWORK_INVOKE: Record<string, AllowlistEntry> = {
   'cowork:session:readLocalImage': { tier: 'P1', restrictions: ['R-path'], note: '`02`: R-path.' },
   'cowork:stream:liveContent': { tier: 'P1', note: '`02`: used by reconnect resync.' },
   'cowork:permission:respond': { tier: 'P1' },
+  'cowork:stageInteraction:answer': { tier: 'P1', note: 'Live Stage card click relayed by the Bot Browser shell bridge; main re-validates requestId + single-use token.' },
   'cowork:permission:listPending': { tier: 'P1', note: '`02`: pending-permission resync after a reconnect or renderer reload; read-only.' },
   'cowork:plan-mode:get': { tier: 'P1' },
   'cowork:plan-mode:set': { tier: 'P1' },

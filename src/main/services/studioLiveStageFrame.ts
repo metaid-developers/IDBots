@@ -84,6 +84,11 @@ export async function drainStudioLiveStageInteractions(
   input: { tabId: number },
 ): Promise<DrainedLiveStageInteraction[]> {
   const frame = await locateLiveStageFrame(deps, input.tabId);
-  const result = await frame.executeJavaScript(buildLiveStageDrainScript(), true) as { ok?: boolean; items?: DrainedLiveStageInteraction[] } | null;
-  return Array.isArray(result?.items) ? result.items : [];
+  const result = await frame.executeJavaScript(buildLiveStageDrainScript(), true) as { ok?: boolean; reason?: string; items?: DrainedLiveStageInteraction[] } | null;
+  // A not-ready stage (stale page, missing bridge) must surface as an error,
+  // not as an empty queue — an empty array here is indistinguishable from
+  // "no clicks yet" and the poller would sit silently forever (2026-11-12
+  // MetaPo retest had zero drain observability).
+  if (!result?.ok) throw new Error(result?.reason || 'stage drain unavailable');
+  return Array.isArray(result.items) ? result.items : [];
 }

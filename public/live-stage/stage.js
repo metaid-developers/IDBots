@@ -420,9 +420,16 @@
   }
 
   function syncInteractionValidity(interaction, card) {
-    if (!card) return;
+    // The submit starts DISABLED for asks, so the gate must never bail on the
+    // disabled state itself — that guard is what kept the 2026-11-12 MetaPo
+    // card's submit grey forever (9792a14f fixed the selector but this guard
+    // still returned before `submit.disabled = !ready` could ever run). The
+    // terminal answered/declined/skipped state is carried by the card-level
+    // done flag instead, which completeInteraction sets and a rebuilt card
+    // clears.
+    if (!card || card.dataset.interactionDone === 'true') return;
     const submit = card.querySelector('[data-interaction-submit]');
-    if (!submit || submit.disabled) return;
+    if (!submit) return;
     let ready = true;
     card.querySelectorAll('[data-interaction-question]').forEach((block) => {
       const index = Number(block.dataset.interactionQuestion);
@@ -448,7 +455,19 @@
     return answers;
   }
 
+  // Primary return path: hand the click to the Bot Browser shell bridge the
+  // moment it happens (stage → shell → renderer → main). The in-page queue +
+  // host poll stays as the fallback; the host dedupes by requestId/token, so
+  // a click delivered through both paths resolves exactly once.
+  function emitInteraction(entry) {
+    interactionQueue.push(entry);
+    try {
+      window.parent.postMessage({ source: 'idbots-live-stage', type: 'stage-interaction', entry }, '*');
+    } catch { /* the poll fallback still carries it */ }
+  }
+
   function completeInteraction(card, message) {
+    card.dataset.interactionDone = 'true';
     const done = card.querySelector('[data-interaction-done]');
     if (done) {
       done.textContent = message;
@@ -509,7 +528,7 @@
     deny.className = 'interaction-button is-danger';
     deny.textContent = interactionCopy('拒绝', 'Deny');
     deny.addEventListener('click', () => {
-      interactionQueue.push({ requestId: interaction.requestId, token: interaction.token, behavior: 'deny' });
+      emitInteraction({ requestId: interaction.requestId, token: interaction.token, behavior: 'deny' });
       completeInteraction(card, interactionCopy('已拒绝，等待舞台更新…', 'Declined — waiting for the stage…'));
     });
     const submit = document.createElement('button');
@@ -523,7 +542,7 @@
     submit.addEventListener('click', () => {
       const entry = { requestId: interaction.requestId, token: interaction.token, behavior: 'allow' };
       if (isAsk) entry.answers = collectInteractionAnswers(interaction, card);
-      interactionQueue.push(entry);
+      emitInteraction(entry);
       completeInteraction(card, interactionCopy('已发送，等待舞台更新…', 'Answer sent — waiting for the stage…'));
     });
     let skipButton = null;
@@ -539,7 +558,7 @@
       skip.style.border = '1px solid rgba(148,163,184,.26)';
       skip.textContent = interactionCopy('跳过', 'Skip');
       skip.addEventListener('click', () => {
-        interactionQueue.push({ requestId: interaction.requestId, token: interaction.token, behavior: 'allow', skip: true });
+        emitInteraction({ requestId: interaction.requestId, token: interaction.token, behavior: 'allow', skip: true });
         completeInteraction(card, interactionCopy('已跳过，等待舞台更新…', 'Skipped — waiting for the stage…'));
       });
       skipButton = skip;
@@ -576,6 +595,10 @@
     if (key !== interactionKey) {
       interactionKey = key;
       interactionSelections.clear();
+      // A fresh prompt reuses the same section element: clear the terminal
+      // done flag the previous card may have set, or the validity gate would
+      // refuse to run for the new card.
+      card.dataset.interactionDone = 'false';
       card.replaceChildren(buildInteractionCard(interaction));
     }
     card.hidden = false;
