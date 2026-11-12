@@ -166,17 +166,31 @@ export function meSubscriptionExpiryMs(subscription: { raw?: Record<string, unkn
   return null;
 }
 
-export type MeExpiryParts = { unit: 'expired' | 'today' | 'days'; n: number };
+/**
+ * Expiry countdown parts. Hour precision (owner request 2026-11-13): a plan
+ * bought at noon expires at noon, so the line must carry the remaining hours,
+ * not just whole days — "剩余 {n} 天 {h} 小时" beyond 24h, "剩余 {n} 小时"
+ * inside it. Keep the mobile mirror (src/mobile/app/me/mePointsStore.ts) in
+ * lockstep; a drift-guard test pins the two.
+ */
+export type MeExpiryParts =
+  | { unit: 'expired'; n: number }
+  | { unit: 'hours'; n: number }
+  | { unit: 'days'; n: number; hours: number };
 
-/** Expiry countdown: past → 'expired', within 24h → 'today', else whole days. */
+/** Expiry countdown: past → 'expired', within 24h → whole hours, else days+hours. */
 export function meExpiryParts(expiryMs: number | null | undefined): MeExpiryParts | null {
   const expiry = Number(expiryMs);
   if (!Number.isFinite(expiry) || expiry <= 0) return null;
   const ms = expiry - Date.now();
   if (ms <= 0) return { unit: 'expired', n: 0 };
   const days = Math.floor(ms / 86_400_000);
-  if (days < 1) return { unit: 'today', n: 0 };
-  return { unit: 'days', n: days };
+  if (days < 1) {
+    // Under a day: round up so the line never says "0 小时" while time is
+    // left (anything below the hour reads as "1 小时内").
+    return { unit: 'hours', n: Math.max(1, Math.ceil(ms / 3_600_000)) };
+  }
+  return { unit: 'days', n: days, hours: Math.floor((ms % 86_400_000) / 3_600_000) };
 }
 
 /** Locale date for the expiry line, e.g. "2026/12/8". */

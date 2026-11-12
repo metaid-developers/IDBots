@@ -190,7 +190,7 @@ test('the records body keeps the accepted by-Bot grouped template', () => {
   );
 });
 
-test('both lists default to 按 Bot, and each face keeps its own memory keys', () => {
+test('the local face defaults to 按 Bot, and each face keeps its own memory keys', () => {
   const grouping = read('src/renderer/utils/sessionViewGrouping.ts');
   assert.match(grouping, /export const DEFAULT_SESSION_VIEW_MODE: SessionViewMode = 'bot';/);
 

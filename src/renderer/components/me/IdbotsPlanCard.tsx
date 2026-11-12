@@ -76,11 +76,13 @@ const IdbotsPlanCard: React.FC<IdbotsPlanCardProps> = ({ onUpgrade }) => {
   const grantRatio = grantMe > 0 ? Math.max(0, Math.min(100, (remainingMe / grantMe) * 100)) : 0;
   const runningLow = grantMe > 0 && remainingMe / grantMe < 0.2;
   // Subscription expiry line (2026-11-11 hardening): show the paid period's
-  // end and the days left; amber within a week, red once past. The date
-  // renders only when the server payload actually carries one — never a
-  // guess. The server's statusText stays the source of truth for state; a
-  // payload expiry in the past with an "active" status (clock skew, lagging
-  // renewal) renders as expired-line copy, not as a locked UI.
+  // end and the time left — hour precision since 2026-11-13 (a plan bought
+  // at noon expires at noon): "剩余 {n} 天 {h} 小时", or whole hours inside
+  // the last day; amber within a week, red once past. The date renders only
+  // when the server payload actually carries one — never a guess. The
+  // server's statusText stays the source of truth for state; a payload
+  // expiry in the past with an "active" status (clock skew, lagging renewal)
+  // renders as expired-line copy, not as a locked UI.
   const expiryMs = subscribed ? meSubscriptionExpiryMs(snapshot.subscription) : null;
   const expiry = meExpiryParts(expiryMs);
   const expiryUrgent = expiry !== null && (expiry.unit !== 'days' || expiry.n <= 7);
@@ -115,11 +117,12 @@ const IdbotsPlanCard: React.FC<IdbotsPlanCardProps> = ({ onUpgrade }) => {
             >
               {expiry.unit === 'expired'
                 ? i18nService.t('mePlanExpiredOn').replace('{date}', formatMeExpiryDate(expiryMs))
-                : expiry.unit === 'today'
-                  ? i18nService.t('mePlanExpiresToday')
+                : expiry.unit === 'hours'
+                  ? i18nService.t('mePlanExpiresToday').replace('{n}', String(expiry.n))
                   : i18nService.t('mePlanExpiresIn')
                       .replace('{date}', formatMeExpiryDate(expiryMs))
-                      .replace('{n}', String(expiry.n))}
+                      .replace('{n}', String(expiry.n))
+                      .replace('{h}', String(expiry.hours))}
             </p>
           )}
         </div>
