@@ -638,7 +638,7 @@ import { buildMetaAppAliases } from './libs/metaAppGuard';
 import { inlineHtmlLocalImages } from './libs/inlineHtmlLocalImages';
 import {
   type CommunityMetaAppInstallResult,
-  findCommunityMetaAppRecordBySourcePinId,
+  findCommunityMetaAppRecordBySourcePinIdCached,
   installCommunityMetaApp,
   listCommunityMetaApps,
 } from './services/metaAppChainService';
@@ -12297,7 +12297,7 @@ if (!gotTheLock) {
           return app;
         }
 
-        const lookup = await findCommunityMetaAppRecordBySourcePinId({
+        const lookup = await findCommunityMetaAppRecordBySourcePinIdCached({
           sourcePinId: app.sourcePinId,
           manager,
         });

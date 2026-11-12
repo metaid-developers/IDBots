@@ -112,7 +112,14 @@ const resolveLocalMetaAppVisualSource = (
   }
 };
 
-const resolveRemoteAssetUrl = (value?: string): string | undefined => {
+const isSvgMetafileReference = (value: string): boolean => {
+  const stripped = value.toLowerCase().startsWith('metafile://')
+    ? value.slice('metafile://'.length)
+    : value;
+  return stripped.trim().toLowerCase().endsWith('.svg');
+};
+
+const resolveRemoteAssetUrl = (value?: string, process?: string): string | undefined => {
   const normalized = String(value || '').trim();
   if (!normalized) {
     return undefined;
@@ -120,7 +127,13 @@ const resolveRemoteAssetUrl = (value?: string): string | undefined => {
 
   const pinId = extractPinIdFromReference(normalized);
   if (pinId) {
-    return `${METAFILE_ACCELERATE_CONTENT_API_BASE_URL}${encodeURIComponent(pinId)}`;
+    const base = `${METAFILE_ACCELERATE_CONTENT_API_BASE_URL}${encodeURIComponent(pinId)}`;
+    // The accelerate image processor returns a JSON error body for SVG pins,
+    // so svg references always resolve to the unprocessed original.
+    if (process && !isSvgMetafileReference(normalized)) {
+      return `${base}?process=${encodeURIComponent(process)}`;
+    }
+    return base;
   }
 
   // Only absolute references can render directly in the renderer. Relative
@@ -153,9 +166,9 @@ export const resolveMetaAppVisualFields = async <T extends MetaAppVisualRecord>(
   if (options.preferRemoteAssetUrls) {
     return {
       ...record,
-      icon: resolveRemoteAssetUrl(record.icon),
-      cover: resolveRemoteAssetUrl(record.cover),
-      authorAvatar: resolveRemoteAssetUrl(record.authorAvatar),
+      icon: resolveRemoteAssetUrl(record.icon, 'thumbnail'),
+      cover: resolveRemoteAssetUrl(record.cover, 'preview'),
+      authorAvatar: resolveRemoteAssetUrl(record.authorAvatar, 'thumbnail'),
     };
   }
 
