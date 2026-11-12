@@ -27,15 +27,13 @@ import { projectChatMessages } from '../src/mobile/app/chatProjection.ts';
  *      card from a reopened session detail (the runner persists the terminal
  *      `Error: …` system row and flips the session to status 'error');
  *   2. structured-first live detection — deriveLiveQuotaExhausted declares a
- *      quota death from the machine code on the cowork:stream:error frame
- *      (REQ-A-25 metadata.errorCode) and reads the text only for the
- *      free/purchased copy refinement; payloads without the code take the
- *      string-fallback result unchanged;
+ *      quota death from the machine code on the cowork:stream:error frame;
+ *      both legacy relay codes use the unified ME purchase surface;
  *   3. the mock bridge's quota scenario mirrors the REAL contract (REQ-A-25:
  *      metadata.errorCode rides cowork:stream:error, never the completion
  *      frame) — an end-to-end mock assertion;
- *   4. ChatScreen renders the prompt card (with the recharge entry) and the
- *      inline error notice instead of a bare/silent failure;
+ *   4. ChatScreen renders the unified ME plan/top-up card and the inline
+ *      error notice instead of a bare/silent failure;
  *   5. a string-fallback MISS (unknown terminal error) keeps the raw system
  *      error row out of the bubble body: the projection renders the localized
  *      turnFailed one-liner as the main copy, with a bounded raw reason line
@@ -47,6 +45,7 @@ type Chat = ReturnType<typeof useChat>;
 function chatFixture(overrides: Partial<Chat> = {}): Chat {
   return {
     messages: [],
+    activityMessages: [],
     sessions: [],
     sessionId: null,
     sessionTitle: null,
@@ -92,11 +91,11 @@ const PURCHASED_ERROR = 'Error: DSH turn failed: 已购额度耗尽（错误代�
 const OTHER_ERROR = 'Error: DSH turn failed: model request terminated (transport failure)';
 
 test('quotaKindFromErrorText separates the two relay codes', () => {
-  assert.equal(quotaKindFromErrorText(FREE_ERROR), 'free');
-  assert.equal(quotaKindFromErrorText('...quota_exhausted...'), 'purchased');
+  assert.equal(quotaKindFromErrorText(FREE_ERROR), 'me');
+  assert.equal(quotaKindFromErrorText('...quota_exhausted...'), 'me');
   // quota_exhausted is a substring of free_quota_exhausted — the free
-  // variant must still report 'free'.
-  assert.equal(quotaKindFromErrorText('free_quota_exhausted'), 'free');
+  // variant must still report 'me'.
+  assert.equal(quotaKindFromErrorText('free_quota_exhausted'), 'me');
   assert.equal(quotaKindFromErrorText(OTHER_ERROR), null);
   assert.equal(quotaKindFromErrorText(undefined), null);
   assert.equal(quotaKindFromErrorText(42), null);
@@ -109,7 +108,7 @@ test('deriveQuotaExhaustedFromDetail follows the live-state rule', () => {
       { type: 'user', content: '帮我写个文档' },
       { type: 'system', content: FREE_ERROR },
     ])),
-    { exhausted: true, kind: 'free' },
+    { exhausted: true, kind: 'me' },
   );
   // C4 purchased-pool death → card, purchased copy.
   assert.deepEqual(
@@ -117,7 +116,7 @@ test('deriveQuotaExhaustedFromDetail follows the live-state rule', () => {
       { type: 'user', content: '继续' },
       { type: 'system', content: PURCHASED_ERROR },
     ])),
-    { exhausted: true, kind: 'purchased' },
+    { exhausted: true, kind: 'me' },
   );
   // Not an error session (the retry flipped it to running) → no card.
   assert.deepEqual(
@@ -148,7 +147,7 @@ test('deriveQuotaExhaustedFromDetail follows the live-state rule', () => {
       { type: 'system', content: OTHER_ERROR },
       { type: 'system', content: FREE_ERROR },
     ])),
-    { exhausted: true, kind: 'free' },
+    { exhausted: true, kind: 'me' },
   );
   // Quota text inside a non-system row never counts.
   assert.deepEqual(
@@ -172,7 +171,7 @@ test('structured code drives live detection; the text only refines the card copy
       { code: LLM_QUOTA_EXHAUSTED_CODE, text: 'DSH turn failed: (upstream copy changed beyond recognition)' },
       persistedNone,
     ),
-    { exhausted: true, kind: 'free' },
+    { exhausted: true, kind: 'me' },
   );
   // Structured + a recognizable relay code in the text → the code picks the copy.
   assert.deepEqual(
@@ -181,18 +180,18 @@ test('structured code drives live detection; the text only refines the card copy
       { code: LLM_QUOTA_EXHAUSTED_CODE, text: 'DSH turn failed: ... quota_exhausted ...' },
       persistedNone,
     ),
-    { exhausted: true, kind: 'purchased' },
+    { exhausted: true, kind: 'me' },
   );
   // Structured declaration wins over a stale persisted result, but the
   // persisted kind refinement survives when the text carries no relay code
-  // (the ?? chain: text code → persisted kind → 'free').
+  // (the ?? chain: text code → persisted kind → 'me').
   assert.deepEqual(
     deriveLiveQuotaExhausted(
       { status: 'error' },
       { code: LLM_QUOTA_EXHAUSTED_CODE, text: 'no relay code here' },
-      { exhausted: true, kind: 'purchased' },
+      { exhausted: true, kind: 'me' },
     ),
-    { exhausted: true, kind: 'purchased' },
+    { exhausted: true, kind: 'me' },
   );
   // NO structured code → the persisted string-fallback result passes through
   // unchanged (restore/resync pathway); the live text is never regexed.
@@ -200,9 +199,9 @@ test('structured code drives live detection; the text only refines the card copy
     deriveLiveQuotaExhausted(
       { status: 'error' },
       { code: null, text: 'Error: DSH turn failed: free_quota_exhausted' },
-      { exhausted: true, kind: 'free' },
+      { exhausted: true, kind: 'me' },
     ),
-    { exhausted: true, kind: 'free' },
+    { exhausted: true, kind: 'me' },
   );
   // No code + unknown text + nothing persisted → no card (the miss leaves
   // the row to the localized diagnostics pathway, not a raw surface).
@@ -291,39 +290,31 @@ test('mock end-to-end: quota turn → stream:error frame → reopened session re
   // ERROR frame, and the relay code inside the text picks the copy.
   assert.equal(frames[0].sessionId, started.session.id);
   assert.equal(frames[0].metadata?.errorCode, 'LLM_QUOTA_EXHAUSTED');
-  assert.equal(quotaKindFromErrorText(frames[0].error), 'free');
+  assert.equal(quotaKindFromErrorText(frames[0].error), 'me');
 
   // Reopen path (what useChat.openSession / applyResync derive): the
   // persisted detail re-derives the same card state.
   const fetched = await api.cowork.getSession(started.session.id);
   assert.ok(fetched?.success && fetched.session);
-  assert.deepEqual(deriveQuotaExhaustedFromDetail(fetched.session), { exhausted: true, kind: 'free' });
+  assert.deepEqual(deriveQuotaExhaustedFromDetail(fetched.session), { exhausted: true, kind: 'me' });
   off();
 });
 
-test('ChatScreen renders the quota prompt with a recharge entry, not a silent failure', () => {
+test('ChatScreen renders the unified ME plan and top-up prompt', () => {
   mobileI18n.setLanguage('zh');
 
   const withCard = renderToStaticMarkup(
     <ChatScreen
-      chat={chatFixture({ quotaExhausted: true, quotaKind: 'free' })}
+      chat={chatFixture({ quotaExhausted: true, quotaKind: 'me' })}
       bots={[]}
       onOpenRecharge={() => undefined}
     />,
   );
   assert.ok(withCard.includes('quota-card'), 'quota card test id present');
-  assert.ok(withCard.includes(t('mobile.chat.quotaTitleFree')), 'friendly free-quota title rendered');
-  assert.ok(withCard.includes(t('mobile.chat.quotaRecharge')), 'recharge entry rendered');
-
-  const purchased = renderToStaticMarkup(
-    <ChatScreen
-      chat={chatFixture({ quotaExhausted: true, quotaKind: 'purchased' })}
-      bots={[]}
-      onOpenRecharge={() => undefined}
-    />,
-  );
-  assert.ok(purchased.includes(t('mobile.chat.quotaTitlePurchased')), 'purchased copy rendered');
-  assert.ok(!purchased.includes(t('mobile.chat.quotaTitleFree')), 'free copy not rendered for purchased deaths');
+  assert.ok(withCard.includes(t('mobile.chat.quotaTitleMe')), 'unified ME title rendered');
+  assert.ok(withCard.includes(t('mobile.chat.quotaBodyMe')), 'spendable-ME body rendered');
+  assert.ok(withCard.includes('去充值或升级套餐'), 'combined plan and top-up action rendered');
+  assert.ok(!withCard.includes('已购额度已用完'), 'retired purchased-quota copy is not rendered');
 
   const healthy = renderToStaticMarkup(
     <ChatScreen chat={chatFixture()} bots={[]} onOpenRecharge={() => undefined} />,
@@ -348,4 +339,34 @@ test('ChatScreen renders terminal error rows as an inline notice instead of drop
   );
   assert.ok(markup.includes('error-bubble'), 'error notice test id present');
   assert.ok(markup.includes('free_quota_exhausted'), 'the relay machine code is visible in the transcript');
+});
+
+test('ChatScreen shows Bot activity instead of mechanical submission copy', () => {
+  mobileI18n.setLanguage('en');
+  const html = renderToStaticMarkup(
+    <ChatScreen
+      chat={chatFixture({
+        turnPhase: 'steering',
+        attempts: [{
+          submissionId: 'attempt-1',
+          kind: 'submit',
+          sessionId: 'session-1',
+          text: 'Follow up',
+          draftToken: 'session-1',
+          draftText: 'Follow up',
+          draftAttachments: [],
+          status: 'sending',
+          error: null,
+          createdAt: 0,
+          startOptions: null,
+        }],
+      })}
+      bots={[]}
+      onOpenRecharge={() => undefined}
+    />,
+  );
+  assert.ok(html.includes('assistant-status-shimmer'), 'desktop Bot activity indicator is reused');
+  assert.ok(html.includes('Understanding your follow-up'), 'natural activity copy is rendered');
+  assert.ok(!html.includes('Sending and waiting for tenant confirmation'), 'mechanical submission copy is removed');
+  assert.ok(!html.includes('Sending your follow-up'), 'transport-oriented follow-up copy is removed');
 });

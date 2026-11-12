@@ -421,7 +421,7 @@ test('resolveSponsorTrafficAccount signs traffic-pre-me when ME billing is reque
   assert.ok(!verifyMessage(IDENTITY_ADDRESS, `traffic-pre:${SERVER_ACCOUNT_ID}:challenge-me`, result.authSignature));
 });
 
-test('resolveSponsorTrafficAccount keeps byte billing for server-mode tenants (D4)', async () => {
+test('resolveSponsorTrafficAccount signs ME billing for server-mode tenants when the capability is requested', async () => {
   await makeServiceFixture({ fetchImpl: bindingAndAccountRoutes(), trafficMode: 'traffic' });
   const previous = process.env.IDBOTS_SERVER_MODE;
   process.env.IDBOTS_SERVER_MODE = '1';
@@ -434,8 +434,8 @@ test('resolveSponsorTrafficAccount keeps byte billing for server-mode tenants (D
       billing: 'me',
     });
     assert.ok(result);
-    assert.equal(result.billing, undefined);
-    assert.ok(verifyMessage(IDENTITY_ADDRESS, `traffic-pre:${SERVER_ACCOUNT_ID}:challenge-tenant`, result.authSignature));
+    assert.equal(result.billing, 'me');
+    assert.ok(verifyMessage(IDENTITY_ADDRESS, `traffic-pre-me:${SERVER_ACCOUNT_ID}:challenge-tenant`, result.authSignature));
   } finally {
     if (previous === undefined) delete process.env.IDBOTS_SERVER_MODE;
     else process.env.IDBOTS_SERVER_MODE = previous;
@@ -1563,7 +1563,7 @@ test('getMeTrafficBillingStatus reads the identity address me block and caches i
   assert.equal(callsTo(fetchImpl, '/convert-to-me').length, 0, 'credits payment off: no conversion');
 });
 
-test('getMeTrafficBillingStatus reads false without a me block, on errors, and for server-mode tenants', async () => {
+test('getMeTrafficBillingStatus reads false without a me block and honors the capability in server mode', async () => {
   const noBlock = createFetchStub([['/v2/assist/gas/address/info', addressInfoPayload()]]);
   await makeServiceFixture({ fetchImpl: noBlock, trafficMode: 'traffic' });
   assert.deepEqual(await getMeTrafficBillingStatus(), { trafficBilling: false });
@@ -1577,8 +1577,8 @@ test('getMeTrafficBillingStatus reads false without a me block, on errors, and f
   const previous = process.env.IDBOTS_SERVER_MODE;
   process.env.IDBOTS_SERVER_MODE = '1';
   try {
-    assert.deepEqual(await getMeTrafficBillingStatus(), { trafficBilling: false });
-    assert.equal(tenant.calls.length, 0);
+    assert.deepEqual(await getMeTrafficBillingStatus(), { trafficBilling: true });
+    assert.equal(tenant.calls.length, 1);
   } finally {
     if (previous === undefined) delete process.env.IDBOTS_SERVER_MODE;
     else process.env.IDBOTS_SERVER_MODE = previous;

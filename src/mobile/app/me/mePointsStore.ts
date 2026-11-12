@@ -125,6 +125,20 @@ export function meFromMilli(milli: number | null | undefined): number {
   return Math.max(0, Math.floor(value / 1000));
 }
 
+/** What a new official ME spend can draw now, in milliME. */
+export function meSpendableMilli(balance: MobileMeBalance): number {
+  if (typeof balance.spendableMilli === 'number' && Number.isFinite(balance.spendableMilli)) {
+    return Math.max(0, balance.spendableMilli);
+  }
+  const grant = Math.max(0, balance.weeklyGrant.remainingMilli);
+  if (balance.autoDeductFromPersistent === false) return grant;
+  const persistent = balance.persistent;
+  return grant
+    + Math.max(0, persistent.topupMilli)
+    + Math.max(0, persistent.bonusMilli)
+    + Math.max(0, persistent.earnedMilli);
+}
+
 /** Grouped integer ME (locale-aware). */
 export function formatMe(me: number): string {
   return new Intl.NumberFormat().format(Math.max(0, Math.floor(me)));

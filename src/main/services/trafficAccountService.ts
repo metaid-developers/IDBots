@@ -31,7 +31,6 @@ import {
   type SponsorBilling,
   type SponsorPaySource,
 } from './mvcSponsorClient';
-import { isServerMode } from '../server/serverMode';
 import {
   getTrafficPinMode,
   getTrafficSettings,
@@ -972,14 +971,13 @@ function toStatus(cached: TrafficMeBillingStatus): TrafficMeBillingStatus {
  * reports trafficBilling, so a client shipped ahead of the backend keeps the
  * byte-balance card it is still billed against. Never throws: no identity,
  * no binding, or an unreachable sponsor read as the last known status (false
- * when none). Server-mode tenants always read false (D4). Seeing
- * trafficBilling with credits payment on also fires the one-shot byte-balance
- * conversion (R5 / D2).
+ * when none). Server-mode tenants use the same capability response as desktop;
+ * unsupported accounts keep the byte-balance fallback. Seeing trafficBilling
+ * with credits payment on also fires the one-shot byte-balance conversion.
  */
 export async function getMeTrafficBillingStatus(
   options: { forceRefresh?: boolean } = {},
 ): Promise<TrafficMeBillingStatus> {
-  if (isServerMode()) return { trafficBilling: false };
   let identityAddress = '';
   try {
     identityAddress = requireIdentity().mvcAddress;
@@ -1668,9 +1666,10 @@ export function listLocalTrafficJournal(input: {
  *
  * billing 'me' (requested by the sponsor flows when address/info advertises
  * me.trafficBilling) bills the order in ME credits and signs the
- * traffic-pre-me domain; it is downgraded to byte billing for server-mode
- * tenants (D4). The returned block's billing field is the billing actually
- * requested, so callers pre-flight and journal against it.
+ * traffic-pre-me domain. Server-mode tenants use the same capability-gated
+ * path; unsupported accounts retain byte billing. The returned block's billing
+ * field is the billing actually requested, so callers pre-flight and journal
+ * against it.
  */
 export async function resolveSponsorTrafficAccount(input: {
   botAddress: string;

@@ -42,7 +42,7 @@ test('generated IPC contract is fresh (generate-ipc-contract.mjs --check)', () =
 test('contract shape: versions, sorted unique method paths', () => {
   assert.equal(contract.contractVersion, '1.0.0');
   assert.equal(contract.allowlistVersion, allowlist.ALLOWLIST_VERSION);
-  assert.equal(allowlist.ALLOWLIST_VERSION, '1.0.2');
+  assert.equal(allowlist.ALLOWLIST_VERSION, '1.0.3');
   assert.equal(contract.source, 'src/main/preload.ts');
   assert.ok(Array.isArray(contract.methods) && contract.methods.length > 0);
 
@@ -130,6 +130,11 @@ test('spot checks from `02`: tiers, restrictions, timeouts', () => {
   assert.deepEqual(invoke('scheduledTask:create').restrictions, ['R-cwd', 'R-exec']);
   assert.deepEqual(invoke('scheduledTask:update').restrictions, ['R-cwd', 'R-exec']);
   assert.deepEqual(invoke('idbots:uploadMetabotHomepageFile'), { tier: 'P2', restrictions: ['R-size'], note: invoke('idbots:uploadMetabotHomepageFile').note });
+
+  // CR-WSA-003 ME settings and read-only traffic capability.
+  assert.equal(invoke('me:getPointsSettings').tier, 'P1');
+  assert.equal(invoke('me:setPointsSettings').tier, 'P1');
+  assert.equal(invoke('traffic:getMeBillingStatus').tier, 'P1');
 
   // Sensitive, shim, and never-tier channels.
   assert.equal(invoke('userIdentity:revealMnemonic').tier, 'H');

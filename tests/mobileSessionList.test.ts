@@ -253,6 +253,7 @@ describe('filterSessionsByTitle', () => {
 function chatFixture(overrides: Record<string, unknown> = {}): Chat {
   return {
     messages: [],
+    activityMessages: [],
     sessions: [],
     sessionId: null,
     sessionTitle: null,

@@ -1622,6 +1622,8 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
       persistent: { topupMilli: topup, earnedMilli: earned, bonusMilli: bonus },
       frozenMilli: 0,
       totalAvailable: weeklyRemaining + topup + bonus + earned,
+      spendableMilli: weeklyRemaining + topup + bonus + earned,
+      autoDeductFromPersistent: true,
     };
   };
   const mePointsImpl = {

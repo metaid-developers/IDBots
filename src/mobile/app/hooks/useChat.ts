@@ -110,14 +110,10 @@ export function deriveQuotaExhaustedFromDetail(
 
 /**
  * STRUCTURED-FIRST live detection: a quota death is declared from the
- * machine code the runner stamped on the cowork:stream:error frame
- * (streamError.code === LLM_QUOTA_EXHAUSTED). The error TEXT is read only to
- * refine the free-vs-purchased card copy, because the frame metadata
- * collapses both relay codes into the one LLM_QUOTA_EXHAUSTED code; when the
- * text carries neither code the kind falls back to the persisted derivation
- * and finally to 'free' (the starter-allowance death every fresh install
- * hits). Payloads without the structured code (code null) take the
- * string-fallback result unchanged — never a live text match.
+ * machine code on the cowork:stream:error frame. Both the legacy relay codes
+ * and the native ME-insufficiency code use the unified ME purchase surface.
+ * Payloads without a structured code take the restore/resync fallback result
+ * unchanged — live error copy is never parsed to invent a different kind.
  */
 export function deriveLiveQuotaExhausted(
   state: Pick<CoworkSession, 'status'> | null | undefined,
@@ -130,7 +126,7 @@ export function deriveLiveQuotaExhausted(
   if (state?.status === 'error' && streamError?.code === LLM_QUOTA_EXHAUSTED_CODE) {
     return {
       exhausted: true,
-      kind: quotaKindFromErrorText(streamError.text) ?? persisted.kind ?? 'free',
+      kind: quotaKindFromErrorText(streamError.text) ?? persisted.kind ?? 'me',
     };
   }
   return persisted;
@@ -204,6 +200,7 @@ export function useChat(bots: MockMetabot[] = []) {
   const attachmentUploads = useChatAttachments(controller, sessionId);
   const state = sessionId ? snapshot.states.get(sessionId) : undefined;
   const messages = useMemo(() => projectChatMessages(state?.messages ?? []), [state?.messages]);
+  const activityMessages = state?.messages ?? [];
   const attempts = useMemo(
     () => snapshot.attempts.filter((attempt) => attempt.sessionId === sessionId),
     [snapshot.attempts, sessionId],
@@ -350,6 +347,7 @@ export function useChat(bots: MockMetabot[] = []) {
 
   return {
     messages,
+    activityMessages,
     sessions: snapshot.sessions,
     sessionId,
     sessionTitle: state?.title ?? null,

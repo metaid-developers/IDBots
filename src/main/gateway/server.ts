@@ -263,7 +263,7 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     }
     const size = stat.size;
     const headers: Record<string, string> = {
-      'Content-Type': mimeForPath(payload.p),
+      'Content-Type': mimeForPath(payload.p, payload.d),
       'Content-Disposition': contentDisposition(payload.d, path.basename(payload.p)),
       'Accept-Ranges': 'bytes',
       'Access-Control-Allow-Origin': '*',

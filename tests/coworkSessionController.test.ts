@@ -509,7 +509,7 @@ describe('cowork session controller', () => {
     assert.equal(detectSideEffectOutcome(stale, { createdAt: 100_000_000 }), null);
   });
 
-  it('keeps text and attachments durable until the tenant accepts the submission', async (t) => {
+  it('clears the composer immediately and dedupes the optimistic message on acceptance', async (t) => {
     const { harness, electron } = makeHarness();
     const values = new Map<string, string>();
     const storage: CoworkRecoveryStorage = {
@@ -532,23 +532,63 @@ describe('cowork session controller', () => {
     });
 
     const sending = controller.send('preserve while pending', { metabotId: 1 }, attachments, 'Input file');
-    assert.equal(controller.getDraft(), 'preserve while pending');
-    assert.deepEqual(controller.getAttachments(), attachments);
+    assert.equal(controller.getDraft(), '');
+    assert.deepEqual(controller.getAttachments(), []);
+    assert.ok(controller.getSnapshot().states.get('s1')?.messages.some((entry) => entry.id === 'local-11111111-1111-4111-8111-111111111111'));
     const pendingReload = controllerFor(electron, storage);
     t.after(() => pendingReload.destroy());
     await pendingReload.openSession('s1');
-    assert.equal(pendingReload.getDraft(), 'preserve while pending');
-    assert.deepEqual(pendingReload.getAttachments(), attachments);
+    assert.equal(pendingReload.getDraft(), '');
+    assert.deepEqual(pendingReload.getAttachments(), []);
 
+    controller.setDraft('next message');
     accept();
     assert.equal((await sending).status, 'accepted');
-    assert.equal(controller.getDraft(), '');
-    assert.deepEqual(controller.getAttachments(), []);
+    assert.equal(controller.getDraft(), 'next message', 'new typing is never overwritten by the accepted attempt');
+    const messages = controller.getSnapshot().states.get('s1')?.messages ?? [];
+    assert.equal(messages.filter((entry) => entry.metadata?.submissionId === '11111111-1111-4111-8111-111111111111').length, 1);
+    assert.equal(messages.some((entry) => entry.id === 'accepted-after-reload'), true);
+    assert.equal(messages.some((entry) => entry.id === 'local-11111111-1111-4111-8111-111111111111'), false);
     const acceptedReload = controllerFor(electron, storage);
     t.after(() => acceptedReload.destroy());
     await acceptedReload.openSession('s1');
-    assert.equal(acceptedReload.getDraft(), '');
+    assert.equal(acceptedReload.getDraft(), 'next message');
     assert.deepEqual(acceptedReload.getAttachments(), []);
+  });
+
+  it('removes the optimistic bubble and restores the original draft on a definite failure', async (t) => {
+    const { harness, electron } = makeHarness();
+    const controller = controllerFor(electron);
+    t.after(() => controller.destroy());
+    await controller.openSession('s1');
+    const attachments = [{ path: '/data/workspace/uploads/a.txt', name: 'a.txt', size: 1, mime: 'text/plain' }];
+    controller.setDraft('restore this message');
+    controller.addAttachments(controller.getDraftToken(), attachments);
+    harness.submitHandler = async () => ({ success: false, error: 'rejected by tenant' });
+
+    const result = await controller.send('restore this message', { metabotId: 1 }, attachments, 'Input file');
+    assert.equal(result.status, 'failed');
+    assert.equal(controller.getDraft(), 'restore this message');
+    assert.deepEqual(controller.getAttachments(), attachments);
+    assert.equal(controller.getSnapshot().states.get('s1')?.messages.some((entry) => entry.id === 'local-11111111-1111-4111-8111-111111111111'), false);
+    assert.equal(controller.getSnapshot().actionErrors.s1, 'rejected by tenant');
+  });
+
+  it('keeps the optimistic bubble while the tenant outcome is uncertain', async (t) => {
+    const { harness, electron } = makeHarness();
+    const controller = controllerFor(electron);
+    t.after(() => controller.destroy());
+    await controller.openSession('s1');
+    const attachments = [{ path: '/data/workspace/uploads/a.txt', name: 'a.txt', size: 1, mime: 'text/plain' }];
+    controller.setDraft('uncertain message');
+    controller.addAttachments(controller.getDraftToken(), attachments);
+    harness.submitHandler = async () => { throw new Error('no result within 120000ms'); };
+
+    const result = await controller.send('uncertain message', { metabotId: 1 }, attachments, 'Input file');
+    assert.equal(result.status, 'uncertain');
+    assert.equal(controller.getDraft(), 'uncertain message');
+    assert.deepEqual(controller.getAttachments(), attachments);
+    assert.equal(controller.getSnapshot().states.get('s1')?.messages.some((entry) => entry.id === 'local-11111111-1111-4111-8111-111111111111'), true);
   });
 
   it('keeps legacy text and attachment metadata per session through reload and late uploads', async (t) => {

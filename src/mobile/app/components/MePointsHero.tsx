@@ -7,6 +7,7 @@ import {
   meExpiryParts,
   meFromMilli,
   meResetParts,
+  meSpendableMilli,
   meWeeklyUsedRatio,
   type MobileMeBalance,
   type MobileMePlan,
@@ -50,8 +51,7 @@ function expiryLine(expiryMs: number | null): { text: string; urgent: boolean } 
 }
 
 /**
- * The points hero (S9 §3): merged total, weekly progress, and the four-row
- * ledger breakdown — every figure from the live balance envelope.
+ * The points hero: spendable ME, weekly progress, and the four ledger pools.
  */
 export function MePointsHero(props: {
   balance: MobileMeBalance | null;
@@ -70,7 +70,7 @@ export function MePointsHero(props: {
 }): JSX.Element {
   const { balance } = props;
   const weekly = balance?.weeklyGrant ?? null;
-  const total = balance ? meFromMilli(balance.totalAvailable) : null;
+  const total = balance ? meFromMilli(meSpendableMilli(balance)) : null;
   const weeklyTotal = weekly ? meFromMilli(weekly.amountMilli) : 0;
   const weeklyRemaining = weekly ? meFromMilli(weekly.remainingMilli) : 0;
   const remainingRatio = weeklyTotal > 0 ? Math.min(1, Math.max(0, weeklyRemaining / weeklyTotal)) : 0;

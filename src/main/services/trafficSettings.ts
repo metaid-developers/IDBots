@@ -19,13 +19,10 @@
  *   (packaged builds pick by plan currency: CNY → Alipay, other → PayPal).
  *   Packaged builds ignore this override.
  *
- * ME traffic billing (2026-11-09 requirements v1.0) is gated server-side by
- * the backend's me.trafficBilling capability; this module only decides
- * whether the client may request it (D4: server-mode tenants keep sponsored
- * byte billing this phase).
+ * ME traffic billing is gated by the backend's me.trafficBilling capability.
+ * Server-mode tenants use the same rule as desktop when that capability is
+ * enabled; unsupported or disabled accounts retain byte-billing fallback.
  */
-
-import { isServerMode } from '../server/serverMode';
 
 export const TRAFFIC_MODE_KEY = 'traffic.mode';
 export const TRAFFIC_FALLBACK_POLICY_KEY = 'traffic.fallbackPolicy';
@@ -42,18 +39,14 @@ export function normalizeTrafficPinMode(value: unknown): TrafficPinMode {
 }
 
 /**
- * True when sponsored writes may be billed in ME credits: the credits-payment
- * switch (积分支付, mode 'traffic', the default) is on and this is not a
- * server-mode tenant. D4: tenants keep sponsoring but stay on byte billing
- * this phase, so the sponsor-or-not gate stays getTrafficPinMode() and this
- * only picks the billing currency. Explicit 'selfpay' users keep paying their
- * own gas (D3 grandfathering). Never throws.
+ * True when the credits-payment switch allows an ME-billed sponsor request.
+ * Explicit self-pay users keep paying their own gas. The backend capability
+ * remains authoritative and is checked separately before billing:'me' is sent.
  */
 export function isMeTrafficBillingAllowed(
   reader: TrafficSettingsReader | null | undefined,
-  env: NodeJS.ProcessEnv = process.env,
+  _env?: NodeJS.ProcessEnv,
 ): boolean {
-  if (isServerMode(env)) return false;
   try {
     return getTrafficPinMode(reader) === 'traffic';
   } catch {

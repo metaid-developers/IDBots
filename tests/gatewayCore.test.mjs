@@ -414,6 +414,13 @@ test('fileSign: inline disposition, extension map, and octet-stream default', (t
 
   const unknown = fileSign.signFileDownload(deps, { path: path.join(paths.dataRoot, 'b.weird') }, now);
   assert.equal(unknown.mime, 'application/octet-stream');
+
+  const htmlPath = path.join(paths.dataRoot, 'index.html');
+  fs.writeFileSync(htmlPath, '<html><body>MetaApp</body></html>');
+  const inlineHtml = fileSign.signFileDownload(deps, { path: htmlPath, disposition: 'inline' }, now);
+  assert.equal(inlineHtml.mime, 'text/html; charset=utf-8');
+  const attachmentHtml = fileSign.signFileDownload(deps, { path: htmlPath }, now);
+  assert.equal(attachmentHtml.mime, 'application/octet-stream');
 });
 
 test('fileSign: ARG_RESTRICTED on symlink escape, outside path, and unresolvable path', (t) => {

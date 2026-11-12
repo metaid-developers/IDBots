@@ -13,6 +13,7 @@ type Chat = ReturnType<typeof useChat>;
 function chatFixture(): Chat {
   return {
     messages: [],
+    activityMessages: [],
     sessions: [],
     sessionId: null,
     sessionTitle: null,
@@ -21,7 +22,7 @@ function chatFixture(): Chat {
     permission: null,
     toolCalls: [],
     quotaExhausted: true,
-    quotaKind: 'free',
+    quotaKind: 'me',
     setMetabotId: () => undefined,
     reloadSessions: async () => undefined,
     openSession: async () => undefined,
@@ -52,7 +53,7 @@ test('ChatScreen hides only its recharge action when native iOS policy disallows
   const hidden = renderToStaticMarkup(
     <ChatScreen chat={chatFixture()} bots={[]} onOpenRecharge={() => undefined} rechargeAllowed={false} />,
   );
-  const rechargeButton = `>${t('mobile.chat.quotaRecharge')}</button>`;
+  const rechargeButton = `>${t('mobile.chat.quotaMeAction')}</button>`;
   assert.ok(hidden.includes('quota-card'));
   assert.ok(!hidden.includes(rechargeButton));
   assert.ok(hidden.includes(t('mobile.chat.quotaDismiss')));

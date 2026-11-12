@@ -1,5 +1,5 @@
 // IPC allowlist data — encodes docs/cloud-mobile/02-ipc-allowlist-v1.md
-// (allowlist version 1.0.2 per CR-WSA-001 + CR-WSA-002 + CR-WSA-004; frozen at 1.0.0 on
+// (allowlist version 1.0.3 per CR-WSA-001 + CR-WSA-002 + CR-WSA-003 + CR-WSA-004; frozen at 1.0.0 on
 // 2026-10-15) as data, per REQ-A-17.
 //
 // Every tier/restriction/timeout assignment in the FROZEN sections of this
@@ -33,8 +33,8 @@ export interface AllowlistEntry {
   note?: string;
 }
 
-/** Allowlist version from `02` (frozen at 1.0.0 on 2026-10-15; 1.0.2 = CR-WSA-004). */
-export const ALLOWLIST_VERSION = '1.0.2';
+/** Allowlist version from `02` (frozen at 1.0.0 on 2026-10-15; 1.0.3 = CR-WSA-003). */
+export const ALLOWLIST_VERSION = '1.0.3';
 
 /** C2 Limits: default invoke timeout. Channel-specific overrides live on entries. */
 export const DEFAULT_INVOKE_TIMEOUT_MS = 120_000;
@@ -410,10 +410,10 @@ const POST_FREEZE_INVOKE: Record<string, AllowlistEntry> = {
   'updateNotification:hasViewed': { tier: 'N', note: 'Not in `02` v1.0.0 (desktop-only announcement system, 2026-10-26); denied by `02` default-deny pending a change request.' },
   'updateNotification:markAsViewed': { tier: 'N', note: 'Not in `02` v1.0.0 (desktop-only announcement system, 2026-10-26); denied by `02` default-deny pending a change request.' },
   'updateNotification:shouldForceShow': { tier: 'N', note: 'Not in `02` v1.0.0 (desktop-only announcement system, 2026-10-26); denied by `02` default-deny pending a change request.' },
-  'me:getPointsSettings': { tier: 'N', note: 'Not in `02` v1.0.1 (desktop ME credit-pack auto-deduct toggle, 2026-11-07); denied by `02` default-deny pending a change request.' },
-  'me:setPointsSettings': { tier: 'N', note: 'Not in `02` v1.0.1 (desktop ME credit-pack auto-deduct toggle, 2026-11-07); denied by `02` default-deny pending a change request.' },
+  'me:getPointsSettings': { tier: 'P1', note: 'CR-WSA-003: read the identity ME persistent-deduction preference.' },
+  'me:setPointsSettings': { tier: 'P1', note: 'CR-WSA-003: update the identity ME persistent-deduction preference; main-process boolean validation.' },
   'fs:inlineHtmlImages': { tier: 'N', note: 'Not in `02` v1.0.1 (desktop-only local-image inlining for rendered HTML reports, 2026-11-09); denied by `02` default-deny pending a change request — the mobile renderer degrades to the document as written.' },
-  'traffic:getMeBillingStatus': { tier: 'N', note: 'Not in `02` v1.0.1 (desktop ME credits traffic billing capability, 2026-11-09); denied by `02` default-deny pending a change request — server-mode tenants stay on byte billing this phase (D4).' },
+  'traffic:getMeBillingStatus': { tier: 'P1', note: 'CR-WSA-003: read-only ME traffic capability and spendable balance; never enables billing by itself.' },
   'traffic:getSponsorOrders': { tier: 'N', note: 'Not in `02` v1.0.1 (desktop per-order traffic history for ME credits billing, 2026-11-09); denied by `02` default-deny pending a change request.' },
 };
 

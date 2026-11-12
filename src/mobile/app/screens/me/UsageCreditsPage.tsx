@@ -9,6 +9,7 @@ import {
   formatMeSigned,
   meFromMilli,
   meResetParts,
+  meSpendableMilli,
   refreshMeBalance,
   refreshMeCatalog,
   refreshMeHistory,
@@ -180,7 +181,7 @@ export function UsageCreditsPage(props: {
   const [subscriptionOrdersError, setSubscriptionOrdersError] = useState('');
   const balance = snapshot.balance;
   const weekly = balance?.weeklyGrant ?? null;
-  const total = balance ? meFromMilli(balance.totalAvailable) : null;
+  const total = balance ? meFromMilli(meSpendableMilli(balance)) : null;
 
   const loadSubscriptionOrders = useCallback(async () => {
     setSubscriptionOrdersLoading(true);
