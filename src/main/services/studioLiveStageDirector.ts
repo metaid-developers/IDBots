@@ -1,7 +1,7 @@
 import { chatCompletionWithTools, type ChatCompletionOptions, type ChatCompletionResult, type ChatMessage } from './cognitiveChatCompletion';
 import type { LiveStageState } from './studioLiveStageModel';
 
-export type LiveStageDirectorScene = Pick<LiveStageState, 'headline' | 'caption' | 'composition' | 'motif' | 'motion'>;
+export type LiveStageDirectorScene = Pick<LiveStageState, 'caption' | 'composition' | 'motif' | 'motion'>;
 export type LiveStageDirectorUsage = {
   inputTokens: number;
   outputTokens: number;
@@ -17,11 +17,10 @@ export type LiveStageDirectorResult = {
 
 const DIRECTOR_SYSTEM_PROMPT = `You are the visual director for IDBots Studio. You receive a small, trusted semantic scene, never the primary agent's full transcript or raw reasoning. Return ONE JSON object only, with no markdown and no explanation.
 
-You may change only headline, caption, composition, motif, and motion. You cannot change task facts, participants, family, topology, completion, errors, or report readiness. Never invent workers, sources, dependencies, results, percentages, or deadlines. Keep the current Bot's presence continuous and make the variation feel alive within the given scene.
+You may change only caption, composition, motif, and motion. You cannot change the headline, task facts, participants, family, topology, completion, errors, or report readiness. Never invent workers, sources, dependencies, results, percentages, or deadlines. Keep the current Bot's presence continuous and make the variation feel alive within the given scene. The headline is host-owned and stays exactly as given.
 
 Schema:
 {
-  "headline": "short plain-language headline, max 80 characters",
   "caption": "one factual sentence, max 240 characters",
   "composition": "presence | gather | topology | converge | ready",
   "motif": "liquid | gather | orbit | proof-loop | projection | rest",
@@ -49,7 +48,8 @@ function parseJsonObject(content: string): Record<string, unknown> {
 
 export function validateLiveStageDirectorScene(content: string, state: LiveStageState): LiveStageDirectorScene {
   const value = parseJsonObject(content);
-  if (typeof value.headline !== 'string' || !value.headline.trim() || value.headline.length > 80) throw new Error('Invalid director headline');
+  // A stray headline field is ignored, never validated or applied: the
+  // headline is host-owned copy.
   if (typeof value.caption !== 'string' || !value.caption.trim() || value.caption.length > 240) throw new Error('Invalid director caption');
   const composition = String(value.composition || '');
   if (!['presence', 'gather', 'topology', 'converge', 'ready'].includes(composition)) throw new Error('Invalid director composition');
@@ -75,7 +75,6 @@ export function validateLiveStageDirectorScene(content: string, state: LiveStage
   if (!Number.isFinite(energy) || energy < 0 || energy > 1 || !Number.isFinite(density) || density < 0 || density > 1) throw new Error('Invalid director energy or density');
   if (!['emphasized-decelerate', 'gentle-spring', 'smooth-in-out'].includes(easing)) throw new Error('Invalid director easing');
   return {
-    headline: value.headline.trim(),
     caption: value.caption.trim(),
     composition: composition as LiveStageState['composition'],
     motif,
@@ -107,7 +106,7 @@ export async function directLiveStageScene(
         },
       },
       recentEvents: state.eventWindow,
-      instruction: state.language === 'zh' ? '仅使用中文输出标题和说明。保留事实，只创造视觉表现。' : 'Write the headline and caption in English. Preserve facts and vary only the presentation.',
+      instruction: state.language === 'zh' ? '仅使用中文输出说明文字。保留事实，只创造视觉表现；标题由主机决定，不要改动。' : 'Write the caption in English. Preserve facts and vary only the presentation; the headline is host-owned — do not change it.',
     }) },
   ];
   const startedAt = now();

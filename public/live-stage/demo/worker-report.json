@@ -7,13 +7,13 @@
   "family": "worker-report",
   "botName": "Nova",
   "language": "en",
-  "headline": "A worker has reported back",
-  "caption": "A receipt has arrived and still needs evidence verification.",
+  "headline": "Pixel reported back",
+  "caption": "I'm checking it now and will report once it's confirmed.",
   "participants": [
     "Nova",
-    "Pixel",
-    "Report"
+    "Pixel"
   ],
+  "kicker": "Teammate reported",
   "composition": "topology",
   "motif": "worker-report",
   "topology": {
@@ -25,40 +25,20 @@
         "kind": "twin"
       },
       {
-        "id": "source",
-        "label": "MetaWeb",
-        "kind": "source"
-      },
-      {
         "id": "worker",
         "label": "Pixel",
         "kind": "worker"
-      },
-      {
-        "id": "evidence",
-        "label": "Evidence",
-        "kind": "evidence"
       }
     ],
     "edges": [
       [
-        "twin",
-        "worker"
-      ],
-      [
-        "source",
-        "twin"
-      ],
-      [
         "worker",
-        "evidence"
-      ],
-      [
-        "evidence",
         "twin"
       ]
     ]
   },
+  "captionSource": "default",
+  "phaseStartedAt": 1760000000000,
   "motion": {
     "preset": "worker-report",
     "seed": 71491,

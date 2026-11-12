@@ -7,20 +7,20 @@
   <style>__STAGE_CSS__</style>
 </head>
 <body data-enabled="true" data-orb-backend="loading">
-  <div class="stage-off"><div><strong>Live stage is off</strong><span>The text conversation and final projector remain available.</span></div></div>
+  <div class="stage-off"><div><strong data-stage-off-title>Live stage is off</strong><span data-stage-off-body>The text conversation and final projector remain available.</span></div></div>
   <main class="live-stage" aria-live="polite">
     <div class="core-aurora"></div>
     <canvas class="core-canvas" aria-hidden="true"></canvas>
     <div class="core-topline"><div class="core-presence"><img data-avatar src="__AVATAR_DATA_URI__" alt="" /><span data-bot-name>Twin presence</span></div><span class="core-family" data-core-family>Received</span></div>
-    <section class="core-copy"><div class="core-kicker" data-core-verb>Received</div><h1 data-core-title></h1><p data-core-caption></p></section>
+    <section class="core-copy"><div class="core-kicker" data-core-verb>Received<span class="core-elapsed" data-core-elapsed hidden></span></div><h1 data-core-title></h1><p data-core-caption></p></section>
     <div class="core-entity"><div class="membrane-wrap"><div class="membrane"><img class="core-avatar" data-avatar src="__AVATAR_DATA_URI__" alt="Current bot avatar" /></div><div class="core-voice" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div></div></div>
     <svg class="handoff-flow" data-handoff-flow viewBox="0 0 1000 700" preserveAspectRatio="xMidYMid meet" aria-hidden="true" hidden><path class="handoff-track" data-handoff-track d="M870 300 Q735 155 560 315"/><circle class="handoff-packet" r="7"><animateMotion data-handoff-motion begin="indefinite" dur="2.8s" repeatCount="1" calcMode="spline" keyTimes="0;1" keySplines="0.2 0 0 1" keyPoints="0;1" path="M870 300 Q735 155 560 315"/></circle></svg><div class="handoff-label" data-handoff-label hidden><span class="handoff-person"><img class="handoff-avatar" data-handoff-avatar hidden alt="" /><span data-handoff-worker></span></span><small data-handoff-copy></small></div>
-    <div class="hybrid-node hybrid-source"><span class="hybrid-mark">02</span><span data-node-source>Source</span><small>source</small></div>
-    <div class="hybrid-node hybrid-worker"><span class="hybrid-mark"><img class="hybrid-avatar" data-worker-avatar hidden alt="Worker avatar" /><span data-worker-fallback>W</span></span><span data-node-worker>Worker</span><small>worker</small></div>
-    <div class="hybrid-node hybrid-evidence"><span class="hybrid-mark">✓</span><span data-node-evidence>Evidence</span><small>evidence</small></div>
+    <div class="hybrid-node hybrid-source"><span class="hybrid-mark">02</span><span data-node-source>Source</span><small data-tag-source>source</small></div>
+    <div class="hybrid-node hybrid-worker"><span class="hybrid-mark"><img class="hybrid-avatar" data-worker-avatar hidden alt="Worker avatar" /><span data-worker-fallback>W</span></span><span data-node-worker>Worker</span><small data-tag-worker>worker</small></div>
+    <div class="hybrid-node hybrid-evidence"><span class="hybrid-mark">✓</span><span data-node-evidence>Evidence</span><small data-tag-evidence>evidence</small></div>
     <div class="core-participants" data-core-participants></div>
     <div class="core-footnote" data-director-metrics></div>
-    <button class="core-report-ready" type="button" data-report-open disabled>Report ready<span data-report-open-label>Opening the final page</span></button>
+    <button class="core-report-ready" type="button" data-report-open disabled><span data-report-ready-text>Report ready</span><span data-report-open-label>Opening the final page</span></button>
     <section class="interaction-card" data-interaction-card hidden></section>
   </main>
   <script>window.__INITIAL_LIVE_STAGE__=__INITIAL_STATE__;window.__LIVE_STAGE_REPORT_URI__=__REPORT_URI__;window.__FALLBACK_AVATAR__=__FALLBACK_AVATAR_DATA_URI__;</script>

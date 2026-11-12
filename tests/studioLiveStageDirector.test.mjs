@@ -21,7 +21,8 @@ test('Director accepts a bounded creative patch and preserves topology requireme
   const scene = validateLiveStageDirectorScene(valid(), current);
   assert.equal(scene.composition, 'converge');
   assert.equal(scene.motion.seed, 18427);
-  assert.equal(current.headline, 'Delegating structured work', 'validation does not mutate the trusted state');
+  assert.equal(scene.headline, undefined, 'the Director scene carries no headline — it is host-owned');
+  assert.equal(current.headline, 'Handing the task to a teammate', 'validation does not mutate the trusted state');
 });
 
 test('Director rejects invented topology, terminal readiness, and malformed motion', () => {

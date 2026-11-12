@@ -565,6 +565,8 @@ import {
   initBotBrowserProjectionService,
 } from './services/botBrowserProjectionService';
 import { createStudioLiveStageService, type StudioLiveStageService } from './services/studioLiveStageService';
+import { listStudioOpenDelegations } from './services/studioOpenDelegations';
+import { describeStudioProjectionBlock } from './services/studioProjectionGate';
 import { applyStudioLiveStagePatch, drainStudioLiveStageInteractions, executeStageFrameScript } from './services/studioLiveStageFrame';
 import { createStudioGenesisStageService, type StudioGenesisStageService } from './services/studioGenesisStageService';
 import { readStudioLiveStageSettings, writeStudioLiveStageSettings } from './services/studioLiveStageSettings';
@@ -7314,9 +7316,14 @@ const getCoworkRunner = () => {
           return imGatewayManager.sendImOutbound(request);
         },
       },
+      // Projection discipline gate (2026-11-12 owner ruling): while delegated
+      // work is still out, projection_begin hands back the section-6 guidance
+      // instead of engaging fast mode for a progress page.
+      projectionBlockedReason: (sessionId: string) => studioProjectionBlockedReason(sessionId, 'begin'),
       controlBotBrowser: {
         openUri: (input) => sendBotBrowserOpenUri(input),
         execute: (command) => getBotBrowserTabBridge().execute(command),
+        projectionBlockedReason: (sessionId: string) => studioProjectionBlockedReason(sessionId, 'preview'),
         projectReport: async (input) => {
           const outcome = await getStudioLiveStageService().projectReport(
             input,
@@ -8660,6 +8667,7 @@ const getCoworkRunner = () => {
 
     coworkRunner.on('messageUpdate', (sessionId: string, messageId: string, content: string, metadata?: Record<string, unknown>) => {
       getStudioGenesisStageService().observeMessageUpdate(sessionId, messageId, content);
+      getStudioLiveStageService().observeMessageUpdate(sessionId, messageId, content, metadata);
       if (!shouldForwardCoworkStreamEvent(getCoworkStore(), sessionId)) {
         return;
       }
@@ -8785,7 +8793,7 @@ const getCoworkRunner = () => {
 
     coworkRunner.on('error', (sessionId: string, error: string, metadata?: { errorCode?: string }) => {
       getStudioGenesisStageService().observeError(sessionId);
-      getStudioLiveStageService().observeError(sessionId);
+      getStudioLiveStageService().observeError(sessionId, error);
       recomputeSleepGuard();
       if (!shouldForwardCoworkStreamEvent(getCoworkStore(), sessionId)) {
         return;
@@ -9052,6 +9060,32 @@ const getBotBrowserProjection = () =>
     },
   });
 
+// Open delegated work for a Studio session, read from the orchestration
+// store. Shared by the Live Stage's delegation-aware completion and any
+// other surface that needs "is a teammate bot still working on this".
+const studioDelegationLookupDeps = {
+  listAttemptsForSourceSessions: (ids: string[]) => getOrchestrationStore().listAttemptsForSourceSessions(ids),
+  getStep: (id: string) => getOrchestrationStore().getStep(id),
+  getTaskForStep: (id: string) => getOrchestrationStore().getTaskForStep(id),
+  getSession: (id: string) => getCoworkStore().getSession(id),
+  getMetabotById: (id: number) => getMetabotStore().getMetabotById(id),
+};
+const listOpenStudioDelegations = (sessionId: string) => listStudioOpenDelegations(studioDelegationLookupDeps, sessionId);
+// Projection discipline (2026-11-12 owner ruling): the gate counts ONLY
+// attempts whose own status is queued/running — a timed-out attempt is
+// already marked completed before the Twin is notified and can still
+// recover, so it must not hold a projection hostage.
+const listBlockingStudioDelegations = (sessionId: string) => listStudioOpenDelegations(
+  studioDelegationLookupDeps,
+  sessionId,
+  Date.now(),
+  { activeAttemptsOnly: true },
+);
+// Shared by both projection entries: bot_browser_preview_local(projection)
+// asks for the 'preview' text, projection_begin for the 'begin' text.
+const studioProjectionBlockedReason = (sessionId: string, kind: 'preview' | 'begin'): string | null =>
+  describeStudioProjectionBlock(listBlockingStudioDelegations(sessionId), kind);
+
 let studioLiveStageService: StudioLiveStageService | null = null;
 const getStudioLiveStageService = (): StudioLiveStageService => {
   if (!studioLiveStageService) {
@@ -9059,6 +9093,7 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
     studioLiveStageService = createStudioLiveStageService({
       getSession: (sessionId) => getCoworkStore().getSession(sessionId),
       getMetabotById: (id) => getMetabotStore().getMetabotById(id),
+      listOpenDelegations: listOpenStudioDelegations,
       getSettings: () => readStudioLiveStageSettings(getStoreOrNull()),
       getLanguage: () => getPersistedAppLanguage(),
       project: (input) => getBotBrowserProjection().project(input),
@@ -9066,6 +9101,10 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
         const result = await getBotBrowserTabBridge().execute({ action: 'get-tabs' }, { focusWindow: false });
         const expectedPrefix = `preview-metaapp://localhost${localPath}`;
         return result.tabs.find((tab) => typeof tab.uri === 'string' && tab.uri.startsWith(expectedPrefix))?.id ?? null;
+      },
+      getTabUri: async (tabId) => {
+        const result = await getBotBrowserTabBridge().execute({ action: 'get-tabs' }, { focusWindow: false });
+        return result.tabs.find((tab) => tab.id === tabId)?.uri ?? null;
       },
       applyPatch: (input) => applyStudioLiveStagePatch({
         getWindows: () => BrowserWindow.getAllWindows(),
@@ -14991,6 +15030,20 @@ if (!gotTheLock) {
       return getCoworkStore().getDelegationInfo(sessionId);
     } catch {
       return null;
+    }
+  });
+
+  // Studio panel worker-status row: open delegated work for a session,
+  // shared with the Live Stage's delegation-aware completion (C1).
+  registerIpcHandler('cowork:studio:openDelegations', async (_event, payload: string | { sessionId?: unknown }) => {
+    try {
+      const sessionId = typeof payload === 'string'
+        ? payload.trim()
+        : toSafeString(payload?.sessionId).trim();
+      if (!sessionId) return { success: true, delegations: [] };
+      return { success: true, delegations: listOpenStudioDelegations(sessionId) };
+    } catch {
+      return { success: false, delegations: [] };
     }
   });
 

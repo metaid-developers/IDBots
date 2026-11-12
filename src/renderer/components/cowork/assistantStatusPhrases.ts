@@ -462,9 +462,10 @@ export function describeToolUseStatus(
   if (DELEGATE_TOOLS.has(name)) {
     return zh ? '正在派遣分身协作…' : 'Delegating to subagents…';
   }
-  if (name === 'owner_update') {
-    return zh ? '正在向你汇报进展…' : 'Posting a progress update…';
-  }
+  // owner_update and projection_begin are host bookkeeping calls: their
+  // visible output is the narration bubble / the projected page itself, so
+  // they never drive the pending-tool status line (and never reach this
+  // function — the indicator's scan skips them upstream).
   // Unknown tool with a usable object: still name the object conversationally.
   const object = objectOf();
   if (object) {

@@ -9,7 +9,7 @@ const require = Module.createRequire(import.meta.url);
 const { createStudioLiveStageService } = require('../dist-electron/main/services/studioLiveStageService.js');
 const { readStudioLiveStageSettings, writeStudioLiveStageSettings, STUDIO_LIVE_STAGE_KEY, STUDIO_LIVE_STAGE_DIRECTOR_KEY } = require('../dist-electron/main/services/studioLiveStageSettings.js');
 
-const message = (id, type, metadata = {}) => ({ id, type, content: '', timestamp: 1, metadata });
+const message = (id, type, metadata = {}, content = '') => ({ id, type, content, timestamp: 1, metadata });
 
 function fixture(t, directorEnabled = false, initialTabId = 7, directSceneOverride = null) {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-live-stage-'));
@@ -69,7 +69,7 @@ test('settings default on and Director follows the Live Stage toggle', () => {
 
 test('service writes one stage per turn, dedupes messages, and preserves report readiness', async (t) => {
   const { service, projected, patches } = fixture(t);
-  service.observeMessage('s', message('u1', 'user', { origin: 'user', submissionId: 'sub-1' }));
+  service.observeMessage('s', message('u1', 'user', { origin: 'user', submissionId: 'sub-1' }, 'Please build the report.'));
   let run = service.getRunInternals('s');
   await run.queue;
   const firstStage = run.stagePath;
@@ -85,7 +85,7 @@ test('service writes one stage per turn, dedupes messages, and preserves report 
   assert.equal(service.getState('s').revision, revision);
   assert.ok(patches.length >= 2);
 
-  service.observeMessage('s', message('u2', 'user', { origin: 'user', submissionId: 'sub-2' }));
+  service.observeMessage('s', message('u2', 'user', { origin: 'user', submissionId: 'sub-2' }, 'Now check the numbers.'));
   run = service.getRunInternals('s');
   await run.queue;
   assert.notEqual(run.stagePath, firstStage, 'every turn owns a distinct history file');
@@ -136,7 +136,8 @@ test('Director coalesces calls and accumulates measured tokens without blocking 
   assert.equal(state.metrics.cacheReadTokens, calls.length * 80);
   assert.equal(state.metrics.cacheCreationTokens, calls.length * 40);
   assert.equal(state.metrics.fallbackCount, 0);
-  assert.equal(state.headline, 'Generated scene');
+  assert.equal(state.caption, 'Generated safely.', 'the Director restyles the caption');
+  assert.notEqual(state.headline, 'Generated scene', 'the headline is host-owned and never Director output');
 });
 
 test('Director stops requesting after consecutive failures and keeps deterministic scenes', async (t) => {
@@ -158,9 +159,10 @@ test('Director stops requesting after consecutive failures and keeps determinist
 
 test('projection cancels queued Director work', async (t) => {
   const { service, calls } = fixture(t, true);
-  service.observeMessage('s', message('u1', 'user', { origin: 'user', submissionId: 'sub-1' }));
+  service.observeMessage('s', message('u1', 'user', { origin: 'user', submissionId: 'sub-1' }, 'Please build the report.'));
+  service.observeMessage('s', message('tool-1', 'tool_use', { toolName: 'conversation_search', toolUseId: 'search-1' }));
   const run = service.getRunInternals('s');
-  assert.ok(run.directorTimer);
+  assert.ok(run.directorTimer, 'a working family with a default caption arms the Director');
   await service.projectReport({ sessionId: 's', localPath: '/tmp/final-report.html' }, async () => ({ uri: 'preview-metaapp://localhost/tmp/final-report.html', tabId: 7, announced: true }));
   await new Promise((resolve) => setTimeout(resolve, 1000));
   assert.equal(calls.length, 0);

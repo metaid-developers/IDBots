@@ -38,3 +38,32 @@ test('owner wait outranks stale projection, streaming, and tool activity', () =>
     i18nService.setLanguage(previousLanguage, { persist: false });
   }
 });
+
+test('pending owner_update and projection_begin tool calls never drive the status line', () => {
+  const previousLanguage = i18nService.getLanguage();
+  i18nService.setLanguage('zh', { persist: false });
+  try {
+    const bookkeepingOnly = [
+      message('user-1', 'user', { origin: 'user' }),
+      message('ou', 'tool_use', { toolName: 'owner_update', toolUseId: 'ou-1', toolInput: { message: '进展更新' } }),
+      message('pb', 'tool_use', { toolName: 'projection_begin', toolUseId: 'pb-1' }),
+    ];
+    const markup = renderToStaticMarkup(
+      <AssistantActivityIndicator inline messages={bookkeepingOnly} sessionId="session-1" />,
+    );
+    assert.doesNotMatch(markup, /汇报进展|投屏到大屏/, 'bookkeeping tools produce no tool-status phrase');
+    assert.match(markup, /正在继续处理|正在推进/, 'the neutral continue fallback covers the gap');
+
+    // A real pending tool still surfaces behind the skipped bookkeeping rows.
+    const withRealTool = [
+      ...bookkeepingOnly,
+      message('bash', 'tool_use', { toolName: 'bash', toolUseId: 'b-1', toolInput: { command: 'ls -la' } }),
+    ];
+    const toolMarkup = renderToStaticMarkup(
+      <AssistantActivityIndicator inline messages={withRealTool} sessionId="session-1" />,
+    );
+    assert.match(toolMarkup, /正在执行：ls -la/, 'the newest REAL pending tool wins');
+  } finally {
+    i18nService.setLanguage(previousLanguage, { persist: false });
+  }
+});

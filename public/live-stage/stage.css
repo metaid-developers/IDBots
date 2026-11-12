@@ -66,3 +66,10 @@ body[data-voice="on"] .core-voice i:nth-child(5){animation-duration:.74s}
 body[data-motion="reduced"] .membrane-wrap{animation:none;translate:0 0;scale:1;rotate:0deg;filter:none}
 body[data-motion="reduced"] .core-fresh{animation:none;opacity:1;filter:none}
 body[data-motion="reduced"] .core-voice{display:none}
+.core-elapsed{margin-left:.6em;font-weight:500;letter-spacing:0;text-transform:none;color:#8e9baf}
+.hybrid-node[hidden],.core-participants[hidden]{display:none}
+.core-copy h1{text-wrap:balance}
+.core-copy p{text-wrap:pretty}
+.core-copy h1[data-length="medium"]{font-size:clamp(30px,3.4vw,48px)}
+.core-copy h1[data-length="long"]{font-size:clamp(22px,2.4vw,36px)}
+.core-participant span,.hybrid-node>span:not(.hybrid-mark){word-break:keep-all;max-width:150px;overflow:hidden;text-overflow:ellipsis}

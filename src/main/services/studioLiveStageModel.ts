@@ -55,8 +55,18 @@ export type LiveStageState = {
   family: LiveStageFamily;
   botName: string;
   language: 'zh' | 'en';
+  /** Localized label shown above the headline; the raw family id never reaches the owner. */
+  kicker: string;
   headline: string;
   caption: string;
+  /**
+   * 'specific' when headline/caption came from real message content (speech,
+   * owner request, tool activity, error copy); 'default' when they are the
+   * family fallback. The Director may only rewrite 'default' captions.
+   */
+  captionSource: 'default' | 'specific';
+  /** Epoch ms when the current family began; the stage renders elapsed time from it. */
+  phaseStartedAt: number;
   composition: 'presence' | 'gather' | 'topology' | 'converge' | 'ready';
   motif: string;
   participants: string[];
@@ -87,45 +97,110 @@ export type LiveStageSessionContext = {
   botName: string;
   language: 'zh' | 'en';
   directorEnabled?: boolean;
+  nowMs?: number;
 };
 
 const text = (language: 'zh' | 'en', zh: string, en: string): string => language === 'zh' ? zh : en;
 
-function sceneFor(family: LiveStageFamily, language: 'zh' | 'en', botName: string): Pick<LiveStageState, 'headline' | 'caption' | 'composition' | 'motif' | 'participants' | 'topology'> {
+const TEAMMATE_FALLBACK: Record<'zh' | 'en', string> = { zh: '协作 Bot', en: 'a teammate' };
+
+/** Localized kicker label per family; 'speaking' uses the bot name instead. */
+const FAMILY_KICKER: Record<LiveStageFamily, { zh: string; en: string }> = {
+  received: { zh: '收到', en: 'Received' },
+  reasoning: { zh: '思考中', en: 'Thinking' },
+  speaking: { zh: '', en: '' },
+  'local-recall': { zh: '查阅资料', en: 'Looking things up' },
+  'web2-research': { zh: '上网查找', en: 'Searching the web' },
+  'metaweb-research': { zh: '查 AI 互联网', en: 'Searching MetaWeb' },
+  making: { zh: '动手制作', en: 'Making' },
+  delegation: { zh: '安排协作', en: 'Delegating' },
+  waiting: { zh: '等待协作', en: 'Waiting on a teammate' },
+  'worker-report': { zh: '协作回执', en: 'Teammate reported' },
+  verification: { zh: '核对结果', en: 'Checking' },
+  'browser-action': { zh: '操作大屏', en: 'On the big screen' },
+  'owner-needed': { zh: '需要你决定', en: 'Needs you' },
+  problem: { zh: '出了点问题', en: 'Problem' },
+  'report-ready': { zh: '汇报就绪', en: 'Report ready' },
+  complete: { zh: '已完成', en: 'Done' },
+};
+
+function sceneFor(
+  family: LiveStageFamily,
+  language: 'zh' | 'en',
+  botName: string,
+  workerName?: string,
+): Pick<LiveStageState, 'headline' | 'caption' | 'kicker' | 'composition' | 'motif' | 'participants' | 'topology'> {
+  const worker = workerName?.trim().slice(0, 80) || TEAMMATE_FALLBACK[language];
   const scenes: Record<LiveStageFamily, { headline: string; caption: string; participants: string[] }> = {
-    received: { headline: text(language, '收到，开始处理', 'Request received'), caption: text(language, `${botName} 已接到你的请求，正在建立本轮工作现场。`, `${botName} has the request and is establishing this run.`), participants: [botName] },
-    reasoning: { headline: text(language, '正在梳理思路', 'Thinking through the request'), caption: text(language, '正在整理目标、上下文和下一步，不展示原始推理。', 'Organizing the goal, context, and next step without exposing raw reasoning.'), participants: [botName] },
-    speaking: { headline: text(language, '正在向你汇报', 'Speaking to you'), caption: text(language, '新的可见回应正在形成，左侧仍保留完整文字记录。', 'A visible response is arriving while the left transcript stays complete.'), participants: [botName] },
-    'local-recall': { headline: text(language, '正在回查相关记录', 'Checking local context'), caption: text(language, '正在核对任务板、历史会话和本地资料。', 'Reviewing task records, past conversations, and local material.'), participants: [botName, text(language, '本地记录', 'Local records')] },
-    'web2-research': { headline: text(language, '正在检索互联网', 'Searching the web'), caption: text(language, '正在查找并核对公开网络资料。', 'Finding and checking public web sources.'), participants: [botName, 'Web'] },
-    'metaweb-research': { headline: text(language, '正在检索 AI 互联网', 'Searching MetaWeb'), caption: text(language, '正在读取链上资料与 MetaWeb 证据。', 'Reading on-chain material and MetaWeb evidence.'), participants: [botName, 'MetaWeb'] },
-    making: { headline: text(language, '正在制作交付内容', 'Shaping the deliverable'), caption: text(language, '资料正在转化为可交付的文件或页面。', 'Source material is becoming a deliverable file or page.'), participants: [botName, text(language, '交付物', 'Deliverable')] },
-    delegation: { headline: text(language, '正在分派协作任务', 'Delegating structured work'), caption: text(language, '任务关系已经展开，协作 Bot 正在接手对应部分。', 'The task graph has expanded and a collaborator is taking a workstream.'), participants: [botName, text(language, '协作 Bot', 'Worker')] },
-    waiting: { headline: text(language, '正在等待协作回执', 'Waiting for a worker'), caption: text(language, '工作仍在进行，当前没有可伪造的完成进度。', 'Work is still running without an invented completion percentage.'), participants: [botName, text(language, '协作 Bot', 'Worker')] },
-    'worker-report': { headline: text(language, '协作结果已返回', 'A worker has reported back'), caption: text(language, '回执已经到达，还需要核对证据才能验收。', 'A receipt has arrived and still needs evidence verification.'), participants: [botName, text(language, '协作 Bot', 'Worker'), text(language, '回执', 'Report')] },
-    verification: { headline: text(language, '正在独立核验', 'Checking the evidence'), caption: text(language, '正在把回执、原始资料和实际结果逐项对照。', 'Comparing claims with original material and observed results.'), participants: [botName, text(language, '证据', 'Evidence')] },
-    'browser-action': { headline: text(language, '正在操作大屏幕', 'Working on the big screen'), caption: text(language, '正在打开、检查或验证右侧浏览器中的页面。', 'Opening, inspecting, or verifying a page in the right browser.'), participants: [botName, text(language, '投影页', 'Projection')] },
-    'owner-needed': { headline: text(language, '需要你的决定', 'Your decision is needed'), caption: text(language, 'Bot 已暂停推进，正在等待你的回答。', 'The Bot is paused until you answer.'), participants: [botName, text(language, '主人', 'Owner')] },
-    problem: { headline: text(language, '遇到一个问题', 'A problem needs attention'), caption: text(language, '现场正在保留真实错误与恢复状态，不会包装成成功。', 'The stage preserves the real error and recovery state instead of claiming success.'), participants: [botName] },
-    'report-ready': { headline: text(language, '汇报已生成', 'The report is ready'), caption: text(language, '本轮过程已经收束，即将打开最终结果页；后退可回到这里。', 'The process is settling into the final report. Back returns to this trace.'), participants: [botName, text(language, '最终汇报', 'Final report')] },
-    complete: { headline: text(language, '本轮工作已完成', 'This run is complete'), caption: text(language, '过程已经收束，左侧保留完整文字记录。', 'The process has settled and the left transcript remains available.'), participants: [botName] },
+    received: { headline: text(language, '收到，我来处理', 'Got it — on it'), caption: text(language, '我来处理这件事。', 'On it.'), participants: [botName] },
+    reasoning: { headline: text(language, '正在想怎么做', 'Thinking it through'), caption: '', participants: [botName] },
+    speaking: { headline: text(language, '正在回复', 'Replying'), caption: '', participants: [botName] },
+    'local-recall': { headline: text(language, '正在查阅相关资料', 'Looking through the material'), caption: '', participants: [botName] },
+    'web2-research': { headline: text(language, '正在网上查找资料', 'Searching the web'), caption: '', participants: [botName] },
+    'metaweb-research': { headline: text(language, '正在查 AI 互联网上的资料', 'Searching MetaWeb'), caption: '', participants: [botName] },
+    making: { headline: text(language, '正在动手制作', 'Making it'), caption: '', participants: [botName] },
+    delegation: { headline: text(language, `正在把任务交给 ${worker}`, `Handing the task to ${worker}`), caption: text(language, '它交回来后我会核对，再向你汇报。', "I'll check its work and report back."), participants: [botName, worker] },
+    waiting: { headline: text(language, `${worker} 正在处理`, `${worker} is on it`), caption: text(language, '交回来后我会核对，再向你汇报。', "I'll check it and report to you when it's back."), participants: [botName, worker] },
+    'worker-report': { headline: text(language, `${worker} 交回了结果`, `${worker} reported back`), caption: text(language, '我正在核对，确认无误再向你汇报。', "I'm checking it now and will report once it's confirmed."), participants: [botName, worker] },
+    verification: { headline: text(language, '正在核对结果', 'Checking the result'), caption: text(language, '确认真的做对了再向你汇报。', "I'll only report back once it's verified."), participants: [botName] },
+    'browser-action': { headline: text(language, '正在大屏上操作', 'Working on the big screen'), caption: '', participants: [botName] },
+    'owner-needed': { headline: text(language, '需要你做个决定', 'I need a decision from you'), caption: text(language, '在你回答之前我先停在这里。', "I'm paused here until you weigh in."), participants: [botName] },
+    problem: { headline: text(language, '这一轮没能完成', "This run didn't finish"), caption: text(language, '说「继续」我就接着做。', 'Say "continue" and I\'ll pick it up.'), participants: [botName] },
+    'report-ready': { headline: text(language, '汇报已投到大屏', 'The report is on the big screen'), caption: text(language, '按返回键可以回到刚才的现场。', 'Press Back to return to the previous view.'), participants: [botName] },
+    complete: { headline: text(language, '这一轮做完了', 'Done for this round'), caption: text(language, '完整记录保留在左侧对话里。', 'The full transcript stays on the left.'), participants: [botName] },
   };
   const scene = scenes[family];
-  const structured = family === 'delegation' || family === 'worker-report' || family === 'verification' || family === 'browser-action';
-  const nodes = structured ? [
-    { id: 'twin', label: botName, kind: 'twin' as const },
-    { id: 'source', label: family === 'verification' ? text(language, '原始资料', 'Source') : 'MetaWeb', kind: 'source' as const },
-    { id: 'worker', label: text(language, '协作 Bot', 'Worker'), kind: 'worker' as const },
-    { id: 'evidence', label: text(language, '证据', 'Evidence'), kind: 'evidence' as const },
-  ] : [];
+  const structured = family === 'delegation' || family === 'waiting' || family === 'worker-report' || family === 'verification' || family === 'browser-action';
+  // Only nodes that correspond to something real may appear: the twin, a
+  // worker bot that was actually dispatched, the check the twin runs, or the
+  // big screen it operates. No decorative "source" nodes.
+  const hasWorker = typeof workerName === 'string' && workerName.trim().length > 0;
+  const nodes: LiveStageState['topology']['nodes'] = structured ? (() => {
+    const twin = { id: 'twin', label: botName, kind: 'twin' as const };
+    switch (family) {
+      case 'delegation':
+      case 'waiting':
+      case 'worker-report':
+        return [twin, { id: 'worker', label: worker, kind: 'worker' as const }];
+      case 'verification':
+        return [
+          twin,
+          ...(hasWorker ? [{ id: 'worker', label: worker, kind: 'worker' as const }] : []),
+          { id: 'evidence', label: text(language, '核对', 'Check'), kind: 'evidence' as const },
+        ];
+      case 'browser-action':
+        return [twin, { id: 'source', label: text(language, '大屏', 'Big screen'), kind: 'source' as const }];
+      default:
+        return [];
+    }
+  })() : [];
+  const edges: LiveStageState['topology']['edges'] = structured ? (() => {
+    switch (family) {
+      case 'delegation':
+      case 'waiting':
+        return [['twin', 'worker']];
+      case 'worker-report':
+        return [['worker', 'twin']];
+      case 'verification':
+        return [...(hasWorker ? [['twin', 'worker'], ['worker', 'evidence']] : []), ['evidence', 'twin']] as Array<[string, string]>;
+      case 'browser-action':
+        return [['twin', 'source'], ['source', 'twin']];
+      default:
+        return [];
+    }
+  })() : [];
   return {
     ...scene,
+    // The participants block lists collaborators only (the stage drops the
+    // twin's own entry): a verification names the worker when one exists.
+    participants: family === 'verification' && hasWorker ? [botName, worker] : scene.participants,
+    kicker: family === 'speaking' ? botName : FAMILY_KICKER[family][language],
     composition: family === 'verification' ? 'converge' : structured ? 'topology' : family === 'local-recall' || family === 'web2-research' || family === 'metaweb-research' ? 'gather' : family === 'report-ready' || family === 'complete' ? 'ready' : 'presence',
     motif: family,
     topology: {
       mode: structured ? 'structured' : 'presence',
       nodes,
-      edges: structured ? [['twin', 'worker'], ['source', 'twin'], ['worker', 'evidence'], ['evidence', 'twin']] : [],
+      edges,
     },
   };
 }
@@ -138,6 +213,7 @@ function seedFor(sessionId: string, turnId: string, revision: number): number {
 
 export function createLiveStageState(context: LiveStageSessionContext): LiveStageState {
   const scene = sceneFor('received', context.language, context.botName);
+  const nowMs = context.nowMs ?? Date.now();
   return {
     protocol: LIVE_STAGE_PROTOCOL,
     sessionId: context.sessionId,
@@ -148,6 +224,8 @@ export function createLiveStageState(context: LiveStageSessionContext): LiveStag
     botName: context.botName,
     language: context.language,
     ...scene,
+    captionSource: 'default',
+    phaseStartedAt: nowMs,
     motion: { preset: 'received', seed: seedFor(context.sessionId, context.turnId, 0), durationMs: 720, easing: 'emphasized-decelerate', energy: .35, density: .25 },
     metrics: { directorEnabled: context.directorEnabled === true, directorCalls: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, rejectedPatches: 0, fallbackCount: 0, directorLatencyMs: 0 },
     handoff: null,
@@ -167,7 +245,7 @@ function familyForTool(toolName: string): LiveStageFamily | null {
   if (name === 'write' || name === 'edit') return 'making';
   if (name.includes('web_search') || name.includes('websearch') || name === 'web_fetch' || name === 'fetch_url') return 'web2-research';
   if (name.startsWith('omni_') || name.includes('metaweb') || name.includes('metaapp') || name.startsWith('mrc721_') || name.startsWith('metatask_') || name === 'chain_history_recall' || name === 'read_metaweb_pin') return 'metaweb-research';
-  if (name === 'owner_update' || name === 'read' || name === 'glob' || name === 'grep' || name === 'bash' || name === 'conversation_search' || name.startsWith('idbots_session_read') || name.startsWith('longterm_') || name.startsWith('memory_')) return 'local-recall';
+  if (name === 'read' || name === 'read_image' || name === 'glob' || name === 'grep' || name === 'bash' || name === 'shell' || name === 'conversation_search' || name.startsWith('idbots_session_read') || name.startsWith('longterm_') || name.startsWith('memory_') || name.startsWith('knowledge_')) return 'local-recall';
   return null;
 }
 
@@ -182,32 +260,265 @@ export function isLiveStageWorkerReport(message: CoworkMessage): boolean {
   return message.type === 'user' && (metadata?.origin === 'cross_session' || metadata?.sourceChannel === 'idbots_cross_session');
 }
 
+const clip = (value: string, max: number): string => (value.length > max ? `${value.slice(0, Math.max(0, max - 1))}…` : value);
+
+/** First sentence-ending punctuation index (inclusive), or -1. */
+const SENTENCE_END = /[。！？!?…]|\.(?=\s|$)/;
+const SENTENCE_END_ALL = /[。！？!?…]|\.(?=\s|$)/g;
+
+const firstSentenceEnd = (text: string): number => {
+  const match = SENTENCE_END.exec(text);
+  return match ? match.index : -1;
+};
+
+/** Last sentence-ending punctuation index inside the first `limit` chars, or -1. */
+const sentenceEnd = (text: string, limit: number): number => {
+  const window = text.slice(0, limit);
+  let best = -1;
+  for (const match of window.matchAll(SENTENCE_END_ALL)) best = (match.index ?? 0);
+  return best;
+};
+
+/**
+ * Reduce one assistant bubble to stage copy: markdown is stripped to plain
+ * prose, the first sentence becomes the headline (≤90 chars) and the rest
+ * becomes the caption (≤200 chars, cut at a sentence boundary).
+ */
+export function liveStageSpeechCopy(markdown: string): { headline: string; caption: string } | null {
+  const plain = markdownToPlainText(markdown);
+  if (!plain) return null;
+  const end = firstSentenceEnd(plain);
+  let headline: string;
+  let rest: string;
+  if (end >= 0) {
+    headline = clip(plain.slice(0, end + 1), 90);
+    rest = plain.slice(end + 1).trimStart();
+  } else {
+    headline = clip(plain, 90);
+    rest = plain.slice(headline.length).trimStart();
+  }
+  let caption = '';
+  if (rest) {
+    if (rest.length <= 200) {
+      caption = rest;
+    } else {
+      const cut = sentenceEnd(rest, 200);
+      caption = cut > 0 ? `${rest.slice(0, cut + 1)}…` : clip(rest, 200);
+    }
+  }
+  return { headline, caption };
+}
+
+/** Strip markdown to plain prose for stage display (no raw syntax on the projector). */
+export function markdownToPlainText(markdown: string): string {
+  return String(markdown ?? '')
+    .replace(/```[\s\S]*?(?:```|$)/g, ' ')
+    .replace(/`([^`\n]*)`/g, '$1')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/^\s{0,3}>+\s?/gm, '')
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
+    .replace(/^\s*\|[^\n]*\|\s*$/gm, ' ')
+    .replace(/^\s*[-*+•]\s+/gm, '')
+    .replace(/^\s*\d+[.)]\s+/gm, '')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*\n]+)\*/g, '$1')
+    .replace(/~~([^~]+)~~/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+const firstSentence = (value: string, max: number): string => {
+  const plain = value.replace(/\s+/g, ' ').trim();
+  if (!plain) return '';
+  const end = firstSentenceEnd(plain);
+  return end >= 0 ? clip(plain.slice(0, end + 1), max) : clip(plain, max);
+};
+
+const pathBaseName = (value: unknown): string => {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) return '';
+  const normalized = raw.replace(/\\/g, '/');
+  const base = normalized.slice(normalized.lastIndexOf('/') + 1);
+  return base || normalized;
+};
+
+const inputPath = (input: Record<string, unknown>): string =>
+  pathBaseName(input.path) || pathBaseName(input.file_path) || pathBaseName(input.filePath) || pathBaseName(input.target_file) || pathBaseName(input.notebook_path);
+
+/**
+ * Owner-facing description of one tool call, in plain words — never raw
+ * commands, paths, or arguments. Returns null for tools without a dedicated
+ * line so the family default copy stays in charge.
+ */
+export function describeLiveStageActivity(
+  toolName: string,
+  toolInput: unknown,
+  language: 'zh' | 'en',
+  workerName?: string,
+): { headline: string; caption?: string } | null {
+  const name = (toolName || '').toLowerCase();
+  if (!name) return null;
+  const input = toolInput && typeof toolInput === 'object' && !Array.isArray(toolInput)
+    ? toolInput as Record<string, unknown>
+    : {};
+  const worker = workerName?.trim().slice(0, 80) || TEAMMATE_FALLBACK[language];
+  const str = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
+
+  if (name === 'bash' || name === 'shell') {
+    const description = str(input.description);
+    return {
+      headline: text(language, '正在电脑上处理', 'Working on the computer'),
+      ...(description && description.length <= 120 ? { caption: description } : {}),
+    };
+  }
+  if (name === 'read' || name === 'read_image') {
+    const base = inputPath(input);
+    return { headline: text(language, `正在查看 ${base || '文件'}`, `Reading ${base || 'a file'}`) };
+  }
+  if (name === 'write' || name === 'edit') {
+    const base = inputPath(input);
+    return { headline: text(language, `正在编写 ${base || '文件'}`, `Writing ${base || 'a file'}`) };
+  }
+  if (name.includes('web_search') || name.includes('websearch')) {
+    const query = clip(str(input.query), 32);
+    return { headline: text(language, `正在网上查${query ? `：${query}` : ''}`, `Searching the web${query ? `: ${query}` : ''}`) };
+  }
+  if (name === 'web_fetch' || name === 'fetch_url') {
+    return { headline: text(language, '正在打开网页', 'Opening a web page') };
+  }
+  if (name === 'conversation_search' || name.startsWith('idbots_session_read')) {
+    return { headline: text(language, '正在翻看以前的聊天记录', 'Looking through past chats') };
+  }
+  if (name.startsWith('memory_') || name.startsWith('knowledge_')) {
+    return { headline: text(language, '正在回想相关的记忆', 'Recalling what I know') };
+  }
+  if (name === 'local_worker_delegate') {
+    const objective = firstSentence(str(input.objective ?? input.task ?? input.description), 80);
+    return {
+      headline: text(language, `正在把任务交给 ${worker}`, `Handing the task to ${worker}`),
+      ...(objective ? { caption: objective } : {}),
+    };
+  }
+  if (name === 'twin_task_status') {
+    return { headline: text(language, `正在看 ${worker} 的进度`, `Checking ${worker}'s progress`) };
+  }
+  if (name === 'twin_task_accept') {
+    return { headline: text(language, `正在验收 ${worker} 的成果`, `Reviewing ${worker}'s work`) };
+  }
+  if (name === 'bot_browser_preview_local') {
+    return input.projection === true
+      ? { headline: text(language, '正在把汇报投到大屏', 'Projecting the report') }
+      : { headline: text(language, '正在大屏上打开预览', 'Opening a preview on the big screen') };
+  }
+  if (name.startsWith('bot_browser_')) {
+    return { headline: text(language, '正在大屏上操作', 'Working on the big screen') };
+  }
+  if (name === 'upload_file') {
+    return { headline: text(language, '正在把文件传到链上', 'Uploading a file to the chain') };
+  }
+  if (name.startsWith('omni_') || name.includes('metaweb') || name.includes('metaapp')) {
+    return { headline: text(language, '正在查 AI 互联网', 'Searching MetaWeb') };
+  }
+  return null;
+}
+
+/**
+ * Apply a streaming assistant update to the speaking scene. Only non-empty
+ * prose moves the stage; the same markdown→headline/caption rules as
+ * reduceLiveStageMessage apply so streamed and final text agree.
+ */
+export function applyLiveStageSpeech(state: LiveStageState, content: string, nowMs = Date.now()): LiveStageState {
+  const speech = liveStageSpeechCopy(content);
+  if (!speech) return state;
+  const familyChanged = state.family !== 'speaking';
+  const scene = sceneFor('speaking', state.language, state.botName);
+  return {
+    ...state,
+    ...scene,
+    headline: speech.headline,
+    caption: speech.caption,
+    captionSource: 'specific',
+    family: 'speaking',
+    handoff: null,
+    phaseStartedAt: familyChanged ? nowMs : state.phaseStartedAt,
+    revision: state.revision + 1,
+    eventWindow: [...state.eventWindow, { family: 'speaking' as const }].slice(-8),
+  };
+}
+
 export function reduceLiveStageMessage(
   state: LiveStageState,
   message: CoworkMessage,
-  options: { workerName?: string; workerAvatar?: string } = {},
+  options: { workerName?: string; workerAvatar?: string; nowMs?: number } = {},
 ): LiveStageState {
+  const nowMs = options.nowMs ?? Date.now();
+  const metadata = message.metadata as Record<string, unknown> | undefined;
+  // Host projection receipts are bookkeeping bubbles, not the bot speaking.
+  if (metadata?.projectorReport) return state;
   let family = state.family;
   let headline: string | undefined;
   let caption: string | undefined;
+  let captionSource: 'default' | 'specific' = 'default';
   let pendingProjectionIds = state.pendingProjectionIds;
-  const metadata = message.metadata as Record<string, unknown> | undefined;
   if (message.type === 'user') {
     family = isLiveStageWorkerReport(message) ? 'worker-report' : 'received';
+    if (family === 'received') {
+      const request = String(message.content ?? '').replace(/\s+/g, ' ').trim();
+      if (request) {
+        caption = clip(state.language === 'zh' ? `「${request}」` : `“${request}”`, 80);
+        captionSource = 'specific';
+      }
+    }
   } else if (message.type === 'assistant') {
-    family = message.metadata?.isThinking ? 'reasoning' : 'speaking';
+    if (message.metadata?.isThinking) {
+      family = 'reasoning';
+    } else {
+      const speech = liveStageSpeechCopy(message.content);
+      if (speech) {
+        family = 'speaking';
+        headline = speech.headline;
+        caption = speech.caption || undefined;
+        captionSource = 'specific';
+      }
+      // An assistant bubble without visible text carries no narration; the
+      // scene stays where the previous event left it until content arrives.
+    }
   } else if (message.type === 'system') {
-    if (message.metadata?.sdkRuntimeStatus === 'api_retry') family = 'problem';
-    else if (message.metadata?.sdkRuntimeStatus === 'requesting') family = 'reasoning';
+    if (message.metadata?.sdkRuntimeStatus === 'api_retry') {
+      family = 'reasoning';
+      const attempt = typeof metadata?.retryAttempt === 'number' && Number.isFinite(metadata.retryAttempt)
+        ? Math.max(1, Math.trunc(metadata.retryAttempt))
+        : null;
+      headline = state.language === 'zh'
+        ? `连接不太稳，正在重试${attempt ? `（第 ${attempt} 次）` : ''}`
+        : `Connection is shaky — retrying${attempt ? ` (attempt ${attempt})` : ''}`;
+    } else if (message.metadata?.sdkRuntimeStatus === 'requesting') {
+      family = 'reasoning';
+    }
   } else if (message.type === 'tool_use') {
     const toolName = typeof message.metadata?.toolName === 'string' ? message.metadata.toolName : '';
-    if (toolName === 'owner_update') {
-      family = message.metadata?.toolInput?.kind === 'problem' ? 'problem' : 'speaking';
-      if (typeof message.metadata?.toolInput?.message === 'string') headline = message.metadata.toolInput.message.slice(0, 160);
-    } else {
+    const toolInput = message.metadata?.toolInput && typeof message.metadata.toolInput === 'object' && !Array.isArray(message.metadata.toolInput)
+      ? message.metadata.toolInput as Record<string, unknown>
+      : {};
+    // owner_update narration reaches the stage through the assistant bubble
+    // that follows it, and projection_begin is host plumbing — neither moves
+    // the scene on its own.
+    if (toolName !== 'owner_update' && toolName !== 'projection_begin') {
       family = familyForTool(toolName) ?? state.family;
+      const workerName = options.workerName ?? (state.topology.mode === 'structured'
+        ? state.topology.nodes.find((node) => node.kind === 'worker')?.label
+        : undefined);
+      const activity = describeLiveStageActivity(toolName, toolInput, state.language, workerName);
+      if (activity) {
+        headline = activity.headline;
+        if (activity.caption) {
+          caption = activity.caption;
+          captionSource = 'specific';
+        }
+      }
     }
-    if (toolName === 'bot_browser_preview_local' && message.metadata?.toolInput?.projection === true) {
+    if (toolName === 'bot_browser_preview_local' && toolInput.projection === true) {
       const id = typeof message.metadata.toolUseId === 'string' ? message.metadata.toolUseId : message.id;
       if (!pendingProjectionIds.includes(id)) pendingProjectionIds = [...pendingProjectionIds, id];
     }
@@ -222,12 +533,16 @@ export function reduceLiveStageMessage(
     family = 'owner-needed';
     headline = undefined;
     caption = undefined;
+    captionSource = 'default';
   }
-  const scene = sceneFor(family, state.language, state.botName);
+  // The effective worker is the freshly reported one, else the worker already
+  // on the structured topology — sceneFor needs it to decide which nodes are
+  // real (a verification only shows a worker that was actually dispatched).
   const workerLabel = options.workerName?.trim().slice(0, 80)
     || (state.topology.mode === 'structured' ? state.topology.nodes.find((node) => node.kind === 'worker')?.label : undefined);
   const workerAvatar = options.workerAvatar
     || (state.topology.mode === 'structured' ? state.topology.nodes.find((node) => node.kind === 'worker')?.avatar : undefined);
+  const scene = sceneFor(family, state.language, state.botName, workerLabel);
   if (workerLabel && scene.topology.mode === 'structured') {
     scene.topology.nodes = scene.topology.nodes.map((node) => node.kind === 'worker'
       ? { ...node, label: workerLabel, ...(workerAvatar ? { avatar: workerAvatar } : {}) }
@@ -239,11 +554,27 @@ export function reduceLiveStageMessage(
     : family === 'delegation'
       ? { direction: 'dispatch' as const, eventId: typeof metadata?.toolUseId === 'string' ? metadata.toolUseId : message.id }
       : null;
+  const familyChanged = family !== state.family;
+  const handoffChanged = (handoff?.direction ?? null) !== (state.handoff?.direction ?? null)
+    || (handoff?.eventId ?? null) !== (state.handoff?.eventId ?? null);
+  // A message that produced no new family and no new copy (empty assistant
+  // bubbles, bookkeeping tool results, owner_update/projection_begin) leaves
+  // the stage exactly where it was — including any speech already on screen.
+  if (!familyChanged && headline == null && caption == null
+    && pendingProjectionIds === state.pendingProjectionIds && !handoffChanged) {
+    return state;
+  }
+  // Same-family updates without fresh copy keep the visible headline/caption
+  // (and whether the Director may restyle them) instead of reverting to the
+  // family defaults.
+  const keepCopy = !familyChanged && headline == null && caption == null;
   return {
     ...state,
     ...scene,
-    headline: headline ?? scene.headline,
-    caption: caption ?? scene.caption,
+    headline: headline ?? (keepCopy ? state.headline : scene.headline),
+    caption: caption ?? (keepCopy ? state.caption : scene.caption),
+    captionSource: caption != null ? captionSource : (keepCopy ? state.captionSource : 'default'),
+    phaseStartedAt: familyChanged ? nowMs : state.phaseStartedAt,
     revision: state.revision + 1,
     family,
     handoff,
@@ -253,20 +584,98 @@ export function reduceLiveStageMessage(
   };
 }
 
-export function completeLiveStage(state: LiveStageState): LiveStageState {
+export function completeLiveStage(state: LiveStageState, nowMs = Date.now()): LiveStageState {
   if (state.family === 'report-ready') return state;
   const scene = sceneFor('complete', state.language, state.botName);
-  return { ...state, ...scene, family: 'complete', handoff: null, revision: state.revision + 1, motion: { ...state.motion, preset: 'complete', energy: .12, durationMs: 600 } };
+  // The bot's last words stay on screen when the turn ends mid-speech; the orb
+  // rests but the headline/caption are not replaced by generic copy.
+  const keepSpeech = state.family === 'speaking';
+  return {
+    ...state,
+    ...scene,
+    headline: keepSpeech ? state.headline : scene.headline,
+    caption: keepSpeech ? state.caption : scene.caption,
+    captionSource: keepSpeech ? state.captionSource : 'default',
+    family: 'complete',
+    handoff: null,
+    phaseStartedAt: nowMs,
+    revision: state.revision + 1,
+    motion: { ...state.motion, preset: 'complete', energy: .12, durationMs: 600 },
+  };
 }
 
-export function reportReadyLiveStage(state: LiveStageState): LiveStageState {
+export function reportReadyLiveStage(state: LiveStageState, nowMs = Date.now()): LiveStageState {
   const scene = sceneFor('report-ready', state.language, state.botName);
-  return { ...state, ...scene, family: 'report-ready', handoff: null, revision: state.revision + 1, pendingProjectionIds: [], motion: { ...state.motion, preset: 'report-ready', energy: .18, durationMs: 650 } };
+  return { ...state, ...scene, family: 'report-ready', handoff: null, phaseStartedAt: nowMs, revision: state.revision + 1, pendingProjectionIds: [], motion: { ...state.motion, preset: 'report-ready', energy: .18, durationMs: 650 } };
 }
 
-export function liveStageError(state: LiveStageState): LiveStageState {
+export function liveStageError(state: LiveStageState, copy?: { headline: string; caption: string }, nowMs = Date.now()): LiveStageState {
   const scene = sceneFor('problem', state.language, state.botName);
-  return { ...state, ...scene, family: 'problem', handoff: null, revision: state.revision + 1, motion: { ...state.motion, preset: 'problem', energy: .25 } };
+  return {
+    ...state,
+    ...scene,
+    headline: copy?.headline ?? scene.headline,
+    caption: copy?.caption ?? scene.caption,
+    captionSource: copy ? 'specific' : 'default',
+    family: 'problem',
+    handoff: null,
+    phaseStartedAt: nowMs,
+    revision: state.revision + 1,
+    motion: { ...state.motion, preset: 'problem', energy: .25 },
+  };
+}
+
+export type LiveStageDelegationWait = {
+  workerName?: string;
+  workerAvatar?: string;
+  /** First delegation's title (owner intent), shown in the caption. */
+  title?: string;
+  /** Total open delegations; >1 renders "X 等 n 位" / "X and n-1 more". */
+  total?: number;
+  /** Earliest delegation start (epoch ms) — the elapsed clock measures from here. */
+  startedAt?: number;
+  nowMs?: number;
+};
+
+/**
+ * Turn-complete-but-workers-still-running scene: structured topology with the
+ * first worker's name/avatar, a bilingual multi-worker summary, and the
+ * delegation's own start time as phaseStartedAt.
+ */
+export function waitingLiveStage(state: LiveStageState, wait: LiveStageDelegationWait): LiveStageState {
+  const nowMs = wait.nowMs ?? Date.now();
+  const language = state.language;
+  const first = wait.workerName?.trim().slice(0, 80) || TEAMMATE_FALLBACK[language];
+  const total = Math.max(1, Math.trunc(wait.total ?? 1));
+  const others = total - 1;
+  const workerLabel = others > 0
+    ? (language === 'zh' ? `${first} 等 ${total} 位` : `${first} and ${others} more`)
+    : first;
+  const scene = sceneFor('waiting', language, state.botName, first);
+  if (scene.topology.mode === 'structured') {
+    scene.topology.nodes = scene.topology.nodes.map((node) => node.kind === 'worker'
+      ? { ...node, label: workerLabel, ...(wait.workerAvatar ? { avatar: wait.workerAvatar } : {}) }
+      : node);
+    scene.participants = scene.participants.map((participant, index) => index === 1 ? workerLabel : participant);
+  }
+  const title = wait.title?.replace(/\s+/g, ' ').trim();
+  const caption = title
+    ? (language === 'zh'
+      ? `${clip(title, 60)}。交回来后我会核对，再向你汇报。`
+      : `${clip(title, 60)}. When it's back I'll check it and report to you.`)
+    : scene.caption;
+  return {
+    ...state,
+    ...scene,
+    caption,
+    captionSource: 'specific',
+    family: 'waiting',
+    handoff: null,
+    phaseStartedAt: wait.startedAt ?? nowMs,
+    revision: state.revision + 1,
+    motion: { ...state.motion, preset: 'waiting', energy: .4, durationMs: 720 },
+    eventWindow: [...state.eventWindow, { family: 'waiting' as const }].slice(-8),
+  };
 }
 
 const MAX_INTERACTION_QUESTIONS = 6;
@@ -363,13 +772,14 @@ export function buildLiveStageInteraction(candidate: LiveStageInteractionCandida
   };
 }
 
-export function presentLiveStageInteraction(state: LiveStageState, interaction: LiveStageInteraction): LiveStageState {
+export function presentLiveStageInteraction(state: LiveStageState, interaction: LiveStageInteraction, nowMs = Date.now()): LiveStageState {
   const scene = sceneFor('owner-needed', state.language, state.botName);
   return {
     ...state,
     ...scene,
     family: 'owner-needed',
     interaction,
+    phaseStartedAt: state.family === 'owner-needed' ? state.phaseStartedAt : nowMs,
     revision: state.revision + 1,
     handoff: null,
     motion: { ...state.motion, preset: 'owner-needed', energy: .12 },

@@ -7,12 +7,13 @@
   "family": "delegation",
   "botName": "Nova",
   "language": "en",
-  "headline": "Delegating structured work",
-  "caption": "The task graph has expanded and a collaborator is taking a workstream.",
+  "headline": "Handing the task to Pixel",
+  "caption": "I'll check its work and report back.",
   "participants": [
     "Nova",
     "Pixel"
   ],
+  "kicker": "Delegating",
   "composition": "topology",
   "motif": "delegation",
   "topology": {
@@ -24,40 +25,20 @@
         "kind": "twin"
       },
       {
-        "id": "source",
-        "label": "MetaWeb",
-        "kind": "source"
-      },
-      {
         "id": "worker",
         "label": "Pixel",
         "kind": "worker"
-      },
-      {
-        "id": "evidence",
-        "label": "Evidence",
-        "kind": "evidence"
       }
     ],
     "edges": [
       [
         "twin",
         "worker"
-      ],
-      [
-        "source",
-        "twin"
-      ],
-      [
-        "worker",
-        "evidence"
-      ],
-      [
-        "evidence",
-        "twin"
       ]
     ]
   },
+  "captionSource": "default",
+  "phaseStartedAt": 1760000000000,
   "motion": {
     "preset": "delegation",
     "seed": 79586,

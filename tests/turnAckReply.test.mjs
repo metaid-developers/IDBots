@@ -11,6 +11,7 @@ import {
   buildTurnAckReplyMessages,
   buildTurnStatusGoalMessages,
   containsCjk,
+  describeOwnerWaitActivity,
   resolveTurnAckActivity,
   remainingTurnAckBudgetMs,
   sanitizeTurnAckReply,
@@ -554,6 +555,69 @@ test('buildOwnerWaitUpdateMessages: system+user roles, wait context carried, ant
   assert.ok(long[1].content.length < 1600, 'user text slice stays bounded');
 });
 
+test('buildOwnerWaitUpdateMessages: currentActivity replaces the generic activity line and the honesty rules are pinned', () => {
+  const messages = buildOwnerWaitUpdateMessages({
+    userText: '帮 Builder阿码 核对结果',
+    waitedMs: 3 * 60_000,
+    waitingForTool: true,
+    priorCount: 0,
+    currentActivity: 'delegated work to Builder阿码 and is waiting for it to report back',
+  });
+  assert.ok(
+    messages[1].content.includes('Current activity: delegated work to Builder阿码 and is waiting for it to report back.'),
+    'the named activity reaches the prompt verbatim',
+  );
+  assert.ok(!messages[1].content.includes('an execution step (a tool/command) is still running'),
+    'the generic tool line yields to the named activity');
+  assert.ok(messages[0].content.includes(
+    'Say what is actually happening right now, using the current activity when it is given; if you are waiting on another bot, name that bot.'),
+    'the name-the-real-activity rule sits after the still-executing line');
+  assert.ok(messages[0].content.includes('never imply you are almost done'),
+    'the no-almost-done rule is pinned');
+  for (const banned of ['"soon"', '"shortly"', '"almost"', '"right away"', '"马上"', '"很快"', '"快好了"', '"稍等就好"']) {
+    assert.ok(messages[0].content.includes(banned), `banned promise word listed: ${banned}`);
+  }
+  assert.ok(messages[0].content.includes('never your thinking or reasoning about these rules'),
+    'the output-only contract survives the rewrite');
+});
+
+test('describeOwnerWaitActivity: tool → honest English phrase map', () => {
+  assert.equal(describeOwnerWaitActivity('', undefined), '');
+  assert.equal(
+    describeOwnerWaitActivity('local_worker_delegate', { workerMetabotId: 7 }, 'Builder阿码'),
+    'delegated work to Builder阿码 and is waiting for it to report back',
+  );
+  assert.equal(
+    describeOwnerWaitActivity('twin_task_status', {}, null),
+    'delegated work to a worker bot and is waiting for it to report back',
+  );
+  assert.equal(
+    describeOwnerWaitActivity('bash', { description: 'run the test suite' }),
+    'running a command: run the test suite',
+  );
+  assert.equal(describeOwnerWaitActivity('bash', {}), 'running a command');
+  assert.equal(describeOwnerWaitActivity('read', { file_path: '/tmp/x' }), 'reading files');
+  assert.equal(describeOwnerWaitActivity('read_image', {}), 'reading files');
+  assert.equal(describeOwnerWaitActivity('write', {}), 'writing a file');
+  assert.equal(describeOwnerWaitActivity('edit', {}), 'writing a file');
+  assert.equal(describeOwnerWaitActivity('web_search', { query: 'q' }), 'searching the web');
+  assert.equal(describeOwnerWaitActivity('web_fetch', {}), 'searching the web');
+  assert.equal(describeOwnerWaitActivity('projection_begin', {}), 'preparing the report page for the big screen');
+  assert.equal(
+    describeOwnerWaitActivity('bot_browser_preview_local', { projection: true }),
+    'preparing the report page for the big screen',
+  );
+  assert.equal(
+    describeOwnerWaitActivity('bot_browser_preview_local', { projection: false }),
+    'working in the browser on the right-hand screen',
+  );
+  assert.equal(describeOwnerWaitActivity('upload_file', {}), 'uploading a file');
+  assert.equal(describeOwnerWaitActivity('exotic_tool', {}), '');
+  assert.equal(describeOwnerWaitActivity('owner_update', { message: 'x' }), '');
+  const long = describeOwnerWaitActivity('bash', { description: `  ${'d'.repeat(200)}  ` });
+  assert.ok(long.length <= 'running a command: '.length + 80, 'the command description clips at 80 units');
+});
+
 test('runner: the wait heartbeat text is LLM-generated per fire — no canned strings remain', () => {
   const source = read('src/main/libs/coworkRunner.ts');
   assert.ok(!source.includes('有一个执行步骤还在运行'), 'the fixed tool-waiting string is deleted');
@@ -570,6 +634,36 @@ test('runner: the wait heartbeat text is LLM-generated per fire — no canned st
   assert.ok(body.includes("kind: 'waiting'"), 'the bubble keeps the waiting kind for the renderer');
   assert.ok(source.includes('activeSession.assistantOwnerTurnUserText = prompt;'),
     'the turn user text is captured at entry for heartbeat language/topic context');
+});
+
+test('runner: post-final-reply heartbeat suppression and currentActivity wiring', () => {
+  const source = read('src/main/libs/coworkRunner.ts');
+  // The flag is set only for a REAL finalized reply — thinking, narration
+  // bubbles and the host ack are progress, not the answer.
+  const finalizeAt = source.indexOf('onMessageFinalize: (messageId, content, metadata) => {');
+  assert.ok(finalizeAt > 0, 'the DSH finalize callback exists');
+  const finalizeBody = source.slice(finalizeAt, finalizeAt + 1600);
+  assert.ok(finalizeBody.includes('assistantOwnerFinalReplyDelivered = true'),
+    'a finalized visible assistant text marks the reply delivered');
+  assert.ok(finalizeBody.includes("finalizeMeta?.narration !== true") && finalizeBody.includes("finalizeMeta?.turnAckReply !== true"),
+    'narration and turnAckReply finals do not count as the delivered reply');
+  // A later tool_use lifts the suppression and becomes the named activity.
+  const trackAt = source.indexOf('const trackDshToolActivity = (message: unknown) => {');
+  assert.ok(trackAt > 0, 'the tool-activity tracker exists');
+  const trackBody = source.slice(trackAt, trackAt + 2400);
+  assert.ok(trackBody.includes('assistantOwnerFinalReplyDelivered = false'),
+    'a new tool_use clears the delivered-reply flag');
+  assert.ok(trackBody.includes('assistantOwnerCurrentTool'),
+    'the last started tool is recorded for the heartbeat activity line');
+  // The timer drops (without re-arming) once the reply is delivered.
+  assert.ok(source.includes("owner wait heartbeat dropped: final reply already delivered"),
+    'the suppression logs its drop reason');
+  const emitter = source.indexOf('private async emitOwnerWaitHeartbeat(');
+  const emitterBody = source.slice(emitter, emitter + 3200);
+  assert.ok(emitterBody.includes('currentActivity,'),
+    'the named activity reaches the wait-update generator input');
+  assert.ok(emitterBody.includes('describeOwnerWaitActivity('),
+    'the phrase comes from the shared tool→activity map');
 });
 
 test('coworkUtil: generateOwnerWaitUpdate mirrors the ack call class', () => {

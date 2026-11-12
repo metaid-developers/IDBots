@@ -61,14 +61,21 @@ test('event window carries semantics only and Director cannot inherit raw argume
   assert.match(serialized, /local_worker_delegate/);
 });
 
-test('owner-visible updates are allowed to shape the headline', () => {
+test('owner_update tool calls do not move the scene; the narration bubble does', () => {
   let state = initial();
+  const before = state;
   state = reduceLiveStageMessage(state, message('update', 'tool_use', {
     toolName: 'owner_update',
     toolInput: { kind: 'milestone', message: '清单已核验完毕' },
   }));
-  assert.equal(state.headline, '清单已核验完毕');
+  assert.equal(state, before, 'the owner_update tool_use itself is host plumbing');
+  state = reduceLiveStageMessage(state, {
+    id: 'narration', type: 'assistant', content: '清单已核验完毕。接下来我会整理结果。', timestamp: 1,
+    metadata: {},
+  });
   assert.equal(state.family, 'speaking');
+  assert.equal(state.headline, '清单已核验完毕。');
+  assert.equal(state.caption, '接下来我会整理结果。');
 });
 
 test('reportReadyLiveStage is idempotent in spirit and clears pending projection ids', () => {
@@ -128,12 +135,12 @@ test('ordinary ask prompts are shaped into a bounded stage interaction', () => {
   const state = presentLiveStageInteraction(initial(), interaction);
   assert.equal(state.interaction?.requestId, 'ask-1');
   assert.equal(state.family, 'owner-needed');
-  assert.equal(state.headline, '需要你的决定');
+  assert.equal(state.headline, '需要你做个决定');
   assert.equal(state.motion.energy, .12);
   assert.equal(state.revision, initial().revision + 1);
   const lateUpdate = reduceLiveStageMessage(state, message('late', 'assistant', { isFinal: true }));
   assert.equal(lateUpdate.family, 'owner-needed', 'late transcript events cannot disguise a pending ask as active work');
-  assert.equal(lateUpdate.headline, '需要你的决定');
+  assert.equal(lateUpdate.headline, '需要你做个决定');
   const cleared = dismissLiveStageInteraction(state, 'ask-1');
   assert.equal(cleared.interaction, null);
   assert.equal(dismissLiveStageInteraction(state, 'other').interaction?.requestId, 'ask-1', 'mismatched ids keep the card');

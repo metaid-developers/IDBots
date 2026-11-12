@@ -32,19 +32,77 @@ test('frame patch script JSON-injects state and escapes HTML-significant charact
   const script = buildLiveStagePatchScript(current);
   assert.doesNotThrow(() => new Function(`return ${script};`));
   assert.doesNotMatch(script, /<script>/);
-  assert.match(script, /window.IDBotsLiveStage.applyPatch/);
+  assert.match(script, /window\.IDBotsLiveStage/);
+  assert.match(script, /\.applyPatch\(/);
+  assert.match(script, /'not-ready'|'turn-mismatch'|'stale-revision'|'protocol'/);
 });
 
 test('frame bridge reaches only the matching local preview frame', async () => {
   const url = 'http://127.0.0.1:5000/live-stage.html';
   let executed = null;
-  const frame = { url, frames: [], executeJavaScript: async (script) => { executed = script; return { ok: true }; } };
+  const frame = {
+    url,
+    frames: [],
+    executeJavaScript: async (script) => {
+      if (script.includes('getState')) return { bridge: true, turnId: 't' };
+      executed = script;
+      return { ok: true };
+    },
+  };
   const root = { url: 'http://127.0.0.1:5185', frames: [frame], executeJavaScript: async () => ({}) };
   await applyStudioLiveStagePatch({
     getWindows: () => [{ isDestroyed: () => false, webContents: { isDestroyed: () => false, mainFrame: root } }],
     executeTabCommand: async () => ({ info: { current: { renderer: { type: 'html-iframe', url } } } }),
   }, { tabId: 7, state: state() });
   assert.ok(executed.includes('idbots.live-stage.v1'));
+});
+
+test('frame selection probes every matching frame and prefers the one showing this turn', async () => {
+  const url = 'http://127.0.0.1:5000/live-stage.html';
+  const scripts = { stale: [], fresh: [] };
+  const makeFrame = (turnId, bucket) => ({
+    url,
+    frames: [],
+    executeJavaScript: async (script) => {
+      if (script.includes('getState')) return { bridge: true, turnId };
+      bucket.push(script);
+      return { ok: true };
+    },
+  });
+  const stale = makeFrame('turn-old', scripts.stale);
+  const fresh = makeFrame('t', scripts.fresh);
+  const deps = {
+    getWindows: () => [{
+      isDestroyed: () => false,
+      webContents: { isDestroyed: () => false, mainFrame: { url: 'http://127.0.0.1:5185', frames: [stale, fresh], executeJavaScript: async () => ({}) } },
+    }],
+    executeTabCommand: async () => ({ info: { current: { renderer: { type: 'html-iframe', url } } } }),
+  };
+  await applyStudioLiveStagePatch(deps, { tabId: 7, state: state() });
+  assert.equal(scripts.stale.length, 0, 'the stale frame never receives the patch');
+  assert.equal(scripts.fresh.length, 1);
+  assert.ok(scripts.fresh[0].includes('idbots.live-stage.v1'));
+
+  // Bridges exist but none belongs to this turn → a machine-readable
+  // turn-mismatch the service turns into a re-projection.
+  const mismatch = await applyStudioLiveStagePatch({
+    ...deps,
+    getWindows: () => [{
+      isDestroyed: () => false,
+      webContents: { isDestroyed: () => false, mainFrame: { url: 'http://127.0.0.1:5185', frames: [makeFrame('turn-other', [])], executeJavaScript: async () => ({}) } },
+    }],
+  }, { tabId: 7, state: state() }).catch((error) => error);
+  assert.equal(mismatch?.reason, 'turn-mismatch');
+
+  // Frames exist but none exposes the bridge yet → not-ready (retryable).
+  const notReady = await applyStudioLiveStagePatch({
+    ...deps,
+    getWindows: () => [{
+      isDestroyed: () => false,
+      webContents: { isDestroyed: () => false, mainFrame: { url: 'http://127.0.0.1:5185', frames: [{ url, executeJavaScript: async () => null }], executeJavaScript: async () => ({}) } },
+    }],
+  }, { tabId: 7, state: state() }).catch((error) => error);
+  assert.equal(notReady?.reason, 'not-ready');
 });
 
 test('drain script consumes the page queue through the same located frame', async () => {

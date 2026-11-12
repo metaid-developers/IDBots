@@ -8,11 +8,11 @@
   "botName": "Nova",
   "language": "en",
   "headline": "Searching MetaWeb",
-  "caption": "Reading on-chain material and MetaWeb evidence.",
+  "caption": "",
   "participants": [
-    "Nova",
-    "MetaWeb"
+    "Nova"
   ],
+  "kicker": "Searching MetaWeb",
   "composition": "gather",
   "motif": "metaweb-research",
   "topology": {
@@ -20,6 +20,8 @@
     "nodes": [],
     "edges": []
   },
+  "captionSource": "default",
+  "phaseStartedAt": 1760000000000,
   "motion": {
     "preset": "metaweb-research",
     "seed": 27205,

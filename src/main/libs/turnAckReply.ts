@@ -162,6 +162,59 @@ export interface OwnerWaitUpdateInput {
   waitingForTool: boolean;
   /** How many wait updates this turn already sent (0 = first). */
   priorCount: number;
+  /**
+   * What the turn is actually doing right now — a short English phrase
+   * derived from the last tool the model started (describeOwnerWaitActivity).
+   * Absent when no tool has run yet or nothing honest can be named.
+   */
+  currentActivity?: string;
+}
+
+const OWNER_WAIT_ACTIVITY_DESCRIPTION_MAX_CHARS = 80;
+
+function oneLineClip(text: string, maxUnits: number): string {
+  return truncateUtf16UnitsSafe(text.replace(/\s+/g, ' ').trim(), maxUnits);
+}
+
+/**
+ * Short English phrase naming the turn's current activity for the wait
+ * heartbeat prompt (session 09bb4098: the heartbeat said "still sorting it
+ * out, answer soon" AFTER the final reply had already been delivered, with
+ * no real activity named). Derived from the last tool_use the turn started;
+ * the phrase feeds the prompt's `Current activity:` line verbatim, so it
+ * must stay plain and factual — never a promise, never jargon the owner
+ * cannot read. Returns '' when there is nothing honest to say.
+ */
+export function describeOwnerWaitActivity(
+  toolName: string,
+  toolInput: Record<string, unknown> | undefined,
+  workerName?: string | null,
+): string {
+  const name = (toolName ?? '').trim().toLowerCase();
+  if (!name) return '';
+  if (name === 'local_worker_delegate' || name === 'twin_task_status') {
+    const worker = (workerName ?? '').trim() || 'a worker bot';
+    return `delegated work to ${worker} and is waiting for it to report back`;
+  }
+  if (name === 'bash' || name === 'pwsh' || name === 'bash_persistent' || name === 'pwsh_persistent') {
+    const description = typeof toolInput?.description === 'string'
+      ? oneLineClip(toolInput.description, OWNER_WAIT_ACTIVITY_DESCRIPTION_MAX_CHARS)
+      : '';
+    return `running a command${description ? `: ${description}` : ''}`;
+  }
+  if (name === 'read' || name === 'read_image') return 'reading files';
+  if (name === 'write' || name === 'edit') return 'writing a file';
+  if (name === 'web_search' || name === 'web_fetch' || name === 'webfetch') return 'searching the web';
+  if (name === 'projection_begin'
+    || (name === 'bot_browser_preview_local' && toolInput?.projection === true)) {
+    return 'preparing the report page for the big screen';
+  }
+  if (name === 'upload_file') return 'uploading a file';
+  if (name.startsWith('bot_browser_')) return 'working in the browser on the right-hand screen';
+  // Unknown tools (and owner_update, which is just the last progress note)
+  // name nothing honest: '' falls back to the generic activity lines rather
+  // than leaking a raw tool id the model might echo to the owner.
+  return '';
 }
 
 /**
@@ -180,9 +233,11 @@ export function buildOwnerWaitUpdateMessages(
   const title = (input.sessionTitle ?? '').trim();
   const waitedMinutes = Math.max(1, Math.round(input.waitedMs / 60_000));
   const titleLine = title ? `Session title: ${truncateUtf16UnitsSafe(title, OWNER_WAIT_TITLE_MAX_CHARS)}\n` : '';
-  const activityLine = input.waitingForTool
-    ? 'Current activity: an execution step (a tool/command) is still running.'
-    : 'Current activity: still thinking, organizing, or checking results — no step is visibly stuck.';
+  const activityLine = input.currentActivity
+    ? `Current activity: ${input.currentActivity}.`
+    : input.waitingForTool
+      ? 'Current activity: an execution step (a tool/command) is still running.'
+      : 'Current activity: still thinking, organizing, or checking results — no step is visibly stuck.';
   const repeatLine = input.priorCount > 0
     ? `You have already sent ${input.priorCount} such note(s) this turn — say something NEW; do not repeat your earlier wording or structure.`
     : '';
@@ -193,8 +248,9 @@ export function buildOwnerWaitUpdateMessages(
         `You are a chat assistant still working on the user's request; the user has been waiting about ${waitedMinutes} minute(s) with no new visible message from you. Write ONE short chat line — your own words — telling them plainly what is happening right now and that work continues.`,
         'This line must sound like a real person replying in chat, never a canned status template. Vary your wording naturally; never produce stock phrases like "仍在处理中" or "still processing" unless that is genuinely what you mean in your own voice.',
         '- If a step is still executing, say so plainly; otherwise say you are still thinking or organizing.',
+        '- Say what is actually happening right now, using the current activity when it is given; if you are waiting on another bot, name that bot.',
         '- A brief natural acknowledgment of the wait is fine when it is genuinely meant; no apologies theater.',
-        'Rules: 1 sentence, under 30 words. Same language as the user message. No markdown, lists, quotes, or emoji. No promises, no ETAs, no deadlines. Output only the finished text — never your thinking or reasoning about these rules.',
+        'Rules: 1 sentence, under 30 words. Same language as the user message. No markdown, lists, quotes, or emoji. No promises, no ETAs, no deadlines, and never imply you are almost done — no words like "soon", "shortly", "almost", "right away", "马上", "很快", "快好了", "稍等就好". Output only the finished text — never your thinking or reasoning about these rules.',
         "Never describe, analyze, translate, or quote the user's message; never mention what language it is in.",
       ].join('\n'),
     },

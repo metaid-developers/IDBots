@@ -9,11 +9,14 @@
 
   const body = document.body;
   const $ = (selector) => document.querySelector(selector);
+  const tr = (zh, en) => (state.language === 'zh' ? zh : en);
   const reportOpen = $('[data-report-open]');
   const reportUri = window.__LIVE_STAGE_REPORT_URI__;
   const canOpenReport = typeof reportUri === 'string' && reportUri.startsWith('preview-metaapp://localhost/');
   reportOpen.disabled = !canOpenReport;
-  $('[data-report-open-label]').textContent = canOpenReport ? 'Open report' : 'Opening the final page';
+  const reportReadyText = $('[data-report-ready-text]');
+  if (reportReadyText) reportReadyText.textContent = tr('汇报就绪', 'Report ready');
+  $('[data-report-open-label]').textContent = canOpenReport ? tr('打开汇报', 'Open report') : tr('正在打开最终页面', 'Opening the final page');
   reportOpen.addEventListener('click', () => {
     if (!canOpenReport) return;
     window.parent.postMessage({
@@ -46,8 +49,8 @@
   }
 
   const textChannels = [
-    { element: $('[data-core-title]'), value: '', chars: [], typed: 0, nextAt: 0, typing: false, renderedTyped: -1, delay: 80, zhRate: 30, enRate: 58 },
-    { element: $('[data-core-caption]'), value: '', chars: [], typed: 0, nextAt: 0, typing: false, renderedTyped: -1, delay: 220, zhRate: 38, enRate: 72 },
+    { element: $('[data-core-title]'), value: '', chars: [], typed: 0, nextAt: 0, typing: false, renderedTyped: -1, delay: 80, zhRate: 30, enRate: 58, doneAt: 0 },
+    { element: $('[data-core-caption]'), value: '', chars: [], typed: 0, nextAt: 0, typing: false, renderedTyped: -1, delay: 220, zhRate: 38, enRate: 72, doneAt: 0 },
   ];
   const textMotion = { energy: 0, voiceUntil: 0, lastFrameAt: 0 };
   const TEXT_PAUSES = { '，': 160, '、': 140, ',': 120, '；': 220, ';': 200, '：': 180, ':': 160, '。': 360, '！': 360, '？': 360, '.': 300, '!': 300, '?': 300, '…': 260, '—': 160 };
@@ -78,11 +81,24 @@
   function setTextChannel(channel, value, now) {
     const next = typeof value === 'string' ? value : '';
     if (channel.value === next) return;
+    // Streaming growth: when the new value only extends the old one, keep the
+    // typing cursor where it is so the text grows smoothly instead of
+    // restarting from the first character on every patch.
+    const appendOnly = channel.value.length > 0 && next.startsWith(channel.value);
     channel.value = next;
     channel.chars = Array.from(next);
+    if (appendOnly) {
+      channel.typed = Math.min(channel.typed, channel.chars.length);
+      channel.typing = !effectiveReduced() && channel.typed < channel.chars.length;
+      channel.doneAt = channel.typing ? channel.doneAt : Date.now();
+      channel.renderedTyped = -1;
+      renderTextChannel(channel);
+      return;
+    }
     channel.typing = !effectiveReduced() && channel.chars.length > 0;
     channel.typed = channel.typing ? 0 : channel.chars.length;
     channel.nextAt = now + channel.delay;
+    channel.doneAt = channel.typing ? 0 : Date.now();
     channel.renderedTyped = -1;
     renderTextChannel(channel);
   }
@@ -91,6 +107,7 @@
     for (const channel of textChannels) {
       channel.typed = channel.chars.length;
       channel.typing = false;
+      channel.doneAt = Date.now();
       renderTextChannel(channel);
     }
   }
@@ -114,7 +131,10 @@
           if (/[\p{L}\p{N}]/u.test(char)) textMotion.energy = Math.min(1, textMotion.energy + (state.language === 'zh' ? .42 : .24));
           textMotion.voiceUntil = now + 150;
           channel.nextAt += 1000 / (state.language === 'zh' ? channel.zhRate : channel.enRate) + (TEXT_PAUSES[char] || 0);
-          if (channel.typed >= channel.chars.length) channel.typing = false;
+          if (channel.typed >= channel.chars.length) {
+            channel.typing = false;
+            channel.doneAt = Date.now();
+          }
         }
         if (changed) renderTextChannel(channel);
       }
@@ -224,11 +244,15 @@
   function updateParticipants() {
     const container = $('[data-core-participants]');
     container.replaceChildren();
-    state.participants.forEach((participant, index) => {
+    // participants[0] is always the twin itself — the block lists only the
+    // collaborators the stage is working with, and hides when there are none.
+    const collaborators = state.participants.slice(1);
+    container.hidden = collaborators.length === 0;
+    collaborators.forEach((participant) => {
       const item = document.createElement('div');
       item.className = 'core-participant';
       const label = document.createElement('small');
-      label.textContent = index === 0 ? 'In focus' : 'Connected';
+      label.textContent = tr('协作', 'With');
       const value = document.createElement('span');
       value.textContent = participant;
       item.append(label, value);
@@ -418,10 +442,10 @@
     const flow = $('[data-handoff-flow]');
     const label = $('[data-handoff-label]');
     const motion = $('[data-handoff-motion]');
-    const worker = state.topology.nodes.find((node) => node.kind === 'worker')?.label || 'Worker';
+    const worker = state.topology.nodes.find((node) => node.kind === 'worker')?.label || tr('协作 Bot', 'Worker');
     $('[data-handoff-worker]').textContent = worker;
     $('[data-handoff-copy]').textContent = handoff.direction === 'return'
-      ? (state.language === 'zh' ? '正在交回结果 · 等待 Twin 核验' : 'Returning work · Twin review required')
+      ? (state.language === 'zh' ? `正在交回结果 · 等待 ${state.botName} 核验` : `Returning work · ${state.botName} review required`)
       : (state.language === 'zh' ? '正在接收获派任务' : 'Receiving the delegated step');
     motion.setAttribute('keyPoints', handoff.direction === 'return' ? '0;1' : '1;0');
     flow.classList.remove('is-leaving');
@@ -698,28 +722,106 @@
     if (interaction.kind === 'ask') syncInteractionValidity(interaction, card);
   }
 
+  // Families whose orb is actively working/thinking/waiting show an elapsed
+  // clock after the kicker once the phase is at least 20 s old.
+  const ELAPSED_FAMILIES = new Set([
+    'reasoning', 'local-recall', 'web2-research', 'metaweb-research', 'making',
+    'delegation', 'waiting', 'worker-report', 'verification', 'browser-action',
+  ]);
+  // Last-resort kicker for states that predate the localized `kicker` field —
+  // never fall back to the raw family id.
+  const FAMILY_LABELS = {
+    received: ['收到', 'Received'],
+    reasoning: ['思考中', 'Thinking'],
+    'local-recall': ['查阅资料', 'Looking things up'],
+    'web2-research': ['上网查找', 'Searching the web'],
+    'metaweb-research': ['查 AI 互联网', 'Searching MetaWeb'],
+    making: ['动手制作', 'Making'],
+    delegation: ['安排协作', 'Delegating'],
+    waiting: ['等待协作', 'Waiting on a teammate'],
+    'worker-report': ['协作回执', 'Teammate reported'],
+    verification: ['核对结果', 'Checking'],
+    'browser-action': ['操作大屏', 'On the big screen'],
+    'owner-needed': ['需要你决定', 'Needs you'],
+    problem: ['出了点问题', 'Problem'],
+    'report-ready': ['汇报就绪', 'Report ready'],
+    complete: ['已完成', 'Done'],
+  };
+
+  function formatElapsed(ms) {
+    const total = Math.max(0, Math.floor(ms / 1000));
+    const minutes = Math.floor(total / 60);
+    const seconds = total % 60;
+    return state.language === 'zh'
+      ? (minutes > 0 ? `${minutes} 分 ${seconds} 秒` : `${seconds} 秒`)
+      : (minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`);
+  }
+
+  function updateElapsed() {
+    const elapsed = $('[data-core-elapsed]');
+    if (!elapsed) return;
+    const began = typeof state.phaseStartedAt === 'number' && state.phaseStartedAt > 0 ? state.phaseStartedAt : 0;
+    const ms = began ? Date.now() - began : 0;
+    if (ms >= 20000 && ELAPSED_FAMILIES.has(state.family)) {
+      elapsed.hidden = false;
+      elapsed.textContent = ` · ${formatElapsed(ms)}`;
+    } else {
+      elapsed.hidden = true;
+      elapsed.textContent = '';
+    }
+  }
+
   function applyState() {
     body.dataset.enabled = String(state.enabled);
     body.dataset.family = state.family;
     body.dataset.activity = window.liquidOrbActivityForFamily(state.family);
     body.dataset.topology = state.topology.mode;
     body.dataset.motion = effectiveReduced() ? 'reduced' : 'full';
+    document.documentElement.lang = state.language === 'zh' ? 'zh' : 'en';
     document.title = `${state.botName} · Live Stage`;
-    $('[data-bot-name]').textContent = `${state.botName} · Twin presence`;
-    $('[data-core-family]').textContent = state.family;
-    $('[data-core-verb]').textContent = state.family;
+    $('[data-bot-name]').textContent = state.botName;
+    const kicker = (typeof state.kicker === 'string' && state.kicker)
+      || (state.family === 'speaking' ? state.botName : '')
+      || (FAMILY_LABELS[state.family] ? tr(...FAMILY_LABELS[state.family]) : state.botName);
+    // Top-right stays a family label: while the bot speaks it says so, even
+    // though the kicker keeps showing the bot's name.
+    $('[data-core-family]').textContent = state.family === 'speaking' ? tr('说话中', 'Speaking') : kicker;
+    $('[data-core-verb]').textContent = kicker;
+    const offTitle = $('[data-stage-off-title]');
+    if (offTitle) offTitle.textContent = tr('现场已关闭', 'Live stage is off');
+    const offBody = $('[data-stage-off-body]');
+    if (offBody) offBody.textContent = tr('文字对话和最终投影仍然可用。', 'The text conversation and final projector remain available.');
     const now = performance.now();
     setTextChannel(textChannels[0], state.headline, now);
     setTextChannel(textChannels[1], state.caption, now);
+    // Headline length tiers keep a long narration readable instead of
+    // flooding the stage; the headline stays the most prominent text.
+    const headlineLength = Array.from(state.headline || '').length;
+    $('[data-core-title]').dataset.length = headlineLength <= 16 ? 'short' : headlineLength <= 40 ? 'medium' : 'long';
+    updateElapsed();
     const nodes = Object.fromEntries(state.topology.nodes.map((node) => [node.id, node]));
-    $('[data-node-source]').textContent = nodes.source?.label || 'Source';
-    $('[data-node-worker]').textContent = nodes.worker?.label || 'Worker';
-    $('[data-node-evidence]').textContent = nodes.evidence?.label || 'Evidence';
+    // Only satellite nodes that exist in the topology are shown — the model
+    // never invents source/evidence nodes for families that have none.
+    const nodeSlots = { source: $('.hybrid-source'), worker: $('.hybrid-worker'), evidence: $('.hybrid-evidence') };
+    for (const [id, element] of Object.entries(nodeSlots)) {
+      if (element) element.hidden = state.topology.mode !== 'structured' || !nodes[id];
+    }
+    $('[data-node-source]').textContent = nodes.source?.label || tr('来源', 'Source');
+    $('[data-node-worker]').textContent = nodes.worker?.label || tr('协作 Bot', 'Worker');
+    $('[data-node-evidence]').textContent = nodes.evidence?.label || tr('证据', 'Evidence');
+    const tagSource = $('[data-tag-source]');
+    if (tagSource) tagSource.textContent = tr('来源', 'source');
+    const tagWorker = $('[data-tag-worker]');
+    if (tagWorker) tagWorker.textContent = tr('协作', 'worker');
+    const tagEvidence = $('[data-tag-evidence]');
+    if (tagEvidence) tagEvidence.textContent = tr('证据', 'evidence');
     updateWorkerVisual(nodes.worker);
-    const metrics = state.metrics;
-    $('[data-director-metrics]').textContent = metrics.directorEnabled
-      ? `Director ${metrics.directorCalls} calls · ${metrics.inputTokens + metrics.outputTokens} tokens${metrics.fallbackCount ? ` · ${metrics.fallbackCount} fallback` : ''}`
-      : '';
+    // Director metrics stay in state for diagnostics; they are never owner copy.
+    const metricsEl = $('[data-director-metrics]');
+    if (metricsEl) {
+      metricsEl.textContent = '';
+      metricsEl.hidden = true;
+    }
     updateParticipants();
     syncOrb(state.family);
     syncHandoff();
@@ -727,13 +829,74 @@
     restartParticles();
   }
 
+  // While the bot is speaking, working-family updates are held until the
+  // words finish typing (+2.5 s dwell, capped 9 s after speech began) so the
+  // narration is never cut off mid-line. Terminal/owner scenes always apply
+  // immediately, and only the latest held patch is kept.
+  const HELD_IMMEDIATE = new Set(['speaking', 'owner-needed', 'problem', 'report-ready', 'complete']);
+  let heldPatch = null;
+  let heldTimer = 0;
+
+  function speechReleaseAt() {
+    const began = typeof state.phaseStartedAt === 'number' && state.phaseStartedAt > 0 ? state.phaseStartedAt : Date.now();
+    const cap = began + 9000;
+    let lastDone = 0;
+    let typing = false;
+    for (const channel of textChannels) {
+      if (channel.typing) typing = true;
+      if (channel.doneAt > lastDone) lastDone = channel.doneAt;
+    }
+    if (typing) return cap;
+    return Math.min(Math.max(lastDone, began) + 2500, cap);
+  }
+
+  function stopHeldRelease() {
+    if (heldTimer) {
+      clearInterval(heldTimer);
+      heldTimer = 0;
+    }
+  }
+
+  function commitStagePatch(patch) {
+    state = patch;
+    try { sessionStorage.setItem(storageKey, JSON.stringify(state)); } catch { /* history still works in memory */ }
+    applyState();
+  }
+
+  function applyHeldPatch() {
+    const patch = heldPatch;
+    heldPatch = null;
+    stopHeldRelease();
+    if (patch) commitStagePatch(patch);
+  }
+
+  function heldTick() {
+    if (!heldPatch) {
+      stopHeldRelease();
+      return;
+    }
+    if (Date.now() >= speechReleaseAt()) applyHeldPatch();
+  }
+
+  function armHeldRelease() {
+    if (heldTimer) return;
+    heldTimer = setInterval(heldTick, 250);
+  }
+
   window.IDBotsLiveStage = {
     applyPatch(patch) {
-      if (!patch || patch.protocol !== initial.protocol || patch.sessionId !== initial.sessionId || patch.turnId !== initial.turnId) return false;
-      if (typeof patch.revision !== 'number' || patch.revision <= state.revision) return false;
-      state = patch;
-      try { sessionStorage.setItem(storageKey, JSON.stringify(state)); } catch { /* history still works in memory */ }
-      applyState();
+      if (!patch || typeof patch !== 'object') return { ok: false, reason: 'protocol' };
+      if (patch.protocol !== initial.protocol || patch.sessionId !== initial.sessionId) return { ok: false, reason: 'protocol' };
+      if (patch.turnId !== initial.turnId) return { ok: false, reason: 'turn-mismatch' };
+      if (typeof patch.revision !== 'number' || patch.revision <= state.revision) return { ok: false, reason: 'stale-revision' };
+      if (state.family === 'speaking' && !HELD_IMMEDIATE.has(patch.family)) {
+        if (!heldPatch || patch.revision > heldPatch.revision) heldPatch = patch;
+        armHeldRelease();
+        return true;
+      }
+      heldPatch = null;
+      stopHeldRelease();
+      commitStagePatch(patch);
       return true;
     },
     // Host-side pull channel: queued card clicks leave the page exactly once.
@@ -753,12 +916,15 @@
     text: textChannels.map((channel) => ({ value: channel.value, typed: channel.typed, length: channel.chars.length, typing: channel.typing })),
   });
   window.__liveStageBackend = 'loading';
+  const elapsedTimer = setInterval(updateElapsed, 1000);
   reducedMedia.addEventListener('change', applyState);
   document.addEventListener('visibilitychange', applyState);
   window.addEventListener('pagehide', () => {
     disposeAllOrbLayers();
     stopHandoff();
     stopInteractionCountdown();
+    stopHeldRelease();
+    clearInterval(elapsedTimer);
     cancelAnimationFrame(raf);
   });
   new ResizeObserver(restartParticles).observe(canvas);
