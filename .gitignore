@@ -822,6 +822,8 @@ man_base_data_pebble/
 !tests/markdownContentSingleTilde.test.tsx
 !tests/nftCardMarkdown.test.tsx
 !tests/nftCardHealService.test.mjs
+!tests/nftSwapLedger.test.mjs
+!tests/nftSwapVaultPoll.test.mjs
 !tests/walletNftCardAttach.test.mjs
 !tests/harness/
 !tests/harness/nft-card-evidence.html
