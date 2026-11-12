@@ -24,6 +24,12 @@ import {
   getMetaAppVisualModel,
 } from './metaAppPresentation.js';
 import { openMetaAppDirectory } from './metaAppLaunch.js';
+import {
+  communityRootCacheKey,
+  readCachedListPage,
+  writeCachedListPage,
+} from './metaAppListCache.js';
+import { stripImageProcessParam } from './myApps/myAppsPresentation.js';
 import MyAppsTab from './myApps/MyAppsTab';
 
 interface MetaAppsManagerProps {
@@ -50,13 +56,22 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'local' | 'myApps' | 'chainCommunity'>('chainCommunity');
   const [apps, setApps] = useState<MetaAppRecord[]>([]);
-  const [communityApps, setCommunityApps] = useState<CommunityMetaAppRecord[]>([]);
+  // Seed the community root page from the last fetched page (localStorage SWR
+  // cache) so reopening the tab renders cards instantly instead of a blank
+  // loading placeholder; a fresh fetch always revalidates in the background.
+  const [communityApps, setCommunityApps] = useState<CommunityMetaAppRecord[]>(
+    () => readCachedListPage(communityRootCacheKey())?.data?.apps ?? [],
+  );
   const [communityCursor, setCommunityCursor] = useState(COMMUNITY_ROOT_CURSOR);
   const [communityCursorStack, setCommunityCursorStack] = useState<string[]>([]);
-  const [communityNextCursor, setCommunityNextCursor] = useState<string | null>(null);
+  const [communityNextCursor, setCommunityNextCursor] = useState<string | null>(
+    () => readCachedListPage(communityRootCacheKey())?.data?.nextCursor ?? null,
+  );
   // App identity seen-set for the current cursor. Keys already shown on earlier
   // pages are sent along so stale edit versions never appear twice.
-  const [communitySeen, setCommunitySeen] = useState<string[]>([]);
+  const [communitySeen, setCommunitySeen] = useState<string[]>(
+    () => readCachedListPage(communityRootCacheKey())?.data?.seen ?? [],
+  );
   // The seen filter used when each cursor was first requested, so going back to
   // a previous page reproduces exactly the same apps.
   const seenByCursorRef = useRef<Map<string, string[]>>(new Map());
@@ -69,6 +84,10 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({
   const [runningCommunitySourcePinId, setRunningCommunitySourcePinId] = useState<string | null>(null);
   const [promptPanel, setPromptPanel] = useState<{ appName: string; prompt: string } | null>(null);
   const [copiedPrompt, setCopiedPrompt] = useState(false);
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
+  const communityCursorRef = useRef(communityCursor);
+  communityCursorRef.current = communityCursor;
 
   useEffect(() => {
     if (!promptPanel) {
@@ -114,34 +133,46 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({
     void loadApps();
     const unsubscribe = metaAppService.onMetaAppsChanged(() => {
       void loadApps();
-      if (activeTab === 'chainCommunity') {
-        void loadCommunityApps();
+      if (activeTabRef.current === 'chainCommunity') {
+        void loadCommunityApps(communityCursorRef.current);
       }
     });
 
-    async function loadCommunityApps(cursor = communityCursor) {
+    async function loadCommunityApps(cursor: string) {
       setIsCommunityLoading(true);
       setActionError('');
+      const requestSeen = seenByCursorRef.current.get(cursor) ?? [];
       try {
         const result = await metaAppService.listCommunityMetaApps({
           cursor,
           size: COMMUNITY_PAGE_SIZE,
-          seen: seenByCursorRef.current.get(cursor) ?? [],
+          seen: requestSeen,
         });
         if (!isActive) return;
         if (result.success && result.apps) {
           setCommunityApps(result.apps);
           setCommunityNextCursor(result.nextCursor || null);
           setCommunitySeen(result.seen ?? []);
+          if (cursor === COMMUNITY_ROOT_CURSOR && requestSeen.length === 0) {
+            writeCachedListPage(communityRootCacheKey(), {
+              apps: result.apps,
+              nextCursor: result.nextCursor || null,
+              seen: result.seen ?? [],
+            });
+          }
         } else {
-          setCommunityApps([]);
-          setCommunityNextCursor(null);
+          if (cursor !== COMMUNITY_ROOT_CURSOR) {
+            setCommunityApps([]);
+            setCommunityNextCursor(null);
+          }
           setActionError(result.error || i18nService.t('metaAppsLoadFailed'));
         }
       } catch (error) {
         if (!isActive) return;
-        setCommunityApps([]);
-        setCommunityNextCursor(null);
+        if (cursor !== COMMUNITY_ROOT_CURSOR) {
+          setCommunityApps([]);
+          setCommunityNextCursor(null);
+        }
         setActionError(error instanceof Error ? error.message : i18nService.t('metaAppsLoadFailed'));
       } finally {
         if (isActive) {
@@ -154,7 +185,11 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({
       isActive = false;
       unsubscribe();
     };
-  }, [activeTab, communityCursor]);
+    // Load once on mount; the onMetaAppsChanged subscription reloads the local
+    // list and the current community page (via refs) without re-running the
+    // effect on every tab switch or cursor change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (activeTab !== 'chainCommunity') {
@@ -166,26 +201,57 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({
     const loadCommunity = async () => {
       setIsCommunityLoading(true);
       setActionError('');
+      const requestSeen = seenByCursorRef.current.get(communityCursor) ?? [];
+      if (communityCursor === COMMUNITY_ROOT_CURSOR) {
+        // Stale-while-revalidate: render the last fetched root page instantly,
+        // then replace it when the fresh response lands.
+        const cached = readCachedListPage(communityRootCacheKey())?.data;
+        if (cached) {
+          setCommunityApps(Array.isArray(cached.apps) ? cached.apps : []);
+          setCommunityNextCursor(cached.nextCursor || null);
+          setCommunitySeen(Array.isArray(cached.seen) ? cached.seen : []);
+        } else {
+          setCommunityApps([]);
+          setCommunityNextCursor(null);
+        }
+      } else {
+        // Non-root pages have no cache; clear the previous page so the loading
+        // state shows instead of stale wrong-page cards.
+        setCommunityApps([]);
+        setCommunityNextCursor(null);
+      }
       try {
         const result = await metaAppService.listCommunityMetaApps({
           cursor: communityCursor,
           size: COMMUNITY_PAGE_SIZE,
-          seen: seenByCursorRef.current.get(communityCursor) ?? [],
+          seen: requestSeen,
         });
         if (!isActive) return;
         if (result.success && result.apps) {
           setCommunityApps(result.apps);
           setCommunityNextCursor(result.nextCursor || null);
           setCommunitySeen(result.seen ?? []);
+          if (communityCursor === COMMUNITY_ROOT_CURSOR && requestSeen.length === 0) {
+            writeCachedListPage(communityRootCacheKey(), {
+              apps: result.apps,
+              nextCursor: result.nextCursor || null,
+              seen: result.seen ?? [],
+            });
+          }
         } else {
-          setCommunityApps([]);
-          setCommunityNextCursor(null);
+          // Keep the seeded root page on failure so cached cards stay visible.
+          if (communityCursor !== COMMUNITY_ROOT_CURSOR) {
+            setCommunityApps([]);
+            setCommunityNextCursor(null);
+          }
           setActionError(result.error || i18nService.t('metaAppsLoadFailed'));
         }
       } catch (error) {
         if (!isActive) return;
-        setCommunityApps([]);
-        setCommunityNextCursor(null);
+        if (communityCursor !== COMMUNITY_ROOT_CURSOR) {
+          setCommunityApps([]);
+          setCommunityNextCursor(null);
+        }
         setActionError(error instanceof Error ? error.message : i18nService.t('metaAppsLoadFailed'));
       } finally {
         if (isActive) {
@@ -232,7 +298,19 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({
         <img
           src={visual.src}
           alt={app.name}
+          loading="lazy"
+          decoding="async"
           className={`h-full w-full ${visual.kind === 'cover' ? 'object-cover' : 'object-contain p-4'}`}
+          onError={(event) => {
+            // Processed variants (?process=…) can fail for pins the processor
+            // rejects; retry once against the unprocessed original.
+            const img = event.currentTarget;
+            if (img.dataset.retriedOriginal) return;
+            const original = stripImageProcessParam(img.src);
+            if (!original) return;
+            img.dataset.retriedOriginal = '1';
+            img.src = original;
+          }}
         />
       </div>
     );
@@ -264,6 +342,8 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({
         <img
           src={authorAvatarSrc}
           alt={author.name}
+          loading="lazy"
+          decoding="async"
           className="h-7 w-7 flex-shrink-0 rounded-full border border-claude-border object-cover dark:border-claude-darkBorder"
           onError={handleAvatarError}
         />
@@ -603,7 +683,9 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({
   };
 
   const renderChainCommunityTab = () => {
-    if (isCommunityLoading) {
+    // Keep cached/seeded cards visible during a background revalidation; only
+    // show the full loading placeholder when there is nothing to render.
+    if (isCommunityLoading && communityApps.length === 0) {
       return (
         <div className="py-12 text-center text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
           {i18nService.t('loading')}

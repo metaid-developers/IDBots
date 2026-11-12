@@ -429,7 +429,7 @@ const mapSearchItemToChainCandidate = (item: MetaAppSearchItem): ChainMetaAppCan
       indexFile: normalizeIndexFile(asText(item.indexFile)),
       code: asText(item.content),
       codeType: '',
-      prompt: '',
+      prompt: asText(item.prompt),
       disabled: asBoolean(item.disabled),
     },
     authorName: asText(item.publisherName) || undefined,
@@ -698,6 +698,42 @@ const findCommunityMetaAppBySourcePinId = async (
 };
 
 export const findCommunityMetaAppRecordBySourcePinId = findCommunityMetaAppBySourcePinId;
+
+// Short-lived cache for repeated per-app community lookups (metaapps:list
+// enrichment). A lookup can scan up to 100 aggregator pages, so hits and
+// misses are both cached for 10 minutes; results carrying an error are never
+// cached. Keyed by lowercase sourcePinId.
+const COMMUNITY_RECORD_LOOKUP_TTL_MS = 10 * 60 * 1000;
+const communityRecordLookupCache = new Map<string, {
+  at: number;
+  promise: Promise<{ record?: CommunityMetaAppRecord; error?: string }>;
+}>();
+
+export const findCommunityMetaAppRecordBySourcePinIdCached = (
+  input: Pick<InstallCommunityMetaAppInput, 'sourcePinId' | 'manager' | 'fetchList' | 'fetchAuthorInfo'>,
+): Promise<{ record?: CommunityMetaAppRecord; error?: string }> => {
+  const key = asText(input.sourcePinId).toLowerCase();
+  if (!key) {
+    return findCommunityMetaAppBySourcePinId(input);
+  }
+
+  const now = Date.now();
+  const cached = communityRecordLookupCache.get(key);
+  if (cached && now - cached.at < COMMUNITY_RECORD_LOOKUP_TTL_MS) {
+    return cached.promise;
+  }
+
+  const promise = findCommunityMetaAppBySourcePinId(input);
+  communityRecordLookupCache.set(key, { at: now, promise });
+  void promise.then((result) => {
+    if (result?.error) {
+      communityRecordLookupCache.delete(key);
+    }
+  }, () => {
+    communityRecordLookupCache.delete(key);
+  });
+  return promise;
+};
 
 const safeExtractZip = (buffer: Buffer, destination: string): void => {
   if (!AdmZip) {

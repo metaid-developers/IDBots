@@ -35,15 +35,15 @@ test('resolveMetaAppVisualFields maps chain metafile visuals to browser URLs wit
 
     assert.equal(
       result.icon,
-      'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/icon-pin-i0',
+      'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/icon-pin-i0?process=thumbnail',
     );
     assert.equal(
       result.cover,
-      'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/cover-pin-i0',
+      'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/cover-pin-i0?process=preview',
     );
     assert.equal(
       result.authorAvatar,
-      'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/avatar-pin-i0',
+      'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/avatar-pin-i0?process=thumbnail',
     );
     assert.equal(result.name, 'Chain App');
   } finally {
@@ -72,19 +72,46 @@ test('resolveMetaAppVisualFields strips optional metafile extensions when mappin
 
     assert.equal(
       result.icon,
-      'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/icon-pin-i0',
+      'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/icon-pin-i0?process=thumbnail',
     );
     assert.equal(
       result.cover,
-      'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/cover-pin-i0',
+      'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/cover-pin-i0?process=preview',
     );
     assert.equal(
       result.authorAvatar,
-      'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/avatar-pin-i0',
+      'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/avatar-pin-i0?process=thumbnail',
     );
   } finally {
     global.fetch = originalFetch;
   }
+});
+
+test('resolveMetaAppVisualFields never appends a process variant for svg metafile references', async () => {
+  assert.equal(typeof resolveMetaAppVisualFields, 'function', 'resolveMetaAppVisualFields() should be exported');
+
+  const result = await resolveMetaAppVisualFields(
+    {
+      name: 'Svg App',
+      icon: 'metafile://icon-pin-i0.SVG',
+      cover: 'metafile://cover-pin-i0.svg',
+      authorAvatar: 'metafile://avatar-pin-i0.svg',
+    },
+    { preferRemoteAssetUrls: true },
+  );
+
+  assert.equal(
+    result.icon,
+    'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/icon-pin-i0',
+  );
+  assert.equal(
+    result.cover,
+    'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/cover-pin-i0',
+  );
+  assert.equal(
+    result.authorAvatar,
+    'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/avatar-pin-i0',
+  );
 });
 
 test('resolveMetaAppVisualFields resolves local MetaApp cover files to data URLs', async () => {

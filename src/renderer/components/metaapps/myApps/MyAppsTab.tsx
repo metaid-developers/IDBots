@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { DocumentDuplicateIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../../services/i18n';
 import { useOwnerMetaApps } from './useOwnerMetaApps';
-import { getCardVisual, getStatePill, buildShareUrl, getOwnerEmptyState, formatRuntime } from './myAppsPresentation.js';
+import { getCardVisual, getStatePill, buildShareUrl, getOwnerEmptyState, formatRuntime, stripImageProcessParam } from './myAppsPresentation.js';
 import ChainStatusModal from './ChainStatusModal';
 import MetaAppPublishForm from './MetaAppPublishForm';
 import MetaAppDetailModal from './MetaAppDetailModal';
@@ -151,10 +151,19 @@ const MyAppsTab: React.FC<MyAppsTabProps> = ({ onRunByPin }) => {
                   className={cardCls}>
                   <div className="relative h-[126px] overflow-hidden">
                     {visual.cover ? (
-                      <img src={visual.cover} alt="" className="absolute inset-0 h-full w-full object-cover"
+                      <img src={visual.cover} alt="" loading="lazy" decoding="async"
+                        className="absolute inset-0 h-full w-full object-cover"
                         onError={(e) => {
-                          // Swap to the placeholder if the cover fails to load.
                           const el = e.currentTarget as HTMLImageElement;
+                          // Processed variants can fail for pins the processor
+                          // rejects; retry once against the original.
+                          const original = stripImageProcessParam(el.src);
+                          if (original && !el.dataset.retriedOriginal) {
+                            el.dataset.retriedOriginal = '1';
+                            el.src = original;
+                            return;
+                          }
+                          // Swap to the placeholder if the cover fails to load.
                           el.style.display = 'none';
                           const ph = el.parentElement?.querySelector('[data-cover-placeholder]') as HTMLElement | null;
                           if (ph) ph.style.display = 'flex';
@@ -174,8 +183,18 @@ const MyAppsTab: React.FC<MyAppsTabProps> = ({ onRunByPin }) => {
                     </div>
                     <div className="absolute left-2 bottom-2 h-10 w-10 rounded-lg overflow-hidden border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface flex items-center justify-center shadow-sm">
                       {visual.icon ? (
-                        <img src={visual.icon} alt="" className="h-full w-full object-cover"
-                          onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden'; }} />
+                        <img src={visual.icon} alt="" loading="lazy" decoding="async"
+                          className="h-full w-full object-cover"
+                          onError={(e) => {
+                            const el = e.currentTarget as HTMLImageElement;
+                            const original = stripImageProcessParam(el.src);
+                            if (original && !el.dataset.retriedOriginal) {
+                              el.dataset.retriedOriginal = '1';
+                              el.src = original;
+                              return;
+                            }
+                            el.style.visibility = 'hidden';
+                          }} />
                       ) : (
                         <span className="text-xs font-semibold text-claude-accent">
                           {(record.appName || 'MA').slice(0, 1).toUpperCase()}

@@ -5,10 +5,12 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 let listCommunityMetaApps;
+let findCommunityMetaAppRecordBySourcePinIdCached;
 try {
-  ({ listCommunityMetaApps } = require('../dist-electron/main/services/metaAppChainService.js'));
+  ({ listCommunityMetaApps, findCommunityMetaAppRecordBySourcePinIdCached } = require('../dist-electron/main/services/metaAppChainService.js'));
 } catch {
   listCommunityMetaApps = null;
+  findCommunityMetaAppRecordBySourcePinIdCached = null;
 }
 
 function jsonResponse(payload, status = 200) {
@@ -506,4 +508,74 @@ test('listCommunityMetaApps maps the newest folded version returned by the aggre
   assert.equal(result.apps[0].sourcePinId, 'pin-current');
   assert.equal(result.apps[0].version, '2.0.0');
   assert.deepEqual(result.seen, ['idq1x::mixed-app']);
+});
+
+test('listCommunityMetaApps maps the MetaSo prompt field to the record aiPrompt', async () => {
+  assert.equal(typeof listCommunityMetaApps, 'function', 'listCommunityMetaApps() should be exported');
+
+  const result = await listCommunityMetaApps({
+    manager: { listMetaApps: () => [] },
+    size: 30,
+    fetchList: async () => [
+      metaSoItem(90, { prompt: 'Summarize this for me' }),
+    ],
+    fetchAuthorInfo: async () => null,
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.apps.length, 1);
+  assert.equal(result.apps[0].aiPrompt, 'Summarize this for me');
+});
+
+test('findCommunityMetaAppRecordBySourcePinIdCached caches hits, misses, and skips errors', async () => {
+  assert.equal(
+    typeof findCommunityMetaAppRecordBySourcePinIdCached,
+    'function',
+    'findCommunityMetaAppRecordBySourcePinIdCached() should be exported',
+  );
+
+  const manager = { listMetaApps: () => [] };
+
+  // Hit: two lookups for the same sourcePinId only fetch once.
+  let hitCalls = 0;
+  const hitItem = metaSoItem(91, { pinId: 'pin-cached-hit', publisherGlobalMetaId: 'idq1hit' });
+  const hitInput = {
+    sourcePinId: 'pin-cached-hit',
+    manager,
+    fetchList: async () => { hitCalls += 1; return [hitItem]; },
+    fetchAuthorInfo: async () => null,
+  };
+  const firstHit = await findCommunityMetaAppRecordBySourcePinIdCached(hitInput);
+  const secondHit = await findCommunityMetaAppRecordBySourcePinIdCached(hitInput);
+  assert.equal(firstHit.record?.sourcePinId, 'pin-cached-hit');
+  assert.equal(secondHit.record?.sourcePinId, 'pin-cached-hit');
+  assert.equal(hitCalls, 1);
+
+  // Miss: an empty result is cached too, so the second lookup does not fetch.
+  let missCalls = 0;
+  const missInput = {
+    sourcePinId: 'pin-cached-miss',
+    manager,
+    fetchList: async () => { missCalls += 1; return [metaSoItem(92)]; },
+    fetchAuthorInfo: async () => null,
+  };
+  const firstMiss = await findCommunityMetaAppRecordBySourcePinIdCached(missInput);
+  const secondMiss = await findCommunityMetaAppRecordBySourcePinIdCached(missInput);
+  assert.equal(firstMiss.record, undefined);
+  assert.equal(secondMiss.record, undefined);
+  assert.equal(missCalls, 1);
+
+  // Error: results carrying an error are not cached, so the next lookup retries.
+  let errorCalls = 0;
+  const errorInput = {
+    sourcePinId: 'pin-cached-error',
+    manager,
+    fetchList: async () => { errorCalls += 1; throw new Error('aggregator down'); },
+    fetchAuthorInfo: async () => null,
+  };
+  const firstError = await findCommunityMetaAppRecordBySourcePinIdCached(errorInput);
+  const secondError = await findCommunityMetaAppRecordBySourcePinIdCached(errorInput);
+  assert.match(firstError.error || '', /aggregator down/);
+  assert.match(secondError.error || '', /aggregator down/);
+  assert.equal(errorCalls, 2);
 });

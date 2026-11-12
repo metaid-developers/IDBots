@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { metaAppOwnerService } from '../../../services/metaAppOwner';
 import type { MetaAppManifestInput, OwnerMetaAppRecord } from '../../../types/metaAppOwner';
+import { ownerRootCacheKey, readCachedListPage, writeCachedListPage } from '../metaAppListCache.js';
 
 const PAGE_SIZE = 12;
 
@@ -64,20 +65,42 @@ export function useOwnerMetaApps() {
     const token = ++loadingToken.current;
     setLoading(true);
     setNotice('');
+    // Stale-while-revalidate on the root page: seed from the last fetched page
+    // so the tab renders instantly, then replace it when the fresh list lands.
+    let seededFromCache = false;
+    if (pageCursor === '') {
+      const cached = readCachedListPage(ownerRootCacheKey(metabotId))?.data;
+      if (cached && Array.isArray(cached.records)) {
+        setRecords(cached.records);
+        setNextCursor(cached.nextCursor || '');
+        seededFromCache = true;
+      }
+    }
     try {
       const result = await metaAppOwnerService.list({ metabotId, cursor: pageCursor, size: PAGE_SIZE });
       if (token !== loadingToken.current) return;
       if (result.success) {
         setRecords(result.records);
         setNextCursor(result.nextCursor);
+        if (pageCursor === '') {
+          writeCachedListPage(ownerRootCacheKey(metabotId), {
+            records: result.records,
+            nextCursor: result.nextCursor,
+          });
+        }
       } else {
-        setRecords([]);
-        setNextCursor('');
+        // Keep seeded records visible when the refresh fails.
+        if (!seededFromCache) {
+          setRecords([]);
+          setNextCursor('');
+        }
         setNotice(result.error || 'Failed to load MetaApps');
       }
     } catch (err) {
       if (token !== loadingToken.current) return;
-      setRecords([]);
+      if (!seededFromCache) {
+        setRecords([]);
+      }
       setNotice(err instanceof Error ? err.message : 'Failed to load MetaApps');
     } finally {
       if (token === loadingToken.current) setLoading(false);
