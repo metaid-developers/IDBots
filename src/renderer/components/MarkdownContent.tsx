@@ -158,18 +158,18 @@ const SYNTAX_HIGHLIGHTER_STYLE = {
   fontSize: '11px',
   lineHeight: '19px',
 };
-const SAFE_URL_PROTOCOLS = new Set(['http', 'https', 'mailto', 'tel', 'file', 'metaid', 'metaapp', 'map', 'metafile', 'pin', 'preview-metaapp', 'idbots']);
+const SAFE_URL_PROTOCOLS = new Set(['http', 'https', 'mailto', 'tel', 'file', 'metaid', 'metaapp', 'map', 'metafile', 'pin', 'preview-metaapp', 'preview-file', 'idbots']);
 
 /** Local .html/.htm links render as report cards in assistant chat mode. */
 const HTML_FILE_RE = /\.html?$/i;
 
-const BOT_BROWSER_URI_PROTOCOL_RE = /^(metaid|metaapp|map|metafile|pin|preview-metaapp):/i;
+const BOT_BROWSER_URI_PROTOCOL_RE = /^(metaid|metaapp|map|metafile|pin|preview-metaapp|preview-file):/i;
 
 /** Whether an href points into the Bot Browser (metaid://, metaapp://, …) rather than the external browser. */
 export const isBotBrowserUri = (href: string): boolean => BOT_BROWSER_URI_PROTOCOL_RE.test(href.trim());
 
-const AGENT_INTERNET_URI_RE = /\b(?:metaid|metaapp|map|metafile|pin|preview-metaapp|idbots):\/\/[A-Za-z0-9][A-Za-z0-9._~%/@-]*/gi;
-const AGENT_INTERNET_URI_HINT_RE = /(?:metaid|metaapp|map|metafile|pin|preview-metaapp|idbots):\/\//i;
+const AGENT_INTERNET_URI_RE = /\b(?:metaid|metaapp|map|metafile|pin|preview-metaapp|preview-file|idbots):\/\/[A-Za-z0-9][A-Za-z0-9._~%/@-]*/gi;
+const AGENT_INTERNET_URI_HINT_RE = /(?:metaid|metaapp|map|metafile|pin|preview-metaapp|preview-file|idbots):\/\//i;
 const CODE_SEGMENT_RE = /(```[\s\S]*?```|`[^`\n]*`)/g;
 const TRAILING_URI_PUNCTUATION_RE = /[.,;:!?]+$/;
 /**

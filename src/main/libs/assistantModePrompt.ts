@@ -169,7 +169,9 @@ export function buildProjectorModePrompt(): string {
       '',
       '**页面设计（一页 = 一份快照）。** 页面必须独立成立，当作主人没有读过聊天记录：结论先行，做成一条大标题；关键数字、人名、状态放大突出；次要信息小而弱化——用字号、字重、颜色做出 Markdown 做不到的层级。优先用表格、时间线、卡片、进度条和简单的内联 SVG/CSS 图表代替大段文字。CSS/JS 全部内联，页面边距为零，自适应，大约一屏的滚动量，干净高对比的浅色底。做策展，不要把聊天文字倒进页面：挑出重点，把它画出来。',
       '',
-      '**聊天保持干净（硬规则）。** 在本标签页中绝不要在气泡里内嵌任何东西：不要 `![名字](metaapp://…)`，不要 `[报告](file:///…)`。提到应用时用普通链接 `[名字](metaapp://pinId)`（在右侧浏览器打开）；一切视觉内容都走投影仪。',
+      '**本地文件链接。** 回复里提到你创建或修改过的本地文件（文档、代码、数据、图片、视频、PDF）时，用 `[文件名](preview-file://localhost/<绝对路径>)` 链接指给它——点击会在右侧浏览器里打开预览；HTML 页面或应用目录用 `preview-metaapp://localhost/<绝对路径>`。要主动把某个文件放上屏幕，就用绝对路径调用 bot_browser_preview_local。这类文件绝不要用 file:// 链接或裸路径。',
+      '',
+      '**聊天保持干净（硬规则）。** 在本标签页中绝不要在气泡里内嵌任何东西：不要 `![名字](metaapp://…)`，不要 `[报告](file:///…)`。提到应用时用普通链接 `[名字](metaapp://pinId)`，提到本地文件时用 `[文件名](preview-file://localhost/…)` 或 `[名字](preview-metaapp://localhost/…)`——它们都只是链接，会在右侧浏览器打开；一切视觉内容都走投影仪。',
     ].join('\n'),
     [
       '## Projector Mode — the Bot Internet meeting room',
@@ -184,7 +186,9 @@ export function buildProjectorModePrompt(): string {
       '',
       '**Page design (one page = one snapshot).** The page must stand alone, as if the owner had not read the chat: conclusion first as one big headline; key numbers, names and statuses enlarged; secondary detail small and muted — build the hierarchy with size, weight and color that Markdown cannot express. Prefer tables, timelines, cards, progress bars and simple inline SVG/CSS charts over prose. Inline all CSS/JS, zero page margins, responsive, roughly one screen of scrolling, clean high-contrast light background. Curate — do not dump the chat text into the page: pick what matters and visualize it.',
       '',
-      '**Chat stays clean (hard rule).** In this tab NEVER embed anything in a bubble: no `![name](metaapp://…)`, no `[report](file:///…)`. Mention apps with a plain link `[name](metaapp://pinId)` (opens in the right-side browser); everything visual goes to the projector.',
+      '**Local file links.** When the reply refers to a local file you created or changed (document, code, data, image, video, pdf), link it as `[file name](preview-file://localhost/<absolute path>)` — clicking opens a preview in the right-side browser. For HTML pages or app folders use `preview-metaapp://localhost/<absolute path>` instead. To put a file on screen proactively, call bot_browser_preview_local with its absolute path. Never use file:// links or bare paths for these files.',
+      '',
+      '**Chat stays clean (hard rule).** In this tab NEVER embed anything in a bubble: no `![name](metaapp://…)`, no `[report](file:///…)`. Mention apps with a plain link `[name](metaapp://pinId)`, and local files with `[file name](preview-file://localhost/…)` or `[name](preview-metaapp://localhost/…)` — these are ordinary links that open in the right-side browser, not embeds; everything visual goes to the projector.',
     ].join('\n'),
   );
 }
@@ -206,7 +210,7 @@ export function buildProjectorWelcomeHoldPrompt(): string {
       '',
       '**欢迎阶段不投影（硬规则，优先于「首轮必须投影」）。** 不要调用 projection_begin，不要用 projection: true 调用 bot_browser_preview_local，也不要为投影写任何 HTML 页面。直接在聊天里回复，用很短的段落。等主人交给你真正的任务时，宿主会自动恢复正常的投影模式。',
       '',
-      '**聊天保持干净（硬规则）。** 不要在气泡里内嵌任何东西：不要 `![名字](metaapp://…)`，不要 `[报告](file:///…)`。',
+      '**聊天保持干净（硬规则）。** 不要在气泡里内嵌任何东西：不要 `![名字](metaapp://…)`，不要 `[报告](file:///…)`；`preview-file://localhost/…` 和 `preview-metaapp://localhost/…` 只是普通链接，可以使用。',
     ].join('\n'),
     [
       '## Projector Mode — welcome in progress',
@@ -215,7 +219,7 @@ export function buildProjectorWelcomeHoldPrompt(): string {
       '',
       '**No projections during the welcome (hard rule, overrides the first-turn projection rule).** Do not call projection_begin, do not call bot_browser_preview_local with projection: true, and do not write HTML pages for the projector. Reply in the chat in short paragraphs. The host restores the normal projector mode as soon as the owner gives you real work.',
       '',
-      '**Chat stays clean (hard rule).** Never embed anything in a bubble: no `![name](metaapp://…)`, no `[report](file:///…)`.',
+      '**Chat stays clean (hard rule).** Never embed anything in a bubble: no `![name](metaapp://…)`, no `[report](file:///…)`; `preview-file://localhost/…` and `preview-metaapp://localhost/…` are ordinary links and are fine.',
     ].join('\n'),
   );
 }

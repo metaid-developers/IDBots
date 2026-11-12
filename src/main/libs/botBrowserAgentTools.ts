@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
+import { classifyLocalFile } from '@openagentinternet/agent-browser-core';
 import { truncateUtf16Units } from './llmSafeText';
 import { parseMetaAppPinIdFromUri } from '../services/botBrowserMetaAppForkService';
 import { readRendererFromEnvelope } from '../services/botBrowserSourceLocator';
@@ -149,6 +150,20 @@ type SdkToolFactory = (
 ) => unknown;
 
 const SURFACE_HINT = 'The Bot Browser surface may not be open; ask the user to switch to Bot Browser mode.';
+
+const HTML_FILE_RE = /\.html?$/iu;
+
+/**
+ * Percent-encode every path segment so spaces, '#', '?' and non-ASCII
+ * survive URI parsing. The Windows drive segment keeps its literal ':' —
+ * preview URIs use the /C:/x/y drive form.
+ */
+function encodeLocalPreviewPath(localPath: string): string {
+  return localPath.split('/').map((segment) => {
+    if (/^[A-Za-z]:$/u.test(segment)) return segment;
+    return encodeURIComponent(segment);
+  }).join('/');
+}
 
 function textResult(text: string, isError = false) {
   return {
@@ -475,7 +490,7 @@ export function buildBotBrowserAgentTools(deps: {
 
   const botBrowserOpenUri = tool(
     'bot_browser_open_uri',
-    'Navigate the Bot Browser to a URI: metaid://<globalMetaId> for an Agent homepage, metaapp://<pinId> for a MetaApp, map:// or metafile:// resources. By default the active tab navigates; set newTab=true to open in a new tab instead. Use this when the user asks to open or view a specific Agent, app, or on-chain page. When NOT to use: to preview a LOCAL app you are building use bot_browser_preview_local (preview-metaapp://); to discover an app by intent before opening it, use search_metaapps first; and in an assistant-mode owner chat, when the owner should use a MetaApp right inside the conversation, do not call this tool — embed the app in your reply with markdown image syntax `![app name](metaapp://<pinId>)` (it renders inline and signs as you).',
+    'Navigate the Bot Browser to a URI: metaid://<globalMetaId> for an Agent homepage, metaapp://<pinId> for a MetaApp, map:// or metafile:// resources. By default the active tab navigates; set newTab=true to open in a new tab instead. Use this when the user asks to open or view a specific Agent, app, or on-chain page. When NOT to use: to preview a LOCAL app or document you are building use bot_browser_preview_local (preview-metaapp:// for apps/HTML, preview-file:// for documents like markdown, code, pdf, images, video, audio); to discover an app by intent before opening it, use search_metaapps first; and in an assistant-mode owner chat, when the owner should use a MetaApp right inside the conversation, do not call this tool — embed the app in your reply with markdown image syntax `![app name](metaapp://<pinId>)` (it renders inline and signs as you).',
     {
       uri: z.string().min(1),
       newTab: z.boolean().optional(),
@@ -497,7 +512,7 @@ export function buildBotBrowserAgentTools(deps: {
 
   const botBrowserPreviewLocal = tool(
     'bot_browser_preview_local',
-    'Preview a local HTML app (directory containing index.html, or a single html/pdf/image/video/audio file) in the Bot Browser via preview-metaapp://. Use this to preview a MetaApp you are building or editing locally BEFORE publishing it on-chain. Requires an absolute path. The preview reads live from disk, so the user can reload to see your latest edits. With projection=true, this is a BOT INTERNET PROJECTOR call: the file becomes the session\'s projected report page and the projector tab is automatically revealed (the owner can go Back through previous pages). When NOT to use: to open an already-published ON-CHAIN app use bot_browser_open_uri with metaapp://<pinId>; this tool is only for local files/directories, and it always needs an absolute path.',
+    'Preview a local app or document in the Bot Browser: a runnable app (directory containing index.html) or a single HTML page opens via preview-metaapp://, and documents — markdown, text, source code, csv, pdf, images, video, audio — open via preview-file:// inside the right-side Bot Browser tab. Use this to preview a MetaApp you are building or editing locally BEFORE publishing it on-chain, or to show the user a file you just created or changed. Requires an absolute path. The preview reads live from disk, so the user can reload to see your latest edits. With projection=true, this is a BOT INTERNET PROJECTOR call: the file becomes the session\'s projected report page and the projector tab is automatically revealed (the owner can go Back through previous pages); projection pages must be self-contained HTML. When NOT to use: to open an already-published ON-CHAIN app use bot_browser_open_uri with metaapp://<pinId>; this tool is only for local files/directories, and it always needs an absolute path.',
     {
       path: z.string().min(1),
       newTab: z.boolean().optional(),
@@ -511,12 +526,27 @@ export function buildBotBrowserAgentTools(deps: {
       if (!localPath.startsWith('/')) {
         return textResult(`bot_browser_preview_local requires an absolute path, got: ${localPath}`, true);
       }
+      let stats: fs.Stats;
       try {
-        await fs.promises.stat(localPath);
+        stats = await fs.promises.stat(localPath);
       } catch {
         return textResult(`Local path not found: ${localPath}`, true);
       }
-      const uri = `preview-metaapp://localhost${localPath}`;
+      const isDirectoryPath = stats.isDirectory();
+      const isHtmlFile = !isDirectoryPath && HTML_FILE_RE.test(localPath);
+      if (args.projection === true && !isDirectoryPath && !isHtmlFile) {
+        return textResult('Projection pages must be self-contained HTML: write the report as a single .html file (or an app directory with index.html) and call bot_browser_preview_local again with projection=true on that path.', true);
+      }
+      let uri: string;
+      if (isDirectoryPath || isHtmlFile) {
+        uri = `preview-metaapp://localhost${encodeLocalPreviewPath(localPath)}`;
+      } else {
+        const fileClass = classifyLocalFile(localPath);
+        if (fileClass.kind === 'unsupported') {
+          return textResult(`Cannot preview ${localPath} in the Bot Browser: the "${path.extname(localPath) || 'extensionless'}" file type is not previewable. Convert it to markdown, HTML, or PDF first.`, true);
+        }
+        uri = `preview-file://localhost${encodeLocalPreviewPath(localPath)}`;
+      }
       if (args.projection === true) {
         if (!controlBotBrowser.projectReport) {
           return textResult('Projection is not available in this host; the preview opened as an ordinary preview instead.', true);
@@ -757,7 +787,7 @@ export function buildBotBrowserScreenshotTool(deps: {
       'bot_browser_screenshot',
       [
         'Screenshot the active Bot Browser tab as an inline image; use for visual/layout checks, NOT reading text (use bot_browser_read_page).',
-        '`uri` (metaapp://<pinId>, metaid://<globalMetaId>, preview-metaapp://) navigates first, `tabId` switches first; then it waits briefly for paint (`waitMs` 0–10000 overrides).',
+        '`uri` (metaapp://<pinId>, metaid://<globalMetaId>, preview-metaapp://, preview-file://) navigates first, `tabId` switches first; then it waits briefly for paint (`waitMs` 0–10000 overrides).',
         '`clip` ({x,y,width,height}, CSS px) crops the target (content area; whole surface if fullSurface=true).',
         '`format` png default, jpeg smaller; `quality` 0–100 (default 80, png ignores). Absolute `savePath` also saves to disk.',
         'Captures are auto-downscaled to 2000px per side max so they always fit the on-chain attachment limits; use `clip` for fine detail.',

@@ -6,6 +6,7 @@ import MarkdownContent from '../../components/MarkdownContent';
 import CoworkPromptInput, { type CoworkPromptInputRef } from '../../components/cowork/CoworkPromptInput';
 import { UserMessageBody } from '../../components/cowork/UserAttachmentBody';
 import { resolveLocalPathAgainstCwd, type LocalFilePathResolver } from '../../utils/localPath';
+import { buildLocalPreviewUri } from './localPreviewUri';
 import { buildSessionComposerCommands } from '../../components/cowork/composerCommandCatalog';
 import FolderSelectorPopover from '../../components/cowork/FolderSelectorPopover';
 import type { MetaBotForSelector } from '../../components/cowork/MetaBotSelector';
@@ -81,6 +82,8 @@ export const PanelMessage: React.FC<{
   onOpenUri: (uri: string) => void;
   isAssistantMode?: boolean;
   resolveLocalFilePath?: LocalFilePathResolver;
+  /** Intercepts local file opens; a true return means the click was handled. */
+  onOpenLocalFile?: (filePath: string, event: React.MouseEvent) => boolean | void;
   /** Meta-line stamp, pre-formatted (`HH:mm` / `MM-DD HH:mm`, '' = omit). */
   timestampLabel?: string;
   /**
@@ -109,6 +112,7 @@ export const PanelMessage: React.FC<{
   onOpenUri,
   isAssistantMode = false,
   resolveLocalFilePath,
+  onOpenLocalFile,
   timestampLabel,
   // showTimestamp stays in the contract but is deliberately NOT destructured:
   // stamp decisions ride timestampLabel alone (the parent gates it with the
@@ -217,7 +221,14 @@ export const PanelMessage: React.FC<{
           onContextMenu={handleBubbleContextMenu}
           className="assistant-bubble w-fit max-w-[92%] rounded-[22px] px-[16px] py-[10px] text-[13px] leading-5 dark:text-claude-darkText text-claude-text shadow-subtle [&_h1]:text-sm [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h2]:text-[13px] [&_h2]:mt-2.5 [&_h2]:mb-1 [&_h3]:text-[13px] [&_h3]:mt-2 [&_h3]:mb-1 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:break-all [&_a]:break-all"
         >
-          <MarkdownContent content={message.content} compact onOpenBotBrowserUri={onOpenUri} emojiImages />
+          <MarkdownContent
+            content={message.content}
+            compact
+            onOpenBotBrowserUri={onOpenUri}
+            resolveLocalFilePath={resolveLocalFilePath}
+            onOpenLocalFile={onOpenLocalFile}
+            emojiImages
+          />
           {bubbleFooter}
         </div>
       </div>
@@ -226,7 +237,14 @@ export const PanelMessage: React.FC<{
   return (
     <div data-panel-message-id={message.id} className="flex min-w-0 flex-col items-start text-[13px] leading-5 dark:text-claude-darkText text-claude-text [&_h1]:text-sm [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h2]:text-[13px] [&_h2]:mt-2.5 [&_h2]:mb-1 [&_h3]:text-[13px] [&_h3]:mt-2 [&_h3]:mb-1 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:break-all [&_a]:break-all">
       <div onContextMenu={handleBubbleContextMenu} className="min-w-0">
-        <MarkdownContent content={message.content} compact onOpenBotBrowserUri={onOpenUri} emojiImages />
+        <MarkdownContent
+          content={message.content}
+          compact
+          onOpenBotBrowserUri={onOpenUri}
+          resolveLocalFilePath={resolveLocalFilePath}
+          onOpenLocalFile={onOpenLocalFile}
+          emojiImages
+        />
         {bubbleFooter}
       </div>
     </div>
@@ -773,6 +791,18 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     window.dispatchEvent(new CustomEvent('botBrowser:openUri', { detail: { uri } }));
   }, []);
 
+  // Studio panel only: local file links the bot produces open inside the
+  // right-side Bot Browser tab instead of a system download/external app —
+  // preview-metaapp for app folders and HTML pages, preview-file for every
+  // other previewable document. Unpreviewable types return false so the
+  // shared markdown link keeps its shell.openPath fallback.
+  const handleOpenLocalFile = useCallback((filePath: string) => {
+    const uri = buildLocalPreviewUri(filePath);
+    if (!uri) return false;
+    window.dispatchEvent(new CustomEvent('botBrowser:openUri', { detail: { uri, newTab: true } }));
+    return true;
+  }, []);
+
   // Attachment paths in the panel resolve exactly like the main transcript's:
   // against the session cwd, with sandbox guest paths mapped back to it. No
   // session cwd = no resolver — the splitter's own absolute-path fallback still
@@ -798,6 +828,7 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
       onOpenUri={handleOpenUri}
       isAssistantMode={isAssistantMode}
       resolveLocalFilePath={resolveLocalFilePath}
+      onOpenLocalFile={handleOpenLocalFile}
       // Same-day `HH:mm`, older days `MM-DD HH:mm` (computed at render,
       // local time) — inside the bubble's bottom-right corner, assistant
       // group-end rows only (owner ruling 2026-11-11 14:07). An empty or

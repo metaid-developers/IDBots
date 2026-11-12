@@ -2,6 +2,7 @@ import {
   applyBrowserSettingsUpdate,
   browserCommandFailed,
   browserCommandSuccess,
+  classifyLocalFile,
   createBrowserSettingsSnapshot,
   createDefaultBrowserConfig,
   fetchBotProfileInfo,
@@ -53,10 +54,16 @@ export interface CreateBotBrowserHostServiceInput {
   resolveMetaAppPin?: (pinId: string) => Promise<CoreBrowserCommandResult<MetaAppGalleryRecord>>;
   installCommunityMetaApp?: (sourcePinId: string) => Promise<CommunityMetaAppInstallResult>;
   resolveMetaAppUrl: (app: MetaAppRecord) => Promise<string>;
-  /** Serves an arbitrary local directory/file for preview-metaapp://localhost resolution. */
+  /**
+   * Serves an arbitrary local directory/file for preview-metaapp://localhost
+   * and preview-file://localhost resolution. `viewer` marks a preview-file
+   * session whose index file must be rendered as the local-file viewer
+   * document instead of being served raw.
+   */
   createLocalPreviewSession?: (input: {
     artifactDir: string;
     indexFile: string;
+    viewer?: boolean;
   }) => Promise<{ previewId: string; localPreviewUrl: string }>;
   /**
    * On-chain Q&A (feat/metaweb-qa phase 3): probe whether a pinId is an
@@ -196,6 +203,9 @@ function createInitialBrowserConfig(): BrowserConfigContainer {
     browser: {
       ...createDefaultBrowserConfig(),
       localMode: true,
+      // IDBots is a local desktop host: preview-file://localhost reads the
+      // owner's own files for in-tab previews, so the host opts in.
+      enablePreviewFile: true,
     },
   };
 }
@@ -276,6 +286,7 @@ function ensureLocalBrowserConfig(config: BrowserConfigContainer): BrowserConfig
     browser: {
       ...(config.browser ?? {}),
       localMode: true,
+      enablePreviewFile: true,
     },
   };
 }
@@ -522,22 +533,6 @@ function createNameAliasProviders(input: {
   });
 }
 
-const PREVIEW_CONTENT_TYPES: Record<string, string> = {
-  '.html': 'text/html',
-  '.htm': 'text/html',
-  '.pdf': 'application/pdf',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.svg': 'image/svg+xml',
-  '.webp': 'image/webp',
-  '.mp4': 'video/mp4',
-  '.webm': 'video/webm',
-  '.mp3': 'audio/mpeg',
-  '.wav': 'audio/wav',
-};
-
 /**
  * preview-metaapp://localhost resolution: stat the path, resolve the entry
  * file, and hand the directory to the host's local preview session factory.
@@ -562,6 +557,7 @@ async function resolveLocalPreviewPath(
 
   let artifactDir: string;
   let indexFile: string;
+  let contentType: string;
   if (stats.isDirectory()) {
     const candidates = ['index.html', 'index.htm'];
     const found = await Promise.all(
@@ -579,14 +575,62 @@ async function resolveLocalPreviewPath(
       throw new Error(`No index.html found in directory: ${localPath}`);
     }
     artifactDir = localPath;
+    contentType = 'text/html';
   } else {
     artifactDir = path.dirname(localPath);
     indexFile = path.basename(localPath);
+    // classifyLocalFile covers the whole previewable surface (md/pdf/media/…),
+    // so a single file preview resolves its real MIME instead of the former
+    // 'text/html' fallback that pushed unknown types into html-iframe.
+    contentType = classifyLocalFile(indexFile).contentType;
   }
 
   const session = await input.createLocalPreviewSession({ artifactDir, indexFile });
-  const contentType = PREVIEW_CONTENT_TYPES[path.extname(indexFile).toLowerCase()] || 'text/html';
   return { previewId: session.previewId, localPreviewUrl: session.localPreviewUrl, contentType };
+}
+
+/**
+ * preview-file://localhost resolution: stat the file, classify it, and hand
+ * it to the same local preview session pipeline as preview-metaapp — flagged
+ * `viewer` for viewer kinds (markdown/text/code/csv) so the preview server
+ * renders the sanitized viewer document instead of the raw bytes. Mirrors
+ * the ABC standalone host's resolveLocalFilePreviewPath.
+ */
+async function resolveLocalFilePreviewPath(
+  input: CreateBotBrowserHostServiceInput,
+  localPath: string,
+): Promise<{ previewId: string; localPreviewUrl: string; contentType: string }> {
+  if (!input.createLocalPreviewSession) {
+    throw new Error('Local preview is not supported by this host.');
+  }
+  let filePath = localPath;
+  // Windows drive form: /C:/x/y -> C:/x/y
+  if (process.platform === 'win32' && /^\/[A-Za-z]:[\/]/.test(filePath)) {
+    filePath = filePath.slice(1);
+  }
+  let stats: fs.Stats;
+  try {
+    stats = await fs.promises.stat(filePath);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code === 'ENOENT') throw new Error(`Local path not found: ${filePath}`);
+    if (code === 'EACCES') throw new Error(`Permission denied: ${filePath}`);
+    throw error;
+  }
+  if (stats.isDirectory()) {
+    throw new Error('preview-file needs a file path; use preview-metaapp:// for directories.');
+  }
+
+  const fileClass = classifyLocalFile(filePath);
+  const session = await input.createLocalPreviewSession({
+    artifactDir: path.dirname(filePath),
+    indexFile: path.basename(filePath),
+    ...(fileClass.viewer ? { viewer: true } : {}),
+  });
+  const localPreviewUrl = fileClass.viewer
+    ? `${session.localPreviewUrl}?abc-viewer=1`
+    : session.localPreviewUrl;
+  return { previewId: session.previewId, localPreviewUrl, contentType: fileClass.contentType };
 }
 
 export function createBotBrowserHostService(
@@ -662,6 +706,8 @@ export function createBotBrowserHostService(
           ? {
             previewMetaAppLocalResolve: ({ path: localPath }: { path: string }) =>
               resolveLocalPreviewPath(input, localPath),
+            previewFileLocalResolve: ({ path: localPath }: { path: string }) =>
+              resolveLocalFilePreviewPath(input, localPath),
           }
           : {}),
       });

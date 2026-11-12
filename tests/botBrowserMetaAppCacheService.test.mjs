@@ -732,3 +732,100 @@ test('MetaApp preview origin falls back to an ephemeral port when all fixed cand
     blockerB.close();
   }
 });
+
+test('local preview viewer sessions render the file viewer document with CSP', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'idbots-preview-viewer-'));
+  await writeFile(path.join(dir, 'note.md'), '# Title\n\nbody with ![img](img.png)', 'utf8');
+  await writeFile(path.join(dir, 'img.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+  const service = createBotBrowserMetaAppCacheService({
+    cacheRoot: path.join(dir, 'cache'),
+    previewPortCandidates: [0],
+  });
+  try {
+    const session = await service.createLocalPreviewSession({ artifactDir: dir, indexFile: 'note.md', viewer: true });
+
+    const viewerResponse = await fetch(`${session.localPreviewUrl}?abc-viewer=1`);
+    assert.equal(viewerResponse.status, 200);
+    assert.match(viewerResponse.headers.get('content-type') ?? '', /^text\/html; charset=utf-8/);
+    assert.equal(
+      viewerResponse.headers.get('content-security-policy'),
+      "default-src 'none'; img-src 'self' data: blob: http: https:; media-src 'self'; style-src 'unsafe-inline'",
+    );
+    const viewerHtml = await viewerResponse.text();
+    assert.match(viewerHtml, /<h1/);
+    assert.match(viewerHtml, /Title/);
+    assert.doesNotMatch(viewerHtml, /<script/);
+
+    // Without the viewer flag the index file serves raw markdown.
+    const rawResponse = await fetch(session.localPreviewUrl);
+    assert.equal(rawResponse.status, 200);
+    assert.match(rawResponse.headers.get('content-type') ?? '', /text\/markdown/);
+    assert.equal(await rawResponse.text(), '# Title\n\nbody with ![img](img.png)');
+
+    // Siblings keep serving raw with the classified MIME.
+    const imageResponse = await fetch(`${session.localPreviewUrl}?abc-viewer=1`.replace('note.md', 'img.png'));
+    assert.equal(imageResponse.status, 200);
+    assert.match(imageResponse.headers.get('content-type') ?? '', /image\/png/);
+  } finally {
+    await service.stop();
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  }
+});
+
+test('local preview streams raw files with single byte ranges', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'idbots-preview-range-'));
+  const payload = Buffer.alloc(100, 0x61);
+  await writeFile(path.join(dir, 'video.mp4'), payload);
+  const service = createBotBrowserMetaAppCacheService({
+    cacheRoot: path.join(dir, 'cache'),
+    previewPortCandidates: [0],
+  });
+  try {
+    const session = await service.createLocalPreviewSession({ artifactDir: dir, indexFile: 'video.mp4' });
+
+    const full = await fetch(session.localPreviewUrl);
+    assert.equal(full.status, 200);
+    assert.match(full.headers.get('content-type') ?? '', /video\/mp4/);
+    assert.equal(full.headers.get('accept-ranges'), 'bytes');
+    assert.equal(full.headers.get('content-length'), '100');
+    assert.equal((await full.arrayBuffer()).byteLength, 100);
+
+    const ranged = await fetch(session.localPreviewUrl, { headers: { Range: 'bytes=10-19' } });
+    assert.equal(ranged.status, 206);
+    assert.equal(ranged.headers.get('content-range'), 'bytes 10-19/100');
+    assert.equal(ranged.headers.get('accept-ranges'), 'bytes');
+    assert.equal(ranged.headers.get('content-length'), '10');
+    assert.equal((await ranged.arrayBuffer()).byteLength, 10);
+
+    const suffix = await fetch(session.localPreviewUrl, { headers: { Range: 'bytes=-5' } });
+    assert.equal(suffix.status, 206);
+    assert.equal(suffix.headers.get('content-range'), 'bytes 95-99/100');
+    assert.equal((await suffix.arrayBuffer()).byteLength, 5);
+
+    const unsatisfiable = await fetch(session.localPreviewUrl, { headers: { Range: 'bytes=200-300' } });
+    assert.equal(unsatisfiable.status, 416);
+    assert.equal(unsatisfiable.headers.get('content-range'), 'bytes */100');
+  } finally {
+    await service.stop();
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  }
+});
+
+test('local preview serves a pdf with the classified MIME', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'idbots-preview-pdf-'));
+  await writeFile(path.join(dir, 'paper.pdf'), Buffer.from('%PDF-1.4 fake', 'utf8'));
+  const service = createBotBrowserMetaAppCacheService({
+    cacheRoot: path.join(dir, 'cache'),
+    previewPortCandidates: [0],
+  });
+  try {
+    const session = await service.createLocalPreviewSession({ artifactDir: dir, indexFile: 'paper.pdf' });
+    const response = await fetch(session.localPreviewUrl);
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type') ?? '', /application\/pdf/);
+    assert.equal(await response.text(), '%PDF-1.4 fake');
+  } finally {
+    await service.stop();
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  }
+});

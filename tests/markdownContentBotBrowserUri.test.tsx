@@ -10,6 +10,7 @@ test('isBotBrowserUri recognizes agent internet schemes', () => {
   assert.equal(isBotBrowserUri('map://alias'), true);
   assert.equal(isBotBrowserUri('metafile://pin.png'), true);
   assert.equal(isBotBrowserUri('preview-metaapp://localhost/tmp/app'), true);
+  assert.equal(isBotBrowserUri('preview-file://localhost/tmp/note.md'), true);
   assert.equal(isBotBrowserUri('https://example.com'), false);
   assert.equal(isBotBrowserUri('file:///tmp/a'), false);
   assert.equal(isBotBrowserUri('javascript:alert(1)'), false);
