@@ -370,3 +370,32 @@ test('ChatScreen shows Bot activity instead of mechanical submission copy', () =
   assert.ok(!html.includes('Sending and waiting for tenant confirmation'), 'mechanical submission copy is removed');
   assert.ok(!html.includes('Sending your follow-up'), 'transport-oriented follow-up copy is removed');
 });
+
+test('positive ME after a legacy relay rejection shows service recovery, not a recharge demand', () => {
+  const error = 'Error: DSH turn failed: 官方模型服务的配额状态与您的 ME 余额不一致。错误代码：ME_ADMISSION_MISMATCH。';
+  assert.equal(quotaKindFromErrorText(error), 'relay_mismatch');
+  assert.deepEqual(
+    deriveLiveQuotaExhausted(
+      { status: 'error' },
+      { code: LLM_QUOTA_EXHAUSTED_CODE, text: error },
+      { exhausted: false, kind: null },
+    ),
+    { exhausted: true, kind: 'relay_mismatch' },
+  );
+  assert.deepEqual(
+    deriveQuotaExhaustedFromDetail(fixture('error', [{ type: 'system', content: error }])),
+    { exhausted: true, kind: 'relay_mismatch' },
+  );
+  mobileI18n.setLanguage('zh');
+  const html = renderToStaticMarkup(
+    <ChatScreen
+      chat={chatFixture({ quotaExhausted: true, quotaKind: 'relay_mismatch' })}
+      bots={[]}
+      onOpenRecharge={() => undefined}
+    />,
+  );
+  assert.ok(html.includes(t('mobile.chat.quotaServiceTitle')));
+  assert.ok(html.includes(t('mobile.chat.quotaServiceBody')));
+  assert.ok(!html.includes(t('mobile.chat.quotaTitleMe')));
+  assert.ok(!html.includes('去充值或升级套餐'));
+});

@@ -4,6 +4,8 @@
 
 Draft v0.1 change request, 2026-11-10. Origin: production incident — a user upgraded from ID.Free to ID.Scholar through the admin panel kept hitting the free tier's weekly LLM relay cap and their bots died mid-task with HTTP 429 `free_quota_exhausted`. Target project: `assist-base-service` LLM relay (`/v2/assist/llm/*`). This document is a requirements contract for the ABS team; the desktop client needs no change for it (it renders whatever the relay reports).
 
+**Follow-up (2026-11-12):** plan-sized legacy pools do not cover free-tier identities with spendable ME. The blocking ME-authoritative admission, reservation, settlement, and real-account acceptance requirements are in [`me-relay-me-admission-backend-requirements.md`](me-relay-me-admission-backend-requirements.md).
+
 ## 1. Incident
 
 1. Operator opened an ID.Scholar subscription for the user's identity via `POST /v1/admin/me/subscriptions/open` → `me_service.OpenSubscription` (`service/me_service/subscription_service.go`). `tb_me_subscription` flips active with `planId = <ID.Scholar>` and the first ME weekly entitlement is materialized.

@@ -197,33 +197,54 @@ export function extractRelayQuotaExhaustedCode(message: unknown): string | null 
 export const LLM_QUOTA_EXHAUSTED_ERROR_CODE = 'LLM_QUOTA_EXHAUSTED';
 
 /**
- * Metadata for the `cowork:stream:error` payload when the turn died on either
- * relay quota code — undefined for every other failure so the stream error
- * shape stays unchanged outside the quota case.
+ * Metadata for the `cowork:stream:error` payload for legacy quota deaths and
+ * ME-authoritative insufficiency — undefined for every other failure.
  */
 export function relayQuotaErrorMetadata(message: unknown): { errorCode: string } | undefined {
+  if (/INSUFFICIENT_ME/i.test(String(message ?? ''))) return { errorCode: 'INSUFFICIENT_ME' };
   return extractRelayQuotaExhaustedCode(message) ? { errorCode: LLM_QUOTA_EXHAUSTED_ERROR_CODE } : undefined;
 }
 
-/**
- * Transcript notice for a free-relay quota death (REQ-A-25).
- *
- * Desktop points at Settings > Models (the user's own provider key is the
- * actionable fix there). Server mode (phone) has no Settings > Models page,
- * so the notice points at recharge instead. The upstream quota code is
- * interpolated verbatim in both modes: the renderer's quota banner keys off
- * it, and tests rely on it staying machine-readable.
- */
+export const RELAY_ME_ADMISSION_MISMATCH_CODE = 'ME_ADMISSION_MISMATCH';
+
+export interface MeBalanceForQuotaNotice {
+  spendableMilli?: number;
+  autoDeductFromPersistent?: boolean;
+  weeklyGrant?: { remainingMilli?: number };
+  persistent?: { topupMilli?: number; earnedMilli?: number; bonusMilli?: number };
+}
+
+export function meBalanceSpendableMilli(balance: MeBalanceForQuotaNotice): number {
+  if (typeof balance.spendableMilli === 'number' && Number.isFinite(balance.spendableMilli)) {
+    return Math.max(0, balance.spendableMilli);
+  }
+  const grant = Math.max(0, balance.weeklyGrant?.remainingMilli ?? 0);
+  if (balance.autoDeductFromPersistent === false) return grant;
+  return grant
+    + Math.max(0, balance.persistent?.topupMilli ?? 0)
+    + Math.max(0, balance.persistent?.earnedMilli ?? 0)
+    + Math.max(0, balance.persistent?.bonusMilli ?? 0);
+}
+
+/** Server mode distinguishes an actual empty ME account from a legacy relay
+ * gate rejecting an identity whose signed ME balance is still spendable. */
 export function buildFreeRelayQuotaNotice(
   relayQuotaCode: string | null,
   serverMode: boolean,
   t: (zh: string, en: string) => string,
+  meBalance?: MeBalanceForQuotaNotice,
 ): string {
   const code = relayQuotaCode ?? 'free_quota_exhausted';
+  if (serverMode && meBalance && meBalanceSpendableMilli(meBalance) > 0) {
+    return t(
+      `（官方模型服务的配额状态与您的 ME 余额不一致，本次请求未获受理。请稍后重试，无需重复充值。错误代码：${RELAY_ME_ADMISSION_MISMATCH_CODE}。）`,
+      ` (The official model service's quota state disagrees with your ME balance, so this request was not accepted. Retry shortly; you do not need to recharge again. Error code: ${RELAY_ME_ADMISSION_MISMATCH_CODE}.)`,
+    );
+  }
   return serverMode
     ? t(
-      `（这不是配置错误：ID.Bots 免费体验额度已用完。可在「我的」页面充值继续对话。错误代码：${code}。）`,
-      ` (This is not a configuration error: the ID.Bots starter allowance is used up. Recharge on the Me page to keep chatting. Error code: ${code}.)`,
+      `（当前可用 ME 积分不足。可在「我的」页面开通套餐或充值后继续对话。错误代码：${code}。）`,
+      ` (Your currently spendable ME credits are insufficient. Subscribe or top up on the Me page to keep chatting. Error code: ${code}.)`,
     )
     : t(
       `（这不是配置错误：ID.Bots 免费体验额度已用完。请到 设置 > 模型 添加一个自己的模型服务商 API Key 即可继续对话。错误代码：${code}。）`,

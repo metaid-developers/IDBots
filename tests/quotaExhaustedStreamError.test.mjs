@@ -127,6 +127,11 @@ test('both relay codes classify as quota turn errors through the kernel QUOTA co
     assert.equal(isQuotaDshTurnError(outcome), true, `${code} must read as a quota death`);
     assert.deepEqual(relayQuotaErrorMetadata(outcome.error.message), { errorCode: 'LLM_QUOTA_EXHAUSTED' });
   }
+  assert.deepEqual(
+    relayQuotaErrorMetadata('429 {"error":{"code":"INSUFFICIENT_ME"}}'),
+    { errorCode: 'INSUFFICIENT_ME' },
+    'ME-authoritative admission keeps its native machine code',
+  );
   assert.equal(
     relayQuotaErrorMetadata('LLM request failed: 502 bad gateway'),
     undefined,
@@ -171,7 +176,35 @@ test('quota notice points at recharge in server mode and Settings > Models on de
       // nonexistent-on-mobile Settings > Models page.
       assert.ok(desktop.includes('Settings > Models') || desktop.includes('设置 > 模型'));
       assert.ok(!server.includes('Settings > Models') && !server.includes('设置 > 模型'));
-      assert.ok(server.includes('Recharge') || server.includes('充值'));
+      assert.ok(server.includes('Subscribe') || server.includes('充值') || server.includes('套餐'));
     }
   }
+});
+
+test('server quota notice does not claim a positive ME balance is exhausted', () => {
+  const zh = (z, _e) => z;
+  const en = (_z, e) => e;
+  for (const t of [zh, en]) {
+    const mismatch = buildFreeRelayQuotaNotice('free_quota_exhausted', true, t, { spendableMilli: 864429 });
+    assert.ok(mismatch.includes('ME_ADMISSION_MISMATCH'));
+    assert.ok(!mismatch.includes('免费体验额度已用完'));
+    assert.ok(!mismatch.includes('starter allowance is used up'));
+    const empty = buildFreeRelayQuotaNotice('free_quota_exhausted', true, t, {
+      weeklyGrant: { remainingMilli: 0 },
+      persistent: { topupMilli: 0, earnedMilli: 0, bonusMilli: 0 },
+    });
+    assert.ok(empty.includes('free_quota_exhausted'));
+    assert.ok(!empty.includes('ME_ADMISSION_MISMATCH'));
+  }
+  const { meBalanceSpendableMilli } = loadCompiledModule('../dist-electron/main/libs/coworkAssistantReply.js');
+  assert.equal(meBalanceSpendableMilli({
+    weeklyGrant: { remainingMilli: 0 },
+    autoDeductFromPersistent: false,
+    persistent: { topupMilli: 864429, earnedMilli: 0, bonusMilli: 0 },
+  }), 0, 'a disabled persistent-deduction switch is not spendable balance');
+  assert.equal(meBalanceSpendableMilli({
+    weeklyGrant: { remainingMilli: 0 },
+    autoDeductFromPersistent: true,
+    persistent: { topupMilli: 864429, earnedMilli: 0, bonusMilli: 0 },
+  }), 864429);
 });
