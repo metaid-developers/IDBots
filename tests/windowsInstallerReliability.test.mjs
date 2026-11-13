@@ -108,6 +108,7 @@ test('Windows updater reports a launcher failure instead of quitting into no ins
 test('NSIS relies on the default running-app flow and restores only a missing desktop shortcut', () => {
   const source = read('scripts/nsis-installer.nsh');
   assert.doesNotMatch(source, /nsExec::ExecToLog\s+'taskkill/);
+  assert.match(source, /IfFileExists "\$APPDATA\\IDBots\\idbots\.sqlite" _idbots_data_check_done 0/);
   assert.match(source, /!macro customInstall/);
   assert.match(source, /IfFileExists "\$newDesktopLink"/);
   assert.match(source, /CreateShortCut "\$newDesktopLink" "\$appExe"/);

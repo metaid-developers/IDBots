@@ -34,3 +34,10 @@ test('the WGSL contour accepts the Genesis distortion range', () => {
   assert.equal((source.match(/clamp\(amount, 0\.0, 4\.0\) \* glsContourStrength\(\)/g) ?? []).length, 2);
   assert.doesNotMatch(source, /clamp\(amount, 0\.0, 1\.0\) \* glsContourStrength\(\)/);
 });
+
+test('Genesis Stage enforces a WebGPU startup timeout so hung Windows drivers degrade to Canvas2D', () => {
+  const genesis = fs.readFileSync(path.resolve('public/genesis-stage/genesis.js'), 'utf8');
+  assert.match(genesis, /const ORB_START_TIMEOUT_MS = 6000;/);
+  assert.match(genesis, /switchToCanvas\(new Error\('WebGPU orb was not ready in time'\)\)/);
+  assert.match(genesis, /signal: abort\?\.signal/);
+});

@@ -231,3 +231,12 @@ test('particles integrate phase and follow the orb activity multiplier', () => {
   assert.match(stage, /if \(!reduced && dt > 0\)/, 'reduced motion never advances the phase');
   assert.match(stage, /particles: \{ activity: particleClock\.activity/, 'debug hook exposes the eased multiplier');
 });
+
+test('WebGPU orb compiles pipelines asynchronously and tears down late timed-out devices', () => {
+  const orb = read('liquid-orb.js');
+  const stage = read('stage.js');
+  assert.match(orb, /device\.createRenderPipelineAsync\(pipelineDescriptor\)/);
+  assert.match(orb, /const abortIfSignaled = \(\) =>/);
+  assert.match(stage, /signal: abort\?\.signal/);
+  assert.match(stage, /controller\.dispose\(!previous\?\.controller\)/);
+});

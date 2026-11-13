@@ -308,18 +308,19 @@
 
   const ORB_START_TIMEOUT_MS = 6000;
 
-  function disposeOrbLayer(layer) {
+  function disposeOrbLayer(layer, destroyDevice = false) {
     if (!layer) return;
     clearTimeout(layer.fadeTimer);
     clearTimeout(layer.startTimer);
-    layer.controller?.dispose(false);
+    layer.abort?.abort();
+    layer.controller?.dispose(destroyDevice);
     layer.canvas.remove();
     orbLayers.delete(layer);
   }
 
   function disposeAllOrbLayers() {
     const devices = new Set([...orbLayers].map((layer) => layer.controller?.getSharedResources().device).filter(Boolean));
-    orbLayers.forEach(disposeOrbLayer);
+    orbLayers.forEach((layer) => disposeOrbLayer(layer, false));
     devices.forEach((device) => device.destroy());
     orb = null;
     orbStarting = false;
@@ -366,7 +367,8 @@
     layerCanvas.dataset.orbStyle = String(style);
     layerCanvas.setAttribute('aria-hidden', 'true');
     $('.membrane').append(layerCanvas);
-    const layer = { canvas: layerCanvas, controller: null, style, family, speed: params.speed, fadeTimer: 0, startTimer: 0 };
+    const abort = typeof AbortController === 'function' ? new AbortController() : null;
+    const layer = { canvas: layerCanvas, controller: null, style, family, speed: params.speed, fadeTimer: 0, startTimer: 0, abort };
     orbLayers.add(layer);
     orb = layer;
     orbStarting = true;
@@ -380,6 +382,7 @@
       initialFamily: family,
       startPhase: Number.isFinite(previousPhase) ? previousPhase * ((previous?.speed || 1) / (params.speed || 1)) : undefined,
       sharedResources: previous?.controller?.getSharedResources(),
+      signal: abort?.signal,
       onReady: () => {
         clearTimeout(layer.startTimer);
         if (orb !== layer) return;
@@ -397,7 +400,7 @@
     }).then((controller) => {
       clearTimeout(layer.startTimer);
       if (orb !== layer) {
-        controller.dispose(false);
+        controller.dispose(!previous?.controller);
         return;
       }
       layer.controller = controller;

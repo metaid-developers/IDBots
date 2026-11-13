@@ -109,18 +109,30 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     if (!navigator.gpu) throw new Error('WebGPU is unavailable');
     const startedAt = performance.now();
     const sharedResources = options.sharedResources;
+    const signal = options.signal;
+    const ownsDevice = !sharedResources?.device;
     let device = sharedResources?.device;
+    const abortIfSignaled = () => {
+      if (!signal?.aborted) return;
+      if (ownsDevice && device) {
+        try { device.destroy(); } catch { /* already lost */ }
+      }
+      throw new Error('WebGPU startup aborted');
+    };
+    abortIfSignaled();
     if (!device) {
       const adapter = await navigator.gpu.requestAdapter();
+      abortIfSignaled();
       if (!adapter) throw new Error('No WebGPU adapter');
       if (adapter.info?.isFallbackAdapter || adapter.isFallbackAdapter) {
         throw new Error('WebGPU adapter is software fallback');
       }
       device = await adapter.requestDevice();
+      abortIfSignaled();
     }
     const context = canvas.getContext('webgpu');
     if (!context) {
-      if (!sharedResources?.device) device.destroy();
+      if (ownsDevice) device.destroy();
       throw new Error('No WebGPU canvas context');
     }
     const format = navigator.gpu.getPreferredCanvasFormat();
@@ -128,13 +140,14 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     const shader = sharedResources?.shader ?? device.createShaderModule({ code: `${window.LiquidOrbEffectSource}\n${entryPoints}` });
     if (!sharedResources?.shader) {
       const compilation = await shader.getCompilationInfo();
+      abortIfSignaled();
       const errors = compilation.messages.filter((message) => message.type === 'error');
       if (errors.length) {
-        device.destroy();
+        if (ownsDevice) device.destroy();
         throw new Error(errors.map((message) => `${message.lineNum}:${message.linePos} ${message.message}`).join('\n'));
       }
     }
-    const pipeline = sharedResources?.pipeline ?? device.createRenderPipeline({
+    const pipelineDescriptor = {
       layout: 'auto',
       vertex: { module: shader, entryPoint: 'vs_main' },
       fragment: { module: shader, entryPoint: 'fs_main', targets: [{
@@ -145,7 +158,13 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
         }
       }] },
       primitive: { topology: 'triangle-list' }
-    });
+    };
+    const pipeline = sharedResources?.pipeline ?? (
+      typeof device.createRenderPipelineAsync === 'function'
+        ? await device.createRenderPipelineAsync(pipelineDescriptor)
+        : device.createRenderPipeline(pipelineDescriptor)
+    );
+    abortIfSignaled();
     const values = new Float32Array(136);
     const uniformBuffer = device.createBuffer({ size: values.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     const bindGroup = device.createBindGroup({

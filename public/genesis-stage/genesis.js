@@ -205,9 +205,13 @@
     return { ...BASE, ...look.params };
   }
 
+  const ORB_START_TIMEOUT_MS = 6000;
+
   function disposeLayer(layer, destroyDevice = false) {
     if (!layer) return;
     clearTimeout(layer.fadeTimer);
+    clearTimeout(layer.startTimer);
+    layer.abort?.abort();
     try { layer.controller?.dispose(destroyDevice); } catch { /* already gone */ }
     layer.canvas.remove();
     orb.layers = orb.layers.filter((entry) => entry !== layer);
@@ -216,6 +220,7 @@
   function switchToCanvas(reason) {
     if (orb.backend === 'canvas') return;
     orb.failed = true;
+    orb.mounting = false;
     const devices = new Set(orb.layers.map((layer) => layer.controller?.getSharedResources?.()?.device).filter(Boolean));
     [...orb.layers].forEach((layer) => disposeLayer(layer));
     devices.forEach((device) => { try { device.destroy(); } catch { /* lost */ } });
@@ -230,7 +235,8 @@
     const canvas = el('canvas', '', { 'aria-hidden': 'true' });
     canvas.dataset.orbStyle = String(style);
     orbLayers.append(canvas);
-    const layer = { canvas, controller: null, style, fadeTimer: 0 };
+    const abort = typeof AbortController === 'function' ? new AbortController() : null;
+    const layer = { canvas, controller: null, style, fadeTimer: 0, startTimer: 0, abort };
     orb.layers.push(layer);
     orb.active = layer;
     const params = { ...orb.params, style };
@@ -258,6 +264,17 @@
       return;
     }
     orb.mounting = true;
+    layer.startTimer = setTimeout(() => {
+      if (orb.active !== layer || orb.backend === 'canvas' || layer.controller) return;
+      if (previous && orb.layers.includes(previous) && previous.controller) {
+        disposeLayer(layer, false);
+        orb.active = previous;
+        orb.mounting = false;
+        previous.canvas.dataset.active = 'true';
+        return;
+      }
+      switchToCanvas(new Error('WebGPU orb was not ready in time'));
+    }, ORB_START_TIMEOUT_MS);
     // Continue the previous layer's contour: the shader animates on
     // time × speed, so the new layer starts where the old one is.
     const previousPhase = previous?.controller?.getPhase?.();
@@ -268,12 +285,15 @@
     window.createLiquidOrbRenderer(canvas, {
       startPhase,
       sharedResources: previous?.controller?.getSharedResources?.() || undefined,
+      signal: abort?.signal,
       onReady: () => {
+        clearTimeout(layer.startTimer);
         if (orb.active !== layer || orb.backend === 'canvas') return;
         orb.backend = 'webgpu';
         reveal();
       },
       onError: (error) => {
+        clearTimeout(layer.startTimer);
         if (orb.active !== layer) {
           disposeLayer(layer, !previous?.controller);
           return;
@@ -281,6 +301,7 @@
         switchToCanvas(error);
       },
     }).then((controller) => {
+      clearTimeout(layer.startTimer);
       if (orb.active !== layer || orb.backend === 'canvas') {
         // Superseded before it was ready: nothing else can share its device.
         layer.controller = controller;
@@ -292,6 +313,7 @@
       controller.setParams(params, { immediate: true });
       controller.setReduced(reduced());
     }).catch((error) => {
+      clearTimeout(layer.startTimer);
       if (orb.active !== layer) {
         disposeLayer(layer, !previous?.controller);
         return;
