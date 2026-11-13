@@ -106,7 +106,7 @@ import WindowTitleBar from '../window/WindowTitleBar';
 import { getCompactFolderName } from '../../utils/path';
 import { buildCompactedNoticeText, extractCompactedCounts, formatCompactTokens } from './compactedNotice';
 import { isQuotaExhaustedErrorLive } from './quotaErrorBanner';
-import { isRenderableAvatarSource as isSharedRenderableAvatarSource } from '../../utils/avatarSource';
+import { isRenderableAvatarSource as isSharedRenderableAvatarSource, toRenderableAvatarSource } from '../../utils/avatarSource';
 import {
   hasSupportedImageExtension,
   stripHashAndQuery,
@@ -3354,7 +3354,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       setFetchedPeerAvatar(null);
       return;
     }
-    if (isRenderableAvatarSource(currentSession.peerAvatar)) {
+    if (toRenderableAvatarSource(currentSession.peerAvatar)) {
       setFetchedPeerAvatar(null);
       return;
     }
@@ -3405,9 +3405,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     return () => { cancelled = true; };
   }, [currentSession?.id, currentSession?.peerGlobalMetaId, currentSession?.peerAvatar, currentSession?.sessionType, currentSession?.messages]);
 
-  const resolvedPeerAvatar = isRenderableAvatarSource(currentSession?.peerAvatar)
-    ? currentSession?.peerAvatar ?? null
-    : fetchedPeerAvatar;
+  const resolvedPeerAvatar = toRenderableAvatarSource(currentSession?.peerAvatar) ?? fetchedPeerAvatar;
 
   useEffect(() => {
     setIsProcessingRefund(false);

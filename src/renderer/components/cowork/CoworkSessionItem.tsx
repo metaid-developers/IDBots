@@ -5,7 +5,7 @@ import { i18nService } from '../../services/i18n';
 import { getCoworkSessionTitleClassName, getAssistantSessionDisplayTitle, shouldShowCoworkA2ADot, getImSessionChannelInfo, isLegacyImSessionTitle } from './coworkSessionPresentation.js';
 import { copyCoworkSessionLinkToClipboard } from './coworkSessionLink.js';
 import TradeActivityBadge from '../chat/TradeActivityBadge';
-import { isRenderableAvatarSource } from '../../utils/avatarSource';
+import { toRenderableAvatarSource } from '../../utils/avatarSource';
 import NftAvatarFrame from '../metabots/NftAvatarFrame';
 import { parseNftAvatarReference } from '../metabots/nftAvatarPresentation.js';
 import { resolveSessionSidebarSection } from '../../utils/sessionAutoGrouping';
@@ -187,8 +187,6 @@ export const formatRelativeTime = (timestamp: number, nowMs: number = Date.now()
   }
 };
 
-const isRenderableSessionAvatarSource = (src?: string | null): src is string =>
-  isRenderableAvatarSource(src);
 
 const avatarInitial = (name?: string | null): string => {
   const trimmed = name?.trim() ?? '';
@@ -203,7 +201,8 @@ export const SessionAvatarCircle: React.FC<{
   /** Size utilities; defaults to the session-row 24px circle. */
   sizeClass?: string;
 }> = ({ src, name, className = '', sizeClass = 'h-6 w-6' }) => {
-  const initiallyRenderable = isRenderableSessionAvatarSource(src);
+  const renderSrc = toRenderableAvatarSource(src);
+  const initiallyRenderable = renderSrc != null;
   // Track image-load failures so a broken/404 avatar URL falls back to the
   // initial letter instead of showing a broken-image icon. Reset if the src
   // changes back to a (different) renderable value.
@@ -231,7 +230,7 @@ export const SessionAvatarCircle: React.FC<{
     >
       {showImage ? (
         <img
-          src={src}
+          src={renderSrc ?? undefined}
           alt={name?.trim() || ''}
           className="h-full w-full object-cover"
           onError={() => setImageFailed(true)}

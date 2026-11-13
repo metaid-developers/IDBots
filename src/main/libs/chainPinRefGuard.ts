@@ -70,7 +70,13 @@ const PINID_ATTEMPT_PREFIX_RE = /^[0-9a-fA-F]{8}/;
  * schemes out of the scan (`preview-metaapp://` is a local-preview scheme,
  * not an on-chain pin reference).
  */
-const PIN_URI_SCAN_RE = /(?<![a-z0-9-])(?:pin|metafile|metaapp):\/\/([^\s"'<>)\]},;{]*)/gi;
+const PIN_URI_SCAN_RE = /(?<![a-z0-9-])(pin|metafile|metaapp):\/\/([^\s"'<>)\]},;{]*)/gi;
+/**
+ * `metafile://<pinId>.<ext>` is the MetaFile protocol's typed form (built-in
+ * avatars, uploaded attachments): the extension is part of the URI, not of
+ * the pinid. Same suffix grammar as normalizeMetafileAvatarReference.
+ */
+const METAFILE_EXT_SUFFIX_RE = /^([0-9a-fA-F]{64}[iI]\d+)\.[a-z0-9][a-z0-9+-]{0,31}$/i;
 /** Hex-blob shape for bare JSON field values (pinid-family lengths and wider). */
 const HEX_BLOB_RE = /^[0-9a-f]{48,128}(i\d{1,3})?$/i;
 /** Trailing sentence punctuation to trim off a scanned URI token. */
@@ -111,7 +117,7 @@ export function isValidPinRef(value: string): boolean {
  * Describe why a URI token is malformed; null when it is fine or not a
  * reference at all (prose, placeholders).
  */
-function judgeUriToken(token: string, _nextChar: string): string | null {
+function judgeUriToken(scheme: string, token: string, _nextChar: string): string | null {
   const trimmed = token.replace(TRAILING_PUNCT_RE, '');
   if (!trimmed) {
     // Empty token: a doc placeholder (`pin://<pinId>`, `pin://{pinId}`) or a
@@ -124,7 +130,10 @@ function judgeUriToken(token: string, _nextChar: string): string | null {
   if (trimmed.startsWith('$')) return null;
   // Tolerate a deep-link suffix (`pin://<pinId>/route`, `?query`) — validate
   // the pinid segment before the first `/`, `?`, or `#`.
-  const segment = trimmed.split(/[/?#]/, 1)[0];
+  const rawSegment = trimmed.split(/[/?#]/, 1)[0];
+  const segment = scheme.toLowerCase() === 'metafile'
+    ? rawSegment.replace(METAFILE_EXT_SUFFIX_RE, '$1')
+    : rawSegment;
   // Only judge tokens that look like a pinid attempt: a run of 8+ hex chars
   // at the start (every real, truncated, or half-garbled reference begins
   // with the real hex). Backticked scheme names, CJK punctuation, and regular
@@ -154,9 +163,9 @@ export function scanPinUriViolations(text: string): PinRefViolation[] {
   // JSON.stringify can emit `\/`; normalize so `pin:\/\/` still matches the scan.
   const normalized = text.replace(/\\\//g, '/');
   for (const match of normalized.matchAll(PIN_URI_SCAN_RE)) {
-    const token = match[1];
+    const token = match[2];
     const nextChar = normalized[match.index! + match[0].length] ?? '';
-    const problem = judgeUriToken(token, nextChar);
+    const problem = judgeUriToken(match[1], token, nextChar);
     if (problem) violations.push(violation('text', match[0], problem));
   }
   return violations;
@@ -256,9 +265,16 @@ export function validateChainWritePinRefs(metaidData: PinGuardMetaidData): strin
  * worker spawns, before any spend) when the payload carries a malformed pin
  * reference. Never throws for clean payloads.
  */
+export const PIN_REF_GUARD_ERROR_CODE = 'PIN_REF_GUARD_BLOCKED';
+
 export function assertChainWritePinRefs(metaidData: PinGuardMetaidData): void {
   const error = validateChainWritePinRefs(metaidData);
-  if (error) throw new Error(error);
+  if (error) throw Object.assign(new Error(error), { code: PIN_REF_GUARD_ERROR_CODE });
+}
+
+/** True for the guard's own block: a payload defect no other payment channel can fix. */
+export function isPinRefGuardError(error: unknown): boolean {
+  return (error as { code?: unknown } | null)?.code === PIN_REF_GUARD_ERROR_CODE;
 }
 
 /**

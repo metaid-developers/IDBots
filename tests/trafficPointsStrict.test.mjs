@@ -594,3 +594,47 @@ test('compiled uploadLargeFileWorker.js exists and chunked MVC upload blocks sil
     /getConfiguredTrafficPinMode\(\) === 'traffic' && getConfiguredTrafficFallbackPolicy\(\) === 'strict'[\s\S]*throw new TrafficInsufficientError/,
   );
 });
+
+// 2026-11-13 dev:fresh: a payload the pin-reference guard blocks is wrong on
+// every channel. The sponsored draft used to swallow the block as a sponsor
+// outage, fall back to self-paid, and re-run the same block — reported as
+// "sponsor service_unavailable at address_info".
+test('a pin-reference guard block never falls back to self-paid', async () => {
+  const { assertChainWritePinRefs, isPinRefGuardError } = await import('../dist-electron/main/libs/chainPinRefGuard.js');
+  let guardError = null;
+  try {
+    assertChainWritePinRefs({ path: '/info/bio', payload: `pin://${'ab'.repeat(30)}` });
+  } catch (error) {
+    guardError = error;
+  }
+  assert.ok(isPinRefGuardError(guardError), 'the guard tags its block');
+  resetSponsorCircuitBreakerForTests();
+  let broadcastCalls = 0;
+  await assert.rejects(
+    runMvcSponsorCreatePin(
+      {
+        metabotId: 36,
+        mnemonic: MNEMONIC,
+        walletPath: WALLET_PATH,
+        mvcAddress: TEST_ADDRESS,
+        feeRate: 1,
+        fallbackPolicy: 'selfpay',
+        baseUrl: 'https://sponsor.test',
+        fetchImpl: createFetchStub([HEALTHY_ADDRESS_INFO]),
+        commitReconcileMaxWaitMs: 0,
+      },
+      {
+        runDraftWorker: async () => { throw guardError; },
+        runBroadcastWorker: async () => {
+          broadcastCalls += 1;
+          return { txids: [COMMIT_TXID], pinId: `${COMMIT_TXID}i0`, totalCost: 300 };
+        },
+        recordSpentOutpoints: () => {},
+        replacePendingFundingUtxos: () => {},
+      },
+    ),
+    (error) => isPinRefGuardError(error) && !/fell back to self-paid/.test(error.message),
+  );
+  assert.equal(broadcastCalls, 0, 'no self-paid attempt');
+  resetSponsorCircuitBreakerForTests();
+});

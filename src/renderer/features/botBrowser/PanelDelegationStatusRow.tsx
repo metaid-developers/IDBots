@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { i18nService } from '../../services/i18n';
 import { getDefaultMetabotAvatarUrl } from '../../utils/rendererAssetPaths';
-import { isRenderableAvatarSource } from '../../utils/avatarSource';
+import { toRenderableAvatarSource } from '../../utils/avatarSource';
 import NftAvatarFrame from '../../components/metabots/NftAvatarFrame';
 import { parseNftAvatarReference } from '../../components/metabots/nftAvatarPresentation.js';
 import {
@@ -40,7 +40,7 @@ export const PanelDelegationStatusRow: React.FC<{
   const rawAvatar = copy.primary.workerAvatar ?? null;
   const avatarSrc = parseNftAvatarReference(rawAvatar)
     ? rawAvatar
-    : (isRenderableAvatarSource(rawAvatar) ? rawAvatar! : DEFAULT_BOT_AVATAR);
+    : (toRenderableAvatarSource(rawAvatar) ?? DEFAULT_BOT_AVATAR);
   const workerSessionId = copy.primary.workerSessionId ?? null;
   const clickable = Boolean(workerSessionId && onOpenWorkerSession);
 

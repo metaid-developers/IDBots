@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { toRenderableAvatarSource } from '../../utils/avatarSource';
 import { ChevronDownIcon, CpuChipIcon, Squares2X2Icon } from '@heroicons/react/24/outline';
 import TwinBadge from '../metabots/TwinBadge';
 import { i18nService } from '../../services/i18n';
@@ -163,8 +164,8 @@ const MetaBotSelector: React.FC<MetaBotSelectorProps> = ({
   );
 
   const renderAvatar = (bot: MetaBotForSelector) => (
-    bot.avatar && (bot.avatar.startsWith('data:') || bot.avatar.startsWith('http')) ? (
-      <img src={bot.avatar} alt="" className={`${avatarSize} rounded-md object-cover flex-shrink-0`} />
+    toRenderableAvatarSource(bot.avatar) ? (
+      <img src={toRenderableAvatarSource(bot.avatar)!} alt="" className={`${avatarSize} rounded-md object-cover flex-shrink-0`} />
     ) : (
       <div className={`${avatarSize} rounded-md dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover flex items-center justify-center flex-shrink-0`}>
         {compact ? (
