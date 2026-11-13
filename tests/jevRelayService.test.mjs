@@ -432,8 +432,10 @@ test('createSignalBoundedFetch: no signal means plain passthrough', async () => 
 // Result-code classification (2026-10-16 availability work)
 // ---------------------------------------------------------------------------
 
-test('parseJevRelayErrorCode: extracts the OpenAI envelope code, tolerates junk', () => {
+test('parseJevRelayErrorCode: extracts OpenAI and ABS errorCode envelopes, tolerates junk', () => {
   assert.equal(parseJevRelayErrorCode({ error: { code: 'jev_free_quota_exhausted' } }), 'jev_free_quota_exhausted');
+  assert.equal(parseJevRelayErrorCode({ code: 1, data: { errorCode: 'ME_INSUFFICIENT' } }), 'ME_INSUFFICIENT');
+  assert.equal(parseJevRelayErrorCode({ errorCode: 'me_insufficient' }), 'me_insufficient');
   assert.equal(parseJevRelayErrorCode({ error: { code: '  spaced  ' } }), 'spaced');
   assert.equal(parseJevRelayErrorCode({ error: { message: 'no code' } }), null);
   assert.equal(parseJevRelayErrorCode({ error: null }), null);
@@ -441,13 +443,19 @@ test('parseJevRelayErrorCode: extracts the OpenAI envelope code, tolerates junk'
   assert.equal(parseJevRelayErrorCode(null), null);
 });
 
-test('classifyJevRelayHttpStatus: full status table including the 429 split', () => {
+test('classifyJevRelayHttpStatus: full status table including 402 and ME quota 429 split', () => {
   assert.equal(classifyJevRelayHttpStatus(200), 'ok');
   assert.equal(classifyJevRelayHttpStatus(204), 'ok');
   assert.equal(classifyJevRelayHttpStatus(401), 'http_401');
-  // The 429 split: ONLY the JEV pool code is quota; the chat pool code and
-  // unknown envelopes stay rate-limited.
+  assert.equal(classifyJevRelayHttpStatus(402), 'http_429_quota');
+  assert.equal(classifyJevRelayHttpStatus(402, 'ME_INSUFFICIENT'), 'http_429_quota');
+  // The 429 split: JEV/ME credit exhaustion codes map to quota; the chat pool
+  // code and unknown envelopes stay rate-limited.
   assert.equal(classifyJevRelayHttpStatus(429, 'jev_free_quota_exhausted'), 'http_429_quota');
+  assert.equal(classifyJevRelayHttpStatus(429, 'jev_quota_exhausted'), 'http_429_quota');
+  assert.equal(classifyJevRelayHttpStatus(429, 'me_insufficient'), 'http_429_quota');
+  assert.equal(classifyJevRelayHttpStatus(429, 'ME_INSUFFICIENT'), 'http_429_quota');
+  assert.equal(classifyJevRelayHttpStatus(429, 'insufficient_me'), 'http_429_quota');
   assert.equal(classifyJevRelayHttpStatus(429, 'free_quota_exhausted'), 'http_429_rate');
   assert.equal(classifyJevRelayHttpStatus(429, null), 'http_429_rate');
   assert.equal(classifyJevRelayHttpStatus(404), 'http_4xx');
@@ -535,6 +543,18 @@ test('createJevRelayCallRecorder: a rate 429 (chat-pool code) does NOT open the 
   const recorded = createJevRelayCallRecorder(inner, { sink });
   await recorded('https://relay.example/v1/systemone', { method: 'POST' });
   assert.equal(isJevRelayQuotaExhausted(), false);
+});
+
+test('createJevRelayCallRecorder: HTTP 402 or 429 ME_INSUFFICIENT opens the quota breaker', async () => {
+  const { lines, sink } = captureSink();
+  const recorded402 = createJevRelayCallRecorder(
+    async () => jsonResponse(402, { code: 1, data: { errorCode: 'ME_INSUFFICIENT' } }),
+    { sink },
+  );
+  const res402 = await recorded402('https://relay.example/v1/systemone', { method: 'POST' });
+  assert.equal(res402.status, 402);
+  assert.equal(isJevRelayQuotaExhausted(), true);
+  assert.equal(lines.find((line) => line.tag === 'jevRelay:call')?.extra.result, 'http_429_quota');
 });
 
 test('createJevRelayCallRecorder: a 400 upstream_bad_request logs the envelope code and the Pydantic detail', async () => {

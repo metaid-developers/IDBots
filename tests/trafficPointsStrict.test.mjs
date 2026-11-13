@@ -337,18 +337,18 @@ test('AC1 & AC3 receipt observability: SPONSOR paid marker emitted only on spons
   assert.match(fallbackText, /WARN sponsor_fallback: true/);
 });
 
-test('AC2/AC5/AC7: stale kvStore fallbackPolicy=selfpay with mode=traffic still resolves to strict for bots and users', () => {
+test('default traffic fallbackPolicy is selfpay across bots and user identity when ME credits run out', () => {
   const kv = new Map([
     ['traffic.mode', 'traffic'],
-    ['traffic.fallbackPolicy', 'selfpay'],
+    ['traffic.fallbackPolicy', 'strict'],
   ]);
   const store = {
     get: (k) => kv.get(k),
     set: (k, v) => { kv.set(k, v); },
   };
   assert.equal(getTrafficPinMode(store), 'traffic');
-  assert.equal(getTrafficFallbackPolicy(store), 'strict');
-  assert.equal(getTrafficSettings(store).fallbackPolicy, 'strict');
+  assert.equal(getTrafficFallbackPolicy(store), 'selfpay');
+  assert.equal(getTrafficSettings(store).fallbackPolicy, 'selfpay');
   assert.equal(isIdentityPinSponsored({ network: 'mvc', reader: store }), true);
 
   setTrafficSettings(store, { mode: 'selfpay' });
@@ -357,8 +357,8 @@ test('AC2/AC5/AC7: stale kvStore fallbackPolicy=selfpay with mode=traffic still 
   assert.equal(isIdentityPinSponsored({ network: 'mvc', reader: store }), false);
 
   setTrafficSettings(store, { mode: 'traffic' });
-  assert.equal(kv.get('traffic.fallbackPolicy'), 'strict');
-  assert.equal(getTrafficFallbackPolicy(store), 'strict');
+  assert.equal(kv.get('traffic.fallbackPolicy'), 'selfpay');
+  assert.equal(getTrafficFallbackPolicy(store), 'selfpay');
 });
 
 test('no_user_utxo strict error triggers gas-subsidy rescue once without self-pay fallback; non-utxo strict errors do not rescue', async () => {
@@ -412,24 +412,22 @@ test('no_user_utxo strict error triggers gas-subsidy rescue once without self-pa
   assert.equal(nonUtxoFundingCalls, 0);
 });
 
-test('AC4 coverage: all MVC write entrypoints route through strict traffic policy without silent fallback', () => {
+test('all MVC write entrypoints route through selfpay fallback policy when credits are insufficient', () => {
   const root = process.cwd();
   const metaidCoreSrc = fs.readFileSync(path.join(root, 'src/main/services/metaidCore.ts'), 'utf8');
   const uploadSvcSrc = fs.readFileSync(path.join(root, 'src/main/services/metaFileUploadService.ts'), 'utf8');
   const trafficSettingsUiSrc = fs.readFileSync(path.join(root, 'src/renderer/components/traffic/TrafficSettings.tsx'), 'utf8');
 
-  // Both MetaBot createPin and user createPinForIdentity read getTrafficFallbackPolicy
   assert.equal(
     (metaidCoreSrc.match(/getTrafficFallbackPolicy\(getMetaidCoreKvReader\(\)\)/g) ?? []).length >= 2,
     true,
   );
-  // Direct file upload passes getConfiguredTrafficFallbackPolicy()
   assert.match(uploadSvcSrc, /fallbackPolicy:\s*getConfiguredTrafficFallbackPolicy\(\)/);
-  // UI toggle writes strict when mode === 'traffic'
-  assert.match(trafficSettingsUiSrc, /fallbackPolicy:\s*mode === 'traffic' \? 'strict' : 'selfpay'/);
+  assert.match(uploadSvcSrc, /feeAssist \? \{ sponsorMode: 'selfpay' as const \} : \{\}/);
+  assert.match(trafficSettingsUiSrc, /fallbackPolicy:\s*'selfpay'/);
 });
 
-test('legacy upgrade without user_identity and unset traffic.mode allows selfpay fallback; explicit traffic or existing identity stays strict', async () => {
+test('getConfiguredTrafficFallbackPolicy resolves to selfpay regardless of user_identity or traffic.mode', async () => {
   const {
     getConfiguredTrafficFallbackPolicy,
     initTrafficAccountService,
@@ -453,12 +451,12 @@ test('legacy upgrade without user_identity and unset traffic.mode allows selfpay
 
     kv.set('traffic.mode', 'traffic');
     assert.equal(isLegacyTrafficUserWithoutIdentity(), false);
-    assert.equal(getConfiguredTrafficFallbackPolicy(), 'strict');
+    assert.equal(getConfiguredTrafficFallbackPolicy(), 'selfpay');
 
     kv.delete('traffic.mode');
     identity = { mnemonic: MNEMONIC, mvc_address: TEST_ADDRESS };
     assert.equal(isLegacyTrafficUserWithoutIdentity(), false);
-    assert.equal(getConfiguredTrafficFallbackPolicy(), 'strict');
+    assert.equal(getConfiguredTrafficFallbackPolicy(), 'selfpay');
   } finally {
     resetTrafficAccountServiceForTests();
   }

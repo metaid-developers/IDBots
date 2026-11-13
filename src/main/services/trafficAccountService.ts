@@ -337,12 +337,9 @@ export function getConfiguredTrafficPinMode(): TrafficPinMode {
 
 export function getConfiguredTrafficFallbackPolicy(): TrafficFallbackPolicy {
   try {
-    if (isLegacyTrafficUserWithoutIdentity()) {
-      return 'selfpay';
-    }
     return getTrafficFallbackPolicy(getKvStore());
   } catch {
-    return 'strict';
+    return 'selfpay';
   }
 }
 

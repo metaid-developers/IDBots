@@ -364,6 +364,18 @@ export type JevRelayCallResultCode =
  */
 export const JEV_FREE_QUOTA_EXHAUSTED_CODE = 'jev_free_quota_exhausted';
 
+const JEV_QUOTA_EXHAUSTED_CODES = new Set([
+  JEV_FREE_QUOTA_EXHAUSTED_CODE,
+  'jev_quota_exhausted',
+  'me_insufficient',
+  'insufficient_me',
+]);
+
+export function isJevQuotaExhaustedCode(errorCode?: string | null): boolean {
+  if (typeof errorCode !== 'string' || !errorCode.trim()) return false;
+  return JEV_QUOTA_EXHAUSTED_CODES.has(errorCode.trim().toLowerCase());
+}
+
 /** Log sink shape shared by coworkLog (levels kept identical). */
 export type JevRelayLogSink = (
   level: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR',
@@ -381,15 +393,27 @@ export function parseJevRelayErrorCode(payload: unknown): string | null {
   if (!payload || typeof payload !== 'object') {
     return null;
   }
-  const error = (payload as { error?: unknown }).error;
-  if (!error || typeof error !== 'object') {
-    return null;
+  const record = payload as { error?: unknown; errorCode?: unknown; error_code?: unknown; data?: unknown };
+  const error = record.error;
+  if (error && typeof error === 'object') {
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === 'string' && code.trim()) {
+      return code.trim();
+    }
   }
-  const code = (error as { code?: unknown }).code;
-  if (typeof code !== 'string' || !code.trim()) {
-    return null;
+  const data = record.data;
+  if (data && typeof data === 'object') {
+    const dataCode = (data as { errorCode?: unknown; error_code?: unknown }).errorCode
+      ?? (data as { error_code?: unknown }).error_code;
+    if (typeof dataCode === 'string' && dataCode.trim()) {
+      return dataCode.trim();
+    }
   }
-  return code.trim();
+  const topCode = record.errorCode ?? record.error_code;
+  if (typeof topCode === 'string' && topCode.trim()) {
+    return topCode.trim();
+  }
+  return null;
 }
 
 /** Cap for the logged 4xx `detail` excerpt (Pydantic arrays can be long). */
@@ -430,8 +454,11 @@ export function classifyJevRelayHttpStatus(status: number, errorCode?: string | 
   if (status === 401) {
     return 'http_401';
   }
+  if (status === 402) {
+    return 'http_429_quota';
+  }
   if (status === 429) {
-    return errorCode === JEV_FREE_QUOTA_EXHAUSTED_CODE ? 'http_429_quota' : 'http_429_rate';
+    return isJevQuotaExhaustedCode(errorCode) ? 'http_429_quota' : 'http_429_rate';
   }
   if (status >= 400 && status < 500) {
     return 'http_4xx';

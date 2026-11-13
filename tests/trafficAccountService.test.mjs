@@ -1164,19 +1164,17 @@ test('redeemTrafficCode surfaces the backend data.errorCode (CODE_USED) and reje
 test('traffic settings snapshot round-trips through the kv store', async () => {
   const { store } = await makeServiceFixture({ fetchImpl: createFetchStub([]) });
 
-  assert.deepEqual(getTrafficSettingsSnapshot(), { mode: 'traffic', fallbackPolicy: 'strict', apiBase: '', rechargeGateway: '' });
+  assert.deepEqual(getTrafficSettingsSnapshot(), { mode: 'traffic', fallbackPolicy: 'selfpay', apiBase: '', rechargeGateway: '' });
   setTrafficSettingsSnapshot({ mode: 'selfpay' });
   assert.deepEqual(getTrafficSettingsSnapshot(), { mode: 'selfpay', fallbackPolicy: 'selfpay', apiBase: '', rechargeGateway: '' });
   setTrafficSettingsSnapshot({ mode: 'traffic' });
-  assert.deepEqual(getTrafficSettingsSnapshot(), { mode: 'traffic', fallbackPolicy: 'strict', apiBase: '', rechargeGateway: '' });
+  assert.deepEqual(getTrafficSettingsSnapshot(), { mode: 'traffic', fallbackPolicy: 'selfpay', apiBase: '', rechargeGateway: '' });
   assert.equal(store.get('traffic.mode'), 'traffic');
-  assert.equal(store.get('traffic.fallbackPolicy'), 'strict');
-  // In traffic mode, effective fallbackPolicy stays strict (no silent self-pay).
-  setTrafficSettingsSnapshot({ fallbackPolicy: 'selfpay' });
-  assert.deepEqual(getTrafficSettingsSnapshot(), { mode: 'traffic', fallbackPolicy: 'strict', apiBase: '', rechargeGateway: '' });
-  // Garbage input normalizes back to the traffic+strict default.
+  assert.equal(store.get('traffic.fallbackPolicy'), 'selfpay');
+  setTrafficSettingsSnapshot({ fallbackPolicy: 'strict' });
+  assert.deepEqual(getTrafficSettingsSnapshot(), { mode: 'traffic', fallbackPolicy: 'selfpay', apiBase: '', rechargeGateway: '' });
   setTrafficSettingsSnapshot({ mode: 'garbage' });
-  assert.deepEqual(getTrafficSettingsSnapshot(), { mode: 'traffic', fallbackPolicy: 'strict', apiBase: '', rechargeGateway: '' });
+  assert.deepEqual(getTrafficSettingsSnapshot(), { mode: 'traffic', fallbackPolicy: 'selfpay', apiBase: '', rechargeGateway: '' });
 });
 
 test('traffic apiBase setting: set/get/validate/clear, and sponsor client wiring', async () => {

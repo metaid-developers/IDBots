@@ -592,6 +592,32 @@ test('confirmDeferredUserIdentitySetup funds and publishes a deferred identity e
   store.close();
 });
 
+test('resumeUserIdentitySetup waits for subsidy indexer propagation before publishing first pin', async () => {
+  const { store, userStore, tempDir } = await makeStores();
+  try {
+    await createDeferredIdentity(userStore);
+    const events = [];
+    const pinMock = makePinMock();
+    const res = await resumeUserIdentitySetup(userStore, {
+      createPin: async (params) => {
+        events.push(`pin:${params.metaidData.path}`);
+        return pinMock.fn(params);
+      },
+      requestSubsidy: async () => {
+        events.push('subsidy');
+        return { success: true };
+      },
+      sleep: async (ms) => {
+        events.push(`sleep:${ms}`);
+      },
+    });
+    assert.equal(res.success, true);
+    assert.deepEqual(events.slice(0, 3), ['subsidy', 'sleep:3000', 'pin:/info/name']);
+  } finally {
+    disposeStores({ store, tempDir });
+  }
+});
+
 test('confirmDeferredUserIdentitySetup is a no-op without an identity or for regularly created ones', async () => {
   const { store, userStore } = await makeStores();
   assert.equal(await confirmDeferredUserIdentitySetup(userStore, baseDeps(makePinMock())), null, 'logged out');

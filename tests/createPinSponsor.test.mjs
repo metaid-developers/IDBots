@@ -1197,33 +1197,32 @@ test('runMvcSponsorCreatePin classifies no_user_utxo under the strict policy', a
   assert.equal(broadcastState.calls, 0);
 });
 
-test('traffic settings default to traffic+strict and enforce strict when credits payment is on', () => {
+test('traffic settings default to traffic+selfpay fallback and tolerate unreadable stores', () => {
   assert.equal(normalizeTrafficPinMode(undefined), 'traffic');
   assert.equal(normalizeTrafficPinMode('traffic'), 'traffic');
   assert.equal(normalizeTrafficPinMode(' Traffic '), 'traffic');
   assert.equal(normalizeTrafficPinMode('selfpay'), 'selfpay');
   assert.equal(normalizeTrafficPinMode('other'), 'traffic');
-  assert.equal(normalizeTrafficFallbackPolicy(undefined), 'strict');
-  assert.equal(normalizeTrafficFallbackPolicy('strict'), 'strict');
+  assert.equal(normalizeTrafficFallbackPolicy(undefined), 'selfpay');
+  assert.equal(normalizeTrafficFallbackPolicy('strict'), 'selfpay');
   assert.equal(normalizeTrafficFallbackPolicy('selfpay'), 'selfpay');
 
   assert.equal(getTrafficPinMode(null), 'traffic');
   assert.equal(getTrafficPinMode({ get: () => 'selfpay' }), 'selfpay');
   assert.equal(getTrafficPinMode({ get: () => { throw new Error('closed'); } }), 'traffic');
-  // Even if legacy kvStore has fallbackPolicy='selfpay' while mode='traffic', effective policy is 'strict'.
-  assert.equal(getTrafficFallbackPolicy(null), 'strict');
-  assert.equal(getTrafficFallbackPolicy({ get: (k) => (k === 'traffic.mode' ? 'traffic' : 'selfpay') }), 'strict');
-  assert.equal(getTrafficFallbackPolicy({ get: (k) => (k === 'traffic.mode' ? 'selfpay' : 'strict') }), 'selfpay');
+  assert.equal(getTrafficFallbackPolicy(null), 'selfpay');
+  assert.equal(getTrafficFallbackPolicy({ get: () => 'strict' }), 'selfpay');
+  assert.equal(getTrafficFallbackPolicy({ get: () => undefined }), 'selfpay');
 
-  const backing = new Map([['traffic.mode', 'traffic'], ['traffic.fallbackPolicy', 'selfpay']]);
+  const backing = new Map([['traffic.mode', 'traffic'], ['traffic.fallbackPolicy', 'strict']]);
   const store = {
     get: (k) => backing.get(k),
     set: (k, v) => { backing.set(k, v); },
   };
   const snapOn = setTrafficSettings(store, { mode: 'traffic' });
   assert.equal(snapOn.mode, 'traffic');
-  assert.equal(snapOn.fallbackPolicy, 'strict');
-  assert.equal(backing.get('traffic.fallbackPolicy'), 'strict');
+  assert.equal(snapOn.fallbackPolicy, 'selfpay');
+  assert.equal(backing.get('traffic.fallbackPolicy'), 'selfpay');
 
   const snapOff = setTrafficSettings(store, { mode: 'selfpay' });
   assert.equal(snapOff.mode, 'selfpay');
@@ -1231,18 +1230,16 @@ test('traffic settings default to traffic+strict and enforce strict when credits
   assert.equal(backing.get('traffic.fallbackPolicy'), 'selfpay');
 });
 
-test('ME billing is allowed on the desktop in credits-payment mode only (D3/D4)', () => {
+test('ME billing is allowed in credits-payment mode across desktop and server mode', () => {
   const desktop = {};
   const tenant = { IDBOTS_SERVER_MODE: '1' };
   assert.equal(isMeTrafficBillingAllowed(null, desktop), true);
   assert.equal(isMeTrafficBillingAllowed({ get: () => 'traffic' }, desktop), true);
-  // D3: an explicit self-pay choice survives the switch to credits payment.
   assert.equal(isMeTrafficBillingAllowed({ get: () => 'selfpay' }, desktop), false);
-  // D4: server-mode tenants stay on byte billing this phase.
-  assert.equal(isMeTrafficBillingAllowed({ get: () => 'traffic' }, tenant), false);
+  assert.equal(isMeTrafficBillingAllowed({ get: () => 'traffic' }, tenant), true);
 });
 
-test('identity pins are sponsored for desktop MVC writes with credits payment on', () => {
+test('identity pins are sponsored for MVC writes with credits payment on', () => {
   const desktop = {};
   const credits = { get: () => 'traffic' };
   assert.equal(isIdentityPinSponsored({ reader: credits, env: desktop }), true);
@@ -1251,7 +1248,7 @@ test('identity pins are sponsored for desktop MVC writes with credits payment on
     assert.equal(isIdentityPinSponsored({ network, reader: credits, env: desktop }), false, network);
   }
   assert.equal(isIdentityPinSponsored({ reader: { get: () => 'selfpay' }, env: desktop }), false);
-  assert.equal(isIdentityPinSponsored({ reader: credits, env: { IDBOTS_SERVER_MODE: '1' } }), false);
+  assert.equal(isIdentityPinSponsored({ reader: credits, env: { IDBOTS_SERVER_MODE: '1' } }), true);
 });
 
 test('runMvcSponsorCreatePin opens the sponsor circuit after repeated broadcast failures', async () => {

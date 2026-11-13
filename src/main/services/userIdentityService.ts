@@ -623,6 +623,7 @@ export async function resumeUserIdentitySetup(
         },
       };
     }
+    await (deps.sleep ?? defaultSleep)(USER_PIN_STEP_INTERVAL_MS);
   }
 
   const chainSync = await syncUserIdentityToChain(
@@ -700,6 +701,7 @@ export async function updateUserIdentityName(
     if (!subsidy.success) {
       return { success: false, error: 'SUBSIDY_NOT_CLAIMED' };
     }
+    await (deps.sleep ?? defaultSleep)(USER_PIN_STEP_INTERVAL_MS);
     const baseSync = await syncUserIdentityToChain(userStore, { includeProfileSteps: false }, deps);
     if (baseSync.txids.length > 0) {
       await (deps.sleep ?? defaultSleep)(USER_PIN_STEP_INTERVAL_MS);
