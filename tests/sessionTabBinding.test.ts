@@ -1160,3 +1160,51 @@ test('static: the welcome hands off to the stage tab in front', () => {
   const genesis = readFileSync('src/main/services/studioGenesisStageService.ts', 'utf8');
   assert.match(genesis, /role: 'stage', reveal: true \}\)/, 'the Genesis projection activates its stage tab');
 });
+
+test('restoreLastSession after prepareDraftTab reuses the stage tab when the browser decodes %20 spaces', async () => {
+  const encodedStageUri = 'preview-metaapp://localhost/Users/tusm/Library/Application%20Support/IDBots/live-stage/studio-live-stage-official-0123456789ab/stage.html';
+  const decodedStageUri = 'preview-metaapp://localhost/Users/tusm/Library/Application Support/IDBots/live-stage/studio-live-stage-official-0123456789ab/stage.html';
+  const bridge = createFakeTabBridge();
+  // Mirror ABC parsePreviewMetaAppUri: decode percent-encoded spaces in tab.uri.
+  const decodingControlTabs: SessionTabHost['controlTabs'] = async (command) => {
+    const res = await bridge.controlTabs(command);
+    if (command.action === 'navigate-tab' && command.uri === encodedStageUri) {
+      const tab = bridge.tabs.find((entry) => entry.id === command.tabId);
+      if (tab) tab.uri = decodedStageUri;
+    }
+    return {
+      ...res,
+      tabs: bridge.tabs.map((t) => ({ ...t })),
+      activeTab: bridge.tabs.find((t) => t.id === bridge.activeTabId) ?? null,
+    };
+  };
+  const fakeHost = createFakeHost(bridge);
+  const hostWithDecode: SessionTabHost = {
+    ...fakeHost.host,
+    controlTabs: decodingControlTabs,
+  };
+  const storage = installStageEntry(encodedStageUri, {
+    'idbots.botBrowser.viewState': JSON.stringify({ sessionId: 'session-a', sessionPages: {} }),
+  });
+  try {
+    const binding = createSessionTabBinding();
+    binding.attach(hostWithDecode);
+    fakeHost.sessions.set('session-a', sessionOf('session-a'));
+
+    // Child panel prewarms draft on mount before restoreLastSession finishes.
+    const draftTabId = await binding.prepareDraftTab();
+    assert.equal(draftTabId, 1);
+    assert.equal(bridge.tabs.length, 1);
+    assert.equal(bridge.tabs[0].uri, decodedStageUri);
+
+    bridge.commands.length = 0;
+    await binding.restoreLastSession();
+
+    assert.equal(bridge.tabs.length, 1, 'restore must adopt the prewarmed tab instead of opening a duplicate');
+    assert.ok(!bridge.commands.some((command) => command.action === 'open-tab'), 'no duplicate open-tab issued');
+    const stageTab = await binding.controlSessionTab({ action: 'get-tabs', sessionId: 'session-a', role: 'stage' });
+    assert.equal(stageTab.sessionTab?.id, 1);
+  } finally {
+    storage.restore();
+  }
+});

@@ -7,6 +7,7 @@ import { describeStudioTurnError } from '../shared/studioTurnErrorCopy';
 import type { StudioOpenDelegation } from './studioOpenDelegations';
 import { isLiveStagePageUri, materializeLiveStageEntry, stageAssetFor, type LiveStageEntry } from './studioLiveStageEntry';
 import { previewMetaappUriForPath } from '../libs/localPreviewUri';
+import { browserUriMatchesPrefix } from '../shared/browserUriMatch';
 import { resolveStudioLiveStageTemplate, STUDIO_LIVE_STAGE_OFFICIAL_TEMPLATE_ID, type StudioLiveStageTemplateResolution } from './studioLiveStageTemplateRegistry';
 import { directLiveStageScene } from './studioLiveStageDirector';
 
@@ -249,8 +250,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
    * itself never does.
    */
   function uriMatchesEntry(candidate: string | null | undefined, entryUri: string): boolean {
-    const value = String(candidate ?? '').trim();
-    return value !== '' && (value === entryUri || value.startsWith(entryUri));
+    return browserUriMatchesPrefix(candidate, entryUri);
   }
 
   // Commit a produced state: phaseStartedAt resets whenever the family

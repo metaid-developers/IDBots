@@ -84,6 +84,26 @@ const browserCoworkSlice = createSlice({
       state.isStreaming = status === 'running';
     },
 
+    updateBrowserSessionModel(
+      state,
+      action: PayloadAction<{
+        sessionId: string;
+        model: string | null;
+        modelProvider?: string | null;
+        effort?: string | null;
+      }>,
+    ) {
+      const { sessionId, model, modelProvider, effort } = action.payload;
+      if (state.currentSession?.id !== sessionId) return;
+      state.currentSession.model = model;
+      if (modelProvider !== undefined) {
+        state.currentSession.modelProvider = modelProvider;
+      }
+      if (effort !== undefined) {
+        state.currentSession.effort = effort;
+      }
+    },
+
     setBrowserStreaming(state, action: PayloadAction<boolean>) {
       state.isStreaming = action.payload;
     },
@@ -111,6 +131,7 @@ export const {
   updateBrowserMessageContent,
   appendBrowserMessageContent,
   updateBrowserSessionStatus,
+  updateBrowserSessionModel,
   setBrowserStreaming,
   clearBrowserSession,
 } = browserCoworkSlice.actions;

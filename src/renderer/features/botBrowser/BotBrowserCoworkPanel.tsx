@@ -10,11 +10,19 @@ import { buildLocalPreviewUri } from './localPreviewUri';
 import { buildSessionComposerCommands } from '../../components/cowork/composerCommandCatalog';
 import FolderSelectorPopover from '../../components/cowork/FolderSelectorPopover';
 import type { MetaBotForSelector } from '../../components/cowork/MetaBotSelector';
-import ModelEffortPicker from '../../components/ModelEffortPicker';
-import { effortDisplayForPick, effortForSessionStart, type ComposerModelEffortPick } from '../../services/modelCatalog';
+import ModelEffortPicker, { type ModelEffortValue } from '../../components/ModelEffortPicker';
+import {
+  LLM_EFFORT_DEFAULT_SENTINEL,
+  convertLegacyEffortLevel,
+  effortDisplayForPick,
+  effortForSessionStart,
+  isLlmEffortLevel,
+  type ComposerModelEffortPick,
+} from '../../services/modelCatalog';
 import { ActiveSkillBadge } from '../../components/skills';
 import { RootState } from '../../store';
 import { clearActiveSkills } from '../../store/slices/skillSlice';
+import { updateBrowserSessionModel } from '../../store/slices/browserCoworkSlice';
 import { browserCoworkService } from '../../services/browserCowork';
 import { coworkService } from '../../services/cowork';
 import { sessionTabBinding } from '../../services/sessionTabBinding';
@@ -320,6 +328,51 @@ interface BotBrowserCoworkPanelProps {
 }
 
 const WORKSPACE_SELECTION_STORAGE_KEY = 'idbots.botBrowser.workspaceSelection';
+const PENDING_MODEL_EFFORT_STORAGE_KEY = 'idbots.botBrowser.pendingModelEffort';
+
+const parsePersistedPendingModelEffort = (raw: string | null): ComposerModelEffortPick | null => {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as {
+      modelId?: unknown;
+      providerKey?: unknown;
+      effort?: unknown;
+    };
+    const modelId = typeof parsed?.modelId === 'string' && parsed.modelId.trim()
+      ? parsed.modelId.trim()
+      : null;
+    if (!modelId) return null;
+    const providerKey = typeof parsed?.providerKey === 'string' && parsed.providerKey.trim()
+      ? parsed.providerKey.trim()
+      : null;
+    const effort = parsed?.effort == null
+      ? null
+      : (isLlmEffortLevel(parsed.effort) ? parsed.effort : convertLegacyEffortLevel(parsed.effort));
+    return { modelId, providerKey, effort };
+  } catch {
+    return null;
+  }
+};
+
+function loadPersistedPendingModelEffort(): ComposerModelEffortPick | null {
+  try {
+    return parsePersistedPendingModelEffort(window.localStorage.getItem(PENDING_MODEL_EFFORT_STORAGE_KEY));
+  } catch {
+    return null;
+  }
+}
+
+function savePersistedPendingModelEffort(pick: ComposerModelEffortPick | null): void {
+  try {
+    if (pick && pick.modelId) {
+      window.localStorage.setItem(PENDING_MODEL_EFFORT_STORAGE_KEY, JSON.stringify(pick));
+    } else {
+      window.localStorage.removeItem(PENDING_MODEL_EFFORT_STORAGE_KEY);
+    }
+  } catch {
+    // Storage unavailable: keep pick in memory only.
+  }
+}
 
 const parsePersistedWorkspaceSelection = (raw: string | null): CoworkWorkspaceSelection | null => {
   if (!raw) return null;
@@ -735,7 +788,22 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
   // Pending model+effort for the session about to start from this panel. The
   // whole state being null = follow the selected bot's brain (its model and
   // effort); inside a pick, effort null is an EXPLICIT "Default" choice.
-  const [pendingModelEffort, setPendingModelEffort] = useState<ComposerModelEffortPick | null>(null);
+  const [pendingModelEffort, setPendingModelEffort] = useState<ComposerModelEffortPick | null>(
+    loadPersistedPendingModelEffort,
+  );
+  // Live-session model+effort override (persisted via cowork:session:setModel
+  // on SQLite, mirroring CoworkSessionDetail in BotWorks so restarts and
+  // session switches restore the chosen model instead of reverting to the
+  // bot's primary LLM).
+  const [sessionModelOverride, setSessionModelOverride] = useState<{
+    modelId: string | null;
+    providerKey: string | null;
+  } | null>(null);
+  const [sessionEffortOverride, setSessionEffortOverride] = useState<string | null>(null);
+  useEffect(() => {
+    setSessionModelOverride(null);
+    setSessionEffortOverride(null);
+  }, [currentSession?.id]);
   // Chat experience mode is overridden in this surface (owner ruling
   // 2026-11-07): every session started here carries the per-session
   // assistantMode marker, so the panel resolves assistant-side for live
@@ -883,12 +951,15 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
         ? workspaceSelection.cwd.trim()
         : undefined;
       const startProjectId = workspaceSelection?.kind === 'project' ? workspaceSelection.projectId : undefined;
-      await browserCoworkService.start(prompt, effectiveMetabotId, startCwd, {
+      const started = await browserCoworkService.start(prompt, effectiveMetabotId, startCwd, {
         model: pendingModelEffort?.modelId ?? undefined,
         modelProvider: pendingModelEffort?.providerKey ?? undefined,
         effort: effortForSessionStart(pendingModelEffort),
       }, skills, startProjectId, prompt, captureOutgoingPrompt);
-      setPendingModelEffort(null);
+      if (started) {
+        setPendingModelEffort(null);
+        savePersistedPendingModelEffort(null);
+      }
     }
     if (skillIds.length > 0) {
       dispatch(clearActiveSkills());
@@ -1136,24 +1207,83 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
             dropdownDirection="up"
             compact
             useFixedDropdown
-            value={{
-              modelId: pendingModelEffort?.modelId ?? selectedMetabot?.llm_id ?? null,
-              providerKey: pendingModelEffort?.modelId == null
-                ? (selectedMetabot?.llm_provider ?? null)
-                : (pendingModelEffort?.providerKey ?? null),
-              // An explicit pick sticks as chosen (null = Auto); only a
-              // missing pick resolves the bot brain fallback. Assistant mode
-              // displays the Auto rung for a missing pick: the session
-              // resolves per turn (cerebellum auto when configured, else the
-              // default chain).
-              effort: effortDisplayForPick(pendingModelEffort, [selectedMetabot?.llm_effort ?? null], { assistantMode: isAssistantMode }),
-            }}
-            onChange={(value) => {
-              setPendingModelEffort({
+            value={(() => {
+              if (currentSession) {
+                const sessionModelId = sessionModelOverride
+                  ? sessionModelOverride.modelId
+                  : (currentSession.model ?? null);
+                const sessionModelProvider = sessionModelOverride
+                  ? sessionModelOverride.providerKey
+                  : (currentSession.modelProvider ?? null);
+                const sessionUsesBrainModel = sessionModelId == null && Boolean(chipMetabot?.llm_id);
+                return {
+                  modelId: sessionModelId ?? chipMetabot?.llm_id ?? null,
+                  providerKey: sessionUsesBrainModel
+                    ? (chipMetabot?.llm_provider ?? null)
+                    : sessionModelProvider,
+                  effort: (() => {
+                    if (sessionEffortOverride != null) return convertLegacyEffortLevel(sessionEffortOverride);
+                    if (currentSession.effort) return convertLegacyEffortLevel(currentSession.effort);
+                    if (isAssistantMode) return null;
+                    return convertLegacyEffortLevel(chipMetabot?.llm_effort ?? null);
+                  })(),
+                };
+              }
+              return {
+                modelId: pendingModelEffort?.modelId ?? selectedMetabot?.llm_id ?? null,
+                providerKey: pendingModelEffort?.modelId == null
+                  ? (selectedMetabot?.llm_provider ?? null)
+                  : (pendingModelEffort?.providerKey ?? null),
+                // An explicit pick sticks as chosen (null = Auto); only a
+                // missing pick resolves the bot brain fallback. Assistant mode
+                // displays the Auto rung for a missing pick: the session
+                // resolves per turn (cerebellum auto when configured, else the
+                // default chain).
+                effort: effortDisplayForPick(pendingModelEffort, [selectedMetabot?.llm_effort ?? null], { assistantMode: isAssistantMode }),
+              };
+            })()}
+            onChange={(value: ModelEffortValue) => {
+              if (currentSession) {
+                const nextEffortSentinel = value.effort ?? LLM_EFFORT_DEFAULT_SENTINEL;
+                const nextProviderKey = value.providerKey ?? null;
+                setSessionModelOverride({
+                  modelId: value.modelId,
+                  providerKey: nextProviderKey,
+                });
+                setSessionEffortOverride(nextEffortSentinel);
+                if (currentSession.id.startsWith('optimistic-browser-')) {
+                  return;
+                }
+                const targetSessionId = currentSession.id;
+                void (async () => {
+                  try {
+                    await window.electron?.cowork?.setSessionModel?.({
+                      sessionId: targetSessionId,
+                      model: value.modelId,
+                      modelProvider: nextProviderKey,
+                      effort: nextEffortSentinel,
+                    });
+                    dispatch(updateBrowserSessionModel({
+                      sessionId: targetSessionId,
+                      model: value.modelId,
+                      modelProvider: nextProviderKey,
+                      effort: nextEffortSentinel,
+                    }));
+                  } catch (modelError) {
+                    console.error('Failed to set Studio session model:', modelError);
+                    setSessionModelOverride(null);
+                    setSessionEffortOverride(null);
+                  }
+                })();
+                return;
+              }
+              const nextPick: ComposerModelEffortPick = {
                 modelId: value.modelId,
                 providerKey: value.providerKey ?? null,
                 effort: value.effort,
-              });
+              };
+              setPendingModelEffort(nextPick);
+              savePersistedPendingModelEffort(nextPick);
             }}
           />
           <ActiveSkillBadge />
