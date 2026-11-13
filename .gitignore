@@ -375,6 +375,7 @@ tests/*
 !tests/metaAppProtocol.test.mjs
 !tests/trafficCreditsMode.test.ts
 !tests/trafficPointsStrict.test.mjs
+!tests/surfaceModePersistence.test.ts
 
 # Local DB (never commit)
 *.sqlite

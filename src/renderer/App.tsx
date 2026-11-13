@@ -88,6 +88,12 @@ import {
   type SidebarResizeSession,
 } from './utils/sidebarResizeSession';
 import { useBotBrowserShell } from './features/botBrowser/useBotBrowserShell';
+import {
+  SURFACE_MODE_KV_KEY,
+  resolveInitialSurfaceMode,
+  type ResolvedInitialSurfaceMode,
+} from './features/botBrowser/surfaceModePersistence';
+import { SURFACE_MODE_STORAGE_KEY_MIRROR } from './hooks/chatExperienceModeSource';
 import { openBotBrowserConversationInCowork } from './features/botBrowser/conversationNavigationAdapter';
 import type { BotBrowserConversationRequest } from './features/botBrowser/types';
 import type { BotHomeSection } from './features/botBrowser/types';
@@ -295,6 +301,10 @@ const App: React.FC = () => {
   const mockInstallTimerRef = useRef<number | null>(null);
   const openingMetaAppIdsRef = useRef<Set<string>>(new Set());
   const hasInitialized = useRef(false);
+  const applyStartupSurfaceModeRef = useRef<((resolved: ResolvedInitialSurfaceMode) => void) | null>(null);
+  const switchToHomeRef = useRef<(() => void) | null>(null);
+  const openBrowserHomeRef = useRef<(() => Promise<void>) | null>(null);
+  const isUpgradingExistingUserRef = useRef(false);
   const dispatch = useDispatch();
   const selectedModel = useSelector((state: RootState) => state.model.selectedModel);
   const currentSessionId = useSelector((state: RootState) => state.cowork.currentSessionId);
@@ -566,22 +576,57 @@ const App: React.FC = () => {
         // between), and the flow's Enter adopts that Twin instead of making
         // another one.
         let hasTwin = true;
-        try {
-          const roster = await window.electron.metabot.list();
-          const bots = roster?.success && Array.isArray(roster.list) ? roster.list : [];
+        let hasExistingBots = false;
+        let currentVersion: string | null = null;
+        let firstInstallVersion: string | null = null;
+        let kvSurfaceMode: unknown = null;
+        const [rosterResult, versionResult, kvSurfaceResult] = await Promise.all([
+          window.electron.metabot.list().catch(() => null),
+          window.electron.appInfo?.getVersion?.().catch(() => null) ?? Promise.resolve(null),
+          window.electron.store?.get?.(SURFACE_MODE_KV_KEY).catch(() => null) ?? Promise.resolve(null),
+        ]);
+        if (rosterResult) {
+          const bots = rosterResult.success && Array.isArray(rosterResult.list) ? rosterResult.list : [];
+          hasExistingBots = bots.length > 0;
           hasTwin = bots.some((bot) => bot.metabot_type === 'twin');
-        } catch {
-          hasTwin = true;
         }
-        const needsWelcomeFlow = !hasTwin || isOnboardingEnterPending();
+        currentVersion = typeof versionResult === 'string' && versionResult.trim() ? versionResult.trim() : null;
+        kvSurfaceMode = kvSurfaceResult;
+        if (currentVersion && window.electron.updateNotification?.resolveFirstInstallVersion) {
+          firstInstallVersion = await window.electron.updateNotification
+            .resolveFirstInstallVersion(currentVersion)
+            .catch(() => null);
+        }
+        const onboardingPending = isOnboardingEnterPending();
+        const needsWelcomeFlow = !hasTwin || onboardingPending;
         setShowWelcomeFlow(needsWelcomeFlow);
+
+        const persistedViewState = loadPersistedViewState();
+        let localSurfaceMode: string | null = null;
+        try {
+          localSurfaceMode = window.localStorage.getItem(SURFACE_MODE_STORAGE_KEY_MIRROR);
+        } catch {
+          localSurfaceMode = null;
+        }
+        const resolvedSurface = resolveInitialSurfaceMode({
+          localStorageValue: localSurfaceMode,
+          kvStoreValue: kvSurfaceMode,
+          currentVersion,
+          firstInstallVersion,
+          hasExistingBots,
+          hasPersistedSessionId: Boolean(persistedViewState?.sessionId),
+          onboardingEnterPending: onboardingPending,
+          needsWelcomeFlow,
+        });
+        isUpgradingExistingUserRef.current = resolvedSurface.isUpgradingExistingUser;
+        applyStartupSurfaceModeRef.current?.(resolvedSurface);
 
         // Bring back the conversation the persisted view state points at, so a
         // renderer reload lands on the chat the user was in instead of the New
         // Task home. The welcome flow owns the screen on a first-run machine,
         // and a stored id that no longer loads (archived / deleted / stale
         // `temp-…`) is dropped rather than retried on every reload.
-        const storedSessionId = needsWelcomeFlow ? null : loadPersistedViewState()?.sessionId ?? null;
+        const storedSessionId = needsWelcomeFlow ? null : persistedViewState?.sessionId ?? null;
         if (storedSessionId) {
           const restored = await coworkService.loadSession(storedSessionId).catch(() => null);
           if (!restored) {
@@ -649,6 +694,11 @@ const App: React.FC = () => {
   // because the Twin still does not exist.
   const handleWelcomeFlowSkip = useCallback(() => {
     setMainView('cowork');
+    if (isUpgradingExistingUserRef.current) {
+      switchToHomeRef.current?.();
+    } else {
+      void openBrowserHomeRef.current?.();
+    }
     setShowWelcomeFlow(false);
   }, []);
 
@@ -832,6 +882,9 @@ const App: React.FC = () => {
   const botBrowserShell = useBotBrowserShell({
     showToast,
   });
+  applyStartupSurfaceModeRef.current = botBrowserShell.applyStartupSurfaceMode;
+  switchToHomeRef.current = botBrowserShell.switchToHome;
+  openBrowserHomeRef.current = botBrowserShell.openBrowserHome;
 
   // The Twin Bot chat already exists (one generated greeting): land in it on
   // the Studio face — the conversation in the Studio panel, the Genesis Stage

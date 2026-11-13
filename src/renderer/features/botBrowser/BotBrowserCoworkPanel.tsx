@@ -209,7 +209,7 @@ export const PanelMessage: React.FC<{
     const displayContent = sentQuoteBlock
       ? [sentQuoteBlock, sentQuoteRest].filter(Boolean).join('\n\n')
       : message.content;
-    const bubbleClassName = "max-w-[90%] min-w-0 whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-[13px] dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text shadow-subtle";
+    const bubbleClassName = "studio-user-bubble max-w-[90%] min-w-0 whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-[13px] dark:bg-claude-darkSurface dark:text-claude-darkText text-claude-text";
     return (
       // data-panel-message-id lets the locator rail measure this row
       // (purity pass #2 ③) without touching the bubble chrome.
