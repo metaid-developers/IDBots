@@ -52,7 +52,21 @@ function fakeFrame() {
   };
 }
 
-const drain = () => new Promise((resolve) => setTimeout(resolve, 20));
+/**
+ * Poll until the expected bridge activity shows up. The debounced fetch and
+ * the fake frame's response are real setTimeout(0) chains; Windows runner
+ * timer granularity (~15ms per hop) can push them past a fixed sleep window,
+ * so the assertions poll instead of racing a fixed drain.
+ */
+const waitFor = async (predicate: () => boolean, what: string, timeoutMs = 2000): Promise<void> => {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) {
+      throw new Error(`timed out waiting for ${what}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+};
 
 test('changed event triggers a debounced snapshot fetch and records it', async () => {
   const recorded: BrowserElementSelectionsSnapshot[] = [];
@@ -75,7 +89,7 @@ test('changed event triggers a debounced snapshot fetch and records it', async (
   });
 
   assert.equal(consumed, true);
-  await drain();
+  await waitFor(() => recorded.length > 0 && frame.sent.length > 0, 'the debounced snapshot fetch to record');
   assert.equal(recorded.length, 1);
   assert.equal(recorded[0].tabId, 7);
   assert.equal(frame.sent.length, 1);
@@ -100,8 +114,7 @@ test('changed events debounce: a burst fetches once with the latest tabId', asyn
   bridge.handleMessage({ type: 'agent-browser:event', version: 1, event: 'element-selections-changed', payload: { tabId: 1, count: 1 } });
   bridge.handleMessage({ type: 'agent-browser:event', version: 1, event: 'element-selections-changed', payload: { tabId: 2, count: 1 } });
   bridge.handleMessage({ type: 'agent-browser:event', version: 1, event: 'element-selections-changed', payload: { tabId: 3, count: 2 } });
-  await drain();
-  await drain();
+  await waitFor(() => recorded.length > 0 && frame.sent.length > 0, 'the debounced burst fetch to record');
 
   assert.equal(frame.sent.length, 1, 'burst should collapse into one fetch');
   assert.deepEqual(handled, [3], 'the fetch targets the latest event tab');
