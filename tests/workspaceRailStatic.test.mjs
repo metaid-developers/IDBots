@@ -11,7 +11,9 @@ import test from 'node:test';
 const repoRoot = path.resolve(import.meta.dirname, '..');
 
 function read(relativePath) {
-  return fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
+  // Windows checkouts are CRLF; the LF-anchored assertions below are written
+  // against the LF canonical form (SOP §11.9).
+  return fs.readFileSync(path.join(repoRoot, relativePath), 'utf8').replace(/\r\n/g, '\n');
 }
 
 const appSource = read('src/renderer/App.tsx');

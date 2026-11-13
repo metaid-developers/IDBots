@@ -33,7 +33,8 @@ import {
 // middle column (and the resize handle next to it) are collapsed.
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const appSource = fs.readFileSync(path.join(root, 'src/renderer/App.tsx'), 'utf8');
+// Windows checkouts are CRLF; normalize to LF for the LF-anchored assertions (SOP §11.9).
+const appSource = fs.readFileSync(path.join(root, 'src/renderer/App.tsx'), 'utf8').replace(/\r\n/g, '\n');
 const t = (key) => key;
 
 /** The rail surfaces render only non-hidden entries; the hidden ones still need a row. */
@@ -201,7 +202,7 @@ test('a collapsed middle column is recoverable from the boundary handle alone', 
   const railSource = fs.readFileSync(
     path.join(root, 'src/renderer/components/layout/WorkspaceRail.tsx'),
     'utf8',
-  );
+  ).replace(/\r\n/g, '\n');
   // The rail no longer carries a collapse toggle: there is exactly ONE panel
   // toggle in the shell and it lives on the mid ⇄ right boundary handle.
   assert.doesNotMatch(railSource, /rail-collapse-toggle/);

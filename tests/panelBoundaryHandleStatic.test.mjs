@@ -28,7 +28,8 @@ import test from 'node:test';
  */
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
-const appSource = fs.readFileSync(path.join(repoRoot, 'src/renderer/App.tsx'), 'utf8');
+// Windows checkouts are CRLF; normalize to LF (SOP §11.9).
+const appSource = fs.readFileSync(path.join(repoRoot, 'src/renderer/App.tsx'), 'utf8').replace(/\r\n/g, '\n');
 
 function sliceBetween(source, startMarker, endMarker) {
   const start = source.indexOf(startMarker);
