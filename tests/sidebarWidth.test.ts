@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import {
   clampSidebarWidth,
   defaultSidebarWidth,
+  firstRunSidebarWidthForWindow,
+  seedFirstRunSidebarWidth,
   loadSidebarWidth,
   maxSidebarWidthForWindow,
   migrateSidebarWidthStorage,
@@ -220,4 +222,37 @@ test('shouldAutoShowSidebar requires the hysteresis band beyond the hide thresho
   assert.equal(shouldAutoShowSidebar(showAt - 1, SIDEBAR_WIDTH_BROWSER_DEFAULT), false);
   assert.equal(shouldAutoShowSidebar(showAt, SIDEBAR_WIDTH_BROWSER_DEFAULT), true);
   assert.equal(shouldAutoShowSidebar(1440, SIDEBAR_WIDTH_HOME_DEFAULT), true);
+});
+
+test('first-run width: wider than the old 320 default and both panes stay visible', () => {
+  assert.equal(firstRunSidebarWidthForWindow(1200), 430);
+  assert.equal(firstRunSidebarWidthForWindow(1440), SIDEBAR_WIDTH_MAX);
+  assert.equal(firstRunSidebarWidthForWindow(1680), SIDEBAR_WIDTH_MAX);
+  assert.equal(firstRunSidebarWidthForWindow(1024), 380);
+  assert.equal(firstRunSidebarWidthForWindow(Number.NaN), SIDEBAR_WIDTH_DEFAULT);
+  for (const windowWidth of [1024, 1100, 1200, 1280, 1366, 1440, 1512, 1680, 1920, 2560]) {
+    const width = firstRunSidebarWidthForWindow(windowWidth);
+    assert.ok(width > SIDEBAR_WIDTH_DEFAULT, `${windowWidth}: ${width} is wider than the old default`);
+    assert.ok(width <= maxSidebarWidthForWindow(windowWidth), `${windowWidth}: within the drag cap`);
+    assert.equal(shouldAutoHideSidebar(windowWidth, width), false, `${windowWidth}: the column is not auto-hidden`);
+    assert.ok(rightPaneWidthForWindow(windowWidth, width) >= RIGHT_PANE_MIN_WIDTH_PX, `${windowWidth}: the browser keeps its minimum`);
+  }
+});
+
+test('seedFirstRunSidebarWidth writes once, only on a machine that never stored a width', () => {
+  const store = new Map<string, string>();
+  const get = (key: string) => store.get(key) ?? null;
+  const set = (key: string, value: string) => void store.set(key, value);
+  seedFirstRunSidebarWidth(get, set, 1200);
+  assert.equal(loadSidebarWidth(get, 'browser'), 430);
+  seedFirstRunSidebarWidth(get, set, 1920);
+  assert.equal(loadSidebarWidth(get, 'home'), 430, 'never overwrites');
+
+  const remembered = new Map<string, string>([['idbots.sidebarWidth', '300']]);
+  seedFirstRunSidebarWidth((key) => remembered.get(key) ?? null, (key, value) => void remembered.set(key, value), 1200);
+  assert.equal(remembered.get('idbots.sidebarWidth'), '300', 'a stored width is untouched');
+
+  const legacy = new Map<string, string>([['idbots.sidebarWidth.home', '290']]);
+  seedFirstRunSidebarWidth((key) => legacy.get(key) ?? null, (key, value) => void legacy.set(key, value), 1200);
+  assert.equal(legacy.has('idbots.sidebarWidth'), false, 'a legacy per-face width is left to the migration');
 });

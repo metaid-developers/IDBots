@@ -137,6 +137,39 @@ export function sidebarSnapWidthForWindow(windowWidth: number): number {
   return Math.min(maxSidebarWidthForWindow(windowWidth), Math.max(SIDEBAR_WIDTH_MIN, ratio));
 }
 
+// ── First-run width (2026-11-13 owner request) ──
+// The 320px shared default made the Studio conversation column cramped on a
+// fresh install. A machine that has never stored a width now starts at ~38%
+// of the middle+right split, kept between 380 and 480px and always under the
+// live drag cap, so both the conversation and the browser beside it are
+// comfortably visible on first launch at common window widths (1200px → 430,
+// 1440px+ → 480, the stored-width ceiling). Stored widths are untouched.
+export const SIDEBAR_FIRST_RUN_RATIO = 0.38;
+export const SIDEBAR_FIRST_RUN_MIN = 380;
+export const SIDEBAR_FIRST_RUN_MAX = SIDEBAR_WIDTH_MAX;
+
+export function firstRunSidebarWidthForWindow(windowWidth: number): number {
+  if (!Number.isFinite(windowWidth) || windowWidth <= 0) return SIDEBAR_WIDTH_DEFAULT;
+  const target = Math.floor(splitWidthForWindow(windowWidth) * SIDEBAR_FIRST_RUN_RATIO);
+  const preferred = Math.min(SIDEBAR_FIRST_RUN_MAX, Math.max(SIDEBAR_FIRST_RUN_MIN, target));
+  return Math.min(maxSidebarWidthForWindow(windowWidth), preferred);
+}
+
+/**
+ * Seed the shared key with the first-run width when nothing was ever stored
+ * (call after migrateSidebarWidthStorage). Persisting it once keeps the face
+ * switch re-reads stable even if the window is resized later. Idempotent.
+ */
+export function seedFirstRunSidebarWidth(
+  getItem: (key: string) => string | null,
+  setItem: (key: string, value: string) => void,
+  windowWidth: number,
+): void {
+  if (getItem(SHARED_STORAGE_KEY) != null) return;
+  if (getItem(LEGACY_PER_MODE_KEYS.home) != null || getItem(LEGACY_PER_MODE_KEYS.browser) != null) return;
+  setItem(SHARED_STORAGE_KEY, String(firstRunSidebarWidthForWindow(windowWidth)));
+}
+
 /**
  * Load the persisted width. Both faces read the SAME shared key (shared-width
  * ruling 2026-11-11 evening); the retired per-face keys answer only while the

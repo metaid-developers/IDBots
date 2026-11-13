@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, session, nativeTheme, dialog, shell, nativeImage, systemPreferences, Menu, powerSaveBlocker, Notification } from 'electron';
+import { app, BrowserWindow, ipcMain, session, nativeTheme, dialog, shell, nativeImage, systemPreferences, Menu, powerSaveBlocker, Notification, screen } from 'electron';
 import type { FileFilter, MessageBoxOptions, OpenDialogOptions, Session, WebContents } from 'electron';
 import path from 'path';
 import fs from 'fs';
@@ -289,6 +289,8 @@ import {
   listMetabotsForManagement,
   readMetabotSubsidyState,
   recordFullSyncOutcome,
+  listAutoResyncCandidates,
+  resyncPendingChainStepsCore,
   requireMetabotLlmIdForCreate,
   normalizeMetabotLlmEffort,
   resumeMetabotSetupCore,
@@ -570,6 +572,9 @@ import { listStudioOpenDelegations } from './services/studioOpenDelegations';
 import { describeStudioProjectionBlock } from './services/studioProjectionGate';
 import { applyStudioLiveStagePatch, drainStudioLiveStageInteractions, executeStageFrameScript } from './services/studioLiveStageFrame';
 import { createStudioGenesisStageService, type StudioGenesisStageService } from './services/studioGenesisStageService';
+import { resolveBuiltinAvatarDataUri } from './libs/builtinAvatarAssets';
+import { resolveInitialWindowSize } from './libs/initialWindowSize';
+import { createMetabotChainSyncAutoRetry, type MetabotChainSyncAutoRetry } from './services/metabotChainSyncAutoRetry';
 import { readStudioLiveStageSettings, writeStudioLiveStageSettings } from './services/studioLiveStageSettings';
 import {
   executeBotBrowserPreviewAct,
@@ -9194,6 +9199,7 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
       },
       assetRoot: path.join(app.getAppPath(), app.isPackaged ? 'dist/live-stage' : 'public/live-stage'),
       fallbackAvatarDataUri: `data:image/png;base64,${fs.readFileSync(fallbackAvatarPath).toString('base64')}`,
+      resolveAvatar: (avatar) => resolveBuiltinAvatarDataUri(avatar, path.join(app.getAppPath(), app.isPackaged ? 'dist' : 'public')),
       isSessionClaimed: (sessionId) => getStudioGenesisStageService().isClaimed(sessionId),
       beforeProjection: (sessionId) => getStudioGenesisStageService().beforeLiveStageProjection(sessionId),
     });
@@ -9233,6 +9239,7 @@ const getStudioGenesisStageService = (): StudioGenesisStageService => {
         fallbackAvatarDataUri,
       },
       fallbackAvatarDataUri,
+      resolveAvatar: (avatar) => resolveBuiltinAvatarDataUri(avatar, publicRoot),
     });
   }
   return studioGenesisStageService;
@@ -9995,6 +10002,21 @@ const signOwnerBindingForLocalUser = async (
  * one wiring; the Twin-only metabot_manage tools and the manual UI IPC handlers
  * therefore run through the exact same code.
  */
+// Unattended re-sync of a bot's unpublished on-chain profile steps (the
+// first-run Twin's profile pins can fail on a just-granted, not yet indexed
+// subsidy). Kicked at launch and after every bot mutation.
+let metabotChainSyncAutoRetry: MetabotChainSyncAutoRetry | null = null;
+function getMetabotChainSyncAutoRetry(): MetabotChainSyncAutoRetry {
+  if (!metabotChainSyncAutoRetry) {
+    metabotChainSyncAutoRetry = createMetabotChainSyncAutoRetry({
+      listCandidates: () => listAutoResyncCandidates(getMetabotStore()),
+      resync: (metabotId) => resyncPendingChainStepsCore(metabotId, getMetabotManageDeps()),
+      log: (message, data) => console.log(`[MetaBot] ${message}`, data ?? ''),
+    });
+  }
+  return metabotChainSyncAutoRetry;
+}
+
 function getMetabotManageDeps(): MetabotManageDeps {
   return {
     store: getMetabotStore(),
@@ -10011,6 +10033,9 @@ function getMetabotManageDeps(): MetabotManageDeps {
     syncToChain: (store, metabotId, options) => syncMetaBotToChain(store, metabotId, {}, options),
     syncEditChanges: (store, input) => syncMetaBotEditChangesToChain(store, input),
     prepareNftAvatar: (input) => prepareNftAvatarForIdentity(input),
+    onAfterMutation: () => {
+      getMetabotChainSyncAutoRetry().kick();
+    },
     onAfterDelete: (deletedMetabot) => {
       // The Welcome Bot's onboarding guide (Bootstrap.md) is only meaningful
       // during initial setup; drop it once the Welcome Bot retires.
@@ -20310,6 +20335,12 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
         const resolved = await resolveNftAvatar(nftRef);
         return { success: true, avatarUrl: resolved.avatarUrl, nft: resolved.nft };
       }
+      // Built-in avatars ship with the app: render the local file instead of
+      // fetching the pinned copy (instant, and works offline).
+      const builtin = resolveBuiltinAvatarDataUri(reference, path.join(app.getAppPath(), app.isPackaged ? 'dist' : 'public'));
+      if (builtin) {
+        return { success: true, avatarUrl: builtin };
+      }
       return {
         success: true,
         avatarUrl: await resolvePinAssetSource(reference),
@@ -20632,9 +20663,15 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     }
 
     startupLog('createWindow begin');
+    let initialSize = resolveInitialWindowSize(null);
+    try {
+      initialSize = resolveInitialWindowSize(screen.getPrimaryDisplay().workAreaSize);
+    } catch {
+      // Keep the minimum default when the display cannot be read.
+    }
     const win = new BrowserWindow({
-      width: 1200,
-      height: 800,
+      width: initialSize.width,
+      height: initialSize.height,
       title: APP_NAME,
       icon: getAppIconPath(),
       ...(isMac
@@ -21427,6 +21464,14 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
       }
     } catch (error) {
       console.error('[brain-fallback-backfill] startup migration failed (non-fatal):', error);
+    }
+
+    // Bots left with unpublished profile steps by an earlier run retry them
+    // on the auto-retry backoff instead of waiting for a manual re-sync.
+    try {
+      getMetabotChainSyncAutoRetry().kick();
+    } catch (error) {
+      console.error('[MetaBot] chain-sync auto-retry kick failed (non-fatal):', error);
     }
 
     // HOST-FIX-RFP 2026-09-28 (D2, the zhipu silent-drop incident): reconcile

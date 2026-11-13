@@ -107,6 +107,31 @@ test('muted engines schedule nothing and the same cue is throttled', () => {
   assert.equal(ctx.closed, 0, 'a provided context is not closed by the engine');
 });
 
+test('silence is true silence: no always-on noise layer and a speech-gated bed', () => {
+  const window = load();
+  const ctx = fakeContext();
+  const gains = [];
+  const createGain = ctx.createGain;
+  ctx.createGain = () => {
+    const node = createGain();
+    const targets = [];
+    node.gain.setTargetAtTime = (value) => { targets.push(value); };
+    gains.push({ node, targets });
+    return node;
+  };
+  const sound = window.createGenesisSound({ context: ctx, immediate: true });
+  assert.ok(!ctx.started.some((entry) => entry.kind === 'noise'), 'no looping noise source runs at rest');
+  sound.setBed(1);
+  gains.forEach((entry) => { entry.targets.length = 0; });
+  sound.frame({ speech: 0, glow: 1 });
+  const idleTargets = gains.flatMap((entry) => entry.targets);
+  assert.ok(idleTargets.length > 0, 'the bed gain is driven every frame');
+  assert.ok(idleTargets.every((value) => value === 0), `idle frame targets ${idleTargets.join(',')} must all be 0`);
+  gains.forEach((entry) => { entry.targets.length = 0; });
+  sound.frame({ speech: 0.9, glow: 0 });
+  assert.ok(gains.flatMap((entry) => entry.targets).some((value) => value > 0), 'speech opens the bed');
+});
+
 test('the engine degrades to silence without Web Audio', () => {
   const window = load();
   const sound = window.createGenesisSound();

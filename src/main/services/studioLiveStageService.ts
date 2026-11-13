@@ -141,6 +141,8 @@ export type StudioLiveStageServiceDeps = {
    * completion, worker waiting, or ordinary tool activity.
    */
   activateStageTab?(sessionId: string): void | Promise<void>;
+  /** Map a non-renderable avatar reference (a built-in metafile://) to a data URI. */
+  resolveAvatar?(avatar: unknown): string | undefined;
 };
 
 export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
@@ -161,7 +163,8 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     };
   };
 
-  const safeAvatar = (avatar: unknown): string | undefined => typeof avatar === 'string' && /^(?:data:image\/|https?:\/\/)/i.test(avatar) ? avatar : undefined;
+  const renderableAvatar = (avatar: unknown): string | undefined => typeof avatar === 'string' && /^(?:data:image\/|https?:\/\/)/i.test(avatar) ? avatar : undefined;
+  const safeAvatar = (avatar: unknown): string | undefined => renderableAvatar(avatar) ?? renderableAvatar(deps.resolveAvatar?.(avatar));
 
   const avatarFor = (session: CoworkSession): string => {
     const metabot = session.metabotId == null ? null : deps.getMetabotById(session.metabotId);

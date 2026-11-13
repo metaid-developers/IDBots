@@ -678,3 +678,30 @@ test('coworkUtil: generateOwnerWaitUpdate mirrors the ack call class', () => {
   assert.ok(body.includes('fallbackLlmId'), 'fallback brain wired like titles/ack');
   assert.ok(body.includes('sanitizeTurnAckReplyForInput(result.content'), 'shared input-aware sanitize');
 });
+
+// Session 73de8dee (2026-11-13): the direct reply was still streaming when the
+// grace window expired, so the ack ("我先梳理一下…稍等一下") landed AFTER the
+// finished answer and the owner read it as a stalled turn. Streaming visible
+// text must close the ack window exactly like settled text does.
+test('runner: an ack never lands while visible reply text is still streaming', () => {
+  const source = read('src/main/libs/coworkRunner.ts');
+  const streamingGuard = '(turn.dshTurnAckStreamingTextIds?.size ?? 0) > 0';
+  for (const marker of ['private emitTurnAckOpeningBubble(', 'private async emitTurnAckReplyBubble(', 'private async emitTurnStatusGoal(']) {
+    const start = source.indexOf(marker);
+    assert.ok(start > 0, `${marker} exists`);
+    const body = source.slice(start, source.indexOf('\n  }\n', start));
+    const visibleGuards = body.split('turn.dshTurnAckVisibleTextSeen\n').length - 1;
+    const streamingGuards = body.split(streamingGuard).length - 1;
+    assert.ok(visibleGuards > 0, `${marker} checks settled visible text`);
+    assert.equal(streamingGuards, visibleGuards, `${marker}: every visible-text gate also checks streaming text`);
+  }
+  const reply = source.slice(source.indexOf('private async emitTurnAckReplyBubble('));
+  const lastGate = reply.lastIndexOf(streamingGuard, reply.indexOf("metadata: { turnAckReply: true, isFinal: true }"));
+  assert.ok(lastGate > 0, 'the final emission gate checks streaming text right before the bubble is stored');
+
+  // Tracking: a non-thinking streaming placeholder becomes a candidate, its
+  // first visible delta marks it, and finalize always releases it.
+  assert.match(source, /activeSession\.dshTurnAckStreamingTextIds = new Set\(\);/);
+  assert.match(source, /dshStreamingTextCandidates\.has\(messageId\) && content\.trim\(\)\.length > 0/);
+  assert.match(source, /activeSession\.dshTurnAckStreamingTextIds\?\.delete\(messageId\);/);
+});

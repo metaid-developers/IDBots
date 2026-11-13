@@ -1598,6 +1598,15 @@ interface ActiveSession {
    */
   dshTurnAckSerial?: number;
   dshTurnAckVisibleTextSeen?: boolean;
+  /**
+   * Ids of this turn's assistant messages whose visible (non-thinking) text
+   * is streaming but not finalized yet. The ack bubble must not be emitted
+   * while one exists: session 73de8dee (2026-11-13) — the direct reply was
+   * mid-stream when the ack grace window expired, the ack landed AFTER it in
+   * the transcript, and the owner was left reading "稍等一下" under a reply
+   * that had already finished ("stuck, no error, no retry").
+   */
+  dshTurnAckStreamingTextIds?: Set<string>;
   dshTurnAckOpeningEmitted?: boolean;
   /**
    * 2026-11-03 rework (second pass, owner decision after session 2c70849f):
@@ -11148,6 +11157,7 @@ export class CoworkRunner extends EventEmitter {
     // split slot boot vs provider prefill when the opening sentence is slow.
     const turnStartedAt = Date.now();
     let firstChunkLogged = false;
+    const dshStreamingTextCandidates = new Set<string>();
     // Direct upstream route: the DSH runtime speaks the provider's native
     // protocol (pi-ai) and bypasses the OpenAI-compat proxy entirely.
     let route: DshProviderRouteInfo | null = null;
@@ -11405,6 +11415,7 @@ export class CoworkRunner extends EventEmitter {
       // double-ack incident).
       let assistantOwnerChatForTurn = false;
       activeSession.dshTurnAckVisibleTextSeen = false;
+      activeSession.dshTurnAckStreamingTextIds = new Set();
       activeSession.dshTurnAckOpeningEmitted = false;
       activeSession.dshTurnAckOpeningText = undefined;
       // Turn acknowledgment fires EARLY with the best tier known without any
@@ -12029,6 +12040,16 @@ export class CoworkRunner extends EventEmitter {
               this.noteAssistantOwnerVisible(sessionId, activeSession)
             }
             const stored = this.store.addMessage(sessionId, message as Omit<CoworkMessage, 'id' | 'timestamp'>);
+            if (
+              (message as { type?: string } | null)?.type === 'assistant'
+              && messageMeta?.isThinking !== true
+              && messageMeta?.isStreaming === true
+            ) {
+              dshStreamingTextCandidates.add(stored.id);
+              if (((message as { content?: string }).content ?? '').trim().length > 0) {
+                activeSession.dshTurnAckStreamingTextIds?.add(stored.id);
+              }
+            }
             this.emit('message', sessionId, stored);
             return stored.id;
           },
@@ -12036,6 +12057,9 @@ export class CoworkRunner extends EventEmitter {
             if (!firstChunkLogged) {
               firstChunkLogged = true;
               coworkLog('INFO', 'turn:firstChunk', 'first model event for turn', { sessionId, kind: 'update', elapsedMs: Date.now() - turnStartedAt });
+            }
+            if (dshStreamingTextCandidates.has(messageId) && content.trim().length > 0) {
+              activeSession.dshTurnAckStreamingTextIds?.add(messageId);
             }
             // Match the Claude path: renderer updates are throttled, SQLite
             // writes wait for finalize. Per-chunk persist starved the shared
@@ -12045,6 +12069,10 @@ export class CoworkRunner extends EventEmitter {
           },
           onMessageFinalize: (messageId, content, metadata) => {
             armDshStallWatchdog();
+            // Settled either way: visible text arms dshTurnAckVisibleTextSeen
+            // below; text that folded into thinking frees the ack again.
+            dshStreamingTextCandidates.delete(messageId);
+            activeSession.dshTurnAckStreamingTextIds?.delete(messageId);
             if (metadata?.isThinking !== true && content.trim().length > 0) {
               activeSession.dshTurnAckVisibleTextSeen = true;
               this.noteAssistantOwnerVisible(sessionId, activeSession);
@@ -17625,6 +17653,7 @@ export class CoworkRunner extends EventEmitter {
     if (this.activeSessions.get(sessionId) !== turn
       || turn.dshTurnAckSerial !== turnSerial
       || turn.dshTurnAckVisibleTextSeen
+      || (turn.dshTurnAckStreamingTextIds?.size ?? 0) > 0
       || turn.dshTurnAckOpeningEmitted) return;
     const reply = deterministicReply.trim();
     if (!reply) return;
@@ -17706,6 +17735,7 @@ export class CoworkRunner extends EventEmitter {
             || this.activeSessions.get(sessionId) !== turn
             || turn.dshTurnAckSerial !== turnSerial
             || turn.dshTurnAckVisibleTextSeen
+            || (turn.dshTurnAckStreamingTextIds?.size ?? 0) > 0
             || turn.dshTurnAckOpeningEmitted) return;
         }
       }
@@ -17722,12 +17752,14 @@ export class CoworkRunner extends EventEmitter {
         if (this.activeSessions.get(sessionId) !== turn
           || turn.dshTurnAckSerial !== turnSerial
           || turn.dshTurnAckVisibleTextSeen
+          || (turn.dshTurnAckStreamingTextIds?.size ?? 0) > 0
           || turn.dshTurnAckOpeningEmitted) return;
         await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
         if (budgetExpired()
           || this.activeSessions.get(sessionId) !== turn
           || turn.dshTurnAckSerial !== turnSerial
           || turn.dshTurnAckVisibleTextSeen
+          || (turn.dshTurnAckStreamingTextIds?.size ?? 0) > 0
           || turn.dshTurnAckOpeningEmitted) return;
         coworkLog('INFO', 'turn:ack', 'retrying first sentence after an empty first attempt', { sessionId });
         generatedReply = await generateTurnAckReply(userPrompt, sessionTitle, ackAbort.signal);
@@ -17737,6 +17769,7 @@ export class CoworkRunner extends EventEmitter {
         || this.activeSessions.get(sessionId) !== turn
         || turn.dshTurnAckSerial !== turnSerial
         || turn.dshTurnAckVisibleTextSeen
+        || (turn.dshTurnAckStreamingTextIds?.size ?? 0) > 0
         || turn.dshTurnAckOpeningEmitted) return;
       const message = this.store.addMessage(sessionId, {
         type: 'assistant',
@@ -17792,6 +17825,7 @@ export class CoworkRunner extends EventEmitter {
       if (this.activeSessions.get(sessionId) !== turn
         || turn.dshTurnAckSerial !== turnSerial
         || turn.dshTurnAckVisibleTextSeen
+        || (turn.dshTurnAckStreamingTextIds?.size ?? 0) > 0
         || turn.dshTurnAckOpeningEmitted) return;
       const message = this.store.addMessage(sessionId, {
         type: 'system',
