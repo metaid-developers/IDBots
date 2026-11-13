@@ -132,6 +132,7 @@ import { hasEmbeddedSkillCatalog } from './skillPromptMarkers';
 import { buildMetabotPersonaPrompt } from './metabotPersonaPrompt';
 import { readBootstrapDoc } from './welcomeBootstrap';
 import { buildTwinProductPrimerSection, readTwinProductPrimer } from './twinProductPrimer';
+import { buildTwinFirstWorkerNudge } from './twinTeamNudge';
 import {
   clearCoworkSessionUpstream,
   resetCoworkSnipHeadTokens,
@@ -6868,6 +6869,25 @@ export class CoworkRunner extends EventEmitter {
   }
 
   /**
+   * First-Worker nudge (owner ruling 2026-11-14): while the Twin is the only
+   * bot on the machine, its owner chats (Studio and BotWorks, never A2A/IM or
+   * automation runs) carry guidance to keep inviting the owner to create a
+   * first Worker. Per-turn volatile so it vanishes once a Worker exists.
+   */
+  private async buildTwinTeamNudgePrompt(sessionId: string): Promise<string> {
+    if (!this.isTwinSession(sessionId) || !this.listLocalWorkers) return '';
+    const session = this.store.getSession(sessionId);
+    if (!session || session.autoOrigin) return '';
+    if (this.store.getConversationSourceContextBySession(sessionId).sourceChannel !== 'cowork_ui') return '';
+    try {
+      return buildTwinFirstWorkerNudge(await this.listLocalWorkers(sessionId));
+    } catch {
+      coworkLog('WARN', 'buildTwinTeamNudgePrompt', 'Local Worker roster unavailable', { sessionId });
+      return '';
+    }
+  }
+
+  /**
    * Volatile Twin impressions of local Workers (nightly dream layer). Injected
    * into the current user-message tail via buildVolatileContextPrompt so dream
    * rewrites never invalidate the cached system-prompt prefix. Failures
@@ -7672,6 +7692,10 @@ export class CoworkRunner extends EventEmitter {
     // Active session goal (/goal command): rides the per-turn tail like the
     // other volatile blocks; a stable goal text costs nothing after its first
     // injection thanks to content-hash dedup.
+    sections.push({
+      key: 'team-nudge',
+      text: await this.buildTwinTeamNudgePrompt(sessionId),
+    });
     const goal = this.store.getSessionWithoutMessages(sessionId)?.goal ?? null;
     if (goal && goal.status === 'active' && !trustSuppressed) {
       sections.push({
