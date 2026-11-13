@@ -1,15 +1,15 @@
 {
   "notifications": [
     {
-      "version": "1.0.8",
+      "version": "1.1.0",
       "minShowVersion": "1.0.0",
       "title": {
-        "zh": "关于睡前冲浪功能的重要提示",
-        "en": "Important Notice About Night Surfing Feature"
+        "zh": "v1.1.0：ME 积分体系与 Studio 全新体验",
+        "en": "v1.1.0: ME Credits System and the New Studio Experience"
       },
       "content": {
-        "zh": "## 睡前冲浪功能可能产生较大 Token 消耗\n\n我们发现部分用户每天夜间的 LLM Token 消耗量较大，主要原因是 MetaBot 的**睡前冲浪功能**持续运行。\n\n### 建议操作\n\n**如果您发现 Token 消耗较多，建议关闭相关 MetaBot 的睡前冲浪功能：**\n\n1. 进入 **我的 Bot** 页面\n2. 点击编辑要调整的 MetaBot\n3. 切换到 **冲浪** 标签页\n4. 将睡前冲浪功能 **关闭**\n\n### 新版本变更\n\n- **新建的 MetaBot 默认关闭冲浪功能**：从本版本开始，新创建的 Bot 不会自动启用冲浪\n- **需要时可手动开启**：如果您确实需要冲浪功能，可以在 Bot 设置的冲浪标签页中手动开启\n\n### 温馨提示\n\n睡前冲浪功能会让 Bot 定期自动浏览网页并获取信息，这会产生持续的 Token 消耗。建议根据实际需要开启，以控制使用成本。",
-        "en": "## Night Surfing Feature May Consume Significant Tokens\n\nWe've noticed that some users experience high LLM token consumption during nighttime hours, primarily due to the **Night Surfing feature** running continuously on their MetaBots.\n\n### Recommended Action\n\n**If you're experiencing high token usage, we recommend disabling the Night Surfing feature for relevant MetaBots:**\n\n1. Go to **My Bots** page\n2. Click to edit the MetaBot you want to adjust\n3. Switch to the **Surfing** tab\n4. Turn **off** the Night Surfing feature\n\n### Changes in This Version\n\n- **Surfing disabled by default for new MetaBots**: Starting from this version, newly created Bots will not have surfing enabled automatically\n- **Manual activation available**: If you need the surfing feature, you can manually enable it in the Bot settings' Surfing tab\n\n### Important Note\n\nThe Night Surfing feature allows your Bot to automatically browse web pages and gather information periodically, which results in continuous token consumption. We recommend enabling it only when needed to control usage costs."
+        "zh": "## 欢迎升级到 IDBots v1.1.0\n\n本版本引入 **ME 积分体系**，并对桌面端体验做了一次大升级。\n\n### ME 积分：官方能力的统一计量\n\n- **官方模型对话、JEV 小脑决策、上链流量**现在消耗 ME 积分，不再直接消耗账户内的其他资源\n- 每周自动发放**免费积分**；订阅档位越高，每周额度越大\n- 积分不足时会**自动回退到各自身份钱包自付**，任务不会中断\n- 新增 **设置 > 积分 & 流量** 面板：实时余额、本周发放、用量明细一目了然\n- 订阅面板新增 **积分增量包**（可开启自动扣减）与 **PayPal / 支付宝** 订阅支付\n\n### 本次其他亮点\n\n- **Studio** 全新上线：实时舞台（Live Stage）、Genesis 欢迎页、投影极速档、会话与浏览器标签页绑定\n- Bot Browser 集成 **元素选取器**（Agent Browser Core 0.10.2），精准指认页面元素\n- **MRC-721** 开放市场、兑换引擎与零确认发布流程\n- 定时任务可延续**同一会话**执行；长期任务心跳不再分裂出新会话\n- 大量稳定性修复：流式断线自愈、渲染守护、安装器与自动更新加固\n\n### 温馨提示\n\n积分余额与用量可在 **设置 > 积分 & 流量** 随时查看；如对订阅或计费有疑问，请在设置页联系客服入口。",
+        "en": "## Welcome to IDBots v1.1.0\n\nThis release introduces the **ME credits system** and ships a major desktop experience upgrade.\n\n### ME Credits: One Meter for Official Capabilities\n\n- **Official model conversations, JEV cerebellum decisions, and on-chain traffic** now consume ME credits instead of drawing on other account resources\n- **Free credits are granted weekly**; higher subscription tiers get larger weekly allowances\n- When credits run out, tasks **automatically fall back to each identity's own wallet self-pay** and never stall\n- A new **Settings > Credits & Traffic** panel shows your live balance, weekly grant, and usage details\n- The subscription panel adds **credit packs** (with an auto-deduct toggle) and **PayPal / Alipay** subscription checkout\n\n### Other Highlights\n\n- **Studio** debuts: Live Stage, a Genesis welcome page, projection fast mode, and session-to-browser-tab binding\n- The Bot Browser integrates an **element picker** (Agent Browser Core 0.10.2) for precise page-element targeting\n- **MRC-721** open market, swap engine, and zero-confirmation publishing\n- Scheduled tasks can continue in **one standing conversation**; long-term task heartbeats no longer fork new sessions\n- Many stability fixes: mid-stream reconnect self-healing, a renderer hang watchdog, and installer/updater hardening\n\n### Good to Know\n\nCheck your balance and usage anytime under **Settings > Credits & Traffic**; for billing questions, use the support entry on the settings page."
       },
       "type": "info"
     }
