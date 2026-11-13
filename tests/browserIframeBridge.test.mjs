@@ -103,12 +103,15 @@ test('negative control: the sandbox-relaxation guard flags a module that still e
   );
 });
 
-test('only the active Stage frame can open its own same-directory final report', async () => {
+test('only the active Stage frame can open its own final report via openTab', async () => {
   const { default: vm } = await import('node:vm');
   const listeners = [];
+  const opened = [];
   const navigated = [];
   const frame = {};
-  const stageUri = 'preview-metaapp://localhost/work/reports/live-stage-turn-1.html';
+  const legacyStageUri = 'preview-metaapp://localhost/work/reports/live-stage-turn-1.html';
+  const persistentStageUri = 'preview-metaapp://localhost/userData/live-stage/studio-live-stage-official-1234567890ab/stage.html';
+  let activeStageUri = legacyStageUri;
   const reportUri = 'preview-metaapp://localhost/work/reports/final-report.html';
   const context = {
     URL,
@@ -119,11 +122,14 @@ test('only the active Stage frame can open its own same-directory final report',
     parent: { postMessage: () => {} },
     addEventListener: (type, listener) => listeners.push({ type, listener }),
     AgentBrowserTabs: {
-      openTab: () => 1,
+      openTab: (uri) => {
+        opened.push(uri);
+        return 1;
+      },
       closeTab: () => {},
       switchTab: () => {},
-      getTabs: () => [{ id: 1, uri: stageUri, isActive: true }],
-      getActiveTab: () => ({ id: 1, uri: stageUri, isActive: true }),
+      getTabs: () => [{ id: 1, uri: activeStageUri, isActive: true }],
+      getActiveTab: () => ({ id: 1, uri: activeStageUri, isActive: true }),
     },
     currentBrowserHtmlFrameWindow: () => frame,
     loadRuntime: async () => ({}),
@@ -152,5 +158,21 @@ test('only the active Stage frame can open its own same-directory final report',
   send(action({ uri: 'https://example.com/report' }));
   send(action({ uri: 'preview-metaapp://localhost/work/reports/../secret.html' }));
 
-  assert.deepEqual(navigated, [reportUri]);
+  // Persistent Live Stage entry allows any clean local report URI (not a stage
+  // file or traversal), while a non-stage active tab is always refused.
+  activeStageUri = persistentStageUri;
+  send(action({ turnId: '', uri: 'preview-metaapp://localhost/C:/work/other/final-report.html' }));
+  send(action({ turnId: '', uri: persistentStageUri }));
+  send(action({ turnId: '', uri: 'preview-metaapp://localhost/work/reports/%2e%2e/secret.html' }));
+
+  activeStageUri = 'preview-metaapp://localhost/work/arbitrary-metaapp/index.html';
+  send(action({ turnId: '', uri: reportUri }));
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(navigated, []);
+  assert.deepEqual(opened, [
+    reportUri,
+    'preview-metaapp://localhost/C:/work/other/final-report.html',
+  ]);
 });

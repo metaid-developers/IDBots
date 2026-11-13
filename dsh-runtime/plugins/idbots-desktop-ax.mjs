@@ -192,7 +192,7 @@ export function createCliRunner(options = {}) {
   return async (argv, timeoutMs) => {
     const started = Date.now()
     return await new Promise((resolve) => {
-      execFile(bin, argv, { timeout: Math.max(1000, timeoutMs), maxBuffer: 16 * 1024 * 1024, env }, (error, stdout, stderr) => {
+      execFile(bin, argv, { timeout: Math.max(1000, timeoutMs), maxBuffer: 16 * 1024 * 1024, env, windowsHide: true }, (error, stdout, stderr) => {
         const code = error && typeof error.code === 'number' ? error.code : error ? 1 : 0
         resolve({
           exitCode: code,

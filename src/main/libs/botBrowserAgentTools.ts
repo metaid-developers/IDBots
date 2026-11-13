@@ -576,7 +576,8 @@ export function buildBotBrowserAgentTools(deps: {
     },
     async (args: { path: string; newTab?: boolean; projection?: boolean; title?: string }) => {
       const localPath = args.path.trim();
-      if (!localPath.startsWith('/')) {
+      const isAbsolutePath = localPath.startsWith('/') || /^[A-Za-z]:[\\/]/u.test(localPath);
+      if (!isAbsolutePath) {
         return textResult(`bot_browser_preview_local requires an absolute path, got: ${localPath}`, true);
       }
       let stats: fs.Stats;

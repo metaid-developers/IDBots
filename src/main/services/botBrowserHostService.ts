@@ -545,13 +545,18 @@ async function resolveLocalPreviewPath(
   if (!input.createLocalPreviewSession) {
     throw new Error('Local preview is not supported by this host.');
   }
+  let fsPath = localPath;
+  // Windows drive form: /C:/x/y -> C:/x/y
+  if (process.platform === 'win32' && /^\/[A-Za-z]:[\/]/.test(fsPath)) {
+    fsPath = fsPath.slice(1);
+  }
   let stats: fs.Stats;
   try {
-    stats = await fs.promises.stat(localPath);
+    stats = await fs.promises.stat(fsPath);
   } catch (error) {
     const code = (error as NodeJS.ErrnoException)?.code;
-    if (code === 'ENOENT') throw new Error(`Local path not found: ${localPath}`);
-    if (code === 'EACCES') throw new Error(`Permission denied: ${localPath}`);
+    if (code === 'ENOENT') throw new Error(`Local path not found: ${fsPath}`);
+    if (code === 'EACCES') throw new Error(`Permission denied: ${fsPath}`);
     throw error;
   }
 
@@ -563,7 +568,7 @@ async function resolveLocalPreviewPath(
     const found = await Promise.all(
       candidates.map(async (name) => {
         try {
-          await fs.promises.access(path.join(localPath, name));
+          await fs.promises.access(path.join(fsPath, name));
           return name;
         } catch {
           return null;
@@ -572,13 +577,13 @@ async function resolveLocalPreviewPath(
     );
     indexFile = found.find((name): name is string => name !== null) ?? '';
     if (!indexFile) {
-      throw new Error(`No index.html found in directory: ${localPath}`);
+      throw new Error(`No index.html found in directory: ${fsPath}`);
     }
-    artifactDir = localPath;
+    artifactDir = fsPath;
     contentType = 'text/html';
   } else {
-    artifactDir = path.dirname(localPath);
-    indexFile = path.basename(localPath);
+    artifactDir = path.dirname(fsPath);
+    indexFile = path.basename(fsPath);
     // classifyLocalFile covers the whole previewable surface (md/pdf/media/…),
     // so a single file preview resolves its real MIME instead of the former
     // 'text/html' fallback that pushed unknown types into html-iframe.

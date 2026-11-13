@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildLocalPreviewUri } from '../src/renderer/features/botBrowser/localPreviewUri';
+import { encodeLocalPreviewPath, previewMetaappUriForPath } from '../src/main/libs/localPreviewUri';
 
 test('buildLocalPreviewUri maps documents to preview-file', () => {
   assert.equal(
@@ -69,4 +70,19 @@ test('buildLocalPreviewUri previews core-named extensionless files and dotfiles'
 test('buildLocalPreviewUri rejects empty and relative input', () => {
   assert.equal(buildLocalPreviewUri(''), null);
   assert.equal(buildLocalPreviewUri('relative/note.md'), null);
+});
+
+test('main localPreviewUri normalizes Windows drive paths for stage and report URIs', () => {
+  assert.equal(
+    previewMetaappUriForPath('C:\\Users\\Alice Smith\\AppData\\Roaming\\IDBots\\live-stage\\official-abc\\stage.html'),
+    'preview-metaapp://localhost/C:/Users/Alice%20Smith/AppData/Roaming/IDBots/live-stage/official-abc/stage.html',
+  );
+  assert.equal(
+    encodeLocalPreviewPath('D:/work/my report #1.html'),
+    '/D:/work/my%20report%20%231.html',
+  );
+  assert.equal(
+    previewMetaappUriForPath('/Users/alice/Application Support/IDBots/live-stage/stage.html'),
+    'preview-metaapp://localhost/Users/alice/Application%20Support/IDBots/live-stage/stage.html',
+  );
 });
