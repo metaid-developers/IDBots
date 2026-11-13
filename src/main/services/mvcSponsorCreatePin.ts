@@ -41,6 +41,7 @@ import {
   type SponsorBilling,
 } from './mvcSponsorClient';
 import { appendMetaidLog } from './metaidLog';
+import { isPinRefGuardError } from '../libs/chainPinRefGuard';
 import { noteMeTrafficBillingLive, recordLocalTrafficSpend, sponsorBilledBy } from './trafficAccountService';
 import {
   isSponsorBroadcastFailureError,
@@ -397,6 +398,10 @@ export async function runMvcSponsorCreatePin(
       ? draftResult.spentOutpoints
       : draft.userInputs.map((utxo) => `${utxo.txId}:${utxo.outputIndex}`);
   } catch (error) {
+    // A payload the pin-reference guard blocked is wrong on every channel:
+    // falling back to self-paid only re-ran the same block and mislabeled it
+    // a sponsor outage ("sponsor service_unavailable at address_info").
+    if (isPinRefGuardError(error)) throw error;
     return fallbackToSelfPaid({
       reason: isNoUserUtxoDraftFailure(error) ? 'no_user_utxo' : 'service_unavailable',
       stage: 'address_info',

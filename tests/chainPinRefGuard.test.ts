@@ -189,3 +189,16 @@ test('metaidCore keeps the fail-closed gate at the shared worker spawn (source c
   assert.ok(gateIdx > spawnIdx, 'gate call missing from metaidCore');
   assert.ok(gateIdx < workerResolveIdx, 'gate must run before the worker path resolution');
 });
+
+// 2026-11-13 dev:fresh: the built-in Twin avatar publishes /info/avatar as
+// `metafile://<pinId>.png`; the guard read `.png` as part of the pinid and
+// blocked every built-in avatar sync ("资料待同步" that a re-sync could not fix).
+test('scanPinUriViolations: metafile:// typed extensions are part of the URI, not the pinid', () => {
+  assert.deepEqual(scanPinUriViolations(`metafile://${VALID_PIN}.png`), []);
+  assert.deepEqual(scanPinUriViolations(`see metafile://${VALID_PIN}.webp.`), []);
+  assert.deepEqual(scanPinUriViolations(`metafile://${FOREIGN_PIN_I1}.svg+xml`), []);
+  assert.equal(validateChainWritePinRefs({ path: '/info/avatar', payload: `metafile://${VALID_PIN}.png` }), null);
+  assert.equal(scanPinUriViolations(`metafile://${NO_I0}.png`).length, 1, 'a broken pinid stays blocked with an extension');
+  assert.equal(scanPinUriViolations(`metafile://${VALID_PIN.slice(0, 60)}.png`).length, 1, 'truncated + extension stays blocked');
+  assert.equal(scanPinUriViolations(`pin://${VALID_PIN}.png`).length, 1, 'only metafile:// carries an extension');
+});
