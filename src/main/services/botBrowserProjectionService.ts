@@ -5,6 +5,7 @@
  */
 
 import type { BotBrowserTabBridge } from './botBrowserTabBridge';
+import { previewMetaappUriForPath } from '../libs/localPreviewUri';
 
 export type BotBrowserProjectionInput = {
   sessionId: string;
@@ -16,6 +17,12 @@ export type BotBrowserProjectionInput = {
   reveal?: boolean;
   /** The current turn's confirmed Stage tab, used as a binding hint. */
   tabId?: number;
+  /**
+   * Fixed session-tab role this projection lands in. Live Stage and Genesis
+   * Stage pass 'stage'; owner-facing reports pass 'showcase' (the default
+   * when omitted — commands without a role bind the showcase tab).
+   */
+  role?: 'stage' | 'showcase';
 };
 
 export type BotBrowserProjectionOutcome = {
@@ -32,7 +39,7 @@ export type BotBrowserProjectionService = {
   forget(sessionId: string): void;
 };
 
-const projectionUriForPath = (localPath: string): string => `preview-metaapp://localhost${localPath}`;
+const projectionUriForPath = (localPath: string): string => previewMetaappUriForPath(localPath);
 
 export function createBotBrowserProjectionService(deps: {
   getTabBridge: () => BotBrowserTabBridge;
@@ -48,7 +55,11 @@ export function createBotBrowserProjectionService(deps: {
       label,
       sessionId: input.sessionId,
       tabId: input.tabId,
+      role: input.role,
       activate: reveal,
+      // Every projection stays off the app surface (stage and reports alike):
+      // a report reveals its tab inside Bot Browser, never switches the app view.
+      background: true,
     }, { focusWindow: false });
     const tabId = result.openedTabId ?? result.sessionTab?.id
       ?? (reveal ? result.activeTab?.id ?? null : null);

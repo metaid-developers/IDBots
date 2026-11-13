@@ -633,3 +633,314 @@ test('static wiring: selection, projection, launch, and browser events share the
   const projectionSource = readSource('../src/main/services/botBrowserProjectionService.ts');
   assert.match(projectionSource, /sessionId: input\.sessionId/);
 });
+
+// ---------------------------------------------------------------------------
+// Fixed stage/showcase roles (owner ruling 2026-11-12)
+// ---------------------------------------------------------------------------
+
+const STAGE_ENTRY_URI = 'preview-metaapp://localhost/app-data/live-stage/studio-live-stage-official-0123456789ab/stage.html';
+const LEGACY_STAGE_URI = 'preview-metaapp://localhost/app-data/reports/live-stage-turn-1.html';
+
+function installStageEntry(uri = STAGE_ENTRY_URI, initial?: Record<string, string>) {
+  const storage = installLocalStorage(initial);
+  const win = (globalThis as { window?: { electron?: unknown } }).window;
+  if (win) {
+    win.electron = {
+      studioLiveStage: { getStageEntry: async () => ({ uri }) },
+    };
+  }
+  return storage;
+}
+
+const flushAdoption = () => new Promise((resolve) => setTimeout(resolve, 10));
+
+test('stage and showcase roles bind separate tabs and only the showcase page persists', async () => {
+  const bridge = createFakeTabBridge();
+  const fakeHost = createFakeHost(bridge);
+  const storage = installStageEntry();
+  try {
+    const binding = createSessionTabBinding();
+    binding.attach(fakeHost.host);
+    fakeHost.sessions.set('session-a', sessionOf('session-a'));
+    fakeHost.sessions.set('session-b', sessionOf('session-b'));
+    fakeHost.setOpen('session-a');
+
+    const stageOpen = await binding.controlSessionTab({
+      action: 'open-tab', sessionId: 'session-a', role: 'stage', uri: STAGE_ENTRY_URI, activate: true,
+    });
+    assert.equal(stageOpen.sessionTab?.uri, STAGE_ENTRY_URI);
+    const stageTabId = stageOpen.sessionTab!.id;
+
+    const showcaseOpen = await binding.controlSessionTab({
+      action: 'open-tab', sessionId: 'session-a', role: 'showcase', uri: 'metaapp://report', activate: true,
+    });
+    const showcaseTabId = showcaseOpen.sessionTab!.id;
+    assert.notEqual(showcaseTabId, stageTabId, 'the two roles never share a tab');
+
+    const stageTabs = await binding.controlSessionTab({ action: 'get-tabs', sessionId: 'session-a', role: 'stage' });
+    assert.equal(stageTabs.sessionTab?.id, stageTabId);
+    const showcaseTabs = await binding.controlSessionTab({ action: 'get-tabs', sessionId: 'session-a', role: 'showcase' });
+    assert.equal(showcaseTabs.sessionTab?.id, showcaseTabId);
+    // A role-less get-tabs keeps meaning the showcase tab.
+    const plainTabs = await binding.controlSessionTab({ action: 'get-tabs', sessionId: 'session-a' });
+    assert.equal(plainTabs.sessionTab?.id, showcaseTabId);
+
+    // The shared entry URI never dedupes two sessions onto one stage tab.
+    fakeHost.setOpen('session-b');
+    const stageOpenB = await binding.controlSessionTab({
+      action: 'open-tab', sessionId: 'session-b', role: 'stage', uri: STAGE_ENTRY_URI, activate: true,
+    });
+    assert.notEqual(stageOpenB.sessionTab?.id, stageTabId, 'session-b gets its own stage tab');
+    assert.equal(stageOpenB.sessionTab?.uri, STAGE_ENTRY_URI);
+    const stageOpenCommand = bridge.commands.find((command) => command.action === 'open-tab' && command.uri === STAGE_ENTRY_URI);
+    assert.equal(stageOpenCommand?.dedupe, false, 'the stage open always bypasses URI dedupe');
+
+    const persisted = JSON.parse(storage.store.get('idbots.botBrowser.viewState') ?? '{}') as {
+      sessionPages?: Record<string, { uri: string }>;
+    };
+    assert.equal(persisted.sessionPages?.['session-a']?.uri, 'metaapp://report', 'only the showcase page persists');
+    assert.equal(persisted.sessionPages?.['session-b'], undefined, 'the stage role never persists a page');
+  } finally {
+    storage.restore();
+  }
+});
+
+test('a committed active tab never moves an existing session binding', async () => {
+  const bridge = createFakeTabBridge();
+  const fakeHost = createFakeHost(bridge);
+  const storage = installStageEntry();
+  try {
+    const binding = createSessionTabBinding();
+    binding.attach(fakeHost.host);
+    fakeHost.sessions.set('session-a', sessionOf('session-a'));
+    fakeHost.sessions.set('session-b', sessionOf('session-b'));
+    fakeHost.setOpen('session-a');
+
+    await binding.controlSessionTab({
+      action: 'open-tab', sessionId: 'session-a', role: 'showcase', uri: 'metaapp://report', activate: true,
+    });
+    const boundShowcaseId = bridge.activeTabId;
+
+    // A brand-new unowned tab becomes active and commits a navigation: the
+    // session already owns a showcase tab, so nothing may be adopted.
+    await bridge.controlTabs({ action: 'open-tab', uri: 'metaapp://other' });
+    const strayTabId = bridge.activeTabId;
+    assert.notEqual(strayTabId, boundShowcaseId);
+    binding.handleBrowserEvent(navigationCommitted(strayTabId, 'metaapp://other', 'Other'));
+    await flushAdoption();
+
+    const tabsA = await binding.controlSessionTab({ action: 'get-tabs', sessionId: 'session-a' });
+    assert.equal(tabsA.sessionTab?.id, boundShowcaseId, 'the showcase binding did not move');
+
+    // A session holding only the stage tab is equally protected.
+    fakeHost.setOpen('session-b');
+    await binding.controlSessionTab({
+      action: 'open-tab', sessionId: 'session-b', role: 'stage', uri: STAGE_ENTRY_URI, activate: true,
+    });
+    const stageTabId = bridge.activeTabId;
+    await bridge.controlTabs({ action: 'open-tab', uri: 'metaapp://other-b' });
+    const strayTabIdB = bridge.activeTabId;
+    binding.handleBrowserEvent(navigationCommitted(strayTabIdB, 'metaapp://other-b', 'Other B'));
+    await flushAdoption();
+
+    const tabsB = await binding.controlSessionTab({ action: 'get-tabs', sessionId: 'session-b' });
+    assert.equal(tabsB.sessionTab, null, 'no showcase binding was adopted over the stage role');
+    const stageTabsB = await binding.controlSessionTab({ action: 'get-tabs', sessionId: 'session-b', role: 'stage' });
+    assert.equal(stageTabsB.sessionTab?.id, stageTabId, 'the stage binding is untouched');
+  } finally {
+    storage.restore();
+  }
+});
+
+test('revealSessionTab prefers showcase, then stage, then opens the stage entry', async () => {
+  const bridge = createFakeTabBridge();
+  const fakeHost = createFakeHost(bridge);
+  const storage = installStageEntry();
+  try {
+    const binding = createSessionTabBinding();
+    binding.attach(fakeHost.host);
+    fakeHost.sessions.set('session-a', sessionOf('session-a'));
+    fakeHost.sessions.set('session-b', sessionOf('session-b'));
+    fakeHost.sessions.set('session-c', sessionOf('session-c'));
+
+    // session-a owns both roles: the showcase tab is revealed first.
+    fakeHost.setOpen('session-a');
+    await binding.controlSessionTab({
+      action: 'open-tab', sessionId: 'session-a', role: 'stage', uri: STAGE_ENTRY_URI, activate: true,
+    });
+    await binding.controlSessionTab({
+      action: 'open-tab', sessionId: 'session-a', role: 'showcase', uri: 'metaapp://report-a', activate: true,
+    });
+    const showcaseA = bridge.activeTabId;
+    await bridge.controlTabs({ action: 'open-tab', uri: 'metaapp://elsewhere' });
+    await binding.revealSessionTab('session-a');
+    assert.equal(bridge.activeTabId, showcaseA, 'the showcase tab wins the reveal');
+
+    // session-b owns only the stage tab: it is revealed when no showcase exists.
+    fakeHost.setOpen('session-b');
+    await binding.controlSessionTab({
+      action: 'open-tab', sessionId: 'session-b', role: 'stage', uri: STAGE_ENTRY_URI, activate: true,
+    });
+    const stageB = bridge.activeTabId;
+    await bridge.controlTabs({ action: 'open-tab', uri: 'metaapp://elsewhere-2' });
+    await binding.revealSessionTab('session-b');
+    assert.equal(bridge.activeTabId, stageB, 'the bound stage tab is revealed');
+
+    // session-c owns nothing: reveal opens the stage entry as the stage role.
+    fakeHost.setOpen('session-c');
+    await binding.revealSessionTab('session-c');
+    const stageC = await binding.controlSessionTab({ action: 'get-tabs', sessionId: 'session-c', role: 'stage' });
+    assert.equal(stageC.sessionTab?.uri, STAGE_ENTRY_URI, 'the persistent entry opened as the stage tab');
+    assert.equal(bridge.activeTabId, stageC.sessionTab!.id);
+    const showcaseC = await binding.controlSessionTab({ action: 'get-tabs', sessionId: 'session-c', role: 'showcase' });
+    assert.equal(showcaseC.sessionTab, null, 'reveal never invents a showcase tab');
+  } finally {
+    storage.restore();
+  }
+});
+
+test('role switch-tab activates the bound tab only for the open session', async () => {
+  const bridge = createFakeTabBridge();
+  const fakeHost = createFakeHost(bridge);
+  const binding = createSessionTabBinding();
+  binding.attach(fakeHost.host);
+  fakeHost.sessions.set('session-a', sessionOf('session-a'));
+  fakeHost.sessions.set('session-b', sessionOf('session-b'));
+  fakeHost.setOpen('session-a');
+
+  await binding.controlSessionTab({
+    action: 'open-tab', sessionId: 'session-a', role: 'stage', uri: STAGE_ENTRY_URI, activate: true,
+  });
+  const stageTabId = bridge.activeTabId;
+  await bridge.controlTabs({ action: 'open-tab', uri: 'metaapp://elsewhere' });
+  assert.notEqual(bridge.activeTabId, stageTabId);
+
+  // A different conversation is on screen: the activation is a no-op and no
+  // switch command ever reaches the tab bridge.
+  fakeHost.setOpen('session-b');
+  const denied = await binding.controlSessionTab({ action: 'switch-tab', sessionId: 'session-a', role: 'stage' });
+  assert.equal(denied.sessionTab, null);
+  assert.notEqual(bridge.activeTabId, stageTabId, 'the view was not yanked to another session');
+  assert.ok(!bridge.commands.some((command) => command.action === 'switch-tab'), 'no switch command reached the bridge');
+
+  // The owning session on screen: the bound stage tab activates.
+  fakeHost.setOpen('session-a');
+  const activated = await binding.controlSessionTab({ action: 'switch-tab', sessionId: 'session-a', role: 'stage' });
+  assert.equal(activated.sessionTab?.id, stageTabId);
+  assert.equal(bridge.activeTabId, stageTabId);
+});
+
+test('a persisted stage page is never restored as the showcase tab', async () => {
+  const bridge = createFakeTabBridge();
+  const fakeHost = createFakeHost(bridge);
+  const storage = installLocalStorage({
+    'idbots.botBrowser.viewState': JSON.stringify({
+      sessionId: null,
+      sessionPages: {
+        'session-a': { uri: LEGACY_STAGE_URI, title: 'Live Stage' },
+        'session-b': { uri: STAGE_ENTRY_URI, title: 'Live Stage' },
+      },
+    }),
+  });
+  const win = (globalThis as { window?: { electron?: unknown } }).window;
+  if (win) {
+    win.electron = {
+      studioLiveStage: { getStageEntry: async () => ({ uri: STAGE_ENTRY_URI }) },
+    };
+  }
+  try {
+    const binding = createSessionTabBinding();
+    binding.attach(fakeHost.host);
+    fakeHost.sessions.set('session-a', sessionOf('session-a'));
+    fakeHost.sessions.set('session-b', sessionOf('session-b'));
+
+    // A legacy per-turn stage file persisted by an old build is ignored: the
+    // session opens the persistent entry as its stage tab instead.
+    fakeHost.setOpen('session-a');
+    await binding.revealSessionTab('session-a');
+    const stageA = await binding.controlSessionTab({ action: 'get-tabs', sessionId: 'session-a', role: 'stage' });
+    assert.equal(stageA.sessionTab?.uri, STAGE_ENTRY_URI);
+    assert.ok(!bridge.tabs.some((tab) => tab.uri === LEGACY_STAGE_URI), 'the legacy stage file was never opened');
+    const showcaseA = await binding.controlSessionTab({ action: 'get-tabs', sessionId: 'session-a', role: 'showcase' });
+    assert.equal(showcaseA.sessionTab, null, 'no showcase tab was bound to the stage page');
+
+    // A persisted persistent-entry URI is ignored the same way.
+    fakeHost.setOpen('session-b');
+    await binding.revealSessionTab('session-b');
+    const stageB = await binding.controlSessionTab({ action: 'get-tabs', sessionId: 'session-b', role: 'stage' });
+    assert.equal(stageB.sessionTab?.uri, STAGE_ENTRY_URI);
+    const showcaseB = await binding.controlSessionTab({ action: 'get-tabs', sessionId: 'session-b', role: 'showcase' });
+    assert.equal(showcaseB.sessionTab, null);
+
+    // A stage-page navigation never becomes the persisted showcase page.
+    binding.handleBrowserEvent(navigationCommitted(stageA.sessionTab!.id, STAGE_ENTRY_URI));
+    await flushAdoption();
+    const persisted = JSON.parse(storage.store.get('idbots.botBrowser.viewState') ?? '{}') as {
+      sessionPages?: Record<string, { uri: string }>;
+    };
+    assert.equal(persisted.sessionPages?.['session-a']?.uri, LEGACY_STAGE_URI, 'the persisted record is untouched by stage navigations');
+  } finally {
+    storage.restore();
+  }
+});
+
+test('the stage role adopts the prewarmed draft while the session is still optimistic', async () => {
+  const bridge = createFakeTabBridge();
+  const fakeHost = createFakeHost(bridge);
+  const storage = installStageEntry();
+  try {
+    const binding = createSessionTabBinding();
+    binding.attach(fakeHost.host);
+
+    // First-open draft: the pending draft tab is prewarmed onto the entry.
+    const draftTabId = await binding.prepareDraftTab();
+    assert.equal(draftTabId, 1);
+    assert.equal(bridge.tabs[0].uri, STAGE_ENTRY_URI);
+
+    // The owner hits send: the open session is still the optimistic
+    // placeholder while main creates the real session and projects the stage.
+    fakeHost.sessions.set('optimistic-browser-x', sessionOf('optimistic-browser-x'));
+    fakeHost.setOpen('optimistic-browser-x');
+    bridge.commands.length = 0;
+
+    const result = await binding.controlSessionTab({
+      action: 'open-tab', sessionId: 's1', role: 'stage', uri: STAGE_ENTRY_URI, activate: true,
+    });
+    assert.equal(result.sessionTab?.id, draftTabId, 'the prewarmed draft became the stage tab');
+    assert.ok(!bridge.commands.some((command) => command.action === 'open-tab'), 'no second stage tab was opened');
+    const stageTabs = await binding.controlSessionTab({ action: 'get-tabs', sessionId: 's1', role: 'stage' });
+    assert.equal(stageTabs.sessionTab?.id, draftTabId);
+  } finally {
+    storage.restore();
+  }
+});
+
+test('the stage role never adopts the draft for an already-bound session', async () => {
+  const bridge = createFakeTabBridge();
+  const fakeHost = createFakeHost(bridge);
+  const storage = installStageEntry();
+  try {
+    const binding = createSessionTabBinding();
+    binding.attach(fakeHost.host);
+    fakeHost.sessions.set('optimistic-browser-x', sessionOf('optimistic-browser-x'));
+    fakeHost.setOpen('optimistic-browser-x');
+
+    const draftTabId = await binding.prepareDraftTab();
+    assert.equal(draftTabId, 1);
+
+    // s2 already owns a showcase tab — it must get its own stage tab even
+    // though the open session is still the optimistic placeholder.
+    await binding.controlSessionTab({
+      action: 'open-tab', sessionId: 's2', role: 'showcase', uri: 'metaapp://report', activate: true,
+    });
+    bridge.commands.length = 0;
+    const result = await binding.controlSessionTab({
+      action: 'open-tab', sessionId: 's2', role: 'stage', uri: STAGE_ENTRY_URI, activate: true,
+    });
+    assert.notEqual(result.sessionTab?.id, draftTabId, 'a bound session never takes the draft');
+    assert.equal(result.sessionTab?.uri, STAGE_ENTRY_URI);
+    assert.ok(bridge.commands.some((command) => command.action === 'open-tab' && command.dedupe === false), 'a fresh stage tab was opened');
+  } finally {
+    storage.restore();
+  }
+});

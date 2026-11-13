@@ -50,10 +50,21 @@ export type LiveStageState = {
   protocol: typeof LIVE_STAGE_PROTOCOL;
   sessionId: string;
   turnId: string;
+  /**
+   * Epoch ms when this turn's state was created. The persistent stage page
+   * uses it to order turns: a patch for a different turnId is accepted only
+   * when its turnStartedAt is newer, so a delayed old-turn patch can never
+   * overwrite a newer turn.
+   */
+  turnStartedAt: number;
   revision: number;
   enabled: boolean;
   family: LiveStageFamily;
   botName: string;
+  /** Twin avatar as an https URL or a stage-relative `avatars/<hash>.<ext>` path; absent → fallback avatar. */
+  botAvatar?: string;
+  /** Showcase URI of the projected report; the stage's report button opens it. */
+  reportUri?: string | null;
   language: 'zh' | 'en';
   /** Localized label shown above the headline; the raw family id never reaches the owner. */
   kicker: string;
@@ -95,6 +106,7 @@ export type LiveStageSessionContext = {
   sessionId: string;
   turnId: string;
   botName: string;
+  botAvatar?: string;
   language: 'zh' | 'en';
   directorEnabled?: boolean;
   nowMs?: number;
@@ -146,7 +158,7 @@ function sceneFor(
     'browser-action': { headline: text(language, '正在大屏上操作', 'Working on the big screen'), caption: '', participants: [botName] },
     'owner-needed': { headline: text(language, '需要你做个决定', 'I need a decision from you'), caption: text(language, '在你回答之前我先停在这里。', "I'm paused here until you weigh in."), participants: [botName] },
     problem: { headline: text(language, '这一轮没能完成', "This run didn't finish"), caption: text(language, '说「继续」我就接着做。', 'Say "continue" and I\'ll pick it up.'), participants: [botName] },
-    'report-ready': { headline: text(language, '汇报已投到大屏', 'The report is on the big screen'), caption: text(language, '按返回键可以回到刚才的现场。', 'Press Back to return to the previous view.'), participants: [botName] },
+    'report-ready': { headline: text(language, '汇报已投到大屏', 'The report is on the big screen'), caption: text(language, '汇报在旁边的标签页里，这里继续显示现场。', 'The report is in the next tab; this live view stays here.'), participants: [botName] },
     complete: { headline: text(language, '这一轮做完了', 'Done for this round'), caption: text(language, '完整记录保留在左侧对话里。', 'The full transcript stays on the left.'), participants: [botName] },
   };
   const scene = scenes[family];
@@ -218,10 +230,12 @@ export function createLiveStageState(context: LiveStageSessionContext): LiveStag
     protocol: LIVE_STAGE_PROTOCOL,
     sessionId: context.sessionId,
     turnId: context.turnId,
+    turnStartedAt: nowMs,
     revision: 0,
     enabled: true,
     family: 'received',
     botName: context.botName,
+    ...(context.botAvatar ? { botAvatar: context.botAvatar } : {}),
     language: context.language,
     ...scene,
     captionSource: 'default',
@@ -604,9 +618,9 @@ export function completeLiveStage(state: LiveStageState, nowMs = Date.now()): Li
   };
 }
 
-export function reportReadyLiveStage(state: LiveStageState, nowMs = Date.now()): LiveStageState {
+export function reportReadyLiveStage(state: LiveStageState, reportUri: string | null, nowMs = Date.now()): LiveStageState {
   const scene = sceneFor('report-ready', state.language, state.botName);
-  return { ...state, ...scene, family: 'report-ready', handoff: null, phaseStartedAt: nowMs, revision: state.revision + 1, pendingProjectionIds: [], motion: { ...state.motion, preset: 'report-ready', energy: .18, durationMs: 650 } };
+  return { ...state, ...scene, family: 'report-ready', reportUri, handoff: null, phaseStartedAt: nowMs, revision: state.revision + 1, pendingProjectionIds: [], motion: { ...state.motion, preset: 'report-ready', energy: .18, durationMs: 650 } };
 }
 
 export function liveStageError(state: LiveStageState, copy?: { headline: string; caption: string }, nowMs = Date.now()): LiveStageState {

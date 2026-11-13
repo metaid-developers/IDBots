@@ -14,6 +14,8 @@ function makeHarness(overrides = {}) {
   const control = {
     execute: async (command) => {
       calls.execute.push(command);
+      const custom = overrides.executeFor?.(command);
+      if (custom) return custom;
       return {
         action: command.action,
         tabs: [
@@ -98,12 +100,60 @@ test('builds bot_browser_tabs, bot_browser_open_uri and bot_browser_preview_loca
 test('bot_browser_tabs list maps to get-tabs and formats the tab list', async () => {
   const { calls, byName } = makeHarness();
   const result = await byName.bot_browser_tabs.handler({ action: 'list' });
-  assert.deepEqual(calls.execute, [{ action: 'get-tabs', uri: undefined, tabId: undefined }]);
+  // The session-scoped list is followed by the two role lookups that annotate
+  // the stage and showcase tabs in the formatted output.
+  assert.deepEqual(calls.execute, [
+    { action: 'get-tabs', sessionId: 'session-1', background: true },
+    { action: 'get-tabs', sessionId: 'session-1', role: 'stage', background: true },
+    { action: 'get-tabs', sessionId: 'session-1', role: 'showcase', background: true },
+  ]);
   const text = result.content[0].text;
   assert.match(text, /Open tabs/);
   assert.match(text, /\*\s+\[1\] Agent A — metaid:\/\/aaa/);
   assert.match(text, /\[2\] Game B — metaapp:\/\/bbb/);
   assert.equal(result.isError, undefined);
+});
+
+test('bot_browser_tabs list marks the host-owned stage tab and the showcase tab', async () => {
+  const tabs = [
+    { id: 1, uri: 'preview-metaapp://localhost/live-stage/x/stage.html', title: 'Live Stage', isActive: true },
+    { id: 2, uri: 'preview-metaapp://localhost/reports/r.html', title: 'Report', isActive: false },
+  ];
+  const { byName } = makeHarness({
+    executeFor: (command) => {
+      if (command.action === 'get-tabs' && command.role === 'stage') {
+        return { action: 'get-tabs', tabs, activeTab: tabs[0], sessionTab: tabs[0] };
+      }
+      if (command.action === 'get-tabs' && command.role === 'showcase') {
+        return { action: 'get-tabs', tabs, activeTab: tabs[0], sessionTab: tabs[1] };
+      }
+      return null;
+    },
+  });
+  const result = await byName.bot_browser_tabs.handler({ action: 'list' });
+  const text = result.content[0].text;
+  assert.match(text, /\[live stage — host-owned, do not navigate\/close\]/);
+  assert.match(text, /\[showcase\]/);
+});
+
+test('bot_browser_tabs refuses close and switch on the Live Stage tab', async () => {
+  const stageTab = { id: 1, uri: 'preview-metaapp://localhost/live-stage/x/stage.html', title: 'Live Stage', isActive: true };
+  const { calls, byName } = makeHarness({
+    executeFor: (command) => {
+      if (command.action === 'get-tabs' && command.role === 'stage') {
+        return { action: 'get-tabs', tabs: [stageTab], activeTab: stageTab, sessionTab: stageTab };
+      }
+      return null;
+    },
+  });
+  const closeResult = await byName.bot_browser_tabs.handler({ action: 'close', tabId: 1 });
+  assert.equal(closeResult.isError, true);
+  assert.match(closeResult.content[0].text, /Live Stage tab/);
+  assert.match(closeResult.content[0].text, /cannot be closed or switched/);
+  const switchResult = await byName.bot_browser_tabs.handler({ action: 'switch', tabId: 1 });
+  assert.equal(switchResult.isError, true);
+  assert.ok(!calls.execute.some((command) => command.action === 'close-tab'), 'no close-tab command reached the bridge');
+  assert.ok(!calls.execute.some((command) => command.action === 'switch-tab'), 'no switch-tab command reached the bridge');
 });
 
 test('bot_browser_tabs validates required args before touching the bridge', async () => {
@@ -123,23 +173,35 @@ test('bot_browser_tabs switch/close pass tabId through to the bridge', async () 
   const { calls, byName } = makeHarness();
   await byName.bot_browser_tabs.handler({ action: 'switch', tabId: 2 });
   await byName.bot_browser_tabs.handler({ action: 'close', tabId: 2 });
-  assert.deepEqual(calls.execute[0], { action: 'switch-tab', uri: undefined, tabId: 2 });
-  assert.deepEqual(calls.execute[1], { action: 'close-tab', uri: undefined, tabId: 2 });
+  // Role lookups probe the stage tab first (host-owned refusal check) and
+  // annotate the list afterwards; only the mutating commands reach the bridge.
+  const bridgeCommands = calls.execute.filter((command) => command.action !== 'get-tabs');
+  assert.deepEqual(bridgeCommands, [
+    { action: 'switch-tab', uri: undefined, tabId: 2 },
+    { action: 'close-tab', uri: undefined, tabId: 2 },
+  ]);
 });
 
-test('bot_browser_open_uri navigates the session tab by default', async () => {
+test('bot_browser_open_uri navigates the session showcase tab by default', async () => {
   const { calls, byName } = makeHarness();
   const result = await byName.bot_browser_open_uri.handler({ uri: 'metaid://abc' });
-  assert.deepEqual(calls.execute, [{ action: 'navigate-tab', uri: 'metaid://abc', sessionId: 'session-1', activate: true }]);
+  assert.deepEqual(calls.execute, [{ action: 'navigate-tab', uri: 'metaid://abc', sessionId: 'session-1', role: 'showcase', activate: true }]);
   assert.equal(calls.openUri.length, 0);
   assert.match(result.content[0].text, /metaid:\/\/abc/);
 });
 
-test('bot_browser_open_uri newTab=true goes through open-tab', async () => {
+test('bot_browser_open_uri newTab=true still lands in the session showcase tab', async () => {
   const { calls, byName } = makeHarness();
-  await byName.bot_browser_open_uri.handler({ uri: 'metaapp://xyz', newTab: true });
-  assert.deepEqual(calls.execute, [{ action: 'open-tab', uri: 'metaapp://xyz' }]);
+  const result = await byName.bot_browser_open_uri.handler({ uri: 'metaapp://xyz', newTab: true });
+  // newTab is accepted for compatibility: there is exactly one showcase tab
+  // per session, so the open goes through open-tab bound to that role.
+  assert.deepEqual(calls.execute, [
+    { action: 'open-tab', uri: 'metaapp://xyz', sessionId: 'session-1', role: 'showcase' },
+    { action: 'get-tabs', sessionId: 'session-1', role: 'stage', background: true },
+    { action: 'get-tabs', sessionId: 'session-1', role: 'showcase', background: true },
+  ]);
   assert.equal(calls.openUri.length, 0);
+  assert.match(result.content[0].text, /showcase tab/);
 });
 
 test('bridge failures degrade to a friendly error result', async () => {
@@ -163,18 +225,22 @@ test('formatBotBrowserTabs handles an empty tab set', () => {
   assert.equal(formatBotBrowserTabs({ tabs: [], activeTab: null }), 'No open tabs.');
 });
 
-test('bot_browser_preview_local opens preview-metaapp URI in a new tab by default', async () => {
+test('bot_browser_preview_local opens preview-metaapp URI in the showcase tab by default', async () => {
   const { calls, byName } = makeHarness();
   const result = await byName.bot_browser_preview_local.handler({ path: process.cwd() });
-  assert.deepEqual(calls.execute, [{ action: 'open-tab', uri: `preview-metaapp://localhost${process.cwd()}` }]);
+  assert.deepEqual(calls.execute, [
+    { action: 'open-tab', uri: `preview-metaapp://localhost${process.cwd()}`, sessionId: 'session-1', role: 'showcase' },
+    { action: 'get-tabs', sessionId: 'session-1', role: 'stage', background: true },
+    { action: 'get-tabs', sessionId: 'session-1', role: 'showcase', background: true },
+  ]);
   assert.equal(calls.openUri.length, 0);
   assert.match(result.content[0].text, /preview-metaapp|preview/i);
 });
 
-test('bot_browser_preview_local newTab=false navigates the session tab', async () => {
+test('bot_browser_preview_local newTab=false navigates the session showcase tab', async () => {
   const { calls, byName } = makeHarness();
   await byName.bot_browser_preview_local.handler({ path: process.cwd(), newTab: false });
-  assert.deepEqual(calls.execute, [{ action: 'navigate-tab', uri: `preview-metaapp://localhost${process.cwd()}`, sessionId: 'session-1', activate: true }]);
+  assert.deepEqual(calls.execute, [{ action: 'navigate-tab', uri: `preview-metaapp://localhost${process.cwd()}`, sessionId: 'session-1', role: 'showcase', activate: true }]);
   assert.equal(calls.openUri.length, 0);
 });
 
@@ -199,7 +265,11 @@ test('bot_browser_preview_local previews a markdown file via preview-file', asyn
     await fs.promises.writeFile(filePath, '# hello', 'utf8');
     const { calls, byName } = makeHarness();
     const result = await byName.bot_browser_preview_local.handler({ path: filePath });
-    assert.deepEqual(calls.execute, [{ action: 'open-tab', uri: `preview-file://localhost${filePath}` }]);
+    assert.deepEqual(calls.execute, [
+      { action: 'open-tab', uri: `preview-file://localhost${filePath}`, sessionId: 'session-1', role: 'showcase' },
+      { action: 'get-tabs', sessionId: 'session-1', role: 'stage', background: true },
+      { action: 'get-tabs', sessionId: 'session-1', role: 'showcase', background: true },
+    ]);
     assert.equal(calls.openUri.length, 0);
     assert.match(result.content[0].text, /preview/i);
   } finally {
@@ -214,7 +284,11 @@ test('bot_browser_preview_local keeps html files and directories on preview-meta
     await fs.promises.writeFile(filePath, '<!doctype html>', 'utf8');
     const { calls, byName } = makeHarness();
     await byName.bot_browser_preview_local.handler({ path: filePath });
-    assert.deepEqual(calls.execute, [{ action: 'open-tab', uri: `preview-metaapp://localhost${filePath}` }]);
+    assert.deepEqual(calls.execute, [
+      { action: 'open-tab', uri: `preview-metaapp://localhost${filePath}`, sessionId: 'session-1', role: 'showcase' },
+      { action: 'get-tabs', sessionId: 'session-1', role: 'stage', background: true },
+      { action: 'get-tabs', sessionId: 'session-1', role: 'showcase', background: true },
+    ]);
   } finally {
     await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => undefined);
   }
@@ -228,7 +302,9 @@ test('bot_browser_preview_local percent-encodes path segments', async () => {
     const { calls, byName } = makeHarness();
     await byName.bot_browser_preview_local.handler({ path: filePath });
     assert.deepEqual(calls.execute, [
-      { action: 'open-tab', uri: `preview-file://localhost${dir}/${encodeURIComponent('a b#c.md')}` },
+      { action: 'open-tab', uri: `preview-file://localhost${dir}/${encodeURIComponent('a b#c.md')}`, sessionId: 'session-1', role: 'showcase' },
+      { action: 'get-tabs', sessionId: 'session-1', role: 'stage', background: true },
+      { action: 'get-tabs', sessionId: 'session-1', role: 'showcase', background: true },
     ]);
   } finally {
     await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => undefined);
@@ -554,10 +630,10 @@ test('bot_browser_screenshot rejects out-of-range quality before capturing', asy
   assert.equal(calls.screenshot.length, 0);
 });
 
-test('bot_browser_screenshot navigates the session tab by uri then captures', async () => {
+test('bot_browser_screenshot navigates the session showcase tab by uri then captures', async () => {
   const { calls, byName } = makeScreenshotHarness();
   await byName.bot_browser_screenshot.handler({ uri: 'metaapp://xyz', waitMs: 0 });
-  assert.deepEqual(calls.execute, [{ action: 'navigate-tab', uri: 'metaapp://xyz', sessionId: 'session-1', activate: true }]);
+  assert.deepEqual(calls.execute, [{ action: 'navigate-tab', uri: 'metaapp://xyz', sessionId: 'session-1', role: 'showcase', activate: true }]);
   assert.equal(calls.openUri.length, 0);
   assert.equal(calls.screenshot.length, 1);
 });

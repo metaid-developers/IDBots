@@ -1,5 +1,3 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { CoworkMessage, CoworkSession } from '../coworkStore';
 import type { BotBrowserProjectionInput, BotBrowserProjectionOutcome } from './botBrowserProjectionService';
@@ -7,8 +5,9 @@ import type { StudioLiveStageSettings } from './studioLiveStageSettings';
 import { applyLiveStageSpeech, completeLiveStage, createLiveStageState, buildLiveStageInteraction, dismissLiveStageInteraction, isLiveStageWorkerReport, liveStageError, presentLiveStageInteraction, reduceLiveStageMessage, reportReadyLiveStage, waitingLiveStage, type LiveStageInteraction, type LiveStageState } from './studioLiveStageModel';
 import { describeStudioTurnError } from '../shared/studioTurnErrorCopy';
 import type { StudioOpenDelegation } from './studioOpenDelegations';
-import { renderLiveStageHtml } from './studioLiveStageTemplate';
-import { resolveStudioLiveStageTemplate, type StudioLiveStageTemplateResolution } from './studioLiveStageTemplateRegistry';
+import { isLiveStagePageUri, materializeLiveStageEntry, stageAssetFor, type LiveStageEntry } from './studioLiveStageEntry';
+import { previewMetaappUriForPath } from '../libs/localPreviewUri';
+import { resolveStudioLiveStageTemplate, STUDIO_LIVE_STAGE_OFFICIAL_TEMPLATE_ID, type StudioLiveStageTemplateResolution } from './studioLiveStageTemplateRegistry';
 import { directLiveStageScene } from './studioLiveStageDirector';
 
 const MAX_DIRECTOR_CALLS_PER_TURN = 4;
@@ -23,12 +22,10 @@ const MAX_STAGE_SELF_HEALS = 2;
 const DELEGATION_RECHECK_MS = 60_000;
 /** Minimum gap between speech-streaming patches. */
 const SPEECH_PATCH_THROTTLE_MS = 600;
-/** Stage files always live under <cwd>/reports/live-stage-<turn>.html. */
-const LIVE_STAGE_URI_MARKER = '/reports/live-stage-';
 /** Failure reasons worth retrying against the same tab before self-healing. */
 const RETRYABLE_PATCH_REASONS = new Set(['not-ready', 'frame-not-found', 'tab-not-found']);
-/** Failure reasons that mean the page belongs to another turn/protocol. */
-const SELF_HEAL_PATCH_REASONS = new Set(['turn-mismatch', 'protocol']);
+/** Failure reasons that mean the page belongs to another session/protocol. */
+const SELF_HEAL_PATCH_REASONS = new Set(['session-mismatch', 'protocol']);
 /** Families the Director may restyle; terminal and owner-facing scenes are off limits. */
 const DIRECTOR_FAMILIES = new Set([
   'local-recall', 'web2-research', 'metaweb-research', 'making',
@@ -46,7 +43,10 @@ type MetabotLiveStageIdentity = {
 
 type LiveStageRun = {
   state: LiveStageState;
+  /** Materialized persistent stage entry (shared per template content). */
   stagePath: string | null;
+  stageUri: string;
+  stageDir: string;
   tabId: number | null;
   reportProjected: boolean;
   queue: Promise<void>;
@@ -93,10 +93,16 @@ export type StudioLiveStageServiceDeps = {
   getSettings(): StudioLiveStageSettings;
   getLanguage(): 'zh' | 'en';
   project(input: BotBrowserProjectionInput): Promise<BotBrowserProjectionOutcome>;
-  findStageTab?(localPath: string): Promise<number | null>;
+  /**
+   * The session's bound 'stage'-role tab ({id, uri}), or null when none is
+   * bound/alive. Resolves through the renderer's session-tab binding.
+   */
+  getStageTab?(sessionId: string): Promise<{ id: number; uri: string | null } | null>;
   /** Current URI of a browser tab; null when the tab no longer exists. */
   getTabUri?(tabId: number): Promise<string | null>;
   applyPatch(input: { tabId: number; state: LiveStageState }): Promise<void>;
+  /** Root under which the persistent stage entry pages are materialized. */
+  stageRoot?: string;
   assetRoot: string;
   fallbackAvatarDataUri: string;
   directScene?: typeof directLiveStageScene;
@@ -104,7 +110,7 @@ export type StudioLiveStageServiceDeps = {
   /** Open cross-session delegations for a session (orchestration store). */
   listOpenDelegations?(sessionId: string): StudioOpenDelegation[];
   /** Pulls queued stage-card clicks over the patch frame channel. */
-  drainInteractions?(tabId: number): Promise<unknown[]>;
+  drainInteractions?(tabId: number, sessionId?: string): Promise<unknown[]>;
   /** Resolves a pending permission in the cowork runner (main-side sink). */
   respondToPermission?(requestId: string, result: Record<string, unknown>): void;
   interactionPollMs?: number;
@@ -116,6 +122,12 @@ export type StudioLiveStageServiceDeps = {
   isSessionClaimed?(sessionId: string): boolean;
   /** Resolves when the previous stage has played its outro (the handoff). */
   beforeProjection?(sessionId: string): Promise<void> | null;
+  /**
+   * Activates the session's stage-role tab (renderer binding switch-tab,
+   * background). Fired on a new human turn and on turn errors — never on
+   * completion, worker waiting, or ordinary tool activity.
+   */
+  activateStageTab?(sessionId: string): void | Promise<void>;
 };
 
 export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
@@ -140,6 +152,15 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     const metabot = session.metabotId == null ? null : deps.getMetabotById(session.metabotId);
     return safeAvatar(session.metabotAvatar ?? metabot?.avatar) ?? deps.fallbackAvatarDataUri;
   };
+
+  /**
+   * Avatar reference safe to put in stage state: data-URI avatars become
+   * stage-relative `avatars/<hash>.<ext>` files under the run's stage dir;
+   * https URLs pass through. Without a materialized entry (no stageRoot)
+   * the raw safe avatar is kept — patches cannot deliver anyway.
+   */
+  const stageAvatarFor = (run: LiveStageRun, avatar: unknown): string | undefined =>
+    run.stageDir ? stageAssetFor(avatar, run.stageDir) : safeAvatar(avatar);
 
   const botNameFor = (session: CoworkSession): string => {
     const metabot = session.metabotId == null ? null : deps.getMetabotById(session.metabotId);
@@ -178,20 +199,40 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     return resolution;
   }
 
-  function writeStage(run: LiveStageRun, reportUri?: string): void {
-    const session = deps.getSession(run.state.sessionId);
-    if (!session) return;
+  function templateAssetRoot(template: StudioLiveStageTemplateResolution): string {
     // The template resolved at turn start is pinned for the whole turn; a
     // fallback resolution keeps rendering from the raw built-in assets.
-    const templateAssetRoot = run.template.status === 'ok' ? run.template.template.assetRoot : deps.assetRoot;
-    const html = renderLiveStageHtml({
-      state: run.state,
-      avatarDataUri: avatarFor(session),
-      assets: { assetRoot: templateAssetRoot, fallbackAvatarDataUri: deps.fallbackAvatarDataUri },
-      reportUri,
+    return template.status === 'ok' ? template.template.assetRoot : deps.assetRoot;
+  }
+
+  function templateIdFor(template: StudioLiveStageTemplateResolution): string {
+    return template.status === 'ok' ? template.template.templateId : STUDIO_LIVE_STAGE_OFFICIAL_TEMPLATE_ID;
+  }
+
+  /**
+   * Materialize the persistent stage entry for a template resolution — once
+   * per content hash under `stageRoot`, idempotent. Returns null when no
+   * stageRoot is configured (tests / degraded hosts keep working without
+   * stage projection).
+   */
+  function entryForTemplate(template: StudioLiveStageTemplateResolution): LiveStageEntry | null {
+    if (!deps.stageRoot) return null;
+    return materializeLiveStageEntry({
+      stageRoot: deps.stageRoot,
+      templateId: templateIdFor(template),
+      assetRoot: templateAssetRoot(template),
+      fallbackAvatarDataUri: deps.fallbackAvatarDataUri,
     });
-    fs.mkdirSync(path.dirname(run.stagePath!), { recursive: true });
-    fs.writeFileSync(run.stagePath!, html, 'utf8');
+  }
+
+  /**
+   * Stage-entry URI a bound tab must already show for the "skip projection"
+   * fast path. The preview URI may carry a query/hash suffix; the entry path
+   * itself never does.
+   */
+  function uriMatchesEntry(candidate: string | null | undefined, entryUri: string): boolean {
+    const value = String(candidate ?? '').trim();
+    return value !== '' && (value === entryUri || value.startsWith(entryUri));
   }
 
   // Commit a produced state: phaseStartedAt resets whenever the family
@@ -241,10 +282,12 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
   }
 
   async function attemptPatchDelivery(run: LiveStageRun): Promise<void> {
-    if (run.reportProjected || !run.state.enabled) return;
+    // The stage is its own tab now: a projected report no longer freezes it.
+    if (!run.state.enabled) return;
     if (run.state.revision <= run.deliveredRevision) return;
-    if (run.tabId == null && run.stagePath && deps.findStageTab) {
-      run.tabId = await deps.findStageTab(run.stagePath);
+    if (run.tabId == null && deps.getStageTab) {
+      const bound = await deps.getStageTab(run.state.sessionId);
+      run.tabId = bound?.id ?? null;
     }
     if (run.tabId == null) {
       const error = new Error('The Live Stage tab is not resolved') as Error & { reason?: string };
@@ -260,8 +303,9 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
 
   async function handlePatchFailure(run: LiveStageRun, error: unknown): Promise<void> {
     const reason = patchFailureReason(error);
-    // A stale-revision rejection means the page already shows something newer.
-    if (reason === 'stale-revision') {
+    // A stale-revision/stale-turn rejection means the page already shows
+    // something newer — drop the patch, never retry it.
+    if (reason === 'stale-revision' || reason === 'stale-turn') {
       run.deliveredRevision = Math.max(run.deliveredRevision, run.state.revision);
       run.patchRetries = 0;
       return;
@@ -295,7 +339,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
   }
 
   function schedulePatchRetry(run: LiveStageRun): void {
-    if (run.retryTimer || run.reportProjected) return;
+    if (run.retryTimer) return;
     const delay = PATCH_RETRY_BACKOFF_MS[Math.min(run.patchRetries, PATCH_RETRY_BACKOFF_MS.length - 1)];
     run.patchRetries += 1;
     run.retryTimer = setTimeout(() => {
@@ -329,10 +373,12 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
   }
 
   /**
-   * A self-heal rewrites the stage file and re-projects it — that must never
-   * land on a tab the Twin or owner deliberately navigated (e.g. the Twin
-   * opened a MetaApp page and is reading it). Heal only when the tab still
-   * shows a Live Stage page of any turn, or when the tab is gone entirely.
+   * A self-heal re-projects the persistent stage entry into the session's
+   * stage role — that must never land on a tab the Twin or owner
+   * deliberately navigated (e.g. the Twin opened a MetaApp page and is
+   * reading it). Heal only when the tab still shows a Live Stage page of any
+   * turn/entry (persistent entry or a legacy per-turn file), or when the
+   * tab is gone entirely.
    */
   async function requestStageHeal(run: LiveStageRun): Promise<void> {
     if (run.healPending) return;
@@ -341,7 +387,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       return;
     }
     const uri = await stageTabUri(run);
-    if (uri === undefined || (uri != null && !uri.includes(LIVE_STAGE_URI_MARKER))) {
+    if (uri === undefined || (uri != null && !isLiveStagePageUri(uri))) {
       if (!run.tabParked) notePatchFailure(run, uri === undefined ? 'tab-uri-unknown' : 'tab-parked');
       run.tabParked = true;
       return;
@@ -365,13 +411,19 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       try {
         const session = deps.getSession(run.state.sessionId);
         if (!session || !run.state.enabled || run.stagePath == null) return;
-        // Rewrite the stage file with the LATEST state so the reloaded page
-        // boots straight into it, then re-project and re-resolve the tab.
-        writeStage(run);
-        const outcome = await deps.project({ sessionId: run.state.sessionId, localPath: run.stagePath, title: `${run.state.botName} · Live Stage` });
+        // Re-project the SAME persistent entry into the stage role: the
+        // binding reuses or reopens the role's tab, then the latest state
+        // patches straight onto the fresh page.
+        const outcome = await deps.project({
+          sessionId: run.state.sessionId,
+          localPath: run.stagePath,
+          title: `${run.state.botName} · Live Stage`,
+          role: 'stage',
+        });
         run.tabId = outcome.tabId;
-        if (run.tabId == null && deps.findStageTab) {
-          run.tabId = await deps.findStageTab(run.stagePath);
+        if (run.tabId == null && deps.getStageTab) {
+          const bound = await deps.getStageTab(run.state.sessionId);
+          run.tabId = bound?.id ?? null;
         }
         try {
           await attemptPatchDelivery(run);
@@ -384,16 +436,38 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     });
   }
 
+  /**
+   * Put the session's stage tab on the persistent entry, then patch.
+   * Fast path: the role-bound tab already shows the current entry URI (the
+   * common case — the entry is shared, so no navigation is needed at all).
+   * Otherwise the entry is projected into the 'stage' role (the binding
+   * reuses the bound tab, adopts the prewarmed draft, or opens a fresh
+   * dedupe:false tab).
+   */
   function projectStage(run: LiveStageRun): void {
     enqueue(run, async () => {
       await deps.beforeProjection?.(run.state.sessionId);
       const session = deps.getSession(run.state.sessionId);
-      if (!session || !run.state.enabled) return;
-      writeStage(run);
-      const outcome = await deps.project({ sessionId: run.state.sessionId, localPath: run.stagePath!, title: `${run.state.botName} · Live Stage` });
+      if (!session || !run.state.enabled || run.stagePath == null) return;
+      const bound = deps.getStageTab ? await deps.getStageTab(run.state.sessionId) : null;
+      if (bound && uriMatchesEntry(bound.uri, run.stageUri)) {
+        run.tabId = bound.id;
+        if (process.env.NODE_ENV === 'development') {
+          console.warn(`[StudioLiveStage] stage tab ${run.state.sessionId} already on entry tab=${run.tabId}`);
+        }
+        deliverPatch(run);
+        return;
+      }
+      const outcome = await deps.project({
+        sessionId: run.state.sessionId,
+        localPath: run.stagePath,
+        title: `${run.state.botName} · Live Stage`,
+        role: 'stage',
+      });
       run.tabId = outcome.tabId;
-      if (run.tabId == null && deps.findStageTab) {
-        run.tabId = await deps.findStageTab(run.stagePath!);
+      if (run.tabId == null && deps.getStageTab) {
+        const again = await deps.getStageTab(run.state.sessionId);
+        run.tabId = again?.id ?? null;
       }
       if (process.env.NODE_ENV === 'development') {
         console.warn(`[StudioLiveStage] stage tab ${run.state.sessionId} outcome=${outcome.tabId} resolved=${run.tabId}`);
@@ -427,7 +501,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     run.delegationStartedAt = startedAt;
     const nextState = waitingLiveStage(run.state, {
       workerName: first.workerName,
-      workerAvatar: first.workerAvatar,
+      workerAvatar: stageAvatarFor(run, first.workerAvatar),
       title: first.title,
       total: delegations.length,
       startedAt,
@@ -543,17 +617,23 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     if (existing) return existing;
     turnCounter += 1;
     const turnId = `turn-${now().toString(36)}-${turnCounter.toString(36)}`;
+    const template = resolveTurnTemplate();
+    const entry = entryForTemplate(template);
+    const stageDir = entry?.dir ?? '';
     const state = createLiveStageState({
       sessionId,
       turnId,
       botName: botNameFor(session),
+      botAvatar: stageDir ? stageAssetFor(avatarFor(session), stageDir) : undefined,
       language: deps.getLanguage(),
       directorEnabled: currentSettings.directorEnabled,
       nowMs: now(),
     });
     const run: LiveStageRun = {
       state,
-      stagePath: path.join(session.cwd, 'reports', `live-stage-${turnId}.html`),
+      stagePath: entry?.filePath ?? null,
+      stageUri: entry?.uri ?? '',
+      stageDir,
       tabId: null,
       reportProjected: false,
       queue: Promise.resolve(),
@@ -582,7 +662,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       directorGeneration: 0,
       interactionTimer: null,
       interactionInFlight: false,
-      template: resolveTurnTemplate(),
+      template,
     };
     if (run.template.status === 'fallback') {
       console.warn(`[StudioLiveStage] template fallback for ${sessionId}: ${run.template.reason}`);
@@ -600,9 +680,8 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     if (run.directorTimer) clearTimeout(run.directorTimer);
     clearPatchRetry(run);
     clearDelegationTimer(run);
-    // The turn's stage file is replaced; a pending card disappears with
-    // it. The permission itself stays pending — the desktop overlay seat
-    // still answers it.
+    // A pending card belongs to this turn; the permission itself stays
+    // pending — the desktop overlay seat still answers it.
     stopInteractionPolling(run);
   }
 
@@ -649,18 +728,35 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       run = null;
     }
     run ??= ensureRun(sessionId);
-    if (!run || run.seen.has(message.id) || run.reportProjected || run.finished) return;
+    // reportProjected no longer gates delivery: the report lands on the
+    // showcase tab, so the stage keeps receiving live patches after it.
+    if (!run || run.seen.has(message.id) || run.finished) return;
     run.seen.add(message.id);
     if (submissionId) run.submissionId = submissionId;
     if (message.type === 'assistant' && !message.metadata?.isThinking) {
       run.latestSpeakingId = message.id;
     }
     const worker = workerIdentityFor(message);
-    const nextState = reduceLiveStageMessage(run.state, message, { workerName: worker.name, workerAvatar: worker.avatar, nowMs: now() });
+    const nextState = reduceLiveStageMessage(run.state, message, { workerName: worker.name, workerAvatar: stageAvatarFor(run, worker.avatar), nowMs: now() });
     if (nextState === run.state) return;
     commitRunState(run, nextState);
     schedulePatch(run);
     scheduleDirector(run);
+    // A new human turn puts the stage in front: the owner asked, the live
+    // presence answers. Completion, worker waits and tool noise never do.
+    if (humanOrigin) activateStage(run);
+  }
+
+  /** Queue the stage-role tab activation behind the pending patch delivery. */
+  function activateStage(run: LiveStageRun): void {
+    const sessionId = run.state.sessionId;
+    enqueue(run, async () => {
+      try {
+        await deps.activateStageTab?.(sessionId);
+      } catch {
+        // Tab activation is best-effort; the patch itself already landed.
+      }
+    });
   }
 
   /**
@@ -671,7 +767,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
    */
   function observeMessageUpdate(sessionId: string, messageId: string, content: string, metadata?: Record<string, unknown>): void {
     const run = runs.get(sessionId);
-    if (!run || run.finished || run.reportProjected || run.errored) return;
+    if (!run || run.finished || run.errored) return;
     if (!messageId || messageId !== run.latestSpeakingId || typeof content !== 'string') return;
     if (run.state.interaction) return;
     const nowMs = now();
@@ -723,6 +819,9 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     commitRunState(run, nextState);
     run.directorGeneration += 1;
     schedulePatch(run);
+    // A failed turn is owner-facing: bring the stage (with its problem scene)
+    // forward so the owner sees what happened.
+    activateStage(run);
   }
 
   // Stage interaction card: present → poll-drain → respond, all in-process.
@@ -813,7 +912,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       }
       run.interactionInFlight = true;
       inFlightSince = Date.now();
-      deps.drainInteractions(run.tabId)
+      deps.drainInteractions(run.tabId, run.state.sessionId)
         .then((items) => {
           run.interactionInFlight = false;
           inFlightSince = 0;
@@ -921,24 +1020,34 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       run.directorTimer = null;
     }
     run.directorDirty = false;
-    commitRunState(run, reportReadyLiveStage(run.state, now()));
+    // The report URI travels in stage state (never baked into the page): the
+    // stage's report button opens the showcase tab that receives the report.
+    const reportUri = previewMetaappUriForPath(input.localPath);
+    commitRunState(run, reportReadyLiveStage(run.state, reportUri, now()));
     schedulePatch(run);
     await run.queue;
     try {
-      const outcome = await project(run.tabId);
+      // Reports land in the session's showcase role (main.ts wires role +
+      // reveal); the stage tab is never the report's target anymore.
+      const outcome = await project(null);
       run.reportProjected = true;
       stopInteractionPolling(run);
-      try {
-        writeStage(run, outcome.uri);
-      } catch (error) {
-        console.warn(`[StudioLiveStage] report recovery snapshot failed: ${error instanceof Error ? error.message : String(error)}`);
-      }
       return outcome;
     } catch (error) {
       commitRunState(run, liveStageError(run.state, undefined, now()));
       schedulePatch(run);
       throw error;
     }
+  }
+
+  /**
+   * The materialized persistent stage entry for the current template
+   * resolution — the IPC prewarm path (`studio:liveStage:getStageEntry`).
+   * Idempotent; returns null when no stageRoot is configured.
+   */
+  function getStageEntry(): { uri: string } | null {
+    const entry = entryForTemplate(resolveTurnTemplate());
+    return entry ? { uri: entry.uri } : null;
   }
 
   function updateSettings(settings: StudioLiveStageSettings): void {
@@ -973,6 +1082,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     listPresentedRequestIds,
     acceptPushedInteraction,
     projectReport,
+    getStageEntry,
     updateSettings,
     forget,
     getState: (sessionId: string): LiveStageState | null => runs.get(sessionId)?.state ?? null,

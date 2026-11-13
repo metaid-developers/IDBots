@@ -13,8 +13,8 @@ test('Live Stage settings are wired through IPC, preload, types, allowlist, Sett
   assert.match(main, /getStudioLiveStageService\(\)\.observeComplete\(sessionId\)/);
   assert.match(main, /getStudioLiveStageService\(\)\.projectReport/);
   assert.match(main, /getBotBrowserProjection\(\)\.project\(\{/);
-  assert.match(main, /reveal: true,/);
-  assert.match(main, /\.\.\.\(stageTabId == null \? \{\} : \{ tabId: stageTabId \}\)/);
+  // Reports land in the session's showcase role and reveal — never the stage tab.
+  assert.match(main, /role: 'showcase',[\s\S]{0,80}reveal: true,/);
   assert.equal((main.match(/\.prepareSession\(/g) ?? []).length, 2);
 
   const preload = read('src/main/preload.ts');
@@ -50,7 +50,7 @@ test('pending permissions present on the Studio stage card and clear on resoluti
   assert.match(main, /getStudioLiveStageService\(\)\.presentInteraction\(sessionId, request\)/);
   assert.match(main, /getStudioLiveStageService\(\)\.clearInteraction\(sessionId, requestId\)/);
   assert.match(main, /const stageInteractionQueue = new Map</);
-  assert.match(main, /drainInteractions: \(tabId\) => drainStudioLiveStageInteractions\(/);
+  assert.match(main, /drainInteractions: \(tabId, sessionId\) => drainStudioLiveStageInteractions\(/);
   assert.match(main, /respondToPermission: \(requestId, result\) =>/);
   const service = read('src/main/services/studioLiveStageService.ts');
   assert.match(service, /presentInteraction\(sessionId: string, request: unknown\): 'presented' \| 'busy' \| 'declined'/);

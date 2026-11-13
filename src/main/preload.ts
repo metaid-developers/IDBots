@@ -824,6 +824,7 @@ contextBridge.exposeInMainWorld('electron', {
   studioLiveStage: {
     get: () => ipcRenderer.invoke('studioLiveStage:get') as Promise<{ enabled: boolean; directorEnabled: boolean }>,
     set: (updates: { enabled?: boolean; directorEnabled?: boolean }) => ipcRenderer.invoke('studioLiveStage:set', updates) as Promise<{ success: boolean; enabled?: boolean; directorEnabled?: boolean; error?: string }>,
+    getStageEntry: () => ipcRenderer.invoke('studio:liveStage:getStageEntry') as Promise<{ success: boolean; uri?: string; error?: string }>,
   },
   dailyReport: {
     runNow: (opts?: { force?: boolean }) =>

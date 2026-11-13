@@ -140,7 +140,7 @@ test('scenes.json agrees with the host model for composition, topology, and moti
     'browser-action': model.reduceLiveStageMessage(fresh(), message('k', 'tool_use', { toolName: 'bot_browser_click', toolUseId: 'k' })),
     'owner-needed': model.reduceLiveStageMessage(fresh(), message('l', 'tool_use', { toolName: 'ask_user_question', toolUseId: 'l' })),
     problem: model.liveStageError(fresh()),
-    'report-ready': model.reportReadyLiveStage(fresh()),
+    'report-ready': model.reportReadyLiveStage(fresh(), null),
     complete: model.completeLiveStage(fresh()),
   };
   for (const [family, state] of Object.entries(derived)) {
@@ -181,7 +181,7 @@ test('demo fixtures are valid states, strictly increasing, and provably model-de
   expected['worker-report'] = state;
   state = model.reduceLiveStageMessage(state, message('demo-tooluse-shot-1', 'tool_use', { toolName: 'bot_browser_screenshot', toolUseId: 'demo-shot-1' }), { nowMs: NOW });
   expected.verification = state;
-  state = model.reportReadyLiveStage(state, NOW);
+  state = model.reportReadyLiveStage(state, null, NOW);
   expected['report-ready'] = state;
 
   let previousRevision = -1;
@@ -266,24 +266,34 @@ test('demo player is offline, self-contained, and boots the real stage runtime',
   }
 });
 
-function serviceFixture(t, { resolveTemplate, applyPatch, listOpenDelegations, directScene, getLanguage, now, delegationRecheckMs, directorEnabled = false, getTabUri } = {}) {
+function serviceFixture(t, { resolveTemplate, applyPatch, listOpenDelegations, directScene, getLanguage, now, delegationRecheckMs, directorEnabled = false, getTabUri, stageTabUri } = {}) {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-live-stage-template-'));
+  const stageRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-live-stage-root-'));
   const session = { cwd, sessionType: 'browser', assistantMode: true, metabotId: 1, metabotName: 'AI_Sunny', metabotAvatar: 'data:image/jpeg;base64,AA==' };
   const projected = [];
   let resolveCalls = 0;
+  // Mirrors the renderer binding: the stage-role tab's current URI, updated
+  // by each stage projection so the "already on the entry" fast path is real.
+  let boundStageUri = stageTabUri ?? null;
   const service = createStudioLiveStageService({
     getSession: (id) => (id === 's' ? session : (id === 'worker-session' ? { ...session, metabotId: 2, metabotName: 'Builder阿码', metabotAvatar: 'data:image/png;base64,BB==' } : null)),
     getMetabotById: (id) => ({ name: id === 2 ? 'Builder阿码' : 'AI_Sunny', avatar: id === 2 ? 'data:image/png;base64,BB==' : session.metabotAvatar, llm_id: 'brain', llm_provider: 'test' }),
     getSettings: () => ({ enabled: true, directorEnabled }),
     getLanguage: getLanguage ?? (() => 'en'),
-    project: async (input) => { projected.push(input); return { uri: `preview-metaapp://localhost${input.localPath}`, tabId: 7, announced: true }; },
-    findStageTab: async () => 7,
+    project: async (input) => {
+      projected.push(input);
+      const uri = `preview-metaapp://localhost${input.localPath}`;
+      if (input.role === 'stage') boundStageUri = uri;
+      return { uri, tabId: 7, announced: true };
+    },
+    getStageTab: async () => ({ id: 7, uri: boundStageUri }),
     ...(getTabUri ? { getTabUri } : {}),
     applyPatch: applyPatch ?? (async () => undefined),
     ...(listOpenDelegations ? { listOpenDelegations } : {}),
     ...(directScene ? { directScene } : {}),
     ...(now ? { now } : {}),
     ...(delegationRecheckMs ? { delegationRecheckMs } : {}),
+    stageRoot,
     assetRoot: PACKAGE_ROOT,
     fallbackAvatarDataUri: 'data:image/png;base64,AA==',
     resolveTemplate: resolveTemplate
@@ -295,9 +305,12 @@ function serviceFixture(t, { resolveTemplate, applyPatch, listOpenDelegations, d
   });
   t.after(() => {
     service.dispose();
-    try { fs.rmSync(cwd, { recursive: true, force: true }); } catch { /* temp dirs are OS-swept */ }
+    try {
+      fs.rmSync(cwd, { recursive: true, force: true });
+      fs.rmSync(stageRoot, { recursive: true, force: true });
+    } catch { /* temp dirs are OS-swept */ }
   });
-  return { service, session, projected, getResolveCalls: () => resolveCalls };
+  return { service, session, projected, getResolveCalls: () => resolveCalls, getBoundStageUri: () => boundStageUri };
 }
 
 test('the service resolves the template once per turn and pins it for the whole turn', async (t) => {
@@ -326,9 +339,11 @@ test('the service falls back to raw built-in assets when template resolution fai
   await run.queue;
   assert.equal(run.template.status, 'fallback');
   const stage = fs.readFileSync(run.stagePath, 'utf8');
-  assert.match(stage, /AI_Sunny/, 'the per-turn instance still renders with the built-in appearance');
+  // The persistent entry boots unclaimed — identity arrives through patches,
+  // so the page carries the stage protocol and orb runtime, not a bot name.
+  assert.match(stage, /idbots\.live-stage\.v1/, 'the fallback render keeps the stage protocol');
   assert.match(stage, /liquidOrbStyleForFamily/, 'the same packaged orb runtime backs the fallback render');
-  assert.match(stage, /"family":"received"/);
+  assert.match(stage, /__INITIAL_LIVE_STAGE__=null/, 'the entry boots unclaimed for the first patch to claim');
 });
 
 test('the built-in render path and the loader consume the same package source', async (t) => {
@@ -412,11 +427,11 @@ test('a stale-revision rejection counts as delivered with no retry or re-project
   assert.ok(delivered.some((patch) => patch.state.revision > 1), 'the next revision still delivers after a stale rejection');
 });
 
-test('a turn-mismatch rejection re-projects the stage and delivers the latest state', async (t) => {
+test('a session-mismatch rejection re-projects the stage entry and delivers the latest state', async (t) => {
   const delivered = [];
   const { service, projected } = serviceFixture(t, {
     applyPatch: async (input) => {
-      if (projected.length === 1) throw reasoned('turn-mismatch');
+      if (projected.length === 1) throw reasoned('session-mismatch');
       delivered.push(input);
     },
   });
@@ -622,9 +637,10 @@ test('activity after a finished run starts a fresh stage while runtime noise doe
   service.observeMessage('s', message('a1', 'assistant', {}, 'A fresh turn narration.'));
   const run2 = service.getRunInternals('s');
   assert.notStrictEqual(run2, run1, 'real activity after completion owns a new stage');
-  assert.notEqual(run2.stagePath, run1.stagePath);
+  assert.notEqual(run2.state.turnId, run1.state.turnId, 'the new run is a new turn on the same persistent page');
+  assert.equal(run2.stagePath, run1.stagePath, 'every run shares the materialized entry');
   await run2.queue;
-  assert.equal(projected.length, 2, 'the projector leaves the old complete screen');
+  assert.equal(projected.length, 1, 'the bound stage tab already shows the entry — the new turn only patches');
   assert.equal(service.getState('s').family, 'speaking');
 });
 
@@ -640,7 +656,10 @@ test('a worker report arriving after the projection starts a fresh run', async (
   const run2 = service.getRunInternals('s');
   assert.notStrictEqual(run2, run, 'a post-projection worker report is a new beat, not ignored history');
   await run2.queue;
-  assert.ok(projected.length > projectedCount, 'the stage re-projects so the report screen is replaced');
+  // The report lives on the showcase tab now: the stage keeps its persistent
+  // page and the new beat arrives as ordinary patches — no re-projection.
+  assert.equal(projected.length, projectedCount, 'the persistent stage patches the new beat without re-projecting');
+  assert.equal(run2.stagePath, run.stagePath);
   assert.equal(service.getState('s').family, 'worker-report');
 });
 
@@ -677,7 +696,7 @@ test('a self-heal never projects over a tab the Twin navigated to another page',
   let tabUri = 'metaapp://localhost/twin-workspace/app';
   const { service, projected } = serviceFixture(t, {
     getTabUri: async () => tabUri,
-    applyPatch: async () => { throw reasoned('turn-mismatch'); },
+    applyPatch: async () => { throw reasoned('session-mismatch'); },
   });
   service.observeMessage('s', message('u1', 'user', { origin: 'user', submissionId: 'sub-1' }, 'Please build the report.'));
   const run = service.getRunInternals('s');

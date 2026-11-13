@@ -12,7 +12,8 @@ function inlineJson(value: unknown): string {
 }
 
 export function renderLiveStageHtml(input: {
-  state: LiveStageState;
+  /** Null renders the unclaimed idle page the persistent stage entry boots into. */
+  state: LiveStageState | null;
   avatarDataUri: string;
   assets: LiveStageTemplateAssets;
   reportUri?: string;

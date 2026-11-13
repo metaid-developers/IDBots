@@ -348,6 +348,7 @@ const FEATURES_UTIL_INVOKE: Record<string, AllowlistEntry> = {
   'app:setExperimentalAutomation': { tier: 'N', note: '`02`: desktop-only.' },
   'studioLiveStage:get': { tier: 'N', note: 'Studio Live Stage settings; desktop-only.' },
   'studioLiveStage:set': { tier: 'N', note: 'Studio Live Stage settings; desktop-only.' },
+  'studio:liveStage:getStageEntry': { tier: 'N', note: 'Persistent Live Stage entry URI for draft prewarm; desktop-only.' },
   'app:getDataDirectory': { tier: 'N', note: 'feat/legacy-data-recovery ②: desktop Settings page data-directory visibility; desktop-only.' },
   'dailyReport:runNow': { tier: 'N', note: '`02`: desktop-only — spawns a local Twin report session.' },
 };

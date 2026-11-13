@@ -419,37 +419,23 @@ export function buildBrowserIframeBridgeScript(): string {
     }
   }
 
-  function localPreviewPath(uri) {
-    var value = textValue(uri);
-    if (value.indexOf('preview-metaapp://localhost/') !== 0) return '';
-    try {
-      return new URL(value).pathname;
-    } catch (error) {
-      return '';
-    }
-  }
-
-  function liveStageReportNavigationAllowed(activeTab, turnId, reportUri) {
-    var stagePath = localPreviewPath(activeTab && activeTab.uri);
-    var reportPath = localPreviewPath(reportUri);
-    var stageSuffix = '/live-stage-' + textValue(turnId) + '.html';
-    if (!stagePath || !reportPath || !textValue(turnId)) return false;
-    if (stagePath.slice(-stageSuffix.length) !== stageSuffix) return false;
-    if (reportPath === stagePath || reportPath.slice(-stageSuffix.length) === stageSuffix) return false;
-    var stageDirectory = stagePath.slice(0, stagePath.lastIndexOf('/') + 1);
-    return reportPath.slice(0, stageDirectory.length) === stageDirectory;
-  }
-
   window.addEventListener('message', function (event) {
     var data = event.data || {};
     if (data.source === 'idbots-live-stage' && data.type === 'open-report') {
-      var reportTab = globalThis.AgentBrowserTabs && globalThis.AgentBrowserTabs.getActiveTab();
+      // The stage's report button asks the host to surface the projected
+      // report. It must come from the current html frame and name a local
+      // preview URI; openTab dedupes by URI, so it focuses the showcase tab
+      // already showing the report instead of navigating the stage frame.
       var reportFrame = typeof globalThis.currentBrowserHtmlFrameWindow === 'function'
         ? globalThis.currentBrowserHtmlFrameWindow()
         : null;
+      var reportUri = textValue(data.uri);
       if (reportFrame && event.source === reportFrame
-        && liveStageReportNavigationAllowed(reportTab, data.turnId, data.uri)) {
-        Promise.resolve(globalThis.navigateTo(textValue(data.uri))).catch(function (error) {
+        && reportUri.indexOf('preview-metaapp://localhost/') === 0
+        && globalThis.AgentBrowserTabs && typeof globalThis.AgentBrowserTabs.openTab === 'function') {
+        Promise.resolve(ensureRuntimeReady()).then(function () {
+          globalThis.AgentBrowserTabs.openTab(reportUri);
+        }).catch(function (error) {
           toast(error && error.message ? error.message : String(error));
         });
       }

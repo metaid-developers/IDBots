@@ -79,7 +79,7 @@ test('owner_update tool calls do not move the scene; the narration bubble does',
 });
 
 test('reportReadyLiveStage is idempotent in spirit and clears pending projection ids', () => {
-  const state = reportReadyLiveStage({ ...initial(), pendingProjectionIds: ['p'] });
+  const state = reportReadyLiveStage({ ...initial(), pendingProjectionIds: ['p'] }, null);
   assert.equal(state.family, 'report-ready');
   assert.equal(state.composition, 'ready');
   assert.deepEqual(state.pendingProjectionIds, []);

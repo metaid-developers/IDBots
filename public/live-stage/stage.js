@@ -1,29 +1,56 @@
 (() => {
+  const PROTOCOL = 'idbots.live-stage.v1';
   const initial = window.__INITIAL_LIVE_STAGE__;
-  const storageKey = `idbots.live-stage:${initial.sessionId}:${initial.turnId}`;
-  let state = initial;
-  try {
-    const saved = JSON.parse(sessionStorage.getItem(storageKey) || 'null');
-    if (saved && saved.protocol === initial.protocol && saved.sessionId === initial.sessionId && saved.turnId === initial.turnId && saved.revision >= initial.revision) state = saved;
-  } catch { /* the initial snapshot is sufficient */ }
+  const bootLanguage = (navigator.language || '').toLowerCase().startsWith('zh') ? 'zh' : 'en';
+  // The persistent stage entry boots UNCLAIMED: orb breathing, fallback
+  // avatar, no text. The first accepted patch claims the page for its
+  // session; same-origin iframes share sessionStorage, so nothing is ever
+  // restored from it — the host re-patches after every reload.
+  const IDLE_STATE = {
+    protocol: PROTOCOL,
+    sessionId: '',
+    turnId: '',
+    turnStartedAt: 0,
+    revision: 0,
+    enabled: true,
+    family: 'idle',
+    botName: '',
+    language: bootLanguage,
+    kicker: '',
+    headline: '',
+    caption: '',
+    captionSource: 'default',
+    phaseStartedAt: 0,
+    composition: 'presence',
+    motif: 'idle',
+    participants: [],
+    topology: { mode: 'presence', nodes: [], edges: [] },
+    motion: { preset: 'idle', seed: 1, durationMs: 720, easing: 'emphasized-decelerate', energy: .3, density: .2 },
+    metrics: { directorEnabled: false, directorCalls: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, rejectedPatches: 0, fallbackCount: 0, directorLatencyMs: 0 },
+    handoff: null,
+    interaction: null,
+    pendingProjectionIds: [],
+    eventWindow: [],
+  };
+  let state = initial && typeof initial === 'object' ? initial : IDLE_STATE;
+  // A page rendered with a baked initial state (legacy per-turn files, the
+  // offline demo) starts claimed by that state; the persistent entry starts
+  // unclaimed and claims on the first accepted patch.
+  let claimedSessionId = typeof initial?.sessionId === 'string' && initial.sessionId ? initial.sessionId : null;
 
   const body = document.body;
   const $ = (selector) => document.querySelector(selector);
   const tr = (zh, en) => (state.language === 'zh' ? zh : en);
   const reportOpen = $('[data-report-open]');
-  const reportUri = window.__LIVE_STAGE_REPORT_URI__;
-  const canOpenReport = typeof reportUri === 'string' && reportUri.startsWith('preview-metaapp://localhost/');
-  reportOpen.disabled = !canOpenReport;
   const reportReadyText = $('[data-report-ready-text]');
   if (reportReadyText) reportReadyText.textContent = tr('汇报就绪', 'Report ready');
-  $('[data-report-open-label]').textContent = canOpenReport ? tr('打开汇报', 'Open report') : tr('正在打开最终页面', 'Opening the final page');
   reportOpen.addEventListener('click', () => {
-    if (!canOpenReport) return;
+    const uri = typeof state.reportUri === 'string' ? state.reportUri : '';
+    if (!uri.startsWith('preview-metaapp://localhost/')) return;
     window.parent.postMessage({
       source: 'idbots-live-stage',
       type: 'open-report',
-      turnId: initial.turnId,
-      uri: reportUri
+      uri
     }, '*');
   });
   const canvas = $('.core-canvas');
@@ -398,7 +425,7 @@
     const image = $('[data-worker-avatar]');
     const fallback = $('[data-worker-fallback]');
     const handoffImage = $('[data-handoff-avatar]');
-    const avatar = typeof worker?.avatar === 'string' && /^(?:data:image\/|https?:\/\/)/i.test(worker.avatar) ? worker.avatar : '';
+    const avatar = typeof worker?.avatar === 'string' && /^(?:data:image\/|https?:\/\/|avatars\/)/i.test(worker.avatar) ? worker.avatar : '';
     image.onerror = () => {
       image.hidden = true;
       fallback.hidden = false;
@@ -778,7 +805,23 @@
     body.dataset.topology = state.topology.mode;
     body.dataset.motion = effectiveReduced() ? 'reduced' : 'full';
     document.documentElement.lang = state.language === 'zh' ? 'zh' : 'en';
-    document.title = `${state.botName} · Live Stage`;
+    document.title = state.botName ? `${state.botName} · Live Stage` : 'Live Stage';
+    // Identity arrives through patches: botAvatar is an https URL or a
+    // stage-relative `avatars/<hash>.<ext>` path; absent → the baked fallback.
+    const avatarSrc = typeof state.botAvatar === 'string' && state.botAvatar ? state.botAvatar : window.__FALLBACK_AVATAR__;
+    document.querySelectorAll('[data-avatar]').forEach((image) => {
+      if (image.dataset.avatarSrc !== avatarSrc) {
+        image.dataset.avatarSrc = avatarSrc;
+        image.src = avatarSrc;
+      }
+    });
+    // The report button follows state.reportUri: enabled only while a
+    // projected report URI is present, labelled from the current language.
+    const reportUri = typeof state.reportUri === 'string' ? state.reportUri : '';
+    const canOpenReport = reportUri.startsWith('preview-metaapp://localhost/');
+    reportOpen.disabled = !canOpenReport;
+    const reportOpenLabel = $('[data-report-open-label]');
+    if (reportOpenLabel) reportOpenLabel.textContent = canOpenReport ? tr('打开汇报', 'Open report') : tr('正在打开最终页面', 'Opening the final page');
     $('[data-bot-name]').textContent = state.botName;
     const kicker = (typeof state.kicker === 'string' && state.kicker)
       || (state.family === 'speaking' ? state.botName : '')
@@ -859,7 +902,6 @@
 
   function commitStagePatch(patch) {
     state = patch;
-    try { sessionStorage.setItem(storageKey, JSON.stringify(state)); } catch { /* history still works in memory */ }
     applyState();
   }
 
@@ -886,8 +928,30 @@
   window.IDBotsLiveStage = {
     applyPatch(patch) {
       if (!patch || typeof patch !== 'object') return { ok: false, reason: 'protocol' };
-      if (patch.protocol !== initial.protocol || patch.sessionId !== initial.sessionId) return { ok: false, reason: 'protocol' };
-      if (patch.turnId !== initial.turnId) return { ok: false, reason: 'turn-mismatch' };
+      if (patch.protocol !== PROTOCOL) return { ok: false, reason: 'protocol' };
+      if (claimedSessionId == null) {
+        // First claim: an unclaimed page adopts the patching session and its
+        // state wholesale — the revision baseline starts here.
+        if (typeof patch.sessionId !== 'string' || !patch.sessionId) return { ok: false, reason: 'protocol' };
+        claimedSessionId = patch.sessionId;
+        heldPatch = null;
+        stopHeldRelease();
+        commitStagePatch(patch);
+        return true;
+      }
+      if (patch.sessionId !== claimedSessionId) return { ok: false, reason: 'session-mismatch' };
+      const patchTurnStart = typeof patch.turnStartedAt === 'number' ? patch.turnStartedAt : 0;
+      const stateTurnStart = typeof state.turnStartedAt === 'number' ? state.turnStartedAt : 0;
+      if (patch.turnId !== state.turnId) {
+        // A different turn is accepted only when it is NEWER: a delayed
+        // old-turn patch can never overwrite the live turn, and the
+        // revision baseline resets with the turn.
+        if (!(patchTurnStart > stateTurnStart)) return { ok: false, reason: 'stale-turn' };
+        heldPatch = null;
+        stopHeldRelease();
+        commitStagePatch(patch);
+        return true;
+      }
       if (typeof patch.revision !== 'number' || patch.revision <= state.revision) return { ok: false, reason: 'stale-revision' };
       if (state.family === 'speaking' && !HELD_IMMEDIATE.has(patch.family)) {
         if (!heldPatch || patch.revision > heldPatch.revision) heldPatch = patch;

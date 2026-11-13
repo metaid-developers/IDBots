@@ -181,8 +181,12 @@ test('report recovery is a real button that navigates through the constrained St
   assert.match(stage, /reportOpen\.addEventListener\('click'/);
   assert.match(stage, /source: 'idbots-live-stage'/);
   assert.match(stage, /type: 'open-report'/);
-  assert.match(stage, /turnId: initial\.turnId/);
-  assert.match(stage, /uri: reportUri/);
+  // The persistent stage posts only the uri; the bridge validates the
+  // preview-metaapp prefix and focuses the showcase tab itself.
+  assert.match(stage, /type: 'open-report',\s*\n\s*uri\s*\n?\s*\}, '\*'\)/);
+  assert.match(stage, /state\.reportUri/);
+  assert.doesNotMatch(stage, /turnId: initial\.turnId/, 'open-report no longer depends on a baked per-turn initial state');
+  assert.match(stage, /uri\.startsWith\('preview-metaapp:\/\/localhost\/'\)/);
   assert.match(stage, /canOpenReport \? tr\('打开汇报', 'Open report'\) : tr\('正在打开最终页面', 'Opening the final page'\)/);
   for (const file of ['stage.html', 'index.html']) {
     const html = read(file);

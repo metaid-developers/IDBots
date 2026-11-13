@@ -80,6 +80,12 @@ export interface BotBrowserTabCommand {
   tabId?: number;
   /** Studio session whose live tab should own this command. */
   sessionId?: string;
+  /**
+   * Fixed per-session tab role. 'stage' is the host-owned Live Stage tab;
+   * 'showcase' (the default when omitted) holds reports, MetaApp previews and
+   * ordinary opens.
+   */
+  role?: 'stage' | 'showcase';
   /** Display label for a newly opened tab (open-tab only). */
   label?: string;
   /** Keep the target tab active after navigate-tab resolves. */

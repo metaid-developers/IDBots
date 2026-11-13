@@ -180,11 +180,39 @@ function textResult(text: string, isError = false) {
   };
 }
 
-export function formatBotBrowserTabs(result: BotBrowserTabCommandResult): string {
+export function formatBotBrowserTabs(
+  result: BotBrowserTabCommandResult,
+  roles?: { stageTabId?: number | null; showcaseTabId?: number | null },
+): string {
   if (!result.tabs.length) return 'No open tabs.';
   return result.tabs
-    .map((tab) => `${tab.isActive ? '* ' : '  '}[${tab.id}] ${tab.title || '(untitled)'} — ${tab.uri || '(no uri)'}`)
+    .map((tab) => {
+      const roleNote = roles?.stageTabId === tab.id
+        ? ' [live stage — host-owned, do not navigate/close]'
+        : roles?.showcaseTabId === tab.id ? ' [showcase]' : '';
+      return `${tab.isActive ? '* ' : '  '}[${tab.id}] ${tab.title || '(untitled)'} — ${tab.uri || '(no uri)'}${roleNote}`;
+    })
     .join('\n');
+}
+
+/**
+ * Resolve one fixed-role tab of the session through the renderer's
+ * session-tab binding (`get-tabs` with sessionId + role). Returns null when
+ * the bridge is unavailable or the role has no live tab — callers degrade to
+ * the unscoped behavior.
+ */
+async function resolveSessionRoleTabId(
+  controlBotBrowser: BotBrowserControl,
+  sessionId: string,
+  role: 'stage' | 'showcase',
+): Promise<number | null> {
+  try {
+    // Host-side role lookup: never let it pull the app surface to the browser.
+    const result = await controlBotBrowser.execute({ action: 'get-tabs', sessionId, role, background: true });
+    return result.sessionTab?.id ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export type SearchMetaAppsNextStep = 'browser' | 'install';
@@ -459,7 +487,7 @@ export function buildBotBrowserAgentTools(deps: {
 
   const botBrowserTabs = tool(
     'bot_browser_tabs',
-    'List, open, close, or switch tabs in the Bot Browser (the on-chain Agent browser shown on the right side of the app). Use action "list" to inspect open tabs (ids, titles, URIs, which one is active), "open" with a uri to open a new tab, "close" or "switch" with a tabId. When NOT to use: to navigate the active tab to a specific on-chain URI prefer bot_browser_open_uri; this tool is mainly for tab management, and always call action "list" first to obtain tab ids before close/switch.',
+    'List, open, close, or switch tabs in the Bot Browser (the on-chain Agent browser shown on the right side of the app). Use action "list" to inspect open tabs (ids, titles, URIs, which one is active), "open" with a uri to open it in the session\'s showcase tab, "close" or "switch" with a tabId. Each session has two fixed tabs: the Live Stage (host-owned — it shows what the assistant is doing and cannot be navigated, closed, or switched) and the showcase tab (reports, previews, deliverables). When NOT to use: to navigate to a specific on-chain URI prefer bot_browser_open_uri; this tool is mainly for tab management, and always call action "list" first to obtain tab ids before close/switch.',
     {
       action: z.enum(['list', 'open', 'close', 'switch']),
       uri: z.string().optional(),
@@ -473,18 +501,31 @@ export function buildBotBrowserAgentTools(deps: {
         if ((args.action === 'close' || args.action === 'switch') && typeof args.tabId !== 'number') {
           return textResult(`bot_browser_tabs: action "${args.action}" requires a numeric tabId. Call with action "list" first to see tab ids.`, true);
         }
+        // The stage tab is host-owned chrome: close/switch on it is refused
+        // with a plain sentence instead of reaching the tab bridge.
+        if (args.action === 'close' || args.action === 'switch') {
+          const stageTabId = await resolveSessionRoleTabId(controlBotBrowser, sessionId, 'stage');
+          if (stageTabId != null && stageTabId === args.tabId) {
+            return textResult('That is the Live Stage tab — the host owns it and it cannot be closed or switched. It shows what the assistant is doing right now.', true);
+          }
+        }
         const actionMap = {
           list: 'get-tabs',
           open: 'open-tab',
           close: 'close-tab',
           switch: 'switch-tab',
         } as const;
-        const result = await controlBotBrowser.execute({
-          action: actionMap[args.action],
-          uri: args.uri,
-          tabId: args.tabId,
-        });
-        const summary = formatBotBrowserTabs(result);
+        const command: BotBrowserTabCommand = args.action === 'list'
+          ? { action: 'get-tabs', sessionId, background: true }
+          : args.action === 'open'
+            ? { action: 'open-tab', uri: args.uri, sessionId, role: 'showcase' }
+            : { action: actionMap[args.action], uri: args.uri, tabId: args.tabId };
+        const result = await controlBotBrowser.execute(command);
+        const [stageTabId, showcaseTabId] = await Promise.all([
+          resolveSessionRoleTabId(controlBotBrowser, sessionId, 'stage'),
+          resolveSessionRoleTabId(controlBotBrowser, sessionId, 'showcase'),
+        ]);
+        const summary = formatBotBrowserTabs(result, { stageTabId, showcaseTabId });
         return textResult(
           args.action === 'list'
             ? `Open tabs (* = active):\n${summary}`
@@ -498,7 +539,7 @@ export function buildBotBrowserAgentTools(deps: {
 
   const botBrowserOpenUri = tool(
     'bot_browser_open_uri',
-    'Navigate the Bot Browser to a URI: metaid://<globalMetaId> for an Agent homepage, metaapp://<pinId> for a MetaApp, map:// or metafile:// resources. By default the active tab navigates; set newTab=true to open in a new tab instead. Use this when the user asks to open or view a specific Agent, app, or on-chain page. When NOT to use: to preview a LOCAL app or document you are building use bot_browser_preview_local (preview-metaapp:// for apps/HTML, preview-file:// for documents like markdown, code, pdf, images, video, audio); to discover an app by intent before opening it, use search_metaapps first; and in an assistant-mode owner chat, when the owner should use a MetaApp right inside the conversation, do not call this tool — embed the app in your reply with markdown image syntax `![app name](metaapp://<pinId>)` (it renders inline and signs as you).',
+    'Navigate the Bot Browser to a URI: metaid://<globalMetaId> for an Agent homepage, metaapp://<pinId> for a MetaApp, map:// or metafile:// resources. Pages always land in this session\'s showcase tab — the right-side tab for reports, previews and deliverables (newTab is accepted for compatibility and changes nothing: there is exactly one showcase tab per session, and the host-owned Live Stage tab is never a target). Use this when the user asks to open or view a specific Agent, app, or on-chain page. When NOT to use: to preview a LOCAL app or document you are building use bot_browser_preview_local (preview-metaapp:// for apps/HTML, preview-file:// for documents like markdown, code, pdf, images, video, audio); to discover an app by intent before opening it, use search_metaapps first; and in an assistant-mode owner chat, when the owner should use a MetaApp right inside the conversation, do not call this tool — embed the app in your reply with markdown image syntax `![app name](metaapp://<pinId>)` (it renders inline and signs as you).',
     {
       uri: z.string().min(1),
       newTab: z.boolean().optional(),
@@ -507,11 +548,15 @@ export function buildBotBrowserAgentTools(deps: {
       const uri = args.uri.trim();
       try {
         if (args.newTab) {
-          const result = await controlBotBrowser.execute({ action: 'open-tab', uri });
-          return textResult(`Opened ${uri} in a new tab. Current tabs (* = active):\n${formatBotBrowserTabs(result)}`);
+          const result = await controlBotBrowser.execute({ action: 'open-tab', uri, sessionId, role: 'showcase' });
+          const [stageTabId, showcaseTabId] = await Promise.all([
+            resolveSessionRoleTabId(controlBotBrowser, sessionId, 'stage'),
+            resolveSessionRoleTabId(controlBotBrowser, sessionId, 'showcase'),
+          ]);
+          return textResult(`Opened ${uri} in the session's showcase tab. Current tabs (* = active):\n${formatBotBrowserTabs(result, { stageTabId, showcaseTabId })}`);
         }
-        await controlBotBrowser.execute({ action: 'navigate-tab', uri, sessionId, activate: true });
-        return textResult(`Navigated the active Bot Browser tab to ${uri}.`);
+        await controlBotBrowser.execute({ action: 'navigate-tab', uri, sessionId, role: 'showcase', activate: true });
+        return textResult(`Navigated the session's showcase tab to ${uri}.`);
       } catch (error) {
         return textResult(`Failed to open ${uri} in Bot Browser: ${error instanceof Error ? error.message : String(error)}. ${SURFACE_HINT}`, true);
       }
@@ -583,11 +628,15 @@ export function buildBotBrowserAgentTools(deps: {
       }
       try {
         if (args.newTab === false) {
-          await controlBotBrowser.execute({ action: 'navigate-tab', uri, sessionId, activate: true });
-          return textResult(`Navigated the active Bot Browser tab to preview ${localPath}. Tell the user to reload the tab after you make further edits.`);
+          await controlBotBrowser.execute({ action: 'navigate-tab', uri, sessionId, role: 'showcase', activate: true });
+          return textResult(`Navigated the session's showcase tab to preview ${localPath}. Tell the user to reload the tab after you make further edits.`);
         }
-        const result = await controlBotBrowser.execute({ action: 'open-tab', uri });
-        return textResult(`Opened a preview of ${localPath} in a new tab. The preview reads live from disk — after you edit files, the user can reload to see changes. Current tabs (* = active):\n${formatBotBrowserTabs(result)}`);
+        const result = await controlBotBrowser.execute({ action: 'open-tab', uri, sessionId, role: 'showcase' });
+        const [stageTabId, showcaseTabId] = await Promise.all([
+          resolveSessionRoleTabId(controlBotBrowser, sessionId, 'stage'),
+          resolveSessionRoleTabId(controlBotBrowser, sessionId, 'showcase'),
+        ]);
+        return textResult(`Opened a preview of ${localPath} in the session's showcase tab. The preview reads live from disk — after you edit files, the user can reload to see changes. Current tabs (* = active):\n${formatBotBrowserTabs(result, { stageTabId, showcaseTabId })}`);
       } catch (error) {
         return textResult(`Failed to preview ${localPath} in Bot Browser: ${error instanceof Error ? error.message : String(error)}. ${SURFACE_HINT}`, true);
       }
@@ -602,7 +651,12 @@ export function buildBotBrowserAgentTools(deps: {
     },
     async (args: { tabId?: number }) => {
       try {
-        const result = await controlBotBrowser.execute({ action: 'get-content', tabId: args.tabId });
+        // Without an explicit tabId the session's showcase tab is the target —
+        // never the host-owned Live Stage.
+        const tabId = args.tabId
+          ?? await resolveSessionRoleTabId(controlBotBrowser, sessionId, 'showcase')
+          ?? undefined;
+        const result = await controlBotBrowser.execute({ action: 'get-content', tabId });
         const content = result.content;
         if (content && typeof content.text === 'string' && content.text.trim()) {
           const trimmed = content.text.length > 12000
@@ -617,7 +671,7 @@ export function buildBotBrowserAgentTools(deps: {
         const uri = content?.uri ?? result.activeTab?.uri ?? '';
         let renderer: { type?: string; url?: string } = {};
         try {
-          const infoResult = await controlBotBrowser.execute({ action: 'get-tab-info', tabId: args.tabId });
+          const infoResult = await controlBotBrowser.execute({ action: 'get-tab-info', tabId });
           renderer = readRendererFromEnvelope(infoResult.info?.current);
         } catch {
           // Older bridges without get-tab-info: fall through with an empty renderer.
@@ -855,14 +909,27 @@ export function buildBotBrowserScreenshotTool(deps: {
           const uri = args.uri?.trim();
           if (uri) {
             if (args.newTab) {
-              await controlBotBrowser.execute({ action: 'open-tab', uri });
+              await controlBotBrowser.execute({ action: 'open-tab', uri, sessionId, role: 'showcase' });
             } else {
-              await controlBotBrowser.execute({ action: 'navigate-tab', uri, sessionId, activate: true });
+              await controlBotBrowser.execute({ action: 'navigate-tab', uri, sessionId, role: 'showcase', activate: true });
             }
             navigated = true;
           } else if (typeof args.tabId === 'number') {
             await controlBotBrowser.execute({ action: 'switch-tab', tabId: args.tabId });
             navigated = true;
+          } else {
+            // No explicit target: capture the session's showcase tab. It must
+            // be active for the capture, so switch to it first when needed;
+            // with no showcase tab bound, keep the active-tab behavior.
+            const showcaseTabId = await resolveSessionRoleTabId(controlBotBrowser, sessionId, 'showcase');
+            if (showcaseTabId != null) {
+              const tabsResult = await controlBotBrowser.execute({ action: 'get-tabs' });
+              const showcaseActive = tabsResult.tabs.some((tab) => tab.id === showcaseTabId && tab.isActive);
+              if (!showcaseActive) {
+                await controlBotBrowser.execute({ action: 'switch-tab', tabId: showcaseTabId });
+                navigated = true;
+              }
+            }
           }
 
           // Give the page a moment to paint after a navigation/switch. There is
@@ -965,10 +1032,15 @@ export function buildBotBrowserActTool(deps: {
           return textResult('bot_browser_act: selector must be a non-empty CSS selector when provided.', true);
         }
         try {
+          // Without an explicit tabId, act on the session's showcase tab —
+          // the host-owned Live Stage is never an action target.
+          const tabId = args.tabId
+            ?? await resolveSessionRoleTabId(controlBotBrowser, deps.sessionId, 'showcase')
+            ?? undefined;
           const outcome = await controlBotBrowser.act({
             action: args.action,
             selector,
-            tabId: args.tabId,
+            tabId,
           });
           if (args.action === 'click' && outcome.clicked) {
             const clicked = outcome.clicked;

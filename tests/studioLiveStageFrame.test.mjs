@@ -19,7 +19,9 @@ test('template is self-contained and injects the active Avatar and initial state
   });
   assert.match(html, /data:image\/jpeg;base64,AA==/);
   assert.match(html, /window.__INITIAL_LIVE_STAGE__=/);
-  assert.match(html, /window.__LIVE_STAGE_REPORT_URI__="preview-metaapp:\/\/localhost\/tmp\/final-report\.html"/);
+  // The report URI travels in patch state (state.reportUri), never as baked
+  // page chrome — the persistent entry is shared by every session.
+  assert.doesNotMatch(html, /__LIVE_STAGE_REPORT_URI__/);
   assert.match(html, /window.__FALLBACK_AVATAR__="data:image\/png;base64,BB=="/);
   assert.doesNotMatch(html, /=__FALLBACK_AVATAR__/);
   assert.match(html, /window.LiquidOrbEffectSource/);
@@ -57,42 +59,56 @@ test('frame bridge reaches only the matching local preview frame', async () => {
   assert.ok(executed.includes('idbots.live-stage.v1'));
 });
 
-test('frame selection probes every matching frame and prefers the one showing this turn', async () => {
+test('frame selection probes every matching frame and prefers the one claimed by this session', async () => {
   const url = 'http://127.0.0.1:5000/live-stage.html';
-  const scripts = { stale: [], fresh: [] };
-  const makeFrame = (turnId, bucket) => ({
+  const scripts = { foreign: [], mine: [], idle: [] };
+  const makeFrame = (sessionId, bucket) => ({
     url,
     frames: [],
     executeJavaScript: async (script) => {
-      if (script.includes('getState')) return { bridge: true, turnId };
+      if (script.includes('getState')) return { bridge: true, sessionId, turnId: 't', turnStartedAt: 1 };
       bucket.push(script);
       return { ok: true };
     },
   });
-  const stale = makeFrame('turn-old', scripts.stale);
-  const fresh = makeFrame('t', scripts.fresh);
+  // The persistent entry URI is shared: a foreign session's claimed page, an
+  // unclaimed idle page, and this session's claimed page can all match.
+  const foreign = makeFrame('other-session', scripts.foreign);
+  const mine = makeFrame('s', scripts.mine);
+  const idle = makeFrame(null, scripts.idle);
   const deps = {
     getWindows: () => [{
       isDestroyed: () => false,
-      webContents: { isDestroyed: () => false, mainFrame: { url: 'http://127.0.0.1:5185', frames: [stale, fresh], executeJavaScript: async () => ({}) } },
+      webContents: { isDestroyed: () => false, mainFrame: { url: 'http://127.0.0.1:5185', frames: [foreign, idle, mine], executeJavaScript: async () => ({}) } },
     }],
     executeTabCommand: async () => ({ info: { current: { renderer: { type: 'html-iframe', url } } } }),
   };
   await applyStudioLiveStagePatch(deps, { tabId: 7, state: state() });
-  assert.equal(scripts.stale.length, 0, 'the stale frame never receives the patch');
-  assert.equal(scripts.fresh.length, 1);
-  assert.ok(scripts.fresh[0].includes('idbots.live-stage.v1'));
+  assert.equal(scripts.foreign.length, 0, 'the foreign session\'s page never receives the patch');
+  assert.equal(scripts.idle.length, 0, 'an unclaimed page loses to the session\'s own claimed page');
+  assert.equal(scripts.mine.length, 1);
+  assert.ok(scripts.mine[0].includes('idbots.live-stage.v1'));
 
-  // Bridges exist but none belongs to this turn → a machine-readable
-  // turn-mismatch the service turns into a re-projection.
+  // Only unclaimed pages remain → the first one claims this session's patch.
+  const idleOnly = await applyStudioLiveStagePatch({
+    ...deps,
+    getWindows: () => [{
+      isDestroyed: () => false,
+      webContents: { isDestroyed: () => false, mainFrame: { url: 'http://127.0.0.1:5185', frames: [makeFrame(null, scripts.idle)], executeJavaScript: async () => ({}) } },
+    }],
+  }, { tabId: 7, state: state() });
+  assert.equal(scripts.idle.length, 1, 'an unclaimed page accepts the claiming patch');
+
+  // Bridges exist but every page is claimed by another session → a
+  // machine-readable session-mismatch the service turns into a re-projection.
   const mismatch = await applyStudioLiveStagePatch({
     ...deps,
     getWindows: () => [{
       isDestroyed: () => false,
-      webContents: { isDestroyed: () => false, mainFrame: { url: 'http://127.0.0.1:5185', frames: [makeFrame('turn-other', [])], executeJavaScript: async () => ({}) } },
+      webContents: { isDestroyed: () => false, mainFrame: { url: 'http://127.0.0.1:5185', frames: [makeFrame('other-session', [])], executeJavaScript: async () => ({}) } },
     }],
   }, { tabId: 7, state: state() }).catch((error) => error);
-  assert.equal(mismatch?.reason, 'turn-mismatch');
+  assert.equal(mismatch?.reason, 'session-mismatch');
 
   // Frames exist but none exposes the bridge yet → not-ready (retryable).
   const notReady = await applyStudioLiveStagePatch({

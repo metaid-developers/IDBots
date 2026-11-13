@@ -20,7 +20,7 @@ export type DrainedLiveStageInteraction = {
  * Frame-location failure with a machine-readable `reason` so the service can
  * pick retry vs. self-heal without parsing messages:
  *  - 'tab-not-found' / 'frame-not-found' / 'not-ready' → transient, retry
- *  - 'turn-mismatch' → the page belongs to another turn, re-project
+ *  - 'session-mismatch' → the page is claimed by another session, re-project
  */
 export class LiveStageFrameError extends Error {
   readonly reason: string;
@@ -36,17 +36,31 @@ export function liveStageFrameErrorReason(error: unknown): string {
   return typeof reason === 'string' && reason ? reason : 'unknown';
 }
 
-const STAGE_TURN_PROBE_SCRIPT = `(() => {
+const STAGE_PAGE_PROBE_SCRIPT = `(() => {
   const bridge = window.IDBotsLiveStage;
-  if (!bridge || typeof bridge.getState !== 'function') return { bridge: false, turnId: null };
+  if (!bridge || typeof bridge.getState !== 'function') return { bridge: false, sessionId: null, turnId: null, turnStartedAt: null };
   const state = bridge.getState();
-  return { bridge: true, turnId: state && typeof state.turnId === 'string' ? state.turnId : null };
+  return {
+    bridge: true,
+    sessionId: state && typeof state.sessionId === 'string' ? state.sessionId : null,
+    turnId: state && typeof state.turnId === 'string' ? state.turnId : null,
+    turnStartedAt: state && typeof state.turnStartedAt === 'number' ? state.turnStartedAt : null,
+  };
 })()`;
 
-async function locateLiveStageFrame(deps: LiveStageFrameDeps, tabId: number, expectedTurnId?: string): Promise<ActFrameShape> {
+type StagePageProbe = {
+  frame: ActFrameShape;
+  bridge: boolean;
+  sessionId: string | null;
+  turnId: string | null;
+  turnStartedAt: number | null;
+};
+
+async function locateLiveStageFrame(deps: LiveStageFrameDeps, tabId: number, expectedSessionId?: string): Promise<ActFrameShape> {
   let info: BotBrowserTabCommandResult;
   try {
-    info = await deps.executeTabCommand({ action: 'get-tab-info', tabId });
+    // Host-side frame lookup: stay off the app surface (controlTabsSilent).
+    info = await deps.executeTabCommand({ action: 'get-tab-info', tabId, background: true });
   } catch {
     throw new LiveStageFrameError('tab-not-found', 'The Live Stage tab is not reachable');
   }
@@ -60,21 +74,32 @@ async function locateLiveStageFrame(deps: LiveStageFrameDeps, tabId: number, exp
     frames.push(...collectMatchingFrames(window.webContents.mainFrame, renderer.url));
   }
   if (!frames.length) throw new LiveStageFrameError('frame-not-found', 'The Live Stage frame is not ready');
-  if (expectedTurnId == null) return frames[0];
-  // Several frames can match the renderer URL (stale pages, sibling
-  // previews): probe each bridge and deliver to the one showing THIS turn.
-  const probed = await Promise.all(frames.map(async (frame) => {
+  if (expectedSessionId == null) return frames[0];
+  // The persistent entry URI is shared by every session's stage tab: several
+  // frames can match the renderer URL. Probe each page and deliver to the one
+  // claimed by THIS session — or to an unclaimed page, which claims it on the
+  // first accepted patch.
+  const probed = await Promise.all(frames.map(async (frame): Promise<StagePageProbe> => {
     try {
-      const result = await frame.executeJavaScript(STAGE_TURN_PROBE_SCRIPT, true) as { bridge?: boolean; turnId?: unknown } | null;
-      return { frame, bridge: result?.bridge === true, turnId: typeof result?.turnId === 'string' ? result.turnId : null };
+      const result = await frame.executeJavaScript(STAGE_PAGE_PROBE_SCRIPT, true) as {
+        bridge?: boolean; sessionId?: unknown; turnId?: unknown; turnStartedAt?: unknown;
+      } | null;
+      return {
+        frame,
+        bridge: result?.bridge === true,
+        sessionId: typeof result?.sessionId === 'string' && result.sessionId ? result.sessionId : null,
+        turnId: typeof result?.turnId === 'string' ? result.turnId : null,
+        turnStartedAt: typeof result?.turnStartedAt === 'number' ? result.turnStartedAt : null,
+      };
     } catch {
-      return { frame, bridge: false, turnId: null };
+      return { frame, bridge: false, sessionId: null, turnId: null, turnStartedAt: null };
     }
   }));
   const bridged = probed.filter((entry) => entry.bridge);
   if (!bridged.length) throw new LiveStageFrameError('not-ready', 'The Live Stage frame is not ready');
-  const match = bridged.find((entry) => entry.turnId === expectedTurnId);
-  if (!match) throw new LiveStageFrameError('turn-mismatch', 'The Live Stage frame belongs to a different turn');
+  const match = bridged.find((entry) => entry.sessionId === expectedSessionId)
+    ?? bridged.find((entry) => entry.sessionId == null);
+  if (!match) throw new LiveStageFrameError('session-mismatch', 'The Live Stage frame belongs to a different session');
   return match.frame;
 }
 
@@ -108,7 +133,7 @@ export async function applyStudioLiveStagePatch(
   deps: LiveStageFrameDeps,
   input: { tabId: number; state: LiveStageState },
 ): Promise<void> {
-  const frame = await locateLiveStageFrame(deps, input.tabId, input.state.turnId);
+  const frame = await locateLiveStageFrame(deps, input.tabId, input.state.sessionId);
   const result = await frame.executeJavaScript(buildLiveStagePatchScript(input.state), true) as { ok?: boolean; reason?: string } | null;
   if (result?.ok === true) return;
   const reason = typeof result?.reason === 'string' && result.reason ? result.reason : 'rejected';
@@ -134,9 +159,9 @@ export function buildLiveStageDrainScript(): string {
  */
 export async function drainStudioLiveStageInteractions(
   deps: LiveStageFrameDeps,
-  input: { tabId: number },
+  input: { tabId: number; sessionId?: string },
 ): Promise<DrainedLiveStageInteraction[]> {
-  const frame = await locateLiveStageFrame(deps, input.tabId);
+  const frame = await locateLiveStageFrame(deps, input.tabId, input.sessionId);
   const result = await frame.executeJavaScript(buildLiveStageDrainScript(), true) as { ok?: boolean; reason?: string; items?: DrainedLiveStageInteraction[] } | null;
   // A not-ready stage (stale page, missing bridge) must surface as an error,
   // not as an empty queue — an empty array here is indistinguishable from

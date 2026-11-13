@@ -2,6 +2,7 @@
   "protocol": "idbots.live-stage.v1",
   "sessionId": "demo-live-stage",
   "turnId": "demo-turn-1",
+  "turnStartedAt": 1760000000000,
   "revision": 2,
   "enabled": true,
   "family": "metaweb-research",
