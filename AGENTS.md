@@ -18,8 +18,24 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 - Use commit messages in the format `<type>: <short description>`, where `<type>` is one of `feat`, `fix`, `refactor`, `docs`, or `chore`.
 - Before committing, make sure the relevant local tests or verification steps pass for your changes.
 - When merging completed work into `main`, use `git merge --no-ff` to preserve the feature merge point.
-- Do not merge a feature branch back into `main` on your own initiative; wait for an explicit user instruction to merge or close out the work.
+- Do not merge a feature branch back into `main` on your own initiative **before the merge is requested**; the merge request is what authorizes it (see "Delivery loop" below).
 - When the user asks to merge a branch back into `main`, after the merge you may delete that branch and its worktree without asking, provided the branch is now fully absorbed into `main` (safe to delete). Do not delete branches that still carry unmerged or uncommitted work.
+
+### Delivery loop (owner ruling 2026-11-13) — test on `main`, not on the branch
+
+The owner's standing instruction: **we test and accept on `main`. A feature that is finished but stranded on a branch is not a deliverable — it is a chore for the owner, who then has to check out a branch by hand to verify anything.** The only sanctioned loop is:
+
+1. Branch from `main` (with its worktree, as above).
+2. Write the code and commit on the branch.
+3. **Request the merge.** Report the branch name, its head commit, what changed, and what you already verified. The merge request is the hand-off point.
+4. Merge into `main` (once the request is authorized), then run the acceptance/tests **on `main`** and report the result with evidence: the merge commit hash, the compile exit code, and the test total/passed/failed counts.
+5. Only then ask for acceptance. A branch's green tests are necessary but never sufficient.
+
+Rules that follow from this:
+
+- Every branch has exactly two endings: merged into `main`, or rejected and deleted. A branch left dangling with finished work in it is a defect, and must be named as such in any status report rather than described as "done".
+- Do not accumulate multiple finished-but-unmerged branches. If one exists, say so and request its merge at the end of the task that produced it.
+- Run the test suite with `NO_COLOR=1 FORCE_COLOR=0` so color escape codes cannot pollute assertion comparisons, and distinguish failures you introduced from failures that were already red on the `main` baseline you branched from.
 
 ### Production deployments come from `main` only
 
