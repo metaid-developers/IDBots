@@ -179,16 +179,31 @@ export interface SponsorClientError extends Error {
   stage: SponsorStage;
   reason: SponsorReason;
   serviceMessage: string;
+  serviceErrorCode?: string;
+  neededMilli?: number;
+  availableMilli?: number;
+  limitMilli?: number;
   status?: number;
   data?: unknown;
   retryable?: boolean;
+}
+
+export function resolveSponsorRequestTimeoutMs(stage: SponsorStage, body?: string): number {
+  if (stage !== 'pre' && stage !== 'commit') {
+    return DEFAULT_REQUEST_TIMEOUT_MS;
+  }
+  const bodyBytes = body ? Buffer.byteLength(body, 'utf8') : 0;
+  // pre and commit carry full raw transactions (up to ~10 MB JSON hex for 5 MiB files).
+  // Scale the request budget with payload size so multi-MB uploads do not abort prematurely.
+  const scaled = 30_000 + Math.ceil(bodyBytes / 262_144) * 3_000;
+  return Math.min(180_000, Math.max(30_000, scaled));
 }
 
 function normalizeReason(stage: SponsorStage, message: string): SponsorReason {
   if (/TRAFFIC_INSUFFICIENT/i.test(message)) {
     return 'insufficient_traffic';
   }
-  if (/ME_INSUFFICIENT|ME_DAILY_LIMIT/i.test(message)) {
+  if (/ME_INSUFFICIENT|ME_DAILY_LIMIT|me daily limit/i.test(message)) {
     return 'insufficient_me';
   }
   if (/available amount not enough|quota not granted|insufficient quota|insufficient balance/i.test(message)) {
@@ -214,14 +229,29 @@ function normalizeErrorCodeReason(code: unknown): SponsorReason | undefined {
 function createSponsorError(
   stage: SponsorStage,
   message: string,
-  extra: { status?: number; data?: unknown; reason?: SponsorReason; retryable?: boolean } = {},
+  extra: {
+    status?: number;
+    data?: unknown;
+    reason?: SponsorReason;
+    serviceErrorCode?: string;
+    retryable?: boolean;
+  } = {},
 ): SponsorClientError {
   const serviceMessage = normalizeText(message) || `MVC sponsor ${stage} failed.`;
+  const dataRecord = readObject(extra.data);
+  const rawErrorCode = normalizeText(extra.serviceErrorCode || dataRecord?.errorCode);
   const error = new Error(serviceMessage) as SponsorClientError;
   error.code = `mvc_fee_assist_${stage}_failed`;
   error.stage = stage;
-  error.reason = extra.reason ?? normalizeReason(stage, serviceMessage);
+  error.reason = extra.reason ?? normalizeErrorCodeReason(rawErrorCode) ?? normalizeReason(stage, serviceMessage);
   error.serviceMessage = serviceMessage;
+  if (rawErrorCode) error.serviceErrorCode = rawErrorCode;
+  const needed = normalizeOptionalNumber(dataRecord ?? {}, 'neededMilli', 'needed_milli');
+  const available = normalizeOptionalNumber(dataRecord ?? {}, 'availableMilli', 'available_milli');
+  const limit = normalizeOptionalNumber(dataRecord ?? {}, 'limitMilli', 'limit_milli');
+  if (needed !== undefined) error.neededMilli = needed;
+  if (available !== undefined) error.availableMilli = available;
+  if (limit !== undefined) error.limitMilli = limit;
   if (extra.status !== undefined) error.status = extra.status;
   if (extra.data !== undefined) error.data = extra.data;
   if (extra.retryable !== undefined) error.retryable = extra.retryable;
@@ -255,17 +285,21 @@ function unwrapEnvelope(body: unknown, stage: SponsorStage): Record<string, unkn
     }
     return data;
   }
+  const dataRecord = readObject(record.data);
+  const serviceErrorCode = normalizeText(record.errorCode) || normalizeText(dataRecord?.errorCode);
   throw createSponsorError(
     stage,
     pickText(record, 'message', 'msg', 'error') || `Sponsor service returned code ${normalizeText(record.code) || 'unknown'}.`,
     {
       data: record.data,
+      serviceErrorCode: serviceErrorCode || undefined,
       // Backend sends TRAFFIC_INSUFFICIENT / ME_INSUFFICIENT / ME_DAILY_LIMIT as
       // data.errorCode (envelope code stays numeric 1) — same pattern as
       // SPONSOR_BROADCAST_PENDING.
       reason: normalizeErrorCodeReason(record.code)
-        ?? normalizeErrorCodeReason(readObject(record.data)?.errorCode),
-      retryable: normalizeBoolean(readObject(record.data)?.retryable) === true,
+        ?? normalizeErrorCodeReason(record.errorCode)
+        ?? normalizeErrorCodeReason(dataRecord?.errorCode),
+      retryable: normalizeBoolean(dataRecord?.retryable) === true,
     },
   );
 }
@@ -277,7 +311,7 @@ async function requestJson(
   stage: SponsorStage,
   retry: boolean,
 ): Promise<Record<string, unknown>> {
-  const timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS;
+  const timeoutMs = resolveSponsorRequestTimeoutMs(stage, init.body);
   const retryDelaysMs = retry ? DEFAULT_RETRY_DELAYS_MS : [];
   for (let attempt = 0; ; attempt += 1) {
     const controller = new AbortController();
@@ -296,6 +330,10 @@ async function requestJson(
       }
       if (!response.ok) {
         const record = readObject(body);
+        const dataRecord = record ? readObject(record.data) : null;
+        const serviceErrorCode = record
+          ? normalizeText(record.errorCode) || normalizeText(dataRecord?.errorCode)
+          : '';
         throw createSponsorError(
           stage,
           record
@@ -304,8 +342,10 @@ async function requestJson(
           {
             status: response.status,
             data: record?.data,
+            serviceErrorCode: serviceErrorCode || undefined,
             reason: normalizeErrorCodeReason(record?.code)
-              ?? normalizeErrorCodeReason(record ? readObject(record.data)?.errorCode : undefined),
+              ?? normalizeErrorCodeReason(record?.errorCode)
+              ?? normalizeErrorCodeReason(dataRecord?.errorCode),
             retryable: isRetryableHttpStatus(response.status),
           },
         );
@@ -409,8 +449,8 @@ function normalizeAddressInfo(record: Record<string, unknown>): MvcSponsorAddres
  * undefined when the backend does not include one. Traffic billing draws from
  * this balance, NOT from the legacy sponsor quota (availableAmount).
  */
-export function trafficBalanceBytesOf(info: MvcSponsorAddressInfo): number | undefined {
-  const raw = info.raw?.traffic;
+export function trafficBalanceBytesOf(info: MvcSponsorAddressInfo | undefined): number | undefined {
+  const raw = info?.raw?.traffic;
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
   const record = raw as Record<string, unknown>;
   const value = Number(record.balanceBytes ?? record.balance_bytes);
@@ -431,8 +471,8 @@ export interface MvcSponsorMeBilling {
  * Callers only request ME billing when trafficBilling is true, so an older
  * backend keeps billing traffic bytes.
  */
-export function meBillingOf(info: MvcSponsorAddressInfo): MvcSponsorMeBilling | undefined {
-  const raw = info.raw?.me;
+export function meBillingOf(info: MvcSponsorAddressInfo | undefined): MvcSponsorMeBilling | undefined {
+  const raw = info?.raw?.me;
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
   const record = raw as Record<string, unknown>;
   const spendable = Number(record.spendableMilli ?? record.spendable_milli);

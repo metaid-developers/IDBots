@@ -86,10 +86,28 @@ export function formatTrafficStrictFailureMessage(input: {
   stage: MvcSponsorFeeAssistStage;
   orderId?: string;
   detail?: string;
+  feeAssist?: Partial<CreatePinFeeAssistMetadata>;
 }): string {
-  const orderPart = input.orderId ? `, order=${input.orderId}` : '';
-  const detailPart = input.detail ? `: ${input.detail}` : '';
-  return `积分支付失败，请检查积分余额或稍后重试 (reason=${input.reason}, stage=${input.stage}${orderPart})${detailPart}`;
+  const parts = [`reason=${input.reason}`, `stage=${input.stage}`];
+  if (input.orderId) parts.push(`order=${input.orderId}`);
+  const fa = input.feeAssist;
+  if (fa?.serviceErrorCode) parts.push(`code=${fa.serviceErrorCode}`);
+  if (fa?.billedBy) parts.push(`billing=${fa.billedBy}`);
+  if (typeof fa?.requiredMilli === 'number' && Number.isFinite(fa.requiredMilli)) {
+    parts.push(`required_milli=${fa.requiredMilli}`);
+  }
+  if (typeof fa?.spendableMilli === 'number' && Number.isFinite(fa.spendableMilli)) {
+    parts.push(`spendable_milli=${fa.spendableMilli}`);
+  }
+  if (typeof fa?.limitMilli === 'number' && Number.isFinite(fa.limitMilli)) {
+    parts.push(`limit_milli=${fa.limitMilli}`);
+  }
+  if (typeof fa?.txSize === 'number' && Number.isFinite(fa.txSize) && fa.txSize > 0) {
+    parts.push(`txSize=${fa.txSize}`);
+  }
+  const detailText = input.detail || fa?.detail;
+  const detailPart = detailText ? `: ${detailText}` : '';
+  return `积分支付失败，请检查积分余额或稍后重试 (${parts.join(', ')})${detailPart}`;
 }
 
 export class TrafficInsufficientError extends Error {
@@ -105,6 +123,7 @@ export class TrafficInsufficientError extends Error {
     reason: MvcSponsorCreatePinFallbackReason;
     stage: MvcSponsorFeeAssistStage;
     orderId?: string;
+    detail?: string;
     feeAssist: CreatePinFeeAssistMetadata;
   }) {
     super(input.message || formatTrafficStrictFailureMessage(input));
@@ -188,6 +207,64 @@ function noteSponsorBroadcastFailure(metabotId: number, mvcAddress: string, cont
   }
 }
 
+function extractSponsorDiagnosticFields(params: {
+  error?: unknown;
+  quotaBefore?: MvcSponsorAddressInfo;
+  trafficAccount?: MvcSponsorTrafficAccount;
+  txSize?: number;
+}): Pick<
+  CreatePinFeeAssistMetadata,
+  'detail' | 'serviceErrorCode' | 'billedBy' | 'requiredMilli' | 'spendableMilli' | 'limitMilli' | 'txSize'
+> {
+  const errObj = params.error as {
+    message?: unknown;
+    serviceMessage?: unknown;
+    serviceErrorCode?: unknown;
+    neededMilli?: unknown;
+    availableMilli?: unknown;
+    limitMilli?: unknown;
+  } | undefined;
+  const rawDetail = typeof errObj?.serviceMessage === 'string' && errObj.serviceMessage.trim()
+    ? errObj.serviceMessage.trim()
+    : params.error instanceof Error && params.error.message
+      ? params.error.message.trim()
+      : '';
+  const serviceErrorCode = typeof errObj?.serviceErrorCode === 'string' && errObj.serviceErrorCode.trim()
+    ? errObj.serviceErrorCode.trim()
+    : undefined;
+  const requiredMilli = typeof errObj?.neededMilli === 'number' && Number.isFinite(errObj.neededMilli)
+    ? errObj.neededMilli
+    : undefined;
+  const availableFromErr = typeof errObj?.availableMilli === 'number' && Number.isFinite(errObj.availableMilli)
+    ? errObj.availableMilli
+    : undefined;
+  const spendableFromQuota = meBillingOf(params.quotaBefore)?.spendableMilli;
+  const spendableMilli = availableFromErr ?? spendableFromQuota;
+  const limitMilli = typeof errObj?.limitMilli === 'number' && Number.isFinite(errObj.limitMilli)
+    ? errObj.limitMilli
+    : undefined;
+  const billedBy = params.trafficAccount?.billing === 'me'
+    ? 'me'
+    : params.trafficAccount
+      ? 'traffic'
+      : meBillingOf(params.quotaBefore)?.trafficBilling
+        ? 'me'
+        : params.quotaBefore
+          ? 'quota'
+          : undefined;
+  return {
+    ...(rawDetail ? { detail: rawDetail } : {}),
+    ...(serviceErrorCode ? { serviceErrorCode } : {}),
+    ...(billedBy ? { billedBy } : {}),
+    ...(requiredMilli !== undefined ? { requiredMilli } : {}),
+    ...(spendableMilli !== undefined ? { spendableMilli } : {}),
+    ...(limitMilli !== undefined ? { limitMilli } : {}),
+    ...(typeof params.txSize === 'number' && Number.isFinite(params.txSize) && params.txSize > 0
+      ? { txSize: params.txSize }
+      : {}),
+  };
+}
+
 export async function runMvcSponsorCreatePin(
   input: MvcSponsorCreatePinInput,
   deps: MvcSponsorCreatePinDeps,
@@ -198,11 +275,20 @@ export async function runMvcSponsorCreatePin(
     reason: MvcSponsorCreatePinFallbackReason;
     stage: MvcSponsorFeeAssistStage;
     orderId?: string;
+    error?: unknown;
     quotaBefore?: MvcSponsorAddressInfo;
+    trafficAccount?: MvcSponsorTrafficAccount;
+    txSize?: number;
     advisoryFeeEstimate?: number;
     /** Sponsor-order outcome observed while reconciling a failed commit. */
     commitOrderOutcome?: 'failed' | 'pending' | 'unknown';
   }): Promise<MvcSponsorCreatePinResult> => {
+    const diagnostics = extractSponsorDiagnosticFields({
+      error: params.error,
+      quotaBefore: params.quotaBefore,
+      trafficAccount: params.trafficAccount,
+      txSize: params.txSize,
+    });
     const feeAssist: CreatePinFeeAssistMetadata = {
       attempted: true,
       used: false,
@@ -214,6 +300,7 @@ export async function runMvcSponsorCreatePin(
       commitOrderOutcome: params.commitOrderOutcome,
       quotaBefore: params.quotaBefore,
       advisoryFeeEstimate: params.advisoryFeeEstimate,
+      ...diagnostics,
     };
     if (input.fallbackPolicy === 'strict') {
       appendMetaidLog('WARN', 'Sponsored MVC createPin failed under strict policy — self-paid fallback blocked', {
@@ -224,11 +311,13 @@ export async function runMvcSponsorCreatePin(
         orderId: params.orderId,
         commitOrderOutcome: params.commitOrderOutcome,
         fallbackPolicy: input.fallbackPolicy,
+        ...diagnostics,
       });
       throw new TrafficInsufficientError({
         reason: params.reason,
         stage: params.stage,
         orderId: params.orderId,
+        detail: diagnostics.detail,
         feeAssist,
       });
     }
@@ -292,8 +381,8 @@ export async function runMvcSponsorCreatePin(
   let quotaBefore: MvcSponsorAddressInfo;
   try {
     quotaBefore = await sponsorClient.getAddressInfo({ address: input.mvcAddress });
-  } catch {
-    return fallbackToSelfPaid({ reason: 'service_unavailable', stage: 'address_info' });
+  } catch (error) {
+    return fallbackToSelfPaid({ reason: 'service_unavailable', stage: 'address_info', error });
   }
 
   let draft: NonNullable<CreatePinWorkerSuccess['draft']>;
@@ -311,6 +400,7 @@ export async function runMvcSponsorCreatePin(
     return fallbackToSelfPaid({
       reason: isNoUserUtxoDraftFailure(error) ? 'no_user_utxo' : 'service_unavailable',
       stage: 'address_info',
+      error,
       quotaBefore,
     });
   }
@@ -324,7 +414,14 @@ export async function runMvcSponsorCreatePin(
     // Every sponsor failure falls back under the 'selfpay' policy (nothing
     // has been broadcast at this stage, so the fallback is always safe).
     const reason = normalizeSponsorReason((error as { reason?: unknown })?.reason, 'service_unavailable');
-    return fallbackToSelfPaid({ reason, stage: 'challenge', quotaBefore, advisoryFeeEstimate });
+    return fallbackToSelfPaid({
+      reason,
+      stage: 'challenge',
+      error,
+      quotaBefore,
+      txSize: draft.estimatedTxSize,
+      advisoryFeeEstimate,
+    });
   }
 
   const challengeSignature = await signMvcAddressMessage({
@@ -352,6 +449,8 @@ export async function runMvcSponsorCreatePin(
         reason: 'insufficient_me',
         stage: 'address_info',
         quotaBefore,
+        trafficAccount,
+        txSize: draft.estimatedTxSize,
         advisoryFeeEstimate,
       });
     }
@@ -362,6 +461,8 @@ export async function runMvcSponsorCreatePin(
         reason: 'insufficient_traffic',
         stage: 'address_info',
         quotaBefore,
+        trafficAccount,
+        txSize: draft.estimatedTxSize,
         advisoryFeeEstimate,
       });
     }
@@ -370,6 +471,7 @@ export async function runMvcSponsorCreatePin(
       reason: 'insufficient_quota',
       stage: 'address_info',
       quotaBefore,
+      txSize: draft.estimatedTxSize,
       advisoryFeeEstimate,
     });
   }
@@ -392,7 +494,15 @@ export async function runMvcSponsorCreatePin(
       noteSponsorBroadcastFailure(input.metabotId, input.mvcAddress, 'pre');
     }
     const reason = normalizeSponsorReason((error as { reason?: unknown })?.reason, 'pre_rejected');
-    return fallbackToSelfPaid({ reason, stage: 'pre', quotaBefore, advisoryFeeEstimate });
+    return fallbackToSelfPaid({
+      reason,
+      stage: 'pre',
+      error,
+      quotaBefore,
+      trafficAccount,
+      txSize: draft.estimatedTxSize,
+      advisoryFeeEstimate,
+    });
   }
 
   let signedTxHex: string;
@@ -417,7 +527,10 @@ export async function runMvcSponsorCreatePin(
       reason: 'pre_rejected',
       stage: 'commit',
       orderId: pre.orderId,
+      error,
       quotaBefore,
+      trafficAccount,
+      txSize: draft.estimatedTxSize,
       advisoryFeeEstimate,
     });
   }
@@ -490,7 +603,10 @@ export async function runMvcSponsorCreatePin(
         reason: 'commit_failed',
         stage: 'commit',
         orderId: pre.orderId,
+        error,
         quotaBefore,
+        trafficAccount,
+        txSize: draft.estimatedTxSize,
         advisoryFeeEstimate,
         commitOrderOutcome: reconciliation.outcome === 'failed' || reconciliation.outcome === 'pending' || reconciliation.outcome === 'unknown'
           ? reconciliation.outcome
