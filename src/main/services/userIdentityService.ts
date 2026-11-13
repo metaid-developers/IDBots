@@ -24,6 +24,7 @@ import { requestMvcGasSubsidy } from './mvcSubsidyService';
 import { fetchMetaidRestoreProfile } from './metabotRestoreService';
 import {
   createPinForIdentity,
+  normalizeMetafileAvatarReference,
   parseDataUrlAvatar,
   type MvcCreatePinSessionSnapshot,
 } from './metaidCore';
@@ -133,8 +134,18 @@ export function buildUserInfoSyncSteps(
       steps.push({ key: 'name', path: '/info/name', contentType: 'text/plain', payload: identity.name });
     }
     const nftReference = parseNftAvatarReference(identity.avatar);
-    const avatarData = parseDataUrlAvatar(nftReference ? identity.avatar_fallback : identity.avatar);
-    if (!identity.avatar_pin_id && avatarData) {
+    const metafileReference = !nftReference ? normalizeMetafileAvatarReference(identity.avatar) : null;
+    const avatarData = !metafileReference
+      ? parseDataUrlAvatar(nftReference ? identity.avatar_fallback : identity.avatar)
+      : null;
+    if (!identity.avatar_pin_id && metafileReference) {
+      steps.push({
+        key: 'avatar',
+        path: '/info/avatar',
+        contentType: 'text/plain',
+        payload: metafileReference,
+      });
+    } else if (!identity.avatar_pin_id && avatarData) {
       steps.push({
         key: 'avatar',
         path: '/info/avatar',
@@ -318,8 +329,10 @@ export async function createUserIdentity(
   if (!name) {
     return { success: false, error: 'NAME_EMPTY' };
   }
-  const avatar = (input.avatar ?? '').trim() || null;
-  if (avatar && !parseDataUrlAvatar(avatar)) {
+  const rawAvatar = (input.avatar ?? '').trim() || null;
+  const metafileAvatar = normalizeMetafileAvatarReference(rawAvatar);
+  const avatar = metafileAvatar ?? rawAvatar;
+  if (avatar && !metafileAvatar && !parseDataUrlAvatar(avatar)) {
     return { success: false, error: 'INVALID_AVATAR' };
   }
 
@@ -746,6 +759,7 @@ export async function updateUserIdentityAvatar(
   if (!identity) return { success: false, error: 'USER_IDENTITY_MISSING' };
   const avatar = typeof input?.avatar === 'string' ? input.avatar.trim() : '';
   const nftReference = parseNftAvatarReference(avatar);
+  const metafileReference = !nftReference ? normalizeMetafileAvatarReference(avatar) : null;
   let stagedAvatar = avatar;
   let avatarFallback: string | null = null;
 
@@ -761,6 +775,8 @@ export async function updateUserIdentityAvatar(
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
+  } else if (metafileReference) {
+    stagedAvatar = metafileReference;
   } else if (avatar && !parseDataUrlAvatar(avatar)) {
     return { success: false, error: 'INVALID_AVATAR' };
   }

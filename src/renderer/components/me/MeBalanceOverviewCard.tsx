@@ -26,6 +26,11 @@ const MeBalanceOverviewCard: React.FC<{ note?: string }> = ({ note }) => {
   const weekly = balance?.weeklyGrant;
   const grantMe = meFromMilli(weekly?.amountMilli);
   const remainingMe = meFromMilli(weekly?.remainingMilli);
+  const persistent = balance?.persistent;
+  const topupMe = meFromMilli(persistent?.topupMilli);
+  const bonusMe = meFromMilli(persistent?.bonusMilli);
+  const earnedMe = meFromMilli(persistent?.earnedMilli);
+  const packTotalMe = topupMe + bonusMe + earnedMe;
   const reset = weekly ? meResetParts(weekly.nextResetAt) : null;
   const resetLine = !reset
     ? ''
@@ -62,12 +67,18 @@ const MeBalanceOverviewCard: React.FC<{ note?: string }> = ({ note }) => {
           <p className="mt-0.5 text-[10px] text-claude-textSecondary dark:text-claude-darkTextSecondary">{resetLine}</p>
         </div>
         <div className="rounded-xl bg-claude-surfaceInset/50 dark:bg-claude-darkSurfaceInset/40 px-3 py-2.5">
-          <p className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">{i18nService.t('meUsagePersistent')}</p>
-          <div className="mt-1 space-y-0.5 text-[11px] tabular-nums text-claude-text dark:text-claude-darkText">
-            <div className="flex justify-between"><span>{i18nService.t('mePanelTopup')}</span><span>{balance ? formatMe(meFromMilli(balance.persistent?.topupMilli)) : '—'}</span></div>
-            <div className="flex justify-between"><span>{i18nService.t('mePanelBonus')}</span><span>{balance ? formatMe(meFromMilli(balance.persistent?.bonusMilli)) : '—'}</span></div>
-            <div className="flex justify-between"><span>{i18nService.t('mePanelEarned')}</span><span>{balance ? formatMe(meFromMilli(balance.persistent?.earnedMilli)) : '—'}</span></div>
-          </div>
+          <p className="flex min-h-[19px] items-center text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+            {i18nService.t('meUsagePersistent')}
+          </p>
+          <p className="mt-1 text-lg font-semibold tabular-nums text-claude-text dark:text-claude-darkText">
+            {balance ? formatMe(packTotalMe) : '—'}
+            <span className="ml-1 text-[10px] font-normal text-claude-textSecondary">ME</span>
+          </p>
+          <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] tabular-nums text-claude-textSecondary dark:text-claude-darkTextSecondary">
+            <span>{i18nService.t('mePanelTopup')} {balance ? formatMe(topupMe) : '—'} ME</span>
+            <span>{i18nService.t('mePanelBonus')}{i18nService.getLanguage() === 'zh' ? '：' : ': '}{balance ? formatMe(bonusMe) : '—'} ME</span>
+            <span>{i18nService.t('mePanelEarned')} {balance ? formatMe(earnedMe) : '—'} ME</span>
+          </p>
         </div>
       </div>
       <p className="mt-2 border-t border-claude-border/50 dark:border-claude-darkBorder/50 pt-2 text-[10px] leading-relaxed text-claude-textSecondary dark:text-claude-darkTextSecondary">

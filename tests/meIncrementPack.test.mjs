@@ -311,3 +311,20 @@ test('credits & traffic tab hosts two sub-pages (credits default, traffic restor
   assert.match(i18nSource, /usageCreditsSubTabCredits: '积分'/);
   assert.match(i18nSource, /usageCreditsSubTabTraffic: '流量'/);
 });
+
+test('credits overview card uses 增量包（不过期） layout and usage header adds 购买积分 left of refresh', () => {
+  const overviewSource = read('src/renderer/components/me/MeBalanceOverviewCard.tsx');
+  assert.match(i18nSource, /meIncrementPackBuy: '购买积分'/);
+  assert.match(i18nSource, /meUsagePersistent: '增量包（不过期）'/);
+  assert.match(overviewSource, /packTotalMe = topupMe \+ bonusMe \+ earnedMe/);
+  assert.match(overviewSource, /formatMe\(packTotalMe\)/);
+  assert.match(overviewSource, /mePanelTopup/);
+  assert.match(overviewSource, /mePanelBonus/);
+  assert.match(overviewSource, /mePanelEarned/);
+
+  const buyIdx = usageSource.indexOf("data-slot=\"me-usage-buy-credits\"");
+  const refreshIdx = usageSource.indexOf("i18nService.t('freeQuotaRefresh')");
+  assert.ok(buyIdx >= 0 && refreshIdx > buyIdx, '购买积分 button must sit left of refresh');
+  assert.match(usageSource, /requestOpenMePurchase\('topup'\)/);
+  assert.match(usageSource, /i18nService\.t\('meIncrementPackBuy'\)/);
+});

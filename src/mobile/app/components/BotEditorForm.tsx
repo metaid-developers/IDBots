@@ -320,6 +320,7 @@ function AvatarField(props: {
           ownerGlobalMetaId={props.ownerGlobalMetaId}
           loadNfts={loadNfts}
           maxLocalBytes={200 * 1024}
+          allowBuiltin={false}
           allowNft={Boolean(props.botId)}
           readLocalFile={fileToAvatarDataUrl}
           onPick={(reference) => {

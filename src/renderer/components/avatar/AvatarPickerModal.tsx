@@ -1,5 +1,14 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeftIcon, ArrowPathIcon, PhotoIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import {
+  ArrowLeftIcon,
+  ArrowPathIcon,
+  CheckIcon,
+  ChevronRightIcon,
+  PhotoIcon,
+  Squares2X2Icon,
+  XMarkIcon,
+} from '@heroicons/react/24/outline';
+import { BUILTIN_AVATARS, builtinAvatarSrc } from '../../assets/builtinAvatars';
 import { i18nService } from '../../services/i18n';
 import { buildNftTileViewModel } from '../metabots/metabotNftPresentation.js';
 import { NftArtworkImage } from '../metabots/NftArtworkImage';
@@ -18,12 +27,14 @@ export interface AvatarPickerNftItem {
 interface AvatarPickerModalProps {
   ownerAddress: string;
   ownerGlobalMetaId?: string | null;
+  currentReference?: string;
   loadNfts: () => Promise<AvatarPickerNftItem[]>;
   onPick: (reference: string) => void;
   onPickLocal: (dataUrl: string) => void;
   onClose: () => void;
   onError: (message: string) => void;
   maxLocalBytes: number;
+  allowBuiltin?: boolean;
   allowNft?: boolean;
   readLocalFile?: (file: File) => Promise<string>;
 }
@@ -31,17 +42,19 @@ interface AvatarPickerModalProps {
 const AvatarPickerModal: React.FC<AvatarPickerModalProps> = ({
   ownerAddress,
   ownerGlobalMetaId,
+  currentReference = '',
   loadNfts,
   onPick,
   onPickLocal,
   onClose,
   onError,
   maxLocalBytes,
+  allowBuiltin = true,
   allowNft = true,
   readLocalFile,
 }) => {
   const inputRef = useRef<HTMLInputElement>(null);
-  const [source, setSource] = useState<'choice' | 'nft'>('choice');
+  const [source, setSource] = useState<'choice' | 'builtin' | 'nft'>('choice');
   const [state, setState] = useState<{ loading: boolean; error: string; items: AvatarPickerNftItem[] }>({
     loading: false,
     error: '',
@@ -100,7 +113,9 @@ const AvatarPickerModal: React.FC<AvatarPickerModalProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" data-slot="avatar-picker">
       <div className="absolute inset-0 bg-black/50 dark:bg-black/60" onClick={onClose} aria-hidden />
       <div
-        className="relative flex max-h-[70vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-main)] dark:bg-claude-darkSurface shadow-xl"
+        className={`relative flex max-h-[76vh] w-full flex-col overflow-hidden rounded-2xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-main)] dark:bg-claude-darkSurface shadow-xl ${
+          source === 'builtin' ? 'max-w-2xl' : 'max-w-lg'
+        }`}
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-2 border-b dark:border-claude-darkBorder border-claude-border px-4 py-3">
@@ -109,7 +124,11 @@ const AvatarPickerModal: React.FC<AvatarPickerModalProps> = ({
               {i18nService.t('avatarPickerTitle')}
             </div>
             <div className="truncate text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
-              {source === 'nft' ? i18nService.t('metabotNftAvatarPickerHint') : i18nService.t('avatarPickerHint')}
+              {source === 'builtin'
+                ? i18nService.t('metabotBuiltinAvatarHint')
+                : source === 'nft'
+                  ? i18nService.t('metabotNftAvatarPickerHint')
+                  : i18nService.t('avatarPickerHint')}
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1">
@@ -137,7 +156,7 @@ const AvatarPickerModal: React.FC<AvatarPickerModalProps> = ({
 
         <div className="min-h-0 flex-1 overflow-y-auto p-4">
           {source === 'choice' && (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="flex flex-col gap-2.5" data-slot="avatar-source-list">
               <input
                 ref={inputRef}
                 type="file"
@@ -145,14 +164,41 @@ const AvatarPickerModal: React.FC<AvatarPickerModalProps> = ({
                 className="hidden"
                 onChange={handleFile}
               />
+              {allowBuiltin && (
+                <button
+                  type="button"
+                  data-slot="avatar-source-builtin"
+                  onClick={() => setSource('builtin')}
+                  className="flex w-full items-center gap-3.5 rounded-xl border dark:border-claude-darkBorder border-claude-border px-4 py-3.5 text-left dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                >
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border dark:border-claude-darkBorder border-claude-border bg-claude-surfaceInset/60 dark:bg-claude-darkSurfaceInset/50">
+                    <Squares2X2Icon className="h-5 w-5 text-claude-textSecondary dark:text-claude-darkTextSecondary" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium">{i18nService.t('avatarPickerBuiltin')}</div>
+                    <div className="truncate text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                      {i18nService.t('metabotBuiltinAvatarHint')}
+                    </div>
+                  </div>
+                  <ChevronRightIcon className="h-4 w-4 shrink-0 text-claude-textSecondary dark:text-claude-darkTextSecondary" />
+                </button>
+              )}
               <button
                 type="button"
                 data-slot="avatar-source-local"
                 onClick={() => inputRef.current?.click()}
-                className="flex min-h-32 flex-col items-center justify-center gap-2 rounded-xl border dark:border-claude-darkBorder border-claude-border px-4 py-6 text-sm dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+                className="flex w-full items-center gap-3.5 rounded-xl border dark:border-claude-darkBorder border-claude-border px-4 py-3.5 text-left dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
               >
-                <PhotoIcon className="h-7 w-7 text-claude-textSecondary dark:text-claude-darkTextSecondary" />
-                {i18nService.t('avatarPickerLocal')}
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border dark:border-claude-darkBorder border-claude-border bg-claude-surfaceInset/60 dark:bg-claude-darkSurfaceInset/50">
+                  <PhotoIcon className="h-5 w-5 text-claude-textSecondary dark:text-claude-darkTextSecondary" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium">{i18nService.t('avatarPickerLocal')}</div>
+                  <div className="truncate text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                    {i18nService.t('metabotAvatarSizeError')}
+                  </div>
+                </div>
+                <ChevronRightIcon className="h-4 w-4 shrink-0 text-claude-textSecondary dark:text-claude-darkTextSecondary" />
               </button>
               {allowNft && (
                 <button
@@ -160,12 +206,66 @@ const AvatarPickerModal: React.FC<AvatarPickerModalProps> = ({
                   data-slot="avatar-source-nft"
                   disabled={!ownerAddress}
                   onClick={() => setSource('nft')}
-                  className="flex min-h-32 flex-col items-center justify-center gap-2 rounded-xl border dark:border-claude-darkBorder border-claude-border px-4 py-6 text-sm dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover disabled:opacity-40"
+                  className="flex w-full items-center gap-3.5 rounded-xl border dark:border-claude-darkBorder border-claude-border px-4 py-3.5 text-left dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors disabled:opacity-40"
                 >
-                  <span className="rounded-md border dark:border-claude-darkBorder border-claude-border px-2 py-1 text-xs font-semibold tracking-wide text-claude-textSecondary dark:text-claude-darkTextSecondary">NFT</span>
-                  {i18nService.t('avatarPickerNft')}
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border dark:border-claude-darkBorder border-claude-border bg-claude-surfaceInset/60 dark:bg-claude-darkSurfaceInset/50 text-xs font-semibold tracking-wide text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                    NFT
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium">{i18nService.t('avatarPickerNft')}</div>
+                    <div className="truncate text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                      {i18nService.t('metabotNftAvatarPickerHint')}
+                    </div>
+                  </div>
+                  <ChevronRightIcon className="h-4 w-4 shrink-0 text-claude-textSecondary dark:text-claude-darkTextSecondary" />
                 </button>
               )}
+            </div>
+          )}
+
+          {source === 'builtin' && (
+            <div>
+              <button
+                type="button"
+                data-slot="avatar-picker-back"
+                onClick={() => setSource('choice')}
+                className="mb-3 inline-flex items-center gap-1 text-xs text-claude-textSecondary hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:text-claude-darkText"
+              >
+                <ArrowLeftIcon className="h-3.5 w-3.5" />
+                {i18nService.t('avatarPickerBack')}
+              </button>
+              <div className="grid grid-cols-4 gap-3 sm:grid-cols-5">
+                {BUILTIN_AVATARS.map((avatar) => {
+                  const selected = avatar.metafileUri === currentReference.trim();
+                  return (
+                    <button
+                      key={avatar.code}
+                      type="button"
+                      data-slot="metabot-builtin-avatar-picker-tile"
+                      data-avatar-code={avatar.code}
+                      data-pin-id={avatar.pinId}
+                      aria-pressed={selected}
+                      onClick={() => onPick(avatar.metafileUri)}
+                      className={`group relative overflow-hidden rounded-xl border transition-shadow hover:shadow-md dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 ${selected ? 'border-amber-500 ring-2 ring-amber-200 dark:ring-amber-900' : ''}`}
+                    >
+                      <img
+                        src={builtinAvatarSrc(avatar)}
+                        alt={avatar.name}
+                        className="aspect-square w-full object-cover"
+                        loading="lazy"
+                      />
+                      {selected && (
+                        <span className="absolute right-1.5 top-1.5 rounded-full bg-amber-500 p-1 text-white shadow-sm">
+                          <CheckIcon className="h-3 w-3" />
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-3 text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                {i18nService.t('metabotBuiltinAvatarReferenceHint')}
+              </p>
             </div>
           )}
 

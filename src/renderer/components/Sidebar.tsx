@@ -195,6 +195,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   // "open" must not greet the next visit.
   const [panelHistoryOpen, setPanelHistoryOpen] = useState(false);
   const [studioTitlePreviewOpen, setStudioTitlePreviewOpen] = useState(false);
+  const studioHeaderRef = useRef<HTMLDivElement>(null);
+  const studioIdentityRowRef = useRef<HTMLDivElement>(null);
   const dispatch = useDispatch();
   // Which task-record category the home history list shows. Persisted across
   // app restarts; the header + tabs stay fixed while only the list scrolls.
@@ -609,6 +611,31 @@ const Sidebar: React.FC<SidebarProps> = ({
     return fromList?.title ?? browserOpenSessionFallbackTitle ?? '';
   }, [browserOpenSessionId, sessions, browserOpenSessionFallbackTitle]);
   useEffect(() => setStudioTitlePreviewOpen(false), [browserOpenSessionId]);
+  useEffect(() => {
+    if (mode === 'home') return undefined;
+    const headerEl = studioHeaderRef.current;
+    const identityRowEl = studioIdentityRowRef.current;
+    if (!headerEl || !identityRowEl) return undefined;
+    const openPreview = () => {
+      if (browserOpenSessionId) setStudioTitlePreviewOpen(true);
+    };
+    const closePreviewOnLeave = () => {
+      if (!headerEl.contains(document.activeElement)) setStudioTitlePreviewOpen(false);
+    };
+    const closePreviewOnFocusOut = (event: FocusEvent) => {
+      if (!headerEl.contains(event.relatedTarget as Node | null)) setStudioTitlePreviewOpen(false);
+    };
+    identityRowEl.addEventListener('mouseenter', openPreview);
+    identityRowEl.addEventListener('focusin', openPreview);
+    headerEl.addEventListener('mouseleave', closePreviewOnLeave);
+    headerEl.addEventListener('focusout', closePreviewOnFocusOut);
+    return () => {
+      identityRowEl.removeEventListener('mouseenter', openPreview);
+      identityRowEl.removeEventListener('focusin', openPreview);
+      headerEl.removeEventListener('mouseleave', closePreviewOnLeave);
+      headerEl.removeEventListener('focusout', closePreviewOnFocusOut);
+    };
+  }, [mode, browserOpenSessionId]);
   const showStudioTitle = Boolean(browserOpenSessionId && studioTitlePreviewOpen);
 
   // Studio rests at identity height. Hovering or focusing the identity reveals
@@ -631,9 +658,12 @@ const Sidebar: React.FC<SidebarProps> = ({
     </>
   ) : (
     <div
+      ref={studioHeaderRef}
       data-slot="studio-task-header"
       className={`relative flex w-full min-w-0 flex-col items-center gap-1 transition-[height] duration-150 ${showStudioTitle ? 'h-16' : 'h-9'}`}
       onMouseLeave={(event) => {
+        const nextTarget = event.relatedTarget as Node | null;
+        if (nextTarget && event.currentTarget.contains(nextTarget)) return;
         if (!event.currentTarget.contains(document.activeElement)) setStudioTitlePreviewOpen(false);
       }}
       onBlur={(event) => {
@@ -641,6 +671,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       }}
     >
       <div
+        ref={studioIdentityRowRef}
         className="flex h-9 w-full min-w-0 shrink-0 items-center justify-center"
         onMouseEnter={() => {
           if (browserOpenSessionId) setStudioTitlePreviewOpen(true);

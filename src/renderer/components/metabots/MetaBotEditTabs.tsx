@@ -38,7 +38,6 @@ import {
 import MetaBotAdvancedActionsSection from './MetaBotAdvancedActionsSection';
 import MetaBotHomepageSection, { composeHomepageForSave } from './MetaBotHomepageSection';
 import AvatarPickerModal, { type AvatarPickerNftItem } from '../avatar/AvatarPickerModal';
-import BuiltinAvatarPickerModal from './BuiltinAvatarPickerModal';
 import NftAvatarFrame from './NftAvatarFrame';
 import { parseNftAvatarReference } from './nftAvatarPresentation.js';
 import KnowledgeBasePanel from './KnowledgeBasePanel';
@@ -262,7 +261,6 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
   onDelete,
 }) => {
   const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
-  const [builtinAvatarPickerOpen, setBuiltinAvatarPickerOpen] = useState(false);
   const [values, setValues] = useState<MetaBotEditValues>(() => buildInitialValues(initialValues));
   const [baseline, setBaseline] = useState<MetaBotEditValues>(() => buildInitialValues(initialValues));
   const [activeTab, setActiveTab] = useState<MetaBotEditTabKey>('basic');  const [savingTab, setSavingTab] = useState<MetaBotEditTabKey | null>(null);
@@ -718,24 +716,14 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
               />
             </div>
             <div className="flex-1 min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  data-slot="metabot-avatar-set"
-                  onClick={() => setAvatarPickerOpen(true)}
-                  className="px-3 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
-                >
-                  {i18nService.t('metabotAvatarSet')}
-                </button>
-                <button
-                  type="button"
-                  data-slot="metabot-avatar-pick-builtin"
-                  onClick={() => setBuiltinAvatarPickerOpen(true)}
-                  className="px-3 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
-                >
-                  {i18nService.t('metabotAvatarPickBuiltin')}
-                </button>
-              </div>
+              <button
+                type="button"
+                data-slot="metabot-avatar-set"
+                onClick={() => setAvatarPickerOpen(true)}
+                className="px-3 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+              >
+                {i18nService.t('metabotAvatarSet')}
+              </button>
               <p className={hintClass}>
                 {i18nService.t('metabotAvatarPlaceholder')}
               </p>
@@ -1453,6 +1441,7 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
         <AvatarPickerModal
           ownerAddress={metabot?.mvc_address ?? ''}
           ownerGlobalMetaId={metabot?.globalmetaid}
+          currentReference={values.avatar}
           loadNfts={loadAvatarNfts}
           maxLocalBytes={AVATAR_MAX_SIZE_BYTES}
           onPick={(reference) => {
@@ -1468,17 +1457,6 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
             window.dispatchEvent(new CustomEvent('app:showToast', { detail: message }));
           }}
           onClose={() => setAvatarPickerOpen(false)}
-        />
-      )}
-
-      {builtinAvatarPickerOpen && (
-        <BuiltinAvatarPickerModal
-          currentReference={values.avatar}
-          onPick={(reference) => {
-            handleChange('avatar', reference);
-            setBuiltinAvatarPickerOpen(false);
-          }}
-          onClose={() => setBuiltinAvatarPickerOpen(false)}
         />
       )}
 
