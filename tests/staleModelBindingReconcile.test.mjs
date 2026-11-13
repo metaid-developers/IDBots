@@ -206,3 +206,38 @@ test('reconcile: no provider config skips cleanly', () => {
   const result = reconcileStaleModelBindings(deps);
   assert.deepEqual(result, { reboundSessions: 0, reboundBots: 0, flagged: [] });
 });
+
+test('reconcile: canonicalizes metaid-free <-> idbots across legacy sessions and pre-renderer-migration app_config', () => {
+  const postUpgradeProviders = {
+    idbots: { enabled: true, models: [{ id: 'deepseek-4.1-flash' }, { id: 'deepseek-v4.1-flash' }] },
+    deepseek: { enabled: true, models: [{ id: 'deepseek-v4.1-flash' }] },
+  };
+  const legacySessions = [
+    { id: 'sess-legacy-free', title: 'Old Free Chat', model: 'deepseek-v4.1-flash', modelProvider: 'metaid-free', updatedAt: 333 },
+  ];
+  const { deps: postDeps, sessionUpdates, notices } = makeDeps({
+    providers: postUpgradeProviders,
+    sessions: legacySessions,
+    bots: [],
+  });
+  const postResult = reconcileStaleModelBindings(postDeps);
+  assert.equal(postResult.flagged.length, 0, 'legacy metaid-free session hint matches canonical idbots without false ambiguity');
+  assert.equal(notices.length, 0, 'no system warning injected into upgraded user transcripts');
+  assert.equal(sessionUpdates.length, 0);
+
+  const preRendererProviders = {
+    'metaid-free': { enabled: true, models: [{ id: 'deepseek-v4.1-flash' }] },
+    deepseek: { enabled: true, models: [{ id: 'deepseek-v4.1-flash' }] },
+  };
+  const migratedBots = [
+    { id: 1, name: 'Twin', llm_id: 'deepseek-v4.1-flash', llm_provider: 'idbots', fallback_llm_id: null, fallback_llm_provider: null },
+  ];
+  const { deps: preDeps, botUpdates } = makeDeps({
+    providers: preRendererProviders,
+    sessions: [],
+    bots: migratedBots,
+  });
+  const preResult = reconcileStaleModelBindings(preDeps);
+  assert.equal(preResult.flagged.length, 0, 'SQL-migrated idbots bot hint matches pre-renderer metaid-free catalog entry');
+  assert.equal(botUpdates.length, 0, 'never reverts idbots back to metaid-free');
+});

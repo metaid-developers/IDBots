@@ -114,9 +114,14 @@ function enabledProvidersOffering(
   modelId: string,
 ): string[] {
   const matches: string[] = [];
+  const seenCanonical = new Set<string>();
   for (const [key, provider] of Object.entries(providers)) {
     if (!provider?.enabled) continue;
-    if (provider.models?.some((model) => model?.id === modelId)) matches.push(key);
+    if (!provider.models?.some((model) => model?.id === modelId)) continue;
+    const canonical = canonicalFreeProviderKey(key);
+    if (canonical && seenCanonical.has(canonical)) continue;
+    if (canonical) seenCanonical.add(canonical);
+    matches.push(key);
   }
   return matches;
 }
@@ -137,10 +142,13 @@ function providerOffers(
   providerKey: string,
   modelId: string,
 ): boolean {
-  const needle = providerKey.toLowerCase();
+  const needle = canonicalFreeProviderKey(providerKey);
+  if (!needle) return false;
   for (const [key, provider] of Object.entries(providers)) {
-    if (key.toLowerCase() !== needle) continue;
-    return Boolean(provider?.enabled) && Boolean(provider.models?.some((model) => model?.id === modelId));
+    if (canonicalFreeProviderKey(key) !== needle) continue;
+    if (Boolean(provider?.enabled) && Boolean(provider.models?.some((model) => model?.id === modelId))) {
+      return true;
+    }
   }
   return false;
 }

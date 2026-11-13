@@ -1877,6 +1877,12 @@ export class CoworkStore implements MemoryBackend {
         this.db.run('ALTER TABLE cowork_sessions ADD COLUMN model_provider TEXT;');
         changed = true;
       }
+      this.db.run(
+        `UPDATE cowork_sessions SET model_provider = 'idbots' WHERE LOWER(TRIM(model_provider)) = 'metaid-free'`,
+      );
+      if ((this.db.getRowsModified?.() ?? 0) > 0) {
+        changed = true;
+      }
       if (!sessionColumns.includes('effort')) {
         // Per-session reasoning effort (off/low/high/max/'default'; NULL = model default chain).
         this.db.run('ALTER TABLE cowork_sessions ADD COLUMN effort TEXT;');

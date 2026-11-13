@@ -86,3 +86,22 @@ test('main localPreviewUri normalizes Windows drive paths for stage and report U
     'preview-metaapp://localhost/Users/alice/Application%20Support/IDBots/live-stage/stage.html',
   );
 });
+
+test('botBrowserAgentTools reuses shared encodeLocalPreviewPath instead of a non-Windows duplicate', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const source = fs.readFileSync(
+    path.resolve(import.meta.dirname, '..', 'src/main/libs/botBrowserAgentTools.ts'),
+    'utf8',
+  );
+  assert.match(source, /import \{ encodeLocalPreviewPath \} from '\.\/localPreviewUri';/);
+  assert.doesNotMatch(source, /function encodeLocalPreviewPath\(/);
+  assert.equal(
+    `preview-file://localhost${encodeLocalPreviewPath('C:\\Users\\Alice\\report.md')}`,
+    'preview-file://localhost/C:/Users/Alice/report.md',
+  );
+  assert.equal(
+    `preview-metaapp://localhost${encodeLocalPreviewPath('C:/Users/Alice/app/index.html')}`,
+    'preview-metaapp://localhost/C:/Users/Alice/app/index.html',
+  );
+});

@@ -120,10 +120,11 @@ describe('main-process wiring — the gate is actually on the navigation paths',
   it('checks the payment gate in setWindowOpenHandler', () => {
     const start = mainSource.indexOf('win.webContents.setWindowOpenHandler');
     assert.ok(start >= 0);
-    const block = mainSource.slice(start, start + 700);
+    const block = mainSource.slice(start, start + 900);
     assert.match(block, /isAllowedPaymentLaunchUrl\(url\)/);
+    assert.match(block, /hasPaymentProtocolApp\(url\)/, 'only invoke custom scheme when OS has a registered handler');
     assert.match(block, /isAllowedExternalUrl\(url\)/, 'http(s)/mailto/tel path must survive');
-    assert.match(block, /shell\.openExternal\(url\)/);
+    assert.match(block, /shell\.openExternal\(url\)\.catch/);
   });
 
   it('checks the payment gate in will-navigate', () => {
@@ -131,8 +132,9 @@ describe('main-process wiring — the gate is actually on the navigation paths',
     assert.ok(start >= 0);
     const block = mainSource.slice(start, start + 1400);
     assert.match(block, /isAllowedPaymentLaunchUrl\(url\)/);
+    assert.match(block, /hasPaymentProtocolApp\(url\)/, 'suppresses Windows Store dialog when alipays: is unregistered');
     assert.match(block, /isAllowedExternalUrl\(url\)/, 'http(s)/mailto/tel path must survive');
-    assert.match(block, /shell\.openExternal\(url\)/);
+    assert.match(block, /shell\.openExternal\(url\)\.catch/);
     assert.match(block, /event\.preventDefault\(\)/, 'the in-app navigation must still be cancelled');
   });
 });

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
 import { classifyLocalFile } from '@openagentinternet/agent-browser-core';
+import { encodeLocalPreviewPath } from './localPreviewUri';
 import { truncateUtf16Units } from './llmSafeText';
 import { parseMetaAppPinIdFromUri } from '../services/botBrowserMetaAppForkService';
 import { readRendererFromEnvelope } from '../services/botBrowserSourceLocator';
@@ -160,18 +161,6 @@ type SdkToolFactory = (
 const SURFACE_HINT = 'The Bot Browser surface may not be open; ask the user to switch to Bot Browser mode.';
 
 const HTML_FILE_RE = /\.html?$/iu;
-
-/**
- * Percent-encode every path segment so spaces, '#', '?' and non-ASCII
- * survive URI parsing. The Windows drive segment keeps its literal ':' —
- * preview URIs use the /C:/x/y drive form.
- */
-function encodeLocalPreviewPath(localPath: string): string {
-  return localPath.split('/').map((segment) => {
-    if (/^[A-Za-z]:$/u.test(segment)) return segment;
-    return encodeURIComponent(segment);
-  }).join('/');
-}
 
 function textResult(text: string, isError = false) {
   return {

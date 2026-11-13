@@ -20773,9 +20773,16 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     // The payment gate is checked first: the Alipay launch URL is a custom
     // scheme, deliberately narrower than the whole alipays: family (see
     // paymentLaunchUrl.ts), and never reaches isAllowedExternalUrl.
+    const hasPaymentProtocolApp = (targetUrl: string): boolean => {
+      try {
+        return Boolean(app.getApplicationNameForProtocol(targetUrl)?.trim());
+      } catch {
+        return false;
+      }
+    };
     win.webContents.setWindowOpenHandler(({ url }) => {
-      if (isAllowedPaymentLaunchUrl(url) || isAllowedExternalUrl(url)) {
-        void shell.openExternal(url);
+      if ((isAllowedPaymentLaunchUrl(url) && hasPaymentProtocolApp(url)) || isAllowedExternalUrl(url)) {
+        void shell.openExternal(url).catch(() => {});
       }
       return { action: 'deny' };
     });
@@ -20797,8 +20804,8 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
       }
 
       event.preventDefault();
-      if (isAllowedPaymentLaunchUrl(url) || isAllowedExternalUrl(url)) {
-        void shell.openExternal(url);
+      if ((isAllowedPaymentLaunchUrl(url) && hasPaymentProtocolApp(url)) || isAllowedExternalUrl(url)) {
+        void shell.openExternal(url).catch(() => {});
       }
     });
 
