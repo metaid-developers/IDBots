@@ -825,6 +825,8 @@ contextBridge.exposeInMainWorld('electron', {
     get: () => ipcRenderer.invoke('studioLiveStage:get') as Promise<{ enabled: boolean; directorEnabled: boolean }>,
     set: (updates: { enabled?: boolean; directorEnabled?: boolean }) => ipcRenderer.invoke('studioLiveStage:set', updates) as Promise<{ success: boolean; enabled?: boolean; directorEnabled?: boolean; error?: string }>,
     getStageEntry: () => ipcRenderer.invoke('studio:liveStage:getStageEntry') as Promise<{ success: boolean; uri?: string; error?: string }>,
+    showSession: (sessionId: string) => ipcRenderer.invoke('studio:liveStage:showSession', sessionId) as Promise<{ success: boolean; error?: string }>,
+    prepareDraft: (input: { tabId: number; metabotId?: number | null }) => ipcRenderer.invoke('studio:liveStage:prepareDraft', input) as Promise<{ success: boolean; error?: string }>,
   },
   dailyReport: {
     runNow: (opts?: { force?: boolean }) =>

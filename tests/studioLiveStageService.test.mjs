@@ -11,7 +11,7 @@ const { readStudioLiveStageSettings, writeStudioLiveStageSettings, STUDIO_LIVE_S
 
 const message = (id, type, metadata = {}, content = '') => ({ id, type, content, timestamp: 1, metadata });
 
-function fixture(t, directorEnabled = false, initialTabId = 7, directSceneOverride = null) {
+function fixture(t, directorEnabled = false, initialTabId = 7, directSceneOverride = null, depOverrides = {}) {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-live-stage-'));
   const stageRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-live-stage-root-'));
   const session = {
@@ -21,6 +21,7 @@ function fixture(t, directorEnabled = false, initialTabId = 7, directSceneOverri
     metabotId: 1,
     metabotName: 'AI_Sunny',
     metabotAvatar: 'data:image/jpeg;base64,AA==',
+    messages: [],
   };
   const projected = [], patches = [], calls = [], drainQueue = [], responses = [], activations = [];
   const settings = { enabled: true, directorEnabled };
@@ -55,6 +56,8 @@ function fixture(t, directorEnabled = false, initialTabId = 7, directSceneOverri
         usage: { inputTokens: 120, outputTokens: 24, cacheReadTokens: 80, cacheCreationTokens: 40, latencyMs: 12 },
       };
     }),
+    projectionRetryBackoffMs: [0, 0],
+    ...depOverrides,
   });
   t.after(() => {
     service.dispose();
@@ -439,4 +442,138 @@ test('a pushed click resolves through the same validated path as the drain', asy
   assert.equal(service.acceptPushedInteraction({ requestId: 'push-1', token, behavior: 'deny' }), false, 'single-use: the second delivery is rejected');
   assert.equal(service.acceptPushedInteraction({ requestId: 'push-1', token: 'wrong', behavior: 'deny' }), false);
   assert.equal(service.acceptPushedInteraction({ requestId: 'ghost', token: 'x', behavior: 'deny' }), false);
+});
+
+// ---------------------------------------------------------------------------
+// Stage Tabs unit: resilient projection, draftClaim, showSession/idle, prepareDraft
+// ---------------------------------------------------------------------------
+
+test('projectStage retries a timed-out stage-tab lookup and patches the bound draft without projecting', async (t) => {
+  let lookups = 0;
+  const { service, projected, patches } = fixture(t, false, 7, null, {
+    getStageTab: async () => {
+      lookups += 1;
+      if (lookups === 1) throw new Error('Bot Browser tab command timed out');
+      const run = service.getRunInternals('s');
+      return run ? { id: 9, uri: run.stageUri } : null;
+    },
+  });
+  service.observeMessage('s', message('u1', 'user', { origin: 'user', submissionId: 'sub-1' }, 'Hello.'));
+  const run = service.getRunInternals('s');
+  await run.queue;
+  // Give the enqueued projectStage + deliverPatch chain a beat to settle.
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await run.queue;
+  assert.equal(lookups >= 2, true, 'the lookup was retried after the timeout');
+  assert.equal(projected.filter((input) => input.role === 'stage').length, 0, 'no projection once the bound tab resolves');
+  assert.equal(patches.length >= 1, true, 'the current state was patched onto the bound tab');
+  assert.equal(patches.at(-1).state.sessionId, 's');
+});
+
+test('projectStage retries a failed projection before falling back to patch delivery', async (t) => {
+  let attempts = 0;
+  const { service, patches } = fixture(t, false, 7, null, {
+    getStageTab: async () => null,
+    project: async (input) => {
+      attempts += 1;
+      if (attempts < 3) throw new Error('Bot Browser tab command timed out');
+      return { uri: `preview-metaapp://localhost${input.localPath}`, tabId: 11, announced: true };
+    },
+  });
+  service.observeMessage('s', message('u1', 'user', { origin: 'user', submissionId: 'sub-1' }, 'Hello.'));
+  const run = service.getRunInternals('s');
+  await run.queue;
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await run.queue;
+  assert.equal(attempts, 3, 'the projection was attempted three times');
+  assert.equal(patches.length >= 1, true, 'delivery continued after the retried projection');
+});
+
+test('draftClaim reaches the stage-role projection for a brand-new session only', async (t) => {
+  const { service, projected } = fixture(t);
+  service.prepareSession('fresh', { draftClaim: true });
+  let run = service.getRunInternals('fresh');
+  await run.queue;
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await run.queue;
+  const stageProjection = projected.find((input) => input.sessionId === 'fresh' && input.role === 'stage');
+  assert.equal(stageProjection?.draftClaim, true, 'session:start marks the first projection as a draft claim');
+
+  // An old session (many user messages) never carries draftClaim.
+  const oldSession = {
+    cwd: '/tmp', sessionType: 'browser', assistantMode: true, metabotId: 1,
+    metabotName: 'AI_Sunny', messages: [{ type: 'user' }, { type: 'user' }, { type: 'user' }],
+  };
+  const { service: service2, projected: projected2 } = fixture(t, false, 7, null, {
+    getSession: (id) => id === 'old' ? oldSession : null,
+  });
+  service2.prepareSession('old');
+  const oldRun = service2.getRunInternals('old');
+  await oldRun.queue;
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await oldRun.queue;
+  const oldProjection = projected2.find((input) => input.sessionId === 'old' && input.role === 'stage');
+  assert.equal(oldProjection?.draftClaim, false, 'an established session keeps the conservative adoption rule');
+});
+
+test('showSession redelivers an existing run and creates a resting idle run otherwise', async (t) => {
+  const { service, patches, activations } = fixture(t);
+  // Existing run: state is re-delivered through the projectStage fast path.
+  service.observeMessage('s', message('u1', 'user', { origin: 'user', submissionId: 'sub-1' }, 'Hello.'));
+  const run = service.getRunInternals('s');
+  await run.queue;
+  const patchesBefore = patches.length;
+  service.showSession('s');
+  await run.queue;
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await run.queue;
+  assert.equal(patches.length > patchesBefore, true, 'the current state was re-delivered');
+  assert.deepEqual(activations, ['s'], 'showSession itself never activates the tab');
+
+  // No run: a resting idle run appears with the idle copy and no activation.
+  service.showSession('opened-old');
+  const idleRun = service.getRunInternals('opened-old');
+  assert.ok(idleRun, 'an idle run was created for the opened session');
+  assert.equal(idleRun.state.family, 'idle');
+  assert.equal(idleRun.state.kicker, 'AI_Sunny', 'idle kicker is the bot name');
+  assert.equal(idleRun.state.headline, "I'm here whenever you're ready");
+  assert.equal(idleRun.state.caption, '');
+  await idleRun.queue;
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await idleRun.queue;
+  const idlePatch = patches.find((input) => input.state?.family === 'idle');
+  assert.ok(idlePatch, 'the idle state reached the stage tab');
+  assert.deepEqual(activations, ['s'], 'the idle run never activates the tab');
+});
+
+test('a later human message replaces the idle run through the submissionId check', async (t) => {
+  const { service } = fixture(t);
+  service.showSession('opened-old');
+  const idleRun = service.getRunInternals('opened-old');
+  const idleTurnId = idleRun.state.turnId;
+  await idleRun.queue;
+  service.observeMessage('opened-old', message('u2', 'user', { origin: 'user', submissionId: 'sub-2' }, 'Now do the thing.'));
+  const nextRun = service.getRunInternals('opened-old');
+  assert.notEqual(nextRun.state.turnId, idleTurnId, 'the human turn replaced the idle run');
+  assert.equal(nextRun.state.family === 'idle', false);
+});
+
+test('prepareDraft patches the tab frame with an unclaimed idle draft identity', async (t) => {
+  const { service, patches } = fixture(t);
+  const result = await service.prepareDraft({ tabId: 5, metabotId: 2 });
+  assert.equal(result.ok, true);
+  const draft = patches.at(-1);
+  assert.equal(draft.state.draft, true);
+  assert.equal(draft.state.family, 'idle');
+  assert.equal(draft.state.botName, 'Builder阿码');
+  assert.match(String(draft.state.botAvatar), /^avatars\/[0-9a-f]{16}\./, 'the avatar is a stage asset');
+  assert.equal(draft.state.sessionId, '', 'the draft carries no session claim');
+
+  const fallback = await service.prepareDraft({ tabId: 5, metabotId: null });
+  assert.equal(fallback.ok, true);
+  const fallbackDraft = patches.at(-1);
+  assert.equal(fallbackDraft.state.botName, 'Twin', 'null metabotId falls back to the default Twin name');
+
+  const invalid = await service.prepareDraft({ tabId: 'nope' });
+  assert.equal(invalid.ok, false);
 });

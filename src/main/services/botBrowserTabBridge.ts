@@ -29,6 +29,11 @@ export type BotBrowserTabCommand = {
   dedupe?: boolean;
   /** Renderer-only routing flag: preserve the current app surface. */
   background?: boolean;
+  /**
+   * First stage projection of a brand-new session: the renderer may adopt
+   * the prewarmed draft tab unconditionally (unowned, blank or on the entry).
+   */
+  draftClaim?: boolean;
 };
 
 export type BotBrowserTabInfo = {
@@ -90,9 +95,11 @@ type BrowserTabBridgeWindow = {
 
 type PendingRequest = {
   target: BrowserTabBridgeWebContents;
+  command: BotBrowserTabCommand;
   resolve(result: BotBrowserTabCommandResult): void;
   reject(error: Error): void;
   timeout: NodeJS.Timeout;
+  startedAt: number;
 };
 
 export type BotBrowserTabBridge = {
@@ -107,11 +114,23 @@ export type BotBrowserTabBridge = {
 export function createBotBrowserTabBridge(options: {
   getWindows(): BrowserTabBridgeWindow[];
   timeoutMs?: number;
+  /** Responses slower than this are logged (default 2s). */
+  slowCommandMs?: number;
 }): BotBrowserTabBridge {
   const pending = new Map<string, PendingRequest>();
   const timeoutMs = options.timeoutMs ?? 10_000;
+  const slowCommandMs = options.slowCommandMs ?? 2_000;
   let requestSequence = 0;
   let disposed = false;
+
+  const logCommandTiming = (command: BotBrowserTabCommand, ms: number, timedOut: boolean): void => {
+    if (!timedOut && ms <= slowCommandMs) return;
+    console.warn(
+      `[BotBrowserTabBridge] ${timedOut ? 'tab command timed out' : 'slow tab command'}`
+      + ` action=${command.action} sessionId=${command.sessionId ?? '-'} role=${command.role ?? '-'}`
+      + ` ms=${ms}`,
+    );
+  };
 
   const execute = (command: BotBrowserTabCommand, opts?: { focusWindow?: boolean }): Promise<BotBrowserTabCommandResult> => {
     if (disposed) {
@@ -126,16 +145,20 @@ export function createBotBrowserTabBridge(options: {
     }
 
     const requestId = `bot-browser-tab-${Date.now()}-${++requestSequence}`;
+    const startedAt = Date.now();
     const promise = new Promise<BotBrowserTabCommandResult>((resolve, reject) => {
       const timeout = setTimeout(() => {
         pending.delete(requestId);
+        logCommandTiming(command, Date.now() - startedAt, true);
         reject(new Error('Bot Browser tab command timed out'));
       }, timeoutMs);
       pending.set(requestId, {
         target: targetWindow.webContents,
+        command,
         resolve,
         reject,
         timeout,
+        startedAt,
       });
     });
 
@@ -186,6 +209,7 @@ export function createBotBrowserTabBridge(options: {
       request.reject(new Error(String(response.error || 'Bot Browser tab command failed')));
       return;
     }
+    logCommandTiming(request.command, Date.now() - request.startedAt, false);
     request.resolve(response.result);
   };
 

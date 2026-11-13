@@ -53,7 +53,7 @@ test('official template resolves from the built-in package with a validated mani
   assert.equal(template.scenesPath, 'scenes.json');
   assert.equal(template.assetRoot, PACKAGE_ROOT);
   assert.deepEqual(template.capabilities, ['stage.applyPatch']);
-  assert.equal(Object.keys(template.scenes.families).length, 16);
+  assert.equal(Object.keys(template.scenes.families).length, 17);
   assert.equal(fs.existsSync(path.join(PACKAGE_ROOT, template.entry)), true);
   assert.equal(fs.existsSync(path.join(DEMO_ROOT, 'received.json')), true);
 });

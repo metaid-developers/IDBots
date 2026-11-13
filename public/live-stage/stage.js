@@ -955,6 +955,16 @@
     applyPatch(patch) {
       if (!patch || typeof patch !== 'object') return { ok: false, reason: 'protocol' };
       if (patch.protocol !== PROTOCOL) return { ok: false, reason: 'protocol' };
+      if (patch.draft === true) {
+        // Pre-claim draft identity (bot name/avatar on the idle family):
+        // applies only while the page is unclaimed and never claims it —
+        // the first real session patch still claims the page wholesale.
+        if (claimedSessionId != null) return { ok: false, reason: 'already-claimed' };
+        heldPatch = null;
+        stopHeldRelease();
+        commitStagePatch(patch);
+        return true;
+      }
       if (claimedSessionId == null) {
         // First claim: an unclaimed page adopts the patching session and its
         // state wholesale — the revision baseline starts here.

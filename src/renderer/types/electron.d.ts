@@ -1770,6 +1770,8 @@ interface IElectronAPI {
     get: () => Promise<{ enabled: boolean; directorEnabled: boolean }>;
     set: (updates: { enabled?: boolean; directorEnabled?: boolean }) => Promise<{ success: boolean; enabled?: boolean; directorEnabled?: boolean; error?: string }>;
     getStageEntry: () => Promise<{ success: boolean; uri?: string; error?: string }>;
+    showSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
+    prepareDraft: (input: { tabId: number; metabotId?: number | null }) => Promise<{ success: boolean; error?: string }>;
   };
   dailyReport: {
     runNow: (opts?: { force?: boolean }) => Promise<

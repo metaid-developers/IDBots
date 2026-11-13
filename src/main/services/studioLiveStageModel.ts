@@ -3,7 +3,7 @@ import type { CoworkMessage } from '../coworkStore';
 export const LIVE_STAGE_PROTOCOL = 'idbots.live-stage.v1' as const;
 
 export type LiveStageFamily =
-  | 'received' | 'reasoning' | 'speaking' | 'local-recall' | 'web2-research'
+  | 'idle' | 'received' | 'reasoning' | 'speaking' | 'local-recall' | 'web2-research'
   | 'metaweb-research' | 'making' | 'delegation' | 'waiting' | 'worker-report'
   | 'verification' | 'browser-action' | 'owner-needed' | 'problem'
   | 'report-ready' | 'complete';
@@ -100,6 +100,12 @@ export type LiveStageState = {
   interaction: LiveStageInteraction | null;
   pendingProjectionIds: string[];
   eventWindow: Array<{ family: LiveStageFamily; tool?: string; outcome?: string }>;
+  /**
+   * Pre-claim draft identity patch (prepareDraft): renders bot name/avatar on
+   * an unclaimed stage page without claiming it — the first real session
+   * patch still claims the page.
+   */
+  draft?: boolean;
 };
 
 export type LiveStageSessionContext = {
@@ -110,6 +116,8 @@ export type LiveStageSessionContext = {
   language: 'zh' | 'en';
   directorEnabled?: boolean;
   nowMs?: number;
+  /** Opening family; defaults to 'received' (a live turn's first beat). */
+  family?: LiveStageFamily;
 };
 
 const text = (language: 'zh' | 'en', zh: string, en: string): string => language === 'zh' ? zh : en;
@@ -118,6 +126,7 @@ const TEAMMATE_FALLBACK: Record<'zh' | 'en', string> = { zh: '协作 Bot', en: '
 
 /** Localized kicker label per family; 'speaking' uses the bot name instead. */
 const FAMILY_KICKER: Record<LiveStageFamily, { zh: string; en: string }> = {
+  idle: { zh: '', en: '' },
   received: { zh: '收到', en: 'Received' },
   reasoning: { zh: '思考中', en: 'Thinking' },
   speaking: { zh: '', en: '' },
@@ -144,6 +153,7 @@ function sceneFor(
 ): Pick<LiveStageState, 'headline' | 'caption' | 'kicker' | 'composition' | 'motif' | 'participants' | 'topology'> {
   const worker = workerName?.trim().slice(0, 80) || TEAMMATE_FALLBACK[language];
   const scenes: Record<LiveStageFamily, { headline: string; caption: string; participants: string[] }> = {
+    idle: { headline: text(language, '我在，随时可以开始', "I'm here whenever you're ready"), caption: '', participants: [botName] },
     received: { headline: text(language, '收到，我来处理', 'Got it — on it'), caption: text(language, '我来处理这件事。', 'On it.'), participants: [botName] },
     reasoning: { headline: text(language, '正在想怎么做', 'Thinking it through'), caption: '', participants: [botName] },
     speaking: { headline: text(language, '正在回复', 'Replying'), caption: '', participants: [botName] },
@@ -206,7 +216,7 @@ function sceneFor(
     // The participants block lists collaborators only (the stage drops the
     // twin's own entry): a verification names the worker when one exists.
     participants: family === 'verification' && hasWorker ? [botName, worker] : scene.participants,
-    kicker: family === 'speaking' ? botName : FAMILY_KICKER[family][language],
+    kicker: family === 'speaking' || family === 'idle' ? botName : FAMILY_KICKER[family][language],
     composition: family === 'verification' ? 'converge' : structured ? 'topology' : family === 'local-recall' || family === 'web2-research' || family === 'metaweb-research' ? 'gather' : family === 'report-ready' || family === 'complete' ? 'ready' : 'presence',
     motif: family,
     topology: {
@@ -224,7 +234,8 @@ function seedFor(sessionId: string, turnId: string, revision: number): number {
 }
 
 export function createLiveStageState(context: LiveStageSessionContext): LiveStageState {
-  const scene = sceneFor('received', context.language, context.botName);
+  const family = context.family ?? 'received';
+  const scene = sceneFor(family, context.language, context.botName);
   const nowMs = context.nowMs ?? Date.now();
   return {
     protocol: LIVE_STAGE_PROTOCOL,
@@ -233,19 +244,19 @@ export function createLiveStageState(context: LiveStageSessionContext): LiveStag
     turnStartedAt: nowMs,
     revision: 0,
     enabled: true,
-    family: 'received',
+    family,
     botName: context.botName,
     ...(context.botAvatar ? { botAvatar: context.botAvatar } : {}),
     language: context.language,
     ...scene,
     captionSource: 'default',
     phaseStartedAt: nowMs,
-    motion: { preset: 'received', seed: seedFor(context.sessionId, context.turnId, 0), durationMs: 720, easing: 'emphasized-decelerate', energy: .35, density: .25 },
+    motion: { preset: family, seed: seedFor(context.sessionId, context.turnId, 0), durationMs: 720, easing: 'emphasized-decelerate', energy: .35, density: .25 },
     metrics: { directorEnabled: context.directorEnabled === true, directorCalls: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, rejectedPatches: 0, fallbackCount: 0, directorLatencyMs: 0 },
     handoff: null,
     interaction: null,
     pendingProjectionIds: [],
-    eventWindow: [{ family: 'received' }],
+    eventWindow: [{ family }],
   };
 }
 

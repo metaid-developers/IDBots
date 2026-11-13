@@ -349,6 +349,8 @@ const FEATURES_UTIL_INVOKE: Record<string, AllowlistEntry> = {
   'studioLiveStage:get': { tier: 'N', note: 'Studio Live Stage settings; desktop-only.' },
   'studioLiveStage:set': { tier: 'N', note: 'Studio Live Stage settings; desktop-only.' },
   'studio:liveStage:getStageEntry': { tier: 'N', note: 'Persistent Live Stage entry URI for draft prewarm; desktop-only.' },
+  'studio:liveStage:showSession': { tier: 'N', note: 'Reveal an existing Studio session on its Live Stage; desktop-only.' },
+  'studio:liveStage:prepareDraft': { tier: 'N', note: 'Patch the prewarmed draft tab with bot identity; desktop-only.' },
   'app:getDataDirectory': { tier: 'N', note: 'feat/legacy-data-recovery ②: desktop Settings page data-directory visibility; desktop-only.' },
   'dailyReport:runNow': { tier: 'N', note: '`02`: desktop-only — spawns a local Twin report session.' },
 };

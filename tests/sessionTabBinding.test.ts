@@ -752,10 +752,18 @@ test('a committed active tab never moves an existing session binding', async () 
   }
 });
 
-test('revealSessionTab prefers showcase, then stage, then opens the stage entry', async () => {
+test('revealSessionTab prefers the stage tab, then opens the stage entry, and asks main to redeliver', async () => {
   const bridge = createFakeTabBridge();
   const fakeHost = createFakeHost(bridge);
+  const shown: string[] = [];
   const storage = installStageEntry();
+  const win = (globalThis as { window?: { electron?: { studioLiveStage?: Record<string, unknown> } } }).window;
+  if (win?.electron?.studioLiveStage) {
+    win.electron.studioLiveStage.showSession = async (sessionId: string) => {
+      shown.push(sessionId);
+      return { success: true };
+    };
+  }
   try {
     const binding = createSessionTabBinding();
     binding.attach(fakeHost.host);
@@ -763,7 +771,8 @@ test('revealSessionTab prefers showcase, then stage, then opens the stage entry'
     fakeHost.sessions.set('session-b', sessionOf('session-b'));
     fakeHost.sessions.set('session-c', sessionOf('session-c'));
 
-    // session-a owns both roles: the showcase tab is revealed first.
+    // session-a owns both roles: the STAGE tab is revealed first — the
+    // showcase stays reachable through its own tab or the report button.
     fakeHost.setOpen('session-a');
     await binding.controlSessionTab({
       action: 'open-tab', sessionId: 'session-a', role: 'stage', uri: STAGE_ENTRY_URI, activate: true,
@@ -771,10 +780,11 @@ test('revealSessionTab prefers showcase, then stage, then opens the stage entry'
     await binding.controlSessionTab({
       action: 'open-tab', sessionId: 'session-a', role: 'showcase', uri: 'metaapp://report-a', activate: true,
     });
-    const showcaseA = bridge.activeTabId;
+    const stageA = (await binding.controlSessionTab({ action: 'get-tabs', sessionId: 'session-a', role: 'stage' })).sessionTab!.id;
     await bridge.controlTabs({ action: 'open-tab', uri: 'metaapp://elsewhere' });
     await binding.revealSessionTab('session-a');
-    assert.equal(bridge.activeTabId, showcaseA, 'the showcase tab wins the reveal');
+    assert.equal(bridge.activeTabId, stageA, 'the stage tab wins the reveal over showcase');
+    assert.deepEqual(shown, ['session-a'], 'main was asked to redeliver the stage state');
 
     // session-b owns only the stage tab: it is revealed when no showcase exists.
     fakeHost.setOpen('session-b');
@@ -785,6 +795,7 @@ test('revealSessionTab prefers showcase, then stage, then opens the stage entry'
     await bridge.controlTabs({ action: 'open-tab', uri: 'metaapp://elsewhere-2' });
     await binding.revealSessionTab('session-b');
     assert.equal(bridge.activeTabId, stageB, 'the bound stage tab is revealed');
+    assert.deepEqual(shown, ['session-a', 'session-b']);
 
     // session-c owns nothing: reveal opens the stage entry as the stage role.
     fakeHost.setOpen('session-c');
@@ -794,6 +805,7 @@ test('revealSessionTab prefers showcase, then stage, then opens the stage entry'
     assert.equal(bridge.activeTabId, stageC.sessionTab!.id);
     const showcaseC = await binding.controlSessionTab({ action: 'get-tabs', sessionId: 'session-c', role: 'showcase' });
     assert.equal(showcaseC.sessionTab, null, 'reveal never invents a showcase tab');
+    assert.deepEqual(shown, ['session-a', 'session-b', 'session-c']);
   } finally {
     storage.restore();
   }
@@ -940,6 +952,161 @@ test('the stage role never adopts the draft for an already-bound session', async
     assert.notEqual(result.sessionTab?.id, draftTabId, 'a bound session never takes the draft');
     assert.equal(result.sessionTab?.uri, STAGE_ENTRY_URI);
     assert.ok(bridge.commands.some((command) => command.action === 'open-tab' && command.dedupe === false), 'a fresh stage tab was opened');
+  } finally {
+    storage.restore();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Stage Tabs unit: idempotent draft prewarm, deterministic draftClaim,
+// adoption diagnostics, draft identity
+// ---------------------------------------------------------------------------
+
+test('prepareDraftTab is idempotent: concurrent and repeat calls never open a second draft', async () => {
+  const bridge = createFakeTabBridge();
+  const fakeHost = createFakeHost(bridge);
+  const storage = installStageEntry();
+  try {
+    const binding = createSessionTabBinding();
+    binding.attach(fakeHost.host);
+
+    const [first, second] = await Promise.all([binding.prepareDraftTab(), binding.prepareDraftTab()]);
+    assert.equal(first, second, 'concurrent callers share one draft');
+    assert.equal(bridge.tabs.length, 1, 'the initial blank tab became the draft — no extra tab');
+    assert.equal(bridge.tabs[0].uri, STAGE_ENTRY_URI);
+
+    // A sequential call sees the draft already on the entry and reuses it.
+    const opensBefore = bridge.commands.filter((command) => command.action === 'open-tab').length;
+    const third = await binding.prepareDraftTab();
+    assert.equal(third, first);
+    assert.equal(bridge.commands.filter((command) => command.action === 'open-tab').length, opensBefore, 'no second draft tab opened');
+  } finally {
+    storage.restore();
+  }
+});
+
+test('prepareDraftTab reuses an unowned active tab already on the stage entry', async () => {
+  const bridge = createFakeTabBridge();
+  const fakeHost = createFakeHost(bridge);
+  const storage = installStageEntry();
+  try {
+    const binding = createSessionTabBinding();
+    binding.attach(fakeHost.host);
+    // Simulate a leftover unowned stage-entry tab (e.g. after a renderer reset):
+    // no pendingDraftTabId is known, but the ACTIVE tab sits on the entry.
+    await bridge.controlTabs({ action: 'navigate-tab', tabId: 1, uri: STAGE_ENTRY_URI });
+    const tabId = await binding.prepareDraftTab();
+    assert.equal(tabId, 1, 'the entry tab was reused as the draft');
+    assert.equal(bridge.tabs.length, 1, 'no second tab was opened');
+  } finally {
+    storage.restore();
+  }
+});
+
+test('draftClaim adopts the pending draft with an optimistic, null, or foreign open session', async () => {
+  for (const openId of ['optimistic-browser-x', null, 'other-session']) {
+    const bridge = createFakeTabBridge();
+    const fakeHost = createFakeHost(bridge);
+    const storage = installStageEntry();
+    try {
+      const binding = createSessionTabBinding();
+      binding.attach(fakeHost.host);
+      if (openId === 'other-session') {
+        fakeHost.sessions.set('other-session', sessionOf('other-session'));
+        fakeHost.setOpen('other-session');
+      } else if (openId) {
+        fakeHost.sessions.set(openId, sessionOf(openId));
+        fakeHost.setOpen(openId);
+      }
+      const draftTabId = await binding.prepareDraftTab();
+      assert.equal(draftTabId, 1);
+      bridge.commands.length = 0;
+
+      const result = await binding.controlSessionTab({
+        action: 'open-tab', sessionId: 's1', role: 'stage', uri: STAGE_ENTRY_URI, activate: true, draftClaim: true,
+      });
+      assert.equal(result.sessionTab?.id, draftTabId, `draft adopted with open=${openId}`);
+      assert.ok(!bridge.commands.some((command) => command.action === 'open-tab'), `no second stage tab with open=${openId}`);
+    } finally {
+      storage.restore();
+    }
+  }
+});
+
+test('an old session background projection never adopts the draft without draftClaim', async () => {
+  const bridge = createFakeTabBridge();
+  const fakeHost = createFakeHost(bridge);
+  const storage = installStageEntry();
+  try {
+    const binding = createSessionTabBinding();
+    binding.attach(fakeHost.host);
+    // Another conversation is on screen and 'old' is fully bound already.
+    fakeHost.sessions.set('other-session', sessionOf('other-session'));
+    fakeHost.setOpen('other-session');
+    fakeHost.sessions.set('old', sessionOf('old'));
+    await binding.controlSessionTab({
+      action: 'open-tab', sessionId: 'old', role: 'showcase', uri: 'metaapp://old-report', activate: true,
+    });
+    const draftTabId = await binding.prepareDraftTab();
+    assert.equal(draftTabId > 0, true);
+    bridge.commands.length = 0;
+
+    const result = await binding.controlSessionTab({
+      action: 'open-tab', sessionId: 'old', role: 'stage', uri: STAGE_ENTRY_URI, activate: true,
+    });
+    assert.notEqual(result.sessionTab?.id, draftTabId, 'a bound session keeps its own stage tab');
+    assert.ok(bridge.commands.some((command) => command.action === 'open-tab' && command.dedupe === false), 'a fresh stage tab opened');
+  } finally {
+    storage.restore();
+  }
+});
+
+test('bindNewSession adopts the pending draft unconditionally for the new session', async () => {
+  const bridge = createFakeTabBridge();
+  const fakeHost = createFakeHost(bridge);
+  const storage = installStageEntry();
+  try {
+    const binding = createSessionTabBinding();
+    binding.attach(fakeHost.host);
+    // A DIFFERENT session is on screen when the draft is claimed — bindNewSession
+    // still hands the draft to the brand-new session.
+    fakeHost.sessions.set('other-session', sessionOf('other-session'));
+    fakeHost.setOpen('other-session');
+    const draftTabId = await binding.prepareDraftTab();
+    assert.equal(draftTabId, 1);
+    bridge.commands.length = 0;
+
+    await binding.bindNewSession('s-new');
+    const stage = await binding.controlSessionTab({ action: 'get-tabs', sessionId: 's-new', role: 'stage' });
+    assert.equal(stage.sessionTab?.id, draftTabId, 'the draft became the new session stage');
+    assert.ok(!bridge.commands.some((command) => command.action === 'open-tab'), 'no second stage tab opened');
+  } finally {
+    storage.restore();
+  }
+});
+
+test('prepareDraftIdentity patches the draft frame with the selected bot after prewarm', async () => {
+  const bridge = createFakeTabBridge();
+  const fakeHost = createFakeHost(bridge);
+  const drafts: Array<{ tabId: number; metabotId: number | null }> = [];
+  const storage = installStageEntry();
+  const win = (globalThis as { window?: { electron?: { studioLiveStage?: Record<string, unknown> } } }).window;
+  if (win?.electron?.studioLiveStage) {
+    win.electron.studioLiveStage.prepareDraft = async (input: { tabId: number; metabotId?: number | null }) => {
+      drafts.push({ tabId: input.tabId, metabotId: input.metabotId ?? null });
+      return { success: true };
+    };
+  }
+  try {
+    const binding = createSessionTabBinding();
+    binding.attach(fakeHost.host);
+    await binding.prepareDraftIdentity(7);
+    assert.deepEqual(drafts, [{ tabId: 1, metabotId: 7 }], 'the draft identity patch targeted the draft tab');
+
+    // A bot-selection change re-patches the same draft — idempotent, no new tab.
+    await binding.prepareDraftIdentity(9);
+    assert.deepEqual(drafts.at(-1), { tabId: 1, metabotId: 9 });
+    assert.equal(bridge.tabs.length, 1);
   } finally {
     storage.restore();
   }

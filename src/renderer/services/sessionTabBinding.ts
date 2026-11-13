@@ -45,6 +45,13 @@ export interface SessionTabBinding {
   attach(host: SessionTabHost): void;
   rememberOpenSession(sessionId: string | null): void;
   prepareDraftTab(): Promise<number | null>;
+  /**
+   * Ensure the prewarmed draft tab exists on the stage entry, then patch its
+   * frame with the selected bot's draft identity (metabotId null → the
+   * default Twin name/fallback avatar). Idempotent; safe to re-call when the
+   * draft's bot selection changes.
+   */
+  prepareDraftIdentity(metabotId: number | null): Promise<void>;
   bindNewSession(sessionId: string): Promise<void>;
   revealSessionTab(sessionId: string): Promise<void>;
   restoreLastSession(): Promise<void>;
@@ -89,6 +96,8 @@ type TabBinding = { sessionId: string; role: SessionTabRole; tabId: number };
 export function createSessionTabBinding(): SessionTabBinding {
   let host: SessionTabHost | null = null;
   let pendingDraftTabId: number | null = null;
+  /** Concurrent prepareDraftTab callers share this one in-flight promise. */
+  let prepareDraftPromise: Promise<number | null> | null = null;
   const sessionTabs = new Map<string, TabBinding>();
   const sessionPages = new Map<string, PersistedBrowserSessionPage>();
   let pagesLoaded = false;
@@ -256,6 +265,11 @@ export function createSessionTabBinding(): SessionTabBinding {
     uri: string;
     label?: string;
     activate: boolean;
+    /**
+     * First projection of a brand-new session: adopt the pending draft when
+     * it is unowned and blank/on the entry, with NO open-session condition.
+     */
+    draftClaim?: boolean;
   }): Promise<BotBrowserTabCommandResult> => {
     const snapshot = await listTabs();
     if (!snapshot) throw new Error('Bot Browser tabs are not available.');
@@ -263,6 +277,9 @@ export function createSessionTabBinding(): SessionTabBinding {
     const activeBefore = snapshot.activeTab ?? tabs.find((tab) => tab.isActive) ?? null;
     const uri = input.uri.trim();
     let target = liveBoundTab(input.sessionId, 'stage', tabs);
+    // Why the pending draft could not be adopted — logged when a fresh stage
+    // tab opens instead, so the next missed-claim is explainable.
+    let draftRejectReason = 'no draft';
 
     if (!target && pendingDraftTabId != null) {
       const pending = tabs.find((tab) => tab.id === pendingDraftTabId) ?? null;
@@ -274,14 +291,22 @@ export function createSessionTabBinding(): SessionTabBinding {
         // (or nothing). The incoming session must be completely unbound — no
         // persisted showcase page and no tab in either role — before it may
         // take the draft over; a bound session always gets its own stage tab.
+        // draftClaim (first projection of a brand-new session) skips the
+        // open-session condition entirely.
         const openIsThisSession = open?.id === input.sessionId;
         const openIsPlaceholder = !open || open.id.startsWith('optimistic-browser-');
         const sessionUnbound = pageFor(input.sessionId) == null
           && !liveBoundTab(input.sessionId, 'stage', tabs)
           && !liveBoundTab(input.sessionId, 'showcase', tabs);
-        const adoptable = (!owner || (owner.sessionId === input.sessionId && owner.role === 'stage'))
-          && (isBlank(pending) || uriOf(pending).toLowerCase() === uri.toLowerCase())
-          && (openIsThisSession || (openIsPlaceholder && sessionUnbound));
+        const ownerOk = !owner || (owner.sessionId === input.sessionId && owner.role === 'stage');
+        const uriOk = isBlank(pending) || uriOf(pending).toLowerCase() === uri.toLowerCase();
+        const sessionOk = input.draftClaim === true
+          || openIsThisSession
+          || (openIsPlaceholder && sessionUnbound);
+        const adoptable = ownerOk && uriOk && sessionOk;
+        if (!ownerOk) draftRejectReason = 'draft owned';
+        else if (!uriOk) draftRejectReason = 'draft URI mismatch';
+        else if (!sessionOk) draftRejectReason = 'claim rule failed';
         if (adoptable) target = pending;
       } else {
         pendingDraftTabId = null;
@@ -307,6 +332,7 @@ export function createSessionTabBinding(): SessionTabBinding {
         fallback = switched;
       }
     } else {
+      console.warn(`[sessionTabBinding] opening a new stage tab for ${input.sessionId}: ${draftRejectReason}`);
       const opened = await controlTabs({
         action: 'open-tab',
         uri,
@@ -341,6 +367,7 @@ export function createSessionTabBinding(): SessionTabBinding {
     hintTabId?: number;
     activate: boolean;
     matchByUri: boolean;
+    draftClaim?: boolean;
   }): Promise<BotBrowserTabCommandResult> => {
     if (input.role === 'stage') {
       if (!input.uri?.trim()) throw new Error('The stage tab requires the stage entry URI.');
@@ -350,6 +377,7 @@ export function createSessionTabBinding(): SessionTabBinding {
         uri: input.uri,
         label: input.label,
         activate: input.activate,
+        draftClaim: input.draftClaim,
       });
     }
     const snapshot = await listTabs();
@@ -449,40 +477,91 @@ export function createSessionTabBinding(): SessionTabBinding {
     return finish(input.action, target.id, fallback);
   };
 
-  const prepareDraftTab = (): Promise<number | null> => enqueue(async () => {
-    try {
-      const snapshot = await listTabs();
-      const active = snapshot?.activeTab ?? null;
-      const reusableBlank = active && isBlank(active) && (
-        pendingDraftTabId === active.id || ownerOfTab(active.id) == null
-      );
-      if (reusableBlank) {
-        pendingDraftTabId = active.id;
-      } else {
+  /**
+   * Idempotent draft prewarm: concurrent callers share one in-flight promise,
+   * and a still-valid pending draft (alive, unowned, blank or on the stage
+   * entry) is reused — never a second draft tab. An unowned ACTIVE tab
+   * already on the entry URI counts as reusable too (covers the second
+   * prewarm entry point firing after the first draft navigated).
+   */
+  const prepareDraftTab = (): Promise<number | null> => {
+    prepareDraftPromise ??= enqueue(async () => {
+      try {
+        const uri = await stageEntryUri();
+        const snapshot = await listTabs();
+        const tabs = snapshot?.tabs ?? [];
+        const active = snapshot?.activeTab ?? tabs.find((tab) => tab.isActive) ?? null;
+        const entryUri = uri?.toLowerCase() ?? null;
+        const onEntry = (tab: BotBrowserTabInfo): boolean =>
+          entryUri != null && uriOf(tab).toLowerCase() === entryUri;
+
+        let draft: BotBrowserTabInfo | null = null;
+        if (pendingDraftTabId != null) {
+          const pending = tabs.find((tab) => tab.id === pendingDraftTabId) ?? null;
+          if (pending && ownerOfTab(pending.id) == null && (isBlank(pending) || onEntry(pending))) {
+            draft = pending;
+          } else {
+            // Owned, navigated away, or gone — it is no longer a draft.
+            pendingDraftTabId = null;
+          }
+        }
+        if (!draft && active && ownerOfTab(active.id) == null) {
+          if (onEntry(active) || isBlank(active)) draft = active;
+        }
+
+        if (draft) {
+          pendingDraftTabId = draft.id;
+          if (uri && !onEntry(draft)) {
+            const navigated = await controlTabs({
+              action: 'navigate-tab',
+              tabId: draft.id,
+              uri,
+              activate: false,
+            });
+            if (!navigated) throw new Error(`Bot Browser tab ${draft.id} could not be navigated.`);
+          }
+          if (!draft.isActive) {
+            await controlTabs({ action: 'switch-tab', tabId: draft.id });
+          }
+          return pendingDraftTabId;
+        }
+
         const opened = await controlTabs({ action: 'open-tab' });
         pendingDraftTabId = opened?.openedTabId ?? opened?.activeTab?.id ?? null;
-      }
-      // Prewarm (2026-11-12): point the draft at the persistent stage entry so
-      // the page is loaded before the first send — the first stage projection
-      // then finds the URI already matching and only patches.
-      const uri = await stageEntryUri();
-      if (uri && pendingDraftTabId != null) {
-        const draft = (await listTabs())?.tabs.find((tab) => tab.id === pendingDraftTabId) ?? null;
-        if (draft && uriOf(draft).toLowerCase() !== uri.toLowerCase()) {
-          await controlTabs({
-            action: 'navigate-tab',
-            tabId: pendingDraftTabId,
-            uri,
-            activate: false,
-          });
+        if (uri && pendingDraftTabId != null) {
+          const openedDraft = (await listTabs())?.tabs.find((tab) => tab.id === pendingDraftTabId) ?? null;
+          if (openedDraft && uriOf(openedDraft).toLowerCase() !== uri.toLowerCase()) {
+            await controlTabs({
+              action: 'navigate-tab',
+              tabId: pendingDraftTabId,
+              uri,
+              activate: false,
+            });
+          }
         }
+        return pendingDraftTabId;
+      } catch {
+        pendingDraftTabId = null;
+        return null;
       }
-      return pendingDraftTabId;
-    } catch {
-      pendingDraftTabId = null;
-      return null;
-    }
-  });
+    }).finally(() => {
+      prepareDraftPromise = null;
+    });
+    return prepareDraftPromise;
+  };
+
+  const prepareDraftIdentity = (metabotId: number | null): Promise<void> =>
+    prepareDraftTab().then(async (tabId) => {
+      if (tabId == null) return;
+      try {
+        await window.electron?.studioLiveStage?.prepareDraft?.({
+          tabId,
+          metabotId: typeof metabotId === 'number' && Number.isInteger(metabotId) && metabotId > 0 ? metabotId : null,
+        });
+      } catch {
+        // Draft identity is cosmetic; the first session patch overwrites it.
+      }
+    }).then(() => undefined);
 
   const bindNewSession = (sessionId: string): Promise<void> => enqueue(async () => {
     try {
@@ -511,6 +590,9 @@ export function createSessionTabBinding(): SessionTabBinding {
           uri: stageUri,
           activate: true,
           matchByUri: false,
+          // bindNewSession only runs for a brand-new session: the pending
+          // draft is adopted unconditionally (unowned, blank or on entry).
+          draftClaim: true,
         });
         return;
       }
@@ -527,50 +609,47 @@ export function createSessionTabBinding(): SessionTabBinding {
   });
 
   const reveal = async (sessionId: string): Promise<void> => {
-    const page = pageFor(sessionId);
     const snapshot = await listTabs();
     const tabs = snapshot?.tabs ?? [];
-    // Showcase wins when bound or persisted; otherwise a bound stage tab is
-    // revealed; with neither, open the stage entry as the stage role.
-    if (liveBoundTab(sessionId, 'showcase', tabs) || page) {
-      await ensureSessionTab({
-        sessionId,
-        role: 'showcase',
-        action: 'open-tab',
-        uri: page?.uri,
-        activate: true,
-        matchByUri: true,
-      });
-      return;
-    }
+    // The Live Stage is the session's front door: reveal its bound stage tab,
+    // or open the stage entry as the stage role — never the showcase tab
+    // (reports stay reachable through their own tab or the stage's report
+    // button). Both paths then ask main to (re)deliver the stage state.
     const stageTab = liveBoundTab(sessionId, 'stage', tabs);
     if (stageTab) {
       if (!stageTab.isActive) {
         await controlTabs({ action: 'switch-tab', tabId: stageTab.id });
       }
-      return;
+    } else {
+      const stageUri = await stageEntryUri();
+      if (stageUri) {
+        await ensureSessionTab({
+          sessionId,
+          role: 'stage',
+          action: 'open-tab',
+          uri: stageUri,
+          activate: true,
+          matchByUri: false,
+        });
+      } else {
+        // No stage entry available (prewarm IPC missing): keep the legacy
+        // behavior of restoring the session's last showcase page.
+        const page = pageFor(sessionId);
+        await ensureSessionTab({
+          sessionId,
+          role: 'showcase',
+          action: 'open-tab',
+          uri: page?.uri,
+          activate: true,
+          matchByUri: true,
+        });
+      }
     }
-    const stageUri = await stageEntryUri();
-    if (!stageUri) {
-      // No stage entry available (prewarm IPC missing): keep the legacy
-      // behavior of binding a fresh blank tab so the session still has one.
-      await ensureSessionTab({
-        sessionId,
-        role: 'showcase',
-        action: 'open-tab',
-        activate: true,
-        matchByUri: true,
-      });
-      return;
+    try {
+      await window.electron?.studioLiveStage?.showSession?.(sessionId);
+    } catch {
+      // Stage redelivery is best-effort; the tab itself is already revealed.
     }
-    await ensureSessionTab({
-      sessionId,
-      role: 'stage',
-      action: 'open-tab',
-      uri: stageUri,
-      activate: true,
-      matchByUri: false,
-    });
   };
 
   const revealSessionTab = (sessionId: string): Promise<void> => enqueue(async () => {
@@ -644,6 +723,7 @@ export function createSessionTabBinding(): SessionTabBinding {
         hintTabId: command.tabId,
         activate: command.action === 'open-tab' ? command.activate !== false : command.activate === true,
         matchByUri: command.action === 'open-tab',
+        draftClaim: command.draftClaim === true,
       });
     }
     if (command.action === 'switch-tab') {
@@ -731,6 +811,7 @@ export function createSessionTabBinding(): SessionTabBinding {
       savePersistedBrowserSessionId(sessionId);
     },
     prepareDraftTab,
+    prepareDraftIdentity,
     bindNewSession,
     revealSessionTab,
     restoreLastSession,

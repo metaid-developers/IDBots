@@ -24,6 +24,13 @@
     "behavior": "static-frame"
   },
   "families": {
+    "idle": {
+      "orb": { "style": 9, "preset": "idle" },
+      "composition": "presence",
+      "topology": { "mode": "presence" },
+      "motion": { "durationMs": 1200, "easing": "emphasized-decelerate", "energy": 0.12, "density": 0.2 },
+      "note": "Resting orb for opened sessions and the pre-session draft; the Director never runs on it."
+    },
     "received": {
       "orb": { "style": 9, "preset": "received" },
       "composition": "presence",
