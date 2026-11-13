@@ -840,8 +840,12 @@ const App: React.FC = () => {
       setMainView('cowork');
       setStudioSeamState('split');
       await botBrowserShell.openBrowserHome();
-      await sessionTabBinding.revealSessionTab(sessionId);
+      // Unmount the welcome BEFORE binding the tab: the Bot Browser surface
+      // only mounts once the welcome is gone, and a reveal issued while it is
+      // still up times out silently — the Genesis projection then opened its
+      // stage tab in the background behind a blank "New Tab".
       setShowWelcomeFlow(false);
+      void sessionTabBinding.revealSessionTab(sessionId);
     }
   }, [botBrowserShell.openBrowserHome]);
 

@@ -221,7 +221,9 @@ export function createStudioGenesisStageService(deps: StudioGenesisStageServiceD
     try {
       flushText(run);
       writeStage(run, run.state);
-      const outcome = await deps.project({ sessionId: run.sessionId, localPath: run.stagePath, title: `${run.state.botName} · Genesis`, role: 'stage' });
+      // The welcome IS the first screen: the stage lands as the active tab
+      // whichever of this projection and the renderer's reveal binds first.
+      const outcome = await deps.project({ sessionId: run.sessionId, localPath: run.stagePath, title: `${run.state.botName} · Genesis`, role: 'stage', reveal: true });
       run.tabId = outcome.tabId ?? (deps.getStageTab ? await deps.getStageTab(run.sessionId).catch(() => null) : null);
       run.projected = true;
       if (process.env.NODE_ENV === 'development') {

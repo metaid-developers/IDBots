@@ -288,6 +288,14 @@ export function createSessionTabBinding(): SessionTabBinding {
       }
     }
 
+    // The open conversation's stage may take over the browser's sole blank,
+    // unowned tab (the boot "New Tab") instead of stacking a second tab next
+    // to it — the first-run welcome otherwise showed "New Tab" + the stage.
+    if (!target && tabs.length === 1 && isBlank(tabs[0]) && tabs[0].id !== pendingDraftTabId
+      && ownerOfTab(tabs[0].id) == null && host?.getOpenSession()?.id === input.sessionId) {
+      target = tabs[0];
+    }
+
     let fallback = snapshot;
     if (target) {
       rememberTab(input.sessionId, 'stage', target.id);

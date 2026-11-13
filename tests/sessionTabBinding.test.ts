@@ -944,3 +944,52 @@ test('the stage role never adopts the draft for an already-bound session', async
     storage.restore();
   }
 });
+
+test('first-run welcome: the open session stage takes over the sole blank boot tab', async () => {
+  const bridge = createFakeTabBridge();
+  const fakeHost = createFakeHost(bridge);
+  const binding = createSessionTabBinding();
+  binding.attach(fakeHost.host);
+  fakeHost.sessions.set('greeting', sessionOf('greeting'));
+  fakeHost.setOpen('greeting');
+  const genesisUri = 'preview-metaapp://localhost/reports/genesis-greeting.html';
+
+  // The Genesis projection lands first, in the background.
+  const projected = await binding.controlSessionTab({
+    action: 'open-tab', sessionId: 'greeting', role: 'stage', uri: genesisUri, activate: false,
+  });
+  assert.equal(bridge.tabs.length, 1, 'no second tab stacked next to the boot "New Tab"');
+  assert.equal(projected.sessionTab?.id, 1);
+  assert.equal(bridge.tabs[0].uri, genesisUri);
+  assert.equal(bridge.activeTabId, 1, 'the welcome stage is the active tab');
+
+  await binding.revealSessionTab('greeting');
+  assert.equal(bridge.tabs.length, 1);
+  assert.equal(bridge.activeTabId, 1);
+});
+
+test('a background session never takes over the sole blank tab', async () => {
+  const bridge = createFakeTabBridge();
+  const fakeHost = createFakeHost(bridge);
+  const binding = createSessionTabBinding();
+  binding.attach(fakeHost.host);
+  fakeHost.sessions.set('open', sessionOf('open'));
+  fakeHost.setOpen('open');
+
+  const result = await binding.controlSessionTab({
+    action: 'open-tab', sessionId: 'background', role: 'stage', uri: 'preview-metaapp://localhost/stage.html', activate: false,
+  });
+  assert.notEqual(result.sessionTab?.id, 1);
+  assert.equal(bridge.tabs.length, 2);
+  assert.equal(bridge.tabs[0].uri, null, 'the user blank tab is untouched');
+  assert.equal(bridge.activeTabId, 1, 'and stays active');
+});
+
+test('static: the welcome hands off to the stage tab in front', () => {
+  const app = readFileSync('src/renderer/App.tsx', 'utf8');
+  const enter = app.slice(app.indexOf('const handleWelcomeFlowEnter'), app.indexOf('}, [botBrowserShell.openBrowserHome]);'));
+  assert.ok(enter.indexOf('setShowWelcomeFlow(false)') < enter.indexOf('sessionTabBinding.revealSessionTab(sessionId)'),
+    'the welcome unmounts before the tab reveal (the surface only mounts after it)');
+  const genesis = readFileSync('src/main/services/studioGenesisStageService.ts', 'utf8');
+  assert.match(genesis, /role: 'stage', reveal: true \}\)/, 'the Genesis projection activates its stage tab');
+});
