@@ -142,6 +142,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     cerebellumInvalidApiKey: 'API Key 无效（401 Unauthorized）',
     cerebellumConnectionUnreachable: '无法连接到小脑服务，请检查 Base URL 与网络连接',
     cerebellumIdbotsProviderHint: 'IDBots-JEV 是 IDBots 官方的小脑模型，使用IDBots-JEV小脑功能将消耗积分。用量情况可在「积分&流量」页查看。',
+    cerebellumIdbotsQuotaPaused: '当前 ME 积分不足，IDBots-JEV 小脑已暂时停用（约 5 分钟后自动恢复探测）。请前往个人中心升级或购买增量包，或切换至自备 TypeSafe Key。',
     cerebellumFreeQuota: '本周剩余 {n} tokens',
     cerebellumFreeQuotaUnavailable: '暂时无法获取免费额度信息',
 
@@ -3964,6 +3965,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     cerebellumInvalidApiKey: 'Invalid API key (401 Unauthorized)',
     cerebellumConnectionUnreachable: 'Could not reach the cerebellum endpoint. Check the Base URL and your network connection',
     cerebellumIdbotsProviderHint: 'IDBots-JEV is IDBots\' official cerebellum model. Using IDBots-JEV consumes ME credits. Usage is available on the Credits & Traffic page.',
+    cerebellumIdbotsQuotaPaused: 'ME credits are exhausted, so IDBots-JEV cerebellum is temporarily paused (re-probes in ~5 minutes). Top up credits or switch to your own TypeSafe key.',
     cerebellumFreeQuota: '{n} tokens left this week',
     cerebellumFreeQuotaUnavailable: 'Free quota information is unavailable right now',
 

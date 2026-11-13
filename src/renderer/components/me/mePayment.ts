@@ -32,6 +32,103 @@ type PaymentOrder = Partial<MeSubscriptionOrderInfo & MeTopupOrderInfo> & {
   breakdown?: Record<string, unknown>;
 };
 
+export interface MeOrderIdempotencyInput {
+  scope: 'desktop' | 'mobile';
+  section: 'subscribe' | 'topup';
+  subjectId: string;
+  period?: string;
+  gateway: string;
+  generation?: number;
+  now?: number;
+}
+
+const ME_ORDER_GENERATION_STORAGE_PREFIX = 'idbots.me.orderGen:';
+
+export function meOrderGenerationSlotKey(input: {
+  section: 'subscribe' | 'topup';
+  subjectId: string;
+  period?: string;
+  gateway: string;
+}): string {
+  return input.section === 'subscribe'
+    ? `subscribe-${input.subjectId}-${input.period || 'month'}-${input.gateway}`
+    : `topup-${input.subjectId}-${input.gateway}`;
+}
+
+export function readMeOrderGeneration(
+  slotKey: string,
+  storage: Pick<Storage, 'getItem'> | null | undefined = typeof window !== 'undefined' ? window.localStorage : null,
+  now: number = Date.now(),
+): number {
+  try {
+    if (!storage) return 0;
+    const dayStamp = new Date(now).toISOString().slice(0, 10);
+    const raw = storage.getItem(`${ME_ORDER_GENERATION_STORAGE_PREFIX}${dayStamp}:${slotKey}`);
+    const parsed = Number(raw);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function bumpMeOrderGeneration(
+  slotKey: string,
+  storage: Pick<Storage, 'getItem' | 'setItem'> | null | undefined = typeof window !== 'undefined' ? window.localStorage : null,
+  now: number = Date.now(),
+): number {
+  const next = readMeOrderGeneration(slotKey, storage, now) + 1;
+  try {
+    if (storage) {
+      const dayStamp = new Date(now).toISOString().slice(0, 10);
+      storage.setItem(`${ME_ORDER_GENERATION_STORAGE_PREFIX}${dayStamp}:${slotKey}`, String(next));
+    }
+  } catch {
+    // storage unavailable; callers still receive the bumped generation
+  }
+  return next;
+}
+
+export function buildMeOrderIdempotencyKey(input: MeOrderIdempotencyInput): string {
+  const dayStamp = new Date(input.now ?? Date.now()).toISOString().slice(0, 10);
+  const base = input.section === 'subscribe'
+    ? `${input.scope}-subscribe-${input.subjectId}-${input.period || 'month'}-${input.gateway}-${dayStamp}`
+    : `${input.scope}-topup-${input.subjectId}-${input.gateway}-${dayStamp}`;
+  const generation = Number.isInteger(input.generation) && (input.generation ?? 0) > 0
+    ? Number(input.generation)
+    : 0;
+  return generation > 0 ? `${base}-r${generation}` : base;
+}
+
+function orderCreatedMs(order: PaymentOrder | null | undefined): number {
+  const raw: unknown = order?.createdAt;
+  if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) {
+    return raw < 1e12 ? raw * 1000 : raw;
+  }
+  if (typeof raw === 'string' && raw.trim()) {
+    const parsed = Date.parse(raw);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return 0;
+}
+
+/**
+ * True when an order returned from a fresh create-order click is a stale
+ * terminal row from an earlier checkout (closed/expired, or already credited
+ * before this click), so the client should bump its generation and request a
+ * fresh order instead of trapping the user on the old terminal order.
+ */
+export function shouldRetryTerminalMeOrder(
+  order: PaymentOrder | null | undefined,
+  attemptStartedAtMs: number,
+): boolean {
+  if (!order) return false;
+  const phase = mePaymentPhase(textOf(order.status));
+  if (phase === 'closed') return true;
+  if (phase !== 'credited') return false;
+  const createdMs = orderCreatedMs(order);
+  return createdMs > 0 && createdMs < attemptStartedAtMs - 10_000;
+}
+
 const recordOf = (value: unknown): Record<string, unknown> | null => (
   value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>

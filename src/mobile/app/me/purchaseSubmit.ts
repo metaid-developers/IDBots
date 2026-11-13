@@ -1,4 +1,5 @@
 import {
+  buildMeOrderIdempotencyKey,
   normalizeMePaymentCheckout,
   type MePaymentCheckout,
 } from '../../../renderer/components/me/mePayment.ts';
@@ -72,6 +73,7 @@ export interface MePurchaseSubmitResult {
   ok: boolean;
   orderId: string;
   payAmount?: number;
+  orderCreatedAt?: number;
   checkout?: MePaymentCheckout;
   error?: string;
   errorCode?: string;
@@ -86,15 +88,21 @@ export function buildMePurchaseOrderRequest(args: {
   gateway?: MePaymentGateway;
   voucherUrl?: string;
   voucherRemark?: string;
+  generation?: number;
   now?: number;
 }): MePurchaseOrderRequest | null {
   const subjectId = args.section === 'subscribe' ? args.planId : args.packageId;
   if (!subjectId) return null;
   const gateway = args.gateway ?? 'alipay';
-  const dayStamp = new Date(args.now ?? Date.now()).toISOString().slice(0, 10);
-  const idempotencyKey = args.section === 'subscribe'
-    ? `mobile-subscribe-${subjectId}-${args.period}-${gateway}-${dayStamp}`
-    : `mobile-topup-${subjectId}-${gateway}-${dayStamp}`;
+  const idempotencyKey = buildMeOrderIdempotencyKey({
+    scope: 'mobile',
+    section: args.section,
+    subjectId,
+    period: args.period,
+    gateway,
+    generation: args.generation,
+    now: args.now,
+  });
   const common = {
     gateway,
     voucherUrl: args.voucherUrl,
@@ -118,6 +126,9 @@ function successResult(order: MePaymentOrder | null | undefined): MePurchaseSubm
     orderId,
     ...(typeof order?.payAmount === 'number' && Number.isFinite(order.payAmount)
       ? { payAmount: order.payAmount }
+      : {}),
+    ...(typeof order?.createdAt === 'number' && Number.isFinite(order.createdAt)
+      ? { orderCreatedAt: order.createdAt }
       : {}),
     ...(checkout && (checkout.approvalUrl || checkout.qrCode) ? { checkout } : {}),
   };

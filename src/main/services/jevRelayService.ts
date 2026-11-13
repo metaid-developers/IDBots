@@ -461,14 +461,31 @@ export const JEV_RELAY_QUOTA_BREAKER_MS = 5 * 60 * 1000;
 
 let quotaExhaustedUntil = 0;
 
-/** Opens the breaker; exposed for the recorder and future IPC surfacing. */
+/** Opens the breaker; exposed for the recorder and IPC surfacing. */
 export function noteJevRelayQuotaExhaustion(nowMs: number = Date.now()): void {
+  const wasExhausted = isJevRelayQuotaExhausted(nowMs);
   quotaExhaustedUntil = nowMs + JEV_RELAY_QUOTA_BREAKER_MS;
+  if (!wasExhausted) {
+    statsSink?.('WARN', 'jevRelay:quota', 'IDBots-JEV cerebellum paused for 5m due to exhausted ME credits', {
+      retryAfterMs: JEV_RELAY_QUOTA_BREAKER_MS,
+    });
+  }
 }
 
 /** True while the breaker is open — the IDBots relay should be skipped. */
 export function isJevRelayQuotaExhausted(nowMs: number = Date.now()): boolean {
   return nowMs < quotaExhaustedUntil;
+}
+
+/** Current breaker status for UI / diagnostics. */
+export function getJevRelayQuotaStatus(nowMs: number = Date.now()): {
+  exhausted: boolean;
+  retryAfterMs: number;
+} {
+  const remaining = quotaExhaustedUntil - nowMs;
+  return remaining > 0
+    ? { exhausted: true, retryAfterMs: remaining }
+    : { exhausted: false, retryAfterMs: 0 };
 }
 
 /** Testing hook: close the breaker and clear the accumulators. */
@@ -694,10 +711,15 @@ type RegisterIpcHandlerFn = (channel: string, handler: (event: any, ...args: any
 export function registerJevRelayIpcHandlers(deps: { registerIpcHandler: RegisterIpcHandlerFn }): void {
   const { registerIpcHandler } = deps;
   registerIpcHandler('jevRelay:resolveCredentials', async () => {
+    const quotaBreaker = getJevRelayQuotaStatus();
     try {
-      return { success: true, credentials: await resolveJevRelayCredentials() };
+      return { success: true, credentials: await resolveJevRelayCredentials(), quotaBreaker };
     } catch (error) {
-      return { success: false, error: error instanceof Error && error.message ? error.message : String(error) };
+      return {
+        success: false,
+        error: error instanceof Error && error.message ? error.message : String(error),
+        quotaBreaker,
+      };
     }
   });
 }

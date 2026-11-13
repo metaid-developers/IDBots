@@ -14,8 +14,7 @@ import {
   uploadMvcSponsorDirectFile,
   type MvcSponsorFeeAssistMetadata,
 } from './mvcSponsorUpload';
-import { getConfiguredTrafficApiBase, getConfiguredTrafficPinMode } from './trafficAccountService';
-import { getConfiguredTrafficFallbackPolicy } from './trafficAccountService';
+import { getConfiguredTrafficApiBase, getConfiguredTrafficFallbackPolicy, getConfiguredTrafficPinMode } from './trafficAccountService';
 import { resolveMetaFileUploadSharedModulePath } from './metaFileUploadSharedResolver';
 import { getMainWorkerCandidatePaths, resolveMainWorkerPath } from './workerPathResolver';
 

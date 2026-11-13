@@ -480,6 +480,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
     ...(configService.getConfig().cerebellum ?? {}),
   }));
   const [cerebellumTestResult, setCerebellumTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [cerebellumQuotaPaused, setCerebellumQuotaPaused] = useState(false);
   const [isTestingCerebellum, setIsTestingCerebellum] = useState(false);
 
   // 创建引用来确保内容区域的滚动
@@ -1881,6 +1882,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
   const ensureCerebellumIdbotsApiKey = async (): Promise<string> => {
     try {
       const response = await window.electron.jevRelay.resolveCredentials();
+      setCerebellumQuotaPaused(response?.quotaBreaker?.exhausted === true);
       const apiKey = response?.success ? (response.credentials?.apiKey ?? '').trim() : '';
       if (apiKey && apiKey !== cerebellum.apiKey.trim()) {
         setCerebellum(prev => (prev.provider === CEREBELLUM_FREE_PROVIDER ? { ...prev, apiKey } : prev));
@@ -3603,10 +3605,19 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
               </div>
 
               {cerebellum.provider === CEREBELLUM_FREE_PROVIDER && (
-                <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2">
-                  <p className="text-[11px] leading-relaxed text-amber-700 dark:text-amber-400">
-                    {i18nService.t('cerebellumIdbotsProviderHint')}
-                  </p>
+                <div className="space-y-2">
+                  <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2">
+                    <p className="text-[11px] leading-relaxed text-amber-700 dark:text-amber-400">
+                      {i18nService.t('cerebellumIdbotsProviderHint')}
+                    </p>
+                  </div>
+                  {cerebellumQuotaPaused && (
+                    <div className="rounded-xl border border-red-500/30 bg-red-500/5 px-3 py-2" role="alert">
+                      <p className="text-[11px] leading-relaxed text-red-600 dark:text-red-400">
+                        {i18nService.t('cerebellumIdbotsQuotaPaused')}
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
 

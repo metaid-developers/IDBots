@@ -24,6 +24,7 @@ import {
   subscribeMeSnapshot,
 } from './mePointsStore';
 import MeBalanceOverviewCard from './MeBalanceOverviewCard';
+import { formatMeMoney } from './mePayment';
 
 const HISTORY_TYPES = ['', 'mint', 'topup', 'bonus', 'burn', 'transfer', 'reverse', 'adjust', 'expire'] as const;
 
@@ -122,6 +123,7 @@ interface MePaymentRecordRow {
   /** milliME granted (topup only). */
   meMilli?: number;
   amountCny?: number;
+  payCurrency?: string;
   status: string;
   rejectReason?: string;
   /** Subscription order still unpaid past the stale window (超时未支付). */
@@ -224,6 +226,7 @@ const MeUsageAndCredits: React.FC = () => {
         title: `${plan?.name ?? order.planId}${periodLabel ? ` · ${periodLabel}` : ''}`,
         createdAt: order.createdAt,
         amountCny: order.payAmount ?? order.amountCny,
+        payCurrency: order.payCurrency,
         status: order.status,
         rejectReason: order.rejectReason,
         staleUnpaid: isStaleUnpaidSubscriptionOrder(order, now),
@@ -237,7 +240,8 @@ const MeUsageAndCredits: React.FC = () => {
         title: order.packageId,
         createdAt: order.createdAt,
         meMilli: order.meMilli,
-        amountCny: order.priceCny,
+        amountCny: order.payAmount ?? order.priceCny,
+        payCurrency: order.payCurrency,
         status: order.status,
         rejectReason: order.rejectReason,
       });
@@ -318,9 +322,9 @@ const MeUsageAndCredits: React.FC = () => {
                       +{formatMe(meFromMilli(row.meMilli))} ME
                     </span>
                   )}
-                  {row.kind === 'subscription' && row.amountCny != null && row.amountCny > 0 && (
+                  {row.amountCny != null && row.amountCny > 0 && (
                     <span className="tabular-nums text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                      ¥{row.amountCny}
+                      {formatMeMoney(row.amountCny, row.payCurrency)}
                     </span>
                   )}
                   <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
