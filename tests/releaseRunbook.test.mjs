@@ -80,3 +80,11 @@ test("run() trims piped output and tolerates stdio:inherit returning null", () =
     "",
   );
 });
+
+test("release-runbook local gates invoke pnpm rather than npm", () => {
+  const source = readFileSync(script, "utf8");
+  assert.doesNotMatch(source, /\["npm",/);
+  assert.match(source, /\["pnpm",\s*\["run",\s*"build"\]\]/);
+  assert.match(source, /\["pnpm",\s*\["run",\s*"compile:electron"\]\]/);
+  assert.match(source, /\["pnpm",\s*\["run",\s*"check:dsh-deps"\]\]/);
+});

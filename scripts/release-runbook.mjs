@@ -230,9 +230,9 @@ function createInitialState(version) {
 
 function verifyLocalGates() {
   const commands = [
-    ["npm", ["run", "build"]],
-    ["npm", ["run", "compile:electron"]],
-    ["npm", ["run", "check:dsh-deps"]],
+    ["pnpm", ["run", "build"]],
+    ["pnpm", ["run", "compile:electron"]],
+    ["pnpm", ["run", "check:dsh-deps"]],
     ["node", ["--test", "tests/runtimeDependencyContract.test.mjs", "tests/dshRuntimeDepsCheck.test.mjs"]],
     ["node", ["scripts/check-cross-platform-paths.js", "--skip-lint", "--skip-compile"]],
   ];

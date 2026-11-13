@@ -7,16 +7,16 @@ resumed after an interrupted session without re-reading every SOP section.
 ## Commands
 
 ```bash
-npm run release:runbook -- init 0.7.0
-npm run release:runbook -- status
-npm run release:runbook -- next
-npm run release:runbook -- mark bump
-npm run release:runbook -- local
-npm run release:runbook -- check
-npm run release:runbook -- monitor
-npm run release:runbook -- download
-npm run release:runbook -- oss
-npm run release:runbook -- website
+pnpm run release:runbook -- init 0.7.0
+pnpm run release:runbook -- status
+pnpm run release:runbook -- next
+pnpm run release:runbook -- mark bump
+pnpm run release:runbook -- local
+pnpm run release:runbook -- check
+pnpm run release:runbook -- monitor
+pnpm run release:runbook -- download
+pnpm run release:runbook -- oss
+pnpm run release:runbook -- website
 ```
 
 ## Phase map
