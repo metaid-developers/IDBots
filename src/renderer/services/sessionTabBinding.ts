@@ -4,6 +4,7 @@ import type {
   BotBrowserTabInfo,
 } from '../features/botBrowser/types';
 import type { CoworkSession, CoworkSessionSummary } from '../types/cowork';
+import { browserUrisMatch } from '../../main/shared/browserUriMatch';
 import {
   loadPersistedBrowserSessionId,
   loadPersistedBrowserSessionPages,
@@ -230,9 +231,9 @@ export function createSessionTabBinding(): SessionTabBinding {
     if (role === 'showcase' && isLiveStagePageUri(uriOf(tab))) return false;
     const owner = ownerOfTab(tab.id);
     if (owner && (owner.sessionId !== sessionId || owner.role !== role)) return false;
-    if (isBlank(tab) || uriOf(tab) === uri) return true;
+    if (isBlank(tab) || browserUrisMatch(uriOf(tab), uri)) return true;
     const lastPage = pageFor(sessionId);
-    return lastPage?.uri === uriOf(tab);
+    return browserUrisMatch(lastPage?.uri, uriOf(tab));
   };
 
   const finish = async (
@@ -299,7 +300,7 @@ export function createSessionTabBinding(): SessionTabBinding {
           && !liveBoundTab(input.sessionId, 'stage', tabs)
           && !liveBoundTab(input.sessionId, 'showcase', tabs);
         const ownerOk = !owner || (owner.sessionId === input.sessionId && owner.role === 'stage');
-        const uriOk = isBlank(pending) || uriOf(pending).toLowerCase() === uri.toLowerCase();
+        const uriOk = isBlank(pending) || browserUrisMatch(uriOf(pending), uri);
         const sessionOk = input.draftClaim === true
           || openIsThisSession
           || (openIsPlaceholder && sessionUnbound);
@@ -313,10 +314,10 @@ export function createSessionTabBinding(): SessionTabBinding {
       }
     }
 
-    // The open conversation's stage may take over the browser's sole blank,
-    // unowned tab (the boot "New Tab") instead of stacking a second tab next
-    // to it — the first-run welcome otherwise showed "New Tab" + the stage.
-    if (!target && tabs.length === 1 && isBlank(tabs[0]) && tabs[0].id !== pendingDraftTabId
+    // The open conversation's stage may take over the browser's sole blank
+    // or matching-entry unowned tab instead of stacking a second tab next to it.
+    if (!target && tabs.length === 1 && (isBlank(tabs[0]) || browserUrisMatch(uriOf(tabs[0]), uri))
+      && tabs[0].id !== pendingDraftTabId
       && ownerOfTab(tabs[0].id) == null && host?.getOpenSession()?.id === input.sessionId) {
       target = tabs[0];
     }
@@ -325,7 +326,7 @@ export function createSessionTabBinding(): SessionTabBinding {
     if (target) {
       rememberTab(input.sessionId, 'stage', target.id);
       if (pendingDraftTabId === target.id) pendingDraftTabId = null;
-      if (uriOf(target).toLowerCase() !== uri.toLowerCase()) {
+      if (!browserUrisMatch(uriOf(target), uri)) {
         const navigated = await controlTabs({
           action: 'navigate-tab',
           tabId: target.id,
@@ -402,7 +403,7 @@ export function createSessionTabBinding(): SessionTabBinding {
 
     if (!target && uri && input.matchByUri) {
       target = tabs.find((tab) => (
-        uriOf(tab).toLowerCase() === uri.toLowerCase()
+        browserUrisMatch(uriOf(tab), uri)
         && canAdopt(input.sessionId, 'showcase', tab, uri)
       )) ?? null;
     }
@@ -439,7 +440,7 @@ export function createSessionTabBinding(): SessionTabBinding {
     if (target) {
       rememberTab(input.sessionId, 'showcase', target.id);
       if (pendingDraftTabId === target.id) pendingDraftTabId = null;
-      if (uri && uriOf(target) !== uri) {
+      if (uri && !browserUrisMatch(uriOf(target), uri)) {
         const navigated = await controlTabs({
           action: 'navigate-tab',
           tabId: target.id,
@@ -456,7 +457,7 @@ export function createSessionTabBinding(): SessionTabBinding {
     } else {
       const uriOwnedByAnotherSession = uri && tabs.some((tab) => {
         const owner = ownerOfTab(tab.id);
-        return uriOf(tab).toLowerCase() === uri.toLowerCase()
+        return browserUrisMatch(uriOf(tab), uri)
           && owner != null
           && owner.sessionId !== input.sessionId;
       });
@@ -501,7 +502,7 @@ export function createSessionTabBinding(): SessionTabBinding {
         const active = snapshot?.activeTab ?? tabs.find((tab) => tab.isActive) ?? null;
         const entryUri = uri?.toLowerCase() ?? null;
         const onEntry = (tab: BotBrowserTabInfo): boolean =>
-          entryUri != null && uriOf(tab).toLowerCase() === entryUri;
+          entryUri != null && browserUrisMatch(uriOf(tab), entryUri);
 
         let draft: BotBrowserTabInfo | null = null;
         if (pendingDraftTabId != null) {
@@ -538,7 +539,7 @@ export function createSessionTabBinding(): SessionTabBinding {
         pendingDraftTabId = opened?.openedTabId ?? opened?.activeTab?.id ?? null;
         if (uri && pendingDraftTabId != null) {
           const openedDraft = (await listTabs())?.tabs.find((tab) => tab.id === pendingDraftTabId) ?? null;
-          if (openedDraft && uriOf(openedDraft).toLowerCase() !== uri.toLowerCase()) {
+          if (openedDraft && !browserUrisMatch(uriOf(openedDraft), uri)) {
             await controlTabs({
               action: 'navigate-tab',
               tabId: pendingDraftTabId,
@@ -702,7 +703,7 @@ export function createSessionTabBinding(): SessionTabBinding {
       const lastPage = pageFor(command.sessionId);
       if (lastPage) {
         sessionTab = snapshot.tabs.find((tab) => (
-          uriOf(tab) === lastPage.uri && canAdopt(command.sessionId, 'showcase', tab, lastPage.uri)
+          browserUrisMatch(uriOf(tab), lastPage.uri) && canAdopt(command.sessionId, 'showcase', tab, lastPage.uri)
         )) ?? null;
         if (sessionTab) rememberTab(command.sessionId, 'showcase', sessionTab.id);
       }

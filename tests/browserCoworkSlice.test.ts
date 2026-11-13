@@ -7,6 +7,7 @@ import reducer, {
   updateBrowserMessageContent,
   appendBrowserMessageContent,
   updateBrowserSessionStatus,
+  updateBrowserSessionModel,
   setBrowserStreaming,
   clearBrowserSession,
 } from '../src/renderer/store/slices/browserCoworkSlice';
@@ -107,6 +108,31 @@ test('updateBrowserSessionStatus follows the open session only', () => {
   state = reducer(state, updateBrowserSessionStatus({ sessionId: 'session-1', status: 'completed' }));
   assert.equal(state.currentSession?.status, 'completed');
   assert.equal(state.isStreaming, false);
+});
+
+test('updateBrowserSessionModel updates model/provider/effort for the open session only', () => {
+  let state = reducer(undefined, setBrowserSession(makeSession({
+    status: 'completed',
+    messages: [{ id: 'm1', type: 'user', content: 'hi', timestamp: 1001 }],
+  })));
+  state = reducer(state, updateBrowserSessionModel({
+    sessionId: 'other',
+    model: 'gpt-5',
+    modelProvider: 'openai',
+    effort: 'high',
+  }));
+  assert.equal(state.currentSession?.model, undefined);
+
+  state = reducer(state, updateBrowserSessionModel({
+    sessionId: 'session-1',
+    model: 'claude-sonnet-4-5',
+    modelProvider: 'anthropic',
+    effort: 'default',
+  }));
+  assert.equal(state.currentSession?.model, 'claude-sonnet-4-5');
+  assert.equal(state.currentSession?.modelProvider, 'anthropic');
+  assert.equal(state.currentSession?.effort, 'default');
+  assert.equal(state.currentSession?.messages.length, 1);
 });
 
 test('setBrowserStreaming and clearBrowserSession control the stream flag and reset state', () => {

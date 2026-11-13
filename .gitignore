@@ -376,6 +376,7 @@ tests/*
 !tests/trafficCreditsMode.test.ts
 !tests/trafficPointsStrict.test.mjs
 !tests/surfaceModePersistence.test.ts
+!tests/studioComposerModelPersistence.test.ts
 
 # Local DB (never commit)
 *.sqlite
