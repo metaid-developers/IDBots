@@ -44,7 +44,28 @@ export function feeAssistReceiptLines(feeAssist: unknown): string[] {
   const orderSuffix = orderId ? `, order ${orderId}${outcome ? `: ${outcome}` : ''}` : '';
   if (used) {
     const recovered = fa.commitRecovered === true;
+    const billedBy = asString(fa.billedBy);
+    const meAmountMilli = typeof fa.meAmountMilli === 'number' && Number.isFinite(fa.meAmountMilli)
+      ? fa.meAmountMilli
+      : undefined;
+    const txSize = typeof fa.txSize === 'number' && Number.isFinite(fa.txSize)
+      ? fa.txSize
+      : undefined;
+    const sponsoredMinerFee = typeof fa.sponsoredMinerFee === 'number' && Number.isFinite(fa.sponsoredMinerFee)
+      ? fa.sponsoredMinerFee
+      : undefined;
+    const paidParts: string[] = [];
+    if (orderId) paidParts.push(`order=${orderId}`);
+    if (billedBy) paidParts.push(`billed_by=${billedBy}`);
+    if (meAmountMilli !== undefined) {
+      paidParts.push(`points=${meAmountMilli / 1000}`);
+      paidParts.push(`me_milli=${meAmountMilli}`);
+    }
+    if (txSize !== undefined) paidParts.push(`bytes=${txSize}`);
+    if (sponsoredMinerFee !== undefined) paidParts.push(`fee_sats=${sponsoredMinerFee}`);
+    const paidMarker = `- SPONSOR paid: ${paidParts.length ? paidParts.join(' ') : 'true'}`;
     return [
+      paidMarker,
       `- sponsor: applied (MVC fee sponsor covered this write${orderId ? `, order ${orderId}` : ''}${recovered ? '; commit response was lost but the order broadcast' : ''})`,
     ];
   }

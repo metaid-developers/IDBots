@@ -32,12 +32,14 @@ import {
   type SponsorPaySource,
 } from './mvcSponsorClient';
 import {
+  getTrafficFallbackPolicy,
   getTrafficPinMode,
   getTrafficSettings,
   isMeTrafficBillingAllowed,
   readRechargeGatewayOverride,
   readTrafficApiBase,
   setTrafficSettings,
+  type TrafficFallbackPolicy,
   type TrafficPinMode,
   type TrafficSettingsReader,
   type TrafficSettingsSnapshot,
@@ -329,6 +331,14 @@ export function getConfiguredTrafficPinMode(): TrafficPinMode {
     return getTrafficPinMode(getKvStore());
   } catch {
     return 'traffic';
+  }
+}
+
+export function getConfiguredTrafficFallbackPolicy(): TrafficFallbackPolicy {
+  try {
+    return getTrafficFallbackPolicy(getKvStore());
+  } catch {
+    return 'strict';
   }
 }
 

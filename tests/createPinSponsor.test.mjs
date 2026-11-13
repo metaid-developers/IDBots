@@ -23,6 +23,7 @@ const {
   isMeTrafficBillingAllowed,
   normalizeTrafficFallbackPolicy,
   normalizeTrafficPinMode,
+  setTrafficSettings,
 } = await import('../dist-electron/main/services/trafficSettings.js');
 const {
   isSponsorCircuitOpen,
@@ -1196,20 +1197,38 @@ test('runMvcSponsorCreatePin classifies no_user_utxo under the strict policy', a
   assert.equal(broadcastState.calls, 0);
 });
 
-test('traffic settings default to account quota and tolerate unreadable stores', () => {
+test('traffic settings default to traffic+strict and enforce strict when credits payment is on', () => {
   assert.equal(normalizeTrafficPinMode(undefined), 'traffic');
   assert.equal(normalizeTrafficPinMode('traffic'), 'traffic');
   assert.equal(normalizeTrafficPinMode(' Traffic '), 'traffic');
   assert.equal(normalizeTrafficPinMode('selfpay'), 'selfpay');
   assert.equal(normalizeTrafficPinMode('other'), 'traffic');
-  assert.equal(normalizeTrafficFallbackPolicy(undefined), 'selfpay');
-  assert.equal(normalizeTrafficFallbackPolicy('strict'), 'selfpay');
+  assert.equal(normalizeTrafficFallbackPolicy(undefined), 'strict');
+  assert.equal(normalizeTrafficFallbackPolicy('strict'), 'strict');
+  assert.equal(normalizeTrafficFallbackPolicy('selfpay'), 'selfpay');
 
   assert.equal(getTrafficPinMode(null), 'traffic');
   assert.equal(getTrafficPinMode({ get: () => 'selfpay' }), 'selfpay');
   assert.equal(getTrafficPinMode({ get: () => { throw new Error('closed'); } }), 'traffic');
-  assert.equal(getTrafficFallbackPolicy({ get: () => 'strict' }), 'selfpay');
-  assert.equal(getTrafficFallbackPolicy({ get: () => undefined }), 'selfpay');
+  // Even if legacy kvStore has fallbackPolicy='selfpay' while mode='traffic', effective policy is 'strict'.
+  assert.equal(getTrafficFallbackPolicy(null), 'strict');
+  assert.equal(getTrafficFallbackPolicy({ get: (k) => (k === 'traffic.mode' ? 'traffic' : 'selfpay') }), 'strict');
+  assert.equal(getTrafficFallbackPolicy({ get: (k) => (k === 'traffic.mode' ? 'selfpay' : 'strict') }), 'selfpay');
+
+  const backing = new Map([['traffic.mode', 'traffic'], ['traffic.fallbackPolicy', 'selfpay']]);
+  const store = {
+    get: (k) => backing.get(k),
+    set: (k, v) => { backing.set(k, v); },
+  };
+  const snapOn = setTrafficSettings(store, { mode: 'traffic' });
+  assert.equal(snapOn.mode, 'traffic');
+  assert.equal(snapOn.fallbackPolicy, 'strict');
+  assert.equal(backing.get('traffic.fallbackPolicy'), 'strict');
+
+  const snapOff = setTrafficSettings(store, { mode: 'selfpay' });
+  assert.equal(snapOff.mode, 'selfpay');
+  assert.equal(snapOff.fallbackPolicy, 'selfpay');
+  assert.equal(backing.get('traffic.fallbackPolicy'), 'selfpay');
 });
 
 test('ME billing is allowed on the desktop in credits-payment mode only (D3/D4)', () => {

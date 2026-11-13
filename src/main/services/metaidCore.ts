@@ -34,7 +34,7 @@ import { buildMetabotInfoPayloads, buildMetabotHomepagePayload, type MetabotInfo
 import { OWNER_BINDING_PATH } from './ownerBindingService';
 import { requestMvcGasSubsidy } from './mvcSubsidyService';
 import { getMainWorkerCandidatePaths, resolveMainWorkerPath } from './workerPathResolver';
-import { runMvcSponsorCreatePin, type CreatePinFeeAssistMetadata } from './mvcSponsorCreatePin';
+import { runMvcSponsorCreatePin, TrafficInsufficientError, type CreatePinFeeAssistMetadata } from './mvcSponsorCreatePin';
 import { recordChainWriteFromCreatePin } from '../libs/chainWriteLedger';
 import { assertChainWritePinRefs } from '../libs/chainPinRefGuard';
 import { getConfiguredTrafficApiBase, resolveSponsorTrafficAccount } from './trafficAccountService';
@@ -537,7 +537,9 @@ export async function runMvcCreatePinWithInsufficientFundsRescue<T>(params: {
     return await params.run();
   } catch (error) {
     const message = getErrorMessage(error);
-    if (!isMvcInsufficientBalanceMessage(message)) {
+    const isNoUserUtxoStrict =
+      error instanceof TrafficInsufficientError && error.reason === 'no_user_utxo';
+    if (!isNoUserUtxoStrict && !isMvcInsufficientBalanceMessage(message)) {
       throw error;
     }
     appendMetaidLog('WARN', 'MVC createPin failed for insufficient bot-wallet funds — requesting gas subsidy and retrying once', {

@@ -1999,6 +1999,11 @@ export function createBotBrowserBridgeService(
               : 'The selected account Actor is no longer available on this host.',
           );
         }
+        const errCode = (error as { code?: unknown } | null)?.code;
+        if (errCode === 'mvc_traffic_insufficient') {
+          const message = error instanceof Error && error.message ? error.message : 'MetaID PIN write failed.';
+          return failure('pin_write_failed', message);
+        }
         return failure('pin_write_failed', 'MetaID PIN write failed.');
       }
     },

@@ -81,12 +81,24 @@ export interface MvcSponsorCreatePinResult extends CreatePinWorkerSuccess {
   feeAssist: CreatePinFeeAssistMetadata;
 }
 
+export function formatTrafficStrictFailureMessage(input: {
+  reason: MvcSponsorCreatePinFallbackReason;
+  stage: MvcSponsorFeeAssistStage;
+  orderId?: string;
+  detail?: string;
+}): string {
+  const orderPart = input.orderId ? `, order=${input.orderId}` : '';
+  const detailPart = input.detail ? `: ${input.detail}` : '';
+  return `积分支付失败，请检查积分余额或稍后重试 (reason=${input.reason}, stage=${input.stage}${orderPart})${detailPart}`;
+}
+
 export class TrafficInsufficientError extends Error {
   readonly code = 'mvc_traffic_insufficient';
   readonly reason: MvcSponsorCreatePinFallbackReason;
   readonly stage: MvcSponsorFeeAssistStage;
   readonly orderId?: string;
   readonly feeAssist: CreatePinFeeAssistMetadata;
+  readonly data: { feeAssist: CreatePinFeeAssistMetadata };
 
   constructor(input: {
     message?: string;
@@ -95,12 +107,13 @@ export class TrafficInsufficientError extends Error {
     orderId?: string;
     feeAssist: CreatePinFeeAssistMetadata;
   }) {
-    super(input.message || `MVC traffic sponsor cannot cover this pin (${input.reason}).`);
+    super(input.message || formatTrafficStrictFailureMessage(input));
     this.name = 'TrafficInsufficientError';
     this.reason = input.reason;
     this.stage = input.stage;
     if (input.orderId !== undefined) this.orderId = input.orderId;
     this.feeAssist = input.feeAssist;
+    this.data = { feeAssist: input.feeAssist };
   }
 }
 
@@ -193,7 +206,7 @@ export async function runMvcSponsorCreatePin(
     const feeAssist: CreatePinFeeAssistMetadata = {
       attempted: true,
       used: false,
-      mode: 'self_paid',
+      mode: input.fallbackPolicy === 'strict' ? 'mvc_sponsor_v2' : 'self_paid',
       sponsor: 'mvc_sponsor_v2',
       reason: params.reason,
       stage: params.stage,
@@ -202,6 +215,23 @@ export async function runMvcSponsorCreatePin(
       quotaBefore: params.quotaBefore,
       advisoryFeeEstimate: params.advisoryFeeEstimate,
     };
+    if (input.fallbackPolicy === 'strict') {
+      appendMetaidLog('WARN', 'Sponsored MVC createPin failed under strict policy — self-paid fallback blocked', {
+        metabotId: input.metabotId,
+        mvcAddress: input.mvcAddress,
+        reason: params.reason,
+        stage: params.stage,
+        orderId: params.orderId,
+        commitOrderOutcome: params.commitOrderOutcome,
+        fallbackPolicy: input.fallbackPolicy,
+      });
+      throw new TrafficInsufficientError({
+        reason: params.reason,
+        stage: params.stage,
+        orderId: params.orderId,
+        feeAssist,
+      });
+    }
     // Self-pay spends the bot's own wallet — never let that happen silently
     // (the 2026-09-07 outage: exhausted legacy quota forced every traffic-mode
     // pin to self-pay with no trace of why). The WARN log + feeAssist trace
@@ -217,9 +247,6 @@ export async function runMvcSponsorCreatePin(
       commitOrderOutcome: params.commitOrderOutcome,
       fallbackPolicy: input.fallbackPolicy,
     });
-    if (input.fallbackPolicy === 'strict') {
-      throw new TrafficInsufficientError({ reason: params.reason, stage: params.stage, feeAssist });
-    }
     try {
       const broadcastResult = await deps.runBroadcastWorker();
       return { ...broadcastResult, feeAssist };
