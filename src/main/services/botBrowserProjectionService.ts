@@ -23,6 +23,11 @@ export type BotBrowserProjectionInput = {
    * when omitted — commands without a role bind the showcase tab).
    */
   role?: 'stage' | 'showcase';
+  /**
+   * First stage projection of a brand-new session: the renderer may adopt
+   * the prewarmed draft tab unconditionally (unowned, blank or on the entry).
+   */
+  draftClaim?: boolean;
 };
 
 export type BotBrowserProjectionOutcome = {
@@ -39,11 +44,19 @@ export type BotBrowserProjectionService = {
   forget(sessionId: string): void;
 };
 
+/** Recorded for showcase projections only — stage chrome never owns browserUri. */
+export type BotBrowserProjectionRecord = {
+  sessionId: string;
+  uri: string;
+  title: string | null;
+  role?: 'stage' | 'showcase';
+};
+
 const projectionUriForPath = (localPath: string): string => previewMetaappUriForPath(localPath);
 
 export function createBotBrowserProjectionService(deps: {
   getTabBridge: () => BotBrowserTabBridge;
-  recordProjection?: (input: { sessionId: string; uri: string; title: string | null }) => void;
+  recordProjection?: (input: BotBrowserProjectionRecord) => void;
 }): BotBrowserProjectionService {
   const project = async (input: BotBrowserProjectionInput): Promise<BotBrowserProjectionOutcome> => {
     const uri = projectionUriForPath(input.localPath);
@@ -56,6 +69,7 @@ export function createBotBrowserProjectionService(deps: {
       sessionId: input.sessionId,
       tabId: input.tabId,
       role: input.role,
+      ...(input.draftClaim === true ? { draftClaim: true } : {}),
       activate: reveal,
       // Every projection stays off the app surface (stage and reports alike):
       // a report reveals its tab inside Bot Browser, never switches the app view.
@@ -72,7 +86,12 @@ export function createBotBrowserProjectionService(deps: {
       announced: reveal || result.activeTab?.id === tabId,
     };
     try {
-      deps.recordProjection?.({ sessionId: input.sessionId, uri, title: label ?? null });
+      deps.recordProjection?.({
+        sessionId: input.sessionId,
+        uri,
+        title: label ?? null,
+        role: input.role,
+      });
     } catch {
       // The projection succeeded; a durable recovery hint is best-effort.
     }
@@ -89,7 +108,7 @@ let singleton: BotBrowserProjectionService | null = null;
 
 export function initBotBrowserProjectionService(deps: {
   getTabBridge: () => BotBrowserTabBridge;
-  recordProjection?: (input: { sessionId: string; uri: string; title: string | null }) => void;
+  recordProjection?: (input: BotBrowserProjectionRecord) => void;
 }): BotBrowserProjectionService {
   if (!singleton) {
     singleton = createBotBrowserProjectionService(deps);

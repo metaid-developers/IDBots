@@ -24,6 +24,8 @@ const DELEGATION_RECHECK_MS = 60_000;
 const SPEECH_PATCH_THROTTLE_MS = 600;
 /** Failure reasons worth retrying against the same tab before self-healing. */
 const RETRYABLE_PATCH_REASONS = new Set(['not-ready', 'frame-not-found', 'tab-not-found']);
+/** Backoff between stage-tab lookup attempts and projection retries. */
+const PROJECTION_RETRY_BACKOFF_MS = [1000, 2000] as const;
 /** Failure reasons that mean the page belongs to another session/protocol. */
 const SELF_HEAL_PATCH_REASONS = new Set(['session-mismatch', 'protocol']);
 /** Families the Director may restyle; terminal and owner-facing scenes are off limits. */
@@ -85,6 +87,12 @@ type LiveStageRun = {
   interactionTimer: NodeJS.Timeout | null;
   interactionInFlight: boolean;
   template: StudioLiveStageTemplateResolution;
+  /**
+   * The next stage-role projection may adopt the renderer's prewarmed draft
+   * tab unconditionally — set for a brand-new conversation's first run
+   * (session:start path or ≤1 user message) until a projection lands.
+   */
+  draftClaimPending: boolean;
 };
 
 export type StudioLiveStageServiceDeps = {
@@ -123,6 +131,11 @@ export type StudioLiveStageServiceDeps = {
   /** Resolves when the previous stage has played its outro (the handoff). */
   beforeProjection?(sessionId: string): Promise<void> | null;
   /**
+   * Backoff between stage-tab lookup retries and projection retries inside
+   * projectStage. Defaults to ~1s/2s; tests inject near-zero values.
+   */
+  projectionRetryBackoffMs?: readonly number[];
+  /**
    * Activates the session's stage-role tab (renderer binding switch-tab,
    * background). Fired on a new human turn and on turn errors — never on
    * completion, worker waiting, or ordinary tool activity.
@@ -132,6 +145,8 @@ export type StudioLiveStageServiceDeps = {
 
 export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
   const runs = new Map<string, LiveStageRun>();
+  /** Sessions whose next run may claim the prewarmed draft (session:start). */
+  const draftClaimRequested = new Set<string>();
   const now = deps.now ?? Date.now;
   let turnCounter = 0;
   let currentSettings = deps.getSettings();
@@ -419,7 +434,9 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
           localPath: run.stagePath,
           title: `${run.state.botName} · Live Stage`,
           role: 'stage',
+          draftClaim: run.draftClaimPending === true,
         });
+        run.draftClaimPending = false;
         run.tabId = outcome.tabId;
         if (run.tabId == null && deps.getStageTab) {
           const bound = await deps.getStageTab(run.state.sessionId);
@@ -436,20 +453,80 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     });
   }
 
+  function retryBackoffMs(): readonly number[] {
+    return deps.projectionRetryBackoffMs ?? PROJECTION_RETRY_BACKOFF_MS;
+  }
+
+  function sleepMs(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      const timer = setTimeout(resolve, ms);
+      timer.unref?.();
+    });
+  }
+
+  /**
+   * Stage-tab lookup that treats a failed/timed-out getStageTab as transient:
+   * up to two retries (~1s, ~2s backoff). A null result retries the same way —
+   * a timed-out command may still complete in the renderer, so the bound tab
+   * can appear a beat later. Returns null when nothing is bound after retries.
+   */
+  async function lookupStageTab(run: LiveStageRun): Promise<{ id: number; uri: string | null } | null> {
+    if (!deps.getStageTab) return null;
+    const backoff = retryBackoffMs();
+    for (let attempt = 0; attempt <= backoff.length; attempt += 1) {
+      try {
+        const bound = await deps.getStageTab(run.state.sessionId);
+        if (bound) return bound;
+      } catch {
+        // A timed-out lookup is not fatal: the renderer may still answer.
+      }
+      if (attempt < backoff.length) await sleepMs(backoff[attempt]);
+    }
+    return null;
+  }
+
+  /**
+   * Projection with up to two retries: a failed project() falls back to the
+   * patch-retry/heal path only after every attempt fails — the timed-out
+   * command may still have bound the tab, which deliverPatch then finds.
+   */
+  async function projectStageEntry(run: LiveStageRun): Promise<BotBrowserProjectionOutcome | null> {
+    const backoff = retryBackoffMs();
+    for (let attempt = 0; attempt <= backoff.length; attempt += 1) {
+      try {
+        return await deps.project({
+          sessionId: run.state.sessionId,
+          localPath: run.stagePath ?? '',
+          title: `${run.state.botName} · Live Stage`,
+          role: 'stage',
+          draftClaim: run.draftClaimPending === true,
+        });
+      } catch (error) {
+        if (attempt >= backoff.length) {
+          console.warn(`[StudioLiveStage] stage projection failed for ${run.state.sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+          return null;
+        }
+        await sleepMs(backoff[attempt]);
+      }
+    }
+    return null;
+  }
+
   /**
    * Put the session's stage tab on the persistent entry, then patch.
    * Fast path: the role-bound tab already shows the current entry URI (the
    * common case — the entry is shared, so no navigation is needed at all).
    * Otherwise the entry is projected into the 'stage' role (the binding
    * reuses the bound tab, adopts the prewarmed draft, or opens a fresh
-   * dedupe:false tab).
+   * dedupe:false tab). Tab lookups and the projection itself are retried —
+   * a timed-out command can still complete in the renderer.
    */
   function projectStage(run: LiveStageRun): void {
     enqueue(run, async () => {
       await deps.beforeProjection?.(run.state.sessionId);
       const session = deps.getSession(run.state.sessionId);
       if (!session || !run.state.enabled || run.stagePath == null) return;
-      const bound = deps.getStageTab ? await deps.getStageTab(run.state.sessionId) : null;
+      const bound = await lookupStageTab(run);
       if (bound && uriMatchesEntry(bound.uri, run.stageUri)) {
         run.tabId = bound.id;
         if (process.env.NODE_ENV === 'development') {
@@ -458,12 +535,15 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
         deliverPatch(run);
         return;
       }
-      const outcome = await deps.project({
-        sessionId: run.state.sessionId,
-        localPath: run.stagePath,
-        title: `${run.state.botName} · Live Stage`,
-        role: 'stage',
-      });
+      const outcome = await projectStageEntry(run);
+      if (outcome == null) {
+        // Every projection attempt failed: hand off to the patch-retry/heal
+        // path — attemptPatchDelivery re-resolves the bound tab itself, so a
+        // command that timed out but still completed is picked up here.
+        deliverPatch(run);
+        return;
+      }
+      run.draftClaimPending = false;
       run.tabId = outcome.tabId;
       if (run.tabId == null && deps.getStageTab) {
         const again = await deps.getStageTab(run.state.sessionId);
@@ -609,7 +689,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     }, DIRECTOR_COALESCE_MS);
   }
 
-  function ensureRun(sessionId: string): LiveStageRun | null {
+  function ensureRun(sessionId: string, options?: { idle?: boolean }): LiveStageRun | null {
     const session = deps.getSession(sessionId);
     if (!currentSettings.enabled || !session || session.sessionType !== 'browser' || session.assistantMode !== true) return null;
     if (deps.isSessionClaimed?.(sessionId)) return null;
@@ -628,7 +708,16 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       language: deps.getLanguage(),
       directorEnabled: currentSettings.directorEnabled,
       nowMs: now(),
+      family: options?.idle === true ? 'idle' : undefined,
     });
+    // A brand-new conversation's first stage projection may adopt the
+    // prewarmed draft tab unconditionally: either session:start asked for it
+    // explicitly, or the session is still empty (≤1 user message — the first
+    // send lands before/with the run).
+    const userMessageCount = Array.isArray(session.messages)
+      ? session.messages.reduce((count, message) => count + (message?.type === 'user' ? 1 : 0), 0)
+      : 0;
+    const draftClaimPending = draftClaimRequested.delete(sessionId) || userMessageCount <= 1;
     const run: LiveStageRun = {
       state,
       stagePath: entry?.filePath ?? null,
@@ -639,7 +728,10 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       queue: Promise.resolve(),
       seen: new Set(),
       submissionId: null,
-      deliveredRevision: state.revision,
+      // An idle run exists to repaint a stage that may still show an older
+      // claimed state: its resting copy must actually be patched, so the
+      // delivered watermark starts below the initial revision.
+      deliveredRevision: options?.idle === true ? -1 : state.revision,
       patchRetries: 0,
       patchFailures: {},
       retryTimer: null,
@@ -663,6 +755,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       interactionTimer: null,
       interactionInFlight: false,
       template,
+      draftClaimPending,
     };
     if (run.template.status === 'fallback') {
       console.warn(`[StudioLiveStage] template fallback for ${sessionId}: ${run.template.reason}`);
@@ -685,10 +778,85 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     stopInteractionPolling(run);
   }
 
-  function prepareSession(sessionId: string): void {
+  function prepareSession(sessionId: string, options?: { draftClaim?: boolean }): void {
     if (typeof sessionId !== 'string' || !sessionId.trim()) return;
     currentSettings = deps.getSettings();
+    // session:start marks the run as a brand-new conversation: its first
+    // stage projection may adopt the prewarmed draft tab unconditionally.
+    if (options?.draftClaim === true) draftClaimRequested.add(sessionId);
     ensureRun(sessionId);
+  }
+
+  /**
+   * Reveal an existing Studio session on its stage (owner switching back to
+   * it): with a live run, reset the delivered-revision watermark and re-run
+   * the projectStage fast path (bound tab on entry → patch; otherwise
+   * project). With no run, create a resting 'idle' run — the stage shows the
+   * bot's name and a calm orb instead of a blank page — without activating
+   * the tab; a later human message replaces it through the submissionId
+   * check exactly like any other turn.
+   */
+  function showSession(sessionId: string): void {
+    currentSettings = deps.getSettings();
+    if (!currentSettings.enabled || typeof sessionId !== 'string' || !sessionId.trim()) return;
+    const session = deps.getSession(sessionId);
+    if (!session || session.sessionType !== 'browser' || session.assistantMode !== true) return;
+    if (deps.isSessionClaimed?.(sessionId)) return;
+    const existing = runs.get(sessionId);
+    if (existing) {
+      existing.deliveredRevision = -1;
+      projectStage(existing);
+      return;
+    }
+    ensureRun(sessionId, { idle: true });
+  }
+
+  /**
+   * Give the prewarmed draft tab a bot identity before any session claims it:
+   * patch the frame with an idle-family draft state (bot name + avatar asset,
+   * draft:true) that stage.js applies only while the page is unclaimed.
+   */
+  async function prepareDraft(input: { tabId?: unknown; metabotId?: unknown }): Promise<{ ok: boolean; error?: string }> {
+    const tabId = typeof input?.tabId === 'number' && Number.isInteger(input.tabId) && input.tabId > 0
+      ? input.tabId
+      : null;
+    if (tabId == null) return { ok: false, error: 'invalid tab' };
+    const metabotId = typeof input?.metabotId === 'number' && Number.isInteger(input.metabotId) && input.metabotId > 0
+      ? input.metabotId
+      : null;
+    const metabot = metabotId == null ? null : deps.getMetabotById(metabotId);
+    const entry = entryForTemplate(resolveTurnTemplate());
+    const stageDir = entry?.dir ?? '';
+    const avatar = metabotId == null
+      ? deps.fallbackAvatarDataUri
+      : safeAvatar(metabot?.avatar) ?? deps.fallbackAvatarDataUri;
+    const state: LiveStageState = {
+      ...createLiveStageState({
+        sessionId: '',
+        turnId: 'draft',
+        botName: metabot?.name?.trim().slice(0, 80) || 'Twin',
+        botAvatar: stageDir ? stageAssetFor(avatar, stageDir) : safeAvatar(avatar),
+        language: deps.getLanguage(),
+        directorEnabled: false,
+        nowMs: now(),
+        family: 'idle',
+      }),
+      draft: true,
+    };
+    // The draft page may still be loading right after the renderer navigated
+    // it: transient frame failures retry briefly before giving up.
+    const backoff = [250, 500, 1000, 2000];
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await deps.applyPatch({ tabId, state });
+        return { ok: true };
+      } catch (error) {
+        if (attempt >= backoff.length || !RETRYABLE_PATCH_REASONS.has(patchFailureReason(error))) {
+          return { ok: false, error: error instanceof Error ? error.message : String(error) };
+        }
+        await sleepMs(backoff[attempt]);
+      }
+    }
   }
 
   function observeMessage(sessionId: string, message: CoworkMessage): void {
@@ -1073,6 +1241,8 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
 
   return {
     prepareSession,
+    showSession,
+    prepareDraft,
     observeMessage,
     observeMessageUpdate,
     observeComplete,

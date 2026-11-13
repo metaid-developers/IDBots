@@ -94,6 +94,11 @@ export interface BotBrowserTabCommand {
   dedupe?: boolean;
   /** Preserve the current app surface instead of revealing Bot Browser. */
   background?: boolean;
+  /**
+   * First stage projection of a brand-new session: the binding may adopt
+   * the prewarmed draft tab unconditionally (unowned, blank or on entry).
+   */
+  draftClaim?: boolean;
 }
 
 export interface BotBrowserTabInfo {

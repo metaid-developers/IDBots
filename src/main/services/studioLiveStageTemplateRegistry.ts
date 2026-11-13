@@ -93,7 +93,7 @@ const TEMPLATE_VERSION_PATTERN = /^\d+\.\d+\.\d+$/;
 const RELATIVE_PATH_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]*(?:\/[a-zA-Z0-9][a-zA-Z0-9._-]*)*$/;
 
 const LIVE_STAGE_FAMILIES: readonly LiveStageFamily[] = [
-  'received', 'reasoning', 'speaking', 'local-recall', 'web2-research',
+  'idle', 'received', 'reasoning', 'speaking', 'local-recall', 'web2-research',
   'metaweb-research', 'making', 'delegation', 'waiting', 'worker-report',
   'verification', 'browser-action', 'owner-needed', 'problem',
   'report-ready', 'complete',

@@ -76,9 +76,21 @@ test('projection routes stage and report through the same session binding with f
   assert.equal(fixture.commands[1].activate, true);
   assert.equal(fixture.commands[1].background, true, 'a revealed report never switches the app surface');
   assert.deepEqual(fixture.records, [
-    { sessionId: 'session-a', uri: stage.uri, title: null },
-    { sessionId: 'session-a', uri: report.uri, title: 'Final report' },
+    { sessionId: 'session-a', uri: stage.uri, title: null, role: 'stage' },
+    { sessionId: 'session-a', uri: report.uri, title: 'Final report', role: 'showcase' },
   ]);
+});
+
+test('draftClaim flows from the projection input to the stage-role tab command', async () => {
+  const fixture = projectionFixture();
+  const service = createBotBrowserProjectionService({
+    getTabBridge: () => ({ execute: fixture.execute }),
+    recordProjection: fixture.recordProjection,
+  });
+  await service.project({ sessionId: 'session-new', localPath: '/live-stage/stage.html', role: 'stage', draftClaim: true });
+  assert.equal(fixture.commands[0].draftClaim, true, 'the claim flag reached the tab command');
+  await service.project({ sessionId: 'session-old', localPath: '/live-stage/stage.html', role: 'stage' });
+  assert.equal(fixture.commands[1].draftClaim, undefined, 'ordinary projections carry no claim');
 });
 
 test('a background projection can use the sessionTab result when openedTabId is absent', async () => {

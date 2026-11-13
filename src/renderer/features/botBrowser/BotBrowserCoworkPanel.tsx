@@ -453,27 +453,6 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     setPanelReactions(readPanelReactionsForSession(getPanelReactionsStorage(), sessionId));
   }, [sessionId]);
 
-  // First-send prewarm (2026-11-12): a draft with no session still owns the
-  // Bot Browser draft tab — point it at the persistent stage entry once per
-  // draft so the first projection only patches. The ref guards re-renders;
-  // it resets when a real session exists so the NEXT draft prewarms again.
-  const draftPrewarmRef = useRef(false);
-  useEffect(() => {
-    if (currentSession) {
-      draftPrewarmRef.current = false;
-      return;
-    }
-    if (draftPrewarmRef.current) return;
-    draftPrewarmRef.current = true;
-    void sessionTabBinding.prepareDraftTab()
-      .then((tabId) => {
-        if (tabId == null) draftPrewarmRef.current = false;
-      })
-      .catch(() => {
-        draftPrewarmRef.current = false;
-      });
-  }, [currentSession]);
-
   const handlePanelContextMenu = useCallback((event: React.MouseEvent, message: CoworkMessage) => {
     // Capture the live selection FIRST (pass #4): at contextmenu time Chromium
     // still holds it (select-then-right-click), and this handler is the only
@@ -709,6 +688,40 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     : null;
   const chipMetabot = currentSession ? (liveSessionMetabot ?? selectedMetabot) : selectedMetabot;
   const effectiveMetabotId = selectedMetabotId;
+
+  // First-send prewarm (2026-11-12): a draft with no session still owns the
+  // Bot Browser draft tab — point it at the persistent stage entry once per
+  // draft so the first projection only patches. The ref guards re-renders;
+  // it resets when a real session exists so the NEXT draft prewarms again.
+  // The same pass stamps the draft's bot identity (name/avatar on the idle
+  // family) and repeats when the draft's bot selection changes.
+  const draftPrewarmRef = useRef(false);
+  const draftIdentityRef = useRef<number | null | undefined>(undefined);
+  useEffect(() => {
+    if (currentSession) {
+      draftPrewarmRef.current = false;
+      draftIdentityRef.current = undefined;
+      return;
+    }
+    if (!draftPrewarmRef.current) {
+      draftPrewarmRef.current = true;
+      void sessionTabBinding.prepareDraftTab()
+        .then((tabId) => {
+          if (tabId == null) draftPrewarmRef.current = false;
+        })
+        .catch(() => {
+          draftPrewarmRef.current = false;
+        });
+    }
+    if (draftIdentityRef.current !== effectiveMetabotId) {
+      draftIdentityRef.current = effectiveMetabotId;
+      void sessionTabBinding.prepareDraftIdentity(effectiveMetabotId)
+        .catch(() => {
+          draftIdentityRef.current = undefined;
+        });
+    }
+  }, [currentSession, effectiveMetabotId]);
+
   const [historyBotId, setHistoryBotId] = useState<number | null>(null);
   useEffect(() => {
     if (showHistory) setHistoryBotId(chipMetabot?.id ?? null);

@@ -9111,7 +9111,10 @@ const getBotBrowserTabBridge = () => {
 const getBotBrowserProjection = () =>
   initBotBrowserProjectionService({
     getTabBridge: getBotBrowserTabBridge,
-    recordProjection: ({ sessionId, uri, title }) => {
+    recordProjection: ({ sessionId, uri, title, role }) => {
+      // Stage-role projections are host plumbing: browserUri must remain the
+      // session's last real showcase page, never the stage entry URI.
+      if (role === 'stage') return;
       const store = getCoworkStore();
       if (store.getSession(sessionId)?.sessionType !== 'browser') return;
       store.updateSession(sessionId, { browserUri: uri, browserTitle: title });
@@ -11839,6 +11842,31 @@ if (!gotTheLock) {
     return entry ? { success: true, uri: entry.uri } : { success: false, error: 'Live Stage entry is unavailable' };
   });
 
+  // Reveal an existing Studio session on its stage: redelivers the live run's
+  // state or creates a resting idle run for a session that never had one.
+  registerIpcHandler('studio:liveStage:showSession', (_event, sessionId: unknown) => {
+    try {
+      getStudioLiveStageService().showSession(typeof sessionId === 'string' ? sessionId : '');
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to show Live Stage session' };
+    }
+  });
+
+  // Draft identity prewarm: patch the prewarmed draft tab's frame with the
+  // selected bot's name/avatar on the idle family — applied only while the
+  // page is unclaimed, so the first real session patch still claims it.
+  registerIpcHandler('studio:liveStage:prepareDraft', async (_event, input: unknown) => {
+    try {
+      const result = await getStudioLiveStageService().prepareDraft(
+        (input && typeof input === 'object' ? input : {}) as { tabId?: unknown; metabotId?: unknown },
+      );
+      return result.ok ? { success: true } : { success: false, error: result.error ?? 'Failed to prepare draft' };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to prepare draft' };
+    }
+  });
+
   // Daily Report (每日汇报) manual "run now": fire the full pipeline on demand
   // so the owner can test the report without waiting for the scheduled hour.
   // force:true bypasses ONLY the fresh-install deferral and the
@@ -12794,7 +12822,9 @@ if (!gotTheLock) {
         null,
         options.assistantMode === true
       );
-      getStudioLiveStageService().prepareSession(session.id);
+      // session:start always creates a brand-new conversation: its first
+      // stage projection may adopt the prewarmed draft tab unconditionally.
+      getStudioLiveStageService().prepareSession(session.id, { draftClaim: true });
       const runner = getCoworkRunner();
 
       // Update session status to 'running' before starting async task

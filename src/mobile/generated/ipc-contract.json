@@ -3223,11 +3223,27 @@
       "args": []
     },
     {
+      "path": "studioLiveStage.prepareDraft",
+      "kind": "invoke",
+      "channel": "studio:liveStage:prepareDraft",
+      "args": [
+        "input"
+      ]
+    },
+    {
       "path": "studioLiveStage.set",
       "kind": "invoke",
       "channel": "studioLiveStage:set",
       "args": [
         "updates"
+      ]
+    },
+    {
+      "path": "studioLiveStage.showSession",
+      "kind": "invoke",
+      "channel": "studio:liveStage:showSession",
+      "args": [
+        "sessionId"
       ]
     },
     {
