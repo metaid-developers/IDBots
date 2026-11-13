@@ -13,6 +13,7 @@ const message = (id, type, metadata = {}, content = '') => ({ id, type, content,
 
 function fixture(t, directorEnabled = false, initialTabId = 7, directSceneOverride = null) {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-live-stage-'));
+  const stageRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-live-stage-root-'));
   const session = {
     cwd,
     sessionType: 'browser',
@@ -21,19 +22,30 @@ function fixture(t, directorEnabled = false, initialTabId = 7, directSceneOverri
     metabotName: 'AI_Sunny',
     metabotAvatar: 'data:image/jpeg;base64,AA==',
   };
-  const projected = [], patches = [], calls = [], drainQueue = [], responses = [];
+  const projected = [], patches = [], calls = [], drainQueue = [], responses = [], activations = [];
   const settings = { enabled: true, directorEnabled };
+  // The stage-role binding remembers which URI its tab currently shows; the
+  // mock mirrors that so the service's "already on the entry" fast path and
+  // heal/re-projection decisions see realistic binding state.
+  let boundStageUri = null;
   const service = createStudioLiveStageService({
     getSession: (id) => id === 'worker-session' ? { ...session, metabotId: 2, metabotName: 'Builder阿码', metabotAvatar: 'data:image/png;base64,BB==' } : session,
     getMetabotById: (id) => ({ name: id === 2 ? 'Builder阿码' : 'AI_Sunny', avatar: id === 2 ? 'data:image/png;base64,BB==' : session.metabotAvatar, llm_id: 'brain', llm_provider: 'test' }),
     getSettings: () => settings,
     getLanguage: () => 'en',
-    project: async (input) => { projected.push(input); return { uri: `preview-metaapp://localhost${input.localPath}`, tabId: initialTabId, announced: true }; },
-    findStageTab: async () => 7,
+    project: async (input) => {
+      projected.push(input);
+      const uri = `preview-metaapp://localhost${input.localPath}`;
+      if (input.role === 'stage') boundStageUri = uri;
+      return { uri, tabId: initialTabId, announced: true };
+    },
+    getStageTab: async () => ({ id: 7, uri: boundStageUri }),
+    activateStageTab: async (sessionId) => { activations.push(sessionId); },
     applyPatch: async (input) => { patches.push(input); },
     drainInteractions: async () => drainQueue.splice(0, drainQueue.length),
     respondToPermission: (requestId, result) => { responses.push({ requestId, result }); },
     interactionPollMs: 10,
+    stageRoot,
     assetRoot: path.resolve('public/live-stage'),
     fallbackAvatarDataUri: 'data:image/png;base64,AA==',
     directScene: directSceneOverride ?? (async (state) => {
@@ -48,9 +60,10 @@ function fixture(t, directorEnabled = false, initialTabId = 7, directSceneOverri
     service.dispose();
     try {
       fs.rmSync(cwd, { recursive: true, force: true });
+      fs.rmSync(stageRoot, { recursive: true, force: true });
     } catch {}
   });
-  return { service, session, projected, patches, calls, settings, drainQueue, responses };
+  return { service, session, projected, patches, calls, settings, drainQueue, responses, activations, stageRoot, getBoundStageUri: () => boundStageUri };
 }
 
 test('settings default on and Director follows the Live Stage toggle', () => {
@@ -67,15 +80,21 @@ test('settings default on and Director follows the Live Stage toggle', () => {
   assert.equal(values.get(STUDIO_LIVE_STAGE_DIRECTOR_KEY), '1');
 });
 
-test('service writes one stage per turn, dedupes messages, and preserves report readiness', async (t) => {
-  const { service, projected, patches } = fixture(t);
+test('service materializes one persistent stage entry, dedupes messages, and keeps patching after the report', async (t) => {
+  const { service, projected, patches, activations } = fixture(t);
   service.observeMessage('s', message('u1', 'user', { origin: 'user', submissionId: 'sub-1' }, 'Please build the report.'));
   let run = service.getRunInternals('s');
   await run.queue;
   const firstStage = run.stagePath;
-  assert.ok(fs.existsSync(firstStage));
-  assert.match(fs.readFileSync(firstStage, 'utf8'), /AI_Sunny/);
+  // The persistent entry is materialized once under stageRoot and boots
+  // unclaimed — identity and turn state arrive through patches, never baked in.
+  assert.ok(firstStage && fs.existsSync(firstStage));
+  assert.match(firstStage, /live-stage.*stage\.html$/);
+  assert.match(fs.readFileSync(firstStage, 'utf8'), /__INITIAL_LIVE_STAGE__=null/);
   assert.equal(projected.length, 1);
+  assert.equal(projected[0].role, 'stage', 'stage projections land in the stage role');
+  // A new human turn activates the stage tab (background, open-session guarded).
+  await waitFor(() => activations.includes('s'));
 
   service.observeMessage('s', message('tool-1', 'tool_use', { toolName: 'local_worker_delegate', toolUseId: 'worker' }));
   await run.queue;
@@ -88,37 +107,43 @@ test('service writes one stage per turn, dedupes messages, and preserves report 
   service.observeMessage('s', message('u2', 'user', { origin: 'user', submissionId: 'sub-2' }, 'Now check the numbers.'));
   run = service.getRunInternals('s');
   await run.queue;
-  assert.notEqual(run.stagePath, firstStage, 'every turn owns a distinct history file');
+  assert.equal(run.stagePath, firstStage, 'every turn shares the persistent entry');
+  assert.equal(projected.length, 1, 'a bound stage tab on the entry needs no re-projection');
   await service.projectReport({ sessionId: 's', localPath: '/tmp/final-report.html' }, async () => ({ uri: 'preview-metaapp://localhost/tmp/final-report.html', tabId: 7, announced: true }));
   assert.equal(service.getState('s').family, 'report-ready');
   assert.equal(service.getState('s').composition, 'ready');
+  assert.equal(service.getState('s').reportUri, 'preview-metaapp://localhost/tmp/final-report.html', 'the report URI travels in stage state');
   assert.equal(run.reportProjected, true);
   const patchCount = patches.length;
-  service.observeMessage('s', message('final', 'assistant', { isFinal: true }));
+  // The report lives on the showcase tab; the stage keeps patching — the
+  // Twin's closing words still move the live scene after the projection.
+  service.observeMessage('s', message('final', 'assistant', { isFinal: true }, 'The report is ready for your review.'));
   service.observeComplete('s');
   await run.queue;
-  assert.equal(service.getState('s').family, 'report-ready');
-  assert.equal(patches.length, patchCount, 'late turn events never patch the report frame');
+  assert.ok(patches.length > patchCount, 'the stage keeps receiving patches after the report — it is a separate tab now');
   assert.equal(service.presentInteraction('s', askRequest('after-report')), 'declined', 'a projected report leaves the prompt on its visible desktop seat');
   assert.equal(service.getState('s').interaction, null);
   assert.deepEqual(service.listPresentedRequestIds(), [], 'the overlay is never suppressed for an invisible stage card');
 });
 
-test('final projection passes the confirmed stage tab and persists its recovery action', async (t) => {
+test('final projection reports through the showcase role and carries the report URI in stage state', async (t) => {
   const { service } = fixture(t);
   service.observeMessage('s', message('u1', 'user', { origin: 'user', submissionId: 'sub-1' }));
   const run = service.getRunInternals('s');
   await run.queue;
-  let stageTabId = null;
+  let stageTabId = 'unset';
   await service.projectReport({ sessionId: 's', localPath: '/tmp/final-report.html' }, async (tabId) => {
     stageTabId = tabId;
     return { uri: 'preview-metaapp://localhost/tmp/final-report.html', tabId: 7, announced: true };
   });
-  assert.equal(stageTabId, 7);
+  // The report never targets the stage tab: the callback receives null and
+  // main.ts wires the showcase role + reveal itself.
+  assert.equal(stageTabId, null);
+  assert.equal(service.getState('s').reportUri, 'preview-metaapp://localhost/tmp/final-report.html');
   const stage = fs.readFileSync(run.stagePath, 'utf8');
-  assert.match(stage, /window\.__LIVE_STAGE_REPORT_URI__="preview-metaapp:\/\/localhost\/tmp\/final-report\.html"/);
   assert.match(stage, /data-report-open/);
   assert.match(stage, /data-report-open-label/);
+  assert.doesNotMatch(stage, /__LIVE_STAGE_REPORT_URI__/, 'the report URI is patch state, not baked page chrome');
 });
 
 test('Director coalesces calls and accumulates measured tokens without blocking the scene', async (t) => {
@@ -243,7 +268,11 @@ test('worker identity resolves the Avatar from the trusted source session', asyn
     crossSessionDeliveryId: 'delivery-avatar',
   }));
   await run.queue;
-  assert.equal(service.getState('s').topology.nodes.find((node) => node.kind === 'worker').avatar, 'data:image/png;base64,BB==');
+  // Data-URI avatars never travel in patches: they are materialized once
+  // under the stage dir and referenced by the relative avatars/ path.
+  const avatar = service.getState('s').topology.nodes.find((node) => node.kind === 'worker').avatar;
+  assert.match(avatar, /^avatars\/[0-9a-f]{16}\.png$/, 'worker avatar is a stage-relative asset path');
+  assert.ok(fs.existsSync(path.join(run.stageDir, avatar)), 'the avatar file was written beside stage.html');
 });
 
 const waitFor = async (predicate, ms = 1000) => {

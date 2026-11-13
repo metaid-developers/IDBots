@@ -7328,10 +7328,12 @@ const getCoworkRunner = () => {
         projectReport: async (input) => {
           const outcome = await getStudioLiveStageService().projectReport(
             input,
-            (stageTabId) => getBotBrowserProjection().project({
+            // Reports are owner-facing: they land in the session's showcase
+            // role and reveal it; the stage tab is never the report target.
+            () => getBotBrowserProjection().project({
               ...input,
+              role: 'showcase',
               reveal: true,
-              ...(stageTabId == null ? {} : { tabId: stageTabId }),
             }),
           );
           // Projection receipt in the conversation (owner ruling #7 companion):
@@ -8567,7 +8569,7 @@ const getCoworkRunner = () => {
         // must follow the same per-session flag.
         const browserAutomationOn = isCoworkBrowserAutomationEnabled(getMetabotStore(), session?.metabotId);
         try {
-          const result = await getBotBrowserTabBridge().execute({ action: 'get-tabs', sessionId });
+          const result = await getBotBrowserTabBridge().execute({ action: 'get-tabs', sessionId, background: true });
           const active = result.sessionTab ?? null;
           if (active?.uri) {
             coworkStoreInstance.updateSession(sessionId, {
@@ -9098,10 +9100,13 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
       getSettings: () => readStudioLiveStageSettings(getStoreOrNull()),
       getLanguage: () => getPersistedAppLanguage(),
       project: (input) => getBotBrowserProjection().project(input),
-      findStageTab: async (localPath) => {
-        const result = await getBotBrowserTabBridge().execute({ action: 'get-tabs' }, { focusWindow: false });
-        const expectedPrefix = `preview-metaapp://localhost${localPath}`;
-        return result.tabs.find((tab) => typeof tab.uri === 'string' && tab.uri.startsWith(expectedPrefix))?.id ?? null;
+      getStageTab: async (sessionId) => {
+        const result = await getBotBrowserTabBridge().execute(
+          { action: 'get-tabs', sessionId, role: 'stage', background: true },
+          { focusWindow: false },
+        );
+        const tab = result.sessionTab ?? null;
+        return tab ? { id: tab.id, uri: tab.uri ?? null } : null;
       },
       getTabUri: async (tabId) => {
         const result = await getBotBrowserTabBridge().execute({ action: 'get-tabs' }, { focusWindow: false });
@@ -9111,10 +9116,17 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
         getWindows: () => BrowserWindow.getAllWindows(),
         executeTabCommand: (command) => getBotBrowserTabBridge().execute(command),
       }, input),
-      drainInteractions: (tabId) => drainStudioLiveStageInteractions({
+      drainInteractions: (tabId, sessionId) => drainStudioLiveStageInteractions({
         getWindows: () => BrowserWindow.getAllWindows(),
         executeTabCommand: (command) => getBotBrowserTabBridge().execute(command),
-      }, { tabId }),
+      }, { tabId, sessionId }),
+      // Human turns and turn errors bring the stage forward through the
+      // renderer binding's role activation — background, open-session guarded.
+      activateStageTab: (sessionId) => getBotBrowserTabBridge().execute(
+        { action: 'switch-tab', sessionId, role: 'stage', background: true },
+        { focusWindow: false },
+      ).then(() => undefined).catch(() => undefined),
+      stageRoot: path.join(app.getPath('userData'), 'live-stage'),
       respondToPermission: (requestId, result) => {
         try {
           getCoworkRunner().respondToPermission(requestId, result as unknown as PermissionResult);
@@ -9148,10 +9160,12 @@ const getStudioGenesisStageService = (): StudioGenesisStageService => {
       getSettings: () => readStudioLiveStageSettings(getStoreOrNull()),
       getLanguage: () => getPersistedAppLanguage(),
       project: (input) => getBotBrowserProjection().project(input),
-      findStageTab: async (localPath) => {
-        const result = await getBotBrowserTabBridge().execute({ action: 'get-tabs' }, { focusWindow: false });
-        const expectedPrefix = `preview-metaapp://localhost${localPath}`;
-        return result.tabs.find((tab) => typeof tab.uri === 'string' && tab.uri.startsWith(expectedPrefix))?.id ?? null;
+      getStageTab: async (sessionId) => {
+        const result = await getBotBrowserTabBridge().execute(
+          { action: 'get-tabs', sessionId, role: 'stage', background: true },
+          { focusWindow: false },
+        );
+        return result.sessionTab?.id ?? null;
       },
       runScript: (input) => executeStageFrameScript(frameDeps, input),
       submitTurn: async (input) => (await getCoworkTurnSubmissionController().submit(input)).success,
@@ -11760,6 +11774,14 @@ if (!gotTheLock) {
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to update Live Stage settings' };
     }
+  });
+
+  // Persistent stage entry prewarm: materializes the built-in stage page once
+  // and returns its preview URI so the renderer can boot the draft tab onto it
+  // before the first turn's projection needs it.
+  registerIpcHandler('studio:liveStage:getStageEntry', () => {
+    const entry = getStudioLiveStageService().getStageEntry();
+    return entry ? { success: true, uri: entry.uri } : { success: false, error: 'Live Stage entry is unavailable' };
   });
 
   // Daily Report (每日汇报) manual "run now": fire the full pipeline on demand

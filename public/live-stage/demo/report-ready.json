@@ -2,13 +2,14 @@
   "protocol": "idbots.live-stage.v1",
   "sessionId": "demo-live-stage",
   "turnId": "demo-turn-1",
+  "turnStartedAt": 1760000000000,
   "revision": 6,
   "enabled": true,
   "family": "report-ready",
   "botName": "Nova",
   "language": "en",
   "headline": "The report is on the big screen",
-  "caption": "Press Back to return to the previous view.",
+  "caption": "The report is in the next tab; this live view stays here.",
   "participants": [
     "Nova"
   ],
@@ -67,5 +68,6 @@
       "family": "verification",
       "tool": "bot_browser_screenshot"
     }
-  ]
+  ],
+  "reportUri": null
 }

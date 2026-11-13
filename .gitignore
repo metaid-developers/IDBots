@@ -1017,3 +1017,6 @@ blob-report/
 !tests/studioGenesisStageVisuals.test.mjs
 !tests/studioGenesisStageWiring.test.mjs
 !tests/studioGenesisStageSound.test.mjs
+
+# conversation_recall store search (in-conversation verbatim recall)
+!tests/conversationRecallStore.test.mjs

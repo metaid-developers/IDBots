@@ -73,3 +73,8 @@ body[data-motion="reduced"] .core-voice{display:none}
 .core-copy h1[data-length="medium"]{font-size:clamp(30px,3.4vw,48px)}
 .core-copy h1[data-length="long"]{font-size:clamp(22px,2.4vw,36px)}
 .core-participant span,.hybrid-node>span:not(.hybrid-mark){word-break:keep-all;max-width:150px;overflow:hidden;text-overflow:ellipsis}
+/* Speaking keeps the base title size (no data-length tiers) and gets a
+   wider, brighter caption column so streamed replies stay readable. */
+body[data-family="speaking"] .core-copy{width:44%;max-width:480px}
+body[data-family="speaking"] .core-copy h1{max-width:480px}
+body[data-family="speaking"] .core-copy p{max-width:480px;color:#c9d3df;font-size:clamp(16px,1.5vw,20px);line-height:1.7}

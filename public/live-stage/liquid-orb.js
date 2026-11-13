@@ -60,14 +60,16 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     'owner-needed': { style: 9, speed: .45, radius: .71, warp: 2.8, contourDeform: .06, glassOpacity: .62, edgeGlow: .1 },
     problem: { style: 9, speed: .38, radius: .7, warp: 2.4, contourDeform: .04, glassOpacity: .58, edgeGlow: .07 },
     'report-ready': { style: 9, speed: .28, radius: .7, warp: 2.2, contourDeform: .015, glassOpacity: .66, edgeGlow: .05 },
-    complete: { style: 9, speed: .22, radius: .7, warp: 2, contourDeform: .01, glassOpacity: .64, edgeGlow: .04 }
+    complete: { style: 9, speed: .22, radius: .7, warp: 2, contourDeform: .01, glassOpacity: .64, edgeGlow: .04 },
+    // The unclaimed entry page: a calm breathing round orb, never "working".
+    idle: { style: 9, speed: .3, radius: .72, warp: 2.4, contourDeform: .03, glassOpacity: .64, edgeGlow: .06 }
   };
   window.liquidOrbStyleForFamily = (family) => (statePresets[family] || statePresets.received).style;
   window.liquidOrbParamsForFamily = (family) => ({ ...baseParams, ...(statePresets[family] || statePresets.received) });
   window.liquidOrbActivityForFamily = (family) => {
     if (family === 'reasoning') return 'thinking';
     if (family === 'speaking') return 'speaking';
-    if (family === 'owner-needed' || family === 'problem' || family === 'report-ready' || family === 'complete') return 'resting';
+    if (family === 'idle' || family === 'owner-needed' || family === 'problem' || family === 'report-ready' || family === 'complete') return 'resting';
     return 'working';
   };
   window.liquidOrbBaseParams = () => ({ ...baseParams });

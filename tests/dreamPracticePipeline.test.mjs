@@ -200,7 +200,7 @@ test('allowlists: no wallet/chain-write/scheduled-task tools; interact_local add
     assert.equal(PRACTICE_READ_ONLY_INLINE_TOOLS.has(banned), false, `${banned} not in read_only`);
     assert.equal(PRACTICE_INTERACT_LOCAL_INLINE_TOOLS.has(banned), false, `${banned} not in interact_local`);
   }
-  for (const allowed of ['search_metaweb', 'read_metaweb_pin', 'omni_read', 'chain_history_recall', 'experience_recall', 'knowledge_recall', 'procedure_recall']) {
+  for (const allowed of ['search_metaweb', 'read_metaweb_pin', 'omni_read', 'chain_history_recall', 'experience_recall', 'knowledge_recall', 'procedure_recall', 'conversation_recall']) {
     assert.ok(PRACTICE_READ_ONLY_INLINE_TOOLS.has(allowed), `${allowed} in read_only`);
   }
   for (const write of ['knowledge_base_add_document', 'knowledge_base_learn', 'knowledge_upsert', 'procedure_save']) {

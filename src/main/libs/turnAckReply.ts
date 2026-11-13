@@ -205,6 +205,7 @@ export function describeOwnerWaitActivity(
   if (name === 'read' || name === 'read_image') return 'reading files';
   if (name === 'write' || name === 'edit') return 'writing a file';
   if (name === 'web_search' || name === 'web_fetch' || name === 'webfetch') return 'searching the web';
+  if (name === 'conversation_recall') return 'looking back through this conversation';
   if (name === 'projection_begin'
     || (name === 'bot_browser_preview_local' && toolInput?.projection === true)) {
     return 'preparing the report page for the big screen';

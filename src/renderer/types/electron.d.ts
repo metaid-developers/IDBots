@@ -1769,6 +1769,7 @@ interface IElectronAPI {
   studioLiveStage: {
     get: () => Promise<{ enabled: boolean; directorEnabled: boolean }>;
     set: (updates: { enabled?: boolean; directorEnabled?: boolean }) => Promise<{ success: boolean; enabled?: boolean; directorEnabled?: boolean; error?: string }>;
+    getStageEntry: () => Promise<{ success: boolean; uri?: string; error?: string }>;
   };
   dailyReport: {
     runNow: (opts?: { force?: boolean }) => Promise<

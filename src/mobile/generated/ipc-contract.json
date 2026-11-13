@@ -3217,6 +3217,12 @@
       "args": []
     },
     {
+      "path": "studioLiveStage.getStageEntry",
+      "kind": "invoke",
+      "channel": "studio:liveStage:getStageEntry",
+      "args": []
+    },
+    {
       "path": "studioLiveStage.set",
       "kind": "invoke",
       "channel": "studioLiveStage:set",

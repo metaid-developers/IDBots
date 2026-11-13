@@ -1244,6 +1244,15 @@ export interface CoworkConversationSearchRecord {
   assistant: string;
 }
 
+/** One verbatim message hit inside ONE session (conversation_recall). */
+export interface CoworkSessionMessageSearchHit {
+  id: string;
+  type: 'user' | 'assistant';
+  createdAt: number;
+  content: string;
+  metadata?: Record<string, unknown>;
+}
+
 export interface CoworkConfig {
   workingDirectory: string;
   systemPrompt: string;
@@ -10788,6 +10797,75 @@ export class CoworkStore implements MemoryBackend {
       }));
 
     return records;
+  }
+
+  /**
+   * Verbatim message search inside ONE session — the in-conversation recall
+   * path. DSH compacts long sessions silently, so early turns survive only
+   * in this table; conversation_search deliberately skips the current
+   * session. Same LIKE style as conversationSearch (`LOWER(content) LIKE
+   * '%term%'`, terms pre-normalized by the caller): a row matches when ANY
+   * term hits, then ranks by the number of matched terms, newest first.
+   * Thinking drafts, sandbox-excluded rows and delegation internals never
+   * surface — the bot should recall what the owner actually saw.
+   */
+  searchSessionMessages(sessionId: string, options: {
+    terms: string[];
+    limit?: number;
+  }): CoworkSessionMessageSearchHit[] {
+    const terms = (options.terms ?? [])
+      .map((term) => String(term ?? '').toLowerCase().trim())
+      .filter((term) => term.length > 0);
+    if (!sessionId || terms.length === 0) return [];
+    const limit = Math.max(1, Math.min(20, Math.floor(options.limit ?? 8)));
+
+    const likeClauses = terms.map(() => 'LOWER(m.content) LIKE ?');
+    const rows = this.getAll<CoworkMessageRow>(`
+      SELECT m.id, m.type, m.content, m.metadata, m.created_at, m.sequence
+      FROM cowork_messages m
+      WHERE m.session_id = ?
+        AND m.type IN ('user', 'assistant')
+        AND m.content IS NOT NULL AND TRIM(m.content) != ''
+        AND (m.metadata IS NULL OR m.metadata NOT LIKE '%"isThinking":true%')
+        AND (m.metadata IS NULL OR m.metadata NOT LIKE '%"excludeFromSandboxHistory":true%')
+        AND (m.metadata IS NULL OR m.metadata NOT LIKE '%"isDelegationInternal":true%')
+        AND (${likeClauses.join(' OR ')})
+      ORDER BY m.created_at DESC, COALESCE(m.sequence, 0) DESC, ROWID DESC
+      LIMIT ?
+    `, [sessionId, ...terms.map((term) => `%${term}%`), limit * 40]);
+
+    const scored = rows
+      .map((row) => {
+        const content = String(row.content ?? '');
+        const lowered = content.toLowerCase();
+        const matched = terms.reduce((count, term) => count + (lowered.includes(term) ? 1 : 0), 0);
+        if (matched === 0) return null;
+        let metadata: Record<string, unknown> | undefined;
+        if (row.metadata) {
+          try {
+            const parsed = JSON.parse(row.metadata);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+              metadata = parsed as Record<string, unknown>;
+            }
+          } catch {
+            metadata = undefined;
+          }
+        }
+        return {
+          hit: {
+            id: row.id,
+            type: row.type as 'user' | 'assistant',
+            createdAt: Number(row.created_at) || 0,
+            content,
+            ...(metadata ? { metadata } : {}),
+          } satisfies CoworkSessionMessageSearchHit,
+          matched,
+        };
+      })
+      .filter((entry): entry is { hit: CoworkSessionMessageSearchHit; matched: number } => entry !== null)
+      .sort((a, b) => (b.matched - a.matched) || (b.hit.createdAt - a.hit.createdAt) || (b.hit.id < a.hit.id ? -1 : b.hit.id > a.hit.id ? 1 : 0));
+
+    return scored.slice(0, limit).map((entry) => entry.hit);
   }
 
   recentChats(options: {

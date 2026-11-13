@@ -50,10 +50,21 @@ export type LiveStageState = {
   protocol: typeof LIVE_STAGE_PROTOCOL;
   sessionId: string;
   turnId: string;
+  /**
+   * Epoch ms when this turn's state was created. The persistent stage page
+   * uses it to order turns: a patch for a different turnId is accepted only
+   * when its turnStartedAt is newer, so a delayed old-turn patch can never
+   * overwrite a newer turn.
+   */
+  turnStartedAt: number;
   revision: number;
   enabled: boolean;
   family: LiveStageFamily;
   botName: string;
+  /** Twin avatar as an https URL or a stage-relative `avatars/<hash>.<ext>` path; absent → fallback avatar. */
+  botAvatar?: string;
+  /** Showcase URI of the projected report; the stage's report button opens it. */
+  reportUri?: string | null;
   language: 'zh' | 'en';
   /** Localized label shown above the headline; the raw family id never reaches the owner. */
   kicker: string;
@@ -95,6 +106,7 @@ export type LiveStageSessionContext = {
   sessionId: string;
   turnId: string;
   botName: string;
+  botAvatar?: string;
   language: 'zh' | 'en';
   directorEnabled?: boolean;
   nowMs?: number;
@@ -146,7 +158,7 @@ function sceneFor(
     'browser-action': { headline: text(language, '正在大屏上操作', 'Working on the big screen'), caption: '', participants: [botName] },
     'owner-needed': { headline: text(language, '需要你做个决定', 'I need a decision from you'), caption: text(language, '在你回答之前我先停在这里。', "I'm paused here until you weigh in."), participants: [botName] },
     problem: { headline: text(language, '这一轮没能完成', "This run didn't finish"), caption: text(language, '说「继续」我就接着做。', 'Say "continue" and I\'ll pick it up.'), participants: [botName] },
-    'report-ready': { headline: text(language, '汇报已投到大屏', 'The report is on the big screen'), caption: text(language, '按返回键可以回到刚才的现场。', 'Press Back to return to the previous view.'), participants: [botName] },
+    'report-ready': { headline: text(language, '汇报已投到大屏', 'The report is on the big screen'), caption: text(language, '汇报在旁边的标签页里，这里继续显示现场。', 'The report is in the next tab; this live view stays here.'), participants: [botName] },
     complete: { headline: text(language, '这一轮做完了', 'Done for this round'), caption: text(language, '完整记录保留在左侧对话里。', 'The full transcript stays on the left.'), participants: [botName] },
   };
   const scene = scenes[family];
@@ -218,10 +230,12 @@ export function createLiveStageState(context: LiveStageSessionContext): LiveStag
     protocol: LIVE_STAGE_PROTOCOL,
     sessionId: context.sessionId,
     turnId: context.turnId,
+    turnStartedAt: nowMs,
     revision: 0,
     enabled: true,
     family: 'received',
     botName: context.botName,
+    ...(context.botAvatar ? { botAvatar: context.botAvatar } : {}),
     language: context.language,
     ...scene,
     captionSource: 'default',
@@ -245,7 +259,7 @@ function familyForTool(toolName: string): LiveStageFamily | null {
   if (name === 'write' || name === 'edit') return 'making';
   if (name.includes('web_search') || name.includes('websearch') || name === 'web_fetch' || name === 'fetch_url') return 'web2-research';
   if (name.startsWith('omni_') || name.includes('metaweb') || name.includes('metaapp') || name.startsWith('mrc721_') || name.startsWith('metatask_') || name === 'chain_history_recall' || name === 'read_metaweb_pin') return 'metaweb-research';
-  if (name === 'read' || name === 'read_image' || name === 'glob' || name === 'grep' || name === 'bash' || name === 'shell' || name === 'conversation_search' || name.startsWith('idbots_session_read') || name.startsWith('longterm_') || name.startsWith('memory_') || name.startsWith('knowledge_')) return 'local-recall';
+  if (name === 'read' || name === 'read_image' || name === 'glob' || name === 'grep' || name === 'bash' || name === 'shell' || name === 'conversation_search' || name === 'conversation_recall' || name.startsWith('idbots_session_read') || name.startsWith('longterm_') || name.startsWith('memory_') || name.startsWith('knowledge_')) return 'local-recall';
   return null;
 }
 
@@ -279,23 +293,60 @@ const sentenceEnd = (text: string, limit: number): number => {
   return best;
 };
 
+const CJK_IDEOGRAPH = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/g;
+/** Speaking headline caps: 28 chars for CJK-dominant text, 60 for Latin-dominant. */
+const SPEECH_HEADLINE_CJK_LIMIT = 28;
+const SPEECH_HEADLINE_LATIN_LIMIT = 60;
+const CLAUSE_MARKS = /[，、；：,;:]/g;
+
+const speechHeadlineLimit = (text: string): number => {
+  const cjk = (text.match(CJK_IDEOGRAPH) ?? []).length;
+  return cjk * 2 > text.length ? SPEECH_HEADLINE_CJK_LIMIT : SPEECH_HEADLINE_LATIN_LIMIT;
+};
+
+/** Index of the last clause mark inside `text`, or -1. */
+const lastClauseMark = (text: string): number => {
+  let best = -1;
+  for (const match of text.matchAll(CLAUSE_MARKS)) best = match.index ?? 0;
+  return best;
+};
+
 /**
  * Reduce one assistant bubble to stage copy: markdown is stripped to plain
- * prose, the first sentence becomes the headline (≤90 chars) and the rest
- * becomes the caption (≤200 chars, cut at a sentence boundary).
+ * prose. The headline is the first sentence when it fits the speaking cap —
+ * 28 characters for CJK-dominant text, 60 for Latin-dominant — otherwise it
+ * is cut at the last clause mark (，、；：,;:) inside the cap, or hard-cut at
+ * the cap (Latin text backs off to a word boundary) with no ellipsis. The
+ * remainder flows into the caption (≤200 chars, cut at a sentence boundary).
+ * The speaking family never takes the headline length tiers, so this copy
+ * keeps the base title size while a reply streams.
  */
 export function liveStageSpeechCopy(markdown: string): { headline: string; caption: string } | null {
   const plain = markdownToPlainText(markdown);
   if (!plain) return null;
+  const limit = speechHeadlineLimit(plain);
   const end = firstSentenceEnd(plain);
+  const firstSentence = end >= 0 ? plain.slice(0, end + 1) : plain;
   let headline: string;
   let rest: string;
-  if (end >= 0) {
-    headline = clip(plain.slice(0, end + 1), 90);
-    rest = plain.slice(end + 1).trimStart();
+  if (firstSentence.length <= limit) {
+    headline = firstSentence;
+    rest = end >= 0 ? plain.slice(end + 1).trimStart() : '';
   } else {
-    headline = clip(plain, 90);
-    rest = plain.slice(headline.length).trimStart();
+    const window = plain.slice(0, limit);
+    const clause = lastClauseMark(window);
+    if (clause > 0) {
+      headline = window.slice(0, clause + 1);
+      rest = plain.slice(clause + 1).trimStart();
+    } else {
+      let cut = limit;
+      if (limit === SPEECH_HEADLINE_LATIN_LIMIT) {
+        const space = window.lastIndexOf(' ');
+        if (space > 0) cut = space;
+      }
+      headline = window.slice(0, cut).trimEnd();
+      rest = plain.slice(cut).trimStart();
+    }
   }
   let caption = '';
   if (rest) {
@@ -386,6 +437,9 @@ export function describeLiveStageActivity(
   }
   if (name === 'web_fetch' || name === 'fetch_url') {
     return { headline: text(language, '正在打开网页', 'Opening a web page') };
+  }
+  if (name === 'conversation_recall') {
+    return { headline: text(language, '正在翻看我们之前聊过的内容', 'Looking back through this conversation') };
   }
   if (name === 'conversation_search' || name.startsWith('idbots_session_read')) {
     return { headline: text(language, '正在翻看以前的聊天记录', 'Looking through past chats') };
@@ -604,9 +658,9 @@ export function completeLiveStage(state: LiveStageState, nowMs = Date.now()): Li
   };
 }
 
-export function reportReadyLiveStage(state: LiveStageState, nowMs = Date.now()): LiveStageState {
+export function reportReadyLiveStage(state: LiveStageState, reportUri: string | null, nowMs = Date.now()): LiveStageState {
   const scene = sceneFor('report-ready', state.language, state.botName);
-  return { ...state, ...scene, family: 'report-ready', handoff: null, phaseStartedAt: nowMs, revision: state.revision + 1, pendingProjectionIds: [], motion: { ...state.motion, preset: 'report-ready', energy: .18, durationMs: 650 } };
+  return { ...state, ...scene, family: 'report-ready', reportUri, handoff: null, phaseStartedAt: nowMs, revision: state.revision + 1, pendingProjectionIds: [], motion: { ...state.motion, preset: 'report-ready', energy: .18, durationMs: 650 } };
 }
 
 export function liveStageError(state: LiveStageState, copy?: { headline: string; caption: string }, nowMs = Date.now()): LiveStageState {

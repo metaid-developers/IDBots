@@ -14,6 +14,13 @@ export type BotBrowserTabCommand = {
   tabId?: number;
   /** Studio session whose live tab should own this command. */
   sessionId?: string;
+  /**
+   * Fixed per-session tab role. 'stage' is the host-owned Live Stage tab;
+   * 'showcase' (the default when omitted) holds reports, MetaApp previews and
+   * ordinary opens. Stage tabs are never navigated or closed by generic
+   * commands.
+   */
+  role?: 'stage' | 'showcase';
   /** Display label for a newly opened tab (open-tab only). */
   label?: string;
   /** Keep the target tab active after navigate-tab resolves. */
@@ -140,7 +147,9 @@ export function createBotBrowserTabBridge(options: {
         requestId,
         command: {
           ...command,
-          background: opts?.focusWindow === false,
+          // An explicit command.background wins; otherwise derive it from
+          // focusWindow so host-side lookups can stay off the app surface.
+          background: command.background ?? opts?.focusWindow === false,
         },
       });
       // Background writes (Bot Internet projections into a non-active tab)

@@ -48,6 +48,7 @@ export const PRACTICE_OUTCOME_MAX_CHARS = 1500;
 export const PRACTICE_READ_ONLY_INLINE_TOOLS: ReadonlySet<string> = new Set([
   // Local conversation/session recall.
   'conversation_search',
+  'conversation_recall',
   'recent_chats',
   'idbots_session_read_all',
   'idbots_session_read_latest',

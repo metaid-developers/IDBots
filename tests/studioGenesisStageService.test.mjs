@@ -210,7 +210,7 @@ test('a reused tab id that shows another session is re-resolved, and its clicks 
     getSettings: () => ({ enabled: true, directorEnabled: false }),
     getLanguage: () => 'en',
     project: async (input) => ({ uri: `preview-metaapp://localhost${input.localPath}`, tabId: 11, announced: true }),
-    findStageTab: async () => 12,
+    getStageTab: async () => 12,
     runScript: async ({ tabId, script }) => {
       const page = pages[tabId];
       const expected = JSON.parse(script.match(/getState\(\)\.sessionId !== ("[^"]*")/)[1]);
@@ -241,6 +241,7 @@ test('a reused tab id that shows another session is re-resolved, and its clicks 
 
 test('the Live Stage skips claimed sessions and waits for the Genesis outro', async (t) => {
   const g = fixture(t);
+  const stageRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-genesis-liveroot-'));
   const projected = [];
   const live = createStudioLiveStageService({
     getSession: () => g.session,
@@ -248,13 +249,18 @@ test('the Live Stage skips claimed sessions and waits for the Genesis outro', as
     getSettings: () => ({ enabled: true, directorEnabled: false }),
     getLanguage: () => 'en',
     project: async (input) => { projected.push({ input, at: Date.now() }); return { uri: 'x', tabId: 11, announced: true }; },
+    getStageTab: async () => ({ id: 11, uri: null }),
     applyPatch: async () => {},
+    stageRoot,
     assetRoot: path.resolve('public/live-stage'),
     fallbackAvatarDataUri: 'data:image/png;base64,AA==',
     isSessionClaimed: (sessionId) => g.service.isClaimed(sessionId),
     beforeProjection: (sessionId) => g.service.beforeLiveStageProjection(sessionId),
   });
-  t.after(() => live.dispose());
+  t.after(() => {
+    live.dispose();
+    try { fs.rmSync(stageRoot, { recursive: true, force: true }); } catch { /* OS sweeps temp dirs */ }
+  });
   g.service.claimGreeting('s1');
   await wait(15);
   live.prepareSession('s1');
@@ -269,5 +275,6 @@ test('the Live Stage skips claimed sessions and waits for the Genesis outro', as
   await wait(80);
   assert.equal(projected.length, 1);
   assert.ok(projected[0].at - releasedAt >= 25, 'the Live Stage projects after the outro');
-  assert.match(projected[0].input.localPath, /live-stage-turn-/);
+  assert.match(projected[0].input.localPath, /-[0-9a-f]{12}[\\/]stage\.html$/, 'the Live Stage projects the persistent entry, not a per-turn file');
+  assert.equal(projected[0].input.role, 'stage', 'stage projections bind the stage role');
 });

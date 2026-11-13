@@ -52,7 +52,8 @@ export type StudioGenesisStageServiceDeps = {
   getSettings(): StudioLiveStageSettings;
   getLanguage(): 'zh' | 'en';
   project(input: BotBrowserProjectionInput): Promise<BotBrowserProjectionOutcome>;
-  findStageTab?(localPath: string): Promise<number | null>;
+  /** Resolve the session's stage-role tab id (role-aware binding lookup). */
+  getStageTab?(sessionId: string): Promise<number | null>;
   /** Run a script inside the stage tab's preview frame. */
   runScript(input: { tabId: number; script: string }): Promise<unknown>;
   /** Submit a visible owner turn into the session (the tour request). */
@@ -183,7 +184,7 @@ export function createStudioGenesisStageService(deps: StudioGenesisStageServiceD
     if (run.released || !runs.has(run.sessionId) || !run.projected) return;
     run.patchDirty = false;
     flushText(run);
-    if (run.tabId == null && deps.findStageTab) run.tabId = await deps.findStageTab(run.stagePath).catch(() => null);
+    if (run.tabId == null && deps.getStageTab) run.tabId = await deps.getStageTab(run.sessionId).catch(() => null);
     if (run.tabId == null) return;
     run.patchInFlight = true;
     run.lastPatchAt = Date.now();
@@ -218,8 +219,8 @@ export function createStudioGenesisStageService(deps: StudioGenesisStageServiceD
     try {
       flushText(run);
       writeStage(run, run.state);
-      const outcome = await deps.project({ sessionId: run.sessionId, localPath: run.stagePath, title: `${run.state.botName} · Genesis` });
-      run.tabId = outcome.tabId ?? (deps.findStageTab ? await deps.findStageTab(run.stagePath).catch(() => null) : null);
+      const outcome = await deps.project({ sessionId: run.sessionId, localPath: run.stagePath, title: `${run.state.botName} · Genesis`, role: 'stage' });
+      run.tabId = outcome.tabId ?? (deps.getStageTab ? await deps.getStageTab(run.sessionId).catch(() => null) : null);
       run.projected = true;
       if (process.env.NODE_ENV === 'development') {
         console.warn(`[StudioGenesisStage] projected ${run.sessionId} on tab ${run.tabId} (attempt ${run.projectAttempts})`);
@@ -257,7 +258,7 @@ export function createStudioGenesisStageService(deps: StudioGenesisStageServiceD
     if (run.pollInFlight || !run.projected) return;
     run.pollInFlight = true;
     try {
-      if (run.tabId == null && deps.findStageTab) run.tabId = await deps.findStageTab(run.stagePath).catch(() => null);
+      if (run.tabId == null && deps.getStageTab) run.tabId = await deps.getStageTab(run.sessionId).catch(() => null);
       if (run.tabId == null) return;
       const result = await deps.runScript({ tabId: run.tabId, script: buildGenesisDrainScript(run.sessionId) }) as { items?: unknown[]; reason?: string } | null;
       if (result?.reason === 'session-mismatch') run.tabId = null;

@@ -83,6 +83,7 @@ import {
   shouldRegisterStreamSessionFromFetch,
 } from './coworkStreamPresentation';
 import { i18nService } from './i18n';
+import { sessionTabBinding } from './sessionTabBinding';
 import { metabotAvatarCache } from './metabotAvatarCache';
 import {
   CoworkStreamReassembler,
@@ -331,9 +332,17 @@ class CoworkService {
 
     // Studio stage card presentation state: the overlay suppresses its
     // duplicate corner card while the stage is showing the prompt for the
-    // session the user is looking at (2026-11-12 spec defect 2).
-    const stageInteractionCleanup = cowork.onStreamStageInteraction(({ requestId, presented }) => {
+    // session the user is looking at (2026-11-12 spec defect 2). A presented
+    // card also pulls the stage tab forward — the owner must see the question
+    // even while reading a report on the showcase tab.
+    const stageInteractionCleanup = cowork.onStreamStageInteraction(({ sessionId, requestId, presented }) => {
       store.dispatch(setStageInteractionPresented({ requestId, presented }));
+      // The binding's role activation no-ops unless this session is the one
+      // on screen — the Studio session lives in browserCowork.currentSession,
+      // not cowork.currentSessionId, so the guard stays inside the binding.
+      if (presented && sessionId) {
+        void sessionTabBinding.controlSessionTab({ action: 'switch-tab', sessionId, role: 'stage' }).catch(() => {});
+      }
     });
     this.streamListenerCleanups.push(stageInteractionCleanup);
 

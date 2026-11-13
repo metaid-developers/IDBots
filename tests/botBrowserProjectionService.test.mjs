@@ -41,14 +41,14 @@ function projectionFixture() {
   };
 }
 
-test('projection routes stage and report through the same session binding', async () => {
+test('projection routes stage and report through the same session binding with fixed roles', async () => {
   const fixture = projectionFixture();
   const service = createBotBrowserProjectionService({
     getTabBridge: () => ({ execute: fixture.execute }),
     recordProjection: fixture.recordProjection,
   });
 
-  const stage = await service.project({ sessionId: 'session-a', localPath: '/reports/live-stage-a.html' });
+  const stage = await service.project({ sessionId: 'session-a', localPath: '/reports/live-stage-a.html', role: 'stage' });
   assert.equal(stage.tabId, 7);
   assert.equal(stage.announced, false);
   assert.deepEqual(fixture.commands[0], {
@@ -57,7 +57,9 @@ test('projection routes stage and report through the same session binding', asyn
     label: undefined,
     sessionId: 'session-a',
     tabId: undefined,
+    role: 'stage',
     activate: false,
+    background: true,
   });
 
   const report = await service.project({
@@ -65,13 +67,14 @@ test('projection routes stage and report through the same session binding', asyn
     localPath: '/reports/final-a.html',
     title: 'Final report',
     reveal: true,
-    tabId: stage.tabId,
+    role: 'showcase',
   });
   assert.equal(report.tabId, 7);
   assert.equal(report.announced, true);
   assert.equal(fixture.commands[1].sessionId, 'session-a');
-  assert.equal(fixture.commands[1].tabId, 7);
+  assert.equal(fixture.commands[1].role, 'showcase', 'reports land in the showcase role, never the stage tab');
   assert.equal(fixture.commands[1].activate, true);
+  assert.equal(fixture.commands[1].background, true, 'a revealed report never switches the app surface');
   assert.deepEqual(fixture.records, [
     { sessionId: 'session-a', uri: stage.uri, title: null },
     { sessionId: 'session-a', uri: report.uri, title: 'Final report' },
@@ -170,7 +173,14 @@ test('background tab commands preserve the app surface including an activated re
 
   await bridge.execute({ action: 'get-tabs' }, { focusWindow: false });
   await bridge.execute({ action: 'navigate-tab', tabId: 1, uri: 'preview-metaapp://localhost/report.html', activate: true }, { focusWindow: false });
+  // An explicit command.background wins over the focusWindow derivation:
+  // host-side lookups stay silent even without the opts, and a revealed
+  // report stays foreground even when the window is not OS-focused.
+  await bridge.execute({ action: 'get-tabs', sessionId: 's', role: 'stage', background: true });
+  await bridge.execute({ action: 'open-tab', uri: 'preview-metaapp://localhost/r.html', sessionId: 's', background: false }, { focusWindow: false });
 
   assert.equal(sent[0].command.background, true);
   assert.equal(sent[1].command.background, true);
+  assert.equal(sent[2].command.background, true, 'explicit background:true survives without focusWindow opts');
+  assert.equal(sent[3].command.background, false, 'explicit background:false survives focusWindow:false');
 });

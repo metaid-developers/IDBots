@@ -152,6 +152,8 @@ test('describeToolUseStatus: projection and browser tools get screen wording', (
 
 test('describeToolUseStatus: session/web/memory/todo/onchain surfaces', () => {
   assert.match(describeToolUseStatus('conversation_search', { query: '10 月版 BP' }, 'zh'), /正在翻找会话：10 月版 BP/);
+  assert.match(describeToolUseStatus('conversation_recall', { query: 'launch date' }, 'zh'), /正在翻看我们之前聊过的内容：launch date/);
+  assert.match(describeToolUseStatus('conversation_recall', {}, 'en'), /Looking back through this conversation/);
   assert.match(describeToolUseStatus('idbots_session_read_latest', { sessionId: 'abc' }, 'zh'), /正在翻找会话/);
   assert.match(describeToolUseStatus('web_search', { query: 'glm-5.3 effort' }, 'zh'), /正在网上查：glm-5\.3 effort/);
   assert.equal(describeToolUseStatus('todo_write', {}, 'zh'), '正在更新任务清单');
