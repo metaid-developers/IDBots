@@ -1,6 +1,6 @@
 import { ArrowLeftIcon, ArrowPathIcon, CheckCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { mePaymentPhase, type MePaymentCheckout } from '@/components/me/mePayment';
+import { formatMeMoney, meCheckoutErrorKey, mePaymentPhase, type MePaymentCheckout } from '@/components/me/mePayment';
 import { t } from '../../i18n';
 import { getMobileElectron } from '../appBridge';
 import { MeTierCards } from '../components/MeTierCards';
@@ -330,6 +330,12 @@ export default function MePurchaseScreen(props: {
 
   const needSubscriptionGate = section === 'topup' && !subscribed && !snapshot.subscriptionLoading;
   const isSubRequired = errorCode === 'SUBSCRIPTION_REQUIRED';
+  // The server envelope message is a generic "error"; the errorCode decides
+  // the copy (shared mapping with the desktop panel).
+  const submitErrorKey = submitError ? meCheckoutErrorKey(errorCode, submitError) : '';
+  const submitErrorText = submitErrorKey
+    ? t(`mobile.me.purchase.${submitErrorKey}`, { gateway: t(gateway === 'paypal' ? 'mobile.me.purchase.gatewayPaypal' : 'mobile.me.purchase.gatewayAlipay') })
+    : submitError;
   const title = section === 'subscribe' ? t('mobile.me.purchase.subscribeTitle') : t('mobile.me.purchase.topupTitle');
   const paymentUrl = checkout?.approvalUrl || (/^https?:\/\//i.test(checkout?.qrCode ?? '') ? checkout?.qrCode : '');
   const formVisible = phase === 'form' || phase === 'submitting';
@@ -399,6 +405,9 @@ export default function MePurchaseScreen(props: {
                   </button>
                 ))}
               </div>
+              {gateway === 'paypal' ? (
+                <p className="me-period-note" data-testid="me-paypal-usd-note">{t('mobile.me.purchase.paypalUsdNote')}</p>
+              ) : null}
             </section>
           </>
         ) : null}
@@ -475,7 +484,7 @@ export default function MePurchaseScreen(props: {
                     {t(paymentUrl ? 'mobile.me.purchase.waitingBrowser' : 'mobile.me.purchase.waitingQr')}
                   </p>
                 </div>
-                <span className="me-pay-amount">{t('mobile.me.purchase.amountDue', { price: checkout.payAmount })}</span>
+                <span className="me-pay-amount">{t('mobile.me.purchase.amountDue', { price: formatMeMoney(checkout.payAmount, checkout.payCurrency) })}</span>
               </div>
               {checkout.creditAppliedCny != null && checkout.creditAppliedCny > 0 ? (
                 <div className="me-proration" data-testid="me-proration-credit">
@@ -525,7 +534,7 @@ export default function MePurchaseScreen(props: {
             {checkout?.orderId ? <p className="me-success-order">{checkout.orderId}</p> : null}
             {checkout ? (
               <p className="me-success-order" data-testid="me-purchase-server-amount">
-                {t('mobile.me.purchase.submittedAmount', { price: checkout.payAmount })}
+                {t('mobile.me.purchase.submittedAmount', { price: formatMeMoney(checkout.payAmount, checkout.payCurrency) })}
               </p>
             ) : null}
             {props.onOpenUsage ? (
@@ -561,7 +570,7 @@ export default function MePurchaseScreen(props: {
         {submitError ? (
           <div className="twin-notice twin-notice-error" data-testid="me-purchase-error" role="alert">
             <p className="text-sm font-semibold">{isSubRequired ? t('mobile.me.purchase.subRequiredTitle') : t('mobile.me.purchase.errorTitle')}</p>
-            <p className="mt-1 text-xs">{isSubRequired ? t('mobile.me.purchase.subRequiredBody') : submitError}</p>
+            <p className="mt-1 text-xs">{isSubRequired ? t('mobile.me.purchase.subRequiredBody') : submitErrorText}</p>
             {isSubRequired ? (
               <button type="button" className="twin-button twin-button-primary twin-button-full mt-2" onClick={() => props.onSwitchSection('subscribe')}>
                 {t('mobile.me.purchase.openPlans')}

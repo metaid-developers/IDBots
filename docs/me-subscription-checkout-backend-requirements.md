@@ -295,3 +295,35 @@ Plan rows carry `priceCny` (mobile/cloud list price) and `desktopPriceCny`; `Pri
 - `src/renderer/components/me/mePayment.ts` — `extractMeProration` (breakdown field aliases), `meTierRank`/`isMePlanDowngrade` (ladder).
 - `src/mobile/app/me/mePointsStore.ts` — mobile mirror of the ladder + expiry parsing.
 - `tests/meTierDowngradeGuard.test.ts`, `tests/meSubscriptionExpiry.test.ts`, `tests/meDesktopPayment.test.ts` (proration cases), `tests/meSubscriptionOrder.test.mjs` (flow pins).
+
+---
+
+## Amendment v0.5 — PayPal USD settlement, gateway-failure code, paid-rate upgrade credit (2026-11-13)
+
+**Owner ruling 2026-11-13.** Shipped together: assist-base-service `feat/paypal-usd-checkout` (server) + IDBots `feat/paypal-subscription-billing` (desktop + mobile client).
+
+### Incident
+
+Choosing PayPal in the plan panel failed with `支付订单处理失败：error`. Root cause: every ME PayPal order (subscription and topup) was created with `currency_code: "CNY"`; the PayPal merchant account cannot settle CNY (PayPal supports CNY only for in-country China accounts), so the create call failed, the server answered `INTERNAL_ERROR` with the generic envelope message `"error"`, and the client printed that message verbatim. The earlier traffic-recharge PayPal flow worked because its plans were priced in USD.
+
+### R11 — PayPal charges whole US dollars
+
+- Plans and topup packages stay priced in CNY. A PayPal checkout charges `ceil(finalCny / 6)` whole dollars of the **final** amount (after period discount and upgrade credit): ¥49 → $9, quarter ¥132.3 → $23, year ¥470.4 → $79, topup ¥30 → $5.
+- Integer-cent arithmetic on both sides (`(cents + 599) / 600`) so exact multiples stay exact (¥48 → $8).
+- The USD amount is derived from the CNY snapshot (no schema change). Subscription rows persist `payCurrency = "USD"`; topup rows derive the currency from `gateway`. The derived amount drives the PayPal create call, the capture amount/currency check, and the order views: `payAmount`/`payCurrency` = what is charged, `amountCny`/`payAmountCny` = the CNY price.
+- A created PayPal row persisted before the fix with `payCurrency = "CNY"` heals to USD on its idempotent replay.
+- Alipay is unchanged (CNY).
+
+### R12 — `GATEWAY_UNAVAILABLE`
+
+A configured gateway that fails to open a payment session (API error, network, merchant restriction) returns `data.errorCode: "GATEWAY_UNAVAILABLE"` and logs `[PAYPAL-ALERT]`/`[ALIPAY-ALERT] me <kind> create payment failed …` with the raw gateway error. `GATEWAY_NOT_CONFIGURED` keeps meaning "disabled / missing credentials". Clients render copy from `errorCode`, never from the envelope message.
+
+### R6 amendment — upgrade credit at the rate actually paid
+
+`credit = value of the remaining days at the per-day rate the user paid`, walking the active plan's credited orders newest-first (renewals stack at the end of the window). A prorated upgrade order counts at its list amount. Days not backed by a paid order (admin grants, bundles) keep the previous `monthly / 30` rule. This removes the over-credit for quarterly/yearly payers (a yearly ID.Pupil paid ¥470.4; the old rule credited ¥596.17).
+
+### Unchanged, re-confirmed
+
+- Downgrades during an active subscription are rejected (client lock + server `PLAN_DOWNGRADE_NOT_ALLOWED`); no refunds.
+- Same-tier order while active = renewal: the period (30 / 90 / 365 days) extends from the current expiry. The desktop panel now states the resulting expiry date.
+- Upgrade = immediate switch; the new period starts at credit time.

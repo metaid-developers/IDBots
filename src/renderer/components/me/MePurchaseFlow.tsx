@@ -15,24 +15,30 @@ import type { MePlanInfo, MeTopupPackageInfo } from '../../types/electron';
 import {
   ensureMeSnapshot,
   formatMe,
+  formatMeExpiryDate,
   getMeSnapshot,
   invalidateMeSnapshot,
   isMeEffectivelySubscribed,
   meActivePlanId,
   meFromMilli,
+  meSubscriptionExpiryMs,
   requestMeSubscription,
   requestOpenUsagePage,
   subscribeMeSnapshot,
   type MePurchaseSection,
 } from './mePointsStore';
 import {
+  formatMeMoney,
   isMePlanDowngrade,
+  meCheckoutErrorKey,
   meDiscountFromPct,
+  meGatewayCharge,
   mePaymentPhase,
   mePeriodPricing,
   meTierRank,
   normalizeMePaymentCheckout,
   type MePaymentCheckout,
+  type MePaymentGatewayOption,
   type MeSubscriptionPeriodOption,
 } from './mePayment';
 
@@ -105,23 +111,17 @@ const formatPaymentDeadline = (expiresAt: number): string => {
   }
 };
 
-/**
- * The selected gateway is not enabled server-side (assist-base-service
- * ErrGatewayNotConfigured — e.g. PayPal credentials not set in production).
- * Matched on the envelope errorCode first, then the server message, so the
- * user sees "use Alipay instead" rather than a raw backend string.
- */
-const isGatewayUnavailableError = (errorCode: string, message: string): boolean => (
-  /GATEWAY_NOT_CONFIGURED|GATEWAY_UNSUPPORTED/i.test(errorCode)
-  || /gateway is not configured|gateway unsupported/i.test(message)
-);
+/** Subscription length the server grants per period (month = plan default 30). */
+const PERIOD_DAYS: Record<MeSubscriptionPeriodOption, number> = { month: 30, quarter: 90, year: 365 };
+
+const DAY_MS = 86_400_000;
 
 const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectionChange, onClose, chrome = 'modal' }) => {
   const snapshot = React.useSyncExternalStore(subscribeMeSnapshot, getMeSnapshot, getMeSnapshot);
   const [selectedPlanId, setSelectedPlanId] = useState('');
   const [selectedPackageId, setSelectedPackageId] = useState('');
   const [period, setPeriod] = useState<MeSubscriptionPeriodOption>('month');
-  const [gateway, setGateway] = useState<'alipay' | 'paypal'>('alipay');
+  const [gateway, setGateway] = useState<MePaymentGatewayOption>('alipay');
   const [topupPackages, setTopupPackages] = useState<MeTopupPackageInfo[]>([]);
   const [phase, setPhase] = useState<OrderPhase>('pick');
   const [orderError, setOrderError] = useState('');
@@ -287,6 +287,18 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
   const amountDue = section === 'subscribe'
     ? (isFreeSelected ? 0 : periodPricing?.total ?? null)
     : selectedTopup?.priceCny ?? null;
+  // What the selected gateway will actually charge (PayPal settles whole
+  // USD, ceil(CNY / 6)); the server returns the authoritative figure on the
+  // order, this only previews it before the order exists.
+  const gatewayCharge = amountDue != null && amountDue > 0 ? meGatewayCharge(gateway, amountDue) : null;
+  // Same-tier renewal (R8.1): the new period extends from the CURRENT
+  // expiry — the panel states the resulting date so a renewal never reads
+  // like a restart.
+  const isRenewal = section === 'subscribe' && subscribed && !!selectedPlan && !isFreeSelected && isCurrentPlan(selectedPlan);
+  const currentExpiryMs = meSubscriptionExpiryMs(snapshot.subscription);
+  const renewedExpiryMs = isRenewal && currentExpiryMs && currentExpiryMs > Date.now()
+    ? currentExpiryMs + PERIOD_DAYS[period] * DAY_MS
+    : null;
 
   useEffect(() => {
     if (!checkout?.qrCode) {
@@ -386,7 +398,7 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
     const dayStamp = new Date().toISOString().slice(0, 10);
     const idempotencyKey = section === 'subscribe'
       ? `desktop-subscribe-${subjectId}-${period}-${gateway}-${dayStamp}`
-      : `desktop-topup-${subjectId}-${dayStamp}`;
+      : `desktop-topup-${subjectId}-${gateway}-${dayStamp}`;
     try {
       const res = section === 'subscribe'
         ? await window.electron.mePoints.submitSubscriptionOrder({
@@ -398,7 +410,7 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
           })
         : await window.electron.mePoints.submitTopupOrder({
             packageId: subjectId,
-            gateway: 'alipay',
+            gateway,
             idempotencyKey,
           });
       if (!res.success) {
@@ -410,7 +422,7 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
       const order = section === 'subscribe'
         ? ('subscriptionOrder' in res ? res.subscriptionOrder : null)
         : ('submission' in res ? res.submission?.order : null);
-      const nextCheckout = normalizeMePaymentCheckout(order, amountDue ?? 0);
+      const nextCheckout = normalizeMePaymentCheckout(order, gatewayCharge?.amount ?? amountDue ?? 0, gatewayCharge?.currency);
       if (!nextCheckout) {
         setPhase('pick');
         setOrderError(i18nService.t('mePurchaseUnavailable'));
@@ -444,7 +456,7 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
       setPhase('pick');
       setOrderError(error instanceof Error && error.message ? error.message : i18nService.t('mePurchaseUnavailable'));
     }
-  }, [section, selectedPlan, selectedTopup, phase, period, amountDue, gateway, isFreeSelected, isUpgradePlan, upgradeConfirmOpen]);
+  }, [section, selectedPlan, selectedTopup, phase, period, amountDue, gatewayCharge, gateway, isFreeSelected, isUpgradePlan, upgradeConfirmOpen]);
 
   const backToPicker = () => {
     setPhase('pick');
@@ -459,6 +471,51 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
   const canCreate = section === 'subscribe'
     ? Boolean(selectedPlan) && !isFreeSelected && !isPlanBlocked(selectedPlan!)
     : section === 'topup' && subscribed && Boolean(selectedTopup);
+  const errorKey = orderError ? meCheckoutErrorKey(errorCode, orderError) : '';
+  const gatewayName = i18nService.t(gateway === 'paypal' ? 'mePurchaseGatewayPaypal' : 'mePurchaseGatewayAlipay');
+
+  const gatewayPicker = (
+    <div className="rounded-xl border border-claude-border dark:border-claude-darkBorder bg-claude-surfaceInset/40 dark:bg-claude-darkSurfaceInset/30 px-3 py-2">
+      <span className="text-[11px] font-medium text-claude-textSecondary dark:text-claude-darkTextSecondary">
+        {i18nService.t('mePurchaseGatewayLabel')}
+      </span>
+      <div className="mt-1.5 grid grid-cols-2 gap-2">
+        {(['alipay', 'paypal'] as const).map((value) => (
+          <button
+            key={value}
+            type="button"
+            disabled={phase === 'creating'}
+            onClick={() => setGateway(value)}
+            className={`rounded-lg border px-2 py-1.5 text-[11px] transition-colors ${
+              gateway === value
+                ? 'border-claude-accent text-claude-accent dark:text-claude-darkAccent bg-claude-accent/5'
+                : 'border-claude-border dark:border-claude-darkBorder text-claude-text dark:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
+            }`}
+          >
+            {i18nService.t(value === 'alipay' ? 'mePurchaseGatewayAlipay' : 'mePurchaseGatewayPaypal')}
+          </button>
+        ))}
+      </div>
+      {gateway === 'paypal' && (
+        <p className="mt-1.5 text-[10px] leading-relaxed text-claude-textSecondary dark:text-claude-darkTextSecondary" data-testid="me-paypal-usd-note">
+          {i18nService.t('mePurchasePaypalUsdNote')}
+        </p>
+      )}
+    </div>
+  );
+
+  // PayPal charge preview under the CNY amount ("PayPal 实付 $9").
+  const chargeLine = gatewayCharge && gatewayCharge.currency !== 'CNY' ? (
+    <div className="mt-1 flex items-baseline justify-between gap-2" data-testid="me-gateway-charge">
+      <span className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+        {i18nService.t('mePurchaseGatewayCharge').replace('{gateway}', gatewayName)}
+      </span>
+      <span className="tabular-nums text-sm font-semibold text-claude-text dark:text-claude-darkText">
+        {formatMeMoney(gatewayCharge.amount, gatewayCharge.currency)}
+      </span>
+    </div>
+  ) : null;
+
   const paymentUrl = checkout?.approvalUrl || (/^https?:\/\//i.test(checkout?.qrCode ?? '') ? checkout!.qrCode : '');
 
   // The flow body, shared verbatim by both chromes (页面嵌套定版 2026-11-09):
@@ -571,30 +628,7 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
                     </div>
                   )}
 
-                  {selectedPlan && !isFreeSelected && (
-                    <div className="rounded-xl border border-claude-border dark:border-claude-darkBorder bg-claude-surfaceInset/40 dark:bg-claude-darkSurfaceInset/30 px-3 py-2">
-                      <span className="text-[11px] font-medium text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                        {i18nService.t('mePurchaseGatewayLabel')}
-                      </span>
-                      <div className="mt-1.5 grid grid-cols-2 gap-2">
-                        {(['alipay', 'paypal'] as const).map((value) => (
-                          <button
-                            key={value}
-                            type="button"
-                            disabled={phase === 'creating'}
-                            onClick={() => setGateway(value)}
-                            className={`rounded-lg border px-2 py-1.5 text-[11px] transition-colors ${
-                              gateway === value
-                                ? 'border-claude-accent text-claude-accent dark:text-claude-darkAccent bg-claude-accent/5'
-                                : 'border-claude-border dark:border-claude-darkBorder text-claude-text dark:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
-                            }`}
-                          >
-                            {i18nService.t(value === 'alipay' ? 'mePurchaseGatewayAlipay' : 'mePurchaseGatewayPaypal')}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                  {selectedPlan && !isFreeSelected && gatewayPicker}
                 </div>
               )}
 
@@ -695,19 +729,34 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
                         </span>
                       )}
                     </div>
+                    {chargeLine}
+                    {isRenewal && (
+                      <p className="mt-1 text-[10px] leading-relaxed text-claude-textSecondary dark:text-claude-darkTextSecondary" data-testid="me-renewal-note">
+                        {renewedExpiryMs
+                          ? i18nService.t('mePurchaseRenewNote')
+                            .replace('{days}', String(PERIOD_DAYS[period]))
+                            .replace('{date}', formatMeExpiryDate(renewedExpiryMs))
+                          : i18nService.t('mePurchaseRenewNoteNoDate').replace('{days}', String(PERIOD_DAYS[period]))}
+                      </p>
+                    )}
                   </div>
                 )
               )}
 
+              {section === 'topup' && canCreate && gatewayPicker}
+
               {section === 'topup' && canCreate && (
-                <div className="flex items-baseline justify-between rounded-xl bg-claude-surfaceInset/40 dark:bg-claude-darkSurfaceInset/30 px-3 py-2">
-                  <span className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                    {i18nService.t('mePurchaseAmountDue')}
-                  </span>
-                  <span className="tabular-nums text-base font-semibold text-claude-text dark:text-claude-darkText">
-                    {priceLabel(amountDue)}
-                    <span className="ml-0.5 text-[10px] font-normal">{i18nService.t('mePurchaseCny')}</span>
-                  </span>
+                <div className="rounded-xl bg-claude-surfaceInset/40 dark:bg-claude-darkSurfaceInset/30 px-3 py-2">
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                      {i18nService.t('mePurchaseAmountDue')}
+                    </span>
+                    <span className="tabular-nums text-base font-semibold text-claude-text dark:text-claude-darkText">
+                      {priceLabel(amountDue)}
+                      <span className="ml-0.5 text-[10px] font-normal">{i18nService.t('mePurchaseCny')}</span>
+                    </span>
+                  </div>
+                  {chargeLine}
                 </div>
               )}
             </>
@@ -724,7 +773,9 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
               <div className="flex items-center justify-between rounded-xl bg-claude-surfaceInset/50 dark:bg-claude-darkSurfaceInset/40 px-3 py-2.5">
                 <span className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">{i18nService.t('mePurchaseAmountDue')}</span>
                 <span className="text-base font-semibold tabular-nums text-claude-text dark:text-claude-darkText">
-                  {priceLabel(checkout.payAmount)} {i18nService.t('mePurchaseCny')}
+                  {checkout.payCurrency.toUpperCase() === 'CNY'
+                    ? `${priceLabel(checkout.payAmount)} ${i18nService.t('mePurchaseCny')}`
+                    : formatMeMoney(checkout.payAmount, checkout.payCurrency)}
                 </span>
               </div>
               {/* Upgrade proration credit (Amendment v0.4 R6): rendered only
@@ -854,9 +905,9 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
                     {i18nService.t('mePurchaseOpenPlans')}
                   </button>
                 </>
-              ) : isGatewayUnavailableError(errorCode, orderError) ? (
-                <p className="text-[11px] text-red-700 dark:text-red-300">
-                  {i18nService.t('mePurchaseGatewayUnavailable')}
+              ) : errorKey ? (
+                <p className="text-[11px] text-red-700 dark:text-red-300" data-testid="me-checkout-error" data-error-code={errorCode}>
+                  {i18nService.t(errorKey).replace('{gateway}', gatewayName)}
                 </p>
               ) : (
                 <p className="text-[11px] text-red-700 dark:text-red-300">

@@ -6,7 +6,11 @@ import {
   extractMeExpiresAt,
   extractMeProration,
   extractMeQrCode,
+  formatMeMoney,
+  meCheckoutErrorKey,
   meDiscountFromPct,
+  meGatewayCharge,
+  mePaypalUsdFromCny,
   mePaymentPhase,
   mePeriodPricing,
   normalizeMePaymentCheckout,
@@ -146,4 +150,38 @@ test('proration fields stay absent until the server reports them (never invented
   const plain = normalizeMePaymentCheckout({ orderId: 'me-order-5', payAmount: 49 }, 49);
   assert.equal(plain?.creditAppliedCny, undefined);
   assert.equal(plain?.listAmountCny, undefined);
+});
+
+test('PayPal charges whole USD: ceil(CNY / 6) of the final amount (owner ruling 2026-11-13)', () => {
+  assert.equal(mePaypalUsdFromCny(49), 9);
+  assert.equal(mePaypalUsdFromCny(149), 25);
+  assert.equal(mePaypalUsdFromCny(449), 75);
+  assert.equal(mePaypalUsdFromCny(132.3), 23);
+  assert.equal(mePaypalUsdFromCny(470.4), 79);
+  assert.equal(mePaypalUsdFromCny(48), 8);
+  assert.equal(mePaypalUsdFromCny(0), 0);
+  assert.deepEqual(meGatewayCharge('paypal', 132.3), { amount: 23, currency: 'USD' });
+  assert.deepEqual(meGatewayCharge('alipay', 132.3), { amount: 132.3, currency: 'CNY' });
+  assert.equal(formatMeMoney(9, 'USD'), '$9');
+  assert.equal(formatMeMoney(49, 'CNY'), '¥49');
+  assert.equal(formatMeMoney(null, 'USD'), '—');
+  // the server's USD figure wins; the currency fallback only fills a gap
+  const checkout = normalizeMePaymentCheckout({
+    orderId: 'mso_1', status: 'created', payAmount: 9, payCurrency: 'USD',
+    gatewayParams: { approvalUrl: 'https://www.paypal.com/checkoutnow?token=X' },
+  }, 49);
+  assert.equal(checkout?.payAmount, 9);
+  assert.equal(checkout?.payCurrency, 'USD');
+  assert.equal(normalizeMePaymentCheckout({ orderId: 'mso_2' }, 9, 'USD')?.payCurrency, 'USD');
+});
+
+test('checkout errors map by errorCode, never the bare "error" envelope message', () => {
+  assert.equal(meCheckoutErrorKey('GATEWAY_UNAVAILABLE', 'error'), 'mePurchaseGatewayUnavailable');
+  assert.equal(meCheckoutErrorKey('GATEWAY_NOT_CONFIGURED', 'error'), 'mePurchaseGatewayNotConfigured');
+  assert.equal(meCheckoutErrorKey('PLAN_DOWNGRADE_NOT_ALLOWED', 'error'), 'mePurchaseDowngradeBlocked');
+  assert.equal(meCheckoutErrorKey('LIMIT_EXCEEDED', 'error'), 'mePurchaseRateLimited');
+  assert.equal(meCheckoutErrorKey('INTERNAL_ERROR', 'error'), 'mePurchaseServiceError');
+  assert.equal(meCheckoutErrorKey('', 'error'), 'mePurchaseServiceError');
+  // a real descriptive message without a known code stays visible as-is
+  assert.equal(meCheckoutErrorKey('', 'ME service request timed out after 15000ms.'), '');
 });

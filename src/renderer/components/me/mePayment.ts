@@ -98,6 +98,7 @@ export function extractMeExpiresAt(order: PaymentOrder | null | undefined): numb
 export function normalizeMePaymentCheckout(
   order: PaymentOrder | null | undefined,
   fallbackAmount: number,
+  fallbackCurrency = 'CNY',
 ): MePaymentCheckout | null {
   const orderId = textOf(order?.orderId);
   if (!orderId) return null;
@@ -107,7 +108,7 @@ export function normalizeMePaymentCheckout(
     approvalUrl: extractMeApprovalUrl(order?.gatewayParams),
     qrCode: extractMeQrCode(order?.gatewayParams),
     payAmount: amountOf(order?.payAmount) ?? amountOf(order?.amountCny) ?? amountOf(order?.priceCny) ?? fallbackAmount,
-    payCurrency: textOf(order?.payCurrency) || 'CNY',
+    payCurrency: textOf(order?.payCurrency) || fallbackCurrency,
     expiresAt: extractMeExpiresAt(order),
     ...extractMeProration(order),
   };
@@ -252,4 +253,63 @@ export function meDiscountFromPct(discountPct: number): MeDiscountParts | null {
   const zhe = (Math.round(zheValue * 10) / 10).toString();
   const pctOff = Math.min(99, Math.max(1, Math.round(100 - discountPct)));
   return { zhe, pctOff };
+}
+
+// ---------------------------------------------------------------------------
+// PayPal settlement currency (owner ruling 2026-11-13): plans and packages
+// are priced in CNY; the PayPal merchant account settles USD, so a PayPal
+// checkout charges ceil(cny / 6) WHOLE dollars of the final amount (49 → $9,
+// quarter 132.3 → $23). The server (assist-base-service gateway_charge.go)
+// is authoritative and returns payAmount/payCurrency on the order; this
+// mirror only previews the amount before the order exists — keep in sync.
+// ---------------------------------------------------------------------------
+
+export type MePaymentGatewayOption = 'alipay' | 'paypal';
+
+export const ME_PAYPAL_CNY_PER_USD = 6;
+
+/** Whole-dollar PayPal charge for a CNY amount (integer cents, rounded up). */
+export function mePaypalUsdFromCny(amountCny: number): number {
+  if (!Number.isFinite(amountCny)) return 0;
+  const cents = Math.round(amountCny * 100);
+  if (cents <= 0) return 0;
+  const centsPerUsd = ME_PAYPAL_CNY_PER_USD * 100;
+  return Math.floor((cents + centsPerUsd - 1) / centsPerUsd);
+}
+
+/** Currency + amount a gateway charges for a CNY-priced subject. */
+export function meGatewayCharge(gateway: MePaymentGatewayOption, amountCny: number): { amount: number; currency: 'CNY' | 'USD' } {
+  return gateway === 'paypal'
+    ? { amount: mePaypalUsdFromCny(amountCny), currency: 'USD' }
+    : { amount: amountCny, currency: 'CNY' };
+}
+
+/** "¥49" / "$9" / "49 EUR" — compact money label for the payment panel. */
+export function formatMeMoney(amount: number | null | undefined, currency: string | null | undefined): string {
+  if (amount == null || !Number.isFinite(amount)) return '—';
+  const code = (currency || 'CNY').toUpperCase();
+  if (code === 'CNY') return `¥${amount}`;
+  if (code === 'USD') return `$${amount}`;
+  return `${amount} ${code}`;
+}
+
+/**
+ * Error-code → i18n key for a failed checkout. The server's business
+ * envelope carries a generic message ("error") plus data.errorCode, so the
+ * code — never the raw message — decides what the user reads. Returns ''
+ * for codes without a dedicated copy (the caller falls back to the message).
+ */
+export function meCheckoutErrorKey(errorCode: string, message: string): string {
+  const code = (errorCode || '').toUpperCase();
+  if (code === 'GATEWAY_NOT_CONFIGURED' || code === 'GATEWAY_UNSUPPORTED' || /gateway is not configured|gateway unsupported/i.test(message)) {
+    return 'mePurchaseGatewayNotConfigured';
+  }
+  if (code === 'GATEWAY_UNAVAILABLE' || /gateway is temporarily unavailable/i.test(message)) {
+    return 'mePurchaseGatewayUnavailable';
+  }
+  if (code === 'PLAN_DOWNGRADE_NOT_ALLOWED') return 'mePurchaseDowngradeBlocked';
+  if (code === 'LIMIT_EXCEEDED') return 'mePurchaseRateLimited';
+  if (code === 'PLAN_NOT_PURCHASABLE' || code === 'STATE_CONFLICT' || code === 'NOT_FOUND') return 'mePurchasePlanUnavailable';
+  if (code === 'INTERNAL_ERROR' || /^error$/i.test(message.trim())) return 'mePurchaseServiceError';
+  return '';
 }
