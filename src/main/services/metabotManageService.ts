@@ -1125,6 +1125,61 @@ function emptyEditSyncPlan(metabotId: number): EditSyncInput {
   return plan;
 }
 
+/** Pending steps the unattended re-sync can publish (owner needs a fresh signature, chatpubkey the full sync). */
+const AUTO_RESYNC_STEPS = new Set<string>(['name', 'avatar', 'nftAvatar', 'bio', 'persona', 'llm', 'chatSkills', 'homepage']);
+
+export interface ResyncPendingChainStepsResult {
+  /** Steps this call tried to publish (empty = nothing auto-resyncable was pending). */
+  attemptedSteps: string[];
+  success: boolean;
+  /** Steps still pending afterwards (including ones the auto path never touches). */
+  remainingSteps: string[];
+  error?: string;
+}
+
+/**
+ * Republish exactly the bot's persisted pending steps through the edit-sync
+ * plan — the unattended twin of the My Bots "re-sync now" button. Only the
+ * steps that confirm leave the plan (on-chain pins are not idempotent).
+ */
+export async function resyncPendingChainStepsCore(
+  metabotId: number,
+  deps: Pick<MetabotManageDeps, 'store' | 'syncEditChanges'>,
+): Promise<ResyncPendingChainStepsResult> {
+  const pending = readChainSyncPending(deps.store, metabotId)?.remainingSteps ?? [];
+  const attemptedSteps = pending.filter((step) => AUTO_RESYNC_STEPS.has(step));
+  if (attemptedSteps.length === 0 || !deps.store.getMetabotById(metabotId)) {
+    return { attemptedSteps: [], success: false, remainingSteps: pending };
+  }
+  const plan = emptyEditSyncPlan(metabotId);
+  for (const [step, flag] of STEP_TO_FLAG) {
+    if (attemptedSteps.includes(step)) plan[flag] = true;
+  }
+  let result: ChainSyncResult;
+  try {
+    result = await deps.syncEditChanges(deps.store, plan);
+  } catch (error) {
+    return { attemptedSteps, success: false, remainingSteps: pending, error: error instanceof Error ? error.message : String(error) };
+  }
+  applyChainSyncProgress(deps.store, metabotId, result.syncedSteps ?? []);
+  const remainingSteps = readChainSyncPending(deps.store, metabotId)?.remainingSteps ?? [];
+  return {
+    attemptedSteps,
+    success: attemptedSteps.every((step) => !remainingSteps.includes(step)),
+    remainingSteps,
+    error: result.error,
+  };
+}
+
+/** Bots whose persisted plan still holds auto-resyncable steps (funded wallets only). */
+export function listAutoResyncCandidates(store: MetabotStore): number[] {
+  return store.listMetabots()
+    .filter((metabot) => readMetabotSubsidyState(store, metabot.id).state !== 'failed')
+    .filter((metabot) => (readChainSyncPending(store, metabot.id)?.remainingSteps ?? [])
+      .some((step) => AUTO_RESYNC_STEPS.has(step)))
+    .map((metabot) => metabot.id);
+}
+
 /**
  * Apply a metabot update locally and then publish the changed info pins to the
  * chain. Single source of truth for the on-chain sync plan (buildEditSyncFlags)
@@ -1231,6 +1286,17 @@ export async function updateMetaBotCore(
     }
   }
 
+  // Steps still owed from EARLIER attempts (e.g. a first-run create whose
+  // profile pins failed) must survive this edit's bookkeeping: the edit only
+  // settles what it confirms. Overwriting the plan with this edit's own
+  // remainder silently dropped them and left the bot "partial" with nothing
+  // to re-sync (2026-11-13 first-run Twin rename).
+  const priorPendingSteps = readChainSyncPending(store, id)?.remainingSteps ?? [];
+  const carryPending = (remaining: string[], synced: string[]): string[] => {
+    const settled = new Set(synced);
+    return [...new Set([...priorPendingSteps.filter((step) => !settled.has(step)), ...remaining])];
+  };
+
   let plan: EditSyncInput = { ...flags, ownerBindingPayload };
   let syncResult: ChainSyncResult;
   try {
@@ -1259,7 +1325,7 @@ export async function updateMetaBotCore(
     const errMsg = error instanceof Error ? error.message : String(error);
     // Publish attempt blew up mid-flight: persist what was still in the plan
     // so the partial badge + re-sync survive a restart.
-    writeChainSyncPending(store, id, { remainingSteps: flagsToStepKeys(plan), error: errMsg });
+    writeChainSyncPending(store, id, { remainingSteps: carryPending(flagsToStepKeys(plan), []), error: errMsg });
     return {
       success: true,
       metabot: local.metabot,
@@ -1277,7 +1343,7 @@ export async function updateMetaBotCore(
   const updated = store.getMetabotById(id) ?? local.metabot;
   const overallSuccess = syncResult.success || Boolean(syncResult.canSkip);
   const remainingAfter = subtractSyncedFlags({ ...flags, ownerBindingPayload }, syncResult.syncedSteps ?? []);
-  const remainingAfterKeys = flagsToStepKeys(remainingAfter);
+  const remainingAfterKeys = carryPending(flagsToStepKeys(remainingAfter), syncResult.syncedSteps ?? []);
   writeChainSyncPending(
     store,
     id,

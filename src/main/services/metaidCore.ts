@@ -515,12 +515,23 @@ export function resolveCreatePinNetwork(network?: CreatePinNetwork | string): Cr
  * simplemsg, buzz, MetaApp publish, RPC writes) without per-callsite
  * wrappers. The original error is rethrown when the subsidy request fails.
  */
+const MVC_SUBSIDY_SETTLE_MS = 3000;
+
 export async function runMvcCreatePinWithInsufficientFundsRescue<T>(params: {
   metabotId: number;
   operation: string;
   path: string;
   requestFreshFunding: (trigger?: string) => Promise<boolean>;
   run: () => Promise<T>;
+  /**
+   * Wait after a granted subsidy before the retry. The subsidy payout is
+   * broadcast by the service and can take a moment to reach the UTXO
+   * provider; retrying in the same instant re-read an empty wallet (2026-11-13
+   * first-run Twin: bio/persona/llm/chatSkills all failed "Not enough balance"
+   * right after "Fresh MVC funding request ... succeeded").
+   */
+  settleMs?: number;
+  sleep?: (ms: number) => Promise<void>;
 }): Promise<T> {
   try {
     return await params.run();
@@ -540,6 +551,7 @@ export async function runMvcCreatePinWithInsufficientFundsRescue<T>(params: {
       throw error;
     }
     clearMvcExcludedOutpoints(params.metabotId);
+    if ((params.settleMs ?? 0) > 0) await (params.sleep ?? sleep)(params.settleMs!);
     return params.run();
   }
 }
@@ -964,6 +976,7 @@ export async function createPin(
           path: metaidData.path || '',
           requestFreshFunding,
           run: runModeDispatch,
+          settleMs: MVC_SUBSIDY_SETTLE_MS,
         });
       },
     });

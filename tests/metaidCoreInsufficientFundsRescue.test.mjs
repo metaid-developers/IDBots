@@ -227,3 +227,29 @@ test('propagates the retry error when the write still fails after funding', asyn
     resetMvcSpendSessionStateForTests();
   }
 });
+
+test('waits for the granted subsidy to settle before the retry', async () => {
+  const restore = silenceConsole();
+  try {
+    const order = [];
+    let runCalls = 0;
+    const result = await runMvcCreatePinWithInsufficientFundsRescue({
+      metabotId: 905,
+      operation: 'create',
+      path: '/info/bio',
+      settleMs: 3000,
+      sleep: async (ms) => { order.push(`sleep:${ms}`); },
+      requestFreshFunding: async () => { order.push('fund'); return true; },
+      run: async () => {
+        runCalls += 1;
+        order.push(`run:${runCalls}`);
+        if (runCalls === 1) throw new Error('Not enough balance');
+        return { txids: ['tx-after-settle'] };
+      },
+    });
+    assert.deepEqual(result, { txids: ['tx-after-settle'] });
+    assert.deepEqual(order, ['run:1', 'fund', 'sleep:3000', 'run:2']);
+  } finally {
+    restore();
+  }
+});
