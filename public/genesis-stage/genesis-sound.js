@@ -1,9 +1,10 @@
 /*
  * Genesis Stage sound — restrained, synthesized cues that follow the orb.
  *
- * Everything is generated with the Web Audio API (no audio files): a near
- * subliminal ambient bed whose filter breathes with the orb, plus short glassy
- * event cues on one D-major pentatonic palette. The whole bus runs through a
+ * Everything is generated with the Web Audio API (no audio files): a soft
+ * tonal bed that only sounds while the orb speaks, plus short glassy event
+ * cues on one D-major pentatonic palette. Silence is true silence: there is no
+ * always-on drone or noise layer, so nothing hums between lines. The whole bus runs through a
  * generated reverb, a low-pass and a compressor at a low master level.
  *
  * window.createGenesisSound({ context?, enabled? }) → engine:
@@ -22,6 +23,8 @@
     return ROOT * Math.pow(2, (SCALE[index] + 12 * lift) / 12);
   };
   const FLOOR = 0.0001;
+  // Speech envelope below which the bed is fully silent.
+  const BED_GATE = 0.06;
 
   // Minimum gap between two cues of the same name (seconds).
   const THROTTLE = {
@@ -95,7 +98,12 @@
       return buffer;
     }
 
-    // ── ambient bed (breathes with the orb) ────────────────────────────
+    // ── speech bed (sounds only while the orb speaks) ──────────────────
+    // The bed used to idle at a constant level with a looping band-passed
+    // noise "air" layer on top; through laptop speakers that read as a
+    // permanent hum + hiss floor between lines. The bed is now gated by the
+    // speech envelope alone (zero output at rest) and the noise layer is gone
+    // — whooshes keep their own one-shot noise sources.
     const bedFilter = ctx.createBiquadFilter();
     bedFilter.type = 'lowpass';
     bedFilter.frequency.value = 260;
@@ -105,9 +113,9 @@
     bedFilter.connect(bedGain);
     bedGain.connect(bus);
     const bedOscillators = [
-      { type: 'sine', freq: note(0, -2), level: 0.55, detune: 0 },
-      { type: 'sine', freq: note(3, -2), level: 0.32, detune: 4 },
-      { type: 'triangle', freq: note(0, -1), level: 0.12, detune: -3 },
+      { type: 'sine', freq: note(0, -1), level: 0.5, detune: 0 },
+      { type: 'sine', freq: note(3, -1), level: 0.3, detune: 4 },
+      { type: 'triangle', freq: note(0, 0), level: 0.1, detune: -3 },
     ].map((spec) => {
       const osc = ctx.createOscillator();
       osc.type = spec.type;
@@ -120,19 +128,6 @@
       osc.start();
       return osc;
     });
-    const air = ctx.createBufferSource();
-    air.buffer = noise;
-    air.loop = true;
-    const airFilter = ctx.createBiquadFilter();
-    airFilter.type = 'bandpass';
-    airFilter.frequency.value = 1900;
-    airFilter.Q.value = 0.6;
-    const airGain = ctx.createGain();
-    airGain.gain.value = 0;
-    air.connect(airFilter);
-    airFilter.connect(airGain);
-    airGain.connect(bus);
-    air.start();
     let bedLevel = 0;
 
     // ── voices ─────────────────────────────────────────────────────────
@@ -391,10 +386,11 @@
       const speech = Math.max(0, Math.min(1, Number(input.speech) || 0));
       const glow = Math.max(0, Math.min(1, Number(input.glow) || 0));
       const now = Number.isFinite(input.at) ? input.at : ctx.currentTime;
+      // Below the gate the bed is exactly silent; above it the level follows
+      // the speech envelope only (glow merely colors the filter).
+      const voiced = speech < BED_GATE ? 0 : (speech - BED_GATE) / (1 - BED_GATE);
       bedFilter.frequency.setTargetAtTime(240 + speech * 760 + glow * 380, now, 0.12);
-      bedGain.gain.setTargetAtTime(bedLevel * (0.018 + speech * 0.012), now, 0.2);
-      airGain.gain.setTargetAtTime(bedLevel * (0.004 + speech * 0.006 + glow * 0.004), now, 0.25);
-      airFilter.frequency.setTargetAtTime(1600 + speech * 1400, now, 0.3);
+      bedGain.gain.setTargetAtTime(bedLevel * voiced * 0.022, now, voiced > 0 ? 0.12 : 0.25);
     }
 
     function setEnabled(on, opts = {}) {
@@ -432,7 +428,7 @@
     function dispose() {
       if (disposed) return;
       disposed = true;
-      try { bedOscillators.forEach((osc) => osc.stop()); air.stop(); } catch { /* already stopped */ }
+      try { bedOscillators.forEach((osc) => osc.stop()); } catch { /* already stopped */ }
       if (!options.context && typeof ctx.close === 'function') ctx.close().catch(() => {});
     }
 
