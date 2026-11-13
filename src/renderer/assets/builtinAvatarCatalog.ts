@@ -1,0 +1,198 @@
+/**
+ * The 20 built-in avatars shipped in public/builtin-avatars, each already
+ * pinned on-chain (pinId / metafileUri). Pure data with no bundler-specific
+ * imports, so the main process can share it (first-run Twin avatar pick and
+ * local stage rendering of a built-in metafile reference).
+ */
+export interface BuiltinAvatar {
+  id: number;
+  code: string;
+  name: string;
+  src: string;
+  pinId: string;
+  metafileUri: string;
+  shareUrl: string;
+}
+
+export const BUILTIN_AVATARS: readonly BuiltinAvatar[] = [
+  {
+    id: 1,
+    code: 'D0',
+    name: 'Robot 0',
+    src: 'builtin-avatars/01-D0.png',
+    pinId: '940862def1adbc1532e7cd5445beab647d9ebc3d787d16dc795c5ab7d0f3e8f8i0',
+    metafileUri: 'metafile://940862def1adbc1532e7cd5445beab647d9ebc3d787d16dc795c5ab7d0f3e8f8i0.png',
+    shareUrl: 'https://openagentinternet.org/browser/metafile/940862def1adbc1532e7cd5445beab647d9ebc3d787d16dc795c5ab7d0f3e8f8i0',
+  },
+  {
+    id: 2,
+    code: 'T41',
+    name: 'Sakura Lashes',
+    src: 'builtin-avatars/02-T41-sakura-lashes.png',
+    pinId: '17647d89d8bc69339076834f02ff568247d3299f1b55d312f76a36dbec4e77f6i0',
+    metafileUri: 'metafile://17647d89d8bc69339076834f02ff568247d3299f1b55d312f76a36dbec4e77f6i0.png',
+    shareUrl: 'https://openagentinternet.org/browser/metafile/17647d89d8bc69339076834f02ff568247d3299f1b55d312f76a36dbec4e77f6i0',
+  },
+  {
+    id: 3,
+    code: 'T45',
+    name: 'Orchid Cool',
+    src: 'builtin-avatars/03-T45-orchid-cool.png',
+    pinId: 'aab0ceaf3df64d3e0507a85a8d2e12c9b224814fbb64a54ee69d8e8a2b3661e4i0',
+    metafileUri: 'metafile://aab0ceaf3df64d3e0507a85a8d2e12c9b224814fbb64a54ee69d8e8a2b3661e4i0.png',
+    shareUrl: 'https://openagentinternet.org/browser/metafile/aab0ceaf3df64d3e0507a85a8d2e12c9b224814fbb64a54ee69d8e8a2b3661e4i0',
+  },
+  {
+    id: 4,
+    code: 'T26',
+    name: 'Lavender',
+    src: 'builtin-avatars/04-T26-lavender.png',
+    pinId: '231afa08882b353707166340e3f1534723f6af37e8d772b6b872a960f0c50952i0',
+    metafileUri: 'metafile://231afa08882b353707166340e3f1534723f6af37e8d772b6b872a960f0c50952i0.png',
+    shareUrl: 'https://openagentinternet.org/browser/metafile/231afa08882b353707166340e3f1534723f6af37e8d772b6b872a960f0c50952i0',
+  },
+  {
+    id: 5,
+    code: 'T03',
+    name: 'Amber',
+    src: 'builtin-avatars/05-T03-amber.png',
+    pinId: 'a4188f7bc40ba1c6d83c41821cd54ee2751e0801607b38f37d1a83ef83da5543i0',
+    metafileUri: 'metafile://a4188f7bc40ba1c6d83c41821cd54ee2751e0801607b38f37d1a83ef83da5543i0.png',
+    shareUrl: 'https://openagentinternet.org/browser/metafile/a4188f7bc40ba1c6d83c41821cd54ee2751e0801607b38f37d1a83ef83da5543i0',
+  },
+  {
+    id: 6,
+    code: 'T04',
+    name: 'Lemon',
+    src: 'builtin-avatars/06-T04-lemon.png',
+    pinId: '0a8603d5b46d3d7ef789aea8d740395add39a82b0bfc5ef90ade5c3a829fa20ci0',
+    metafileUri: 'metafile://0a8603d5b46d3d7ef789aea8d740395add39a82b0bfc5ef90ade5c3a829fa20ci0.png',
+    shareUrl: 'https://openagentinternet.org/browser/metafile/0a8603d5b46d3d7ef789aea8d740395add39a82b0bfc5ef90ade5c3a829fa20ci0',
+  },
+  {
+    id: 7,
+    code: 'T01',
+    name: 'Apricot',
+    src: 'builtin-avatars/07-T01-apricot.png',
+    pinId: '074fd882df613bfc28c24829bd3b1caea687f43398d013c2a1be2624ff92bd8ci0',
+    metafileUri: 'metafile://074fd882df613bfc28c24829bd3b1caea687f43398d013c2a1be2624ff92bd8ci0.png',
+    shareUrl: 'https://openagentinternet.org/browser/metafile/074fd882df613bfc28c24829bd3b1caea687f43398d013c2a1be2624ff92bd8ci0',
+  },
+  {
+    id: 8,
+    code: 'T15',
+    name: 'Petrol',
+    src: 'builtin-avatars/08-T15-petrol.png',
+    pinId: '2aef8796f27d34457a8bcf35a6f4a06a0988080e3a6f89af9b13b82f7be70859i0',
+    metafileUri: 'metafile://2aef8796f27d34457a8bcf35a6f4a06a0988080e3a6f89af9b13b82f7be70859i0.png',
+    shareUrl: 'https://openagentinternet.org/browser/metafile/2aef8796f27d34457a8bcf35a6f4a06a0988080e3a6f89af9b13b82f7be70859i0',
+  },
+  {
+    id: 9,
+    code: 'T12',
+    name: 'Turquoise',
+    src: 'builtin-avatars/09-T12-turquoise.png',
+    pinId: '3192446338307dbbb832282c54154d89816dcaf1ec466381339ef01bdca879bci0',
+    metafileUri: 'metafile://3192446338307dbbb832282c54154d89816dcaf1ec466381339ef01bdca879bci0.png',
+    shareUrl: 'https://openagentinternet.org/browser/metafile/3192446338307dbbb832282c54154d89816dcaf1ec466381339ef01bdca879bci0',
+  },
+  {
+    id: 10,
+    code: 'T35',
+    name: 'Blush',
+    src: 'builtin-avatars/10-T35-blush.png',
+    pinId: 'cb3c70074676d00a27774c27d0533d4b983262201777efa67f5fe04ecc79e9a1i0',
+    metafileUri: 'metafile://cb3c70074676d00a27774c27d0533d4b983262201777efa67f5fe04ecc79e9a1i0.png',
+    shareUrl: 'https://openagentinternet.org/browser/metafile/cb3c70074676d00a27774c27d0533d4b983262201777efa67f5fe04ecc79e9a1i0',
+  },
+  {
+    id: 11,
+    code: 'T32',
+    name: 'Salmon',
+    src: 'builtin-avatars/11-T32-salmon.png',
+    pinId: 'f005a54c6c238a88e0bab7114f2961ba26aeeb65a8c4389e42a537525a3eee50i0',
+    metafileUri: 'metafile://f005a54c6c238a88e0bab7114f2961ba26aeeb65a8c4389e42a537525a3eee50i0.png',
+    shareUrl: 'https://openagentinternet.org/browser/metafile/f005a54c6c238a88e0bab7114f2961ba26aeeb65a8c4389e42a537525a3eee50i0',
+  },
+  {
+    id: 12,
+    code: 'T37',
+    name: 'Taupe',
+    src: 'builtin-avatars/12-T37-taupe.png',
+    pinId: 'a07b5b05ffc6c5be231f2adf61ad2717ad5e7354a357cca0bd4a0b02783cbeb1i0',
+    metafileUri: 'metafile://a07b5b05ffc6c5be231f2adf61ad2717ad5e7354a357cca0bd4a0b02783cbeb1i0.png',
+    shareUrl: 'https://openagentinternet.org/browser/metafile/a07b5b05ffc6c5be231f2adf61ad2717ad5e7354a357cca0bd4a0b02783cbeb1i0',
+  },
+  {
+    id: 13,
+    code: 'T40',
+    name: 'Chocolate',
+    src: 'builtin-avatars/13-T40-chocolate.png',
+    pinId: '8cd7fec6b519dc862819eeb71183fb9b2cdf36e6807ec909b7b1ff0e3c60b6a1i0',
+    metafileUri: 'metafile://8cd7fec6b519dc862819eeb71183fb9b2cdf36e6807ec909b7b1ff0e3c60b6a1i0.png',
+    shareUrl: 'https://openagentinternet.org/browser/metafile/8cd7fec6b519dc862819eeb71183fb9b2cdf36e6807ec909b7b1ff0e3c60b6a1i0',
+  },
+  {
+    id: 14,
+    code: 'P48',
+    name: 'Fuchsia Cat',
+    src: 'builtin-avatars/14-P48-fuchsia-cat.png',
+    pinId: '188e4d1530271a0db3c0829f1a7fa40b51565fed1617488fcbd12ad4100134bfi0',
+    metafileUri: 'metafile://188e4d1530271a0db3c0829f1a7fa40b51565fed1617488fcbd12ad4100134bfi0.png',
+    shareUrl: 'https://openagentinternet.org/browser/metafile/188e4d1530271a0db3c0829f1a7fa40b51565fed1617488fcbd12ad4100134bfi0',
+  },
+  {
+    id: 15,
+    code: 'P44',
+    name: 'Lilac Plus',
+    src: 'builtin-avatars/15-P44-lilac-plus.png',
+    pinId: '3d0ea6bb3f343a714e1d67e06e957b1bb477bbe76e396368352192cb12db8de5i0',
+    metafileUri: 'metafile://3d0ea6bb3f343a714e1d67e06e957b1bb477bbe76e396368352192cb12db8de5i0.png',
+    shareUrl: 'https://openagentinternet.org/browser/metafile/3d0ea6bb3f343a714e1d67e06e957b1bb477bbe76e396368352192cb12db8de5i0',
+  },
+  {
+    id: 16,
+    code: 'P31',
+    name: 'Coral',
+    src: 'builtin-avatars/16-P31-coral.png',
+    pinId: '15361a10cb629878c8600091732df3d93c7a368a57dff6c77138469ee3e91ec9i0',
+    metafileUri: 'metafile://15361a10cb629878c8600091732df3d93c7a368a57dff6c77138469ee3e91ec9i0.png',
+    shareUrl: 'https://openagentinternet.org/browser/metafile/15361a10cb629878c8600091732df3d93c7a368a57dff6c77138469ee3e91ec9i0',
+  },
+  {
+    id: 17,
+    code: 'P03',
+    name: 'Amber',
+    src: 'builtin-avatars/17-P03-amber.png',
+    pinId: '543dd1fd00c7a6d868dfcadd6c713b5e11f25731703de01a17b2a57110e38660i0',
+    metafileUri: 'metafile://543dd1fd00c7a6d868dfcadd6c713b5e11f25731703de01a17b2a57110e38660i0.png',
+    shareUrl: 'https://openagentinternet.org/browser/metafile/543dd1fd00c7a6d868dfcadd6c713b5e11f25731703de01a17b2a57110e38660i0',
+  },
+  {
+    id: 18,
+    code: 'P06',
+    name: 'Lime',
+    src: 'builtin-avatars/18-P06-lime.png',
+    pinId: 'ed69bdff4aa11c07fc55d393f32489740fb1a0422f836f9c9a3b9b18bf9a2552i0',
+    metafileUri: 'metafile://ed69bdff4aa11c07fc55d393f32489740fb1a0422f836f9c9a3b9b18bf9a2552i0.png',
+    shareUrl: 'https://openagentinternet.org/browser/metafile/ed69bdff4aa11c07fc55d393f32489740fb1a0422f836f9c9a3b9b18bf9a2552i0',
+  },
+  {
+    id: 19,
+    code: 'P12',
+    name: 'Turquoise',
+    src: 'builtin-avatars/19-P12-turquoise.png',
+    pinId: 'ef9cc134678b55d08e1a6df90b0c76ade7a4c5f9ad01e66b7556d3103b902ec1i0',
+    metafileUri: 'metafile://ef9cc134678b55d08e1a6df90b0c76ade7a4c5f9ad01e66b7556d3103b902ec1i0.png',
+    shareUrl: 'https://openagentinternet.org/browser/metafile/ef9cc134678b55d08e1a6df90b0c76ade7a4c5f9ad01e66b7556d3103b902ec1i0',
+  },
+  {
+    id: 20,
+    code: 'P18',
+    name: 'Ocean',
+    src: 'builtin-avatars/20-P18-ocean.png',
+    pinId: 'bb765a256d6039682b13891b5e64d970e2457b0c2e0a4204fe5450716865f180i0',
+    metafileUri: 'metafile://bb765a256d6039682b13891b5e64d970e2457b0c2e0a4204fe5450716865f180i0.png',
+    shareUrl: 'https://openagentinternet.org/browser/metafile/bb765a256d6039682b13891b5e64d970e2457b0c2e0a4204fe5450716865f180i0',
+  },
+];

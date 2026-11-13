@@ -570,6 +570,7 @@ import { listStudioOpenDelegations } from './services/studioOpenDelegations';
 import { describeStudioProjectionBlock } from './services/studioProjectionGate';
 import { applyStudioLiveStagePatch, drainStudioLiveStageInteractions, executeStageFrameScript } from './services/studioLiveStageFrame';
 import { createStudioGenesisStageService, type StudioGenesisStageService } from './services/studioGenesisStageService';
+import { resolveBuiltinAvatarDataUri } from './libs/builtinAvatarAssets';
 import { readStudioLiveStageSettings, writeStudioLiveStageSettings } from './services/studioLiveStageSettings';
 import {
   executeBotBrowserPreviewAct,
@@ -9191,6 +9192,7 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
       },
       assetRoot: path.join(app.getAppPath(), app.isPackaged ? 'dist/live-stage' : 'public/live-stage'),
       fallbackAvatarDataUri: `data:image/png;base64,${fs.readFileSync(fallbackAvatarPath).toString('base64')}`,
+      resolveAvatar: (avatar) => resolveBuiltinAvatarDataUri(avatar, path.join(app.getAppPath(), app.isPackaged ? 'dist' : 'public')),
       isSessionClaimed: (sessionId) => getStudioGenesisStageService().isClaimed(sessionId),
       beforeProjection: (sessionId) => getStudioGenesisStageService().beforeLiveStageProjection(sessionId),
     });
@@ -9230,6 +9232,7 @@ const getStudioGenesisStageService = (): StudioGenesisStageService => {
         fallbackAvatarDataUri,
       },
       fallbackAvatarDataUri,
+      resolveAvatar: (avatar) => resolveBuiltinAvatarDataUri(avatar, publicRoot),
     });
   }
   return studioGenesisStageService;
@@ -20279,6 +20282,12 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
       if (nftRef) {
         const resolved = await resolveNftAvatar(nftRef);
         return { success: true, avatarUrl: resolved.avatarUrl, nft: resolved.nft };
+      }
+      // Built-in avatars ship with the app: render the local file instead of
+      // fetching the pinned copy (instant, and works offline).
+      const builtin = resolveBuiltinAvatarDataUri(reference, path.join(app.getAppPath(), app.isPackaged ? 'dist' : 'public'));
+      if (builtin) {
+        return { success: true, avatarUrl: builtin };
       }
       return {
         success: true,

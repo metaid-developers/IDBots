@@ -82,7 +82,7 @@ import {
   pickFreeProviderDefaultModelId,
 } from '../../renderer/services/llmFreeQuotaGate.js';
 import { pickTwinBotName } from '../../renderer/components/onboarding/twinBotNames.js';
-import { twinBotAvatarUrl } from '../../renderer/assets/twinBotAvatar';
+import { pickTwinBotAvatar } from '../../renderer/assets/twinBotAvatar';
 import type { ServerBootstrapFacts, ServerBootstrapStepExecutors } from './bootstrap';
 
 /** C1/REQ-A-8: default display name for the silently provisioned identity. */
@@ -301,7 +301,7 @@ export function createServerBootstrapStepExecutors(
         const ownerGlobalMetaId = deps.getUserIdentityStore().get()?.globalmetaid ?? null;
         const result = await createMetaBotOnChainCore({
           name: pickTwinBotName(),
-          avatar: twinBotAvatarUrl,
+          avatar: pickTwinBotAvatar(),
           role: persona.role,
           soul: persona.soul,
           goal: persona.goal,

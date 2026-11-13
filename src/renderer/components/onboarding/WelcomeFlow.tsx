@@ -15,7 +15,7 @@ import { pickTwinBotName } from './twinBotNames.js';
 import { clearOnboardingEnterPending, markOnboardingEnterPending } from '../../services/viewState';
 import { LLM_FREE_PROVIDER_KEY, pickFreeProviderDefaultModelId } from '../../services/llmFreeQuotaGate.js';
 import type { Metabot } from '../../types/metabot';
-import { twinBotAvatarUrl } from '../../assets/twinBotAvatar';
+import { pickTwinBotAvatar } from '../../assets/twinBotAvatar';
 import heroWelcomeImage from '../../assets/onboarding/hero-welcome-v2.png';
 import heroTwinBotImage from '../../assets/onboarding/hero-twinbot-v4.png';
 
@@ -182,7 +182,7 @@ async function ensureTwinBot(): Promise<Metabot> {
   const name = pickTwinBotName();
   const result = await window.electron.idbots.createMetaBotOnChain({
     name,
-    avatar: twinBotAvatarUrl,
+    avatar: pickTwinBotAvatar(),
     role: TWIN_BOT_ROLE,
     soul: TWIN_BOT_SOUL,
     goal: TWIN_BOT_GOAL,
