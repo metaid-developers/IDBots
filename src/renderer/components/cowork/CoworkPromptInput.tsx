@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import { ArrowUpIcon, StopIcon, FolderIcon } from '@heroicons/react/24/solid';
-import { PaperClipIcon, SparklesIcon, ChevronDownIcon, PlusIcon, PuzzlePieceIcon, CommandLineIcon } from '@heroicons/react/24/outline';
+import { PaperClipIcon, SparklesIcon, ChevronDownIcon, PlusIcon, PuzzlePieceIcon, CommandLineIcon, FaceSmileIcon } from '@heroicons/react/24/outline';
 import { placePopoverAbove, useAnchorMoveWatcher } from '../../utils/anchoredPopover';
 import ModelEffortPicker, { type ModelEffortValue } from '../ModelEffortPicker';
 import ContextUsageRing from '../ContextUsageRing';
@@ -194,6 +194,7 @@ interface PlusMenuButtonProps {
   /** The '+' door follows the attachment gate (steering-aware), not `isStreaming` alone. */
   disabled?: boolean;
   onToggle: () => void;
+  onInsertEmoji: () => void;
   onAddAttachment: () => void;
   onUseSkill: () => void;
   onUseCommand: () => void;
@@ -202,9 +203,15 @@ interface PlusMenuButtonProps {
 const PLUS_MENU_WIDTH = 256; // w-64
 
 /**
- * The composer's '+' trigger with its quick-action menu (add attachment /
- * use a skill / pick a '/' command), ported from the DSH composer layout:
- * the plus icon sits at the far left of the toolbar.
+ * The composer's '+' trigger with its quick-action menu (insert emoji /
+ * add attachment / use a skill / pick a '/' command): the plus icon sits at
+ * the far left of the toolbar.
+ *
+ * Gate note: the trigger is `disabled={!attachmentAdmitted}`, i.e.
+ * `!(disabled || (isStreaming && steerDisabled))` — the very same predicate
+ * as the composer's `emojiPickerDisabled`. Folding the emoji entry into this
+ * menu therefore costs no emoji reachability, and the item itself must not
+ * carry a second disabled layer (a disabled '+' already blocks the menu).
  */
 const PlusMenuButton: React.FC<PlusMenuButtonProps> = ({
   open,
@@ -214,6 +221,7 @@ const PlusMenuButton: React.FC<PlusMenuButtonProps> = ({
   menuRef,
   disabled = false,
   onToggle,
+  onInsertEmoji,
   onAddAttachment,
   onUseSkill,
   onUseCommand,
@@ -275,6 +283,10 @@ const PlusMenuButton: React.FC<PlusMenuButtonProps> = ({
           className="fixed z-50 w-64 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg shadow-lg overflow-hidden py-1"
           style={menuStyle ?? { visibility: 'hidden' }}
         >
+          <button type="button" role="menuitem" onClick={onInsertEmoji} className={itemClass}>
+            <FaceSmileIcon className="h-4 w-4 flex-shrink-0" />
+            <span>{i18nService.t('composerMenuInsertEmoji')}</span>
+          </button>
           {showAttachment && (
             <button type="button" role="menuitem" onClick={onAddAttachment} className={itemClass}>
               <PaperClipIcon className="h-4 w-4 flex-shrink-0" />
@@ -459,7 +471,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const dragDepthRef = useRef(0);
     const contextMenuRef = useRef<HTMLDivElement>(null);
     const plusButtonRef = useRef<HTMLButtonElement>(null);
-    const emojiButtonRef = useRef<HTMLButtonElement>(null);
     const backdropRef = useRef<HTMLDivElement>(null);
     const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     // Selection captured when the context menu opened; only drives the
@@ -895,6 +906,19 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     }
     void runCommand(command, '');
   }, [runCommand]);
+
+  // Opening the '+' menu closes the emoji panel (the two popovers never
+  // stack); the buttons themselves live outside each other's mousedown
+  // guards, so this is the one place that enforces the mutual exclusion.
+  const handlePlusMenuToggle = () => {
+    if (!plusMenuOpen) setEmojiPickerOpen(false);
+    setPlusMenuOpen(!plusMenuOpen);
+  };
+
+  const handlePlusMenuInsertEmoji = () => {
+    setPlusMenuOpen(false);
+    setEmojiPickerOpen(true);
+  };
 
   const handlePlusMenuAddAttachment = () => {
     setPlusMenuOpen(false);
@@ -1503,6 +1527,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   });
   // Emoji input is text input: the picker follows the textarea's own gate
   // (plain typing stays available while steering; both lock when disabled).
+  // This predicate is identical to the '+' trigger gate
+  // (`!attachmentAdmitted`), so opening the picker from the '+' menu keeps
+  // emoji reachability exactly as it was; it is NOT a second, stricter gate.
   const emojiPickerDisabled = disabled || (isStreaming && steerDisabled);
   const effectivePlaceholder = deriveCoworkComposerPlaceholder({
     isStreaming,
@@ -1645,16 +1672,19 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   buttonRef={plusButtonRef}
                   menuRef={plusMenuRef}
                   disabled={!attachmentAdmitted}
-                  onToggle={() => setPlusMenuOpen(!plusMenuOpen)}
+                  onToggle={handlePlusMenuToggle}
+                  onInsertEmoji={handlePlusMenuInsertEmoji}
                   onAddAttachment={handlePlusMenuAddAttachment}
                   onUseSkill={handlePlusMenuUseSkill}
                   onUseCommand={handlePlusMenuUseCommand}
                 />
+                {/* Trigger-less: the panel opens from the '+' menu's
+                    「插入表情」 item and anchors to the '+' button. */}
                 <EmojiMenuButton
                   open={emojiPickerOpen}
-                  buttonRef={emojiButtonRef}
-                  disabled={emojiPickerDisabled}
-                  onToggle={() => setEmojiPickerOpen(!emojiPickerOpen)}
+                  showTrigger={false}
+                  buttonRef={plusButtonRef}
+                  onToggle={() => setEmojiPickerOpen(false)}
                   onPick={handlePickEmoji}
                 />
                 {/* Model/effort + pinned-skill chips are session configuration,
@@ -1720,16 +1750,18 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               buttonRef={plusButtonRef}
               menuRef={plusMenuRef}
               disabled={!attachmentAdmitted}
-              onToggle={() => setPlusMenuOpen(!plusMenuOpen)}
+              onToggle={handlePlusMenuToggle}
+              onInsertEmoji={handlePlusMenuInsertEmoji}
               onAddAttachment={handlePlusMenuAddAttachment}
               onUseSkill={handlePlusMenuUseSkill}
               onUseCommand={handlePlusMenuUseCommand}
             />
+            {/* Trigger-less panel (see the wide branch above). */}
             <EmojiMenuButton
               open={emojiPickerOpen}
-              buttonRef={emojiButtonRef}
-              disabled={emojiPickerDisabled}
-              onToggle={() => setEmojiPickerOpen(!emojiPickerOpen)}
+              showTrigger={false}
+              buttonRef={plusButtonRef}
+              onToggle={() => setEmojiPickerOpen(false)}
               onPick={handlePickEmoji}
             />
             {/* The shrinkable flex item is this wrapper (min-w-0): the
