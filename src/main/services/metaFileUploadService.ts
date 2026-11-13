@@ -5,7 +5,8 @@ import path from 'path';
 import { app } from 'electron';
 import type { MetabotStore } from '../metabotStore';
 import { resolveElectronExecutablePath } from '../libs/runtimePaths';
-import { createPin } from './metaidCore';
+import { createPin, runMvcCreatePinWithInsufficientFundsRescue } from './metaidCore';
+import { requestMvcGasSubsidy } from './mvcSubsidyService';
 import { getRate as getGlobalFeeRate } from './feeRateStore';
 import { getMvcSpendCoordinator } from './mvcSpendCoordinator';
 import { verifyMetafileAvailability } from './metafileVerifier';
@@ -338,21 +339,36 @@ export async function uploadMetaFile(
     if (network === 'mvc' && !useData && metabot && sponsorUploadAllowed && isMvcSponsorUploadEnabled(metabotStore, params.metabotId)) {
       const sponsorWallet = metabotStore.getMetabotWalletByMetabotId(params.metabotId);
       if (sponsorWallet?.mnemonic?.trim() && metabot.mvc_address?.trim()) {
+        const mvcAddress = metabot.mvc_address.trim();
+        const mnemonic = sponsorWallet.mnemonic.trim();
+        const walletPath = (sponsorWallet.path || DEFAULT_PATH).trim();
+        const runDirectSponsor = () => uploadMvcSponsorDirectFile({
+          filePath: resolvedFilePath,
+          fileName,
+          contentType,
+          bytes: size,
+          extension: getMetafileExtension({ fileName, contentType }),
+          mnemonic,
+          walletPath,
+          mvcAddress,
+          globalMetaId: metabot.metaid?.trim() || undefined,
+          fallbackPolicy: getConfiguredTrafficFallbackPolicy(),
+          baseUrl: getConfiguredTrafficApiBase(),
+          selfPaidUpload: async (feeAssist) => selfPaidDirect(feeAssist),
+        });
+        const directUploadResult = await runMvcCreatePinWithInsufficientFundsRescue({
+          metabotId: params.metabotId,
+          operation: 'create',
+          path: '/file',
+          settleMs: 3000,
+          requestFreshFunding: async () => {
+            const subsidy = await requestMvcGasSubsidy({ mvcAddress, mnemonic, path: walletPath });
+            return subsidy.success;
+          },
+          run: runDirectSponsor,
+        });
         const sponsorResult = await attachVerificationIfRequested(
-          await uploadMvcSponsorDirectFile({
-            filePath: resolvedFilePath,
-            fileName,
-            contentType,
-            bytes: size,
-            extension: getMetafileExtension({ fileName, contentType }),
-            mnemonic: sponsorWallet.mnemonic.trim(),
-            walletPath: (sponsorWallet.path || DEFAULT_PATH).trim(),
-            mvcAddress: metabot.mvc_address.trim(),
-            globalMetaId: metabot.metaid?.trim() || undefined,
-            fallbackPolicy: getConfiguredTrafficFallbackPolicy(),
-            baseUrl: getConfiguredTrafficApiBase(),
-            selfPaidUpload: async (feeAssist) => selfPaidDirect(feeAssist),
-          }),
+          directUploadResult,
           params,
         );
         sponsorResult.contentHash = contentHash;

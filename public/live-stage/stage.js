@@ -306,9 +306,12 @@
     });
   }
 
+  const ORB_START_TIMEOUT_MS = 6000;
+
   function disposeOrbLayer(layer) {
     if (!layer) return;
     clearTimeout(layer.fadeTimer);
+    clearTimeout(layer.startTimer);
     layer.controller?.dispose(false);
     layer.canvas.remove();
     orbLayers.delete(layer);
@@ -335,9 +338,13 @@
       disposeOrbLayer(layer);
       return;
     }
+    const hadController = Boolean(layer.controller);
     disposeOrbLayer(layer);
     orbStarting = false;
-    if (previous && orbLayers.has(previous) && previous.controller) {
+    // If the failing layer already obtained a controller (meaning device.lost
+    // or an uncaptured/frame error hit the shared WebGPU device), previous
+    // shares that same dead device and cannot continue either.
+    if (!hadController && previous && orbLayers.has(previous) && previous.controller) {
       orb = previous;
       previous.canvas.dataset.active = 'true';
       previous.controller.setReduced(effectiveReduced());
@@ -359,16 +366,22 @@
     layerCanvas.dataset.orbStyle = String(style);
     layerCanvas.setAttribute('aria-hidden', 'true');
     $('.membrane').append(layerCanvas);
-    const layer = { canvas: layerCanvas, controller: null, style, family, speed: params.speed, fadeTimer: 0 };
+    const layer = { canvas: layerCanvas, controller: null, style, family, speed: params.speed, fadeTimer: 0, startTimer: 0 };
     orbLayers.add(layer);
     orb = layer;
     orbStarting = true;
+    layer.startTimer = setTimeout(() => {
+      if (orb === layer && orbStarting) {
+        failOrbLayer(layer, previous, new Error('WebGPU orb was not ready in time'));
+      }
+    }, ORB_START_TIMEOUT_MS);
     const previousPhase = previous?.controller?.getPhase();
     window.createLiquidOrbRenderer(layerCanvas, {
       initialFamily: family,
       startPhase: Number.isFinite(previousPhase) ? previousPhase * ((previous?.speed || 1) / (params.speed || 1)) : undefined,
       sharedResources: previous?.controller?.getSharedResources(),
       onReady: () => {
+        clearTimeout(layer.startTimer);
         if (orb !== layer) return;
         body.dataset.orbBackend = 'webgpu';
         window.__liveStageBackend = 'webgpu';
@@ -382,6 +395,7 @@
       },
       onError: (error) => failOrbLayer(layer, previous, error)
     }).then((controller) => {
+      clearTimeout(layer.startTimer);
       if (orb !== layer) {
         controller.dispose(false);
         return;

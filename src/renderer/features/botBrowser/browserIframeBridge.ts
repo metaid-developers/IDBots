@@ -419,19 +419,71 @@ export function buildBrowserIframeBridgeScript(): string {
     }
   }
 
+  function hasParentSegment(pathText) {
+    return String(pathText || '').split(String.fromCharCode(92)).join('/').split('/').indexOf('..') !== -1;
+  }
+
+  function localPreviewPath(uri) {
+    var value = textValue(uri);
+    if (value.indexOf('preview-metaapp://localhost/') !== 0) return '';
+    if (value.indexOf('?') !== -1 || value.indexOf('#') !== -1 || value.indexOf(String.fromCharCode(92)) !== -1) return '';
+    var rawPath = value.slice('preview-metaapp://localhost'.length);
+    if (hasParentSegment(rawPath)) return '';
+    try {
+      if (hasParentSegment(decodeURIComponent(rawPath))) return '';
+      var parsed = new URL(value);
+      if (parsed.hostname !== 'localhost' || parsed.search || parsed.hash) return '';
+      var decoded = decodeURIComponent(parsed.pathname);
+      if (hasParentSegment(decoded)) return '';
+      return decoded;
+    } catch (error) {
+      return '';
+    }
+  }
+
+  function isPersistentStagePath(stagePath) {
+    return stagePath.indexOf('/live-stage/') !== -1 && stagePath.slice(-'/stage.html'.length) === '/stage.html';
+  }
+
+  function isLegacyStagePath(reportPath) {
+    var base = reportPath.split('/').pop() || '';
+    return base.indexOf('live-stage-') === 0 && base.slice(-'.html'.length) === '.html';
+  }
+
+  function liveStageReportOpenAllowed(activeTab, turnId, reportUri) {
+    var stagePath = localPreviewPath(activeTab && activeTab.uri);
+    var reportPath = localPreviewPath(reportUri);
+    if (!stagePath || !reportPath) return false;
+    if (reportPath === stagePath || isPersistentStagePath(reportPath) || isLegacyStagePath(reportPath)) {
+      return false;
+    }
+    if (isPersistentStagePath(stagePath)) {
+      return true;
+    }
+    var cleanTurnId = textValue(turnId);
+    if (!cleanTurnId) return false;
+    var stageSuffix = '/live-stage-' + cleanTurnId + '.html';
+    if (stagePath.slice(-stageSuffix.length) !== stageSuffix) return false;
+    var stageDirectory = stagePath.slice(0, stagePath.lastIndexOf('/') + 1);
+    return reportPath.slice(0, stageDirectory.length) === stageDirectory;
+  }
+
   window.addEventListener('message', function (event) {
     var data = event.data || {};
     if (data.source === 'idbots-live-stage' && data.type === 'open-report') {
       // The stage's report button asks the host to surface the projected
-      // report. It must come from the current html frame and name a local
-      // preview URI; openTab dedupes by URI, so it focuses the showcase tab
-      // already showing the report instead of navigating the stage frame.
+      // report. It must come from the current stage html frame and name a safe
+      // local preview URI; openTab dedupes by URI, so it focuses the showcase
+      // tab already showing the report instead of navigating the stage frame.
+      var reportTab = globalThis.AgentBrowserTabs && typeof globalThis.AgentBrowserTabs.getActiveTab === 'function'
+        ? globalThis.AgentBrowserTabs.getActiveTab()
+        : null;
       var reportFrame = typeof globalThis.currentBrowserHtmlFrameWindow === 'function'
         ? globalThis.currentBrowserHtmlFrameWindow()
         : null;
       var reportUri = textValue(data.uri);
       if (reportFrame && event.source === reportFrame
-        && reportUri.indexOf('preview-metaapp://localhost/') === 0
+        && liveStageReportOpenAllowed(reportTab, data.turnId, reportUri)
         && globalThis.AgentBrowserTabs && typeof globalThis.AgentBrowserTabs.openTab === 'function') {
         Promise.resolve(ensureRuntimeReady()).then(function () {
           globalThis.AgentBrowserTabs.openTab(reportUri);

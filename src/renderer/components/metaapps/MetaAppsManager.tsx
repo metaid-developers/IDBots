@@ -185,10 +185,6 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({
       isActive = false;
       unsubscribe();
     };
-    // Load once on mount; the onMetaAppsChanged subscription reloads the local
-    // list and the current community page (via refs) without re-running the
-    // effect on every tab switch or cursor change.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
