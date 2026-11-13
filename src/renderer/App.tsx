@@ -70,6 +70,7 @@ import { normalizePreselectedSkillId } from './utils/newChatPreselect';
 import {
   clampSidebarWidth,
   loadSidebarWidth,
+  seedFirstRunSidebarWidth,
   maxSidebarWidthForWindow,
   migrateSidebarWidthStorage,
   shouldAutoHideSidebar,
@@ -232,7 +233,12 @@ const App: React.FC = () => {
       (key) => window.localStorage.getItem(key),
       (key, value) => window.localStorage.setItem(key, value),
     );
-    return loadSidebarWidth((key) => window.localStorage.getItem(key), 'home');
+    seedFirstRunSidebarWidth(
+      (key) => window.localStorage.getItem(key),
+      (key, value) => window.localStorage.setItem(key, value),
+      window.innerWidth,
+    );
+    return clampSidebarWidth(loadSidebarWidth((key) => window.localStorage.getItem(key), 'home'), window.innerWidth);
   });
   const [isSidebarResizing, setIsSidebarResizing] = useState(false);
   // True while the double-click snap tween is animating the width. Like the

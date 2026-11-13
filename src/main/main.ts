@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, session, nativeTheme, dialog, shell, nativeImage, systemPreferences, Menu, powerSaveBlocker, Notification } from 'electron';
+import { app, BrowserWindow, ipcMain, session, nativeTheme, dialog, shell, nativeImage, systemPreferences, Menu, powerSaveBlocker, Notification, screen } from 'electron';
 import type { FileFilter, MessageBoxOptions, OpenDialogOptions, Session, WebContents } from 'electron';
 import path from 'path';
 import fs from 'fs';
@@ -571,6 +571,7 @@ import { describeStudioProjectionBlock } from './services/studioProjectionGate';
 import { applyStudioLiveStagePatch, drainStudioLiveStageInteractions, executeStageFrameScript } from './services/studioLiveStageFrame';
 import { createStudioGenesisStageService, type StudioGenesisStageService } from './services/studioGenesisStageService';
 import { resolveBuiltinAvatarDataUri } from './libs/builtinAvatarAssets';
+import { resolveInitialWindowSize } from './libs/initialWindowSize';
 import { readStudioLiveStageSettings, writeStudioLiveStageSettings } from './services/studioLiveStageSettings';
 import {
   executeBotBrowserPreviewAct,
@@ -20611,9 +20612,15 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     }
 
     startupLog('createWindow begin');
+    let initialSize = resolveInitialWindowSize(null);
+    try {
+      initialSize = resolveInitialWindowSize(screen.getPrimaryDisplay().workAreaSize);
+    } catch {
+      // Keep the minimum default when the display cannot be read.
+    }
     const win = new BrowserWindow({
-      width: 1200,
-      height: 800,
+      width: initialSize.width,
+      height: initialSize.height,
       title: APP_NAME,
       icon: getAppIconPath(),
       ...(isMac
