@@ -11,10 +11,12 @@ import { getRate as getGlobalFeeRate } from './feeRateStore';
 import { getMvcSpendCoordinator } from './mvcSpendCoordinator';
 import { verifyMetafileAvailability } from './metafileVerifier';
 import {
+  TrafficInsufficientError,
   uploadMvcSponsorDirectFile,
   type MvcSponsorFeeAssistMetadata,
 } from './mvcSponsorUpload';
-import { getConfiguredTrafficApiBase, getConfiguredTrafficFallbackPolicy, getConfiguredTrafficPinMode } from './trafficAccountService';
+import { getConfiguredTrafficApiBase, getConfiguredTrafficPinMode } from './trafficAccountService';
+import { getConfiguredTrafficFallbackPolicy } from './trafficAccountService';
 import { resolveMetaFileUploadSharedModulePath } from './metaFileUploadSharedResolver';
 import { getMainWorkerCandidatePaths, resolveMainWorkerPath } from './workerPathResolver';
 
@@ -380,6 +382,26 @@ export async function uploadMetaFile(
 
   if (network !== 'mvc') {
     throw new Error('Large file upload currently supports MVC only.');
+  }
+
+  if (getConfiguredTrafficPinMode() === 'traffic' && getConfiguredTrafficFallbackPolicy() === 'strict') {
+    const detail = '大于 5 MiB 的分片文件上传需要自付钱包 SPACE（外部 MetaFS 分片服务暂不支持积分代付），当前已开启「流量使用积分支付」且禁止静默扣钱包；请将文件压缩至 5 MiB 以内以使用积分，或关闭积分支付开关后重试。';
+    throw new TrafficInsufficientError({
+      reason: 'pre_rejected',
+      stage: 'address_info',
+      detail,
+      feeAssist: {
+        attempted: true,
+        used: false,
+        mode: 'mvc_sponsor_v2',
+        sponsor: 'mvc_sponsor_v2',
+        reason: 'pre_rejected',
+        stage: 'address_info',
+        billedBy: 'me',
+        txSize: size,
+        detail,
+      },
+    });
   }
 
   const metabot = metabotStore.getMetabotById(params.metabotId);

@@ -463,3 +463,136 @@ test('legacy upgrade without user_identity and unset traffic.mode allows selfpay
     resetTrafficAccountServiceForTests();
   }
 });
+
+test('mvcSponsorClient scales pre/commit timeouts for multi-MB payloads while keeping lightweight calls at 8s', async () => {
+  const { resolveSponsorRequestTimeoutMs } = await import('../dist-electron/main/services/mvcSponsorClient.js');
+  assert.equal(resolveSponsorRequestTimeoutMs('address_info'), 8_000);
+  assert.equal(resolveSponsorRequestTimeoutMs('challenge'), 8_000);
+  assert.equal(resolveSponsorRequestTimeoutMs('pre', '{"txHex":"ab"}'), 33_000);
+  const fiveMibHexJson = 'x'.repeat(10 * 1024 * 1024);
+  const bigTimeout = resolveSponsorRequestTimeoutMs('pre', fiveMibHexJson);
+  assert.ok(bigTimeout >= 140_000 && bigTimeout <= 180_000, `expected 140s..180s, got ${bigTimeout}`);
+  assert.equal(resolveSponsorRequestTimeoutMs('commit', 'x'.repeat(20 * 1024 * 1024)), 180_000);
+});
+
+test('errorCode precedence & diagnostics: ME_DAILY_LIMIT, ME_INSUFFICIENT, and open-order limit surface exact detail and ME numbers', async () => {
+  const draftResult = buildDraftResult();
+
+  // Case 1: ME_DAILY_LIMIT with non-English message text that omits the code string.
+  await assert.rejects(
+    runMvcSponsorCreatePin(
+      {
+        metabotId: 22,
+        mnemonic: MNEMONIC,
+        walletPath: WALLET_PATH,
+        mvcAddress: TEST_ADDRESS,
+        feeRate: 1,
+        fallbackPolicy: 'strict',
+        baseUrl: 'https://sponsor.test',
+        trafficAccount: { accountId: 'acc-1', authSignature: 'sig', timestamp: 1700000000, billing: 'me' },
+        fetchImpl: createFetchStub([
+          ['/v2/assist/gas/address/info', {
+            exists: true,
+            balance: 5000,
+            grantedAmount: 5000,
+            reservedAmount: 0,
+            spentAmount: 0,
+            availableAmount: 5000,
+            status: 'active',
+            me: { trafficBilling: true, spendableMilli: 27500 },
+          }],
+          CHALLENGE_ROUTE,
+          ['/v2/assist/gas/mvc/pre', () => ({
+            code: 1,
+            message: '今日额度已用完',
+            data: { errorCode: 'ME_DAILY_LIMIT', limitMilli: 20000000, retryable: false },
+          })],
+        ]),
+      },
+      {
+        runDraftWorker: async () => draftResult,
+        runBroadcastWorker: async () => {
+          throw new Error('must not self-pay');
+        },
+        recordSpentOutpoints: () => {},
+        replacePendingFundingUtxos: () => {},
+      },
+    ),
+    (error) => {
+      assert.ok(error instanceof TrafficInsufficientError);
+      assert.equal(error.reason, 'insufficient_me');
+      assert.equal(error.stage, 'pre');
+      assert.equal(error.feeAssist.serviceErrorCode, 'ME_DAILY_LIMIT');
+      assert.equal(error.feeAssist.billedBy, 'me');
+      assert.equal(error.feeAssist.spendableMilli, 27500);
+      assert.equal(error.feeAssist.limitMilli, 20000000);
+      assert.equal(error.feeAssist.detail, '今日额度已用完');
+      assert.match(error.message, /ME_DAILY_LIMIT/);
+      assert.match(error.message, /今日额度已用完/);
+      assert.match(chainWriteFailureDetail(error), /service_code=ME_DAILY_LIMIT/);
+      return true;
+    },
+  );
+
+  // Case 2: ME_INSUFFICIENT carries neededMilli + availableMilli in diagnostics.
+  await assert.rejects(
+    runMvcSponsorCreatePin(
+      {
+        metabotId: 22,
+        mnemonic: MNEMONIC,
+        walletPath: WALLET_PATH,
+        mvcAddress: TEST_ADDRESS,
+        feeRate: 1,
+        fallbackPolicy: 'strict',
+        baseUrl: 'https://sponsor.test',
+        trafficAccount: { accountId: 'acc-1', authSignature: 'sig', timestamp: 1700000000, billing: 'me' },
+        fetchImpl: createFetchStub([
+          ['/v2/assist/gas/address/info', {
+            exists: true,
+            balance: 5000,
+            grantedAmount: 5000,
+            reservedAmount: 0,
+            spentAmount: 0,
+            availableAmount: 5000,
+            status: 'active',
+            me: { trafficBilling: true, spendableMilli: 5000 },
+          }],
+          CHALLENGE_ROUTE,
+          ['/v2/assist/gas/mvc/pre', () => ({
+            code: 1,
+            message: 'ME balance insufficient',
+            data: { errorCode: 'ME_INSUFFICIENT', neededMilli: 95987, availableMilli: 5000, retryable: false },
+          })],
+        ]),
+      },
+      {
+        runDraftWorker: async () => draftResult,
+        runBroadcastWorker: async () => {
+          throw new Error('must not self-pay');
+        },
+        recordSpentOutpoints: () => {},
+        replacePendingFundingUtxos: () => {},
+      },
+    ),
+    (error) => {
+      assert.ok(error instanceof TrafficInsufficientError);
+      assert.equal(error.reason, 'insufficient_me');
+      assert.equal(error.feeAssist.requiredMilli, 95987);
+      assert.equal(error.feeAssist.spendableMilli, 5000);
+      assert.match(error.message, /required_milli=95987/);
+      assert.match(error.message, /spendable_milli=5000/);
+      assert.match(chainWriteFailureDetail(error), /required_milli=95987; spendable_milli=5000/);
+      return true;
+    },
+  );
+});
+
+test('compiled uploadLargeFileWorker.js exists and chunked MVC upload blocks silent self-pay under strict traffic mode', async () => {
+  const workerPath = path.join(process.cwd(), 'dist-electron', 'main', 'libs', 'uploadLargeFileWorker.js');
+  assert.equal(fs.existsSync(workerPath), true, 'uploadLargeFileWorker.js must be compiled into dist-electron/main/libs');
+  const uploadSvcSrc = fs.readFileSync(path.join(process.cwd(), 'src/main/services/metaFileUploadService.ts'), 'utf8');
+  assert.match(
+    uploadSvcSrc,
+    /getConfiguredTrafficPinMode\(\) === 'traffic' && getConfiguredTrafficFallbackPolicy\(\) === 'strict'[\s\S]*throw new TrafficInsufficientError/,
+  );
+});

@@ -122,6 +122,18 @@ export interface MvcSponsorFeeAssistMetadata {
   billedBy?: TrafficSpendBilledBy;
   /** ME charged in milliME when billedBy is 'me' and the sponsor echoed it. */
   meAmountMilli?: number;
+  /** Underlying sponsor/worker failure detail for diagnostics. */
+  detail?: string;
+  /** Backend data.errorCode / code when present (e.g. ME_DAILY_LIMIT, ME_INSUFFICIENT). */
+  serviceErrorCode?: string;
+  /** Required ME in milliME reported by backend on ME_INSUFFICIENT. */
+  requiredMilli?: number;
+  /** Latest known spendable ME in milliME from address/info or backend rejection. */
+  spendableMilli?: number;
+  /** Daily traffic ME limit in milliME reported by backend on ME_DAILY_LIMIT. */
+  limitMilli?: number;
+  /** Estimated or observed transaction byte size. */
+  txSize?: number;
 }
 
 export interface MvcSponsorDirectUploadInput {
@@ -299,11 +311,52 @@ async function fallbackSelfPaidForSponsorError(input: {
   stage: MvcSponsorFeeAssistStage;
   orderId?: string;
   quotaBefore?: MvcSponsorAddressInfo;
+  billedBy?: TrafficSpendBilledBy;
+  txSize?: number;
   advisoryFeeEstimate?: number;
   /** Sponsor-order outcome observed while reconciling a failed commit. */
   commitOrderOutcome?: 'failed' | 'pending' | 'unknown';
 }): Promise<Record<string, unknown>> {
   const reason = normalizeSponsorReason((input.error as { reason?: unknown })?.reason, input.fallbackReason);
+  const errObj = input.error as {
+    message?: unknown;
+    serviceMessage?: unknown;
+    serviceErrorCode?: unknown;
+    neededMilli?: unknown;
+    availableMilli?: unknown;
+    limitMilli?: unknown;
+  } | undefined;
+  const rawDetail = typeof errObj?.serviceMessage === 'string' && errObj.serviceMessage.trim()
+    ? errObj.serviceMessage.trim()
+    : input.error instanceof Error && input.error.message
+      ? input.error.message.trim()
+      : '';
+  const serviceErrorCode = typeof errObj?.serviceErrorCode === 'string' && errObj.serviceErrorCode.trim()
+    ? errObj.serviceErrorCode.trim()
+    : undefined;
+  const requiredMilli = typeof errObj?.neededMilli === 'number' && Number.isFinite(errObj.neededMilli)
+    ? errObj.neededMilli
+    : undefined;
+  const availableFromErr = typeof errObj?.availableMilli === 'number' && Number.isFinite(errObj.availableMilli)
+    ? errObj.availableMilli
+    : undefined;
+  const spendableMilli = availableFromErr ?? meBillingOf(input.quotaBefore)?.spendableMilli;
+  const limitMilli = typeof errObj?.limitMilli === 'number' && Number.isFinite(errObj.limitMilli)
+    ? errObj.limitMilli
+    : undefined;
+  const billedBy = input.billedBy
+    ?? (meBillingOf(input.quotaBefore)?.trafficBilling ? 'me' : input.quotaBefore ? 'quota' : undefined);
+  const diagnosticFields: Partial<MvcSponsorFeeAssistMetadata> = {
+    ...(rawDetail ? { detail: rawDetail } : {}),
+    ...(serviceErrorCode ? { serviceErrorCode } : {}),
+    ...(billedBy ? { billedBy } : {}),
+    ...(requiredMilli !== undefined ? { requiredMilli } : {}),
+    ...(spendableMilli !== undefined ? { spendableMilli } : {}),
+    ...(limitMilli !== undefined ? { limitMilli } : {}),
+    ...(typeof input.txSize === 'number' && Number.isFinite(input.txSize) && input.txSize > 0
+      ? { txSize: input.txSize }
+      : {}),
+  };
   if (input.fallbackPolicy === 'strict') {
     const feeAssist: MvcSponsorFeeAssistMetadata = {
       attempted: true,
@@ -316,6 +369,7 @@ async function fallbackSelfPaidForSponsorError(input: {
       commitOrderOutcome: input.commitOrderOutcome,
       quotaBefore: input.quotaBefore,
       advisoryFeeEstimate: input.advisoryFeeEstimate,
+      ...diagnosticFields,
     };
     appendMetaidLog('WARN', 'Sponsored MVC file upload failed under strict policy — self-paid fallback blocked', {
       reason,
@@ -323,11 +377,13 @@ async function fallbackSelfPaidForSponsorError(input: {
       orderId: input.orderId,
       commitOrderOutcome: input.commitOrderOutcome,
       fallbackPolicy: input.fallbackPolicy,
+      ...diagnosticFields,
     });
     throw new TrafficInsufficientError({
       reason,
       stage: input.stage,
       orderId: input.orderId,
+      detail: rawDetail || undefined,
       feeAssist,
     });
   }
@@ -530,6 +586,7 @@ export async function uploadMvcSponsorDirectFile(
   // as the tx byte-size estimate for the traffic-bytes comparison. The ME cost
   // is priced server-side, so the ME preflight only short-circuits an empty
   // balance and leaves the exact check to pre.
+  const draftByteSize = Math.floor(draft.unsignedTxHex.length / 2);
   if (trafficAccount?.billing === 'me') {
     const spendableMilli = meBillingOf(quotaBefore)?.spendableMilli;
     if (spendableMilli !== undefined && spendableMilli <= 0) {
@@ -540,6 +597,8 @@ export async function uploadMvcSponsorDirectFile(
         fallbackReason: 'insufficient_me',
         stage: 'address_info',
         quotaBefore,
+        billedBy: 'me',
+        txSize: draftByteSize,
         advisoryFeeEstimate: estimatedMinerFee,
       });
     }
@@ -553,6 +612,8 @@ export async function uploadMvcSponsorDirectFile(
         fallbackReason: 'insufficient_traffic',
         stage: 'address_info',
         quotaBefore,
+        billedBy: 'traffic',
+        txSize: draftByteSize,
         advisoryFeeEstimate: estimatedMinerFee,
       });
     }
@@ -564,6 +625,8 @@ export async function uploadMvcSponsorDirectFile(
       fallbackReason: 'insufficient_quota',
       stage: 'address_info',
       quotaBefore,
+      billedBy: 'quota',
+      txSize: draftByteSize,
       advisoryFeeEstimate: estimatedMinerFee,
     });
   }
@@ -609,6 +672,8 @@ export async function uploadMvcSponsorDirectFile(
       fallbackReason: normalizeSponsorReason((error as { reason?: unknown })?.reason, 'pre_rejected'),
       stage: 'pre',
       quotaBefore,
+      billedBy: trafficAccount?.billing === 'me' ? 'me' : trafficAccount ? 'traffic' : 'quota',
+      txSize: Math.floor(draft.unsignedTxHex.length / 2),
       advisoryFeeEstimate: estimatedMinerFee,
     });
   }
@@ -724,6 +789,8 @@ export async function uploadMvcSponsorDirectFile(
         stage: 'commit',
         orderId: pre.orderId,
         quotaBefore,
+        billedBy: trafficAccount?.billing === 'me' ? 'me' : trafficAccount ? 'traffic' : 'quota',
+        txSize: Math.floor(draft.unsignedTxHex.length / 2),
         advisoryFeeEstimate,
         commitOrderOutcome: reconciliation.outcome === 'failed' || reconciliation.outcome === 'pending' || reconciliation.outcome === 'unknown'
           ? reconciliation.outcome

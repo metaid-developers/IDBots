@@ -101,6 +101,22 @@ export function chainWriteFailureDetail(error: unknown): string {
   const reason = asString(fa.reason);
   const stage = asString(fa.stage);
   if (reason) parts.push(`sponsor=${reason}${stage ? `@${stage}` : ''}`);
+  const serviceErrorCode = asString(fa.serviceErrorCode);
+  if (serviceErrorCode) parts.push(`service_code=${serviceErrorCode}`);
+  const billedBy = asString(fa.billedBy);
+  if (billedBy) parts.push(`billing=${billedBy}`);
+  if (typeof fa.requiredMilli === 'number' && Number.isFinite(fa.requiredMilli)) {
+    parts.push(`required_milli=${fa.requiredMilli}`);
+  }
+  if (typeof fa.spendableMilli === 'number' && Number.isFinite(fa.spendableMilli)) {
+    parts.push(`spendable_milli=${fa.spendableMilli}`);
+  }
+  if (typeof fa.limitMilli === 'number' && Number.isFinite(fa.limitMilli)) {
+    parts.push(`limit_milli=${fa.limitMilli}`);
+  }
+  if (typeof fa.txSize === 'number' && Number.isFinite(fa.txSize) && fa.txSize > 0) {
+    parts.push(`txSize=${fa.txSize}`);
+  }
   const orderId = asString(fa.orderId);
   if (orderId) parts.push(`order=${orderId}`);
   const outcome = asString(fa.commitOrderOutcome);

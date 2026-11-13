@@ -123,6 +123,17 @@ function runStaticChecks() {
     'root libs symlink targets current electron output'
   );
 
+  if (fs.existsSync(resolveInProject('dist-electron/main'))) {
+    for (const worker of ['createPinWorker.js', 'uploadLargeFileWorker.js', 'transferMvcWorker.js']) {
+      const workerRel = path.join('dist-electron', 'main', 'libs', worker);
+      addCheck(
+        `compiled worker present: ${worker}`,
+        fs.existsSync(resolveInProject(workerRel)),
+        workerRel
+      );
+    }
+  }
+
   checkFileContains(
     'src/main/libs/coworkRunner.ts',
     ['getEnhancedEnv(', 'isStaleConversationSessionError(', 'staleResumeDetected'],

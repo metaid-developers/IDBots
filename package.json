@@ -10,7 +10,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && node scripts/verify-twemoji-bundle.mjs",
+    "build": "tsc && vite build && pnpm run compile:electron && node scripts/verify-twemoji-bundle.mjs",
     "dev:mobile": "cross-env VITE_MOBILE_MOCK=1 vite --config vite.mobile.config.ts --port 5176",
     "dev:mobile:real": "cross-env vite --config vite.mobile.config.ts --port 5176",
     "test:e2e:mobile": "node scripts/run-mobile-e2e.mjs",
