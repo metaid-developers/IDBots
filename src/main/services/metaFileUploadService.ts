@@ -311,6 +311,7 @@ export async function uploadMetaFile(
           network,
           feeRate,
           origin: params.origin,
+          ...(feeAssist ? { sponsorMode: 'selfpay' as const } : {}),
         },
       );
       const normalized = normalizeRpcUploadResult({

@@ -782,7 +782,7 @@ const TrafficSettings: React.FC = () => {
     try {
       const res = await trafficApi.setSettings({
         mode,
-        fallbackPolicy: mode === 'traffic' ? 'strict' : 'selfpay',
+        fallbackPolicy: 'selfpay',
       });
       if (res.success && res.settings) {
         setSettings(res.settings);
