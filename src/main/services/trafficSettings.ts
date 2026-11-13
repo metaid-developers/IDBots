@@ -6,12 +6,13 @@
  *
  * - traffic.mode: 'traffic' (credits payment, default) | 'selfpay' (each
  *   wallet pays its own gas). In credits-payment mode sponsored writes are
- *   billed to the user's ME credits (weekly grant first, then credit packs
- *   while auto-deduct is on); when the credits cannot cover a write it falls
- *   back to the writing wallet, like every other sponsor failure.
- * - traffic.fallbackPolicy: always 'selfpay' — when credits payment is
- *   unavailable or insufficient, writes fall back to the writing wallet.
- *   The old 'strict' option is no longer exposed.
+ *   billed strictly to the user's ME credits (weekly grant first, then credit
+ *   packs while auto-deduct is on); when credits payment is unavailable or
+ *   insufficient the write fails explicitly with TrafficInsufficientError and
+ *   never falls back to the writing wallet.
+ * - traffic.fallbackPolicy: derived from traffic.mode — 'strict' whenever
+ *   traffic.mode === 'traffic' (no silent self-pay fallback), 'selfpay' only
+ *   when traffic.mode === 'selfpay'.
  * - traffic.apiBase: assist-service base URL override (integration testing);
  *   empty/unset means the production default baked into the clients.
  * - traffic.rechargeGateway: recharge payment-gateway override (dev-only E2E
@@ -54,9 +55,12 @@ export function isMeTrafficBillingAllowed(
   }
 }
 
-/** Stored 'strict' is ignored; account-quota mode always falls back to self-pay. */
-export function normalizeTrafficFallbackPolicy(_value?: unknown): TrafficFallbackPolicy {
-  return 'selfpay';
+/**
+ * Normalize a fallbackPolicy value; defaults to 'strict' unless explicitly 'selfpay'.
+ * Effective fallbackPolicy in traffic mode is always 'strict'.
+ */
+export function normalizeTrafficFallbackPolicy(value?: unknown): TrafficFallbackPolicy {
+  return String(value ?? '').trim().toLowerCase() === 'selfpay' ? 'selfpay' : 'strict';
 }
 
 /**
@@ -126,9 +130,9 @@ export function getTrafficPinMode(reader: TrafficSettingsReader | null | undefin
 }
 
 export function getTrafficFallbackPolicy(
-  _reader?: TrafficSettingsReader | null,
+  reader?: TrafficSettingsReader | null,
 ): TrafficFallbackPolicy {
-  return 'selfpay';
+  return getTrafficPinMode(reader) === 'traffic' ? 'strict' : 'selfpay';
 }
 
 /** Settings snapshot for the renderer toggle UI. */
@@ -166,7 +170,7 @@ export function setTrafficSettings(
 ): TrafficSettingsSnapshot {
   const current = getTrafficSettings(store);
   const nextMode = input.mode === undefined ? current.mode : normalizeTrafficPinMode(input.mode);
-  const nextFallbackPolicy = 'selfpay';
+  const nextFallbackPolicy: TrafficFallbackPolicy = nextMode === 'traffic' ? 'strict' : 'selfpay';
   // Validate before touching the store: invalid values must not be persisted.
   const nextApiBase = input.apiBase === undefined ? current.apiBase : normalizeTrafficApiBase(input.apiBase);
   const nextGateway = input.rechargeGateway === undefined
@@ -174,8 +178,12 @@ export function setTrafficSettings(
     : normalizeRechargeGatewayOverride(input.rechargeGateway);
   if (store) {
     try {
-      if (input.mode !== undefined) store.set(TRAFFIC_MODE_KEY, nextMode);
-      if (input.fallbackPolicy !== undefined) store.set(TRAFFIC_FALLBACK_POLICY_KEY, nextFallbackPolicy);
+      if (input.mode !== undefined) {
+        store.set(TRAFFIC_MODE_KEY, nextMode);
+        store.set(TRAFFIC_FALLBACK_POLICY_KEY, nextFallbackPolicy);
+      } else if (input.fallbackPolicy !== undefined) {
+        store.set(TRAFFIC_FALLBACK_POLICY_KEY, nextFallbackPolicy);
+      }
       if (input.apiBase !== undefined) store.set(TRAFFIC_API_BASE_KEY, nextApiBase);
       if (input.rechargeGateway !== undefined) store.set(TRAFFIC_RECHARGE_GATEWAY_KEY, nextGateway);
     } catch {

@@ -1353,8 +1353,16 @@ export function startMetaidRpcServer(
         res.writeHead(200);
         res.end(JSON.stringify(result));
       } catch (err) {
+        const errObj = err && typeof err === 'object' ? (err as { code?: unknown; reason?: unknown; stage?: unknown; data?: { feeAssist?: unknown } }) : null;
         res.writeHead(400);
-        res.end(JSON.stringify({ success: false, error: String((err as Error)?.message || err) }));
+        res.end(JSON.stringify({
+          success: false,
+          error: String((err as Error)?.message || err),
+          ...(typeof errObj?.code === 'string' && errObj.code ? { code: errObj.code } : {}),
+          ...(typeof errObj?.reason === 'string' && errObj.reason ? { reason: errObj.reason } : {}),
+          ...(typeof errObj?.stage === 'string' && errObj.stage ? { stage: errObj.stage } : {}),
+          ...(errObj?.data?.feeAssist ? { feeAssist: errObj.data.feeAssist } : {}),
+        }));
       }
       return;
     }
@@ -3052,6 +3060,7 @@ export function startMetaidRpcServer(
           txid,
           pinId,
           totalCost: result.totalCost,
+          ...(result.feeAssist ? { feeAssist: result.feeAssist } : {}),
         })
       );
     } catch (err) {
@@ -3059,6 +3068,7 @@ export function startMetaidRpcServer(
         err && typeof err === 'object' && 'message' in err
           ? String((err as Error).message)
           : String(err);
+      const errObj = err && typeof err === 'object' ? (err as { code?: unknown; reason?: unknown; stage?: unknown; data?: { feeAssist?: unknown } }) : null;
       try {
         const logPath = path.join(app.getPath('userData'), 'metaid-rpc.log');
         const line = `[${new Date().toISOString()}] [ERROR] create-pin: ${message}\n`;
@@ -3067,7 +3077,14 @@ export function startMetaidRpcServer(
         /* ignore */
       }
       res.writeHead(500);
-      res.end(JSON.stringify({ success: false, error: message }));
+      res.end(JSON.stringify({
+        success: false,
+        error: message,
+        ...(typeof errObj?.code === 'string' && errObj.code ? { code: errObj.code } : {}),
+        ...(typeof errObj?.reason === 'string' && errObj.reason ? { reason: errObj.reason } : {}),
+        ...(typeof errObj?.stage === 'string' && errObj.stage ? { stage: errObj.stage } : {}),
+        ...(errObj?.data?.feeAssist ? { feeAssist: errObj.data.feeAssist } : {}),
+      }));
     }
   });
 

@@ -66,12 +66,15 @@ import {
   sponsorCircuitRetryAfterMs,
   SPONSOR_BREAKER_COOLDOWN_MS,
 } from './mvcSponsorCircuitBreaker';
+import { TrafficInsufficientError } from './mvcSponsorCreatePin';
+import type { TrafficFallbackPolicy } from './trafficSettings';
 
 export {
   createMvcSponsorV2Client,
   fetchMvcAddressUtxos,
   signMvcPreparedUserInputs,
 } from './mvcSponsorClient';
+export { TrafficInsufficientError } from './mvcSponsorCreatePin';
 export type {
   MvcSponsorAddressInfo,
   MvcSponsorDraft,
@@ -135,6 +138,11 @@ export interface MvcSponsorDirectUploadInput {
   selfPaidUpload: (
     feeAssist: MvcSponsorFeeAssistMetadata,
   ) => Promise<Record<string, unknown>>;
+  /**
+   * 'strict' forbids self-paid fallback and throws TrafficInsufficientError;
+   * 'selfpay' (or omitted) keeps the self-paid fallback.
+   */
+  fallbackPolicy?: TrafficFallbackPolicy;
   baseUrl?: string;
   fetchImpl?: typeof fetch;
   fetchUtxos?: (address: string) => Promise<SponsorMvcUtxo[]>;
@@ -286,6 +294,7 @@ function attachFeeAssistError(input: {
 async function fallbackSelfPaidForSponsorError(input: {
   error: unknown;
   selfPaidUpload: MvcSponsorDirectUploadInput['selfPaidUpload'];
+  fallbackPolicy?: TrafficFallbackPolicy;
   fallbackReason: MvcSponsorFeeAssistReason;
   stage: MvcSponsorFeeAssistStage;
   orderId?: string;
@@ -295,6 +304,33 @@ async function fallbackSelfPaidForSponsorError(input: {
   commitOrderOutcome?: 'failed' | 'pending' | 'unknown';
 }): Promise<Record<string, unknown>> {
   const reason = normalizeSponsorReason((input.error as { reason?: unknown })?.reason, input.fallbackReason);
+  if (input.fallbackPolicy === 'strict') {
+    const feeAssist: MvcSponsorFeeAssistMetadata = {
+      attempted: true,
+      used: false,
+      mode: 'mvc_sponsor_v2',
+      sponsor: 'mvc_sponsor_v2',
+      reason,
+      stage: input.stage,
+      orderId: input.orderId,
+      commitOrderOutcome: input.commitOrderOutcome,
+      quotaBefore: input.quotaBefore,
+      advisoryFeeEstimate: input.advisoryFeeEstimate,
+    };
+    appendMetaidLog('WARN', 'Sponsored MVC file upload failed under strict policy — self-paid fallback blocked', {
+      reason,
+      stage: input.stage,
+      orderId: input.orderId,
+      commitOrderOutcome: input.commitOrderOutcome,
+      fallbackPolicy: input.fallbackPolicy,
+    });
+    throw new TrafficInsufficientError({
+      reason,
+      stage: input.stage,
+      orderId: input.orderId,
+      feeAssist,
+    });
+  }
   // Self-pay spends the bot's own wallet — never let that happen silently
   // (the 2026-09-07 outage: exhausted legacy quota forced every traffic-mode
   // write to self-pay with no trace of why). The WARN log + feeAssist trace
@@ -384,6 +420,7 @@ export async function uploadMvcSponsorDirectFile(
     return fallbackSelfPaidForSponsorError({
       error: { reason: 'circuit_open' },
       selfPaidUpload: input.selfPaidUpload,
+      fallbackPolicy: input.fallbackPolicy,
       fallbackReason: 'circuit_open',
       stage: 'address_info',
     });
@@ -396,6 +433,7 @@ export async function uploadMvcSponsorDirectFile(
     return fallbackSelfPaidForSponsorError({
       error,
       selfPaidUpload: input.selfPaidUpload,
+      fallbackPolicy: input.fallbackPolicy,
       fallbackReason: 'service_unavailable',
       stage: 'address_info',
     });
@@ -421,6 +459,16 @@ export async function uploadMvcSponsorDirectFile(
       userInputTotal: draft.userInputs.reduce((sum, utxo) => sum + utxo.satoshis, 0),
     });
   } catch (error) {
+    if (input.fallbackPolicy === 'strict') {
+      return fallbackSelfPaidForSponsorError({
+        error,
+        selfPaidUpload: input.selfPaidUpload,
+        fallbackPolicy: input.fallbackPolicy,
+        fallbackReason: isNoUserUtxoDraftError(error) ? 'no_user_utxo' : 'service_unavailable',
+        stage: 'address_info',
+        quotaBefore,
+      });
+    }
     if (!isNoUserUtxoDraftError(error)) {
       attachFeeAssistError({
         error,
@@ -433,6 +481,7 @@ export async function uploadMvcSponsorDirectFile(
     return fallbackSelfPaidForSponsorError({
       error,
       selfPaidUpload: input.selfPaidUpload,
+      fallbackPolicy: input.fallbackPolicy,
       fallbackReason: 'no_user_utxo',
       stage: 'address_info',
       quotaBefore,
@@ -448,6 +497,7 @@ export async function uploadMvcSponsorDirectFile(
     return fallbackSelfPaidForSponsorError({
       error,
       selfPaidUpload: input.selfPaidUpload,
+      fallbackPolicy: input.fallbackPolicy,
       fallbackReason: normalizeSponsorReason((error as { reason?: unknown })?.reason, 'service_unavailable'),
       stage: 'challenge',
       quotaBefore,
@@ -486,6 +536,7 @@ export async function uploadMvcSponsorDirectFile(
       return fallbackSelfPaidForSponsorError({
         error: { reason: 'insufficient_me' },
         selfPaidUpload: input.selfPaidUpload,
+        fallbackPolicy: input.fallbackPolicy,
         fallbackReason: 'insufficient_me',
         stage: 'address_info',
         quotaBefore,
@@ -498,6 +549,7 @@ export async function uploadMvcSponsorDirectFile(
       return fallbackSelfPaidForSponsorError({
         error: { reason: 'insufficient_traffic' },
         selfPaidUpload: input.selfPaidUpload,
+        fallbackPolicy: input.fallbackPolicy,
         fallbackReason: 'insufficient_traffic',
         stage: 'address_info',
         quotaBefore,
@@ -508,6 +560,7 @@ export async function uploadMvcSponsorDirectFile(
     return fallbackSelfPaidForSponsorError({
       error: { reason: 'insufficient_quota' },
       selfPaidUpload: input.selfPaidUpload,
+      fallbackPolicy: input.fallbackPolicy,
       fallbackReason: 'insufficient_quota',
       stage: 'address_info',
       quotaBefore,
@@ -552,6 +605,7 @@ export async function uploadMvcSponsorDirectFile(
     return fallbackSelfPaidForSponsorError({
       error,
       selfPaidUpload: input.selfPaidUpload,
+      fallbackPolicy: input.fallbackPolicy,
       fallbackReason: normalizeSponsorReason((error as { reason?: unknown })?.reason, 'pre_rejected'),
       stage: 'pre',
       quotaBefore,
@@ -580,6 +634,7 @@ export async function uploadMvcSponsorDirectFile(
     return fallbackSelfPaidForSponsorError({
       error,
       selfPaidUpload: input.selfPaidUpload,
+      fallbackPolicy: input.fallbackPolicy,
       fallbackReason: 'pre_rejected',
       stage: 'commit',
       orderId: pre.orderId,
@@ -664,6 +719,7 @@ export async function uploadMvcSponsorDirectFile(
       return fallbackSelfPaidForSponsorError({
         error,
         selfPaidUpload: input.selfPaidUpload,
+        fallbackPolicy: input.fallbackPolicy,
         fallbackReason: 'commit_failed',
         stage: 'commit',
         orderId: pre.orderId,

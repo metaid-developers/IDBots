@@ -7,6 +7,7 @@ import path from 'node:path';
 const {
   buildMvcFileInscriptionDraft,
   createMvcSponsorV2Client,
+  TrafficInsufficientError,
   uploadMvcSponsorDirectFile,
 } = await import('../dist-electron/main/services/mvcSponsorUpload.js');
 const {
@@ -551,4 +552,153 @@ test('uploadMvcSponsorDirectFile attaches structured feeAssist when the self-pai
       return true;
     },
   );
+});
+
+test('uploadMvcSponsorDirectFile throws TrafficInsufficientError across all 8 failure reasons under strict policy without calling selfPaidUpload', async () => {
+  const mvcAddress = '1K9eUW4vED3qfWmr4Fcre64sU7D38QM1tX';
+  const draft = await buildTestDraft(mvcAddress);
+  const { filePath } = await makeTestFile();
+
+  const cases = [
+    {
+      reason: 'service_unavailable',
+      stage: 'address_info',
+      routes: [['/v2/assist/gas/address/info', () => ({ code: 1, msg: 'service down' })]],
+      utxos: [{ txId: TEST_TXID, outputIndex: 0, satoshis: 50000, address: mvcAddress, height: 1 }],
+    },
+    {
+      reason: 'service_unavailable',
+      stage: 'pre',
+      routes: [
+        ['/v2/assist/gas/address/info', {
+          exists: true, balance: 5000, grantedAmount: 5000, reservedAmount: 0, spentAmount: 0, availableAmount: 5000, status: 'active',
+        }],
+        ['/v2/assist/gas/mvc/challenge', { challengeId: 'challenge-1', message: 'sign this message' }],
+        ['/v2/assist/gas/mvc/pre', () => ({ code: 1, msg: 'open sponsor orders for address exceed limit' })],
+      ],
+      utxos: [{ txId: TEST_TXID, outputIndex: 0, satoshis: 50000, address: mvcAddress, height: 1 }],
+    },
+    {
+      reason: 'no_user_utxo',
+      stage: 'address_info',
+      routes: [
+        ['/v2/assist/gas/address/info', {
+          exists: true, balance: 5000, grantedAmount: 5000, reservedAmount: 0, spentAmount: 0, availableAmount: 5000, status: 'active',
+        }],
+      ],
+      utxos: [],
+    },
+    {
+      reason: 'insufficient_quota',
+      stage: 'pre',
+      routes: [
+        ['/v2/assist/gas/address/info', {
+          exists: true, balance: 5000, grantedAmount: 5000, reservedAmount: 0, spentAmount: 0, availableAmount: 5000, status: 'active',
+        }],
+        ['/v2/assist/gas/mvc/challenge', { challengeId: 'challenge-1', message: 'sign this message' }],
+        ['/v2/assist/gas/mvc/pre', () => ({ code: 1, msg: 'available amount not enough' })],
+      ],
+      utxos: [{ txId: TEST_TXID, outputIndex: 0, satoshis: 50000, address: mvcAddress, height: 1 }],
+    },
+    {
+      reason: 'insufficient_traffic',
+      stage: 'pre',
+      routes: [
+        ['/v2/assist/gas/address/info', {
+          exists: true, balance: 5000, grantedAmount: 5000, reservedAmount: 0, spentAmount: 0, availableAmount: 5000, status: 'active',
+        }],
+        ['/v2/assist/gas/mvc/challenge', { challengeId: 'challenge-1', message: 'sign this message' }],
+        ['/v2/assist/gas/mvc/pre', () => ({ code: 1, msg: 'TRAFFIC_INSUFFICIENT' })],
+      ],
+      utxos: [{ txId: TEST_TXID, outputIndex: 0, satoshis: 50000, address: mvcAddress, height: 1 }],
+    },
+    {
+      reason: 'insufficient_me',
+      stage: 'pre',
+      routes: [
+        ['/v2/assist/gas/address/info', {
+          exists: true, balance: 5000, grantedAmount: 5000, reservedAmount: 0, spentAmount: 0, availableAmount: 5000, status: 'active',
+        }],
+        ['/v2/assist/gas/mvc/challenge', { challengeId: 'challenge-1', message: 'sign this message' }],
+        ['/v2/assist/gas/mvc/pre', () => ({ code: 1, msg: 'me balance low', data: { errorCode: 'ME_INSUFFICIENT', retryable: false } })],
+      ],
+      utxos: [{ txId: TEST_TXID, outputIndex: 0, satoshis: 50000, address: mvcAddress, height: 1 }],
+    },
+    {
+      reason: 'pre_rejected',
+      stage: 'pre',
+      routes: [
+        ['/v2/assist/gas/address/info', {
+          exists: true, balance: 5000, grantedAmount: 5000, reservedAmount: 0, spentAmount: 0, availableAmount: 5000, status: 'active',
+        }],
+        ['/v2/assist/gas/mvc/challenge', { challengeId: 'challenge-1', message: 'sign this message' }],
+        ['/v2/assist/gas/mvc/pre', () => ({ code: 1, msg: 'address not match' })],
+      ],
+      utxos: [{ txId: TEST_TXID, outputIndex: 0, satoshis: 50000, address: mvcAddress, height: 1 }],
+    },
+    {
+      reason: 'commit_failed',
+      stage: 'commit',
+      routes: [
+        ['/v2/assist/gas/address/info', {
+          exists: true, balance: 5000, grantedAmount: 5000, reservedAmount: 0, spentAmount: 0, availableAmount: 5000, status: 'active',
+        }],
+        ['/v2/assist/gas/mvc/challenge', { challengeId: 'challenge-1', message: 'sign this message' }],
+        ['/v2/assist/gas/mvc/pre', { preparedTxHex: draft.unsignedTxHex, orderId: 'order-strict-1', minerFee: 100, userInputIndexes: [0] }],
+        ['/v2/assist/gas/mvc/commit', () => ({ code: 1, msg: 'commit failed' })],
+        ['/v2/assist/gas/mvc/order/order-strict-1', { orderId: 'order-strict-1', status: 'failed', txSize: 300, minerFee: 100, pending: false, final: true }],
+      ],
+      utxos: [{ txId: TEST_TXID, outputIndex: 0, satoshis: 50000, address: mvcAddress, height: 1 }],
+    },
+    {
+      reason: 'circuit_open',
+      stage: 'address_info',
+      tripBreaker: true,
+      routes: [],
+      utxos: [{ txId: TEST_TXID, outputIndex: 0, satoshis: 50000, address: mvcAddress, height: 1 }],
+    },
+  ];
+
+  for (const testCase of cases) {
+    resetSponsorCircuitBreakerForTests();
+    if (testCase.tripBreaker) {
+      recordSponsorBroadcastFailure(mvcAddress);
+      recordSponsorBroadcastFailure(mvcAddress);
+      recordSponsorBroadcastFailure(mvcAddress);
+    }
+    let selfPaidCalls = 0;
+    await assert.rejects(
+      uploadMvcSponsorDirectFile({
+        filePath,
+        fileName: 'sponsor-test.bin',
+        contentType: 'application/octet-stream;binary',
+        bytes: 16,
+        extension: '.bin',
+        mnemonic: MNEMONIC,
+        walletPath: WALLET_PATH,
+        mvcAddress,
+        fallbackPolicy: 'strict',
+        selfPaidUpload: async () => {
+          selfPaidCalls += 1;
+          return { success: true, pinId: 'selfpaid-i0' };
+        },
+        fetchImpl: createFetchStub(testCase.routes),
+        fetchUtxos: async () => testCase.utxos,
+        commitReconcileMaxWaitMs: 0,
+      }),
+      (error) => {
+        assert.ok(error instanceof TrafficInsufficientError, `${testCase.reason}@${testCase.stage}`);
+        assert.equal(error.code, 'mvc_traffic_insufficient');
+        assert.equal(error.reason, testCase.reason);
+        assert.equal(error.stage, testCase.stage);
+        assert.equal(error.feeAssist.used, false);
+        assert.match(error.message, /积分支付失败，请检查积分余额或稍后重试/);
+        assert.ok(error.message.includes(testCase.reason));
+        assert.ok(error.message.includes(testCase.stage));
+        return true;
+      },
+    );
+    assert.equal(selfPaidCalls, 0, `${testCase.reason}@${testCase.stage} must never self-pay`);
+  }
+  resetSponsorCircuitBreakerForTests();
 });
