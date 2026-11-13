@@ -10,6 +10,12 @@
 	request_body {
 		max_size 26MB
 	}
+	# Plan B tenant credit routes are server-to-server only and their responses
+	# carry single-use upstream redeem codes (a bearer value: first redeemer
+	# wins). They are reachable exclusively on the internal tenants network
+	# (tenant → http://<cp-ip>:8080), never through the public edge.
+	@tenantCredit path /api/v1/tenant/*
+	respond @tenantCredit 404
 	reverse_proxy control-plane:8080 {
 		# WebSocket connections stay open without an idle timeout.
 		flush_interval -1

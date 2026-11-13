@@ -30,7 +30,7 @@ export interface PaidBundleOrder {
 }
 
 export function recordBundleOrderCredit(
-  app: Pick<AppContext, 'db'>,
+  app: Pick<AppContext, 'db' | 'config'>,
   input: { userId: string; order: PaidBundleOrder },
   operator: string,
 ): ReturnType<typeof grantCredit> {

@@ -20,7 +20,7 @@ import { encryptSecret, sha256Hex, maskPhone } from './crypto.js';
 import { upgradeTenants, findContainerId, recreateContainer } from './services/upgrade.js';
 import { MetricsRegistry } from './metrics.js';
 import type { AppContext } from './context.js';
-import { grantCredit, listCredits } from './services/creditService.js';
+import { attachCreditApplyCode, grantCredit, listCredits } from './services/creditService.js';
 import { HttpError } from './http.js';
 
 // --- CLI-scoped config (no listen/SMS/origin requirements) ------------------
@@ -343,6 +343,7 @@ function cmdCreditGrant(ctx: AppContext, flags: Map<string, string | boolean>, a
       source: 'manual',
       actor: `admin:${as}`,
       referenceKey: flagString(flags, 'reference'),
+      applyCode: flagString(flags, 'code'),
     });
   } catch (err) {
     if (err instanceof HttpError) {
@@ -356,9 +357,32 @@ function cmdCreditGrant(ctx: AppContext, flags: Map<string, string | boolean>, a
     );
   } else {
     console.log(
-      `credit #${result.creditId}: ${result.bytes} bytes → user ${result.userId} (reference ${result.referenceKey ?? '-'})`,
+      `credit #${result.creditId}: ${result.bytes} bytes → user ${result.userId} ` +
+        `(reference ${result.referenceKey ?? '-'}, apply=${result.applyState}, code=${result.hasApplyCode ? 'yes' : 'no'})`,
     );
   }
+}
+
+function cmdCreditAttachCode(ctx: AppContext, flags: Map<string, string | boolean>, as: string): void {
+  const idText = requireFlag(flags, 'id');
+  const creditId = Number(idText);
+  if (!Number.isInteger(creditId) || creditId <= 0) {
+    throw new CliError(`--id must be a positive integer, got "${idText}"`);
+  }
+  const code = requireFlag(flags, 'code');
+  let result;
+  try {
+    result = attachCreditApplyCode(ctx, { creditId, code, actor: `admin:${as}` });
+  } catch (err) {
+    if (err instanceof HttpError) {
+      throw new CliError(`${err.code}: ${err.message}`);
+    }
+    throw err;
+  }
+  console.log(
+    `credit #${result.creditId}: application code attached ` +
+      `(${result.bytes} bytes → user ${result.userId}, apply=${result.applyState})`,
+  );
 }
 
 function cmdCreditList(ctx: AppContext, flags: Map<string, string | boolean>): void {
@@ -626,6 +650,7 @@ const MUTATING = new Set([
   'invite.disable',
   'redeem.import',
   'credit.grant',
+  'credit.attach-code',
   'user.disable',
   'user.enable',
   'tenant.restart',
@@ -675,6 +700,9 @@ async function run(argv: string[]): Promise<void> {
         break;
       case 'credit.list':
         cmdCreditList(ctx, flags);
+        break;
+      case 'credit.attach-code':
+        cmdCreditAttachCode(ctx, flags, as!);
         break;
       case 'user.list':
         cmdUserList(ctx, flags);

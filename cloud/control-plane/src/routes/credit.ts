@@ -1,6 +1,11 @@
 import type { AppContext } from '../context.js';
 import { HttpError, writeJson, type RequestCtx, type Route } from '../http.js';
-import { grantCredit, listCredits, rowToCreditResult } from '../services/creditService.js';
+import {
+  attachCreditApplyCode,
+  grantCredit,
+  listCredits,
+  rowToCreditResult,
+} from '../services/creditService.js';
 
 /**
  * Admin credit surface (payment credit channel, NEW capability — no C2/C3
@@ -19,8 +24,13 @@ import { grantCredit, listCredits, rowToCreditResult } from '../services/creditS
  *
  * GET /api/v1/admin/credit?userId=...&limit=... → { credits: [...] }
  *
+ * POST /api/v1/admin/credit/:creditId/code  body { code, operator? }
+ *   → attach the single-use upstream redeem code a pending manual grant is
+ *     worth. Code values are never echoed or logged.
+ *
  * Every grant lands in credit_ledger AND audit_log; the CLI writes the same
- * ledger rows through services/creditService.grantCredit.
+ * ledger rows through services/creditService.grantCredit. The tenant-facing
+ * pull/apply surface lives in routes/tenantCredit.ts.
  */
 
 function requireAdminToken(app: AppContext, reqCtx: RequestCtx): void {
@@ -65,9 +75,50 @@ async function adminCreditGrant(app: AppContext, reqCtx: RequestCtx, body: unkno
       payload.referenceKey === undefined || payload.referenceKey === null
         ? null
         : String(payload.referenceKey),
+    applyCode:
+      payload.applyCode === undefined || payload.applyCode === null
+        ? null
+        : String(payload.applyCode),
   });
-  reqCtx.log('info', 'credit grant', { userId: result.userId, bytes: result.bytes, duplicate: result.duplicate });
+  reqCtx.log('info', 'credit grant', {
+    userId: result.userId,
+    bytes: result.bytes,
+    duplicate: result.duplicate,
+    applyState: result.applyState,
+  });
   writeJson(reqCtx.res, result.duplicate ? 200 : 201, result);
+}
+
+/**
+ * Attach the upstream redeem code a pending manual grant redeems. This is the
+ * one operator step plan B needs: the tenant applies the bytes itself, so the
+ * control plane only needs to know WHICH single-use code that grant is worth.
+ * The code value is never echoed back and never logged.
+ */
+async function adminAttachApplyCode(
+  app: AppContext,
+  reqCtx: RequestCtx,
+  body: unknown,
+  params: Record<string, string>,
+): Promise<void> {
+  requireAdminToken(app, reqCtx);
+  const creditId = Number(params.creditId);
+  if (!Number.isInteger(creditId) || creditId <= 0) {
+    throw new HttpError(400, 'INVALID_CREDIT_ID', 'creditId must be a positive integer');
+  }
+  const payload = (body ?? {}) as Record<string, unknown>;
+  const operator = String(payload.operator ?? '').trim() || 'http';
+  const result = attachCreditApplyCode(app, {
+    creditId,
+    code: String(payload.code ?? ''),
+    actor: `admin:${operator}`,
+  });
+  reqCtx.log('info', 'credit apply code attached', {
+    creditId: result.creditId,
+    userId: result.userId,
+    hasApplyCode: result.hasApplyCode,
+  });
+  writeJson(reqCtx.res, 200, result);
 }
 
 async function adminCreditList(app: AppContext, reqCtx: RequestCtx): Promise<void> {
@@ -83,4 +134,10 @@ async function adminCreditList(app: AppContext, reqCtx: RequestCtx): Promise<voi
 export const creditRoutes: Route[] = [
   { method: 'POST', path: '/api/v1/admin/credit', auth: false, handler: adminCreditGrant },
   { method: 'GET', path: '/api/v1/admin/credit', auth: false, handler: adminCreditList },
+  {
+    method: 'POST',
+    path: '/api/v1/admin/credit/:creditId/code',
+    auth: false,
+    handler: adminAttachApplyCode,
+  },
 ];
