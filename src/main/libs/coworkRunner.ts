@@ -131,6 +131,7 @@ import { SOCIAL_TRUST_RULE } from './socialTrustPrompt';
 import { hasEmbeddedSkillCatalog } from './skillPromptMarkers';
 import { buildMetabotPersonaPrompt } from './metabotPersonaPrompt';
 import { readBootstrapDoc } from './welcomeBootstrap';
+import { buildTwinProductPrimerSection, readTwinProductPrimer } from './twinProductPrimer';
 import {
   clearCoworkSessionUpstream,
   resetCoworkSnipHeadTokens,
@@ -6806,6 +6807,17 @@ export class CoworkRunner extends EventEmitter {
   }
 
   /**
+   * Built-in product knowledge for the Twin (IDBotsPrimer.md): new owners ask
+   * their Twin "what can I do here?" and "Studio or BotWorks?" first, and a
+   * Twin with no product facts could only guess. Session-invariant and
+   * version-bundled, so it sits in the cached system prefix; Workers omit it.
+   */
+  private buildTwinProductPrimerPrompt(sessionId: string): string {
+    if (!this.isTwinSession(sessionId)) return '';
+    return buildTwinProductPrimerSection(readTwinProductPrimer(app.getAppPath()));
+  }
+
+  /**
    * Host-owned role overlay for the one persistent Twin Bot. This is kept
    * separate from editable persona text so a Worker cannot promote itself by
    * changing bio, soul, or a delegated prompt.
@@ -9196,6 +9208,7 @@ export class CoworkRunner extends EventEmitter {
       const personaWithExperience = [
         personaBlock,
         this.buildTwinOrchestrationPrompt(sessionId),
+        this.buildTwinProductPrimerPrompt(sessionId),
         this.buildWelcomeBootstrapPrompt(sessionId),
         await this.buildTwinLocalRosterPrompt(sessionId),
       ]
@@ -9348,6 +9361,7 @@ export class CoworkRunner extends EventEmitter {
       const personaWithExperience = [
         personaBlock,
         this.buildTwinOrchestrationPrompt(sessionId),
+        this.buildTwinProductPrimerPrompt(sessionId),
         this.buildWelcomeBootstrapPrompt(sessionId),
         await this.buildTwinLocalRosterPrompt(sessionId),
       ]
