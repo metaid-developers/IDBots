@@ -1864,7 +1864,12 @@ interface IElectronAPI {
     getPaymentInfo: () => Promise<{ success: boolean; payment?: { qrContent: string; payeeHint: string; qrImageDataUrl?: string }; error?: string }>;
   };
   jevRelay: {
-    resolveCredentials: () => Promise<{ success: boolean; credentials?: JevRelayCredentials; error?: string }>;
+    resolveCredentials: () => Promise<{
+      success: boolean;
+      credentials?: JevRelayCredentials;
+      quotaBreaker?: { exhausted: boolean; retryAfterMs: number };
+      error?: string;
+    }>;
   };
   appInfo: {
     getVersion: () => Promise<string>;

@@ -1,6 +1,15 @@
 import { ArrowLeftIcon, ArrowPathIcon, CheckCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { formatMeMoney, meCheckoutErrorKey, mePaymentPhase, type MePaymentCheckout } from '@/components/me/mePayment';
+import {
+  bumpMeOrderGeneration,
+  formatMeMoney,
+  meCheckoutErrorKey,
+  meOrderGenerationSlotKey,
+  mePaymentPhase,
+  readMeOrderGeneration,
+  shouldRetryTerminalMeOrder,
+  type MePaymentCheckout,
+} from '@/components/me/mePayment';
 import { t } from '../../i18n';
 import { getMobileElectron } from '../appBridge';
 import { MeTierCards } from '../components/MeTierCards';
@@ -76,6 +85,7 @@ export default function MePurchaseScreen(props: {
   const [errorCode, setErrorCode] = useState('');
   const [upgradeConfirmOpen, setUpgradeConfirmOpen] = useState(false);
   const submittingRef = useRef(false);
+  const activeSlotKeyRef = useRef('');
   const onSubmittedRef = useRef(props.onSubmitted);
   onSubmittedRef.current = props.onSubmitted;
 
@@ -214,9 +224,11 @@ export default function MePurchaseScreen(props: {
       setCheckout(merged);
       const orderPhase = mePaymentPhase(merged.status);
       if (orderPhase === 'credited') {
+        if (activeSlotKeyRef.current) bumpMeOrderGeneration(activeSlotKeyRef.current);
         setPhase('credited');
         finishCredited(merged.orderId);
       } else if (orderPhase === 'closed') {
+        if (activeSlotKeyRef.current) bumpMeOrderGeneration(activeSlotKeyRef.current);
         setPhase('closed');
         clearMeCheckoutRecovery(merged.orderId);
       }
@@ -264,6 +276,12 @@ export default function MePurchaseScreen(props: {
       setUpgradeConfirmOpen(true);
       return;
     }
+    const subjectId = section === 'subscribe' ? selectedPlan?.planId : selectedPackage?.packageId;
+    if (!subjectId) return;
+    const slotKey = meOrderGenerationSlotKey({ section, subjectId, period, gateway });
+    activeSlotKeyRef.current = slotKey;
+    const attemptStartedAt = Date.now();
+    const initialGeneration = readMeOrderGeneration(slotKey);
     const request = buildMePurchaseOrderRequest({
       section,
       planId: selectedPlan?.planId,
@@ -271,6 +289,7 @@ export default function MePurchaseScreen(props: {
       period,
       periodDays: days,
       gateway,
+      generation: initialGeneration,
     });
     if (!request) return;
     submittingRef.current = true;
@@ -278,7 +297,25 @@ export default function MePurchaseScreen(props: {
     setSubmitError('');
     setErrorCode('');
     try {
-      const result = await submitMePurchaseOrder(window.electron.mePoints, request);
+      let result = await submitMePurchaseOrder(window.electron.mePoints, request);
+      if (result.ok && result.checkout && shouldRetryTerminalMeOrder({
+        status: result.checkout.status,
+        createdAt: result.orderCreatedAt,
+      }, attemptStartedAt)) {
+        const nextGeneration = bumpMeOrderGeneration(slotKey);
+        const retryRequest = buildMePurchaseOrderRequest({
+          section,
+          planId: selectedPlan?.planId,
+          packageId: selectedPackage?.packageId,
+          period,
+          periodDays: days,
+          gateway,
+          generation: nextGeneration,
+        });
+        if (retryRequest) {
+          result = await submitMePurchaseOrder(window.electron.mePoints, retryRequest);
+        }
+      }
       if (!result.ok) {
         setPhase('form');
         setSubmitError(result.error || t('mobile.me.purchase.errorTitle'));
@@ -288,6 +325,12 @@ export default function MePurchaseScreen(props: {
       if (!result.checkout) {
         setPhase('form');
         setSubmitError(t('mobile.me.purchase.paymentUnavailable'));
+        return;
+      }
+      if (mePaymentPhase(result.checkout.status) === 'closed') {
+        bumpMeOrderGeneration(slotKey);
+        setCheckout(result.checkout);
+        setPhase('closed');
         return;
       }
       setCheckout(result.checkout);

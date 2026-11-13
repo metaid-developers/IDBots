@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  buildMeOrderIdempotencyKey,
+  bumpMeOrderGeneration,
   extractMeApprovalUrl,
   extractMeExpiresAt,
   extractMeProration,
@@ -10,10 +12,13 @@ import {
   meCheckoutErrorKey,
   meDiscountFromPct,
   meGatewayCharge,
+  meOrderGenerationSlotKey,
   mePaypalUsdFromCny,
   mePaymentPhase,
   mePeriodPricing,
   normalizeMePaymentCheckout,
+  readMeOrderGeneration,
+  shouldRetryTerminalMeOrder,
 } from '../src/renderer/components/me/mePayment.ts';
 
 test('checkout parsing matches the traffic recharge gatewayParams contract', () => {
@@ -184,4 +189,30 @@ test('checkout errors map by errorCode, never the bare "error" envelope message'
   assert.equal(meCheckoutErrorKey('', 'error'), 'mePurchaseServiceError');
   // a real descriptive message without a known code stays visible as-is
   assert.equal(meCheckoutErrorKey('', 'ME service request timed out after 15000ms.'), '');
+});
+
+test('same-day idempotency generation bumps unblock repeat topups and expired orders', () => {
+  const mem = new Map<string, string>();
+  const storage = {
+    getItem: (k: string) => mem.get(k) ?? null,
+    setItem: (k: string, v: string) => { mem.set(k, v); },
+  };
+  const now = Date.UTC(2026, 10, 13, 12, 0, 0);
+  const slot = meOrderGenerationSlotKey({ section: 'topup', subjectId: 'pkg-1', gateway: 'alipay' });
+  assert.equal(readMeOrderGeneration(slot, storage, now), 0);
+  assert.equal(
+    buildMeOrderIdempotencyKey({ scope: 'desktop', section: 'topup', subjectId: 'pkg-1', gateway: 'alipay', generation: 0, now }),
+    'desktop-topup-pkg-1-alipay-2026-11-13',
+  );
+  const gen1 = bumpMeOrderGeneration(slot, storage, now);
+  assert.equal(gen1, 1);
+  assert.equal(readMeOrderGeneration(slot, storage, now), 1);
+  assert.equal(
+    buildMeOrderIdempotencyKey({ scope: 'desktop', section: 'topup', subjectId: 'pkg-1', gateway: 'alipay', generation: gen1, now }),
+    'desktop-topup-pkg-1-alipay-2026-11-13-r1',
+  );
+  assert.equal(shouldRetryTerminalMeOrder({ status: 'closed', createdAt: now }, now), true);
+  assert.equal(shouldRetryTerminalMeOrder({ status: 'credited', createdAt: now - 60_000 }, now), true);
+  assert.equal(shouldRetryTerminalMeOrder({ status: 'credited', createdAt: now }, now), false);
+  assert.equal(shouldRetryTerminalMeOrder({ status: 'created', createdAt: now - 60_000 }, now), false);
 });

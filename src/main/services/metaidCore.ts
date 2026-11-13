@@ -37,7 +37,7 @@ import { getMainWorkerCandidatePaths, resolveMainWorkerPath } from './workerPath
 import { runMvcSponsorCreatePin, TrafficInsufficientError, type CreatePinFeeAssistMetadata } from './mvcSponsorCreatePin';
 import { recordChainWriteFromCreatePin } from '../libs/chainWriteLedger';
 import { assertChainWritePinRefs } from '../libs/chainPinRefGuard';
-import { getConfiguredTrafficApiBase, resolveSponsorTrafficAccount } from './trafficAccountService';
+import { getConfiguredTrafficApiBase, isLegacyTrafficUserWithoutIdentity, resolveSponsorTrafficAccount } from './trafficAccountService';
 import { deriveMvcSponsorAddress, type MvcSponsorTrafficAccount } from './mvcSponsorClient';
 import { appendMetaidLog } from './metaidLog';
 import {
@@ -761,39 +761,50 @@ export async function createPinForIdentity(params: {
     operation: params.metaidData.operation,
     path: params.metaidData.path || '',
   });
-  return runMvcSponsorCreatePin(
-    {
-      // Not a MetaBot: 0 marks identity writes in the sponsor logs, which also carry mvcAddress.
-      metabotId: 0,
-      mnemonic,
-      walletPath,
-      mvcAddress: identityAddress,
-      feeRate: resolveCreatePinFeeRate('mvc', params.options?.feeRate),
-      fallbackPolicy: getTrafficFallbackPolicy(getMetaidCoreKvReader()),
-      baseUrl: getConfiguredTrafficApiBase(),
-      journalKind: params.metaidData.path || undefined,
+  return runMvcCreatePinWithInsufficientFundsRescue({
+    metabotId: 0,
+    operation: params.metaidData.operation,
+    path: params.metaidData.path || '',
+    settleMs: MVC_SUBSIDY_SETTLE_MS,
+    requestFreshFunding: async () => {
+      if (!identityAddress) return false;
+      const subsidy = await requestMvcGasSubsidy({ mvcAddress: identityAddress, mnemonic, path: walletPath });
+      return subsidy.success;
     },
-    {
-      runDraftWorker: () => spawnCreatePinWorker({
+    run: () => runMvcSponsorCreatePin(
+      {
+        // Not a MetaBot: 0 marks identity writes in the sponsor logs, which also carry mvcAddress.
+        metabotId: 0,
         mnemonic,
         walletPath,
-        metaidData: params.metaidData,
-        options: { ...params.options, mode: 'draft' },
-        sessionSnapshot: params.sessionSnapshot,
-      }),
-      runBroadcastWorker,
-      // The caller threads spentOutpoints/changeUtxo from the result into its own snapshot.
-      recordSpentOutpoints: () => {},
-      replacePendingFundingUtxos: () => {},
-      resolveTrafficAccount: ({ challengeId, billing }) => resolveSponsorTrafficAccount({
-        botAddress: identityAddress,
-        challengeId,
-        botMnemonic: mnemonic,
-        botWalletPath: walletPath,
-        billing,
-      }),
-    },
-  );
+        mvcAddress: identityAddress,
+        feeRate: resolveCreatePinFeeRate('mvc', params.options?.feeRate),
+        fallbackPolicy: getTrafficFallbackPolicy(getMetaidCoreKvReader()),
+        baseUrl: getConfiguredTrafficApiBase(),
+        journalKind: params.metaidData.path || undefined,
+      },
+      {
+        runDraftWorker: () => spawnCreatePinWorker({
+          mnemonic,
+          walletPath,
+          metaidData: params.metaidData,
+          options: { ...params.options, mode: 'draft' },
+          sessionSnapshot: params.sessionSnapshot,
+        }),
+        runBroadcastWorker,
+        // The caller threads spentOutpoints/changeUtxo from the result into its own snapshot.
+        recordSpentOutpoints: () => {},
+        replacePendingFundingUtxos: () => {},
+        resolveTrafficAccount: ({ challengeId, billing }) => resolveSponsorTrafficAccount({
+          botAddress: identityAddress,
+          challengeId,
+          botMnemonic: mnemonic,
+          botWalletPath: walletPath,
+          billing,
+        }),
+      },
+    ),
+  });
 }
 
 /**
@@ -925,6 +936,9 @@ export async function createPin(
             operation: metaidData.operation,
             path: metaidData.path || '',
           });
+          const defaultFallbackPolicy = getTrafficFallbackPolicy(getMetaidCoreKvReader());
+          const fallbackPolicy = options?.sponsorFallbackPolicy
+            ?? (isLegacyTrafficUserWithoutIdentity() ? 'selfpay' : defaultFallbackPolicy);
           return runMvcSponsorCreatePin(
             {
               metabotId: metabot_id,
@@ -932,7 +946,7 @@ export async function createPin(
               walletPath,
               mvcAddress: sponsorMvcAddress,
               feeRate: resolveCreatePinFeeRate('mvc', options?.feeRate),
-              fallbackPolicy: options?.sponsorFallbackPolicy ?? getTrafficFallbackPolicy(getMetaidCoreKvReader()),
+              fallbackPolicy,
               baseUrl: options?.sponsorBaseUrl ?? getConfiguredTrafficApiBase(),
               fetchImpl: options?.sponsorFetchImpl,
               trafficAccount: options?.sponsorTrafficAccount,

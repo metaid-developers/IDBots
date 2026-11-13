@@ -32,6 +32,7 @@ import {
   type SponsorPaySource,
 } from './mvcSponsorClient';
 import {
+  TRAFFIC_MODE_KEY,
   getTrafficFallbackPolicy,
   getTrafficPinMode,
   getTrafficSettings,
@@ -336,9 +337,34 @@ export function getConfiguredTrafficPinMode(): TrafficPinMode {
 
 export function getConfiguredTrafficFallbackPolicy(): TrafficFallbackPolicy {
   try {
+    if (isLegacyTrafficUserWithoutIdentity()) {
+      return 'selfpay';
+    }
     return getTrafficFallbackPolicy(getKvStore());
   } catch {
     return 'strict';
+  }
+}
+
+/**
+ * True when the running install has no local user_identity (so no ME credits
+ * account exists at all) AND the user never explicitly persisted traffic.mode.
+ * Legacy custom-API-key installs upgrading from pre-ME releases fall into this
+ * bucket: rather than failing every MetaBot chain write with "积分支付失败"
+ * when the bot's legacy sponsor quota runs out, callers allow self-paid
+ * fallback from the bot's own wallet. Any user with a user_identity OR an
+ * explicit traffic.mode choice keeps strict points-only enforcement.
+ */
+export function isLegacyTrafficUserWithoutIdentity(): boolean {
+  try {
+    if (!depsRef?.getUserIdentityStore) return false;
+    const identity = depsRef.getUserIdentityStore()?.get();
+    if (identity?.mnemonic?.trim() && normalizeText(identity.mvc_address)) return false;
+    const kv = getKvStore();
+    if (!kv) return false;
+    return kv.get(TRAFFIC_MODE_KEY) === undefined;
+  } catch {
+    return false;
   }
 }
 

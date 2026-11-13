@@ -28,15 +28,19 @@ import {
   type MePurchaseSection,
 } from './mePointsStore';
 import {
+  bumpMeOrderGeneration,
   formatMeMoney,
   isMePlanDowngrade,
   meCheckoutErrorKey,
   meDiscountFromPct,
   meGatewayCharge,
+  meOrderGenerationSlotKey,
   mePaymentPhase,
   mePeriodPricing,
   meTierRank,
   normalizeMePaymentCheckout,
+  readMeOrderGeneration,
+  shouldRetryTerminalMeOrder,
   type MePaymentCheckout,
   type MePaymentGatewayOption,
   type MeSubscriptionPeriodOption,
@@ -128,6 +132,7 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
   const [errorCode, setErrorCode] = useState('');
   const [checking, setChecking] = useState(false);
   const [checkout, setCheckout] = useState<MePaymentCheckout | null>(null);
+  const activeSlotKeyRef = useRef<string>('');
   const [qrDataUrl, setQrDataUrl] = useState('');
   // Upgrade two-step confirm (owner policy 2026-11-11, interim until ABS
   // ships proration): the first CTA press on a HIGHER tier opens an inline
@@ -327,11 +332,13 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
         }
         const nextPhase = mePaymentPhase(res.subscriptionOrder.status);
         if (nextPhase === 'credited') {
+          if (activeSlotKeyRef.current) bumpMeOrderGeneration(activeSlotKeyRef.current);
           setCheckout((current) => current ? { ...current, status: res.subscriptionOrder!.status } : current);
           setPhase('credited');
           invalidateMeSnapshot();
           void requestMeSubscription();
         } else if (nextPhase === 'closed') {
+          if (activeSlotKeyRef.current) bumpMeOrderGeneration(activeSlotKeyRef.current);
           setPhase('closed');
         }
       } else {
@@ -343,10 +350,12 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
         }
         const nextPhase = mePaymentPhase(order.status);
         if (nextPhase === 'credited') {
+          if (activeSlotKeyRef.current) bumpMeOrderGeneration(activeSlotKeyRef.current);
           setCheckout((current) => current ? { ...current, status: order.status } : current);
           setPhase('credited');
           invalidateMeSnapshot();
         } else if (nextPhase === 'closed') {
+          if (activeSlotKeyRef.current) bumpMeOrderGeneration(activeSlotKeyRef.current);
           setPhase('closed');
         }
       }
@@ -389,18 +398,16 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
     setPhase('creating');
     setOrderError('');
     setErrorCode('');
-    // R2.2-stable idempotency key (2026-11-11): the UTC day-stamp collapses
-    // same-day re-orders of the same subject into ONE server order — an
-    // abandoned checkout resumes (the dedup response carries the original
-    // order + gatewayParams) instead of stacking payable duplicates. The
-    // gateway rides in the subscribe key: switching Alipay→PayPal is a
-    // different checkout, not a retry.
+    const slotKey = meOrderGenerationSlotKey({ section, subjectId, period, gateway });
+    activeSlotKeyRef.current = slotKey;
+    const attemptStartedAt = Date.now();
     const dayStamp = new Date().toISOString().slice(0, 10);
-    const idempotencyKey = section === 'subscribe'
-      ? `desktop-subscribe-${subjectId}-${period}-${gateway}-${dayStamp}`
-      : `desktop-topup-${subjectId}-${gateway}-${dayStamp}`;
-    try {
-      const res = section === 'subscribe'
+    const submitOnce = async (generation: number) => {
+      const genSuffix = generation > 0 ? `-r${generation}` : '';
+      const idempotencyKey = section === 'subscribe'
+        ? `desktop-subscribe-${subjectId}-${period}-${gateway}-${dayStamp}${genSuffix}`
+        : `desktop-topup-${subjectId}-${gateway}-${dayStamp}${genSuffix}`;
+      return section === 'subscribe'
         ? await window.electron.mePoints.submitSubscriptionOrder({
             planId: subjectId,
             period,
@@ -413,6 +420,19 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
             gateway,
             idempotencyKey,
           });
+    };
+    try {
+      let generation = readMeOrderGeneration(slotKey);
+      let res = await submitOnce(generation);
+      if (res.success) {
+        const initialOrder = section === 'subscribe'
+          ? ('subscriptionOrder' in res ? res.subscriptionOrder : null)
+          : ('submission' in res ? res.submission?.order : null);
+        if (shouldRetryTerminalMeOrder(initialOrder, attemptStartedAt)) {
+          generation = bumpMeOrderGeneration(slotKey);
+          res = await submitOnce(generation);
+        }
+      }
       if (!res.success) {
         setPhase('pick');
         setOrderError(res.error || i18nService.t('mePurchaseUnavailable'));
@@ -432,9 +452,8 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
         // Zero-amount upgrade (R6 credit ≥ list, shipped 2026-11-11): the
         // server credits the order in the same transaction and ships NO
         // gateway checkout — that is a success, not an unusable order.
-        // Re-entering here with the day-stable key replays the same
-        // credited order, so reporting an error would dead-loop the panel.
         if (mePaymentPhase(nextCheckout.status) === 'credited') {
+          bumpMeOrderGeneration(slotKey);
           setCheckout(nextCheckout);
           setPhase('credited');
           invalidateMeSnapshot();
@@ -443,6 +462,12 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
         }
         setPhase('pick');
         setOrderError(i18nService.t('mePurchaseUnavailable'));
+        return;
+      }
+      if (mePaymentPhase(nextCheckout.status) === 'closed') {
+        bumpMeOrderGeneration(slotKey);
+        setCheckout(nextCheckout);
+        setPhase('closed');
         return;
       }
       setCheckout(nextCheckout);

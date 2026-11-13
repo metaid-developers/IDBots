@@ -268,20 +268,37 @@
     window.createLiquidOrbRenderer(canvas, {
       startPhase,
       sharedResources: previous?.controller?.getSharedResources?.() || undefined,
-      onReady: () => { orb.backend = 'webgpu'; reveal(); },
-      onError: (error) => switchToCanvas(error),
+      onReady: () => {
+        if (orb.active !== layer || orb.backend === 'canvas') return;
+        orb.backend = 'webgpu';
+        reveal();
+      },
+      onError: (error) => {
+        if (orb.active !== layer) {
+          disposeLayer(layer, !previous?.controller);
+          return;
+        }
+        switchToCanvas(error);
+      },
     }).then((controller) => {
-      orb.mounting = false;
       if (orb.active !== layer || orb.backend === 'canvas') {
         // Superseded before it was ready: nothing else can share its device.
         layer.controller = controller;
         disposeLayer(layer, !previous?.controller);
         return;
       }
+      orb.mounting = false;
       layer.controller = controller;
       controller.setParams(params, { immediate: true });
       controller.setReduced(reduced());
-    }).catch((error) => { orb.mounting = false; switchToCanvas(error); });
+    }).catch((error) => {
+      if (orb.active !== layer) {
+        disposeLayer(layer, !previous?.controller);
+        return;
+      }
+      orb.mounting = false;
+      switchToCanvas(error);
+    });
   }
 
   /** Move the orb to a named look; a different shader style cross-fades a new layer. */

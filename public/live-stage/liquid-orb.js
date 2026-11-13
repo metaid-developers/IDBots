@@ -113,6 +113,9 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     if (!device) {
       const adapter = await navigator.gpu.requestAdapter();
       if (!adapter) throw new Error('No WebGPU adapter');
+      if (adapter.info?.isFallbackAdapter || adapter.isFallbackAdapter) {
+        throw new Error('WebGPU adapter is software fallback');
+      }
       device = await adapter.requestDevice();
     }
     const context = canvas.getContext('webgpu');

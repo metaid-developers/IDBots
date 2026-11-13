@@ -428,3 +428,38 @@ test('AC4 coverage: all MVC write entrypoints route through strict traffic polic
   // UI toggle writes strict when mode === 'traffic'
   assert.match(trafficSettingsUiSrc, /fallbackPolicy:\s*mode === 'traffic' \? 'strict' : 'selfpay'/);
 });
+
+test('legacy upgrade without user_identity and unset traffic.mode allows selfpay fallback; explicit traffic or existing identity stays strict', async () => {
+  const {
+    getConfiguredTrafficFallbackPolicy,
+    initTrafficAccountService,
+    isLegacyTrafficUserWithoutIdentity,
+    resetTrafficAccountServiceForTests,
+  } = await import('../dist-electron/main/services/trafficAccountService.js');
+  const kv = new Map();
+  let identity = null;
+  initTrafficAccountService({
+    getStore: () => ({
+      get: (k) => kv.get(k),
+      set: (k, v) => { kv.set(k, v); },
+      getDatabase: () => ({ exec: () => [], run: () => {} }),
+      getSaveFunction: () => () => {},
+    }),
+    getUserIdentityStore: () => ({ get: () => identity }),
+  });
+  try {
+    assert.equal(isLegacyTrafficUserWithoutIdentity(), true);
+    assert.equal(getConfiguredTrafficFallbackPolicy(), 'selfpay');
+
+    kv.set('traffic.mode', 'traffic');
+    assert.equal(isLegacyTrafficUserWithoutIdentity(), false);
+    assert.equal(getConfiguredTrafficFallbackPolicy(), 'strict');
+
+    kv.delete('traffic.mode');
+    identity = { mnemonic: MNEMONIC, mvc_address: TEST_ADDRESS };
+    assert.equal(isLegacyTrafficUserWithoutIdentity(), false);
+    assert.equal(getConfiguredTrafficFallbackPolicy(), 'strict');
+  } finally {
+    resetTrafficAccountServiceForTests();
+  }
+});

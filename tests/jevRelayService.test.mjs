@@ -31,6 +31,7 @@ const {
   classifyJevRelayThrownError,
   createJevRelayCallRecorder,
   isJevRelayQuotaExhausted,
+  getJevRelayQuotaStatus,
   noteJevRelayQuotaExhaustion,
   flushJevRelayCallStats,
   JEV_RELAY_QUOTA_BREAKER_MS,
@@ -713,4 +714,19 @@ test('after an identity change the resolver adopts the re-issued provider key, n
   assert.equal(calls.bootstrap, 0, 'no bootstrap needed: the provider entry already carries the new key');
   const runtime = await resolveCerebellumRuntimeConfig(FREE_CEREBELLUM_CONFIG);
   assert.equal(runtime.apiKey, 'mrk_identityA');
+});
+
+test('getJevRelayQuotaStatus reports breaker exhaustion and emits WARN log once per window', () => {
+  const { lines, sink } = captureSink();
+  service.setJevRelayCallStatsSink(sink);
+  const now = 1_700_000_000_000;
+  assert.deepEqual(getJevRelayQuotaStatus(now), { exhausted: false, retryAfterMs: 0 });
+  noteJevRelayQuotaExhaustion(now);
+  noteJevRelayQuotaExhaustion(now + 1000);
+  const status = getJevRelayQuotaStatus(now + 1000);
+  assert.equal(status.exhausted, true);
+  assert.equal(status.retryAfterMs, JEV_RELAY_QUOTA_BREAKER_MS);
+  assert.equal(getJevRelayQuotaStatus(now + 2000).retryAfterMs, JEV_RELAY_QUOTA_BREAKER_MS - 1000);
+  const warnLines = lines.filter((line) => line.tag === 'jevRelay:quota' && line.level === 'WARN');
+  assert.equal(warnLines.length, 1);
 });
