@@ -270,10 +270,12 @@ test('payment UX honesty: topup intro, code expiry, stale-unpaid orders, gateway
   assert.match(purchaseFlowSource, /checkout\.expiresAt\s*\n\s*\? i18nService\.t\('mePurchaseQrExpiryAt'\)/);
   assert.match(paymentSource, /expiresAt\?: number/);
   assert.match(paymentSource, /export function extractMeExpiresAt/);
-  // Gateway not enabled server-side → friendly "use Alipay" copy, not a raw
-  // backend error string.
-  assert.match(purchaseFlowSource, /isGatewayUnavailableError\(errorCode, orderError\)/);
-  assert.match(purchaseFlowSource, /GATEWAY_NOT_CONFIGURED\|GATEWAY_UNSUPPORTED/i);
+  // Gateway not enabled / temporarily down server-side → friendly
+  // per-gateway copy keyed on data.errorCode, never the raw envelope
+  // message ("error").
+  assert.match(purchaseFlowSource, /meCheckoutErrorKey\(errorCode, orderError\)/);
+  assert.match(paymentSource, /GATEWAY_NOT_CONFIGURED/);
+  assert.match(paymentSource, /GATEWAY_UNAVAILABLE/);
   assert.match(i18nSource, /mePurchaseGatewayUnavailable/);
   // Usage page: subscription orders unpaid past 2h render 超时未支付 (gray,
   // not the live amber 提交中) and stop driving the 20s status poll.

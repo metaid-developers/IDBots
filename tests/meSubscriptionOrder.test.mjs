@@ -266,7 +266,7 @@ const i18nSource = fs.readFileSync(
 function createOrderBody() {
   const start = flowSource.indexOf('const handleCreateOrder = useCallback(');
   assert.ok(start >= 0, 'MePurchaseFlow must keep a handleCreateOrder callback');
-  const end = flowSource.indexOf('}, [section, selectedPlan, selectedTopup, phase, period, amountDue, gateway, isFreeSelected, isUpgradePlan, upgradeConfirmOpen]);', start);
+  const end = flowSource.indexOf('}, [section, selectedPlan, selectedTopup, phase, period, amountDue, gatewayCharge, gateway, isFreeSelected, isUpgradePlan, upgradeConfirmOpen]);', start);
   assert.ok(end > start, 'handleCreateOrder dependency list shape changed — update this slice');
   return flowSource.slice(start, end);
 }
@@ -282,7 +282,7 @@ test('MePurchaseFlow: subscribe creates a desktop order with the selected gatewa
   assert.match(subscribeBlock, /gateway,/);
   assert.match(body, /window\.electron\.shell\.openExternal\(nextCheckout\.approvalUrl\)/);
   // Gateway is user-selectable in the panel, defaulting to Alipay.
-  assert.match(flowSource, /useState<'alipay' \| 'paypal'>\('alipay'\)/);
+  assert.match(flowSource, /useState<MePaymentGatewayOption>\('alipay'\)/);
   assert.match(flowSource, /mePurchaseGatewayAlipay/);
   assert.match(flowSource, /mePurchaseGatewayPaypal/);
 });
@@ -293,7 +293,8 @@ test('MePurchaseFlow: topup uses its package endpoint and the desktop flow has n
   assert.ok(topupCall >= 0);
   const topupBlock = body.slice(topupCall, body.indexOf('})', topupCall));
   assert.match(topupBlock, /packageId: subjectId/);
-  assert.match(topupBlock, /gateway: 'alipay'/);
+  // topups take the same gateway picker as subscriptions (PayPal included)
+  assert.match(topupBlock, /gateway,/);
   assert.doesNotMatch(topupBlock, /planId/);
   assert.doesNotMatch(flowSource, /pickVoucher|voucherUrl|voucherRemark|DocumentArrowUpIcon|buildAlipayVariantCUrl/);
 });
@@ -405,7 +406,7 @@ test('MePurchaseFlow: idempotency keys are day-stable (UTC), not per-click', () 
   const body = createOrderBody();
   assert.match(body, /const dayStamp = new Date\(\)\.toISOString\(\)\.slice\(0, 10\);/);
   assert.match(body, /desktop-subscribe-\$\{subjectId\}-\$\{period\}-\$\{gateway\}-\$\{dayStamp\}/);
-  assert.match(body, /desktop-topup-\$\{subjectId\}-\$\{dayStamp\}/);
+  assert.match(body, /desktop-topup-\$\{subjectId\}-\$\{gateway\}-\$\{dayStamp\}/);
   assert.doesNotMatch(body, /Date\.now\(\)`/);
 });
 
