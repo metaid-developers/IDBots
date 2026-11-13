@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { i18nService } from '../../services/i18n';
 import type { CoworkMessage } from '../../types/cowork';
 import { getDefaultMetabotAvatarUrl } from '../../utils/rendererAssetPaths';
-import { isRenderableAvatarSource } from '../../utils/avatarSource';
+import { toRenderableAvatarSource } from '../../utils/avatarSource';
 import NftAvatarFrame from '../metabots/NftAvatarFrame';
 import { parseNftAvatarReference } from '../metabots/nftAvatarPresentation.js';
 import { splitThinkTaggedContent } from './ThinkingBlock';
@@ -372,7 +372,7 @@ export const AssistantActivityIndicator: React.FC<{
 
   const avatarSrc = parseNftAvatarReference(avatar)
     ? avatar
-    : (isRenderableAvatarSource(avatar) ? avatar! : DEFAULT_BOT_AVATAR);
+    : (toRenderableAvatarSource(avatar) ?? DEFAULT_BOT_AVATAR);
 
   const row = (
     // pt-2 keeps the ring's breathing room below the bubble above it; the

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { toRenderableAvatarSource } from '../../../utils/avatarSource';
 import { DocumentDuplicateIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../../services/i18n';
 import { useOwnerMetaApps } from './useOwnerMetaApps';
@@ -74,8 +75,8 @@ const MyAppsTab: React.FC<MyAppsTabProps> = ({ onRunByPin }) => {
           <div className="relative w-full max-w-xs">
             <button type="button" onClick={() => setBotMenuOpen((v) => !v)}
               className="w-full flex items-center gap-2 rounded-lg dark:bg-claude-darkSurface bg-claude-surface dark:border-claude-darkBorder border-claude-border border px-4 py-2 text-sm focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/40 cursor-pointer">
-              {selectedBot?.avatar && (selectedBot.avatar.startsWith('data:') || selectedBot.avatar.startsWith('http')) ? (
-                <img src={selectedBot.avatar} alt="" className="w-6 h-6 rounded-md object-cover flex-shrink-0" />
+              {toRenderableAvatarSource(selectedBot?.avatar) ? (
+                <img src={toRenderableAvatarSource(selectedBot?.avatar)!} alt="" className="w-6 h-6 rounded-md object-cover flex-shrink-0" />
               ) : (
                 <div className="w-6 h-6 rounded-md dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover flex items-center justify-center flex-shrink-0">
                   <span className="text-[10px] font-semibold dark:text-claude-darkText text-claude-text uppercase">
@@ -94,8 +95,8 @@ const MyAppsTab: React.FC<MyAppsTabProps> = ({ onRunByPin }) => {
                   <button key={b.id} type="button"
                     onClick={() => { owner.setSelectedBotId(b.id); setBotMenuOpen(false); }}
                     className={`w-full flex items-center gap-2 px-4 py-2 text-left text-sm hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors ${b.id === owner.selectedBotId ? 'dark:bg-claude-darkSurfaceHover/50 bg-claude-surfaceHover/50 text-claude-accent font-medium' : 'dark:text-claude-darkText text-claude-text'}`}>
-                    {b.avatar && (b.avatar.startsWith('data:') || b.avatar.startsWith('http')) ? (
-                      <img src={b.avatar} alt="" className="w-6 h-6 rounded-md object-cover flex-shrink-0" />
+                    {toRenderableAvatarSource(b.avatar) ? (
+                      <img src={toRenderableAvatarSource(b.avatar)!} alt="" className="w-6 h-6 rounded-md object-cover flex-shrink-0" />
                     ) : (
                       <div className="w-6 h-6 rounded-md dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover flex items-center justify-center flex-shrink-0">
                         <span className="text-[10px] font-semibold dark:text-claude-darkText text-claude-text uppercase">{(b.name || '?').slice(0, 2)}</span>

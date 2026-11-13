@@ -1,3 +1,5 @@
+import { builtinAvatarSrc, getBuiltinAvatarByReference } from '../assets/builtinAvatars';
+
 /**
  * Avatar source helpers shared across cowork / A2A / group-task views.
  *
@@ -60,9 +62,21 @@ export const pickRenderableAvatarSource = (
   ...values: Array<string | null | undefined>
 ): string | null => {
   for (const value of values) {
-    if (isRenderableAvatarSource(value)) {
-      return value!.trim() || null;
-    }
+    const source = toRenderableAvatarSource(value);
+    if (source) return source;
   }
   return null;
+};
+
+/**
+ * The `<img src>` for an avatar value, or null when it is not renderable as
+ * is. Built-in avatars are stored as their on-chain `metafile://<pinId>.png`
+ * reference (the first-run Twin picks one at random); they map to the bundled
+ * file so every surface — activity row, session list, A2A transcript —
+ * shows the bot's face instead of a blank/default avatar.
+ */
+export const toRenderableAvatarSource = (value: string | null | undefined): string | null => {
+  const builtin = getBuiltinAvatarByReference(value);
+  if (builtin) return builtinAvatarSrc(builtin);
+  return isRenderableAvatarSource(value) ? value!.trim() || null : null;
 };

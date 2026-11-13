@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CheckIcon, ClipboardDocumentIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
-import { isRenderableAvatarSource } from '../../utils/avatarSource';
+import { toRenderableAvatarSource } from '../../utils/avatarSource';
 import NftAvatarFrame from '../metabots/NftAvatarFrame';
 import { parseNftAvatarReference } from '../metabots/nftAvatarPresentation.js';
 import { buildBotPageBrowserUri } from '../../features/botBrowser/botBrowserIntent';
@@ -69,7 +69,8 @@ export const GroupTaskTinyAvatar: React.FC<{
   useEffect(() => {
     setImageFailed(false);
   }, [src]);
-  const showImage = isRenderableAvatarSource(src) && !imageFailed;
+  const renderSrc = toRenderableAvatarSource(src);
+  const showImage = renderSrc != null && !imageFailed;
   const box = size === 'hover' ? 'h-5 w-5 text-[10px]' : 'h-4 w-4 text-[9px]';
   const displayName = name?.trim() || '';
   const body = parseNftAvatarReference(src) ? (
@@ -86,7 +87,7 @@ export const GroupTaskTinyAvatar: React.FC<{
     >
       {showImage ? (
         <img
-          src={src ?? undefined}
+          src={renderSrc ?? undefined}
           alt={displayName}
           className="h-full w-full object-cover"
           onError={() => setImageFailed(true)}

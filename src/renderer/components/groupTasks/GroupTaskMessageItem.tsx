@@ -3,7 +3,7 @@ import { DocumentDuplicateIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import { resolveMetaidAvatarSource } from '../../services/metabotInfoService';
 import { getDefaultMetabotAvatarUrl } from '../../utils/rendererAssetPaths';
-import { isRenderableAvatarSource as isSharedRenderableAvatarSource } from '../../utils/avatarSource';
+import { toRenderableAvatarSource } from '../../utils/avatarSource';
 import NftAvatarFrame from '../metabots/NftAvatarFrame';
 import { parseNftAvatarReference } from '../metabots/nftAvatarPresentation.js';
 import MarkdownContent from '../MarkdownContent';
@@ -28,9 +28,6 @@ const TXID_RE = /^[0-9a-f]{64}$/i;
 /** Module-level resolution cache so the 5s transcript polling never re-resolves. */
 const avatarResolutionCache = new Map<string, string | null>();
 
-const isRenderableAvatarSource = (value: string | null | undefined): boolean =>
-  isSharedRenderableAvatarSource(value);
-
 /**
  * Resolve a sender avatar to a renderable URL. Raw MetaWeb avatar values
  * (metafile:// refs, pin ids) go through the main-process resolver used by the
@@ -38,7 +35,7 @@ const isRenderableAvatarSource = (value: string | null | undefined): boolean =>
  */
 function useSenderAvatar(message: GroupChatTranscriptMessage): string {
   const raw = message.senderAvatar?.trim() ?? '';
-  const direct = parseNftAvatarReference(raw) ? raw : (isRenderableAvatarSource(raw) ? raw : null);
+  const direct = parseNftAvatarReference(raw) ? raw : toRenderableAvatarSource(raw);
   const reference = direct ? null : (raw || message.senderGlobalMetaId?.trim() || null);
   const [resolved, setResolved] = useState<string | null>(
     reference ? avatarResolutionCache.get(reference) ?? null : null,
