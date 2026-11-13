@@ -1934,7 +1934,7 @@ interface PendingPermission {
   suspended?: boolean;
 }
 
-type SystemPromptProfileId = 'default' | 'service_order_a2a' | 'memory_read_only_automation';
+type SystemPromptProfileId = 'default' | 'service_order_a2a' | 'private_chat_a2a' | 'memory_read_only_automation';
 type SystemPromptBlockMode = 'full' | 'compact';
 
 interface SystemPromptProfile {
@@ -1970,6 +1970,15 @@ const SERVICE_ORDER_A2A_SYSTEM_PROMPT_PROFILE: SystemPromptProfile = {
   includeMemoryPromptBlocks: true,
   includeMemoryStrategy: false,
   metawebMode: 'compact',
+};
+
+const PRIVATE_CHAT_A2A_SYSTEM_PROMPT_PROFILE: SystemPromptProfile = {
+  id: 'private_chat_a2a',
+  workspaceSafetyMode: 'compact',
+  localTimeMode: 'compact',
+  includeMemoryPromptBlocks: true,
+  includeMemoryStrategy: false,
+  metawebMode: 'tiered',
 };
 
 /**
@@ -6599,6 +6608,12 @@ export class CoworkRunner extends EventEmitter {
     ) {
       return SERVICE_ORDER_A2A_SYSTEM_PROMPT_PROFILE;
     }
+    if (
+      session?.sessionType === 'a2a'
+      && sourceContext.sourceChannel === 'metaweb_private'
+    ) {
+      return PRIVATE_CHAT_A2A_SYSTEM_PROMPT_PROFILE;
+    }
     // Any other memory-read-only automated session (group-task skill turns via
     // the orchestrator bridge) keeps memory reads but drops the write-inviting
     // Memory STRATEGY section.
@@ -8980,17 +8995,25 @@ export class CoworkRunner extends EventEmitter {
       && options.systemPrompt !== session.systemPrompt
     ) {
       persistedSystemPrompt = options.systemPrompt;
-      persistedClaudeSessionId = null;
+      const keepDshHandle = isDshSessionHandle(session.claudeSessionId);
+      if (!keepDshHandle) {
+        persistedClaudeSessionId = null;
+      }
       systemPromptChanged = true;
       // Persist the skill set the NEW prompt was built for so the continue
       // policy can distinguish a deliberate skill change from live-catalog
       // drift (which must never rewrite the cacheable prompt head).
+      // DSH sessions address their transcript deterministically (`cw-${sessionId}`)
+      // and update prompt sections via session/ensure, so keep the `dsh:` handle
+      // intact instead of tricking later turns into first-turn tail placement.
       this.store.updateSession(sessionId, {
         systemPrompt: options.systemPrompt,
-        claudeSessionId: null,
+        ...(!keepDshHandle ? { claudeSessionId: null } : {}),
         ...(options.skillIds !== undefined ? { activeSkillIds: options.skillIds } : {}),
       });
-      coworkLog('INFO', 'startSession', 'System prompt changed, reset claudeSessionId', {
+      coworkLog('INFO', 'startSession', keepDshHandle
+        ? 'System prompt changed, updated prompt on existing DSH handle'
+        : 'System prompt changed, reset claudeSessionId', {
         sessionId,
       });
     }

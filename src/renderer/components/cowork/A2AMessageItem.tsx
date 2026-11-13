@@ -1,6 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { CoworkMessage } from '../../types/cowork';
-import { ChevronDownIcon, ChevronRightIcon, DocumentDuplicateIcon, ShareIcon } from '@heroicons/react/24/outline';
+import {
+  ArrowDownTrayIcon,
+  ArrowsPointingOutIcon,
+  ChevronDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  DocumentDuplicateIcon,
+  DocumentIcon,
+  ShareIcon,
+  XMarkIcon,
+} from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import { getDefaultMetabotAvatarUrl } from '../../utils/rendererAssetPaths';
 import { pickRenderableAvatarSource as pickSharedRenderableAvatarSource } from '../../utils/avatarSource';
@@ -25,11 +36,15 @@ import {
   normalizeTxidCandidate,
   resolveA2AMessageTxid,
 } from './a2aInternalMessageFilter';
+import { sanitizeA2APeerMessageContent } from './a2aMessageSanitizer';
 
 export { formatA2ATxidPreview, resolveA2AMessageTxid };
 
 const normalizeMetafileCandidate = (candidate: string): string => {
-  return String(candidate || '').trim().replace(/[),.;:!?]+$/, '');
+  return String(candidate || '')
+    .trim()
+    .replace(/^[(<《【\[（]+/, '')
+    .replace(/[),.;:!?，。；：！？）》】\]]+$/, '');
 };
 
 interface A2AMessageItemProps {
@@ -105,12 +120,29 @@ const ORDER_PROTOCOL_TAG_RE = /^\[(ORDER_STATUS|NeedsRating|ORDER_END)(?::[0-9a-
 const ORDER_PROTOCOL_TXID_TAG_RE = /^\[(?:ORDER_STATUS|DELIVERY|NeedsRating|ORDER_END):([0-9a-fA-F]{64})(?:\s+[A-Za-z0-9_-]+)?\]/i;
 const METAID_CONTENT_BASE = 'https://file.metaid.io/metafile-indexer/api/v1/files/content';
 const METAID_ACCELERATE_CONTENT_BASE = 'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content';
-const METAFILE_URI_REGEX = /metafile:\/\/[^\s<>"'`]+/gi;
+const METAID_FILE_INFO_BASE = 'https://file.metaid.io/metafile-indexer/api/v1/files';
+const STRICT_METAFILE_PIN_ID_RE = /^[0-9a-f]{64}i0$/i;
+const COMPAT_METAFILE_ID_RE = /^(?:[0-9a-f]{64}i\d+|[0-9a-f]{64})$/i;
+const METAFILE_EXTRACT_RE = /metafile:\/\/([0-9a-f]{64}i0)(?:\.([a-z0-9]{1,16})(?![a-z0-9]))?(?![0-9a-z])/gi;
+const NFT_CARD_FENCE_STRIP_RE = /```(?:nft-card-group|nft-collection-card|nft-card|nftcard|nft)\b[\s\S]*?```/gi;
 const METAFILE_PREVIEW_MAX_BYTES = 20 * 1024 * 1024;
+const METAFILE_METADATA_CACHE_MAX = 500;
 
-const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.gif', '.png', '.webp', '.bmp', '.svg']);
-const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm', '.mov']);
-const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.flac']);
+const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.gif', '.png', '.webp', '.bmp', '.svg', '.avif', '.ico']);
+const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm', '.mov', '.m4v']);
+const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.flac', '.ogg', '.m4a', '.aac', '.opus']);
+const OTHER_KNOWN_EXTENSIONS = new Set([
+  '.zip', '.7z', '.rar', '.tar', '.gz', '.tgz', '.bz2', '.xz',
+  '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+  '.txt', '.md', '.csv', '.json', '.xml', '.html', '.htm',
+  '.apk', '.ipa', '.dmg', '.pkg', '.exe', '.wasm', '.bin',
+]);
+const KNOWN_METAFILE_EXTENSIONS = new Set([
+  ...IMAGE_EXTENSIONS,
+  ...VIDEO_EXTENSIONS,
+  ...AUDIO_EXTENSIONS,
+  ...OTHER_KNOWN_EXTENSIONS,
+]);
 const MIME_TYPE_BY_EXTENSION = new Map<string, string>([
   ['.jpg', 'image/jpeg'],
   ['.jpeg', 'image/jpeg'],
@@ -119,24 +151,64 @@ const MIME_TYPE_BY_EXTENSION = new Map<string, string>([
   ['.webp', 'image/webp'],
   ['.bmp', 'image/bmp'],
   ['.svg', 'image/svg+xml'],
+  ['.avif', 'image/avif'],
+  ['.ico', 'image/x-icon'],
   ['.mp4', 'video/mp4'],
   ['.webm', 'video/webm'],
   ['.mov', 'video/quicktime'],
+  ['.m4v', 'video/x-m4v'],
   ['.mp3', 'audio/mpeg'],
   ['.wav', 'audio/wav'],
   ['.flac', 'audio/flac'],
+  ['.ogg', 'audio/ogg'],
+  ['.m4a', 'audio/mp4'],
+  ['.aac', 'audio/aac'],
+  ['.opus', 'audio/opus'],
+]);
+const EXTENSION_BY_MIME_TYPE = new Map<string, string>([
+  ['image/jpeg', '.jpg'],
+  ['image/jpg', '.jpg'],
+  ['image/gif', '.gif'],
+  ['image/png', '.png'],
+  ['image/webp', '.webp'],
+  ['image/bmp', '.bmp'],
+  ['image/svg+xml', '.svg'],
+  ['image/avif', '.avif'],
+  ['image/x-icon', '.ico'],
+  ['video/mp4', '.mp4'],
+  ['video/webm', '.webm'],
+  ['video/quicktime', '.mov'],
+  ['video/x-m4v', '.m4v'],
+  ['audio/mpeg', '.mp3'],
+  ['audio/mp3', '.mp3'],
+  ['audio/wav', '.wav'],
+  ['audio/x-wav', '.wav'],
+  ['audio/flac', '.flac'],
+  ['audio/ogg', '.ogg'],
+  ['audio/mp4', '.m4a'],
+  ['audio/aac', '.aac'],
+  ['audio/opus', '.opus'],
+  ['application/zip', '.zip'],
+  ['application/x-zip-compressed', '.zip'],
+  ['application/pdf', '.pdf'],
+  ['application/json', '.json'],
+  ['text/plain', '.txt'],
+  ['text/markdown', '.md'],
+  ['text/html', '.html'],
 ]);
 
 type DeliveryPayload = {
   result?: string;
 };
 
-type MetafilePreviewKind = 'image' | 'video' | 'audio' | 'download';
+export type MetafilePreviewKind = 'image' | 'video' | 'audio' | 'download';
 
-type ParsedMetafile = {
+export type ParsedMetafile = {
   uri: string;
   pinId: string;
   extension: string | null;
+  mimeType?: string;
+  fileSize?: number;
   sourceUrl: string;
   fallbackUrl: string;
   fileName: string;
@@ -205,7 +277,46 @@ const copyTextToClipboard = (value: string): void => {
   void navigator.clipboard.writeText(value).catch(() => {});
 };
 
-export const parseMetafileUri = (rawUri: string): ParsedMetafile | null => {
+export const isStrictMetafilePinId = (value: string): boolean => (
+  STRICT_METAFILE_PIN_ID_RE.test(String(value || '').trim())
+);
+
+const classifyMetafileKind = (
+  extension: string | null,
+  mimeType?: string,
+  fileTypeHint?: string,
+): MetafilePreviewKind => {
+  const normalizedExt = extension ? extension.toLowerCase() : null;
+  const normalizedMime = mimeType ? mimeType.toLowerCase() : '';
+  const normalizedHint = fileTypeHint ? fileTypeHint.toLowerCase() : '';
+  if (
+    (normalizedExt && IMAGE_EXTENSIONS.has(normalizedExt))
+    || normalizedMime.startsWith('image/')
+    || normalizedHint === 'image'
+  ) {
+    return 'image';
+  }
+  if (
+    (normalizedExt && VIDEO_EXTENSIONS.has(normalizedExt))
+    || normalizedMime.startsWith('video/')
+    || normalizedHint === 'video'
+  ) {
+    return 'video';
+  }
+  if (
+    (normalizedExt && AUDIO_EXTENSIONS.has(normalizedExt))
+    || normalizedMime.startsWith('audio/')
+    || normalizedHint === 'audio'
+  ) {
+    return 'audio';
+  }
+  return 'download';
+};
+
+export const parseMetafileUri = (
+  rawUri: string,
+  options?: { strictPinId?: boolean },
+): ParsedMetafile | null => {
   const normalizedUri = normalizeMetafileCandidate(rawUri);
   if (!normalizedUri.toLowerCase().startsWith('metafile://')) {
     return null;
@@ -223,31 +334,35 @@ export const parseMetafileUri = (rawUri: string): ParsedMetafile | null => {
 
   const lastDotIndex = basePart.lastIndexOf('.');
   const hasExtension = lastDotIndex > 0 && lastDotIndex < basePart.length - 1;
-  const pinId = hasExtension ? basePart.slice(0, lastDotIndex) : basePart;
-  const extension = hasExtension ? `.${basePart.slice(lastDotIndex + 1).toLowerCase()}` : null;
+  const candidateExt = hasExtension ? `.${basePart.slice(lastDotIndex + 1).toLowerCase()}` : null;
+  const validExtension = candidateExt && KNOWN_METAFILE_EXTENSIONS.has(candidateExt) ? candidateExt : null;
+  const pinId = validExtension
+    ? basePart.slice(0, lastDotIndex)
+    : (hasExtension ? '' : basePart);
 
   if (!pinId) {
     return null;
   }
 
-  let kind: MetafilePreviewKind = 'download';
-  if (extension && IMAGE_EXTENSIONS.has(extension)) {
-    kind = 'image';
-  } else if (extension && VIDEO_EXTENSIONS.has(extension)) {
-    kind = 'video';
-  } else if (extension && AUDIO_EXTENSIONS.has(extension)) {
-    kind = 'audio';
+  const idPattern = options?.strictPinId ? STRICT_METAFILE_PIN_ID_RE : COMPAT_METAFILE_ID_RE;
+  if (!idPattern.test(pinId)) {
+    return null;
   }
 
-  const encodedPinId = encodeURIComponent(pinId);
+  const normalizedPinId = pinId.toLowerCase();
+  const mimeType = validExtension ? MIME_TYPE_BY_EXTENSION.get(validExtension) : undefined;
+  const kind = classifyMetafileKind(validExtension, mimeType);
+  const encodedPinId = encodeURIComponent(normalizedPinId);
   const sourceUrl = `${METAID_ACCELERATE_CONTENT_BASE}/${encodedPinId}`;
   const fallbackUrl = `${METAID_CONTENT_BASE}/${encodedPinId}`;
-  const fileName = extension ? `${pinId}${extension}` : pinId;
+  const fileName = validExtension ? `${normalizedPinId}${validExtension}` : normalizedPinId;
+  const canonicalUri = `metafile://${normalizedPinId}${validExtension ?? ''}`;
 
   return {
-    uri: normalizedUri,
-    pinId,
-    extension,
+    uri: canonicalUri,
+    pinId: normalizedPinId,
+    extension: validExtension,
+    mimeType,
     sourceUrl,
     fallbackUrl,
     fileName,
@@ -255,26 +370,172 @@ export const parseMetafileUri = (rawUri: string): ParsedMetafile | null => {
   };
 };
 
-const extractMetafileItems = (content: string): ParsedMetafile[] => {
+export const extractMetafileItems = (content: string): ParsedMetafile[] => {
   const text = String(content || '');
   if (!text) {
     return [];
   }
 
+  const strippedText = text.replace(NFT_CARD_FENCE_STRIP_RE, '\n');
   const entries: ParsedMetafile[] = [];
-  const seen = new Set<string>();
-  const matches = text.match(METAFILE_URI_REGEX) || [];
+  const indexByPinId = new Map<string, number>();
+  METAFILE_EXTRACT_RE.lastIndex = 0;
 
-  for (const match of matches) {
-    const parsed = parseMetafileUri(match);
-    if (!parsed || seen.has(parsed.uri)) {
+  for (const match of strippedText.matchAll(METAFILE_EXTRACT_RE)) {
+    const rawPinId = match[1] || '';
+    const rawExt = match[2] ? `.${match[2].toLowerCase()}` : null;
+    const validExt = rawExt && KNOWN_METAFILE_EXTENSIONS.has(rawExt) ? rawExt : null;
+    const candidateUri = `metafile://${rawPinId}${validExt ?? ''}`;
+    const parsed = parseMetafileUri(candidateUri, { strictPinId: true });
+    if (!parsed) {
       continue;
     }
-    seen.add(parsed.uri);
+    const existingIndex = indexByPinId.get(parsed.pinId);
+    if (existingIndex !== undefined) {
+      if (!entries[existingIndex]!.extension && parsed.extension) {
+        entries[existingIndex] = parsed;
+      }
+      continue;
+    }
+    indexByPinId.set(parsed.pinId, entries.length);
     entries.push(parsed);
   }
 
   return entries;
+};
+
+const resolvedMetafileCache = new Map<string, ParsedMetafile>();
+const inFlightMetafileResolutions = new Map<string, Promise<ParsedMetafile>>();
+
+export const resetMetafileMetadataCacheForTests = (): void => {
+  resolvedMetafileCache.clear();
+  inFlightMetafileResolutions.clear();
+};
+
+const rememberResolvedMetafile = (pinId: string, value: ParsedMetafile): void => {
+  if (resolvedMetafileCache.size >= METAFILE_METADATA_CACHE_MAX) {
+    const oldest = resolvedMetafileCache.keys().next().value;
+    if (oldest) resolvedMetafileCache.delete(oldest);
+  }
+  resolvedMetafileCache.set(pinId.toLowerCase(), value);
+};
+
+const sanitizeServerFileName = (rawName: unknown, pinId: string, ext: string | null): string => {
+  const leaf = String(rawName || '')
+    .split(/[\\/]/)
+    .pop()
+    ?.replace(/[\u0000-\u001f<>:"|?*]+/g, '')
+    .trim() || '';
+  if (leaf) {
+    if (ext && !leaf.toLowerCase().endsWith(ext.toLowerCase())) {
+      return `${leaf}${ext}`;
+    }
+    return leaf;
+  }
+  return ext ? `${pinId}${ext}` : pinId;
+};
+
+export const resolveMetafileMetadata = async (
+  item: ParsedMetafile,
+  fetchImpl?: typeof fetch,
+): Promise<ParsedMetafile> => {
+  if (item.extension) {
+    return item;
+  }
+  const cacheKey = item.pinId.toLowerCase();
+  const cached = resolvedMetafileCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+  const existingPromise = inFlightMetafileResolutions.get(cacheKey);
+  if (existingPromise) {
+    return existingPromise;
+  }
+
+  const doFetch = fetchImpl ?? (typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : undefined);
+  if (!doFetch) {
+    return item;
+  }
+
+  const promise = (async (): Promise<ParsedMetafile> => {
+    // 1. Lightweight indexer metadata lookup (~200B JSON, no file payload transfer).
+    try {
+      const infoUrl = `${METAID_FILE_INFO_BASE}/${encodeURIComponent(item.pinId)}`;
+      const infoRes = await doFetch(infoUrl);
+      if (infoRes.ok) {
+        const json = await infoRes.json() as {
+          code?: number;
+          data?: {
+            content_type?: string;
+            file_type?: string;
+            file_extension?: string;
+            file_name?: string;
+            file_size?: number;
+          };
+        };
+        const data = json?.data;
+        if (data && typeof data === 'object') {
+          const mimeType = normalizeContentType(data.content_type ?? null);
+          const rawExt = typeof data.file_extension === 'string' ? data.file_extension.trim().toLowerCase() : '';
+          const normalizedExt = rawExt
+            ? (rawExt.startsWith('.') ? rawExt : `.${rawExt}`)
+            : (mimeType ? EXTENSION_BY_MIME_TYPE.get(mimeType.toLowerCase()) ?? null : null);
+          const validExt = normalizedExt && KNOWN_METAFILE_EXTENSIONS.has(normalizedExt)
+            ? normalizedExt
+            : (mimeType ? EXTENSION_BY_MIME_TYPE.get(mimeType.toLowerCase()) ?? null : null);
+          const kind = classifyMetafileKind(validExt, mimeType, data.file_type);
+          const fileSize = typeof data.file_size === 'number' && Number.isFinite(data.file_size) && data.file_size > 0
+            ? data.file_size
+            : undefined;
+          const resolved: ParsedMetafile = {
+            ...item,
+            extension: validExt,
+            mimeType: mimeType || (validExt ? MIME_TYPE_BY_EXTENSION.get(validExt) : undefined),
+            fileSize,
+            fileName: sanitizeServerFileName(data.file_name, item.pinId, validExt),
+            kind,
+          };
+          rememberResolvedMetafile(cacheKey, resolved);
+          return resolved;
+        }
+      }
+    } catch {
+      // Fall back to HEAD probing below.
+    }
+
+    // 2. Fallback HEAD probe against accelerate / content endpoints.
+    for (const probeUrl of [item.sourceUrl, item.fallbackUrl]) {
+      try {
+        const headRes = await doFetch(probeUrl, { method: 'HEAD' });
+        if (!headRes.ok) continue;
+        const mimeType = normalizeContentType(headRes.headers?.get?.('content-type') ?? null);
+        if (!mimeType) continue;
+        const inferredExt = EXTENSION_BY_MIME_TYPE.get(mimeType.toLowerCase()) ?? null;
+        const rawLen = Number(headRes.headers?.get?.('content-length') || '');
+        const fileSize = Number.isFinite(rawLen) && rawLen > 0 ? rawLen : undefined;
+        const kind = classifyMetafileKind(inferredExt, mimeType);
+        const resolved: ParsedMetafile = {
+          ...item,
+          extension: inferredExt,
+          mimeType,
+          fileSize,
+          fileName: inferredExt ? `${item.pinId}${inferredExt}` : item.pinId,
+          kind,
+        };
+        rememberResolvedMetafile(cacheKey, resolved);
+        return resolved;
+      } catch {
+        // Try next candidate URL.
+      }
+    }
+
+    return item;
+  })().finally(() => {
+    inFlightMetafileResolutions.delete(cacheKey);
+  });
+
+  inFlightMetafileResolutions.set(cacheKey, promise);
+  return promise;
 };
 
 export const triggerMetafileDownload = async (item: ParsedMetafile): Promise<void> => {
@@ -307,6 +568,7 @@ export const triggerMetafileDownload = async (item: ParsedMetafile): Promise<voi
 };
 
 const getMetafileMimeType = (item: ParsedMetafile): string | undefined => {
+  if (item.mimeType) return item.mimeType;
   return item.extension ? MIME_TYPE_BY_EXTENSION.get(item.extension) : undefined;
 };
 
@@ -479,7 +741,11 @@ const ToolCallBlock: React.FC<{ message: CoworkMessage }> = ({ message }) => {
   );
 };
 
-const MetafileMediaPreview: React.FC<{ item: ParsedMetafile }> = ({ item }) => {
+const MetafileMediaPreview: React.FC<{
+  item: ParsedMetafile;
+  compact?: boolean;
+  onZoom?: () => void;
+}> = ({ item, compact = true, onZoom }) => {
   const [mediaSourceUrl, setMediaSourceUrl] = useState<string | null>(item.sourceUrl);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('ready');
   const [loadedBytes, setLoadedBytes] = useState(0);
@@ -539,7 +805,7 @@ const MetafileMediaPreview: React.FC<{ item: ParsedMetafile }> = ({ item }) => {
 
   if (item.kind === 'audio') {
     return (
-      <>
+      <div className="flex h-32 flex-col justify-center rounded-lg bg-black/5 px-2 dark:bg-white/5">
         <audio
           controls
           preload="auto"
@@ -558,21 +824,35 @@ const MetafileMediaPreview: React.FC<{ item: ParsedMetafile }> = ({ item }) => {
             {errorLabel}
           </div>
         )}
-      </>
+      </div>
     );
   }
 
   return (
-    <>
+    <div className="group relative">
       <video
         controls
         preload="auto"
         playsInline
-        className="w-full max-h-80 rounded-md bg-black"
+        className={compact
+          ? 'h-32 w-full rounded-lg bg-black object-contain'
+          : 'max-h-[80vh] max-w-[90vw] rounded-lg bg-black object-contain'}
         onError={() => { void loadFallbackPreview(); }}
       >
         {mediaSourceUrl && <source src={mediaSourceUrl} type={mediaType} />}
       </video>
+      {compact && onZoom && (
+        <button
+          type="button"
+          onClick={onZoom}
+          title={i18nService.t('a2aZoomPreview')}
+          aria-label={i18nService.t('a2aZoomPreview')}
+          data-metafile-zoom="video"
+          className="absolute right-1.5 top-1.5 inline-flex h-6 w-6 items-center justify-center rounded-md bg-black/65 text-white opacity-85 transition-opacity hover:bg-black/85 hover:opacity-100"
+        >
+          <ArrowsPointingOutIcon className="h-3.5 w-3.5" />
+        </button>
+      )}
       {status === 'loading' && (
         <div className="mt-1 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
           {loadingLabel}{loadedLabel ? ` ${loadedLabel}` : ''}
@@ -583,22 +863,28 @@ const MetafileMediaPreview: React.FC<{ item: ParsedMetafile }> = ({ item }) => {
           {errorLabel}
         </div>
       )}
-    </>
+    </div>
   );
 };
 
-const MetafileImagePreview: React.FC<{ item: ParsedMetafile }> = ({ item }) => {
+const MetafileImagePreview: React.FC<{
+  item: ParsedMetafile;
+  compact?: boolean;
+  onZoom?: () => void;
+}> = ({ item, compact = true, onZoom }) => {
   const [imageSourceUrl, setImageSourceUrl] = useState(item.sourceUrl);
 
   useEffect(() => {
     setImageSourceUrl(item.sourceUrl);
   }, [item.uri, item.sourceUrl]);
 
-  return (
+  const imgElement = (
     <img
       src={imageSourceUrl}
       alt={item.fileName}
-      className="w-full max-h-80 object-contain rounded-md"
+      className={compact
+        ? 'h-32 w-full rounded-lg bg-black/5 object-cover transition-transform duration-150 group-hover:scale-[1.02] dark:bg-white/5'
+        : 'max-h-[82vh] max-w-[92vw] rounded-lg object-contain select-none'}
       loading="lazy"
       onError={() => {
         if (imageSourceUrl !== item.fallbackUrl) {
@@ -607,38 +893,324 @@ const MetafileImagePreview: React.FC<{ item: ParsedMetafile }> = ({ item }) => {
       }}
     />
   );
+
+  if (!compact || !onZoom) {
+    return imgElement;
+  }
+
+  return (
+    <div className="group relative overflow-hidden rounded-lg">
+      <button
+        type="button"
+        onClick={onZoom}
+        title={i18nService.t('a2aZoomPreview')}
+        aria-label={i18nService.t('a2aZoomPreview')}
+        data-metafile-zoom="image"
+        className="block w-full cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/60"
+      >
+        {imgElement}
+      </button>
+      <button
+        type="button"
+        onClick={onZoom}
+        title={i18nService.t('a2aZoomPreview')}
+        aria-label={i18nService.t('a2aZoomPreview')}
+        className="pointer-events-none absolute right-1.5 top-1.5 inline-flex h-6 w-6 items-center justify-center rounded-md bg-black/60 text-white opacity-80 transition-opacity group-hover:opacity-100"
+      >
+        <ArrowsPointingOutIcon className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
 };
 
-const MetafilePreviewCard: React.FC<{ item: ParsedMetafile }> = ({ item }) => {
-  return (
-    <div className="rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg/40 bg-claude-bg/60 p-2">
-      {item.kind === 'image' && (
-        <MetafileImagePreview item={item} />
+const MetafileLightboxModal: React.FC<{
+  items: ParsedMetafile[];
+  activeIndex: number;
+  onChangeIndex: (index: number) => void;
+  onClose: () => void;
+}> = ({ items, activeIndex, onChangeIndex, onClose }) => {
+  const item = items[activeIndex];
+  const hasMultiple = items.length > 1;
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onClose();
+      } else if (hasMultiple && event.key === 'ArrowLeft') {
+        event.preventDefault();
+        onChangeIndex((activeIndex - 1 + items.length) % items.length);
+      } else if (hasMultiple && event.key === 'ArrowRight') {
+        event.preventDefault();
+        onChangeIndex((activeIndex + 1) % items.length);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeIndex, hasMultiple, items.length, onChangeIndex, onClose]);
+
+  if (!item || typeof document === 'undefined' || !document.body) {
+    return null;
+  }
+
+  return createPortal(
+    <div
+      role="dialog"
+      aria-modal="true"
+      data-metafile-lightbox="true"
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/85 p-4 backdrop-blur-xs"
+    >
+      <div className="absolute right-4 top-4 flex items-center gap-2">
+        {hasMultiple && (
+          <span className="rounded-full bg-white/15 px-2.5 py-1 font-mono text-xs text-white">
+            {activeIndex + 1} / {items.length}
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={onClose}
+          title={i18nService.t('a2aClosePreview')}
+          aria-label={i18nService.t('a2aClosePreview')}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25"
+        >
+          <XMarkIcon className="h-5 w-5" />
+        </button>
+      </div>
+
+      {hasMultiple && (
+        <>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onChangeIndex((activeIndex - 1 + items.length) % items.length);
+            }}
+            title={i18nService.t('a2aPrevPreview')}
+            aria-label={i18nService.t('a2aPrevPreview')}
+            className="absolute left-4 top-1/2 -translate-y-1/2 inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25"
+          >
+            <ChevronLeftIcon className="h-5 w-5" />
+          </button>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onChangeIndex((activeIndex + 1) % items.length);
+            }}
+            title={i18nService.t('a2aNextPreview')}
+            aria-label={i18nService.t('a2aNextPreview')}
+            className="absolute right-4 top-1/2 -translate-y-1/2 inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25"
+          >
+            <ChevronRightIcon className="h-5 w-5" />
+          </button>
+        </>
       )}
-      {item.kind === 'video' && (
-        <MetafileMediaPreview item={item} />
-      )}
-      {item.kind === 'audio' && (
-        <MetafileMediaPreview item={item} />
-      )}
-      {item.kind === 'download' && (
-        <div className="rounded-md border dark:border-claude-darkBorder border-claude-border px-2.5 py-2 text-xs break-all dark:text-claude-darkText text-claude-text dark:bg-claude-darkSurface bg-claude-surface">
-          {item.fileName}
-        </div>
-      )}
-      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-        <span className="min-w-0 text-[11px] break-all dark:text-claude-darkTextSecondary text-claude-textSecondary">
+
+      <div
+        onClick={(event) => event.stopPropagation()}
+        className="flex max-h-[84vh] max-w-[92vw] items-center justify-center"
+      >
+        {item.kind === 'image' ? (
+          <MetafileImagePreview item={item} compact={false} />
+        ) : (
+          <MetafileMediaPreview item={item} compact={false} />
+        )}
+      </div>
+
+      <div
+        onClick={(event) => event.stopPropagation()}
+        className="mt-3 flex max-w-[92vw] flex-wrap items-center justify-center gap-3 rounded-xl bg-white/10 px-3.5 py-2 text-xs text-white"
+      >
+        <span className="max-w-[50vw] truncate font-mono opacity-90" title={item.pinId}>
           PINID: {item.pinId}
         </span>
         <button
           type="button"
-          onClick={() => { void triggerMetafileDownload(item); }}
-          className="inline-flex items-center rounded-md border dark:border-claude-darkBorder border-claude-border px-3 py-1.5 text-xs dark:text-claude-darkText text-claude-text hover:opacity-80 transition-opacity"
+          onClick={() => copyTextToClipboard(item.pinId)}
+          title={i18nService.t('a2aCopyPinId')}
+          aria-label={i18nService.t('a2aCopyPinId')}
+          className="inline-flex h-6 w-6 items-center justify-center rounded bg-white/10 hover:bg-white/20"
         >
+          <DocumentDuplicateIcon className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          onClick={() => { void triggerMetafileDownload(item); }}
+          className="inline-flex items-center gap-1 rounded-md bg-white/20 px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-white/30"
+        >
+          <ArrowDownTrayIcon className="h-3.5 w-3.5" />
           {i18nService.t('a2aDownloadFile')}
         </button>
       </div>
+    </div>,
+    document.body,
+  );
+};
+
+const MetafilePreviewCard: React.FC<{
+  item: ParsedMetafile;
+  onOpenLightbox?: (resolvedItem: ParsedMetafile) => void;
+  onResolved?: (resolvedItem: ParsedMetafile) => void;
+}> = ({ item, onOpenLightbox, onResolved }) => {
+  const [resolvedItem, setResolvedItem] = useState<ParsedMetafile>(
+    () => resolvedMetafileCache.get(item.pinId.toLowerCase()) ?? item,
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    const cached = resolvedMetafileCache.get(item.pinId.toLowerCase());
+    if (cached) {
+      setResolvedItem(cached);
+      onResolved?.(cached);
+      return () => { cancelled = true; };
+    }
+    setResolvedItem(item);
+    if (!item.extension) {
+      void resolveMetafileMetadata(item).then((next) => {
+        if (cancelled) return;
+        setResolvedItem(next);
+        if (next !== item) {
+          onResolved?.(next);
+        }
+      });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [item.uri, item.pinId, item.extension]);
+
+  const isZoomable = resolvedItem.kind === 'image' || resolvedItem.kind === 'video';
+  const handleZoom = isZoomable && onOpenLightbox
+    ? () => onOpenLightbox(resolvedItem)
+    : undefined;
+  const extBadge = resolvedItem.extension
+    ? resolvedItem.extension.slice(1).toUpperCase()
+    : 'FILE';
+  const sizeLabel = resolvedItem.fileSize ? formatBytes(resolvedItem.fileSize) : '';
+  const cardWidthClass = resolvedItem.kind === 'audio'
+    ? 'w-60 max-w-full'
+    : 'w-48 sm:w-52 max-w-full';
+
+  return (
+    <div
+      data-metafile-card={resolvedItem.pinId}
+      data-metafile-kind={resolvedItem.kind}
+      className={`${cardWidthClass} flex flex-col justify-between rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg/40 bg-claude-bg/60 p-2`}
+    >
+      {resolvedItem.kind === 'image' && (
+        <MetafileImagePreview item={resolvedItem} compact onZoom={handleZoom} />
+      )}
+      {resolvedItem.kind === 'video' && (
+        <MetafileMediaPreview item={resolvedItem} compact onZoom={handleZoom} />
+      )}
+      {resolvedItem.kind === 'audio' && (
+        <MetafileMediaPreview item={resolvedItem} compact />
+      )}
+      {resolvedItem.kind === 'download' && (
+        <div className="flex h-32 flex-col items-center justify-center gap-1.5 rounded-lg border dark:border-claude-darkBorder border-claude-border px-2.5 py-2 text-center dark:bg-claude-darkSurface bg-claude-surface">
+          <div className="inline-flex items-center gap-1 rounded-md bg-claude-accent/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-claude-accent">
+            <DocumentIcon className="h-3.5 w-3.5" />
+            <span>{extBadge}</span>
+          </div>
+          <div
+            className="w-full truncate px-1 text-[11px] dark:text-claude-darkText text-claude-text"
+            title={resolvedItem.fileName}
+          >
+            {resolvedItem.fileName}
+          </div>
+          {sizeLabel && (
+            <div className="text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              {sizeLabel}
+            </div>
+          )}
+        </div>
+      )}
+      <div className="mt-2 flex items-center justify-between gap-1.5">
+        <span
+          className="min-w-0 flex-1 truncate font-mono text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary"
+          title={`PINID: ${resolvedItem.pinId}`}
+        >
+          PINID: {resolvedItem.pinId}
+        </span>
+        <div className="flex shrink-0 items-center gap-1">
+          {isZoomable && handleZoom && (
+            <button
+              type="button"
+              onClick={handleZoom}
+              title={i18nService.t('a2aZoomPreview')}
+              aria-label={i18nService.t('a2aZoomPreview')}
+              className="inline-flex h-6 w-6 items-center justify-center rounded-md border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:opacity-80 transition-opacity"
+            >
+              <ArrowsPointingOutIcon className="h-3.5 w-3.5" />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => { void triggerMetafileDownload(resolvedItem); }}
+            className="inline-flex items-center gap-1 rounded-md border dark:border-claude-darkBorder border-claude-border px-2 py-1 text-[11px] dark:text-claude-darkText text-claude-text hover:opacity-80 transition-opacity"
+          >
+            <ArrowDownTrayIcon className="h-3 w-3" />
+            {i18nService.t('a2aDownloadFile')}
+          </button>
+        </div>
+      </div>
     </div>
+  );
+};
+
+const MetafileGallery: React.FC<{
+  items: ParsedMetafile[];
+  alignEnd: boolean;
+}> = ({ items, alignEnd }) => {
+  const [resolvedMap, setResolvedMap] = useState<Record<string, ParsedMetafile>>({});
+  const [lightboxPinId, setLightboxPinId] = useState<string | null>(null);
+
+  const mergedItems = items.map((item) => (
+    resolvedMap[item.pinId] ?? resolvedMetafileCache.get(item.pinId) ?? item
+  ));
+  const zoomableItems = mergedItems.filter((entry) => entry.kind === 'image' || entry.kind === 'video');
+  const activeLightboxIndex = lightboxPinId
+    ? zoomableItems.findIndex((entry) => entry.pinId === lightboxPinId)
+    : -1;
+
+  return (
+    <>
+      <div
+        data-metafile-gallery="true"
+        className={`mt-2 flex max-w-full flex-wrap gap-2 ${alignEnd ? 'justify-end' : 'justify-start'}`}
+      >
+        {items.map((item, index) => (
+          <MetafilePreviewCard
+            key={`${item.pinId}-${index}`}
+            item={item}
+            onResolved={(resolved) => {
+              setResolvedMap((prev) => (
+                prev[resolved.pinId] === resolved ? prev : { ...prev, [resolved.pinId]: resolved }
+              ));
+            }}
+            onOpenLightbox={(target) => {
+              setResolvedMap((prev) => (
+                prev[target.pinId] === target ? prev : { ...prev, [target.pinId]: target }
+              ));
+              setLightboxPinId(target.pinId);
+            }}
+          />
+        ))}
+      </div>
+      {activeLightboxIndex >= 0 && (
+        <MetafileLightboxModal
+          items={zoomableItems}
+          activeIndex={activeLightboxIndex}
+          onChangeIndex={(nextIdx) => {
+            const next = zoomableItems[nextIdx];
+            if (next) setLightboxPinId(next.pinId);
+          }}
+          onClose={() => setLightboxPinId(null)}
+        />
+      )}
+    </>
   );
 };
 
@@ -800,9 +1372,10 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
     ? deliveryPayload.result.trim()
     : '';
   const shouldRenderDeliveryResult = deliveryResult.length > 0;
-  const contentToRender = shouldRenderDeliveryResult
+  const rawContentToRender = shouldRenderDeliveryResult
     ? deliveryResult
     : stripOrderProtocolTag(message.content);
+  const contentToRender = sanitizeA2APeerMessageContent(rawContentToRender) || rawContentToRender;
   // S4 chat trade marker: the message announces an NFT trade (nft-card
   // fence with a trade action) → a trade chip rides the meta row, same
   // family as the session-list trade icon. The p2p chip needs a hostStamp
@@ -838,11 +1411,7 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
           <MarkdownContent content={mapWechatBracketCodesForDisplay(contentToRender)} className={markdownClassName} emojiImages />
         </div>
         {metafileItems.length > 0 && (
-          <div className="w-full mt-2 space-y-2">
-            {metafileItems.map((item, index) => (
-              <MetafilePreviewCard key={`${item.uri}-${index}`} item={item} />
-            ))}
-          </div>
+          <MetafileGallery items={metafileItems} alignEnd={displayRight} />
         )}
         {txidPreview ? (
           // Meta row: time and txid share one line (two-space gap via gap-1 +

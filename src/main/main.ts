@@ -2586,6 +2586,54 @@ const fetchMetafileDownloadResponse = async (url: string, fallbackUrl?: string):
   return fetch(fallbackUrl);
 };
 
+const MIME_EXTENSION_FALLBACKS: ReadonlyMap<string, string> = new Map([
+  ['image/png', '.png'],
+  ['image/jpeg', '.jpg'],
+  ['image/gif', '.gif'],
+  ['image/webp', '.webp'],
+  ['image/svg+xml', '.svg'],
+  ['image/bmp', '.bmp'],
+  ['video/mp4', '.mp4'],
+  ['video/webm', '.webm'],
+  ['video/quicktime', '.mov'],
+  ['audio/mpeg', '.mp3'],
+  ['audio/wav', '.wav'],
+  ['audio/x-wav', '.wav'],
+  ['audio/flac', '.flac'],
+  ['audio/ogg', '.ogg'],
+  ['audio/mp4', '.m4a'],
+  ['application/zip', '.zip'],
+  ['application/x-zip-compressed', '.zip'],
+  ['application/pdf', '.pdf'],
+  ['application/json', '.json'],
+  ['text/plain', '.txt'],
+  ['text/markdown', '.md'],
+  ['text/html', '.html'],
+]);
+
+const inferMetafileDownloadExtension = async (url: string, fallbackUrl?: string): Promise<string> => {
+  const candidates = [url, fallbackUrl].filter((entry): entry is string => Boolean(entry));
+  for (const candidate of candidates) {
+    try {
+      const response = await fetch(candidate, {
+        method: 'HEAD',
+        signal: AbortSignal.timeout(2_500),
+      });
+      if (!response.ok) continue;
+      const mime = String(response.headers.get('content-type') || '')
+        .split(';')[0]
+        ?.trim()
+        .toLowerCase();
+      if (mime && MIME_EXTENSION_FALLBACKS.has(mime)) {
+        return MIME_EXTENSION_FALLBACKS.get(mime)!;
+      }
+    } catch {
+      // Best-effort extension hint only; never fail the download flow.
+    }
+  }
+  return '';
+};
+
 const downloadMetafileWithDialog = async (
   webContents: WebContents,
   options: { url?: string; fallbackUrl?: string; fileName?: string }
@@ -2594,7 +2642,13 @@ const downloadMetafileWithDialog = async (
   const fallbackUrl = options?.fallbackUrl
     ? normalizeMetafileContentUrl(options.fallbackUrl)
     : undefined;
-  const defaultName = sanitizeAttachmentFileName(options?.fileName || 'metafile');
+  let defaultName = sanitizeAttachmentFileName(options?.fileName || 'metafile');
+  if (!path.extname(defaultName)) {
+    const inferredExt = await inferMetafileDownloadExtension(url, fallbackUrl);
+    if (inferredExt) {
+      defaultName = `${defaultName}${inferredExt}`;
+    }
+  }
   const ownerWindow = BrowserWindow.fromWebContents(webContents);
   const saveOptions = {
     title: tApp('保存交付文件', 'Save delivery file'),
@@ -4864,8 +4918,9 @@ const startStartupMessageTier = (): void => {
     () => triggerDaemonWasmRecovery('privateChatDaemon'),
     async (input) => skillMgr.buildChatSkillsRoutingPrompt(input),
     async (params) => {
+      const sessionCwd = (getCoworkStore().getSessionWithoutMessages(params.sessionId)?.cwd ?? '').trim();
       const roots = skillMgr.getAllSkillRoots();
-      const cwd = roots.length > 0 ? roots[roots.length - 1]! : skillMgr.getSkillsRoot();
+      const cwd = sessionCwd || (roots.length > 0 ? roots[roots.length - 1]! : skillMgr.getSkillsRoot());
       return runSkillTurnInExistingSession(getCoworkRunner(), getCoworkStore(), {
         sessionId: params.sessionId,
         systemPrompt: params.systemPrompt,

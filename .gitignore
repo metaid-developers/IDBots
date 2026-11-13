@@ -1020,3 +1020,7 @@ blob-report/
 
 # conversation_recall store search (in-conversation verbatim recall)
 !tests/conversationRecallStore.test.mjs
+
+# A2A private-chat polish & collaboration regression tests
+!tests/a2aMessageSanitizer.test.mjs
+!tests/a2aPrivateChatCollaboration.test.mjs
