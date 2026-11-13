@@ -206,3 +206,28 @@ test('stage clicks push straight to the shell bridge alongside the poll queue', 
   assert.match(stage, /emitInteraction\(\{ requestId: interaction\.requestId, token: interaction\.token, behavior: 'allow', skip: true \}\)/);
   assert.doesNotMatch(stage, /interactionQueue\.push\(\{ requestId: interaction\.requestId, token: interaction\.token, behavior: 'deny'/, 'every click leaves through the emitter');
 });
+
+test('speaking keeps the base headline size and a wider brighter caption', () => {
+  const stage = read('stage.js');
+  // A streaming reply grows sentence by sentence; length tiers would flash
+  // sizes mid-speech, so the attribute is removed for the speaking family.
+  assert.match(stage, /state\.family === 'speaking'\) \{\s*\n?\s*titleEl\.removeAttribute\('data-length'\)/);
+  const css = read('stage.css');
+  assert.match(css, /body\[data-family="speaking"\] \.core-copy\{width:44%;max-width:480px\}/);
+  assert.match(css, /body\[data-family="speaking"\] \.core-copy h1\{max-width:480px\}/);
+  assert.match(css, /body\[data-family="speaking"\] \.core-copy p\{max-width:480px;color:#c9d3df;font-size:clamp\(16px,1\.5vw,20px\);line-height:1\.7\}/);
+});
+
+test('particles integrate phase and follow the orb activity multiplier', () => {
+  const stage = read('stage.js');
+  // No absolute-time angle: energy/family changes retune velocity without
+  // teleporting the field, and reduced motion freezes the accumulated phase.
+  assert.doesNotMatch(stage, /t \* particle\.speed \* state\.motion\.energy/);
+  assert.match(stage, /particle\.phase \+= dt \* particle\.speed \* rate/);
+  assert.match(stage, /particle\.angle \+ particle\.phase/);
+  assert.match(stage, /PARTICLE_ACTIVITY = \{ working: 1\.75, speaking: \.6, resting: \.5 \}/);
+  assert.match(stage, /liquidOrbActivityForFamily\(state\.family\)/);
+  assert.match(stage, /1 - Math\.exp\(-dt \/ \.8\)/, '~0.8 s ease toward the activity target');
+  assert.match(stage, /if \(!reduced && dt > 0\)/, 'reduced motion never advances the phase');
+  assert.match(stage, /particles: \{ activity: particleClock\.activity/, 'debug hook exposes the eased multiplier');
+});

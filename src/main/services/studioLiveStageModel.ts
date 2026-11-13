@@ -293,23 +293,60 @@ const sentenceEnd = (text: string, limit: number): number => {
   return best;
 };
 
+const CJK_IDEOGRAPH = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/g;
+/** Speaking headline caps: 28 chars for CJK-dominant text, 60 for Latin-dominant. */
+const SPEECH_HEADLINE_CJK_LIMIT = 28;
+const SPEECH_HEADLINE_LATIN_LIMIT = 60;
+const CLAUSE_MARKS = /[，、；：,;:]/g;
+
+const speechHeadlineLimit = (text: string): number => {
+  const cjk = (text.match(CJK_IDEOGRAPH) ?? []).length;
+  return cjk * 2 > text.length ? SPEECH_HEADLINE_CJK_LIMIT : SPEECH_HEADLINE_LATIN_LIMIT;
+};
+
+/** Index of the last clause mark inside `text`, or -1. */
+const lastClauseMark = (text: string): number => {
+  let best = -1;
+  for (const match of text.matchAll(CLAUSE_MARKS)) best = match.index ?? 0;
+  return best;
+};
+
 /**
  * Reduce one assistant bubble to stage copy: markdown is stripped to plain
- * prose, the first sentence becomes the headline (≤90 chars) and the rest
- * becomes the caption (≤200 chars, cut at a sentence boundary).
+ * prose. The headline is the first sentence when it fits the speaking cap —
+ * 28 characters for CJK-dominant text, 60 for Latin-dominant — otherwise it
+ * is cut at the last clause mark (，、；：,;:) inside the cap, or hard-cut at
+ * the cap (Latin text backs off to a word boundary) with no ellipsis. The
+ * remainder flows into the caption (≤200 chars, cut at a sentence boundary).
+ * The speaking family never takes the headline length tiers, so this copy
+ * keeps the base title size while a reply streams.
  */
 export function liveStageSpeechCopy(markdown: string): { headline: string; caption: string } | null {
   const plain = markdownToPlainText(markdown);
   if (!plain) return null;
+  const limit = speechHeadlineLimit(plain);
   const end = firstSentenceEnd(plain);
+  const firstSentence = end >= 0 ? plain.slice(0, end + 1) : plain;
   let headline: string;
   let rest: string;
-  if (end >= 0) {
-    headline = clip(plain.slice(0, end + 1), 90);
-    rest = plain.slice(end + 1).trimStart();
+  if (firstSentence.length <= limit) {
+    headline = firstSentence;
+    rest = end >= 0 ? plain.slice(end + 1).trimStart() : '';
   } else {
-    headline = clip(plain, 90);
-    rest = plain.slice(headline.length).trimStart();
+    const window = plain.slice(0, limit);
+    const clause = lastClauseMark(window);
+    if (clause > 0) {
+      headline = window.slice(0, clause + 1);
+      rest = plain.slice(clause + 1).trimStart();
+    } else {
+      let cut = limit;
+      if (limit === SPEECH_HEADLINE_LATIN_LIMIT) {
+        const space = window.lastIndexOf(' ');
+        if (space > 0) cut = space;
+      }
+      headline = window.slice(0, cut).trimEnd();
+      rest = plain.slice(cut).trimStart();
+    }
   }
   let caption = '';
   if (rest) {

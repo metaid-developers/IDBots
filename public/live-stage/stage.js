@@ -191,8 +191,16 @@
       const value = Math.sin(index * 91.731 + salt * 17.17) * 43758.5453;
       return value - Math.floor(value);
     };
-    return { angle: random(1) * Math.PI * 2, radius: 110 + random(2) * 250, speed: .12 + random(3) * .35, size: .7 + random(4) * 1.8, drift: random(5) };
+    return { angle: random(1) * Math.PI * 2, radius: 110 + random(2) * 250, speed: .12 + random(3) * .35, size: .7 + random(4) * 1.8, drift: random(5), phase: 0 };
   });
+
+  // Particles integrate their own phase (phase += dt × speed × energy ×
+  // activity) so family/energy changes retune the drift without teleporting
+  // the field. The activity multiplier follows the orb's activity bucket —
+  // working speeds up, speaking and resting slow down — and eases toward its
+  // target with a ~0.8 s time constant.
+  const particleClock = { last: 0, activity: 1 };
+  const PARTICLE_ACTIVITY = { working: 1.75, speaking: .6, resting: .5 };
 
   function drawParticles(time = 0) {
     if (!state || !width || !height) return;
@@ -205,6 +213,17 @@
       return;
     }
     const t = reduced ? state.motion.seed * .01 : now / 1000;
+    const dt = particleClock.last === 0 ? 0 : Math.min(.1, Math.max(0, (now - particleClock.last) / 1000));
+    particleClock.last = now;
+    const activityTarget = PARTICLE_ACTIVITY[window.liquidOrbActivityForFamily(state.family)] ?? 1;
+    particleClock.activity += (activityTarget - particleClock.activity) * (1 - Math.exp(-dt / .8));
+    if (!reduced && dt > 0) {
+      // Integrated phase must never see a non-finite energy: one NaN step
+      // would poison the accumulator for the rest of the session.
+      const energy = Number.isFinite(state.motion?.energy) ? state.motion.energy : 0;
+      const rate = energy * particleClock.activity;
+      for (const particle of particles) particle.phase += dt * particle.speed * rate;
+    }
     const structured = state.topology.mode === 'structured';
     const cx = width * (structured ? .56 : .67), cy = height * .45;
     if (structured) {
@@ -240,7 +259,7 @@
       });
     }
     particles.forEach((particle, index) => {
-      const angle = particle.angle + t * particle.speed * state.motion.energy + state.motion.seed * .0001;
+      const angle = particle.angle + particle.phase + state.motion.seed * .0001;
       let x = cx + Math.cos(angle) * particle.radius * 1.1;
       let y = cy + Math.sin(angle) * particle.radius * .62;
       if (state.family === 'local-recall' || state.family === 'web2-research' || state.family === 'metaweb-research') {
@@ -838,9 +857,16 @@
     setTextChannel(textChannels[0], state.headline, now);
     setTextChannel(textChannels[1], state.caption, now);
     // Headline length tiers keep a long narration readable instead of
-    // flooding the stage; the headline stays the most prominent text.
-    const headlineLength = Array.from(state.headline || '').length;
-    $('[data-core-title]').dataset.length = headlineLength <= 16 ? 'short' : headlineLength <= 40 ? 'medium' : 'long';
+    // flooding the stage — except while speaking: a streaming reply grows
+    // sentence by sentence and would flash between sizes, so speech always
+    // keeps the base title size (the model caps the headline instead).
+    const titleEl = $('[data-core-title]');
+    if (state.family === 'speaking') {
+      titleEl.removeAttribute('data-length');
+    } else {
+      const headlineLength = Array.from(state.headline || '').length;
+      titleEl.dataset.length = headlineLength <= 16 ? 'short' : headlineLength <= 40 ? 'medium' : 'long';
+    }
     updateElapsed();
     const nodes = Object.fromEntries(state.topology.nodes.map((node) => [node.id, node]));
     // Only satellite nodes that exist in the topology are shown — the model
@@ -978,6 +1004,7 @@
     orbFamily: orb?.family || state.family,
     orbStyle: orb?.style ?? window.liquidOrbStyleForFamily(state.family),
     text: textChannels.map((channel) => ({ value: channel.value, typed: channel.typed, length: channel.chars.length, typing: channel.typing })),
+    particles: { activity: particleClock.activity, energy: state.motion.energy, phase: particles[0]?.phase ?? 0 },
   });
   window.__liveStageBackend = 'loading';
   const elapsedTimer = setInterval(updateElapsed, 1000);

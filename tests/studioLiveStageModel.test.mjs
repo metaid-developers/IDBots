@@ -11,6 +11,7 @@ const {
   buildLiveStageInteraction,
   presentLiveStageInteraction,
   dismissLiveStageInteraction,
+  liveStageSpeechCopy,
 } = require('../dist-electron/main/services/studioLiveStageModel.js');
 
 const message = (id, type, metadata = {}) => ({ id, type, content: '', timestamp: 1, metadata });
@@ -76,6 +77,56 @@ test('owner_update tool calls do not move the scene; the narration bubble does',
   assert.equal(state.family, 'speaking');
   assert.equal(state.headline, '清单已核验完毕。');
   assert.equal(state.caption, '接下来我会整理结果。');
+});
+
+test('speech copy keeps a fitting first sentence whole and flows the rest to the caption', () => {
+  const copy = liveStageSpeechCopy('清单已核验完毕。接下来我会整理结果。还有第三句。');
+  assert.equal(copy.headline, '清单已核验完毕。');
+  assert.equal(copy.caption, '接下来我会整理结果。还有第三句。');
+  const latin = liveStageSpeechCopy('Done. The report is attached and verified.');
+  assert.equal(latin.headline, 'Done.');
+  assert.equal(latin.caption, 'The report is attached and verified.');
+});
+
+test('speech copy cuts an over-cap CJK headline at the last clause mark, no ellipsis', () => {
+  // 30 CJK chars before the clause mark would overflow the 28 cap; the mark
+  // at position 20 wins, and everything after it becomes caption.
+  const copy = liveStageSpeechCopy('我已经把方案、预算和排期都核对了一遍，接下来把结果整理好发给你。');
+  assert.equal(copy.headline, '我已经把方案、预算和排期都核对了一遍，');
+  assert.ok(copy.headline.length <= 28);
+  assert.equal(copy.caption, '接下来把结果整理好发给你。');
+  assert.doesNotMatch(copy.headline, /…|\.\.\./);
+});
+
+test('speech copy hard-cuts an over-cap CJK headline with no clause mark', () => {
+  const long = '这是一段没有任何标点超过二十八个字符的长句子用来测试硬切断行为是否正确';
+  const copy = liveStageSpeechCopy(`${long}后面的内容进摘要。`);
+  assert.equal(copy.headline.length, 28);
+  assert.equal(copy.headline, long.slice(0, 28));
+  assert.equal(copy.caption, `${long.slice(28)}后面的内容进摘要。`);
+});
+
+test('speech copy cuts an over-cap Latin headline at a clause mark or word boundary', () => {
+  const withClause = liveStageSpeechCopy('I checked the plan, the budget and the schedule; next I will package the results for you.');
+  assert.equal(withClause.headline, 'I checked the plan, the budget and the schedule;');
+  assert.ok(withClause.headline.length <= 60);
+  assert.equal(withClause.caption, 'next I will package the results for you.');
+  // No clause mark inside 60 chars: back off to the last word boundary so
+  // no word is split across headline and caption.
+  const noClause = liveStageSpeechCopy('supercalifragilisticexpialidocious antidisestablishmentarianism floccinaucinihilipilification pneumonoultramicroscopicsilicovolcanoconiosis trailing');
+  assert.equal(noClause.headline, 'supercalifragilisticexpialidocious');
+  assert.equal(noClause.caption, 'antidisestablishmentarianism floccinaucinihilipilification pneumonoultramicroscopicsilicovolcanoconiosis trailing');
+});
+
+test('speech copy never ellipsizes the headline and keeps the caption cap', () => {
+  const long = 'word '.repeat(80).trim();
+  const copy = liveStageSpeechCopy(long);
+  assert.doesNotMatch(copy.headline, /…|\.\.\./);
+  assert.ok(copy.headline.length <= 60);
+  const cjk = '字'.repeat(120);
+  const copyZh = liveStageSpeechCopy(cjk);
+  assert.equal(copyZh.headline.length, 28);
+  assert.ok(copyZh.caption.length <= 200);
 });
 
 test('reportReadyLiveStage is idempotent in spirit and clears pending projection ids', () => {
