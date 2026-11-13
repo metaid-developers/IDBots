@@ -70,7 +70,7 @@ test('projector prompt: zh carries the hard-rule when-to-project and status-tag 
   assert.match(prompt, /\*\*何时投影（硬规则）。\*\*/, 'the zh paragraph is the new hard-rule text');
   assert.match(prompt, /投影就是向老板交代/, 'projection = reporting to the boss');
   assert.match(prompt, /绝不投影过程页/, 'the no-progress-page ban is present');
-  assert.match(prompt, /每页最上方先放一个醒目的状态标签——「已完成」「需要你拍板」或「建议下一步」/, 'the status-tag sentence leads the design paragraph');
+  assert.match(prompt, /每页最上方先放一个醒目的状态标签——「已完成」「需要你拍板」「建议下一步」或「讲解」/, 'the status-tag sentence leads the design paragraph');
   assert.ok(!prompt.includes('结论先行，做成一条大标题'), 'the old conclusion-first clause is gone');
   assert.ok(!prompt.includes('当本轮产出了值得看的东西'), 'the old when-to-project paragraph is gone');
 });
@@ -80,7 +80,7 @@ test('projector prompt: en carries the hard-rule when-to-project and status-tag 
   assert.match(prompt, /\*\*When to project \(hard rule\)\.\*\*/, 'the en paragraph is the new hard-rule text');
   assert.match(prompt, /A projection is you reporting to your boss/, 'projection = reporting to the boss');
   assert.match(prompt, /\*\*Never project a progress page:\*\*/, 'the no-progress-page ban is present');
-  assert.match(prompt, /open with a prominent status tag — "Done", "Your call" or "Recommended next step" — then the conclusion as one big headline/, 'the status-tag clause leads the design paragraph');
+  assert.match(prompt, /open with a prominent status tag — "Done", "Your call", "Recommended next step" or "Explainer" — then the conclusion as one big headline/, 'the status-tag clause leads the design paragraph');
   assert.ok(!prompt.includes('conclusion first as one big headline'), 'the old conclusion-first clause is gone');
   assert.ok(!prompt.includes('something worth seeing'), 'the old when-to-project paragraph is gone');
 });
