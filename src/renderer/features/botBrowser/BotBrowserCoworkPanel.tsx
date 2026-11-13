@@ -711,7 +711,10 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
   const effectiveMetabotId = selectedMetabotId;
   const [historyBotId, setHistoryBotId] = useState<number | null>(null);
   useEffect(() => {
-    if (showHistory) setHistoryBotId(chipMetabot?.id ?? null);
+    if (showHistory) {
+      setHistoryBotId(chipMetabot?.id ?? null);
+      setShowBotPickerMenu(false);
+    }
   }, [showHistory, chipMetabot?.id]);
   const historyMetabot = historyBotId === chipMetabot?.id
     ? chipMetabot

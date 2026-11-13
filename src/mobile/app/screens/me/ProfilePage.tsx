@@ -169,6 +169,7 @@ export function ProfilePage(props: {
           ownerGlobalMetaId={props.identity?.globalmetaid}
           loadNfts={loadUserNfts}
           maxLocalBytes={200 * 1024}
+          allowBuiltin={false}
           readLocalFile={fileToAvatarDataUrl}
           onPick={(reference) => { void saveAvatar(reference); }}
           onPickLocal={(dataUrl) => { void saveAvatar(dataUrl); }}

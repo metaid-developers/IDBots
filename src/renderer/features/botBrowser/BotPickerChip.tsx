@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import TwinBadge from '../../components/metabots/TwinBadge';
+import { builtinAvatarSrc, getBuiltinAvatarByReference } from '../../assets/builtinAvatars';
 import { i18nService } from '../../services/i18n';
 import { bindSeatMenuOutsideDismiss } from './seatMenuDismiss';
 
@@ -34,26 +35,36 @@ interface BotPickerChipProps {
   menuHint?: string;
 }
 
-const ChipIdentity: React.FC<{ metabot: BotPickerChipBot; compact: boolean }> = ({ metabot, compact }) => (
-  <>
-    {metabot.avatar && (metabot.avatar.startsWith('data:') || metabot.avatar.startsWith('http')) ? (
-      <img
-        src={metabot.avatar}
-        alt=""
-        className={`${compact ? 'h-5 w-5 rounded-md' : 'h-8 w-8 rounded-full'} shrink-0 object-cover ring-1 ring-black/10 dark:ring-white/10`}
-      />
-    ) : (
-      <div className={`${compact ? 'h-5 w-5 rounded-md' : 'h-8 w-8 rounded-full'} flex shrink-0 items-center justify-center ring-1 ring-black/10 dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover dark:ring-white/10`}>
-        <span className={`${compact ? 'text-[8px]' : 'text-[10px]'} font-semibold uppercase dark:text-claude-darkText text-claude-text`}>
-          {metabot.name.slice(0, 2) || '?'}
-        </span>
-      </div>
-    )}
-    <span className={`min-w-0 truncate ${compact ? 'text-xs' : 'text-sm'} font-medium dark:text-claude-darkText text-claude-text`}>
-      {metabot.name}
-    </span>
-  </>
-);
+function resolvePickerAvatarSrc(avatar: string | null): string | null {
+  const builtin = getBuiltinAvatarByReference(avatar);
+  if (builtin) return builtinAvatarSrc(builtin);
+  if (avatar && (avatar.startsWith('data:') || avatar.startsWith('http'))) return avatar;
+  return null;
+}
+
+const ChipIdentity: React.FC<{ metabot: BotPickerChipBot; compact: boolean }> = ({ metabot, compact }) => {
+  const avatarSrc = resolvePickerAvatarSrc(metabot.avatar);
+  return (
+    <>
+      {avatarSrc ? (
+        <img
+          src={avatarSrc}
+          alt=""
+          className={`${compact ? 'h-5 w-5 rounded-md' : 'h-8 w-8 rounded-full'} shrink-0 object-cover ring-1 ring-black/10 dark:ring-white/10`}
+        />
+      ) : (
+        <div className={`${compact ? 'h-5 w-5 rounded-md' : 'h-8 w-8 rounded-full'} flex shrink-0 items-center justify-center ring-1 ring-black/10 dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover dark:ring-white/10`}>
+          <span className={`${compact ? 'text-[8px]' : 'text-[10px]'} font-semibold uppercase dark:text-claude-darkText text-claude-text`}>
+            {metabot.name.slice(0, 2) || '?'}
+          </span>
+        </div>
+      )}
+      <span className={`min-w-0 truncate ${compact ? 'text-xs' : 'text-sm'} font-medium dark:text-claude-darkText text-claude-text`}>
+        {metabot.name}
+      </span>
+    </>
+  );
+};
 
 export interface BotPickerMenuRowProps {
   metabot: BotPickerChipBot;
@@ -67,38 +78,41 @@ export const BotPickerMenuRow: React.FC<BotPickerMenuRowProps> = ({
   metabot,
   isSelected,
   onSelect,
-}) => (
-  <button
-    type="button"
-    role="menuitem"
-    aria-selected={isSelected}
-    onClick={() => onSelect(metabot)}
-    className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${
-      isSelected
-        ? 'dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover dark:text-claude-darkText text-claude-text'
-        : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:text-claude-text dark:hover:text-claude-darkText'
-    }`}
-  >
-    <span className="h-5 w-5 shrink-0">
-      {metabot.avatar && (metabot.avatar.startsWith('data:') || metabot.avatar.startsWith('http')) ? (
-        <img src={metabot.avatar} alt="" className="h-5 w-5 rounded-md object-cover" />
-      ) : (
-        <span className="flex h-5 w-5 items-center justify-center rounded-md dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover">
-          <span className="text-[8px] font-semibold uppercase dark:text-claude-darkText text-claude-text">
-            {metabot.name.slice(0, 2) || '?'}
+}) => {
+  const avatarSrc = resolvePickerAvatarSrc(metabot.avatar);
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      aria-selected={isSelected}
+      onClick={() => onSelect(metabot)}
+      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${
+        isSelected
+          ? 'dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover dark:text-claude-darkText text-claude-text'
+          : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:text-claude-text dark:hover:text-claude-darkText'
+      }`}
+    >
+      <span className="h-5 w-5 shrink-0">
+        {avatarSrc ? (
+          <img src={avatarSrc} alt="" className="h-5 w-5 rounded-md object-cover" />
+        ) : (
+          <span className="flex h-5 w-5 items-center justify-center rounded-md dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover">
+            <span className="text-[8px] font-semibold uppercase dark:text-claude-darkText text-claude-text">
+              {metabot.name.slice(0, 2) || '?'}
+            </span>
           </span>
+        )}
+      </span>
+      <span className="min-w-0 flex-1 truncate font-medium">{metabot.name}</span>
+      {metabot.role && (
+        <span className="min-w-0 max-w-[45%] truncate text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+          {metabot.role}
         </span>
       )}
-    </span>
-    <span className="min-w-0 flex-1 truncate font-medium">{metabot.name}</span>
-    {metabot.role && (
-      <span className="min-w-0 max-w-[45%] truncate text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
-        {metabot.role}
-      </span>
-    )}
-    {metabot.metabot_type === 'twin' && <TwinBadge className="shrink-0" />}
-  </button>
-);
+      {metabot.metabot_type === 'twin' && <TwinBadge className="shrink-0" />}
+    </button>
+  );
+};
 
 const BotPickerChip: React.FC<BotPickerChipProps> = ({
   chipMetabot,

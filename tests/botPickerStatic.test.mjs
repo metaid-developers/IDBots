@@ -68,6 +68,15 @@ test('the Studio header rests at identity height and previews the title on hover
   assert.match(headerSpan, /aria-hidden=\{!showStudioTitle\}/);
   assert.match(headerSpan, /invisible pointer-events-none/);
   assert.match(headerSpan, /absolute right-0 top-0/);
+  assert.match(sidebarSource, /identityRowEl\.addEventListener\('mouseenter', openPreview\)/);
+  assert.match(sidebarSource, /headerEl\.addEventListener\('mouseleave', closePreviewOnLeave\)/);
+  assert.match(sidebarSource, /nextTarget && event\.currentTarget\.contains\(nextTarget\)/);
+});
+
+test('Studio history panel stacks above the centered draft bot picker', () => {
+  const historySource = read('src/renderer/features/botBrowser/CoworkHistoryPanel.tsx');
+  assert.match(historySource, /data-slot="cowork-history-panel"[\s\S]*?\bz-30\b/);
+  assert.match(panelSource, /setShowBotPickerMenu\(false\)/);
 });
 
 test('picking a bot is a pure selection: no metabot_type write, no IPC, no toast', () => {

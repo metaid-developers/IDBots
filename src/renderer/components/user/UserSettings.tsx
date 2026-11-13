@@ -1148,6 +1148,7 @@ const UserSettings: React.FC = () => {
           <AvatarPickerModal
             ownerAddress={identity.mvc_address}
             ownerGlobalMetaId={identity.globalmetaid}
+            currentReference={identity.avatar ?? ''}
             loadNfts={loadUserNfts}
             maxLocalBytes={AVATAR_MAX_SIZE_BYTES}
             onPick={(reference) => { void handleAvatarChange(reference); }}

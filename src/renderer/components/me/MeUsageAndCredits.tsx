@@ -20,6 +20,7 @@ import {
   formatMeSigned,
   getMeSnapshot,
   meFromMilli,
+  requestOpenMePurchase,
   subscribeMeSnapshot,
 } from './mePointsStore';
 import MeBalanceOverviewCard from './MeBalanceOverviewCard';
@@ -258,19 +259,29 @@ const MeUsageAndCredits: React.FC = () => {
 
   return (
     <div className="h-full overflow-y-auto px-4 py-4 space-y-4 max-w-3xl">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="text-base font-semibold text-claude-text dark:text-claude-darkText">{i18nService.t('meUsageTitle')}</h2>
           <p className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">{i18nService.t('meUsageSubtitle')}</p>
         </div>
-        <button
-          type="button"
-          onClick={() => void handleRefreshAll()}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-claude-border dark:border-claude-darkBorder px-2.5 py-1.5 text-[11px] font-medium text-claude-text dark:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
-        >
-          <ArrowPathIcon className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-          {i18nService.t('freeQuotaRefresh')}
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            data-slot="me-usage-buy-credits"
+            onClick={() => requestOpenMePurchase('topup')}
+            className="btn-idchat-primary-filled inline-flex items-center justify-center rounded-xl px-3 py-1.5 text-xs font-medium"
+          >
+            {i18nService.t('meIncrementPackBuy')}
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleRefreshAll()}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-claude-border dark:border-claude-darkBorder px-2.5 py-1.5 text-[11px] font-medium text-claude-text dark:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+          >
+            <ArrowPathIcon className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+            {i18nService.t('freeQuotaRefresh')}
+          </button>
+        </div>
       </div>
 
       {/* 双池概览 */}

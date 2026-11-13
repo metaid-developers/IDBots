@@ -80,7 +80,7 @@ const CoworkHistoryPanel: React.FC<CoworkHistoryPanelProps> = ({
   return (
     <div
       data-slot="cowork-history-panel"
-      className="absolute inset-0 z-10 flex flex-col overflow-hidden rounded-lg border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted shadow-lg"
+      className="absolute inset-0 z-30 flex flex-col overflow-hidden rounded-lg border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted shadow-lg"
     >
       <div className="flex shrink-0 items-center gap-2 px-3 pb-1.5 pt-2.5">
         <span className="shrink-0 text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">

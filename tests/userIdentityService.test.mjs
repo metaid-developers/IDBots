@@ -790,3 +790,23 @@ test('user identity import restores NFT reference, cover fallback, and declarati
     disposeStores(context);
   }
 });
+
+test('user built-in MetaFile avatar updates and publishes /info/avatar as a text reference', async () => {
+  const context = await makeStores();
+  const { userStore } = context;
+  try {
+    insertIdentityForAvatar(userStore);
+    const pinMock = makePinMock();
+    const reference = `metafile://${'94'.repeat(32)}i0.png`;
+    const result = await updateUserIdentityAvatar(userStore, { avatar: reference }, baseDeps(pinMock));
+    assert.equal(result.success, true);
+    assert.equal(result.identity.avatar, reference);
+    assert.equal(pinMock.calls.length, 1);
+    assert.equal(pinMock.calls[0].metaidData.path, '/info/avatar');
+    assert.equal(pinMock.calls[0].metaidData.contentType, 'text/plain');
+    assert.equal(pinMock.calls[0].metaidData.payload, reference);
+    assert.equal(pinMock.calls[0].metaidData.encoding, undefined);
+  } finally {
+    disposeStores(context);
+  }
+});

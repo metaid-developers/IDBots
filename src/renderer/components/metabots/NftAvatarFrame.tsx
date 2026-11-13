@@ -4,6 +4,7 @@ import { i18nService } from '../../services/i18n';
 import { getNftCaRegistryCached, isCollectionCertified } from '../../services/nftCaRegistryService';
 import { parseNftAvatarReference, resolveNftAvatarBadgeKind } from './nftAvatarPresentation';
 import { isMetafileAvatarReference } from '../../utils/metafileAvatar';
+import { builtinAvatarSrc, getBuiltinAvatarByReference } from '../../assets/builtinAvatars';
 
 interface NftAvatarState {
   src: string | null;
@@ -94,8 +95,20 @@ const NftAvatarFrame: React.FC<NftAvatarFrameProps> = ({
   alt = '',
 }) => {
   const nftRef = parseNftAvatarReference(avatar ?? null);
-  const metafileRef = isMetafileAvatarReference(avatar);
+  const builtinAvatar = getBuiltinAvatarByReference(avatar);
+  const metafileRef = !builtinAvatar && isMetafileAvatarReference(avatar);
   const resolved = useNftAvatarState(nftRef || metafileRef ? (avatar as string).trim() : null);
+
+  if (builtinAvatar) {
+    return (
+      <img
+        src={builtinAvatarSrc(builtinAvatar)}
+        alt={alt}
+        className={`${frameClassName} object-cover ${imgClassName ?? ''}`}
+        data-metafile-avatar={avatar?.trim()}
+      />
+    );
+  }
 
   if (!nftRef && !metafileRef) {
     if (avatar && (avatar.startsWith('data:') || avatar.startsWith('http'))) {

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import TwinBadge from '../../components/metabots/TwinBadge';
 import { isRenderableAvatarSource } from '../../utils/avatarSource';
+import { builtinAvatarSrc, getBuiltinAvatarByReference } from '../../assets/builtinAvatars';
 import { subscribeMetabotsChanged } from '../../services/metabotEvents';
 import {
   resolveSurfaceIdentityBadge,
@@ -9,32 +10,38 @@ import {
 } from './surfaceIdentityBadge';
 
 /** Read-only live identity; hover or keyboard focus previews the session title. */
-export const SurfaceIdentityBadgeView: React.FC<{ identity: ResolvedSurfaceIdentity }> = ({ identity }) => (
-  <div
-    data-slot="cowork-surface-identity-badge"
-    title={identity.name}
-    tabIndex={0}
-    className="flex h-9 min-w-0 max-w-full items-center justify-center gap-2 rounded-lg px-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
-  >
-    {identity.avatar && isRenderableAvatarSource(identity.avatar) ? (
-      <img
-        src={identity.avatar}
-        alt=""
-        className="h-8 w-8 shrink-0 rounded-full object-cover ring-1 ring-black/10 dark:ring-white/10"
-      />
-    ) : (
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full ring-1 ring-black/10 dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover dark:ring-white/10">
-        <span className="text-[10px] font-semibold uppercase leading-none dark:text-claude-darkText text-claude-text">
-          {identity.name.slice(0, 2) || '?'}
+export const SurfaceIdentityBadgeView: React.FC<{ identity: ResolvedSurfaceIdentity }> = ({ identity }) => {
+  const builtinAvatar = getBuiltinAvatarByReference(identity.avatar);
+  const avatarSrc = builtinAvatar
+    ? builtinAvatarSrc(builtinAvatar)
+    : (identity.avatar && isRenderableAvatarSource(identity.avatar) ? identity.avatar : null);
+  return (
+    <div
+      data-slot="cowork-surface-identity-badge"
+      title={identity.name}
+      tabIndex={0}
+      className="flex h-9 min-w-0 max-w-full items-center justify-center gap-2 rounded-lg px-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+    >
+      {avatarSrc ? (
+        <img
+          src={avatarSrc}
+          alt=""
+          className="h-8 w-8 shrink-0 rounded-full object-cover ring-1 ring-black/10 dark:ring-white/10"
+        />
+      ) : (
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full ring-1 ring-black/10 dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover dark:ring-white/10">
+          <span className="text-[10px] font-semibold uppercase leading-none dark:text-claude-darkText text-claude-text">
+            {identity.name.slice(0, 2) || '?'}
+          </span>
         </span>
+      )}
+      <span className="min-w-0 max-w-[140px] truncate text-sm font-medium leading-none dark:text-claude-darkText text-claude-text">
+        {identity.name}
       </span>
-    )}
-    <span className="min-w-0 max-w-[140px] truncate text-sm font-medium leading-none dark:text-claude-darkText text-claude-text">
-      {identity.name}
-    </span>
-    {identity.isTwin ? <TwinBadge /> : null}
-  </div>
-);
+      {identity.isTwin ? <TwinBadge /> : null}
+    </div>
+  );
+};
 
 interface CoworkSurfaceIdentityBadgeProps {
   /** The open session's owning MetaBot id (null for unattributed sessions). */
