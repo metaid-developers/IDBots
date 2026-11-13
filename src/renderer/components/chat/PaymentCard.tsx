@@ -12,10 +12,11 @@
  * API, so the loop closes on evidence + seller confirmation, never on
  * auto-reconciliation. The card never claims the platform touches funds.
  *
- * Desktop note (doc 01 §4): Electron without an Alipay handler makes
- * location.href a silent no-op, the hide signal never arrives, and the same
- * 2s watchdog degrades — the desktop precheck is a follow-up optimization,
- * not a behavior difference.
+ * Desktop note (doc 01 §4): the main process hands the exact variant-C URL
+ * to the OS (paymentLaunchUrl.ts), so Electron does open the Alipay app. The
+ * page itself never hides (the app is a separate process), so the same 2s
+ * watchdog still degrades to the QR card underneath the opened app — the QR
+ * stays the standing fallback, not a failure signal.
  *
  * Display-only besides the launch attempt, the local record write, and the
  * QR re-render (all local; no network side effects).

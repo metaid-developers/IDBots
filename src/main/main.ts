@@ -18,6 +18,7 @@ import { installServerShutdownHandlers } from './server/shutdown';
 import { runServerBootstrap, ServerBootstrapStore, type ServerBootstrapRun } from './server/bootstrap';
 import { createServerBootstrapFacts, createServerBootstrapStepExecutors } from './server/bootstrapSteps';
 import { SqliteStore } from './sqliteStore';
+import { isAllowedPaymentLaunchUrl } from './paymentLaunchUrl';
 import { registerIpcHandler } from './ipc/registry';
 import { broadcastToRenderers } from './ipc/broadcast';
 import {
@@ -20625,8 +20626,11 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     });
 
     // Block unexpected window popups/navigation; only allow explicit external links.
+    // The payment gate is checked first: the Alipay launch URL is a custom
+    // scheme, deliberately narrower than the whole alipays: family (see
+    // paymentLaunchUrl.ts), and never reaches isAllowedExternalUrl.
     win.webContents.setWindowOpenHandler(({ url }) => {
-      if (isAllowedExternalUrl(url)) {
+      if (isAllowedPaymentLaunchUrl(url) || isAllowedExternalUrl(url)) {
         void shell.openExternal(url);
       }
       return { action: 'deny' };
@@ -20649,7 +20653,7 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
       }
 
       event.preventDefault();
-      if (isAllowedExternalUrl(url)) {
+      if (isAllowedPaymentLaunchUrl(url) || isAllowedExternalUrl(url)) {
         void shell.openExternal(url);
       }
     });
