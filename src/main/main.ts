@@ -4918,8 +4918,9 @@ const startStartupMessageTier = (): void => {
     () => triggerDaemonWasmRecovery('privateChatDaemon'),
     async (input) => skillMgr.buildChatSkillsRoutingPrompt(input),
     async (params) => {
+      const sessionCwd = (getCoworkStore().getSessionWithoutMessages(params.sessionId)?.cwd ?? '').trim();
       const roots = skillMgr.getAllSkillRoots();
-      const cwd = roots.length > 0 ? roots[roots.length - 1]! : skillMgr.getSkillsRoot();
+      const cwd = sessionCwd || (roots.length > 0 ? roots[roots.length - 1]! : skillMgr.getSkillsRoot());
       return runSkillTurnInExistingSession(getCoworkRunner(), getCoworkStore(), {
         sessionId: params.sessionId,
         systemPrompt: params.systemPrompt,
