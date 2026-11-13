@@ -4660,6 +4660,69 @@ export class CoworkRunner extends EventEmitter {
     return this.formatChatSearchOutput(chats);
   }
 
+  /**
+   * conversation_recall terms: whitespace-separated tokens, plus the whole
+   * query as one term when it contains CJK (Chinese has no word spaces, so
+   * the phrase itself is the meaningful unit). Lowercased for the store's
+   * LOWER(content) LIKE scan.
+   */
+  private conversationRecallTerms(query: string): string[] {
+    const normalized = query.replace(/\s+/g, ' ').trim().toLowerCase();
+    if (!normalized) return [];
+    const terms = normalized.split(' ').filter(Boolean);
+    if (/[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/.test(normalized) && !terms.includes(normalized)) {
+      terms.unshift(normalized);
+    }
+    return Array.from(new Set(terms));
+  }
+
+  private conversationRecallSnippet(content: string, terms: string[]): string {
+    const flat = content.replace(/\s+/g, ' ').trim();
+    const lowered = flat.toLowerCase();
+    let at = -1;
+    let matchLength = 0;
+    for (const term of terms) {
+      const index = lowered.indexOf(term);
+      if (index >= 0 && (at < 0 || index < at)) {
+        at = index;
+        matchLength = term.length;
+      }
+    }
+    if (at < 0) return flat.length > 320 ? `${flat.slice(0, 319)}…` : flat;
+    const center = at + matchLength / 2;
+    const start = Math.max(0, Math.min(flat.length - 320, Math.floor(center - 160)));
+    const end = Math.min(flat.length, start + 320);
+    let snippet = flat.slice(start, end).trim();
+    if (start > 0) snippet = `…${snippet}`;
+    if (end < flat.length) snippet = `${snippet}…`;
+    return snippet;
+  }
+
+  private runConversationRecallTool(args: {
+    query: string;
+    max_results?: number;
+  }, sessionId: string): string {
+    const terms = this.conversationRecallTerms(String(args.query ?? ''));
+    if (terms.length === 0) return 'No search terms — pass a non-empty query.';
+    const hits = this.store.searchSessionMessages(sessionId, {
+      terms,
+      limit: args.max_results ?? 8,
+    });
+    if (hits.length === 0) {
+      return 'No earlier messages in this conversation match the query.';
+    }
+    return hits.map((hit) => {
+      const date = new Date(hit.createdAt || 0);
+      const pad = (value: number): string => String(value).padStart(2, '0');
+      const localTime = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+      const metadata = hit.metadata ?? {};
+      const workerReport = hit.type === 'user'
+        && (metadata.origin === 'cross_session' || metadata.sourceChannel === 'idbots_cross_session');
+      const speaker = hit.type === 'assistant' ? 'you' : workerReport ? 'worker report' : 'owner';
+      return `[${speaker} · ${localTime} · ${hit.id}]\n${this.conversationRecallSnippet(hit.content, terms)}`;
+    }).join('\n\n');
+  }
+
   private formatCrossSessionToolOutput(result: unknown): string {
     return JSON.stringify(result, null, 2);
   }
@@ -6627,7 +6690,7 @@ export class CoworkRunner extends EventEmitter {
 
     const memoryRecallPrompt = [
       '## Memory Strategy',
-      '- Historical retrieval is tool-first: when the user references previous chats, earlier outputs, prior decisions, or says "还记得/之前/上次/刚才", call `conversation_search` or `recent_chats` before answering.',
+      '- Historical retrieval is tool-first: when the user references previous chats, earlier outputs, prior decisions, or says "还记得/之前/上次/刚才", call `conversation_search` or `recent_chats` before answering. For earlier turns of THIS conversation (long chats are summarized automatically), call `conversation_recall` instead — `conversation_search` covers other sessions only.',
       '- When the conversation includes an `IDBots://{sessionId}` link, extract the session id and use `idbots_session_read_all` or `idbots_session_read_latest` to inspect that local Cowork/A2A session before relying on it.',
       '- When a <recent_sessions> digest rides the turn, it lists your most recent other conversations with their latest exchange (newest first). Treat it as live awareness of your own recent work: before asking the owner to do or provide anything, or reporting anything as still pending, cross-check the digest first and open the IDBots:// link with `idbots_session_read_all` when unsure.',
       '- Use `idbots_session_insert_user_message` only to send an instruction into another Cowork session; the source session id is derived automatically. Work orders dispatched through it report back automatically: once the target turn ends, this session receives a [DISPATCH-REPORT] (outcome + final reply excerpt) — wait for it instead of asking the target to "reply back" or polling.',
@@ -9734,6 +9797,14 @@ export class CoworkRunner extends EventEmitter {
           max_results: typeof toolInput.max_results === 'number' ? toolInput.max_results : undefined,
           before: typeof toolInput.before === 'string' ? toolInput.before : undefined,
           after: typeof toolInput.after === 'string' ? toolInput.after : undefined,
+        }, sessionId);
+        return { success: true, text };
+      }
+
+      if (toolName === 'conversation_recall') {
+        const text = this.runConversationRecallTool({
+          query: String(toolInput.query ?? ''),
+          max_results: typeof toolInput.max_results === 'number' ? toolInput.max_results : undefined,
         }, sessionId);
         return { success: true, text };
       }
@@ -13498,7 +13569,7 @@ export class CoworkRunner extends EventEmitter {
     const memoryTools: any[] = [
       tool(
         'conversation_search',
-        'Search the user\'s prior conversations across all sessions by keyword/phrase and return matching chats as Claude-style <chat> blocks (id, title, snippet, time). Use when the user references a past conversation ("我们之前聊过...", "the chat where we discussed X", "上次说的那个") or you need to recall what was decided/built before. When NOT to use: not for the current session (its history is already in context), and not for on-chain posts/social content — use search_social_posts for that. Supports max_results (1-10) and before/after cursors for paging. Returns zero or more <chat> blocks; an empty result means no match, not an error.',
+        'Search the user\'s prior conversations across all sessions by keyword/phrase and return matching chats as Claude-style <chat> blocks (id, title, snippet, time). Use when the user references a past conversation ("我们之前聊过...", "the chat where we discussed X", "上次说的那个") or you need to recall what was decided/built before. When NOT to use: not for the current session — long conversations are summarized automatically, so for earlier turns of THIS conversation use conversation_recall instead; and not for on-chain posts/social content — use search_social_posts for that. Supports max_results (1-10) and before/after cursors for paging. Returns zero or more <chat> blocks; an empty result means no match, not an error.',
         {
           query: z.string().min(1),
           max_results: z.number().int().min(1).max(10).optional(),
@@ -13519,6 +13590,23 @@ export class CoworkRunner extends EventEmitter {
                 text,
               },
             ],
+          } as any;
+        }
+      ),
+      tool(
+        'conversation_recall',
+        'Search THIS conversation\'s own earlier messages verbatim and return matching turns. Long conversations are summarized automatically, so earlier turns may no longer be visible to you — use this when the owner refers to something said earlier in this conversation, or before answering about an earlier decision, number, name or file. For other conversations use conversation_search instead. Args: query (required; pass 1-3 short keywords separated by spaces, such as a name, number or term, rather than a full sentence), max_results (1-20, default 8). Returns one block per hit with local time, speaker (owner / you / worker report), message id and a ~320-char snippet centred on the first match; an empty result means nothing matched, not an error.',
+        {
+          query: z.string().min(1),
+          max_results: z.number().int().min(1).max(20).optional(),
+        },
+        async (args: {
+          query: string;
+          max_results?: number;
+        }) => {
+          const text = this.runConversationRecallTool(args, sessionId);
+          return {
+            content: [{ type: 'text', text }],
           } as any;
         }
       ),

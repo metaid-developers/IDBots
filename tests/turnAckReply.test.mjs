@@ -602,6 +602,7 @@ test('describeOwnerWaitActivity: tool → honest English phrase map', () => {
   assert.equal(describeOwnerWaitActivity('edit', {}), 'writing a file');
   assert.equal(describeOwnerWaitActivity('web_search', { query: 'q' }), 'searching the web');
   assert.equal(describeOwnerWaitActivity('web_fetch', {}), 'searching the web');
+  assert.equal(describeOwnerWaitActivity('conversation_recall', { query: 'launch date' }), 'looking back through this conversation');
   assert.equal(describeOwnerWaitActivity('projection_begin', {}), 'preparing the report page for the big screen');
   assert.equal(
     describeOwnerWaitActivity('bot_browser_preview_local', { projection: true }),

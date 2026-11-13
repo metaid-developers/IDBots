@@ -259,7 +259,7 @@ function familyForTool(toolName: string): LiveStageFamily | null {
   if (name === 'write' || name === 'edit') return 'making';
   if (name.includes('web_search') || name.includes('websearch') || name === 'web_fetch' || name === 'fetch_url') return 'web2-research';
   if (name.startsWith('omni_') || name.includes('metaweb') || name.includes('metaapp') || name.startsWith('mrc721_') || name.startsWith('metatask_') || name === 'chain_history_recall' || name === 'read_metaweb_pin') return 'metaweb-research';
-  if (name === 'read' || name === 'read_image' || name === 'glob' || name === 'grep' || name === 'bash' || name === 'shell' || name === 'conversation_search' || name.startsWith('idbots_session_read') || name.startsWith('longterm_') || name.startsWith('memory_') || name.startsWith('knowledge_')) return 'local-recall';
+  if (name === 'read' || name === 'read_image' || name === 'glob' || name === 'grep' || name === 'bash' || name === 'shell' || name === 'conversation_search' || name === 'conversation_recall' || name.startsWith('idbots_session_read') || name.startsWith('longterm_') || name.startsWith('memory_') || name.startsWith('knowledge_')) return 'local-recall';
   return null;
 }
 
@@ -437,6 +437,9 @@ export function describeLiveStageActivity(
   }
   if (name === 'web_fetch' || name === 'fetch_url') {
     return { headline: text(language, '正在打开网页', 'Opening a web page') };
+  }
+  if (name === 'conversation_recall') {
+    return { headline: text(language, '正在翻看我们之前聊过的内容', 'Looking back through this conversation') };
   }
   if (name === 'conversation_search' || name.startsWith('idbots_session_read')) {
     return { headline: text(language, '正在翻看以前的聊天记录', 'Looking through past chats') };

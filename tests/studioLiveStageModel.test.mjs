@@ -245,3 +245,37 @@ test('malformed candidates never reach the stage', () => {
   assert.deepEqual(interaction.questions[0].options, [{ label: 'Keep' }], 'unlabeled and junk options are dropped');
   assert.equal(interaction.questions[0].options[0].description, undefined);
 });
+
+test('conversation_recall classifies as local-recall with this-conversation wording', () => {
+  let state = initial();
+  state = reduceLiveStageMessage(state, message('recall', 'tool_use', {
+    toolName: 'conversation_recall',
+    toolUseId: 'recall-1',
+    toolInput: { query: 'launch date' },
+  }));
+  assert.equal(state.family, 'local-recall');
+  assert.equal(state.headline, '正在翻看我们之前聊过的内容');
+  const english = { ...initial(), language: 'en' };
+  const enState = reduceLiveStageMessage(english, message('recall-en', 'tool_use', {
+    toolName: 'conversation_recall',
+    toolUseId: 'recall-2',
+    toolInput: { query: 'launch date' },
+  }));
+  assert.equal(enState.headline, 'Looking back through this conversation');
+});
+
+test('a compaction system row leaves the Live Stage state untouched', () => {
+  let state = initial();
+  state = reduceLiveStageMessage(state, {
+    id: 'speak', type: 'assistant', content: '正在整理结果。', timestamp: 1, metadata: {},
+  });
+  assert.equal(state.family, 'speaking');
+  const before = state;
+  // DSH compacts silently in-session; the bookkeeping row must not move the
+  // scene — the owner never sees summarization on the stage.
+  const next = reduceLiveStageMessage(state, message('compact', 'system', { compaction: true }));
+  assert.equal(next, before, 'compaction rows return the same state object');
+  assert.equal(next.family, 'speaking');
+  assert.equal(next.headline, before.headline);
+  assert.equal(next.caption, before.caption);
+});

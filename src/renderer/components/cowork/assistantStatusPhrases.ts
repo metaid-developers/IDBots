@@ -308,7 +308,7 @@ const WRITE_TOOLS = new Set([
   'notebook_edit', 'create_file',
 ]);
 const SEARCH_SESSION_TOOLS = new Set([
-  'conversation_search', 'idbots_session_read_all', 'idbots_session_read_latest', 'session_search',
+  'conversation_search', 'conversation_recall', 'idbots_session_read_all', 'idbots_session_read_latest', 'session_search',
 ]);
 const PROJECT_TOOL = 'bot_browser_preview_local';
 
@@ -420,6 +420,12 @@ export function describeToolUseStatus(
     return file
       ? (zh ? `正在修改 ${file}` : `Editing ${file}`)
       : (zh ? '正在改写文件…' : 'Editing a file…');
+  }
+  if (name === 'conversation_recall') {
+    const query = firstString(toolInput, ['query']);
+    return query
+      ? (zh ? `正在翻看我们之前聊过的内容：${clip(query)}` : `Looking back through this conversation: ${clip(query)}`)
+      : (zh ? '正在翻看我们之前聊过的内容…' : 'Looking back through this conversation…');
   }
   if (SEARCH_SESSION_TOOLS.has(name)) {
     const query = firstString(toolInput, ['query', 'sessionId']);
