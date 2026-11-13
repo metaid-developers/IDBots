@@ -34,6 +34,15 @@ export type QuestionItem = {
 export type SafetyContext = {
   requestedToolName: string;
   requestedToolInput: Record<string, unknown>;
+  /**
+   * Host classification (buildSafetyQuestionInput): true ONLY for
+   * delete-class gates (delete tools / bash rm-family). Non-destructive
+   * safety gates (chain upload, wallet transfer, skill install, precise
+   * location) must NOT render with the red "允许删除" chrome — the 2026-11-13
+   * aaee4df7 incident had owners rejecting plain uploads because every
+   * safety approval titled itself "此操作将删除文件".
+   */
+  destructive: boolean;
 };
 
 /**
@@ -106,6 +115,7 @@ export const parseSafetyContext = (permission: CoworkPermissionRequest): SafetyC
   return {
     requestedToolName: context.requestedToolName,
     requestedToolInput,
+    destructive: context.destructive === true,
   };
 };
 
@@ -536,12 +546,15 @@ const CoworkPermissionPanel: React.FC<CoworkPermissionPanelProps> = ({
     );
   }
 
+  // Safety approvals render the HOST'S actual question (e.g. "…是否允许本次上
+  // 传？") — never a hardcoded operation label. The delete-styled chrome
+  // applies only when the host classified the gate as destructive.
   const approvalTitle = isSafetyApproval
-    ? i18nService.t('coworkApprovalDestructiveTitle')
+    ? (questions[0]?.question ?? i18nService.t('coworkApprovalActionTitle'))
     : isMalformedQuestion
       ? i18nService.t('coworkApprovalUnavailableTitle')
       : nativeReason || i18nService.t('coworkApprovalActionTitle');
-  const isDestructive = isSafetyApproval;
+  const isDestructive = isSafetyApproval && safetyContext.destructive === true;
 
   return (
     <section
@@ -564,7 +577,7 @@ const CoworkPermissionPanel: React.FC<CoworkPermissionPanelProps> = ({
           <ExclamationTriangleIcon className="h-5 w-5" />
         </span>
         <div className="min-w-0 flex-1">
-          <h2 id={`cowork-approval-${permission.requestId}`} className="m-0 text-[15px] leading-6 font-semibold text-claude-text dark:text-claude-darkText">
+          <h2 id={`cowork-approval-${permission.requestId}`} className="m-0 whitespace-pre-wrap break-words text-[15px] leading-6 font-semibold text-claude-text dark:text-claude-darkText">
             {approvalTitle}
           </h2>
           {isMalformedQuestion ? (

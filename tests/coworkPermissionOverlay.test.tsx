@@ -131,13 +131,57 @@ test('overlay renders the destructive allow label for safety approvals', () => {
         },
       ],
       answers: {},
-      context: { requestedToolName: 'bash', requestedToolInput: { command: 'rm -rf ./dist' } },
+      // buildSafetyQuestionInput stamps destructive for delete-class gates
+      // (isDeleteOperation) — the only safety approvals that may render the
+      // red "允许删除" chrome.
+      context: { requestedToolName: 'bash', requestedToolInput: { command: 'rm -rf ./dist' }, destructive: true },
     },
   });
   const markup = renderOverlay([safetyPermission], 'sess-current', [sessionSummary()]);
 
   assert.ok(markup.includes(i18nService.t('coworkApprovalAllowDelete')), 'destructive allow action rendered');
   assert.ok(markup.includes(i18nService.t('coworkDeny')), 'deny action rendered');
+});
+
+/**
+ * 2026-11-13 aaee4df7 incident: the chain-upload gate asked "…是否允许本次上
+ * 传？" but the overlay's allow button read "允许删除" for every safety
+ * approval. Non-destructive safety approvals (upload/transfer/install/
+ * location) must keep the plain allow-once look; only host-stamped
+ * destructive gates take the red chrome.
+ */
+test('overlay keeps the plain allow-once label for non-destructive safety approvals', () => {
+  const uploadGatePermission = permission({
+    toolName: 'AskUserQuestion',
+    toolInput: {
+      questions: [
+        {
+          header: '安全确认',
+          question: 'Agent 将把工作区之外的以下文件上传上链公开发布（不可撤销）：\n- /tmp/video.mp4\n是否允许本次上传？',
+          options: [
+            { label: '允许本次操作', description: '仅允许当前这一次操作继续执行。' },
+            { label: '拒绝本次操作', description: '拒绝当前操作。' },
+          ],
+        },
+      ],
+      answers: {},
+      context: {
+        requestedToolName: 'upload_file',
+        requestedToolInput: { files: ['/tmp/video.mp4'] },
+        destructive: false,
+      },
+    },
+  });
+  const markup = renderOverlay([uploadGatePermission], 'sess-current', [sessionSummary()]);
+
+  assert.ok(markup.includes('是否允许本次上传'), 'the real gate question is the visible summary');
+  assert.ok(markup.includes(i18nService.t('coworkApprovalAllowOnce')), 'non-destructive allow stays allow-once');
+  assert.ok(!markup.includes(i18nService.t('coworkApprovalAllowDelete')), 'no delete label on an upload approval');
+  // The red destructive allow chrome is reserved for delete-class gates.
+  const allowLabel = i18nService.t('coworkApprovalAllowOnce');
+  const allowIndex = markup.indexOf(allowLabel);
+  const allowButtonMarkup = markup.slice(markup.lastIndexOf('<button', allowIndex), allowIndex);
+  assert.ok(!allowButtonMarkup.includes('bg-red-600'), 'non-destructive allow is not styled as the destructive red button');
 });
 
 test('overlay skips the open chat composer seat and still shows a later prompt for that chat', () => {

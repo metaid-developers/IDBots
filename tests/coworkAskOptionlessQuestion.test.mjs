@@ -43,7 +43,11 @@ const onAskRequestBody = (() => {
 })();
 
 const wireAnswersBody = (() => {
-  const start = runnerSource.indexOf('const wireAnswersFromModal = (modalAnswers');
+  // The arrow's parameters wrapped onto their own line (formatting drift);
+  // match the declaration, not the first parameter (2026-11-13: this needle
+  // went stale on main and the suite was red before any of this branch's
+  // edits — absorbed here so the permission-semantics suites run green).
+  const start = runnerSource.indexOf('const wireAnswersFromModal = (');
   assert.notEqual(start, -1, 'coworkRunner must define wireAnswersFromModal');
   const end = runnerSource.indexOf('// Full-trust parity', start);
   assert.notEqual(end, -1);

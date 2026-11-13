@@ -135,8 +135,16 @@ const PermissionOverlayCard: React.FC<{
     const first = questions.find((item) => item && typeof item === 'object' && typeof (item as Record<string, unknown>).question === 'string');
     return first ? String((first as Record<string, unknown>).question) : permission.toolName;
   }, [permission]);
-  const isSafetyApproval = useMemo(
-    () => parseSafetyContext(permission) !== null && parseQuestions(permission).length > 0,
+  // Red "允许删除" chrome only for delete-class gates (host-stamped
+  // context.destructive). Non-destructive safety approvals (chain upload,
+  // wallet transfer, skill install, precise location) keep the plain
+  // allow-once look — 2026-11-13 aaee4df7: every safety approval used to
+  // render as deletion, so owners declined plain on-chain uploads. The
+  // parseQuestions check is unnecessary here: a safety approval always
+  // carries usable options, and one that somehow doesn't still renders the
+  // plain allow button rather than a bogus red one.
+  const isDestructiveSafetyApproval = useMemo(
+    () => parseSafetyContext(permission)?.destructive === true,
     [permission],
   );
   const a2aApproval = a2aApprovalOf(permission);
@@ -210,7 +218,7 @@ const PermissionOverlayCard: React.FC<{
           disabled={responding}
           onClick={() => handleRespond(buildAllowResult(permission))}
           className={`rounded-lg ${a2aApproval ? 'px-4 py-1.5 text-xs font-semibold' : 'px-3 py-1.5 text-xs font-medium'} transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-            isSafetyApproval
+            isDestructiveSafetyApproval
               ? 'border border-red-700 bg-red-600 text-white hover:bg-red-700'
               : 'btn-idchat-primary-filled'
           }`}
@@ -218,7 +226,7 @@ const PermissionOverlayCard: React.FC<{
           <PermissionCountdownLabel
             label={responding
               ? i18nService.t('processing')
-              : isSafetyApproval
+              : isDestructiveSafetyApproval
                 ? i18nService.t('coworkApprovalAllowDelete')
                 : i18nService.t('coworkApprovalAllowOnce')}
             seconds={responding ? null : countdownFor('allow')}
