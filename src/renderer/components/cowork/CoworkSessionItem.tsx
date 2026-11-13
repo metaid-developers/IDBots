@@ -91,11 +91,12 @@ interface CoworkSessionItemProps {
   /** Studio history keeps the visited page in the metadata line instead of the task status. */
   showBrowserContext?: boolean;
   /**
-   * Show the 浏览器 source badge on browser-type rows. Opt-in per surface
-   * (owner ruling 2026-11-12, restoring the pre-2026-11-11 badge): the
-   * BotWorks local list shows it so Studio sessions stay identifiable; the
-   * Studio panel history (bot-centered, owner ruling 2026-11-11 17:28) keeps
-   * its rows badge-free and does not pass the flag.
+   * Show the Studio source badge on browser-type rows. Opt-in per surface
+   * (owner ruling 2026-11-12, restoring the pre-2026-11-11 badge; label copy
+   * renamed 浏览器→Studio the same day): the BotWorks local list shows it so
+   * Studio sessions stay identifiable; the Studio panel history (bot-centered,
+   * owner ruling 2026-11-11 17:28) keeps its rows badge-free and does not
+   * pass the flag.
    */
   showBrowserBadge?: boolean;
 }
@@ -774,10 +775,13 @@ const CoworkSessionItemRow: React.FC<CoworkSessionItemProps> = ({
               </span>
             )}
             {showBrowserBadge && session.sessionType === 'browser' ? (
-              // 浏览器 source badge, restored 2026-11-12 (owner order): the
-              // BotWorks local list shows Studio/browser rows with the badge
-              // they carried before the 2026-11-11 retirement — that ruling
-              // stays in force on the Studio panel history (no badge there).
+              // Studio source badge, restored 2026-11-12 (owner order; label
+              // renamed 浏览器→Studio same day): the BotWorks local list shows
+              // Studio/browser rows with the badge they carried before the
+              // 2026-11-11 retirement — that ruling stays in force on the
+              // Studio panel history (no badge there). The i18n KEY stays
+              // coworkSessionTypeBrowser because it gates on sessionType
+              // 'browser'; only its copy says Studio.
               <span
                 className="shrink-0 rounded px-1 py-px text-[9px] font-medium uppercase leading-none tracking-wider bg-claude-accent/10 text-claude-accent"
                 title={i18nService.t('coworkSessionTypeBrowser')}

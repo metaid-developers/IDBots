@@ -135,11 +135,11 @@ interface CoworkSessionListProps {
    */
   groupFace?: SessionGroupFace;
   /**
-   * Badge browser-type rows with the 浏览器 source label (owner ruling
-   * 2026-11-12). Defaults ON: both sidebars' lists (and the search modal)
-   * show it wherever a browser row renders. The Studio panel history renders
-   * CoworkSessionItem directly without the flag and stays badge-free (its
-   * own 2026-11-11 17:28 ruling).
+   * Badge browser-type rows with the Studio source label (owner ruling
+   * 2026-11-12; copy renamed 浏览器→Studio same day). Defaults ON: both
+   * sidebars' lists (and the search modal) show it wherever a browser row
+   * renders. The Studio panel history renders CoworkSessionItem directly
+   * without the flag and stays badge-free (its own 2026-11-11 17:28 ruling).
    */
   showBrowserBadge?: boolean;
 }

@@ -6,11 +6,12 @@ import path from 'node:path';
 // Regression guard for the BotWorks browser-session listing (owner ruling
 // 2026-11-12, SUPERSEDING the two-surface split of 2026-11-08): Studio
 // (Bot Internet) browser co-work sessions (session_type 'browser') are listed
-// again in the BotWorks local history — with their 浏览器 badge — and open in
-// the BotWorks chat view with the PROFESSIONAL presentation (full thinking
-// transcript), not by routing back to the Studio surface. The Studio face
-// keeps its side of the 11-08 split: its own local list stays browser-free
-// and its search rows / panel history remain the Studio entry points.
+// again in the BotWorks local history — with their Studio badge (copy renamed
+// 浏览器→Studio the same day) — and open in the BotWorks chat view with the
+// PROFESSIONAL presentation (full thinking transcript), not by routing back
+// to the Studio surface. The Studio face keeps its side of the 11-08 split:
+// its own local list stays browser-free and its search rows / panel history
+// remain the Studio entry points.
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
 
@@ -84,7 +85,7 @@ test('a2a grouping is unchanged; the group bucket is Internet-only', () => {
   assert.match(internetCopy, /group:\s*homeSessions\.filter\(\(session\)\s*=>\s*session\.sessionType\s*===\s*'group_task'\)/);
 });
 
-test('the 浏览器 badge is restored as a per-surface opt-in (owner ruling 2026-11-12)', () => {
+test('the Studio badge is restored as a per-surface opt-in (owner ruling 2026-11-12)', () => {
   // SUPERSEDES the 2026-11-11 17:28 retirement: the badge is back, but as an
   // explicit showBrowserBadge prop so the Studio panel history (its own
   // bot-centered ruling) stays badge-free.
@@ -105,10 +106,16 @@ test('the 浏览器 badge is restored as a per-surface opt-in (owner ruling 2026
   assert.doesNotMatch(panel, /showBrowserBadge/, 'the panel history stays badge-free');
 });
 
-test('the badge label is back in both locales (restored 2026-11-12)', () => {
+test('the badge label reads Studio in both locales (copy renamed 2026-11-12)', () => {
   const source = read('src/renderer/services/i18n.ts');
   const occurrences = source.match(/coworkSessionTypeBrowser:/g) ?? [];
   assert.equal(occurrences.length, 2, 'the badge key must exist in exactly the two locales');
+  const copies = source.match(/coworkSessionTypeBrowser: '([^']*)'/g) ?? [];
+  assert.deepEqual(
+    copies,
+    ["coworkSessionTypeBrowser: 'Studio'", "coworkSessionTypeBrowser: 'Studio'"],
+    'both locales carry the Studio copy (the 浏览器/Browser wording is retired)',
+  );
 });
 
 test('App keeps the browser-session route for the Studio-face Sidebar only', () => {

@@ -57,7 +57,7 @@ export function isAssistantModeOwnerChatSession(
   // Face-owned presentation FIRST (owner ruling 2026-11-12): the BotWorks
   // face ('professional') renders EVERY session shape professionally — Studio
   // projector sessions included. They re-entered the BotWorks local list with
-  // a 浏览器 badge and open there precisely so the owner can read their full
+  // a Studio badge and open there precisely so the owner can read their full
   // thinking transcript; the presentation gate must not claw them back into
   // assistant chrome. The Studio face ('assistant') is decided below.
   if (mode !== 'assistant') return false;
