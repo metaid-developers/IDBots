@@ -115,30 +115,51 @@ test('recents render as a strip embedded ABOVE the main grid (WeChat style, no R
   }
 });
 
-test('composer wires the emoji button next to the + button in both layout branches, inserting at the caret', () => {
+test('composer folds emoji insertion into the + menu (above 添加附件) and inserts at the caret', () => {
   const source = readSource('../src/renderer/components/cowork/CoworkPromptInput.tsx');
-  // Two render branches (wide toolbar row + single-line composer) each mount
-  // the picker directly after the PlusMenuButton.
-  const emojiButtonCount = (source.match(/<EmojiMenuButton/g) ?? []).length;
-  assert.equal(emojiButtonCount, 2, 'both composer branches must render the emoji button');
-  // Every PlusMenuButton JSX mount is followed by an EmojiMenuButton mount.
-  // (The negative lookahead skips the `React.FC<PlusMenuButtonProps>` type
-  // reference, whose `<PlusMenuButton` prefix would otherwise match.)
-  const plusBlockEnds = [...source.matchAll(/<PlusMenuButton(?![A-Za-z])[\s\S]*?\/>/g)].map((m) => m.index! + m[0].length);
-  assert.ok(plusBlockEnds.length === 2, `expected 2 PlusMenuButton mounts, got ${plusBlockEnds.length}`);
-  for (const end of plusBlockEnds) {
-    const between = source.slice(end, end + 400);
-    assert.ok(
-      between.includes('<EmojiMenuButton'),
-      'an EmojiMenuButton must directly follow each PlusMenuButton mount',
-    );
-  }
+  // The standalone emoji trigger is gone from BOTH layout branches: each
+  // branch mounts the picker trigger-less (panel only), anchored to the '+'
+  // button, so the toolbar width goes back to the input.
+  assert.equal((source.match(/<EmojiMenuButton/g) ?? []).length, 2, 'both composer branches must still mount the panel');
+  const triggerlessMounts = source.match(/<EmojiMenuButton\s+open=\{emojiPickerOpen\}\s+showTrigger=\{false\}\s+buttonRef=\{plusButtonRef\}/g) ?? [];
+  assert.equal(triggerlessMounts.length, 2, 'both mounts must be trigger-less and anchored to the + button');
+  assert.doesNotMatch(source, /emojiButtonRef/, 'the dedicated trigger ref must be gone (no dead ref)');
+  // The '+' menu carries the emoji entry ABOVE 添加附件; it hangs off the
+  // same handler contract as the other items (close the menu, open the target).
+  const insertKeyIndex = source.indexOf("i18nService.t('composerMenuInsertEmoji')");
+  const attachmentKeyIndex = source.indexOf("i18nService.t('composerMenuAddAttachment')");
+  assert.ok(insertKeyIndex >= 0, 'the + menu must render composerMenuInsertEmoji');
+  assert.ok(attachmentKeyIndex >= 0);
+  assert.ok(insertKeyIndex < attachmentKeyIndex, '「插入表情」 must sit above 「添加附件」');
+  assert.match(source, /const handlePlusMenuInsertEmoji = \(\) => \{\s*setPlusMenuOpen\(false\);\s*setEmojiPickerOpen\(true\);\s*\};/);
+  assert.equal(
+    (source.match(/onInsertEmoji=\{handlePlusMenuInsertEmoji\}/g) ?? []).length,
+    2,
+    'both + menu mounts must receive the handler',
+  );
+  // Mutual exclusion: opening the '+' menu closes the emoji panel.
+  assert.match(source, /const handlePlusMenuToggle = \(\) => \{\s*if \(!plusMenuOpen\) setEmojiPickerOpen\(false\);\s*setPlusMenuOpen\(!plusMenuOpen\);\s*\};/);
   // Insertion path: read live selection -> applyTextareaChange(start, end, emoji)
   // -> refocus, i.e. the same DOM path paste uses (setRangeText 'end' mode
   // lands the caret after the inserted sequence).
   assert.match(source, /const handlePickEmoji = \(emoji: string\) => \{[\s\S]*?readLiveSelection\(\)[\s\S]*?applyTextareaChange\(start, end, emoji\)[\s\S]*?textarea\.focus\(\)/);
   // The picker follows the textarea's own disabled gate, not the attachment gate.
   assert.match(source, /const emojiPickerDisabled = disabled \|\| \(isStreaming && steerDisabled\)/);
+  // Folding the entry into the menu must not add a second disabled layer on
+  // the item: the '+' trigger itself already carries that exact gate.
+  assert.doesNotMatch(source, /<button type="button" role="menuitem" onClick=\{onInsertEmoji\}[^>]*disabled/);
+});
+
+test('trigger-less picker renders only the panel (no standalone emoji button)', () => {
+  const closed = renderToStaticMarkup(
+    <EmojiMenuButton open={false} showTrigger={false} buttonRef={{ current: null }} onToggle={() => {}} onPick={() => {}} />,
+  );
+  assert.equal(closed, '', 'closed trigger-less mount renders nothing');
+  const openMarkup = renderToStaticMarkup(
+    <EmojiMenuButton open showTrigger={false} buttonRef={{ current: null }} onToggle={() => {}} onPick={() => {}} />,
+  );
+  assert.match(openMarkup, /role="dialog"/, 'the panel itself still renders');
+  assert.doesNotMatch(openMarkup, /aria-haspopup="menu"/, 'no trigger button in trigger-less mode');
 });
 
 test('group-task message bubbles render WeChat bracket codes as Twemoji images (display-only)', () => {
@@ -278,6 +299,7 @@ test('emoji picker copy resolves in both shipped locales', () => {
     assert.ok(title && title.length > 0, `composerEmojiTitle missing for ${locale}`);
     assert.ok(i18nService.tIn(locale, 'emojiPickerSearchPlaceholder').length > 0);
     assert.ok(i18nService.tIn(locale, 'emojiPickerNoResults').length > 0);
+    assert.ok(i18nService.tIn(locale, 'composerMenuInsertEmoji').length > 0, `composerMenuInsertEmoji missing for ${locale}`);
     for (const key of [
       'emojiCategoryRecent',
       'emojiCategorySmileys',
@@ -293,4 +315,6 @@ test('emoji picker copy resolves in both shipped locales', () => {
       assert.ok(i18nService.tIn(locale, key).length > 0, `${key} missing for ${locale}`);
     }
   }
+  // Owner-facing Chinese copy for the new '+' menu item.
+  assert.equal(i18nService.tIn('zh', 'composerMenuInsertEmoji'), '插入表情');
 });

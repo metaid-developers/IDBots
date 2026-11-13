@@ -247,6 +247,15 @@ export interface EmojiMenuButtonProps {
   buttonRef: React.RefObject<HTMLButtonElement>;
   /** Follows the textarea's own gate (disabled composer = disabled picker). */
   disabled?: boolean;
+  /**
+   * false = panel-only mount: no trigger button. The panel is opened by a
+   * sibling control (the Cowork composer's '+' menu) and still anchors to
+   * `buttonRef` (that '+' button). With no trigger left, `onToggle` is
+   * reached only through the dismissal paths (outside click / Escape), so
+   * such callers pass a close callback. Default true keeps the standalone
+   * trigger + panel contract.
+   */
+  showTrigger?: boolean;
   onToggle: () => void;
   /** Insert the picked emoji at the composer caret. */
   onPick: (emoji: string) => void;
@@ -255,12 +264,14 @@ export interface EmojiMenuButtonProps {
 /**
  * The emoji trigger + popover. Self-contained (no redux, no store) so any
  * composer can mount it next to its other toolbar buttons, and so tests can
- * render it standalone.
+ * render it standalone. `showTrigger={false}` renders only the popover, for
+ * composers that open it from another control.
  */
 const EmojiMenuButton: React.FC<EmojiMenuButtonProps> = ({
   open,
   buttonRef,
   disabled = false,
+  showTrigger = true,
   onToggle,
   onPick,
 }) => {
@@ -313,6 +324,22 @@ const EmojiMenuButton: React.FC<EmojiMenuButtonProps> = ({
     };
   }, [open, onToggle, buttonRef]);
 
+  const panel = open ? (
+    <div
+      ref={panelRef}
+      role="dialog"
+      aria-label={i18nService.t('composerEmojiTitle')}
+      className="fixed z-50 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg shadow-lg overflow-hidden flex flex-col"
+      style={panelStyle ?? { visibility: 'hidden' }}
+    >
+      <EmojiPickerPanel onSelect={onPick} />
+    </div>
+  ) : null;
+
+  // Panel-only mount: the opening control lives elsewhere, so there is no
+  // trigger to render (and no trigger DOM to steal toolbar width).
+  if (!showTrigger) return panel;
+
   return (
     <div className="relative shrink-0">
       <button
@@ -328,17 +355,7 @@ const EmojiMenuButton: React.FC<EmojiMenuButtonProps> = ({
       >
         <FaceSmileIcon className="h-4 w-4" />
       </button>
-      {open && (
-        <div
-          ref={panelRef}
-          role="dialog"
-          aria-label={i18nService.t('composerEmojiTitle')}
-          className="fixed z-50 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg shadow-lg overflow-hidden flex flex-col"
-          style={panelStyle ?? { visibility: 'hidden' }}
-        >
-          <EmojiPickerPanel onSelect={onPick} />
-        </div>
-      )}
+      {panel}
     </div>
   );
 };
