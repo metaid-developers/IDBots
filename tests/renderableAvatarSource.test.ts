@@ -38,3 +38,17 @@ test('static: every bot-avatar surface renders through toRenderableAvatarSource'
   }
   assert.match(readFileSync('src/renderer/components/cowork/A2AMessageItem.tsx', 'utf8'), /pickSharedRenderableAvatarSource/);
 });
+
+test('NftAvatarFrame draws pre-mapped built-in avatar paths instead of the default robot', async () => {
+  const { isDirectImageSource } = await import('../src/renderer/utils/avatarSource');
+  const mapped = toRenderableAvatarSource(BUILTIN_AVATARS[0].metafileUri)!;
+  assert.equal(isDirectImageSource(mapped), true, mapped);
+  assert.equal(isDirectImageSource('/builtin-avatars/01-D0.png'), true);
+  assert.equal(isDirectImageSource('data:image/png;base64,AAAA'), true);
+  assert.equal(isDirectImageSource('https://file.metaid.io/x.png'), true);
+  assert.equal(isDirectImageSource('//evil.example/x.png'), false, 'protocol-relative is not a bundled path');
+  assert.equal(isDirectImageSource('metafile://' + 'a'.repeat(64) + 'i0.png'), false);
+  assert.equal(isDirectImageSource(''), false);
+  const frame = readFileSync('src/renderer/components/metabots/NftAvatarFrame.tsx', 'utf8');
+  assert.match(frame, /if \(isDirectImageSource\(avatar\)\) \{/);
+});

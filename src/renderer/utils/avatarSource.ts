@@ -80,3 +80,16 @@ export const toRenderableAvatarSource = (value: string | null | undefined): stri
   if (builtin) return builtinAvatarSrc(builtin);
   return isRenderableAvatarSource(value) ? value!.trim() || null : null;
 };
+
+/**
+ * A source an <img> can draw as-is: data:/blob:/http(s) URLs, or a bundled
+ * app asset path (`./builtin-avatars/…` or `/builtin-avatars/…`, the form
+ * toRenderableAvatarSource maps built-in avatars to). NftAvatarFrame's plain
+ * branch only accepted data:/http, so a pre-mapped built-in avatar fell back
+ * to the default robot in the Studio activity row (2026-11-14).
+ */
+export const isDirectImageSource = (value: string | null | undefined): boolean => {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  if (!normalized) return false;
+  return /^(?:data:|blob:|https?:)/i.test(normalized) || /^\.?\/(?!\/)[^:]*$/.test(normalized);
+};

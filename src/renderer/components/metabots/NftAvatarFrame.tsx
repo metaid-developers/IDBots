@@ -5,6 +5,7 @@ import { getNftCaRegistryCached, isCollectionCertified } from '../../services/nf
 import { parseNftAvatarReference, resolveNftAvatarBadgeKind } from './nftAvatarPresentation';
 import { isMetafileAvatarReference } from '../../utils/metafileAvatar';
 import { builtinAvatarSrc, getBuiltinAvatarByReference } from '../../assets/builtinAvatars';
+import { isDirectImageSource } from '../../utils/avatarSource';
 
 interface NftAvatarState {
   src: string | null;
@@ -111,8 +112,8 @@ const NftAvatarFrame: React.FC<NftAvatarFrameProps> = ({
   }
 
   if (!nftRef && !metafileRef) {
-    if (avatar && (avatar.startsWith('data:') || avatar.startsWith('http'))) {
-      return <img src={avatar} alt={alt} className={`${frameClassName} object-cover ${imgClassName ?? ''}`} />;
+    if (isDirectImageSource(avatar)) {
+      return <img src={avatar!.trim()} alt={alt} className={`${frameClassName} object-cover ${imgClassName ?? ''}`} />;
     }
     return <>{fallback}</>;
   }
