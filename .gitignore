@@ -1017,3 +1017,6 @@ blob-report/
 !tests/studioGenesisStageVisuals.test.mjs
 !tests/studioGenesisStageWiring.test.mjs
 !tests/studioGenesisStageSound.test.mjs
+
+# A2A private-chat polish & collaboration regression tests
+!tests/a2aMessageSanitizer.test.mjs

@@ -832,6 +832,34 @@ test('resolveMetafileMetadata detects image/video MIME and extension for extensi
   resetMetafileMetadataCacheForTests();
 });
 
+test('A2A bubble hides leaked Local Time Context blocks from historical chain messages', () => {
+  const txid = 'e'.repeat(64);
+  const markup = renderToStaticMarkup(
+    <A2AMessageItem
+      message={{
+        id: 'msg-leaked-ltc',
+        type: 'user',
+        content: [
+          '④ 补发回来了，回报告示——挂账已清。',
+          '',
+          '## Local Time Context',
+          '- Treat this section as the authoritative current local time for this machine.',
+          '- Current local datetime: 2026-11-09 04:10:09 (timezone: Asia/Shanghai, UTC+08:00)',
+          '- 当前 CoWork 会话 ID: 05a159e1-936f-494f-9d9c-5f345b74c64f',
+          '- 创建一次性定时任务 (`schedule.type = "at"`) 时，请使用本地时钟日期时间格式。',
+        ].join('\n'),
+        timestamp: 1_744_444_457_000,
+        metadata: { direction: 'incoming', senderName: 'Peer Bot', txid },
+      }}
+      peerName="Peer Bot"
+    />
+  );
+
+  assert.match(markup, /④ 补发回来了，回报告示——挂账已清。/);
+  assert.doesNotMatch(markup, /Local Time Context/);
+  assert.doesNotMatch(markup, /05a159e1-936f-494f-9d9c-5f345b74c64f/);
+});
+
 test('A2A incoming message renders the friend badge beside the peer name when confirmed friends', () => {
   const txid = '9'.repeat(64);
   const markup = renderToStaticMarkup(

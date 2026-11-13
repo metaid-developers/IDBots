@@ -36,6 +36,7 @@ import {
   normalizeTxidCandidate,
   resolveA2AMessageTxid,
 } from './a2aInternalMessageFilter';
+import { sanitizeA2APeerMessageContent } from './a2aMessageSanitizer';
 
 export { formatA2ATxidPreview, resolveA2AMessageTxid };
 
@@ -1371,9 +1372,10 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
     ? deliveryPayload.result.trim()
     : '';
   const shouldRenderDeliveryResult = deliveryResult.length > 0;
-  const contentToRender = shouldRenderDeliveryResult
+  const rawContentToRender = shouldRenderDeliveryResult
     ? deliveryResult
     : stripOrderProtocolTag(message.content);
+  const contentToRender = sanitizeA2APeerMessageContent(rawContentToRender) || rawContentToRender;
   // S4 chat trade marker: the message announces an NFT trade (nft-card
   // fence with a trade action) → a trade chip rides the meta row, same
   // family as the session-list trade icon. The p2p chip needs a hostStamp
