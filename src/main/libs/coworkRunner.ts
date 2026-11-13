@@ -8105,6 +8105,15 @@ export class CoworkRunner extends EventEmitter {
       context: {
         requestedToolName,
         requestedToolInput: this.sanitizeToolPayload(requestedToolInput),
+        // Renderer classification: ONLY delete-class gates (delete tools /
+        // bash rm-family commands, per isDeleteOperation) render with the red
+        // "允许删除" destructive styling. Every other safety gate (chain upload,
+        // wallet transfer, skill install, precise location) used to inherit it
+        // and read as "此操作将删除文件", which made owners reject uploads that
+        // were actually asking "allow this on-chain publish?" (2026-11-13
+        // session aaee4df7: the upload gate's question never reached the
+        // screen; the owner saw a delete dialog and declined).
+        destructive: this.isDeleteOperation(requestedToolName, requestedToolInput),
       },
     };
   }
@@ -8136,13 +8145,25 @@ export class CoworkRunner extends EventEmitter {
       .some((value) => value === SAFETY_APPROVAL_ALLOW_OPTION || value === SAFETY_APPROVAL_ALLOW_OPTION_EN);
   }
 
+  /**
+   * One owner confirmation dialog for every safety gate (delete, chain upload,
+   * wallet transfer, skill install, precise location). `timeoutDefault` picks
+   * what an unanswered dialog resolves to after the 60s window: 'deny' for
+   * delete-class operations (fail-closed since the 2026-11-03 pre-release
+   * review), 'allow' for the non-destructive gates per the owner ruling of
+   * 2026-11-13 — an unattended upload/transfer/install/location prompt lets
+   * the operation proceed instead of silently killing the bot's task. The
+   * renderer reads the same stamp and runs its countdown on the button the
+   * watchdog will press.
+   */
   private async requestSafetyApproval(
     sessionId: string,
     signal: AbortSignal,
     activeSession: ActiveSession,
     question: string,
     requestedToolName: string,
-    requestedToolInput: Record<string, unknown>
+    requestedToolInput: Record<string, unknown>,
+    timeoutDefault: PermissionTimeoutDefault = 'deny'
   ): Promise<'approved' | 'denied' | 'timeout' | 'aborted'> {
     const request: PermissionRequest = {
       requestId: uuidv4(),
@@ -8150,17 +8171,24 @@ export class CoworkRunner extends EventEmitter {
       toolInput: this.buildSafetyQuestionInput(question, requestedToolName, requestedToolInput),
     };
 
-    stampPermissionDeadline(request, 'deny');
+    stampPermissionDeadline(request, timeoutDefault);
     activeSession.pendingPermission = request;
     this.emit('permissionRequest', sessionId, request);
 
     const result = await this.waitForPermissionResponse(sessionId, request.requestId, signal, {
-      timeoutBehavior: 'deny',
+      timeoutBehavior: timeoutDefault,
     });
     if (activeSession.abortController.signal.aborted || signal.aborted) {
       return 'aborted';
     }
     if (this.isSafetyApproval(result, question)) {
+      return 'approved';
+    }
+    // Bare allow without the expected answers shape: the 60s watchdog auto-allow
+    // (timeoutDefault 'allow') and the text relays (允许 / relay auto-allow)
+    // resolve { behavior: 'allow' } without fabricating an answers payload.
+    // They all mean "approved" — an explicit answers match is covered above.
+    if (result.behavior === 'allow') {
       return 'approved';
     }
     // The 60s watchdog denies with a distinctive message — report it
@@ -8281,12 +8309,14 @@ export class CoworkRunner extends EventEmitter {
   /**
    * Wrap the skill_tool control so install_skill requires a human
    * confirmation in interactive sessions: installing a skill package brings
-   * executable content onto the device, the same trust surface as a delete
-   * operation. Unattended sessions (acceptEdits / bypassPermissions /
-   * autoApprove) skip the prompt so background workers are never blocked on a
-   * human. The learning-loop prompt section still requires the bot to declare
-   * what it is installing, why, and the source pinId before calling
-   * install_skill — this gate is the enforcement half of that policy.
+   * executable content onto the device. Unattended sessions (acceptEdits /
+   * bypassPermissions / autoApprove) skip the prompt so background workers are
+   * never blocked on a human; attended sessions ask, and an unanswered prompt
+   * resolves as allow (owner ruling 2026-11-13 — non-destructive safety gates
+   * default to allow so an away-from-keyboard owner never strands the task).
+   * The learning-loop prompt section still requires the bot to declare what it
+   * is installing, why, and the source pinId before calling install_skill —
+   * this gate is the enforcement half of that policy.
    */
   private withSkillInstallApproval(sessionId: string, control: SkillToolControl): SkillToolControl {
     return {
@@ -8314,20 +8344,22 @@ export class CoworkRunner extends EventEmitter {
             `Agent 将安装技能包（来源: ${source}）。安装技能会引入可执行内容，根据安全策略需要人工确认。是否允许本次安装？`,
             `The agent is about to install a skill package (source: ${source}). Installing a skill introduces executable content, so safety policy requires a human confirmation. Allow this install?`
           );
+          // timeoutDefault 'allow' (owner ruling 2026-11-13): an unanswered
+          // install prompt proceeds instead of blocking the bot until someone
+          // clicks; only an explicit owner denial stops it.
           const outcome = await this.requestSafetyApproval(
             sessionId,
             activeSession.abortController.signal,
             activeSession,
             question,
             'skill_tool',
-            input as Record<string, unknown>
+            input as Record<string, unknown>,
+            'allow'
           );
           if (outcome !== 'approved') {
-            const error = outcome === 'timeout'
-              ? 'Skill install was not confirmed within 60s — treated as declined (no human answer, NOT an explicit denial). Tell the owner the install needs their confirmation; they can re-ask when around.'
-              : outcome === 'aborted'
-                ? 'Skill install confirmation was interrupted (session aborted).'
-                : 'Skill install denied by the owner.';
+            const error = outcome === 'aborted'
+              ? 'Skill install confirmation was interrupted (session aborted).'
+              : 'Skill install denied by the owner.';
             return { ok: false as const, error };
           }
         }
@@ -8363,13 +8395,17 @@ export class CoworkRunner extends EventEmitter {
       'Agent 请求获取本机的精确位置（调用操作系统定位，可达到街道级精度）。是否允许？允许后本次会话内不再重复询问。',
       'The agent requests this machine\'s precise location (OS geolocation, street-level accuracy). Allow it? You will not be asked again in this session.'
     );
+    // timeoutDefault 'allow' (owner ruling 2026-11-13): an unanswered precise
+    // location prompt resolves as granted (sticking for the session) instead
+    // of wedging the tool call in a session nobody is watching.
     const outcome = await this.requestSafetyApproval(
       sessionId,
       activeSession.abortController.signal,
       activeSession,
       question,
       'get_host_location',
-      { granularity: 'precise' }
+      { granularity: 'precise' },
+      'allow'
     );
     if (outcome === 'approved') {
       this.preciseLocationConsentedSessions.add(sessionId);
@@ -8380,9 +8416,10 @@ export class CoworkRunner extends EventEmitter {
 
   /**
    * Owner-approval gate for chain-write uploads (post_buzz / post_simplenote):
-   * local files OUTSIDE the session workspace are only published after the
-   * owner confirms (chainUploadGate). Mirrors withSkillInstallApproval's
-   * permission-mode skip (acceptEdits / bypassPermissions / autoApprove).
+   * local files OUTSIDE the session workspace are confirmed with the owner
+   * before they are published (chainUploadGate). Mirrors
+   * withSkillInstallApproval's permission-mode skip (acceptEdits /
+   * bypassPermissions / autoApprove).
    *
    * autoApprove posture (review follow-up): unattended STUDY sessions never
    * reach this gate — the study-session tool allowlist structurally removes
@@ -8406,15 +8443,21 @@ export class CoworkRunner extends EventEmitter {
             `Agent 将把工作区之外的以下文件上传上链公开发布（不可撤销）：\n${list}\n是否允许本次上传？`,
             `The agent is about to upload the following files from OUTSIDE the session workspace on-chain, where they become public and irreversible:\n${list}\nAllow this upload?`
           );
-          // timeout/aborted (e.g. the 60s watchdog) count as NOT approved —
-          // publishing an out-of-workspace file needs an explicit yes.
+          // timeoutDefault 'allow' (owner ruling 2026-11-13): an unanswered
+          // upload prompt proceeds so an away-from-keyboard owner never
+          // strands the bot mid-delivery; only an explicit denial stops it.
+          // (2026-11-13 session aaee4df7: this dialog rendered with the
+          // delete-class "此操作将删除文件/允许删除" chrome and its countdown
+          // defaulted to deny — the owner read a plain upload as a deletion
+          // request and declined it.)
           const outcome = await this.requestSafetyApproval(
             sessionId,
             activeSession.abortController.signal,
             activeSession,
             question,
             'upload_file',
-            { files } as Record<string, unknown>
+            { files } as Record<string, unknown>,
+            'allow'
           );
           return outcome === 'approved';
         }
@@ -8425,10 +8468,12 @@ export class CoworkRunner extends EventEmitter {
 
   /**
    * Channel-B owner gate for wallet_transfer (R2): transfers to addresses
-   * OUTSIDE the local metabot roster need an explicit owner approval
+   * OUTSIDE the local metabot roster need an owner approval
    * (from/to/amount/estimated fee) unless the settings gate is disabled.
-   * Local-roster transfers never reach this dialog. timeout/aborted count
-   * as NOT approved — an external transfer needs an explicit yes.
+   * Local-roster transfers never reach this dialog. timeoutDefault 'allow'
+   * (owner ruling 2026-11-13): an unanswered transfer prompt proceeds so an
+   * away-from-keyboard owner never strands the task; only an explicit denial
+   * stops it.
    */
   private async confirmExternalTransfer(sessionId: string, info: ExternalTransferInfo): Promise<boolean> {
     const activeSession = this.activeSessions.get(sessionId);
@@ -8456,7 +8501,8 @@ export class CoworkRunner extends EventEmitter {
         to: info.toAddress,
         amount_sats: info.amountSats,
         estimated_fee_sats: info.estimatedFeeSats,
-      } as Record<string, unknown>
+      } as Record<string, unknown>,
+      'allow'
     );
     return outcome === 'approved';
   }

@@ -132,6 +132,36 @@ test('low-risk marked questions auto-answer with their first option', async (t) 
   assert.equal(tryAutoAnswerLowRiskQuestion('nope'), null);
 });
 
+test('non-destructive safety gates default an unanswered prompt to allow (owner ruling 2026-11-13)', () => {
+  // 2026-11-13 session aaee4df7: the chain-upload gate rendered with the
+  // delete-class chrome ("此操作将删除文件" / red "允许删除") and its countdown
+  // defaulted to deny, so the owner declined a plain upload. Ruling: every
+  // non-delete safety gate (upload / transfer / install / location) stamps
+  // timeoutDefault 'allow'; only delete-class keeps fail-closed deny.
+  // The deadline stamp and the watchdog follow the same per-call default…
+  assert.match(runnerSource, /stampPermissionDeadline\(request, timeoutDefault\)/);
+  assert.match(runnerSource, /timeoutBehavior: timeoutDefault/);
+  // …a bare allow (watchdog auto-allow, text relay) counts as approved…
+  assert.match(runnerSource, /if \(result\.behavior === 'allow'\) \{[\s\S]{0,80}?return 'approved';/);
+  // …and the host stamps the destructive classification for the renderer.
+  assert.match(runnerSource, /destructive: this\.isDeleteOperation\(requestedToolName, requestedToolInput\)/);
+  // Every non-delete gate passes 'allow' to requestSafetyApproval.
+  for (const toolName of ['upload_file', 'wallet_transfer', 'skill_tool', 'get_host_location']) {
+    const callStart = runnerSource.indexOf(`'${toolName}',`);
+    assert.notEqual(callStart, -1, `requestSafetyApproval call for ${toolName} must exist`);
+    assert.match(
+      runnerSource.slice(callStart, callStart + 500),
+      /'allow'/,
+      `${toolName} gate must stamp timeoutDefault allow`,
+    );
+  }
+  // The delete-class gate keeps the deny default — no 'allow' argument.
+  const deleteCallStart = runnerSource.indexOf('deleteQuestion,');
+  assert.notEqual(deleteCallStart, -1, 'delete gate call must exist');
+  const deleteCallBody = runnerSource.slice(deleteCallStart, runnerSource.indexOf(');', deleteCallStart));
+  assert.doesNotMatch(deleteCallBody, /'allow'/, 'delete gate must keep the fail-closed deny default');
+});
+
 test('pickRecommendedOptionLabel prefers the explicit marker, then the first option', async (t) => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cowork-risk-'));
   t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));

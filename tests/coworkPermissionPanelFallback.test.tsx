@@ -4,6 +4,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import CoworkPermissionPanel, {
   parseQuestions,
+  parseSafetyContext,
 } from '../src/renderer/components/cowork/CoworkPermissionPanel';
 import { i18nService } from '../src/renderer/services/i18n';
 
@@ -107,4 +108,79 @@ test('questions with no usable options drop into the fallback, empty questions n
   const markup = renderToStaticMarkup(panel('AskUserQuestion', { questions: [] }));
   assert.ok(markup.includes(i18nService.t('coworkApprovalUnavailableTitle')));
   assert.ok(markup.includes(i18nService.t('coworkApprovalAllowOnce')));
+});
+
+/**
+ * 2026-11-13 aaee4df7 incident regression: the chain-upload gate's question
+ * ("…是否允许本次上传？") never reached the screen — every safety approval
+ * rendered the hardcoded title "此操作将删除文件" with a red "允许删除" allow
+ * button, so the owner read a plain upload as a deletion request and declined
+ * it. Safety approvals must render the HOST'S question, and the destructive
+ * red chrome is reserved for host-stamped delete-class gates.
+ */
+const uploadGatePayload = {
+  questions: [
+    {
+      header: '安全确认',
+      question: 'Agent 将把工作区之外的以下文件上传上链公开发布（不可撤销）：\n- /tmp/video.mp4\n是否允许本次上传？',
+      options: [
+        { label: '允许本次操作', description: '仅允许当前这一次操作继续执行。' },
+        { label: '拒绝本次操作', description: '拒绝当前操作。' },
+      ],
+    },
+  ],
+  answers: {},
+  context: {
+    requestedToolName: 'upload_file',
+    requestedToolInput: { files: ['/tmp/video.mp4'] },
+    destructive: false,
+  },
+};
+
+const deleteGatePayload = {
+  questions: [
+    {
+      header: '安全确认',
+      question: '工具 "bash" 将执行删除操作。根据安全策略，删除必须人工确认。是否允许本次操作？',
+      options: [
+        { label: '允许本次操作', description: '仅允许当前这一次操作继续执行。' },
+        { label: '拒绝本次操作', description: '拒绝当前操作。' },
+      ],
+    },
+  ],
+  answers: {},
+  context: {
+    requestedToolName: 'bash',
+    requestedToolInput: { command: 'rm -rf ./dist' },
+    destructive: true,
+  },
+};
+
+test('non-destructive safety approval renders the real gate question with the plain allow-once button', () => {
+  const markup = renderToStaticMarkup(panel('AskUserQuestion', uploadGatePayload));
+  assert.ok(markup.includes('是否允许本次上传'), 'the host question is the visible title');
+  assert.ok(!markup.includes('此操作将删除文件'), 'no hardcoded delete title on an upload approval');
+  assert.ok(markup.includes(i18nService.t('coworkApprovalAllowOnce')), 'allow-once label for a non-destructive gate');
+  assert.ok(!markup.includes(i18nService.t('coworkApprovalAllowDelete')), 'no allow-delete label on an upload approval');
+  assert.ok(!markup.includes('bg-red-600'), 'no destructive red allow button on an upload approval');
+  assert.ok(markup.includes('upload_file'), 'requested tool name still disclosed');
+});
+
+test('delete-class safety approval keeps the destructive allow-delete chrome', () => {
+  const markup = renderToStaticMarkup(panel('AskUserQuestion', deleteGatePayload));
+  assert.ok(markup.includes('是否允许本次操作'), 'the host question is the visible title');
+  assert.ok(markup.includes(i18nService.t('coworkApprovalAllowDelete')), 'allow-delete label for a delete-class gate');
+  assert.ok(markup.includes('bg-red-600'), 'destructive red allow button for a delete-class gate');
+});
+
+test('parseSafetyContext surfaces the host destructive classification', () => {
+  const upload = parseSafetyContext({ toolName: 'AskUserQuestion', toolInput: uploadGatePayload } as never);
+  assert.equal(upload?.destructive, false, 'upload gate classified non-destructive');
+  const del = parseSafetyContext({ toolName: 'AskUserQuestion', toolInput: deleteGatePayload } as never);
+  assert.equal(del?.destructive, true, 'bash rm classified destructive');
+  const legacy = parseSafetyContext({
+    toolName: 'AskUserQuestion',
+    toolInput: { questions: [{ question: 'q?', options: [{ label: 'a' }] }], answers: {}, context: { requestedToolName: 'x', requestedToolInput: {} } },
+  } as never);
+  assert.equal(legacy?.destructive, false, 'payloads without the stamp degrade to non-destructive');
 });
