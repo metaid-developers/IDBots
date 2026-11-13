@@ -10,6 +10,10 @@ import {
   canOpenMetaAppInBrowser,
 } from '../../components/metaapps/metaAppLaunch.js';
 import { SURFACE_MODE_CHANGE_EVENT } from '../../hooks/chatExperienceModeSource';
+import {
+  SURFACE_MODE_KV_KEY,
+  type ResolvedInitialSurfaceMode,
+} from './surfaceModePersistence';
 import type {
   BotBrowserOpenUriInput,
   BotBrowserSurfaceHandle,
@@ -42,6 +46,18 @@ const writeStoredSurfaceMode = (mode: BotBrowserSurfaceMode) => {
     // localStorage unavailable: the choice just stays this session's.
   }
 };
+const persistSurfaceModeToKvStore = (mode: BotBrowserSurfaceMode) => {
+  try {
+    const setItem = window.electron?.store?.set;
+    if (typeof setItem === 'function') {
+      void Promise.resolve(setItem(SURFACE_MODE_KV_KEY, mode)).catch(() => {
+        // Best-effort SQLite mirror alongside localStorage.
+      });
+    }
+  } catch {
+    // Preload store bridge unavailable (static/node tests).
+  }
+};
 
 interface UseBotBrowserShellInput {
   showToast: (message: string) => void;
@@ -52,9 +68,7 @@ export function useBotBrowserShell(input: UseBotBrowserShellInput) {
   const browserRef = useRef<BotBrowserSurfaceHandle | null>(null);
   const pendingOpenUriRef = useRef<BotBrowserOpenUriInput | null>(null);
   const [surfaceMode, setSurfaceModeState] = useState<BotBrowserSurfaceMode>(readStoredSurfaceMode);
-  const setSurfaceMode = useCallback((mode: BotBrowserSurfaceMode) => {
-    writeStoredSurfaceMode(mode);
-    setSurfaceModeState(mode);
+  const announceSurfaceMode = useCallback((mode: BotBrowserSurfaceMode) => {
     // Announce the face change in-window (cross-window listeners get the
     // native `storage` event from the write above). The chat experience mode
     // derives from this slot — see hooks/chatExperienceModeSource.ts — so the
@@ -65,6 +79,22 @@ export function useBotBrowserShell(input: UseBotBrowserShellInput) {
       // No window (static tests): nothing to announce to.
     }
   }, []);
+  const setSurfaceMode = useCallback((mode: BotBrowserSurfaceMode) => {
+    writeStoredSurfaceMode(mode);
+    persistSurfaceModeToKvStore(mode);
+    setSurfaceModeState(mode);
+    announceSurfaceMode(mode);
+  }, [announceSurfaceMode]);
+  const applyStartupSurfaceMode = useCallback((resolved: ResolvedInitialSurfaceMode) => {
+    if (resolved.persistToLocalStorage) {
+      writeStoredSurfaceMode(resolved.mode);
+    }
+    if (resolved.persistToKvStore) {
+      persistSurfaceModeToKvStore(resolved.mode);
+    }
+    setSurfaceModeState(resolved.mode);
+    announceSurfaceMode(resolved.mode);
+  }, [announceSurfaceMode]);
   const [internetPane, setInternetPane] = useState<BotInternetPane>('browser');
   const [hasMountedBrowser, setHasMountedBrowser] = useState(true);
 
@@ -257,5 +287,6 @@ export function useBotBrowserShell(input: UseBotBrowserShellInput) {
     openMetaApp,
     openMetaAppByPin,
     switchToHome,
+    applyStartupSurfaceMode,
   };
 }

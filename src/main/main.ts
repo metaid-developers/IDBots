@@ -20999,6 +20999,14 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
   let isCleanupInProgress = false;
 
   const runAppCleanup = async (): Promise<void> => {
+    // Flush Chromium session storage (localStorage / IndexedDB) before
+    // before-quit calls app.exit(0), so recent renderer UI preferences (like
+    // the active Studio vs BotWorks mode) survive immediate quits.
+    try {
+      session.defaultSession?.flushStorageData();
+    } catch (error) {
+      console.warn('[Main] Failed to flush Chromium session storage on shutdown:', error);
+    }
     // Refresh the data-guard fingerprint with the latest counters while the
     // store is still open, so the "last known contents" stays current.
     writeDataGuardSnapshot('shutdown');
