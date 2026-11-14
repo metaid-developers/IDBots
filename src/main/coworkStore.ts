@@ -158,6 +158,7 @@ const DREAM_DEDUP_REPLACE_TEXT_MIN_LENGTH_RATIO = 1.3;
 const MEMORY_OPERATIONAL_PREFERENCE_RE = /(默认语言|回复格式|输出风格|回复风格|尽量简洁|保持简短|reply(?:\s+in)?|respond(?:\s+in)?|language|format|style|tone|markdown|concise|brief)/i;
 const MEMORY_PREFERENCE_RE = /(偏好|喜欢|prefer|preference|likes?|dislikes?)/i;
 const SCOPED_USER_MEMORIES_BACKFILL_KEY = 'userMemories.scopeBackfill.v1.completed';
+const MODEL_PROVIDER_METAID_FREE_MIGRATION_KEY = 'cowork.modelProviderMetaidFreeMigrated.v1';
 const METAWEB_ORDER_SESSION_MIGRATION_KEY = 'cowork.metawebOrderSessionsToPeerConversations.v1.completed';
 const METAWEB_ORDER_SIMPLEMSG_BACKFILL_KEY = 'cowork.backfillMetawebOrderSimplemsgMetadata.v1.completed';
 const METAWEB_PRIVATE_SIMPLEMSG_BACKFILL_KEY = 'cowork.backfillMetawebPrivateSimplemsgMetadata.v1.completed';
@@ -1845,6 +1846,31 @@ export class CoworkStore implements MemoryBackend {
         CREATE INDEX IF NOT EXISTS idx_cowork_sessions_metabot_updated
         ON cowork_sessions(metabot_id, updated_at DESC)
       `);
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_cowork_sessions_visible_activity
+        ON cowork_sessions(pinned DESC, COALESCE(activity_at, updated_at) DESC, updated_at DESC, created_at DESC, id DESC)
+        WHERE COALESCE(hidden_from_session_list, 0) = 0 AND archived_at IS NULL
+      `);
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_cowork_sessions_visible_metabot_activity
+        ON cowork_sessions(metabot_id, COALESCE(activity_at, updated_at) DESC, updated_at DESC, created_at DESC)
+        WHERE COALESCE(hidden_from_session_list, 0) = 0 AND archived_at IS NULL
+      `);
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_cowork_sessions_null_activity
+        ON cowork_sessions(id)
+        WHERE activity_at IS NULL
+      `);
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_cowork_sessions_null_metabot
+        ON cowork_sessions(id)
+        WHERE metabot_id IS NULL
+      `);
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_cowork_sessions_fork_parent
+        ON cowork_sessions(id)
+        WHERE parent_session_id IS NOT NULL
+      `);
       this.saveDb();
     } catch (error) {
       console.warn('[CoworkStore] Failed to verify cowork_sessions indexes:', error);
@@ -1877,11 +1903,14 @@ export class CoworkStore implements MemoryBackend {
         this.db.run('ALTER TABLE cowork_sessions ADD COLUMN model_provider TEXT;');
         changed = true;
       }
-      this.db.run(
-        `UPDATE cowork_sessions SET model_provider = 'idbots' WHERE LOWER(TRIM(model_provider)) = 'metaid-free'`,
-      );
-      if ((this.db.getRowsModified?.() ?? 0) > 0) {
-        changed = true;
+      if (this.getKvValue(MODEL_PROVIDER_METAID_FREE_MIGRATION_KEY) !== '1') {
+        this.db.run(
+          `UPDATE cowork_sessions SET model_provider = 'idbots' WHERE LOWER(TRIM(model_provider)) = 'metaid-free'`,
+        );
+        if ((this.db.getRowsModified?.() ?? 0) > 0) {
+          changed = true;
+        }
+        this.setKvValue(MODEL_PROVIDER_METAID_FREE_MIGRATION_KEY, '1');
       }
       if (!sessionColumns.includes('effort')) {
         // Per-session reasoning effort (off/low/high/max/'default'; NULL = model default chain).
@@ -1973,6 +2002,11 @@ export class CoworkStore implements MemoryBackend {
         this.db.run('ALTER TABLE cowork_sessions ADD COLUMN last_turn_completed_at_ms INTEGER;');
         changed = true;
       }
+
+      // Ensure partial session indexes before running the startup sweeps so
+      // multi-GB databases with large system_prompt overflow chains seek only
+      // matching rows instead of scanning the entire table on every launch.
+      this.ensureCoworkSessionIndexes();
 
       // Sweep failed-fork orphans: a fork whose session row exists but has
       // zero messages is unambiguously a fork that died mid-copy (forkSession
@@ -4391,12 +4425,25 @@ export class CoworkStore implements MemoryBackend {
       cwd?: string | null;
       created_at: number;
       updated_at: number;
+      stored_activity_at?: number | null;
       activity_at?: number | null;
     }
 
     const metabotId = options?.metabotId;
     const filterByMetabot = typeof metabotId === 'number' && Number.isInteger(metabotId) && metabotId > 0;
     const rows = this.getAll<SessionSummaryRow>(`
+      WITH im_ranked AS (
+        SELECT
+          cowork_session_id,
+          channel,
+          external_conversation_id,
+          ROW_NUMBER() OVER (
+            PARTITION BY cowork_session_id
+            ORDER BY (channel LIKE 'im:%:group') DESC, last_active_at DESC
+          ) AS rn
+        FROM cowork_conversation_mappings
+        WHERE channel >= 'im:' AND channel < 'im;'
+      )
       SELECT
         s.id,
         s.title,
@@ -4417,18 +4464,8 @@ export class CoworkStore implements MemoryBackend {
         -- from 'a2a' to 'standard' are classified identically without a
         -- destructive data migration. The :group channel wins over the
         -- legacy im:<platform> channel when both exist.
-        (
-          SELECT im.channel FROM cowork_conversation_mappings im
-          WHERE im.cowork_session_id = s.id AND im.channel LIKE 'im:%'
-          ORDER BY (im.channel LIKE 'im:%:group') DESC, im.last_active_at DESC
-          LIMIT 1
-        ) AS im_channel,
-        (
-          SELECT im.external_conversation_id FROM cowork_conversation_mappings im
-          WHERE im.cowork_session_id = s.id AND im.channel LIKE 'im:%'
-          ORDER BY (im.channel LIKE 'im:%:group') DESC, im.last_active_at DESC
-          LIMIT 1
-        ) AS im_conversation_id,
+        im.channel AS im_channel,
+        im.external_conversation_id AS im_conversation_id,
         s.auto_origin,
         s.fold_override,
         -- S4 chat trade markers: 'p2p' | 'escrow' | NULL (write-path
@@ -4444,6 +4481,7 @@ export class CoworkStore implements MemoryBackend {
         s.cwd,
         s.created_at,
         s.updated_at,
+        s.activity_at AS stored_activity_at,
         -- Sort by the LAST CONVERSATION EVENT time (a user message OR an
         -- on-chain A2A private DM synced into the session), not the newest
         -- assistant stream message: while tasks run, stream updates no longer
@@ -4459,6 +4497,7 @@ export class CoworkStore implements MemoryBackend {
         COALESCE(s.activity_at, ${coworkSessionActivityAtSelectSql('s')}) AS activity_at
       FROM cowork_sessions s
       LEFT JOIN metabots mb ON mb.id = s.metabot_id
+      LEFT JOIN im_ranked im ON im.cowork_session_id = s.id AND im.rn = 1
       WHERE COALESCE(s.hidden_from_session_list, 0) = 0
       AND s.archived_at IS NULL
       -- Thread aggregation: a superseded A2A episode (a successor session
@@ -4469,8 +4508,24 @@ export class CoworkStore implements MemoryBackend {
         WHERE episode.session_id = s.id AND episode.next_session_id IS NOT NULL
       )
       ${filterByMetabot ? 'AND s.metabot_id = ?' : ''}
-      ORDER BY s.pinned DESC, activity_at DESC, s.updated_at DESC, s.created_at DESC, s.id DESC
+      ORDER BY s.pinned DESC, COALESCE(s.activity_at, s.updated_at) DESC, s.updated_at DESC, s.created_at DESC, s.id DESC
     `, filterByMetabot ? [metabotId] : []);
+
+    const needsFallbackResort = rows.some(
+      (row) => row.stored_activity_at == null && (parseIdNumber(row.activity_at) ?? row.updated_at) !== row.updated_at,
+    );
+    if (needsFallbackResort) {
+      rows.sort((left, right) => {
+        const pinDiff = Number(Boolean(right.pinned)) - Number(Boolean(left.pinned));
+        if (pinDiff !== 0) return pinDiff;
+        const leftAct = parseIdNumber(left.activity_at) ?? left.updated_at;
+        const rightAct = parseIdNumber(right.activity_at) ?? right.updated_at;
+        if (rightAct !== leftAct) return rightAct - leftAct;
+        if (right.updated_at !== left.updated_at) return right.updated_at - left.updated_at;
+        if (right.created_at !== left.created_at) return right.created_at - left.created_at;
+        return right.id < left.id ? -1 : right.id > left.id ? 1 : 0;
+      });
+    }
 
     return rows.map(row => ({
       id: row.id,
@@ -10992,6 +11047,7 @@ export class CoworkStore implements MemoryBackend {
       `NOT EXISTS (
         SELECT 1 FROM cowork_conversation_mappings group_map
         WHERE group_map.cowork_session_id = s.id
+          AND group_map.channel >= 'im:' AND group_map.channel < 'im;'
           AND group_map.channel LIKE 'im:%:group'
       )`,
     ];
@@ -11011,7 +11067,7 @@ export class CoworkStore implements MemoryBackend {
         s.updated_at
       FROM cowork_sessions s
       WHERE ${clauses.join(' AND ')}
-      ORDER BY activity_at DESC, s.updated_at DESC, s.created_at DESC
+      ORDER BY COALESCE(s.activity_at, s.updated_at) DESC, s.updated_at DESC, s.created_at DESC
       LIMIT ?
     `, [...params, limit]);
     return rows
