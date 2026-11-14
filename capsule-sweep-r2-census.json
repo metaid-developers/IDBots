@@ -1,0 +1,1462 @@
+{
+ "baseline_total": 291,
+ "baseline_note": "eb3c579f 实测 291；任务书 289 = 291 − metaBotCardPresentation.js(.js 文件 2 处，基线口径漏计 .js)。Mon 裁决（cross_session_message 2026-11-14 21:5x）：M1 index.css 解禁直改、M2 AppUpdateBadge 维持矩形、M3 MetaAppsManager:369 回退圆形并登记②",
+ "after_total": 288,
+ "records": [
+  {
+   "file": "src/renderer/App.tsx",
+   "line": 143,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/App.tsx",
+   "line": 146,
+   "category": "③进度/装饰"
+  },
+  {
+   "file": "src/renderer/App.tsx",
+   "line": 147,
+   "category": "③进度/装饰"
+  },
+  {
+   "file": "src/renderer/App.tsx",
+   "line": 1879,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/features/botBrowser/PanelMessageLocatorRail.tsx",
+   "line": 290,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/features/botBrowser/PanelMessageLocatorRail.tsx",
+   "line": 306,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/features/botBrowser/PanelMessageLocatorRail.tsx",
+   "line": 321,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/features/botBrowser/CoworkSurfaceIdentityBadge.tsx",
+   "line": 29,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/features/botBrowser/CoworkSurfaceIdentityBadge.tsx",
+   "line": 32,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/features/botBrowser/MacWindowLights.tsx",
+   "line": 103,
+   "category": "①禁触-移交"
+  },
+  {
+   "file": "src/renderer/features/botBrowser/CoworkHistoryPanel.tsx",
+   "line": 202,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/features/botBrowser/PanelDelegationStatusRow.tsx",
+   "line": 52,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/features/botBrowser/PanelDelegationStatusRow.tsx",
+   "line": 53,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/features/botBrowser/BotBrowserCoworkPanel.tsx",
+   "line": 1198,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/features/botBrowser/BotBrowserCoworkPanel.tsx",
+   "line": 1199,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/features/botBrowser/BotBrowserCoworkPanel.tsx",
+   "line": 1200,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/features/botBrowser/BotPickerChip.tsx",
+   "line": 53,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/features/botBrowser/BotPickerChip.tsx",
+   "line": 56,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/features/userProfile/MeCreditsPanel.tsx",
+   "line": 134,
+   "category": "③进度/装饰"
+  },
+  {
+   "file": "src/renderer/features/userProfile/MeCreditsPanel.tsx",
+   "line": 136,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/Settings.tsx",
+   "line": 1729,
+   "category": "②开关轨道"
+  },
+  {
+   "file": "src/renderer/components/Settings.tsx",
+   "line": 1743,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/Settings.tsx",
+   "line": 2373,
+   "category": "②开关轨道"
+  },
+  {
+   "file": "src/renderer/components/Settings.tsx",
+   "line": 2382,
+   "category": "②开关滑块"
+  },
+  {
+   "file": "src/renderer/components/Settings.tsx",
+   "line": 2394,
+   "category": "②开关轨道"
+  },
+  {
+   "file": "src/renderer/components/Settings.tsx",
+   "line": 2395,
+   "category": "②开关滑块"
+  },
+  {
+   "file": "src/renderer/components/Settings.tsx",
+   "line": 2440,
+   "category": "②开关轨道"
+  },
+  {
+   "file": "src/renderer/components/Settings.tsx",
+   "line": 2449,
+   "category": "②开关滑块"
+  },
+  {
+   "file": "src/renderer/components/Settings.tsx",
+   "line": 2489,
+   "category": "②开关轨道"
+  },
+  {
+   "file": "src/renderer/components/Settings.tsx",
+   "line": 2498,
+   "category": "②开关滑块"
+  },
+  {
+   "file": "src/renderer/components/Settings.tsx",
+   "line": 2732,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/Settings.tsx",
+   "line": 2877,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/Settings.tsx",
+   "line": 2954,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/Settings.tsx",
+   "line": 3034,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/Settings.tsx",
+   "line": 3173,
+   "category": "②开关轨道"
+  },
+  {
+   "file": "src/renderer/components/Settings.tsx",
+   "line": 3177,
+   "category": "②开关滑块"
+  },
+  {
+   "file": "src/renderer/components/Settings.tsx",
+   "line": 3480,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/Settings.tsx",
+   "line": 3574,
+   "category": "②开关轨道"
+  },
+  {
+   "file": "src/renderer/components/Settings.tsx",
+   "line": 3581,
+   "category": "②开关滑块"
+  },
+  {
+   "file": "src/renderer/components/Settings.tsx",
+   "line": 3769,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/traffic/TrafficSettings.tsx",
+   "line": 1185,
+   "category": "②开关轨道"
+  },
+  {
+   "file": "src/renderer/components/traffic/TrafficSettings.tsx",
+   "line": 1190,
+   "category": "②开关滑块"
+  },
+  {
+   "file": "src/renderer/components/traffic/TrafficSettings.tsx",
+   "line": 1309,
+   "category": "①改动"
+  },
+  {
+   "file": "src/renderer/components/traffic/TrafficSettings.tsx",
+   "line": 1731,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/traffic/TrafficSettings.tsx",
+   "line": 1876,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/longTermTasks/ParticipantAvatars.tsx",
+   "line": 23,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/longTermTasks/ParticipantAvatars.tsx",
+   "line": 25,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/longTermTasks/ParticipantAvatars.tsx",
+   "line": 34,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/longTermTasks/LongTermTaskDetail.tsx",
+   "line": 164,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/longTermTasks/LongTermTaskDetail.tsx",
+   "line": 296,
+   "category": "③进度/装饰"
+  },
+  {
+   "file": "src/renderer/components/longTermTasks/LongTermTaskDetail.tsx",
+   "line": 297,
+   "category": "③进度/装饰"
+  },
+  {
+   "file": "src/renderer/components/longTermTasks/LongTermTaskDetail.tsx",
+   "line": 393,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/longTermTasks/LongTermTaskDetail.tsx",
+   "line": 397,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/longTermTasks/LongTermTaskDetail.tsx",
+   "line": 435,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/longTermTasks/LongTermTasksBoard.tsx",
+   "line": 105,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/longTermTasks/LongTermTaskCard.tsx",
+   "line": 121,
+   "category": "③进度/装饰"
+  },
+  {
+   "file": "src/renderer/components/longTermTasks/LongTermTaskCard.tsx",
+   "line": 122,
+   "category": "③进度/装饰"
+  },
+  {
+   "file": "src/renderer/components/settings/CapabilityDraftsPanel.tsx",
+   "line": 59,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/settings/CapabilityDraftsPanel.tsx",
+   "line": 63,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/settings/DreamTelemetryPanel.tsx",
+   "line": 133,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/settings/MetaIDContactPanel.tsx",
+   "line": 109,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/settings/MetaIDContactPanel.tsx",
+   "line": 112,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/settings/MetaIDContactPanel.tsx",
+   "line": 269,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/settings/MetaIDContactPanel.tsx",
+   "line": 287,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/settings/MemorySettings.tsx",
+   "line": 1076,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/settings/MemorySettings.tsx",
+   "line": 1176,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/settings/MemorySettings.tsx",
+   "line": 1179,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/settings/MemorySettings.tsx",
+   "line": 1183,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/settings/MemorySettings.tsx",
+   "line": 1342,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/settings/MemorySettings.tsx",
+   "line": 1347,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/settings/MemorySettings.tsx",
+   "line": 1352,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/settings/MemorySettings.tsx",
+   "line": 1471,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/settings/MemorySettings.tsx",
+   "line": 1524,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/settings/MemorySettings.tsx",
+   "line": 1575,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/settings/MemorySettings.tsx",
+   "line": 1750,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/settings/MemorySettings.tsx",
+   "line": 1910,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/settings/MemorySettings.tsx",
+   "line": 1912,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/settings/MemorySettings.tsx",
+   "line": 1914,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/settings/MemorySettings.tsx",
+   "line": 2135,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/settings/MemorySettings.tsx",
+   "line": 2138,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/settings/MemorySettings.tsx",
+   "line": 2142,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/settings/MemorySettings.tsx",
+   "line": 2422,
+   "category": "②开关轨道"
+  },
+  {
+   "file": "src/renderer/components/settings/MemorySettings.tsx",
+   "line": 2426,
+   "category": "②开关滑块"
+  },
+  {
+   "file": "src/renderer/components/agentGame/AgentGameConsentCard.tsx",
+   "line": 51,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/UpdateNotificationModal.tsx",
+   "line": 46,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/groupTasks/GroupTaskSidebarList.tsx",
+   "line": 217,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/groupTasks/GroupTaskSidebarList.tsx",
+   "line": 224,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/groupTasks/OpenTeamCollabsSection.tsx",
+   "line": 105,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/groupTasks/OpenTeamCollabsSection.tsx",
+   "line": 166,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/groupTasks/GroupTaskListMeta.tsx",
+   "line": 79,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/groupTasks/GroupTaskListMeta.tsx",
+   "line": 85,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/groupTasks/GroupTaskListMeta.tsx",
+   "line": 117,
+   "category": "②头像圈(可点击)"
+  },
+  {
+   "file": "src/renderer/components/groupTasks/GroupTaskListMeta.tsx",
+   "line": 220,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/groupTasks/GroupTaskListMeta.tsx",
+   "line": 224,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/groupTasks/GroupTaskMessageItem.tsx",
+   "line": 225,
+   "category": "②头像圈(可点击)"
+  },
+  {
+   "file": "src/renderer/components/groupTasks/GroupTaskMessageItem.tsx",
+   "line": 229,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/groupTasks/GroupTaskMessageItem.tsx",
+   "line": 230,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/groupTasks/GroupTaskMessageItem.tsx",
+   "line": 237,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/groupTasks/GroupTaskMessageItem.tsx",
+   "line": 238,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/groupTasks/GroupTaskItemMenu.tsx",
+   "line": 315,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/groupTasks/GroupTasksView.tsx",
+   "line": 147,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/groupTasks/GroupTaskCloseConfirmModal.tsx",
+   "line": 55,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/groupTasks/OpenTeamCollabSidebarRow.tsx",
+   "line": 62,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/groupTasks/OpenTeamCollabDetailView.tsx",
+   "line": 215,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/groupTasks/AcceptanceSummaryCard.tsx",
+   "line": 64,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/groupTasks/AcceptanceSummaryCard.tsx",
+   "line": 68,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/groupTasks/AcceptanceSummaryCard.tsx",
+   "line": 73,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/groupTasks/GroupTaskDetailView.tsx",
+   "line": 676,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/groupTasks/GroupTaskDetailView.tsx",
+   "line": 680,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/groupTasks/GroupTaskKickConfirmModal.tsx",
+   "line": 39,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/gigSquare/GigSquareSkillPicker.tsx",
+   "line": 107,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/gigSquare/GigSquareSkillPicker.tsx",
+   "line": 113,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/gigSquare/GigSquarePublishModal.tsx",
+   "line": 619,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/gigSquare/GigSquarePublishModal.tsx",
+   "line": 622,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/gigSquare/GigSquareRefundsModal.tsx",
+   "line": 110,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/gigSquare/GigSquareRefundsModal.tsx",
+   "line": 113,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/gigSquare/GigSquareRefundsModal.tsx",
+   "line": 134,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/gigSquare/GigSquareRefundsModal.tsx",
+   "line": 391,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/gigSquare/GigSquareHeaderActions.tsx",
+   "line": 32,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/gigSquare/GigSquareView.tsx",
+   "line": 327,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/gigSquare/GigSquareMyServicesModal.tsx",
+   "line": 911,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/gigSquare/GigSquareMyServicesModal.tsx",
+   "line": 916,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/gigSquare/GigSquareMyServicesModal.tsx",
+   "line": 1109,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/gigSquare/GigSquareMyServicesModal.tsx",
+   "line": 1112,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/gigSquare/GigSquareMyServicesModal.tsx",
+   "line": 1118,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/gigSquare/GigSquareOrderModal.tsx",
+   "line": 896,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/gigSquare/GigSquareServiceCard.tsx",
+   "line": 155,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/gigSquare/GigSquareServiceCard.tsx",
+   "line": 161,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/gigSquare/GigSquareServiceCard.tsx",
+   "line": 186,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/gigSquare/GigSquareServiceCard.tsx",
+   "line": 191,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/update/AppUpdateModal.tsx",
+   "line": 97,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/update/AppUpdateModal.tsx",
+   "line": 170,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/update/AppUpdateModal.tsx",
+   "line": 173,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/update/AppUpdateModal.tsx",
+   "line": 177,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/update/AppUpdateBadge.tsx",
+   "line": 86,
+   "category": "①改动"
+  },
+  {
+   "file": "src/renderer/components/update/AppUpdateBadge.tsx",
+   "line": 87,
+   "category": "①改动"
+  },
+  {
+   "file": "src/renderer/components/update/AppUpdateBadge.tsx",
+   "line": 101,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/update/UpdateChangeLogPanel.tsx",
+   "line": 39,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/chat/NftCard.tsx",
+   "line": 275,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/chat/NftCard.tsx",
+   "line": 282,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/HomeSidebar.tsx",
+   "line": 510,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/metabots/BuiltinAvatarPickerModal.tsx",
+   "line": 72,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/metabots/NftAvatarFrame.tsx",
+   "line": 150,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/metabots/MetaBotRestoreMnemonicModal.tsx",
+   "line": 122,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/metabots/MetaBotDeleteConfirmModal.tsx",
+   "line": 86,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/metabots/metaBotCardPresentation.js",
+   "line": 20,
+   "category": "②开关轨道"
+  },
+  {
+   "file": "src/renderer/components/metabots/metaBotCardPresentation.js",
+   "line": 29,
+   "category": "②开关滑块"
+  },
+  {
+   "file": "src/renderer/components/metabots/MetaBotTransferModal.tsx",
+   "line": 262,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/metabots/MetaBotTransferModal.tsx",
+   "line": 327,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/metabots/DailyReportSection.tsx",
+   "line": 234,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/metabots/MetaBotBackupMnemonicModal.tsx",
+   "line": 68,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/metabots/MetawebStudyJobsPanel.tsx",
+   "line": 85,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/metabots/MetaBotTokenTransferModal.tsx",
+   "line": 265,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/metabots/MetaBotTokenTransferModal.tsx",
+   "line": 316,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/metabots/MetabotsManager.tsx",
+   "line": 713,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/metabots/MetaBotNftWalletModal.tsx",
+   "line": 570,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/metabots/MetaBotNftWalletModal.tsx",
+   "line": 806,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/metabots/MetaBotNftWalletModal.tsx",
+   "line": 1057,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/metabots/MetaBotListCard.tsx",
+   "line": 180,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/metabots/KnowledgeBasePanel.tsx",
+   "line": 491,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/metabots/MetaBotEditTabs.tsx",
+   "line": 1126,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/metabots/MetaBotEditTabs.tsx",
+   "line": 1178,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/metabots/TwinBadge.tsx",
+   "line": 18,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/metabots/SurfReportsPanel.tsx",
+   "line": 152,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/metabots/SurfReportsPanel.tsx",
+   "line": 155,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/metabots/SurfReportsPanel.tsx",
+   "line": 210,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/layout/WorkspaceRail.tsx",
+   "line": 111,
+   "category": "③禁触-装饰条"
+  },
+  {
+   "file": "src/renderer/components/projects/ProjectsManager.tsx",
+   "line": 204,
+   "category": "②开关轨道"
+  },
+  {
+   "file": "src/renderer/components/projects/ProjectsManager.tsx",
+   "line": 211,
+   "category": "②开关滑块"
+  },
+  {
+   "file": "src/renderer/components/user/ChainBackupMnemonicReminderModal.tsx",
+   "line": 36,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/user/ChainBackupRestorePrompt.tsx",
+   "line": 34,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/user/UserSettings.tsx",
+   "line": 700,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/user/UserSettings.tsx",
+   "line": 1080,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/user/UserSettings.tsx",
+   "line": 1083,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/user/UserSettings.tsx",
+   "line": 1328,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/user/UserBackupMnemonicModal.tsx",
+   "line": 88,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/mcp/McpManager.tsx",
+   "line": 238,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/mcp/McpManager.tsx",
+   "line": 263,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/mcp/McpManager.tsx",
+   "line": 272,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/mcp/McpManager.tsx",
+   "line": 281,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/mcp/McpManager.tsx",
+   "line": 355,
+   "category": "②开关轨道"
+  },
+  {
+   "file": "src/renderer/components/mcp/McpManager.tsx",
+   "line": 361,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/mcp/McpManager.tsx",
+   "line": 544,
+   "category": "②开关轨道"
+  },
+  {
+   "file": "src/renderer/components/mcp/McpManager.tsx",
+   "line": 550,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/listenerHub/ListenerHubView.tsx",
+   "line": 133,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/listenerHub/ListenerHubView.tsx",
+   "line": 136,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/preference/PreferenceSealConfirmModal.tsx",
+   "line": 35,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/metatask/MetaIdBadge.tsx",
+   "line": 22,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/metatask/MetaIdBadge.tsx",
+   "line": 25,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/metatask/MetaTaskDetail.tsx",
+   "line": 430,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/metatask/MetaTaskChainView.tsx",
+   "line": 400,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/metatask/MetaTaskChainView.tsx",
+   "line": 408,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/metatask/MetaTaskChainView.tsx",
+   "line": 473,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/metatask/MetaTaskChainView.tsx",
+   "line": 534,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/metatask/MetaTaskChainView.tsx",
+   "line": 544,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/metatask/MetaTaskChainView.tsx",
+   "line": 606,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/metatask/MetaTaskChainView.tsx",
+   "line": 607,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/metatask/MetaTaskNodeSections.tsx",
+   "line": 229,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/metatask/MetaTaskNodeSections.tsx",
+   "line": 239,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/metatask/MetaTaskBoard.tsx",
+   "line": 302,
+   "category": "③进度/装饰"
+  },
+  {
+   "file": "src/renderer/components/metatask/MetaTaskBoard.tsx",
+   "line": 304,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/me/MeBalanceOverviewCard.tsx",
+   "line": 61,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/me/MeUsageAndCredits.tsx",
+   "line": 330,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/me/MeBalanceBadge.tsx",
+   "line": 201,
+   "category": "③进度/装饰"
+  },
+  {
+   "file": "src/renderer/components/me/MeBalanceBadge.tsx",
+   "line": 203,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/me/MePurchaseFlow.tsx",
+   "line": 605,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/me/MePurchaseFlow.tsx",
+   "line": 609,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/me/MePurchaseFlow.tsx",
+   "line": 883,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/me/IdbotsPlanCard.tsx",
+   "line": 162,
+   "category": "③进度/装饰"
+  },
+  {
+   "file": "src/renderer/components/me/IdbotsPlanCard.tsx",
+   "line": 164,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/me/MeIncrementPackCard.tsx",
+   "line": 152,
+   "category": "②开关轨道"
+  },
+  {
+   "file": "src/renderer/components/me/MeIncrementPackCard.tsx",
+   "line": 157,
+   "category": "②开关滑块"
+  },
+  {
+   "file": "src/renderer/components/SleepGuardBadge.tsx",
+   "line": 63,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/avatar/AvatarPickerModal.tsx",
+   "line": 258,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/scheduledTasks/DeleteConfirmModal.tsx",
+   "line": 30,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/scheduledTasks/TaskList.tsx",
+   "line": 145,
+   "category": "②开关轨道"
+  },
+  {
+   "file": "src/renderer/components/scheduledTasks/TaskList.tsx",
+   "line": 152,
+   "category": "②开关滑块"
+  },
+  {
+   "file": "src/renderer/components/im/IMSettings.tsx",
+   "line": 857,
+   "category": "②开关轨道"
+  },
+  {
+   "file": "src/renderer/components/im/IMSettings.tsx",
+   "line": 868,
+   "category": "②开关滑块"
+  },
+  {
+   "file": "src/renderer/components/im/IMSettings.tsx",
+   "line": 899,
+   "category": "②开关轨道"
+  },
+  {
+   "file": "src/renderer/components/im/IMSettings.tsx",
+   "line": 911,
+   "category": "②开关滑块"
+  },
+  {
+   "file": "src/renderer/components/im/IMSettings.tsx",
+   "line": 943,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/im/IMSettings.tsx",
+   "line": 957,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/im/IMSettings.tsx",
+   "line": 958,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/im/IMSettings.tsx",
+   "line": 962,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/im/IMSettings.tsx",
+   "line": 963,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/im/IMSettings.tsx",
+   "line": 1782,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/Sidebar.tsx",
+   "line": 796,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/Sidebar.tsx",
+   "line": 893,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/skills/SkillScopeEditor.tsx",
+   "line": 179,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/skills/SkillScopeEditor.tsx",
+   "line": 183,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/skills/SkillsManager.tsx",
+   "line": 884,
+   "category": "②开关轨道"
+  },
+  {
+   "file": "src/renderer/components/skills/SkillsManager.tsx",
+   "line": 890,
+   "category": "②开关滑块"
+  },
+  {
+   "file": "src/renderer/components/metaapps/MetaAppsManager.tsx",
+   "line": 343,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/metaapps/MetaAppsManager.tsx",
+   "line": 369,
+   "category": "②chip徽章(标签形态-MonM3)"
+  },
+  {
+   "file": "src/renderer/components/metaapps/myApps/ChainStatusModal.tsx",
+   "line": 30,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/Toast.tsx",
+   "line": 14,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/cowork/UserMessageOriginBadge.tsx",
+   "line": 189,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/cowork/FriendBadge.tsx",
+   "line": 14,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/cowork/A2AApprovalBar.tsx",
+   "line": 48,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/cowork/CoworkSessionList.tsx",
+   "line": 714,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/cowork/CoworkSessionList.tsx",
+   "line": 767,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/cowork/InlineMetaAppBlock.tsx",
+   "line": 542,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/cowork/InlineMetaAppBlock.tsx",
+   "line": 563,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/cowork/CoworkAttachmentPreview.tsx",
+   "line": 76,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/cowork/AssistantActivityIndicator.tsx",
+   "line": 385,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/cowork/AssistantActivityIndicator.tsx",
+   "line": 386,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/cowork/TodoPanel.tsx",
+   "line": 145,
+   "category": "③进度/装饰"
+  },
+  {
+   "file": "src/renderer/components/cowork/TodoPanel.tsx",
+   "line": 147,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/cowork/CoworkPermissionOverlay.tsx",
+   "line": 180,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/cowork/CoworkPermissionPanel.tsx",
+   "line": 452,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/cowork/CoworkPermissionPanel.tsx",
+   "line": 490,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/cowork/CoworkPermissionPanel.tsx",
+   "line": 491,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/cowork/CoworkPermissionPanel.tsx",
+   "line": 570,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/cowork/ThinkingBlock.tsx",
+   "line": 65,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/cowork/ThinkingBlock.tsx",
+   "line": 70,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/cowork/SubagentPanel.tsx",
+   "line": 122,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/cowork/SubagentPanel.tsx",
+   "line": 127,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/cowork/BackgroundTasksBadge.tsx",
+   "line": 65,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/cowork/MetaBotSelector.tsx",
+   "line": 251,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/cowork/MetaBotSelector.tsx",
+   "line": 275,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/cowork/CoworkSessionItem.tsx",
+   "line": 216,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/cowork/CoworkSessionItem.tsx",
+   "line": 219,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/cowork/CoworkSessionItem.tsx",
+   "line": 228,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/cowork/CoworkSessionItem.tsx",
+   "line": 290,
+   "category": "②头像圈(可点击)"
+  },
+  {
+   "file": "src/renderer/components/cowork/CoworkSessionItem.tsx",
+   "line": 703,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/cowork/CoworkSessionItem.tsx",
+   "line": 718,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/cowork/A2AMessageItem.tsx",
+   "line": 669,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/cowork/A2AMessageItem.tsx",
+   "line": 674,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/cowork/A2AMessageItem.tsx",
+   "line": 691,
+   "category": "②头像圈(可点击)"
+  },
+  {
+   "file": "src/renderer/components/cowork/A2AMessageItem.tsx",
+   "line": 967,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/cowork/CoworkSessionDetail.tsx",
+   "line": 560,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/cowork/CoworkSessionDetail.tsx",
+   "line": 1096,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/cowork/CoworkSessionDetail.tsx",
+   "line": 1133,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/cowork/CoworkSessionDetail.tsx",
+   "line": 1134,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/cowork/CoworkSessionDetail.tsx",
+   "line": 1135,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/cowork/CoworkSessionDetail.tsx",
+   "line": 2112,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/cowork/CoworkSessionDetail.tsx",
+   "line": 2113,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/cowork/CoworkSessionDetail.tsx",
+   "line": 2114,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/cowork/CoworkSessionDetail.tsx",
+   "line": 2339,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/cowork/CoworkSessionDetail.tsx",
+   "line": 4661,
+   "category": "②头像圈"
+  },
+  {
+   "file": "src/renderer/components/cowork/CoworkSessionDetail.tsx",
+   "line": 4665,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/cowork/CoworkSessionDetail.tsx",
+   "line": 4705,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/cowork/CoworkSessionDetail.tsx",
+   "line": 4710,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/cowork/CoworkSessionDetail.tsx",
+   "line": 4715,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/cowork/CoworkSessionDetail.tsx",
+   "line": 4725,
+   "category": "②chip徽章"
+  },
+  {
+   "file": "src/renderer/components/cowork/CoworkSessionDetail.tsx",
+   "line": 4897,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/onboarding/WelcomeFlow.tsx",
+   "line": 72,
+   "category": "②状态点"
+  },
+  {
+   "file": "src/renderer/components/onboarding/WelcomeFlow.tsx",
+   "line": 297,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/onboarding/WelcomeFlow.tsx",
+   "line": 319,
+   "category": "③其他装饰"
+  },
+  {
+   "file": "src/renderer/components/onboarding/WelcomeFlow.tsx",
+   "line": 340,
+   "category": "③其他装饰"
+  }
+ ]
+}

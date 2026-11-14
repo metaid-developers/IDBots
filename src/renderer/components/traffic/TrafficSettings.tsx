@@ -1306,7 +1306,7 @@ const TrafficSettings: React.FC = () => {
               {i18nService.t('trafficBalanceTitle')}
               <button
                 type="button"
-                className="rounded-full p-0.5 dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-accent dark:hover:text-claude-accent transition-colors"
+                className="rounded-[var(--shape-radius-md)] p-0.5 dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-accent dark:hover:text-claude-accent transition-colors"
                 onClick={() => setTariffOpen(true)}
                 title={i18nService.t('trafficTariffAria')}
                 aria-label={i18nService.t('trafficTariffAria')}

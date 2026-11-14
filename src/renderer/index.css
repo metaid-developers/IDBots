@@ -355,11 +355,14 @@ select::-ms-expand {
   background-color: var(--bg-hover);
 }
 
-/* IDChat-style buttons: border + offset shadow, hover lift, active press */
+/* IDChat-style buttons: border + offset shadow, hover lift, active press.
+   Flat ruling 2026-11-14 (owner v2 rect-flat + Mon M1): offset shadows and
+   hover/press displacement are retired — both vars are zeroed so every
+   btn-idchat-* family renders flat (plain yellow fill, ink text, no lift). */
 :root {
   --btn-border-width: 2px;
-  --btn-shadow-offset: 3px;
-  --btn-move-range: 2px;
+  --btn-shadow-offset: 0px;
+  --btn-move-range: 0px;
 }
 
 .btn-idchat {
@@ -410,29 +413,29 @@ select::-ms-expand {
   transform: translateX(var(--btn-move-range)) translateY(var(--btn-move-range));
 }
 
-/* Filled primary button (IDChat .main-border.primary): yellow background + border + shadow + lift/press */
+/* Filled primary button (IDChat .main-border.primary): flat yellow fill + ink
+   text. Owner ruling 2026-11-14 (Mon M1): the 3 px offset hard shadow and the
+   hover/press lift are retired — hover/press now read as a subtle face change
+   (relative brightness step), no translation, no shadow. */
 .btn-idchat-primary-filled {
   background-color: var(--color-primary);
   color: #303133;
   border: var(--btn-border-width) solid var(--btn-primary-edge);
-  box-shadow: var(--btn-shadow-offset) var(--btn-shadow-offset) 0 var(--btn-primary-edge);
   border-radius: var(--rounded);
   padding: 0.5rem 1rem;
   font-weight: 500;
-  transition: box-shadow 0.2s ease, transform 0.2s ease;
+  transition: filter 0.2s ease;
   user-select: none;
 }
 
 @media (min-width: 1024px) {
   .btn-idchat-primary-filled:not(.still):hover:not(:active):not(:disabled) {
-    box-shadow: calc(var(--btn-shadow-offset) + var(--btn-move-range) / 2) calc(var(--btn-shadow-offset) + var(--btn-move-range) / 2) 0 var(--btn-primary-edge);
-    transform: translateX(calc(0px - var(--btn-move-range) / 2)) translateY(calc(0px - var(--btn-move-range) / 2));
+    filter: brightness(0.96);
   }
 }
 
 .btn-idchat-primary-filled:not(.still):active:not(:disabled) {
-  box-shadow: calc(var(--btn-shadow-offset) - var(--btn-move-range)) calc(var(--btn-shadow-offset) - var(--btn-move-range)) 0 var(--btn-primary-edge);
-  transform: translateX(var(--btn-move-range)) translateY(var(--btn-move-range));
+  filter: brightness(0.9);
 }
 
 .btn-idchat-primary-filled:disabled {
