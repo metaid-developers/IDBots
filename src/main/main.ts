@@ -456,6 +456,7 @@ import {
 } from './services/contentSummaryService';
 import { MetawebStudyJobStore } from './metawebStudyJobStore';
 import { MetawebSurfStore } from './metawebSurfStore';
+import { pruneStaleDshSkillEnvFiles } from './libs/dshSkillSessionEnv';
 import { SurfService, SURF_STATUS_CHANNEL } from './services/surfService';
 import { buildSurfSessionPrompt, parseSurfRunReport, SURF_DEEP_READ_GUIDANCE, SURF_KB_ADD_BUDGET } from './libs/surfPrompt';
 import { foldSurfReceiptsIntoSeenActions, surfReceiptSeenActions, surfSessionPartialStats, type SurfSessionWriteState } from './libs/surfInteractionGuard';
@@ -5967,6 +5968,8 @@ const startStartupNightlyServices = (): void => {
     metaidKnowledgeStore: dreamKnowledgeStore,
     metaidCultureStore: getTeamCultureStore(),
     standingPageStore: getStandingPageStore(),
+    metawebSurfStore: getMetawebSurfStore(),
+    chainContentHistoryStore: getChainContentHistoryStore(),
     performChat: performChatCompletionForOrchestrator,
     emitToRenderer: (channel, data) => {
       broadcastToRenderers(channel as string, data);
@@ -6258,8 +6261,9 @@ const scheduleCoworkStoreHeavyMaintenance = (): void => {
     try {
       startupLog('cowork store heavy maintenance begin');
       const result = coworkStore.runHeavyStartupMaintenance();
+      const prunedEnvFiles = pruneStaleDshSkillEnvFiles(app.getPath('userData'));
       startupLog(
-        `cowork store heavy maintenance done (orderSessions=${result.migratedMetawebOrderSessions}, orderBackfill=${result.backfilledMetawebOrderMessages}, privateBackfill=${result.backfilledMetawebPrivateMessages})`,
+        `cowork store heavy maintenance done (orderSessions=${result.migratedMetawebOrderSessions}, orderBackfill=${result.backfilledMetawebOrderMessages}, privateBackfill=${result.backfilledMetawebPrivateMessages}, prunedSkillEnv=${prunedEnvFiles})`,
       );
       coworkStoreHeavyMaintenanceFinished = true;
       if (!coworkStore.isMessagesFtsReady()) {

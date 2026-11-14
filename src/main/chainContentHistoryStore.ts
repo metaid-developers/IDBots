@@ -678,4 +678,23 @@ export class ChainContentHistoryStore {
       [...params, limit],
     ).map(readRowToRecord);
   }
+
+  pruneOldChainReads(input: { cutoffMs: number; excludeMetabotIds?: ReadonlySet<number> }): number {
+    if (!Number.isFinite(input.cutoffMs) || input.cutoffMs <= 0) return 0;
+    const excluded = input.excludeMetabotIds ? [...input.excludeMetabotIds] : [];
+    const exclusionSql = excluded.length > 0
+      ? ` AND metabot_id NOT IN (${excluded.map(() => '?').join(', ')})`
+      : '';
+    this.db.run(
+      `DELETE FROM metabot_chain_reads
+       WHERE COALESCE(saved_to_kb, 0) = 0
+         AND last_read_at_ms < ?${exclusionSql}`,
+      [Math.floor(input.cutoffMs), ...excluded],
+    );
+    const deleted = this.db.getRowsModified?.() || 0;
+    if (deleted > 0) {
+      this.saveDb();
+    }
+    return deleted;
+  }
 }
