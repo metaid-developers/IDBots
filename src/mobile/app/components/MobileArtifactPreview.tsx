@@ -114,6 +114,14 @@ export default function MobileArtifactPreview({ path, onClose }: { path: string;
             <MarkdownContent content={document.text} compact />
           </div>
         ) : null}
+        {!loading && !failed && kind === 'html' && inline.url ? (
+          <iframe
+            src={inline.url}
+            title={filename}
+            data-testid="artifact-html"
+            className="h-[60dvh] w-full rounded-lg border border-[var(--border-color)] bg-white"
+          />
+        ) : null}
         {kind === 'other' ? (
           <p className="py-4 text-sm text-[var(--text-secondary)]">{t('mobile.artifact.otherBody')}</p>
         ) : null}

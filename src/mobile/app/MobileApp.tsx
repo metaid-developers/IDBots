@@ -112,6 +112,9 @@ export default function MobileApp(): JSX.Element {
   }, [tab]);
   // Chat state lives at the shell level so switching tabs keeps the stream.
   const { bots, error: botsError, reload: reloadBots } = useMetabots();
+  useEffect(() => {
+    if (tab === 'chat') void reloadBots();
+  }, [tab, reloadBots]);
   const chat = useChat(bots);
   const twinMetabotId = resolveTwinMetabotId(bots);
   const twinName = bots.find((bot) => bot.id === twinMetabotId)?.name ?? 'Twin Bot';

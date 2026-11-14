@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import JSZip from 'jszip';
 import { createMobileBrowserHost } from '../src/mobile/app/browser/mobileBrowserHost.ts';
+import { clearLocalFileUrlCache } from '../src/renderer/services/localFileUrl.ts';
 import {
   createMobileMetaAppPreviewSession,
   rewriteMobileMetaAppHtml,
@@ -146,6 +147,46 @@ test('mobile Browser advertises read-only features and rejects trusted NFT actio
     assert.equal((action.body as { code: string }).code, 'unsupported_method');
     browser.dispose();
   } finally {
+    if (previous) host.window = previous;
+    else delete host.window;
+  }
+});
+
+
+test('mobile Browser resolves tenant HTML artifacts through a signed preview-file URL', async () => {
+  const host = globalThis as unknown as { window?: unknown };
+  const previous = host.window;
+  host.window = {
+    idbotsMobile: { isMobile: true },
+    electron: {
+      gateway: {
+        fileSign: async ({ path, disposition }: { path: string; disposition: string }) => ({
+          url: `/gateway/v1/files/${path.endsWith('.html') ? 'signed-html' : 'unexpected'}`,
+          expiresAt: 0,
+          size: 128,
+          mime: disposition === 'inline' ? 'text/html' : 'application/octet-stream',
+        }),
+      },
+      metabot: { list: async () => ({ success: true, list: [] }) },
+      userIdentity: { get: async () => ({ success: true, identity: null }) },
+    },
+  };
+  try {
+    const browser = createMobileBrowserHost();
+    const resolved = await browser.handle({
+      url: `/api/browser/resolve?uri=${encodeURIComponent('preview-file://localhost/data/workspace/today-inspiration.html')}`,
+    });
+    assert.equal(resolved.status, 200);
+    assert.equal(resolved.body.ok, true);
+    const data = resolved.body.data as {
+      renderer: { type: string; url: string; contentType: string };
+    };
+    assert.equal(data.renderer.type, 'html-iframe');
+    assert.equal(data.renderer.url, '/files/signed-html');
+    assert.equal(data.renderer.contentType, 'text/html; charset=utf-8');
+    browser.dispose();
+  } finally {
+    clearLocalFileUrlCache();
     if (previous) host.window = previous;
     else delete host.window;
   }

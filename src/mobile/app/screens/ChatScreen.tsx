@@ -26,6 +26,7 @@ import { sortBotsForList } from '../botList';
 import { useVoiceInput } from '../voice/useVoiceInput';
 import { VoiceButton, VoiceErrorBanner } from '../voice/VoiceButton';
 import { sendVoiceMessage, type HoldCancelReason } from '../voice/holdToSend';
+import { artifactBrowserUri } from '../artifacts';
 
 type Chat = ReturnType<typeof useChat>;
 
@@ -529,9 +530,14 @@ export default function ChatScreen(props: {
   const hasNativeAttachmentPicker = nativeCapabilities !== null
     && (nativeCapabilities.camera || nativeCapabilities.photos || nativeCapabilities.files);
   const openPreview = useCallback((filePath: string): boolean => {
+    const browserUri = artifactBrowserUri(filePath);
+    if (browserUri && props.onOpenUri) {
+      props.onOpenUri(browserUri);
+      return true;
+    }
     setPreviewPath(filePath);
     return true;
-  }, []);
+  }, [props.onOpenUri]);
   const turnPhase = chat.turnPhase ?? (chat.isStreaming ? 'running' : 'idle');
   const composerBlocked = chat.isSending
     || chat.restoring
@@ -688,7 +694,15 @@ export default function ChatScreen(props: {
             </h1>
           </div>
         </div>
-        <button type="button" onClick={() => setPickerOpen(true)} aria-label={t('mobile.chat.newChat')} className="twin-icon-button">
+        <button
+          type="button"
+          onClick={() => {
+            setPickerOpen(true);
+            props.onReloadBots?.();
+          }}
+          aria-label={t('mobile.chat.newChat')}
+          className="twin-icon-button"
+        >
           <PlusIcon className="h-6 w-6" aria-hidden />
         </button>
       </div>
