@@ -20,7 +20,7 @@ const Toast: React.FC<ToastProps> = ({ message, onClose }) => {
           {onClose && (
             <button
               onClick={onClose}
-              className="shrink-0 text-claude-textSecondary dark:text-white/70 hover:text-claude-text dark:hover:text-white rounded-full p-1 hover:bg-claude-surfaceHover dark:hover:bg-white/10 transition-colors"
+              className="shrink-0 text-claude-textSecondary dark:text-white/70 hover:text-claude-text dark:hover:text-white rounded-[var(--shape-radius-md)] p-1 hover:bg-claude-surfaceHover dark:hover:bg-white/10 transition-colors"
               aria-label="Close"
             >
               <XMarkIcon className="h-4 w-4" />

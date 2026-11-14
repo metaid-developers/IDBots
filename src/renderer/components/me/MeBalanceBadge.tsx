@@ -134,7 +134,7 @@ const MeBalanceBadge: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
         className={
           compact
             ? `flex h-10 w-10 items-center justify-center rounded-xl border transition-colors bg-claude-surface/80 dark:bg-claude-darkSurface/80 hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover ${badgeClass}`
-            : `flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors bg-claude-surface/80 dark:bg-claude-darkSurface/80 hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover ${badgeClass}`
+            : `flex items-center gap-1.5 rounded-[var(--shape-radius-md)] border px-2.5 py-1 text-xs font-medium transition-colors bg-claude-surface/80 dark:bg-claude-darkSurface/80 hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover ${badgeClass}`
         }
       >
         <MeCoinIcon className={compact ? 'h-5 w-5' : 'h-3.5 w-3.5'} />

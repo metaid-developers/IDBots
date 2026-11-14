@@ -886,7 +886,7 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
                 <span className="relative inline-flex shrink-0 group">
                   <button
                     type="button"
-                    className="rounded-full p-0.5 dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-accent dark:hover:text-claude-accent transition-colors"
+                    className="rounded-[var(--shape-radius-md)] p-0.5 dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-accent dark:hover:text-claude-accent transition-colors"
                     aria-label={i18nService.t('metabotPrimaryLlmHint')}
                   >
                     <QuestionMarkCircleIcon className="h-4 w-4" />
@@ -1131,7 +1131,7 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
                     <button
                       type="button"
                       onClick={() => handleRemoveAllowChatSkill(skillId)}
-                      className="inline-flex h-4 w-4 items-center justify-center rounded-full text-claude-textSecondary dark:text-claude-darkTextSecondary hover:bg-black/10 dark:hover:bg-white/10"
+                      className="inline-flex h-4 w-4 items-center justify-center rounded-[var(--shape-radius-md)] text-claude-textSecondary dark:text-claude-darkTextSecondary hover:bg-black/10 dark:hover:bg-white/10"
                       aria-label={i18nService.t('metabotDelete')}
                       title={i18nService.t('metabotDelete')}
                     >

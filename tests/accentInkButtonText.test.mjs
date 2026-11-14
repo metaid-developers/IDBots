@@ -3,7 +3,9 @@
 // #FFDC51 is nearly illegible; content on the accent fill must use the
 // near-black accentInk token (#303133, matching .btn-idchat-primary-filled).
 // The old composer send/stop deep-orange-on-yellow exception was retired on
-// 2026-10-23: those buttons are now neutral gray circles with dark-gray ink.
+// 2026-10-23: those buttons are now neutral gray with dark-gray ink, and as of
+// the 2026-11-14 flat-shape sweep (feat/flat-buttons-sweep) they are flat
+// rounded-[var(--shape-radius-md)] rectangles with no shadow.
 // Semantic error fills (red/green) keep their white text and are out of scope.
 
 import test from 'node:test';
@@ -54,15 +56,20 @@ test('accentInk token is defined and is the shared near-black on yellow', () => 
   assert.match(filled.slice(0, 200), /color: #303133/);
 });
 
-test('composer send/stop buttons use the neutral gray circle with dark-gray ink', () => {
+test('composer send/stop buttons use the neutral flat rectangle with dark-gray ink', () => {
   const composer = readFileSync(
     join(here, '../src/renderer/components/cowork/CoworkPromptInput.tsx'),
     'utf8',
   );
-  // Every composer send/stop className pins the gray-circle + dark-ink style.
+  // Every composer send/stop className pins the flat radius-token rectangle + dark-ink style.
   assert.equal(
-    (composer.match(/rounded-full bg-claude-surfaceHover hover:bg-claude-border text-claude-text/g) || []).length,
+    (composer.match(/rounded-\[var\(--shape-radius-md\)\] bg-claude-surfaceHover hover:bg-claude-border text-claude-text/g) || []).length,
     4,
+  );
+  // ...and the retired capsule shape never comes back on those buttons.
+  assert.equal(
+    (composer.match(/p-2 rounded-full bg-claude-surfaceHover/g) || []).length,
+    0,
   );
   // ...and the retired yellow fill + deep-orange ink never comes back.
   assert.doesNotMatch(composer, /bg-claude-accent hover:bg-claude-accentHover text-\[#9A3412\]/);

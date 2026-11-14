@@ -5023,7 +5023,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                 onClick={handleScrollToBottomClick}
                 title={i18nService.t('coworkScrollToBottom')}
                 aria-label={i18nService.t('coworkScrollToBottom')}
-                className="pointer-events-auto -mt-[34px] flex h-[34px] w-[34px] items-center justify-center rounded-full border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-elevated dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+                className="pointer-events-auto -mt-[34px] flex h-[34px] w-[34px] items-center justify-center rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
               >
                 <ChevronDownIcon className="h-3.5 w-3.5" />
               </button>

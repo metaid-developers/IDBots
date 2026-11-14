@@ -617,7 +617,7 @@ const CoworkPermissionPanel: React.FC<CoworkPermissionPanelProps> = ({
           <PermissionCountdownLabel label={i18nService.t('coworkDeny')} seconds={responding ? null : countdownFor('deny')} />
         </button>
         <button type="button" onClick={handleApprove} disabled={responding} className={isDestructive
-          ? 'px-3 py-2 rounded-lg border-2 border-red-700 bg-red-600 text-white text-xs font-medium shadow-[2px_2px_0_#991b1b] hover:bg-red-700 active:translate-x-[1px] active:translate-y-[1px] active:shadow-none disabled:opacity-50 disabled:cursor-not-allowed'
+          ? 'px-3 py-2 rounded-lg border-2 border-red-700 bg-red-600 text-white text-xs font-medium hover:bg-red-700 active:translate-x-[1px] active:translate-y-[1px] disabled:opacity-50 disabled:cursor-not-allowed'
           : 'btn-idchat-primary-filled px-3 py-2 text-xs disabled:opacity-50 disabled:cursor-not-allowed'}>
           <PermissionCountdownLabel
             label={responding

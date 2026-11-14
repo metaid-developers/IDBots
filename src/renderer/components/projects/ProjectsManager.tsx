@@ -208,7 +208,7 @@ const ProjectsManager: React.FC<{ autoOpenCreateForm?: boolean }> = ({ autoOpenC
                     }`}
                   >
                     <span
-                      className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-md transition-transform ${
+                      className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
                         project.enabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
                       }`}
                     />

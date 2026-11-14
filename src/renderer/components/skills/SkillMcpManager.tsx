@@ -33,7 +33,7 @@ const SkillMcpManager: React.FC<SkillMcpManagerProps> = ({ onStartTaskWithSkill 
             onClick={() => dispatch({ type: 'set-mode', mode: 'skills' })}
             className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
               state.mode === 'skills'
-                ? 'bg-claude-accent text-claude-accentInk shadow-sm'
+                ? 'bg-claude-accent text-claude-accentInk'
                 : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:text-claude-darkText hover:text-claude-text'
             }`}
           >
@@ -44,7 +44,7 @@ const SkillMcpManager: React.FC<SkillMcpManagerProps> = ({ onStartTaskWithSkill 
             onClick={() => dispatch({ type: 'set-mode', mode: 'mcp' })}
             className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
               state.mode === 'mcp'
-                ? 'bg-claude-accent text-claude-accentInk shadow-sm'
+                ? 'bg-claude-accent text-claude-accentInk'
                 : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:text-claude-darkText hover:text-claude-text'
             }`}
           >

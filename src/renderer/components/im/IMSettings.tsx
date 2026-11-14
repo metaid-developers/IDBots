@@ -865,7 +865,7 @@ const IMSettings: React.FC = () => {
                   }}
                 >
                   <div
-                    className={`w-3 h-3 rounded-full bg-white shadow-md transform transition-transform ${
+                    className={`w-3 h-3 rounded-full bg-white transform transition-transform ${
                       isEnabled ? 'translate-x-3.5' : 'translate-x-0.5'
                     }`}
                   />
@@ -908,7 +908,7 @@ const IMSettings: React.FC = () => {
               }}
             >
               <div
-                className={`w-3 h-3 rounded-full bg-white shadow-md transform transition-transform ${
+                className={`w-3 h-3 rounded-full bg-white transform transition-transform ${
                   chainListenerConfig.enabled ? 'translate-x-3.5' : 'translate-x-0.5'
                 }`}
               />
