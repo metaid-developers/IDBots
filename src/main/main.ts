@@ -21393,6 +21393,15 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     });
   };
 
+  const DESKTOP_CLEANUP_TIMEOUT_MS = 5_000;
+
+  const finishCleanupAndExit = () => {
+    if (isCleanupFinished) return;
+    isCleanupFinished = true;
+    isCleanupInProgress = false;
+    app.exit(0);
+  };
+
   app.on('before-quit', (e) => {
     if (isCleanupFinished) return;
 
@@ -21408,14 +21417,19 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     // only fires on the next day's first call, which never comes at quit).
     flushJevRelayCallStats();
 
+    const watchdog = setTimeout(() => {
+      console.warn(`[Main] App cleanup exceeded ${DESKTOP_CLEANUP_TIMEOUT_MS}ms; forcing exit.`);
+      finishCleanupAndExit();
+    }, DESKTOP_CLEANUP_TIMEOUT_MS);
+    watchdog.unref();
+
     void runAppCleanup()
       .catch((error) => {
         console.error('[Main] Cleanup error:', error);
       })
       .finally(() => {
-        isCleanupFinished = true;
-        isCleanupInProgress = false;
-        app.exit(0);
+        clearTimeout(watchdog);
+        finishCleanupAndExit();
       });
   });
 
@@ -21426,14 +21440,18 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     console.log(`[Main] Received ${signal}, running cleanup before exit...`);
     isCleanupInProgress = true;
     isQuitting = true;
+    const watchdog = setTimeout(() => {
+      console.warn(`[Main] App cleanup during ${signal} exceeded ${DESKTOP_CLEANUP_TIMEOUT_MS}ms; forcing exit.`);
+      finishCleanupAndExit();
+    }, DESKTOP_CLEANUP_TIMEOUT_MS);
+    watchdog.unref();
     void runAppCleanup()
       .catch((error) => {
         console.error(`[Main] Cleanup error during ${signal}:`, error);
       })
       .finally(() => {
-        isCleanupFinished = true;
-        isCleanupInProgress = false;
-        app.exit(0);
+        clearTimeout(watchdog);
+        finishCleanupAndExit();
       });
   };
 

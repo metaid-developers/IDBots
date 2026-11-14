@@ -270,6 +270,7 @@ export async function stopMetaAppServer(): Promise<void> {
         }
         resolve();
       });
+      localServer.closeAllConnections?.();
     });
   }
 

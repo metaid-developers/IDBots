@@ -893,7 +893,7 @@ export function launchWindowsNsisInstaller(
   spawnImpl: typeof spawn = spawn,
 ): Promise<number | undefined> {
   return new Promise((resolve, reject) => {
-    const installer = spawnImpl(exePath, [], {
+    const installer = spawnImpl(exePath, ['--updated'], {
       detached: true,
       stdio: 'ignore',
       windowsHide: false,

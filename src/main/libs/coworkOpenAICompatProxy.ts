@@ -4526,6 +4526,7 @@ export async function stopCoworkOpenAICompatProxy(): Promise<void> {
       }
       resolve();
     });
+    server.closeAllConnections?.();
   });
 }
 

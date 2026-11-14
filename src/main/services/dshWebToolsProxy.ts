@@ -309,7 +309,10 @@ export async function createDshWebToolsProxy(deps: DshWebToolsProxyDeps): Promis
     },
     async stop() {
       if (activeProxy === proxy) activeProxy = null;
-      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+        server.closeAllConnections?.();
+      });
     },
   };
   server.unref();
