@@ -520,6 +520,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('cowork:session:listMetabotAvatars', metabotIds),
     listPeerAvatars: (sessionIds: string[]) =>
       ipcRenderer.invoke('cowork:session:listPeerAvatars', sessionIds),
+    getSessionSummary: (sessionId: string) =>
+      ipcRenderer.invoke('cowork:session:getSummary', sessionId),
     processServiceRefund: (sessionId: string) =>
       ipcRenderer.invoke('cowork:session:processServiceRefund', sessionId),
     readLocalImage: (options: { path: string; maxBytes?: number }) =>

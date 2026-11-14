@@ -1038,3 +1038,4 @@ blob-report/
 !tests/sqliteReadWorker.test.mjs
 !tests/coworkSessionColdPromptAndPeerAvatar.test.mjs
 !tests/coworkMessagesFtsSearch.test.mjs
+!tests/coworkSessionSummaryDelta.test.mjs

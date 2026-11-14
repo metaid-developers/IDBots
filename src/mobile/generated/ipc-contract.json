@@ -698,6 +698,14 @@
       ]
     },
     {
+      "path": "cowork.getSessionSummary",
+      "kind": "invoke",
+      "channel": "cowork:session:getSummary",
+      "args": [
+        "sessionId"
+      ]
+    },
+    {
       "path": "cowork.getStreamLiveContent",
       "kind": "invoke",
       "channel": "cowork:stream:liveContent",

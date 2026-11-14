@@ -15093,6 +15093,29 @@ if (!gotTheLock) {
     });
   });
 
+  registerIpcHandler('cowork:session:getSummary', async (event, sessionId: string) => {
+    return withSqliteRecovery('cowork:session:getSummary', async () => {
+      try {
+        repairSelfDirectedServiceOrders();
+        const isDesktopRenderer = event.sender !== null;
+        const raw = getCoworkStore().getSessionSummary(sessionId, {
+          omitInlinePeerDataAvatar: isDesktopRenderer,
+        });
+        if (!raw) {
+          return { success: true, summary: null };
+        }
+        const [summary] = enrichCoworkSessionsWithServiceOrderSummaries([raw]);
+        return { success: true, summary: summary ?? raw };
+      } catch (error) {
+        if (isSqliteWasmBoundsError(error)) throw error;
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to get session summary',
+        };
+      }
+    });
+  });
+
   registerIpcHandler('cowork:session:processServiceRefund', async (_event, sessionId: string) => {
     return withSqliteRecovery('cowork:session:processServiceRefund', async () => {
     try {

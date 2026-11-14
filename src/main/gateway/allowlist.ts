@@ -422,6 +422,7 @@ const POST_FREEZE_INVOKE: Record<string, AllowlistEntry> = {
   'traffic:getMeBillingStatus': { tier: 'P1', note: 'CR-WSA-003: read-only ME traffic capability and spendable balance; never enables billing by itself.' },
   'traffic:getSponsorOrders': { tier: 'N', note: 'Not in `02` v1.0.1 (desktop per-order traffic history for ME credits billing, 2026-11-09); denied by `02` default-deny pending a change request.' },
   'cowork:session:listPeerAvatars': { tier: 'N', note: 'Not in `02` v1.0.1 (desktop peer-avatar deduplication channel, 2026-11-14); mobile gateway receives peerAvatar inline via cowork:session:list.' },
+  'cowork:session:getSummary': { tier: 'N', note: 'Not in `02` v1.0.1 (desktop single-session summary delta channel, 2026-11-14); mobile gateway uses cowork:session:list.' },
 };
 
 export const INVOKE_ALLOWLIST: Record<string, AllowlistEntry> = {

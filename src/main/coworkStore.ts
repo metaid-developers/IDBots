@@ -968,6 +968,7 @@ export interface CoworkSessionSummary {
   autoOrigin?: CoworkSessionAutoOrigin | null;
   /** Manual fold placement (see CoworkSession.foldOverride); null = follow the policy. */
   foldOverride?: CoworkSessionFoldOverride | null;
+  tradeBadge?: 'p2p' | 'escrow' | null;
   /** Follow-up state (see CoworkSession.followUpState); 'pending' = needs a human decision. */
   followUpState?: 'pending' | null;
   /** Which lane set the follow-up marker (see CoworkSessionFollowUpSource); null = none. */
@@ -4852,6 +4853,141 @@ export class CoworkStore implements MemoryBackend {
       sessionId: row.id,
       peerAvatar: row.peer_avatar ?? null,
     }));
+  }
+
+  getSessionSummary(
+    sessionId: string,
+    options?: { omitInlinePeerDataAvatar?: boolean },
+  ): CoworkSessionSummary | null {
+    const id = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!id) return null;
+    const omitInlinePeerDataAvatar = options?.omitInlinePeerDataAvatar === true;
+    const peerAvatarColumnsSql = omitInlinePeerDataAvatar
+      ? `CASE WHEN s.peer_avatar LIKE 'data:%' THEN NULL ELSE s.peer_avatar END AS peer_avatar,
+        CASE WHEN s.peer_avatar LIKE 'data:%' THEN (s.updated_at * 1000 + (LENGTH(s.peer_avatar) % 1000)) ELSE NULL END AS peer_avatar_version,`
+      : `s.peer_avatar,
+        NULL AS peer_avatar_version,`;
+
+    const row = this.getOne<{
+      id: string;
+      title: string;
+      status: string;
+      pinned: number | null;
+      metabot_id?: number | null;
+      session_type?: string | null;
+      peer_name?: string | null;
+      peer_avatar?: string | null;
+      peer_avatar_version?: number | null;
+      metabot_name?: string | null;
+      metabot_updated_at?: number | null;
+      browser_uri?: string | null;
+      browser_title?: string | null;
+      assistant_mode?: number | null;
+      hidden_from_session_list?: number | null;
+      im_channel?: string | null;
+      im_conversation_id?: string | null;
+      auto_origin?: string | null;
+      fold_override?: string | null;
+      trade_badge?: string | null;
+      follow_up_state?: string | null;
+      follow_up_source?: string | null;
+      follow_up_at?: string | null;
+      model?: string | null;
+      model_provider?: string | null;
+      effort?: string | null;
+      project_id?: string | null;
+      cwd?: string | null;
+      created_at: number;
+      updated_at: number;
+      activity_at?: number | null;
+    }>(`
+      SELECT
+        s.id,
+        s.title,
+        s.status,
+        s.pinned,
+        s.metabot_id,
+        s.session_type,
+        s.peer_name,
+        ${peerAvatarColumnsSql}
+        mb.name AS metabot_name,
+        mb.updated_at AS metabot_updated_at,
+        s.browser_uri,
+        s.browser_title,
+        s.assistant_mode,
+        s.hidden_from_session_list,
+        (
+          SELECT im.channel FROM cowork_conversation_mappings im
+          WHERE im.cowork_session_id = s.id AND im.channel >= 'im:' AND im.channel < 'im;'
+          ORDER BY (im.channel LIKE 'im:%:group') DESC, im.last_active_at DESC
+          LIMIT 1
+        ) AS im_channel,
+        (
+          SELECT im.external_conversation_id FROM cowork_conversation_mappings im
+          WHERE im.cowork_session_id = s.id AND im.channel >= 'im:' AND im.channel < 'im;'
+          ORDER BY (im.channel LIKE 'im:%:group') DESC, im.last_active_at DESC
+          LIMIT 1
+        ) AS im_conversation_id,
+        s.auto_origin,
+        s.fold_override,
+        s.trade_badge,
+        s.follow_up_state,
+        s.follow_up_source,
+        s.follow_up_at,
+        s.model,
+        s.model_provider,
+        s.effort,
+        s.project_id,
+        s.cwd,
+        s.created_at,
+        s.updated_at,
+        COALESCE(s.activity_at, ${coworkSessionActivityAtSelectSql('s')}) AS activity_at
+      FROM cowork_sessions s
+      LEFT JOIN metabots mb ON mb.id = s.metabot_id
+      WHERE s.id = ?
+        AND COALESCE(s.hidden_from_session_list, 0) = 0
+        AND s.archived_at IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM a2a_conversation_episodes episode
+          WHERE episode.session_id = s.id AND episode.next_session_id IS NOT NULL
+        )
+      LIMIT 1
+    `, [id]);
+
+    if (!row) return null;
+    const metabotId = parseIdNumber(row.metabot_id);
+    return {
+      id: row.id,
+      title: row.title,
+      status: row.status as CoworkSessionStatus,
+      pinned: Boolean(row.pinned),
+      createdAt: row.created_at,
+      updatedAt: parseIdNumber(row.activity_at) ?? row.updated_at,
+      metabotId,
+      sessionType: (row.session_type === 'agent_agent' ? 'a2a' : row.session_type as CoworkSessionType) || 'standard',
+      peerName: row.peer_name ?? null,
+      peerAvatar: row.peer_avatar ?? null,
+      ...(row.peer_avatar_version != null ? { peerAvatarVersion: parseIdNumber(row.peer_avatar_version) } : {}),
+      metabotName: row.metabot_name ?? null,
+      metabotAvatarVersion: parseIdNumber(row.metabot_updated_at),
+      browserUri: row.browser_uri ?? null,
+      browserTitle: row.browser_title ?? null,
+      assistantMode: Boolean(row.assistant_mode),
+      hiddenFromSessionList: Boolean(row.hidden_from_session_list),
+      imChannel: row.im_channel ?? null,
+      imConversationId: row.im_conversation_id ?? null,
+      autoOrigin: (row.auto_origin as CoworkSessionAutoOrigin | null) ?? null,
+      foldOverride: (row.fold_override as CoworkSessionFoldOverride | null) ?? null,
+      tradeBadge: row.trade_badge === 'p2p' || row.trade_badge === 'escrow' ? row.trade_badge : null,
+      followUpState: (row.follow_up_state as 'pending' | null) ?? null,
+      followUpSource: (row.follow_up_source as CoworkSessionFollowUpSource | null) ?? null,
+      followUpAt: row.follow_up_at ?? null,
+      model: row.model ?? null,
+      modelProvider: row.model_provider ?? null,
+      effort: row.effort ?? null,
+      projectId: row.project_id ?? null,
+      cwd: row.cwd ?? null,
+    };
   }
 
   /**

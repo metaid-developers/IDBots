@@ -4,6 +4,7 @@ import {
   setCurrentSession,
   addSession,
   registerBackgroundSession,
+  upsertSessionSummary,
   updateSessionStatus,
   deleteSession as deleteSessionAction,
   addMessage,
@@ -178,8 +179,7 @@ class CoworkService {
       let sessionExists = state.sessions.some(s => s.id === sessionId);
 
       if (!sessionExists) {
-        // Session was created by IM or another source, refresh the session list
-        await this.loadSessions();
+        await this.refreshSessionSummaryOrReload(sessionId);
         // Re-check after reload
         state = store.getState().cowork;
         sessionExists = state.sessions.some(s => s.id === sessionId);
@@ -279,11 +279,11 @@ class CoworkService {
       }
 
       if (message.metadata?.refreshSessionSummary) {
-        await this.loadSessions();
-        const currentSessionId = store.getState().cowork.currentSessionId;
         const previousEpisodeSessionId = typeof message.metadata.previousEpisodeSessionId === 'string'
           ? message.metadata.previousEpisodeSessionId
           : null;
+        await this.refreshSessionSummaryOrReload(sessionId, previousEpisodeSessionId);
+        const currentSessionId = store.getState().cowork.currentSessionId;
         if (previousEpisodeSessionId && currentSessionId === previousEpisodeSessionId) {
           await this.loadSession(sessionId);
         } else if (currentSessionId === sessionId) {
@@ -434,7 +434,7 @@ class CoworkService {
     // A2A peer profile (name/avatar) was refreshed from latest chain data in
     // the main process; reload so the session list and open detail show it.
     const profileRefreshedCleanup = cowork.onSessionProfileRefreshed?.(async ({ sessionId }) => {
-      await this.loadSessions();
+      await this.refreshSessionSummaryOrReload(sessionId);
       if (store.getState().cowork.currentSessionId === sessionId) {
         try {
           const refreshed = await window.electron?.cowork?.getSession(sessionId);
@@ -739,6 +739,34 @@ class CoworkService {
       return;
     }
     await this.readSessions();
+  }
+
+  async refreshSessionSummaryOrReload(sessionId: string, removeSessionId?: string | null): Promise<void> {
+    const fetchSummary = window.electron?.cowork?.getSessionSummary;
+    if (typeof fetchSummary !== 'function') {
+      await this.loadSessions();
+      return;
+    }
+    try {
+      const result = await fetchSummary(sessionId);
+      if (!result?.success) {
+        await this.loadSessions();
+        return;
+      }
+      if (!result.summary) {
+        store.dispatch(upsertSessionSummary({ summary: null, sessionId, removeSessionId }));
+        return;
+      }
+      const [withMetabot] = await metabotAvatarCache.attachAvatars([result.summary]);
+      const [enriched] = await peerAvatarCache.attachPeerAvatars([withMetabot ?? result.summary]);
+      store.dispatch(upsertSessionSummary({
+        summary: enriched ?? withMetabot ?? result.summary,
+        sessionId,
+        removeSessionId,
+      }));
+    } catch {
+      await this.loadSessions();
+    }
   }
 
   /** Splice the waiters a read covers: it resolves the burst queued before it
@@ -1178,7 +1206,7 @@ class CoworkService {
           if (store.getState().cowork.currentSessionId === request.sessionId) {
             await this.loadSession(request.sessionId, { onlyIfCurrent: true });
           }
-          await this.loadSessions();
+          await this.refreshSessionSummaryOrReload(request.sessionId);
         }
         return {
           success: true,
@@ -1240,7 +1268,7 @@ class CoworkService {
       const result = await cowork.resendA2ADeliveryArtifact(request);
       if (result?.success) {
         await this.loadSession(request.sessionId);
-        await this.loadSessions();
+        await this.refreshSessionSummaryOrReload(request.sessionId);
         return {
           success: true,
           deliveryPinId: result.deliveryPinId ?? null,
@@ -1371,7 +1399,7 @@ class CoworkService {
         } else {
           await this.loadSession(sessionId);
         }
-        await this.loadSessions();
+        await this.refreshSessionSummaryOrReload(sessionId);
         return {
           success: true,
           refundTxid: result.refundTxid,

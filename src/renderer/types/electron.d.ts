@@ -1470,6 +1470,11 @@ interface IElectronAPI {
       avatars?: Array<{ sessionId: string; peerAvatar: string | null }>;
       error?: string;
     }>;
+    getSessionSummary: (sessionId: string) => Promise<{
+      success: boolean;
+      summary?: CoworkSessionSummary | null;
+      error?: string;
+    }>;
     processServiceRefund: (sessionId: string) => Promise<{
       success: boolean;
       refundTxid?: string;
