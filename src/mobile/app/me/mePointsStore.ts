@@ -161,17 +161,22 @@ export function formatMeRate(multiplier: number | null | undefined): string {
   return `${Number.isInteger(rounded) ? rounded : rounded.toFixed(1)}x`;
 }
 
-export type MeResetParts = { unit: 'soon' | 'hours' | 'days'; n: number };
+export type MeResetParts =
+  | { unit: 'soon'; n: number }
+  | { unit: 'hours'; n: number }
+  | { unit: 'days'; n: number; hours: number };
 
-/** Weekly reset countdown: ≤24h in hours, otherwise days. */
+/** Weekly reset countdown: whole hours inside the last day, else days+hours (mirror of desktop). */
 export function meResetParts(nextResetAt: number | null | undefined): MeResetParts | null {
   const reset = Number(nextResetAt);
   if (!Number.isFinite(reset) || reset <= 0) return null;
   const ms = reset - Date.now();
   if (ms <= 0) return { unit: 'soon', n: 0 };
-  const hours = Math.ceil(ms / 3_600_000);
-  if (hours <= 24) return { unit: 'hours', n: hours };
-  return { unit: 'days', n: Math.ceil(ms / 86_400_000) };
+  const days = Math.floor(ms / 86_400_000);
+  if (days < 1) {
+    return { unit: 'hours', n: Math.max(1, Math.ceil(ms / 3_600_000)) };
+  }
+  return { unit: 'days', n: days, hours: Math.floor((ms % 86_400_000) / 3_600_000) };
 }
 
 /** 0..1 share of the weekly grant already spent (0 when no grant). */

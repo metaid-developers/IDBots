@@ -66,6 +66,7 @@ export interface UserProfileCopy {
   meResetSoon: string;
   meResetInHours: string;
   meResetInDays: string;
+  meResetInDaysHours: string;
   mePack: string;
   meUpgrade: string;
   meRecharge: string;
@@ -101,6 +102,7 @@ const ZH: UserProfileCopy = {
   meResetSoon: '即将重置',
   meResetInHours: '{n} 小时后重置',
   meResetInDays: '{n} 天后重置',
+  meResetInDaysHours: '{n} 天 {h} 小时后重置',
   mePack: '积分增量包',
   meUpgrade: '开通 / 升级套餐',
   meRecharge: '充值',
@@ -135,6 +137,7 @@ const EN: UserProfileCopy = {
   meResetSoon: 'Resets soon',
   meResetInHours: 'Resets in {n}h',
   meResetInDays: 'Resets in {n}d',
+  meResetInDaysHours: 'Resets in {n}d {h}h',
   mePack: 'Credit Pack',
   meUpgrade: 'Plans & upgrades',
   meRecharge: 'Top up',

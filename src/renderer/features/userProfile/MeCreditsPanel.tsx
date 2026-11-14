@@ -82,7 +82,9 @@ const MeCreditsPanel: React.FC = () => {
       ? copy.meResetSoon
       : reset.unit === 'hours'
         ? formatUserProfileCount(copy.meResetInHours, reset.n)
-        : formatUserProfileCount(copy.meResetInDays, reset.n);
+        : reset.hours > 0
+          ? copy.meResetInDaysHours.replace('{n}', String(reset.n)).replace('{h}', String(reset.hours))
+          : formatUserProfileCount(copy.meResetInDays, reset.n);
 
   const grantRatio = grantMe > 0 ? Math.max(0, Math.min(100, (remainingMe / grantMe) * 100)) : 0;
 
