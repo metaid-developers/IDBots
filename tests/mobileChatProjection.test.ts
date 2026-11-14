@@ -41,6 +41,25 @@ describe('mobile chat projection', () => {
     assert.deepEqual(views.map((entry) => [entry.id, entry.text]), [['a1', 'Visible answer']]);
   });
 
+  it('hides scheduled-task lifecycle and follow-up protocols without changing the user task or answer', () => {
+    const lifecycle = '[Scheduled task lifecycle] Task "Short result" (id abc), fire #1. Retire it when done.\n\n';
+    const contract = '[End-of-run follow-up contract] End this run\'s final message with exactly ONE tag:\nThe tag routes this session between the owner\'s Follow-Up list and the autonomous fold; a missing or wrong tag costs the owner attention they did not owe.\n\n';
+    const views = projectChatMessages([
+      message('scheduled', 'user', `${lifecycle}${contract}只回复：定时任务执行成功。不要调用工具。`),
+      message('answer', 'assistant', '定时任务执行成功\n[FOLLOW_UP: none]'),
+    ]);
+    assert.deepEqual(views.map((entry) => [entry.id, entry.text]), [
+      ['scheduled', '只回复：定时任务执行成功。不要调用工具。'],
+      ['answer', '定时任务执行成功'],
+    ]);
+  });
+
+  it('does not strip ordinary text that merely mentions follow-up protocols', () => {
+    const ordinary = 'Explain [Scheduled task lifecycle] and [End-of-run follow-up contract] to me';
+    const views = projectChatMessages([message('u1', 'user', ordinary)]);
+    assert.equal(views[0]?.text, ordinary);
+  });
+
   it('keeps terminal errors and owner progress visible — unknown ones as the localized one-liner', () => {
     const views = projectChatMessages([
       message('progress', 'assistant', 'A problem needs attention', { narration: true, ownerUpdateKind: 'problem' }),
