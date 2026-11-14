@@ -606,7 +606,12 @@ test('listStudioOpenDelegations keeps timed-out-but-running workers and enforces
       ? { status: 'completed', ownerIntent: 'Already done' }
       : { status: 'running', ownerIntent: `First line of intent for ${id}\nsecond line stays out` }),
     getSession: (id) => ({ status: id === 'ws-2' ? 'running' : 'completed' }),
-    getMetabotById: (id) => ({ name: `Bot${id}`, avatar: id === 2 ? 'data:image/png;base64,AA==' : 'file:///not-allowed' }),
+    getMetabotById: (id) => {
+      if (id === 2) return { name: 'Bot2', avatar: 'nft://mrc721/item1', avatar_fallback: 'data:image/png;base64,AA==' };
+      if (id === 3) return { name: 'Bot3', avatar: 'file:///not-allowed' };
+      return { name: `Bot${id}`, avatar: 'metafile://builtin-1.png' };
+    },
+    resolveAvatar: (avatar) => (avatar === 'metafile://builtin-1.png' ? 'data:image/png;base64,BB==' : undefined),
   };
   const list = listStudioOpenDelegations(deps, 'src-session', NOW);
   assert.deepEqual(list.map((entry) => entry.attemptId), ['att-timeout', 'att-run'], 'sorted by startedAt; the timed-out-but-running worker stays open');
@@ -616,8 +621,18 @@ test('listStudioOpenDelegations keeps timed-out-but-running workers and enforces
   assert.equal(timeout.title, 'First line of intent for step-2');
   assert.equal(timeout.startedAt, NOW - 7_000_000);
   const running = list[1];
-  assert.equal(running.workerAvatar, 'data:image/png;base64,AA==');
+  assert.equal(running.workerAvatar, 'data:image/png;base64,AA==', 'nft:// workers fall back to avatar_fallback');
   assert.equal(listStudioOpenDelegations(deps, 'other-session', NOW).length, 0, 'attempts belong to their source session only');
+
+  // Built-in metafile:// avatars resolve via deps.resolveAvatar.
+  const builtinDeps = {
+    ...deps,
+    listAttemptsForSourceSessions: () => [
+      { id: 'att-builtin', stepId: 'step-b', workerMetabotId: 7, workerSessionId: 'ws-7', status: 'running', queuedAt: iso(NOW - 1000), startedAt: iso(NOW - 500) },
+    ],
+  };
+  const builtinList = listStudioOpenDelegations(builtinDeps, 'src-session', NOW);
+  assert.equal(builtinList[0].workerAvatar, 'data:image/png;base64,BB==');
 });
 
 test('activity after a finished run starts a fresh stage while runtime noise does not', async (t) => {

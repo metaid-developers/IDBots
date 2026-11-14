@@ -240,3 +240,12 @@ test('WebGPU orb compiles pipelines asynchronously and tears down late timed-out
   assert.match(stage, /signal: abort\?\.signal/);
   assert.match(stage, /controller\.dispose\(!previous\?\.controller\)/);
 });
+
+test('worker visual sets avatar src without flickering and derives fallback initial from worker label', () => {
+  const stage = read('stage.js');
+  assert.match(stage, /fallback\.textContent = initial \|\| 'W'/);
+  assert.match(stage, /image\.dataset\.workerAvatarSrc !== avatar/);
+  assert.match(stage, /handoffImage\.dataset\.workerAvatarSrc !== avatar/);
+  const css = read('stage.css');
+  assert.match(css, /\.hybrid-avatar\[hidden\],\.handoff-avatar\[hidden\],\[data-worker-fallback\]\[hidden\]\{display:none\}/);
+});

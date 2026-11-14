@@ -462,23 +462,40 @@
     const fallback = $('[data-worker-fallback]');
     const handoffImage = $('[data-handoff-avatar]');
     const avatar = typeof worker?.avatar === 'string' && /^(?:data:image\/|https?:\/\/|avatars\/)/i.test(worker.avatar) ? worker.avatar : '';
+    const initial = typeof worker?.label === 'string' ? worker.label.trim().slice(0, 1).toUpperCase() : '';
+    fallback.textContent = initial || 'W';
     image.onerror = () => {
+      image.dataset.workerAvatarFailed = 'true';
       image.hidden = true;
       fallback.hidden = false;
       handoffImage.hidden = true;
     };
     handoffImage.onerror = () => {
+      handoffImage.dataset.workerAvatarFailed = 'true';
       handoffImage.hidden = true;
       image.hidden = true;
       fallback.hidden = false;
     };
     if (avatar) {
-      image.src = avatar;
-      handoffImage.src = avatar;
-      image.hidden = false;
-      handoffImage.hidden = false;
-      fallback.hidden = true;
+      if (image.dataset.workerAvatarSrc !== avatar) {
+        image.dataset.workerAvatarSrc = avatar;
+        image.dataset.workerAvatarFailed = 'false';
+        image.src = avatar;
+      }
+      if (handoffImage.dataset.workerAvatarSrc !== avatar) {
+        handoffImage.dataset.workerAvatarSrc = avatar;
+        handoffImage.dataset.workerAvatarFailed = 'false';
+        handoffImage.src = avatar;
+      }
+      const failed = image.dataset.workerAvatarFailed === 'true' || handoffImage.dataset.workerAvatarFailed === 'true';
+      image.hidden = failed;
+      handoffImage.hidden = failed;
+      fallback.hidden = !failed;
     } else {
+      delete image.dataset.workerAvatarSrc;
+      delete handoffImage.dataset.workerAvatarSrc;
+      delete image.dataset.workerAvatarFailed;
+      delete handoffImage.dataset.workerAvatarFailed;
       image.removeAttribute('src');
       handoffImage.removeAttribute('src');
       image.hidden = true;

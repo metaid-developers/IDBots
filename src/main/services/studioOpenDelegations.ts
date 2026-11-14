@@ -34,6 +34,7 @@ export type StudioOpenDelegationSession = {
 export type StudioOpenDelegationMetabot = {
   name?: string | null;
   avatar?: string | null;
+  avatar_fallback?: string | null;
 };
 
 export type StudioOpenDelegationsDeps = {
@@ -42,6 +43,7 @@ export type StudioOpenDelegationsDeps = {
   getTaskForStep(stepId: string): StudioOpenDelegationTask | null;
   getSession(sessionId: string): StudioOpenDelegationSession | null;
   getMetabotById(metabotId: number): StudioOpenDelegationMetabot | null;
+  resolveAvatar?(avatar: unknown): string | undefined;
 };
 
 export type StudioOpenDelegation = {
@@ -49,6 +51,7 @@ export type StudioOpenDelegation = {
   workerMetabotId: number;
   workerName?: string;
   workerAvatar?: string;
+  workerAvatarRef?: string;
   workerSessionId?: string;
   title: string;
   /** Epoch ms; `startedAt` when known, otherwise `queuedAt`. */
@@ -103,13 +106,23 @@ export function listStudioOpenDelegations(
     const step = deps.getStep(attempt.stepId);
     const metabot = deps.getMetabotById(attempt.workerMetabotId);
     const name = typeof metabot?.name === 'string' ? metabot.name.trim().slice(0, 80) : '';
-    const avatar = typeof metabot?.avatar === 'string' && SAFE_AVATAR_PATTERN.test(metabot.avatar) ? metabot.avatar : undefined;
+    const pickSafeAvatar = (candidate: unknown): string | undefined => {
+      if (typeof candidate !== 'string' || !candidate) return undefined;
+      if (SAFE_AVATAR_PATTERN.test(candidate)) return candidate;
+      const resolved = deps.resolveAvatar?.(candidate);
+      return typeof resolved === 'string' && SAFE_AVATAR_PATTERN.test(resolved) ? resolved : undefined;
+    };
+    const avatar = pickSafeAvatar(metabot?.avatar) ?? pickSafeAvatar(metabot?.avatar_fallback);
+    const unresolvedRef = !avatar && typeof metabot?.avatar === 'string' && /^(?:metafile|nft):\/\//i.test(metabot.avatar.trim())
+      ? metabot.avatar.trim()
+      : undefined;
     const startedMs = Date.parse(attempt.startedAt ?? '') || queuedMs;
     entries.push({
       attemptId: attempt.id,
       workerMetabotId: attempt.workerMetabotId,
       ...(name ? { workerName: name } : {}),
       ...(avatar ? { workerAvatar: avatar } : {}),
+      ...(unresolvedRef ? { workerAvatarRef: unresolvedRef } : {}),
       ...(attempt.workerSessionId ? { workerSessionId: attempt.workerSessionId } : {}),
       title: clipTitle(task?.ownerIntent) || clipTitle(step?.title),
       startedAt: startedMs,

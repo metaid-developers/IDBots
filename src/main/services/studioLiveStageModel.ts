@@ -603,10 +603,13 @@ export function reduceLiveStageMessage(
   // The effective worker is the freshly reported one, else the worker already
   // on the structured topology — sceneFor needs it to decide which nodes are
   // real (a verification only shows a worker that was actually dispatched).
-  const workerLabel = options.workerName?.trim().slice(0, 80)
-    || (state.topology.mode === 'structured' ? state.topology.nodes.find((node) => node.kind === 'worker')?.label : undefined);
-  const workerAvatar = options.workerAvatar
-    || (state.topology.mode === 'structured' ? state.topology.nodes.find((node) => node.kind === 'worker')?.avatar : undefined);
+  const previousWorker = state.topology.mode === 'structured'
+    ? state.topology.nodes.find((node) => node.kind === 'worker')
+    : undefined;
+  const incomingName = options.workerName?.trim().slice(0, 80);
+  const workerLabel = incomingName || previousWorker?.label;
+  const sameWorker = !incomingName || !previousWorker?.label || incomingName === previousWorker.label;
+  const workerAvatar = options.workerAvatar || (sameWorker ? previousWorker?.avatar : undefined);
   const scene = sceneFor(family, state.language, state.botName, workerLabel);
   if (workerLabel && scene.topology.mode === 'structured') {
     scene.topology.nodes = scene.topology.nodes.map((node) => node.kind === 'worker'
@@ -614,6 +617,10 @@ export function reduceLiveStageMessage(
       : node);
     scene.participants = scene.participants.map((participant, index) => index === 1 ? workerLabel : participant);
   }
+  const nextWorkerAvatar = scene.topology.mode === 'structured'
+    ? scene.topology.nodes.find((node) => node.kind === 'worker')?.avatar
+    : undefined;
+  const workerAvatarChanged = (nextWorkerAvatar ?? null) !== (previousWorker?.avatar ?? null);
   const handoff = family === 'worker-report'
     ? { direction: 'return' as const, eventId: typeof metadata?.crossSessionDeliveryId === 'string' ? metadata.crossSessionDeliveryId : message.id }
     : family === 'delegation'
@@ -626,7 +633,7 @@ export function reduceLiveStageMessage(
   // bubbles, bookkeeping tool results, owner_update/projection_begin) leaves
   // the stage exactly where it was — including any speech already on screen.
   if (!familyChanged && headline == null && caption == null
-    && pendingProjectionIds === state.pendingProjectionIds && !handoffChanged) {
+    && pendingProjectionIds === state.pendingProjectionIds && !handoffChanged && !workerAvatarChanged) {
     return state;
   }
   // Same-family updates without fresh copy keep the visible headline/caption

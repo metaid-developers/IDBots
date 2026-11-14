@@ -38,10 +38,17 @@ const DIRECTOR_FAMILIES = new Set([
 type MetabotLiveStageIdentity = {
   name?: string | null;
   avatar?: string | null;
+  avatar_fallback?: string | null;
   llm_id?: string | null;
   llm_provider?: string | null;
   fallback_llm_id?: string | null;
   fallback_llm_provider?: string | null;
+};
+
+type WorkerIdentity = {
+  name?: string;
+  avatar?: string;
+  rawAvatarRef?: string;
 };
 
 type LiveStageRun = {
@@ -88,6 +95,10 @@ type LiveStageRun = {
   interactionTimer: NodeJS.Timeout | null;
   interactionInFlight: boolean;
   template: StudioLiveStageTemplateResolution;
+  /** Most recent collaborating worker in this turn (survives intermediate speaking/bash beats). */
+  lastWorker: WorkerIdentity | null;
+  /** Async avatar refs already requested for this run. */
+  pendingAvatarRefs: Set<string>;
   /**
    * The next stage-role projection may adopt the renderer's prewarmed draft
    * tab unconditionally — set for a brand-new conversation's first run
@@ -145,6 +156,8 @@ export type StudioLiveStageServiceDeps = {
   activateStageTab?(sessionId: string): void | Promise<void>;
   /** Map a non-renderable avatar reference (a built-in metafile://) to a data URI. */
   resolveAvatar?(avatar: unknown): string | undefined;
+  /** Resolve a remote avatar reference (metafile:// or nft://) to a data/http URI. */
+  resolveAvatarAsync?(avatar: unknown): Promise<string | undefined>;
 };
 
 export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
@@ -165,12 +178,25 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     };
   };
 
+  const resolvedAsyncAvatars = new Map<string, string>();
   const renderableAvatar = (avatar: unknown): string | undefined => typeof avatar === 'string' && /^(?:data:image\/|https?:\/\/)/i.test(avatar) ? avatar : undefined;
-  const safeAvatar = (avatar: unknown): string | undefined => renderableAvatar(avatar) ?? renderableAvatar(deps.resolveAvatar?.(avatar));
+  const unresolvedAvatarRef = (avatar: unknown): string | undefined => {
+    if (typeof avatar !== 'string') return undefined;
+    const trimmed = avatar.trim();
+    return /^(?:metafile|nft):\/\//i.test(trimmed) ? trimmed : undefined;
+  };
+  const safeOneAvatar = (avatar: unknown): string | undefined => {
+    const direct = renderableAvatar(avatar) ?? renderableAvatar(deps.resolveAvatar?.(avatar));
+    if (direct) return direct;
+    const ref = unresolvedAvatarRef(avatar);
+    return ref ? resolvedAsyncAvatars.get(ref) : undefined;
+  };
+  const safeAvatar = (avatar: unknown, fallback?: unknown): string | undefined =>
+    safeOneAvatar(avatar) ?? safeOneAvatar(fallback);
 
   const avatarFor = (session: CoworkSession): string => {
     const metabot = session.metabotId == null ? null : deps.getMetabotById(session.metabotId);
-    return safeAvatar(session.metabotAvatar ?? metabot?.avatar) ?? deps.fallbackAvatarDataUri;
+    return safeAvatar(session.metabotAvatar ?? metabot?.avatar, metabot?.avatar_fallback) ?? deps.fallbackAvatarDataUri;
   };
 
   /**
@@ -187,19 +213,51 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     return session.metabotName ?? metabot?.name ?? 'Twin';
   };
 
-  const workerIdentityFor = (message: CoworkMessage): { name?: string; avatar?: string } => {
-    const metadata = message.metadata as { sourceSessionId?: unknown; toolInput?: { workerMetabotId?: unknown } } | undefined;
-    if (typeof metadata?.sourceSessionId === 'string') {
-      const sourceSession = deps.getSession(metadata.sourceSessionId);
-      if (sourceSession) {
-        const metabot = sourceSession.metabotId == null ? null : deps.getMetabotById(sourceSession.metabotId);
-        return { name: botNameFor(sourceSession), avatar: safeAvatar(sourceSession.metabotAvatar ?? metabot?.avatar) };
-      }
+  const sessionWorkerIdentity = (targetSessionId: string): WorkerIdentity => {
+    const sourceSession = deps.getSession(targetSessionId);
+    if (!sourceSession) return {};
+    const metabot = sourceSession.metabotId == null ? null : deps.getMetabotById(sourceSession.metabotId);
+    const avatar = safeAvatar(sourceSession.metabotAvatar ?? metabot?.avatar, metabot?.avatar_fallback);
+    const rawAvatarRef = avatar ? undefined : (unresolvedAvatarRef(metabot?.avatar) ?? unresolvedAvatarRef(sourceSession.metabotAvatar));
+    return {
+      name: botNameFor(sourceSession),
+      ...(avatar ? { avatar } : {}),
+      ...(rawAvatarRef ? { rawAvatarRef } : {}),
+    };
+  };
+
+  const positiveInt = (value: unknown): number | null => {
+    if (typeof value === 'number' && Number.isInteger(value) && value > 0) return value;
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value.trim());
+      if (Number.isInteger(parsed) && parsed > 0) return parsed;
     }
-    const workerId = metadata?.toolInput?.workerMetabotId;
-    if (typeof workerId === 'number' && Number.isInteger(workerId) && workerId > 0) {
+    return null;
+  };
+
+  const workerIdentityFor = (message: CoworkMessage): WorkerIdentity => {
+    const metadata = message.metadata as {
+      sourceSessionId?: unknown;
+      toolInput?: { workerMetabotId?: unknown; targetSessionId?: unknown };
+    } | undefined;
+    if (typeof metadata?.sourceSessionId === 'string' && metadata.sourceSessionId.trim()) {
+      const identity = sessionWorkerIdentity(metadata.sourceSessionId.trim());
+      if (identity.name || identity.avatar) return identity;
+    }
+    const workerId = positiveInt(metadata?.toolInput?.workerMetabotId);
+    if (workerId != null) {
       const worker = deps.getMetabotById(workerId);
-      return { name: worker?.name?.trim().slice(0, 80) || undefined, avatar: safeAvatar(worker?.avatar) };
+      const avatar = safeAvatar(worker?.avatar, worker?.avatar_fallback);
+      const rawAvatarRef = avatar ? undefined : unresolvedAvatarRef(worker?.avatar);
+      return {
+        name: worker?.name?.trim().slice(0, 80) || undefined,
+        ...(avatar ? { avatar } : {}),
+        ...(rawAvatarRef ? { rawAvatarRef } : {}),
+      };
+    }
+    if (typeof metadata?.toolInput?.targetSessionId === 'string' && metadata.toolInput.targetSessionId.trim()) {
+      const identity = sessionWorkerIdentity(metadata.toolInput.targetSessionId.trim());
+      if (identity.name || identity.avatar) return identity;
     }
     return {};
   };
@@ -574,10 +632,52 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     }
   }
 
+  function resolveWorkerAvatarAsync(run: LiveStageRun, rawRef: string | undefined, workerName?: string): void {
+    if (!rawRef || !deps.resolveAvatarAsync || run.pendingAvatarRefs.has(rawRef)) return;
+    run.pendingAvatarRefs.add(rawRef);
+    void deps.resolveAvatarAsync(rawRef).then((resolved) => {
+      const safe = renderableAvatar(resolved);
+      if (!safe) return;
+      resolvedAsyncAvatars.set(rawRef, safe);
+      if (runs.get(run.state.sessionId) !== run) return;
+      const asset = stageAvatarFor(run, safe);
+      if (!asset) return;
+      if (run.lastWorker && run.lastWorker.rawAvatarRef === rawRef && !run.lastWorker.avatar) {
+        run.lastWorker = { ...run.lastWorker, avatar: asset };
+      }
+      if (run.state.topology.mode !== 'structured') return;
+      const workerNode = run.state.topology.nodes.find((node) => node.kind === 'worker');
+      if (!workerNode || workerNode.avatar) return;
+      if (workerName && workerNode.label !== workerName && !workerNode.label.startsWith(`${workerName} `)) return;
+      const nextState: LiveStageState = {
+        ...run.state,
+        revision: run.state.revision + 1,
+        topology: {
+          ...run.state.topology,
+          nodes: run.state.topology.nodes.map((node) => (node.kind === 'worker' ? { ...node, avatar: asset } : node)),
+        },
+      };
+      commitRunState(run, nextState);
+      schedulePatch(run);
+    }).catch(() => undefined);
+  }
+
   function applyDelegationWait(run: LiveStageRun, delegations: StudioOpenDelegation[]): void {
     const first = delegations[0];
     const startedAt = delegations.reduce((min, entry) => Math.min(min, entry.startedAt), first.startedAt);
-    const signature = JSON.stringify([delegations.length, first.workerName ?? '', first.title ?? '', startedAt]);
+    const rawAvatar = safeAvatar(first.workerAvatar) ?? (first.workerAvatarRef ? resolvedAsyncAvatars.get(first.workerAvatarRef) : undefined);
+    const workerAvatar = stageAvatarFor(run, rawAvatar);
+    if (!workerAvatar && first.workerAvatarRef) {
+      resolveWorkerAvatarAsync(run, first.workerAvatarRef, first.workerName);
+    }
+    if (first.workerName || workerAvatar || first.workerAvatarRef) {
+      run.lastWorker = {
+        ...(first.workerName ? { name: first.workerName } : {}),
+        ...(workerAvatar ? { avatar: workerAvatar } : {}),
+        ...(first.workerAvatarRef ? { rawAvatarRef: first.workerAvatarRef } : {}),
+      };
+    }
+    const signature = JSON.stringify([delegations.length, first.workerName ?? '', workerAvatar ?? '', first.title ?? '', startedAt]);
     if (run.state.family === 'waiting' && run.waitingSignature === signature) return;
     run.waitingSignature = signature;
     // The delegation clock starts at the earliest worker start, not at the
@@ -585,7 +685,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     run.delegationStartedAt = startedAt;
     const nextState = waitingLiveStage(run.state, {
       workerName: first.workerName,
-      workerAvatar: stageAvatarFor(run, first.workerAvatar),
+      workerAvatar,
       title: first.title,
       total: delegations.length,
       startedAt,
@@ -761,6 +861,8 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       interactionTimer: null,
       interactionInFlight: false,
       template,
+      lastWorker: null,
+      pendingAvatarRefs: new Set(),
       draftClaimPending,
     };
     if (run.template.status === 'fallback') {
@@ -835,7 +937,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     const stageDir = entry?.dir ?? '';
     const avatar = metabotId == null
       ? deps.fallbackAvatarDataUri
-      : safeAvatar(metabot?.avatar) ?? deps.fallbackAvatarDataUri;
+      : safeAvatar(metabot?.avatar, metabot?.avatar_fallback) ?? deps.fallbackAvatarDataUri;
     const state: LiveStageState = {
       ...createLiveStageState({
         sessionId: '',
@@ -910,8 +1012,53 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     if (message.type === 'assistant' && !message.metadata?.isThinking) {
       run.latestSpeakingId = message.id;
     }
-    const worker = workerIdentityFor(message);
-    const nextState = reduceLiveStageMessage(run.state, message, { workerName: worker.name, workerAvatar: stageAvatarFor(run, worker.avatar), nowMs: now() });
+    const directWorker = workerIdentityFor(message);
+    const toolName = message.type === 'tool_use' && typeof message.metadata?.toolName === 'string'
+      ? message.metadata.toolName.toLowerCase()
+      : '';
+    const isWorkerStageEvent = isLiveStageWorkerReport(message)
+      || toolName === 'local_worker_delegate'
+      || toolName === 'idbots_session_insert_user_message'
+      || toolName === 'twin_task_reassign'
+      || toolName === 'twin_task_status'
+      || toolName === 'twin_task_accept'
+      || toolName === 'longterm_subtask_wait'
+      || (toolName === 'bot_browser_screenshot' || toolName === 'bot_browser_read_page' || toolName === 'mrc721_item_info');
+    let effectiveWorker: WorkerIdentity = directWorker;
+    if (directWorker.name || directWorker.avatar || directWorker.rawAvatarRef) {
+      const materialized = stageAvatarFor(run, directWorker.avatar);
+      run.lastWorker = {
+        ...(directWorker.name ? { name: directWorker.name } : {}),
+        ...(materialized ? { avatar: materialized } : {}),
+        ...(directWorker.rawAvatarRef ? { rawAvatarRef: directWorker.rawAvatarRef } : {}),
+      };
+      if (!materialized && directWorker.rawAvatarRef) {
+        resolveWorkerAvatarAsync(run, directWorker.rawAvatarRef, directWorker.name);
+      }
+      effectiveWorker = { ...directWorker, avatar: materialized };
+    } else if (isWorkerStageEvent) {
+      if (run.lastWorker) {
+        effectiveWorker = run.lastWorker;
+      } else if (toolName === 'twin_task_status' || toolName === 'twin_task_accept' || toolName === 'longterm_subtask_wait') {
+        const openFirst = openDelegationsFor(run)[0];
+        if (openFirst) {
+          const openAvatar = stageAvatarFor(
+            run,
+            safeAvatar(openFirst.workerAvatar) ?? (openFirst.workerAvatarRef ? resolvedAsyncAvatars.get(openFirst.workerAvatarRef) : undefined),
+          );
+          effectiveWorker = {
+            ...(openFirst.workerName ? { name: openFirst.workerName } : {}),
+            ...(openAvatar ? { avatar: openAvatar } : {}),
+            ...(openFirst.workerAvatarRef ? { rawAvatarRef: openFirst.workerAvatarRef } : {}),
+          };
+          run.lastWorker = effectiveWorker;
+          if (!openAvatar && openFirst.workerAvatarRef) {
+            resolveWorkerAvatarAsync(run, openFirst.workerAvatarRef, openFirst.workerName);
+          }
+        }
+      }
+    }
+    const nextState = reduceLiveStageMessage(run.state, message, { workerName: effectiveWorker.name, workerAvatar: effectiveWorker.avatar, nowMs: now() });
     if (nextState === run.state) return;
     commitRunState(run, nextState);
     schedulePatch(run);
