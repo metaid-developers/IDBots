@@ -1040,3 +1040,4 @@ blob-report/
 !tests/coworkMessagesFtsSearch.test.mjs
 !tests/coworkSessionSummaryDelta.test.mjs
 !tests/coworkTranscriptPerfAndGitProbe.test.mjs
+!tests/dshMemoryAdaptivePolicy.test.mjs

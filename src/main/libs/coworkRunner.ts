@@ -19,7 +19,7 @@ import { resolveCoworkExecutionMode } from './coworkExecutionMode';
 import { buildGoalPromptSection, type CoworkSessionGoal } from './coworkSessionGoal';
 import { buildDispatchReportMessage, tailDispatchReportExcerpt } from './coworkCrossSessionReport';
 import { formatHostToolSchemaGuardWarning, guardHostToolSchemas, normalizeHostToolParameters } from './hostToolSchemaGuard';
-import { DshTurnHub, dshSessionRootFor, isNativeDeepSeekChatRoute, DSH_RUNTIME_IDLE_TTL_MS, type DshTurnProviderRoute } from './coworkDshTurn';
+import { DshTurnHub, dshSessionRootFor, isNativeDeepSeekChatRoute, DSH_RUNTIME_IDLE_TTL_MS, shouldSkipSecondaryCleanWarmupForMemory, type DshTurnProviderRoute } from './coworkDshTurn';
 import { getDshWebToolsProxyDescriptor } from '../services/dshWebToolsProxy';
 import { getMeBalance } from '../services/mePointsService';
 import { noteOwnerAskCancelled } from '../services/pendingOwnerAskBridge';
@@ -10858,6 +10858,7 @@ export class CoworkRunner extends EventEmitter {
       const comboWarm: Array<{
         row: { id: string; cwd?: string | null };
         route: ReturnType<typeof resolveDshProviderRoute>;
+        hasAutomation: boolean;
       }> = [];
       for (const row of rowsAttendedFirst) {
         if (comboWarm.length >= COWORK_WARMUP_COMBO_LIMIT) break;
@@ -10870,7 +10871,7 @@ export class CoworkRunner extends EventEmitter {
           const identity = `${route.provider}|${route.baseUrl}|${route.model}|${browser ? 'b' : ''}${computer ? 'c' : ''}`;
           if (comboSeen.has(identity)) continue;
           comboSeen.add(identity);
-          comboWarm.push({ row, route });
+          comboWarm.push({ row, route, hasAutomation: browser || computer });
         } catch {
           // Unresolvable rows degrade out of the combo list.
         }
@@ -10932,8 +10933,17 @@ export class CoworkRunner extends EventEmitter {
       // boots on composer intent or on demand and rides the hub's serialized
       // boot queue.
       const [topCombo] = comboWarm;
-      if (topCombo) await bootComboSlot(topCombo);
-      if (warmRoutes[0]) await bootCleanSlot(warmRoutes[0]);
+      const hasComboWarmupSupport = typeof hub.prewarmTurnSlot === 'function';
+      if (topCombo && hasComboWarmupSupport) {
+        await bootComboSlot(topCombo);
+      }
+      const skipCleanSlot = shouldSkipSecondaryCleanWarmupForMemory({
+        hasComboWarmupSupport,
+        topComboHasAutomation: Boolean(topCombo?.hasAutomation),
+      });
+      if (warmRoutes[0] && !skipCleanSlot) {
+        await bootCleanSlot(warmRoutes[0]);
+      }
     } catch (error) {
       coworkLog('WARN', 'prewarmDshRuntime', 'Warmup failed; first turn will cold-start', {
         error: error instanceof Error ? error.message : String(error),
