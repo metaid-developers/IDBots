@@ -105,7 +105,7 @@ const AcceptanceSummaryCard: React.FC<{
           <button
             type="button"
             onClick={actions.onAccept}
-            className="px-3 py-1.5 text-sm font-medium rounded-lg bg-emerald-500 text-white hover:bg-emerald-600 transition-colors"
+            className="border border-emerald-600 px-3 py-1.5 text-sm font-medium rounded-lg bg-emerald-500 text-white hover:bg-emerald-600 transition-colors"
           >
             {i18nService.t('groupTasksAcceptClose')}
           </button>

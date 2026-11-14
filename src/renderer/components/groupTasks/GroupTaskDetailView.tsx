@@ -704,7 +704,7 @@ const GroupTaskDetailView: React.FC<GroupTaskDetailViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setConfirmAction('done')}
-                  className="px-2.5 py-1 text-xs font-medium rounded-lg whitespace-nowrap shrink-0 bg-emerald-500 text-white hover:bg-emerald-600 transition-colors"
+                  className="border border-emerald-600 px-2.5 py-1 text-xs font-medium rounded-lg whitespace-nowrap shrink-0 bg-emerald-500 text-white hover:bg-emerald-600 transition-colors"
                 >
                   {i18nService.t('groupTasksAcceptClose')}
                 </button>

@@ -366,7 +366,7 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({
               avatar: authorBrowserTarget.avatar,
             });
           }}
-          className="min-w-0 flex items-center gap-2 rounded-full text-left transition-shadow hover:ring-2 hover:ring-claude-accent/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/60"
+          className="min-w-0 flex items-center gap-2 rounded-[var(--shape-radius-sm)] text-left transition-shadow hover:ring-2 hover:ring-claude-accent/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/60"
         >
           {authorContent}
         </button>

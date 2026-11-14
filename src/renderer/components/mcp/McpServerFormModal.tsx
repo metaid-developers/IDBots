@@ -439,7 +439,7 @@ const McpServerFormModal: React.FC<McpServerFormModalProps> = ({
             <button
               type="button"
               onClick={handleSave}
-              className="btn-idchat-primary-filled px-3 py-1.5 text-xs"
+              className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] rounded-lg px-3 py-1.5 text-xs"
             >
               {saveText}
             </button>

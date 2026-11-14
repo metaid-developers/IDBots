@@ -179,7 +179,7 @@ const LongTermTaskDetail: React.FC<{ taskId: string }> = ({ taskId }) => {
           <button
             type="button"
             onClick={() => void runAction(() => longTermTaskService.setStage({ taskId: detail.id, action: 'resume' }))}
-            className="rounded-[var(--shape-radius-md)] border border-[var(--btn-primary-edge)] bg-claude-primary text-claude-accentInk px-3 py-1 text-xs font-medium hover:brightness-[0.96] active:brightness-[0.9] transition-[filter]"
+            className="rounded-[var(--shape-radius-md)] border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk px-3 py-1 text-xs font-medium hover:brightness-[0.96] active:brightness-[0.9] transition-[filter]"
           >
             {i18nService.t('longTermTask.action.resume')}
           </button>
@@ -188,7 +188,7 @@ const LongTermTaskDetail: React.FC<{ taskId: string }> = ({ taskId }) => {
           <button
             type="button"
             onClick={() => setConfirming('complete')}
-            className="rounded-[var(--shape-radius-md)] border border-[var(--btn-primary-edge)] bg-claude-primary text-claude-accentInk px-3 py-1 text-xs font-medium hover:brightness-[0.96] active:brightness-[0.9] transition-[filter]"
+            className="rounded-[var(--shape-radius-md)] border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk px-3 py-1 text-xs font-medium hover:brightness-[0.96] active:brightness-[0.9] transition-[filter]"
             title={i18nService.t('longTermTask.action.completeHint')}
           >
             {i18nService.t('longTermTask.action.complete')}
@@ -531,7 +531,7 @@ const LongTermTaskDetail: React.FC<{ taskId: string }> = ({ taskId }) => {
                 <button
                   type="button"
                   onClick={() => openSessionWithDraft(selectedSubtask, false)}
-                  className="rounded-[var(--shape-radius-md)] border border-[var(--btn-primary-edge)] bg-claude-primary text-claude-accentInk px-3 py-1.5 text-xs font-medium hover:brightness-[0.96] active:brightness-[0.9] transition-[filter]"
+                  className="rounded-[var(--shape-radius-md)] border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk px-3 py-1.5 text-xs font-medium hover:brightness-[0.96] active:brightness-[0.9] transition-[filter]"
                 >
                   {i18nService.t('longTermTask.action.openSession')}
                 </button>
@@ -565,7 +565,7 @@ const LongTermTaskDetail: React.FC<{ taskId: string }> = ({ taskId }) => {
                     <button
                       type="button"
                       onClick={() => void runAction(() => longTermTaskService.acceptSubtask(detail.id, selectedSubtask.id))}
-                      className="rounded-[var(--shape-radius-md)] border border-[var(--btn-primary-edge)] bg-claude-primary text-claude-accentInk px-3 py-1.5 text-xs font-medium hover:brightness-[0.96] active:brightness-[0.9] transition-[filter]"
+                      className="rounded-[var(--shape-radius-md)] border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk px-3 py-1.5 text-xs font-medium hover:brightness-[0.96] active:brightness-[0.9] transition-[filter]"
                     >
                       {i18nService.t('longTermTask.action.accept')}
                     </button>
@@ -645,7 +645,7 @@ const LongTermTaskDetail: React.FC<{ taskId: string }> = ({ taskId }) => {
                       onClick={() =>
                         void runAction(() => longTermTaskService.rejectSubtask(detail.id, selectedSubtask.id, rejectText.trim())).then(() => setRejectingId(null))
                       }
-                      className="rounded-lg bg-red-500/90 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+                      className="border border-red-600 rounded-lg bg-red-500/90 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
                     >
                       {i18nService.t('longTermTask.rejectConfirm')}
                     </button>

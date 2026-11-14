@@ -793,7 +793,7 @@ const IMSettings: React.FC = () => {
       type="button"
       onClick={() => handleConnectivityTest(platform)}
       disabled={isLoading || testingPlatform === platform}
-      className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+      className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
     >
       <SignalIcon className="h-3.5 w-3.5 mr-1.5" />
       {testingPlatform === platform
@@ -1158,7 +1158,7 @@ const IMSettings: React.FC = () => {
                   type="button"
                   onClick={() => { void handleWeixinScan(); }}
                   disabled={weixinLoginLoading}
-                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   <SignalIcon className="h-3.5 w-3.5 mr-1.5" />
                   {weixinLoginLoading ? i18nService.t('loading') : i18nService.t('weixinScanConnect')}
@@ -1167,7 +1167,7 @@ const IMSettings: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => { void handleWeixinCancelScan(); }}
-                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors active:scale-[0.98]"
+                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
                 >
                   <XMarkIcon className="h-3.5 w-3.5 mr-1.5" />
                   {i18nService.t('weixinScanCancel')}
@@ -1177,7 +1177,7 @@ const IMSettings: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => { void imService.stopGateway('weixin'); }}
-                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors active:scale-[0.98]"
+                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
                 >
                   {i18nService.t('weixinDisconnect')}
                 </button>
@@ -1276,7 +1276,7 @@ const IMSettings: React.FC = () => {
                   type="button"
                   onClick={() => { void handleQQScan(); }}
                   disabled={qqLoginLoading}
-                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   <SignalIcon className="h-3.5 w-3.5 mr-1.5" />
                   {qqLoginLoading ? i18nService.t('loading') : i18nService.t('qqScanConnect')}
@@ -1285,7 +1285,7 @@ const IMSettings: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => { void handleQQCancelScan(); }}
-                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors active:scale-[0.98]"
+                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
                 >
                   <XMarkIcon className="h-3.5 w-3.5 mr-1.5" />
                   {i18nService.t('qqScanCancel')}
@@ -1295,7 +1295,7 @@ const IMSettings: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => { void imService.stopGateway('qq'); }}
-                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors active:scale-[0.98]"
+                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
                 >
                   {i18nService.t('qqDisconnect')}
                 </button>
@@ -1334,7 +1334,7 @@ const IMSettings: React.FC = () => {
                   type="button"
                   onClick={() => { void handleQQFillCredentials(); }}
                   disabled={qqSaving}
-                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {qqSaving ? i18nService.t('loading') : i18nService.t('qqSaveConnect')}
                 </button>
@@ -1448,7 +1448,7 @@ const IMSettings: React.FC = () => {
                               <button
                                 type="button"
                                 onClick={() => { void allowQQGroup(candidate.groupId); }}
-                                className="px-2.5 py-1 text-[11px] font-medium rounded-lg bg-claude-accent text-claude-accentInk hover:opacity-90 transition-opacity"
+                                className="border border-[var(--btn-primary-edge)] px-2.5 py-1 text-[11px] font-medium rounded-lg bg-claude-accent text-claude-accentInk hover:opacity-90 transition-opacity"
                               >
                                 {i18nService.t('qqPendingGroupAllow')}
                               </button>

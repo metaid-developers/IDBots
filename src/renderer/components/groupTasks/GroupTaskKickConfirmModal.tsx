@@ -71,7 +71,7 @@ const GroupTaskKickConfirmModal: React.FC<GroupTaskKickConfirmModalProps> = ({
               type="button"
               onClick={onConfirm}
               disabled={kicking}
-              className="flex-1 px-4 py-2 text-sm rounded-lg text-white transition-colors disabled:opacity-50 bg-red-500 hover:bg-red-600"
+              className="border border-red-600 flex-1 px-4 py-2 text-sm rounded-lg text-white transition-colors disabled:opacity-50 bg-red-500 hover:bg-red-600"
             >
               {kicking ? i18nService.t('groupTasksRemovingMember') : i18nService.t('groupTasksRemoveMember')}
             </button>

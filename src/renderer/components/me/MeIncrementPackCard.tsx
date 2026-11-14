@@ -118,14 +118,14 @@ const MeIncrementPackCard: React.FC = () => {
           <button
             type="button"
             onClick={() => requestOpenMePurchase('topup')}
-            className="btn-idchat-primary-filled inline-flex items-center justify-center rounded-xl px-3 py-1.5 text-xs font-medium"
+            className="inline-flex items-center justify-center rounded-[var(--shape-radius-md)] border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk px-3 py-1.5 text-xs font-medium hover:brightness-[0.96] active:brightness-[0.9] transition-[filter]"
           >
             {i18nService.t('meIncrementPackBuy')}
           </button>
           <button
             type="button"
             onClick={() => requestOpenUsagePage()}
-            className="inline-flex items-center justify-center rounded-xl px-3 py-1.5 text-xs font-medium border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors active:scale-[0.98]"
+            className="inline-flex items-center justify-center rounded-[var(--shape-radius-md)] px-3 py-1.5 text-xs font-medium border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
           >
             {i18nService.t('meIncrementPackDetails')}
           </button>
