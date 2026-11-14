@@ -231,7 +231,7 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
       data-rail-surface={mode}
       aria-label={i18nService.t('workspaceRailLabel')}
       onDoubleClick={handleRailDoubleClick}
-      className="relative z-30 flex w-16 shrink-0 flex-col items-center dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted"
+      className="relative z-30 flex w-16 shrink-0 flex-col items-center dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted border-r border-claude-border/60 dark:border-claude-darkBorder/60"
     >
       {/* Row 1 is the pure traffic-light reservation (52 px on mac — the
           lights, trafficLightPosition y=20, own it alone). Row 2 is the
