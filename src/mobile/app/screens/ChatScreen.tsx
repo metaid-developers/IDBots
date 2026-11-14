@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Bars3Icon, PlusIcon, PaperClipIcon, FaceSmileIcon, StopIcon, EllipsisHorizontalIcon, MagnifyingGlassIcon, PencilSquareIcon, TrashIcon, XMarkIcon, ArrowDownIcon } from '@heroicons/react/24/outline';
+import { Bars3Icon, PlusIcon, PaperClipIcon, FaceSmileIcon, StopIcon, EllipsisHorizontalIcon, MagnifyingGlassIcon, PencilSquareIcon, TrashIcon, XMarkIcon, ArrowDownIcon, PaperAirplaneIcon } from '@heroicons/react/24/outline';
 import MarkdownContent from '@/components/MarkdownContent';
 import MobileArtifactPreview from '../components/MobileArtifactPreview';
 import CoworkPermissionPanel from '@/components/cowork/CoworkPermissionPanel';
@@ -851,8 +851,19 @@ export default function ChatScreen(props: {
               <StopIcon className="h-5 w-5" aria-hidden />
             </button>
           ) : (
-            <div className="twin-composer-tail">
-              <VoiceButton
+            <>
+              <button
+                type="button"
+                onClick={submit}
+                disabled={!canSubmit}
+                aria-label={t('mobile.chat.send')}
+                className="twin-icon-button twin-icon-button-primary twin-composer-tail"
+                data-testid="composer-send"
+              >
+                <PaperAirplaneIcon className="h-5 w-5" aria-hidden />
+              </button>
+              <div className="twin-composer-tail">
+                <VoiceButton
                 state={voice.state}
                 elapsedSec={voice.elapsedSec}
                 recognizedText={voice.recognizedText}
@@ -867,7 +878,8 @@ export default function ChatScreen(props: {
                 onDismissError={voice.dismissError}
                 onHoldCancelled={handleVoiceHoldCancelled}
               />
-            </div>
+              </div>
+            </>
           )}
         </div>
       </div>
