@@ -1043,3 +1043,4 @@ blob-report/
 !tests/dshMemoryAdaptivePolicy.test.mjs
 !tests/cerebellumBundlePerfAndBreaker.test.mjs
 !tests/loggingAndMessageIndexPerf.test.mjs
+!tests/streamingMarkdownBlocks.test.ts

@@ -1683,6 +1683,7 @@ const AssistantMessageItem: React.FC<{
                   bubble — assistant narration renders catalog emoji identically. */}
               <MarkdownContent
                 content={replyContent}
+                isStreaming={Boolean(message.metadata?.isStreaming)}
                 emojiImages
                 className="prose dark:prose-invert max-w-none"
                 resolveLocalFilePath={resolveLocalFilePath}
@@ -1740,6 +1741,7 @@ const AssistantMessageItem: React.FC<{
             {/* Professional mode shares the display-only Twemoji pipeline. */}
             <MarkdownContent
               content={replyContent}
+              isStreaming={Boolean(message.metadata?.isStreaming)}
               emojiImages
               className="prose dark:prose-invert max-w-none"
               resolveLocalFilePath={resolveLocalFilePath}
