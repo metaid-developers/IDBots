@@ -20882,6 +20882,7 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
         ? {
             titleBarStyle: 'hiddenInset' as const,
             trafficLightPosition: { x: 12, y: 20 },
+            acceptFirstMouse: true,
           }
         : isWindows
           ? {

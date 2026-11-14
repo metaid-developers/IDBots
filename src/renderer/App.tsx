@@ -118,7 +118,8 @@ const UpdateNotificationModal = React.lazy(() => import('./components/UpdateNoti
  * binding keeps the identifier its import used to have, so every JSX call site
  * is unchanged.
  */
-const Settings = React.lazy(() => import('./components/Settings'));
+const loadSettingsModule = () => import('./components/Settings');
+const Settings = React.lazy(loadSettingsModule);
 const MetaAppsView = React.lazy(() =>
   import('./components/metaapps').then((module) => ({ default: module.MetaAppsView })));
 const ScheduledTasksView = React.lazy(() =>
@@ -146,6 +147,23 @@ const AppLoadingIndicator: React.FC = () => (
         <div className="h-full w-1/2 rounded-full bg-claude-accent animate-shimmer" />
       </div>
       <div className="dark:text-claude-darkText text-claude-text text-xl font-medium">{i18nService.t('loading')}</div>
+    </div>
+  </div>
+);
+
+const SettingsLoadingShell: React.FC<{ onClose: () => void }> = ({ onClose }) => (
+  <div
+    data-slot="settings-loading-shell"
+    className="non-draggable fixed inset-0 z-50 modal-backdrop flex items-center justify-center"
+    onClick={onClose}
+  >
+    <div
+      className="flex w-[900px] h-[80vh] rounded-2xl dark:border-claude-darkBorder border-claude-border border shadow-modal overflow-hidden modal-content dark:bg-claude-darkBg bg-claude-bg items-center justify-center"
+      onClick={(event) => event.stopPropagation()}
+    >
+      <div className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
+        {i18nService.t('loading')}
+      </div>
     </div>
   </div>
 );
@@ -716,6 +734,26 @@ const App: React.FC = () => {
       },
     });
   }, [isInitialized, selectedModel?.id, selectedModel?.providerKey]);
+
+  useEffect(() => {
+    if (!isInitialized) return;
+    const win = window as Window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+    if (typeof win.requestIdleCallback === 'function') {
+      const idleId = win.requestIdleCallback(() => {
+        void loadSettingsModule().catch(() => {});
+      }, { timeout: 2500 });
+      return () => {
+        win.cancelIdleCallback?.(idleId);
+      };
+    }
+    const timer = window.setTimeout(() => {
+      void loadSettingsModule().catch(() => {});
+    }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [isInitialized]);
 
   const handleShowSettings = useCallback((options?: SettingsOpenOptions) => {
     setSettingsOptions((prev) => ({
@@ -1850,7 +1888,7 @@ const App: React.FC = () => {
             </button>
           </div>
           {showSettings && (
-            <Suspense fallback={null}>
+            <Suspense fallback={<SettingsLoadingShell onClose={handleCloseSettings} />}>
               <Settings
                 onClose={handleCloseSettings}
                 initialTab={settingsOptions.initialTab}
@@ -2317,7 +2355,7 @@ const App: React.FC = () => {
 
       {/* 设置窗口显示在所有主内容之上，但不影响主界面的交互 */}
       {showSettings && (
-        <Suspense fallback={null}>
+        <Suspense fallback={<SettingsLoadingShell onClose={handleCloseSettings} />}>
           <Settings
             onClose={handleCloseSettings}
             initialTab={settingsOptions.initialTab}

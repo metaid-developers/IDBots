@@ -1033,3 +1033,4 @@ blob-report/
 !tests/serviceOrderSessionEnrichmentPerf.test.mjs
 !tests/sqlitePerfOptimizations.test.mjs
 !tests/hotPathMetadataAndSkillCache.test.mjs
+!tests/settingsFirstClickAndStorePerf.test.mjs
