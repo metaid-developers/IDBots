@@ -1,0 +1,3433 @@
+[
+ {
+  "file": "src/renderer/App.tsx",
+  "buttons": [
+   {
+    "line": 1883,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/ErrorMessage.tsx",
+  "buttons": [
+   {
+    "line": 17,
+    "cls": "ml-2 text-white hover:text-red-100 rounded-[var(--shape-radius-md)] p-1 hover:bg-white/10 transition-colors"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/FreeQuotaCard.tsx",
+  "buttons": [
+   {
+    "line": 62,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/HomeSidebar.tsx",
+  "buttons": [
+   {
+    "line": 495,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/HomeWorkspaceSection.tsx",
+  "buttons": [
+   {
+    "line": 143,
+    "cls": "DYN DYN"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/MarkdownContent.tsx",
+  "buttons": [
+   {
+    "line": 555,
+    "cls": "absolute top-2 right-2 z-10 p-1.5 rounded-md bg-gray-700/80 text-gray-300 hover:bg-gray-600 transition-colors opacity-0 group-hover:opacity-100"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/ModelEffortPicker.tsx",
+  "buttons": [
+   {
+    "line": 263,
+    "cls": "className={triggerClassName}"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/QuotaNudgeBanner.tsx",
+  "buttons": [
+   {
+    "line": 120,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/Settings.tsx",
+  "buttons": [
+   {
+    "line": 1715,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 1738,
+    "cls": "inline-flex items-center px-2 py-1 text-[11px] font-medium rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+   },
+   {
+    "line": 1744,
+    "cls": "btn-idchat-primary-filled inline-flex items-center justify-center w-full px-2 py-1 text-[10px] font-medium"
+   },
+   {
+    "line": 1764,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 1818,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 1947,
+    "cls": "inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+   },
+   {
+    "line": 1949,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 1965,
+    "cls": "mt-1.5 inline-flex items-center text-[11px] font-medium text-claude-accent hover:text-claude-accentHover"
+   },
+   {
+    "line": 1974,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 2071,
+    "cls": "inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+   },
+   {
+    "line": 2093,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 2130,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 2140,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 2154,
+    "cls": "dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:text-claude-darkText hover:text-claude-text p-1.5 dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-lg transition-colors"
+   },
+   {
+    "line": 2177,
+    "cls": "px-4 py-2 dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-[var(--rounded)] transition-colors text-sm font-medium border dark:border-claude-darkBorder border-claude-border"
+   },
+   {
+    "line": 2193,
+    "cls": "p-1 dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:text-claude-darkText hover:text-claude-text rounded-md dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover"
+   },
+   {
+    "line": 2266,
+    "cls": "px-3 py-1.5 text-xs dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-xl border dark:border-claude-darkBorder border-claude-border"
+   }
+  ],
+  "pairs": [
+   {
+    "a": {
+     "line": 1715,
+     "cls": "(no-cls)"
+    },
+    "b": {
+     "line": 1738,
+     "cls": "inline-flex items-center px-2 py-1 text-[11px] font-medium rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+    }
+   },
+   {
+    "a": {
+     "line": 1738,
+     "cls": "inline-flex items-center px-2 py-1 text-[11px] font-medium rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+    },
+    "b": {
+     "line": 1744,
+     "cls": "btn-idchat-primary-filled inline-flex items-center justify-center w-full px-2 py-1 text-[10px] font-medium"
+    }
+   },
+   {
+    "a": {
+     "line": 1744,
+     "cls": "btn-idchat-primary-filled inline-flex items-center justify-center w-full px-2 py-1 text-[10px] font-medium"
+    },
+    "b": {
+     "line": 1764,
+     "cls": "(no-cls)"
+    }
+   },
+   {
+    "a": {
+     "line": 1947,
+     "cls": "inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+    },
+    "b": {
+     "line": 1949,
+     "cls": "(no-cls)"
+    }
+   },
+   {
+    "a": {
+     "line": 1949,
+     "cls": "(no-cls)"
+    },
+    "b": {
+     "line": 1965,
+     "cls": "mt-1.5 inline-flex items-center text-[11px] font-medium text-claude-accent hover:text-claude-accentHover"
+    }
+   },
+   {
+    "a": {
+     "line": 1965,
+     "cls": "mt-1.5 inline-flex items-center text-[11px] font-medium text-claude-accent hover:text-claude-accentHover"
+    },
+    "b": {
+     "line": 1974,
+     "cls": "(no-cls)"
+    }
+   },
+   {
+    "a": {
+     "line": 2071,
+     "cls": "inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+    },
+    "b": {
+     "line": 2093,
+     "cls": "(no-cls)"
+    }
+   },
+   {
+    "a": {
+     "line": 2140,
+     "cls": "(no-cls)"
+    },
+    "b": {
+     "line": 2154,
+     "cls": "dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:text-claude-darkText hover:text-claude-text p-1.5 dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-lg transition-colors"
+    }
+   },
+   {
+    "a": {
+     "line": 2154,
+     "cls": "dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:text-claude-darkText hover:text-claude-text p-1.5 dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-lg transition-colors"
+    },
+    "b": {
+     "line": 2177,
+     "cls": "px-4 py-2 dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-[var(--rounded)] transition-colors text-sm font-medium border dark:border-claude-darkBorder border-claude-border"
+    }
+   },
+   {
+    "a": {
+     "line": 2177,
+     "cls": "px-4 py-2 dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-[var(--rounded)] transition-colors text-sm font-medium border dark:border-claude-darkBorder border-claude-border"
+    },
+    "b": {
+     "line": 2193,
+     "cls": "p-1 dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:text-claude-darkText hover:text-claude-text rounded-md dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover"
+    }
+   }
+  ],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/Sidebar.tsx",
+  "buttons": [
+   {
+    "line": 645,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/Toast.tsx",
+  "buttons": [
+   {
+    "line": 21,
+    "cls": "shrink-0 text-claude-textSecondary dark:text-white/70 hover:text-claude-text dark:hover:text-white rounded-[var(--shape-radius-md)] p-1 hover:bg-claude-surfaceHover dark:hover:bg-white/10 transition-colors"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/UpdateNotificationModal.tsx",
+  "buttons": [
+   {
+    "line": 56,
+    "cls": "flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border-color)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+   },
+   {
+    "line": 80,
+    "cls": "btn-idchat-primary-filled text-sm font-medium transition-[filter]"
+   }
+  ],
+  "pairs": [
+   {
+    "a": {
+     "line": 56,
+     "cls": "flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border-color)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+    },
+    "b": {
+     "line": 80,
+     "cls": "btn-idchat-primary-filled text-sm font-medium transition-[filter]"
+    }
+   }
+  ],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/agentGame/AgentGameConsentCard.tsx",
+  "buttons": [
+   {
+    "line": 62,
+    "cls": "p-2 rounded-lg dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary text-claude-textSecondary transition-colors"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/avatar/AvatarPickerModal.tsx",
+  "buttons": [
+   {
+    "line": 136,
+    "cls": "rounded p-1.5 text-claude-textSecondary transition-colors hover:bg-black/5 dark:text-claude-darkTextSecondary dark:hover:bg-white/10"
+   },
+   {
+    "line": 153,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 183,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 191,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [
+   {
+    "a": {
+     "line": 136,
+     "cls": "rounded p-1.5 text-claude-textSecondary transition-colors hover:bg-black/5 dark:text-claude-darkTextSecondary dark:hover:bg-white/10"
+    },
+    "b": {
+     "line": 153,
+     "cls": "(no-cls)"
+    }
+   }
+  ],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/chat/EmojiPickerPopover.tsx",
+  "buttons": [
+   {
+    "line": 127,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 238,
+    "cls": "flex items-center justify-center p-1.5 rounded-lg text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover dark:hover:text-claude-darkText hover:text-claude-text transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:dark:hover:bg-transparent"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/chat/EscrowCard.tsx",
+  "buttons": [
+   {
+    "line": 132,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/chat/NftCard.tsx",
+  "buttons": [
+   {
+    "line": 185,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 250,
+    "cls": "flex h-full w-full flex-col overflow-hidden rounded-xl border border-claude-border bg-claude-surface text-left shadow-subtle transition-shadow hover:shadow-md dark:border-claude-darkBorder dark:bg-claude-darkSurface"
+   }
+  ],
+  "pairs": [],
+  "violations": [
+   {
+    "line": 250,
+    "why": "shadow-token",
+    "hit": "shadow",
+    "cls": "flex h-full w-full flex-col overflow-hidden rounded-xl border border-claude-border bg-claude-surface text-left shadow-subtle transition-shadow hover:shadow-md dark:border-claude-darkBorder dark:bg-claude-darkSurface"
+   }
+  ]
+ },
+ {
+  "file": "src/renderer/components/chat/NftCollectionCard.tsx",
+  "buttons": [
+   {
+    "line": 81,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/chat/PaymentCard.tsx",
+  "buttons": [
+   {
+    "line": 195,
+    "cls": "w-full rounded-lg bg-[#1677FF] px-3 py-2 text-[13px] font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/A2AApprovalBar.tsx",
+  "buttons": [
+   {
+    "line": 60,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/A2AMessageItem.tsx",
+  "buttons": [
+   {
+    "line": 684,
+    "cls": "rounded-full flex-shrink-0 transition-shadow hover:ring-2 hover:ring-claude-accent/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/60"
+   },
+   {
+    "line": 809,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": [
+   {
+    "line": 684,
+    "why": "shadow-token",
+    "hit": "shadow",
+    "cls": "rounded-full flex-shrink-0 transition-shadow hover:ring-2 hover:ring-claude-accent/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/60"
+   }
+  ]
+ },
+ {
+  "file": "src/renderer/components/cowork/BackgroundTasksBadge.tsx",
+  "buttons": [
+   {
+    "line": 48,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/BootstrapShortcuts.tsx",
+  "buttons": [
+   {
+    "line": 28,
+    "cls": "className={BUTTON_CLASS}"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/ComposerCommandPicker.tsx",
+  "buttons": [
+   {
+    "line": 100,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkAttachmentPreview.tsx",
+  "buttons": [
+   {
+    "line": 62,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkConversationSearch.tsx",
+  "buttons": [
+   {
+    "line": 105,
+    "cls": "mr-0.5 flex h-10 w-10 shrink-0 items-center justify-center border-l border-claude-border text-claude-textSecondary transition-colors hover:bg-claude-surfaceHover hover:text-claude-text dark:border-claude-darkBorder dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkImageLightbox.tsx",
+  "buttons": [
+   {
+    "line": 43,
+    "cls": "absolute right-4 top-4 rounded-[var(--shape-radius-md)] bg-black/50 p-1.5 text-white transition-colors hover:bg-black/70"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkMessageActionsMenu.tsx",
+  "buttons": [
+   {
+    "line": 119,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkPermissionOverlay.tsx",
+  "buttons": [
+   {
+    "line": 190,
+    "cls": "inline-flex shrink-0 items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium text-claude-accent transition-colors hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkPermissionPanel.tsx",
+  "buttons": [
+   {
+    "line": 477,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkPromptInput.tsx",
+  "buttons": [
+   {
+    "line": 167,
+    "cls": "w-full flex items-center gap-2 px-3 py-2 text-left text-sm transition-colors dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover disabled:opacity-40 disabled:hover:bg-transparent disabled:dark:hover:bg-transparent disabled:cursor-not-allowed"
+   },
+   {
+    "line": 1576,
+    "cls": "p-2 rounded-[var(--shape-radius-md)] bg-claude-surfaceHover hover:bg-claude-border text-claude-text transition-colors"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkQuoteActionBar.tsx",
+  "buttons": [
+   {
+    "line": 53,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkQuotedSelectionTiles.tsx",
+  "buttons": [
+   {
+    "line": 85,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkSearchModal.tsx",
+  "buttons": [
+   {
+    "line": 109,
+    "cls": "p-2 rounded-lg glass-text-secondary hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkSessionDetail.tsx",
+  "buttons": [
+   {
+    "line": 582,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 655,
+    "cls": "p-1.5 rounded-md dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-all duration-200 DYN"
+   },
+   {
+    "line": 1194,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 1350,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 3333,
+    "cls": "h-8 w-8 inline-flex items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkSessionItem.tsx",
+  "buttons": [
+   {
+    "line": 284,
+    "cls": "-ml-2 rounded-full ring-2 ring-claude-surfaceMuted dark:ring-claude-darkSurfaceMuted transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-claude-accent DYN"
+   },
+   {
+    "line": 503,
+    "cls": "p-1.5 rounded-lg bg-claude-surfaceMuted dark:bg-claude-darkSurfaceMuted dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurface hover:bg-claude-surface transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkSessionList.tsx",
+  "buttons": [
+   {
+    "line": 704,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkView.tsx",
+  "buttons": [
+   {
+    "line": 823,
+    "cls": "h-8 w-8 inline-flex items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/FeedbackNudgeHint.tsx",
+  "buttons": [
+   {
+    "line": 74,
+    "cls": "p-0.5 rounded-md dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary text-claude-textSecondary transition-colors"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/FolderSelectorPopover.tsx",
+  "buttons": [
+   {
+    "line": 319,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/InlineHtmlReportBlock.tsx",
+  "buttons": [
+   {
+    "line": 509,
+    "cls": "h-6 w-6 inline-flex shrink-0 items-center justify-center rounded-md dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/InlineMetaAppBlock.tsx",
+  "buttons": [
+   {
+    "line": 465,
+    "cls": "className={iconButtonClass}"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/ManualCompactButton.tsx",
+  "buttons": [
+   {
+    "line": 56,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/MarkdownViewerPanel.tsx",
+  "buttons": [
+   {
+    "line": 201,
+    "cls": "h-6 w-6 inline-flex shrink-0 items-center justify-center rounded-md dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/MessageFeedbackControls.tsx",
+  "buttons": [
+   {
+    "line": 89,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/MetaBotSelector.tsx",
+  "buttons": [
+   {
+    "line": 199,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/PermissionModeSelector.tsx",
+  "buttons": [
+   {
+    "line": 71,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/SessionViewOptionsMenu.tsx",
+  "buttons": [
+   {
+    "line": 34,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/SubagentPanel.tsx",
+  "buttons": [
+   {
+    "line": 112,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 162,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/ThinkingBlock.tsx",
+  "buttons": [
+   {
+    "line": 50,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/TodoPanel.tsx",
+  "buttons": [
+   {
+    "line": 120,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/TurnNavigator.tsx",
+  "buttons": [
+   {
+    "line": 278,
+    "cls": "absolute left-0 right-0 flex h-3.5 items-center justify-end border-0 bg-transparent p-0"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/UsageStatsChip.tsx",
+  "buttons": [
+   {
+    "line": 161,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/cowork/UserAttachmentBody.tsx",
+  "buttons": [
+   {
+    "line": 177,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/gigSquare/GigSquareHeaderActions.tsx",
+  "buttons": [
+   {
+    "line": 18,
+    "cls": "btn-idchat-primary whitespace-nowrap px-3 py-1.5 text-xs font-medium"
+   },
+   {
+    "line": 24,
+    "cls": "btn-idchat-primary whitespace-nowrap px-3 py-1.5 text-xs font-medium"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/gigSquare/GigSquareMyServicesModal.tsx",
+  "buttons": [
+   {
+    "line": 267,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 500,
+    "cls": "inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-claude-textSecondary hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover"
+   },
+   {
+    "line": 523,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 786,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 859,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [
+   {
+    "a": {
+     "line": 500,
+     "cls": "inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-claude-textSecondary hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover"
+    },
+    "b": {
+     "line": 523,
+     "cls": "(no-cls)"
+    }
+   }
+  ],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/gigSquare/GigSquareOrderModal.tsx",
+  "buttons": [
+   {
+    "line": 808,
+    "cls": "text-xs px-2 py-1 rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/gigSquare/GigSquarePublishModal.tsx",
+  "buttons": [
+   {
+    "line": 307,
+    "cls": "text-xs px-2 py-1 rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+   },
+   {
+    "line": 341,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 349,
+    "cls": "px-4 py-2 text-sm font-medium rounded-[var(--rounded)] border border-claude-border dark:border-claude-darkBorder dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+   },
+   {
+    "line": 355,
+    "cls": "btn-idchat-primary text-sm font-medium"
+   },
+   {
+    "line": 408,
+    "cls": "btn-idchat-primary px-4 py-2 text-sm font-medium"
+   }
+  ],
+  "pairs": [
+   {
+    "a": {
+     "line": 307,
+     "cls": "text-xs px-2 py-1 rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+    },
+    "b": {
+     "line": 341,
+     "cls": "(no-cls)"
+    }
+   },
+   {
+    "a": {
+     "line": 341,
+     "cls": "(no-cls)"
+    },
+    "b": {
+     "line": 349,
+     "cls": "px-4 py-2 text-sm font-medium rounded-[var(--rounded)] border border-claude-border dark:border-claude-darkBorder dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+    }
+   },
+   {
+    "a": {
+     "line": 349,
+     "cls": "px-4 py-2 text-sm font-medium rounded-[var(--rounded)] border border-claude-border dark:border-claude-darkBorder dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+    },
+    "b": {
+     "line": 355,
+     "cls": "btn-idchat-primary text-sm font-medium"
+    }
+   }
+  ],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/gigSquare/GigSquareRefundsModal.tsx",
+  "buttons": [
+   {
+    "line": 186,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 259,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/gigSquare/GigSquareServiceCard.tsx",
+  "buttons": [
+   {
+    "line": 172,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/gigSquare/GigSquareSkillPicker.tsx",
+  "buttons": [
+   {
+    "line": 91,
+    "cls": "inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-claude-border px-3 py-2 text-sm text-claude-text transition-colors hover:bg-claude-surfaceHover disabled:cursor-not-allowed disabled:opacity-50 dark:border-claude-darkBorder dark:text-claude-darkText dark:hover:bg-claude-darkSurfaceHover"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/gigSquare/GigSquareView.tsx",
+  "buttons": [
+   {
+    "line": 56,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 286,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/groupTasks/AcceptanceSummaryCard.tsx",
+  "buttons": [
+   {
+    "line": 81,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 209,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/groupTasks/GroupTaskCloseConfirmModal.tsx",
+  "buttons": [
+   {
+    "line": 107,
+    "cls": "flex-1 px-4 py-2 text-sm rounded-lg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors disabled:opacity-50"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/groupTasks/GroupTaskComposer.tsx",
+  "buttons": [
+   {
+    "line": 51,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/groupTasks/GroupTaskDetailView.tsx",
+  "buttons": [
+   {
+    "line": 63,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 555,
+    "cls": "px-4 py-2 text-sm rounded-lg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+   },
+   {
+    "line": 625,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/groupTasks/GroupTaskInfoModal.tsx",
+  "buttons": [
+   {
+    "line": 46,
+    "cls": "p-1 rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+   },
+   {
+    "line": 96,
+    "cls": "w-full px-4 py-2 text-sm rounded-lg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/groupTasks/GroupTaskItemMenu.tsx",
+  "buttons": [
+   {
+    "line": 283,
+    "cls": "w-full flex items-center gap-2 px-3 py-2 text-left text-sm transition-colors dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/groupTasks/GroupTaskKickConfirmModal.tsx",
+  "buttons": [
+   {
+    "line": 62,
+    "cls": "flex-1 px-4 py-2 text-sm rounded-lg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors disabled:opacity-50"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/groupTasks/GroupTaskListMeta.tsx",
+  "buttons": [
+   {
+    "line": 105,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/groupTasks/GroupTaskMessageItem.tsx",
+  "buttons": [
+   {
+    "line": 215,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/groupTasks/GroupTaskRatingStars.tsx",
+  "buttons": [
+   {
+    "line": 44,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/groupTasks/GroupTaskSidebarList.tsx",
+  "buttons": [
+   {
+    "line": 250,
+    "cls": "p-1 rounded-md bg-claude-surfaceMuted dark:bg-claude-darkSurfaceMuted dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurface hover:bg-claude-surface transition-colors"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/groupTasks/GroupTasksView.tsx",
+  "buttons": [
+   {
+    "line": 177,
+    "cls": "p-1.5 rounded-lg bg-claude-surfaceMuted dark:bg-claude-darkSurfaceMuted dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurface hover:bg-claude-surface transition-colors"
+   },
+   {
+    "line": 180,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 194,
+    "cls": "btn-idchat-primary-filled px-3 py-1 text-sm font-medium"
+   },
+   {
+    "line": 210,
+    "cls": "shrink-0 text-xs dark:text-amber-300/80 text-amber-700 hover:underline"
+   }
+  ],
+  "pairs": [
+   {
+    "a": {
+     "line": 177,
+     "cls": "p-1.5 rounded-lg bg-claude-surfaceMuted dark:bg-claude-darkSurfaceMuted dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurface hover:bg-claude-surface transition-colors"
+    },
+    "b": {
+     "line": 180,
+     "cls": "(no-cls)"
+    }
+   },
+   {
+    "a": {
+     "line": 180,
+     "cls": "(no-cls)"
+    },
+    "b": {
+     "line": 194,
+     "cls": "btn-idchat-primary-filled px-3 py-1 text-sm font-medium"
+    }
+   },
+   {
+    "a": {
+     "line": 194,
+     "cls": "btn-idchat-primary-filled px-3 py-1 text-sm font-medium"
+    },
+    "b": {
+     "line": 210,
+     "cls": "shrink-0 text-xs dark:text-amber-300/80 text-amber-700 hover:underline"
+    }
+   }
+  ],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/groupTasks/NewGroupTaskModal.tsx",
+  "buttons": [
+   {
+    "line": 96,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 117,
+    "cls": "flex-1 px-4 py-2 text-sm rounded-lg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors disabled:opacity-50"
+   },
+   {
+    "line": 138,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [
+   {
+    "a": {
+     "line": 96,
+     "cls": "(no-cls)"
+    },
+    "b": {
+     "line": 117,
+     "cls": "flex-1 px-4 py-2 text-sm rounded-lg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors disabled:opacity-50"
+    }
+   },
+   {
+    "a": {
+     "line": 117,
+     "cls": "flex-1 px-4 py-2 text-sm rounded-lg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors disabled:opacity-50"
+    },
+    "b": {
+     "line": 138,
+     "cls": "(no-cls)"
+    }
+   }
+  ],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/groupTasks/OpenTeamCollabDetailView.tsx",
+  "buttons": [
+   {
+    "line": 195,
+    "cls": "h-8 w-8 inline-flex items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/im/IMSettings.tsx",
+  "buttons": [
+   {
+    "line": 792,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 809,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 833,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 833,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 840,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 885,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 905,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 1073,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/layout/WorkspaceRail.tsx",
+  "buttons": [
+   {
+    "line": 93,
+    "cls": "non-draggable relative inline-flex h-10 w-10 items-center justify-center rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 DYN"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/listenerHub/ListenerHubView.tsx",
+  "buttons": [
+   {
+    "line": 204,
+    "cls": "btn-idchat-primary-filled inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/longTermTasks/CopyIdChip.tsx",
+  "buttons": [
+   {
+    "line": 23,
+    "cls": "non-draggable inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/longTermTasks/LongTermTaskCard.tsx",
+  "buttons": [
+   {
+    "line": 12,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 129,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/longTermTasks/LongTermTaskDetail.tsx",
+  "buttons": [
+   {
+    "line": 154,
+    "cls": "rounded-lg p-1.5 dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover"
+   },
+   {
+    "line": 184,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 185,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 192,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 196,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 299,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 320,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 327,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 329,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [
+   {
+    "a": {
+     "line": 154,
+     "cls": "rounded-lg p-1.5 dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover"
+    },
+    "b": {
+     "line": 184,
+     "cls": "(no-cls)"
+    }
+   }
+  ],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/longTermTasks/LongTermTaskOriginChip.tsx",
+  "buttons": [
+   {
+    "line": 49,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/longTermTasks/LongTermTasksBoard.tsx",
+  "buttons": [
+   {
+    "line": 63,
+    "cls": "btn-idchat-primary-filled px-3 py-1.5 text-sm font-medium"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/mcp/McpManager.tsx",
+  "buttons": [
+   {
+    "line": 260,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 284,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 308,
+    "cls": "rounded-xl border-2 border-dashed dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:border-claude-accent hover:text-claude-accent dark:hover:border-claude-accent dark:hover:text-claude-accent transition-colors flex items-center justify-center min-h-[120px] text-sm"
+   },
+   {
+    "line": 318,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 324,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 397,
+    "cls": "px-3 py-1.5 text-xs rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+   }
+  ],
+  "pairs": [
+   {
+    "a": {
+     "line": 284,
+     "cls": "(no-cls)"
+    },
+    "b": {
+     "line": 308,
+     "cls": "rounded-xl border-2 border-dashed dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:border-claude-accent hover:text-claude-accent dark:hover:border-claude-accent dark:hover:text-claude-accent transition-colors flex items-center justify-center min-h-[120px] text-sm"
+    }
+   },
+   {
+    "a": {
+     "line": 308,
+     "cls": "rounded-xl border-2 border-dashed dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:border-claude-accent hover:text-claude-accent dark:hover:border-claude-accent dark:hover:text-claude-accent transition-colors flex items-center justify-center min-h-[120px] text-sm"
+    },
+    "b": {
+     "line": 318,
+     "cls": "(no-cls)"
+    }
+   }
+  ],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/mcp/McpServerFormModal.tsx",
+  "buttons": [
+   {
+    "line": 233,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 244,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 258,
+    "cls": "px-3 py-1.5 text-xs rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+   }
+  ],
+  "pairs": [
+   {
+    "a": {
+     "line": 244,
+     "cls": "(no-cls)"
+    },
+    "b": {
+     "line": 258,
+     "cls": "px-3 py-1.5 text-xs rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+    }
+   }
+  ],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/mcp/McpView.tsx",
+  "buttons": [
+   {
+    "line": 21,
+    "cls": "h-8 w-8 inline-flex items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/me/IdbotsPlanCard.tsx",
+  "buttons": [
+   {
+    "line": 131,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/me/MeBalanceBadge.tsx",
+  "buttons": [
+   {
+    "line": 128,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 151,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/me/MeIncrementPackCard.tsx",
+  "buttons": [
+   {
+    "line": 118,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/me/MePurchaseFlow.tsx",
+  "buttons": [
+   {
+    "line": 509,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 514,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 521,
+    "cls": "rounded-lg border border-claude-border dark:border-claude-darkBorder px-3 py-1.5 text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary hover:bg-claude-surfaceHover hover:text-claude-text dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText"
+   },
+   {
+    "line": 539,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 543,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 581,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [
+   {
+    "a": {
+     "line": 514,
+     "cls": "(no-cls)"
+    },
+    "b": {
+     "line": 521,
+     "cls": "rounded-lg border border-claude-border dark:border-claude-darkBorder px-3 py-1.5 text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary hover:bg-claude-surfaceHover hover:text-claude-text dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText"
+    }
+   },
+   {
+    "a": {
+     "line": 521,
+     "cls": "rounded-lg border border-claude-border dark:border-claude-darkBorder px-3 py-1.5 text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary hover:bg-claude-surfaceHover hover:text-claude-text dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText"
+    },
+    "b": {
+     "line": 539,
+     "cls": "(no-cls)"
+    }
+   }
+  ],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/me/MeUsageAndCredits.tsx",
+  "buttons": [
+   {
+    "line": 272,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metaapps/MetaAppsManager.tsx",
+  "buttons": [
+   {
+    "line": 357,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 437,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metaapps/MetaAppsView.tsx",
+  "buttons": [
+   {
+    "line": 41,
+    "cls": "h-8 w-8 inline-flex items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metaapps/myApps/ChainStatusModal.tsx",
+  "buttons": [
+   {
+    "line": 60,
+    "cls": "px-3 py-1.5 text-sm rounded-lg bg-claude-accent text-claude-accentInk hover:opacity-90 transition-opacity"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metaapps/myApps/MetaAppDeleteModal.tsx",
+  "buttons": [
+   {
+    "line": 29,
+    "cls": "px-3 py-1.5 text-sm rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metaapps/myApps/MetaAppDetailModal.tsx",
+  "buttons": [
+   {
+    "line": 62,
+    "cls": "px-2.5 py-1 text-xs rounded-[var(--shape-radius-md)] border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] disabled:opacity-40"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metaapps/myApps/MetaAppPublishForm.tsx",
+  "buttons": [
+   {
+    "line": 270,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metaapps/myApps/MyAppsTab.tsx",
+  "buttons": [
+   {
+    "line": 61,
+    "cls": "px-4 py-2 text-xs rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors disabled:opacity-50"
+   },
+   {
+    "line": 63,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 185,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 197,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [
+   {
+    "a": {
+     "line": 61,
+     "cls": "px-4 py-2 text-xs rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors disabled:opacity-50"
+    },
+    "b": {
+     "line": 63,
+     "cls": "(no-cls)"
+    }
+   }
+  ],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metabots/BuiltinAvatarPickerModal.tsx",
+  "buttons": [
+   {
+    "line": 41,
+    "cls": "shrink-0 rounded p-1.5 text-claude-textSecondary transition-colors hover:bg-black/5 dark:text-claude-darkTextSecondary dark:hover:bg-white/10"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metabots/DailyReportSection.tsx",
+  "buttons": [
+   {
+    "line": 288,
+    "cls": "className={actionBtnClass}"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metabots/KnowledgeBasePanel.tsx",
+  "buttons": [
+   {
+    "line": 427,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotAdvancedActionsSection.tsx",
+  "buttons": [
+   {
+    "line": 57,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotBackupMnemonicModal.tsx",
+  "buttons": [
+   {
+    "line": 108,
+    "cls": "px-4 py-2 text-sm rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotCreateForm.tsx",
+  "buttons": [
+   {
+    "line": 195,
+    "cls": "mt-2 text-sm text-claude-accent hover:underline"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotCreateSuccessModal.tsx",
+  "buttons": [
+   {
+    "line": 167,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 173,
+    "cls": "btn-idchat-primary-filled px-4 py-2 text-sm disabled:opacity-70 disabled:cursor-wait flex items-center gap-2"
+   },
+   {
+    "line": 185,
+    "cls": "btn-idchat-primary-filled px-4 py-2 text-sm disabled:opacity-70 disabled:cursor-wait flex items-center gap-2"
+   }
+  ],
+  "pairs": [
+   {
+    "a": {
+     "line": 167,
+     "cls": "(no-cls)"
+    },
+    "b": {
+     "line": 173,
+     "cls": "btn-idchat-primary-filled px-4 py-2 text-sm disabled:opacity-70 disabled:cursor-wait flex items-center gap-2"
+    }
+   }
+  ],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotDeleteConfirmModal.tsx",
+  "buttons": [
+   {
+    "line": 100,
+    "cls": "text-sm text-claude-accent hover:underline disabled:opacity-50"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotEditTabs.tsx",
+  "buttons": [
+   {
+    "line": 622,
+    "cls": "px-3 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50"
+   },
+   {
+    "line": 766,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotHomepageSection.tsx",
+  "buttons": [
+   {
+    "line": 222,
+    "cls": "className={homepageInlineButtonClass}"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotListCard.tsx",
+  "buttons": [
+   {
+    "line": 76,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 123,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotNftWalletModal.tsx",
+  "buttons": [
+   {
+    "line": 248,
+    "cls": "rounded p-1 text-claude-textSecondary transition-colors hover:bg-black/5 dark:text-claude-darkTextSecondary dark:hover:bg-white/10"
+   },
+   {
+    "line": 274,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 400,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 406,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 413,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 423,
+    "cls": "rounded-xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface px-6 py-2.5 text-sm font-medium dark:text-claude-darkText text-claude-text"
+   },
+   {
+    "line": 425,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 534,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 568,
+    "cls": "rounded-xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface px-6 py-2.5 text-sm font-medium dark:text-claude-darkText text-claude-text"
+   },
+   {
+    "line": 662,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 667,
+    "cls": "rounded-lg border dark:border-claude-darkBorder border-claude-border px-3 py-1.5 text-sm dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover disabled:opacity-50"
+   },
+   {
+    "line": 696,
+    "cls": "rounded-xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface px-6 py-2.5 text-sm font-medium dark:text-claude-darkText text-claude-text"
+   },
+   {
+    "line": 720,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [
+   {
+    "a": {
+     "line": 248,
+     "cls": "rounded p-1 text-claude-textSecondary transition-colors hover:bg-black/5 dark:text-claude-darkTextSecondary dark:hover:bg-white/10"
+    },
+    "b": {
+     "line": 274,
+     "cls": "(no-cls)"
+    }
+   },
+   {
+    "a": {
+     "line": 413,
+     "cls": "(no-cls)"
+    },
+    "b": {
+     "line": 423,
+     "cls": "rounded-xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface px-6 py-2.5 text-sm font-medium dark:text-claude-darkText text-claude-text"
+    }
+   },
+   {
+    "a": {
+     "line": 423,
+     "cls": "rounded-xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface px-6 py-2.5 text-sm font-medium dark:text-claude-darkText text-claude-text"
+    },
+    "b": {
+     "line": 425,
+     "cls": "(no-cls)"
+    }
+   },
+   {
+    "a": {
+     "line": 534,
+     "cls": "(no-cls)"
+    },
+    "b": {
+     "line": 568,
+     "cls": "rounded-xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface px-6 py-2.5 text-sm font-medium dark:text-claude-darkText text-claude-text"
+    }
+   },
+   {
+    "a": {
+     "line": 662,
+     "cls": "(no-cls)"
+    },
+    "b": {
+     "line": 667,
+     "cls": "rounded-lg border dark:border-claude-darkBorder border-claude-border px-3 py-1.5 text-sm dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover disabled:opacity-50"
+    }
+   },
+   {
+    "a": {
+     "line": 667,
+     "cls": "rounded-lg border dark:border-claude-darkBorder border-claude-border px-3 py-1.5 text-sm dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover disabled:opacity-50"
+    },
+    "b": {
+     "line": 696,
+     "cls": "rounded-xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface px-6 py-2.5 text-sm font-medium dark:text-claude-darkText text-claude-text"
+    }
+   },
+   {
+    "a": {
+     "line": 696,
+     "cls": "rounded-xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface px-6 py-2.5 text-sm font-medium dark:text-claude-darkText text-claude-text"
+    },
+    "b": {
+     "line": 720,
+     "cls": "(no-cls)"
+    }
+   }
+  ],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotRestoreMnemonicModal.tsx",
+  "buttons": [
+   {
+    "line": 208,
+    "cls": "px-4 py-2 text-sm rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotTokenTransferModal.tsx",
+  "buttons": [
+   {
+    "line": 211,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 222,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 226,
+    "cls": "flex-1 rounded-xl border border-[var(--btn-primary-edge)] bg-claude-accent px-4 py-2.5 text-sm font-medium text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] disabled:opacity-50"
+   }
+  ],
+  "pairs": [
+   {
+    "a": {
+     "line": 222,
+     "cls": "(no-cls)"
+    },
+    "b": {
+     "line": 226,
+     "cls": "flex-1 rounded-xl border border-[var(--btn-primary-edge)] bg-claude-accent px-4 py-2.5 text-sm font-medium text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] disabled:opacity-50"
+    }
+   }
+  ],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotTransferModal.tsx",
+  "buttons": [
+   {
+    "line": 202,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 214,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 219,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotWalletAssetsModal.tsx",
+  "buttons": [
+   {
+    "line": 145,
+    "cls": "rounded p-1 text-claude-textSecondary transition-colors hover:bg-black/5 dark:text-claude-darkTextSecondary dark:hover:bg-white/10"
+   },
+   {
+    "line": 150,
+    "cls": "rounded-xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface px-3 py-2 text-sm dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+   },
+   {
+    "line": 206,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 217,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 217,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [
+   {
+    "a": {
+     "line": 145,
+     "cls": "rounded p-1 text-claude-textSecondary transition-colors hover:bg-black/5 dark:text-claude-darkTextSecondary dark:hover:bg-white/10"
+    },
+    "b": {
+     "line": 150,
+     "cls": "rounded-xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface px-3 py-2 text-sm dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+    }
+   }
+  ],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotWalletBalanceModal.tsx",
+  "buttons": [
+   {
+    "line": 164,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metabots/MetabotsManager.tsx",
+  "buttons": [
+   {
+    "line": 606,
+    "cls": "px-4 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metabots/MetabotsView.tsx",
+  "buttons": [
+   {
+    "line": 34,
+    "cls": "h-8 w-8 inline-flex items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metabots/MetawebStudyJobsPanel.tsx",
+  "buttons": [
+   {
+    "line": 116,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metabots/SurfReportsPanel.tsx",
+  "buttons": [
+   {
+    "line": 177,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metabots/SurfSection.tsx",
+  "buttons": [
+   {
+    "line": 393,
+    "cls": "className={actionBtnClass}"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metatask/MetaTaskBoard.tsx",
+  "buttons": [
+   {
+    "line": 99,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 105,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 163,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 205,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metatask/MetaTaskCandidateDrawer.tsx",
+  "buttons": [
+   {
+    "line": 139,
+    "cls": "sticky top-0 z-10 float-right inline-flex items-center gap-1 rounded-[7px] border dark:border-claude-darkBorder border-claude-border bg-claude-surface dark:bg-claude-darkSurface px-2.5 py-1 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:text-claude-darkText hover:text-claude-text"
+   },
+   {
+    "line": 140,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 146,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 159,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [
+   {
+    "a": {
+     "line": 139,
+     "cls": "sticky top-0 z-10 float-right inline-flex items-center gap-1 rounded-[7px] border dark:border-claude-darkBorder border-claude-border bg-claude-surface dark:bg-claude-darkSurface px-2.5 py-1 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:text-claude-darkText hover:text-claude-text"
+    },
+    "b": {
+     "line": 140,
+     "cls": "(no-cls)"
+    }
+   }
+  ],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metatask/MetaTaskChainView.tsx",
+  "buttons": [
+   {
+    "line": 492,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metatask/MetaTaskCopyMini.tsx",
+  "buttons": [
+   {
+    "line": 22,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metatask/MetaTaskDeliverables.tsx",
+  "buttons": [
+   {
+    "line": 177,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metatask/MetaTaskDetail.tsx",
+  "buttons": [
+   {
+    "line": 146,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 163,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 198,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 202,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 225,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 462,
+    "cls": "shrink-0 p-0.5 rounded dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metatask/MetaTaskNodeSections.tsx",
+  "buttons": [
+   {
+    "line": 111,
+    "cls": "flex w-full items-center gap-2.5 px-3.5 py-[11px] text-left hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover/60 transition-colors"
+   },
+   {
+    "line": 115,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [
+   {
+    "a": {
+     "line": 111,
+     "cls": "flex w-full items-center gap-2.5 px-3.5 py-[11px] text-left hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover/60 transition-colors"
+    },
+    "b": {
+     "line": 115,
+     "cls": "(no-cls)"
+    }
+   }
+  ],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/metatask/MetaTaskTreeMap.tsx",
+  "buttons": [
+   {
+    "line": 41,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 49,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 56,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/onboarding/WelcomeFlow.tsx",
+  "buttons": [
+   {
+    "line": 352,
+    "cls": "btn-welcome-primary"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/preference/PreferenceComparePanel.tsx",
+  "buttons": [
+   {
+    "line": 61,
+    "cls": "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
+   },
+   {
+    "line": 258,
+    "cls": "inline-flex shrink-0 items-center gap-1 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+   },
+   {
+    "line": 263,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 277,
+    "cls": "inline-flex items-center gap-1 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+   }
+  ],
+  "pairs": [
+   {
+    "a": {
+     "line": 258,
+     "cls": "inline-flex shrink-0 items-center gap-1 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+    },
+    "b": {
+     "line": 263,
+     "cls": "(no-cls)"
+    }
+   },
+   {
+    "a": {
+     "line": 263,
+     "cls": "(no-cls)"
+    },
+    "b": {
+     "line": 277,
+     "cls": "inline-flex items-center gap-1 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+    }
+   }
+  ],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/preference/PreferenceRoundsSection.tsx",
+  "buttons": [
+   {
+    "line": 62,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/preference/PreferenceSealConfirmModal.tsx",
+  "buttons": [
+   {
+    "line": 52,
+    "cls": "flex-1 rounded-lg border border-[var(--border-color)] px-3 py-2 text-sm hover:bg-[var(--bg-hover)] disabled:opacity-50"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/projects/ProjectFormModal.tsx",
+  "buttons": [
+   {
+    "line": 166,
+    "cls": "p-1 rounded-lg text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-claude-text dark:hover:text-claude-darkText transition-colors"
+   },
+   {
+    "line": 174,
+    "cls": "className={ghostButtonClass}"
+   },
+   {
+    "line": 186,
+    "cls": "className={ghostButtonClass}"
+   }
+  ],
+  "pairs": [
+   {
+    "a": {
+     "line": 166,
+     "cls": "p-1 rounded-lg text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-claude-text dark:hover:text-claude-darkText transition-colors"
+    },
+    "b": {
+     "line": 174,
+     "cls": "className={ghostButtonClass}"
+    }
+   }
+  ],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/projects/ProjectsManager.tsx",
+  "buttons": [
+   {
+    "line": 133,
+    "cls": "btn-idchat-primary-filled px-3 py-1.5 text-xs flex items-center gap-1"
+   },
+   {
+    "line": 182,
+    "cls": "px-3 py-1.5 text-xs rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/quick-actions/PromptPanel.tsx",
+  "buttons": [
+   {
+    "line": 40,
+    "cls": "inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-accent transition-colors"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/quick-actions/QuickActionBar.tsx",
+  "buttons": [
+   {
+    "line": 40,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/scheduledTasks/AllRunsHistory.tsx",
+  "buttons": [
+   {
+    "line": 110,
+    "cls": "w-full py-3 text-sm text-claude-accent hover:text-claude-accentHover transition-colors"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/scheduledTasks/DeleteConfirmModal.tsx",
+  "buttons": [
+   {
+    "line": 40,
+    "cls": "flex-1 px-4 py-2 text-sm rounded-lg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/scheduledTasks/ScheduledTasksView.tsx",
+  "buttons": [
+   {
+    "line": 127,
+    "cls": "h-8 w-8 inline-flex items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/scheduledTasks/TaskDetail.tsx",
+  "buttons": [
+   {
+    "line": 139,
+    "cls": "p-2 rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/scheduledTasks/TaskForm.tsx",
+  "buttons": [
+   {
+    "line": 475,
+    "cls": "px-3 py-2 text-sm rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/scheduledTasks/TaskList.tsx",
+  "buttons": [
+   {
+    "line": 142,
+    "cls": "relative shrink-0 w-7 h-4 rounded-full transition-colors DYN"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/scheduledTasks/TaskRunHistory.tsx",
+  "buttons": [
+   {
+    "line": 85,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/settings/MemorySettings.tsx",
+  "buttons": [
+   {
+    "line": 1064,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 1090,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 1117,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 1161,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 1183,
+    "cls": "rounded-lg border px-2 py-1 text-[11px] dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary"
+   },
+   {
+    "line": 1205,
+    "cls": "mt-2 rounded-lg border px-3 py-1 text-xs dark:border-claude-darkAccent border-claude-accent text-claude-accent dark:text-claude-darkAccent"
+   },
+   {
+    "line": 1256,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 1262,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 1263,
+    "cls": "rounded-lg border px-3 py-1 text-xs dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text"
+   },
+   {
+    "line": 1303,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 1476,
+    "cls": "px-3 py-1.5 text-sm dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-xl border dark:border-claude-darkBorder border-claude-border transition-colors"
+   }
+  ],
+  "pairs": [
+   {
+    "a": {
+     "line": 1161,
+     "cls": "(no-cls)"
+    },
+    "b": {
+     "line": 1183,
+     "cls": "rounded-lg border px-2 py-1 text-[11px] dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary"
+    }
+   },
+   {
+    "a": {
+     "line": 1183,
+     "cls": "rounded-lg border px-2 py-1 text-[11px] dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary"
+    },
+    "b": {
+     "line": 1205,
+     "cls": "mt-2 rounded-lg border px-3 py-1 text-xs dark:border-claude-darkAccent border-claude-accent text-claude-accent dark:text-claude-darkAccent"
+    }
+   },
+   {
+    "a": {
+     "line": 1262,
+     "cls": "(no-cls)"
+    },
+    "b": {
+     "line": 1263,
+     "cls": "rounded-lg border px-3 py-1 text-xs dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text"
+    }
+   },
+   {
+    "a": {
+     "line": 1263,
+     "cls": "rounded-lg border px-3 py-1 text-xs dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text"
+    },
+    "b": {
+     "line": 1303,
+     "cls": "(no-cls)"
+    }
+   }
+  ],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/settings/MetaIDContactPanel.tsx",
+  "buttons": [
+   {
+    "line": 45,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 68,
+    "cls": "w-full flex items-start justify-between gap-2 text-left"
+   },
+   {
+    "line": 139,
+    "cls": "w-full flex items-start justify-between gap-2 text-left"
+   },
+   {
+    "line": 240,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [
+   {
+    "a": {
+     "line": 45,
+     "cls": "(no-cls)"
+    },
+    "b": {
+     "line": 68,
+     "cls": "w-full flex items-start justify-between gap-2 text-left"
+    }
+   }
+  ],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/settings/PaymentReceivingSettings.tsx",
+  "buttons": [
+   {
+    "line": 353,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/settings/PendingPaymentRecordsPanel.tsx",
+  "buttons": [
+   {
+    "line": 111,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/settings/ProviderTemplatePicker.tsx",
+  "buttons": [
+   {
+    "line": 40,
+    "cls": "inline-flex items-center px-2 py-1 text-xs font-medium rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/skills/ActiveSkillBadge.tsx",
+  "buttons": [
+   {
+    "line": 40,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/skills/EmailSkillConfig.tsx",
+  "buttons": [
+   {
+    "line": 274,
+    "cls": "text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-accent transition-colors"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/skills/SkillMcpManager.tsx",
+  "buttons": [
+   {
+    "line": 31,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/skills/SkillScopeEditor.tsx",
+  "buttons": [
+   {
+    "line": 135,
+    "cls": "flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:border-claude-accent/60 hover:text-claude-accent transition-colors"
+   },
+   {
+    "line": 138,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 143,
+    "cls": "px-2.5 py-1 text-[11px] rounded-lg transition-colors DYN disabled:opacity-60 disabled:cursor-not-allowed"
+   }
+  ],
+  "pairs": [
+   {
+    "a": {
+     "line": 135,
+     "cls": "flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:border-claude-accent/60 hover:text-claude-accent transition-colors"
+    },
+    "b": {
+     "line": 138,
+     "cls": "(no-cls)"
+    }
+   },
+   {
+    "a": {
+     "line": 138,
+     "cls": "(no-cls)"
+    },
+    "b": {
+     "line": 143,
+     "cls": "px-2.5 py-1 text-[11px] rounded-lg transition-colors DYN disabled:opacity-60 disabled:cursor-not-allowed"
+    }
+   }
+  ],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/skills/SkillsButton.tsx",
+  "buttons": [
+   {
+    "line": 30,
+    "cls": "p-2 rounded-xl dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-accent dark:hover:text-claude-accent hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors DYN"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/skills/SkillsManager.tsx",
+  "buttons": [
+   {
+    "line": 482,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 490,
+    "cls": "w-full flex items-center gap-3 px-3 py-2.5 text-sm dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50"
+   },
+   {
+    "line": 493,
+    "cls": "w-full flex items-center gap-3 px-3 py-2.5 text-sm dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50"
+   },
+   {
+    "line": 498,
+    "cls": "w-full flex items-center gap-3 px-3 py-2.5 text-sm dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+   },
+   {
+    "line": 501,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 508,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 538,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 564,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 583,
+    "cls": "px-3 py-1.5 text-xs rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+   },
+   {
+    "line": 611,
+    "cls": "px-3 py-1.5 text-xs rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+   },
+   {
+    "line": 626,
+    "cls": "px-3 py-1.5 text-xs rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+   },
+   {
+    "line": 653,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 663,
+    "cls": "btn-idchat-primary-filled w-full py-2.5 text-sm font-medium disabled:opacity-50"
+   }
+  ],
+  "pairs": [
+   {
+    "a": {
+     "line": 482,
+     "cls": "(no-cls)"
+    },
+    "b": {
+     "line": 490,
+     "cls": "w-full flex items-center gap-3 px-3 py-2.5 text-sm dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50"
+    }
+   },
+   {
+    "a": {
+     "line": 493,
+     "cls": "w-full flex items-center gap-3 px-3 py-2.5 text-sm dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50"
+    },
+    "b": {
+     "line": 498,
+     "cls": "w-full flex items-center gap-3 px-3 py-2.5 text-sm dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+    }
+   },
+   {
+    "a": {
+     "line": 498,
+     "cls": "w-full flex items-center gap-3 px-3 py-2.5 text-sm dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+    },
+    "b": {
+     "line": 501,
+     "cls": "(no-cls)"
+    }
+   },
+   {
+    "a": {
+     "line": 564,
+     "cls": "(no-cls)"
+    },
+    "b": {
+     "line": 583,
+     "cls": "px-3 py-1.5 text-xs rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+    }
+   },
+   {
+    "a": {
+     "line": 626,
+     "cls": "px-3 py-1.5 text-xs rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+    },
+    "b": {
+     "line": 653,
+     "cls": "(no-cls)"
+    }
+   },
+   {
+    "a": {
+     "line": 653,
+     "cls": "(no-cls)"
+    },
+    "b": {
+     "line": 663,
+     "cls": "btn-idchat-primary-filled w-full py-2.5 text-sm font-medium disabled:opacity-50"
+    }
+   }
+  ],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/skills/SkillsPopover.tsx",
+  "buttons": [
+   {
+    "line": 193,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/traffic/TrafficSettings.tsx",
+  "buttons": [
+   {
+    "line": 313,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 911,
+    "cls": "DYN shrink-0"
+   },
+   {
+    "line": 959,
+    "cls": "className={primaryButtonClass}"
+   },
+   {
+    "line": 977,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 1009,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 1011,
+    "cls": "className={ghostButtonClass}"
+   },
+   {
+    "line": 1013,
+    "cls": "className={primaryButtonClass}"
+   },
+   {
+    "line": 1082,
+    "cls": "className={primaryButtonClass}"
+   }
+  ],
+  "pairs": [
+   {
+    "a": {
+     "line": 959,
+     "cls": "className={primaryButtonClass}"
+    },
+    "b": {
+     "line": 977,
+     "cls": "(no-cls)"
+    }
+   },
+   {
+    "a": {
+     "line": 1009,
+     "cls": "(no-cls)"
+    },
+    "b": {
+     "line": 1011,
+     "cls": "className={ghostButtonClass}"
+    }
+   },
+   {
+    "a": {
+     "line": 1011,
+     "cls": "className={ghostButtonClass}"
+    },
+    "b": {
+     "line": 1013,
+     "cls": "className={primaryButtonClass}"
+    }
+   }
+  ],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/ui/LocalFileLink.tsx",
+  "buttons": [
+   {
+    "line": 361,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/ui/SecretInput.tsx",
+  "buttons": [
+   {
+    "line": 41,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/ui/ThemedSelect.tsx",
+  "buttons": [
+   {
+    "line": 56,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/ui/useTextInputContextMenu.tsx",
+  "buttons": [
+   {
+    "line": 57,
+    "cls": "w-full flex items-center gap-2 px-3 py-2 text-left text-sm transition-colors dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover disabled:opacity-40 disabled:hover:bg-transparent disabled:dark:hover:bg-transparent disabled:cursor-not-allowed"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/update/AppUpdateBadge.tsx",
+  "buttons": [
+   {
+    "line": 94,
+    "cls": "className={className}"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/update/AppUpdateModal.tsx",
+  "buttons": [
+   {
+    "line": 65,
+    "cls": "absolute top-3 right-3 z-10 dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:text-claude-darkText hover:text-claude-text p-1.5 dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-lg transition-colors"
+   },
+   {
+    "line": 69,
+    "cls": "btn-idchat-primary-filled text-sm"
+   },
+   {
+    "line": 93,
+    "cls": "px-4 py-2 text-sm rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+   },
+   {
+    "line": 134,
+    "cls": "btn-idchat-primary-filled text-sm"
+   },
+   {
+    "line": 152,
+    "cls": "px-4 py-2 text-sm rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+   }
+  ],
+  "pairs": [
+   {
+    "a": {
+     "line": 65,
+     "cls": "absolute top-3 right-3 z-10 dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:text-claude-darkText hover:text-claude-text p-1.5 dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-lg transition-colors"
+    },
+    "b": {
+     "line": 69,
+     "cls": "btn-idchat-primary-filled text-sm"
+    }
+   },
+   {
+    "a": {
+     "line": 69,
+     "cls": "btn-idchat-primary-filled text-sm"
+    },
+    "b": {
+     "line": 93,
+     "cls": "px-4 py-2 text-sm rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+    }
+   },
+   {
+    "a": {
+     "line": 93,
+     "cls": "px-4 py-2 text-sm rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+    },
+    "b": {
+     "line": 134,
+     "cls": "btn-idchat-primary-filled text-sm"
+    }
+   },
+   {
+    "a": {
+     "line": 134,
+     "cls": "btn-idchat-primary-filled text-sm"
+    },
+    "b": {
+     "line": 152,
+     "cls": "px-4 py-2 text-sm rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+    }
+   }
+  ],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/user/ChainBackupMnemonicReminderModal.tsx",
+  "buttons": [
+   {
+    "line": 53,
+    "cls": "px-4 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:opacity-90"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/user/ChainBackupRestorePrompt.tsx",
+  "buttons": [
+   {
+    "line": 53,
+    "cls": "px-4 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/user/UserBackupMnemonicModal.tsx",
+  "buttons": [
+   {
+    "line": 118,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/user/UserSettings.tsx",
+  "buttons": [
+   {
+    "line": 132,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 564,
+    "cls": "p-1.5 rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+   },
+   {
+    "line": 579,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 584,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 610,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 618,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 747,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [
+   {
+    "a": {
+     "line": 564,
+     "cls": "p-1.5 rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+    },
+    "b": {
+     "line": 579,
+     "cls": "(no-cls)"
+    }
+   }
+  ],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/components/window/WindowTitleBar.tsx",
+  "buttons": [
+   {
+    "line": 94,
+    "cls": "non-draggable h-8 w-8 inline-flex items-center justify-center rounded-lg transition-colors dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/features/botBrowser/BotBrowserCoworkPanel.tsx",
+  "buttons": [
+   {
+    "line": 191,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 914,
+    "cls": "mt-3 inline-flex items-center rounded-lg px-2 py-1 -ml-1 text-xs font-medium dark:text-claude-accent text-claude-accent hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/features/botBrowser/BotBrowserModeSwitch.tsx",
+  "buttons": [
+   {
+    "line": 172,
+    "cls": "className={segmentClass(active)}"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/features/botBrowser/BotPickerChip.tsx",
+  "buttons": [
+   {
+    "line": 84,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/features/botBrowser/CoworkHistoryPanel.tsx",
+  "buttons": [
+   {
+    "line": 114,
+    "cls": "inline-flex h-6 w-6 items-center justify-center rounded-md dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/features/botBrowser/CoworkSurfaceSessionName.tsx",
+  "buttons": [
+   {
+    "line": 125,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/features/botBrowser/MacWindowLights.tsx",
+  "buttons": [
+   {
+    "line": 96,
+    "cls": "non-draggable h-[8px] w-[8px] rounded-full transition-opacity duration-150 hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/features/botBrowser/PanelDelegationStatusRow.tsx",
+  "buttons": [
+   {
+    "line": 70,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/features/botBrowser/PanelMessageContextMenu.tsx",
+  "buttons": [
+   {
+    "line": 56,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/features/proposals/BotActionCard.tsx",
+  "buttons": [
+   {
+    "line": 73,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/features/proposals/ProposalCard.tsx",
+  "buttons": [
+   {
+    "line": 37,
+    "cls": "proposal-option DYN"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/features/proposals/nativeDemo.tsx",
+  "buttons": [
+   {
+    "line": 57,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/features/twinWork/TwinWorkPanel.tsx",
+  "buttons": [
+   {
+    "line": 112,
+    "cls": "shrink-0 rounded p-0.5 dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:text-claude-darkText hover:text-claude-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+   },
+   {
+    "line": 130,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 252,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [
+   {
+    "a": {
+     "line": 112,
+     "cls": "shrink-0 rounded p-0.5 dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:text-claude-darkText hover:text-claude-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+    },
+    "b": {
+     "line": 130,
+     "cls": "(no-cls)"
+    }
+   }
+  ],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/features/userProfile/MeCreditsPanel.tsx",
+  "buttons": [
+   {
+    "line": 95,
+    "cls": "inline-flex h-7 w-7 items-center justify-center rounded-lg text-claude-textSecondary transition-colors hover:bg-claude-surfaceHover hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+   },
+   {
+    "line": 99,
+    "cls": "(no-cls)"
+   },
+   {
+    "line": 107,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [
+   {
+    "a": {
+     "line": 95,
+     "cls": "inline-flex h-7 w-7 items-center justify-center rounded-lg text-claude-textSecondary transition-colors hover:bg-claude-surfaceHover hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+    },
+    "b": {
+     "line": 99,
+     "cls": "(no-cls)"
+    }
+   }
+  ],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/features/userProfile/UserProfileAvatarButton.tsx",
+  "buttons": [
+   {
+    "line": 60,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/features/userProfile/UserProfileMovedNotice.tsx",
+  "buttons": [
+   {
+    "line": 24,
+    "cls": "(no-cls)"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ },
+ {
+  "file": "src/renderer/features/userProfile/UserProfilePage.tsx",
+  "buttons": [
+   {
+    "line": 100,
+    "cls": "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-claude-border bg-claude-surfaceInset text-claude-textSecondary transition-colors hover:bg-claude-surfaceHover hover:text-claude-text dark:border-claude-darkBorder dark:bg-claude-darkSurfaceInset dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+   }
+  ],
+  "pairs": [],
+  "violations": []
+ }
+]

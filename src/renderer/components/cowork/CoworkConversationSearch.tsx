@@ -107,7 +107,7 @@ export const CoworkConversationSearchBar: React.FC<CoworkConversationSearchBarPr
             onClick={onClose}
             title={i18nService.t('close')}
             aria-label={i18nService.t('close')}
-            className="mr-0.5 flex h-10 w-10 shrink-0 items-center justify-center border-l border-claude-border text-claude-textSecondary transition-colors hover:bg-claude-surfaceHover hover:text-claude-text active:scale-[0.96] dark:border-claude-darkBorder dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText"
+            className="mr-0.5 flex h-10 w-10 shrink-0 items-center justify-center border-l border-claude-border text-claude-textSecondary transition-colors hover:bg-claude-surfaceHover hover:text-claude-text dark:border-claude-darkBorder dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText"
           >
             <XMarkIcon className="h-4 w-4" />
           </button>

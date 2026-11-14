@@ -40,7 +40,7 @@ const ProviderTemplatePicker: React.FC<ProviderTemplatePickerProps> = ({
         <button
           type="button"
           onClick={onBack}
-          className="inline-flex items-center px-2 py-1 text-xs font-medium rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors active:scale-[0.98]"
+          className="inline-flex items-center px-2 py-1 text-xs font-medium rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
         >
           <ArrowLeftIcon className="h-3.5 w-3.5 mr-1" />
           {i18nService.t('templatePickerBack')}

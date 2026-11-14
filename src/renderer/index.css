@@ -358,9 +358,13 @@ select::-ms-expand {
 /* IDChat-style buttons: border + offset shadow, hover lift, active press.
    Flat ruling 2026-11-14 (owner v2 rect-flat + Mon M1): offset shadows and
    hover/press displacement are retired — both vars are zeroed so every
-   btn-idchat-* family renders flat (plain yellow fill, ink text, no lift). */
+   btn-idchat-* family renders flat (plain yellow fill, ink text, no lift).
+   v3 pair-harmony (owner 2026-11-14 evening): borders cap at 1 px — the 2 px
+   edge was the "thick" weight; same-module primary/secondary pairs must be
+   geometric twins (same height/radius/padding/border), differing only in
+   fill and text colour. Hover/press feedback is a face change only. */
 :root {
-  --btn-border-width: 2px;
+  --btn-border-width: 1px;
   --btn-shadow-offset: 0px;
   --btn-move-range: 0px;
 }
@@ -373,20 +377,19 @@ select::-ms-expand {
   border-radius: var(--rounded);
   padding: 0.5rem 1rem;
   font-weight: 500;
-  transition: box-shadow 0.2s ease, transform 0.2s ease;
+  transition: filter 0.2s ease, border-color 0.2s ease;
   user-select: none;
 }
 
 @media (min-width: 1024px) {
   .btn-idchat:not(.still):hover:not(:active) {
-    box-shadow: calc(var(--btn-shadow-offset) + var(--btn-move-range) / 2) calc(var(--btn-shadow-offset) + var(--btn-move-range) / 2) 0 var(--border-color);
-    transform: translateX(calc(0px - var(--btn-move-range) / 2)) translateY(calc(0px - var(--btn-move-range) / 2));
+    filter: brightness(0.96);
   }
 }
 
 .btn-idchat:not(.still):active {
-  box-shadow: calc(var(--btn-shadow-offset) - var(--btn-move-range)) calc(var(--btn-shadow-offset) - var(--btn-move-range)) 0 var(--border-color);
-  transform: translateX(var(--btn-move-range)) translateY(var(--btn-move-range));
+  filter: brightness(0.9);
+  border-color: var(--text-secondary);
 }
 
 .btn-idchat-primary {
@@ -397,20 +400,19 @@ select::-ms-expand {
   border-radius: var(--rounded);
   padding: 0.5rem 1rem;
   font-weight: 500;
-  transition: box-shadow 0.2s ease, transform 0.2s ease;
+  transition: filter 0.2s ease, border-color 0.2s ease;
   user-select: none;
 }
 
 @media (min-width: 1024px) {
   .btn-idchat-primary:not(.still):hover:not(:active) {
-    box-shadow: calc(var(--btn-shadow-offset) + var(--btn-move-range) / 2) calc(var(--btn-shadow-offset) + var(--btn-move-range) / 2) 0 var(--color-primary);
-    transform: translateX(calc(0px - var(--btn-move-range) / 2)) translateY(calc(0px - var(--btn-move-range) / 2));
+    filter: brightness(0.96);
   }
 }
 
 .btn-idchat-primary:not(.still):active {
-  box-shadow: calc(var(--btn-shadow-offset) - var(--btn-move-range)) calc(var(--btn-shadow-offset) - var(--btn-move-range)) 0 var(--color-primary);
-  transform: translateX(var(--btn-move-range)) translateY(var(--btn-move-range));
+  filter: brightness(0.9);
+  border-color: var(--text-secondary);
 }
 
 /* Filled primary button (IDChat .main-border.primary): flat yellow fill + ink
@@ -460,7 +462,7 @@ select::-ms-expand {
   padding: 0.8125rem 1.875rem;
   font-size: 15px;
   font-weight: 700;
-  transition: box-shadow 0.2s ease, transform 0.2s ease;
+  transition: filter 0.2s ease, border-color 0.2s ease;
   user-select: none;
 }
 

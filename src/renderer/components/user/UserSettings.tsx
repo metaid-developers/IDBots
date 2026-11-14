@@ -710,7 +710,7 @@ const UserSettings: React.FC = () => {
         <button
           type="button"
           onClick={() => setView('import')}
-          className="flex flex-col items-center gap-1.5 rounded-xl border-2 dark:border-claude-darkBorder border-claude-border px-4 py-4 transition-colors hover:border-claude-accent/60 dark:hover:border-claude-accent/60 dark:hover:bg-claude-darkSurfaceHover/60 hover:bg-claude-surfaceHover/60 active:scale-[0.98]"
+          className="flex flex-col items-center gap-1.5 rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border px-4 py-4 transition-colors hover:border-claude-accent/60 dark:hover:border-claude-accent/60 dark:hover:bg-claude-darkSurfaceHover/60 hover:bg-claude-surfaceHover/60"
         >
           <KeyIcon className="h-6 w-6 text-claude-accent" />
           <span className="text-sm font-medium dark:text-claude-darkText text-claude-text">
@@ -723,7 +723,7 @@ const UserSettings: React.FC = () => {
         <button
           type="button"
           onClick={() => setView('create')}
-          className="flex flex-col items-center gap-1.5 rounded-xl border-2 dark:border-claude-darkBorder border-claude-border px-4 py-4 transition-colors hover:border-claude-accent/60 dark:hover:border-claude-accent/60 dark:hover:bg-claude-darkSurfaceHover/60 hover:bg-claude-surfaceHover/60 active:scale-[0.98]"
+          className="flex flex-col items-center gap-1.5 rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border px-4 py-4 transition-colors hover:border-claude-accent/60 dark:hover:border-claude-accent/60 dark:hover:bg-claude-darkSurfaceHover/60 hover:bg-claude-surfaceHover/60"
         >
           <UserPlusIcon className="h-6 w-6 text-claude-accent" />
           <span className="text-sm font-medium dark:text-claude-darkText text-claude-text">
@@ -845,7 +845,7 @@ const UserSettings: React.FC = () => {
         <button
           type="button"
           onClick={() => { void handleCopy(createdWords.join(' ')); }}
-          className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors active:scale-[0.98]"
+          className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
         >
           <ClipboardDocumentIcon className="h-3.5 w-3.5 mr-1.5" />
           {i18nService.t('copy')}
@@ -853,7 +853,7 @@ const UserSettings: React.FC = () => {
         <button
           type="button"
           onClick={handleBackupConfirmed}
-          className="btn-idchat-primary-filled px-4 py-2 text-sm"
+          className="btn-idchat-primary-filled text-sm"
         >
           {i18nService.t('userSettingsBackupConfirm')}
         </button>
@@ -947,7 +947,7 @@ const UserSettings: React.FC = () => {
             type="button"
             onClick={() => { void handleCopy(value); }}
             aria-label={i18nService.t('copy')}
-            className="p-2 rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors active:scale-[0.98]"
+            className="p-2 rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
           >
             <ClipboardDocumentIcon className="h-4 w-4" />
           </button>
@@ -975,7 +975,7 @@ const UserSettings: React.FC = () => {
         type="button"
         onClick={() => { void handleRetryChainSync(); }}
         disabled={retryingSync}
-        className="inline-flex shrink-0 items-center px-3 py-1.5 text-xs font-medium rounded-xl border border-amber-500/50 text-amber-700 dark:text-amber-300 hover:bg-amber-500/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+        className="inline-flex shrink-0 items-center px-3 py-1.5 text-xs font-medium rounded-xl border border-amber-500/50 text-amber-700 dark:text-amber-300 hover:bg-amber-500/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       >
         <ArrowPathIcon className={`h-3.5 w-3.5 mr-1.5 ${retryingSync ? 'animate-spin' : ''}`} />
         {retryingSync ? i18nService.t('userSettingsRetrying') : i18nService.t('userSettingsRetryChainSync')}
@@ -1005,7 +1005,7 @@ const UserSettings: React.FC = () => {
         type="button"
         onClick={() => { void handleRetrySubsidy(); }}
         disabled={subsidyRetrying}
-        className="inline-flex shrink-0 items-center px-3 py-1.5 text-xs font-medium rounded-xl border border-amber-500/50 text-amber-700 dark:text-amber-300 hover:bg-amber-500/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+        className="inline-flex shrink-0 items-center px-3 py-1.5 text-xs font-medium rounded-xl border border-amber-500/50 text-amber-700 dark:text-amber-300 hover:bg-amber-500/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       >
         <ArrowPathIcon className={`h-3.5 w-3.5 mr-1.5 ${subsidyRetrying ? 'animate-spin' : ''}`} />
         {subsidyRetrying ? i18nService.t('userSettingsRetryingSubsidy') : i18nService.t('userSettingsRetrySubsidy')}
@@ -1038,7 +1038,7 @@ const UserSettings: React.FC = () => {
             <button
               type="button"
               onClick={() => setBackupModalOpen(true)}
-              className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors active:scale-[0.98]"
+              className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
             >
               <KeyIcon className="h-3.5 w-3.5 mr-1.5" />
               {i18nService.t('userSettingsBackupMnemonic')}
@@ -1046,7 +1046,7 @@ const UserSettings: React.FC = () => {
             <button
               type="button"
               onClick={() => openLogoutModal('switch')}
-              className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors active:scale-[0.98]"
+              className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
             >
               <ArrowRightStartOnRectangleIcon className="h-3.5 w-3.5 mr-1.5" />
               {i18nService.t('userSettingsSwitchAccount')}
@@ -1054,7 +1054,7 @@ const UserSettings: React.FC = () => {
             <button
               type="button"
               onClick={() => openLogoutModal('logout')}
-              className="px-3 py-1.5 text-xs font-medium rounded-xl bg-red-600 hover:bg-red-700 text-white transition-colors active:scale-[0.98]"
+              className="px-3 py-1.5 text-xs font-medium rounded-[var(--rounded)] border border-red-600 bg-red-600 hover:bg-red-700 text-white transition-colors"
             >
               {i18nService.t('userSettingsLogout')}
             </button>
@@ -1131,7 +1131,7 @@ const UserSettings: React.FC = () => {
                 type="button"
                 onClick={() => { void handleSaveName(); }}
                 disabled={!canSaveName}
-                className="btn-idchat-primary-filled shrink-0 px-4 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                className="btn-idchat-primary-filled shrink-0 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {nameSaving ? i18nService.t('saving') : i18nService.t('save')}
               </button>
@@ -1270,7 +1270,7 @@ const UserSettings: React.FC = () => {
               type="button"
               onClick={() => { void handleChainBackup(); }}
               disabled={chainBackupRunning || chainBackupRestoring}
-              className="btn-idchat-primary-filled px-3 py-1.5 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+              className="btn-idchat-primary-filled text-xs disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <ArrowPathIcon className={`h-3.5 w-3.5 mr-1.5 inline ${chainBackupRunning ? 'animate-spin' : ''}`} />
               {chainBackupRunning
@@ -1283,7 +1283,7 @@ const UserSettings: React.FC = () => {
               type="button"
               onClick={() => { void handleChainRestore(); }}
               disabled={chainBackupRunning || chainBackupRestoring}
-              className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-black/5 dark:hover:bg-white/5 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+              className="inline-flex items-center px-4 py-2 text-xs font-medium rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <ArrowPathIcon className={`h-3.5 w-3.5 mr-1.5 inline ${chainBackupRestoring ? 'animate-spin' : ''}`} />
               {chainBackupRestoring ? i18nService.t('userSettingsChainBackupRestoreRunning') : i18nService.t('userSettingsChainBackupRestoreButton')}
@@ -1297,7 +1297,7 @@ const UserSettings: React.FC = () => {
           type="button"
           data-payment-settings-entry="true"
           onClick={() => dispatchPaymentSettings({ type: 'open' })}
-          className="w-full flex items-center gap-3 rounded-xl border dark:border-claude-darkBorder border-claude-border bg-claude-accent/5 dark:hover:bg-white/5 hover:bg-black/[0.03] active:scale-[0.995] px-4 py-3 text-left transition-colors"
+          className="w-full flex items-center gap-3 rounded-xl border dark:border-claude-darkBorder border-claude-border bg-claude-accent/5 dark:hover:bg-white/5 hover:bg-black/[0.03] px-4 py-3 text-left transition-colors"
         >
           <span className="flex-shrink-0 w-10 h-10 rounded-xl bg-claude-accent/15 flex items-center justify-center">
             <CreditCardIcon className="h-5 w-5 text-claude-accent" />
@@ -1343,7 +1343,7 @@ const UserSettings: React.FC = () => {
                     type="button"
                     onClick={() => { void handleRevealMnemonic(); }}
                     disabled={revealLoading || logoutLoading}
-                    className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+                    className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                   >
                     {revealLoading
                       ? i18nService.t('loading')
@@ -1374,7 +1374,7 @@ const UserSettings: React.FC = () => {
                     type="button"
                     onClick={() => setLogoutModalOpen(false)}
                     disabled={logoutLoading}
-                    className="px-4 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="px-4 py-2 text-sm rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {i18nService.t('cancel')}
                   </button>
@@ -1382,7 +1382,7 @@ const UserSettings: React.FC = () => {
                     type="button"
                     onClick={() => { void handleLogout(); }}
                     disabled={logoutLoading}
-                    className="px-4 py-2 text-sm rounded-xl bg-red-600 hover:bg-red-700 text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    className="px-4 py-2 text-sm rounded-[var(--rounded)] border border-red-600 bg-red-600 hover:bg-red-700 text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                   >
                     {i18nService.t(logoutMode === 'switch' ? 'userSettingsSwitchConfirm' : 'userSettingsLogoutConfirm')}
                   </button>

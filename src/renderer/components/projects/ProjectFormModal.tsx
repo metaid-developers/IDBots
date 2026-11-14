@@ -144,7 +144,7 @@ const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
   const inputClass = 'w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text dark:placeholder-claude-darkTextSecondary placeholder-claude-textSecondary border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent';
   const labelClass = 'text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary';
   const hintClass = 'text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary';
-  const ghostButtonClass = 'px-3 py-1.5 text-xs rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors';
+  const ghostButtonClass = 'px-4 py-2 text-xs rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors';
 
   return (
     <div
@@ -334,7 +334,7 @@ const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
           <button
             type="button"
             onClick={handleSave}
-            className="btn-idchat-primary-filled px-4 py-1.5 text-xs"
+            className="btn-idchat-primary-filled text-xs"
           >
             {i18nService.t('save')}
           </button>

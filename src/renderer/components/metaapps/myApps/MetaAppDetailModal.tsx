@@ -34,7 +34,7 @@ const MetaAppDetailModal: React.FC<MetaAppDetailModalProps> = ({ record, onRun, 
     ['updatedAt', record.timestamp ? new Date(record.timestamp).toISOString() : ''],
   ];
 
-  const btnBase = 'px-2.5 py-1 text-xs rounded-lg border transition-colors';
+  const btnBase = 'px-2.5 py-1 text-xs rounded-[var(--shape-radius-md)] border transition-colors';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -60,7 +60,7 @@ const MetaAppDetailModal: React.FC<MetaAppDetailModalProps> = ({ record, onRun, 
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
             <button type="button" onClick={onRun} disabled={record.disabled}
-              className="px-2.5 py-1 text-xs rounded-lg bg-claude-accent text-claude-accentInk hover:opacity-90 disabled:opacity-40">
+              className="px-2.5 py-1 text-xs rounded-[var(--shape-radius-md)] border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] disabled:opacity-40">
               {t('run') || 'Run'}
             </button>
             <button type="button" onClick={onShare} className={`${btnBase} dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text`}>

@@ -585,7 +585,7 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="px-3 py-2 text-sm font-medium rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+              className="px-4 py-2 text-sm font-medium rounded-[var(--rounded)] border border-claude-border dark:border-claude-darkBorder dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
               disabled={isFormDisabled}
             >
               {i18nService.t('cancel')}
@@ -594,7 +594,7 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
               <button
                 type="button"
                 onClick={onClose}
-                className="btn-idchat-primary px-4 py-2 text-sm font-medium"
+                className="btn-idchat-primary text-sm font-medium"
               >
                 {i18nService.t('gigSquarePublishSuccess')}
               </button>
@@ -602,7 +602,7 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
               <button
                 type="button"
                 onClick={handleSubmit}
-                className="btn-idchat-primary px-4 py-2 text-sm font-medium"
+                className="btn-idchat-primary text-sm font-medium"
                 disabled={isFormDisabled}
               >
                 {submitLabel}
