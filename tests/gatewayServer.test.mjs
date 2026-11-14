@@ -17,6 +17,7 @@ const require = createRequire(import.meta.url);
 const server = require('../dist-electron/main/gateway/server.js');
 const tokens = require('../dist-electron/main/gateway/tokens.js');
 const { WebSocket } = require('ws');
+const { readCoworkSessionMessagesPageForTransport, readCoworkSessionViewForTransport } = require('../dist-electron/main/gateway/sessionHistory.js');
 
 const SECRET = 'test-gateway-secret';
 const TENANT = 't_testtenant0000000001';
@@ -1006,6 +1007,79 @@ test('http: reveal-mnemonic rejects reused nonces and wrong-purpose tokens (403)
     body: JSON.stringify({ target: 'user' }),
   });
   assert.equal(missing.status, 403, 'missing reverify header rejected');
+});
+
+test('session history: mobile positional options and every page survive IPC sanitization', async (t) => {
+  const { createCoworkStore, createSqliteStore } = await import('./memoryTestUtils.mjs');
+  const { db, cleanup } = await createSqliteStore();
+  t.after(() => {
+    try { db.close(); } catch {}
+    try { cleanup(); } catch {}
+  });
+  const store = createCoworkStore(db);
+  const session = store.createSession('long creative task', '/tmp/history', '', 'local');
+  const ids = [];
+  for (let index = 1; index <= 93; index += 1) {
+    const type = index === 1 ? 'user'
+      : index === 93 || index % 3 === 2 ? 'assistant'
+        : index % 3 === 0 ? 'tool_use' : 'tool_result';
+    ids.push(store.addMessage(session.id, {
+      type,
+      content: index === 93 ? '[Open the finished app](file:///data/workspace/bots/2/app.html)' : `message-${index}`,
+      ...(type === 'assistant' && index !== 93 ? { metadata: { isThinking: true, isFinal: true } } : {}),
+    }).id);
+  }
+
+  const { handle } = await startServer(t, {
+    invokeHandler: async (channel, clientId, args) => {
+      const context = { gateway: { clientId } };
+      if (channel === 'cowork:session:get') {
+        return { success: true, session: readCoworkSessionViewForTransport(context, args[0], args[1], store) };
+      }
+      if (channel === 'cowork:session:getMessagesPage') {
+        return { success: true, page: readCoworkSessionMessagesPageForTransport(context, args[0], store) };
+      }
+      throw new Error(`Unexpected channel: ${channel}`);
+    },
+  });
+  const client = await openClient(handle.port);
+  t.after(() => client.close());
+
+  const single = await client.invoke('cowork:session:get', [session.id, { messageLimit: 1 }]);
+  assert.equal(single.ok, true);
+  assert.deepEqual(single.value.session.messages.map((message) => message.id), ids.slice(-1));
+  assert.equal(single.value.session.messageHistory.hasMoreBefore, true);
+  assert.equal(single.value.session.messageHistory.pageSize, 1);
+
+  const latest = await client.invoke('cowork:session:get', [session.id, { messageLimit: 200 }]);
+  assert.equal(latest.ok, true);
+  assert.equal(latest.value.session.messages.length, 40);
+  assert.equal(latest.value.session.messages.every((message) => typeof message === 'object'), true);
+  assert.equal(latest.value.session.messages.at(-1).content, '[Open the finished app](file:///data/workspace/bots/2/app.html)');
+  assert.equal(latest.value.session.messages.at(-1).metadata?.isThinking, undefined);
+  assert.equal(latest.value.session.messageHistory.hasMoreBefore, true);
+  assert.equal(latest.value.session.messageHistory.pageSize, 40);
+
+  let collected = latest.value.session.messages.map((message) => message.id);
+  let history = latest.value.session.messageHistory;
+  for (let guard = 0; history.hasMoreBefore && guard < 5; guard += 1) {
+    const earlier = await client.invoke('cowork:session:getMessagesPage', [{
+      sessionId: session.id,
+      beforeSequence: history.beforeSequence,
+      beforeTranscriptCursor: history.beforeTranscriptCursor,
+      limit: history.pageSize,
+    }]);
+    assert.equal(earlier.ok, true);
+    assert.equal(earlier.value.page.messages.every((message) => typeof message === 'object'), true);
+    collected = [...earlier.value.page.messages.map((message) => message.id), ...collected];
+    history = { ...earlier.value.page, pageSize: history.pageSize };
+  }
+  assert.equal(history.hasMoreBefore, false);
+  assert.deepEqual(collected, ids);
+
+  const desktop = readCoworkSessionViewForTransport({}, session.id, undefined, store);
+  assert.deepEqual(desktop.messages.map((message) => message.id), ids);
+  assert.equal(desktop.messageHistory.hasMoreBefore, false);
 });
 
 // ---------------------------------------------------------------------------

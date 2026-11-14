@@ -5,6 +5,10 @@ import fs from 'fs';
 import os from 'os';
 import { startGatewayFromApp, getActiveGatewayContext, getActiveGatewayReadiness, setGatewayReadinessProvider, GATEWAY_CONTRACT_VERSION } from './gateway/wiring';
 import { createGatewayFileSignHandler } from './gateway/fileSignChannel';
+import {
+  readCoworkSessionMessagesPageForTransport,
+  readCoworkSessionViewForTransport,
+} from './gateway/sessionHistory';
 import type { GatewayHandle } from './gateway/server';
 import {
   applyServerModeEnvDefaults,
@@ -14740,28 +14744,14 @@ if (!gotTheLock) {
     });
   });
 
-  registerIpcHandler('cowork:session:get', async (_event, payload: string | { sessionId?: unknown; messageLimit?: unknown }) => {
+  registerIpcHandler('cowork:session:get', async (_event, payload: string | { sessionId?: unknown; messageLimit?: unknown }, options?: { messageLimit?: unknown }) => {
     return withSqliteRecovery('cowork:session:get', async () => {
       try {
-        // The session view is a bounded window (newest messages first) plus the
-        // cursor to page older ones in from; callers that need a different
-        // window size pass it, and the browser panel — whose surface has no
-        // paging — asks for the whole transcript.
-        const sessionId = typeof payload === 'string'
-          ? payload
-          : toSafeString(payload?.sessionId).trim();
-        const requestedMessageLimit = typeof payload === 'object' && payload !== null
-          ? Number(payload.messageLimit)
-          : Number.NaN;
-        const messageLimit = Number.isFinite(requestedMessageLimit) && requestedMessageLimit > 0
-          ? Math.floor(requestedMessageLimit)
-          : undefined;
         repairSelfDirectedServiceOrders();
         const session = enrichCoworkSessionWithServiceOrderSummary(
-          messageLimit == null
-            ? getCoworkStore().getSessionView(sessionId)
-            : getCoworkStore().getSessionView(sessionId, messageLimit)
+          readCoworkSessionViewForTransport(_event, payload, options, getCoworkStore())
         );
+        const sessionId = session?.id ?? '';
         if (session?.sessionType === 'a2a') {
           scheduleA2APeerProfileRefresh(session.id);
         }
@@ -14894,14 +14884,10 @@ if (!gotTheLock) {
         if (!sessionId || !metadata) {
           return { success: false, error: 'Session not found' };
         }
-        const page = getCoworkStore().getSessionMessagesPage(sessionId, {
-          beforeSequence: typeof input?.beforeSequence === 'number' ? input.beforeSequence : null,
-          beforeTranscriptCursor: typeof input?.beforeTranscriptCursor === 'string'
-            ? input.beforeTranscriptCursor
-            : null,
-          limit: typeof input?.limit === 'number' ? input.limit : undefined,
+        const page = readCoworkSessionMessagesPageForTransport(_event, {
+          ...input,
           displayWindow: metadata.sessionType === 'a2a',
-        });
+        }, getCoworkStore());
         return { success: true, page };
       } catch (error) {
         if (isSqliteWasmBoundsError(error)) throw error;
