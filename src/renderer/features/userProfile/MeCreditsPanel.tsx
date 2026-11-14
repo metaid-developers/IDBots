@@ -165,7 +165,7 @@ const MeCreditsPanel: React.FC = () => {
                 type="button"
                 onClick={() => openUserProfilePlansPage('topup')}
                 data-slot="user-profile-me-recharge"
-                className="btn-idchat-primary-filled flex-1 rounded-lg px-3 py-2 text-xs font-medium"
+                className="btn-idchat-primary-filled flex-1 !rounded-lg px-3 py-2 text-xs font-medium"
               >
                 {copy.meRecharge}
               </button>
