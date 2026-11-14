@@ -92,6 +92,19 @@ export const CEREBELLUM_EFFORT_RUNG_CRITERIA: Record<CerebellumEffortRung, strin
 
 export const CEREBELLUM_EFFORT_QUESTION_ID = 'effort_level';
 
+export const CEREBELLUM_BUNDLED_EFFORT_INSTRUCTIONS =
+  CEREBELLUM_EFFORT_INSTRUCTIONS.replace('`user_message`', '`current_message`');
+
+export function buildBundledEffortQuestion(): Record<string, CerebellumEffortChoiceQuestion> {
+  return {
+    [CEREBELLUM_EFFORT_QUESTION_ID]: {
+      type: 'choice',
+      instructions: CEREBELLUM_BUNDLED_EFFORT_INSTRUCTIONS,
+      criteria: CEREBELLUM_EFFORT_RUNG_CRITERIA,
+    },
+  };
+}
+
 export interface CerebellumEffortChoiceQuestion {
   type: 'choice';
   instructions: string;
@@ -300,10 +313,11 @@ export async function selectEffortWithCerebellum(input: {
     return null;
   }
 
+  const effectiveTimeoutMs = Math.max(1, input.timeoutMs ?? CEREBELLUM_EFFORT_TIMEOUT_MS);
   const controller = new AbortController();
   const timer = setTimeout(
     () => controller.abort(),
-    Math.max(1, input.timeoutMs ?? CEREBELLUM_EFFORT_TIMEOUT_MS),
+    effectiveTimeoutMs,
   );
   try {
     const response = await fetchImpl(`${config.baseUrl}/v1/systemone`, {
@@ -311,6 +325,7 @@ export async function selectEffortWithCerebellum(input: {
       headers: {
         Authorization: `Bearer ${config.apiKey}`,
         'Content-Type': 'application/json',
+        'X-Deadline-Ms': String(effectiveTimeoutMs),
       },
       body: JSON.stringify(buildEffortSelectorRequest({
         currentUserText: input.currentUserText,

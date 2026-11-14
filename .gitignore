@@ -1041,3 +1041,4 @@ blob-report/
 !tests/coworkSessionSummaryDelta.test.mjs
 !tests/coworkTranscriptPerfAndGitProbe.test.mjs
 !tests/dshMemoryAdaptivePolicy.test.mjs
+!tests/cerebellumBundlePerfAndBreaker.test.mjs
