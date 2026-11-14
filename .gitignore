@@ -1042,3 +1042,4 @@ blob-report/
 !tests/coworkTranscriptPerfAndGitProbe.test.mjs
 !tests/dshMemoryAdaptivePolicy.test.mjs
 !tests/cerebellumBundlePerfAndBreaker.test.mjs
+!tests/loggingAndMessageIndexPerf.test.mjs
