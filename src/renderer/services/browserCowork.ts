@@ -1,5 +1,5 @@
 import { store } from '../store';
-import { setBrowserSession } from '../store/slices/browserCoworkSlice';
+import { setBrowserSession, prependBrowserMessages } from '../store/slices/browserCoworkSlice';
 import { setBrowserOpenSessionId } from '../store/slices/coworkSlice';
 import { coworkService } from './cowork';
 import { sessionTabBinding } from './sessionTabBinding';
@@ -215,6 +215,39 @@ class BrowserCoworkService {
     if (result?.success && result.session) {
       this.applySession(result.session);
     }
+  }
+
+  async loadEarlierMessages(): Promise<number> {
+    const current = store.getState().browserCowork.currentSession;
+    const history = current?.messageHistory;
+    if (!current || isOptimisticSession(current) || !history?.hasMoreBefore) {
+      return 0;
+    }
+    const beforeTranscriptCursor = history.beforeTranscriptCursor ?? null;
+    if (history.beforeSequence == null && beforeTranscriptCursor == null) {
+      return 0;
+    }
+    const result = await window.electron?.cowork?.getSessionMessagesPage?.({
+      sessionId: current.id,
+      beforeSequence: history.beforeSequence,
+      beforeTranscriptCursor,
+      limit: history.pageSize,
+    });
+    if (!result?.success || !result.page) {
+      return 0;
+    }
+    store.dispatch(prependBrowserMessages({
+      sessionId: current.id,
+      messages: result.page.messages,
+      messageHistory: {
+        hasMoreBefore: result.page.hasMoreBefore,
+        beforeSequence: result.page.beforeSequence,
+        beforeTranscriptCursor: result.page.beforeTranscriptCursor ?? null,
+        pageSize: history.pageSize,
+        beforeEpisodeIndex: history.beforeEpisodeIndex ?? null,
+      },
+    }));
+    return result.page.messages.length;
   }
 
   async archiveSession(sessionId: string): Promise<void> {

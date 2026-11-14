@@ -3894,12 +3894,6 @@ export class CoworkStore implements MemoryBackend {
         },
       };
     }
-    if (session.sessionType === 'browser') {
-      return {
-        ...session,
-        messages: this.getSessionMessages(id),
-      };
-    }
     const page = this.getSessionMessagesPage(id, { limit: messageLimit });
     return {
       ...session,

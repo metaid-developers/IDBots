@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import reducer, {
   setBrowserSession,
+  prependBrowserMessages,
   addBrowserMessage,
   updateBrowserMessageContent,
   appendBrowserMessageContent,
@@ -42,6 +43,35 @@ test('setBrowserSession stores the session and derives streaming from status', (
 
   const idle = reducer(undefined, setBrowserSession(makeSession({ status: 'completed' })));
   assert.equal(idle.isStreaming, false);
+});
+
+test('prependBrowserMessages prepends deduplicated older pages and setBrowserSession preserves them on refresh', () => {
+  let state = reducer(undefined, setBrowserSession(makeSession({
+    status: 'completed',
+    messages: [{ id: 'm3', type: 'assistant', content: 'newest', timestamp: 1003 }],
+    messageHistory: { hasMoreBefore: true, beforeSequence: null, beforeTranscriptCursor: '1003:0:3', pageSize: 1 },
+  })));
+  state = reducer(state, prependBrowserMessages({
+    sessionId: 'session-1',
+    messages: [
+      { id: 'm1', type: 'user', content: 'oldest', timestamp: 1001 },
+      { id: 'm2', type: 'assistant', content: 'middle', timestamp: 1002 },
+    ],
+    messageHistory: { hasMoreBefore: false, beforeSequence: null, beforeTranscriptCursor: null, pageSize: 1 },
+  }));
+  assert.deepEqual(state.currentSession?.messages.map((m) => m.id), ['m1', 'm2', 'm3']);
+
+  state = reducer(state, setBrowserSession(makeSession({
+    status: 'completed',
+    messages: [
+      { id: 'm3', type: 'assistant', content: 'newest updated', timestamp: 1003 },
+      { id: 'm4', type: 'user', content: 'follow-up', timestamp: 1004 },
+    ],
+    messageHistory: { hasMoreBefore: true, beforeSequence: null, beforeTranscriptCursor: '1003:0:3', pageSize: 1 },
+  })));
+  assert.deepEqual(state.currentSession?.messages.map((m) => m.id), ['m1', 'm2', 'm3', 'm4']);
+  assert.equal(state.currentSession?.messages[2].content, 'newest updated');
+  assert.equal(state.currentSession?.messageHistory?.hasMoreBefore, false);
 });
 
 test('addBrowserMessage appends only for the open session and dedupes by id', () => {
