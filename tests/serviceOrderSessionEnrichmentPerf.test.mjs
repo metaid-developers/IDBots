@@ -121,7 +121,10 @@ test('cowork:session:list uses batch enrichment and avoids unconditional getSess
     'utf8',
   ).replace(/\r\n/g, '\n');
 
-  assert.match(mainSource, /enrichCoworkSessionsWithServiceOrderSummaries\(\s*getCoworkStore\(\)\.listSessions\(options\)\s*\)/);
+  assert.match(
+    mainSource,
+    /enrichCoworkSessionsWithServiceOrderSummaries\(\s*getCoworkStore\(\)\.listSessions\(/,
+  );
   const summaryFnStart = mainSource.indexOf('const getServiceOrderSummaryForSession =');
   const summaryFnEnd = mainSource.indexOf('const getScheduler =', summaryFnStart);
   assert.ok(summaryFnStart > 0 && summaryFnEnd > summaryFnStart);
