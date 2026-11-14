@@ -98,6 +98,7 @@ type LiveStageRun = {
 
 export type StudioLiveStageServiceDeps = {
   getSession(sessionId: string): CoworkSession | null;
+  hasMultipleUserMessages?(sessionId: string): boolean;
   getMetabotById(id: number): MetabotLiveStageIdentity | null;
   getSettings(): StudioLiveStageSettings;
   getLanguage(): 'zh' | 'en';
@@ -717,10 +718,12 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     // prewarmed draft tab unconditionally: either session:start asked for it
     // explicitly, or the session is still empty (≤1 user message — the first
     // send lands before/with the run).
-    const userMessageCount = Array.isArray(session.messages)
-      ? session.messages.reduce((count, message) => count + (message?.type === 'user' ? 1 : 0), 0)
-      : 0;
-    const draftClaimPending = draftClaimRequested.delete(sessionId) || userMessageCount <= 1;
+    const multipleUserMessages = typeof deps.hasMultipleUserMessages === 'function'
+      ? deps.hasMultipleUserMessages(sessionId)
+      : (Array.isArray(session.messages)
+          ? session.messages.reduce((count, message) => count + (message?.type === 'user' ? 1 : 0), 0) > 1
+          : false);
+    const draftClaimPending = draftClaimRequested.delete(sessionId) || !multipleUserMessages;
     const run: LiveStageRun = {
       state,
       stagePath: entry?.filePath ?? null,

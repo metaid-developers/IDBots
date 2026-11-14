@@ -1686,9 +1686,10 @@ export function startMetaidRpcServer(
             ? String((err as Error).message)
             : String(err);
         try {
+          const { appendMetaidLogLine } = require('./metaidLog');
           const logPath = path.join(app.getPath('userData'), 'metaid-rpc.log');
           const line = `[${new Date().toISOString()}] [ERROR] get-pin: ${message}\n`;
-          fs.appendFileSync(logPath, line);
+          appendMetaidLogLine(logPath, line);
         } catch {
           /* ignore */
         }
@@ -3070,9 +3071,10 @@ export function startMetaidRpcServer(
           : String(err);
       const errObj = err && typeof err === 'object' ? (err as { code?: unknown; reason?: unknown; stage?: unknown; data?: { feeAssist?: unknown } }) : null;
       try {
+        const { appendMetaidLogLine } = require('./metaidLog');
         const logPath = path.join(app.getPath('userData'), 'metaid-rpc.log');
         const line = `[${new Date().toISOString()}] [ERROR] create-pin: ${message}\n`;
-        fs.appendFileSync(logPath, line);
+        appendMetaidLogLine(logPath, line);
       } catch {
         /* ignore */
       }

@@ -5393,7 +5393,7 @@ const startStartupMessageTier = (): void => {
       // Run inside the guest session's own per-bot workspace instead of the
       // shared skills root: generated files stay isolated per session, and the
       // deliverable collection allowlists exactly this directory.
-      const sessionCwd = (getCoworkStore().getSession(params.sessionId)?.cwd ?? '').trim();
+      const sessionCwd = (getCoworkStore().getSessionWithoutMessages(params.sessionId)?.cwd ?? '').trim();
       const roots = skillMgr.getAllSkillRoots();
       const cwd = sessionCwd || (roots.length > 0 ? roots[roots.length - 1]! : skillMgr.getSkillsRoot());
       const result = await runSkillTurnInExistingSession(getCoworkRunner(), getCoworkStore(), {
@@ -7205,7 +7205,7 @@ const getCoworkRunner = () => {
       mcpServerProvider: (coworkSessionId: string) => {
         // REQ-A-5: local MCP servers are disabled in server mode.
         if (isServerMode()) return [];
-        const metabotId = getCoworkStore().getSession(coworkSessionId)?.metabotId;
+        const metabotId = getCoworkStore().getSessionMetabotId(coworkSessionId);
         if (!isCoworkMcpMountEnabled(getMetabotStore(), metabotId)) return [];
         return getMcpStore().getEnabledServers();
       },
@@ -7217,7 +7217,7 @@ const getCoworkRunner = () => {
       // installed Chrome over a Playwright-managed download. See
       // services/coworkAutomationPreference.ts.
       browserAutomationProvider: (coworkSessionId: string) => {
-        const metabotId = getCoworkStore().getSession(coworkSessionId)?.metabotId;
+        const metabotId = getCoworkStore().getSessionMetabotId(coworkSessionId);
         return metabotAutomationProviders.browser(metabotId ?? null);
       },
       // Per-bot switch (default OFF since 2026-11-12, explicit '1' opts in):
@@ -7225,7 +7225,7 @@ const getCoworkRunner = () => {
       // in-process). Requires the app to hold the macOS Accessibility/Screen
       // Recording grants — the OS prompts on first use.
       computerUseProvider: (coworkSessionId: string) => {
-        const metabotId = getCoworkStore().getSession(coworkSessionId)?.metabotId;
+        const metabotId = getCoworkStore().getSessionMetabotId(coworkSessionId);
         return metabotAutomationProviders.computer(metabotId ?? null);
       },
       // Metabot-keyed variants for intent prewarms that fire before any
@@ -9124,7 +9124,7 @@ const getBotBrowserProjection = () =>
       // session's last real showcase page, never the stage entry URI.
       if (role === 'stage') return;
       const store = getCoworkStore();
-      if (store.getSession(sessionId)?.sessionType !== 'browser') return;
+      if (store.getSessionWithoutMessages(sessionId)?.sessionType !== 'browser') return;
       store.updateSession(sessionId, { browserUri: uri, browserTitle: title });
     },
   });
@@ -9136,7 +9136,7 @@ const studioDelegationLookupDeps = {
   listAttemptsForSourceSessions: (ids: string[]) => getOrchestrationStore().listAttemptsForSourceSessions(ids),
   getStep: (id: string) => getOrchestrationStore().getStep(id),
   getTaskForStep: (id: string) => getOrchestrationStore().getTaskForStep(id),
-  getSession: (id: string) => getCoworkStore().getSession(id),
+  getSession: (id: string) => getCoworkStore().getSessionWithoutMessages(id),
   getMetabotById: (id: number) => getMetabotStore().getMetabotById(id),
 };
 const listOpenStudioDelegations = (sessionId: string) => listStudioOpenDelegations(studioDelegationLookupDeps, sessionId);
@@ -9160,7 +9160,8 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
   if (!studioLiveStageService) {
     const fallbackAvatarPath = path.join(app.getAppPath(), app.isPackaged ? 'dist/default_metabot.png' : 'public/default_metabot.png');
     studioLiveStageService = createStudioLiveStageService({
-      getSession: (sessionId) => getCoworkStore().getSession(sessionId),
+      getSession: (sessionId) => getCoworkStore().getSessionWithoutMessages(sessionId),
+      hasMultipleUserMessages: (sessionId) => getCoworkStore().hasMultipleUserMessages(sessionId),
       getMetabotById: (id) => getMetabotStore().getMetabotById(id),
       listOpenDelegations: listOpenStudioDelegations,
       getSettings: () => readStudioLiveStageSettings(getStoreOrNull()),

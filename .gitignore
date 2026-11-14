@@ -1032,3 +1032,4 @@ blob-report/
 # Performance optimization regression tests (fix/perf-optimization)
 !tests/serviceOrderSessionEnrichmentPerf.test.mjs
 !tests/sqlitePerfOptimizations.test.mjs
+!tests/hotPathMetadataAndSkillCache.test.mjs

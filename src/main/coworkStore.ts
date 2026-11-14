@@ -4672,6 +4672,14 @@ export class CoworkStore implements MemoryBackend {
     return Number(row?.count ?? 0);
   }
 
+  hasMultipleUserMessages(sessionId: string): boolean {
+    const rows = this.getAll<{ found: number }>(
+      "SELECT 1 AS found FROM cowork_messages WHERE session_id = ? AND type = 'user' LIMIT 2",
+      [sessionId],
+    );
+    return rows.length > 1;
+  }
+
   /**
    * Engagement signals for one session — the long-term heartbeat's
    * owner-presence / twin-activity probe over the task's related sessions.
