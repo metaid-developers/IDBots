@@ -1028,3 +1028,6 @@ blob-report/
 # A2A private-chat polish & collaboration regression tests
 !tests/a2aMessageSanitizer.test.mjs
 !tests/a2aPrivateChatCollaboration.test.mjs
+
+# Performance optimization regression tests (fix/perf-optimization)
+!tests/serviceOrderSessionEnrichmentPerf.test.mjs

@@ -5041,6 +5041,40 @@ export class CoworkStore implements MemoryBackend {
     }));
   }
 
+  getSessionOrderHeaderMessages(sessionId: string): CoworkMessage[] {
+    const rows = this.getAll<CoworkMessageRow>(`
+      SELECT id, type, content, metadata, created_at, sequence
+      FROM cowork_messages
+      WHERE session_id = ?
+        AND content IS NOT NULL
+        AND UPPER(SUBSTR(LTRIM(content), 1, 7)) = '[ORDER]'
+      ORDER BY
+        created_at ASC,
+        sequence ASC,
+        ROWID ASC
+    `, [sessionId]);
+
+    return rows.map((row) => this.mapCoworkMessageRow(row));
+  }
+
+  getSessionOrderLinkageMessages(sessionId: string): CoworkMessage[] {
+    const rows = this.getAll<CoworkMessageRow>(`
+      SELECT id, type, content, metadata, created_at, sequence
+      FROM cowork_messages
+      WHERE session_id = ?
+        AND (
+          (metadata IS NOT NULL AND (instr(metadata, 'serviceOrderPinId') > 0 OR instr(metadata, 'orderPinId') > 0))
+          OR (content IS NOT NULL AND (instr(LOWER(content), 'txid') > 0 OR instr(LOWER(content), 'order') > 0))
+        )
+      ORDER BY
+        created_at ASC,
+        sequence ASC,
+        ROWID ASC
+    `, [sessionId]);
+
+    return rows.map((row) => this.mapCoworkMessageRow(row));
+  }
+
   getRecentPrivateA2AMessages(sessionId: string, requestedLimit: number = 100): CoworkMessage[] {
     const limit = Number.isFinite(requestedLimit)
       ? Math.max(1, Math.min(1000, Math.floor(requestedLimit)))
