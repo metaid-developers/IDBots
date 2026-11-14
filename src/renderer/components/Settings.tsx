@@ -2645,7 +2645,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                   type="button"
                   onClick={handleOpenDataDirectory}
                   disabled={!dataDirectoryPath}
-                  className="shrink-0 px-4 py-2 text-sm font-medium rounded-xl transition-colors border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none"
+                  className="shrink-0 px-4 py-2 text-sm font-medium rounded-xl transition-colors border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:pointer-events-none"
                 >
                   {i18nService.t('settingsDataDirectoryOpen')}
                 </button>
@@ -3106,7 +3106,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                       type="button"
                       onClick={handleImportProvidersClick}
                       disabled={isImportingProviders || isExportingProviders}
-                      className="inline-flex items-center px-2 py-1 text-[11px] font-medium rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+                      className="inline-flex items-center px-2 py-1 text-[11px] font-medium rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
                       {i18nService.t('import')}
                     </button>
@@ -3114,7 +3114,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                       type="button"
                       onClick={handleExportProviders}
                       disabled={isImportingProviders || isExportingProviders}
-                      className="inline-flex items-center px-2 py-1 text-[11px] font-medium rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+                      className="inline-flex items-center px-2 py-1 text-[11px] font-medium rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
                       {i18nService.t('export')}
                     </button>
@@ -3410,7 +3410,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                   type="button"
                   onClick={handleTestConnection}
                   disabled={isTesting || (providerRequiresApiKey(activeProvider) && !providers[activeProvider].apiKey)}
-                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   <SignalIcon className="h-3.5 w-3.5 mr-1.5" />
                   {isTesting ? i18nService.t('testing') : i18nService.t('testConnection')}
@@ -3675,7 +3675,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                   type="button"
                   onClick={handleTestCerebellumConnection}
                   disabled={isTestingCerebellum || (cerebellum.provider !== CEREBELLUM_FREE_PROVIDER && !cerebellum.apiKey.trim())}
-                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   <SignalIcon className="h-3.5 w-3.5 mr-1.5" />
                   {isTestingCerebellum ? i18nService.t('testing') : i18nService.t('testConnection')}
@@ -3953,7 +3953,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-xl transition-colors text-sm font-medium border dark:border-claude-darkBorder border-claude-border active:scale-[0.98]"
+                className="px-4 py-2 dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-[var(--rounded)] transition-colors text-sm font-medium border dark:border-claude-darkBorder border-claude-border"
               >
                 {i18nService.t('cancel')}
               </button>
