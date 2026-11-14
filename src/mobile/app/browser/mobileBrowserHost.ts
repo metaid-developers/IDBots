@@ -2,6 +2,7 @@ import { resolveMetaAppPinToRecord } from '@openagentinternet/agent-browser-core
 import { createBrowserEndpointShim, type BrowserEndpointShimResponse } from '@/features/botBrowser/browserEndpointShim';
 import { createIdbotsBrowserHostAdapter } from '@/features/botBrowser/idbotsBrowserHostAdapter';
 import { getMobileElectron } from '../appBridge';
+import { resolveLocalFileUrl } from '../../../renderer/services/localFileUrl';
 import { createMobileMetaAppPreviewSession } from './mobileMetaAppPreview';
 
 export function createMobileBrowserHost(): {
@@ -33,6 +34,9 @@ export function createMobileBrowserHost(): {
       };
     },
     listMetaApps: async () => [],
+    previewFileLocalResolve: async ({ path }) => ({
+      localPreviewUrl: await resolveLocalFileUrl(path, { disposition: 'inline' }),
+    }),
     resolveMetaAppPin: (pinId) => resolveMetaAppPinToRecord({
       pinId,
       createPreviewSession: preview.createPreviewSession,

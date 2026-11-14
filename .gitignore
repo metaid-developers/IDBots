@@ -131,6 +131,8 @@ tests/*
 !tests/mobileRechargeRecovery.test.ts
 !tests/mobileBotLifecycle.test.ts
 !tests/mobileBotSort.test.ts
+!tests/mobileMetabotRoster.test.ts
+!tests/officialSkillFrontmatter.test.mjs
 !tests/mobileSessionList.test.ts
 !tests/mobileA2aLimits.test.ts
 !tests/mobileMeIa.test.tsx

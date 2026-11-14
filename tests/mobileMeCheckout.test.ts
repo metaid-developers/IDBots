@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import test from 'node:test';
 import { fetchMePaymentCheckout, mergeMePaymentCheckout } from '../src/mobile/app/me/meCheckout.ts';
 import {
@@ -48,6 +49,13 @@ test('checkout recovery stores only order routing fields and clears the matching
     if (previous) host.window = previous;
     else delete host.window;
   }
+});
+
+test('a missing order clears stale cross-account recovery instead of showing an error', () => {
+  const source = fs.readFileSync(new URL('../src/mobile/app/screens/MePurchaseScreen.tsx', import.meta.url), 'utf8');
+  assert.match(source, /if \(!next\) \{\s*clearMeCheckoutRecovery\(recovery\.orderId\);\s*setPhase\('form'\);\s*return;\s*\}/);
+  const missingBranch = source.slice(source.indexOf('if (!next)'), source.indexOf('if (!next)') + 180);
+  assert.ok(!missingBranch.includes('setSubmitError'), 'missing orders silently reset to a fresh checkout');
 });
 
 test('subscription status checks read the authoritative order and preserve the payment handoff', async () => {

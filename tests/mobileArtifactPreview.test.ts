@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  artifactBrowserUri,
   artifactFilename,
   artifactKind,
   fetchArtifactText,
@@ -22,6 +23,21 @@ test('artifact names and preview types are derived from tenant paths', () => {
   assert.equal(artifactKind('/data/readme.txt'), 'markdown');
   assert.equal(artifactKind('/data/archive.zip'), 'other');
   assert.equal(artifactKind('/data/no-extension'), 'other');
+  assert.equal(artifactKind('/data/app.HTML'), 'html');
+  assert.equal(artifactKind('/data/index.htm'), 'html');
+});
+
+test('HTML artifacts open through ABC preview-file while other kinds keep their native preview', () => {
+  assert.equal(
+    artifactBrowserUri('/data/workspace/today-inspiration.html'),
+    'preview-file://localhost/data/workspace/today-inspiration.html',
+  );
+  assert.equal(
+    artifactBrowserUri('C:\\work\\report.html'),
+    'preview-file://localhost/C:/work/report.html',
+  );
+  assert.equal(artifactBrowserUri('/data/chart.png'), null);
+  assert.equal(artifactBrowserUri('/data/notes.md'), null);
 });
 
 test('signed text requests use credentials and expose failures honestly', async () => {

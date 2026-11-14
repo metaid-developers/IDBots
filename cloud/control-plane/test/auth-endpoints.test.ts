@@ -185,6 +185,17 @@ describe('C3 auth endpoints (AC-B-2 error matrix)', () => {
     });
     assert.equal(required.status, 403);
     assert.equal((required.json as ErrorBody).error.code, 'INVITE_REQUIRED');
+    const codeAfterRequired = db.prepare('SELECT consumed_at FROM sms_codes WHERE phone_e164 = ?').get(phoneA) as { consumed_at: number | null };
+    assert.equal(codeAfterRequired.consumed_at, null, 'an invite retry must not need a second SMS code');
+    insertInvite(db, { code: 'RETRY-1', maxUses: 1, now: Date.now() });
+    const retry = await api(app.baseUrl, '/api/v1/auth/sms/verify', {
+      method: 'POST',
+      body: { phone: phoneA, code: '246810', inviteCode: 'RETRY-1' },
+      origin: ORIGIN,
+    });
+    assert.equal(retry.status, 200);
+    const codeAfterRetry = db.prepare('SELECT consumed_at FROM sms_codes WHERE phone_e164 = ?').get(phoneA) as { consumed_at: number | null };
+    assert.notEqual(codeAfterRetry.consumed_at, null);
 
     const phoneB = '+8613900001007';
     insertLoginCode(phoneB);
@@ -195,6 +206,8 @@ describe('C3 auth endpoints (AC-B-2 error matrix)', () => {
     });
     assert.equal(invalid.status, 403);
     assert.equal((invalid.json as ErrorBody).error.code, 'INVITE_INVALID');
+    const codeAfterInvalid = db.prepare('SELECT consumed_at FROM sms_codes WHERE phone_e164 = ?').get(phoneB) as { consumed_at: number | null };
+    assert.equal(codeAfterInvalid.consumed_at, null);
 
     insertInvite(db, { code: 'GONE-1', maxUses: 1, usedCount: 1, now: Date.now() });
     const phoneC = '+8613900001008';
@@ -206,6 +219,8 @@ describe('C3 auth endpoints (AC-B-2 error matrix)', () => {
     });
     assert.equal(exhausted.status, 403);
     assert.equal((exhausted.json as ErrorBody).error.code, 'INVITE_EXHAUSTED');
+    const codeAfterExhausted = db.prepare('SELECT consumed_at FROM sms_codes WHERE phone_e164 = ?').get(phoneC) as { consumed_at: number | null };
+    assert.equal(codeAfterExhausted.consumed_at, null);
   });
 
   test('USER_DISABLED for a disabled account', async () => {

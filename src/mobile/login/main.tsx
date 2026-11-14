@@ -309,6 +309,7 @@ function LoginPage(): JSX.Element {
 
   return (
     <div style={styles.page}>
+      <div style={styles.loginCard}>
       <img src="/icon-192.png" alt="IDBots" style={styles.logo} />
       <h1 style={styles.title}>{t('mobile.login.title')}</h1>
       <p style={styles.subtitle}>{t('mobile.login.subtitle')}</p>
@@ -404,6 +405,7 @@ function LoginPage(): JSX.Element {
       )}
       {error && <p style={styles.error}>{error}</p>}
       <p style={styles.noteSmall}>{t('mobile.login.demoNote')}</p>
+      </div>
     </div>
   );
 }

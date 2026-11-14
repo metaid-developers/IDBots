@@ -79,6 +79,7 @@ export interface IdBotsBrowserHostAdapterInput {
   resolveBrowserResource?: (
     input: BrowserResolveInput,
   ) => Promise<BrowserCommandResult<BrowserResolveResult>>;
+  previewFileLocalResolve?: (input: { path: string }) => Promise<{ localPreviewUrl: string }>;
   getBrowserProfile?: (
     input: BrowserProfileInput,
   ) => Promise<BrowserCommandResult<Record<string, unknown>>>;
@@ -180,11 +181,12 @@ function safeBridgeMessage(value: unknown, fallback: string): string {
   return message;
 }
 
-function createInitialBrowserConfig(): BrowserConfigContainer {
+function createInitialBrowserConfig(enablePreviewFile: boolean): BrowserConfigContainer {
   return {
     browser: {
       ...createDefaultBrowserConfig(),
       localMode: true,
+      enablePreviewFile,
     },
   };
 }
@@ -421,7 +423,7 @@ function createContractSettingsSnapshot(config: BrowserConfigContainer): Browser
 export function createIdbotsBrowserHostAdapter(
   input: IdBotsBrowserHostAdapterInput,
 ): BrowserEndpointAdapter {
-  let browserConfig = createInitialBrowserConfig();
+  let browserConfig = createInitialBrowserConfig(Boolean(input.previewFileLocalResolve));
 
   return {
     async getRuntime(_runtimeInput?: BrowserRuntimeInput): Promise<BrowserCommandResult<BrowserRuntimeSnapshot>> {
@@ -479,6 +481,7 @@ export function createIdbotsBrowserHostAdapter(
         config: resolveBrowserConfig(browserConfig),
         fetch: input.fetch,
         metaAppResolve: (pinId) => resolveMetaAppRecord(input, pinId),
+        previewFileLocalResolve: input.previewFileLocalResolve,
       });
 
       if (!result.ok) {

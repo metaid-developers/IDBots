@@ -1,4 +1,7 @@
-export type MobileArtifactKind = 'image' | 'pdf' | 'markdown' | 'other';
+import { previewFileUriFromFileUri } from '@openagentinternet/agent-browser-core';
+import { buildLocalFileUrl } from '../../renderer/services/localFileUrl';
+
+export type MobileArtifactKind = 'image' | 'pdf' | 'markdown' | 'html' | 'other';
 
 export function artifactFilename(path: string): string {
   return path.replace(/\\/g, '/').split('/').pop() || 'file';
@@ -9,7 +12,14 @@ export function artifactKind(path: string): MobileArtifactKind {
   if (['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.avif'].includes(extension)) return 'image';
   if (extension === '.pdf') return 'pdf';
   if (['.md', '.markdown', '.txt'].includes(extension)) return 'markdown';
+  if (['.html', '.htm'].includes(extension)) return 'html';
   return 'other';
+}
+
+export function artifactBrowserUri(path: string): string | null {
+  return artifactKind(path) === 'html'
+    ? previewFileUriFromFileUri(buildLocalFileUrl(path))
+    : null;
 }
 
 export async function fetchArtifactText(

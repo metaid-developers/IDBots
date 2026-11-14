@@ -1,6 +1,7 @@
 ---
 name: metabot-publish-nft
-description: Guided MRC-721 NFT issuance wizard (MetaID native, pin-based Agent Goods — NOT the metacontract wallet_nft_* legacy line). Use when the owner wants to publish NFT content — "publish an NFT", "issue/release a collection/album/series/drop", "make this an NFT", "fan badge", "mint", "paid-knowledge collection", "NFT 专辑", "专辑", "发专辑", "发行专辑", "数字藏品", "数字商品", "数字物品", "AI数字物品", "藏品", "合集", "上链一张图/一个作品", or asks what NFTs (数字藏品/数字商品) can do here — in this product's context ALL these Chinese words mean the same thing, the MRC-721 Agent Good. You walk the owner through: worldview intro → guided field Q&A → a LOCAL mock-preview page (hard gate) → staged on-chain publish (items first, collection_desc LAST) → a visual result page. Also covers adding items to an existing collection and resuming an interrupted issue.
+description: >-
+  Guided MRC-721 NFT issuance wizard (MetaID native, pin-based Agent Goods — NOT the metacontract wallet_nft_* legacy line). Use when the owner wants to publish NFT content — "publish an NFT", "issue/release a collection/album/series/drop", "make this an NFT", "fan badge", "mint", "paid-knowledge collection", "NFT 专辑", "专辑", "发专辑", "发行专辑", "数字藏品", "数字商品", "数字物品", "AI数字物品", "藏品", "合集", "上链一张图/一个作品", or asks what NFTs (数字藏品/数字商品) can do here — in this product's context ALL these Chinese words mean the same thing, the MRC-721 Agent Good. You walk the owner through: worldview intro → guided field Q&A → a LOCAL mock-preview page (hard gate) → staged on-chain publish (items first, collection_desc LAST) → a visual result page. Also covers adding items to an existing collection and resuming an interrupted issue.
 official: true
 version: 2.2.0
 ---

@@ -506,9 +506,10 @@ test('composer keeps the text area wide between one plus button and voice, with 
   assert.ok(!markup.includes('data-testid="composer-action-sheet"'));
   const plusIdx = markup.indexOf('data-testid="composer-plus"');
   const inputIdx = markup.indexOf('data-testid="chat-composer-input"');
+  const sendIdx = markup.indexOf('data-testid="composer-send"');
   const voiceIdx = markup.indexOf('data-testid="voice-btn-idle"');
-  assert.ok(plusIdx >= 0 && plusIdx < inputIdx && inputIdx < voiceIdx, 'plus → wide input → voice layout');
-  assert.ok(!markup.includes('mobile.chat.send'));
+  assert.ok(plusIdx >= 0 && plusIdx < inputIdx && inputIdx < sendIdx && sendIdx < voiceIdx, 'plus → wide input → send → voice layout');
+  assert.match(markup, /data-testid="composer-send"/);
   const source = readSource('../src/mobile/app/screens/ChatScreen.tsx');
   assert.match(source, /data-testid="composer-action-emoji"/);
   assert.match(source, /data-testid="composer-action-attachment"/);

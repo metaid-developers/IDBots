@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import type { MobileMetabot, MockSkill } from '../../bridge/types';
 import { getMobileElectron, hasAppBridge } from '../appBridge';
+import { getMetabotRoster, setMetabotRoster, subscribeMetabotRoster } from '../metabotRosterStore';
 import { t } from '../../i18n';
 import { buildModelGroupsFromConfig, type CatalogProviderGroup } from '../../../renderer/services/modelCatalog';
 
@@ -51,7 +52,7 @@ export function useMetabots(): {
   setBotEnabled: (id: number, enabled: boolean) => Promise<BotOperationResult>;
   getBotBalance: (id: number) => Promise<{ success: boolean; value?: string; error?: string }>;
 } {
-  const [bots, setBots] = useState<MobileMetabot[]>([]);
+  const bots = useSyncExternalStore(subscribeMetabotRoster, getMetabotRoster, getMetabotRoster);
   const [skills, setSkills] = useState<MockSkill[]>([]);
   const [modelGroups, setModelGroups] = useState<CatalogProviderGroup[]>([]);
   const [loading, setLoading] = useState(true);
@@ -72,7 +73,7 @@ export function useMetabots(): {
       getMobileElectron().store.get('app_config'),
     ]);
     if (rosterResult.status === 'fulfilled' && rosterResult.value?.success && Array.isArray(rosterResult.value.list)) {
-      setBots(rosterResult.value.list);
+      setMetabotRoster(rosterResult.value.list);
       setError(null);
     } else {
       setError(t('mobile.chat.rosterUnavailable'));

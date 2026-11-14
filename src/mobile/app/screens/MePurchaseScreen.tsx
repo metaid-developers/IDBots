@@ -167,8 +167,8 @@ export default function MePurchaseScreen(props: {
       }).then((next) => {
         if (cancelled) return;
         if (!next) {
+          clearMeCheckoutRecovery(recovery.orderId);
           setPhase('form');
-          setSubmitError(t('mobile.me.purchase.orderUnavailable'));
           return;
         }
         setCheckout(next);

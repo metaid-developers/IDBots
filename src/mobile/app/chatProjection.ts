@@ -47,6 +47,18 @@ export const DIAGNOSTIC_REASON_MAX_CHARS = 120;
  */
 const DIAGNOSTIC_ERROR_TOKEN = /\b(?:ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|EPIPE|EACCES|ENOMEM|ENOSPC|UNAUTHORIZED|FORBIDDEN|TOO_MANY_REQUESTS|INTERNAL_SERVER_ERROR|BAD_GATEWAY|SERVICE_UNAVAILABLE|GATEWAY_TIMEOUT|HTTP[ _-]?[45]\d{2}|[45]\d{2})\b/;
 
+const FOLLOW_UP_CONTRACT_END = 'The tag routes this session between the owner\'s Follow-Up list and the autonomous fold; a missing or wrong tag costs the owner attention they did not owe.';
+const FOLLOW_UP_TAG_LINE = /^\s*\[FOLLOW_UP:\s*(?:none|owner\s+—\s*[^\n]+)\]\s*$/gimu;
+
+export function stripScheduledTaskProtocol(text: string): string {
+  let visible = text;
+  if (visible.includes('[Scheduled task lifecycle]') && visible.includes('[End-of-run follow-up contract]')) {
+    const contractEnd = visible.indexOf(FOLLOW_UP_CONTRACT_END);
+    if (contractEnd >= 0) visible = visible.slice(contractEnd + FOLLOW_UP_CONTRACT_END.length).trimStart();
+  }
+  return visible.replace(FOLLOW_UP_TAG_LINE, '').trimEnd();
+}
+
 function normalizeReasonLine(line: string): string {
   return line.replace(/\s+/g, ' ').trim();
 }
@@ -135,7 +147,8 @@ function projectMessage(message: CoworkMessage, role: ChatMessageView['role']): 
   const diagnostic: ChatDiagnosticKind | null = metadataDiagnostic
     ?? (role === 'error' && quotaKindFromErrorText(errorText) === null ? 'turnFailed' : null);
   const rawText = diagnostic ? '' : errorText;
-  const text = role === 'assistant' ? splitThinkTaggedContent(rawText).text : rawText;
+  const visibleText = role === 'user' || role === 'assistant' ? stripScheduledTaskProtocol(rawText) : rawText;
+  const text = role === 'assistant' ? splitThinkTaggedContent(visibleText).text : visibleText;
   const diagnosticReason = diagnostic === 'turnFailed'
     ? extractTurnFailureReason(message.content, message.metadata?.error)
     : null;

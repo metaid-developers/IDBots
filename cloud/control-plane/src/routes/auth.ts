@@ -192,11 +192,12 @@ export async function issueSmsCode(
 }
 
 /** Validates a submitted SMS code (REQ-B-6/B-16 shared rules). */
-export function consumeSmsCode(
+function verifySmsCode(
   app: AppContext,
   phone: string,
   purpose: 'login' | 'reverify',
   code: string,
+  consume: boolean,
 ): void {
   const now = Date.now();
   const lock = checkPhoneLock(app.db, phone, now);
@@ -223,7 +224,25 @@ export function consumeSmsCode(
     incrementCodeAttempts(app.db, codeRow.id);
     throw new HttpError(400, 'CODE_INVALID', 'wrong code');
   }
-  app.db.prepare('UPDATE sms_codes SET consumed_at = ? WHERE id = ?').run(now, codeRow.id);
+  if (consume) app.db.prepare('UPDATE sms_codes SET consumed_at = ? WHERE id = ?').run(now, codeRow.id);
+}
+
+export function validateSmsCode(
+  app: AppContext,
+  phone: string,
+  purpose: 'login' | 'reverify',
+  code: string,
+): void {
+  verifySmsCode(app, phone, purpose, code, false);
+}
+
+export function consumeSmsCode(
+  app: AppContext,
+  phone: string,
+  purpose: 'login' | 'reverify',
+  code: string,
+): void {
+  verifySmsCode(app, phone, purpose, code, true);
 }
 
 async function smsSend(app: AppContext, reqCtx: RequestCtx, body: unknown): Promise<void> {
@@ -259,7 +278,7 @@ async function smsVerify(app: AppContext, reqCtx: RequestCtx, body: unknown): Pr
   }
   const now = Date.now();
 
-  consumeSmsCode(app, phone, LOGIN_PURPOSE, code);
+  validateSmsCode(app, phone, LOGIN_PURPOSE, code);
 
   const existing = app.db.prepare('SELECT * FROM users WHERE phone_e164 = ?').get(phone) as
     | UserRow
@@ -309,6 +328,8 @@ async function smsVerify(app: AppContext, reqCtx: RequestCtx, body: unknown): Pr
       });
     }
   }
+
+  consumeSmsCode(app, phone, LOGIN_PURPOSE, code);
 
   const token = newSessionToken();
   app.db
