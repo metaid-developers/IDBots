@@ -256,7 +256,7 @@ const MeBalanceBadge: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
                         setPanelOpen(false);
                         requestOpenMePurchase('topup');
                       }}
-                      className="btn-idchat-primary-filled flex-1 rounded-lg px-2 py-1.5 text-[11px] font-medium"
+                      className="btn-idchat-primary-filled flex-1 !rounded-lg px-2 py-1.5 text-[11px] font-medium"
                     >
                       {i18nService.t('mePanelRecharge')}
                     </button>
