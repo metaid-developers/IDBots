@@ -13,6 +13,7 @@ import { OWNER_SCOPE_KEY } from './memory/memoryScope';
 import { findNearestExistingFile } from './libs/runtimePaths';
 import { writeFileAtomicSync } from './libs/atomicFile';
 import { createNativeSqliteDatabase } from './nativeSqliteDatabase';
+import { SqliteReadWorker } from './sqliteReadWorker';
 import type { SqliteDatabase } from './sqliteTypes';
 import { disableDeadFetchMcpServers } from './mcpStore';
 import { ensureMetaIDExperienceSchema } from './metaidExperienceStore';
@@ -335,6 +336,7 @@ export class SqliteStore {
   private db: SqliteDatabase;
   private dbPath: string;
   private backendKind: SqliteBackendKind;
+  private readWorker: SqliteReadWorker | null = null;
   private emitter = new EventEmitter();
   private isClosed = false;
   private static sqlPromise: Promise<SqlJsStatic> | null = null;
@@ -388,6 +390,16 @@ export class SqliteStore {
 
   getBackendKind(): SqliteBackendKind {
     return this.backendKind;
+  }
+
+  getReadWorker(): SqliteReadWorker | null {
+    if (this.isClosed || this.backendKind !== 'native' || !this.dbPath || this.dbPath === ':memory:') {
+      return null;
+    }
+    if (!this.readWorker || this.readWorker.isDisposed()) {
+      this.readWorker = new SqliteReadWorker(this.dbPath);
+    }
+    return this.readWorker;
   }
 
   /** Is the one-shot migration flag present in cowork_config? (absent = falsy) */
@@ -4468,6 +4480,10 @@ export class SqliteStore {
   close(): void {
     if (this.isClosed) {
       return;
+    }
+    if (this.readWorker) {
+      this.readWorker.closeSync();
+      this.readWorker = null;
     }
     this.db.close();
     this.isClosed = true;

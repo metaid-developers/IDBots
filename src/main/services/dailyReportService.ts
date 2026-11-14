@@ -110,8 +110,8 @@ export interface DailyReportServiceDeps {
   /** Fresh-install deferral (resolveBackgroundAutomationDeferral). */
   backgroundDeferral: () => string | null;
   isExperimentalAutomationAllowed: (store: { get(key: string): unknown } | null) => boolean;
-  /** Collector, wired to the shared db by the caller. */
-  collectFacts: (args: { windowStartMs: number; windowEndMs: number; twinId: number }) => DailyReportFacts;
+  /** Collector, wired to the shared db (or off-thread read worker) by the caller. */
+  collectFacts: (args: { windowStartMs: number; windowEndMs: number; twinId: number }) => DailyReportFacts | Promise<DailyReportFacts>;
   /** Cerebellum triage gate; null verdicts degrade to recency order. */
   triageCandidates: (args: {
     candidates: ReadonlyArray<{
@@ -368,7 +368,7 @@ export const startDailyReportService = (deps: DailyReportServiceDeps): DailyRepo
     }
 
     try {
-      const facts = deps.collectFacts({ windowStartMs, windowEndMs, twinId: twin.id });
+      const facts = await deps.collectFacts({ windowStartMs, windowEndMs, twinId: twin.id });
       if (!facts.hasAnyActivity && input.force !== true) {
         deps.dailyReportStore.markSkipped(run.id, nowMs);
         log(`${dateLabel}: window empty — recorded 'skipped', no session created.`);

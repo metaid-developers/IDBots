@@ -448,16 +448,35 @@ export const DSH_KERNEL_ACTIVITY_GRACE_MS = 10 * 60_000
  */
 export const DSH_RUNTIME_IDLE_TTL_MS = 30 * 60_000
 export const DSH_RUNTIME_PRESSURE_IDLE_TTL_MS = 2 * 60_000
+export const DSH_RUNTIME_CRITICAL_PRESSURE_IDLE_TTL_MS = 45_000
 export const DSH_RUNTIME_LOW_FREE_MEMORY_MB = 1024
+export const DSH_RUNTIME_CRITICAL_FREE_MEMORY_MB = 256
 
 export function resolveDshRuntimeIdleTtlMsForMemory(
   baseTtlMs: number,
   freeMemoryMb = os.freemem() / 1024 / 1024,
 ): number {
   if (baseTtlMs <= 0) return baseTtlMs
+  if (freeMemoryMb < DSH_RUNTIME_CRITICAL_FREE_MEMORY_MB) {
+    return Math.min(baseTtlMs, DSH_RUNTIME_CRITICAL_PRESSURE_IDLE_TTL_MS)
+  }
   return freeMemoryMb < DSH_RUNTIME_LOW_FREE_MEMORY_MB
     ? Math.min(baseTtlMs, DSH_RUNTIME_PRESSURE_IDLE_TTL_MS)
     : baseTtlMs
+}
+
+export function shouldSkipSecondaryCleanWarmupForMemory(input: {
+  hasComboWarmupSupport: boolean
+  topComboHasAutomation: boolean
+  freeMemoryMb?: number
+  totalMemoryMb?: number
+}): boolean {
+  if (!input.hasComboWarmupSupport || !input.topComboHasAutomation) {
+    return false
+  }
+  const freeMemoryMb = input.freeMemoryMb ?? (os.freemem() / 1024 / 1024)
+  const totalMemoryMb = input.totalMemoryMb ?? (os.totalmem() / 1024 / 1024)
+  return freeMemoryMb < 512 || (totalMemoryMb <= 16_384 && freeMemoryMb < DSH_RUNTIME_LOW_FREE_MEMORY_MB)
 }
 
 const DSH_WARMUP_CALLBACKS: DshTurnCallbacks = {
@@ -1525,9 +1544,10 @@ export class DshTurnHub {
   }
 
   private scheduleReap(): void {
-    const ttl = this.opts.runtimeIdleTtlMs ?? DSH_RUNTIME_IDLE_TTL_MS
-    if (ttl <= 0 || this.reapTimer) return
-    const delay = Math.max(50, Math.min(ttl, 60_000))
+    const baseTtl = this.opts.runtimeIdleTtlMs ?? DSH_RUNTIME_IDLE_TTL_MS
+    if (baseTtl <= 0 || this.reapTimer) return
+    const effectiveTtl = resolveDshRuntimeIdleTtlMsForMemory(baseTtl)
+    const delay = Math.max(50, Math.min(effectiveTtl, 60_000))
     this.reapTimer = setTimeout(() => {
       this.reapTimer = null
       void this.reapIdleSlots()

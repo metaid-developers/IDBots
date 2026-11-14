@@ -1459,10 +1459,20 @@ interface IElectronAPI {
     listSessionFeedback: (input: { sessionId: string }) => Promise<{ success: boolean; feedback?: CoworkMessageFeedbackRecord[]; error?: string }>;
     getA2AConversationHistoryPage: (input: { sessionId: string; beforeCursor?: CoworkA2AHistoryCursor | null; limit?: number }) => Promise<{ success: boolean; page?: CoworkA2AHistoryPage; error?: string }>;
     getA2AEpisodes: (sessionId: string) => Promise<{ success: boolean; episodes?: CoworkA2AEpisodeInfo[]; error?: string }>;
-    listSessions: (options?: { metabotId?: number | null }) => Promise<{ success: boolean; sessions?: CoworkSessionSummary[]; error?: string }>;
+    listSessions: (options?: { metabotId?: number | null; omitInlinePeerDataAvatar?: boolean }) => Promise<{ success: boolean; sessions?: CoworkSessionSummary[]; error?: string }>;
     listMetabotAvatars: (metabotIds: number[]) => Promise<{
       success: boolean;
       avatars?: Array<{ metabotId: number; avatar: string | null }>;
+      error?: string;
+    }>;
+    listPeerAvatars: (sessionIds: string[]) => Promise<{
+      success: boolean;
+      avatars?: Array<{ sessionId: string; peerAvatar: string | null }>;
+      error?: string;
+    }>;
+    getSessionSummary: (sessionId: string) => Promise<{
+      success: boolean;
+      summary?: CoworkSessionSummary | null;
       error?: string;
     }>;
     processServiceRefund: (sessionId: string) => Promise<{

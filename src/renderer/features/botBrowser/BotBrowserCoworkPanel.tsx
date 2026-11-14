@@ -848,6 +848,26 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
   // ends), then a 15s poll only while the panel shows an assistant-mode
   // browser session that is not streaming.
   const [openDelegations, setOpenDelegations] = useState<PanelOpenDelegation[]>([]);
+  const [isLoadingEarlier, setIsLoadingEarlier] = useState(false);
+
+  const handleLoadEarlierMessages = useCallback(async () => {
+    if (isLoadingEarlier || !currentSession?.messageHistory?.hasMoreBefore) return;
+    const scroller = listRef.current;
+    const prevScrollHeight = scroller?.scrollHeight ?? 0;
+    const prevScrollTop = scroller?.scrollTop ?? 0;
+    setIsLoadingEarlier(true);
+    try {
+      const count = await browserCoworkService.loadEarlierMessages();
+      if (count > 0 && scroller) {
+        window.requestAnimationFrame(() => {
+          const addedHeight = scroller.scrollHeight - prevScrollHeight;
+          scroller.scrollTop = Math.max(0, prevScrollTop + addedHeight);
+        });
+      }
+    } finally {
+      setIsLoadingEarlier(false);
+    }
+  }, [currentSession?.messageHistory?.hasMoreBefore, isLoadingEarlier]);
   const delegationSessionId = currentSession?.id ?? null;
   const delegationPollingActive = Boolean(currentSession && isAssistantMode && !isStreaming);
   useEffect(() => {
@@ -1142,7 +1162,22 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
             </div>
           )
         ) : (
-          visibleMessages.map(renderMessage)
+          <>
+            {currentSession?.messageHistory?.hasMoreBefore ? (
+              <div className="flex justify-center pt-1 pb-1">
+                <button
+                  type="button"
+                  data-slot="panel-load-earlier"
+                  disabled={isLoadingEarlier}
+                  onClick={() => { void handleLoadEarlierMessages(); }}
+                  className="rounded-lg border dark:border-claude-darkBorder/70 border-claude-border/70 px-2.5 py-1 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors disabled:opacity-50"
+                >
+                  {isLoadingEarlier ? i18nService.t('loading') : i18nService.t('coworkTurnNavigatorLoadEarlier')}
+                </button>
+              </div>
+            ) : null}
+            {visibleMessages.map(renderMessage)}
+          </>
         )}
         {isStreaming ? (
           // Assistant mode uses the same bot-avatar activity indicator as the

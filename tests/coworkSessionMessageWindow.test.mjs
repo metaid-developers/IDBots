@@ -120,15 +120,19 @@ test('the window follows transcript order when it disagrees with insertion order
   }
 });
 
-test('browser sessions keep the full transcript for the side panel', async () => {
+test('browser sessions open on a bounded newest-messages window and page older messages in', async () => {
   const { db, cleanup } = await createSqliteStore();
   try {
     const store = createCoworkStore(db);
     const { session, ids } = seedSession(store, db, 'browser panel', 150, 'browser');
 
     const view = store.getSessionView(session.id);
-    assert.equal(view.messages.length, ids.length);
-    assert.equal(view.messageHistory, undefined);
+    assert.equal(view.messages.length, 100);
+    assert.equal(view.messageHistory.hasMoreBefore, true);
+    assert.deepEqual(view.messages.map((message) => message.id), ids.slice(-100));
+
+    const { collected } = drainWindow(store, session.id, 100);
+    assert.deepEqual(collected, ids);
   } finally {
     cleanup();
   }

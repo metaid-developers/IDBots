@@ -698,6 +698,14 @@
       ]
     },
     {
+      "path": "cowork.getSessionSummary",
+      "kind": "invoke",
+      "channel": "cowork:session:getSummary",
+      "args": [
+        "sessionId"
+      ]
+    },
+    {
       "path": "cowork.getStreamLiveContent",
       "kind": "invoke",
       "channel": "cowork:stream:liveContent",
@@ -789,6 +797,14 @@
       "channel": "cowork:session:listMetabotAvatars",
       "args": [
         "metabotIds"
+      ]
+    },
+    {
+      "path": "cowork.listPeerAvatars",
+      "kind": "invoke",
+      "channel": "cowork:session:listPeerAvatars",
+      "args": [
+        "sessionIds"
       ]
     },
     {

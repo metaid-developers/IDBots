@@ -5916,13 +5916,27 @@ const startStartupNightlyServices = (): void => {
     experimentalAutomationStore: getStore(),
     backgroundDeferral: resolveBackgroundAutomationDeferral,
     isExperimentalAutomationAllowed,
-    collectFacts: ({ windowStartMs, windowEndMs, twinId }) =>
-      collectDailyReportFacts({
+    collectFacts: async ({ windowStartMs, windowEndMs, twinId }) => {
+      const readWorker = getStore().getReadWorker();
+      if (readWorker) {
+        try {
+          const workerFacts = await readWorker.collectDailyReportFacts({
+            windowStartMs,
+            windowEndMs,
+            twinId,
+          });
+          if (workerFacts) return workerFacts;
+        } catch (error) {
+          console.warn('[DailyReport] Read-worker collection degraded to main thread:', error);
+        }
+      }
+      return collectDailyReportFacts({
         db: createDailyReportDbAccessor(getStore().getDatabase()),
         windowStartMs,
         windowEndMs,
         twinId,
-      }),
+      });
+    },
     triageCandidates: createDailyReportTriageGate(),
     resolveBrain: () => resolveSystemBrainOptions(getMetabotStore().listMetabots()),
     performChat: performChatCompletionForOrchestrator,
@@ -6241,6 +6255,18 @@ const scheduleCoworkStoreHeavyMaintenance = (): void => {
         `cowork store heavy maintenance done (orderSessions=${result.migratedMetawebOrderSessions}, orderBackfill=${result.backfilledMetawebOrderMessages}, privateBackfill=${result.backfilledMetawebPrivateMessages})`,
       );
       coworkStoreHeavyMaintenanceFinished = true;
+      if (!coworkStore.isMessagesFtsReady()) {
+        const scheduleNextFtsBatch = () => {
+          if (areStartupTiersCancelled() || !coworkStore || coworkStore.isMessagesFtsReady()) return;
+          const step = coworkStore.backfillMessagesFtsBatch(5_000);
+          if (!step.done) {
+            const handle = setTimeout(scheduleNextFtsBatch, 200);
+            handle.unref?.();
+          }
+        };
+        const firstHandle = setTimeout(scheduleNextFtsBatch, 200);
+        firstHandle.unref?.();
+      }
     } catch (error) {
       coworkStoreHeavyMaintenanceScheduled = false;
       console.error('[CoworkStore] Heavy startup maintenance failed:', error);
@@ -14537,8 +14563,10 @@ if (!gotTheLock) {
     return withSqliteRecovery('cowork:session:listArchived', async () => {
       try {
         const coworkStoreInstance = getCoworkStore();
-        const sessions = coworkStoreInstance.listArchivedSessions(options);
-        const total = coworkStoreInstance.countArchivedSessions(options);
+        const { sessions, total } = await coworkStoreInstance.listArchivedSessionsPageAsync(
+          options,
+          getStore().getReadWorker(),
+        );
         return { success: true, sessions, total };
       } catch (error) {
         if (isSqliteWasmBoundsError(error)) throw error;
@@ -15013,12 +15041,16 @@ if (!gotTheLock) {
     });
   });
 
-  registerIpcHandler('cowork:session:list', async (_event, options?: { metabotId?: number | null }) => {
+  registerIpcHandler('cowork:session:list', async (event, options?: { metabotId?: number | null; omitInlinePeerDataAvatar?: boolean }) => {
     return withSqliteRecovery('cowork:session:list', async () => {
       try {
         repairSelfDirectedServiceOrders();
+        const isDesktopRenderer = event.sender !== null;
         const sessions = enrichCoworkSessionsWithServiceOrderSummaries(
-          getCoworkStore().listSessions(options)
+          getCoworkStore().listSessions({
+            ...options,
+            omitInlinePeerDataAvatar: options?.omitInlinePeerDataAvatar ?? isDesktopRenderer,
+          })
         );
         return { success: true, sessions };
       } catch (error) {
@@ -15041,6 +15073,44 @@ if (!gotTheLock) {
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Failed to list MetaBot avatars',
+        };
+      }
+    });
+  });
+
+  registerIpcHandler('cowork:session:listPeerAvatars', async (_event, sessionIds?: string[]) => {
+    return withSqliteRecovery('cowork:session:listPeerAvatars', async () => {
+      try {
+        const avatars = getCoworkStore().listSessionPeerAvatars(sessionIds);
+        return { success: true, avatars };
+      } catch (error) {
+        if (isSqliteWasmBoundsError(error)) throw error;
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to list peer avatars',
+        };
+      }
+    });
+  });
+
+  registerIpcHandler('cowork:session:getSummary', async (event, sessionId: string) => {
+    return withSqliteRecovery('cowork:session:getSummary', async () => {
+      try {
+        repairSelfDirectedServiceOrders();
+        const isDesktopRenderer = event.sender !== null;
+        const raw = getCoworkStore().getSessionSummary(sessionId, {
+          omitInlinePeerDataAvatar: isDesktopRenderer,
+        });
+        if (!raw) {
+          return { success: true, summary: null };
+        }
+        const [summary] = enrichCoworkSessionsWithServiceOrderSummaries([raw]);
+        return { success: true, summary: summary ?? raw };
+      } catch (error) {
+        if (isSqliteWasmBoundsError(error)) throw error;
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to get session summary',
         };
       }
     });

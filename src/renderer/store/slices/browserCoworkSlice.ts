@@ -1,6 +1,7 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import type {
   CoworkMessage,
+  CoworkMessageHistoryState,
   CoworkMessageMetadata,
   CoworkSession,
   CoworkSessionStatus,
@@ -31,8 +32,44 @@ const browserCoworkSlice = createSlice({
   initialState,
   reducers: {
     setBrowserSession(state, action: PayloadAction<CoworkSession | null>) {
-      state.currentSession = action.payload;
-      state.isStreaming = action.payload?.status === 'running';
+      let nextSession = action.payload;
+      if (
+        nextSession
+        && nextSession.messageHistory
+        && state.currentSession?.id === nextSession.id
+        && state.currentSession.messageHistory
+      ) {
+        const incomingById = new Map(nextSession.messages.map((message) => [message.id, message]));
+        const existingIds = new Set(state.currentSession.messages.map((message) => message.id));
+        nextSession = {
+          ...nextSession,
+          messages: [
+            ...state.currentSession.messages.map((message) => incomingById.get(message.id) ?? message),
+            ...nextSession.messages.filter((message) => !existingIds.has(message.id)),
+          ],
+          messageHistory: state.currentSession.messageHistory,
+        };
+      }
+      state.currentSession = nextSession;
+      state.isStreaming = nextSession?.status === 'running';
+    },
+
+    prependBrowserMessages(
+      state,
+      action: PayloadAction<{
+        sessionId: string;
+        messages: CoworkMessage[];
+        messageHistory: CoworkMessageHistoryState;
+      }>,
+    ) {
+      const { sessionId, messages, messageHistory } = action.payload;
+      if (state.currentSession?.id !== sessionId) return;
+      const existingIds = new Set(state.currentSession.messages.map((item) => item.id));
+      const fresh = messages.filter((item) => !existingIds.has(item.id));
+      if (fresh.length > 0) {
+        state.currentSession.messages = [...fresh, ...state.currentSession.messages];
+      }
+      state.currentSession.messageHistory = messageHistory;
     },
 
     addBrowserMessage(state, action: PayloadAction<{ sessionId: string; message: CoworkMessage }>) {
@@ -127,6 +164,7 @@ const browserCoworkSlice = createSlice({
 
 export const {
   setBrowserSession,
+  prependBrowserMessages,
   addBrowserMessage,
   updateBrowserMessageContent,
   appendBrowserMessageContent,

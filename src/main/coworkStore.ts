@@ -4,6 +4,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import type { SqliteDatabase as Database } from './sqliteTypes';
+import type { SqliteReadWorkerLike } from './sqliteReadWorker';
 import { v4 as uuidv4 } from 'uuid';
 import {
   extractTurnMemoryChanges,
@@ -159,6 +160,13 @@ const MEMORY_OPERATIONAL_PREFERENCE_RE = /(默认语言|回复格式|输出风�
 const MEMORY_PREFERENCE_RE = /(偏好|喜欢|prefer|preference|likes?|dislikes?)/i;
 const SCOPED_USER_MEMORIES_BACKFILL_KEY = 'userMemories.scopeBackfill.v1.completed';
 const MODEL_PROVIDER_METAID_FREE_MIGRATION_KEY = 'cowork.modelProviderMetaidFreeMigrated.v1';
+const COWORK_MESSAGES_FTS_READY_KEY = 'cowork.messagesFtsReady.v1';
+const COWORK_MESSAGES_FTS_CURSOR_KEY = 'cowork.messagesFtsCursorRowid.v1';
+const COWORK_MESSAGES_FTS_INLINE_THRESHOLD = 5_000;
+const COWORK_MESSAGES_FTS_BATCH_SIZE = 5_000;
+
+const escapeFts5Phrase = (term: string): string => `"${term.replace(/"/g, '""')}"`;
+const hasFtsTrigramMinLength = (term: string): boolean => Array.from(term).length >= 3;
 const METAWEB_ORDER_SESSION_MIGRATION_KEY = 'cowork.metawebOrderSessionsToPeerConversations.v1.completed';
 const METAWEB_ORDER_SIMPLEMSG_BACKFILL_KEY = 'cowork.backfillMetawebOrderSimplemsgMetadata.v1.completed';
 const METAWEB_PRIVATE_SIMPLEMSG_BACKFILL_KEY = 'cowork.backfillMetawebPrivateSimplemsgMetadata.v1.completed';
@@ -921,6 +929,7 @@ export interface CoworkSessionSummary {
   peerName?: string | null;
   /** Remote peer MetaBot's avatar (A2A sessions only) */
   peerAvatar?: string | null;
+  peerAvatarVersion?: number | null;
   /** Owning MetaBot's display name, when attributed */
   metabotName?: string | null;
   /**
@@ -938,6 +947,7 @@ export interface CoworkSessionSummary {
   browserUri?: string | null;
   /** Bot Browser context: title of the tab this session is about (browser sessions only) */
   browserTitle?: string | null;
+  assistantMode?: boolean;
   /** Per-session model override (null = inherit the global default model). */
   model?: string | null;
   /** Provider key for the session model override (see CoworkSession.modelProvider). */
@@ -958,6 +968,7 @@ export interface CoworkSessionSummary {
   autoOrigin?: CoworkSessionAutoOrigin | null;
   /** Manual fold placement (see CoworkSession.foldOverride); null = follow the policy. */
   foldOverride?: CoworkSessionFoldOverride | null;
+  tradeBadge?: 'p2p' | 'escrow' | null;
   /** Follow-up state (see CoworkSession.followUpState); 'pending' = needs a human decision. */
   followUpState?: 'pending' | null;
   /** Which lane set the follow-up marker (see CoworkSessionFollowUpSource); null = none. */
@@ -1569,6 +1580,8 @@ export class CoworkStore implements MemoryBackend {
   // Whether the generated heal columns exist; false keeps the boot heals on
   // the legacy metadata LIKE scans.
   private coworkMessageHealColumnsReady = false;
+  private messagesFtsAvailable = false;
+  private messagesFtsReady = false;
 
   constructor(db: Database, saveDb: () => void, options?: { deferHeavyStartupMaintenance?: boolean }) {
     this.db = db;
@@ -1614,12 +1627,14 @@ export class CoworkStore implements MemoryBackend {
   }
 
   private ensureSchemaCompatibility(deferHeavyStartupMaintenance = false): void {
+    this.ensureSessionPromptsSchema();
     this.ensureMemorySchemaCompatibility();
     this.ensureMemoryPolicySchemaCompatibility();
     this.ensureConversationMappingSchemaCompatibility();
     this.ensureA2AConversationSchemaCompatibility();
     this.ensureCoworkMessageHealColumns();
     this.ensureCoworkMessageIndexes();
+    this.ensureCoworkMessagesFtsSchema(deferHeavyStartupMaintenance);
     this.ensureCoworkSessionIndexes();
     this.backfillScopedMemoryMetadata();
     this.restoreMissingSelfIdentities();
@@ -1634,6 +1649,7 @@ export class CoworkStore implements MemoryBackend {
     backfilledMetawebOrderMessages: number;
     backfilledMetawebPrivateMessages: number;
     backfilledSessionActivityAt: number;
+    migratedInlineSessionPrompts: number;
   } {
     const migratedMetawebOrderSessions = this.migrateMetawebOrderSessionsToPeerConversations();
     const backfilledMetawebOrderMessages = this.backfillMetawebOrderSimplemsgMetadata();
@@ -1647,12 +1663,201 @@ export class CoworkStore implements MemoryBackend {
     // Order matters: the metadata backfills above can tag legacy rows as
     // metaweb_private, and those rows must count toward the activity stamp.
     const backfilledSessionActivityAt = this.backfillSessionActivityAt();
+    const migratedInlineSessionPrompts = this.backfillSessionPromptsOutOfLine();
+    this.backfillMessagesFtsBatch(COWORK_MESSAGES_FTS_BATCH_SIZE);
     return {
       migratedMetawebOrderSessions,
       backfilledMetawebOrderMessages,
       backfilledMetawebPrivateMessages,
       backfilledSessionActivityAt,
+      migratedInlineSessionPrompts,
     };
+  }
+
+  isMessagesFtsReady(): boolean {
+    return this.messagesFtsReady;
+  }
+
+  private canUseMessagesFts(terms: readonly string[]): boolean {
+    return (
+      this.messagesFtsAvailable
+      && this.messagesFtsReady
+      && terms.length > 0
+      && terms.every(hasFtsTrigramMinLength)
+    );
+  }
+
+  private ensureCoworkMessagesFtsSchema(deferHeavyBackfill = false): void {
+    if (!this.tableExists('cowork_messages')) {
+      return;
+    }
+    try {
+      this.db.run(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS cowork_messages_fts USING fts5(
+          content,
+          content='cowork_messages',
+          content_rowid='rowid',
+          tokenize='trigram'
+        )
+      `);
+      this.db.run(`
+        CREATE TRIGGER IF NOT EXISTS trg_cowork_messages_fts_ai
+        AFTER INSERT ON cowork_messages
+        BEGIN
+          INSERT INTO cowork_messages_fts(rowid, content) VALUES (new.rowid, new.content);
+        END
+      `);
+      this.db.run(`
+        CREATE TRIGGER IF NOT EXISTS trg_cowork_messages_fts_ad
+        AFTER DELETE ON cowork_messages
+        BEGIN
+          INSERT INTO cowork_messages_fts(cowork_messages_fts, rowid, content)
+          VALUES ('delete', old.rowid, old.content);
+        END
+      `);
+      this.db.run(`
+        CREATE TRIGGER IF NOT EXISTS trg_cowork_messages_fts_au
+        AFTER UPDATE OF content ON cowork_messages
+        BEGIN
+          INSERT INTO cowork_messages_fts(cowork_messages_fts, rowid, content)
+          VALUES ('delete', old.rowid, old.content);
+          INSERT INTO cowork_messages_fts(rowid, content)
+          VALUES (new.rowid, new.content);
+        END
+      `);
+      this.messagesFtsAvailable = true;
+      if (this.getKvValue(COWORK_MESSAGES_FTS_READY_KEY) === '1') {
+        this.messagesFtsReady = true;
+        return;
+      }
+      const maxRow = this.getOne<{ max_rowid: number }>(
+        'SELECT COALESCE(MAX(rowid), 0) AS max_rowid FROM cowork_messages',
+      );
+      const maxRowid = Number(maxRow?.max_rowid ?? 0) || 0;
+      if (maxRowid === 0) {
+        this.setKvValue(COWORK_MESSAGES_FTS_CURSOR_KEY, '0');
+        this.setKvValue(COWORK_MESSAGES_FTS_READY_KEY, '1');
+        this.messagesFtsReady = true;
+        return;
+      }
+      if (!deferHeavyBackfill && maxRowid <= COWORK_MESSAGES_FTS_INLINE_THRESHOLD) {
+        this.backfillMessagesFtsBatch(COWORK_MESSAGES_FTS_INLINE_THRESHOLD + 1);
+      }
+    } catch {
+      this.messagesFtsAvailable = false;
+      this.messagesFtsReady = false;
+    }
+  }
+
+  backfillMessagesFtsBatch(batchSize = COWORK_MESSAGES_FTS_BATCH_SIZE): { indexed: number; done: boolean } {
+    if (!this.messagesFtsAvailable) {
+      return { indexed: 0, done: true };
+    }
+    if (this.messagesFtsReady || this.getKvValue(COWORK_MESSAGES_FTS_READY_KEY) === '1') {
+      this.messagesFtsReady = true;
+      return { indexed: 0, done: true };
+    }
+    try {
+      const cursor = Math.max(0, Number(this.getKvValue(COWORK_MESSAGES_FTS_CURSOR_KEY) ?? 0) || 0);
+      const limit = Math.max(100, Math.floor(batchSize));
+      const rows = this.getAll<{ rowid: number }>(
+        'SELECT rowid FROM cowork_messages WHERE rowid > ? ORDER BY rowid ASC LIMIT ?',
+        [cursor, limit],
+      );
+      if (rows.length === 0) {
+        this.setKvValue(COWORK_MESSAGES_FTS_READY_KEY, '1');
+        this.messagesFtsReady = true;
+        return { indexed: 0, done: true };
+      }
+      const endRowid = Number(rows[rows.length - 1]!.rowid);
+      this.db.run('BEGIN TRANSACTION');
+      try {
+        this.db.run(
+          `INSERT INTO cowork_messages_fts(rowid, content)
+           SELECT rowid, content FROM cowork_messages
+           WHERE rowid > ? AND rowid <= ?`,
+          [cursor, endRowid],
+        );
+        this.db.run('COMMIT');
+      } catch (innerError) {
+        try { this.db.run('ROLLBACK'); } catch { /* ignore */ }
+        throw innerError;
+      }
+      this.setKvValue(COWORK_MESSAGES_FTS_CURSOR_KEY, String(endRowid));
+      const done = rows.length < limit;
+      if (done) {
+        this.setKvValue(COWORK_MESSAGES_FTS_READY_KEY, '1');
+        this.messagesFtsReady = true;
+      }
+      return { indexed: rows.length, done };
+    } catch (error) {
+      console.warn('[CoworkStore] FTS5 batch backfill failed:', error);
+      return { indexed: 0, done: true };
+    }
+  }
+
+  private ensureSessionPromptsSchema(): void {
+    if (!this.tableExists('cowork_sessions')) {
+      return;
+    }
+    try {
+      this.db.run(`
+        CREATE TABLE IF NOT EXISTS cowork_session_prompts (
+          session_id TEXT PRIMARY KEY,
+          system_prompt TEXT NOT NULL DEFAULT '',
+          updated_at INTEGER NOT NULL,
+          FOREIGN KEY (session_id) REFERENCES cowork_sessions(id) ON DELETE CASCADE
+        )
+      `);
+    } catch (error) {
+      console.warn('[CoworkStore] Failed to verify cowork_session_prompts schema:', error);
+    }
+  }
+
+  private backfillSessionPromptsOutOfLine(): number {
+    if (!this.tableExists('cowork_sessions') || !this.tableExists('cowork_session_prompts')) {
+      return 0;
+    }
+    try {
+      const hasInline = this.getOne<{ found: number }>(`
+        SELECT 1 AS found
+        FROM cowork_sessions
+        WHERE system_prompt IS NOT NULL AND system_prompt != ''
+        LIMIT 1
+      `);
+      if (!hasInline) {
+        return 0;
+      }
+      this.db.run('BEGIN TRANSACTION');
+      try {
+        this.db.run(`
+          INSERT INTO cowork_session_prompts (session_id, system_prompt, updated_at)
+          SELECT id, system_prompt, updated_at
+          FROM cowork_sessions
+          WHERE system_prompt IS NOT NULL AND system_prompt != ''
+          ON CONFLICT(session_id) DO UPDATE SET
+            system_prompt = excluded.system_prompt,
+            updated_at = excluded.updated_at
+        `);
+        this.db.run(`
+          UPDATE cowork_sessions
+          SET system_prompt = ''
+          WHERE system_prompt IS NOT NULL AND system_prompt != ''
+        `);
+        const changed = this.db.getRowsModified?.() || 0;
+        this.db.run('COMMIT');
+        if (changed > 0) {
+          this.saveDb();
+        }
+        return changed;
+      } catch (innerError) {
+        try { this.db.run('ROLLBACK'); } catch { /* ignore */ }
+        throw innerError;
+      }
+    } catch (error) {
+      console.warn('[CoworkStore] Failed to move cowork_sessions.system_prompt out of line:', error);
+      return 0;
+    }
   }
 
   /**
@@ -3681,8 +3886,20 @@ export class CoworkStore implements MemoryBackend {
 
     this.db.run(`
       INSERT INTO cowork_sessions (id, title, claude_session_id, status, cwd, system_prompt, execution_mode, active_skill_ids, metabot_id, pinned, session_type, peer_global_metaid, peer_name, peer_avatar, permission_mode, model, effort, model_provider, project_id, goal, parent_session_id, assistant_mode, created_at, updated_at)
-      VALUES (?, ?, NULL, 'idle', ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [id, title, cwd, systemPrompt, resolveCoworkExecutionMode(executionMode), JSON.stringify(activeSkillIds), metabotId, sessionType, peerGlobalMetaId, peerName, peerAvatar, permissionMode, model, effort, modelProvider, projectId, goal ? serializeSessionGoal(goal) : null, parentSessionId, assistantMode ? 1 : 0, now, now]);
+      VALUES (?, ?, NULL, 'idle', ?, '', ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [id, title, cwd, resolveCoworkExecutionMode(executionMode), JSON.stringify(activeSkillIds), metabotId, sessionType, peerGlobalMetaId, peerName, peerAvatar, permissionMode, model, effort, modelProvider, projectId, goal ? serializeSessionGoal(goal) : null, parentSessionId, assistantMode ? 1 : 0, now, now]);
+
+    if (systemPrompt && this.tableExists('cowork_session_prompts')) {
+      this.db.run(`
+        INSERT INTO cowork_session_prompts (session_id, system_prompt, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(session_id) DO UPDATE SET
+          system_prompt = excluded.system_prompt,
+          updated_at = excluded.updated_at
+      `, [id, systemPrompt, now]);
+    } else if (systemPrompt) {
+      this.db.run('UPDATE cowork_sessions SET system_prompt = ? WHERE id = ?', [systemPrompt, id]);
+    }
 
     this.upsertConversationMapping({
       channel: 'cowork_ui',
@@ -3811,12 +4028,6 @@ export class CoworkStore implements MemoryBackend {
         },
       };
     }
-    if (session.sessionType === 'browser') {
-      return {
-        ...session,
-        messages: this.getSessionMessages(id),
-      };
-    }
     const page = this.getSessionMessagesPage(id, { limit: messageLimit });
     return {
       ...session,
@@ -3870,9 +4081,12 @@ export class CoworkStore implements MemoryBackend {
       updated_at: number;
     }
 
+    const hasPromptsTable = this.tableExists('cowork_session_prompts');
     const row = this.getOne<SessionRow>(`
-      SELECT id, title, claude_session_id, status, pinned, cwd, system_prompt, execution_mode, active_skill_ids, metabot_id,
-             session_type, peer_global_metaid, peer_name, peer_avatar, browser_uri, browser_title, hidden_from_session_list, assistant_mode,
+      SELECT cowork_sessions.id, cowork_sessions.title, cowork_sessions.claude_session_id, cowork_sessions.status, cowork_sessions.pinned, cowork_sessions.cwd,
+             ${hasPromptsTable ? "COALESCE(NULLIF(sp.system_prompt, ''), cowork_sessions.system_prompt, '')" : 'cowork_sessions.system_prompt'} AS system_prompt,
+             cowork_sessions.execution_mode, cowork_sessions.active_skill_ids, cowork_sessions.metabot_id,
+             cowork_sessions.session_type, cowork_sessions.peer_global_metaid, cowork_sessions.peer_name, cowork_sessions.peer_avatar, cowork_sessions.browser_uri, cowork_sessions.browser_title, cowork_sessions.hidden_from_session_list, cowork_sessions.assistant_mode,
              (
                SELECT im.channel FROM cowork_conversation_mappings im
                WHERE im.cowork_session_id = cowork_sessions.id AND im.channel LIKE 'im:%'
@@ -3885,9 +4099,10 @@ export class CoworkStore implements MemoryBackend {
                ORDER BY (im.channel LIKE 'im:%:group') DESC, im.last_active_at DESC
                LIMIT 1
              ) AS im_conversation_id,
-             auto_origin, fold_override, follow_up_state, follow_up_source, follow_up_at, permission_mode, parent_session_id, fork_point_message_id, model, model_provider, effort, project_id, goal, created_at, updated_at
+             cowork_sessions.auto_origin, cowork_sessions.fold_override, cowork_sessions.follow_up_state, cowork_sessions.follow_up_source, cowork_sessions.follow_up_at, cowork_sessions.permission_mode, cowork_sessions.parent_session_id, cowork_sessions.fork_point_message_id, cowork_sessions.model, cowork_sessions.model_provider, cowork_sessions.effort, cowork_sessions.project_id, cowork_sessions.goal, cowork_sessions.created_at, cowork_sessions.updated_at
       FROM cowork_sessions
-      WHERE id = ?
+      ${hasPromptsTable ? 'LEFT JOIN cowork_session_prompts sp ON sp.session_id = cowork_sessions.id' : ''}
+      WHERE cowork_sessions.id = ?
     `, [id]);
 
     if (!row) return null;
@@ -4019,8 +4234,23 @@ export class CoworkStore implements MemoryBackend {
       values.push(updates.cwd);
     }
     if (updates.systemPrompt !== undefined) {
-      setClauses.push('system_prompt = ?');
-      values.push(updates.systemPrompt);
+      if (this.tableExists('cowork_session_prompts')) {
+        setClauses.push("system_prompt = ''");
+        if (updates.systemPrompt) {
+          this.db.run(`
+            INSERT INTO cowork_session_prompts (session_id, system_prompt, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(session_id) DO UPDATE SET
+              system_prompt = excluded.system_prompt,
+              updated_at = excluded.updated_at
+          `, [id, updates.systemPrompt, now]);
+        } else {
+          this.db.run('DELETE FROM cowork_session_prompts WHERE session_id = ?', [id]);
+        }
+      } else {
+        setClauses.push('system_prompt = ?');
+        values.push(updates.systemPrompt);
+      }
     }
     if (updates.executionMode !== undefined) {
       setClauses.push('execution_mode = ?');
@@ -4123,6 +4353,9 @@ export class CoworkStore implements MemoryBackend {
         `, [a2aEpisode.previous_session_id, a2aEpisode.next_session_id]);
       }
       this.db.run('DELETE FROM a2a_conversation_episodes WHERE session_id = ?', [id]);
+    }
+    if (this.tableExists('cowork_session_prompts')) {
+      this.db.run('DELETE FROM cowork_session_prompts WHERE session_id = ?', [id]);
     }
     this.db.run('DELETE FROM cowork_sessions WHERE id = ?', [id]);
     if (a2aEpisode) {
@@ -4394,7 +4627,7 @@ export class CoworkStore implements MemoryBackend {
   }
 
 
-  listSessions(options?: { metabotId?: number | null }): CoworkSessionSummary[] {
+  listSessions(options?: { metabotId?: number | null; omitInlinePeerDataAvatar?: boolean }): CoworkSessionSummary[] {
     interface SessionSummaryRow {
       id: string;
       title: string;
@@ -4404,6 +4637,7 @@ export class CoworkStore implements MemoryBackend {
       session_type?: string | null;
       peer_name?: string | null;
       peer_avatar?: string | null;
+      peer_avatar_version?: number | null;
       metabot_name?: string | null;
       metabot_updated_at?: number | null;
       browser_uri?: string | null;
@@ -4430,7 +4664,13 @@ export class CoworkStore implements MemoryBackend {
     }
 
     const metabotId = options?.metabotId;
+    const omitInlinePeerDataAvatar = options?.omitInlinePeerDataAvatar === true;
     const filterByMetabot = typeof metabotId === 'number' && Number.isInteger(metabotId) && metabotId > 0;
+    const peerAvatarColumnsSql = omitInlinePeerDataAvatar
+      ? `CASE WHEN s.peer_avatar LIKE 'data:%' THEN NULL ELSE s.peer_avatar END AS peer_avatar,
+        CASE WHEN s.peer_avatar LIKE 'data:%' THEN (s.updated_at * 1000 + (LENGTH(s.peer_avatar) % 1000)) ELSE NULL END AS peer_avatar_version,`
+      : `s.peer_avatar,
+        NULL AS peer_avatar_version,`;
     const rows = this.getAll<SessionSummaryRow>(`
       WITH im_ranked AS (
         SELECT
@@ -4452,7 +4692,7 @@ export class CoworkStore implements MemoryBackend {
         s.metabot_id,
         s.session_type,
         s.peer_name,
-        s.peer_avatar,
+        ${peerAvatarColumnsSql}
         mb.name AS metabot_name,
         mb.updated_at AS metabot_updated_at,
         s.browser_uri,
@@ -4538,6 +4778,7 @@ export class CoworkStore implements MemoryBackend {
       sessionType: (row.session_type === 'agent_agent' ? 'a2a' : row.session_type as CoworkSessionType) || 'standard',
       peerName: row.peer_name ?? null,
       peerAvatar: row.peer_avatar ?? null,
+      ...(row.peer_avatar_version != null ? { peerAvatarVersion: parseIdNumber(row.peer_avatar_version) } : {}),
       metabotName: row.metabot_name ?? null,
       metabotAvatarVersion: parseIdNumber(row.metabot_updated_at),
       browserUri: row.browser_uri ?? null,
@@ -4591,6 +4832,164 @@ export class CoworkStore implements MemoryBackend {
     }));
   }
 
+  listSessionPeerAvatars(sessionIds?: string[] | null): Array<{ sessionId: string; peerAvatar: string | null }> {
+    const ids = Array.isArray(sessionIds)
+      ? [...new Set(
+          sessionIds
+            .map((id) => (typeof id === 'string' ? id.trim() : ''))
+            .filter((id) => id.length > 0),
+        )].slice(0, 200)
+      : [];
+    if (ids.length === 0) {
+      return [];
+    }
+
+    const rows = this.getAll<{ id: string; peer_avatar?: string | null }>(
+      `SELECT id, peer_avatar FROM cowork_sessions WHERE id IN (${ids.map(() => '?').join(', ')})`,
+      ids,
+    );
+
+    return rows.map((row) => ({
+      sessionId: row.id,
+      peerAvatar: row.peer_avatar ?? null,
+    }));
+  }
+
+  getSessionSummary(
+    sessionId: string,
+    options?: { omitInlinePeerDataAvatar?: boolean },
+  ): CoworkSessionSummary | null {
+    const id = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!id) return null;
+    const omitInlinePeerDataAvatar = options?.omitInlinePeerDataAvatar === true;
+    const peerAvatarColumnsSql = omitInlinePeerDataAvatar
+      ? `CASE WHEN s.peer_avatar LIKE 'data:%' THEN NULL ELSE s.peer_avatar END AS peer_avatar,
+        CASE WHEN s.peer_avatar LIKE 'data:%' THEN (s.updated_at * 1000 + (LENGTH(s.peer_avatar) % 1000)) ELSE NULL END AS peer_avatar_version,`
+      : `s.peer_avatar,
+        NULL AS peer_avatar_version,`;
+
+    const row = this.getOne<{
+      id: string;
+      title: string;
+      status: string;
+      pinned: number | null;
+      metabot_id?: number | null;
+      session_type?: string | null;
+      peer_name?: string | null;
+      peer_avatar?: string | null;
+      peer_avatar_version?: number | null;
+      metabot_name?: string | null;
+      metabot_updated_at?: number | null;
+      browser_uri?: string | null;
+      browser_title?: string | null;
+      assistant_mode?: number | null;
+      hidden_from_session_list?: number | null;
+      im_channel?: string | null;
+      im_conversation_id?: string | null;
+      auto_origin?: string | null;
+      fold_override?: string | null;
+      trade_badge?: string | null;
+      follow_up_state?: string | null;
+      follow_up_source?: string | null;
+      follow_up_at?: string | null;
+      model?: string | null;
+      model_provider?: string | null;
+      effort?: string | null;
+      project_id?: string | null;
+      cwd?: string | null;
+      created_at: number;
+      updated_at: number;
+      activity_at?: number | null;
+    }>(`
+      SELECT
+        s.id,
+        s.title,
+        s.status,
+        s.pinned,
+        s.metabot_id,
+        s.session_type,
+        s.peer_name,
+        ${peerAvatarColumnsSql}
+        mb.name AS metabot_name,
+        mb.updated_at AS metabot_updated_at,
+        s.browser_uri,
+        s.browser_title,
+        s.assistant_mode,
+        s.hidden_from_session_list,
+        (
+          SELECT im.channel FROM cowork_conversation_mappings im
+          WHERE im.cowork_session_id = s.id AND im.channel >= 'im:' AND im.channel < 'im;'
+          ORDER BY (im.channel LIKE 'im:%:group') DESC, im.last_active_at DESC
+          LIMIT 1
+        ) AS im_channel,
+        (
+          SELECT im.external_conversation_id FROM cowork_conversation_mappings im
+          WHERE im.cowork_session_id = s.id AND im.channel >= 'im:' AND im.channel < 'im;'
+          ORDER BY (im.channel LIKE 'im:%:group') DESC, im.last_active_at DESC
+          LIMIT 1
+        ) AS im_conversation_id,
+        s.auto_origin,
+        s.fold_override,
+        s.trade_badge,
+        s.follow_up_state,
+        s.follow_up_source,
+        s.follow_up_at,
+        s.model,
+        s.model_provider,
+        s.effort,
+        s.project_id,
+        s.cwd,
+        s.created_at,
+        s.updated_at,
+        COALESCE(s.activity_at, ${coworkSessionActivityAtSelectSql('s')}) AS activity_at
+      FROM cowork_sessions s
+      LEFT JOIN metabots mb ON mb.id = s.metabot_id
+      WHERE s.id = ?
+        AND COALESCE(s.hidden_from_session_list, 0) = 0
+        AND s.archived_at IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM a2a_conversation_episodes episode
+          WHERE episode.session_id = s.id AND episode.next_session_id IS NOT NULL
+        )
+      LIMIT 1
+    `, [id]);
+
+    if (!row) return null;
+    const metabotId = parseIdNumber(row.metabot_id);
+    return {
+      id: row.id,
+      title: row.title,
+      status: row.status as CoworkSessionStatus,
+      pinned: Boolean(row.pinned),
+      createdAt: row.created_at,
+      updatedAt: parseIdNumber(row.activity_at) ?? row.updated_at,
+      metabotId,
+      sessionType: (row.session_type === 'agent_agent' ? 'a2a' : row.session_type as CoworkSessionType) || 'standard',
+      peerName: row.peer_name ?? null,
+      peerAvatar: row.peer_avatar ?? null,
+      ...(row.peer_avatar_version != null ? { peerAvatarVersion: parseIdNumber(row.peer_avatar_version) } : {}),
+      metabotName: row.metabot_name ?? null,
+      metabotAvatarVersion: parseIdNumber(row.metabot_updated_at),
+      browserUri: row.browser_uri ?? null,
+      browserTitle: row.browser_title ?? null,
+      assistantMode: Boolean(row.assistant_mode),
+      hiddenFromSessionList: Boolean(row.hidden_from_session_list),
+      imChannel: row.im_channel ?? null,
+      imConversationId: row.im_conversation_id ?? null,
+      autoOrigin: (row.auto_origin as CoworkSessionAutoOrigin | null) ?? null,
+      foldOverride: (row.fold_override as CoworkSessionFoldOverride | null) ?? null,
+      tradeBadge: row.trade_badge === 'p2p' || row.trade_badge === 'escrow' ? row.trade_badge : null,
+      followUpState: (row.follow_up_state as 'pending' | null) ?? null,
+      followUpSource: (row.follow_up_source as CoworkSessionFollowUpSource | null) ?? null,
+      followUpAt: row.follow_up_at ?? null,
+      model: row.model ?? null,
+      modelProvider: row.model_provider ?? null,
+      effort: row.effort ?? null,
+      projectId: row.project_id ?? null,
+      cwd: row.cwd ?? null,
+    };
+  }
+
   /**
    * Shared WHERE builder for archived-session listing/counting: archived rows,
    * optional bot filter, and text search across title / peer name / message
@@ -4633,11 +5032,22 @@ export class CoworkStore implements MemoryBackend {
       ];
       params.push(`%${escaped}%`, `%${escaped}%`);
       if (options?.searchContent === true) {
-        titleClauses.push(`EXISTS (
-          SELECT 1 FROM cowork_messages m
-          WHERE m.session_id = s.id AND LOWER(m.content) LIKE ? ESCAPE '\\'
-        )`);
-        params.push(`%${escaped}%`);
+        if (this.canUseMessagesFts([query])) {
+          titleClauses.push(`EXISTS (
+            SELECT 1 FROM cowork_messages m
+            WHERE m.session_id = s.id
+              AND m.rowid IN (
+                SELECT rowid FROM cowork_messages_fts WHERE cowork_messages_fts MATCH ?
+              )
+          )`);
+          params.push(escapeFts5Phrase(query.toLowerCase()));
+        } else {
+          titleClauses.push(`EXISTS (
+            SELECT 1 FROM cowork_messages m
+            WHERE m.session_id = s.id AND LOWER(m.content) LIKE ? ESCAPE '\\'
+          )`);
+          params.push(`%${escaped}%`);
+        }
       }
       clauses.push(`(${titleClauses.join(' OR ')})`);
     }
@@ -4751,56 +5161,32 @@ export class CoworkStore implements MemoryBackend {
    * put away by the user (records preserved), newest archive first. Separate
    * from listSessions, which deliberately excludes archived rows.
    */
-  listArchivedSessions(options?: {
-    metabotId?: number | null;
-    query?: string;
-    searchContent?: boolean;
-    sessionType?: CoworkSessionType;
-    limit?: number;
-    offset?: number;
-  }): CoworkSessionSummary[] {
-    interface ArchivedSessionRow {
-      id: string;
-      title: string;
-      status: string;
-      pinned: number | null;
-      metabot_id?: number | null;
-      session_type?: string | null;
-      peer_name?: string | null;
-      browser_uri?: string | null;
-      browser_title?: string | null;
-      assistant_mode?: number | null;
-      hidden_from_session_list?: number | null;
-      auto_origin?: string | null;
-      fold_override?: string | null;
-      follow_up_state?: string | null;
-      follow_up_source?: string | null;
-      follow_up_at?: string | null;
-      model?: string | null;
-      model_provider?: string | null;
-      effort?: string | null;
-      project_id?: string | null;
-      archived_at: number;
-      created_at: number;
-      updated_at: number;
-    }
-
-    const { clauses, params } = this.buildArchivedSessionFilter(options);
-    const limit = Math.max(1, Math.min(200, Math.floor(options?.limit ?? 50)));
-    const offset = Math.max(0, Math.floor(options?.offset ?? 0));
-
-    const rows = this.getAll<ArchivedSessionRow>(`
-      SELECT
-        s.id, s.title, s.status, s.pinned, s.metabot_id, s.session_type, s.peer_name,
-        s.browser_uri, s.browser_title, s.hidden_from_session_list, s.auto_origin, s.fold_override, s.follow_up_state, s.follow_up_source, s.follow_up_at, s.model, s.model_provider, s.effort, s.project_id, s.assistant_mode,
-        s.archived_at, s.created_at, s.updated_at
-      FROM cowork_sessions s
-      WHERE ${clauses.join(' AND ')}
-      ORDER BY s.archived_at DESC
-      LIMIT ? OFFSET ?
-    `, [...params, limit, offset]);
-
-    return rows.map(row => ({
+  private mapArchivedSessionRow(row: {
+    id: string;
+    title: string;
+    status: string;
+    pinned: number | null;
+    metabot_id?: number | null;
+    session_type?: string | null;
+    peer_name?: string | null;
+    browser_uri?: string | null;
+    browser_title?: string | null;
+    assistant_mode?: number | null;
+    hidden_from_session_list?: number | null;
+    auto_origin?: string | null;
+    fold_override?: string | null;
+    follow_up_state?: string | null;
+    follow_up_source?: string | null;
+    follow_up_at?: string | null;
+    model?: string | null;
+    model_provider?: string | null;
+    effort?: string | null;
+    project_id?: string | null;
+    archived_at: number;
+    created_at: number;
+    updated_at: number;
+  }): CoworkSessionSummary {
+    return {
       id: row.id,
       title: row.title,
       status: row.status as CoworkSessionStatus,
@@ -4824,7 +5210,91 @@ export class CoworkStore implements MemoryBackend {
       modelProvider: row.model_provider ?? null,
       effort: row.effort ?? null,
       projectId: row.project_id ?? null,
-    }));
+    };
+  }
+
+  listArchivedSessions(options?: {
+    metabotId?: number | null;
+    query?: string;
+    searchContent?: boolean;
+    sessionType?: CoworkSessionType;
+    limit?: number;
+    offset?: number;
+  }): CoworkSessionSummary[] {
+    const { clauses, params } = this.buildArchivedSessionFilter(options);
+    const limit = Math.max(1, Math.min(200, Math.floor(options?.limit ?? 50)));
+    const offset = Math.max(0, Math.floor(options?.offset ?? 0));
+
+    const rows = this.getAll<Parameters<CoworkStore['mapArchivedSessionRow']>[0]>(`
+      SELECT
+        s.id, s.title, s.status, s.pinned, s.metabot_id, s.session_type, s.peer_name,
+        s.browser_uri, s.browser_title, s.hidden_from_session_list, s.auto_origin, s.fold_override, s.follow_up_state, s.follow_up_source, s.follow_up_at, s.model, s.model_provider, s.effort, s.project_id, s.assistant_mode,
+        s.archived_at, s.created_at, s.updated_at
+      FROM cowork_sessions s
+      WHERE ${clauses.join(' AND ')}
+      ORDER BY s.archived_at DESC
+      LIMIT ? OFFSET ?
+    `, [...params, limit, offset]);
+
+    return rows.map((row) => this.mapArchivedSessionRow(row));
+  }
+
+  async listArchivedSessionsPageAsync(
+    options?: {
+      metabotId?: number | null;
+      query?: string;
+      searchContent?: boolean;
+      sessionType?: CoworkSessionType;
+      limit?: number;
+      offset?: number;
+    },
+    readWorker?: SqliteReadWorkerLike | null,
+  ): Promise<{ sessions: CoworkSessionSummary[]; total: number }> {
+    if (!readWorker) {
+      return {
+        sessions: this.listArchivedSessions(options),
+        total: this.countArchivedSessions(options),
+      };
+    }
+    try {
+      const { clauses, params } = this.buildArchivedSessionFilter(options);
+      const limit = Math.max(1, Math.min(200, Math.floor(options?.limit ?? 50)));
+      const offset = Math.max(0, Math.floor(options?.offset ?? 0));
+      const whereSql = clauses.join(' AND ');
+      const [listRows, countRows] = await readWorker.batchQueryAll([
+        {
+          sql: `
+            SELECT
+              s.id, s.title, s.status, s.pinned, s.metabot_id, s.session_type, s.peer_name,
+              s.browser_uri, s.browser_title, s.hidden_from_session_list, s.auto_origin, s.fold_override, s.follow_up_state, s.follow_up_source, s.follow_up_at, s.model, s.model_provider, s.effort, s.project_id, s.assistant_mode,
+              s.archived_at, s.created_at, s.updated_at
+            FROM cowork_sessions s
+            WHERE ${whereSql}
+            ORDER BY s.archived_at DESC
+            LIMIT ? OFFSET ?
+          `,
+          params: [...params, limit, offset],
+        },
+        {
+          sql: `
+            SELECT COUNT(*) AS count
+            FROM cowork_sessions s
+            WHERE ${whereSql}
+          `,
+          params,
+        },
+      ]);
+      const sessions = (listRows as Array<Parameters<CoworkStore['mapArchivedSessionRow']>[0]>).map((row) =>
+        this.mapArchivedSessionRow(row),
+      );
+      const total = Number((countRows[0] as { count?: unknown } | undefined)?.count ?? 0);
+      return { sessions, total };
+    } catch {
+      return {
+        sessions: this.listArchivedSessions(options),
+        total: this.countArchivedSessions(options),
+      };
+    }
   }
 
   resetRunningSessions(): number {
@@ -6035,6 +6505,7 @@ export class CoworkStore implements MemoryBackend {
       updated_at: number | null;
     }
 
+    const hasPromptsTable = this.tableExists('cowork_session_prompts');
     const rows = this.getAll<OrderMappingRow>(`
       SELECT
         m.channel,
@@ -6044,7 +6515,7 @@ export class CoworkStore implements MemoryBackend {
         m.metadata_json,
         s.title,
         s.cwd,
-        s.system_prompt,
+        ${hasPromptsTable ? "COALESCE(NULLIF(sp.system_prompt, ''), s.system_prompt, '')" : 's.system_prompt'} AS system_prompt,
         s.execution_mode,
         s.session_type,
         s.peer_global_metaid,
@@ -6054,6 +6525,7 @@ export class CoworkStore implements MemoryBackend {
         s.updated_at
       FROM cowork_conversation_mappings m
       LEFT JOIN cowork_sessions s ON s.id = m.cowork_session_id
+      ${hasPromptsTable ? 'LEFT JOIN cowork_session_prompts sp ON sp.session_id = s.id' : ''}
       WHERE m.channel = 'metaweb_order'
     `);
 
@@ -10823,12 +11295,17 @@ export class CoworkStore implements MemoryBackend {
     const beforeMs = parseTimeToMs(options.before);
     const afterMs = parseTimeToMs(options.after);
 
+    const useFts = this.canUseMessagesFts(terms);
     const likeClauses = terms.map(() => 'LOWER(m.content) LIKE ?');
     const clauses: string[] = [
       "m.type IN ('user', 'assistant')",
-      `(${likeClauses.join(' OR ')})`,
+      useFts
+        ? 'm.rowid IN (SELECT rowid FROM cowork_messages_fts WHERE cowork_messages_fts MATCH ?)'
+        : `(${likeClauses.join(' OR ')})`,
     ];
-    const params: Array<string | number> = terms.map((term) => `%${term}%`);
+    const params: Array<string | number> = useFts
+      ? [terms.map(escapeFts5Phrase).join(' OR ')]
+      : terms.map((term) => `%${term}%`);
 
     if (beforeMs !== null) {
       clauses.push('m.created_at < ?');
@@ -10922,7 +11399,14 @@ export class CoworkStore implements MemoryBackend {
     if (!sessionId || terms.length === 0) return [];
     const limit = Math.max(1, Math.min(20, Math.floor(options.limit ?? 8)));
 
+    const useFts = this.canUseMessagesFts(terms);
     const likeClauses = terms.map(() => 'LOWER(m.content) LIKE ?');
+    const matchClause = useFts
+      ? 'm.rowid IN (SELECT rowid FROM cowork_messages_fts WHERE cowork_messages_fts MATCH ?)'
+      : `(${likeClauses.join(' OR ')})`;
+    const matchParams = useFts
+      ? [terms.map(escapeFts5Phrase).join(' OR ')]
+      : terms.map((term) => `%${term}%`);
     const rows = this.getAll<CoworkMessageRow>(`
       SELECT m.id, m.type, m.content, m.metadata, m.created_at, m.sequence
       FROM cowork_messages m
@@ -10932,10 +11416,10 @@ export class CoworkStore implements MemoryBackend {
         AND (m.metadata IS NULL OR m.metadata NOT LIKE '%"isThinking":true%')
         AND (m.metadata IS NULL OR m.metadata NOT LIKE '%"excludeFromSandboxHistory":true%')
         AND (m.metadata IS NULL OR m.metadata NOT LIKE '%"isDelegationInternal":true%')
-        AND (${likeClauses.join(' OR ')})
+        AND ${matchClause}
       ORDER BY m.created_at DESC, COALESCE(m.sequence, 0) DESC, ROWID DESC
       LIMIT ?
-    `, [sessionId, ...terms.map((term) => `%${term}%`), limit * 40]);
+    `, [sessionId, ...matchParams, limit * 40]);
 
     const scored = rows
       .map((row) => {

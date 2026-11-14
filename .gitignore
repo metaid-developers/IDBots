@@ -1035,3 +1035,9 @@ blob-report/
 !tests/sqlitePerfOptimizations.test.mjs
 !tests/hotPathMetadataAndSkillCache.test.mjs
 !tests/settingsFirstClickAndStorePerf.test.mjs
+!tests/sqliteReadWorker.test.mjs
+!tests/coworkSessionColdPromptAndPeerAvatar.test.mjs
+!tests/coworkMessagesFtsSearch.test.mjs
+!tests/coworkSessionSummaryDelta.test.mjs
+!tests/coworkTranscriptPerfAndGitProbe.test.mjs
+!tests/dshMemoryAdaptivePolicy.test.mjs

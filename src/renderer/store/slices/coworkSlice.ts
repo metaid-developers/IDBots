@@ -341,6 +341,33 @@ const coworkSlice = createSlice({
       }
     },
 
+    upsertSessionSummary(
+      state,
+      action: PayloadAction<{ summary: CoworkSessionSummary | null; sessionId: string; removeSessionId?: string | null }>,
+    ) {
+      const { summary, sessionId, removeSessionId } = action.payload;
+      if (removeSessionId) {
+        state.sessions = state.sessions.filter((item) => item.id !== removeSessionId);
+      }
+      if (!summary) {
+        state.sessions = state.sessions.filter((item) => item.id !== sessionId);
+        return;
+      }
+      const existingIndex = state.sessions.findIndex((item) => item.id === summary.id);
+      if (existingIndex !== -1) {
+        state.sessions[existingIndex] = summary;
+      } else {
+        state.sessions.push(summary);
+      }
+      state.sessions.sort((left, right) => {
+        const pinDiff = Number(Boolean(right.pinned)) - Number(Boolean(left.pinned));
+        if (pinDiff !== 0) return pinDiff;
+        if (right.updatedAt !== left.updatedAt) return right.updatedAt - left.updatedAt;
+        if (right.createdAt !== left.createdAt) return right.createdAt - left.createdAt;
+        return right.id < left.id ? -1 : right.id > left.id ? 1 : 0;
+      });
+    },
+
     // Status flips (running/waiting/completed) repaint the row's status dot but
     // never reorder the list: the sort anchor is the last user-side input, so
     // parallel streaming sessions stay put while their turns run.
@@ -678,6 +705,7 @@ export const {
   setNewTaskOrigin,
   addSession,
   registerBackgroundSession,
+  upsertSessionSummary,
   updateSessionStatus,
   deleteSession,
   addMessage,
