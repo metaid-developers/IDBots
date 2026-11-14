@@ -11,7 +11,7 @@
         {
           "file": "dsh-runtime/node_modules/@deepseek-ai/dsh-win32-process/lib/index.js",
           "match": "0x08000000",
-          "count": 2
+          "count": 3
         }
       ]
     },
