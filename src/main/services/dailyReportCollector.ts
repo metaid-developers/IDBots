@@ -960,6 +960,13 @@ export const collectDailyReportFacts = (input: {
   const isoEnd = new Date(input.windowEndMs).toISOString();
   const msStart = input.windowStartMs;
   const msEnd = input.windowEndMs;
+  // Coarse B-tree range bounds for TEXT created_at columns storing either
+  // SQLite's `YYYY-MM-DD HH:MM:SS` (space = 0x20) or ISO `YYYY-MM-DDTHH:MM:SS.sssZ`
+  // ('T' = 0x54). Adding `created_at >= sqlRangeLower AND created_at < sqlRangeUpper`
+  // lets SQLite seek idx_private_chat_msg_created_at / idx_group_chat_msg_created_at
+  // instead of full-scanning 200k+ rows, while `datetime(...)` preserves exact borders.
+  const sqlRangeLower = new Date(Math.max(0, msStart - 60_000)).toISOString().slice(0, 19).replace('T', ' ');
+  const sqlRangeUpper = `${new Date(msEnd + 86_400_000).toISOString().slice(0, 10)}~`;
 
   const pendingFollowUps = safeCollect('pendingFollowUps', [], () => {
     const rows = db.queryAll<Record<string, unknown>>(`
@@ -1161,17 +1168,19 @@ export const collectDailyReportFacts = (input: {
       FROM private_chat_messages m
       JOIN metabots mb ON (mb.globalmetaid IS NOT NULL AND mb.globalmetaid != ''
         AND (mb.globalmetaid = m.from_global_metaid OR mb.globalmetaid = m.to_global_metaid))
-      WHERE datetime(m.created_at) >= datetime(?) AND datetime(m.created_at) < datetime(?)
+      WHERE m.created_at >= ? AND m.created_at < ?
+        AND datetime(m.created_at) >= datetime(?) AND datetime(m.created_at) < datetime(?)
       GROUP BY mb.id
-    `, [isoStart, isoEnd]);
+    `, [sqlRangeLower, sqlRangeUpper, isoStart, isoEnd]);
     const groupRows = db.queryAll<Record<string, unknown>>(`
       SELECT mb.id AS metabot_id, mb.name AS bot_name, COUNT(*) AS message_count
       FROM group_chat_messages m
       JOIN metabots mb ON (mb.globalmetaid IS NOT NULL AND mb.globalmetaid != ''
         AND mb.globalmetaid = m.sender_global_metaid)
-      WHERE datetime(m.created_at) >= datetime(?) AND datetime(m.created_at) < datetime(?)
+      WHERE m.created_at >= ? AND m.created_at < ?
+        AND datetime(m.created_at) >= datetime(?) AND datetime(m.created_at) < datetime(?)
       GROUP BY mb.id
-    `, [isoStart, isoEnd]);
+    `, [sqlRangeLower, sqlRangeUpper, isoStart, isoEnd]);
     const byBot = new Map<number, { botName: string; privateMessageCount: number; groupMessageCount: number }>();
     for (const row of privateRows) {
       const id = Number(row.metabot_id);
@@ -1297,11 +1306,12 @@ export const collectDailyReportFacts = (input: {
       FROM private_chat_messages m
       JOIN metabots mb ON (mb.globalmetaid IS NOT NULL AND mb.globalmetaid != ''
         AND (mb.globalmetaid = m.from_global_metaid OR mb.globalmetaid = m.to_global_metaid))
-      WHERE datetime(m.created_at) >= datetime(?) AND datetime(m.created_at) < datetime(?)
+      WHERE m.created_at >= ? AND m.created_at < ?
+        AND datetime(m.created_at) >= datetime(?) AND datetime(m.created_at) < datetime(?)
       GROUP BY mb.id, peer_global
       ORDER BY message_count DESC
       LIMIT 60
-    `, [isoStart, isoEnd]);
+    `, [sqlRangeLower, sqlRangeUpper, isoStart, isoEnd]);
     for (const row of externalRows) {
       const acc = accumulator(String(row.bot_name ?? ''));
       if (acc) acc.externalRows.push(row);
@@ -1550,15 +1560,16 @@ export const collectDailyReportFacts = (input: {
       }
     }
     const onlineRows: Record<string, unknown>[] = [];
-    for (const [table] of [['private_chat_messages'], ['group_chat_messages']] as const) {
-      try {
-        onlineRows.push(...db.queryAll<Record<string, unknown>>(`
-          SELECT CAST(strftime('%H', m.created_at, 'localtime') AS INTEGER) AS h, COUNT(*) AS cnt
-          FROM ${table} m
-          WHERE datetime(m.created_at) >= datetime(?) AND datetime(m.created_at) < datetime(?)
-          GROUP BY h
-        `, [isoStart, isoEnd]));
-      } catch {
+      for (const [table] of [['private_chat_messages'], ['group_chat_messages']] as const) {
+        try {
+          onlineRows.push(...db.queryAll<Record<string, unknown>>(`
+            SELECT CAST(strftime('%H', m.created_at, 'localtime') AS INTEGER) AS h, COUNT(*) AS cnt
+            FROM ${table} m
+            WHERE m.created_at >= ? AND m.created_at < ?
+              AND datetime(m.created_at) >= datetime(?) AND datetime(m.created_at) < datetime(?)
+            GROUP BY h
+          `, [sqlRangeLower, sqlRangeUpper, isoStart, isoEnd]));
+        } catch {
         // One table's buckets are not worth the section.
       }
     }

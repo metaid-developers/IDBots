@@ -56,6 +56,9 @@ export const CEREBELLUM_REMOTE_SERVICE_SHORTLIST_MIN_POOL = 12;
 /** Per-option description cap inside the choice `criteria` map (tokens). */
 export const CEREBELLUM_REMOTE_SERVICE_OPTION_MAX_DESCRIPTION_CHARS = 320;
 
+/** Total char budget across all service option labels in `criteria`. */
+export const CEREBELLUM_REMOTE_SERVICE_OPTIONS_TOTAL_MAX_CHARS = 12000;
+
 export interface CerebellumRemoteServiceCandidate {
   /** Service pin id — the same identifier the delegation protocol uses. */
   id: string;
@@ -136,8 +139,14 @@ export function buildRemoteServiceChoiceQuestions(
     return {};
   }
   const criteria: Record<string, string> = {};
+  let totalChars = 0;
   for (const service of services) {
-    criteria[String(service.id)] = buildRemoteServiceOptionLabel(service);
+    const label = buildRemoteServiceOptionLabel(service);
+    if (Object.keys(criteria).length > 0 && totalChars + label.length > CEREBELLUM_REMOTE_SERVICE_OPTIONS_TOTAL_MAX_CHARS) {
+      break;
+    }
+    criteria[String(service.id)] = label;
+    totalChars += label.length;
   }
   return {
     [CEREBELLUM_REMOTE_SERVICE_RANK_QUESTION_ID]: {

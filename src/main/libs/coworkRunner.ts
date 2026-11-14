@@ -1622,6 +1622,8 @@ interface ActiveSession {
    */
   /** The opening text shown so far this turn; injected into the turn prompt. */
   dshTurnAckOpeningText?: string;
+  needsBundledEffort?: boolean;
+  bundledEffortResolver?: (dist: Record<'off' | 'low' | 'high' | 'max', number> | null) => void;
   finalizingTurn?: boolean;
   finalizationAttempted?: boolean;
   finalizationFallbackText?: string;
@@ -2651,6 +2653,8 @@ export interface CoworkRunnerOptions {
     memories: ReadonlyArray<{ id: string; text: string }>;
     /** Newest-first knowledge pool (empty = decision off for this turn). */
     knowledge: ReadonlyArray<{ id: string; topic: string; summary: string; kind: string }>;
+    /** Coalesce auto-effort classification into the same /v1/systemone call. */
+    includeEffort?: boolean;
   }) => Promise<{
     memoryScores: ReadonlyMap<string, number> | null;
     knowledgeScores: ReadonlyMap<string, number> | null;
@@ -2667,6 +2671,7 @@ export interface CoworkRunnerOptions {
       probability: number;
     }> | null;
     gateVerdicts: Record<string, boolean> | null;
+    effortDistribution?: Record<'off' | 'low' | 'high' | 'max', number> | null;
   } | null>;
   /**
    * Optional cerebellum re-rank for conversation_search hits. A score map
@@ -7520,15 +7525,18 @@ export class CoworkRunner extends EventEmitter {
       sessionMemoryEnabled,
       profile.includeMemoryPromptBlocks,
     );
+    const activeForDecisions = this.activeSessions.get(sessionId);
+    const includeBundledEffort = Boolean(activeForDecisions?.needsBundledEffort);
     const decisionsStartedAt = Date.now();
-    const decisionsPromise = this.cerebellumTurnDecisions && prompt.trim()
-      ? this.cerebellumTurnDecisions({
+    const decisionsPromise: ReturnType<NonNullable<CoworkRunnerOptions['cerebellumTurnDecisions']>> | null =
+      this.cerebellumTurnDecisions && prompt.trim()
+        ? this.cerebellumTurnDecisions({
           currentUserText: prompt,
           metabotId: this.store.getMetabotIdForSession(sessionId),
           // Only 'volatile' sessions have a catalog in the tail (inline/
           // legacy carry theirs in the system prompt), so those skip the
           // skill questions entirely.
-          skillsCatalogVolatile: this.activeSessions.get(sessionId)?.skillsCatalogMode === 'volatile',
+          skillsCatalogVolatile: activeForDecisions?.skillsCatalogMode === 'volatile',
           remoteServicesEnabled: !disableRemoteServicesPrompt,
           memories: memoryContext?.pooledCandidates ?? [],
           knowledge: (knowledgeEntries ?? []).map((entry) => ({
@@ -7537,8 +7545,18 @@ export class CoworkRunner extends EventEmitter {
             summary: entry.summary,
             kind: entry.kind,
           })),
-        }).catch(() => null)
-      : null;
+          ...(includeBundledEffort ? { includeEffort: true } : {}),
+        }).then((res) => {
+          activeForDecisions?.bundledEffortResolver?.(res?.effortDistribution ?? null);
+          return res;
+        }).catch(() => {
+          activeForDecisions?.bundledEffortResolver?.(null);
+          return null;
+        })
+      : (() => {
+          activeForDecisions?.bundledEffortResolver?.(null);
+          return null;
+        })();
     let turnDecisions: Awaited<ReturnType<NonNullable<CoworkRunnerOptions['cerebellumTurnDecisions']>>> = null;
     let decisionsSettled = false;
     const awaitTurnDecisions = async () => {
@@ -11593,9 +11611,20 @@ export class CoworkRunner extends EventEmitter {
       // human-sent messages rate the per-message JEV classification, where
       // conversational latency is the scarce resource.
       const unattendedTurn = this.isUnattendedAutomationSession(sessionId);
-      const autoEffortPromise = effectiveEffortRung == null && !unattendedTurn && this.cerebellumEffortSelector
-        ? this.cerebellumEffortSelector({ currentUserText: prompt })
-        : null
+      const canSelectAutoEffort = effectiveEffortRung == null && !unattendedTurn && this.cerebellumEffortSelector;
+      let autoEffortPromise: Promise<Record<'off' | 'low' | 'high' | 'max', number> | null> | null = null;
+      if (canSelectAutoEffort && this.cerebellumTurnDecisions && prompt.trim()) {
+        activeSession.needsBundledEffort = true;
+        autoEffortPromise = new Promise((resolve) => {
+          activeSession.bundledEffortResolver = resolve;
+        });
+      } else {
+        activeSession.needsBundledEffort = false;
+        activeSession.bundledEffortResolver = undefined;
+        autoEffortPromise = canSelectAutoEffort
+          ? this.cerebellumEffortSelector!({ currentUserText: prompt })
+          : null;
+      }
       // Volatile context (memory projections, time, browser tabs, remote
       // services) rides inside the user message on DSH turns — at the head by
       // default (620d2850), with one first-turn exception below.

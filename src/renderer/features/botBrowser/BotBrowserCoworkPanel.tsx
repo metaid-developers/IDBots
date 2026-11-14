@@ -282,6 +282,7 @@ export const PanelMessage: React.FC<{
         >
           <MarkdownContent
             content={message.content}
+            isStreaming={Boolean(message.metadata?.isStreaming)}
             compact
             onOpenBotBrowserUri={onOpenUri}
             resolveLocalFilePath={resolveLocalFilePath}
@@ -298,6 +299,7 @@ export const PanelMessage: React.FC<{
       <div onContextMenu={handleBubbleContextMenu} className="min-w-0">
         <MarkdownContent
           content={message.content}
+          isStreaming={Boolean(message.metadata?.isStreaming)}
           compact
           onOpenBotBrowserUri={onOpenUri}
           resolveLocalFilePath={resolveLocalFilePath}

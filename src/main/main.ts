@@ -56,6 +56,7 @@ import {
   createJevRelayCallRecorder,
   createJevRelayFetchWithKeyRetry,
   createSignalBoundedFetch,
+  doesJevRelaySupportTemplates,
   flushJevRelayCallStats,
   initJevRelayService,
   registerJevRelayIpcHandlers,
@@ -459,6 +460,7 @@ import {
 } from './services/contentSummaryService';
 import { MetawebStudyJobStore } from './metawebStudyJobStore';
 import { MetawebSurfStore } from './metawebSurfStore';
+import { pruneStaleDshSkillEnvFiles } from './libs/dshSkillSessionEnv';
 import { SurfService, SURF_STATUS_CHANNEL } from './services/surfService';
 import { buildSurfSessionPrompt, parseSurfRunReport, SURF_DEEP_READ_GUIDANCE, SURF_KB_ADD_BUDGET } from './libs/surfPrompt';
 import { foldSurfReceiptsIntoSeenActions, surfReceiptSeenActions, surfSessionPartialStats, type SurfSessionWriteState } from './libs/surfInteractionGuard';
@@ -3975,12 +3977,14 @@ const createCerebellumTurnDecisionCaller = () =>
     remoteServicesEnabled: boolean;
     memories: ReadonlyArray<{ id: string; text: string }>;
     knowledge: ReadonlyArray<{ id: string; topic: string; summary: string; kind: string }>;
+    includeEffort?: boolean;
   }): Promise<{
     memoryScores: ReadonlyMap<string, number> | null;
     knowledgeScores: ReadonlyMap<string, number> | null;
     skillRanking: Array<{ id: string; name: string; description: string; probability: number }> | null;
     serviceRanking: Array<{ id: string; name: string; description: string; probability: number }> | null;
     gateVerdicts: Record<string, boolean> | null;
+    effortDistribution?: Record<'off' | 'low' | 'high' | 'max', number> | null;
   } | null> => {
     const context = await resolveCerebellumCallContext();
     if (!context) {
@@ -4020,6 +4024,8 @@ const createCerebellumTurnDecisionCaller = () =>
     const outcome = await runCerebellumTurnDecisions({
       config: context.config,
       fetchImpl: context.fetchImpl,
+      useQuestionTemplates:
+        context.config.provider === CEREBELLUM_FREE_PROVIDER && doesJevRelaySupportTemplates(),
       decisions: {
         currentUserText: input.currentUserText,
         memories: input.memories,
@@ -4027,6 +4033,7 @@ const createCerebellumTurnDecisionCaller = () =>
         skills: skills.length >= CEREBELLUM_SKILL_SHORTLIST_MIN_POOL ? skills : [],
         services: services.length >= CEREBELLUM_REMOTE_SERVICE_SHORTLIST_MIN_POOL ? services : [],
         includeGate: true,
+        includeEffort: input.includeEffort === true,
       },
       onPayload: (stats) => {
         coworkLog('INFO', 'cerebellum:turnPayload', 'Cerebellum turn decision bundle payload', {
@@ -4075,6 +4082,7 @@ const createCerebellumTurnDecisionCaller = () =>
           return service ? [{ ...service, probability: entry.probability }] : [];
         }) ?? null,
       gateVerdicts: outcome.gateVerdicts,
+      effortDistribution: outcome.effortDistribution ?? null,
     };
   };
 
@@ -5964,6 +5972,8 @@ const startStartupNightlyServices = (): void => {
     metaidKnowledgeStore: dreamKnowledgeStore,
     metaidCultureStore: getTeamCultureStore(),
     standingPageStore: getStandingPageStore(),
+    metawebSurfStore: getMetawebSurfStore(),
+    chainContentHistoryStore: getChainContentHistoryStore(),
     performChat: performChatCompletionForOrchestrator,
     emitToRenderer: (channel, data) => {
       broadcastToRenderers(channel as string, data);
@@ -6255,8 +6265,9 @@ const scheduleCoworkStoreHeavyMaintenance = (): void => {
     try {
       startupLog('cowork store heavy maintenance begin');
       const result = coworkStore.runHeavyStartupMaintenance();
+      const prunedEnvFiles = pruneStaleDshSkillEnvFiles(app.getPath('userData'));
       startupLog(
-        `cowork store heavy maintenance done (orderSessions=${result.migratedMetawebOrderSessions}, orderBackfill=${result.backfilledMetawebOrderMessages}, privateBackfill=${result.backfilledMetawebPrivateMessages})`,
+        `cowork store heavy maintenance done (orderSessions=${result.migratedMetawebOrderSessions}, orderBackfill=${result.backfilledMetawebOrderMessages}, privateBackfill=${result.backfilledMetawebPrivateMessages}, prunedSkillEnv=${prunedEnvFiles})`,
       );
       coworkStoreHeavyMaintenanceFinished = true;
       if (!coworkStore.isMessagesFtsReady()) {

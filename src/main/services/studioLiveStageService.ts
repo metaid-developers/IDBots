@@ -868,7 +868,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
   function observeMessage(sessionId: string, message: CoworkMessage): void {
     if (!message?.id) return;
     currentSettings = deps.getSettings();
-    if (process.env.NODE_ENV === 'development') {
+    if (process.env.IDBOTS_DEBUG_LIVE_STAGE === '1') {
       console.warn(`[StudioLiveStage] observe ${sessionId} type=${message.type} id=${message.id} enabled=${currentSettings.enabled} director=${currentSettings.directorEnabled}`);
     }
     if (!currentSettings.enabled) return;
