@@ -83,7 +83,9 @@ test('the current face is the checked, yellow-filled radio', () => {
   const homeButton = home.slice(start, home.indexOf('</button>', start));
   assert.match(homeButton, /bg-claude-accent/);
   assert.match(homeButton, /text-claude-accentInk/);
-  assert.match(homeButton, /shadow-\[3px_3px_0_var\(--btn-primary-edge\)\]/);
+  // v2 rect-flat (owner ruling 2026-11-14): the selected face is a FLAT fill —
+  // the old 3 px grey offset edge is retired, so depth is border + colour only.
+  assert.doesNotMatch(homeButton, /shadow-\[/);
   assert.match(home, /aria-checked="true" tabindex="0"/);
 
   const browserStart = home.indexOf('data-surface="browser"');
@@ -99,18 +101,57 @@ test('the current face is the checked, yellow-filled radio', () => {
   assert.equal((browser.match(/bg-claude-accent\b/g) ?? []).length, 1);
 });
 
-test('the tray keeps the baseline segmented grammar', () => {
+test('the tray keeps the rect-flat segmented grammar (v2, owner ruling 2026-11-14)', () => {
   const markup = render('browser');
   const trayStart = markup.indexOf('data-slot="bot-browser-mode-segments"');
   const tray = markup.slice(trayStart, markup.indexOf('>', trayStart));
-  for (const token of ['grid-cols-2', 'rounded-xl', 'gap-1', 'p-0.5', 'border-claude-border/70']) {
+  for (const token of ['grid-cols-2', 'rounded-[var(--shape-radius-lg)]', 'gap-0', 'overflow-hidden', 'border-claude-border/70']) {
     assert.ok(tray.includes(token), `tray is missing ${token}`);
   }
-  const buttonStart = markup.indexOf('data-slot="surface-switch-option"');
-  const button = markup.slice(buttonStart, markup.indexOf('>', buttonStart));
-  for (const token of ['h-[34px]', 'rounded-[10px]', 'text-xs', 'font-medium']) {
-    assert.ok(button.includes(token), `segment is missing ${token}`);
+  // The capsule grammar is retired: no pill radius, no gutter between cells.
+  assert.ok(!tray.includes('rounded-xl'), 'the tray must not carry the retired capsule radius');
+  assert.ok(!tray.split(' ').includes('gap-1'), 'the cells sit flush (gap-0), not on a gutter');
+  // The fill must meet the border (reference .seg has no tray padding). An
+  // inset fill read as two tiles pasted inside a rounded frame — owner rejected.
+  assert.ok(!tray.split(' ').includes('p-0.5'), 'the tray has no inner padding; the fill meets the 1px border');
+
+  const firstStart = markup.indexOf('data-slot="surface-switch-option"');
+  const first = markup.slice(firstStart, markup.indexOf('>', firstStart));
+  const secondStart = markup.indexOf('data-slot="surface-switch-option"', firstStart + 1);
+  const second = markup.slice(secondStart, markup.indexOf('>', secondStart));
+  for (const token of ['h-full', 'text-xs', 'font-medium', 'transition-colors']) {
+    assert.ok(first.includes(token), `segment is missing ${token}`);
   }
+  // The cell itself is square and flat — the tray owns the only radius.
+  for (const segment of [first, second]) {
+    assert.ok(!segment.includes('rounded-[10px]'), 'the per-cell radius is retired');
+    assert.ok(!segment.includes('shadow-[3px'), 'the offset hard shadow is retired');
+    assert.ok(!segment.includes('transition-all'), 'colour-only transition, no layout tween');
+    // No divider between the cells at all (owner ruling 2026-11-14): the two
+    // cells are one surface, split by fill alone.
+    assert.ok(!/\bborder-l\b/.test(segment), 'no seam divider — the split is fill only');
+  }
+});
+
+test('the shape tokens the tray depends on exist in the theme block', () => {
+  const css = readFileSync(new URL('../src/renderer/index.css', import.meta.url), 'utf8');
+  const rootBlock = css.slice(css.indexOf(':root {'), css.indexOf('.dark {'));
+  for (const [token, value] of [
+    ['--shape-radius-lg', '12px'],
+    ['--shape-radius-md', '10px'],
+    ['--shape-radius-sm', '8px'],
+    ['--shape-radius-xs', '4px'],
+  ] as const) {
+    assert.match(
+      rootBlock,
+      new RegExp(`${token}:\\s*${value};`),
+      `theme block is missing ${token}: ${value}`,
+    );
+  }
+  // The rect-flat ruling is recorded where the tokens live.
+  assert.match(rootBlock, /rect-flat/);
+  assert.match(rootBlock, /owner ruling 2026-11-14/);
+  assert.match(rootBlock, /no capsules, no offset shadows/i);
 });
 
 test('both faces land the pill + band at the same column inset, below the lights', () => {

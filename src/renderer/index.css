@@ -26,6 +26,14 @@
   --rounded: 12px;
   --rounded-lg: 8px;
   --btn-primary-edge: rgba(0, 0, 0, 0.15);
+  /* Shape language v2 — rect-flat family (owner ruling 2026-11-14 v2).
+     Rectangles are the shape base; corners are softened by four radii only
+     (12 / 10 / 8 / 4). No capsules, no offset shadows: depth comes from a
+     1 px border plus a flat fill. Mode-invariant, so :root alone declares it. */
+  --shape-radius-lg: 12px;
+  --shape-radius-md: 10px;
+  --shape-radius-sm: 8px;
+  --shape-radius-xs: 4px;
 }
 
 /* Dark mode: aligned with IDChat */

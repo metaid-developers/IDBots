@@ -468,11 +468,16 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
           <div className="text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
             {i18nService.t('coworkHistory')}
           </div>
+          {/* Shape language v2 rect-flat (owner ruling 2026-11-14): the SAME
+              segmented template as the surface switcher above — rectangular
+              tray, cells flush (no tray padding, no divider), flat accent fill
+              clipped by the tray's arc, no capsule. This row is the mid tier:
+              32 px tall, so the radius is the 10 px token. */}
           <div
             data-slot="home-session-scope"
             role="group"
             aria-label={i18nService.t('coworkHistory')}
-            className="grid w-full grid-cols-2 gap-1 rounded-lg border border-claude-border/70 bg-claude-bg/80 p-1 mt-2 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80"
+            className="grid h-[32px] w-full grid-cols-2 gap-0 overflow-hidden rounded-[var(--shape-radius-md)] border border-claude-border/70 bg-claude-bg/80 mt-2 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80"
           >
             {TASK_RECORD_TABS.map((tab, index) => {
               const isActive = taskRecordTab === tab.id;
@@ -492,12 +497,11 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
                   type="button"
                   aria-pressed={isActive}
                   onClick={() => handleSetTaskRecordTab(tab.id)}
-                  className={`non-draggable group relative inline-flex h-7 min-w-0 items-center justify-center gap-1 rounded-md px-1 text-xs font-medium leading-none transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
+                  className={`non-draggable group relative inline-flex h-full min-w-0 items-center justify-center gap-1 px-1 text-xs font-medium leading-none transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
                     isActive
-                      // Same flat accent fill as the mid-column scope row
-                      // (aesthetic pass 2026-11-08): the primary-button class
-                      // brought rem padding + a 2px offset shadow that made the
-                      // active segment wider than its grid cell.
+                      // Flat accent fill, flush to the tray border and clipped
+                      // by its radius (v2 rect-flat, owner ruling 2026-11-14;
+                      // the per-cell radius was the retired capsule grammar).
                       ? 'bg-claude-accent text-claude-accentInk'
                       : 'text-claude-textSecondary hover:bg-claude-surfaceHover/70 hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover/70 dark:hover:text-claude-darkText'
                   }`}
