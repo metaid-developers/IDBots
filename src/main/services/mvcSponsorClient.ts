@@ -143,6 +143,7 @@ export function isMvcInsufficientSelfPayError(error: unknown): boolean {
   const message = getErrorMessage(error, '');
   return isNoUserUtxoDraftError(error)
     || /not enough balance|余额不足/i.test(message)
+    || /Insufficient MVC balance for chunked upload/i.test(message)
     || message.includes('所有已知 MVC 手续费输入都已失效');
 }
 
@@ -310,8 +311,9 @@ async function requestJson(
   init: { method: string; headers: Record<string, string>; body?: string },
   stage: SponsorStage,
   retry: boolean,
+  minTimeoutMs = 0,
 ): Promise<Record<string, unknown>> {
-  const timeoutMs = resolveSponsorRequestTimeoutMs(stage, init.body);
+  const timeoutMs = Math.max(minTimeoutMs, resolveSponsorRequestTimeoutMs(stage, init.body));
   const retryDelaysMs = retry ? DEFAULT_RETRY_DELAYS_MS : [];
   for (let attempt = 0; ; attempt += 1) {
     const controller = new AbortController();
@@ -691,6 +693,33 @@ export interface MvcSponsorV2Client {
     meAmountMilli?: number;
     raw: Record<string, unknown>;
   }>;
+  chunkedUploadSponsor(payload: {
+    address: string;
+    metaId: string;
+    fileName: string;
+    path: string;
+    contentType: string;
+    operation?: string;
+    storageKey: string;
+    fileSize: number;
+    feeRate?: number;
+    challengeId: string;
+    publicKey: string;
+    signature: string;
+    trafficAccount?: MvcSponsorTrafficAccount;
+  }): Promise<{
+    orderId: string;
+    txId: string;
+    pinId: string;
+    mergeTxId?: string;
+    chunkTxIds?: string[];
+    chunkNumber?: number;
+    txSize?: number;
+    minerFee?: number;
+    paySource?: SponsorPaySource;
+    meAmountMilli?: number;
+    raw: Record<string, unknown>;
+  }>;
   getSponsorOrder(orderId: string): Promise<{
     orderId: string;
     status: string;
@@ -828,6 +857,69 @@ export function createMvcSponsorV2Client(input: {
         }
         throw error;
       }
+    },
+    async chunkedUploadSponsor(payload) {
+      const trafficAccount = normalizeTrafficAccount(payload?.trafficAccount);
+      const record = await requestJson(
+        fetchImpl,
+        `${baseUrl}/v2/assist/gas/mvc/chunked-upload`,
+        {
+          method: 'POST',
+          headers: { accept: 'application/json', 'content-type': 'application/json' },
+          body: JSON.stringify({
+            address: requireText('commit', 'address', payload?.address),
+            metaId: requireText('commit', 'metaId', payload?.metaId),
+            fileName: requireText('commit', 'fileName', payload?.fileName),
+            path: requireText('commit', 'path', payload?.path),
+            contentType: requireText('commit', 'contentType', payload?.contentType),
+            operation: normalizeText(payload?.operation) || 'create',
+            storageKey: requireText('commit', 'storageKey', payload?.storageKey),
+            fileSize: Math.max(0, Math.trunc(toFiniteNumber(payload?.fileSize))),
+            ...(Number.isFinite(payload?.feeRate) && Number(payload?.feeRate) > 0
+              ? { feeRate: Math.floor(Number(payload.feeRate)) }
+              : {}),
+            challengeId: requireText('commit', 'challengeId', payload?.challengeId),
+            publicKey: requireText('commit', 'publicKey', payload?.publicKey),
+            signature: requireText('commit', 'signature', payload?.signature),
+            ...(trafficAccount ? { trafficAccount } : {}),
+          }),
+        },
+        'commit',
+        false,
+        60_000,
+      );
+      const orderId = pickText(record, 'orderId', 'order_id');
+      const txId = pickText(record, 'txId', 'txid');
+      const pinId = pickText(record, 'pinId', 'pin_id') || (txId ? `${txId}i0` : '');
+      if (!orderId || !txId) {
+        throw createSponsorError('commit', 'Sponsor chunked upload response is missing required fields.', {
+          data: record,
+          reason: 'commit_failed',
+        });
+      }
+      const chunkTxIds = Array.isArray(record.chunkTxIds)
+        ? record.chunkTxIds.map((item) => normalizeText(item)).filter(Boolean)
+        : undefined;
+      return {
+        orderId,
+        txId,
+        pinId,
+        ...(pickText(record, 'mergeTxId', 'merge_tx_id')
+          ? { mergeTxId: pickText(record, 'mergeTxId', 'merge_tx_id') }
+          : {}),
+        ...(chunkTxIds ? { chunkTxIds } : {}),
+        ...(normalizeOptionalNumber(record, 'chunkNumber', 'chunk_number') !== undefined
+          ? { chunkNumber: normalizeOptionalNumber(record, 'chunkNumber', 'chunk_number') }
+          : {}),
+        ...(normalizeOptionalNumber(record, 'txSize', 'tx_size') !== undefined
+          ? { txSize: normalizeOptionalNumber(record, 'txSize', 'tx_size') }
+          : {}),
+        ...(normalizeOptionalNumber(record, 'minerFee', 'miner_fee') !== undefined
+          ? { minerFee: normalizeOptionalNumber(record, 'minerFee', 'miner_fee') }
+          : {}),
+        ...normalizePaySourceEcho(record),
+        raw: record,
+      };
     },
     getSponsorOrder,
   };

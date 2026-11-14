@@ -165,7 +165,7 @@ function normalizeUploaderBaseUrl(url) {
 function selectUploadMode({ sizeBytes, chunkThresholdBytes = DEFAULT_CHUNK_THRESHOLD_BYTES }) {
   assertPositiveInteger(sizeBytes, 'sizeBytes');
   assertPositiveInteger(chunkThresholdBytes, 'chunkThresholdBytes');
-  return sizeBytes > chunkThresholdBytes ? 'chunked' : 'direct';
+  return sizeBytes >= chunkThresholdBytes ? 'chunked' : 'direct';
 }
 
 function validateUploadSize({ sizeBytes, maxSizeBytes = DEFAULT_MAX_FILE_SIZE_BYTES }) {
