@@ -38,7 +38,9 @@ const MeBalanceOverviewCard: React.FC<{ note?: string }> = ({ note }) => {
       ? i18nService.t('mePanelResetSoon')
       : reset.unit === 'hours'
         ? i18nService.t('mePanelResetInHours').replace('{n}', String(reset.n))
-        : i18nService.t('mePanelResetInDays').replace('{n}', String(reset.n));
+        : reset.hours > 0
+          ? i18nService.t('mePanelResetInDaysHours').replace('{n}', String(reset.n)).replace('{h}', String(reset.hours))
+          : i18nService.t('mePanelResetInDays').replace('{n}', String(reset.n));
 
   // Current subscription tier for the weekly-grant badge (same resolution
   // as the plan card): active paid tier, or ID.Free when not subscribed.

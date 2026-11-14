@@ -18,6 +18,7 @@ function resetLine(nextResetAt: number | null | undefined): string {
   if (!parts) return '';
   if (parts.unit === 'soon') return t('mobile.me.points.resetSoon');
   if (parts.unit === 'hours') return t('mobile.me.points.resetHours', { n: parts.n });
+  if (parts.hours > 0) return t('mobile.me.points.resetDaysHours', { n: parts.n, h: parts.hours });
   return t('mobile.me.points.resetDays', { n: parts.n });
 }
 

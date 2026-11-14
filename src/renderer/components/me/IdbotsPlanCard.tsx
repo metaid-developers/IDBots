@@ -92,7 +92,9 @@ const IdbotsPlanCard: React.FC<IdbotsPlanCardProps> = ({ onUpgrade }) => {
       ? i18nService.t('mePanelResetSoon')
       : reset.unit === 'hours'
         ? i18nService.t('mePlanResetIn').replace('{n}', String(reset.n))
-        : i18nService.t('mePlanResetInDays').replace('{n}', String(reset.n));
+        : reset.hours > 0
+          ? i18nService.t('mePlanResetInDaysHours').replace('{n}', String(reset.n)).replace('{h}', String(reset.hours))
+          : i18nService.t('mePlanResetInDays').replace('{n}', String(reset.n));
 
   return (
     <section className="rounded-2xl border border-claude-border dark:border-claude-darkBorder bg-claude-surfaceInset/40 dark:bg-claude-darkSurfaceInset/30 p-3.5" aria-label={i18nService.t('mePlanTitle')}>

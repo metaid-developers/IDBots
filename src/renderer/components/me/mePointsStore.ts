@@ -69,18 +69,26 @@ export function meResetImminent(nextResetAt: number): boolean {
   return hours !== null && hours <= 24;
 }
 
+export type MeResetParts =
+  | { unit: 'soon'; n: number }
+  | { unit: 'hours'; n: number }
+  | { unit: 'days'; n: number; hours: number };
+
 /**
- * Human reset countdown: hours under a day, days above (120h → "5 天后重置").
+ * Human reset countdown: whole hours inside the last day, days+hours above
+ * (e.g. 6d 23h → "6 天 23 小时后重置", exact 7d → "7 天后重置").
  * Returns null when the server sent no reset timestamp.
  */
-export function meResetParts(nextResetAt: number): { unit: 'soon' | 'hours' | 'days'; n: number } | null {
+export function meResetParts(nextResetAt: number | null | undefined): MeResetParts | null {
   const reset = Number(nextResetAt);
   if (!Number.isFinite(reset) || reset <= 0) return null;
   const ms = reset - Date.now();
   if (ms <= 0) return { unit: 'soon', n: 0 };
-  const hours = Math.ceil(ms / 3_600_000);
-  if (hours <= 24) return { unit: 'hours', n: hours };
-  return { unit: 'days', n: Math.ceil(ms / 86_400_000) };
+  const days = Math.floor(ms / 86_400_000);
+  if (days < 1) {
+    return { unit: 'hours', n: Math.max(1, Math.ceil(ms / 3_600_000)) };
+  }
+  return { unit: 'days', n: days, hours: Math.floor((ms % 86_400_000) / 3_600_000) };
 }
 
 /**
