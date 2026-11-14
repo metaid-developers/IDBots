@@ -922,6 +922,7 @@ export interface CoworkSessionSummary {
   peerName?: string | null;
   /** Remote peer MetaBot's avatar (A2A sessions only) */
   peerAvatar?: string | null;
+  peerAvatarVersion?: number | null;
   /** Owning MetaBot's display name, when attributed */
   metabotName?: string | null;
   /**
@@ -1616,6 +1617,7 @@ export class CoworkStore implements MemoryBackend {
   }
 
   private ensureSchemaCompatibility(deferHeavyStartupMaintenance = false): void {
+    this.ensureSessionPromptsSchema();
     this.ensureMemorySchemaCompatibility();
     this.ensureMemoryPolicySchemaCompatibility();
     this.ensureConversationMappingSchemaCompatibility();
@@ -1636,6 +1638,7 @@ export class CoworkStore implements MemoryBackend {
     backfilledMetawebOrderMessages: number;
     backfilledMetawebPrivateMessages: number;
     backfilledSessionActivityAt: number;
+    migratedInlineSessionPrompts: number;
   } {
     const migratedMetawebOrderSessions = this.migrateMetawebOrderSessionsToPeerConversations();
     const backfilledMetawebOrderMessages = this.backfillMetawebOrderSimplemsgMetadata();
@@ -1649,12 +1652,78 @@ export class CoworkStore implements MemoryBackend {
     // Order matters: the metadata backfills above can tag legacy rows as
     // metaweb_private, and those rows must count toward the activity stamp.
     const backfilledSessionActivityAt = this.backfillSessionActivityAt();
+    const migratedInlineSessionPrompts = this.backfillSessionPromptsOutOfLine();
     return {
       migratedMetawebOrderSessions,
       backfilledMetawebOrderMessages,
       backfilledMetawebPrivateMessages,
       backfilledSessionActivityAt,
+      migratedInlineSessionPrompts,
     };
+  }
+
+  private ensureSessionPromptsSchema(): void {
+    if (!this.tableExists('cowork_sessions')) {
+      return;
+    }
+    try {
+      this.db.run(`
+        CREATE TABLE IF NOT EXISTS cowork_session_prompts (
+          session_id TEXT PRIMARY KEY,
+          system_prompt TEXT NOT NULL DEFAULT '',
+          updated_at INTEGER NOT NULL,
+          FOREIGN KEY (session_id) REFERENCES cowork_sessions(id) ON DELETE CASCADE
+        )
+      `);
+    } catch (error) {
+      console.warn('[CoworkStore] Failed to verify cowork_session_prompts schema:', error);
+    }
+  }
+
+  private backfillSessionPromptsOutOfLine(): number {
+    if (!this.tableExists('cowork_sessions') || !this.tableExists('cowork_session_prompts')) {
+      return 0;
+    }
+    try {
+      const hasInline = this.getOne<{ found: number }>(`
+        SELECT 1 AS found
+        FROM cowork_sessions
+        WHERE system_prompt IS NOT NULL AND system_prompt != ''
+        LIMIT 1
+      `);
+      if (!hasInline) {
+        return 0;
+      }
+      this.db.run('BEGIN TRANSACTION');
+      try {
+        this.db.run(`
+          INSERT INTO cowork_session_prompts (session_id, system_prompt, updated_at)
+          SELECT id, system_prompt, updated_at
+          FROM cowork_sessions
+          WHERE system_prompt IS NOT NULL AND system_prompt != ''
+          ON CONFLICT(session_id) DO UPDATE SET
+            system_prompt = excluded.system_prompt,
+            updated_at = excluded.updated_at
+        `);
+        this.db.run(`
+          UPDATE cowork_sessions
+          SET system_prompt = ''
+          WHERE system_prompt IS NOT NULL AND system_prompt != ''
+        `);
+        const changed = this.db.getRowsModified?.() || 0;
+        this.db.run('COMMIT');
+        if (changed > 0) {
+          this.saveDb();
+        }
+        return changed;
+      } catch (innerError) {
+        try { this.db.run('ROLLBACK'); } catch { /* ignore */ }
+        throw innerError;
+      }
+    } catch (error) {
+      console.warn('[CoworkStore] Failed to move cowork_sessions.system_prompt out of line:', error);
+      return 0;
+    }
   }
 
   /**
@@ -3683,8 +3752,20 @@ export class CoworkStore implements MemoryBackend {
 
     this.db.run(`
       INSERT INTO cowork_sessions (id, title, claude_session_id, status, cwd, system_prompt, execution_mode, active_skill_ids, metabot_id, pinned, session_type, peer_global_metaid, peer_name, peer_avatar, permission_mode, model, effort, model_provider, project_id, goal, parent_session_id, assistant_mode, created_at, updated_at)
-      VALUES (?, ?, NULL, 'idle', ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [id, title, cwd, systemPrompt, resolveCoworkExecutionMode(executionMode), JSON.stringify(activeSkillIds), metabotId, sessionType, peerGlobalMetaId, peerName, peerAvatar, permissionMode, model, effort, modelProvider, projectId, goal ? serializeSessionGoal(goal) : null, parentSessionId, assistantMode ? 1 : 0, now, now]);
+      VALUES (?, ?, NULL, 'idle', ?, '', ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [id, title, cwd, resolveCoworkExecutionMode(executionMode), JSON.stringify(activeSkillIds), metabotId, sessionType, peerGlobalMetaId, peerName, peerAvatar, permissionMode, model, effort, modelProvider, projectId, goal ? serializeSessionGoal(goal) : null, parentSessionId, assistantMode ? 1 : 0, now, now]);
+
+    if (systemPrompt && this.tableExists('cowork_session_prompts')) {
+      this.db.run(`
+        INSERT INTO cowork_session_prompts (session_id, system_prompt, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(session_id) DO UPDATE SET
+          system_prompt = excluded.system_prompt,
+          updated_at = excluded.updated_at
+      `, [id, systemPrompt, now]);
+    } else if (systemPrompt) {
+      this.db.run('UPDATE cowork_sessions SET system_prompt = ? WHERE id = ?', [systemPrompt, id]);
+    }
 
     this.upsertConversationMapping({
       channel: 'cowork_ui',
@@ -3872,9 +3953,12 @@ export class CoworkStore implements MemoryBackend {
       updated_at: number;
     }
 
+    const hasPromptsTable = this.tableExists('cowork_session_prompts');
     const row = this.getOne<SessionRow>(`
-      SELECT id, title, claude_session_id, status, pinned, cwd, system_prompt, execution_mode, active_skill_ids, metabot_id,
-             session_type, peer_global_metaid, peer_name, peer_avatar, browser_uri, browser_title, hidden_from_session_list, assistant_mode,
+      SELECT cowork_sessions.id, cowork_sessions.title, cowork_sessions.claude_session_id, cowork_sessions.status, cowork_sessions.pinned, cowork_sessions.cwd,
+             ${hasPromptsTable ? "COALESCE(NULLIF(sp.system_prompt, ''), cowork_sessions.system_prompt, '')" : 'cowork_sessions.system_prompt'} AS system_prompt,
+             cowork_sessions.execution_mode, cowork_sessions.active_skill_ids, cowork_sessions.metabot_id,
+             cowork_sessions.session_type, cowork_sessions.peer_global_metaid, cowork_sessions.peer_name, cowork_sessions.peer_avatar, cowork_sessions.browser_uri, cowork_sessions.browser_title, cowork_sessions.hidden_from_session_list, cowork_sessions.assistant_mode,
              (
                SELECT im.channel FROM cowork_conversation_mappings im
                WHERE im.cowork_session_id = cowork_sessions.id AND im.channel LIKE 'im:%'
@@ -3887,9 +3971,10 @@ export class CoworkStore implements MemoryBackend {
                ORDER BY (im.channel LIKE 'im:%:group') DESC, im.last_active_at DESC
                LIMIT 1
              ) AS im_conversation_id,
-             auto_origin, fold_override, follow_up_state, follow_up_source, follow_up_at, permission_mode, parent_session_id, fork_point_message_id, model, model_provider, effort, project_id, goal, created_at, updated_at
+             cowork_sessions.auto_origin, cowork_sessions.fold_override, cowork_sessions.follow_up_state, cowork_sessions.follow_up_source, cowork_sessions.follow_up_at, cowork_sessions.permission_mode, cowork_sessions.parent_session_id, cowork_sessions.fork_point_message_id, cowork_sessions.model, cowork_sessions.model_provider, cowork_sessions.effort, cowork_sessions.project_id, cowork_sessions.goal, cowork_sessions.created_at, cowork_sessions.updated_at
       FROM cowork_sessions
-      WHERE id = ?
+      ${hasPromptsTable ? 'LEFT JOIN cowork_session_prompts sp ON sp.session_id = cowork_sessions.id' : ''}
+      WHERE cowork_sessions.id = ?
     `, [id]);
 
     if (!row) return null;
@@ -4021,8 +4106,23 @@ export class CoworkStore implements MemoryBackend {
       values.push(updates.cwd);
     }
     if (updates.systemPrompt !== undefined) {
-      setClauses.push('system_prompt = ?');
-      values.push(updates.systemPrompt);
+      if (this.tableExists('cowork_session_prompts')) {
+        setClauses.push("system_prompt = ''");
+        if (updates.systemPrompt) {
+          this.db.run(`
+            INSERT INTO cowork_session_prompts (session_id, system_prompt, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(session_id) DO UPDATE SET
+              system_prompt = excluded.system_prompt,
+              updated_at = excluded.updated_at
+          `, [id, updates.systemPrompt, now]);
+        } else {
+          this.db.run('DELETE FROM cowork_session_prompts WHERE session_id = ?', [id]);
+        }
+      } else {
+        setClauses.push('system_prompt = ?');
+        values.push(updates.systemPrompt);
+      }
     }
     if (updates.executionMode !== undefined) {
       setClauses.push('execution_mode = ?');
@@ -4125,6 +4225,9 @@ export class CoworkStore implements MemoryBackend {
         `, [a2aEpisode.previous_session_id, a2aEpisode.next_session_id]);
       }
       this.db.run('DELETE FROM a2a_conversation_episodes WHERE session_id = ?', [id]);
+    }
+    if (this.tableExists('cowork_session_prompts')) {
+      this.db.run('DELETE FROM cowork_session_prompts WHERE session_id = ?', [id]);
     }
     this.db.run('DELETE FROM cowork_sessions WHERE id = ?', [id]);
     if (a2aEpisode) {
@@ -4396,7 +4499,7 @@ export class CoworkStore implements MemoryBackend {
   }
 
 
-  listSessions(options?: { metabotId?: number | null }): CoworkSessionSummary[] {
+  listSessions(options?: { metabotId?: number | null; omitInlinePeerDataAvatar?: boolean }): CoworkSessionSummary[] {
     interface SessionSummaryRow {
       id: string;
       title: string;
@@ -4406,6 +4509,7 @@ export class CoworkStore implements MemoryBackend {
       session_type?: string | null;
       peer_name?: string | null;
       peer_avatar?: string | null;
+      peer_avatar_version?: number | null;
       metabot_name?: string | null;
       metabot_updated_at?: number | null;
       browser_uri?: string | null;
@@ -4432,7 +4536,13 @@ export class CoworkStore implements MemoryBackend {
     }
 
     const metabotId = options?.metabotId;
+    const omitInlinePeerDataAvatar = options?.omitInlinePeerDataAvatar === true;
     const filterByMetabot = typeof metabotId === 'number' && Number.isInteger(metabotId) && metabotId > 0;
+    const peerAvatarColumnsSql = omitInlinePeerDataAvatar
+      ? `CASE WHEN s.peer_avatar LIKE 'data:%' THEN NULL ELSE s.peer_avatar END AS peer_avatar,
+        CASE WHEN s.peer_avatar LIKE 'data:%' THEN (s.updated_at * 1000 + (LENGTH(s.peer_avatar) % 1000)) ELSE NULL END AS peer_avatar_version,`
+      : `s.peer_avatar,
+        NULL AS peer_avatar_version,`;
     const rows = this.getAll<SessionSummaryRow>(`
       WITH im_ranked AS (
         SELECT
@@ -4454,7 +4564,7 @@ export class CoworkStore implements MemoryBackend {
         s.metabot_id,
         s.session_type,
         s.peer_name,
-        s.peer_avatar,
+        ${peerAvatarColumnsSql}
         mb.name AS metabot_name,
         mb.updated_at AS metabot_updated_at,
         s.browser_uri,
@@ -4540,6 +4650,7 @@ export class CoworkStore implements MemoryBackend {
       sessionType: (row.session_type === 'agent_agent' ? 'a2a' : row.session_type as CoworkSessionType) || 'standard',
       peerName: row.peer_name ?? null,
       peerAvatar: row.peer_avatar ?? null,
+      ...(row.peer_avatar_version != null ? { peerAvatarVersion: parseIdNumber(row.peer_avatar_version) } : {}),
       metabotName: row.metabot_name ?? null,
       metabotAvatarVersion: parseIdNumber(row.metabot_updated_at),
       browserUri: row.browser_uri ?? null,
@@ -4590,6 +4701,29 @@ export class CoworkStore implements MemoryBackend {
     return rows.map((row) => ({
       metabotId: parseIdNumber(row.id) ?? 0,
       avatar: normalizeMetabotAvatarForDisplay(row.avatar),
+    }));
+  }
+
+  listSessionPeerAvatars(sessionIds?: string[] | null): Array<{ sessionId: string; peerAvatar: string | null }> {
+    const ids = Array.isArray(sessionIds)
+      ? [...new Set(
+          sessionIds
+            .map((id) => (typeof id === 'string' ? id.trim() : ''))
+            .filter((id) => id.length > 0),
+        )].slice(0, 200)
+      : [];
+    if (ids.length === 0) {
+      return [];
+    }
+
+    const rows = this.getAll<{ id: string; peer_avatar?: string | null }>(
+      `SELECT id, peer_avatar FROM cowork_sessions WHERE id IN (${ids.map(() => '?').join(', ')})`,
+      ids,
+    );
+
+    return rows.map((row) => ({
+      sessionId: row.id,
+      peerAvatar: row.peer_avatar ?? null,
     }));
   }
 
@@ -6097,6 +6231,7 @@ export class CoworkStore implements MemoryBackend {
       updated_at: number | null;
     }
 
+    const hasPromptsTable = this.tableExists('cowork_session_prompts');
     const rows = this.getAll<OrderMappingRow>(`
       SELECT
         m.channel,
@@ -6106,7 +6241,7 @@ export class CoworkStore implements MemoryBackend {
         m.metadata_json,
         s.title,
         s.cwd,
-        s.system_prompt,
+        ${hasPromptsTable ? "COALESCE(NULLIF(sp.system_prompt, ''), s.system_prompt, '')" : 's.system_prompt'} AS system_prompt,
         s.execution_mode,
         s.session_type,
         s.peer_global_metaid,
@@ -6116,6 +6251,7 @@ export class CoworkStore implements MemoryBackend {
         s.updated_at
       FROM cowork_conversation_mappings m
       LEFT JOIN cowork_sessions s ON s.id = m.cowork_session_id
+      ${hasPromptsTable ? 'LEFT JOIN cowork_session_prompts sp ON sp.session_id = s.id' : ''}
       WHERE m.channel = 'metaweb_order'
     `);
 

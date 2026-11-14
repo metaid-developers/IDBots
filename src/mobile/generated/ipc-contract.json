@@ -792,6 +792,14 @@
       ]
     },
     {
+      "path": "cowork.listPeerAvatars",
+      "kind": "invoke",
+      "channel": "cowork:session:listPeerAvatars",
+      "args": [
+        "sessionIds"
+      ]
+    },
+    {
       "path": "cowork.listPendingPermissions",
       "kind": "invoke",
       "channel": "cowork:permission:listPending",

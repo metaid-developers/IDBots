@@ -1036,3 +1036,4 @@ blob-report/
 !tests/hotPathMetadataAndSkillCache.test.mjs
 !tests/settingsFirstClickAndStorePerf.test.mjs
 !tests/sqliteReadWorker.test.mjs
+!tests/coworkSessionColdPromptAndPeerAvatar.test.mjs

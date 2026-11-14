@@ -85,6 +85,7 @@ import {
 import { i18nService } from './i18n';
 import { sessionTabBinding } from './sessionTabBinding';
 import { metabotAvatarCache } from './metabotAvatarCache';
+import { peerAvatarCache } from './peerAvatarCache';
 import {
   CoworkStreamReassembler,
   type CoworkStreamUpdatePayload,
@@ -747,7 +748,8 @@ class CoworkService {
     const read = (async () => {
       const result = await window.electron?.cowork?.listSessions();
       if (result?.success && result.sessions) {
-        store.dispatch(setSessions(await metabotAvatarCache.attachAvatars(result.sessions)));
+        const withMetabotAvatars = await metabotAvatarCache.attachAvatars(result.sessions);
+        store.dispatch(setSessions(await peerAvatarCache.attachPeerAvatars(withMetabotAvatars)));
       }
     })();
     this.sessionsLoadInFlight = read;

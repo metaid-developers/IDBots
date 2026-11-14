@@ -15029,12 +15029,16 @@ if (!gotTheLock) {
     });
   });
 
-  registerIpcHandler('cowork:session:list', async (_event, options?: { metabotId?: number | null }) => {
+  registerIpcHandler('cowork:session:list', async (event, options?: { metabotId?: number | null; omitInlinePeerDataAvatar?: boolean }) => {
     return withSqliteRecovery('cowork:session:list', async () => {
       try {
         repairSelfDirectedServiceOrders();
+        const isDesktopRenderer = event.sender !== null;
         const sessions = enrichCoworkSessionsWithServiceOrderSummaries(
-          getCoworkStore().listSessions(options)
+          getCoworkStore().listSessions({
+            ...options,
+            omitInlinePeerDataAvatar: options?.omitInlinePeerDataAvatar ?? isDesktopRenderer,
+          })
         );
         return { success: true, sessions };
       } catch (error) {
@@ -15057,6 +15061,21 @@ if (!gotTheLock) {
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Failed to list MetaBot avatars',
+        };
+      }
+    });
+  });
+
+  registerIpcHandler('cowork:session:listPeerAvatars', async (_event, sessionIds?: string[]) => {
+    return withSqliteRecovery('cowork:session:listPeerAvatars', async () => {
+      try {
+        const avatars = getCoworkStore().listSessionPeerAvatars(sessionIds);
+        return { success: true, avatars };
+      } catch (error) {
+        if (isSqliteWasmBoundsError(error)) throw error;
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to list peer avatars',
         };
       }
     });

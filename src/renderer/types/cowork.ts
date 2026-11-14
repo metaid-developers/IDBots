@@ -902,6 +902,7 @@ export interface CoworkSessionSummary {
   peerName?: string | null;
   /** Remote peer MetaBot's avatar (A2A sessions only) */
   peerAvatar?: string | null;
+  peerAvatarVersion?: number | null;
   /** Owning MetaBot's display name, when attributed */
   metabotName?: string | null;
   /** Owning MetaBot's avatar (data URL or remote URL), when attributed. List rows resolve it through the avatar cache, not through listSessions. */
