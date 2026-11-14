@@ -20936,8 +20936,14 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
       icon: getAppIconPath(),
       ...(isMac
         ? {
-            titleBarStyle: 'hiddenInset' as const,
-            trafficLightPosition: { x: 12, y: 20 },
+            // macOS mini lights (owner ruling 2026-11-14, WeChat-style):
+            // the native traffic lights' size is system-pinned — the
+            // reposition options below only ever MOVED them. The app now
+            // hides the native buttons (see setWindowButtonVisibility
+            // after creation) and the renderer draws WeChat-scale 8px
+            // dots (MacWindowLights, mounted in the mid column's top
+            // strip), so darwin drops to the plain hidden style.
+            titleBarStyle: 'hidden' as const,
             acceptFirstMouse: true,
           }
         : isWindows
@@ -20981,6 +20987,15 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     // 第一个窗口作为主窗口引用（托盘、second-instance 聚焦等使用）
     if (!mainWindow) {
       mainWindow = win;
+    }
+
+    // macOS: the renderer draws its own mini traffic lights (MacWindowLights
+    // in the mid column's top strip), so the native buttons must not ALSO
+    // render — the hidden titlebar style alone keeps them visible, and this
+    // call is what removes them. Feature-guarded: the method only exists on
+    // recent Electron builds, and isMac already scopes the branch.
+    if (isMac && typeof win.setWindowButtonVisibility === 'function') {
+      win.setWindowButtonVisibility(false);
     }
 
     // 设置 macOS Dock 图标（开发模式下 Electron 默认图标不是应用 Logo）

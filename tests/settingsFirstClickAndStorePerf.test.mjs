@@ -9,9 +9,19 @@ const read = (relativePath) =>
 
 test('macOS BrowserWindow enables acceptFirstMouse so unfocused first clicks activate controls immediately', () => {
   const mainSource = read('src/main/main.ts');
+  // SUPERSEDED (mini-lights ruling 2026-11-14): the darwin branch dropped
+  // 'hiddenInset' + trafficLightPosition — the native lights' size is
+  // system-pinned, so main.ts falls back to the plain 'hidden' style and
+  // removes the native buttons after creation; the renderer draws WeChat-
+  // scale 8px dots (MacWindowLights). acceptFirstMouse is retained, which
+  // is this test's original intent.
   assert.match(
     mainSource,
-    /\.\.\.\(isMac\s*\?\s*\{\s*titleBarStyle:\s*'hiddenInset'\s*as\s*const,\s*trafficLightPosition:\s*\{\s*x:\s*12,\s*y:\s*20\s*\},\s*acceptFirstMouse:\s*true,\s*\}/,
+    /\.\.\.\(isMac\s*\?\s*\{[^{}]*?titleBarStyle:\s*'hidden'\s*as\s*const,\s*acceptFirstMouse:\s*true,/,
+  );
+  assert.match(
+    mainSource,
+    /if \(isMac && typeof win\.setWindowButtonVisibility === 'function'\)\s*\{\s*win\.setWindowButtonVisibility\(false\);\s*\}/,
   );
 });
 

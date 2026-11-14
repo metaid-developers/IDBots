@@ -1,5 +1,6 @@
 import React, { useRef } from 'react';
 import { i18nService } from '../../services/i18n';
+import MacWindowLights from './MacWindowLights';
 import type { BotBrowserSurfaceMode } from './types';
 
 interface BotBrowserModeSwitchProps {
@@ -140,7 +141,13 @@ const BotBrowserModeSwitch: React.FC<BotBrowserModeSwitchProps> = ({
           data-slot="surface-header-top-gap"
           data-top-gap-px={resolvedTopGapPx}
           style={{ height: `${resolvedTopGapPx}px` }}
-        />
+          className="flex items-center"
+        >
+          {/* macOS draws its own mini lights here (main.ts hides the native
+              buttons); other platforms render nothing — the strip stays a
+              pure drag gap. */}
+          <MacWindowLights />
+        </div>
       ) : null}
       {/* Row 2: the band — one full row BELOW the traffic lights' 52 px strip
           on macOS. The container stays a drag handle; the tray is the

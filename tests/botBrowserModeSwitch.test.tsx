@@ -7,6 +7,12 @@ import BotBrowserModeSwitch, {
   TOP_GAP_DEFAULT_PX,
   TOP_GAP_MAC_PX,
 } from '../src/renderer/features/botBrowser/BotBrowserModeSwitch';
+import MacWindowLights, {
+  MAC_LIGHT_DOT_COLORS,
+  MAC_LIGHT_DOT_GAP_PX,
+  MAC_LIGHT_DOT_PX,
+  MAC_LIGHT_INSET_PX,
+} from '../src/renderer/features/botBrowser/MacWindowLights';
 import type { BotBrowserSurfaceMode } from '../src/renderer/features/botBrowser/types';
 
 const switchSource = readFileSync(
@@ -23,6 +29,10 @@ const homeSidebarSource = readFileSync(
 );
 const panelSource = readFileSync(
   new URL('../src/renderer/features/botBrowser/BotBrowserCoworkPanel.tsx', import.meta.url),
+  'utf8',
+);
+const lightsSource = readFileSync(
+  new URL('../src/renderer/features/botBrowser/MacWindowLights.tsx', import.meta.url),
   'utf8',
 );
 
@@ -320,8 +330,8 @@ test('neither face mounts an identity entry in the header (it lives in the rail)
  * D-line geometry (static, not a browser measurement), owner red-box order
  * 2026-11-09 10:58: on mac the traffic lights own row 1 alone and the whole
  * identity+band row falls BELOW it —
- *   lights          = trafficLightPosition y=20, dot ≈12 px → extent ≈14–26,
- *                     strictly inside the 0–52 strip (same height as the
+ *   lights          = MacWindowLights: 8 px dots centered in the strip ->
+ *                     extent 22-30 (center 26), strictly inside the 0-52
  *                     rail's mac top track)
  *   band row top    = TOP_GAP_MAC_PX = 52 on BOTH faces (the rail face's
  *                     lights live over the rail column's strip, so the mid
@@ -346,7 +356,27 @@ test('mac: the band row starts below the 52 px traffic-light strip on both faces
   assert.match(railSource, /className="mt-2 flex min-h-0 w-full flex-1 flex-col items-center/);
 
   // The lights' true position: center y=20, so their extent stays inside 0–52.
-  assert.match(mainWindowSource, /trafficLightPosition: \{ x: 12, y: 20 \}/);
+  // SUPERSEDED (mini-lights ruling 2026-11-14, owner): the native lights
+  // are gone — main.ts drops the darwin branch to the plain hidden style,
+  // retires the reposition option, and removes the native buttons after
+  // creation; the renderer's MacWindowLights owns the strip instead. The
+  // non-darwin branches are pinned UNCHANGED (behavior frozen there).
+  const winCreateIdx = mainWindowSource.indexOf('const win = new BrowserWindow({');
+  const darwinBranch = mainWindowSource.slice(
+    mainWindowSource.indexOf('...(isMac', winCreateIdx),
+    mainWindowSource.indexOf(': isWindows', winCreateIdx),
+  );
+  assert.match(darwinBranch, /titleBarStyle: 'hidden' as const/);
+  assert.doesNotMatch(mainWindowSource, /titleBarStyle: 'hiddenInset'/);
+  assert.doesNotMatch(mainWindowSource, /trafficLightPosition: \{/);
+  assert.match(
+    mainWindowSource,
+    /if \(isMac && typeof win\.setWindowButtonVisibility === 'function'\) \{\s*win\.setWindowButtonVisibility\(false\);\s*\}/,
+  );
+  assert.match(mainWindowSource, /frame: false,/);
+  assert.match(mainWindowSource, /titleBarOverlay: getTitleBarOverlayOptions\(\)/);
+  // The drawn dots mount in the top-gap strip: 8 px, centered -> extent 22-30.
+  assert.match(switchSource, /<MacWindowLights \/>/);
 
   // The switch's mac branch: a 52 px strip precedes the band row; the row
   // keeps its 52 px height and the retired lights inset is gone.
@@ -367,8 +397,8 @@ test('mac: the band row starts below the 52 px traffic-light strip on both faces
   assert.match(homeSidebarSource, /px-2\.5 pt-1/);
   assert.doesNotMatch(homeSidebarSource, /justify-between gap-1\.5 px-3 pt-2/);
 
-  const lightsTop = 20 - 6;
-  const lightsBottom = 20 + 6;
+  const lightsTop = 26 - 4; // MacWindowLights: 8 px dot, centered in the strip
+  const lightsBottom = 26 + 4;
   const bandRowTop = 52;
   // D-line final ruling 2026-11-09: the rail column is [52 strip][52 avatar
   // slot][mt-2 8] — the first function icon starts at 112, below the avatar,
@@ -379,4 +409,61 @@ test('mac: the band row starts below the 52 px traffic-light strip on both faces
   assert.equal(bandRowTop, 52);
   assert.equal(railIconTop, 112);
   assert.equal(homeMenuTop, 112);
+});
+
+
+test('mac mini lights: three 8px dots, close | minimize | zoom, drag container, IPC wiring', () => {
+  // Sizes are px literals — the app root font is 15px, so rem-scaled classes
+  // drift (exact-fill arithmetic must stay in px; shape-language v2).
+  assert.match(lightsSource, /MAC_LIGHT_DOT_PX = 8/);
+  assert.match(lightsSource, /MAC_LIGHT_DOT_GAP_PX = 8/);
+  assert.match(lightsSource, /MAC_LIGHT_INSET_PX = 12/);
+  assert.match(lightsSource, /className="draggable flex items-center pl-\[12px\] gap-\[8px\]"/);
+  assert.match(lightsSource, /non-draggable h-\[8px\] w-\[8px\] rounded-full/);
+  // The three actions ride the EXISTING window-control bridge: preload
+  // window.close / window.minimize / window.toggleMaximize -> send channels
+  // window-close / window-minimize / window-maximize -> ipcMain.on handlers.
+  assert.match(lightsSource, /window\.electron\.window\.close\(\)/);
+  assert.match(lightsSource, /window\.electron\.window\.minimize\(\)/);
+  assert.match(lightsSource, /window\.electron\.window\.toggleMaximize\(\)/);
+  const closeIdx = lightsSource.indexOf("action: 'close'");
+  const minIdx = lightsSource.indexOf("action: 'minimize'");
+  const zoomIdx = lightsSource.indexOf("action: 'zoom'");
+  assert.ok(closeIdx >= 0 && closeIdx < minIdx && minIdx < zoomIdx, 'dots run close, minimize, zoom');
+
+  const mac = renderToStaticMarkup(<MacWindowLights platform="darwin" />);
+  assert.equal((mac.match(/<button /g) ?? []).length, 3);
+  assert.ok(
+    mac.indexOf('data-window-action="close"') < mac.indexOf('data-window-action="minimize"')
+      && mac.indexOf('data-window-action="minimize"') < mac.indexOf('data-window-action="zoom"'),
+    'markup order: close, minimize, zoom',
+  );
+  assert.match(mac, /data-window-action="close"[^>]*aria-label="Close"/);
+  assert.match(mac, /data-window-action="minimize"[^>]*aria-label="Minimize"/);
+  assert.match(mac, /data-window-action="zoom"[^>]*aria-label="Zoom"/);
+  assert.match(mac, /h-\[8px\] w-\[8px\]/);
+  assert.match(mac, /pl-\[12px\] gap-\[8px\]/);
+  assert.match(mac, /draggable flex items-center/);
+  assert.match(mac, /non-draggable h-\[8px\]/);
+  for (const color of Object.values(MAC_LIGHT_DOT_COLORS)) {
+    assert.ok(mac.includes(color), `dot color ${color} rides the inline style`);
+  }
+  assert.equal(MAC_LIGHT_DOT_PX, 8);
+  assert.equal(MAC_LIGHT_DOT_GAP_PX, 8);
+  assert.equal(MAC_LIGHT_INSET_PX, 12);
+});
+
+test('mac mini lights render NOTHING off darwin (win32 / linux / Node renders)', () => {
+  assert.equal(renderToStaticMarkup(<MacWindowLights platform="win32" />), '');
+  assert.equal(renderToStaticMarkup(<MacWindowLights platform="linux" />), '');
+  assert.equal(renderToStaticMarkup(<MacWindowLights />), '', 'no prop + no window (Node) renders nothing');
+});
+
+test('the drawn lights ride the top-gap strip of the shared header (both faces)', () => {
+  const gapStart = switchSource.indexOf('data-slot="surface-header-top-gap"');
+  const gapEnd = switchSource.indexOf('data-slot="surface-header-bar"', gapStart);
+  assert.ok(gapEnd > gapStart, 'band-row anchor found');
+  const gapSlice = switchSource.slice(gapStart, gapEnd);
+  assert.ok(gapSlice.includes('<MacWindowLights />'), 'lights mount inside the gap strip');
+  assert.match(gapSlice, /className="flex items-center"/, 'the gap strip centers the dots');
 });
