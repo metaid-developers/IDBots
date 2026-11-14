@@ -126,7 +126,7 @@ const CoworkQuotedSelectionTiles: React.FC<CoworkQuotedSelectionTilesProps> = ({
             <button
               type="button"
               onClick={() => onRemove(selection.id)}
-              className="ml-0.5 rounded-full p-0.5 hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+              className="ml-0.5 rounded-[var(--shape-radius-md)] p-0.5 hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
               aria-label={removeLabel}
               title={removeLabel}
             >

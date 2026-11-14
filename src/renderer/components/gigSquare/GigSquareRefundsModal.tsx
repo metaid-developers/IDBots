@@ -284,7 +284,7 @@ const GigSquareRefundsModal: React.FC<GigSquareRefundsModalProps> = ({
               onClick={() => setTab('pendingForMe')}
               className={`rounded-lg px-3.5 py-2 text-xs font-medium transition ${
                 resolvedTab === 'pendingForMe'
-                  ? 'bg-[var(--bg-panel)] text-claude-text shadow-sm dark:bg-claude-darkSurface dark:text-claude-darkText'
+                  ? 'bg-[var(--bg-panel)] text-claude-text dark:bg-claude-darkSurface dark:text-claude-darkText'
                   : 'text-claude-textSecondary hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:text-claude-darkText'
               }`}
             >
@@ -295,7 +295,7 @@ const GigSquareRefundsModal: React.FC<GigSquareRefundsModalProps> = ({
               onClick={() => setTab('initiatedByMe')}
               className={`rounded-lg px-3.5 py-2 text-xs font-medium transition ${
                 resolvedTab === 'initiatedByMe'
-                  ? 'bg-[var(--bg-panel)] text-claude-text shadow-sm dark:bg-claude-darkSurface dark:text-claude-darkText'
+                  ? 'bg-[var(--bg-panel)] text-claude-text dark:bg-claude-darkSurface dark:text-claude-darkText'
                   : 'text-claude-textSecondary hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:text-claude-darkText'
               }`}
             >

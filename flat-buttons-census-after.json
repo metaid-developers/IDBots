@@ -1,0 +1,1874 @@
+[
+ {
+  "file": "src/renderer/App.tsx",
+  "line": 143,
+  "tokens": [
+   "shadow-glow-accent"
+  ],
+  "text": "      <div className=\"w-16 h-16 rounded-full bg-gradient-to-br from-claude-accent to-claude-accentHover flex items-center justify-center shadow-glow-accent animate-pulse\">"
+ },
+ {
+  "file": "src/renderer/App.tsx",
+  "line": 161,
+  "tokens": [
+   "shadow-modal"
+  ],
+  "text": "      className=\"flex w-[900px] h-[80vh] rounded-2xl dark:border-claude-darkBorder border-claude-border border shadow-modal overflow-hidden modal-content dark:bg-claude-darkBg bg-claude-bg items-cente"
+ },
+ {
+  "file": "src/renderer/App.tsx",
+  "line": 193,
+  "tokens": [
+   "shadow"
+  ],
+  "text": "// shadow, no backdrop blur, muted claude text tokens at reduced opacity;"
+ },
+ {
+  "file": "src/renderer/App.tsx",
+  "line": 1879,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "            <div className=\"w-16 h-16 rounded-full bg-red-500 flex items-center justify-center shadow-lg\">"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 321,
+  "tokens": [
+   "box-shadow:"
+  ],
+  "text": "  box-shadow: 0 0 0 2px var(--bg-main), 0 0 0 4px var(--color-accent);"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 350,
+  "tokens": [
+   "shadow"
+  ],
+  "text": "/* IDChat-style buttons: border + offset shadow, hover lift, active press */"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 353,
+  "tokens": [
+   "shadow-offset:"
+  ],
+  "text": "  --btn-shadow-offset: 3px;"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 361,
+  "tokens": [
+   "box-shadow:",
+   "shadow-offset"
+  ],
+  "text": "  box-shadow: var(--btn-shadow-offset) var(--btn-shadow-offset) 0 var(--border-color);"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 365,
+  "tokens": [
+   "shadow"
+  ],
+  "text": "  transition: box-shadow 0.2s ease, transform 0.2s ease;"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 371,
+  "tokens": [
+   "box-shadow:",
+   "shadow-offset"
+  ],
+  "text": "    box-shadow: calc(var(--btn-shadow-offset) + var(--btn-move-range) / 2) calc(var(--btn-shadow-offset) + var(--btn-move-range) / 2) 0 var(--border-color);"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 377,
+  "tokens": [
+   "box-shadow:",
+   "shadow-offset"
+  ],
+  "text": "  box-shadow: calc(var(--btn-shadow-offset) - var(--btn-move-range)) calc(var(--btn-shadow-offset) - var(--btn-move-range)) 0 var(--border-color);"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 385,
+  "tokens": [
+   "box-shadow:",
+   "shadow-offset"
+  ],
+  "text": "  box-shadow: var(--btn-shadow-offset) var(--btn-shadow-offset) 0 var(--color-primary);"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 389,
+  "tokens": [
+   "shadow"
+  ],
+  "text": "  transition: box-shadow 0.2s ease, transform 0.2s ease;"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 395,
+  "tokens": [
+   "box-shadow:",
+   "shadow-offset"
+  ],
+  "text": "    box-shadow: calc(var(--btn-shadow-offset) + var(--btn-move-range) / 2) calc(var(--btn-shadow-offset) + var(--btn-move-range) / 2) 0 var(--color-primary);"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 401,
+  "tokens": [
+   "box-shadow:",
+   "shadow-offset"
+  ],
+  "text": "  box-shadow: calc(var(--btn-shadow-offset) - var(--btn-move-range)) calc(var(--btn-shadow-offset) - var(--btn-move-range)) 0 var(--color-primary);"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 405,
+  "tokens": [
+   "shadow"
+  ],
+  "text": "/* Filled primary button (IDChat .main-border.primary): yellow background + border + shadow + lift/press */"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 410,
+  "tokens": [
+   "box-shadow:",
+   "shadow-offset"
+  ],
+  "text": "  box-shadow: var(--btn-shadow-offset) var(--btn-shadow-offset) 0 var(--btn-primary-edge);"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 414,
+  "tokens": [
+   "shadow"
+  ],
+  "text": "  transition: box-shadow 0.2s ease, transform 0.2s ease;"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 420,
+  "tokens": [
+   "box-shadow:",
+   "shadow-offset"
+  ],
+  "text": "    box-shadow: calc(var(--btn-shadow-offset) + var(--btn-move-range) / 2) calc(var(--btn-shadow-offset) + var(--btn-move-range) / 2) 0 var(--btn-primary-edge);"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 426,
+  "tokens": [
+   "box-shadow:",
+   "shadow-offset"
+  ],
+  "text": "  box-shadow: calc(var(--btn-shadow-offset) - var(--btn-move-range)) calc(var(--btn-shadow-offset) - var(--btn-move-range)) 0 var(--btn-primary-edge);"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 436,
+  "tokens": [
+   "shadow"
+  ],
+  "text": "   offset-shadow identity as .btn-idchat-primary-filled, at the larger hero"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 447,
+  "tokens": [
+   "box-shadow:"
+  ],
+  "text": "  box-shadow: 4px 4px 0 var(--btn-primary-edge);"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 452,
+  "tokens": [
+   "shadow"
+  ],
+  "text": "  transition: box-shadow 0.2s ease, transform 0.2s ease;"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 458,
+  "tokens": [
+   "box-shadow:"
+  ],
+  "text": "    box-shadow: 6px 6px 0 var(--btn-primary-edge);"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 464,
+  "tokens": [
+   "box-shadow:"
+  ],
+  "text": "  box-shadow: 1px 1px 0 var(--btn-primary-edge);"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 544,
+  "tokens": [
+   "box-shadow:"
+  ],
+  "text": "  box-shadow: 0 0 6px rgba(59,130,246,0.4);"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 584,
+  "tokens": [
+   "box-shadow:"
+  ],
+  "text": "    box-shadow: 0 0 0 0 rgba(6,182,212,0);"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 589,
+  "tokens": [
+   "box-shadow:"
+  ],
+  "text": "    box-shadow: 0 0 10px 1px rgba(6,182,212,0.25);"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 648,
+  "tokens": [
+   "shadow"
+  ],
+  "text": "   chat surface (the ring plus the original subtle drop shadow, one"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 649,
+  "tokens": [
+   "shadow-subtle"
+  ],
+  "text": "   declaration so it cannot fight the shadow-subtle utility). Dark mode's"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 654,
+  "tokens": [
+   "shadow-subtle"
+  ],
+  "text": "   bubble's shadow-subtle utility. */"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 657,
+  "tokens": [
+   "box-shadow:"
+  ],
+  "text": "    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.07), 0 1px 2px rgba(0, 0, 0, 0.05);"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 668,
+  "tokens": [
+   "box-shadow:"
+  ],
+  "text": "    box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.09), 0 1px 2px rgba(15, 23, 42, 0.04);"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 671,
+  "tokens": [
+   "box-shadow:"
+  ],
+  "text": "    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 679,
+  "tokens": [
+   "box-shadow:"
+  ],
+  "text": "    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.18);"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 684,
+  "tokens": [
+   "box-shadow:"
+  ],
+  "text": "    box-shadow: 0 0 10px 1px rgba(245, 158, 11, 0.34);"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 758,
+  "tokens": [
+   "shadow"
+  ],
+  "text": "  --glass-reduce-shadow: 0 10px 30px rgba(15, 23, 42, 0.14), 0 1px 3px rgba(15, 23, 42, 0.08);"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 763,
+  "tokens": [
+   "shadow"
+  ],
+  "text": "  --glass-shadow: 0 18px 48px rgba(15, 23, 42, 0.16), 0 2px 8px rgba(15, 23, 42, 0.08);"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 772,
+  "tokens": [
+   "shadow"
+  ],
+  "text": "  --glass-reduce-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.35);"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 776,
+  "tokens": [
+   "shadow"
+  ],
+  "text": "  --glass-shadow: 0 18px 48px rgba(0, 0, 0, 0.55), 0 2px 10px rgba(0, 0, 0, 0.4);"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 791,
+  "tokens": [
+   "box-shadow:",
+   "shadow"
+  ],
+  "text": "  box-shadow: var(--glass-shadow), inset 0 1px 0 var(--glass-highlight);"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 805,
+  "tokens": [
+   "box-shadow:",
+   "shadow"
+  ],
+  "text": "  box-shadow: var(--glass-reduce-shadow);"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 830,
+  "tokens": [
+   "box-shadow:",
+   "shadow"
+  ],
+  "text": "  box-shadow: var(--glass-reduce-shadow);"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 843,
+  "tokens": [
+   "box-shadow:",
+   "shadow"
+  ],
+  "text": "    box-shadow: var(--glass-reduce-shadow);"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 858,
+  "tokens": [
+   "box-shadow:",
+   "shadow"
+  ],
+  "text": "    box-shadow: var(--glass-reduce-shadow);"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 872,
+  "tokens": [
+   "box-shadow:"
+  ],
+  "text": "    box-shadow: none;"
+ },
+ {
+  "file": "src/renderer/index.css",
+  "line": 886,
+  "tokens": [
+   "box-shadow:",
+   "shadow"
+  ],
+  "text": "    box-shadow: var(--glass-reduce-shadow);"
+ },
+ {
+  "file": "src/renderer/types/preference.ts",
+  "line": 11,
+  "tokens": [
+   "shadow"
+  ],
+  "text": "export type PreferenceJudgeClass = 'deciding' | 'shadow' | 'public';"
+ },
+ {
+  "file": "src/renderer/types/preference.ts",
+  "line": 82,
+  "tokens": [
+   "shadow"
+  ],
+  "text": "  ballots: { deciding: number; shadow: number; public: number } | null;"
+ },
+ {
+  "file": "src/renderer/features/botBrowser/BotBrowserCoworkPanel.tsx",
+  "line": 246,
+  "tokens": [
+   "shadow-subtle"
+  ],
+  "text": "        <div className=\"w-fit max-w-[92%] rounded-[22px] border dark:border-amber-500/30 border-amber-500/40 dark:bg-amber-500/5 bg-amber-50 px-[16px] py-[10px] text-[13px] leading-5 dark:text-claude-"
+ },
+ {
+  "file": "src/renderer/features/botBrowser/BotBrowserCoworkPanel.tsx",
+  "line": 281,
+  "tokens": [
+   "shadow-subtle"
+  ],
+  "text": "          className=\"assistant-bubble w-fit max-w-[92%] rounded-[22px] px-[16px] py-[10px] text-[13px] leading-5 dark:text-claude-darkText text-claude-text shadow-subtle [&_h1]:text-sm [&_h1]:mt-3 [&_"
+ },
+ {
+  "file": "src/renderer/features/botBrowser/BotBrowserModeSwitch.tsx",
+  "line": 55,
+  "tokens": [
+   "shadow-[3px_3px_0_var(--btn-primary-edge"
+  ],
+  "text": "    ? 'bg-claude-accent text-claude-accentInk shadow-[3px_3px_0_var(--btn-primary-edge)]'"
+ },
+ {
+  "file": "src/renderer/features/botBrowser/BotPickerChip.tsx",
+  "line": 172,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "          className={`absolute left-0 z-40 w-72 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface p-2 shadow-lg ${"
+ },
+ {
+  "file": "src/renderer/features/botBrowser/CoworkHistoryPanel.tsx",
+  "line": 83,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "      className=\"absolute inset-0 z-30 flex flex-col overflow-hidden rounded-lg border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted shadow-"
+ },
+ {
+  "file": "src/renderer/features/botBrowser/CoworkSurfaceSessionName.tsx",
+  "line": 119,
+  "tokens": [
+   "shadow-none"
+  ],
+  "text": "        className=\"non-draggable h-6 w-full min-w-0 flex-none border-0 bg-transparent shadow-none px-4 text-center text-[13px] font-medium leading-none dark:text-claude-darkText text-claude-text outli"
+ },
+ {
+  "file": "src/renderer/features/botBrowser/PanelMessageContextMenu.tsx",
+  "line": 86,
+  "tokens": [
+   "shadow-elevated"
+  ],
+  "text": "      className=\"z-[70] rounded-xl border border-white/10 bg-[#2b2b2d] py-1 shadow-elevated\""
+ },
+ {
+  "file": "src/renderer/features/botBrowser/PanelMessageLocatorRail.tsx",
+  "line": 333,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "          className=\"pointer-events-none absolute right-full mr-2 w-56 rounded-xl border px-2.5 py-2 shadow-lg dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-s"
+ },
+ {
+  "file": "src/renderer/features/userProfile/UserProfilePage.tsx",
+  "line": 87,
+  "tokens": [
+   "shadow-2xl"
+  ],
+  "text": "        className=\"non-draggable relative flex h-full w-full flex-col overflow-hidden dark:bg-claude-darkSurface bg-claude-surface sm:m-6 sm:h-[calc(100vh-3rem)] sm:max-w-3xl sm:rounded-2xl sm:border "
+ },
+ {
+  "file": "src/renderer/features/proposals/botAction.css",
+  "line": 1,
+  "tokens": [
+   "box-shadow:"
+  ],
+  "text": ".bot-action-card{overflow:hidden;border:1px solid color-mix(in srgb,var(--border-color) 56%,transparent);border-radius:14px;background:var(--bg-panel);box-shadow:0 10px 32px rgba(39,48,61,.07);font-si"
+ },
+ {
+  "file": "src/renderer/features/proposals/proposals.css",
+  "line": 1,
+  "tokens": [
+   "box-shadow:",
+   "shadow"
+  ],
+  "text": ".proposal-demo{display:flex;height:100vh;background:var(--bg-main);color:var(--text-primary);font-family:inherit;font-size:14px}.demo-sidebar{width:218px;flex-shrink:0;background:var(--bg-sidebar);bor"
+ },
+ {
+  "file": "src/renderer/features/twinWork/TwinWorkPanel.tsx",
+  "line": 230,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "          className=\"absolute right-0 top-full z-50 mt-1 w-64 rounded-xl border border-claude-border bg-claude-surface p-1 shadow-lg dark:border-claude-darkBorder dark:bg-claude-darkSurface\""
+ },
+ {
+  "file": "src/renderer/components/ContextUsageRing.tsx",
+  "line": 88,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "      <div className=\"absolute right-0 bottom-full mb-2 px-3.5 py-2.5 text-[13px] leading-relaxed rounded-xl shadow-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text dar"
+ },
+ {
+  "file": "src/renderer/components/ErrorMessage.tsx",
+  "line": 11,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "    <div className=\"flex items-center justify-between bg-gradient-to-r from-red-500/90 to-orange-500/90 text-white p-4 rounded-xl shadow-lg m-3 backdrop-blur-sm transition-all duration-200\">"
+ },
+ {
+  "file": "src/renderer/components/HomeSidebar.tsx",
+  "line": 499,
+  "tokens": [
+   "shadow"
+  ],
+  "text": "                      // brought rem padding + a 2px offset shadow that made the"
+ },
+ {
+  "file": "src/renderer/components/HomeSidebar.tsx",
+  "line": 510,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "                    className={`pointer-events-none absolute top-full mt-1.5 z-50 ${tooltipAlign} whitespace-nowrap rounded-md border dark:border-claude-darkBorder border-claude-border dark:bg-claude-"
+ },
+ {
+  "file": "src/renderer/components/MarkdownContent.tsx",
+  "line": 578,
+  "tokens": [
+   "shadow-subtle"
+  ],
+  "text": "      <div className=\"my-[16px] rounded-[12px] overflow-hidden border dark:border-claude-darkBorder border-claude-border relative shadow-subtle\">"
+ },
+ {
+  "file": "src/renderer/components/ModelEffortPicker.tsx",
+  "line": 313,
+  "tokens": [
+   "shadow-popover"
+  ],
+  "text": "            ? 'fixed w-72 dark:bg-claude-darkSurface bg-claude-surface rounded-xl popover-enter shadow-popover z-50 dark:border-claude-darkBorder border-claude-border border overflow-hidden'"
+ },
+ {
+  "file": "src/renderer/components/ModelEffortPicker.tsx",
+  "line": 314,
+  "tokens": [
+   "shadow-popover"
+  ],
+  "text": "            : `absolute ${dropdownPositionClass} left-0 ${isField ? 'right-0' : 'w-72'} dark:bg-claude-darkSurface bg-claude-surface rounded-xl popover-enter shadow-popover z-50 dark:border-claude-dar"
+ },
+ {
+  "file": "src/renderer/components/QuotaNudgeBanner.tsx",
+  "line": 103,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "        className={`flex items-center gap-3 rounded-xl border px-4 py-2.5 shadow-lg backdrop-blur-md ${"
+ },
+ {
+  "file": "src/renderer/components/Settings.tsx",
+  "line": 3871,
+  "tokens": [
+   "shadow-modal"
+  ],
+  "text": "        className=\"flex w-[900px] h-[80vh] rounded-2xl dark:border-claude-darkBorder border-claude-border border shadow-modal overflow-hidden modal-content\""
+ },
+ {
+  "file": "src/renderer/components/Settings.tsx",
+  "line": 3981,
+  "tokens": [
+   "shadow-modal"
+  ],
+  "text": "                className=\"w-full max-w-md rounded-2xl dark:bg-claude-darkSurface bg-claude-bg dark:border-claude-darkBorder border-claude-border border shadow-modal p-4\""
+ },
+ {
+  "file": "src/renderer/components/Settings.tsx",
+  "line": 4116,
+  "tokens": [
+   "shadow-modal"
+  ],
+  "text": "                className=\"w-full max-w-sm rounded-2xl dark:bg-claude-darkSurface bg-claude-bg dark:border-claude-darkBorder border-claude-border border shadow-modal p-4\""
+ },
+ {
+  "file": "src/renderer/components/Sidebar.tsx",
+  "line": 883,
+  "tokens": [
+   "shadow"
+  ],
+  "text": "                            // and 2px offset shadow are designed for a free-"
+ },
+ {
+  "file": "src/renderer/components/Sidebar.tsx",
+  "line": 897,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "                          className={`pointer-events-none absolute top-full mt-1.5 z-50 ${tooltipAlign} whitespace-nowrap rounded-md border dark:border-claude-darkBorder border-claude-border dark:bg-c"
+ },
+ {
+  "file": "src/renderer/components/Toast.tsx",
+  "line": 12,
+  "tokens": [
+   "shadow-[0_20px_60px_rgba(0",
+   "shadow-xl"
+  ],
+  "text": "      <div className=\"w-full max-w-sm mx-4 rounded-2xl border border-claude-border/70 dark:border-white/15 pointer-events-auto bg-white/95 dark:bg-[#111827] text-claude-text dark:text-white px-6 py-4 "
+ },
+ {
+  "file": "src/renderer/components/UpdateNotificationModal.tsx",
+  "line": 40,
+  "tokens": [
+   "shadow-2xl"
+  ],
+  "text": "        className=\"relative w-[90%] max-w-2xl max-h-[80vh] rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] shadow-2xl animate-slideUp\""
+ },
+ {
+  "file": "src/renderer/components/traffic/TrafficSettings.tsx",
+  "line": 344,
+  "tokens": [
+   "shadow-modal"
+  ],
+  "text": "      className={`${widthClass} max-w-full rounded-2xl dark:bg-claude-darkBg bg-claude-bg dark:border-claude-darkBorder border-claude-border border shadow-modal p-5`}"
+ },
+ {
+  "file": "src/renderer/components/traffic/TrafficSettings.tsx",
+  "line": 1190,
+  "tokens": [
+   "shadow-md"
+  ],
+  "text": "                className={`w-4 h-4 rounded-full bg-white shadow-md transform transition-transform ${"
+ },
+ {
+  "file": "src/renderer/components/ui/LocalFileLink.tsx",
+  "line": 352,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "          className=\"fixed z-50 min-w-[208px] rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-lg overflow-hidden\""
+ },
+ {
+  "file": "src/renderer/components/ui/LocalFileLink.tsx",
+  "line": 377,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "                className=\"fixed z-50 min-w-[220px] rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-lg overflow-hidden py-1\""
+ },
+ {
+  "file": "src/renderer/components/ui/ThemedSelect.tsx",
+  "line": 69,
+  "tokens": [
+   "shadow-popover"
+  ],
+  "text": "            <div className=\"absolute z-10 w-full mt-1 overflow-auto rounded-md popover-enter shadow-popover max-h-60 focus:outline-none\">"
+ },
+ {
+  "file": "src/renderer/components/ui/Tooltip.tsx",
+  "line": 146,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "          className={`pointer-events-none z-[100] px-3.5 py-2.5 text-[13px] leading-relaxed rounded-xl shadow-xl"
+ },
+ {
+  "file": "src/renderer/components/ui/useTextInputContextMenu.tsx",
+  "line": 90,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "    className=\"fixed z-50 min-w-[176px] rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-lg overflow-hidden py-1\""
+ },
+ {
+  "file": "src/renderer/components/settings/MemorySettings.tsx",
+  "line": 2327,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "            className=\"dark:bg-claude-darkSurface bg-claude-surface dark:border-claude-darkBorder border-claude-border border rounded-2xl shadow-xl w-full max-w-md\""
+ },
+ {
+  "file": "src/renderer/components/settings/PaymentReceivingSettings.tsx",
+  "line": 425,
+  "tokens": [
+   "shadow-modal"
+  ],
+  "text": "      className=\"w-full max-w-xl dark:bg-claude-darkSurface bg-claude-surface rounded-2xl shadow-modal border dark:border-claude-darkBorder border-claude-border overflow-hidden\""
+ },
+ {
+  "file": "src/renderer/components/agentGame/AgentGameConsentCard.tsx",
+  "line": 48,
+  "tokens": [
+   "shadow-modal"
+  ],
+  "text": "      <div className=\"modal-content w-full max-w-lg mx-4 dark:bg-claude-darkSurface bg-claude-surface rounded-2xl shadow-modal overflow-hidden animate-scale-in\">"
+ },
+ {
+  "file": "src/renderer/components/groupTasks/GroupTaskCloseConfirmModal.tsx",
+  "line": 49,
+  "tokens": [
+   "shadow-2xl"
+  ],
+  "text": "        className={`relative rounded-xl shadow-2xl dark:bg-claude-darkSurface bg-white border dark:border-claude-darkBorder border-claude-border p-5 ${"
+ },
+ {
+  "file": "src/renderer/components/groupTasks/GroupTaskDetailView.tsx",
+  "line": 1209,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "          className=\"fixed bottom-4 right-4 z-[9998] rounded-lg bg-amber-500 text-white text-sm px-4 py-2 shadow-lg cursor-pointer\""
+ },
+ {
+  "file": "src/renderer/components/groupTasks/GroupTaskDetailView.tsx",
+  "line": 1216,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "        <div className=\"fixed bottom-4 right-4 z-[9998] rounded-lg bg-red-500 text-white text-sm px-4 py-2 shadow-lg\">"
+ },
+ {
+  "file": "src/renderer/components/groupTasks/GroupTaskDetailView.tsx",
+  "line": 1221,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "        <div className=\"fixed bottom-4 right-4 z-[9998] rounded-lg bg-claude-textSecondary text-white text-sm px-4 py-2 shadow-lg\">"
+ },
+ {
+  "file": "src/renderer/components/groupTasks/GroupTaskInfoModal.tsx",
+  "line": 38,
+  "tokens": [
+   "shadow-2xl"
+  ],
+  "text": "        className=\"relative rounded-xl shadow-2xl dark:bg-claude-darkSurface bg-white border dark:border-claude-darkBorder border-claude-border w-full max-w-2xl max-h-[80vh] overflow-hidden flex flex-"
+ },
+ {
+  "file": "src/renderer/components/groupTasks/GroupTaskItemMenu.tsx",
+  "line": 278,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "        className=\"fixed z-50 min-w-[180px] rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-lg overflow-hidden\""
+ },
+ {
+  "file": "src/renderer/components/groupTasks/GroupTaskItemMenu.tsx",
+  "line": 311,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "          className=\"w-full max-w-sm mx-4 dark:bg-claude-darkSurface bg-claude-surface rounded-2xl shadow-xl overflow-hidden\""
+ },
+ {
+  "file": "src/renderer/components/groupTasks/GroupTaskKickConfirmModal.tsx",
+  "line": 35,
+  "tokens": [
+   "shadow-2xl"
+  ],
+  "text": "        className=\"relative w-80 rounded-xl shadow-2xl dark:bg-claude-darkSurface bg-white border dark:border-claude-darkBorder border-claude-border p-5\""
+ },
+ {
+  "file": "src/renderer/components/groupTasks/GroupTaskListMeta.tsx",
+  "line": 117,
+  "tokens": [
+   "shadow"
+  ],
+  "text": "      className={`flex-shrink-0 rounded-full transition-shadow hover:ring-2 hover:ring-claude-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/60 ${box}`}"
+ },
+ {
+  "file": "src/renderer/components/groupTasks/GroupTaskListMeta.tsx",
+  "line": 212,
+  "tokens": [
+   "shadow-popover"
+  ],
+  "text": "      className=\"pointer-events-none fixed z-[80] max-h-[70vh] overflow-y-auto rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface px-3 py"
+ },
+ {
+  "file": "src/renderer/components/groupTasks/GroupTaskMessageItem.tsx",
+  "line": 225,
+  "tokens": [
+   "shadow"
+  ],
+  "text": "          className=\"rounded-full flex-shrink-0 transition-shadow hover:ring-2 hover:ring-claude-accent/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/60\""
+ },
+ {
+  "file": "src/renderer/components/groupTasks/NewGroupTaskModal.tsx",
+  "line": 87,
+  "tokens": [
+   "shadow-2xl"
+  ],
+  "text": "        className=\"relative w-[480px] max-h-[85vh] overflow-y-auto rounded-xl shadow-2xl dark:bg-claude-darkSurface bg-white border dark:border-claude-darkBorder border-claude-border p-5\""
+ },
+ {
+  "file": "src/renderer/components/gigSquare/GigSquareMyServicesModal.tsx",
+  "line": 742,
+  "tokens": [
+   "shadow-modal"
+  ],
+  "text": "        className=\"modal-content relative flex h-[min(84vh,880px)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-claude-border bg-claude-surface shadow-modal dark:border-claude-d"
+ },
+ {
+  "file": "src/renderer/components/gigSquare/GigSquareMyServicesModal.tsx",
+  "line": 1279,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "              className=\"w-full max-w-lg rounded-2xl border border-claude-border bg-[var(--bg-main)] p-6 shadow-xl dark:border-claude-darkBorder dark:bg-claude-darkSurface\""
+ },
+ {
+  "file": "src/renderer/components/gigSquare/GigSquareMyServicesModal.tsx",
+  "line": 1340,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "              className=\"flex max-h-[calc(100svh-2rem)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-claude-border bg-[var(--bg-main)] shadow-xl dark:border-claude-darkBorder da"
+ },
+ {
+  "file": "src/renderer/components/gigSquare/GigSquareOrderModal.tsx",
+  "line": 796,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "          className=\"relative w-full max-w-lg rounded-2xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-main)] dark:bg-claude-darkSurface p-5 shadow-xl\""
+ },
+ {
+  "file": "src/renderer/components/gigSquare/GigSquareOrderModal.tsx",
+  "line": 961,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "            className=\"relative w-full max-w-md rounded-2xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-main)] dark:bg-claude-darkSurface p-5 shadow-xl max-h-[80vh] overflow"
+ },
+ {
+  "file": "src/renderer/components/gigSquare/GigSquareOrderModal.tsx",
+  "line": 992,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "            className=\"relative w-full max-w-md rounded-2xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-main)] dark:bg-claude-darkSurface p-5 shadow-xl\""
+ },
+ {
+  "file": "src/renderer/components/gigSquare/GigSquarePublishModal.tsx",
+  "line": 295,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "        className=\"relative flex max-h-[calc(100svh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-main)] dark:bg-c"
+ },
+ {
+  "file": "src/renderer/components/gigSquare/GigSquarePublishModal.tsx",
+  "line": 616,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "            <div className=\"w-full max-w-sm rounded-xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-main)] dark:bg-claude-darkSurface p-5 shadow-xl\">"
+ },
+ {
+  "file": "src/renderer/components/gigSquare/GigSquareRefundsModal.tsx",
+  "line": 244,
+  "tokens": [
+   "shadow-modal"
+  ],
+  "text": "        className=\"modal-content relative flex h-[min(82vh,860px)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-claude-border bg-claude-surface shadow-modal dark:border-claude-d"
+ },
+ {
+  "file": "src/renderer/components/gigSquare/GigSquareServiceCard.tsx",
+  "line": 98,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "      className={`cursor-pointer rounded-2xl border px-4 py-4 text-left transition hover:-translate-y-0.5 hover:shadow-lg ${"
+ },
+ {
+  "file": "src/renderer/components/gigSquare/GigSquareServiceCard.tsx",
+  "line": 115,
+  "tokens": [
+   "shadow-sm"
+  ],
+  "text": "            className=\"flex h-14 w-14 flex-shrink-0 select-none items-center justify-center rounded-xl border border-white/20 text-base font-semibold shadow-sm\""
+ },
+ {
+  "file": "src/renderer/components/update/AppUpdateBadge.tsx",
+  "line": 107,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "          className=\"fixed z-50 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-lg overflow-hidden\""
+ },
+ {
+  "file": "src/renderer/components/update/AppUpdateModal.tsx",
+  "line": 61,
+  "tokens": [
+   "shadow-modal"
+  ],
+  "text": "        className=\"modal-content relative w-full max-w-md mx-4 dark:bg-claude-darkSurface bg-claude-surface rounded-2xl shadow-modal overflow-hidden\""
+ },
+ {
+  "file": "src/renderer/components/chat/EmojiPickerPopover.tsx",
+  "line": 332,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "      className=\"fixed z-50 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg shadow-lg overflow-hidden flex flex-col\""
+ },
+ {
+  "file": "src/renderer/components/chat/EscrowCard.tsx",
+  "line": 63,
+  "tokens": [
+   "shadow-sm"
+  ],
+  "text": "      className=\"my-2 max-w-sm rounded-[16px] border border-white/10 bg-[#202127] p-3 text-[13px] leading-5 text-slate-200 shadow-sm\""
+ },
+ {
+  "file": "src/renderer/components/chat/NftCard.tsx",
+  "line": 207,
+  "tokens": [
+   "shadow-sm"
+  ],
+  "text": "    className={`pointer-events-none absolute bottom-1.5 right-1.5 rounded px-1.5 py-px text-[10px] font-semibold leading-tight shadow-sm backdrop-blur-sm ${"
+ },
+ {
+  "file": "src/renderer/components/chat/NftCard.tsx",
+  "line": 393,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "        className=\"flex max-h-[86vh] w-[min(94vw,640px)] flex-col overflow-hidden rounded-2xl border border-claude-border bg-claude-surface shadow-xl dark:border-claude-darkBorder dark:bg-claude-darkS"
+ },
+ {
+  "file": "src/renderer/components/chat/NftCard.tsx",
+  "line": 480,
+  "tokens": [
+   "shadow",
+   "shadow-md",
+   "shadow-subtle"
+  ],
+  "text": "          className=\"flex h-full w-full flex-col overflow-hidden rounded-xl border border-claude-border bg-claude-surface text-left shadow-subtle transition-shadow hover:shadow-md dark:border-claude-d"
+ },
+ {
+  "file": "src/renderer/components/chat/NftCollectionCard.tsx",
+  "line": 113,
+  "tokens": [
+   "shadow-subtle"
+  ],
+  "text": "        className=\"flex h-full w-full flex-col overflow-hidden rounded-xl border border-claude-border bg-claude-surface shadow-subtle dark:border-claude-darkBorder dark:bg-claude-darkSurface\""
+ },
+ {
+  "file": "src/renderer/components/chat/PaymentCard.tsx",
+  "line": 174,
+  "tokens": [
+   "shadow-subtle"
+  ],
+  "text": "    <div className=\"my-[12px] max-w-[380px] overflow-hidden rounded-xl border border-claude-border bg-claude-surface shadow-subtle dark:border-claude-darkBorder dark:bg-claude-darkSurface\">"
+ },
+ {
+  "file": "src/renderer/components/metabots/BuiltinAvatarPickerModal.tsx",
+  "line": 29,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "        className=\"relative flex max-h-[76vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-main)] dark:bg-claude-darkSur"
+ },
+ {
+  "file": "src/renderer/components/metabots/BuiltinAvatarPickerModal.tsx",
+  "line": 63,
+  "tokens": [
+   "shadow",
+   "shadow-md"
+  ],
+  "text": "                  className={`group relative overflow-hidden rounded-xl border transition-shadow hover:shadow-md dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-cla"
+ },
+ {
+  "file": "src/renderer/components/metabots/BuiltinAvatarPickerModal.tsx",
+  "line": 72,
+  "tokens": [
+   "shadow-sm"
+  ],
+  "text": "                    <span className=\"absolute right-1.5 top-1.5 rounded-full bg-amber-500 p-1 text-white shadow-sm\">"
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotBackupMnemonicModal.tsx",
+  "line": 65,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "      <div className=\"relative w-full max-w-lg rounded-2xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg shadow-xl overflow-hidden\">"
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotCreateSuccessModal.tsx",
+  "line": 111,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "      <div className=\"relative w-full max-w-md rounded-2xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg shadow-xl overflow-hidden\">"
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotDeleteConfirmModal.tsx",
+  "line": 83,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "      <div className=\"relative w-full max-w-md rounded-2xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg shadow-xl overflow-hidden\">"
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotEditTabs.tsx",
+  "line": 896,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "                    className=\"pointer-events-none absolute left-0 bottom-full mb-1.5 z-50 w-56 rounded-md border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claud"
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotEditTabs.tsx",
+  "line": 1407,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "          <div className=\"relative w-full max-w-md rounded-2xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg shadow-xl overflow-hidden\">"
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotHomepageSection.tsx",
+  "line": 305,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "                    className=\"absolute right-0 top-full z-30 mt-2 w-[min(24rem,calc(100vw-3rem))] overflow-hidden rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-d"
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotNftWalletModal.tsx",
+  "line": 241,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "        className=\"relative flex max-h-[86vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-main)] dark:bg-claude-darkSur"
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotNftWalletModal.tsx",
+  "line": 370,
+  "tokens": [
+   "shadow",
+   "shadow-md"
+  ],
+  "text": "                      className=\"overflow-hidden rounded-xl border text-left transition-shadow hover:shadow-md dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claud"
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotNftWalletModal.tsx",
+  "line": 684,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "              <div className=\"absolute left-0 right-0 top-full z-10 mt-1 rounded-xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface py-1 shado"
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotRestoreMnemonicModal.tsx",
+  "line": 119,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "      <div className=\"relative w-full max-w-2xl rounded-2xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg shadow-xl overflow-hidden\">"
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotTokenTransferModal.tsx",
+  "line": 172,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "        className=\"relative w-full max-w-md rounded-2xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-main)] dark:bg-claude-darkSurface p-5 shadow-xl\""
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotTokenTransferModal.tsx",
+  "line": 220,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "                    <div className=\"absolute top-full left-0 right-0 mt-1 rounded-xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface py-1 shad"
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotTransferModal.tsx",
+  "line": 163,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "        className=\"relative w-full max-w-md rounded-2xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-main)] dark:bg-claude-darkSurface p-5 shadow-xl\""
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotTransferModal.tsx",
+  "line": 217,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "                    <div className=\"absolute top-full left-0 right-0 mt-1 rounded-xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface py-1 shad"
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotWalletAssetsModal.tsx",
+  "line": 140,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "        className=\"flex max-h-[86vh] w-[min(94vw,640px)] flex-col overflow-hidden rounded-2xl border border-claude-border bg-claude-surface shadow-xl dark:border-claude-darkBorder dark:bg-claude-darkS"
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotWalletAssetsModal.tsx",
+  "line": 159,
+  "tokens": [
+   "shadow-sm"
+  ],
+  "text": "              className=\"pointer-events-none absolute bottom-1.5 right-1.5 rounded bg-slate-600/80 px-1.5 py-px text-[10px] font-semibold leading-tight text-white shadow-sm backdrop-blur-sm\""
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotWalletAssetsModal.tsx",
+  "line": 230,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "        className=\"relative w-full max-w-3xl rounded-2xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-main)] dark:bg-claude-darkSurface shadow-xl\""
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotWalletAssetsModal.tsx",
+  "line": 335,
+  "tokens": [
+   "shadow",
+   "shadow-md"
+  ],
+  "text": "                                className=\"overflow-hidden rounded-xl border text-left transition-shadow hover:shadow-md dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/5"
+ },
+ {
+  "file": "src/renderer/components/metabots/MetaBotWalletBalanceModal.tsx",
+  "line": 189,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "          className=\"relative w-full max-w-lg rounded-2xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-main)] dark:bg-claude-darkSurface shadow-xl\""
+ },
+ {
+  "file": "src/renderer/components/metabots/MetabotsManager.tsx",
+  "line": 584,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "            <div className=\"w-full max-w-sm mx-4 rounded-2xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface p-6 shadow-xl text-center space-y-4\""
+ },
+ {
+  "file": "src/renderer/components/metabots/MetabotsManager.tsx",
+  "line": 1168,
+  "tokens": [
+   "shadow-2xl"
+  ],
+  "text": "                className=\"w-full max-w-sm mx-4 rounded-2xl dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border shadow-2xl p-5\""
+ },
+ {
+  "file": "src/renderer/components/projects/ProjectFormModal.tsx",
+  "line": 155,
+  "tokens": [
+   "shadow-2xl"
+  ],
+  "text": "        className=\"modal-content w-full max-w-lg mx-4 rounded-2xl dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border shadow-2xl max-h-[82vh] overflo"
+ },
+ {
+  "file": "src/renderer/components/projects/ProjectsManager.tsx",
+  "line": 246,
+  "tokens": [
+   "shadow-2xl"
+  ],
+  "text": "            className=\"modal-content w-full max-w-sm mx-4 p-5 rounded-2xl dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border shadow-2xl\""
+ },
+ {
+  "file": "src/renderer/components/user/ChainBackupMnemonicReminderModal.tsx",
+  "line": 33,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "      <div className=\"relative w-full max-w-lg rounded-2xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg shadow-xl overflow-hidden\">"
+ },
+ {
+  "file": "src/renderer/components/user/ChainBackupRestorePrompt.tsx",
+  "line": 31,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "      <div className=\"relative w-full max-w-lg rounded-2xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg shadow-xl overflow-hidden\">"
+ },
+ {
+  "file": "src/renderer/components/user/UserBackupMnemonicModal.tsx",
+  "line": 85,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "      <div className=\"relative w-full max-w-lg rounded-2xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg shadow-xl overflow-hidden\">"
+ },
+ {
+  "file": "src/renderer/components/user/UserSettings.tsx",
+  "line": 790,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "          <div className=\"w-full max-w-sm mx-4 rounded-2xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface p-6 shadow-xl text-center space-y-4\">"
+ },
+ {
+  "file": "src/renderer/components/user/UserSettings.tsx",
+  "line": 1323,
+  "tokens": [
+   "shadow-modal"
+  ],
+  "text": "              className=\"w-full max-w-lg dark:bg-claude-darkSurface bg-claude-surface rounded-2xl shadow-modal border dark:border-claude-darkBorder border-claude-border overflow-hidden\""
+ },
+ {
+  "file": "src/renderer/components/mcp/McpManager.tsx",
+  "line": 599,
+  "tokens": [
+   "shadow-2xl"
+  ],
+  "text": "            className=\"w-full max-w-sm mx-4 rounded-2xl dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border shadow-2xl p-5\""
+ },
+ {
+  "file": "src/renderer/components/mcp/McpServerFormModal.tsx",
+  "line": 224,
+  "tokens": [
+   "shadow-2xl"
+  ],
+  "text": "        className=\"w-full max-w-lg mx-4 rounded-2xl dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border shadow-2xl p-6 max-h-[80vh] overflow-y-auto\""
+ },
+ {
+  "file": "src/renderer/components/preference/PreferenceSealConfirmModal.tsx",
+  "line": 31,
+  "tokens": [
+   "shadow-2xl"
+  ],
+  "text": "      className=\"relative w-[26rem] rounded-xl border border-[var(--border-color)] bg-[var(--bg-panel)] p-5 text-[var(--text-primary)] shadow-2xl\""
+ },
+ {
+  "file": "src/renderer/components/metatask/MetaTaskCandidateDrawer.tsx",
+  "line": 137,
+  "tokens": [
+   "shadow-[-12px_0_40px_rgba(0"
+  ],
+  "text": "      <aside className=\"absolute bottom-0 right-0 top-0 w-[460px] max-w-[94vw] overflow-y-auto border-l dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg shadow-[-1"
+ },
+ {
+  "file": "src/renderer/components/metatask/MetaTaskChainView.tsx",
+  "line": 41,
+  "tokens": [
+   "shadow"
+  ],
+  "text": " * attached glow shadow) is deliberately a different visual channel from the"
+ },
+ {
+  "file": "src/renderer/components/metatask/MetaTaskChainView.tsx",
+  "line": 82,
+  "tokens": [
+   "drop-shadow"
+  ],
+  "text": ".metatask-chain-edge-gold { stroke-width: 2.5; filter: drop-shadow(0 0 3px rgba(245, 184, 61, 0.35)); }"
+ },
+ {
+  "file": "src/renderer/components/metatask/MetaTaskChainView.tsx",
+  "line": 568,
+  "tokens": [
+   "shadow-[0_0_6px_-1px_rgba(245"
+  ],
+  "text": "            className={`${legendSwatch} border-amber-400 dark:border-amber-300 shadow-[0_0_6px_-1px_rgba(245,184,61,0.35)]`}"
+ },
+ {
+  "file": "src/renderer/components/metatask/MetaTaskChainView.tsx",
+  "line": 581,
+  "tokens": [
+   "shadow-[0_0_5px_-1px_rgba(56"
+  ],
+  "text": "          <span className={`${legendSwatch} border-solid border-sky-500 dark:border-sky-400 shadow-[0_0_5px_-1px_rgba(56,189,248,0.5)]`} />"
+ },
+ {
+  "file": "src/renderer/components/metatask/metaTaskCandidateState.ts",
+  "line": 62,
+  "tokens": [
+   "shadow-[0_0_0_1px_#f5b83d"
+  ],
+  "text": "    'border-amber-400 dark:border-amber-300 shadow-[0_0_0_1px_#f5b83d,0_0_18px_-4px_rgba(245,184,61,0.35)]',"
+ },
+ {
+  "file": "src/renderer/components/metatask/metaTaskCandidateState.ts",
+  "line": 64,
+  "tokens": [
+   "shadow-[0_0_0_1px_#f5b83d"
+  ],
+  "text": "    'border-amber-400 dark:border-amber-300 shadow-[0_0_0_1px_#f5b83d,0_0_18px_-4px_rgba(245,184,61,0.35)]',"
+ },
+ {
+  "file": "src/renderer/components/metatask/metaTaskCandidateState.ts",
+  "line": 77,
+  "tokens": [
+   "shadow-[0_0_10px_-3px_rgba(56"
+  ],
+  "text": "  'border-solid border-sky-500 dark:border-sky-400 shadow-[0_0_10px_-3px_rgba(56,189,248,0.45)]';"
+ },
+ {
+  "file": "src/renderer/components/me/MeBalanceBadge.tsx",
+  "line": 153,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "          <div className={`absolute bottom-[calc(100%+8px)] z-[80] max-h-[70vh] w-[300px] overflow-y-auto rounded-2xl border border-claude-border dark:border-claude-darkBorder bg-claude-surface dark:b"
+ },
+ {
+  "file": "src/renderer/components/me/MePurchaseFlow.tsx",
+  "line": 1001,
+  "tokens": [
+   "shadow-2xl"
+  ],
+  "text": "      <div className=\"relative m-auto max-h-[86vh] w-[560px] max-w-full overflow-y-auto rounded-2xl border border-claude-border dark:border-claude-darkBorder bg-claude-surface dark:bg-claude-darkSurfa"
+ },
+ {
+  "file": "src/renderer/components/avatar/AvatarPickerModal.tsx",
+  "line": 116,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "        className={`relative flex max-h-[76vh] w-full flex-col overflow-hidden rounded-2xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-main)] dark:bg-claude-darkSurface shad"
+ },
+ {
+  "file": "src/renderer/components/avatar/AvatarPickerModal.tsx",
+  "line": 249,
+  "tokens": [
+   "shadow",
+   "shadow-md"
+  ],
+  "text": "                      className={`group relative overflow-hidden rounded-xl border transition-shadow hover:shadow-md dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg"
+ },
+ {
+  "file": "src/renderer/components/avatar/AvatarPickerModal.tsx",
+  "line": 258,
+  "tokens": [
+   "shadow-sm"
+  ],
+  "text": "                        <span className=\"absolute right-1.5 top-1.5 rounded-full bg-amber-500 p-1 text-white shadow-sm\">"
+ },
+ {
+  "file": "src/renderer/components/avatar/AvatarPickerModal.tsx",
+  "line": 315,
+  "tokens": [
+   "shadow",
+   "shadow-md"
+  ],
+  "text": "                      className=\"overflow-hidden rounded-xl border text-left transition-shadow hover:shadow-md dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claud"
+ },
+ {
+  "file": "src/renderer/components/scheduledTasks/DeleteConfirmModal.tsx",
+  "line": 26,
+  "tokens": [
+   "shadow-2xl"
+  ],
+  "text": "        className=\"relative w-80 rounded-xl shadow-2xl dark:bg-claude-darkSurface bg-white border dark:border-claude-darkBorder border-claude-border p-5\""
+ },
+ {
+  "file": "src/renderer/components/scheduledTasks/TaskForm.tsx",
+  "line": 583,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "            <div className=\"absolute z-10 mt-1 w-full rounded-lg border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-white shadow-lg py-1\">"
+ },
+ {
+  "file": "src/renderer/components/scheduledTasks/TaskList.tsx",
+  "line": 170,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "            <div className=\"absolute right-0 top-full mt-1 w-32 rounded-lg shadow-lg dark:bg-claude-darkSurface bg-white border dark:border-claude-darkBorder border-claude-border z-50 py-1\">"
+ },
+ {
+  "file": "src/renderer/components/im/IMSettings.tsx",
+  "line": 1757,
+  "tokens": [
+   "shadow-modal"
+  ],
+  "text": "              className=\"w-full max-w-2xl dark:bg-claude-darkSurface bg-claude-surface rounded-2xl shadow-modal border dark:border-claude-darkBorder border-claude-border overflow-hidden\""
+ },
+ {
+  "file": "src/renderer/components/skills/SkillScopeEditor.tsx",
+  "line": 154,
+  "tokens": [
+   "shadow-2xl"
+  ],
+  "text": "        <div className=\"absolute right-0 top-full z-40 mt-1 w-64 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-2xl p-3\">"
+ },
+ {
+  "file": "src/renderer/components/skills/SkillsManager.tsx",
+  "line": 797,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "              className=\"absolute right-0 mt-2 w-72 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-lg z-50 overflow-hidden\""
+ },
+ {
+  "file": "src/renderer/components/skills/SkillsManager.tsx",
+  "line": 966,
+  "tokens": [
+   "shadow-2xl"
+  ],
+  "text": "            className=\"w-full max-w-sm mx-4 rounded-2xl dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border shadow-2xl p-5\""
+ },
+ {
+  "file": "src/renderer/components/skills/SkillsManager.tsx",
+  "line": 1008,
+  "tokens": [
+   "shadow-2xl"
+  ],
+  "text": "            className=\"w-full max-w-sm mx-4 rounded-2xl dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border shadow-2xl p-5\""
+ },
+ {
+  "file": "src/renderer/components/skills/SkillsManager.tsx",
+  "line": 1050,
+  "tokens": [
+   "shadow-2xl"
+  ],
+  "text": "            className=\"w-full max-w-sm mx-4 rounded-2xl dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border shadow-2xl p-5\""
+ },
+ {
+  "file": "src/renderer/components/skills/SkillsManager.tsx",
+  "line": 1092,
+  "tokens": [
+   "shadow-2xl"
+  ],
+  "text": "            className=\"w-full max-w-md mx-4 rounded-2xl dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border shadow-2xl p-6\""
+ },
+ {
+  "file": "src/renderer/components/skills/SkillsPopover.tsx",
+  "line": 165,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "      className=\"fixed w-72 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-xl z-50\""
+ },
+ {
+  "file": "src/renderer/components/metaapps/MetaAppsManager.tsx",
+  "line": 369,
+  "tokens": [
+   "shadow"
+  ],
+  "text": "          className=\"min-w-0 flex items-center gap-2 rounded-full text-left transition-shadow hover:ring-2 hover:ring-claude-accent/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:rin"
+ },
+ {
+  "file": "src/renderer/components/metaapps/MetaAppsManager.tsx",
+  "line": 437,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "          className=\"w-full max-w-2xl overflow-hidden rounded-xl border border-claude-border bg-white shadow-xl dark:border-claude-darkBorder dark:bg-claude-darkSurface\""
+ },
+ {
+  "file": "src/renderer/components/metaapps/myApps/ChainStatusModal.tsx",
+  "line": 24,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "      <div className=\"w-full max-w-md mx-4 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-xl\">"
+ },
+ {
+  "file": "src/renderer/components/metaapps/myApps/MetaAppDeleteModal.tsx",
+  "line": 18,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "      <div className=\"w-full max-w-sm mx-4 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-xl\">"
+ },
+ {
+  "file": "src/renderer/components/metaapps/myApps/MetaAppDetailModal.tsx",
+  "line": 41,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "      <div className=\"w-full max-w-2xl mx-4 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-xl flex flex-col max-h-[85vh]\">"
+ },
+ {
+  "file": "src/renderer/components/metaapps/myApps/MetaAppPublishForm.tsx",
+  "line": 285,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "      <div className=\"w-full max-w-2xl mx-4 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-xl flex flex-col max-h-[85vh]\">"
+ },
+ {
+  "file": "src/renderer/components/metaapps/myApps/MyAppsTab.tsx",
+  "line": 93,
+  "tokens": [
+   "shadow-popover"
+  ],
+  "text": "              <div className=\"absolute top-full left-0 right-0 mt-1 rounded-lg border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-popover z-5"
+ },
+ {
+  "file": "src/renderer/components/metaapps/myApps/MyAppsTab.tsx",
+  "line": 185,
+  "tokens": [
+   "shadow-sm"
+  ],
+  "text": "                    <div className=\"absolute left-2 bottom-2 h-10 w-10 rounded-lg overflow-hidden border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
+ },
+ {
+  "file": "src/renderer/components/metaapps/myApps/MyAppsTab.tsx",
+  "line": 282,
+  "tokens": [
+   "shadow-elevated"
+  ],
+  "text": "        <div className=\"fixed bottom-6 left-1/2 -translate-x-1/2 z-50 rounded-lg dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border px-3 py-2 text-x"
+ },
+ {
+  "file": "src/renderer/components/metaapps/myApps/MyAppsTab.tsx",
+  "line": 330,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "            <div className=\"w-full max-w-md mx-4 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-xl\">"
+ },
+ {
+  "file": "src/renderer/components/cowork/A2AApprovalBar.tsx",
+  "line": 42,
+  "tokens": [
+   "shadow-sm"
+  ],
+  "text": "      className=\"mx-auto w-full overflow-hidden rounded-xl border border-amber-300/80 bg-claude-surface shadow-sm dark:border-amber-700/60 dark:bg-claude-darkSurface\""
+ },
+ {
+  "file": "src/renderer/components/cowork/A2AApprovalBar.tsx",
+  "line": 48,
+  "tokens": [
+   "shadow-[0_0_0_4px_rgba(245"
+  ],
+  "text": "        <span className=\"h-2 w-2 rounded-full bg-amber-500 shadow-[0_0_0_4px_rgba(245,158,11,0.12)]\" />"
+ },
+ {
+  "file": "src/renderer/components/cowork/A2AMessageItem.tsx",
+  "line": 691,
+  "tokens": [
+   "shadow"
+  ],
+  "text": "        className=\"rounded-full flex-shrink-0 transition-shadow hover:ring-2 hover:ring-claude-accent/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/60\""
+ },
+ {
+  "file": "src/renderer/components/cowork/ComposerCommandPicker.tsx",
+  "line": 82,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "    ? 'fixed z-50 w-80 max-w-full rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg shadow-lg overflow-hidden py-1'"
+ },
+ {
+  "file": "src/renderer/components/cowork/ComposerCommandPicker.tsx",
+  "line": 83,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "    : 'absolute left-0 bottom-full mb-2 z-50 w-80 max-w-full rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg shadow-lg overflow-hidden py-1';"
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkConversationSearch.tsx",
+  "line": 84,
+  "tokens": [
+   "shadow-subtle"
+  ],
+  "text": "      <div className=\"mx-auto max-w-[clamp(680px,64%,920px)] overflow-hidden rounded-xl border border-claude-border bg-claude-surface shadow-subtle dark:border-claude-darkBorder dark:bg-claude-darkSur"
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkImageLightbox.tsx",
+  "line": 56,
+  "tokens": [
+   "shadow-elevated"
+  ],
+  "text": "        className=\"max-h-full max-w-full rounded-lg object-contain shadow-elevated cursor-default\""
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkMessageActionsMenu.tsx",
+  "line": 20,
+  "tokens": [
+   "shadow"
+  ],
+  "text": " * No new colour, shadow, radius or font token is introduced."
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkMessageActionsMenu.tsx",
+  "line": 144,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "          className=\"fixed z-50 min-w-[180px] rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-lg overflow-hidden\""
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkPermissionOverlay.tsx",
+  "line": 176,
+  "tokens": [
+   "shadow-elevated"
+  ],
+  "text": "      className=\"pointer-events-auto w-[min(24rem,calc(100vw-2rem))] shrink-0 overflow-hidden rounded-xl border border-claude-border bg-claude-surface shadow-elevated animate-slide-up dark:border-clau"
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkPermissionPanel.tsx",
+  "line": 447,
+  "tokens": [
+   "shadow-elevated"
+  ],
+  "text": "        className=\"w-full overflow-hidden rounded-[20px] border border-claude-accent/70 dark:border-claude-accent/50 bg-claude-surface dark:bg-claude-darkSurface shadow-elevated animate-slide-up\""
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkPermissionPanel.tsx",
+  "line": 452,
+  "tokens": [
+   "shadow-[0_0_0_4px_rgba(196"
+  ],
+  "text": "          <span className=\"h-2 w-2 rounded-full bg-[#c48f00] dark:bg-claude-accent shadow-[0_0_0_4px_rgba(196,143,0,0.12)]\" />"
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkPermissionPanel.tsx",
+  "line": 486,
+  "tokens": [
+   "shadow-[inset_0_0_0_1px_rgba(198"
+  ],
+  "text": "                      ? 'border-[#c69a0b] bg-claude-accent/15 text-claude-text dark:text-claude-darkText shadow-[inset_0_0_0_1px_rgba(198,154,11,0.14)]'"
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkPermissionPanel.tsx",
+  "line": 561,
+  "tokens": [
+   "shadow-elevated"
+  ],
+  "text": "      className={`w-full overflow-hidden rounded-[20px] border bg-claude-surface dark:bg-claude-darkSurface shadow-elevated animate-slide-up ${"
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkPermissionPanel.tsx",
+  "line": 570,
+  "tokens": [
+   "shadow-[0_0_0_4px_rgba(196"
+  ],
+  "text": "        <span className=\"h-2 w-2 rounded-full bg-[#c48f00] dark:bg-claude-accent shadow-[0_0_0_4px_rgba(196,143,0,0.12)]\" />"
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkPromptInput.tsx",
+  "line": 283,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "          className=\"fixed z-50 w-64 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg shadow-lg overflow-hidden py-1\""
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkPromptInput.tsx",
+  "line": 1846,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "                  <div className=\"absolute left-1/2 -translate-x-1/2 bottom-full mb-2 px-3.5 py-2.5 text-[13px] leading-relaxed rounded-xl shadow-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude"
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkPromptInput.tsx",
+  "line": 1913,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "          className=\"fixed z-50 min-w-[176px] rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-lg overflow-hidden py-1\""
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkSessionDetail.tsx",
+  "line": 987,
+  "tokens": [
+   "shadow-subtle"
+  ],
+  "text": "            className=\"assistant-bubble rounded-[22px] px-[16px] py-[10px] dark:text-claude-darkText text-claude-text shadow-subtle\""
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkSessionDetail.tsx",
+  "line": 1305,
+  "tokens": [
+   "shadow-subtle"
+  ],
+  "text": "    <div className=\"rounded-2xl border border-claude-border dark:border-claude-darkBorder bg-claude-surfaceMuted dark:bg-claude-darkSurfaceMuted px-4 py-3 shadow-subtle\">"
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkSessionDetail.tsx",
+  "line": 1346,
+  "tokens": [
+   "shadow-subtle"
+  ],
+  "text": "    <div className=\"rounded-2xl border border-emerald-500/30 bg-emerald-500/5 dark:bg-emerald-500/10 px-4 py-3 shadow-subtle\">"
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkSessionDetail.tsx",
+  "line": 1679,
+  "tokens": [
+   "shadow-subtle"
+  ],
+  "text": "              className=\"assistant-bubble rounded-[22px] px-[16px] py-[10px] dark:text-claude-darkText text-claude-text shadow-subtle\""
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkSessionDetail.tsx",
+  "line": 4841,
+  "tokens": [
+   "shadow-popover"
+  ],
+  "text": "          className=\"fixed z-50 min-w-[180px] rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-popover popover-enter overflow-hi"
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkSessionDetail.tsx",
+  "line": 4977,
+  "tokens": [
+   "shadow"
+  ],
+  "text": "                  ? 'rounded-lg ring-2 ring-amber-500/40 ring-offset-2 ring-offset-claude-bg transition-shadow dark:ring-offset-claude-darkBg'"
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkSessionItem.tsx",
+  "line": 705,
+  "tokens": [
+   "shadow-[0_0_0_3px_rgba(239"
+  ],
+  "text": "                    ? 'bg-red-500 shadow-[0_0_0_3px_rgba(239,68,68,0.14)] animate-pulse'"
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkSessionItem.tsx",
+  "line": 706,
+  "tokens": [
+   "shadow-[0_0_6px_rgba(59"
+  ],
+  "text": "                    : `bg-claude-accent ${showRunningIndicator ? 'shadow-[0_0_6px_rgba(59,130,246,0.5)] animate-pulse' : ''}`"
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkSessionItem.tsx",
+  "line": 839,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "          className=\"fixed z-50 min-w-[180px] rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-lg overflow-hidden\""
+ },
+ {
+  "file": "src/renderer/components/cowork/CoworkSessionItem.tsx",
+  "line": 872,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "              className=\"fixed z-50 min-w-[150px] rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-lg overflow-hidden\""
+ },
+ {
+  "file": "src/renderer/components/cowork/InlineHtmlReportBlock.tsx",
+  "line": 459,
+  "tokens": [
+   "shadow-subtle"
+  ],
+  "text": "        className=\"group my-1 flex w-full items-center gap-3 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface px-3.5 py-2.5 shadow-subt"
+ },
+ {
+  "file": "src/renderer/components/cowork/InlineHtmlReportBlock.tsx",
+  "line": 487,
+  "tokens": [
+   "shadow-subtle"
+  ],
+  "text": "      className=\"group relative my-1 w-full overflow-hidden rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-subtle\""
+ },
+ {
+  "file": "src/renderer/components/cowork/InlineHtmlReportBlock.tsx",
+  "line": 592,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "          className=\"fixed z-50 min-w-[208px] rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-lg overflow-hidden\""
+ },
+ {
+  "file": "src/renderer/components/cowork/InlineMetaAppBlock.tsx",
+  "line": 448,
+  "tokens": [
+   "shadow-subtle"
+  ],
+  "text": "      className=\"relative my-1 w-[688px] max-w-full overflow-hidden rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-subtle\""
+ },
+ {
+  "file": "src/renderer/components/cowork/InlineMetaAppBlock.tsx",
+  "line": 629,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "      className=\"w-full max-w-[440px] rounded-xl border p-4 shadow-lg dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface\""
+ },
+ {
+  "file": "src/renderer/components/cowork/ManualCompactButton.tsx",
+  "line": 67,
+  "tokens": [
+   "shadow-sm"
+  ],
+  "text": "        <span className=\"absolute top-full right-0 z-20 mt-1 whitespace-nowrap rounded-md border border-red-200 dark:border-red-800/60 bg-white dark:bg-claude-darkBg px-1.5 py-0.5 text-[10px] text-red"
+ },
+ {
+  "file": "src/renderer/components/cowork/MessageFeedbackControls.tsx",
+  "line": 118,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "        <div className=\"absolute left-0 top-full mt-1 w-64 rounded-xl shadow-xl dark:bg-claude-darkBg bg-claude-bg dark:border-claude-darkBorder border-claude-border border p-2 z-50\">"
+ },
+ {
+  "file": "src/renderer/components/cowork/MetaBotSelector.tsx",
+  "line": 232,
+  "tokens": [
+   "shadow-popover"
+  ],
+  "text": "              ? 'fixed z-50 rounded-lg border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-popover overflow-hidden max-h-56 overflow-y-auto'"
+ },
+ {
+  "file": "src/renderer/components/cowork/MetaBotSelector.tsx",
+  "line": 233,
+  "tokens": [
+   "shadow-popover"
+  ],
+  "text": "              : `absolute left-0 right-0 rounded-lg border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-popover z-50 overflow-hidden max-h-56 "
+ },
+ {
+  "file": "src/renderer/components/cowork/PermissionModeSelector.tsx",
+  "line": 91,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "        <div className=\"absolute right-0 bottom-full mb-2 w-56 rounded-xl shadow-xl dark:bg-claude-darkBg bg-claude-bg dark:border-claude-darkBorder border-claude-border border p-1.5 z-50\">"
+ },
+ {
+  "file": "src/renderer/components/cowork/SessionViewOptionsMenu.tsx",
+  "line": 133,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "      className=\"fixed z-50 rounded-xl border border-claude-border p-1 shadow-lg dark:border-claude-darkBorder dark:bg-claude-darkSurface bg-claude-surface\""
+ },
+ {
+  "file": "src/renderer/components/cowork/SubagentPanel.tsx",
+  "line": 133,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "        <div className=\"absolute right-0 bottom-full mb-2 w-80 rounded-xl shadow-xl dark:bg-claude-darkBg bg-claude-bg dark:border-claude-darkBorder border-claude-border border z-50 flex flex-col max-"
+ },
+ {
+  "file": "src/renderer/components/cowork/TodoPanel.tsx",
+  "line": 135,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "        <div className=\"absolute right-0 bottom-full mb-2 z-50 w-80 max-w-[calc(100vw-2rem)] rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-s"
+ },
+ {
+  "file": "src/renderer/components/cowork/TurnNavigator.tsx",
+  "line": 342,
+  "tokens": [
+   "shadow-lg"
+  ],
+  "text": "          className=\"pointer-events-none absolute right-full mr-2.5 w-[min(300px,40vw)] overflow-hidden rounded-lg border border-claude-border bg-claude-surface p-2.5 shadow-lg dark:border-claude-dark"
+ },
+ {
+  "file": "src/renderer/components/cowork/UsageStatsChip.tsx",
+  "line": 174,
+  "tokens": [
+   "shadow-xl"
+  ],
+  "text": "        <div className=\"absolute right-0 bottom-full mb-2 w-60 rounded-xl shadow-xl dark:bg-claude-darkBg bg-claude-bg dark:border-claude-darkBorder border-claude-border border p-3 z-50\">"
+ },
+ {
+  "file": "src/renderer/components/onboarding/WelcomeFlow.tsx",
+  "line": 84,
+  "tokens": [
+   "shadow-[0_0_0_1px_rgba(255"
+  ],
+  "text": "  <div className=\"aspect-square w-[min(500px,100%)] overflow-hidden rounded-[28px] shadow-[0_0_0_1px_rgba(255,220,81,0.22),0_0_0_8px_rgba(255,190,80,0.06),0_28px_72px_rgba(0,0,0,0.5),0_0_110px_rgba(25"
+ }
+]

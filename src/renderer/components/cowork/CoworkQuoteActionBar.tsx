@@ -56,7 +56,7 @@ const CoworkQuoteActionBar = React.forwardRef<HTMLDivElement, CoworkQuoteActionB
         // it: pressing the bar must not collapse the selection first.
         onMouseDown={(event) => event.preventDefault()}
         onClick={onAdd}
-        className="inline-flex items-center gap-1.5 rounded-lg border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface px-3 py-1.5 text-xs font-medium shadow-elevated dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+        className="inline-flex items-center gap-1.5 rounded-lg border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface px-3 py-1.5 text-xs font-medium dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
       >
         <ChatBubbleBottomCenterTextIcon className="h-3.5 w-3.5 flex-shrink-0" />
         <span className="truncate">{i18nService.t('coworkQuoteAddToConversation')}</span>

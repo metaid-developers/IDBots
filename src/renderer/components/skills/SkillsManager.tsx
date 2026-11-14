@@ -887,7 +887,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                     onClick={() => handleToggleSkill(skill.id)}
                   >
                     <div
-                      className={`w-3.5 h-3.5 rounded-full bg-white shadow-md transform transition-transform ${
+                      className={`w-3.5 h-3.5 rounded-full bg-white transform transition-transform ${
                         skill.enabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
                       }`}
                     />

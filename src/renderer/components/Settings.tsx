@@ -1692,7 +1692,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
         onClick={() => handleProviderChange(providerKey)}
         className={`flex items-center p-2 rounded-xl cursor-pointer transition-colors group ${
           activeProvider === providerKey && !showCerebellumSettings
-            ? 'bg-claude-accent/10 dark:bg-claude-accent/20 border border-claude-accent/30 shadow-subtle'
+            ? 'bg-claude-accent/10 dark:bg-claude-accent/20 border border-claude-accent/30'
             : 'dark:bg-claude-darkSurface/50 bg-claude-surface hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover border border-transparent'
         }`}
       >
@@ -1740,7 +1740,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
             }}
           >
             <div
-              className={`w-3 h-3 rounded-full bg-white shadow-md transform transition-transform ${
+              className={`w-3 h-3 rounded-full bg-white transform transition-transform ${
                 config.enabled ? 'translate-x-3.5' : 'translate-x-0.5'
               }`}
             />
@@ -3143,7 +3143,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
               <div
                 className={`flex w-full items-center rounded-xl border p-2 transition-colors ${
                   showCerebellumSettings
-                    ? 'border-claude-accent/30 bg-claude-accent/10 dark:bg-claude-accent/20 shadow-subtle'
+                    ? 'border-claude-accent/30 bg-claude-accent/10 dark:bg-claude-accent/20'
                     : 'border-transparent dark:bg-claude-darkSurface/50 bg-claude-surface hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
                 }`}
               >
@@ -3174,7 +3174,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                     cerebellum.enabled ? 'bg-claude-accent' : 'dark:bg-claude-darkBorder bg-claude-border'
                   }`}
                   >
-                    <span className={`h-3 w-3 rounded-full bg-white shadow-md transform transition-transform ${
+                    <span className={`h-3 w-3 rounded-full bg-white transform transition-transform ${
                       cerebellum.enabled ? 'translate-x-3.5' : 'translate-x-0.5'
                     }`}
                     />

@@ -154,7 +154,7 @@ const MeIncrementPackCard: React.FC = () => {
           } ${settingsReady ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
         >
           <span
-            className={`w-3 h-3 rounded-full bg-white shadow-md transform transition-transform ${
+            className={`w-3 h-3 rounded-full bg-white transform transition-transform ${
               autoDeduct ? 'translate-x-3.5' : 'translate-x-0.5'
             }`}
           />

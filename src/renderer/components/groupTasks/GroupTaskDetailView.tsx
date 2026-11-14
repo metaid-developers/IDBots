@@ -65,7 +65,7 @@ const RoomIdBadge: React.FC<{ groupId: string }> = ({ groupId }) => {
       onClick={() => void handleCopy()}
       title={i18nService.t(copied ? 'groupTasksRoomIdCopied' : 'groupTasksCopyRoomId')}
       aria-label={i18nService.t(copied ? 'groupTasksRoomIdCopied' : 'groupTasksCopyRoomId')}
-      className="non-draggable inline-flex shrink-0 items-center gap-1 rounded-full border dark:border-claude-darkBorder border-claude-border px-2 py-0.5 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+      className="non-draggable inline-flex shrink-0 items-center gap-1 rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border px-2 py-0.5 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
     >
       <span className="font-mono">{shortGroupId(groupId)}</span>
       {copied

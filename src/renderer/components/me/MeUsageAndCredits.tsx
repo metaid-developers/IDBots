@@ -356,7 +356,7 @@ const MeUsageAndCredits: React.FC = () => {
                 key={type || 'all'}
                 type="button"
                 onClick={() => setTypeFilter(type)}
-                className={`rounded-full border px-2 py-0.5 text-[10px] transition-colors ${
+                className={`rounded-[var(--shape-radius-md)] border px-2 py-0.5 text-[10px] transition-colors ${
                   typeFilter === type
                     ? 'border-claude-accent text-claude-accent dark:text-claude-darkAccent bg-claude-accent/5'
                     : 'border-claude-border dark:border-claude-darkBorder text-claude-textSecondary dark:text-claude-darkTextSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
