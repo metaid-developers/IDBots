@@ -369,10 +369,11 @@ test('mac: the band row starts below the 52 px traffic-light strip on both faces
   assert.match(darwinBranch, /titleBarStyle: 'hidden' as const/);
   assert.doesNotMatch(mainWindowSource, /titleBarStyle: 'hiddenInset'/);
   assert.doesNotMatch(mainWindowSource, /trafficLightPosition: \{/);
-  assert.match(
-    mainWindowSource,
-    /if \(isMac && typeof win\.setWindowButtonVisibility === 'function'\) \{\s*win\.setWindowButtonVisibility\(false\);\s*\}/,
-  );
+  // Hotfix eb3c579f shape: creation-time hide + ready-to-show re-apply
+  // (macOS re-shows native buttons when a still-hidden window first shows).
+  assert.match(mainWindowSource, /const hideNativeLights = \(\) => \{/);
+  assert.match(mainWindowSource, /win\.setWindowButtonVisibility\(false\);/);
+  assert.match(mainWindowSource, /win\.once\('ready-to-show', hideNativeLights\);/);
   assert.match(mainWindowSource, /frame: false,/);
   assert.match(mainWindowSource, /titleBarOverlay: getTitleBarOverlayOptions\(\)/);
   // The drawn dots mount in the top-gap strip: 8 px, centered -> extent 22-30.
