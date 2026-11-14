@@ -1039,3 +1039,4 @@ blob-report/
 !tests/coworkSessionColdPromptAndPeerAvatar.test.mjs
 !tests/coworkMessagesFtsSearch.test.mjs
 !tests/coworkSessionSummaryDelta.test.mjs
+!tests/coworkTranscriptPerfAndGitProbe.test.mjs

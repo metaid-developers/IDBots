@@ -2115,6 +2115,18 @@ const TypingDots: React.FC = () => (
   </div>
 );
 
+const OFFSCREEN_USER_TURN_STYLE: React.CSSProperties = {
+  contentVisibility: 'auto',
+  containIntrinsicSize: 'auto 96px',
+};
+
+const OFFSCREEN_ASSISTANT_TURN_STYLE: React.CSSProperties = {
+  contentVisibility: 'auto',
+  containIntrinsicSize: 'auto 220px',
+};
+
+const GIT_BRANCH_STREAMING_POLL_MS = 15_000;
+
 const AssistantTurnBlock = React.memo(function AssistantTurnBlock({
   turn,
   resolveLocalFilePath,
@@ -2813,23 +2825,16 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     }
     return () => { active = false; };
   }, [currentSession?.id, currentSession?.projectId]);
+  const refreshGitBranchRef = useRef<(() => Promise<void>) | null>(null);
   useEffect(() => {
     let active = true;
+    refreshGitBranchRef.current = null;
     setGitBranch(null);
     if (!currentSession?.id || !currentSession.cwd) return;
     const cwd = currentSession.cwd;
-    // In-flight guard: a probe that outlives the 3s interval (git hung on a
-    // network drive despite the 2s main-process timeout) must not pile up
-    // overlapping probes — skip while one is still settling.
     let probeInFlight = false;
-    // Consecutive failures mean "not a git repo" (the normal case for
-    // arbitrary working dirs). Stop the interval after three to avoid
-    // spawning a failing `git` child every 3s forever; focus/visibility
-    // refreshes still re-probe so a later `git init` is picked up.
     let consecutiveFailures = 0;
     const refresh = async () => {
-      // Skip while the tab is hidden/backgrounded: the branch cannot change
-      // through the UI here, and idle git probes waste nothing useful.
       if (!active || probeInFlight || document.visibilityState !== 'visible') return;
       probeInFlight = true;
       try {
@@ -2843,23 +2848,29 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         probeInFlight = false;
       }
     };
+    refreshGitBranchRef.current = refresh;
     void refresh();
     const onFocus = () => { void refresh(); };
     const onVisibility = () => { if (document.visibilityState === 'visible') void refresh(); };
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onVisibility);
-    const poll = () => {
-      if (consecutiveFailures >= 3) return;
-      void refresh();
-    };
-    const interval = window.setInterval(poll, 3000);
     return () => {
       active = false;
-      window.clearInterval(interval);
+      refreshGitBranchRef.current = null;
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [currentSession?.id, currentSession?.cwd]);
+
+  const sessionActivelyRunning = isStreaming || currentSession?.status === 'running';
+  useEffect(() => {
+    void refreshGitBranchRef.current?.();
+    if (!sessionActivelyRunning) return;
+    const interval = window.setInterval(() => {
+      void refreshGitBranchRef.current?.();
+    }, GIT_BRANCH_STREAMING_POLL_MS);
+    return () => window.clearInterval(interval);
+  }, [sessionActivelyRunning]);
   const sessionModelId = sessionModelOverride
     ? sessionModelOverride.modelId
     : (currentSession?.model ?? null);
@@ -4532,6 +4543,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
 
     return turns.map((turn, index) => {
       const isLastTurn = index === turns.length - 1;
+      const allowOffscreenSkip = !isConversationSearchOpen && !isExportingImage && index < turns.length - 4;
       // Assistant mode: the inline indicator is visible through the ENTIRE
       // running state — the pre-first-token wait, narration streaming, tool
       // runs, and hidden thinking alike. Hiding it while reply text streamed
@@ -4552,7 +4564,11 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       return (
         <React.Fragment key={turn.id}>
           {turn.userMessage && (
-            <div data-export-role="user-message" data-message-id={turn.userMessage.id}>
+            <div
+              data-export-role="user-message"
+              data-message-id={turn.userMessage.id}
+              style={allowOffscreenSkip ? OFFSCREEN_USER_TURN_STYLE : undefined}
+            >
               <UserMessageItem
                 message={turn.userMessage}
                 skills={skills}
@@ -4566,7 +4582,10 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
             </div>
           )}
           {showAssistantBlock && (
-            <div data-export-role="assistant-block">
+            <div
+              data-export-role="assistant-block"
+              style={allowOffscreenSkip ? OFFSCREEN_ASSISTANT_TURN_STYLE : undefined}
+            >
               <AssistantTurnBlock
                 turn={turn}
                 resolveLocalFilePath={resolveLocalFilePath}
