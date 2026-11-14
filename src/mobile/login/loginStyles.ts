@@ -74,6 +74,18 @@ export function buildStyles(
       color: p.text,
       fontFamily: 'system-ui, -apple-system, sans-serif',
     },
+    loginCard: {
+      width: '100%',
+      maxWidth: 400,
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 16,
+      padding: 14,
+      borderRadius: 28,
+      border: `1px solid ${p.border}`,
+      backgroundColor: p.surface,
+      boxShadow: isDark ? '0 16px 50px rgba(0, 0, 0, 0.36)' : '0 16px 50px rgba(36, 36, 37, 0.08)',
+    },
     guidePage: {
       minHeight: '100dvh',
       display: 'flex',

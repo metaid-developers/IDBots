@@ -273,6 +273,17 @@ test('login palette matches the app theme tokens in both schemes', () => {
   assert.equal(dark.logo.imageRendering, 'pixelated');
 });
 
+test('login card uses the active surface and concentric radius in both schemes', () => {
+  for (const isDark of [true, false]) {
+    const styles = buildStyles(isDark);
+    assert.equal(styles.loginCard.backgroundColor, styles.input.backgroundColor);
+    assert.equal(styles.loginCard.borderRadius, 28);
+    assert.equal(styles.loginCard.padding, 14);
+    assert.equal(styles.input.borderRadius, 14);
+    assert.ok(String(styles.loginCard.boxShadow).length > 0);
+  }
+});
+
 test('login main.tsx ships no hardcoded color literals (palette lives in loginStyles.ts)', () => {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const source = readFileSync(path.join(here, '../src/mobile/login/main.tsx'), 'utf8');
