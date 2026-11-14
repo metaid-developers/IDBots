@@ -37,6 +37,7 @@ interface WorkerPayload {
   feeRate: number;
   maxSizeBytes: number;
   uploaderBaseUrl?: string;
+  storageKey?: string;
 }
 
 interface JsonEnvelope<T> {
@@ -304,15 +305,19 @@ async function main(): Promise<void> {
   const feeRateInput = Number(payload.feeRate);
   const maxSizeBytes = Number(payload.maxSizeBytes);
   const uploaderBaseUrl = normalizeUploaderBaseUrl(payload.uploaderBaseUrl);
+  const preUploadedStorageKey = String(payload.storageKey || '').trim();
 
-  if (!filePath || !fileName || !metaId || !address || !Number.isFinite(size) || size <= 0) {
+  if ((!filePath && !preUploadedStorageKey) || !fileName || !metaId || !address || !Number.isFinite(size) || size <= 0) {
     console.log(JSON.stringify({ success: false, error: 'Invalid worker payload for large file upload' }));
     process.exit(1);
   }
 
-  const fileBuffer = await fs.promises.readFile(filePath);
-  if (fileBuffer.length !== size) {
-    throw new Error(`File changed while preparing upload: expected ${size} bytes, got ${fileBuffer.length}`);
+  let fileBuffer: Buffer | null = null;
+  if (!preUploadedStorageKey) {
+    fileBuffer = await fs.promises.readFile(filePath);
+    if (fileBuffer.length !== size) {
+      throw new Error(`File changed while preparing upload: expected ${size} bytes, got ${fileBuffer.length}`);
+    }
   }
 
   logStep('Fetching uploader config');
@@ -320,7 +325,7 @@ async function main(): Promise<void> {
   const effectiveMaxSize = uploaderLimits.maxFileSize > 0
     ? Math.min(maxSizeBytes, uploaderLimits.maxFileSize)
     : maxSizeBytes;
-  if (effectiveMaxSize > 0 && fileBuffer.length > effectiveMaxSize) {
+  if (effectiveMaxSize > 0 && size > effectiveMaxSize) {
     throw new Error(
       `File size exceeds the effective chunked-upload limit of ${formatMiB(effectiveMaxSize)}`,
     );
@@ -338,16 +343,16 @@ async function main(): Promise<void> {
   // can fund the estimated on-chain cost BEFORE streaming the file, so an
   // underfunded wallet fails fast instead of after a wasted upload.
   const preflightUtxos = await fetchMvcFundingUtxos(address);
-  const estimatedFundingSats = estimateChunkedUploadFundingSats(fileBuffer.length, feeRate, uploaderLimits.chunkSize);
+  const estimatedFundingSats = estimateChunkedUploadFundingSats(size, feeRate, uploaderLimits.chunkSize);
   pickChunkedUploadFundingUtxos(preflightUtxos, estimatedFundingSats, feeRate);
   logStep('Funding preflight passed', {
     estimatedFundingSats,
     spendableUtxos: preflightUtxos.length,
   });
 
-  const storageKey = await uploadToMultipartStorage(
+  const storageKey = preUploadedStorageKey || await uploadToMultipartStorage(
     uploaderBaseUrl,
-    fileBuffer,
+    fileBuffer as Buffer,
     fileName,
     metaId,
     address,
@@ -487,7 +492,7 @@ async function main(): Promise<void> {
       success: true,
       pinId: `${indexTxId}i0`,
       fileName,
-      size: fileBuffer.length,
+      size,
       contentType,
       uploadMode: 'chunked',
       txId: indexTxId,

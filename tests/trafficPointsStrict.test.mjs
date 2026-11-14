@@ -585,14 +585,50 @@ test('errorCode precedence & diagnostics: ME_DAILY_LIMIT, ME_INSUFFICIENT, and o
   );
 });
 
-test('compiled uploadLargeFileWorker.js exists and chunked MVC upload blocks silent self-pay under strict traffic mode', async () => {
+test('compiled uploadLargeFileWorker.js exists and chunked MVC upload routes through sponsor with strict fallback gate', async () => {
   const workerPath = path.join(process.cwd(), 'dist-electron', 'main', 'libs', 'uploadLargeFileWorker.js');
   assert.equal(fs.existsSync(workerPath), true, 'uploadLargeFileWorker.js must be compiled into dist-electron/main/libs');
   const uploadSvcSrc = fs.readFileSync(path.join(process.cwd(), 'src/main/services/metaFileUploadService.ts'), 'utf8');
-  assert.match(
-    uploadSvcSrc,
-    /getConfiguredTrafficPinMode\(\) === 'traffic' && getConfiguredTrafficFallbackPolicy\(\) === 'strict'[\s\S]*throw new TrafficInsufficientError/,
+  assert.match(uploadSvcSrc, /uploadMvcSponsorChunkedFile\(/);
+  assert.match(uploadSvcSrc, /fallbackPolicy:\s*getConfiguredTrafficFallbackPolicy\(\)/);
+  const { uploadMvcSponsorChunkedFile } = await import('../dist-electron/main/services/mvcSponsorChunkedUpload.js');
+  resetSponsorCircuitBreakerForTests();
+  let selfPaidCalls = 0;
+  await assert.rejects(
+    uploadMvcSponsorChunkedFile({
+      data: Buffer.alloc(5 * 1024 * 1024, 1),
+      fileName: 'big.bin',
+      uploadPath: '/file/big.bin',
+      contentType: 'application/octet-stream;binary',
+      bytes: 5 * 1024 * 1024,
+      feeRate: 1,
+      mnemonic: MNEMONIC,
+      walletPath: WALLET_PATH,
+      mvcAddress: TEST_ADDRESS,
+      metaId: 'metaid-test',
+      fallbackPolicy: 'strict',
+      baseUrl: 'https://sponsor.test',
+      fetchImpl: createFetchStub([
+        ['/v2/assist/gas/address/info', () => ({
+          exists: true,
+          balance: 0,
+          grantedAmount: 0,
+          reservedAmount: 0,
+          spentAmount: 0,
+          availableAmount: 0,
+          status: 'active',
+          me: { trafficBilling: true, spendableMilli: 0 },
+        })],
+      ]),
+      selfPaidChunkedUpload: async () => {
+        selfPaidCalls += 1;
+        return { pinId: 'should-not-run' };
+      },
+    }),
+    (error) => error instanceof TrafficInsufficientError && error.reason === 'insufficient_me',
   );
+  assert.equal(selfPaidCalls, 0, 'strict policy must not fall back to self-paid');
+  resetSponsorCircuitBreakerForTests();
 });
 
 // 2026-11-13 dev:fresh: a payload the pin-reference guard blocks is wrong on

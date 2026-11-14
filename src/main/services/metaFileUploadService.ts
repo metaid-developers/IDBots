@@ -11,10 +11,11 @@ import { getRate as getGlobalFeeRate } from './feeRateStore';
 import { getMvcSpendCoordinator } from './mvcSpendCoordinator';
 import { verifyMetafileAvailability } from './metafileVerifier';
 import {
-  TrafficInsufficientError,
   uploadMvcSponsorDirectFile,
   type MvcSponsorFeeAssistMetadata,
 } from './mvcSponsorUpload';
+import { uploadMvcSponsorChunkedFile } from './mvcSponsorChunkedUpload';
+import { uploadFileToMetaFsMultipart } from './metaFsMultipartUpload';
 import { getConfiguredTrafficApiBase, getConfiguredTrafficPinMode } from './trafficAccountService';
 import { getConfiguredTrafficFallbackPolicy } from './trafficAccountService';
 import { resolveMetaFileUploadSharedModulePath } from './metaFileUploadSharedResolver';
@@ -23,6 +24,7 @@ import { getMainWorkerCandidatePaths, resolveMainWorkerPath } from './workerPath
 function loadMetaFileUploadShared(): {
   DEFAULT_CHUNK_THRESHOLD_BYTES: number;
   DEFAULT_MAX_FILE_SIZE_BYTES: number;
+  buildChunkedMetaFilePath: (fileName: string) => string;
   inferContentTypeFromFilePath: (filePath: string) => string;
   normalizeRpcUploadResult: (payload: Record<string, unknown>) => Record<string, unknown>;
   normalizeUploadContentType: (contentType: string) => string;
@@ -45,6 +47,7 @@ function loadMetaFileUploadShared(): {
 const {
   DEFAULT_CHUNK_THRESHOLD_BYTES,
   DEFAULT_MAX_FILE_SIZE_BYTES,
+  buildChunkedMetaFilePath,
   inferContentTypeFromFilePath,
   normalizeRpcUploadResult,
   normalizeUploadContentType,
@@ -111,6 +114,7 @@ interface ChunkWorkerPayload {
   feeRate: number;
   maxSizeBytes: number;
   uploaderBaseUrl?: string;
+  storageKey?: string;
 }
 
 function getErrorMessage(err: unknown): string {
@@ -385,26 +389,6 @@ export async function uploadMetaFile(
     throw new Error('Large file upload currently supports MVC only.');
   }
 
-  if (getConfiguredTrafficPinMode() === 'traffic' && getConfiguredTrafficFallbackPolicy() === 'strict') {
-    const detail = '大于 5 MiB 的分片文件上传需要自付钱包 SPACE（外部 MetaFS 分片服务暂不支持积分代付），当前已开启「流量使用积分支付」且禁止静默扣钱包；请将文件压缩至 5 MiB 以内以使用积分，或关闭积分支付开关后重试。';
-    throw new TrafficInsufficientError({
-      reason: 'pre_rejected',
-      stage: 'address_info',
-      detail,
-      feeAssist: {
-        attempted: true,
-        used: false,
-        mode: 'mvc_sponsor_v2',
-        sponsor: 'mvc_sponsor_v2',
-        reason: 'pre_rejected',
-        stage: 'address_info',
-        billedBy: 'me',
-        txSize: size,
-        detail,
-      },
-    });
-  }
-
   const metabot = metabotStore.getMetabotById(params.metabotId);
   if (!metabot) {
     throw new Error(`MetaBot not found: ${params.metabotId}`);
@@ -421,35 +405,104 @@ export async function uploadMetaFile(
     throw new Error(`MetaBot ${params.metabotId} wallet not found`);
   }
 
-  const workerResult = await getMvcSpendCoordinator().runMvcSpendJob({
-    metabotId: params.metabotId,
-    action: `chunked_upload:${fileName}`,
-    execute: async () => runUploadLargeFileWorker(
-      {
-        filePath: resolvedFilePath,
+  const mvcAddress = metabot.mvc_address.trim();
+  const mnemonic = wallet.mnemonic.trim();
+  const walletPath = (wallet.path || DEFAULT_PATH).trim();
+  const globalMetaId = metabot.metaid.trim();
+  const feeRate = getGlobalFeeRate('mvc');
+  const maxSizeBytes = params.maxSizeBytes ?? DEFAULT_MAX_FILE_SIZE_BYTES;
+
+  const selfPaidChunked = async (
+    feeAssist?: MvcSponsorFeeAssistMetadata,
+    preUploadedStorageKey?: string,
+  ): Promise<Record<string, unknown>> => {
+    let storageKey = preUploadedStorageKey;
+    if (!storageKey && useData && dataBuffer) {
+      const multipart = await uploadFileToMetaFsMultipart({
+        data: dataBuffer,
         fileName,
         size,
-        contentType,
-        metaId: metabot.metaid.trim(),
-        address: metabot.mvc_address.trim(),
-        feeRate: getGlobalFeeRate('mvc'),
-        maxSizeBytes: params.maxSizeBytes ?? DEFAULT_MAX_FILE_SIZE_BYTES,
+        metaId: globalMetaId,
+        address: mvcAddress,
+        maxSizeBytes,
         uploaderBaseUrl: params.uploaderBaseUrl,
-      },
-      {
-        IDBOTS_METABOT_MNEMONIC: wallet.mnemonic.trim(),
-        IDBOTS_METABOT_PATH: (wallet.path || DEFAULT_PATH).trim(),
-      },
-    ),
-  });
+      });
+      storageKey = multipart.storageKey;
+    }
 
-  return attachVerificationIfRequested(
-    normalizeRpcUploadResult({
+    const workerResult = await getMvcSpendCoordinator().runMvcSpendJob({
+      metabotId: params.metabotId,
+      action: `chunked_upload:${fileName}`,
+      execute: async () => runUploadLargeFileWorker(
+        {
+          filePath: resolvedFilePath,
+          fileName,
+          size,
+          contentType,
+          metaId: globalMetaId,
+          address: mvcAddress,
+          feeRate,
+          maxSizeBytes,
+          uploaderBaseUrl: params.uploaderBaseUrl,
+          ...(storageKey ? { storageKey } : {}),
+        },
+        {
+          IDBOTS_METABOT_MNEMONIC: mnemonic,
+          IDBOTS_METABOT_PATH: walletPath,
+        },
+      ),
+    });
+
+    const normalized = normalizeRpcUploadResult({
       ...workerResult,
       network: 'mvc',
       txids: workerResult.txId ? [workerResult.txId] : [],
-      globalMetaId: metabot.metaid.trim(),
-    }),
-    params,
-  );
+      globalMetaId,
+    });
+    if (feeAssist) {
+      normalized.feeAssist = feeAssist;
+    }
+    return normalized;
+  };
+
+  const sponsorChunkedAllowed = getConfiguredTrafficPinMode() === 'traffic';
+  if (sponsorChunkedAllowed && isMvcSponsorUploadEnabled(metabotStore, params.metabotId)) {
+    const chunkedSponsorResult = await uploadMvcSponsorChunkedFile({
+      filePath: resolvedFilePath || undefined,
+      data: dataBuffer ?? undefined,
+      fileName,
+      uploadPath: buildChunkedMetaFilePath(fileName),
+      contentType,
+      bytes: size,
+      feeRate,
+      maxSizeBytes,
+      uploaderBaseUrl: params.uploaderBaseUrl,
+      mnemonic,
+      walletPath,
+      mvcAddress,
+      metaId: globalMetaId,
+      fallbackPolicy: getConfiguredTrafficFallbackPolicy(),
+      baseUrl: getConfiguredTrafficApiBase(),
+      selfPaidChunkedUpload: (feeAssist, storageKey) => selfPaidChunked(feeAssist, storageKey),
+    });
+    if (chunkedSponsorResult.feeAssist && typeof chunkedSponsorResult.feeAssist === 'object') {
+      const normalized = normalizeRpcUploadResult({
+        ...chunkedSponsorResult,
+        network: 'mvc',
+        globalMetaId,
+      });
+      normalized.feeAssist = chunkedSponsorResult.feeAssist;
+      return attachVerificationIfRequested(normalized, params);
+    }
+    return attachVerificationIfRequested(
+      normalizeRpcUploadResult({
+        ...chunkedSponsorResult,
+        network: 'mvc',
+        globalMetaId,
+      }),
+      params,
+    );
+  }
+
+  return attachVerificationIfRequested(await selfPaidChunked(), params);
 }
