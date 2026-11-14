@@ -98,6 +98,73 @@ function git(args) {
   return spawnSync('git', args, { cwd: PROJECT_ROOT, encoding: 'utf8' });
 }
 
+/**
+ * Manifest-vs-patch invariant (v1.1.0 retrospective, 2026-11-14): every
+ * manifest.json count must be at least the number of marker-bearing lines the
+ * patch itself ADDS. The patched file always contains every added occurrence,
+ * so a manifest count below the patch's own additions is a manifest bug that
+ * darwin-side verification can never see (platform-scoped entries are skipped
+ * on a non-matching platform) and that only the CI Windows packaged check
+ * would catch — after a tag. v1.1.0 shipped through exactly this: the
+ * win32-process manifest said 2 while its patch adds 3.
+ *
+ * A manifest count ABOVE the added lines is legitimate (the unpatched file may
+ * already contain the marker), so that case only logs an informational note.
+ * Returns the number of invariant failures added to the run.
+ */
+function checkManifestCountInvariant(patchFile, label) {
+  let failures = 0;
+  const manifestPath = path.join(PATCHES_DIR, 'manifest.json');
+  if (!fs.existsSync(manifestPath)) {
+    return 0; // completeness is verify-dsh-kernel-patches.cjs's job, not ours
+  }
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  const entries = Array.isArray(manifest) ? manifest : manifest.patches || [];
+  const entry = entries.find((candidate) => candidate.patch === label);
+  if (!entry) {
+    return 0; // missing manifest entry fails loudly in verify-dsh-kernel-patches.cjs
+  }
+  const patchLines = fs.readFileSync(patchFile, 'utf8').split('\n');
+  for (const target of entry.targets || []) {
+    const match = target.match;
+    if (!match) {
+      continue;
+    }
+    const expected = target.count;
+    if (typeof expected !== 'number') {
+      console.error(
+        `[dsh-kernel-patches] ${label}: manifest target ${target.file} "${match}" has no numeric count`,
+      );
+      failures += 1;
+      continue;
+    }
+    // Added content lines start with a single '+' — never the '+++' file header.
+    const added = patchLines.filter(
+      (line) => line.startsWith('+') && !line.startsWith('+++') && line.includes(match),
+    ).length;
+    if (added === 0) {
+      console.error(
+        `[dsh-kernel-patches] ${label}: manifest expects "${match}" in ${target.file} but the patch never adds it — the count cannot be satisfied`,
+      );
+      failures += 1;
+      continue;
+    }
+    if (expected < added) {
+      console.error(
+        `[dsh-kernel-patches] ${label}: manifest count ${expected} is below the ${added} "${match}" lines this patch adds to ${target.file} — the patched file must contain at least the added occurrences. Fix manifest.json; a drifted count only fails on the matching platform or in CI (v1.1.0 tag incident).`,
+      );
+      failures += 1;
+      continue;
+    }
+    if (expected > added) {
+      console.log(
+        `[dsh-kernel-patches] ${label}: manifest count ${expected} exceeds the ${added} added "${match}" lines — OK if the unpatched file already contains the marker; recheck when rebasing`,
+      );
+    }
+  }
+  return failures;
+}
+
 function main() {
   if (!fs.existsSync(PATCHES_DIR)) {
     console.log('[dsh-kernel-patches] no patches directory — nothing to do');
@@ -143,6 +210,11 @@ function main() {
       failures += 1;
       continue;
     }
+
+    // Platform-independent manifest sanity: runs on every platform on every
+    // gate pass, unlike the packaged-app fingerprint check that only exists
+    // for the matching platform in CI.
+    failures += checkManifestCountInvariant(path.join(PATCHES_DIR, patchFile), label);
 
     const patchPath = path.join(PATCHES_DIR, patchFile);
     const applyPath = lfNormalizedPatch(patchPath, label);
