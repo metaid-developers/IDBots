@@ -29,7 +29,7 @@ Measured on a real long-running production/dev `IDBots` data directory (`idbots.
 
 ---
 
-## 3. P1 Architecture & UI Optimization Plan (Active Implementation Scope)
+## 3. P1 Architecture & UI Optimizations (Completed & Merged into `main` at `22a5019db`)
 
 ### P1-1: Dedicated Off-Main-Thread SQLite Read Worker (`node:worker_threads` + WAL)
 - **Problem**: Even with indexes, running multi-table analytical queries (`collectDailyReportFacts`, archived-chat content search, cross-session conversation search) synchronously via `DatabaseSync` on Electron's main thread blocks IPC and window events whenever cold pages or large windows are scanned.
@@ -81,25 +81,35 @@ Measured on a real long-running production/dev `IDBots` data directory (`idbots.
 
 ---
 
-## 4. P2 Follow-Up Plan (Deferred for Separate Review & Backend Coordination)
+## 4. P2 Optimizations (P2-1 through P2-4 Implemented; P2-5 Deferred)
 
-### P2-1: Cerebellum JEV Relay Payload Cap, Circuit Breaker & Backend `/v1/systemone` Optimization
-- **Client side**:
-  - Cap total serialized candidate characters in `cerebellumTurnDecisions` (observed reaching **82.7 KB / 77 questions** in a single request, guaranteeing a 1,000ms race timeout).
-  - Add a short-lived latency circuit breaker (e.g., after 3 consecutive timeouts on `/v1/systemone`, bypass remote cerebellum calls for 2 minutes with 0ms local lexical fallback instead of paying a 1,000ms race wait on every turn).
-- **Backend (`/v1/systemone` & `assist-open-api`)**:
-  - Audit queueing/batching latency for >16 KB prompts; support compact score-only response framing and server-side early deadline cancellation when client disconnects at 1,500ms.
+### P2-1 (Implemented): Cerebellum (`/v1/systemone`) Bundle Budget, Effort Coalescing, Circuit Breaker & `assist-base-service` Relay Support
+- **Empirical baseline**: `cowork.log` recorded `1,309` `/v1/systemone` calls with a **47.3% timeout rate** and **83.8% (`356/425`) turn-race budget misses** (`1,000ms` dead first-token wait) caused by ~80.8 KB / 77-question merged bundles plus a second concurrent `effortSelector` request.
+- **Client (`IDBots` `852f5f655`)**:
+  - Unified per-turn candidate/character caps with lexical overlap pre-pruning (`<= 15` memories, `<= 12` knowledge items, `<= 18` skills, `<= 16` remote services; `remoteServiceShortlist` total cap `12,000` chars).
+  - Coalesced `effort_level` auto-effort classification into `turnDecisionBundle` so DSH turns issue a single `/v1/systemone` request.
+  - Added `X-Deadline-Ms` propagation, auto-negotiated `question_templates` (`templates-v1`) via `X-Jev-Capabilities`, and a 90s consecutive-timeout circuit breaker (`3` consecutive timeouts -> `0ms` fast local fallback).
+- **Backend (`assist-base-service` `b5ccc9b` on `feat/perf-jev-relay`)**:
+  - `ParseLlmJevSystemoneRequest` expands optional `question_templates` (`$tpl` + `{{INDEX}}`) in-memory before forwarding to TypeSafe JEV while keeping legacy requests verbatim.
+  - `LlmJevSystemone` enforces `X-Deadline-Ms` and client context cancellation before ME wallet freezes and between failover attempts, skipping false upstream key health penalties on client-side aborts.
 
-### P2-2: `ProviderDiscovery` Incremental / Conditional Sync (`ETag` / `since`)
-- **Backend (`idchat online-status` / discovery indexer)**:
-  - Add `If-None-Match` (`ETag` -> `304 Not Modified`), `since=<epochMs>` delta responses, and gzip/brotli compression so desktop clients stop timing out on full-directory fetches.
-- **Client side**:
-  - Persist last `ETag`/`since` cursor and skip renderer `providerDiscovery:changed` broadcasts when the snapshot hash has not changed.
+### P2-2 (Implemented): Async Batched `coworkLogger`, Log Deduplication & Dropping Redundant `cowork_messages` Prefix Indexes (`f92b5e111`)
+- Buffered `coworkLogger` writes asynchronously in Electron (`200ms` / `64 KB` batches + in-memory size rotation tracking + `process.once('exit')` synchronous flush), deduplicated `resolveNodeShim` PATH logs (previously `2,120` entries), and gated per-message `StudioLiveStage` dev `console.warn` spam (`10,514` lines) behind `IDBOTS_DEBUG_LIVE_STAGE=1`.
+- Dropped redundant left-prefix indexes `idx_cowork_messages_session_id` (**40.2 MB**) and `idx_cowork_messages_session_created_at` (**60.8 MB**) once composite window indexes exist, saving **~101 MB** and reducing per-message index write amplification, plus eliminating warm-boot no-op `saveDb()` calls.
 
-### P2-3: Automated Storage & Sidecar Retention Hygiene
-- **`dsh-skill-env/` GC**: Sweep `.env` files older than 7 days that do not belong to any active DSH session during the startup idle tier (cleans up the 4,802-file accumulation).
-- **SQLite Ledger Retention & Compression**:
-  - `metabot_prompt_layer_snapshots` (**144.3 MB for 670 rows**): deduplicate identical snapshots by SHA-256 content hash or retain only the last N snapshots per bot.
-  - `metaweb_surf_seen_pins` (**105k rows**): prune seen-pin markers older than 30–60 days during `MemoryHygieneService`.
-  - `dailyReportCollector`: replace `WHERE datetime(m.created_at) >= datetime(?)` with direct index-friendly range predicates on `private_chat_messages(created_at)` and `group_chat_messages(created_at)` (**4,500 ms -> < 5 ms**).
-  - Optional explicit user action in Settings ("Compact Database") to run `VACUUM` + `PRAGMA optimize` with progress UI after large archivals/deletions.
+### P2-3 (Implemented): Streaming Markdown Frozen-Prefix + Active-Tail Incremental Rendering (`7d8bd0140`)
+- Added `splitStreamingMarkdownBlocks` and `MemoizedMarkdownBlock` in `MarkdownContent.tsx` so live streaming replies freeze settled top-level paragraphs and closed code fences in `React.memo` and only re-parse the active trailing block on each frame (`O(L^2)` -> `O(1)` per frame), reverting seamlessly to a single tree once finalized.
+
+### P2-4 (Implemented): Snapshot Compression, Ledger Retention Hygiene, `dsh-skill-env` GC & Indexed Daily Report Scans (`ec4c1590f`)
+- Gzip-compressed `metabot_prompt_layer_snapshots.payload_json` (`gz:` prefix with transparent gunzip and `compactPromptLayerSnapshots()` background compaction, shrinking **144.3 MB -> ~10 MB** without losing rollback history).
+- Wired `MetawebSurfStore.pruneSeenPins` and `ChainContentHistoryStore.pruneOldChainReads` (90-day non-KB read retention) into `MemoryHygieneService`.
+- Added 7-day `pruneStaleDshSkillEnvFiles` cleanup during deferred startup maintenance (reclaiming 4,800+ orphaned `.env` sidecars while keeping `loader.sh` and active sessions).
+- Added B-tree range prefilters (`m.created_at >= ? AND m.created_at < ?`) ahead of `datetime(m.created_at)` predicates in `dailyReportCollector.ts` so `private_chat_messages` and `group_chat_messages` use `created_at` indexes.
+
+---
+
+## 5. Deferred Future Item (P2-5 — Not Scheduled Yet)
+
+### P2-5: `ProviderDiscovery` (`idchat online-status`) Conditional Sync (`ETag` / Snapshot Hash Diff) & Idle Window Backoff
+- **Backend (`idchat` `/group-chat/socket/online-status`)**: Investigate timeout slow queries, support `ETag` / `304 Not Modified`, and compress directory responses.
+- **Client**: Skip `ProviderDiscoveryService` listener/IPC broadcasts when the online-status snapshot fingerprint has not changed, and lengthen polling intervals while minimized with no active seller/delegation sessions.

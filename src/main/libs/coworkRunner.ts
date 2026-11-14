@@ -11611,9 +11611,9 @@ export class CoworkRunner extends EventEmitter {
       // human-sent messages rate the per-message JEV classification, where
       // conversational latency is the scarce resource.
       const unattendedTurn = this.isUnattendedAutomationSession(sessionId);
-      const wantAutoEffort = effectiveEffortRung == null && !unattendedTurn;
+      const canSelectAutoEffort = effectiveEffortRung == null && !unattendedTurn && this.cerebellumEffortSelector;
       let autoEffortPromise: Promise<Record<'off' | 'low' | 'high' | 'max', number> | null> | null = null;
-      if (wantAutoEffort && this.cerebellumTurnDecisions && prompt.trim()) {
+      if (canSelectAutoEffort && this.cerebellumTurnDecisions && prompt.trim()) {
         activeSession.needsBundledEffort = true;
         autoEffortPromise = new Promise((resolve) => {
           activeSession.bundledEffortResolver = resolve;
@@ -11621,8 +11621,8 @@ export class CoworkRunner extends EventEmitter {
       } else {
         activeSession.needsBundledEffort = false;
         activeSession.bundledEffortResolver = undefined;
-        autoEffortPromise = wantAutoEffort && this.cerebellumEffortSelector
-          ? this.cerebellumEffortSelector({ currentUserText: prompt })
+        autoEffortPromise = canSelectAutoEffort
+          ? this.cerebellumEffortSelector!({ currentUserText: prompt })
           : null;
       }
       // Volatile context (memory projections, time, browser tabs, remote
