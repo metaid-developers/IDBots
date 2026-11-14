@@ -1373,6 +1373,14 @@ export class SqliteStore {
         ON private_chat_messages(from_global_metaid, id);
     `);
     this.db.run(`
+      CREATE INDEX IF NOT EXISTS idx_private_chat_msg_created_at
+        ON private_chat_messages(created_at);
+    `);
+    this.db.run(`
+      CREATE INDEX IF NOT EXISTS idx_group_chat_msg_created_at
+        ON group_chat_messages(created_at);
+    `);
+    this.db.run(`
       CREATE TABLE IF NOT EXISTS protocol_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         pin_id TEXT UNIQUE NOT NULL,

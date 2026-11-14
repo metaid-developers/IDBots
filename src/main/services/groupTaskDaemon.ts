@@ -7773,7 +7773,8 @@ export function createGroupTaskDaemonLoop(deps: GroupTaskDaemonDeps): GroupTaskD
     const watcher = setInterval(() => {
       let status: string | null = null;
       try {
-        status = deps.getCoworkStore().getSession(sessionId)?.status ?? null;
+        const store = deps.getCoworkStore();
+        status = (store.getSessionWithoutMessages?.(sessionId) ?? store.getSession(sessionId))?.status ?? null;
       } catch {
         status = null;
       }
@@ -7983,7 +7984,8 @@ export function createGroupTaskDaemonLoop(deps: GroupTaskDaemonDeps): GroupTaskD
     {
       let sessionStatus: string | null = null;
       try {
-        sessionStatus = deps.getCoworkStore().getSession(sessionId)?.status ?? null;
+        const store = deps.getCoworkStore();
+        sessionStatus = (store.getSessionWithoutMessages?.(sessionId) ?? store.getSession(sessionId))?.status ?? null;
       } catch {
         sessionStatus = null;
       }
@@ -10932,7 +10934,9 @@ export function createGroupTaskDaemonLoop(deps: GroupTaskDaemonDeps): GroupTaskD
         let preempt = inFlight != null && inFlight.startedAt < openedAtMs;
         if (!preempt && inFlight == null && chairSessionId) {
           try {
-            preempt = deps.getCoworkStore().getSession(chairSessionId)?.status === 'running'
+            const coworkStore = deps.getCoworkStore();
+            const chairSession = coworkStore.getSessionWithoutMessages?.(chairSessionId) ?? coworkStore.getSession(chairSessionId);
+            preempt = chairSession?.status === 'running'
               || deps.isCoworkSessionActive?.(chairSessionId) === true;
           } catch {
             preempt = false; // best-effort read — retry next tick

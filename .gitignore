@@ -1029,3 +1029,9 @@ blob-report/
 !tests/a2aMessageSanitizer.test.mjs
 !tests/a2aPrivateChatCollaboration.test.mjs
 !tests/mvcSponsorChunkedUpload.test.mjs
+
+# Performance optimization regression tests (fix/perf-optimization)
+!tests/serviceOrderSessionEnrichmentPerf.test.mjs
+!tests/sqlitePerfOptimizations.test.mjs
+!tests/hotPathMetadataAndSkillCache.test.mjs
+!tests/settingsFirstClickAndStorePerf.test.mjs

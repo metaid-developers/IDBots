@@ -107,6 +107,13 @@ export interface ServiceOrderSessionSummary {
   refundTxid: string | null;
 }
 
+export interface ServiceOrderSessionLookup {
+  revision: number;
+  totalOrders: number;
+  latestBySessionId: ReadonlyMap<string, ServiceOrderRecord>;
+  ordersByLocalMetabotId: ReadonlyMap<number, readonly ServiceOrderRecord[]>;
+}
+
 export interface ServiceOrderProviderRefundRiskRecord {
   providerGlobalMetaId: string;
   oldestRefundRequestedAt: number;
@@ -292,6 +299,7 @@ export class ServiceOrderStore {
    * and run before the first read, so they deliberately do not count.
    */
   private ordersRevision = 0;
+  private cachedSessionLookup: ServiceOrderSessionLookup | null = null;
 
   constructor(db: Database, saveDb: () => void) {
     this.db = db;
@@ -437,6 +445,11 @@ export class ServiceOrderStore {
       CREATE INDEX IF NOT EXISTS idx_service_orders_order_pin_id
       ON service_orders(order_pin_id)
       WHERE order_pin_id IS NOT NULL AND trim(order_pin_id) <> '';
+    `);
+    this.db.run(`
+      CREATE INDEX IF NOT EXISTS idx_service_orders_cowork_session_updated
+      ON service_orders(cowork_session_id, updated_at DESC, created_at DESC)
+      WHERE cowork_session_id IS NOT NULL AND trim(cowork_session_id) <> '';
     `);
   }
 
@@ -893,38 +906,61 @@ export class ServiceOrderStore {
     `, [normalizedOrderPinId]).map((row) => this.mapRow(row));
   }
 
-  getSessionSummary(coworkSessionId: string): ServiceOrderSessionSummary | null {
-    const row = this.getOne<ServiceOrderRow>(`
+  getOrderSessionLookup(): ServiceOrderSessionLookup {
+    if (this.cachedSessionLookup && this.cachedSessionLookup.revision === this.ordersRevision) {
+      return this.cachedSessionLookup;
+    }
+
+    const rows = this.getAll<ServiceOrderRow>(`
       SELECT *
       FROM service_orders
-      WHERE cowork_session_id = ?
       ORDER BY updated_at DESC, created_at DESC
-      LIMIT 1
-    `, [coworkSessionId]);
-    if (!row) return null;
+    `);
+    const latestBySessionId = new Map<string, ServiceOrderRecord>();
+    const ordersByLocalMetabotId = new Map<number, ServiceOrderRecord[]>();
+
+    for (const row of rows) {
+      const record = this.mapRow(row);
+      if (row.cowork_session_id && !latestBySessionId.has(row.cowork_session_id)) {
+        latestBySessionId.set(row.cowork_session_id, record);
+      }
+      const list = ordersByLocalMetabotId.get(record.localMetabotId);
+      if (list) {
+        list.push(record);
+      } else {
+        ordersByLocalMetabotId.set(record.localMetabotId, [record]);
+      }
+    }
+
+    const lookup: ServiceOrderSessionLookup = {
+      revision: this.ordersRevision,
+      totalOrders: rows.length,
+      latestBySessionId,
+      ordersByLocalMetabotId,
+    };
+    this.cachedSessionLookup = lookup;
+    return lookup;
+  }
+
+  getSessionSummary(coworkSessionId: string): ServiceOrderSessionSummary | null {
+    const order = this.getOrderSessionLookup().latestBySessionId.get(coworkSessionId);
+    if (!order) return null;
 
     return {
-      role: row.role as ServiceOrderRole,
-      status: row.status as ServiceOrderStatus,
-      servicePinId: row.service_pin_id,
-      serviceName: row.service_name,
-      paymentTxid: row.payment_txid,
+      role: order.role,
+      status: order.status,
+      servicePinId: order.servicePinId,
+      serviceName: order.serviceName,
+      paymentTxid: order.paymentTxid,
       outputType: null,
-      failureReason: row.failure_reason,
-      refundRequestPinId: row.refund_request_pin_id,
-      refundTxid: row.refund_txid,
+      failureReason: order.failureReason,
+      refundRequestPinId: order.refundRequestPinId,
+      refundTxid: order.refundTxid,
     };
   }
 
   findLatestOrderBySessionId(coworkSessionId: string): ServiceOrderRecord | null {
-    const row = this.getOne<ServiceOrderRow>(`
-      SELECT *
-      FROM service_orders
-      WHERE cowork_session_id = ?
-      ORDER BY updated_at DESC, created_at DESC
-      LIMIT 1
-    `, [coworkSessionId]);
-    return row ? this.mapRow(row) : null;
+    return this.getOrderSessionLookup().latestBySessionId.get(coworkSessionId) ?? null;
   }
 
   listOrdersByStatuses(

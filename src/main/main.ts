@@ -5393,7 +5393,7 @@ const startStartupMessageTier = (): void => {
       // Run inside the guest session's own per-bot workspace instead of the
       // shared skills root: generated files stay isolated per session, and the
       // deliverable collection allowlists exactly this directory.
-      const sessionCwd = (getCoworkStore().getSession(params.sessionId)?.cwd ?? '').trim();
+      const sessionCwd = (getCoworkStore().getSessionWithoutMessages(params.sessionId)?.cwd ?? '').trim();
       const roots = skillMgr.getAllSkillRoots();
       const cwd = sessionCwd || (roots.length > 0 ? roots[roots.length - 1]! : skillMgr.getSkillsRoot());
       const result = await runSkillTurnInExistingSession(getCoworkRunner(), getCoworkStore(), {
@@ -7205,7 +7205,7 @@ const getCoworkRunner = () => {
       mcpServerProvider: (coworkSessionId: string) => {
         // REQ-A-5: local MCP servers are disabled in server mode.
         if (isServerMode()) return [];
-        const metabotId = getCoworkStore().getSession(coworkSessionId)?.metabotId;
+        const metabotId = getCoworkStore().getSessionMetabotId(coworkSessionId);
         if (!isCoworkMcpMountEnabled(getMetabotStore(), metabotId)) return [];
         return getMcpStore().getEnabledServers();
       },
@@ -7217,7 +7217,7 @@ const getCoworkRunner = () => {
       // installed Chrome over a Playwright-managed download. See
       // services/coworkAutomationPreference.ts.
       browserAutomationProvider: (coworkSessionId: string) => {
-        const metabotId = getCoworkStore().getSession(coworkSessionId)?.metabotId;
+        const metabotId = getCoworkStore().getSessionMetabotId(coworkSessionId);
         return metabotAutomationProviders.browser(metabotId ?? null);
       },
       // Per-bot switch (default OFF since 2026-11-12, explicit '1' opts in):
@@ -7225,7 +7225,7 @@ const getCoworkRunner = () => {
       // in-process). Requires the app to hold the macOS Accessibility/Screen
       // Recording grants — the OS prompts on first use.
       computerUseProvider: (coworkSessionId: string) => {
-        const metabotId = getCoworkStore().getSession(coworkSessionId)?.metabotId;
+        const metabotId = getCoworkStore().getSessionMetabotId(coworkSessionId);
         return metabotAutomationProviders.computer(metabotId ?? null);
       },
       // Metabot-keyed variants for intent prewarms that fire before any
@@ -9124,7 +9124,7 @@ const getBotBrowserProjection = () =>
       // session's last real showcase page, never the stage entry URI.
       if (role === 'stage') return;
       const store = getCoworkStore();
-      if (store.getSession(sessionId)?.sessionType !== 'browser') return;
+      if (store.getSessionWithoutMessages(sessionId)?.sessionType !== 'browser') return;
       store.updateSession(sessionId, { browserUri: uri, browserTitle: title });
     },
   });
@@ -9136,7 +9136,7 @@ const studioDelegationLookupDeps = {
   listAttemptsForSourceSessions: (ids: string[]) => getOrchestrationStore().listAttemptsForSourceSessions(ids),
   getStep: (id: string) => getOrchestrationStore().getStep(id),
   getTaskForStep: (id: string) => getOrchestrationStore().getTaskForStep(id),
-  getSession: (id: string) => getCoworkStore().getSession(id),
+  getSession: (id: string) => getCoworkStore().getSessionWithoutMessages(id),
   getMetabotById: (id: number) => getMetabotStore().getMetabotById(id),
 };
 const listOpenStudioDelegations = (sessionId: string) => listStudioOpenDelegations(studioDelegationLookupDeps, sessionId);
@@ -9160,7 +9160,8 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
   if (!studioLiveStageService) {
     const fallbackAvatarPath = path.join(app.getAppPath(), app.isPackaged ? 'dist/default_metabot.png' : 'public/default_metabot.png');
     studioLiveStageService = createStudioLiveStageService({
-      getSession: (sessionId) => getCoworkStore().getSession(sessionId),
+      getSession: (sessionId) => getCoworkStore().getSessionWithoutMessages(sessionId),
+      hasMultipleUserMessages: (sessionId) => getCoworkStore().hasMultipleUserMessages(sessionId),
       getMetabotById: (id) => getMetabotStore().getMetabotById(id),
       listOpenDelegations: listOpenStudioDelegations,
       getSettings: () => readStudioLiveStageSettings(getStoreOrNull()),
@@ -11133,11 +11134,106 @@ const syncServiceRefundProtocols = async (): Promise<void> => {
   }
 };
 
-const enrichCoworkSessionWithServiceOrderSummary = <T extends { id: string }>(
+type CachedSessionOrderFacts = {
+  updatedAt: number;
+  orderMessages?: CoworkMessage[];
+  linkageChecked?: boolean;
+  orderPinId?: string | null;
+  paymentTxid?: string | null;
+};
+
+const SESSION_ORDER_FACTS_CACHE_MAX = 4096;
+const sessionOrderFactsCache = new Map<string, CachedSessionOrderFacts>();
+
+const getOrCreateSessionOrderFactsEntry = (
+  sessionId: string,
+  updatedAt: number,
+): CachedSessionOrderFacts => {
+  const existing = sessionOrderFactsCache.get(sessionId);
+  if (existing && existing.updatedAt === updatedAt) {
+    return existing;
+  }
+  if (!existing && sessionOrderFactsCache.size >= SESSION_ORDER_FACTS_CACHE_MAX) {
+    const oldestKey = sessionOrderFactsCache.keys().next().value;
+    if (oldestKey !== undefined) {
+      sessionOrderFactsCache.delete(oldestKey);
+    }
+  }
+  const fresh: CachedSessionOrderFacts = { updatedAt };
+  sessionOrderFactsCache.set(sessionId, fresh);
+  return fresh;
+};
+
+const readCachedSessionOrderHeaderMessages = (
+  sessionId: string,
+  updatedAt?: number | null,
+): CoworkMessage[] => {
+  if (typeof updatedAt === 'number' && Number.isFinite(updatedAt) && updatedAt > 0) {
+    const entry = getOrCreateSessionOrderFactsEntry(sessionId, updatedAt);
+    if (!entry.orderMessages) {
+      entry.orderMessages = getCoworkStore().getSessionOrderHeaderMessages(sessionId);
+    }
+    return entry.orderMessages;
+  }
+  return getCoworkStore().getSessionOrderHeaderMessages(sessionId);
+};
+
+const readCachedSessionOrderLinkageIds = (
+  sessionId: string,
+  updatedAt?: number | null,
+): { orderPinId: string | null; paymentTxid: string | null } => {
+  if (typeof updatedAt === 'number' && Number.isFinite(updatedAt) && updatedAt > 0) {
+    const entry = getOrCreateSessionOrderFactsEntry(sessionId, updatedAt);
+    if (!entry.linkageChecked) {
+      const linkageMessages = getCoworkStore().getSessionOrderLinkageMessages(sessionId);
+      entry.orderPinId = extractSessionOrderPinId(linkageMessages);
+      entry.paymentTxid = extractSessionOrderTxid(linkageMessages);
+      entry.linkageChecked = true;
+    }
+    return {
+      orderPinId: entry.orderPinId ?? null,
+      paymentTxid: entry.paymentTxid ?? null,
+    };
+  }
+  const linkageMessages = getCoworkStore().getSessionOrderLinkageMessages(sessionId);
+  return {
+    orderPinId: extractSessionOrderPinId(linkageMessages),
+    paymentTxid: extractSessionOrderTxid(linkageMessages),
+  };
+};
+
+type SessionOrderResolutionHint = {
+  metabotId?: number | null;
+  sessionType?: string | null;
+  peerGlobalMetaId?: string | null;
+  updatedAt?: number | null;
+  orderMessages?: CoworkMessage[];
+};
+
+const enrichCoworkSessionWithServiceOrderSummary = <T extends {
+  id: string;
+  metabotId?: number | null;
+  sessionType?: string | null;
+  peerGlobalMetaId?: string | null;
+  updatedAt?: number | null;
+  messages?: CoworkMessage[];
+}>(
   session: T | null
 ): (T & { serviceOrderSummary?: ReturnType<ServiceOrderStore['getSessionSummary']> }) | null => {
   if (!session) return null;
-  const serviceOrderSummary = getServiceOrderSummaryForSession(session.id);
+  const orderMessages = Array.isArray(session.messages)
+    ? session.messages.filter((item) => (
+      typeof item.content === 'string'
+      && item.content.trim().toUpperCase().startsWith('[ORDER]')
+    ))
+    : undefined;
+  const serviceOrderSummary = getServiceOrderSummaryForSession(session.id, {
+    metabotId: session.metabotId,
+    sessionType: session.sessionType,
+    peerGlobalMetaId: session.peerGlobalMetaId,
+    updatedAt: Array.isArray(session.messages) ? session.updatedAt : undefined,
+    orderMessages: orderMessages && orderMessages.length > 0 ? orderMessages : undefined,
+  });
   if (!serviceOrderSummary) {
     return session;
   }
@@ -11145,6 +11241,72 @@ const enrichCoworkSessionWithServiceOrderSummary = <T extends { id: string }>(
     ...session,
     serviceOrderSummary,
   };
+};
+
+const enrichCoworkSessionsWithServiceOrderSummaries = <T extends {
+  id: string;
+  metabotId?: number | null;
+  sessionType?: string | null;
+  updatedAt?: number | null;
+}>(
+  sessions: T[]
+): Array<T & { serviceOrderSummary?: ReturnType<ServiceOrderStore['getSessionSummary']> }> => {
+  if (sessions.length === 0) return [];
+  const lookup = getServiceOrderStore().getOrderSessionLookup();
+  if (lookup.totalOrders === 0) {
+    return sessions;
+  }
+
+  let identities: Map<string, { peerGlobalMetaId: string | null; updatedAt: number }> | null = null;
+  const getIdentities = () => {
+    if (!identities) {
+      identities = readOrderResolutionSessionIdentities();
+    }
+    return identities;
+  };
+
+  return sessions.map((session) => {
+    const directOrder = lookup.latestBySessionId.get(session.id);
+    if (directOrder) {
+      const identity = getIdentities().get(session.id);
+      const summary = buildServiceOrderSummaryFromRecord(directOrder);
+      const outputType = summary.outputType || resolveSessionServiceOrderOutputType(
+        session.id,
+        directOrder,
+        { updatedAt: identity?.updatedAt ?? null },
+      );
+      return {
+        ...session,
+        serviceOrderSummary: {
+          ...summary,
+          outputType,
+        },
+      };
+    }
+
+    const sessionType = toSafeString(session.sessionType).trim();
+    if (sessionType && sessionType !== 'a2a' && sessionType !== 'agent_agent') {
+      return session;
+    }
+    if (session.metabotId == null || !lookup.ordersByLocalMetabotId.has(session.metabotId)) {
+      return session;
+    }
+
+    const identity = getIdentities().get(session.id);
+    const serviceOrderSummary = getServiceOrderSummaryForSession(session.id, {
+      metabotId: session.metabotId,
+      sessionType: session.sessionType ?? 'a2a',
+      peerGlobalMetaId: identity?.peerGlobalMetaId ?? null,
+      updatedAt: identity?.updatedAt ?? null,
+    });
+    if (!serviceOrderSummary) {
+      return session;
+    }
+    return {
+      ...session,
+      serviceOrderSummary,
+    };
+  });
 };
 
 const buildServiceOrderSummaryFromRecord = (
@@ -11161,20 +11323,50 @@ const buildServiceOrderSummaryFromRecord = (
   refundTxid: order.refundTxid,
 });
 
-const resolveServiceOrderForSession = (sessionId: string): ServiceOrderRecord | null => {
+const resolveServiceOrderForSession = (
+  sessionId: string,
+  hint?: SessionOrderResolutionHint,
+): ServiceOrderRecord | null => {
   const orderStore = getServiceOrderStore();
   const directMatch = orderStore.findLatestOrderBySessionId(sessionId);
   if (directMatch) {
     return directMatch;
   }
 
-  const session = getCoworkStore().getSession(sessionId);
-  if (!session || session.metabotId == null) {
+  const lookup = orderStore.getOrderSessionLookup();
+  if (lookup.totalOrders === 0) {
     return null;
   }
 
-  const orderPinId = extractSessionOrderPinId(session.messages);
-  const paymentTxid = extractSessionOrderTxid(session.messages);
+  const sessionHeader = (
+    hint && hint.metabotId !== undefined && hint.peerGlobalMetaId !== undefined
+  )
+    ? hint
+    : getCoworkStore().getSessionWithoutMessages(sessionId);
+  if (!sessionHeader || sessionHeader.metabotId == null) {
+    return null;
+  }
+
+  const normalizedType = toSafeString(sessionHeader.sessionType).trim();
+  if (normalizedType && normalizedType !== 'a2a' && normalizedType !== 'agent_agent') {
+    return null;
+  }
+
+  const botOrders = lookup.ordersByLocalMetabotId.get(sessionHeader.metabotId);
+  if (!botOrders || botOrders.length === 0) {
+    return null;
+  }
+  if (
+    sessionHeader.peerGlobalMetaId
+    && !botOrders.some((candidate) => candidate.counterpartyGlobalMetaid === sessionHeader.peerGlobalMetaId)
+  ) {
+    return null;
+  }
+
+  const { orderPinId, paymentTxid } = readCachedSessionOrderLinkageIds(
+    sessionId,
+    sessionHeader.updatedAt ?? null,
+  );
   if (!orderPinId && !paymentTxid) {
     return null;
   }
@@ -11184,10 +11376,10 @@ const resolveServiceOrderForSession = (sessionId: string): ServiceOrderRecord | 
     : orderStore.listOrdersByPaymentTxid(paymentTxid);
   const matched = candidates
     .find((candidate) => (
-      candidate.localMetabotId === session.metabotId
+      candidate.localMetabotId === sessionHeader.metabotId
       && (
-        !session.peerGlobalMetaId
-        || candidate.counterpartyGlobalMetaid === session.peerGlobalMetaId
+        !sessionHeader.peerGlobalMetaId
+        || candidate.counterpartyGlobalMetaid === sessionHeader.peerGlobalMetaId
       )
     ));
   if (!matched) {
@@ -11230,7 +11422,7 @@ const resolveServiceOrderForSessionAndOrderTxid = (
     return resolveServiceOrderForSession(sessionId);
   }
 
-  const session = getCoworkStore().getSession(sessionId);
+  const session = getCoworkStore().getSessionWithoutMessages(sessionId);
   if (!session || session.metabotId == null) {
     return null;
   }
@@ -11254,21 +11446,17 @@ const resolveServiceOrderForSessionAndOrderTxid = (
     return directMatch;
   }
 
-  const sessionMatch = resolveServiceOrderForSession(sessionId);
+  const sessionMatch = resolveServiceOrderForSession(sessionId, session);
   if (sessionMatch?.role === 'seller' && normalizeA2AOrderTxid(sessionMatch.orderMessageTxid) === normalizedOrderTxid) {
     return sessionMatch;
   }
   return null;
 };
 
-const resolveSessionOrderPayload = (
-  session: NonNullable<ReturnType<CoworkStore['getSession']>> | null,
+const resolveSessionOrderPayloadFromMessages = (
+  orderMessages: CoworkMessage[],
   orderTxid?: string | null,
 ): string => {
-  const orderMessages = session?.messages.filter((item) => (
-    typeof item.content === 'string'
-    && item.content.trim().toUpperCase().startsWith('[ORDER]')
-  )) ?? [];
   const normalizedOrderTxid = normalizeA2AOrderTxid(orderTxid);
   const message = normalizedOrderTxid
     ? orderMessages.find((item) => getCoworkMessageOrderTxid(item) === normalizedOrderTxid)
@@ -11277,10 +11465,23 @@ const resolveSessionOrderPayload = (
 };
 
 const resolveSessionServiceOrderOutputType = (
-  session: NonNullable<ReturnType<CoworkStore['getSession']>> | null,
+  sessionOrId: string | NonNullable<ReturnType<CoworkStore['getSession']>> | null,
   order?: ServiceOrderRecord | null,
+  hint?: SessionOrderResolutionHint,
 ): string | null => {
-  const orderPayload = resolveSessionOrderPayload(session, order?.orderMessageTxid ?? null);
+  let orderMessages: CoworkMessage[];
+  if (!sessionOrId) {
+    orderMessages = [];
+  } else if (typeof sessionOrId === 'string') {
+    orderMessages = hint?.orderMessages
+      ?? readCachedSessionOrderHeaderMessages(sessionOrId, hint?.updatedAt ?? null);
+  } else {
+    orderMessages = sessionOrId.messages.filter((item) => (
+      typeof item.content === 'string'
+      && item.content.trim().toUpperCase().startsWith('[ORDER]')
+    ));
+  }
+  const orderPayload = resolveSessionOrderPayloadFromMessages(orderMessages, order?.orderMessageTxid ?? null);
   const explicit = normalizeOrderOutputType(extractOrderOutputType(orderPayload) || '');
   if (explicit) {
     return explicit;
@@ -11407,24 +11608,24 @@ const resolveCoworkSessionIdForOrder = (
 };
 
 const getServiceOrderSummaryForSession = (
-  sessionId: string
+  sessionId: string,
+  hint?: SessionOrderResolutionHint,
 ): ReturnType<ServiceOrderStore['getSessionSummary']> | null => {
-  const session = getCoworkStore().getSession(sessionId);
-  const directSummary = getServiceOrderStore().getSessionSummary(sessionId);
-  if (directSummary) {
-    const order = resolveServiceOrderForSession(sessionId);
+  const directOrder = getServiceOrderStore().findLatestOrderBySessionId(sessionId);
+  if (directOrder) {
+    const directSummary = buildServiceOrderSummaryFromRecord(directOrder);
     return {
       ...directSummary,
-      outputType: directSummary.outputType || resolveSessionServiceOrderOutputType(session, order),
+      outputType: directSummary.outputType || resolveSessionServiceOrderOutputType(sessionId, directOrder, hint),
     };
   }
-  const resolvedOrder = resolveServiceOrderForSession(sessionId);
+  const resolvedOrder = resolveServiceOrderForSession(sessionId, hint);
   if (!resolvedOrder) {
     return null;
   }
   return {
     ...buildServiceOrderSummaryFromRecord(resolvedOrder),
-    outputType: resolveSessionServiceOrderOutputType(session, resolvedOrder),
+    outputType: resolveSessionServiceOrderOutputType(sessionId, resolvedOrder, hint),
   };
 };
 
@@ -14816,8 +15017,8 @@ if (!gotTheLock) {
     return withSqliteRecovery('cowork:session:list', async () => {
       try {
         repairSelfDirectedServiceOrders();
-        const sessions = getCoworkStore().listSessions(options).map((session) =>
-          enrichCoworkSessionWithServiceOrderSummary(session)
+        const sessions = enrichCoworkSessionsWithServiceOrderSummaries(
+          getCoworkStore().listSessions(options)
         );
         return { success: true, sessions };
       } catch (error) {
@@ -20681,6 +20882,7 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
         ? {
             titleBarStyle: 'hiddenInset' as const,
             trafficLightPosition: { x: 12, y: 20 },
+            acceptFirstMouse: true,
           }
         : isWindows
           ? {

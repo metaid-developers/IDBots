@@ -2203,7 +2203,18 @@ export class SkillManager {
     }, WATCH_DEBOUNCE_MS);
   }
 
+  private parsedSkillFileCache = new Map<string, {
+    mtimeMs: number;
+    ctimeMs: number;
+    size: number;
+    name: string;
+    description: string;
+    isOfficial: boolean;
+    prompt: string;
+  }>();
+
   private notifySkillsChanged(): void {
+    this.parsedSkillFileCache.clear();
     broadcastToRenderers('skills:changed');
   }
 
@@ -2214,20 +2225,54 @@ export class SkillManager {
     isBuiltIn: boolean
   ): SkillRecord | null {
     const skillFile = path.join(dir, SKILL_FILE_NAME);
-    if (!fs.existsSync(skillFile)) return null;
     try {
-      const raw = fs.readFileSync(skillFile, 'utf8');
-      const { frontmatter, content } = parseFrontmatter(raw);
-      const name = (String(frontmatter.name || '') || path.basename(dir)).trim() || path.basename(dir);
-      const description = (String(frontmatter.description || '') || extractDescription(content) || name).trim();
-      const isOfficial = isTruthy(frontmatter.official) || isTruthy(frontmatter.isOfficial);
-      const updatedAt = fs.statSync(skillFile).mtimeMs;
+      const stat = fs.statSync(skillFile);
+      if (!stat.isFile()) return null;
       const id = path.basename(dir);
-      const prompt = content.trim();
+      const cached = this.parsedSkillFileCache.get(skillFile);
+      let name: string;
+      let description: string;
+      let isOfficial: boolean;
+      let prompt: string;
+      if (
+        cached
+        && cached.mtimeMs === stat.mtimeMs
+        && cached.ctimeMs === stat.ctimeMs
+        && cached.size === stat.size
+      ) {
+        name = cached.name;
+        description = cached.description;
+        isOfficial = cached.isOfficial;
+        prompt = cached.prompt;
+      } else {
+        const raw = fs.readFileSync(skillFile, 'utf8');
+        const { frontmatter, content } = parseFrontmatter(raw);
+        name = (String(frontmatter.name || '') || id).trim() || id;
+        description = (String(frontmatter.description || '') || extractDescription(content) || name).trim();
+        isOfficial = isTruthy(frontmatter.official) || isTruthy(frontmatter.isOfficial);
+        prompt = content.trim();
+        if (this.parsedSkillFileCache.size >= 2048) {
+          const oldest = this.parsedSkillFileCache.keys().next().value;
+          if (oldest !== undefined) this.parsedSkillFileCache.delete(oldest);
+        }
+        this.parsedSkillFileCache.set(skillFile, {
+          mtimeMs: stat.mtimeMs,
+          ctimeMs: stat.ctimeMs,
+          size: stat.size,
+          name,
+          description,
+          isOfficial,
+          prompt,
+        });
+      }
       const defaultEnabled = defaults[id]?.enabled ?? true;
       const enabled = state[id]?.enabled ?? defaultEnabled;
-      return { id, name, description, enabled, isOfficial, isBuiltIn, updatedAt, prompt, skillPath: skillFile };
+      return { id, name, description, enabled, isOfficial, isBuiltIn, updatedAt: stat.mtimeMs, prompt, skillPath: skillFile };
     } catch (error) {
+      if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') {
+        this.parsedSkillFileCache.delete(skillFile);
+        return null;
+      }
       console.warn('[skills] Failed to parse skill:', dir, error);
       return null;
     }

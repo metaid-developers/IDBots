@@ -48,8 +48,13 @@ const rowsToExecResult = (
   }];
 };
 
+const MAX_CACHED_STATEMENTS = 128;
+const CACHEABLE_SQL_RE = /^\s*(?:WITH|SELECT|INSERT|UPDATE|DELETE)\b/iu;
+const SCHEMA_MUTATION_SQL_RE = /^\s*(?:CREATE|ALTER|DROP|VACUUM|ATTACH|DETACH)\b/iu;
+
 export class NativeSqliteDatabase implements SqliteDatabase {
   private readonly db: NativeDatabaseSync;
+  private readonly statementCache = new Map<string, NativeStatementSync>();
   private rowsModified = 0;
   private closed = false;
 
@@ -69,34 +74,78 @@ export class NativeSqliteDatabase implements SqliteDatabase {
     this.db.exec('PRAGMA busy_timeout = 5000;');
     try {
       this.db.exec('PRAGMA journal_mode = WAL;');
+      this.db.exec('PRAGMA synchronous = NORMAL;');
     } catch {
       // WAL unavailable (read-only media, exotic filesystems): degrade to the
       // default rollback journal; busy_timeout above still serializes writers.
     }
+    try {
+      this.db.exec('PRAGMA temp_store = MEMORY;');
+      this.db.exec('PRAGMA cache_size = -32000;');
+    } catch {
+      // Optional memory-backed temp B-trees and 32 MiB page cache; ignore if unsupported.
+    }
+  }
+
+  private getPreparedStatement(sql: string): { statement: NativeStatementSync; cached: boolean } {
+    if (SCHEMA_MUTATION_SQL_RE.test(sql)) {
+      this.statementCache.clear();
+    }
+    if (!CACHEABLE_SQL_RE.test(sql)) {
+      return { statement: this.db.prepare(sql), cached: false };
+    }
+    const existing = this.statementCache.get(sql);
+    if (existing) {
+      this.statementCache.delete(sql);
+      this.statementCache.set(sql, existing);
+      return { statement: existing, cached: true };
+    }
+    const statement = this.db.prepare(sql);
+    if (hasUnpreparedTrailingSql(sql, statement)) {
+      return { statement, cached: false };
+    }
+    if (this.statementCache.size >= MAX_CACHED_STATEMENTS) {
+      const oldestKey = this.statementCache.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.statementCache.delete(oldestKey);
+      }
+    }
+    this.statementCache.set(sql, statement);
+    return { statement, cached: true };
   }
 
   exec(sql: string, params: unknown[] = []): SqliteExecResult[] {
     this.assertOpen();
-    const statement = this.db.prepare(sql);
-    if (params.length === 0 && hasUnpreparedTrailingSql(sql, statement)) {
+    const { statement, cached } = this.getPreparedStatement(sql);
+    if (!cached && params.length === 0 && hasUnpreparedTrailingSql(sql, statement)) {
       this.db.exec(sql);
       return [];
     }
-    return rowsToExecResult(statement, statement.all(...params));
+    try {
+      return rowsToExecResult(statement, statement.all(...params));
+    } catch (error) {
+      this.statementCache.delete(sql);
+      throw error;
+    }
   }
 
   run(sql: string, params: unknown[] = []): unknown {
     this.assertOpen();
-    const statement = this.db.prepare(sql);
-    if (params.length === 0 && hasUnpreparedTrailingSql(sql, statement)) {
+    const { statement, cached } = this.getPreparedStatement(sql);
+    if (!cached && params.length === 0 && hasUnpreparedTrailingSql(sql, statement)) {
       this.db.exec(sql);
       this.rowsModified = 0;
       return undefined;
     }
 
-    const result = statement.run(...params);
-    this.rowsModified = toSafeNumber(result.changes);
-    return result;
+    try {
+      const result = statement.run(...params);
+      this.rowsModified = toSafeNumber(result.changes);
+      return result;
+    } catch (error) {
+      this.statementCache.delete(sql);
+      throw error;
+    }
   }
 
   getRowsModified(): number {
@@ -105,6 +154,7 @@ export class NativeSqliteDatabase implements SqliteDatabase {
 
   close(): void {
     if (this.closed) return;
+    this.statementCache.clear();
     // Fold any WAL frames back into the main database file so a later
     // main-file-only reader (e.g. the sql.js fallback backend) sees the full
     // contents after a clean shutdown. Best-effort: a concurrent writer can

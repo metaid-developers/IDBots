@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { Suspense, useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { configService, mergeProvidersConfig } from '../services/config';
 import { apiService } from '../services/api';
 import { buildOpenCodeGoSessionHeaders } from '../services/opencodeGatewayHeaders';
@@ -33,15 +33,16 @@ import { groupTaskService } from '../services/groupTaskService';
 import { effectiveMaxOutputForWindow, formatContextWindowSize, NEW_MODEL_DEFAULT_MAX_OUTPUT_TOKENS, parseContextWindowSizeInput } from '../utils/contextWindowSize';
 import { groupTaskStatusBadgeClass } from './groupTasks/groupTaskUtils';
 import { groupTaskStatusLabelKey } from './groupTasks/GroupTasksView';
-import IMSettings from './im/IMSettings';
-import EmailSkillConfig from './skills/EmailSkillConfig';
-import MemorySettings from './settings/MemorySettings';
-import SkillMcpManager from './skills/SkillMcpManager';
-import ProjectsManager from './projects/ProjectsManager';
 import IdbotsPlanCard from './me/IdbotsPlanCard';
 import MeIncrementPackCard from './me/MeIncrementPackCard';
-import MeUsageAndCredits from './me/MeUsageAndCredits';
-import TrafficSettings from './traffic/TrafficSettings';
+
+const IMSettings = React.lazy(() => import('./im/IMSettings'));
+const EmailSkillConfig = React.lazy(() => import('./skills/EmailSkillConfig'));
+const MemorySettings = React.lazy(() => import('./settings/MemorySettings'));
+const SkillMcpManager = React.lazy(() => import('./skills/SkillMcpManager'));
+const ProjectsManager = React.lazy(() => import('./projects/ProjectsManager'));
+const MeUsageAndCredits = React.lazy(() => import('./me/MeUsageAndCredits'));
+const TrafficSettings = React.lazy(() => import('./traffic/TrafficSettings'));
 import { findMeRateForModel } from './me/meRates';
 import { ensureMeSnapshot, getMeSnapshot, subscribeMeSnapshot } from './me/mePointsStore';
 import { defaultConfig, type AppConfig } from '../config';
@@ -3863,7 +3864,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
 
   return (
     <div
-      className="fixed inset-0 z-50 modal-backdrop flex items-center justify-center"
+      className="non-draggable fixed inset-0 z-50 modal-backdrop flex items-center justify-center"
       onClick={onClose}
     >
       <div
@@ -3936,7 +3937,15 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
               ref={contentRef}
               className="px-6 py-4 flex-1 overflow-y-auto"
             >
-              {renderTabContent()}
+              <Suspense
+                fallback={
+                  <div className="py-8 text-center text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    {i18nService.t('loading')}
+                  </div>
+                }
+              >
+                {renderTabContent()}
+              </Suspense>
             </div>
 
             {/* Footer buttons */}
