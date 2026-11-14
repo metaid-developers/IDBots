@@ -5916,13 +5916,27 @@ const startStartupNightlyServices = (): void => {
     experimentalAutomationStore: getStore(),
     backgroundDeferral: resolveBackgroundAutomationDeferral,
     isExperimentalAutomationAllowed,
-    collectFacts: ({ windowStartMs, windowEndMs, twinId }) =>
-      collectDailyReportFacts({
+    collectFacts: async ({ windowStartMs, windowEndMs, twinId }) => {
+      const readWorker = getStore().getReadWorker();
+      if (readWorker) {
+        try {
+          const workerFacts = await readWorker.collectDailyReportFacts({
+            windowStartMs,
+            windowEndMs,
+            twinId,
+          });
+          if (workerFacts) return workerFacts;
+        } catch (error) {
+          console.warn('[DailyReport] Read-worker collection degraded to main thread:', error);
+        }
+      }
+      return collectDailyReportFacts({
         db: createDailyReportDbAccessor(getStore().getDatabase()),
         windowStartMs,
         windowEndMs,
         twinId,
-      }),
+      });
+    },
     triageCandidates: createDailyReportTriageGate(),
     resolveBrain: () => resolveSystemBrainOptions(getMetabotStore().listMetabots()),
     performChat: performChatCompletionForOrchestrator,
@@ -14537,8 +14551,10 @@ if (!gotTheLock) {
     return withSqliteRecovery('cowork:session:listArchived', async () => {
       try {
         const coworkStoreInstance = getCoworkStore();
-        const sessions = coworkStoreInstance.listArchivedSessions(options);
-        const total = coworkStoreInstance.countArchivedSessions(options);
+        const { sessions, total } = await coworkStoreInstance.listArchivedSessionsPageAsync(
+          options,
+          getStore().getReadWorker(),
+        );
         return { success: true, sessions, total };
       } catch (error) {
         if (isSqliteWasmBoundsError(error)) throw error;

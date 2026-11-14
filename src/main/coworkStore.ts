@@ -4,6 +4,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import type { SqliteDatabase as Database } from './sqliteTypes';
+import type { SqliteReadWorkerLike } from './sqliteReadWorker';
 import { v4 as uuidv4 } from 'uuid';
 import {
   extractTurnMemoryChanges,
@@ -938,6 +939,7 @@ export interface CoworkSessionSummary {
   browserUri?: string | null;
   /** Bot Browser context: title of the tab this session is about (browser sessions only) */
   browserTitle?: string | null;
+  assistantMode?: boolean;
   /** Per-session model override (null = inherit the global default model). */
   model?: string | null;
   /** Provider key for the session model override (see CoworkSession.modelProvider). */
@@ -4751,56 +4753,32 @@ export class CoworkStore implements MemoryBackend {
    * put away by the user (records preserved), newest archive first. Separate
    * from listSessions, which deliberately excludes archived rows.
    */
-  listArchivedSessions(options?: {
-    metabotId?: number | null;
-    query?: string;
-    searchContent?: boolean;
-    sessionType?: CoworkSessionType;
-    limit?: number;
-    offset?: number;
-  }): CoworkSessionSummary[] {
-    interface ArchivedSessionRow {
-      id: string;
-      title: string;
-      status: string;
-      pinned: number | null;
-      metabot_id?: number | null;
-      session_type?: string | null;
-      peer_name?: string | null;
-      browser_uri?: string | null;
-      browser_title?: string | null;
-      assistant_mode?: number | null;
-      hidden_from_session_list?: number | null;
-      auto_origin?: string | null;
-      fold_override?: string | null;
-      follow_up_state?: string | null;
-      follow_up_source?: string | null;
-      follow_up_at?: string | null;
-      model?: string | null;
-      model_provider?: string | null;
-      effort?: string | null;
-      project_id?: string | null;
-      archived_at: number;
-      created_at: number;
-      updated_at: number;
-    }
-
-    const { clauses, params } = this.buildArchivedSessionFilter(options);
-    const limit = Math.max(1, Math.min(200, Math.floor(options?.limit ?? 50)));
-    const offset = Math.max(0, Math.floor(options?.offset ?? 0));
-
-    const rows = this.getAll<ArchivedSessionRow>(`
-      SELECT
-        s.id, s.title, s.status, s.pinned, s.metabot_id, s.session_type, s.peer_name,
-        s.browser_uri, s.browser_title, s.hidden_from_session_list, s.auto_origin, s.fold_override, s.follow_up_state, s.follow_up_source, s.follow_up_at, s.model, s.model_provider, s.effort, s.project_id, s.assistant_mode,
-        s.archived_at, s.created_at, s.updated_at
-      FROM cowork_sessions s
-      WHERE ${clauses.join(' AND ')}
-      ORDER BY s.archived_at DESC
-      LIMIT ? OFFSET ?
-    `, [...params, limit, offset]);
-
-    return rows.map(row => ({
+  private mapArchivedSessionRow(row: {
+    id: string;
+    title: string;
+    status: string;
+    pinned: number | null;
+    metabot_id?: number | null;
+    session_type?: string | null;
+    peer_name?: string | null;
+    browser_uri?: string | null;
+    browser_title?: string | null;
+    assistant_mode?: number | null;
+    hidden_from_session_list?: number | null;
+    auto_origin?: string | null;
+    fold_override?: string | null;
+    follow_up_state?: string | null;
+    follow_up_source?: string | null;
+    follow_up_at?: string | null;
+    model?: string | null;
+    model_provider?: string | null;
+    effort?: string | null;
+    project_id?: string | null;
+    archived_at: number;
+    created_at: number;
+    updated_at: number;
+  }): CoworkSessionSummary {
+    return {
       id: row.id,
       title: row.title,
       status: row.status as CoworkSessionStatus,
@@ -4824,7 +4802,91 @@ export class CoworkStore implements MemoryBackend {
       modelProvider: row.model_provider ?? null,
       effort: row.effort ?? null,
       projectId: row.project_id ?? null,
-    }));
+    };
+  }
+
+  listArchivedSessions(options?: {
+    metabotId?: number | null;
+    query?: string;
+    searchContent?: boolean;
+    sessionType?: CoworkSessionType;
+    limit?: number;
+    offset?: number;
+  }): CoworkSessionSummary[] {
+    const { clauses, params } = this.buildArchivedSessionFilter(options);
+    const limit = Math.max(1, Math.min(200, Math.floor(options?.limit ?? 50)));
+    const offset = Math.max(0, Math.floor(options?.offset ?? 0));
+
+    const rows = this.getAll<Parameters<CoworkStore['mapArchivedSessionRow']>[0]>(`
+      SELECT
+        s.id, s.title, s.status, s.pinned, s.metabot_id, s.session_type, s.peer_name,
+        s.browser_uri, s.browser_title, s.hidden_from_session_list, s.auto_origin, s.fold_override, s.follow_up_state, s.follow_up_source, s.follow_up_at, s.model, s.model_provider, s.effort, s.project_id, s.assistant_mode,
+        s.archived_at, s.created_at, s.updated_at
+      FROM cowork_sessions s
+      WHERE ${clauses.join(' AND ')}
+      ORDER BY s.archived_at DESC
+      LIMIT ? OFFSET ?
+    `, [...params, limit, offset]);
+
+    return rows.map((row) => this.mapArchivedSessionRow(row));
+  }
+
+  async listArchivedSessionsPageAsync(
+    options?: {
+      metabotId?: number | null;
+      query?: string;
+      searchContent?: boolean;
+      sessionType?: CoworkSessionType;
+      limit?: number;
+      offset?: number;
+    },
+    readWorker?: SqliteReadWorkerLike | null,
+  ): Promise<{ sessions: CoworkSessionSummary[]; total: number }> {
+    if (!readWorker) {
+      return {
+        sessions: this.listArchivedSessions(options),
+        total: this.countArchivedSessions(options),
+      };
+    }
+    try {
+      const { clauses, params } = this.buildArchivedSessionFilter(options);
+      const limit = Math.max(1, Math.min(200, Math.floor(options?.limit ?? 50)));
+      const offset = Math.max(0, Math.floor(options?.offset ?? 0));
+      const whereSql = clauses.join(' AND ');
+      const [listRows, countRows] = await readWorker.batchQueryAll([
+        {
+          sql: `
+            SELECT
+              s.id, s.title, s.status, s.pinned, s.metabot_id, s.session_type, s.peer_name,
+              s.browser_uri, s.browser_title, s.hidden_from_session_list, s.auto_origin, s.fold_override, s.follow_up_state, s.follow_up_source, s.follow_up_at, s.model, s.model_provider, s.effort, s.project_id, s.assistant_mode,
+              s.archived_at, s.created_at, s.updated_at
+            FROM cowork_sessions s
+            WHERE ${whereSql}
+            ORDER BY s.archived_at DESC
+            LIMIT ? OFFSET ?
+          `,
+          params: [...params, limit, offset],
+        },
+        {
+          sql: `
+            SELECT COUNT(*) AS count
+            FROM cowork_sessions s
+            WHERE ${whereSql}
+          `,
+          params,
+        },
+      ]);
+      const sessions = (listRows as Array<Parameters<CoworkStore['mapArchivedSessionRow']>[0]>).map((row) =>
+        this.mapArchivedSessionRow(row),
+      );
+      const total = Number((countRows[0] as { count?: unknown } | undefined)?.count ?? 0);
+      return { sessions, total };
+    } catch {
+      return {
+        sessions: this.listArchivedSessions(options),
+        total: this.countArchivedSessions(options),
+      };
+    }
   }
 
   resetRunningSessions(): number {
