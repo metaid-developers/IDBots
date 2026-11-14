@@ -670,9 +670,14 @@ const Sidebar: React.FC<SidebarProps> = ({
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setStudioTitlePreviewOpen(false);
       }}
     >
+      {/* Left-anchor order 2026-11-15: the identity row and the session
+          title sit on the header's LEFT padding edge (the actions slot's
+          pl-2, matching the switcher tray's left border) instead of the
+          retired centered lane — the max-w guard below only caps growth
+          toward the right-hand button cluster. */}
       <div
         ref={studioIdentityRowRef}
-        className="flex h-9 w-full min-w-0 shrink-0 items-center justify-center"
+        className="flex h-9 w-full min-w-0 shrink-0 items-center"
         onMouseEnter={() => {
           if (browserOpenSessionId) setStudioTitlePreviewOpen(true);
         }}
@@ -680,7 +685,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           if (browserOpenSessionId) setStudioTitlePreviewOpen(true);
         }}
       >
-        <div className="flex min-w-0 max-w-[calc(100%_-_8rem)] items-center justify-center">
+        <div className="flex min-w-0 max-w-[calc(100%_-_8rem)] items-center">
           <div data-slot="cowork-header-identity-anchor" className="contents" />
         </div>
       </div>

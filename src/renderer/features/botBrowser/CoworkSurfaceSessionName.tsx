@@ -25,7 +25,11 @@ interface CoworkSurfaceSessionNameProps {
 }
 
 /**
- * Centered, ellipsis-truncated session title below the Studio bot identity.
+ * Left-anchored, ellipsis-truncated session title below the Studio bot
+ * identity (owner order 2026-11-15: centered lane retired; the title's left
+ * edge rides pl-1 so its text lands on the identity avatar's left edge, and
+ * the size steps up one token (13px → text-base/15px at the 15px root) — the
+ * title is the hover-revealed element, exempt from the compact row's scale).
  * A click swaps the label for a frameless editor with identical metrics.
  * Enter or blur commits through the shared rename channel, Escape cancels,
  * and an empty or unchanged commit is a no-op. Drafts keep an empty spacer
@@ -116,7 +120,7 @@ const CoworkSurfaceSessionName: React.FC<CoworkSurfaceSessionNameProps> = ({
           }
         }}
         onBlur={handleRenameBlur}
-        className="non-draggable h-6 w-full min-w-0 flex-none border-0 bg-transparent shadow-none px-4 text-center text-[13px] font-medium leading-none dark:text-claude-darkText text-claude-text outline-none focus:outline-none focus:ring-0"
+        className="non-draggable h-6 w-full min-w-0 flex-none border-0 bg-transparent shadow-none pl-1 pr-4 text-left text-base font-medium leading-none dark:text-claude-darkText text-claude-text outline-none focus:outline-none focus:ring-0"
       />
     );
   }
@@ -132,7 +136,7 @@ const CoworkSurfaceSessionName: React.FC<CoworkSurfaceSessionNameProps> = ({
       }}
       aria-label={displayTitle}
       title={displayTitle}
-      className="non-draggable flex h-6 w-full min-w-0 flex-none items-center justify-center rounded-lg px-4 text-center text-[13px] font-medium leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 text-claude-text dark:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+      className="non-draggable flex h-6 w-full min-w-0 flex-none items-center rounded-lg pl-1 pr-4 text-left text-base font-medium leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 text-claude-text dark:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
     >
       <span className="min-w-0 truncate">{displayTitle}</span>
     </button>

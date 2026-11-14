@@ -9,7 +9,9 @@ import {
   resolveSurfaceSessionDisplayTitle,
 } from '../src/renderer/features/botBrowser/surfaceSessionName';
 
-// Studio centers the session title below the bot identity and renames it in
+// Studio left-anchors the session title below the bot identity (owner order
+// 2026-11-15: the centered lane is retired and the hover-revealed title
+// steps up one size token) and renames it in
 // place. These tests pin the DECISION MATH — the
 // same contract the two existing rename implementations share
 // (CoworkSessionItem rows, CoworkSessionDetail header):
@@ -58,7 +60,8 @@ test('rename decision: padding-only edits do not write', () => {
 });
 
 // Render smoke (renderToStaticMarkup, Node — no DOM, no store): the default
-// state is a centered read-only BUTTON carrying the resolved display title.
+// state is a left-anchored read-only BUTTON carrying the resolved display
+// title (left-anchor order 2026-11-15 supersedes the centered lane).
 test('render: default state is a read-only button showing the display title', () => {
   const markup = renderToStaticMarkup(
     React.createElement(CoworkSurfaceSessionName, {
@@ -71,8 +74,9 @@ test('render: default state is a read-only button showing the display title', ()
   assert.match(markup, /data-slot="cowork-surface-session-name"/);
   assert.match(markup, /抓周/);
   assert.match(markup, /h-6 w-full/);
-  assert.match(markup, /items-center justify-center/);
-  assert.match(markup, /text-center/);
+  assert.match(markup, /items-center rounded-lg pl-1 pr-4 text-left/);
+  assert.match(markup, /text-base font-medium/);
+  assert.doesNotMatch(markup, /text-center/);
   assert.doesNotMatch(markup, /<input/);
 });
 

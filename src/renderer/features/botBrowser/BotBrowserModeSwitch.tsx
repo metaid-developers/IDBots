@@ -13,10 +13,18 @@ interface BotBrowserModeSwitchProps {
    */
   actions?: React.ReactNode;
   /**
-   * Gap ABOVE the band row. macOS 52 — a traffic-light strip as tall as the
-   * rail's mac top track, so the band row starts exactly at the lights row's
-   * bottom edge (the lights, trafficLightPosition y=20, never share the
-   * band's row). Elsewhere 12 px of quiet air. An explicit value is accepted
+   * Gap ABOVE the band row. macOS 37.75 — measured so the band row's tray
+   * VISIBLE top border lands on the same pixel row as the Bot Browser
+   * panel's top tab divider line (owner alignment order 2026-11-15, sample
+   * crop bots/2/2026-11-14 n06pjw). The divider paints at window y=45:
+   * agent-browser-ui 0.6.0's browser page has an 8px body margin + a 38px
+   * tabstrip row whose 1px border-bottom sits INSIDE that box (border-box
+   * sizing), so the line occupies [45,46) — NOT at the box edge 46. The
+   * tray rides 7.25px of vertical centering inside its 52px band row and
+   * its 1px border-top also paints inside its box, so the tray's box top
+   * must be 45: 45 − 7.25 = 37.75. The lights re-center inside the shorter
+   * strip — the strip still IS the lights' row, no gap opens between it and
+   * the band. Elsewhere 12 px of quiet air. An explicit value is accepted
    * so tests can pin BOTH platform branches without a DOM.
    */
   topGapPx?: number;
@@ -28,12 +36,15 @@ interface SurfaceSegment {
 }
 
 /**
- * macOS: a 52 px traffic-light strip precedes the band row — the same height
- * as the rail's mac top track, so the band row starts exactly at the strip's
- * bottom edge and the lights (trafficLightPosition y=20) own the first row
- * alone (owner red-box order 2026-11-09 10:58).
+ * macOS: a 37.75 px strip precedes the band row — sized so the tray's
+ * visible top border lands on the same pixel row as the Bot Browser
+ * tabstrip divider (window y=45, owner alignment order 2026-11-15), with
+ * the rail's mac top track kept at the same height so the rail avatar's
+ * centerline still rides the band labels' centerline. The lights own the
+ * strip alone (owner red-box order 2026-11-09 10:58; alignment amended
+ * 2026-11-15).
  */
-export const TOP_GAP_MAC_PX = 52;
+export const TOP_GAP_MAC_PX = 37.75;
 /** Non-macOS: no system corner to share, keep a quiet 12 px breath. */
 export const TOP_GAP_DEFAULT_PX = 12;
 
@@ -63,7 +74,10 @@ const segmentClass = (active: boolean) => [
  * final ruling 2026-11-09 (identity moved to the rail's top slot):
  *
  *   [ traffic lights alone ]                          <- row 1: the lights'
- *                                                       own 52 px strip
+ *                                                       own strip (38.75 px
+ *                                                       on mac, sized to the
+ *                                                       browser-tabstrip
+ *                                                       divider line)
  *   [ Studio | BotWorks ]                             <- row 2: the band, BELOW
  *                                                      the lights row — no
  *                                                      identity slot here any
@@ -187,9 +201,13 @@ const BotBrowserModeSwitch: React.FC<BotBrowserModeSwitchProps> = ({
         </div>
       </div>
       {actions ? (
+        // Left inset rides the band's pl-2 rhythm so the Studio face's
+        // left-aligned identity header starts on the tray's left edge;
+        // BotWorks' compact actions are right-aligned and only see the
+        // pr-2.5 (owner left-anchor order 2026-11-15).
         <div
           data-slot="surface-header-actions"
-          className="non-draggable flex min-h-7 w-full items-center justify-end gap-0.5 px-2.5"
+          className="non-draggable flex min-h-7 w-full items-center justify-end gap-0.5 pl-2 pr-2.5"
         >
           {actions}
         </div>

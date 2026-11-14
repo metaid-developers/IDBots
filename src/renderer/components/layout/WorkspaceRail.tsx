@@ -233,16 +233,21 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
       onDoubleClick={handleRailDoubleClick}
       className="relative z-30 flex w-16 shrink-0 flex-col items-center dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted border-r border-claude-border/60 dark:border-claude-darkBorder/60"
     >
-      {/* Row 1 is the pure traffic-light reservation (52 px on mac — the
-          lights, trafficLightPosition y=20, own it alone). Row 2 is the
-          identity AVATAR slot (owner D-line final ruling 2026-11-09): the
-          same 52 px height as the mid column's band row (the switch's
+      {/* Row 1 is the pure traffic-light reservation. Its mac height stays in
+          lockstep with the mid column's lights strip (the surface switch's
+          TOP_GAP_MAC_PX = 37.75, owner alignment order 2026-11-15: the
+          switcher tray's visible top border lands on the Bot Browser
+          tabstrip divider's pixel row), so the avatar keeps riding the band
+          labels' centerline — the slot pair below only holds while row 1 and
+          the switch's strip are the SAME height. Row 2 is the identity
+          AVATAR slot (owner D-line final ruling 2026-11-09): the same 52 px
+          height as the mid column's band row (the switch's
           surface-header-bar), so the avatar's centerline rides the band
           labels' centerline, and the rail's own centerline puts it on the
           icon column's X — the Mac-WeChat form. The nav's 8 px top margin
-          then lands the first function icon at 52 + 52 + 8 = 112 px — below
-          the avatar, never in the top cell. */}
-      <div className={`draggable w-full shrink-0 ${isMac ? 'h-[52px]' : 'h-3'}`} />
+          then lands the first function icon at 37.75 + 52 + 8 = 97.75 px —
+          below the avatar, never in the top cell. */}
+      <div className={`draggable w-full shrink-0 ${isMac ? 'h-[37.75px]' : 'h-3'}`} />
       <div
         data-slot="workspace-rail-avatar-slot"
         className="flex h-[52px] w-full shrink-0 items-center justify-center"
