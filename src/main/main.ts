@@ -20992,10 +20992,23 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     // macOS: the renderer draws its own mini traffic lights (MacWindowLights
     // in the mid column's top strip), so the native buttons must not ALSO
     // render — the hidden titlebar style alone keeps them visible, and this
-    // call is what removes them. Feature-guarded: the method only exists on
-    // recent Electron builds, and isMac already scopes the branch.
-    if (isMac && typeof win.setWindowButtonVisibility === 'function') {
-      win.setWindowButtonVisibility(false);
+    // call is what removes them. Hotfix 2026-11-14: calling only at creation
+    // is not enough — macOS re-shows the native buttons when the window is
+    // first shown while it was still hidden, so re-apply at ready-to-show
+    // (verified live: 6 lights -> 3 after this move). Feature-guarded: the
+    // method only exists on recent Electron builds, isMac scopes the branch.
+    if (isMac) {
+      const hideNativeLights = () => {
+        if (typeof win.setWindowButtonVisibility === 'function') {
+          try {
+            win.setWindowButtonVisibility(false);
+          } catch {
+            // window may already be destroyed during shutdown
+          }
+        }
+      };
+      hideNativeLights();
+      win.once('ready-to-show', hideNativeLights);
     }
 
     // 设置 macOS Dock 图标（开发模式下 Electron 默认图标不是应用 Logo）
