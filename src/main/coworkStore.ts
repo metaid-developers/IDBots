@@ -160,6 +160,13 @@ const MEMORY_OPERATIONAL_PREFERENCE_RE = /(默认语言|回复格式|输出风�
 const MEMORY_PREFERENCE_RE = /(偏好|喜欢|prefer|preference|likes?|dislikes?)/i;
 const SCOPED_USER_MEMORIES_BACKFILL_KEY = 'userMemories.scopeBackfill.v1.completed';
 const MODEL_PROVIDER_METAID_FREE_MIGRATION_KEY = 'cowork.modelProviderMetaidFreeMigrated.v1';
+const COWORK_MESSAGES_FTS_READY_KEY = 'cowork.messagesFtsReady.v1';
+const COWORK_MESSAGES_FTS_CURSOR_KEY = 'cowork.messagesFtsCursorRowid.v1';
+const COWORK_MESSAGES_FTS_INLINE_THRESHOLD = 5_000;
+const COWORK_MESSAGES_FTS_BATCH_SIZE = 5_000;
+
+const escapeFts5Phrase = (term: string): string => `"${term.replace(/"/g, '""')}"`;
+const hasFtsTrigramMinLength = (term: string): boolean => Array.from(term).length >= 3;
 const METAWEB_ORDER_SESSION_MIGRATION_KEY = 'cowork.metawebOrderSessionsToPeerConversations.v1.completed';
 const METAWEB_ORDER_SIMPLEMSG_BACKFILL_KEY = 'cowork.backfillMetawebOrderSimplemsgMetadata.v1.completed';
 const METAWEB_PRIVATE_SIMPLEMSG_BACKFILL_KEY = 'cowork.backfillMetawebPrivateSimplemsgMetadata.v1.completed';
@@ -1572,6 +1579,8 @@ export class CoworkStore implements MemoryBackend {
   // Whether the generated heal columns exist; false keeps the boot heals on
   // the legacy metadata LIKE scans.
   private coworkMessageHealColumnsReady = false;
+  private messagesFtsAvailable = false;
+  private messagesFtsReady = false;
 
   constructor(db: Database, saveDb: () => void, options?: { deferHeavyStartupMaintenance?: boolean }) {
     this.db = db;
@@ -1624,6 +1633,7 @@ export class CoworkStore implements MemoryBackend {
     this.ensureA2AConversationSchemaCompatibility();
     this.ensureCoworkMessageHealColumns();
     this.ensureCoworkMessageIndexes();
+    this.ensureCoworkMessagesFtsSchema(deferHeavyStartupMaintenance);
     this.ensureCoworkSessionIndexes();
     this.backfillScopedMemoryMetadata();
     this.restoreMissingSelfIdentities();
@@ -1653,6 +1663,7 @@ export class CoworkStore implements MemoryBackend {
     // metaweb_private, and those rows must count toward the activity stamp.
     const backfilledSessionActivityAt = this.backfillSessionActivityAt();
     const migratedInlineSessionPrompts = this.backfillSessionPromptsOutOfLine();
+    this.backfillMessagesFtsBatch(COWORK_MESSAGES_FTS_BATCH_SIZE);
     return {
       migratedMetawebOrderSessions,
       backfilledMetawebOrderMessages,
@@ -1660,6 +1671,128 @@ export class CoworkStore implements MemoryBackend {
       backfilledSessionActivityAt,
       migratedInlineSessionPrompts,
     };
+  }
+
+  isMessagesFtsReady(): boolean {
+    return this.messagesFtsReady;
+  }
+
+  private canUseMessagesFts(terms: readonly string[]): boolean {
+    return (
+      this.messagesFtsAvailable
+      && this.messagesFtsReady
+      && terms.length > 0
+      && terms.every(hasFtsTrigramMinLength)
+    );
+  }
+
+  private ensureCoworkMessagesFtsSchema(deferHeavyBackfill = false): void {
+    if (!this.tableExists('cowork_messages')) {
+      return;
+    }
+    try {
+      this.db.run(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS cowork_messages_fts USING fts5(
+          content,
+          content='cowork_messages',
+          content_rowid='rowid',
+          tokenize='trigram'
+        )
+      `);
+      this.db.run(`
+        CREATE TRIGGER IF NOT EXISTS trg_cowork_messages_fts_ai
+        AFTER INSERT ON cowork_messages
+        BEGIN
+          INSERT INTO cowork_messages_fts(rowid, content) VALUES (new.rowid, new.content);
+        END
+      `);
+      this.db.run(`
+        CREATE TRIGGER IF NOT EXISTS trg_cowork_messages_fts_ad
+        AFTER DELETE ON cowork_messages
+        BEGIN
+          INSERT INTO cowork_messages_fts(cowork_messages_fts, rowid, content)
+          VALUES ('delete', old.rowid, old.content);
+        END
+      `);
+      this.db.run(`
+        CREATE TRIGGER IF NOT EXISTS trg_cowork_messages_fts_au
+        AFTER UPDATE OF content ON cowork_messages
+        BEGIN
+          INSERT INTO cowork_messages_fts(cowork_messages_fts, rowid, content)
+          VALUES ('delete', old.rowid, old.content);
+          INSERT INTO cowork_messages_fts(rowid, content)
+          VALUES (new.rowid, new.content);
+        END
+      `);
+      this.messagesFtsAvailable = true;
+      if (this.getKvValue(COWORK_MESSAGES_FTS_READY_KEY) === '1') {
+        this.messagesFtsReady = true;
+        return;
+      }
+      const maxRow = this.getOne<{ max_rowid: number }>(
+        'SELECT COALESCE(MAX(rowid), 0) AS max_rowid FROM cowork_messages',
+      );
+      const maxRowid = Number(maxRow?.max_rowid ?? 0) || 0;
+      if (maxRowid === 0) {
+        this.setKvValue(COWORK_MESSAGES_FTS_CURSOR_KEY, '0');
+        this.setKvValue(COWORK_MESSAGES_FTS_READY_KEY, '1');
+        this.messagesFtsReady = true;
+        return;
+      }
+      if (!deferHeavyBackfill && maxRowid <= COWORK_MESSAGES_FTS_INLINE_THRESHOLD) {
+        this.backfillMessagesFtsBatch(COWORK_MESSAGES_FTS_INLINE_THRESHOLD + 1);
+      }
+    } catch {
+      this.messagesFtsAvailable = false;
+      this.messagesFtsReady = false;
+    }
+  }
+
+  backfillMessagesFtsBatch(batchSize = COWORK_MESSAGES_FTS_BATCH_SIZE): { indexed: number; done: boolean } {
+    if (!this.messagesFtsAvailable) {
+      return { indexed: 0, done: true };
+    }
+    if (this.messagesFtsReady || this.getKvValue(COWORK_MESSAGES_FTS_READY_KEY) === '1') {
+      this.messagesFtsReady = true;
+      return { indexed: 0, done: true };
+    }
+    try {
+      const cursor = Math.max(0, Number(this.getKvValue(COWORK_MESSAGES_FTS_CURSOR_KEY) ?? 0) || 0);
+      const limit = Math.max(100, Math.floor(batchSize));
+      const rows = this.getAll<{ rowid: number }>(
+        'SELECT rowid FROM cowork_messages WHERE rowid > ? ORDER BY rowid ASC LIMIT ?',
+        [cursor, limit],
+      );
+      if (rows.length === 0) {
+        this.setKvValue(COWORK_MESSAGES_FTS_READY_KEY, '1');
+        this.messagesFtsReady = true;
+        return { indexed: 0, done: true };
+      }
+      const endRowid = Number(rows[rows.length - 1]!.rowid);
+      this.db.run('BEGIN TRANSACTION');
+      try {
+        this.db.run(
+          `INSERT INTO cowork_messages_fts(rowid, content)
+           SELECT rowid, content FROM cowork_messages
+           WHERE rowid > ? AND rowid <= ?`,
+          [cursor, endRowid],
+        );
+        this.db.run('COMMIT');
+      } catch (innerError) {
+        try { this.db.run('ROLLBACK'); } catch { /* ignore */ }
+        throw innerError;
+      }
+      this.setKvValue(COWORK_MESSAGES_FTS_CURSOR_KEY, String(endRowid));
+      const done = rows.length < limit;
+      if (done) {
+        this.setKvValue(COWORK_MESSAGES_FTS_READY_KEY, '1');
+        this.messagesFtsReady = true;
+      }
+      return { indexed: rows.length, done };
+    } catch (error) {
+      console.warn('[CoworkStore] FTS5 batch backfill failed:', error);
+      return { indexed: 0, done: true };
+    }
   }
 
   private ensureSessionPromptsSchema(): void {
@@ -4763,11 +4896,22 @@ export class CoworkStore implements MemoryBackend {
       ];
       params.push(`%${escaped}%`, `%${escaped}%`);
       if (options?.searchContent === true) {
-        titleClauses.push(`EXISTS (
-          SELECT 1 FROM cowork_messages m
-          WHERE m.session_id = s.id AND LOWER(m.content) LIKE ? ESCAPE '\\'
-        )`);
-        params.push(`%${escaped}%`);
+        if (this.canUseMessagesFts([query])) {
+          titleClauses.push(`EXISTS (
+            SELECT 1 FROM cowork_messages m
+            WHERE m.session_id = s.id
+              AND m.rowid IN (
+                SELECT rowid FROM cowork_messages_fts WHERE cowork_messages_fts MATCH ?
+              )
+          )`);
+          params.push(escapeFts5Phrase(query.toLowerCase()));
+        } else {
+          titleClauses.push(`EXISTS (
+            SELECT 1 FROM cowork_messages m
+            WHERE m.session_id = s.id AND LOWER(m.content) LIKE ? ESCAPE '\\'
+          )`);
+          params.push(`%${escaped}%`);
+        }
       }
       clauses.push(`(${titleClauses.join(' OR ')})`);
     }
@@ -11015,12 +11159,17 @@ export class CoworkStore implements MemoryBackend {
     const beforeMs = parseTimeToMs(options.before);
     const afterMs = parseTimeToMs(options.after);
 
+    const useFts = this.canUseMessagesFts(terms);
     const likeClauses = terms.map(() => 'LOWER(m.content) LIKE ?');
     const clauses: string[] = [
       "m.type IN ('user', 'assistant')",
-      `(${likeClauses.join(' OR ')})`,
+      useFts
+        ? 'm.rowid IN (SELECT rowid FROM cowork_messages_fts WHERE cowork_messages_fts MATCH ?)'
+        : `(${likeClauses.join(' OR ')})`,
     ];
-    const params: Array<string | number> = terms.map((term) => `%${term}%`);
+    const params: Array<string | number> = useFts
+      ? [terms.map(escapeFts5Phrase).join(' OR ')]
+      : terms.map((term) => `%${term}%`);
 
     if (beforeMs !== null) {
       clauses.push('m.created_at < ?');
@@ -11114,7 +11263,14 @@ export class CoworkStore implements MemoryBackend {
     if (!sessionId || terms.length === 0) return [];
     const limit = Math.max(1, Math.min(20, Math.floor(options.limit ?? 8)));
 
+    const useFts = this.canUseMessagesFts(terms);
     const likeClauses = terms.map(() => 'LOWER(m.content) LIKE ?');
+    const matchClause = useFts
+      ? 'm.rowid IN (SELECT rowid FROM cowork_messages_fts WHERE cowork_messages_fts MATCH ?)'
+      : `(${likeClauses.join(' OR ')})`;
+    const matchParams = useFts
+      ? [terms.map(escapeFts5Phrase).join(' OR ')]
+      : terms.map((term) => `%${term}%`);
     const rows = this.getAll<CoworkMessageRow>(`
       SELECT m.id, m.type, m.content, m.metadata, m.created_at, m.sequence
       FROM cowork_messages m
@@ -11124,10 +11280,10 @@ export class CoworkStore implements MemoryBackend {
         AND (m.metadata IS NULL OR m.metadata NOT LIKE '%"isThinking":true%')
         AND (m.metadata IS NULL OR m.metadata NOT LIKE '%"excludeFromSandboxHistory":true%')
         AND (m.metadata IS NULL OR m.metadata NOT LIKE '%"isDelegationInternal":true%')
-        AND (${likeClauses.join(' OR ')})
+        AND ${matchClause}
       ORDER BY m.created_at DESC, COALESCE(m.sequence, 0) DESC, ROWID DESC
       LIMIT ?
-    `, [sessionId, ...terms.map((term) => `%${term}%`), limit * 40]);
+    `, [sessionId, ...matchParams, limit * 40]);
 
     const scored = rows
       .map((row) => {

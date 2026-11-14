@@ -1037,3 +1037,4 @@ blob-report/
 !tests/settingsFirstClickAndStorePerf.test.mjs
 !tests/sqliteReadWorker.test.mjs
 !tests/coworkSessionColdPromptAndPeerAvatar.test.mjs
+!tests/coworkMessagesFtsSearch.test.mjs

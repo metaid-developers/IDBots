@@ -6255,6 +6255,18 @@ const scheduleCoworkStoreHeavyMaintenance = (): void => {
         `cowork store heavy maintenance done (orderSessions=${result.migratedMetawebOrderSessions}, orderBackfill=${result.backfilledMetawebOrderMessages}, privateBackfill=${result.backfilledMetawebPrivateMessages})`,
       );
       coworkStoreHeavyMaintenanceFinished = true;
+      if (!coworkStore.isMessagesFtsReady()) {
+        const scheduleNextFtsBatch = () => {
+          if (areStartupTiersCancelled() || !coworkStore || coworkStore.isMessagesFtsReady()) return;
+          const step = coworkStore.backfillMessagesFtsBatch(5_000);
+          if (!step.done) {
+            const handle = setTimeout(scheduleNextFtsBatch, 200);
+            handle.unref?.();
+          }
+        };
+        const firstHandle = setTimeout(scheduleNextFtsBatch, 200);
+        firstHandle.unref?.();
+      }
     } catch (error) {
       coworkStoreHeavyMaintenanceScheduled = false;
       console.error('[CoworkStore] Heavy startup maintenance failed:', error);
