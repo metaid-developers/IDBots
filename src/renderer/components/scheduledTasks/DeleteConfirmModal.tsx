@@ -47,7 +47,7 @@ const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
             <button
               type="button"
               onClick={onConfirm}
-              className="flex-1 px-4 py-2 text-sm rounded-lg bg-red-500 text-white hover:bg-red-600 transition-colors"
+              className="border border-red-600 flex-1 px-4 py-2 text-sm rounded-lg bg-red-500 text-white hover:bg-red-600 transition-colors"
             >
               {i18nService.t('scheduledTasksDelete')}
             </button>

@@ -1163,7 +1163,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                           type="button"
                           onClick={() => { void handleSaveKnowledgeEdit(); }}
                           disabled={!knowledgeDraftTopic.trim() || !knowledgeDraftSummary.trim()}
-                          className="rounded-[var(--shape-radius-md)] border border-[var(--btn-primary-edge)] bg-claude-primary text-claude-accentInk px-2 py-1 text-[10px] font-medium hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] disabled:opacity-60"
+                          className="rounded-[var(--shape-radius-md)] border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk px-2 py-1 text-[10px] font-medium hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] disabled:opacity-60"
                         >
                           {i18nService.t('save')}
                         </button>
@@ -1857,7 +1857,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                     type="button"
                     onClick={() => { void handleSaveHygiene(); }}
                     disabled={hygieneSaving}
-                    className="btn-idchat-primary-filled inline-flex items-center justify-center px-4 py-1.5 text-xs disabled:opacity-60"
+                    className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] rounded-lg inline-flex items-center justify-center px-4 py-1.5 text-xs disabled:opacity-60"
                   >
                     {hygieneSaving ? i18nService.t('saving') : i18nService.t('memoryHygieneSave')}
                   </button>
@@ -2103,7 +2103,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             type="button"
             onClick={() => { void handleSaveCulture(); }}
             disabled={!cultureDraft.topic.trim() || !cultureDraft.text.trim()}
-            className="btn-idchat-primary-filled inline-flex items-center px-3 py-1 text-xs disabled:opacity-60"
+            className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] rounded-lg inline-flex items-center px-3 py-1 text-xs disabled:opacity-60"
           >
             {i18nService.t('memoryCultureSave')}
           </button>

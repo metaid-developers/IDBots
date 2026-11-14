@@ -240,10 +240,10 @@ const SkillScopeEditor: React.FC<SkillScopeEditorProps> = ({ skill, metabots, on
               type="button"
               onClick={handleSave}
               disabled={saving || (mode === 'bots' && checked.size === 0)}
-              className={`px-2.5 py-1 text-[11px] rounded-lg transition-colors ${
+              className={`px-2.5 py-1 text-[11px] rounded-lg border transition-colors ${
                 confirming
-                  ? 'bg-amber-500 text-white hover:bg-amber-600'
-                  : 'btn-idchat-primary-filled'
+                  ? 'border-amber-600 bg-amber-500 text-white hover:brightness-[0.96]'
+                  : 'border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9]'
               } disabled:opacity-60 disabled:cursor-not-allowed`}
             >
               {confirming ? i18nService.t('communitySkillConfirm') : i18nService.t('skillScopeConfirm')}

@@ -616,7 +616,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved }) =>
         <button
           type="button"
           onClick={onCancel}
-          className="px-4 py-2 text-sm rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+          className="px-4 py-2 text-sm rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
         >
           {i18nService.t('cancel')}
         </button>
@@ -624,7 +624,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved }) =>
           type="button"
           onClick={handleSubmit}
           disabled={submitting}
-          className="btn-idchat-primary-filled px-4 py-2 text-sm font-medium disabled:opacity-50"
+          className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50"
         >
           {submitting
             ? i18nService.t('saving')

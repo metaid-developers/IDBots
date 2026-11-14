@@ -3153,7 +3153,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                     setShowProviderTemplatePicker(false);
                     setShowCerebellumSettings(true);
                   }}
-                  className="-my-2 flex min-h-10 min-w-0 flex-1 items-center text-left transition-transform active:scale-[0.96]"
+                  className="-my-2 flex min-h-10 min-w-0 flex-1 items-center text-left transition-transform"
                 >
                   <span className="mr-2 flex h-7 w-7 shrink-0 items-center justify-center dark:text-claude-darkText text-claude-text">
                     <BrainIcon className="h-5 w-5" />
@@ -3168,7 +3168,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                   aria-checked={cerebellum.enabled}
                   aria-label={i18nService.t('cerebellumEnabled')}
                   onClick={() => handleCerebellumConfigChange('enabled', !cerebellum.enabled)}
-                  className="-my-2 ml-1 flex h-10 w-10 shrink-0 items-center justify-center transition-transform active:scale-[0.96]"
+                  className="-my-2 ml-1 flex h-10 w-10 shrink-0 items-center justify-center transition-transform"
                 >
                   <span className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${
                     cerebellum.enabled ? 'bg-claude-accent' : 'dark:bg-claude-darkBorder bg-claude-border'
@@ -4088,7 +4088,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                   <button
                     type="button"
                     onClick={handleSaveNewModel}
-                    className="btn-idchat-primary-filled px-3 py-1.5 text-xs"
+                    className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] rounded-[var(--rounded)] px-3 py-1.5 text-xs"
                   >
                     {i18nService.t('save')}
                   </button>
@@ -4132,7 +4132,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                   <button
                     type="button"
                     onClick={() => handleDeleteCustomProvider(pendingDeleteProvider)}
-                    className="px-3 py-1.5 text-xs font-medium rounded-xl bg-red-500 text-white hover:bg-red-600 transition-colors active:scale-[0.98]"
+                    className="px-3 py-1.5 text-xs font-medium rounded-xl border border-red-600 bg-red-500 text-white hover:bg-red-600 transition-colors"
                   >
                     {i18nService.t('confirm')}
                   </button>

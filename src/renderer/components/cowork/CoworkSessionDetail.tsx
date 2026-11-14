@@ -1891,7 +1891,7 @@ const A2AGuidanceControls = React.memo(({
             <button
               type="submit"
               disabled={isSubmittingA2AGuidance || !guidanceText.trim()}
-              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-claude-accent px-3 text-xs font-medium text-claude-accentInk transition-colors hover:bg-claude-accent/90 disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-[var(--btn-primary-edge)] bg-claude-accent px-3 text-xs font-medium text-claude-accentInk transition-colors hover:bg-claude-accent/90 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <PaperAirplaneIcon className="h-4 w-4" />
               {isSubmittingA2AGuidance ? i18nService.t('a2aGuidanceSubmitting') : i18nService.t('a2aGuidanceSend')}
@@ -4773,7 +4773,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               aria-label={i18nService.t('coworkConversationSearch')}
               aria-expanded={isConversationSearchOpen}
               aria-controls="cowork-conversation-search"
-              className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors active:scale-[0.96] ${
+              className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
                 isConversationSearchOpen
                   ? 'bg-claude-surfaceHover text-claude-text dark:bg-claude-darkSurfaceHover dark:text-claude-darkText'
                   : 'text-claude-textSecondary hover:bg-claude-surfaceHover hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText'

@@ -412,7 +412,7 @@ const GigSquareRefundsModal: React.FC<GigSquareRefundsModalProps> = ({
                             type="button"
                             onClick={() => void onProcessRefund(item.orderId)}
                             disabled={isAnyRefundProcessing}
-                            className="btn-idchat-primary px-2.5 py-1.5 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-60"
+                            className="border border-[var(--color-primary)] bg-[var(--bg-panel)] text-claude-text hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] rounded-lg px-2.5 py-1.5 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             {isProcessing
                               ? i18nService.t('gigSquareRefundsProcessing')

@@ -938,7 +938,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                             <button
                               type="button"
                               onClick={() => handleOpenDetail(service)}
-                              className="btn-idchat-primary whitespace-nowrap px-2.5 py-1 text-[11px] font-medium"
+                              className="border border-[var(--color-primary)] bg-[var(--bg-panel)] text-claude-text hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] rounded-lg whitespace-nowrap px-2.5 py-1 text-[11px] font-medium"
                             >
                               {i18nService.t('gigSquareMyServicesActionDetail')}
                             </button>
@@ -1319,7 +1319,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                   type="button"
                   onClick={() => void handleConfirmRevoke()}
                   disabled={mutationBusyServiceId === revokeTargetService.id}
-                  className="btn-idchat-primary-filled px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-60"
+                  className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] rounded-lg px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {mutationBusyServiceId === revokeTargetService.id
                     ? i18nService.t('gigSquarePublishSubmitting')
@@ -1623,7 +1623,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                   type="button"
                   onClick={() => void handleSubmitModify()}
                   disabled={isModifySubmitDisabled}
-                  className="btn-idchat-primary-filled px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-60"
+                  className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] rounded-lg px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {isModifySubmitting
                     ? i18nService.t('gigSquarePublishSubmitting')

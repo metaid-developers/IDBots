@@ -741,7 +741,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                         type="button"
                         onClick={() => handleReinstallMissingSkill(entry)}
                         disabled={reinstallingMissingSkillId !== null}
-                        className="btn-idchat-primary-filled inline-flex items-center gap-1 px-2 py-1 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] rounded-lg inline-flex items-center gap-1 px-2 py-1 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {reinstallingMissingSkillId === entry.id ? <ArrowPathIcon className="h-3 w-3 animate-spin" /> : null}
                         {i18nService.t('missingSkillReinstall')}
@@ -990,7 +990,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                 type="button"
                 onClick={handleConfirmInstallCommunitySkill}
                 disabled={installingSkillName !== null}
-                className="px-3 py-1.5 text-xs rounded-lg btn-idchat-primary-filled transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] px-3 py-1.5 text-xs rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {installingSkillName === communitySkillPendingDownload.name ? i18nService.t('skillOfficialLoading') : i18nService.t('communitySkillConfirm')}
               </button>
@@ -1032,7 +1032,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                 type="button"
                 onClick={handleConfirmForgetMissingSkill}
                 disabled={isForgettingMissingSkill}
-                className="px-3 py-1.5 text-xs rounded-lg bg-red-500 text-gray-900 hover:bg-red-600 dark:bg-red-500 dark:hover:bg-red-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                className="border border-red-600 px-3 py-1.5 text-xs rounded-lg bg-red-500 text-gray-900 hover:bg-red-600 dark:bg-red-500 dark:hover:bg-red-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {i18nService.t('confirmDelete')}
               </button>
@@ -1074,7 +1074,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                 type="button"
                 onClick={handleConfirmDeleteSkill}
                 disabled={isDeletingSkill}
-                className="px-3 py-1.5 text-xs rounded-lg bg-red-500 text-gray-900 hover:bg-red-600 dark:bg-red-500 dark:hover:bg-red-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                className="border border-red-600 px-3 py-1.5 text-xs rounded-lg bg-red-500 text-gray-900 hover:bg-red-600 dark:bg-red-500 dark:hover:bg-red-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {i18nService.t('confirmDelete')}
               </button>

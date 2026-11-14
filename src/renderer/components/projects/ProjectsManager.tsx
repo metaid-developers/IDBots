@@ -270,7 +270,7 @@ const ProjectsManager: React.FC<{ autoOpenCreateForm?: boolean }> = ({ autoOpenC
                 type="button"
                 onClick={handleConfirmDelete}
                 disabled={isDeleting}
-                className="px-3 py-1.5 text-xs rounded-lg bg-red-500 text-gray-900 hover:bg-red-600 dark:bg-red-500 dark:hover:bg-red-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                className="border border-red-600 px-3 py-1.5 text-xs rounded-lg bg-red-500 text-white hover:bg-red-600 dark:bg-red-500 dark:hover:bg-red-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {i18nService.t('confirmDelete')}
               </button>
