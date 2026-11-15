@@ -56,6 +56,7 @@ import {
   createJevRelayCallRecorder,
   createJevRelayFetchWithKeyRetry,
   createSignalBoundedFetch,
+  doesJevRelaySupportTemplates,
   flushJevRelayCallStats,
   initJevRelayService,
   registerJevRelayIpcHandlers,
@@ -459,6 +460,7 @@ import {
 } from './services/contentSummaryService';
 import { MetawebStudyJobStore } from './metawebStudyJobStore';
 import { MetawebSurfStore } from './metawebSurfStore';
+import { pruneStaleDshSkillEnvFiles } from './libs/dshSkillSessionEnv';
 import { SurfService, SURF_STATUS_CHANNEL } from './services/surfService';
 import { buildSurfSessionPrompt, parseSurfRunReport, SURF_DEEP_READ_GUIDANCE, SURF_KB_ADD_BUDGET } from './libs/surfPrompt';
 import { foldSurfReceiptsIntoSeenActions, surfReceiptSeenActions, surfSessionPartialStats, type SurfSessionWriteState } from './libs/surfInteractionGuard';
@@ -3975,12 +3977,14 @@ const createCerebellumTurnDecisionCaller = () =>
     remoteServicesEnabled: boolean;
     memories: ReadonlyArray<{ id: string; text: string }>;
     knowledge: ReadonlyArray<{ id: string; topic: string; summary: string; kind: string }>;
+    includeEffort?: boolean;
   }): Promise<{
     memoryScores: ReadonlyMap<string, number> | null;
     knowledgeScores: ReadonlyMap<string, number> | null;
     skillRanking: Array<{ id: string; name: string; description: string; probability: number }> | null;
     serviceRanking: Array<{ id: string; name: string; description: string; probability: number }> | null;
     gateVerdicts: Record<string, boolean> | null;
+    effortDistribution?: Record<'off' | 'low' | 'high' | 'max', number> | null;
   } | null> => {
     const context = await resolveCerebellumCallContext();
     if (!context) {
@@ -4020,6 +4024,8 @@ const createCerebellumTurnDecisionCaller = () =>
     const outcome = await runCerebellumTurnDecisions({
       config: context.config,
       fetchImpl: context.fetchImpl,
+      useQuestionTemplates:
+        context.config.provider === CEREBELLUM_FREE_PROVIDER && doesJevRelaySupportTemplates(),
       decisions: {
         currentUserText: input.currentUserText,
         memories: input.memories,
@@ -4027,6 +4033,7 @@ const createCerebellumTurnDecisionCaller = () =>
         skills: skills.length >= CEREBELLUM_SKILL_SHORTLIST_MIN_POOL ? skills : [],
         services: services.length >= CEREBELLUM_REMOTE_SERVICE_SHORTLIST_MIN_POOL ? services : [],
         includeGate: true,
+        includeEffort: input.includeEffort === true,
       },
       onPayload: (stats) => {
         coworkLog('INFO', 'cerebellum:turnPayload', 'Cerebellum turn decision bundle payload', {
@@ -4075,6 +4082,7 @@ const createCerebellumTurnDecisionCaller = () =>
           return service ? [{ ...service, probability: entry.probability }] : [];
         }) ?? null,
       gateVerdicts: outcome.gateVerdicts,
+      effortDistribution: outcome.effortDistribution ?? null,
     };
   };
 
@@ -5964,6 +5972,8 @@ const startStartupNightlyServices = (): void => {
     metaidKnowledgeStore: dreamKnowledgeStore,
     metaidCultureStore: getTeamCultureStore(),
     standingPageStore: getStandingPageStore(),
+    metawebSurfStore: getMetawebSurfStore(),
+    chainContentHistoryStore: getChainContentHistoryStore(),
     performChat: performChatCompletionForOrchestrator,
     emitToRenderer: (channel, data) => {
       broadcastToRenderers(channel as string, data);
@@ -6255,8 +6265,9 @@ const scheduleCoworkStoreHeavyMaintenance = (): void => {
     try {
       startupLog('cowork store heavy maintenance begin');
       const result = coworkStore.runHeavyStartupMaintenance();
+      const prunedEnvFiles = pruneStaleDshSkillEnvFiles(app.getPath('userData'));
       startupLog(
-        `cowork store heavy maintenance done (orderSessions=${result.migratedMetawebOrderSessions}, orderBackfill=${result.backfilledMetawebOrderMessages}, privateBackfill=${result.backfilledMetawebPrivateMessages})`,
+        `cowork store heavy maintenance done (orderSessions=${result.migratedMetawebOrderSessions}, orderBackfill=${result.backfilledMetawebOrderMessages}, privateBackfill=${result.backfilledMetawebPrivateMessages}, prunedSkillEnv=${prunedEnvFiles})`,
       );
       coworkStoreHeavyMaintenanceFinished = true;
       if (!coworkStore.isMessagesFtsReady()) {
@@ -9162,12 +9173,33 @@ const getBotBrowserProjection = () =>
 // Open delegated work for a Studio session, read from the orchestration
 // store. Shared by the Live Stage's delegation-aware completion and any
 // other surface that needs "is a teammate bot still working on this".
+const resolveLiveStageBuiltinAvatar = (avatar: unknown): string | undefined =>
+  resolveBuiltinAvatarDataUri(avatar, path.join(app.getAppPath(), app.isPackaged ? 'dist' : 'public'));
+
+const resolveLiveStageRemoteAvatar = async (avatar: unknown): Promise<string | undefined> => {
+  if (typeof avatar !== 'string') return undefined;
+  const reference = avatar.trim();
+  if (!reference) return undefined;
+  const nftRef = parseNftAvatarReference(reference);
+  if (nftRef) {
+    const resolved = await resolveNftAvatar(nftRef);
+    return resolved.avatarUrl ?? undefined;
+  }
+  const builtin = resolveLiveStageBuiltinAvatar(reference);
+  if (builtin) return builtin;
+  if (/^metafile:\/\//i.test(reference)) {
+    return (await resolvePinAssetSource(reference)) ?? undefined;
+  }
+  return undefined;
+};
+
 const studioDelegationLookupDeps = {
   listAttemptsForSourceSessions: (ids: string[]) => getOrchestrationStore().listAttemptsForSourceSessions(ids),
   getStep: (id: string) => getOrchestrationStore().getStep(id),
   getTaskForStep: (id: string) => getOrchestrationStore().getTaskForStep(id),
   getSession: (id: string) => getCoworkStore().getSessionWithoutMessages(id),
   getMetabotById: (id: number) => getMetabotStore().getMetabotById(id),
+  resolveAvatar: resolveLiveStageBuiltinAvatar,
 };
 const listOpenStudioDelegations = (sessionId: string) => listStudioOpenDelegations(studioDelegationLookupDeps, sessionId);
 // Projection discipline (2026-11-12 owner ruling): the gate counts ONLY
@@ -9233,7 +9265,8 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
       },
       assetRoot: path.join(app.getAppPath(), app.isPackaged ? 'dist/live-stage' : 'public/live-stage'),
       fallbackAvatarDataUri: `data:image/png;base64,${fs.readFileSync(fallbackAvatarPath).toString('base64')}`,
-      resolveAvatar: (avatar) => resolveBuiltinAvatarDataUri(avatar, path.join(app.getAppPath(), app.isPackaged ? 'dist' : 'public')),
+      resolveAvatar: resolveLiveStageBuiltinAvatar,
+      resolveAvatarAsync: resolveLiveStageRemoteAvatar,
       isSessionClaimed: (sessionId) => getStudioGenesisStageService().isClaimed(sessionId),
       beforeProjection: (sessionId) => getStudioGenesisStageService().beforeLiveStageProjection(sessionId),
     });
@@ -21046,11 +21079,13 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
       startupLog('main frame did-finish-load');
       emitWindowState(win);
     });
-    if (isDev) {
-      win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+      if (isDev) {
         console.log(`[Renderer:${level}] ${sourceId}:${line} ${message}`);
-      });
-    }
+      } else if (/\[(?:LiveStage|GenesisStage)\]|WebGPU/i.test(String(message))) {
+        console.warn(`[Renderer:${level}] ${message}`);
+      }
+    });
 
     // [关键代码] 显式告诉 Electron 使用系统的代理配置
     // 这会涵盖绝大多数 VPN（如 Clash, V2Ray 等开启了"系统代理"模式的情况）
@@ -21410,6 +21445,15 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     });
   };
 
+  const DESKTOP_CLEANUP_TIMEOUT_MS = 5_000;
+
+  const finishCleanupAndExit = () => {
+    if (isCleanupFinished) return;
+    isCleanupFinished = true;
+    isCleanupInProgress = false;
+    app.exit(0);
+  };
+
   app.on('before-quit', (e) => {
     if (isCleanupFinished) return;
 
@@ -21425,14 +21469,19 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     // only fires on the next day's first call, which never comes at quit).
     flushJevRelayCallStats();
 
+    const watchdog = setTimeout(() => {
+      console.warn(`[Main] App cleanup exceeded ${DESKTOP_CLEANUP_TIMEOUT_MS}ms; forcing exit.`);
+      finishCleanupAndExit();
+    }, DESKTOP_CLEANUP_TIMEOUT_MS);
+    watchdog.unref();
+
     void runAppCleanup()
       .catch((error) => {
         console.error('[Main] Cleanup error:', error);
       })
       .finally(() => {
-        isCleanupFinished = true;
-        isCleanupInProgress = false;
-        app.exit(0);
+        clearTimeout(watchdog);
+        finishCleanupAndExit();
       });
   });
 
@@ -21443,14 +21492,18 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     console.log(`[Main] Received ${signal}, running cleanup before exit...`);
     isCleanupInProgress = true;
     isQuitting = true;
+    const watchdog = setTimeout(() => {
+      console.warn(`[Main] App cleanup during ${signal} exceeded ${DESKTOP_CLEANUP_TIMEOUT_MS}ms; forcing exit.`);
+      finishCleanupAndExit();
+    }, DESKTOP_CLEANUP_TIMEOUT_MS);
+    watchdog.unref();
     void runAppCleanup()
       .catch((error) => {
         console.error(`[Main] Cleanup error during ${signal}:`, error);
       })
       .finally(() => {
-        isCleanupFinished = true;
-        isCleanupInProgress = false;
-        app.exit(0);
+        clearTimeout(watchdog);
+        finishCleanupAndExit();
       });
   };
 
@@ -21486,6 +21539,34 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     startupLog('initApp begin');
     await app.whenReady();
     startupLog('app.whenReady resolved');
+
+    if (!isServerMode()) {
+      try {
+        const gpuStatus = app.getGPUFeatureStatus() as unknown as Record<string, unknown>;
+        console.log('[GPU] Feature status:', JSON.stringify({
+          webgpu: gpuStatus.webgpu,
+          webgl: gpuStatus.webgl,
+          webgl2: gpuStatus.webgl2,
+          gpu_compositing: gpuStatus.gpu_compositing,
+          '2d_canvas': gpuStatus['2d_canvas'],
+        }));
+        void app.getGPUInfo('basic').then((info) => {
+          const rawDevices = Array.isArray((info as { gpuDevice?: unknown[] } | null)?.gpuDevice)
+            ? (info as { gpuDevice: Array<{ vendorId?: number; deviceId?: number; active?: boolean; driverVendor?: string; driverVersion?: string }> }).gpuDevice
+            : [];
+          const devices = rawDevices.map((d) => ({
+            vendorId: d.vendorId,
+            deviceId: d.deviceId,
+            active: d.active,
+            driverVendor: d.driverVendor,
+            driverVersion: d.driverVersion,
+          }));
+          console.log('[GPU] Basic info:', JSON.stringify(devices));
+        }).catch(() => {});
+      } catch (error) {
+        console.warn('[GPU] Failed to read GPU status:', error);
+      }
+    }
 
     // Indexer requests must be attributable in server logs (ops ticket
     // 2026-11-08: 20 tenant instances shared the bare `node` UA). Tenant

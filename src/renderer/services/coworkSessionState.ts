@@ -75,11 +75,21 @@ const settleStreamingMessages = (messages: CoworkMessage[]): CoworkMessage[] => 
   return changed ? next : messages;
 };
 
+function isAcknowledgedOptimisticMessage(message: CoworkMessage, incoming: CoworkMessage): boolean {
+  const submissionId = incoming.metadata?.submissionId;
+  return typeof submissionId === 'string' && submissionId.length > 0
+    && message.id === `local-${submissionId}`
+    && message.metadata?.optimistic === true
+    && message.metadata.submissionId === submissionId;
+}
+
 export function upsertCoworkMessage(
   messages: CoworkMessage[],
   incoming: CoworkMessage,
 ): { messages: CoworkMessage[]; added: boolean } {
-  const index = messages.findIndex((message) => message.id === incoming.id);
+  const index = messages.findIndex((message) => (
+    message.id === incoming.id || isAcknowledgedOptimisticMessage(message, incoming)
+  ));
   if (index < 0) return { messages: [...messages, incoming], added: true };
   if (messages[index] === incoming) return { messages, added: false };
   const next = [...messages];
@@ -139,6 +149,7 @@ export function mergeCoworkSnapshotMessages(
   const retainedTail: CoworkMessage[] = [];
   for (const message of existing) {
     if (incomingIds.has(message.id)) continue;
+    if (incoming.some((incomingMessage) => isAcknowledgedOptimisticMessage(message, incomingMessage))) continue;
     const isLocal = message.id.startsWith('local-');
     const isLive = isNewerLiveMessage(message.id)
       || (options.baseMessageRevisions === undefined && message.metadata?.isStreaming === true);
@@ -204,10 +215,11 @@ export function applyCoworkSessionEvent(
 
   if (event.type === 'message') {
     const incoming = event.message;
-    const exists = state.messages.some((message) => message.id === incoming.id);
+    const upserted = upsertCoworkMessage(state.messages, incoming);
+    const exists = !upserted.added;
     const sequence = messageSequence(incoming);
     const sequenceGap = sequence !== null && state.lastSequence !== null && sequence > state.lastSequence + 1;
-    const messages = exists ? state.messages : [...state.messages, incoming];
+    const messages = upserted.messages;
     const revision = exists ? state.revision : state.revision + 1;
     const messageRevisions = exists
       ? state.messageRevisions

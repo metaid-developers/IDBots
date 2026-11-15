@@ -204,7 +204,7 @@ export async function resolveCerebellumRuntimeConfig(appConfig: unknown): Promis
   if (!config || config.provider !== CEREBELLUM_FREE_PROVIDER) {
     return config;
   }
-  if (isJevRelayQuotaExhausted()) {
+  if (isJevRelayQuotaExhausted() || isJevRelayTimeoutCircuitOpen()) {
     return null;
   }
   try {
@@ -485,8 +485,39 @@ export function classifyJevRelayThrownError(error: unknown): JevRelayCallResultC
  * without an app restart.
  */
 export const JEV_RELAY_QUOTA_BREAKER_MS = 5 * 60 * 1000;
+export const JEV_RELAY_TIMEOUT_STREAK_THRESHOLD = 3;
+export const JEV_RELAY_TIMEOUT_BREAKER_MS = 90 * 1000;
 
 let quotaExhaustedUntil = 0;
+let consecutiveTransientFailures = 0;
+let timeoutCircuitOpenUntil = 0;
+let relaySupportsQuestionTemplates = false;
+
+export function doesJevRelaySupportTemplates(): boolean {
+  return relaySupportsQuestionTemplates;
+}
+
+export function setJevRelayTemplateSupportForTests(supported: boolean): void {
+  relaySupportsQuestionTemplates = supported;
+}
+
+export function isJevRelayTimeoutCircuitOpen(nowMs: number = Date.now()): boolean {
+  return nowMs < timeoutCircuitOpenUntil;
+}
+
+function noteJevRelayTransientFailure(nowMs: number): void {
+  consecutiveTransientFailures += 1;
+  if (consecutiveTransientFailures >= JEV_RELAY_TIMEOUT_STREAK_THRESHOLD) {
+    const wasOpen = isJevRelayTimeoutCircuitOpen(nowMs);
+    timeoutCircuitOpenUntil = nowMs + JEV_RELAY_TIMEOUT_BREAKER_MS;
+    if (!wasOpen) {
+      statsSink?.('WARN', 'jevRelay:breaker', 'IDBots-JEV cerebellum paused for 90s due to consecutive relay timeouts', {
+        streak: consecutiveTransientFailures,
+        retryAfterMs: JEV_RELAY_TIMEOUT_BREAKER_MS,
+      });
+    }
+  }
+}
 
 /** Opens the breaker; exposed for the recorder and IPC surfacing. */
 export function noteJevRelayQuotaExhaustion(nowMs: number = Date.now()): void {
@@ -518,6 +549,9 @@ export function getJevRelayQuotaStatus(nowMs: number = Date.now()): {
 /** Testing hook: close the breaker and clear the accumulators. */
 export function resetJevRelayCallStatsForTests(): void {
   quotaExhaustedUntil = 0;
+  consecutiveTransientFailures = 0;
+  timeoutCircuitOpenUntil = 0;
+  relaySupportsQuestionTemplates = false;
   activeDayStats = null;
   statsSink = null;
 }
@@ -598,8 +632,12 @@ function recordJevRelayCallResult(
   activeDayStats.acc.latencies.push(Math.max(0, Math.round(latencyMs)));
   if (code === 'http_429_quota') {
     noteJevRelayQuotaExhaustion(nowMs);
+  } else if (code === 'timeout' || code === 'http_5xx') {
+    noteJevRelayTransientFailure(nowMs);
   } else if (code === 'ok') {
     quotaExhaustedUntil = 0;
+    consecutiveTransientFailures = 0;
+    timeoutCircuitOpenUntil = 0;
   }
 }
 
@@ -645,6 +683,14 @@ export function createJevRelayCallRecorder<R extends { ok: boolean; status: numb
     let response: R;
     try {
       response = await fetchImpl(url, init);
+      try {
+        const capHeader = (response as { headers?: { get?: (k: string) => string | null } })?.headers?.get?.('x-jev-capabilities');
+        if (typeof capHeader === 'string' && capHeader.includes('templates-v1')) {
+          relaySupportsQuestionTemplates = true;
+        }
+      } catch {
+        // Ignore exotic test response mocks without headers.
+      }
       if (response.status === 429) {
         let parsed: unknown = null;
         let parsedOk = false;

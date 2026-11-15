@@ -197,14 +197,14 @@ const coworkActivityMessageMatch = (alias = ''): string =>
  */
 const coworkSessionActivityAtSelectSql = (sessionRef: string): string => `COALESCE((
           SELECT m.created_at
-          FROM cowork_messages m INDEXED BY idx_cowork_messages_session_created_at
+          FROM cowork_messages m
           WHERE m.session_id = ${sessionRef}.id
             AND ${coworkActivityMessageMatch('m.')}
           ORDER BY m.created_at DESC
           LIMIT 1
         ), (
           SELECT m.created_at
-          FROM cowork_messages m INDEXED BY idx_cowork_messages_session_created_at
+          FROM cowork_messages m
           WHERE m.session_id = ${sessionRef}.id
           ORDER BY m.created_at DESC
           LIMIT 1
@@ -212,7 +212,7 @@ const coworkSessionActivityAtSelectSql = (sessionRef: string): string => `COALES
 /** Activity key of a single session row, ignoring the stored column (may be NULL). */
 const coworkSessionActivityAtMessageSql = (sessionRef: string): string => `(
           SELECT m.created_at
-          FROM cowork_messages m INDEXED BY idx_cowork_messages_session_created_at
+          FROM cowork_messages m
           WHERE m.session_id = ${sessionRef}.id
             AND ${coworkActivityMessageMatch('m.')}
           ORDER BY m.created_at DESC
@@ -1893,15 +1893,31 @@ export class CoworkStore implements MemoryBackend {
       return;
     }
     try {
-      this.db.run(`
-        CREATE INDEX IF NOT EXISTS idx_cowork_messages_session_created_at
-        ON cowork_messages(session_id, created_at DESC)
-      `);
-      this.db.run(`
-        CREATE INDEX IF NOT EXISTS idx_cowork_messages_session_sequence
-        ON cowork_messages(session_id, sequence DESC)
-      `);
-      this.saveDb();
+      let changed = false;
+      if (this.indexExists('idx_cowork_messages_session_id')) {
+        this.db.run('DROP INDEX IF EXISTS idx_cowork_messages_session_id');
+        changed = true;
+      }
+      if (
+        !this.indexExists('idx_cowork_messages_session_created_sequence')
+        && !this.indexExists('idx_cowork_messages_session_created_at')
+      ) {
+        this.db.run(`
+          CREATE INDEX IF NOT EXISTS idx_cowork_messages_session_created_at
+          ON cowork_messages(session_id, created_at DESC)
+        `);
+        changed = true;
+      }
+      if (!this.indexExists('idx_cowork_messages_session_sequence')) {
+        this.db.run(`
+          CREATE INDEX IF NOT EXISTS idx_cowork_messages_session_sequence
+          ON cowork_messages(session_id, sequence DESC)
+        `);
+        changed = true;
+      }
+      if (changed) {
+        this.saveDb();
+      }
     } catch (error) {
       console.warn('[CoworkStore] Failed to verify cowork_messages indexes:', error);
     }
@@ -1948,6 +1964,16 @@ export class CoworkStore implements MemoryBackend {
           ON cowork_messages(session_id, sequence, created_at)
         `);
         changed = true;
+      }
+      if (this.indexExists('idx_cowork_messages_session_created_sequence')) {
+        if (this.indexExists('idx_cowork_messages_session_created_at')) {
+          this.db.run('DROP INDEX IF EXISTS idx_cowork_messages_session_created_at');
+          changed = true;
+        }
+        if (this.indexExists('idx_cowork_messages_session_id')) {
+          this.db.run('DROP INDEX IF EXISTS idx_cowork_messages_session_id');
+          changed = true;
+        }
       }
       if (changed) {
         this.saveDb();
@@ -2047,36 +2073,42 @@ export class CoworkStore implements MemoryBackend {
       return;
     }
     try {
-      this.db.run(`
-        CREATE INDEX IF NOT EXISTS idx_cowork_sessions_metabot_updated
-        ON cowork_sessions(metabot_id, updated_at DESC)
-      `);
-      this.db.run(`
-        CREATE INDEX IF NOT EXISTS idx_cowork_sessions_visible_activity
-        ON cowork_sessions(pinned DESC, COALESCE(activity_at, updated_at) DESC, updated_at DESC, created_at DESC, id DESC)
-        WHERE COALESCE(hidden_from_session_list, 0) = 0 AND archived_at IS NULL
-      `);
-      this.db.run(`
-        CREATE INDEX IF NOT EXISTS idx_cowork_sessions_visible_metabot_activity
-        ON cowork_sessions(metabot_id, COALESCE(activity_at, updated_at) DESC, updated_at DESC, created_at DESC)
-        WHERE COALESCE(hidden_from_session_list, 0) = 0 AND archived_at IS NULL
-      `);
-      this.db.run(`
-        CREATE INDEX IF NOT EXISTS idx_cowork_sessions_null_activity
-        ON cowork_sessions(id)
-        WHERE activity_at IS NULL
-      `);
-      this.db.run(`
-        CREATE INDEX IF NOT EXISTS idx_cowork_sessions_null_metabot
-        ON cowork_sessions(id)
-        WHERE metabot_id IS NULL
-      `);
-      this.db.run(`
-        CREATE INDEX IF NOT EXISTS idx_cowork_sessions_fork_parent
-        ON cowork_sessions(id)
-        WHERE parent_session_id IS NOT NULL
-      `);
-      this.saveDb();
+      const sessionIndexDefs: Array<[string, string]> = [
+        [
+          'idx_cowork_sessions_metabot_updated',
+          'CREATE INDEX IF NOT EXISTS idx_cowork_sessions_metabot_updated ON cowork_sessions(metabot_id, updated_at DESC)',
+        ],
+        [
+          'idx_cowork_sessions_visible_activity',
+          'CREATE INDEX IF NOT EXISTS idx_cowork_sessions_visible_activity ON cowork_sessions(pinned DESC, COALESCE(activity_at, updated_at) DESC, updated_at DESC, created_at DESC, id DESC) WHERE COALESCE(hidden_from_session_list, 0) = 0 AND archived_at IS NULL',
+        ],
+        [
+          'idx_cowork_sessions_visible_metabot_activity',
+          'CREATE INDEX IF NOT EXISTS idx_cowork_sessions_visible_metabot_activity ON cowork_sessions(metabot_id, COALESCE(activity_at, updated_at) DESC, updated_at DESC, created_at DESC) WHERE COALESCE(hidden_from_session_list, 0) = 0 AND archived_at IS NULL',
+        ],
+        [
+          'idx_cowork_sessions_null_activity',
+          'CREATE INDEX IF NOT EXISTS idx_cowork_sessions_null_activity ON cowork_sessions(id) WHERE activity_at IS NULL',
+        ],
+        [
+          'idx_cowork_sessions_null_metabot',
+          'CREATE INDEX IF NOT EXISTS idx_cowork_sessions_null_metabot ON cowork_sessions(id) WHERE metabot_id IS NULL',
+        ],
+        [
+          'idx_cowork_sessions_fork_parent',
+          'CREATE INDEX IF NOT EXISTS idx_cowork_sessions_fork_parent ON cowork_sessions(id) WHERE parent_session_id IS NOT NULL',
+        ],
+      ];
+      let changed = false;
+      for (const [name, ddl] of sessionIndexDefs) {
+        if (!this.indexExists(name)) {
+          this.db.run(ddl);
+          changed = true;
+        }
+      }
+      if (changed) {
+        this.saveDb();
+      }
     } catch (error) {
       console.warn('[CoworkStore] Failed to verify cowork_sessions indexes:', error);
     }
@@ -2531,61 +2563,75 @@ export class CoworkStore implements MemoryBackend {
 
   private ensureA2AConversationSchemaCompatibility(): void {
     try {
-      this.db.run(`
-        CREATE TABLE IF NOT EXISTS a2a_conversation_threads (
-          id TEXT PRIMARY KEY,
-          participant_pair_key TEXT NOT NULL,
-          local_metabot_id INTEGER NOT NULL,
-          local_global_metaid TEXT NOT NULL,
-          peer_global_metaid TEXT NOT NULL,
-          created_at INTEGER NOT NULL,
-          updated_at INTEGER NOT NULL
-        )
-      `);
-      this.db.run(`
-        CREATE INDEX IF NOT EXISTS idx_a2a_threads_participant_pair
-        ON a2a_conversation_threads(participant_pair_key, updated_at DESC)
-      `);
-      this.db.run(`
-        CREATE TABLE IF NOT EXISTS a2a_conversation_episodes (
-          session_id TEXT PRIMARY KEY,
-          thread_id TEXT NOT NULL,
-          episode_index INTEGER NOT NULL,
-          previous_session_id TEXT,
-          next_session_id TEXT,
-          started_at INTEGER NOT NULL,
-          ended_at INTEGER,
-          close_reason TEXT,
-          UNIQUE(thread_id, episode_index),
-          FOREIGN KEY (session_id) REFERENCES cowork_sessions(id) ON DELETE CASCADE,
-          FOREIGN KEY (thread_id) REFERENCES a2a_conversation_threads(id) ON DELETE CASCADE
-        )
-      `);
-      this.db.run(`
-        CREATE INDEX IF NOT EXISTS idx_a2a_episodes_thread_index
-        ON a2a_conversation_episodes(thread_id, episode_index DESC)
-      `);
-      // Episode rollover is a live policy again (long-lived A2A threads roll
-      // over to a fresh session past a message threshold, aggregated as one
-      // conversation in the UI) — threads may legitimately hold multiple
-      // episodes, so no startup consolidation may collapse them.
+      let changed = false;
+      if (!this.tableExists('a2a_conversation_threads')) {
+        this.db.run(`
+          CREATE TABLE IF NOT EXISTS a2a_conversation_threads (
+            id TEXT PRIMARY KEY,
+            participant_pair_key TEXT NOT NULL,
+            local_metabot_id INTEGER NOT NULL,
+            local_global_metaid TEXT NOT NULL,
+            peer_global_metaid TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+          )
+        `);
+        changed = true;
+      }
+      if (!this.indexExists('idx_a2a_threads_participant_pair')) {
+        this.db.run(`
+          CREATE INDEX IF NOT EXISTS idx_a2a_threads_participant_pair
+          ON a2a_conversation_threads(participant_pair_key, updated_at DESC)
+        `);
+        changed = true;
+      }
+      if (!this.tableExists('a2a_conversation_episodes')) {
+        this.db.run(`
+          CREATE TABLE IF NOT EXISTS a2a_conversation_episodes (
+            session_id TEXT PRIMARY KEY,
+            thread_id TEXT NOT NULL,
+            episode_index INTEGER NOT NULL,
+            previous_session_id TEXT,
+            next_session_id TEXT,
+            started_at INTEGER NOT NULL,
+            ended_at INTEGER,
+            close_reason TEXT,
+            UNIQUE(thread_id, episode_index),
+            FOREIGN KEY (session_id) REFERENCES cowork_sessions(id) ON DELETE CASCADE,
+            FOREIGN KEY (thread_id) REFERENCES a2a_conversation_threads(id) ON DELETE CASCADE
+          )
+        `);
+        changed = true;
+      }
+      if (!this.indexExists('idx_a2a_episodes_thread_index')) {
+        this.db.run(`
+          CREATE INDEX IF NOT EXISTS idx_a2a_episodes_thread_index
+          ON a2a_conversation_episodes(thread_id, episode_index DESC)
+        `);
+        changed = true;
+      }
       const episodeSchemaColumns = this.db.exec('PRAGMA table_info(a2a_conversation_episodes);');
       const episodeSchemaColumnNames = (episodeSchemaColumns[0]?.values || []).map((row) => String(row[1]));
       if (!episodeSchemaColumnNames.includes('summary')) {
         this.db.run('ALTER TABLE a2a_conversation_episodes ADD COLUMN summary TEXT;');
+        changed = true;
       }
-      this.backfillA2AConversationEpisodes();
-      this.saveDb();
+      if (this.backfillA2AConversationEpisodes() > 0) {
+        changed = true;
+      }
+      if (changed) {
+        this.saveDb();
+      }
     } catch (error) {
       console.warn('[CoworkStore] Failed to verify A2A conversation schema:', error);
     }
   }
 
-  private backfillA2AConversationEpisodes(): void {
-    if (!this.tableExists('metabots')) return;
+  private backfillA2AConversationEpisodes(): number {
+    if (!this.tableExists('metabots')) return 0;
     const metabotColumns = this.db.exec('PRAGMA table_info(metabots);');
     const metabotColumnNames = (metabotColumns[0]?.values || []).map((row) => String(row[1]));
-    if (!metabotColumnNames.includes('globalmetaid')) return;
+    if (!metabotColumnNames.includes('globalmetaid')) return 0;
 
     const rows = this.getAll<{
       session_id: string;
@@ -2669,6 +2715,7 @@ export class CoworkStore implements MemoryBackend {
           : null,
       });
     }
+    return rows.length;
   }
   private getKvValue(key: string): string | null {
     const row = this.getOne<{ value: string }>('SELECT value FROM kv WHERE key = ?', [key]);

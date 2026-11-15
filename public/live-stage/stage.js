@@ -306,7 +306,7 @@
     });
   }
 
-  const ORB_START_TIMEOUT_MS = 6000;
+  const ORB_START_TIMEOUT_MS = 20000;
 
   function disposeOrbLayer(layer, destroyDevice = false) {
     if (!layer) return;
@@ -331,7 +331,9 @@
     disposeAllOrbLayers();
     body.dataset.orbBackend = 'canvas';
     window.__liveStageBackend = 'canvas';
-    window.__liveStageOrbError = error instanceof Error ? error.message : String(error);
+    const message = error instanceof Error ? error.message : String(error);
+    window.__liveStageOrbError = message;
+    console.warn('[LiveStage] WebGPU fallback:', message);
   }
 
   function failOrbLayer(layer, previous, error) {
@@ -380,6 +382,7 @@
     const previousPhase = previous?.controller?.getPhase();
     window.createLiquidOrbRenderer(layerCanvas, {
       initialFamily: family,
+      fixedStyle: style,
       startPhase: Number.isFinite(previousPhase) ? previousPhase * ((previous?.speed || 1) / (params.speed || 1)) : undefined,
       sharedResources: previous?.controller?.getSharedResources(),
       signal: abort?.signal,
@@ -462,23 +465,40 @@
     const fallback = $('[data-worker-fallback]');
     const handoffImage = $('[data-handoff-avatar]');
     const avatar = typeof worker?.avatar === 'string' && /^(?:data:image\/|https?:\/\/|avatars\/)/i.test(worker.avatar) ? worker.avatar : '';
+    const initial = typeof worker?.label === 'string' ? worker.label.trim().slice(0, 1).toUpperCase() : '';
+    fallback.textContent = initial || 'W';
     image.onerror = () => {
+      image.dataset.workerAvatarFailed = 'true';
       image.hidden = true;
       fallback.hidden = false;
       handoffImage.hidden = true;
     };
     handoffImage.onerror = () => {
+      handoffImage.dataset.workerAvatarFailed = 'true';
       handoffImage.hidden = true;
       image.hidden = true;
       fallback.hidden = false;
     };
     if (avatar) {
-      image.src = avatar;
-      handoffImage.src = avatar;
-      image.hidden = false;
-      handoffImage.hidden = false;
-      fallback.hidden = true;
+      if (image.dataset.workerAvatarSrc !== avatar) {
+        image.dataset.workerAvatarSrc = avatar;
+        image.dataset.workerAvatarFailed = 'false';
+        image.src = avatar;
+      }
+      if (handoffImage.dataset.workerAvatarSrc !== avatar) {
+        handoffImage.dataset.workerAvatarSrc = avatar;
+        handoffImage.dataset.workerAvatarFailed = 'false';
+        handoffImage.src = avatar;
+      }
+      const failed = image.dataset.workerAvatarFailed === 'true' || handoffImage.dataset.workerAvatarFailed === 'true';
+      image.hidden = failed;
+      handoffImage.hidden = failed;
+      fallback.hidden = !failed;
     } else {
+      delete image.dataset.workerAvatarSrc;
+      delete handoffImage.dataset.workerAvatarSrc;
+      delete image.dataset.workerAvatarFailed;
+      delete handoffImage.dataset.workerAvatarFailed;
       image.removeAttribute('src');
       handoffImage.removeAttribute('src');
       image.hidden = true;

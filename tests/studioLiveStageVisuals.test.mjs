@@ -239,4 +239,40 @@ test('WebGPU orb compiles pipelines asynchronously and tears down late timed-out
   assert.match(orb, /const abortIfSignaled = \(\) =>/);
   assert.match(stage, /signal: abort\?\.signal/);
   assert.match(stage, /controller\.dispose\(!previous\?\.controller\)/);
+  assert.match(stage, /fixedStyle: style/);
+  assert.match(stage, /const ORB_START_TIMEOUT_MS = 20000;/);
+  assert.match(stage, /console\.warn\('\[LiveStage\] WebGPU fallback:', message\)/);
+});
+
+test('WebGPU orb specializes fixed-style WGSL for Windows shader compile speed and retries adapters', () => {
+  const window = {};
+  vm.runInNewContext(read('liquid-orb-effect.js'), { window });
+  vm.runInNewContext(read('liquid-orb.js'), { window });
+  const specialized = window.buildLiquidOrbShaderSource(window.LiquidOrbEffectSource, 9);
+  assert.match(specialized, /fn glsPresetFluid\(p: vec2<f32>, style: i32, t: f32\) -> vec3<f32> \{\s*\n\s*return glsSiriFluid\(p, t\);\s*\n\}/);
+  assert.match(specialized, /fn glsContourStrength\(\) -> f32 \{\s*\n\s*return 0\.09;\s*\n\}/);
+  assert.match(specialized, /let style = 9;/);
+  assert.match(specialized, /let s = 9;/);
+  assert.doesNotMatch(specialized, /glsAuroraFluid\(p, t\)/);
+  assert.doesNotMatch(specialized, /else \{ fcol = glsFluid\(fu, md, t\); \}/);
+
+  const orb = read('liquid-orb.js');
+  assert.match(orb, /powerPreference: 'high-performance'/);
+  assert.match(orb, /powerPreference: 'low-power'/);
+  assert.match(orb, /featureLevel: 'compatibility'/);
+  assert.match(orb, /adapter\.info\?\.isFallbackAdapter \|\| adapter\.isFallbackAdapter/);
+
+  const main = fs.readFileSync(path.resolve('src/main/main.ts'), 'utf8');
+  assert.match(main, /app\.getGPUFeatureStatus\(\)/);
+  assert.match(main, /app\.getGPUInfo\('basic'\)/);
+  assert.match(main, /\\\[\(\?:LiveStage\|GenesisStage\)\\\]\|WebGPU/);
+});
+
+test('worker visual sets avatar src without flickering and derives fallback initial from worker label', () => {
+  const stage = read('stage.js');
+  assert.match(stage, /fallback\.textContent = initial \|\| 'W'/);
+  assert.match(stage, /image\.dataset\.workerAvatarSrc !== avatar/);
+  assert.match(stage, /handoffImage\.dataset\.workerAvatarSrc !== avatar/);
+  const css = read('stage.css');
+  assert.match(css, /\.hybrid-avatar\[hidden\],\.handoff-avatar\[hidden\],\[data-worker-fallback\]\[hidden\]\{display:none\}/);
 });

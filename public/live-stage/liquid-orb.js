@@ -103,6 +103,85 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     colors.forEach((hex,index) => target.set(rgb(hex), 40 + index * 4));
   }
 
+  const PRESET_FLUID_BY_STYLE = {
+    9: 'glsSiriFluid',
+    10: 'glsAuroraFluid',
+    11: 'glsPlasmaFluid',
+    12: 'glsChromeFluid',
+    13: 'glsOpalFluid',
+    14: 'glsSpectrumFluid',
+    15: 'glsFrostFluid',
+    19: 'glsVoiceWaveFluid',
+    20: 'glsBlueDropFluid',
+    21: 'glsVioletEmberFluid',
+    22: 'glsChromaticMetalFluid',
+    23: 'glsRefractiveBlobFluid',
+    24: 'glsParticleRibbonFluid',
+  };
+
+  // Specialize the monolithic WGSL effect when a stage only uses one style (e.g.
+  // Live Stage uses style 9 exclusively). Without specialization, Dawn/Tint emits
+  // all 14 procedural branches at all 4 glsPresetFluid call sites, making Windows
+  // DXC/FXC cold shader compilation exceed startup timeouts.
+  function buildOrbShaderSource(baseEffectSource, fixedStyle) {
+    let source = String(baseEffectSource || '');
+    if (Number.isInteger(fixedStyle) && PRESET_FLUID_BY_STYLE[fixedStyle]) {
+      const fnName = PRESET_FLUID_BY_STYLE[fixedStyle];
+      const strength = fixedStyle >= 18.5 ? '0.11' : (fixedStyle >= 15.5 ? '0.16' : '0.09');
+      source = source
+        .replace(
+          /fn glsPresetFluid\(p: vec2<f32>, style: i32, t: f32\) -> vec3<f32> \{[\s\S]*?\n\}/,
+          `fn glsPresetFluid(p: vec2<f32>, style: i32, t: f32) -> vec3<f32> {\n  return ${fnName}(p, t);\n}`,
+        )
+        .replace(
+          /fn glsContourStrength\(\) -> f32 \{[\s\S]*?\n\}/,
+          `fn glsContourStrength() -> f32 {\n  return ${strength};\n}`,
+        )
+        .replace(/let style = i32\(u\.style \+ 0\.5\);/g, `let style = ${fixedStyle};`)
+        .replace(/let s = i32\(u\.style \+ 0\.5\);/g, `let s = ${fixedStyle};`)
+        .replace(/else \{ fcol = glsFluid\(fu, md, t\); \}/g, 'else { fcol = vec3<f32>(0.0); }');
+    }
+    return `${source}\n${entryPoints}`;
+  }
+
+  window.buildLiquidOrbShaderSource = buildOrbShaderSource;
+
+  async function acquireHardwareDevice(abortIfSignaled) {
+    const candidates = [
+      undefined,
+      { powerPreference: 'high-performance' },
+      { powerPreference: 'low-power' },
+      { featureLevel: 'compatibility' },
+    ];
+    let lastError = null;
+    let sawFallback = false;
+    for (const opts of candidates) {
+      let adapter = null;
+      try {
+        adapter = opts ? await navigator.gpu.requestAdapter(opts) : await navigator.gpu.requestAdapter();
+      } catch (error) {
+        lastError = error;
+        continue;
+      }
+      abortIfSignaled();
+      if (!adapter) continue;
+      if (adapter.info?.isFallbackAdapter || adapter.isFallbackAdapter) {
+        sawFallback = true;
+        continue;
+      }
+      try {
+        const device = await adapter.requestDevice();
+        abortIfSignaled();
+        return device;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    if (lastError) throw lastError;
+    if (sawFallback) throw new Error('WebGPU adapter is software fallback');
+    throw new Error('No WebGPU adapter');
+  }
+
   window.createLiquidOrbRenderer = async function createLiquidOrbRenderer(canvas, options = {}) {
     const forcedCanvas = new URLSearchParams(window.location.search).get('orb') === 'canvas';
     if (forcedCanvas) throw new Error('Canvas2D fallback requested');
@@ -121,14 +200,7 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     };
     abortIfSignaled();
     if (!device) {
-      const adapter = await navigator.gpu.requestAdapter();
-      abortIfSignaled();
-      if (!adapter) throw new Error('No WebGPU adapter');
-      if (adapter.info?.isFallbackAdapter || adapter.isFallbackAdapter) {
-        throw new Error('WebGPU adapter is software fallback');
-      }
-      device = await adapter.requestDevice();
-      abortIfSignaled();
+      device = await acquireHardwareDevice(abortIfSignaled);
     }
     const context = canvas.getContext('webgpu');
     if (!context) {
@@ -137,7 +209,9 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     }
     const format = navigator.gpu.getPreferredCanvasFormat();
     context.configure({ device, format, alphaMode: 'premultiplied' });
-    const shader = sharedResources?.shader ?? device.createShaderModule({ code: `${window.LiquidOrbEffectSource}\n${entryPoints}` });
+    const shader = sharedResources?.shader ?? device.createShaderModule({
+      code: buildOrbShaderSource(window.LiquidOrbEffectSource, options.fixedStyle),
+    });
     if (!sharedResources?.shader) {
       const compilation = await shader.getCompilationInfo();
       abortIfSignaled();

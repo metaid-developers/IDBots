@@ -496,10 +496,11 @@ export async function fetchMrc721ItemVerify(params: {
  * NFT business indexes — the full manapi-compatible MRC-721 read surface
  * (this file's reads), sell-intent queries, collection search, issuer views —
  * are served by MetaSo, which builds on man-p2p's raw pin index. The
- * production base is BUILT IN (same posture as the old MANAPI_BASE constant);
- * the `IDBOTS_METASO_API_BASE` env only overrides it for staging/local
- * testing, and it doubles as the rollback lever (point it back at
- * https://manapi.metaid.io to revert reads without a rebuild).
+ * production base is BUILT IN (same posture as the old MANAPI_BASE constant).
+ * `IDBOTS_MRC721_INDEXER_API_BASE` overrides it for staging/local testing and
+ * doubles as the rollback lever (point it back at https://manapi.metaid.io to
+ * revert reads without a rebuild). `IDBOTS_METASO_API_BASE` belongs to the
+ * assist-open-api traffic service, not this chain indexer.
  */
 export const METASO_API_BASE_DEFAULT = 'https://so.metaid.io';
 
@@ -566,9 +567,12 @@ export async function fetchMrc721RawPin(pinId: string): Promise<Mrc721RawPin | n
   }
 }
 
-export function getMetasoApiBase(): string {
-  const override = (process.env.IDBOTS_METASO_API_BASE ?? '').trim().replace(/\/+$/, '');
-  return override || METASO_API_BASE_DEFAULT;
+export function getMetasoApiBase(env: NodeJS.ProcessEnv = process.env): string {
+  const override = (env.IDBOTS_MRC721_INDEXER_API_BASE ?? '').trim().replace(/\/+$/, '');
+  if (override) return override;
+  const legacy = (env.IDBOTS_METASO_API_BASE ?? '').trim().replace(/\/+$/, '');
+  if (legacy && !/(?:^|\/)assist-open-api(?:\/|$)/i.test(legacy)) return legacy;
+  return METASO_API_BASE_DEFAULT;
 }
 
 /**

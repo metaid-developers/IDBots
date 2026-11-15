@@ -1,3 +1,4 @@
+import zlib from 'node:zlib';
 import { v4 as uuidv4 } from 'uuid';
 import type { SqliteDatabase as Database } from './sqliteTypes';
 import { formatBotWorkspaceDate } from './libs/botWorkspace';
@@ -2488,6 +2489,10 @@ export class DreamStore {
     payload: PromptLayerSnapshotPayload;
   }): PromptLayerSnapshot {
     const now = Date.now();
+    const rawJson = JSON.stringify(input.payload ?? {});
+    const encodedPayload = rawJson.length >= 512
+      ? `gz:${zlib.gzipSync(Buffer.from(rawJson, 'utf8')).toString('base64')}`
+      : rawJson;
     this.db.run(
       `UPDATE metabot_prompt_layer_snapshots SET status = 'superseded' WHERE metabot_id = ? AND status = 'active'`,
       [input.metabotId],
@@ -2502,7 +2507,7 @@ export class DreamStore {
         status = 'active',
         rollback_reason = NULL,
         rolled_back_at = NULL
-    `, [uuidv4(), input.metabotId, input.dreamDate, now, JSON.stringify(input.payload ?? {})]);
+    `, [uuidv4(), input.metabotId, input.dreamDate, now, encodedPayload]);
     // Retention: at most ROLLBACK_MAX_SNAPSHOTS_PER_BOT per bot — prune the
     // oldest superseded/rolled_back rows first, never the active one.
     this.db.run(`
@@ -2599,7 +2604,11 @@ export class DreamStore {
   private mapSnapshotRow(row: PromptLayerSnapshotRow): PromptLayerSnapshot {
     let payload: PromptLayerSnapshotPayload = { version: 1, memories: [], promotedProcedureIds: [] };
     try {
-      const parsed = JSON.parse(row.payload_json ?? '{}');
+      const rawText = row.payload_json ?? '{}';
+      const jsonText = rawText.startsWith('gz:')
+        ? zlib.gunzipSync(Buffer.from(rawText.slice(3), 'base64')).toString('utf8')
+        : rawText;
+      const parsed = JSON.parse(jsonText);
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         const record = parsed as Record<string, unknown>;
         payload = {
@@ -2683,6 +2692,42 @@ export class DreamStore {
       } catch {
         // Preserve the original write error.
       }
+      throw error;
+    }
+  }
+
+  compactPromptLayerSnapshots(batchLimit = 200): number {
+    const limit = Math.max(1, Math.min(1000, Math.floor(batchLimit)));
+    const rows = this.getAll<{ id: string; payload_json: string }>(`
+      SELECT id, payload_json
+      FROM metabot_prompt_layer_snapshots
+      WHERE payload_json IS NOT NULL
+        AND LENGTH(payload_json) >= 512
+        AND payload_json NOT LIKE 'gz:%'
+      LIMIT ?
+    `, [limit]);
+    if (rows.length === 0) return 0;
+
+    let compacted = 0;
+    this.db.run('BEGIN IMMEDIATE');
+    try {
+      for (const row of rows) {
+        const compressed = `gz:${zlib.gzipSync(Buffer.from(row.payload_json, 'utf8')).toString('base64')}`;
+        if (compressed.length < row.payload_json.length) {
+          this.db.run(
+            'UPDATE metabot_prompt_layer_snapshots SET payload_json = ? WHERE id = ?',
+            [compressed, row.id],
+          );
+          compacted += this.db.getRowsModified?.() || 0;
+        }
+      }
+      this.db.run('COMMIT');
+      if (compacted > 0) {
+        this.saveDb();
+      }
+      return compacted;
+    } catch (error) {
+      try { this.db.run('ROLLBACK'); } catch { /* ignore */ }
       throw error;
     }
   }

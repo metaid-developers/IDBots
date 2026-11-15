@@ -12,6 +12,7 @@ import {
   meCheckoutErrorKey,
   meDiscountFromPct,
   meGatewayCharge,
+  buildMePaymentReturnContext,
   meOrderGenerationSlotKey,
   mePaypalUsdFromCny,
   mePaymentPhase,
@@ -85,12 +86,23 @@ test('payment status only completes on credit and closes on terminal failure', (
   for (const status of ['confirmed', 'credited', 'active', 'completed', 3]) {
     assert.equal(mePaymentPhase(status), 'credited');
   }
-  for (const status of ['closed', 'rejected', 'expired', 'cancelled', 'failed', 4]) {
+  for (const status of ['closed', 'rejected', 'expired', 'cancelled', 'failed', 4, 'replaced', 5]) {
     assert.equal(mePaymentPhase(status), 'closed');
   }
   for (const status of ['created', 'submitted', 'paid', 'pending', '']) {
     assert.equal(mePaymentPhase(status), 'pending');
   }
+});
+
+test('payment return context is only added for mobile runtimes', () => {
+  assert.equal(buildMePaymentReturnContext({}), null);
+  assert.deepEqual(buildMePaymentReturnContext({
+    idbotsMobile: { isMobile: true, shell: 'pwa' },
+    location: { href: 'https://app.idbots.world/app/' },
+  }), { clientForm: 'pwa', returnTo: 'https://app.idbots.world/app/' });
+  assert.deepEqual(buildMePaymentReturnContext({
+    idbotsMobile: { isMobile: true, shell: 'capacitor' },
+  }), { clientForm: 'native', returnTo: 'idbots://app/' });
 });
 
 test('period pricing follows the uniform monthly-rate model (quarter 90% / year 80%)', () => {

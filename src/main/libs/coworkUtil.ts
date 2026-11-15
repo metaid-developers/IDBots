@@ -960,6 +960,14 @@ function listNvmNodeBinDirs(home: string): string[] {
   }
 }
 
+const loggedPathInjectionNotices = new Set<string>();
+function logPathInjectionOnce(tag: string, message: string): void {
+  const key = `${tag}:${message}`;
+  if (loggedPathInjectionNotices.has(key)) return;
+  loggedPathInjectionNotices.add(key);
+  coworkLog('INFO', tag, message);
+}
+
 function applyPackagedEnvOverrides(env: Record<string, string | undefined>): void {
   // On Windows, resolve git-bash and ensure Git toolchain directories are available in PATH.
   if (process.platform === 'win32') {
@@ -975,7 +983,7 @@ function applyPackagedEnvOverrides(env: Record<string, string | undefined>): voi
       env.CLAUDE_CODE_GIT_BASH_PATH = bashPath;
       const gitToolDirs = getWindowsGitToolDirs(bashPath);
       assignPathValue(env, appendEnvPath(pathValueOf(env), gitToolDirs));
-      coworkLog('INFO', 'resolveGitBash', `Injected Windows Git toolchain PATH entries: ${gitToolDirs.join(', ')}`);
+      logPathInjectionOnce('resolveGitBash', `Injected Windows Git toolchain PATH entries: ${gitToolDirs.join(', ')}`);
     }
 
     // Prepend shim dir so our cygpath (and node) shims are found first — avoids "cygpath -u" failures when Git's cygpath is missing
@@ -984,7 +992,7 @@ function applyPackagedEnvOverrides(env: Record<string, string | undefined>): voi
       assignPathValue(env, appendEnvPath(pathValueOf(env), [shimInfo.shimDir]));
       env.IDBOTS_NODE_SHIM_SCRIPT = shimInfo.shimScriptPath;
       env.IDBOTS_NODE_SHIM_DIR = shimInfo.shimDir;
-      coworkLog('INFO', 'resolveNodeShim', `Injected Electron Node shim PATH entry: ${shimInfo.shimDir}`);
+      logPathInjectionOnce('resolveNodeShim', `Injected Electron Node shim PATH entry: ${shimInfo.shimDir}`);
     }
 
     // Inject Node.js directories so that npx/npm/ts-node are findable inside git-bash.
@@ -993,7 +1001,7 @@ function applyPackagedEnvOverrides(env: Record<string, string | undefined>): voi
     const nodeDirs = resolveWindowsNodeDirs();
     if (nodeDirs.length > 0) {
       assignPathValue(env, appendEnvPath(pathValueOf(env), nodeDirs));
-      coworkLog('INFO', 'resolveNodeDirs', `Injected Windows Node.js PATH entries: ${nodeDirs.join(', ')}`);
+      logPathInjectionOnce('resolveNodeDirs', `Injected Windows Node.js PATH entries: ${nodeDirs.join(', ')}`);
     }
 
     // Disable MSYS2/Git Bash automatic path conversion.
@@ -1017,7 +1025,7 @@ function applyPackagedEnvOverrides(env: Record<string, string | undefined>): voi
     assignPathValue(env, appendEnvPathFallback(pathValueOf(env), [shimInfo.shimDir]));
     env.IDBOTS_NODE_SHIM_SCRIPT = shimInfo.shimScriptPath;
     env.IDBOTS_NODE_SHIM_DIR = shimInfo.shimDir;
-    coworkLog('INFO', 'resolveNodeShim', `Injected Electron Node shim PATH entry: ${shimInfo.shimDir}`);
+    logPathInjectionOnce('resolveNodeShim', `Injected Electron Node shim PATH entry: ${shimInfo.shimDir}`);
   };
 
   if (!app.isPackaged) {

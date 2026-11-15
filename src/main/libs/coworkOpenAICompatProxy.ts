@@ -4304,7 +4304,7 @@ async function handleRequest(
       // A relay quota death is a state change the global quota nudge cares
       // about: force a recompute so the banner lights up now, not at the
       // next poll tick.
-      if (firstErrorCode && /^(free_quota_exhausted|quota_exhausted)$/i.test(firstErrorCode)) {
+      if (firstErrorCode && /^(free_quota_exhausted|quota_exhausted|insufficient_me|me_insufficient|me_daily_limit)$/i.test(firstErrorCode)) {
         try {
           freeQuotaExhaustedListener?.();
         } catch { /* the listener must never break the proxy */ }
@@ -4526,6 +4526,7 @@ export async function stopCoworkOpenAICompatProxy(): Promise<void> {
       }
       resolve();
     });
+    server.closeAllConnections?.();
   });
 }
 

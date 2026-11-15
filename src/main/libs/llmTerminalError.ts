@@ -26,7 +26,7 @@ const toErrorText = (error: unknown): string => {
 };
 
 /** Relay quota machine codes + upstream "account has no spendable credit" bodies. */
-const QUOTA_MACHINE_CODE = /free_quota_exhausted|quota_exhausted|insufficient_quota/i;
+const QUOTA_MACHINE_CODE = /free_quota_exhausted|quota_exhausted|insufficient_quota|insufficient_me|me_insufficient|me_daily_limit/i;
 const QUOTA_FINGERPRINT = /insufficient[ _-]?(credits?|quota|balance|funds)|quota[ _-]?exceeded|billing[ _-]?limit/i;
 const QUOTA_JSON_CODE = /["']code["']\s*:\s*["']quota["']/i;
 

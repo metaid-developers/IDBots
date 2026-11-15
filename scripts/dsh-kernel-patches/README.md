@@ -249,3 +249,13 @@ which drives the real patched engine with a stubbed `compactRegion`.
    `--list` prints the current manifest, `--platform` lets a non-Windows
    machine check Windows-scoped markers). Keep the count exact: a
    half-applied patch must fail the gate, not silently pass.
+6. **Manifest count invariant (checked by apply-dsh-kernel-patches.cjs on
+   every gate pass, any platform)**: each manifest count must be ≥ the number
+   of marker-bearing lines the patch itself adds. The patched file always
+   contains every added occurrence, so a lower count is a manifest bug that
+   darwin-side verification can never see (platform-scoped entries are
+   skipped on a non-matching platform) and that only the CI Windows packaged
+   check would catch — after a tag. v1.1.0 shipped through exactly this
+   (win32-process said 2, the patch adds 3). A count above the added lines is
+   legitimate when the unpatched file already contains the marker; the script
+   logs an informational note for that case.

@@ -71,7 +71,7 @@ import {
   parseFollowUpDeclaration,
   resolveFollowUpAction,
 } from '../cerebellum/sessionFollowUpGate';
-import { CONFIG_HARD_FALLBACK_RESUME_PROMPT, CONTINUE_TURN_REASONING_EFFORT, DEEPSEEK_RESPONSES_REASONING_PLACEHOLDER, EMPTY_TERMINAL_TURN_CONTINUE_PROMPT, FINALIZATION_TURN_CONTINUE_PROMPT, isEmptyTerminalSdkResult, isAuthDshTurnError, isBodyLimitDshTurnError, isConfigModelMissingDshTurnError, isMalformedToolCallDshTurnError, isModelSwitchCompactionFailedDshTurnError, isOverflowDshTurnError, isQuotaDshTurnError, isRuntimeBootDshTurnError, isTransientDshTurnError, isWontHealDshTurnError, shouldAutoReviewDshToolCall, MALFORMED_TOOL_CALL_TURN_CONTINUE_PROMPT, OVERFLOW_TURN_RESUME_PROMPT, relayQuotaErrorMetadata, extractRelayQuotaExhaustedCode, TRANSIENT_TURN_RESUME_PROMPT, TRUNCATED_TURN_CONTINUE_PROMPT, buildFreeRelayQuotaNotice, meBalanceSpendableMilli } from './coworkAssistantReply';
+import { CONFIG_HARD_FALLBACK_RESUME_PROMPT, CONTINUE_TURN_REASONING_EFFORT, DEEPSEEK_RESPONSES_REASONING_PLACEHOLDER, EMPTY_TERMINAL_TURN_CONTINUE_PROMPT, FINALIZATION_TURN_CONTINUE_PROMPT, isEmptyTerminalSdkResult, isAuthDshTurnError, isBodyLimitDshTurnError, isConfigModelMissingDshTurnError, isMalformedToolCallDshTurnError, isModelSwitchCompactionFailedDshTurnError, isOverflowDshTurnError, isQuotaDshTurnError, isRuntimeBootDshTurnError, isTransientDshTurnError, isWontHealDshTurnError, shouldAutoReviewDshToolCall, MALFORMED_TOOL_CALL_TURN_CONTINUE_PROMPT, OVERFLOW_TURN_RESUME_PROMPT, relayQuotaErrorMetadata, extractRelayQuotaExhaustedCode, extractOfficialRelayMeErrorCode, TRANSIENT_TURN_RESUME_PROMPT, TRUNCATED_TURN_CONTINUE_PROMPT, buildFreeRelayQuotaNotice, meBalanceSpendableMilli } from './coworkAssistantReply';
 import {
   filterSdkInternalDiagnostics,
   isSdkInternalDiagnostic,
@@ -1622,6 +1622,8 @@ interface ActiveSession {
    */
   /** The opening text shown so far this turn; injected into the turn prompt. */
   dshTurnAckOpeningText?: string;
+  needsBundledEffort?: boolean;
+  bundledEffortResolver?: (dist: Record<'off' | 'low' | 'high' | 'max', number> | null) => void;
   finalizingTurn?: boolean;
   finalizationAttempted?: boolean;
   finalizationFallbackText?: string;
@@ -2651,6 +2653,8 @@ export interface CoworkRunnerOptions {
     memories: ReadonlyArray<{ id: string; text: string }>;
     /** Newest-first knowledge pool (empty = decision off for this turn). */
     knowledge: ReadonlyArray<{ id: string; topic: string; summary: string; kind: string }>;
+    /** Coalesce auto-effort classification into the same /v1/systemone call. */
+    includeEffort?: boolean;
   }) => Promise<{
     memoryScores: ReadonlyMap<string, number> | null;
     knowledgeScores: ReadonlyMap<string, number> | null;
@@ -2667,6 +2671,7 @@ export interface CoworkRunnerOptions {
       probability: number;
     }> | null;
     gateVerdicts: Record<string, boolean> | null;
+    effortDistribution?: Record<'off' | 'low' | 'high' | 'max', number> | null;
   } | null>;
   /**
    * Optional cerebellum re-rank for conversation_search hits. A score map
@@ -7520,15 +7525,18 @@ export class CoworkRunner extends EventEmitter {
       sessionMemoryEnabled,
       profile.includeMemoryPromptBlocks,
     );
+    const activeForDecisions = this.activeSessions.get(sessionId);
+    const includeBundledEffort = Boolean(activeForDecisions?.needsBundledEffort);
     const decisionsStartedAt = Date.now();
-    const decisionsPromise = this.cerebellumTurnDecisions && prompt.trim()
-      ? this.cerebellumTurnDecisions({
+    const decisionsPromise: ReturnType<NonNullable<CoworkRunnerOptions['cerebellumTurnDecisions']>> | null =
+      this.cerebellumTurnDecisions && prompt.trim()
+        ? this.cerebellumTurnDecisions({
           currentUserText: prompt,
           metabotId: this.store.getMetabotIdForSession(sessionId),
           // Only 'volatile' sessions have a catalog in the tail (inline/
           // legacy carry theirs in the system prompt), so those skip the
           // skill questions entirely.
-          skillsCatalogVolatile: this.activeSessions.get(sessionId)?.skillsCatalogMode === 'volatile',
+          skillsCatalogVolatile: activeForDecisions?.skillsCatalogMode === 'volatile',
           remoteServicesEnabled: !disableRemoteServicesPrompt,
           memories: memoryContext?.pooledCandidates ?? [],
           knowledge: (knowledgeEntries ?? []).map((entry) => ({
@@ -7537,8 +7545,18 @@ export class CoworkRunner extends EventEmitter {
             summary: entry.summary,
             kind: entry.kind,
           })),
-        }).catch(() => null)
-      : null;
+          ...(includeBundledEffort ? { includeEffort: true } : {}),
+        }).then((res) => {
+          activeForDecisions?.bundledEffortResolver?.(res?.effortDistribution ?? null);
+          return res;
+        }).catch(() => {
+          activeForDecisions?.bundledEffortResolver?.(null);
+          return null;
+        })
+      : (() => {
+          activeForDecisions?.bundledEffortResolver?.(null);
+          return null;
+        })();
     let turnDecisions: Awaited<ReturnType<NonNullable<CoworkRunnerOptions['cerebellumTurnDecisions']>>> = null;
     let decisionsSettled = false;
     const awaitTurnDecisions = async () => {
@@ -11593,9 +11611,20 @@ export class CoworkRunner extends EventEmitter {
       // human-sent messages rate the per-message JEV classification, where
       // conversational latency is the scarce resource.
       const unattendedTurn = this.isUnattendedAutomationSession(sessionId);
-      const autoEffortPromise = effectiveEffortRung == null && !unattendedTurn && this.cerebellumEffortSelector
-        ? this.cerebellumEffortSelector({ currentUserText: prompt })
-        : null
+      const canSelectAutoEffort = effectiveEffortRung == null && !unattendedTurn && this.cerebellumEffortSelector;
+      let autoEffortPromise: Promise<Record<'off' | 'low' | 'high' | 'max', number> | null> | null = null;
+      if (canSelectAutoEffort && this.cerebellumTurnDecisions && prompt.trim()) {
+        activeSession.needsBundledEffort = true;
+        autoEffortPromise = new Promise((resolve) => {
+          activeSession.bundledEffortResolver = resolve;
+        });
+      } else {
+        activeSession.needsBundledEffort = false;
+        activeSession.bundledEffortResolver = undefined;
+        autoEffortPromise = canSelectAutoEffort
+          ? this.cerebellumEffortSelector!({ currentUserText: prompt })
+          : null;
+      }
       // Volatile context (memory projections, time, browser tabs, remote
       // services) rides inside the user message on DSH turns — at the head by
       // default (620d2850), with one first-turn exception below.
@@ -12794,20 +12823,23 @@ export class CoworkRunner extends EventEmitter {
           && isTransientDshTurnError(outcome);
         const runtimeBootTerminalDeath = ladderNoTargetKind === 'no-alternative'
           && isRuntimeBootDshTurnError(outcome);
+        const meRelayQuotaCode = extractOfficialRelayMeErrorCode(outcome.error?.message);
         const legacyRelayQuotaCode = extractRelayQuotaExhaustedCode(outcome.error?.message);
-        const relayQuotaCode = legacyRelayQuotaCode
+        const relayQuotaCode = meRelayQuotaCode
+          ?? legacyRelayQuotaCode
           ?? (/INSUFFICIENT_ME/i.test(outcome.error?.message ?? '') ? 'INSUFFICIENT_ME' : null);
         const freeRelayQuotaDeath = quotaTerminalDeath
           && (isFreeQuotaProvider(lastAttemptRoute.provider) || relayQuotaCode !== null);
         let officialRelayMeBalance: Awaited<ReturnType<typeof getMeBalance>> | undefined;
-        if (isServerMode() && freeRelayQuotaDeath && isFreeQuotaProvider(lastAttemptRoute.provider)) {
+        if (freeRelayQuotaDeath && isFreeQuotaProvider(lastAttemptRoute.provider) && relayQuotaCode !== 'me_daily_limit') {
           try {
             officialRelayMeBalance = await getMeBalance({ forceRefresh: true });
           } catch {
             officialRelayMeBalance = undefined;
           }
         }
-        const relayMeAdmissionMismatch = officialRelayMeBalance !== undefined
+        const relayMeAdmissionMismatch = relayQuotaCode !== 'me_daily_limit'
+          && officialRelayMeBalance !== undefined
           && meBalanceSpendableMilli(officialRelayMeBalance) > 0;
         const noModelConfiguredNotice = ladderNoTargetKind === 'no-alternative'
           && !quotaTerminalDeath && !transportTerminalDeath && !runtimeBootTerminalDeath
@@ -12900,11 +12932,21 @@ export class CoworkRunner extends EventEmitter {
         const ladderSemantics = ladderNoTargetKind === 'no-alternative'
           ? (quotaTerminalDeath
               ? (freeRelayQuotaDeath
-                  ? (relayMeAdmissionMismatch
+                  ? (relayQuotaCode === 'me_daily_limit'
+                      ? tApp(
+                          `今日 ME 计量日限额已达上限（最后错误码 ${outcome.error?.code ?? 'ME_DAILY_LIMIT'}）`,
+                          `Today's ME metering daily limit reached (last error code ${outcome.error?.code ?? 'ME_DAILY_LIMIT'})`
+                        )
+                      : relayMeAdmissionMismatch
                       ? tApp(
                           `官方模型服务配额状态与 ME 余额不一致（您的 ME 余额仍可用；最后错误码 ${outcome.error?.code ?? 'QUOTA'}）`,
                           `The official model service quota state disagrees with your ME balance (your ME credits are still spendable; last error code ${outcome.error?.code ?? 'QUOTA'})`
                         )
+                      : (relayQuotaCode === 'insufficient_me' || relayQuotaCode === 'me_insufficient' || relayQuotaCode === 'INSUFFICIENT_ME' || relayQuotaCode === 'quota_exhausted')
+                        ? tApp(
+                            `当前可用 ME 积分或本周套餐额度不足（最后错误码 ${outcome.error?.code ?? 'QUOTA'}）`,
+                            `Your currently spendable ME credits or weekly plan allowance are insufficient (last error code ${outcome.error?.code ?? 'QUOTA'})`
+                          )
                       : tApp(
                           isServerMode()
                             ? `当前可用 ME 积分不足（最后错误码 ${outcome.error?.code ?? 'QUOTA'}）`

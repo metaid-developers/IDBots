@@ -38,14 +38,20 @@ import {
   CEREBELLUM_MEMORY_CURRENT_MESSAGE_MAX_CHARS,
   CEREBELLUM_MEMORY_MIN_ANSWER_COVERAGE,
   CEREBELLUM_MEMORY_MIN_POOL,
+  CEREBELLUM_MEMORY_RANK_CRITERIA,
+  CEREBELLUM_MEMORY_RANK_INSTRUCTIONS,
   buildMemoryRankQuestions,
+  cerebellumMemoryQuestionId,
   parseMemoryRankAnswers,
   selectMemoryRankCandidates,
 } from './memoryRank';
 import {
   CEREBELLUM_KNOWLEDGE_MIN_ANSWER_COVERAGE,
   CEREBELLUM_KNOWLEDGE_MIN_POOL,
+  CEREBELLUM_KNOWLEDGE_RANK_CRITERIA,
+  CEREBELLUM_KNOWLEDGE_RANK_INSTRUCTIONS,
   buildKnowledgeRankQuestions,
+  cerebellumKnowledgeQuestionId,
   parseKnowledgeRankAnswers,
   selectKnowledgeRankCandidates,
 } from './knowledgeHotRank';
@@ -73,14 +79,23 @@ import {
   CEREBELLUM_VOLATILE_GATE_SECTION_KEYS,
   parseVolatileGateAnswers,
 } from './volatileBlockGate';
+import {
+  buildBundledEffortQuestion,
+  parseEffortSelectorAnswers,
+  type CerebellumEffortChoiceQuestion,
+  type CerebellumEffortDistribution,
+} from './effortSelector';
 
-/**
- * Same hard abort deadline as every other cerebellum call site, unchanged by
- * the merge. The 2026-10-16 server baseline (relay P50 217ms / P99 412ms /
- * max 452ms, all < 600ms) leaves ~3x headroom over the observed worst case,
- * so the budget stays put.
- */
 export const CEREBELLUM_TURN_DECISION_TIMEOUT_MS = 1500;
+export const CEREBELLUM_BUNDLE_MAX_MEMORIES = 15;
+export const CEREBELLUM_BUNDLE_MEMORY_TEXT_MAX_CHARS = 220;
+export const CEREBELLUM_BUNDLE_MAX_KNOWLEDGE = 12;
+export const CEREBELLUM_BUNDLE_KNOWLEDGE_TEXT_MAX_CHARS = 200;
+export const CEREBELLUM_BUNDLE_MAX_SKILLS = 18;
+export const CEREBELLUM_BUNDLE_SKILL_DESC_MAX_CHARS = 140;
+export const CEREBELLUM_BUNDLE_MAX_SERVICES = 16;
+export const CEREBELLUM_BUNDLE_SERVICE_DESC_MAX_CHARS = 140;
+export const CEREBELLUM_BUNDLE_CURRENT_MESSAGE_MAX_CHARS = 1200;
 
 /** The five turn-scoped decisions, gathered by the caller before the call. */
 export interface CerebellumTurnDecisionSet {
@@ -95,6 +110,8 @@ export interface CerebellumTurnDecisionSet {
   services: readonly CerebellumRemoteServiceCandidate[];
   /** Whether the volatile block gate questions ride (blank text skips all). */
   includeGate: boolean;
+  /** Whether to coalesce the auto reasoning-effort Choice question into this bundle. */
+  includeEffort?: boolean;
 }
 
 /**
@@ -109,12 +126,15 @@ export interface CerebellumTurnDecisionSelection {
   skills: CerebellumSkillCandidate[];
   services: CerebellumRemoteServiceCandidate[];
   includeGate: boolean;
+  includeEffort: boolean;
 }
 
 export type CerebellumTurnQuestion =
   | { type: 'noul'; instructions: string; criteria: { true: string; false: string } }
+  | { $tpl: string; index: number }
   | CerebellumSkillChoiceQuestion
-  | CerebellumRemoteServiceChoiceQuestion;
+  | CerebellumRemoteServiceChoiceQuestion
+  | CerebellumEffortChoiceQuestion;
 
 export interface CerebellumTurnDecisionRequest {
   state: {
@@ -123,6 +143,7 @@ export interface CerebellumTurnDecisionRequest {
     knowledge?: Array<{ id: string; text: string }>;
   };
   model: string;
+  question_templates?: Record<string, { type: 'noul'; instructions: string; criteria: { true: string; false: string } }>;
   questions: Record<string, CerebellumTurnQuestion>;
 }
 
@@ -133,6 +154,7 @@ export interface CerebellumTurnDecisionResults {
   skillRanking: CerebellumSkillRankEntry[] | null;
   serviceRanking: CerebellumRemoteServiceRankEntry[] | null;
   gateVerdicts: Record<string, boolean> | null;
+  effortDistribution?: CerebellumEffortDistribution | null;
 }
 
 /**
@@ -152,6 +174,56 @@ function truncateUtf16Prefix(text: string, maxUnits: number): string {
  * sites used) and candidate selection. Floors compare the RAW input size —
  * exactly where the old call sites checked — so behavior is unchanged.
  */
+function extractBundleQueryTokens(text: string): Set<string> {
+  const tokens = new Set<string>();
+  const lower = text.toLowerCase();
+  for (const match of lower.matchAll(/[a-z0-9]{2,}/g)) {
+    tokens.add(match[0]);
+  }
+  for (const run of lower.matchAll(/[\u4e00-\u9fff]+/g)) {
+    const chars = run[0];
+    for (let index = 0; index + 1 < chars.length; index += 1) {
+      tokens.add(chars.slice(index, index + 2));
+    }
+    if (chars.length === 1) tokens.add(chars);
+  }
+  return tokens;
+}
+
+function scoreBundleLexicalOverlap(text: string, tokens: ReadonlySet<string>): number {
+  if (tokens.size === 0 || !text) return 0;
+  const lower = text.toLowerCase();
+  let score = 0;
+  for (const token of tokens) {
+    if (lower.includes(token)) score += 1;
+  }
+  return score;
+}
+
+function rankAndCapBundleOptions<T extends { id: string; name: string; description: string }>(
+  items: readonly T[],
+  tokens: ReadonlySet<string>,
+  maxCount: number,
+  maxDescChars: number,
+): T[] {
+  const ranked = items.length > maxCount
+    ? items
+        .map((item, index) => ({
+          item,
+          index,
+          score: scoreBundleLexicalOverlap(`${item.name} ${item.description}`, tokens),
+        }))
+        .sort((a, b) => b.score - a.score || a.index - b.index)
+        .slice(0, maxCount)
+        .map((entry) => entry.item)
+    : items.slice(0, maxCount);
+
+  return ranked.map((item) => ({
+    ...item,
+    description: truncateUtf16Prefix(String(item.description ?? '').replace(/\s+/g, ' ').trim(), maxDescChars),
+  }));
+}
+
 export function selectTurnDecisionCandidates(
   decisions: CerebellumTurnDecisionSet,
 ): CerebellumTurnDecisionSelection | null {
@@ -159,23 +231,63 @@ export function selectTurnDecisionCandidates(
   if (!currentUserText.trim()) {
     return null;
   }
+  const queryTokens = extractBundleQueryTokens(currentUserText);
   const memories = decisions.memories.length >= CEREBELLUM_MEMORY_MIN_POOL
     ? selectMemoryRankCandidates(decisions.memories, currentUserText)
+        .slice(0, CEREBELLUM_BUNDLE_MAX_MEMORIES)
+        .map((entry) => ({
+          id: entry.id,
+          text: truncateUtf16Prefix(entry.text, CEREBELLUM_BUNDLE_MEMORY_TEXT_MAX_CHARS),
+        }))
     : [];
-  const knowledge = decisions.knowledge.length >= CEREBELLUM_KNOWLEDGE_MIN_POOL
-    ? selectKnowledgeRankCandidates(decisions.knowledge)
+  const preRankedKnowledge = decisions.knowledge.length >= CEREBELLUM_KNOWLEDGE_MIN_POOL
+    ? (decisions.knowledge.length > CEREBELLUM_BUNDLE_MAX_KNOWLEDGE
+        ? decisions.knowledge
+            .slice(0, 60)
+            .map((item, index) => ({
+              item,
+              index,
+              score: scoreBundleLexicalOverlap(`${item.topic} ${item.summary}`, queryTokens),
+            }))
+            .sort((a, b) => b.score - a.score || a.index - b.index)
+            .map((entry) => entry.item)
+        : decisions.knowledge)
     : [];
+  const knowledge = selectKnowledgeRankCandidates(preRankedKnowledge)
+    .slice(0, CEREBELLUM_BUNDLE_MAX_KNOWLEDGE)
+    .map((entry) => ({
+      id: entry.id,
+      text: truncateUtf16Prefix(entry.text, CEREBELLUM_BUNDLE_KNOWLEDGE_TEXT_MAX_CHARS),
+    }));
   const skills = decisions.skills.length >= CEREBELLUM_SKILL_SHORTLIST_MIN_POOL
-    ? decisions.skills.slice(0, CEREBELLUM_SKILL_MAX_OPTIONS)
+    ? rankAndCapBundleOptions(
+        decisions.skills.slice(0, CEREBELLUM_SKILL_MAX_OPTIONS),
+        queryTokens,
+        CEREBELLUM_BUNDLE_MAX_SKILLS,
+        CEREBELLUM_BUNDLE_SKILL_DESC_MAX_CHARS,
+      )
     : [];
   const services = decisions.services.length >= CEREBELLUM_REMOTE_SERVICE_SHORTLIST_MIN_POOL
-    ? decisions.services.slice(0, CEREBELLUM_REMOTE_SERVICE_MAX_OPTIONS)
+    ? rankAndCapBundleOptions(
+        decisions.services.slice(0, CEREBELLUM_REMOTE_SERVICE_MAX_OPTIONS),
+        queryTokens,
+        CEREBELLUM_BUNDLE_MAX_SERVICES,
+        CEREBELLUM_BUNDLE_SERVICE_DESC_MAX_CHARS,
+      )
     : [];
   const includeGate = decisions.includeGate;
-  if (memories.length === 0 && knowledge.length === 0 && skills.length === 0 && services.length === 0 && !includeGate) {
+  const includeEffort = decisions.includeEffort === true;
+  if (
+    memories.length === 0
+    && knowledge.length === 0
+    && skills.length === 0
+    && services.length === 0
+    && !includeGate
+    && !includeEffort
+  ) {
     return null;
   }
-  return { currentUserText, memories, knowledge, skills, services, includeGate };
+  return { currentUserText, memories, knowledge, skills, services, includeGate, includeEffort };
 }
 
 /**
@@ -186,21 +298,56 @@ export function selectTurnDecisionCandidates(
 export function buildTurnDecisionRequest(input: {
   selection: CerebellumTurnDecisionSelection;
   model: string;
+  useQuestionTemplates?: boolean;
 }): CerebellumTurnDecisionRequest {
   const { selection } = input;
+  const useTemplates = input.useQuestionTemplates === true
+    && (selection.memories.length > 0 || selection.knowledge.length > 0);
+  const templates: NonNullable<CerebellumTurnDecisionRequest['question_templates']> = {};
+  const memQuestions: Record<string, CerebellumTurnQuestion> = {};
+  if (useTemplates && selection.memories.length > 0) {
+    templates.mem = {
+      type: 'noul',
+      instructions: CEREBELLUM_MEMORY_RANK_INSTRUCTIONS,
+      criteria: { ...CEREBELLUM_MEMORY_RANK_CRITERIA },
+    };
+    for (let index = 0; index < selection.memories.length; index += 1) {
+      memQuestions[cerebellumMemoryQuestionId(index)] = { $tpl: 'mem', index };
+    }
+  } else {
+    Object.assign(memQuestions, buildMemoryRankQuestions(selection.memories.length));
+  }
+
+  const knQuestions: Record<string, CerebellumTurnQuestion> = {};
+  if (useTemplates && selection.knowledge.length > 0) {
+    templates.kn = {
+      type: 'noul',
+      instructions: CEREBELLUM_KNOWLEDGE_RANK_INSTRUCTIONS,
+      criteria: { ...CEREBELLUM_KNOWLEDGE_RANK_CRITERIA },
+    };
+    for (let index = 0; index < selection.knowledge.length; index += 1) {
+      knQuestions[cerebellumKnowledgeQuestionId(index)] = { $tpl: 'kn', index };
+    }
+  } else {
+    Object.assign(knQuestions, buildKnowledgeRankQuestions(selection.knowledge.length));
+  }
+
+  const messageCap = Math.min(CEREBELLUM_MEMORY_CURRENT_MESSAGE_MAX_CHARS, CEREBELLUM_BUNDLE_CURRENT_MESSAGE_MAX_CHARS);
   return {
     state: {
-      current_message: truncateUtf16Prefix(selection.currentUserText, CEREBELLUM_MEMORY_CURRENT_MESSAGE_MAX_CHARS),
+      current_message: truncateUtf16Prefix(selection.currentUserText, messageCap),
       ...(selection.memories.length > 0 ? { memories: selection.memories } : {}),
       ...(selection.knowledge.length > 0 ? { knowledge: selection.knowledge } : {}),
     },
     model: input.model,
+    ...(Object.keys(templates).length > 0 ? { question_templates: templates } : {}),
     questions: {
-      ...buildMemoryRankQuestions(selection.memories.length),
+      ...memQuestions,
       ...buildSkillChoiceQuestions(selection.skills),
       ...buildRemoteServiceChoiceQuestions(selection.services),
       ...(selection.includeGate ? buildVolatileGateQuestions() : {}),
-      ...buildKnowledgeRankQuestions(selection.knowledge.length),
+      ...(selection.includeEffort ? buildBundledEffortQuestion() : {}),
+      ...knQuestions,
     },
   };
 }
@@ -224,7 +371,7 @@ export function parseTurnDecisionAnswers(
     && knowledgeScores.size >= selection.knowledge.length * CEREBELLUM_KNOWLEDGE_MIN_ANSWER_COVERAGE
     ? knowledgeScores
     : null;
-  return {
+  const baseResults: CerebellumTurnDecisionResults = {
     memoryScores: memoryScoresUsable,
     knowledgeScores: knowledgeScoresUsable,
     skillRanking: selection.skills.length > 0 ? parseSkillShortlistAnswers(payload, selection.skills) : null,
@@ -233,6 +380,10 @@ export function parseTurnDecisionAnswers(
       : null,
     gateVerdicts: selection.includeGate ? parseVolatileGateAnswers(payload) : null,
   };
+  if (selection.includeEffort) {
+    baseResults.effortDistribution = parseEffortSelectorAnswers(payload);
+  }
+  return baseResults;
 }
 
 /** Payload accounting for the JEV cost budget (counts/chars, never text). */
@@ -258,6 +409,7 @@ export async function runCerebellumTurnDecisions(input: {
   fetchImpl: CerebellumFetchLike;
   decisions: CerebellumTurnDecisionSet;
   timeoutMs?: number;
+  useQuestionTemplates?: boolean;
   /** Debug hook: payload accounting (counts/chars only, never text). */
   onPayload?: (stats: CerebellumTurnDecisionPayloadStats) => void;
 }): Promise<CerebellumTurnDecisionResults | null> {
@@ -267,21 +419,24 @@ export async function runCerebellumTurnDecisions(input: {
     return null;
   }
 
+  const effectiveTimeoutMs = Math.max(1, input.timeoutMs ?? CEREBELLUM_TURN_DECISION_TIMEOUT_MS);
   const controller = new AbortController();
   const timer = setTimeout(
     () => controller.abort(),
-    Math.max(1, input.timeoutMs ?? CEREBELLUM_TURN_DECISION_TIMEOUT_MS),
+    effectiveTimeoutMs,
   );
   try {
-    const request = buildTurnDecisionRequest({ selection, model: config.model });
+    const request = buildTurnDecisionRequest({
+      selection,
+      model: config.model,
+      useQuestionTemplates: input.useQuestionTemplates,
+    });
     const body = JSON.stringify(request);
     input.onPayload?.({
       memoriesSent: selection.memories.length,
       knowledgeSent: selection.knowledge.length,
       skillsSent: selection.skills.length,
       servicesSent: selection.services.length,
-      // Review Minor 6: derive from the gate's own key list — a hardcoded 4
-      // silently desynced when 'team-culture' joined the gateable blocks.
       gateQuestions: selection.includeGate ? CEREBELLUM_VOLATILE_GATE_SECTION_KEYS.length : 0,
       totalQuestions: Object.keys(request.questions).length,
       currentMessageChars: request.state.current_message.length,
@@ -292,6 +447,7 @@ export async function runCerebellumTurnDecisions(input: {
       headers: {
         Authorization: `Bearer ${config.apiKey}`,
         'Content-Type': 'application/json',
+        'X-Deadline-Ms': String(effectiveTimeoutMs),
       },
       body,
       signal: controller.signal,

@@ -208,3 +208,30 @@ test('server quota notice does not claim a positive ME balance is exhausted', ()
     persistent: { topupMilli: 864429, earnedMilli: 0, bonusMilli: 0 },
   }), 864429);
 });
+
+test('me_daily_limit, insufficient_me, and quota_exhausted never claim starter free quota ran out on desktop', () => {
+  const zh = (z, _e) => z;
+  const en = (_z, e) => e;
+  for (const t of [zh, en]) {
+    const daily = buildFreeRelayQuotaNotice('me_daily_limit', false, t, { spendableMilli: 78783000 });
+    assert.ok(daily.includes('me_daily_limit'));
+    assert.ok(!daily.includes('免费体验额度已用完'));
+    assert.ok(!daily.includes('starter allowance is used up'));
+    assert.ok(!daily.includes('ME_ADMISSION_MISMATCH'));
+
+    for (const code of ['insufficient_me', 'me_insufficient', 'quota_exhausted']) {
+      const msg = buildFreeRelayQuotaNotice(code, false, t);
+      assert.ok(msg.includes(code));
+      assert.ok(!msg.includes('免费体验额度已用完'));
+      assert.ok(!msg.includes('starter allowance is used up'));
+    }
+  }
+  assert.deepEqual(
+    relayQuotaErrorMetadata('429 {"error":{"code":"me_daily_limit"}}'),
+    { errorCode: 'ME_DAILY_LIMIT' },
+  );
+  assert.equal(
+    isQuotaDshTurnError({ kind: 'error', error: { message: 'me_daily_limit: ME_METERING: daily limit reached', code: 'API_ERROR' } }),
+    true,
+  );
+});

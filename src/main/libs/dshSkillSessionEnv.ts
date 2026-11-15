@@ -12,7 +12,7 @@
 // Concurrent sessions keep distinct files; subagent sessions copy the parent
 // file when they start.
 
-import { chmodSync, copyFileSync, existsSync, mkdirSync, renameSync, writeFileSync } from 'fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
 export const DSH_SKILL_ENV_DIR_ENV = 'IDBOTS_SKILL_ENV_DIR';
@@ -143,4 +143,38 @@ export function copyDshSkillSessionEnvFile(
   const dest = dshSkillEnvFilePath(userDataPath, toDshSessionId);
   copyFileSync(src, dest);
   tryChmod(dest, 0o600);
+}
+
+export const DSH_SKILL_ENV_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+export function pruneStaleDshSkillEnvFiles(
+  userDataPath: string,
+  options?: { maxAgeMs?: number; nowMs?: number; activeDshSessionIds?: ReadonlySet<string> },
+): number {
+  const dir = dshSkillEnvDir(userDataPath);
+  if (!existsSync(dir)) return 0;
+  const maxAgeMs = Math.max(60_000, options?.maxAgeMs ?? DSH_SKILL_ENV_RETENTION_MS);
+  const cutoffMs = (options?.nowMs ?? Date.now()) - maxAgeMs;
+  const activeIds = options?.activeDshSessionIds;
+  let removed = 0;
+  try {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith('.env')) continue;
+      const sessionId = entry.name.slice(0, -4);
+      if (activeIds?.has(sessionId)) continue;
+      const fullPath = join(dir, entry.name);
+      try {
+        const stat = statSync(fullPath);
+        if (stat.mtimeMs < cutoffMs) {
+          unlinkSync(fullPath);
+          removed += 1;
+        }
+      } catch {
+        // Best-effort per-file cleanup.
+      }
+    }
+  } catch {
+    // Ignore directory read errors.
+  }
+  return removed;
 }

@@ -71,6 +71,7 @@ import PaymentCard from './chat/PaymentCard';
 import { isPayCardFenceLanguage, parsePayCardFence } from './chat/paymentCardSyntax';
 import EscrowCard from './chat/EscrowCard';
 import { isEscrowCardFenceLanguage, parseEscrowCardFence } from './chat/escrowCardSyntax';
+import { splitStreamingMarkdownBlocks } from './streamingMarkdownSplit';
 
 /**
  * Code-block languages worth highlighting in chat output.
@@ -1069,7 +1070,27 @@ interface MarkdownContentProps {
    * blocks (falling back to cards when the file cannot be read).
    * Defaults to 'professional' (plain inline links). */
   chatExperienceMode?: ChatExperienceMode;
+  /** When true, freezes completed top-level prefix blocks so only the active tail re-parses per frame. */
+  isStreaming?: boolean;
 }
+
+const MemoizedMarkdownBlock = React.memo(({
+  content,
+  remarkPlugins,
+  components,
+}: {
+  content: string;
+  remarkPlugins: never[];
+  components: ReturnType<typeof createMarkdownComponents>;
+}) => (
+  <ReactMarkdown
+    remarkPlugins={remarkPlugins}
+    urlTransform={safeUrlTransform}
+    components={components}
+  >
+    {content}
+  </ReactMarkdown>
+));
 
 const MarkdownContent = React.memo(({
   content,
@@ -1080,6 +1101,7 @@ const MarkdownContent = React.memo(({
   onOpenLocalFile,
   chatExperienceMode = 'professional',
   emojiImages = false,
+  isStreaming = false,
 }: MarkdownContentProps) => {
   const components = useMemo(
     () => createMarkdownComponents(resolveLocalFilePath, onOpenBotBrowserUri, onOpenLocalFile, chatExperienceMode),
@@ -1098,6 +1120,31 @@ const MarkdownContent = React.memo(({
     () => groupAdjacentNftCardFences(encodeFileUrlsInMarkdown(linkifyAgentInternetUris(content))),
     [content]
   );
+  const streamingSplit = useMemo(
+    () => (isStreaming ? splitStreamingMarkdownBlocks(normalizedContent) : null),
+    [isStreaming, normalizedContent]
+  );
+  if (streamingSplit && streamingSplit.settledBlocks.length > 0) {
+    return (
+      <div className={`markdown-content ${compact ? 'text-[13px] leading-5' : 'text-[14px] leading-[24px]'} ${className}`}>
+        {streamingSplit.settledBlocks.map((block, index) => (
+          <MemoizedMarkdownBlock
+            key={index}
+            content={block}
+            remarkPlugins={remarkPlugins}
+            components={components}
+          />
+        ))}
+        {streamingSplit.activeTail ? (
+          <MemoizedMarkdownBlock
+            content={streamingSplit.activeTail}
+            remarkPlugins={remarkPlugins}
+            components={components}
+          />
+        ) : null}
+      </div>
+    );
+  }
   return (
     <div className={`markdown-content ${compact ? 'text-[13px] leading-5' : 'text-[14px] leading-[24px]'} ${className}`}>
       <ReactMarkdown

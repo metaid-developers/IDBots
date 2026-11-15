@@ -559,13 +559,18 @@ export class SqliteStore {
       );
     `);
 
-    this.db.run(`
-      CREATE INDEX IF NOT EXISTS idx_cowork_messages_session_id ON cowork_messages(session_id);
-    `);
-    this.db.run(`
-      CREATE INDEX IF NOT EXISTS idx_cowork_messages_session_created_at
-      ON cowork_messages(session_id, created_at DESC);
-    `);
+    this.db.run('DROP INDEX IF EXISTS idx_cowork_messages_session_id;');
+    const hasCompositeWindowIdx = (
+      this.db.exec(
+        "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_cowork_messages_session_created_sequence' LIMIT 1",
+      )[0]?.values?.length ?? 0
+    ) > 0;
+    if (!hasCompositeWindowIdx) {
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_cowork_messages_session_created_at
+        ON cowork_messages(session_id, created_at DESC);
+      `);
+    }
 
     // Per-message human feedback (thumbs up/down) on cowork messages — one row
     // per rated message, read by the dream consolidation as the human's

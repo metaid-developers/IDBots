@@ -72,7 +72,7 @@ export async function fetchFromLocalOrFallback(
 ): Promise<Response> {
   const localBase = getConfiguredP2PLocalBase();
   if (localBase) {
-    const localUrl = localBase + localPath;
+    const localUrl = localBase + localPath + new URL(fallbackUrl).search;
 
     try {
       const localRes = await fetch(localUrl, {

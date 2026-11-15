@@ -577,3 +577,110 @@ test('prepareDraft patches the tab frame with an unclaimed idle draft identity',
   const invalid = await service.prepareDraft({ tabId: 'nope' });
   assert.equal(invalid.ok, false);
 });
+
+test('NFT worker avatar fallback, speaking transition, and async remote avatar resolution keep worker avatar on stage', async (t) => {
+  const nftWorker = {
+    name: 'Builder阿码',
+    avatar: 'nft://mrc721/624df3e5?owner=1Ax&metaid=idq1',
+    avatar_fallback: 'data:image/png;base64,Q0M=',
+    llm_id: 'brain',
+    llm_provider: 'test',
+  };
+  const remoteWorker = {
+    name: '阿墨',
+    avatar: 'metafile://abcdef0123456789i0.png',
+    avatar_fallback: null,
+    llm_id: 'brain',
+    llm_provider: 'test',
+  };
+  let openDelegations = [
+    {
+      attemptId: 'att-nft',
+      workerMetabotId: 15,
+      workerName: 'Builder阿码',
+      workerAvatar: nftWorker.avatar_fallback,
+      workerSessionId: 'ws-15',
+      title: '测试任务',
+      startedAt: Date.now() - 5000,
+    },
+  ];
+  const { service } = fixture(t, false, 7, null, {
+    getMetabotById: (id) => {
+      if (id === 15) return nftWorker;
+      if (id === 38) return remoteWorker;
+      return { name: 'AI_Sunny', avatar: 'data:image/jpeg;base64,AA==', llm_id: 'brain', llm_provider: 'test' };
+    },
+    getSession: (id) => {
+      if (id === 'target-session') {
+        return { cwd: os.tmpdir(), sessionType: 'browser', assistantMode: true, metabotId: 15, metabotName: 'Builder阿码', metabotAvatar: nftWorker.avatar_fallback, messages: [] };
+      }
+      return { cwd: os.tmpdir(), sessionType: 'browser', assistantMode: true, metabotId: 1, metabotName: 'AI_Sunny', metabotAvatar: 'data:image/jpeg;base64,AA==', messages: [] };
+    },
+    listOpenDelegations: () => openDelegations,
+    resolveAvatarAsync: async (ref) => (ref === remoteWorker.avatar ? 'data:image/png;base64,REQ=' : undefined),
+  });
+
+  service.observeMessage('s', message('u1', 'user', { origin: 'user', submissionId: 'sub-nft' }, 'Delegate to 阿码'));
+  const run = service.getRunInternals('s');
+  await run.queue;
+
+  // 1) local_worker_delegate uses avatar_fallback for nft:// workers.
+  service.observeMessage('s', message('del-1', 'tool_use', {
+    toolName: 'local_worker_delegate',
+    toolUseId: 'call-nft',
+    toolInput: { workerMetabotId: 15 },
+  }));
+  await run.queue;
+  let workerNode = service.getState('s').topology.nodes.find((n) => n.kind === 'worker');
+  assert.equal(workerNode.label, 'Builder阿码');
+  assert.match(String(workerNode.avatar), /^avatars\/[0-9a-f]{16}\.png$/);
+  assert.ok(fs.existsSync(path.join(run.stageDir, workerNode.avatar)));
+
+  // 2) Speaking clears topology temporarily, then twin_task_status and twin_task_accept keep lastWorker identity + avatar.
+  service.observeMessage('s', message('ack-1', 'assistant', { isFinal: true }, '已经派给阿码了。'));
+  await run.queue;
+  assert.equal(service.getState('s').family, 'speaking');
+  service.observeMessage('s', message('status-1', 'tool_use', { toolName: 'twin_task_status', toolUseId: 'st-1', toolInput: { taskId: 't1' } }));
+  await run.queue;
+  workerNode = service.getState('s').topology.nodes.find((n) => n.kind === 'worker');
+  assert.equal(workerNode.label, 'Builder阿码');
+  assert.match(String(workerNode.avatar), /^avatars\/[0-9a-f]{16}\.png$/);
+
+  service.observeMessage('s', message('accept-1', 'tool_use', { toolName: 'twin_task_accept', toolUseId: 'ac-1', toolInput: { stepId: 'st1' } }));
+  await run.queue;
+  workerNode = service.getState('s').topology.nodes.find((n) => n.kind === 'worker');
+  assert.equal(service.getState('s').family, 'verification');
+  assert.equal(workerNode.label, 'Builder阿码');
+  assert.match(String(workerNode.avatar), /^avatars\/[0-9a-f]{16}\.png$/);
+
+  // 3) idbots_session_insert_user_message resolves targetSessionId bot avatar.
+  service.observeMessage('s', message('ins-1', 'tool_use', {
+    toolName: 'idbots_session_insert_user_message',
+    toolUseId: 'ins-call',
+    toolInput: { targetSessionId: 'target-session', message: 'hello' },
+  }));
+  await run.queue;
+  workerNode = service.getState('s').topology.nodes.find((n) => n.kind === 'worker');
+  assert.equal(workerNode.label, 'Builder阿码');
+  assert.match(String(workerNode.avatar), /^avatars\/[0-9a-f]{16}\.png$/);
+
+  // 4) Async remote metafile:// worker avatar resolves and patches the waiting stage.
+  openDelegations = [
+    {
+      attemptId: 'att-remote',
+      workerMetabotId: 38,
+      workerName: '阿墨',
+      workerAvatarRef: remoteWorker.avatar,
+      workerSessionId: 'ws-38',
+      title: '设计任务',
+      startedAt: Date.now() - 2000,
+    },
+  ];
+  service.observeComplete('s');
+  await run.queue;
+  await waitFor(() => Boolean(service.getState('s').topology.nodes.find((n) => n.kind === 'worker')?.avatar));
+  await run.queue;
+  workerNode = service.getState('s').topology.nodes.find((n) => n.kind === 'worker');
+  assert.equal(workerNode.label, '阿墨');
+  assert.match(String(workerNode.avatar), /^avatars\/[0-9a-f]{16}\.png$/);
+});

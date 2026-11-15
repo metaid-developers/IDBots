@@ -728,6 +728,8 @@ export async function submitMeTopupOrder(input: {
   voucherRemark?: string;
   idempotencyKey?: string;
   gateway?: MePaymentGateway;
+  clientForm?: 'pwa' | 'native';
+  returnTo?: string;
 }): Promise<MeSubmitTopupResult> {
   const { identity } = await signedAuth('topup_submit', 'topup_submit');
   // Retry ladder: a transient network failure must not double-submit. Same as
@@ -746,6 +748,8 @@ export async function submitMeTopupOrder(input: {
           ...(input.voucherRemark ? { voucherRemark: input.voucherRemark } : {}),
           ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
           ...(input.gateway ? { gateway: input.gateway } : {}),
+          ...(input.clientForm ? { clientForm: input.clientForm } : {}),
+          ...(input.returnTo ? { returnTo: input.returnTo } : {}),
         },
         identity,
       })) as Record<string, unknown>;
@@ -782,6 +786,8 @@ export async function submitMeSubscriptionOrder(input: {
   voucherRemark?: string;
   idempotencyKey?: string;
   gateway?: MePaymentGateway;
+  clientForm?: 'pwa' | 'native';
+  returnTo?: string;
 }): Promise<MeSubscriptionOrder> {
   const { identity } = await signedAuth('subscription_order', ME_SUBSCRIPTION_ORDER_ACTION);
   let lastError: unknown = null;
@@ -799,6 +805,8 @@ export async function submitMeSubscriptionOrder(input: {
           ...(input.voucherRemark ? { voucherRemark: input.voucherRemark } : {}),
           ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
           ...(input.gateway ? { gateway: input.gateway } : {}),
+          ...(input.clientForm ? { clientForm: input.clientForm } : {}),
+          ...(input.returnTo ? { returnTo: input.returnTo } : {}),
         },
         identity,
       })) as Record<string, unknown>;
@@ -1022,6 +1030,8 @@ export function registerMePointsIpcHandlers(deps: {
       voucherRemark: normalizeText(input.voucherRemark) || undefined,
       idempotencyKey: normalizeText(input.idempotencyKey) || undefined,
       gateway: optionalPaymentGateway(input.gateway, 'topup_submit'),
+      clientForm: input.clientForm === 'pwa' || input.clientForm === 'native' ? input.clientForm : undefined,
+      returnTo: normalizeText(input.returnTo) || undefined,
     }),
   }));
   wrap('me:subscriptionOrder', async (input) => {
@@ -1038,6 +1048,8 @@ export function registerMePointsIpcHandlers(deps: {
         voucherRemark: normalizeText(input.voucherRemark) || undefined,
         idempotencyKey: normalizeText(input.idempotencyKey) || undefined,
         gateway: optionalPaymentGateway(input.gateway, 'subscription_order'),
+        clientForm: input.clientForm === 'pwa' || input.clientForm === 'native' ? input.clientForm : undefined,
+        returnTo: normalizeText(input.returnTo) || undefined,
       }),
     };
   });

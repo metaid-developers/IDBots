@@ -23,6 +23,8 @@ import { FALSIFIED_MAX_PER_BOT, FALSIFIED_RETENTION_DAYS } from '../libs/capabil
 import { HOT_LAYER_USAGE_RETENTION_DAYS } from '../coworkStore';
 import { metabotBrainOptions } from './llmFallback';
 import type { StandingPageStore } from '../standingPageStore';
+import type { MetawebSurfStore } from '../metawebSurfStore';
+import type { ChainContentHistoryStore } from '../chainContentHistoryStore';
 import {
   STANDING_PAGE_MAX_OUTPUT_TOKENS,
   buildStandingPageRefreshPrompt,
@@ -100,6 +102,8 @@ export interface MemoryHygieneRunContext {
   knowledgeStore?: MetaIDKnowledgeStore;
   cultureStore?: TeamCultureStore;
   standingPageStore?: StandingPageStore;
+  surfStore?: MetawebSurfStore;
+  chainHistoryStore?: ChainContentHistoryStore;
 }
 
 /** Steps return flat counters, or { counts, errors } when they collect
@@ -143,6 +147,8 @@ export interface MemoryHygieneDeps {
   metaidCultureStore?: TeamCultureStore;
   /** Required only for the standing-pages step; absent = step no-ops. */
   standingPageStore?: StandingPageStore;
+  metawebSurfStore?: MetawebSurfStore;
+  chainContentHistoryStore?: ChainContentHistoryStore;
   /** Required only for the deep-consolidation step; absent = step no-ops. */
   performChat?: MemoryHygienePerformChat;
   tickIntervalMs?: number;
@@ -682,6 +688,30 @@ export class MemoryHygieneService {
         };
       },
     });
+    this.steps.push({
+      name: 'storage-hygiene',
+      run: (context) => {
+        const snapshotsCompacted = context.dreamStore?.compactPromptLayerSnapshots?.(500) ?? 0;
+        let surfBotsPruned = 0;
+        if (context.surfStore) {
+          const nowIso = new Date(context.nowMs).toISOString();
+          for (const bot of this.deps.metabotStore.listMetabots()) {
+            if (context.disabledMetabotIds.has(bot.id)) continue;
+            context.surfStore.pruneSeenPins(bot.id, nowIso);
+            surfBotsPruned += 1;
+          }
+        }
+        const chainReadsPruned = context.chainHistoryStore?.pruneOldChainReads({
+          cutoffMs: context.nowMs - 90 * 86_400_000,
+          excludeMetabotIds: context.disabledMetabotIds,
+        }) ?? 0;
+        return {
+          snapshotsCompacted,
+          surfBotsPruned,
+          chainReadsPruned,
+        };
+      },
+    });
   }
 
   start(): void {
@@ -780,6 +810,8 @@ export class MemoryHygieneService {
         knowledgeStore: this.deps.metaidKnowledgeStore,
         cultureStore: this.deps.metaidCultureStore,
         standingPageStore: this.deps.standingPageStore,
+        surfStore: this.deps.metawebSurfStore,
+        chainHistoryStore: this.deps.chainContentHistoryStore,
       };
       for (const step of this.steps) {
         try {

@@ -38,6 +38,17 @@ describe('cowork session state', () => {
     assert.deepEqual(merged.map((entry) => entry.id), ['server-old', 'local-new']);
   });
 
+  it('replaces only the optimistic message acknowledged by submission id in a snapshot', () => {
+    const merged = mergeCoworkSnapshotMessages(
+      [
+        message('local-submit-1', 'user', 'same text', { submissionId: 'submit-1', optimistic: true }),
+        message('local-submit-2', 'user', 'same text', { submissionId: 'submit-2', optimistic: true }),
+      ],
+      [message('server-submit-1', 'user', 'same text', { submissionId: 'submit-1' })],
+    );
+    assert.deepEqual(merged.map((entry) => entry.id), ['server-submit-1', 'local-submit-2']);
+  });
+
   it('keeps unacknowledged local sends after server history in display order', () => {
     const merged = mergeCoworkSnapshotMessages(
       [message('local-new', 'user', 'new')],
@@ -86,6 +97,17 @@ describe('cowork session state', () => {
     }).state;
     assert.equal(withBackgroundPermission.pendingPermissions.length, 1);
     assert.equal(running.pendingPermissions.length, 0);
+  });
+
+  it('replaces an optimistic bubble when its persisted message event arrives', () => {
+    const initial = createCoworkSessionEventState('s1');
+    initial.messages.push(message('local-submit-1', 'user', 'same text', { submissionId: 'submit-1', optimistic: true }));
+    const next = applyCoworkSessionEvent(initial, {
+      type: 'message',
+      sessionId: 's1',
+      message: message('server-submit-1', 'user', 'same text', { submissionId: 'submit-1' }),
+    });
+    assert.deepEqual(next.state.messages.map((entry) => entry.id), ['server-submit-1']);
   });
 
   it('drops a remotely resolved request without inventing an approval outcome', () => {
