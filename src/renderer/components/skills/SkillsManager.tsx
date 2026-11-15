@@ -259,6 +259,14 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
     setCommunitySkillPendingDownload(null);
   };
 
+  // OWNER 01:50: 已安装 ghost badge on market faces gains a real uninstall —
+  // it resolves the installed local skill by name and reuses the standard
+  // delete-confirm flow (same dialog, same skills:delete IPC as 本地技能).
+  const handleUninstallMarketSkill = (skill: OfficialSkillItem) => {
+    const local = skills.find(s => s.name === skill.name);
+    if (local) setSkillPendingDelete(local);
+  };
+
   const handleInstallOfficialSkill = async (skill: OfficialSkillItem) => {
     if (installingSkillName || isSyncingAll) return;
     if (skill.status !== 'download' && skill.status !== 'update') return;
@@ -358,6 +366,13 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
     }
     if (result.skills) {
       dispatch(setSkills(result.skills));
+    }
+    if (resolvedActiveTab === 'official' || resolvedActiveTab === 'community') {
+      const updated = await window.electron.idbots.getOfficialSkillsStatus();
+      if (updated.success && updated.skills) {
+        setOfficialSkills(updated.skills);
+        setCommunitySkills(updated.skills);
+      }
     }
     setIsDeletingSkill(false);
     setSkillPendingDelete(null);
@@ -605,10 +620,15 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                         </button>
                       )}
                       {skill.status === 'installed' && (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-[var(--shape-radius-sm)] border border-claude-border/70 dark:border-claude-darkBorder/70 text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                        <button
+                          type="button"
+                          title={i18nService.t('deleteSkill')}
+                          onClick={() => handleUninstallMarketSkill(skill)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-[var(--shape-radius-sm)] border border-claude-border/70 dark:border-claude-darkBorder/70 text-claude-textSecondary dark:text-claude-darkTextSecondary hover:border-red-500/50 hover:text-red-500 transition-colors cursor-pointer"
+                        >
                           <CheckBadgeIcon className="h-3.5 w-3.5" />
                           {i18nService.t('skillInstalled')}
-                        </span>
+                        </button>
                       )}
                       {skill.status === 'conflict' && (
                         <span
@@ -691,10 +711,15 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                         </button>
                       )}
                       {skill.status === 'installed' && (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-[var(--shape-radius-sm)] border border-claude-border/70 dark:border-claude-darkBorder/70 text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                        <button
+                          type="button"
+                          title={i18nService.t('deleteSkill')}
+                          onClick={() => handleUninstallMarketSkill(skill)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-[var(--shape-radius-sm)] border border-claude-border/70 dark:border-claude-darkBorder/70 text-claude-textSecondary dark:text-claude-darkTextSecondary hover:border-red-500/50 hover:text-red-500 transition-colors cursor-pointer"
+                        >
                           <CheckBadgeIcon className="h-3.5 w-3.5" />
                           {i18nService.t('skillInstalled')}
-                        </span>
+                        </button>
                       )}
                       {skill.status === 'conflict' && (
                         <span
