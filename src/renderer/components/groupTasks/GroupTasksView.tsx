@@ -322,12 +322,12 @@ const GroupTasksView: React.FC<GroupTasksViewProps> = ({
 
       {/* Mode tabs: local group tasks | Open Team | MetaTask.
           Segmented-control style mirrors the Settings Skills/MCP toggle. */}
-      <div className="flex items-stretch border-b dark:border-claude-darkBorder border-claude-border px-4 h-[46px] shrink-0">
+      <div className="flex items-center border-b dark:border-claude-darkBorder border-claude-border px-4 h-[46px] shrink-0">
         {/* Joined segmented tray (owner 2026-11-15 17:52): same language as
             the Skills|MCP switcher and the 积分|流量 header — 1px tray border,
             zero inset, overflow-hidden, selected face is a flat accent
             rectangle with ink text, labels flex-centered. */}
-        <div className="flex min-w-0 self-stretch overflow-hidden rounded-[var(--shape-radius-lg)] border border-claude-border bg-claude-bg dark:border-claude-darkBorder dark:bg-claude-darkBg">
+        <div className="inline-flex h-9 min-w-0 overflow-hidden rounded-[var(--shape-radius-lg)] border border-claude-border bg-claude-bg dark:border-claude-darkBorder dark:bg-claude-darkBg">
           {MODE_TABS.map((tab) => (
             <button
               key={tab.id}
@@ -352,7 +352,7 @@ const GroupTasksView: React.FC<GroupTasksViewProps> = ({
           header, so it renders no sub row here. */}
       {/* Same 46px band height as the mode tray band — divider spacing equalized (owner 2026-11-15 18:16). */}
       {mode !== 'metaTask' && (
-        <div className="flex h-[46px] items-stretch justify-between border-b dark:border-claude-darkBorder border-claude-border px-4 shrink-0">
+        <div className="flex h-[46px] items-center justify-between border-b dark:border-claude-darkBorder border-claude-border px-4 shrink-0">
           <div className="flex">
             {subTabs.map((tab) => (
               <button
@@ -376,7 +376,7 @@ const GroupTasksView: React.FC<GroupTasksViewProps> = ({
             <button
               type="button"
               onClick={onNewGroupTask}
-              className="btn-idchat-primary-filled inline-flex items-center justify-center self-stretch rounded-[var(--shape-radius-lg)] px-3 text-sm font-medium"
+              className="btn-idchat-primary-filled inline-flex h-9 items-center justify-center rounded-[var(--shape-radius-lg)] px-3 text-sm font-medium"
             >
               {i18nService.t('groupTasksNewTask')}
             </button>
