@@ -270,6 +270,10 @@ const MeUsageAndCredits: React.FC = () => {
       {/* 双池概览 — OWNER 2026-11-16 00:29: buy/refresh actions moved from the
           page header into the overview card's bottom-right, next to the
           weekly-reset note line. */}
+      {/* OWNER 04:08: cards keep their original width — only the header label
+          row pulls flush to the panel title edge (this pl-4 wrapper holds the
+          cards at the pre-alignment geometry). */}
+      <div className="pl-4">
       <MeBalanceOverviewCard
         onRefresh={() => void handleRefreshAll()}
         refreshing={refreshing}
@@ -439,6 +443,8 @@ const MeUsageAndCredits: React.FC = () => {
             )}
           </div>
         )}
+      </div>
+
       </div>
 
       <p className="pb-2 text-center text-[10px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
