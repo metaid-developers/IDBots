@@ -1067,13 +1067,13 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         onClick={() => setActiveSection(key)}
         className={`flex h-full min-w-0 items-center justify-center gap-1.5 px-3 text-xs font-medium leading-none transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
           active
-            ? 'bg-claude-accent text-claude-accentInk'
-            : 'text-claude-textSecondary hover:bg-claude-surfaceHover/70 hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover/70 dark:hover:text-claude-darkText'
+            ? 'border border-claude-accent bg-claude-accent/10 text-claude-accent'
+            : 'border border-transparent text-claude-textSecondary hover:bg-claude-surfaceHover/70 hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover/70 dark:hover:text-claude-darkText'
         }`}
       >
         <span>{label}</span>
         {typeof count === 'number' && (
-          <span className={`rounded-full px-1.5 text-[10px] ${active ? 'bg-claude-accentInk/15 text-claude-accentInk' : 'dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover'}`}>
+          <span className={`rounded-full px-1.5 text-[10px] ${active ? 'bg-claude-accent/15 text-claude-accent' : 'dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover'}`}>
             {count}
           </span>
         )}
