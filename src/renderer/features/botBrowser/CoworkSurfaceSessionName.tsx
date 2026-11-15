@@ -5,9 +5,9 @@ import {
 } from './surfaceSessionName';
 
 /**
- * Inline replica of lucide-react's `MessageSquare` (24×24 stroke SVG, ISC;
- * path verbatim from lucide) — owner icon ruling 2026-11-15 09:03 for the
- * session-name prefix. lucide-react is NOT in package.json and the
+ * Inline replica of lucide-react's `MessageCircle` (24×24 stroke SVG, ISC; ROUND bubble echoing the twin avatar's circle,
+ * path verbatim from lucide) — owner icon ruling 2026-11-15 10:48 supersedes 09:03: the
+ * round bubble echoes the twin avatar circle. lucide-react is NOT in package.json and the
  * worktree's node_modules is a symlink into the main checkout, so adding the
  * dependency would mutate the main tree's graph; the decision to install (or
  * keep this replica) belongs to the orchestrator. Mon design: square chat
@@ -28,7 +28,7 @@ const SessionNameMessageSquareIcon: React.FC<{ className?: string }> = ({ classN
     aria-hidden="true"
     className={className}
   >
-    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" />
   </svg>
 );
 
