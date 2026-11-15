@@ -151,10 +151,10 @@ test('render: draft state preserves the title row with a non-interactive spacer'
   assert.doesNotMatch(markup, /<button/);
 });
 
-test('grace collapse: editing pins the row, otherwise the 2500 ms grace applies (owner 09:17 ruling)', () => {
+test('grace collapse: editing pins the row, otherwise the 2000 ms grace applies (owner rulings 09:17 → 16:08 two seconds)', () => {
   assert.equal(SESSION_TITLE_HIDE_GRACE_MS, 2000); // owner ruling 2026-11-15 16:08: collapse after two seconds
   // Clause ②: the inline editor pins the row — no collapse timer at all.
   assert.equal(resolveTitleHideDelayMs(true), null);
   // Plain leave: the full grace window before the collapse fires.
-  assert.equal(resolveTitleHideDelayMs(false), 2500);
+  assert.equal(resolveTitleHideDelayMs(false), 2000);
 });
