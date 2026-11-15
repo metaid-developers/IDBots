@@ -3887,17 +3887,17 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
         {/* Right content */}
         <div className="relative flex-1 flex flex-col min-w-0 overflow-hidden dark:bg-claude-darkBg bg-claude-bg rounded-r-2xl">
           {/* Content header */}
-          {/* Fixed-height header band (owner 2026-11-15 17:00): the tray tab
-              and the text-h3 tabs previously produced different row heights,
-              so the close button drifted when switching to 积分&流量. Fixed
-              h-16 pins the close button on every tab. OWNER 17:09: the
-              edge-hugging divider was noise — removed. */}
-          <div className="flex justify-between items-center px-6 h-16 shrink-0">
+          {/* Fixed-height header band. OWNER 2026-11-16 00:07 symmetry ruling:
+              the footer divider sits 68px above the modal bottom edge, so the
+              header title/tray/close must center on the same 68px line below
+              the modal top edge -> band height 136px (2 x 68), items-center.
+              Replaces the old h-16 band (title center sat at ~31px). */}
+          <div className="flex justify-between items-center px-6 h-[136px] shrink-0">
             {/* Credits & traffic view: the segmented 积分|流量 pair replaces the
                 text heading (owner 2026-11-15 16:31) — the buttons ARE the page
                 title; other tabs keep the plain h3 label. */}
             {activeTab === 'traffic' ? (
-              <div className="inline-flex h-9 min-w-0 self-end mb-1.5 overflow-hidden rounded-[var(--shape-radius-sm)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80">
+              <div className="inline-flex h-9 min-w-0 overflow-hidden rounded-[var(--shape-radius-sm)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80">
                 {(['credits', 'traffic'] as const).map((sub) => (
                   <button
                     key={sub}
