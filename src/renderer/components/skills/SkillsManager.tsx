@@ -3,6 +3,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import {
   ArrowPathIcon,
   ArrowUpTrayIcon,
+  CheckBadgeIcon,
   ExclamationTriangleIcon,
   FolderOpenIcon,
   LinkIcon,
@@ -604,7 +605,8 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                         </button>
                       )}
                       {skill.status === 'installed' && (
-                        <span className="px-2.5 py-1 text-xs rounded-lg dark:bg-claude-darkBorder bg-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary cursor-not-allowed">
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-[var(--shape-radius-sm)] border border-claude-border/70 dark:border-claude-darkBorder/70 text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                          <CheckBadgeIcon className="h-3.5 w-3.5" />
                           {i18nService.t('skillInstalled')}
                         </span>
                       )}
@@ -689,7 +691,8 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                         </button>
                       )}
                       {skill.status === 'installed' && (
-                        <span className="px-2.5 py-1 text-xs rounded-lg dark:bg-claude-darkBorder bg-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary cursor-not-allowed">
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-[var(--shape-radius-sm)] border border-claude-border/70 dark:border-claude-darkBorder/70 text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                          <CheckBadgeIcon className="h-3.5 w-3.5" />
                           {i18nService.t('skillInstalled')}
                         </span>
                       )}
