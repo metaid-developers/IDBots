@@ -31,7 +31,7 @@ export type SurfaceSessionRenameDecision =
  * 2500 ms; re-entering the badge row or the title box inside the window
  * cancels the pending collapse).
  */
-export const SESSION_TITLE_HIDE_GRACE_MS = 2500;
+export const SESSION_TITLE_HIDE_GRACE_MS = 2000;
 
 /**
  * Decision math for the header-leave event. While the inline rename editor
