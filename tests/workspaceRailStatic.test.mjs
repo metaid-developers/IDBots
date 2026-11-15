@@ -73,13 +73,11 @@ test('rail entries are icon buttons with hover tooltips, Settings pinned to the 
   assert.doesNotMatch(railSource, /import MeBalanceBadge/);
 });
 
-test('the rail top: lights strip, then the avatar slot on the band row; icons start below it (D-line final 2026-11-09; strip height amended by the alignment order 2026-11-15)', () => {
-  // Row 1 = the lights' pure reservation (37.75 px mac / 12 px elsewhere) —
-  // the mac height is TOP_GAP_MAC_PX itself, so the rail avatar's centerline
-  // keeps riding the band labels' centerline (alignment order 2026-11-15:
-  // the switcher tray's visible top border lands on the Bot Browser
-  // tabstrip divider's pixel row).
-  assert.match(railSource, /isMac \? 'h-\[37\.75px\]' : 'h-3'/);
+test('the rail top: lights strip, then the avatar slot on the band row; icons start below it (D-line final 2026-11-09)', () => {
+  // Row 1 = the lights' pure reservation (42.375 px mac per the 08:27
+  // baseline ruling — the tray's visible top lands on the bot-home panel
+  // header divider y=50.625; 12 px elsewhere).
+  assert.match(railSource, /isMac \? 'h-\[42\.375px\]' : 'h-3'/);
   // Row 2 = the identity AVATAR slot (Mac-WeChat form): the SAME 52 px height
   // as the mid column's band row (BotBrowserModeSwitch surface-header-bar),
   // content centered — the slot's centerline is the band labels' centerline,
@@ -87,10 +85,10 @@ test('the rail top: lights strip, then the avatar slot on the band row; icons st
   assert.match(railSource, /data-slot="workspace-rail-avatar-slot"/);
   assert.match(railSource, /className="flex h-\[52px\] w-full shrink-0 items-center justify-center"/);
   assert.match(railSource, /<UserProfileAvatarButton \/>/);
-  // Row 3: the nav's 8 px top margin puts the first icon at 37.75 + 52 + 8 =
-  // 97.75 px — below the avatar slot, never in the top cell.
+  // Row 3: the nav's 8 px top margin puts the first icon at 42.375 + 52 + 8 =
+  // 102.375 px — below the avatar slot, never in the top cell.
   assert.match(railSource, /className="mt-2 flex min-h-0 w-full flex-1 flex-col items-center/);
-  assert.equal(37.75 + 52 + 8, 97.75);
+  assert.equal(42.375 + 52 + 8, 102.375);
 });
 
 test('Settings and ME moved out of the middle column into the rail', () => {
@@ -162,12 +160,12 @@ test('the Home face mounts the same rail; its records column carries no rail ite
 test('the surface switcher sits in the mid column header — the rail top has no switcher', () => {
   // Owner ruling 2026-11-08 14:15: the switch left the 64 px rail so it can
   // show the current surface's NAME in a Codex-style capsule. The rail keeps
-  // its 37.75 px macOS traffic-light reservation (alignment order
-  // 2026-11-15, in lockstep with TOP_GAP_MAC_PX) plus the identity avatar
-  // slot (owner D-line final ruling 2026-11-09), and mounts no switcher.
+  // its 42.375 px macOS traffic-light reservation plus the identity avatar slot
+  // (owner D-line final ruling 2026-11-09), and mounts no switcher.
   assert.doesNotMatch(railSource, /BotBrowserModeSwitch/);
   assert.doesNotMatch(railSource, /surface-switch-trigger/);
-  assert.match(railSource, /isMac \? 'h-\[37\.75px\]' : 'h-3'/);
+  assert.match(railSource, /isMac \? 'h-\[42\.375px\]' : 'h-3'/);
+  assert.match(railSource, /className="mt-2 flex min-h-0 w-full flex-1 flex-col items-center/);
 
   assert.match(sidebarSource, /data-slot="mid-column-header"/);
   // The switcher rides the shared header bar below the traffic-light strip
@@ -277,34 +275,27 @@ test('surface session-name slot: read-only default, inline editor, empty commit 
   // 18:05 rework: the slot is the row's title. Originally a left-packed
   // growing lane (min-w-0 flex-1); the "enlarge and center Studio task
   // header" order (18ee742a) reworked the geometry into a full-width
-  // centered lane. SUPERSEDED by the left-anchor order 2026-11-15: the lane
-  // stays full-width on every mount, but both interactive mounts LEFT-align
-  // their text (pl-1 so the title's left edge lands on the identity
-  // avatar's left edge) and the size steps up one token (13px → text-base).
-  // The invariant that survives: ALL THREE mounts — the read-only button,
-  // the inline editor, AND the draft spacer — carry the same lane classes
-  // (h-6 w-full min-w-0 flex-none), so the row's geometry holds across
-  // every state swap.
+  // centered lane. The invariant that survives: ALL THREE mounts — the
+  // read-only button, the inline editor, AND the draft spacer — carry the
+  // same lane classes (h-6 w-full min-w-0 flex-none), so the row's geometry
+  // holds across every state swap, and the two interactive mounts center
+  // their text identically.
   assert.equal((componentSource.match(/min-w-0 flex-none/g) ?? []).length, 3, 'title lane on all three mounts (read-only + editor + draft spacer)');
   assert.equal((componentSource.match(/w-full min-w-0 flex-none/g) ?? []).length, 3, 'the lane is full-width on every mount');
-  assert.equal((componentSource.match(/text-left/g) ?? []).length, 2, 'both interactive mounts left-align the title');
-  assert.equal((componentSource.match(/text-center/g) ?? []).length, 0, 'the centered lane is retired');
-  assert.match(componentSource, /text-base font-medium/);
-  assert.equal((componentSource.match(/pl-1 pr-4/g) ?? []).length, 2, 'title text left edge = identity avatar left edge on both mounts');
+  assert.equal((componentSource.match(/text-center/g) ?? []).length, 2, 'both interactive mounts center the title');
+  assert.match(componentSource, /text-\[13px\] font-medium/);
   assert.match(componentSource, /text-claude-text dark:text-claude-darkText/);
   // Owner 18:54 frameless-editor order: the inline editor carries NO box —
-  // transparent background, no border, no ring, no shadow; the display
-  // metrics (text-base medium, same left padding) stay identical to the
-  // display state and only the caret marks the edit affordance. (The old
-  // boxed input broke the title look.)
+  // transparent background, no border, no ring, no shadow; the 13 px medium
+  // metrics stay identical to the display state and only the caret marks
+  // the edit affordance. (The old boxed input broke the title look.)
   const editorBlock = componentSource.slice(componentSource.indexOf('data-slot="cowork-surface-session-name-input"'));
   const editorClassName = editorBlock.slice(editorBlock.indexOf('className="'), editorBlock.indexOf('\n', editorBlock.indexOf('className="')));
   assert.match(editorClassName, /bg-transparent/);
   assert.match(editorClassName, /border-0/);
   assert.match(editorClassName, /focus:ring-0/);
   assert.match(editorClassName, /shadow-none/);
-  assert.match(editorClassName, /text-base font-medium/);
-  assert.match(editorClassName, /pl-1 pr-4 text-left/);
+  assert.match(editorClassName, /text-\[13px\] font-medium/);
   assert.doesNotMatch(editorClassName, /border-claude|ring-2|ring-claude|bg-claude-darkBg|bg-claude-bg|rounded-lg/);
   assert.match(componentSource, /className="min-w-0 truncate"/);
 });

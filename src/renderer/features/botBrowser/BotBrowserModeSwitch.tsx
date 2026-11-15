@@ -13,19 +13,11 @@ interface BotBrowserModeSwitchProps {
    */
   actions?: React.ReactNode;
   /**
-   * Gap ABOVE the band row. macOS 37.75 — measured so the band row's tray
-   * VISIBLE top border lands on the same pixel row as the Bot Browser
-   * panel's top tab divider line (owner alignment order 2026-11-15, sample
-   * crop bots/2/2026-11-14 n06pjw). The divider paints at window y=45:
-   * agent-browser-ui 0.6.0's browser page has an 8px body margin + a 38px
-   * tabstrip row whose 1px border-bottom sits INSIDE that box (border-box
-   * sizing), so the line occupies [45,46) — NOT at the box edge 46. The
-   * tray rides 7.25px of vertical centering inside its 52px band row and
-   * its 1px border-top also paints inside its box, so the tray's box top
-   * must be 45: 45 − 7.25 = 37.75. The lights re-center inside the shorter
-   * strip — the strip still IS the lights' row, no gap opens between it and
-   * the band. Elsewhere 12 px of quiet air. An explicit value is accepted
-   * so tests can pin BOTH platform branches without a DOM.
+   * Gap ABOVE the band row. macOS 42.375 — sized so the tray's visible top
+   * edge lands on the bot-home panel's header divider (y=50.625; owner
+   * baseline ruling 2026-11-15 08:27). Elsewhere 12 px of quiet air. An
+   * explicit value is accepted so tests can pin BOTH platform branches
+   * without a DOM.
    */
   topGapPx?: number;
 }
@@ -36,15 +28,14 @@ interface SurfaceSegment {
 }
 
 /**
- * macOS: a 37.75 px strip precedes the band row — sized so the tray's
- * visible top border lands on the same pixel row as the Bot Browser
- * tabstrip divider (window y=45, owner alignment order 2026-11-15), with
- * the rail's mac top track kept at the same height so the rail avatar's
- * centerline still rides the band labels' centerline. The lights own the
- * strip alone (owner red-box order 2026-11-09 10:58; alignment amended
- * 2026-11-15).
+ * macOS: a 42.375 px strip precedes the band row (owner baseline change
+ * 2026-11-15 08:27: the tray's visible top edge lands on the bot-home
+ * panel's header divider line — measured y=50.625; 50.625 − tray centering
+ * offset 7.25 − 1 px tray border = 42.375, supersedes the y=45 tabstrip
+ * baseline). The rail's mac top track mirrors this height so the rail's
+ * avatar slot stays aligned with the band row.
  */
-export const TOP_GAP_MAC_PX = 37.75;
+export const TOP_GAP_MAC_PX = 42.375;
 /** Non-macOS: no system corner to share, keep a quiet 12 px breath. */
 export const TOP_GAP_DEFAULT_PX = 12;
 
@@ -158,13 +149,15 @@ const BotBrowserModeSwitch: React.FC<BotBrowserModeSwitchProps> = ({
           className="flex items-center"
         >
           {/* macOS draws its own mini lights here (main.ts hides the native
-              buttons); other platforms render nothing — the strip stays a
-              pure drag gap. */}
+              buttons); other platforms render nothing. Owner gap-center
+              ruling 2026-11-15 08:21: the dots center between the window
+              content top and the tray's border-top — the pt offset lives in
+              MacWindowLights. */}
           <MacWindowLights />
         </div>
       ) : null}
-      {/* Row 2: the band — one full row BELOW the traffic lights' 52 px strip
-          on macOS. The container stays a drag handle; the tray is the
+      {/* Row 2: the band — one full row BELOW the 52 px top-gap strip on
+          macOS. The container stays a drag handle; the tray is the
           non-draggable content. The identity avatar does NOT ride this row
           any more (owner D-line final ruling 2026-11-09): it lives in the
           rail's top slot (WorkspaceRail workspace-rail-avatar-slot). */}
