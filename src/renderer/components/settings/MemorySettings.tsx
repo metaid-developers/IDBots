@@ -2050,7 +2050,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
               key={kind}
               type="button"
               onClick={() => setCultureKindFilter(kind)}
-              className={`rounded-[var(--shape-radius-sm)] border px-2.5 py-1 text-xs transition-colors ${
+              className={`inline-flex h-[26px] items-center justify-center rounded-[var(--shape-radius-sm)] border px-2.5 text-xs leading-none transition-colors ${
                 active
                   ? 'border-claude-accent bg-claude-accent/5 text-claude-accent dark:bg-claude-accent/10 dark:text-claude-darkAccent'
                   : 'dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
@@ -2065,7 +2065,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           value={cultureQuery}
           onChange={(event) => setCultureQuery(event.target.value)}
           placeholder={i18nService.t('memoryCultureSearchPlaceholder')}
-          className="min-w-[160px] flex-1 rounded-lg border px-2 py-1.5 text-xs dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
+          className="h-[26px] min-w-[160px] flex-1 rounded-[var(--shape-radius-sm)] border px-2 text-xs leading-none dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
         />
       </div>
 
