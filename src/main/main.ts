@@ -131,6 +131,11 @@ import { GroupTaskStore, setGroupTaskStoreStatusBroadcaster, type GroupTaskStatu
 import { OpenTeamMembershipStore } from './openTeamMembershipStore';
 import { DialogueCognitionStore } from './dialogueCognitionStore';
 import { OrchestrationStore } from './orchestrationStore';
+import { StudioDecisionQueueStore } from './studioDecisionQueueStore';
+import {
+  StudioChiefOfStaffService,
+  STUDIO_CHIEF_OF_STAFF_INTERVAL_MS,
+} from './services/studioChiefOfStaffService';
 import { MetabotStore } from './metabotStore';
 import { ServiceOrderStore, type ServiceOrderRecord } from './serviceOrderStore';
 import { MetaIDExperienceStore } from './metaidExperienceStore';
@@ -4584,6 +4589,13 @@ const startSqliteDaemons = (): void => {
       await getLongTermAdvanceService().run(nowMs);
     },
   });
+  getHeartbeatService().registerHandler({
+    name: 'studio.chiefOfStaff',
+    intervalMs: STUDIO_CHIEF_OF_STAFF_INTERVAL_MS,
+    run: async (nowMs) => {
+      await getStudioChiefOfStaffService().runHeartbeatTick(nowMs);
+    },
+  });
   // MetaTask chain sweep (10 min) + watch (10 min): the sweep keeps the local
   // projection warm; watch turns local-roster-relevant changes into alerts
   // surfaced on the MetaTask tab. Both are local/cheap; no LLM escalation.
@@ -7891,6 +7903,59 @@ const getCoworkRunner = () => {
         store: () => getLongTermTaskStore(),
         getAppLanguage: () => getPersistedAppLanguage(),
       },
+      studioChiefOfStaffTools: {
+        isTwinSession: (sid) => {
+          const metabotId = getCoworkStore().getMetabotIdForSession(sid);
+          if (metabotId == null) return false;
+          const bot = getMetabotStore().getMetabotById(metabotId);
+          return Boolean(bot && bot.enabled && bot.metabot_type === 'twin');
+        },
+        resolveTwinMetabotId: () => {
+          const twin = getMetabotStore().listMetabots().find((bot) => bot.metabot_type === 'twin' && bot.enabled);
+          return twin?.id ?? null;
+        },
+        enqueueDecision: (sid, input) => {
+          const twin = getMetabotStore().listMetabots().find((bot) => bot.metabot_type === 'twin' && bot.enabled);
+          if (!twin) return { ok: false, error: 'TWIN_NOT_FOUND' };
+          const enqueued = getStudioDecisionQueueStore().enqueue({
+            ...input,
+            twinMetabotId: twin.id,
+            originStudioSessionId: input.originStudioSessionId
+              ?? (getStudioChiefOfStaffService().isStudioOwnerSession(sid) ? sid : getStudioChiefOfStaffService().resolveActiveStudioSessionId(twin.id)),
+          });
+          return { ok: true, ...enqueued };
+        },
+        listOpenDecisions: () => {
+          const twin = getMetabotStore().listMetabots().find((bot) => bot.metabot_type === 'twin' && bot.enabled);
+          if (!twin) return [];
+          return getStudioDecisionQueueStore().listOpen(twin.id);
+        },
+        resolveDecision: (_sid, queueItemId, resolutionNote) => {
+          const resolved = getStudioDecisionQueueStore().resolve(queueItemId, resolutionNote);
+          if (!resolved) return { ok: false, error: 'QUEUE_ITEM_NOT_FOUND' };
+          return { ok: true, item: resolved };
+        },
+        deferDecision: (_sid, queueItemId) => {
+          const twin = getMetabotStore().listMetabots().find((bot) => bot.metabot_type === 'twin' && bot.enabled);
+          if (!twin) return { ok: false, error: 'TWIN_NOT_FOUND' };
+          const deferred = getStudioDecisionQueueStore().deferPresenting(queueItemId || twin.id);
+          if (!deferred) return { ok: false, error: 'NO_PRESENTING_ITEM' };
+          return { ok: true, item: deferred };
+        },
+        markPresence: (sid, mode, reason) => {
+          if (mode === 'shaping') {
+            getStudioChiefOfStaffService().presenceTracker.markShapingHold(sid, reason ?? 'requirement alignment');
+          } else {
+            getStudioChiefOfStaffService().presenceTracker.clearShapingHold(sid);
+          }
+          broadcastLongTermTaskUpdate([], `studio_presence_${mode}`);
+          return { ok: true };
+        },
+        dispatchTwinStampPublish: (sid, input) =>
+          getStudioChiefOfStaffService().dispatchTwinStampPublish(sid, input),
+      },
+      getStudioVolatileContextPrompt: (sid) =>
+        getStudioChiefOfStaffService().buildVolatileTurnContext(sid),
       // MetaTask (chain-side quadrant four): participation tools — claim with
       // replay guard, #8/#9-disciplined verify drafts, publish invariants.
       // Same chain-write pipeline as post_buzz (createPinForSession per bot).
@@ -8889,6 +8954,9 @@ const getCoworkRunner = () => {
     coworkRunner.on('complete', (sessionId: string, claudeSessionId: string | null) => {
       getStudioGenesisStageService().observeComplete(sessionId);
       getStudioLiveStageService().observeComplete(sessionId);
+      if (getStudioChiefOfStaffService().isStudioOwnerSession(sessionId)) {
+        getStudioChiefOfStaffService().presenceTracker.recordNonBriefingTurnEnd(sessionId);
+      }
       // A session finished: recompute the sleep guard so the blocker is
       // released as soon as no other work source is active.
       recomputeSleepGuard();
@@ -9809,12 +9877,98 @@ const broadcastLongTermTaskUpdate = (taskIds: string[], reason: string): void =>
   broadcastToRenderers('longtermTask:update', payload);
 };
 
+let studioDecisionQueueStore: StudioDecisionQueueStore | null = null;
+let preferredStudioOpenSessionId: string | null = null;
+const getStudioDecisionQueueStore = () => {
+  if (!studioDecisionQueueStore) {
+    const sqliteStore = getStore();
+    studioDecisionQueueStore = new StudioDecisionQueueStore(
+      sqliteStore.getDatabase(),
+      sqliteStore.getSaveFunction(),
+    );
+    studioDecisionQueueStore.onChange((event) => {
+      broadcastLongTermTaskUpdate([], `studio_queue_${event.reason}`);
+    });
+  }
+  return studioDecisionQueueStore;
+};
+
+let studioChiefOfStaffService: StudioChiefOfStaffService | null = null;
+const getStudioChiefOfStaffService = () => {
+  if (!studioChiefOfStaffService) {
+    studioChiefOfStaffService = new StudioChiefOfStaffService({
+      decisionQueueStore: () => getStudioDecisionQueueStore(),
+      coworkStore: () => getCoworkStore(),
+      coworkRunner: () => getCoworkRunner(),
+      resolveTwinMetabotId: () => {
+        const twin = getMetabotStore().listMetabots().find((bot) => bot.metabot_type === 'twin' && bot.enabled);
+        return twin?.id ?? null;
+      },
+      resolveTwinWorkspace: (twinMetabotId) => {
+        const config = getCoworkStore().getConfig();
+        const root = config.workingDirectory?.trim() || path.join(app.getPath('userData'), 'orchestration-workspace');
+        const workspace = resolveBotWorkspaceCwd(root, twinMetabotId);
+        fs.mkdirSync(workspace, { recursive: true });
+        return workspace;
+      },
+      getBaseSystemPrompt: () => getCoworkStore().getConfig().systemPrompt,
+      getAppLanguage: () => getPersistedAppLanguage(),
+      getPreferredStudioSessionId: () => preferredStudioOpenSessionId,
+      hasDefiningDraftForSession: (sid) => {
+        const ltStore = getLongTermTaskStore();
+        return ltStore
+          .listBoard()
+          .cards.some((card) => card.stage === 'defining' && ltStore.getTask(card.id)?.definitionSessionId === sid);
+      },
+      listOpenSiblingDelegations: (studioSessionId) =>
+        listOpenStudioDelegations(studioSessionId).map((entry) => ({
+          attemptId: entry.attemptId,
+          workerName: entry.workerName ?? `bot-${entry.workerMetabotId}`,
+          title: entry.title,
+          status: 'running',
+        })),
+      projectShowcaseHtml: (input) =>
+        getBotBrowserProjection().project({
+          sessionId: input.sessionId,
+          localPath: input.localPath,
+          title: input.title,
+          role: 'showcase',
+        }),
+      emitSessionMessage: (sid, message) => {
+        if (!shouldForwardCoworkStreamEvent(getCoworkStore(), sid)) return;
+        emitCoworkStreamMessage(sid, message);
+      },
+      onStateChanged: (reason) => {
+        broadcastLongTermTaskUpdate([], `studio_${reason}`);
+      },
+      createPin: (metabotId, metaidData, options) =>
+        withChainWriteBudget(
+          `createPin(${String(metaidData?.path ?? 'pin')})`,
+          () => withMvcBalanceHint(
+            getMetabotStore(),
+            metabotId,
+            options?.network,
+            () => createPin(getMetabotStore(), metabotId, metaidData, {
+              ...options,
+              feeRate: resolveCreatePinFeeRate(options?.network ?? 'mvc'),
+            }),
+            { estimateNeedSats: () => estimateMvcPinNeedSats() },
+          ),
+        ),
+      kv: getStore(),
+    });
+  }
+  return studioChiefOfStaffService;
+};
+
 const getTwinOrchestrationService = () => new TwinOrchestrationService({
   orchestrationStore: getOrchestrationStore(),
   coworkStore: getCoworkStore(),
   coworkRunner: getCoworkRunner(),
   // Hard gate: delegations from long-term-bound sessions always carry the anchor.
   longTermTaskStore: () => getLongTermTaskStore(),
+  onStudioWorkerTerminalState: (event) =>
+    getStudioChiefOfStaffService().onStudioWorkerTerminalState(event),
   directory: {
     getSession: (id) => getCoworkStore().getSession(id),
     listMetabots: () => getMetabotStore().listMetabots(),
@@ -16350,6 +16504,28 @@ if (!gotTheLock) {
       return { success: true, board: getLongTermTaskStore().listBoard() };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to read the long-term task board' };
+    }
+  });
+
+  registerIpcHandler('longtermTask:studioStatus', async (_event, input?: { activeSessionId?: string | null }) => {
+    try {
+      if (input && 'activeSessionId' in input) {
+        const candidate = typeof input.activeSessionId === 'string' ? input.activeSessionId.trim() : '';
+        preferredStudioOpenSessionId = candidate || null;
+      }
+      const presence = getStudioChiefOfStaffService().getPresenceSnapshot();
+      const twin = getMetabotStore().listMetabots().find((bot) => bot.metabot_type === 'twin' && bot.enabled);
+      const openDecisions = twin ? getStudioDecisionQueueStore().listOpen(twin.id) : [];
+      return {
+        success: true,
+        presence,
+        openDecisions,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to read Studio status',
+      };
     }
   });
 

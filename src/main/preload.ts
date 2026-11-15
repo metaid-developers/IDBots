@@ -1064,6 +1064,8 @@ contextBridge.exposeInMainWorld('electron', {
     // Long-term task board (first-class redesign): board read + owner actions.
     // The Twin's channel is the longterm_* agent tools; these are the owner's.
     board: () => ipcRenderer.invoke('longtermTask:board'),
+    studioStatus: (input?: { activeSessionId?: string | null }) =>
+      ipcRenderer.invoke('longtermTask:studioStatus', input),
     get: (input: { taskId: string }) => ipcRenderer.invoke('longtermTask:get', input),
     update: (input: { taskId: string; title?: string; goal?: string; acceptanceDelegate?: boolean }) =>
       ipcRenderer.invoke('longtermTask:update', input),

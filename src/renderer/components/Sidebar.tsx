@@ -195,9 +195,39 @@ const Sidebar: React.FC<SidebarProps> = ({
   // "open" must not greet the next visit.
   const [panelHistoryOpen, setPanelHistoryOpen] = useState(false);
   const [studioTitlePreviewOpen, setStudioTitlePreviewOpen] = useState(false);
+  const [studioDecisionQueueSummary, setStudioDecisionQueueSummary] = useState<{
+    queuedCount: number;
+    presenting: boolean;
+  }>({ queuedCount: 0, presenting: false });
   const studioHeaderRef = useRef<HTMLDivElement>(null);
   const studioIdentityRowRef = useRef<HTMLDivElement>(null);
   const dispatch = useDispatch();
+
+  useEffect(() => {
+    if (mode !== 'browser') return undefined;
+    const ltApi = window.electron?.longtermTask;
+    if (!ltApi?.studioStatus) return undefined;
+    let cancelled = false;
+    const syncStudioStatus = async () => {
+      try {
+        const res = await ltApi.studioStatus({ activeSessionId: browserOpenSessionId });
+        if (!cancelled && res?.success && res.presence) {
+          setStudioDecisionQueueSummary({
+            queuedCount: res.presence.queuedCount ?? 0,
+            presenting: res.presence.presentingItem != null,
+          });
+        }
+      } catch {
+        // Best-effort status badge sync.
+      }
+    };
+    void syncStudioStatus();
+    const unsub = ltApi.onUpdate ? ltApi.onUpdate(() => { void syncStudioStatus(); }) : undefined;
+    return () => {
+      cancelled = true;
+      unsub?.();
+    };
+  }, [mode, browserOpenSessionId]);
   // Which task-record category the home history list shows. Persisted across
   // app restarts; the header + tabs stay fixed while only the list scrolls.
   const [taskRecordTab, setTaskRecordTab] = useState<TaskRecordTab>(loadTaskRecordTab);
@@ -703,20 +733,28 @@ const Sidebar: React.FC<SidebarProps> = ({
         </div>
       ) : null}
       <div className="absolute right-0 top-0 flex h-9 items-center gap-0.5">
+        {studioDecisionQueueSummary.presenting || studioDecisionQueueSummary.queuedCount > 0 ? (
+          <span
+            data-slot="studio-decision-queue-badge"
+            className="mr-1 inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300"
+          >
+            <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+            {studioDecisionQueueSummary.queuedCount > 0
+              ? i18nService.t('studioDecisionQueueBadge').replace('{count}', String(studioDecisionQueueSummary.queuedCount))
+              : i18nService.t('studioDecisionPresentingBadge')}
+          </span>
+        ) : null}
         <button
           type="button"
           data-slot="cowork-new-session"
           onClick={() => {
             setPanelHistoryOpen(false);
-            browserCoworkService.startNewDraft();
-            // The upcoming session owns one tab (owner request 2026-11-10): a
-            // page-carrying active tab gets a fresh blank sibling; a blank
-            // active tab is reused. Best-effort — no tab when the bridge is down.
+            void browserCoworkService.clearCurrentScreen();
             void sessionTabBinding.prepareDraftTab();
           }}
           className="non-draggable inline-flex h-7 w-7 items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
-          aria-label={i18nService.t('botBrowserCoworkNew')}
-          title={i18nService.t('botBrowserCoworkNew')}
+          aria-label={i18nService.t('studioClearScreen')}
+          title={i18nService.t('studioClearScreen')}
         >
           <ComposeIcon className="h-4 w-4" />
         </button>
@@ -730,8 +768,8 @@ const Sidebar: React.FC<SidebarProps> = ({
               ? 'dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover dark:text-claude-darkText text-claude-text'
               : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text'
           }`}
-          aria-label={i18nService.t('botBrowserCoworkHistory')}
-          title={i18nService.t('botBrowserCoworkHistory')}
+          aria-label={i18nService.t('studioHistoryChapters')}
+          title={i18nService.t('studioHistoryChapters')}
         >
           <ClockIcon className="h-4 w-4" />
         </button>

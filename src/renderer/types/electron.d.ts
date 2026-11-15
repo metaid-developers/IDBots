@@ -1991,6 +1991,26 @@ interface IElectronAPI {
    */
   longtermTask: {
     board: () => Promise<{ success: boolean; board?: LongTermBoard; error?: string }>;
+    studioStatus: (input?: { activeSessionId?: string | null }) => Promise<{
+      success: boolean;
+      presence?: {
+        mode: 'shaping' | 'briefing' | 'idle';
+        reason: string;
+        activeStudioSessionId: string | null;
+        presentingItem: { id: string; title: string; kind: string } | null;
+        queuedCount: number;
+      };
+      openDecisions?: Array<{
+        id: string;
+        status: 'queued' | 'presenting' | 'resolved' | 'cancelled';
+        kind: 'decision' | 'acceptance' | 'hiring' | 'stamp_publish' | 'blocker';
+        title: string;
+        question: string;
+        recommendation: string;
+        reportHtmlPath: string | null;
+      }>;
+      error?: string;
+    }>;
     get: (input: { taskId: string }) => Promise<{ success: boolean; detail?: LongTermTaskDetail; error?: string }>;
     update: (input: LongTermTaskUpdateInput) => Promise<LongTermResult<LongTermTaskDetail>>;
     setStage: (input: { taskId: string; action: 'pause' | 'resume' | 'cancel'; note?: string }) => Promise<LongTermResult<LongTermTaskDetail | null>>;

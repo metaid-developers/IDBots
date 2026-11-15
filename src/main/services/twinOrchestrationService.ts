@@ -135,6 +135,21 @@ export interface TwinOrchestrationServiceDeps {
    */
   insertCrossSessionUserMessage?: TwinOrchestrationInsertCrossSessionMessageFn;
   /**
+   * Studio Chief-of-Staff intercept: when the delegating source session is the
+   * owner's Studio conversation, route Worker terminal settlements into silent
+   * back-office supervision instead of injecting raw [ORCH-NOTIFY] messages
+   * into the owner's chat stream. Returning true suppresses front-office
+   * cross-session injection while keeping the notification claim/kv guard set.
+   */
+  onStudioWorkerTerminalState?: (event: {
+    task: OrchestrationTask;
+    attempt: OrchestrationAttempt;
+    workerName: string;
+    outcome: 'completed' | 'failed';
+    detail?: string | null;
+    notifySummaryText: string;
+  }) => boolean;
+  /**
    * Round-4 r6: secondary, fast-path terminal-notification marker (kv key
    * `orch_notify:<taskId>:<attemptId>:<status>`). The durable arbiter is the
    * `orchestration_notifications` row claimed by
@@ -316,6 +331,18 @@ export class TwinOrchestrationService {
             ? `${detail.trim()} — host-initiated stop, not a worker fault; once the cause clears, re-dispatching should succeed`
             : (detail ?? '').trim() || 'WORKER_ATTEMPT_FAILED',
         ));
+      if (this.deps.onStudioWorkerTerminalState?.({
+        task,
+        attempt,
+        workerName,
+        outcome,
+        detail,
+        notifySummaryText: text,
+      })) {
+        this.deps.kv?.set(guardKey, '1');
+        console.log(`[TwinOrchestration] Studio back-office supervision notified (${task.id} → ${outcome})`);
+        return;
+      }
       const result = this.insertCrossSession({
         sourceSessionId: workerSessionId,
         targetSessionId,

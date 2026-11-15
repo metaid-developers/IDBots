@@ -34,9 +34,8 @@ import { i18nService } from '../../services/i18n';
 import { subscribeMetabotsChanged } from '../../services/metabotEvents';
 import { getCompactFolderName } from '../../utils/path';
 import type { CoworkMessage, CoworkWorkspaceSelection } from '../../types/cowork';
-import BotPickerChip from './BotPickerChip';
 import CoworkSurfaceIdentityBadge from './CoworkSurfaceIdentityBadge';
-import { resolveDefaultMetabotId } from '../../services/coworkSessionStart';
+import { resolveTwinOnlyMetabotId } from '../../services/coworkSessionStart';
 import { elementSelectionsStore } from './elementSelectionsStore';
 import CoworkHistoryPanel from './CoworkHistoryPanel';
 import { formatPanelMessageTimestamp, isPanelMessageGroupEnd } from './panelMessageTimestamp';
@@ -71,7 +70,21 @@ type PanelMetabot = MetaBotForSelector & { llm_id?: string | null; llm_provider?
 export function filterVisiblePanelMessages(messages: CoworkMessage[]): CoworkMessage[] {
   return messages.filter((message) => {
     if (message.metadata?.isDelegationInternal) return false;
-    if (message.type === 'user') return true;
+    if (message.type === 'user') {
+      const meta = message.metadata as Record<string, unknown> | undefined;
+      if (meta?.sourceChannel === 'idbots_cross_session') return false;
+      if (
+        meta?.origin === 'heartbeat'
+        || meta?.origin === 'studio_briefing'
+        || meta?.origin === 'studio_supervision'
+      ) {
+        return false;
+      }
+      if (/^(?:来自\S+\s*的信息：)?<cross_session_message\b|\[ORCH-NOTIFY\]/i.test(message.content ?? '')) {
+        return false;
+      }
+      return true;
+    }
     if (message.type === 'assistant') return !message.metadata?.isThinking;
     // Turn-level failures (final turn error + the three turn-death flags)
     // render as an assistant-side card; every other system row — compaction
@@ -456,10 +469,6 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     loadPersistedWorkspaceSelection()
   );
   const [showFolderMenu, setShowFolderMenu] = useState(false);
-  // The central welcome picker selects the next conversation's bot without
-  // writing metabot_type. Live sessions keep their own actor in the header.
-  const [showBotPickerMenu, setShowBotPickerMenu] = useState(false);
-  const [pickedMetabotId, setPickedMetabotId] = useState<number | null>(null);
   // Only live identity uses the header portal; standalone mounts omit it.
   const [identityAnchorEl, setIdentityAnchorEl] = useState<HTMLElement | null>(null);
   useEffect(() => {
@@ -686,16 +695,6 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     void loadMetabots();
   }), [loadMetabots]);
 
-  const closeBotPickerMenu = useCallback(() => setShowBotPickerMenu(false), []);
-
-  // Picking a bot is a pure local selection (owner ruling 2026-11-11): no IPC
-  // write, no toast, no roster change — the next conversation started from
-  // this panel simply runs with that bot.
-  const handlePickBot = useCallback((target: PanelMetabot) => {
-    setPickedMetabotId(target.id);
-    setShowBotPickerMenu(false);
-  }, []);
-
   // Remember the workspace choice across panel remounts / app restarts.
   useEffect(() => {
     try {
@@ -733,7 +732,9 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
   // bootstrap guidance instead of a composer. Live sessions always show and
   // scope to the bot they were started with, so old transcripts read the same
   // as before.
-  const selectedMetabotId = resolveDefaultMetabotId(metabots, pickedMetabotId);
+  // Studio Chief-of-Staff single-stream rule: Studio always binds to the
+  // machine's Twin Bot (to speak directly with a Worker Bot, use BotWorks).
+  const selectedMetabotId = resolveTwinOnlyMetabotId(metabots);
   const selectedMetabot = selectedMetabotId != null
     ? metabots.find((m) => m.id === selectedMetabotId) ?? null
     : null;
@@ -781,7 +782,6 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
   useEffect(() => {
     if (showHistory) {
       setHistoryBotId(chipMetabot?.id ?? null);
-      setShowBotPickerMenu(false);
     }
   }, [showHistory, chipMetabot?.id]);
   const historyMetabot = historyBotId === chipMetabot?.id
@@ -1141,15 +1141,11 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
                   fallbackAvatar={currentSession.metabotAvatar ?? null}
                 />
               ) : chipMetabot ? (
-                <div data-slot="cowork-draft-bot-picker" className="relative z-20 flex justify-center">
-                  <BotPickerChip
-                    chipMetabot={chipMetabot}
-                    roster={metabots}
-                    menuOpen={showBotPickerMenu}
-                    onToggleMenu={() => setShowBotPickerMenu((value) => !value)}
-                    onDismissMenu={closeBotPickerMenu}
-                    onSelect={handlePickBot}
-                    menuDirection="down"
+                <div data-slot="cowork-draft-twin-identity" className="relative z-20 flex justify-center">
+                  <CoworkSurfaceIdentityBadge
+                    metabotId={chipMetabot.id}
+                    fallbackName={chipMetabot.name ?? null}
+                    fallbackAvatar={chipMetabot.avatar ?? null}
                   />
                 </div>
               ) : null}

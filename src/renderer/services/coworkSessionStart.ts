@@ -14,6 +14,13 @@ export function resolveDefaultMetabotId<T extends CoworkBotSelection>(
   return twin?.id ?? bots[0]?.id ?? null;
 }
 
+export function resolveTwinOnlyMetabotId<T extends CoworkBotSelection>(
+  bots: T[],
+): number | null {
+  const twin = bots.find((bot) => bot.metabot_type === 'twin');
+  return twin?.id ?? bots[0]?.id ?? null;
+}
+
 export function buildCoworkSessionStartOptions(input: {
   metabotId: number;
   title: string;
