@@ -5,8 +5,10 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 import CoworkSurfaceSessionName from '../src/renderer/features/botBrowser/CoworkSurfaceSessionName';
 import {
+  SESSION_TITLE_HIDE_GRACE_MS,
   decideSurfaceSessionRename,
   resolveSurfaceSessionDisplayTitle,
+  resolveTitleHideDelayMs,
 } from '../src/renderer/features/botBrowser/surfaceSessionName';
 
 // Studio centers the session title below the bot identity and renames it in
@@ -73,7 +75,41 @@ test('render: default state is a read-only button showing the display title', ()
   assert.match(markup, /h-6 w-full/);
   assert.match(markup, /items-center justify-center/);
   assert.match(markup, /text-center/);
+  assert.match(markup, /data-slot="cowork-surface-session-name-icon"/);
   assert.doesNotMatch(markup, /<input/);
+});
+
+test('session-name icon: MessageSquare replica rides the title row (owner icon ruling 2026-11-15 09:03)', () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CoworkSurfaceSessionName, {
+      sessionId: 'sess-1',
+      title: '抓周',
+      fallbackTitle: '新会话',
+      onRename: () => {},
+    }),
+  );
+  // The icon rides BEFORE the title text node, inside the read-only button
+  // (the button's aria-label also carries the title earlier in the markup —
+  // anchor on the TEXT NODE, not the bare string).
+  const iconAt = markup.indexOf('data-slot="cowork-surface-session-name-icon"');
+  const titleAt = markup.indexOf('>抓周</span>');
+  assert.ok(iconAt > 0, 'icon rendered');
+  assert.ok(titleAt > iconAt, 'icon precedes the title text');
+  // lucide `MessageSquare` path, verbatim (square bubble — NOT MessageCircle,
+  // NOT a double-bubble variant).
+  assert.match(
+    markup,
+    /d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/,
+  );
+  // Mon design pins: 14 px square, secondary text color (dark twin), 6 px
+  // gap, vertical centering rides the row's items-center, hover deepens via
+  // the button's group without touching the title's interaction.
+  assert.match(markup, /h-\[14px\] w-\[14px\]/);
+  assert.match(markup, /text-claude-textSecondary/);
+  assert.match(markup, /dark:text-claude-darkTextSecondary/);
+  assert.match(markup, /gap-\[6px\]/);
+  assert.match(markup, /group-hover:text-claude-text/);
+  assert.match(markup, /aria-hidden="true"/);
 });
 
 test('render: blank stored title displays the default title', () => {
@@ -102,4 +138,12 @@ test('render: draft state preserves the title row with a non-interactive spacer'
   assert.doesNotMatch(markup, /data-slot="cowork-surface-session-name"/);
   assert.doesNotMatch(markup, /<input/);
   assert.doesNotMatch(markup, /<button/);
+});
+
+test('grace collapse: editing pins the row, otherwise the 2500 ms grace applies (owner 09:17 ruling)', () => {
+  assert.equal(SESSION_TITLE_HIDE_GRACE_MS, 2500);
+  // Clause ②: the inline editor pins the row — no collapse timer at all.
+  assert.equal(resolveTitleHideDelayMs(true), null);
+  // Plain leave: the full grace window before the collapse fires.
+  assert.equal(resolveTitleHideDelayMs(false), 2500);
 });

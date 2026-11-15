@@ -245,6 +245,15 @@ test('surface header: the open session name is the actions row’s LEFT title; �
   // The slot wires the EXISTING rename channel (coworkService.renameSession
   // via listOnRenameSession) — never a second IPC path.
   assert.match(sidebarSource, /onRename=\{listOnRenameSession\}/);
+  // Grace-collapse machinery (owner ruling 2026-11-15 09:17): the header
+  // schedules a 2500 ms hide on leave (never snaps), cancels it on
+  // re-enter, and the inline editor pins the row (clause ②) — the delay
+  // comes from the shared pure module, not a local literal.
+  assert.match(sidebarSource, /resolveTitleHideDelayMs\(titleEditingRef\.current\)/);
+  assert.match(sidebarSource, /if \(titleEditingRef\.current\) return;/);
+  assert.match(sidebarSource, /cancelTitleHideTimer\(\)/);
+  assert.match(sidebarSource, /pointerInStudioHeaderRef\.current = false;/);
+  assert.match(sidebarSource, /onRenameEditingChange=\{handleSessionTitleEditingChange\}/);
 });
 
 test('surface session-name slot: read-only default, inline editor, empty commit falls back (item ④ contract)', () => {
@@ -257,6 +266,30 @@ test('surface session-name slot: read-only default, inline editor, empty commit 
   assert.match(componentSource, /if \(e\.key === 'Enter'\)/);
   assert.match(componentSource, /if \(e\.key === 'Escape'\)/);
   assert.match(componentSource, /onBlur=\{handleRenameBlur\}/);
+  // Grace-collapse bridge (owner ruling 2026-11-15 09:17): the component
+  // bridges its editing state to the header (clause ② — editing pins the
+  // row) through onRenameEditingChange via the applyRenaming funnel, at ALL
+  // THREE transitions (enter / commit / cancel).
+  assert.match(componentSource, /onRenameEditingChange\?\./);
+  assert.match(componentSource, /const applyRenaming = \(next: boolean\) => \{/);
+  assert.match(componentSource, /const applyRenaming = \(next: boolean\) => \{/);
+  assert.equal(componentSource.split('applyRenaming(').length - 1, 3, 'exactly the three transition call sites');
+  // Owner icon ruling 2026-11-15 09:03: a MessageSquare chat-bubble prefix
+  // rides the title row — an INLINE lucide replica (14 px, secondary color,
+  // 6 px gap, group-hover deepen), NOT a new dependency: lucide-react is not
+  // in package.json and the worktree's node_modules symlinks into the main
+  // checkout, so installing would mutate the main tree's graph.
+  assert.match(componentSource, /const SessionNameMessageSquareIcon/);
+  assert.match(componentSource, /data-slot="cowork-surface-session-name-icon"/);
+  assert.match(
+    componentSource,
+    /d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/,
+  );
+  assert.match(componentSource, /h-\[14px\] w-\[14px\]/);
+  assert.match(componentSource, /gap-\[6px\]/);
+  assert.match(componentSource, /text-claude-textSecondary/);
+  assert.match(componentSource, /dark:text-claude-darkTextSecondary/);
+  assert.doesNotMatch(componentSource, /from 'lucide-react'/);
   // Draft state (no open session) — superseded by the owner 18:54
   // left-anchor order: the slot renders a non-interactive spacer (same
   // flex-1 lane) instead of unmounting, so the identity component ahead of
