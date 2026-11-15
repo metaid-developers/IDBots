@@ -244,11 +244,6 @@ const McpManager: React.FC<McpManagerProps> = ({
 
   return (
     <div className="space-y-4">
-      {/* Description */}
-      <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
-        {i18nService.t('mcpDescription')}
-      </p>
-
       {actionError && (
         <ErrorMessage
           message={actionError}
@@ -257,9 +252,12 @@ const McpManager: React.FC<McpManagerProps> = ({
       )}
 
       {(!hideTabBar || !hideSearch) && (
-        <div className="flex items-center gap-3">
+        <> 
+        {/* OWNER 01:27: divider now spans the full row (tabs + search); the
+            description line moved below the divider to mirror the skills face. */}
+        <div className="flex items-center gap-3 border-b dark:border-claude-darkBorder border-claude-border pb-0">
           {!hideTabBar && (
-            <div className="flex items-center border-b dark:border-claude-darkBorder border-claude-border mr-auto">
+            <div className="flex items-center mr-auto">
               <button type="button" onClick={() => setCurrentTab('installed')} className={tabClass('installed')}>
                 {i18nService.t('mcpInstalled')}
                 {servers.length > 0 && (
@@ -304,6 +302,10 @@ const McpManager: React.FC<McpManagerProps> = ({
           )}
           {tabBarTrailing}
         </div>
+        <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
+          {i18nService.t('mcpDescription')}
+        </p>
+        </>
       )}
 
       {/* ── Tab: Installed ──────────────────────────────── */}
