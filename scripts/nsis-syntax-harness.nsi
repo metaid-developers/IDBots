@@ -21,9 +21,27 @@ Unicode true
 !macro _HarnessFlag _a _b _t _f
   StrCmp "0" "1" `${_t}` `${_f}`
 !macroend
-!define isUpdated `"" _HarnessFlag ""`
-!define UAC_IsInnerInstance `"" _HarnessFlag ""`
-!define UAC_IsAdmin `"" _HarnessFlag ""`
+!define isUpdated `"" HarnessFlag ""`
+!define UAC_IsInnerInstance `"" HarnessFlag ""`
+!define UAC_IsAdmin `"" HarnessFlag ""`
+!define UAC_SYNCREGISTERS 0x1
+!define UAC_SYNCOUTDIR 0x4
+!define UAC_SYNCINSTDIR 0x8
+
+!macro UAC_AsUser_Call type name flags
+  Call ${name}
+!macroend
+
+!macro _HarnessExecShlUser out file verb args
+  DetailPrint "ExecShellAsUser ${file} ${verb} ${args}"
+  StrCpy ${out} "ok"
+!macroend
+!define StdUtils.ExecShellAsUser `!insertmacro _HarnessExecShlUser`
+
+!macro MUI_PAGE_FINISH
+  Page instfiles
+  Page custom StartApp
+!macroend
 
 !macro WinShell::SetLnkAUMI shortcut appId
   DetailPrint "SetLnkAUMI ${shortcut} ${appId}"
@@ -34,11 +52,23 @@ LangString appCannotBeClosed 0 "IDBots cannot be closed."
 
 !include "${IDBOTS_NSIS_SCRIPT}"
 
-Var newDesktopLink
-Var newStartMenuLink
-Var appExe
+!ifndef BUILD_UNINSTALLER
+  Var newDesktopLink
+  Var newStartMenuLink
+  Var appExe
+
+  !insertmacro customFinishPage
+!endif
 
 OutFile "${IDBOTS_NSIS_OUTPUT}"
+!ifdef BUILD_UNINSTALLER
+Section "harness"
+  WriteUninstaller "${IDBOTS_NSIS_OUTPUT}.uninst.exe"
+SectionEnd
+Section "un.harness"
+  !insertmacro customCheckAppRunning
+SectionEnd
+!else
 Section "harness"
   StrCpy $newDesktopLink "$DESKTOP\IDBots.lnk"
   StrCpy $newStartMenuLink "$SMPROGRAMS\IDBots.lnk"
@@ -47,3 +77,4 @@ Section "harness"
   !insertmacro customInit
   !insertmacro customInstall
 SectionEnd
+!endif

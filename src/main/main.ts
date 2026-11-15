@@ -2971,6 +2971,9 @@ const requestCalendarPermission = async (): Promise<boolean> => {
 
 
 // 配置应用
+if (isWindows) {
+  app.setAppUserModelId('ai.idbots.app');
+}
 if (isLinux) {
   if (disableLinuxSandbox) {
     app.commandLine.appendSwitch('no-sandbox');

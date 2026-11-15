@@ -1,3 +1,8 @@
+!ifndef BUILD_UNINSTALLER
+  Var IdbotsPrevUserDir
+  Var IdbotsPrevMachineDir
+!endif
+
 !macro _IDBOTS_SET_PROCESS_ENV
   ReadRegStr $R6 HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation
   ClearErrors
@@ -10,26 +15,47 @@
   System::Call 'kernel32::SetEnvironmentVariable(t "IDBOTS_EXE_NAME", t "${APP_EXECUTABLE_FILENAME}")'
 !macroend
 
-!macro _IDBOTS_FIND_RUNNING_PROCESSES OUT_VAR
-  !insertmacro _IDBOTS_SET_PROCESS_ENV
-  nsExec::Exec `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$ErrorActionPreference='SilentlyContinue';$$s=[int]$$env:IDBOTS_INSTALLER_PID;$$sid=(gps -Id $$PID).SessionId;$$n=[IO.Path]::GetFileNameWithoutExtension($$env:IDBOTS_EXE_NAME);$$ds=@($$env:IDBOTS_TARGET_DIR,$$env:IDBOTS_OLD_USER_DIR,$$env:IDBOTS_OLD_MACHINE_DIR)|?{$$_}|%{if($$_.EndsWith('\')){$$_}else{$$_+'\'}}|select -Unique;$$h=$$false;foreach($$p in (gps -Name $$n)){if($$p.Id -ne $$s -and $$p.Id -ne $$PID -and $$p.SessionId -eq $$sid){$$h=$$true;break}};if(-not $$h -and $$ds){foreach($$w in (gcim Win32_Process)){if($$w.ProcessId -ne $$s -and $$w.ProcessId -ne $$PID -and $$w.SessionId -eq $$sid -and $$w.ExecutablePath){foreach($$d in $$ds){if($$w.ExecutablePath.StartsWith($$d,'OrdinalIgnoreCase')){$$h=$$true;break}};if($$h){break}}}};if($$h){exit 0}else{exit 1}"`
+!macro _IDBOTS_FIND_MAIN_EXE OUT_VAR
+  nsExec::Exec `"$SYSDIR\cmd.exe" /c ""$SYSDIR\tasklist.exe" /NH /FI "IMAGENAME eq ${APP_EXECUTABLE_FILENAME}" /FI "PID ne $R8" /FO CSV | "$SYSDIR\find.exe" /I "${APP_EXECUTABLE_FILENAME}""`
   Pop ${OUT_VAR}
-  ; Fallback when PowerShell is unavailable or blocked by local policy.
-  ${If} ${OUT_VAR} != "0"
-  ${AndIf} ${OUT_VAR} != "1"
-    nsExec::Exec `"$SYSDIR\cmd.exe" /c ""$SYSDIR\tasklist.exe" /FI "IMAGENAME eq ${APP_EXECUTABLE_FILENAME}" /FO csv | "$SYSDIR\find.exe" /I "${APP_EXECUTABLE_FILENAME}""`
-    Pop ${OUT_VAR}
+!macroend
+
+!macro _IDBOTS_FIND_BUNDLED_CANDIDATES OUT_VAR
+  nsExec::Exec `"$SYSDIR\cmd.exe" /c ""$SYSDIR\tasklist.exe" /NH /FI "PID ne $R8" /FO CSV | "$SYSDIR\findstr.exe" /I /C:"\"${APP_EXECUTABLE_FILENAME}\"" /C:"\"python.exe\"" /C:"\"bash.exe\"" /C:"\"git.exe\"" /C:"\"sh.exe\"" /C:"\"ffmpeg-win32-x64.exe\"""`
+  Pop ${OUT_VAR}
+!macroend
+
+!macro _IDBOTS_FIND_RUNNING_PROCESSES OUT_VAR
+  ; Fast path (~25ms, zero PowerShell): check native tasklist for IDBots.exe or
+  ; any bundled helper binary name first. In normal upgrades where IDBots has
+  ; exited and no bundled tool name is running, this avoids cold-starting
+  ; PowerShell + AMSI/CIM completely.
+  !insertmacro _IDBOTS_FIND_MAIN_EXE ${OUT_VAR}
+  ${If} ${OUT_VAR} != 0
+    !insertmacro _IDBOTS_FIND_BUNDLED_CANDIDATES ${OUT_VAR}
+    ${If} ${OUT_VAR} == 0
+      !insertmacro _IDBOTS_SET_PROCESS_ENV
+      nsExec::Exec `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$ErrorActionPreference='SilentlyContinue';$$s=[int]$$env:IDBOTS_INSTALLER_PID;$$sid=(gps -Id $$PID).SessionId;$$ds=@($$env:IDBOTS_TARGET_DIR,$$env:IDBOTS_OLD_USER_DIR,$$env:IDBOTS_OLD_MACHINE_DIR)|?{$$_}|%{if($$_.EndsWith('\')){$$_}else{$$_+'\'}}|select -Unique;$$h=$$false;if($$ds){foreach($$p in (gps -Name python,bash,git,sh,ffmpeg-win32-x64 -EA SilentlyContinue)){if($$p.Id -ne $$s -and $$p.Id -ne $$PID -and $$p.SessionId -eq $$sid -and $$p.Path){foreach($$d in $$ds){if($$p.Path.StartsWith($$d,'OrdinalIgnoreCase')){$$h=$$true;break}};if($$h){break}}}};if($$h){exit 0}else{exit 1}"`
+      Pop ${OUT_VAR}
+      ${If} ${OUT_VAR} != "0"
+      ${AndIf} ${OUT_VAR} != "1"
+        StrCpy ${OUT_VAR} "1"
+      ${EndIf}
+    ${EndIf}
   ${EndIf}
 !macroend
 
 !macro _IDBOTS_STOP_RUNNING_PROCESSES
-  !insertmacro _IDBOTS_SET_PROCESS_ENV
-  nsExec::Exec `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$ErrorActionPreference='SilentlyContinue';$$s=[int]$$env:IDBOTS_INSTALLER_PID;$$sid=(gps -Id $$PID).SessionId;$$n=[IO.Path]::GetFileNameWithoutExtension($$env:IDBOTS_EXE_NAME);$$ds=@($$env:IDBOTS_TARGET_DIR,$$env:IDBOTS_OLD_USER_DIR,$$env:IDBOTS_OLD_MACHINE_DIR)|?{$$_}|%{if($$_.EndsWith('\')){$$_}else{$$_+'\'}}|select -Unique;gps -Name $$n|?{$$_.Id -ne $$s -and $$_.Id -ne $$PID -and $$_.SessionId -eq $$sid}|spps -Force;if($$ds){gcim Win32_Process|?{$$_.ProcessId -ne $$s -and $$_.ProcessId -ne $$PID -and $$_.SessionId -eq $$sid -and $$_.ExecutablePath}|%{foreach($$d in $$ds){if($$_.ExecutablePath.StartsWith($$d,'OrdinalIgnoreCase')){spps -Id $$_.ProcessId -Force;break}}}}"`
-  Pop $0
   ; Do not pass /T to taskkill /IM IDBots.exe: the updater launches this
   ; installer directly, and killing the process tree would kill the installer.
   nsExec::Exec `"$SYSDIR\taskkill.exe" /F /IM "${APP_EXECUTABLE_FILENAME}" /FI "PID ne $R8"`
   Pop $0
+  !insertmacro _IDBOTS_FIND_BUNDLED_CANDIDATES $0
+  ${If} $0 == 0
+    !insertmacro _IDBOTS_SET_PROCESS_ENV
+    nsExec::Exec `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$ErrorActionPreference='SilentlyContinue';$$s=[int]$$env:IDBOTS_INSTALLER_PID;$$sid=(gps -Id $$PID).SessionId;$$n=[IO.Path]::GetFileNameWithoutExtension($$env:IDBOTS_EXE_NAME);$$ds=@($$env:IDBOTS_TARGET_DIR,$$env:IDBOTS_OLD_USER_DIR,$$env:IDBOTS_OLD_MACHINE_DIR)|?{$$_}|%{if($$_.EndsWith('\')){$$_}else{$$_+'\'}}|select -Unique;gps -Name $$n -EA SilentlyContinue|?{$$_.Id -ne $$s -and $$_.Id -ne $$PID -and $$_.SessionId -eq $$sid}|spps -Force;if($$ds){gps -Name python,bash,git,sh,ffmpeg-win32-x64 -EA SilentlyContinue|?{$$_.Id -ne $$s -and $$_.Id -ne $$PID -and $$_.SessionId -eq $$sid -and $$_.Path}|%{foreach($$d in $$ds){if($$_.Path.StartsWith($$d,'OrdinalIgnoreCase')){spps -Id $$_.Id -Force;break}}}}"`
+    Pop $0
+  ${EndIf}
 !macroend
 
 !macro customCheckAppRunning
@@ -38,14 +64,19 @@
   !insertmacro _IDBOTS_FIND_RUNNING_PROCESSES $R0
   ${If} $R0 == 0
     ${If} ${isUpdated}
-      ; Auto-update launches the installer while calling app.quit(). Give the
-      ; exiting process up to ~5s to flush SQLite and close children cleanly.
+      ; Auto-update launches the installer while calling app.quit(). Poll the
+      ; fast native tasklist check for up to ~5s so SQLite flushes cleanly
+      ; without spawning PowerShell on every 250ms tick.
       StrCpy $R1 0
       _idbots_grace_loop_${_IDBOTS_CHK_ID}:
         Sleep 250
-        !insertmacro _IDBOTS_FIND_RUNNING_PROCESSES $R0
+        !insertmacro _IDBOTS_FIND_MAIN_EXE $R0
         ${If} $R0 != 0
-          Goto _idbots_not_running_${_IDBOTS_CHK_ID}
+          !insertmacro _IDBOTS_FIND_RUNNING_PROCESSES $R0
+          ${If} $R0 != 0
+            Goto _idbots_not_running_${_IDBOTS_CHK_ID}
+          ${EndIf}
+          Goto _idbots_stop_process_${_IDBOTS_CHK_ID}
         ${EndIf}
         IntOp $R1 $R1 + 1
         ${If} $R1 < 20
@@ -71,7 +102,7 @@
         ${If} $R0 != 0
           Goto _idbots_not_running_${_IDBOTS_CHK_ID}
         ${EndIf}
-        Sleep 400
+        Sleep 300
         IntOp $R1 $R1 + 1
         ${If} $R1 < 8
           Goto _idbots_wait_exit_${_IDBOTS_CHK_ID}
@@ -90,7 +121,7 @@
           ${If} $R0 != 0
             Goto _idbots_not_running_${_IDBOTS_CHK_ID}
           ${EndIf}
-          Sleep 400
+          Sleep 300
           IntOp $R1 $R1 + 1
           ${If} $R1 < 6
             Goto _idbots_wait_uac_${_IDBOTS_CHK_ID}
@@ -101,14 +132,24 @@
       Quit
 
     _idbots_not_running_${_IDBOTS_CHK_ID}:
-    ; Allow Windows/Crashpad/AV a brief moment to release file handles before
-    ; uninstallOldVersion renames files inside $INSTDIR.
-    Sleep 500
+    !ifndef BUILD_UNINSTALLER
+      ; Allow Windows/Crashpad/AV a brief moment to release file handles before
+      ; uninstallOldVersion renames files inside $INSTDIR.
+      Sleep 300
+    !endif
   ${EndIf}
   !undef _IDBOTS_CHK_ID
 !macroend
 
 !macro customInit
+  ; Snapshot previous install directories before registryAddInstallInfo updates
+  ; them so customInstall only runs PowerShell shortcut retargeting when an
+  ; install path actually changed.
+  ReadRegStr $IdbotsPrevUserDir HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation
+  ClearErrors
+  ReadRegStr $IdbotsPrevMachineDir HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation
+  ClearErrors
+
   ; In UAC-elevated assisted installs, installSection.nsh skips CHECK_APP_RUNNING
   ; for the inner elevated instance. Close any running instance here after
   ; elevation succeeds so uninstallOldVersion never hits a locked process.
@@ -136,26 +177,122 @@ _idbots_data_check_done:
   ; electron-builder preserves shortcuts on upgrade and therefore does not
   ; recreate one the user previously deleted. Restore only a missing link;
   ; an existing shortcut (including its customized target) stays untouched
-  ; unless its target is broken or points to a stale IDBots.exe location.
+  ; unless a previous install directory moved to a new $INSTDIR.
   IfFileExists "$newDesktopLink" _idbots_desktop_shortcut_exists 0
   CreateShortCut "$newDesktopLink" "$appExe" "" "$appExe" 0 "" "" "${APP_DESCRIPTION}"
   ClearErrors
   WinShell::SetLnkAUMI "$newDesktopLink" "${APP_ID}"
 
 _idbots_desktop_shortcut_exists:
-  System::Call 'kernel32::SetEnvironmentVariable(t "IDBOTS_APP_EXE", t "$appExe")'
-  System::Call 'kernel32::SetEnvironmentVariable(t "IDBOTS_INST_DIR", t "$INSTDIR")'
-  System::Call 'kernel32::SetEnvironmentVariable(t "IDBOTS_DESKTOP_LINK", t "$newDesktopLink")'
-  System::Call 'kernel32::SetEnvironmentVariable(t "IDBOTS_STARTMENU_LINK", t "$newStartMenuLink")'
-  System::Call 'kernel32::SetEnvironmentVariable(t "IDBOTS_TASKBAR_LINK", t "$APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\${SHORTCUT_NAME}.lnk")'
-  System::Call 'kernel32::SetEnvironmentVariable(t "IDBOTS_EXE_NAME", t "${APP_EXECUTABLE_FILENAME}")'
-  System::Call 'kernel32::SetEnvironmentVariable(t "IDBOTS_SHORTCUT_NAME", t "${SHORTCUT_NAME}")'
-  nsExec::Exec `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$ErrorActionPreference='SilentlyContinue';$$e=$$env:IDBOTS_APP_EXE;$$d=$$env:IDBOTS_INST_DIR;$$n=$$env:IDBOTS_EXE_NAME;if(-not $$e -or -not (Test-Path -LiteralPath $$e)){exit 0};$$w=New-Object -Com WScript.Shell;$$p=Join-Path $$env:PUBLIC ('Desktop\'+$$env:IDBOTS_SHORTCUT_NAME+'.lnk');@($$env:IDBOTS_DESKTOP_LINK,$$env:IDBOTS_STARTMENU_LINK,$$env:IDBOTS_TASKBAR_LINK,$$p)|?{$$_}|select -Unique|%{if(Test-Path -LiteralPath $$_){try{$$sc=$$w.CreateShortcut($$_);$$t=$$sc.TargetPath;if(-not $$t -or -not (Test-Path -LiteralPath $$t) -or ((Split-Path $$t -Leaf) -ieq $$n -and $$t -ine $$e)){$$sc.TargetPath=$$e;$$sc.WorkingDirectory=$$d;if(-not $$sc.IconLocation -or $$sc.IconLocation -like ('*'+$$n+'*')){$$sc.IconLocation=($$e+',0')};$$sc.Save()}}catch{}}}"`
-  Pop $0
+  StrCpy $R9 "0"
+  ${If} $IdbotsPrevUserDir != ""
+  ${AndIf} $IdbotsPrevUserDir != "$INSTDIR"
+    StrCpy $R9 "1"
+  ${EndIf}
+  ${If} $IdbotsPrevMachineDir != ""
+  ${AndIf} $IdbotsPrevMachineDir != "$INSTDIR"
+    StrCpy $R9 "1"
+  ${EndIf}
+  ${If} $R9 == "1"
+    System::Call 'kernel32::SetEnvironmentVariable(t "IDBOTS_APP_EXE", t "$appExe")'
+    System::Call 'kernel32::SetEnvironmentVariable(t "IDBOTS_INST_DIR", t "$INSTDIR")'
+    System::Call 'kernel32::SetEnvironmentVariable(t "IDBOTS_DESKTOP_LINK", t "$newDesktopLink")'
+    System::Call 'kernel32::SetEnvironmentVariable(t "IDBOTS_STARTMENU_LINK", t "$newStartMenuLink")'
+    System::Call 'kernel32::SetEnvironmentVariable(t "IDBOTS_TASKBAR_LINK", t "$APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\${SHORTCUT_NAME}.lnk")'
+    System::Call 'kernel32::SetEnvironmentVariable(t "IDBOTS_EXE_NAME", t "${APP_EXECUTABLE_FILENAME}")'
+    System::Call 'kernel32::SetEnvironmentVariable(t "IDBOTS_SHORTCUT_NAME", t "${SHORTCUT_NAME}")'
+    nsExec::Exec `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$ErrorActionPreference='SilentlyContinue';$$e=$$env:IDBOTS_APP_EXE;$$d=$$env:IDBOTS_INST_DIR;$$n=$$env:IDBOTS_EXE_NAME;if(-not $$e -or -not (Test-Path -LiteralPath $$e)){exit 0};$$w=New-Object -Com WScript.Shell;$$p=Join-Path $$env:PUBLIC ('Desktop\'+$$env:IDBOTS_SHORTCUT_NAME+'.lnk');@($$env:IDBOTS_DESKTOP_LINK,$$env:IDBOTS_STARTMENU_LINK,$$env:IDBOTS_TASKBAR_LINK,$$p)|?{$$_}|select -Unique|%{if(Test-Path -LiteralPath $$_){try{$$sc=$$w.CreateShortcut($$_);$$t=$$sc.TargetPath;if(-not $$t -or -not (Test-Path -LiteralPath $$t) -or ((Split-Path $$t -Leaf) -ieq $$n -and $$t -ine $$e)){$$sc.TargetPath=$$e;$$sc.WorkingDirectory=$$d;if(-not $$sc.IconLocation -or $$sc.IconLocation -like ('*'+$$n+'*')){$$sc.IconLocation=($$e+',0')};$$sc.Save()}}catch{}}}"`
+    Pop $0
+  ${EndIf}
+  ClearErrors
+  IfFileExists "$newStartMenuLink" 0 +2
+  WinShell::SetLnkAUMI "$newStartMenuLink" "${APP_ID}"
   ClearErrors
   IfFileExists "$newDesktopLink" 0 _idbots_desktop_shortcut_done
   WinShell::SetLnkAUMI "$newDesktopLink" "${APP_ID}"
   System::Call 'Shell32::SHChangeNotify(i 0x8000000, i 0, i 0, i 0)'
 
 _idbots_desktop_shortcut_done:
+!macroend
+
+!macro customFinishPage
+  !ifndef HIDE_RUN_AFTER_FINISH
+    Function _IdbotsLaunchFromUserProcess
+      SetOutPath "$INSTDIR"
+      ClearErrors
+      Exec '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" $1'
+      ${If} ${Errors}
+        ClearErrors
+        ExecShell "" "$INSTDIR\${APP_EXECUTABLE_FILENAME}" "$1" SW_SHOWNORMAL
+      ${EndIf}
+      ${If} ${Errors}
+        StrCpy $0 "error"
+      ${Else}
+        StrCpy $0 "ok"
+      ${EndIf}
+    FunctionEnd
+
+    Function StartApp
+      ${If} ${isUpdated}
+        StrCpy $1 "--updated"
+      ${Else}
+        StrCpy $1 ""
+      ${EndIf}
+      SetOutPath "$INSTDIR"
+      StrCpy $appExe "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
+
+      ; 1. UAC-elevated inner installer: execute CreateProcess directly inside
+      ;    the original non-elevated outer installer process. Launching $appExe
+      ;    instead of $launchLink (.lnk) avoids Windows Shell dropping .lnk
+      ;    launches when --updated arguments are supplied (electron-builder#5988).
+      ${If} ${UAC_IsInnerInstance}
+        StrCpy $0 "error"
+        !insertmacro UAC_AsUser_Call Function _IdbotsLaunchFromUserProcess ${UAC_SYNCREGISTERS}|${UAC_SYNCOUTDIR}|${UAC_SYNCINSTDIR}
+        ${If} $0 == "ok"
+          Return
+        ${EndIf}
+      ${EndIf}
+
+      ; 2. Non-elevated per-user install (the default): already running as the
+      ;    interactive user, so spawn IDBots.exe directly via CreateProcess
+      ;    without round-tripping through Explorer IShellDispatch2 COM.
+      ${IfNot} ${UAC_IsAdmin}
+        ClearErrors
+        Exec '"$appExe" $1'
+        ${IfNot} ${Errors}
+          Return
+        ${EndIf}
+        ExecShell "" "$appExe" "$1" SW_SHOWNORMAL
+        Return
+      ${EndIf}
+
+      ; 3. Directly elevated admin installer (e.g. Run as administrator or UAC
+      ;    disabled on older Windows): de-elevate via Explorer on $appExe, then
+      ;    verify IDBots.exe actually entered the process table and fall back
+      ;    to direct CreateProcess if Explorer COM silently ignored the call.
+      System::Call 'kernel32::GetCurrentProcessId() i .R8'
+      ${StdUtils.ExecShellAsUser} $0 "$appExe" "open" "$1"
+      ${If} $0 == "ok"
+        Sleep 250
+        !insertmacro _IDBOTS_FIND_MAIN_EXE $R0
+        ${If} $R0 == 0
+          Return
+        ${EndIf}
+        Sleep 350
+        !insertmacro _IDBOTS_FIND_MAIN_EXE $R0
+        ${If} $R0 == 0
+          Return
+        ${EndIf}
+      ${EndIf}
+      ClearErrors
+      Exec '"$appExe" $1'
+      ${If} ${Errors}
+        ExecShell "" "$appExe" "$1" SW_SHOWNORMAL
+      ${EndIf}
+    FunctionEnd
+
+    !define MUI_FINISHPAGE_RUN
+    !define MUI_FINISHPAGE_RUN_FUNCTION "StartApp"
+  !endif
+  !insertmacro MUI_PAGE_FINISH
 !macroend
