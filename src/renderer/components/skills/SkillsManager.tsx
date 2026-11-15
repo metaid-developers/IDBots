@@ -592,7 +592,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
               {officialSkills.map((skill) => (
                 <div
                   key={skill.name}
-                  className="rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 p-3 transition-colors"
+                  className="flex flex-col rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 p-3 transition-colors"
                 >
                   <div className="flex items-start justify-between mb-2">
                     <div className="flex items-center gap-2 min-w-0">
@@ -653,7 +653,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                       {skill.description}
                     </p>
                   )}
-                  <div className="text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  <div className="mt-auto pt-1 text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
                     v{skill.remoteVersion}
                     {skill.status === 'update' && skill.localVersion ? ` (v${skill.localVersion} → v${skill.remoteVersion})` : ''}
                   </div>
@@ -683,7 +683,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
               {communitySkills.map((skill) => (
                 <div
                   key={skill.name}
-                  className="rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 p-3 transition-colors"
+                  className="flex flex-col rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 p-3 transition-colors"
                 >
                   <div className="flex items-start justify-between mb-2">
                     <div className="flex items-center gap-2 min-w-0">
@@ -744,7 +744,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                       {skill.description}
                     </p>
                   )}
-                  <div className="text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  <div className="mt-auto pt-1 text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
                     v{skill.remoteVersion}
                     {skill.status === 'update' && skill.localVersion ? ` (v${skill.localVersion} → v${skill.remoteVersion})` : ''}
                   </div>
@@ -902,7 +902,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
           filteredSkills.map((skill) => (
             <div
               key={skill.id}
-              className="rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 p-3 transition-colors hover:border-claude-accent/50"
+              className="flex flex-col rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 p-3 transition-colors hover:border-claude-accent/50"
             >
               <div className="flex items-start justify-between mb-2">
                 <div className="flex items-center gap-2 min-w-0">
@@ -950,7 +950,9 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                 </p>
               </Tooltip>
 
-              <div className="flex items-center justify-between gap-2 mt-1">
+              {/* OWNER 01:56: scope chip + date pinned to the card's bottom-left
+                  (mt-auto) so varying description lengths can't drift the row. */}
+              <div className="flex items-center justify-between gap-2 mt-auto pt-1">
                 <div className="flex items-center gap-2 text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary min-w-0">
                   {skill.isOfficial && (
                     <>
