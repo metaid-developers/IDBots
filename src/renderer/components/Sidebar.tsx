@@ -749,10 +749,8 @@ const Sidebar: React.FC<SidebarProps> = ({
         <div
           data-slot="studio-title-preview"
           aria-hidden={!showStudioTitle}
-          className={`h-9 w-full shrink-0 transition-[opacity,transform] duration-150 ${
-            showStudioTitle
-              ? 'visible translate-y-0 opacity-100'
-              : 'invisible pointer-events-none -translate-y-1 opacity-0'
+          className={`w-full shrink-0 overflow-hidden transition-[height] duration-150 ${
+            showStudioTitle ? 'h-9' : 'h-0'
           }`}
         >
           <CoworkSurfaceSessionName
