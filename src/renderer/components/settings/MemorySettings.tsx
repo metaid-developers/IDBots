@@ -1,7 +1,8 @@
 import ThemedSelect from '../ui/ThemedSelect';
+import MiniMonthCalendar from '../ui/MiniMonthCalendar';
 import Tooltip from '../ui/Tooltip';
 import { InformationCircleIcon } from '@heroicons/react/24/outline';
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
 import { useSelector } from 'react-redux';
@@ -181,6 +182,57 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   // are reached through the calendar index (date picker) instead of a
   // 365-entry wall for a year-old bot.
   const [dreamBrowseDate, setDreamBrowseDate] = useState('');
+  const [dreamCalOpen, setDreamCalOpen] = useState<'browse' | 'force' | null>(null);
+  const [dreamCalPos, setDreamCalPos] = useState<{ top: number; left: number } | null>(null);
+  const dreamCalBrowseRef = useRef<HTMLDivElement>(null);
+  const dreamCalForceRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!dreamCalOpen) return;
+    const close = (event: MouseEvent) => {
+      const inBrowse = dreamCalBrowseRef.current?.contains(event.target as Node);
+      const inForce = dreamCalForceRef.current?.contains(event.target as Node);
+      if (!inBrowse && !inForce) setDreamCalOpen(null);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [dreamCalOpen]);
+
+  const openDreamCal = (which: 'browse' | 'force', ref: React.RefObject<HTMLDivElement>) => {
+    const rect = ref.current?.getBoundingClientRect();
+    if (rect) setDreamCalPos({ top: rect.bottom + 4, left: Math.max(8, rect.right - 224) });
+    setDreamCalOpen((prev) => (prev === which ? null : which));
+  };
+
+  const dreamMarkedDayKeys = useMemo(
+    () => new Set(dreamSummaries.map((summary) => summary.summaryDate)),
+    [dreamSummaries],
+  );
+
+  const renderDreamCalPopover = () => {
+    if (!dreamCalOpen || !dreamCalPos) return null;
+    const isBrowse = dreamCalOpen === 'browse';
+    return (
+      <div
+        className="fixed z-40 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-2xl p-2"
+        style={{ top: dreamCalPos.top, left: dreamCalPos.left }}
+      >
+        <MiniMonthCalendar
+          markedDayKeys={dreamMarkedDayKeys}
+          selectedDayKey={isBrowse ? (dreamBrowseDate || null) : dreamRunDate}
+          onPick={(dayKey) => {
+            if (isBrowse) {
+              handleDreamBrowse(dreamBrowseDate === dayKey ? '' : dayKey);
+              setDreamCalOpen(null);
+            } else {
+              setDreamRunDate(dayKey);
+              setDreamCalOpen(null);
+            }
+          }}
+        />
+      </div>
+    );
+  };
   const [dreamShowAll, setDreamShowAll] = useState(false);
   const [dreamRunDate, setDreamRunDate] = useState<string>(() => {
     const now = new Date();
@@ -1455,14 +1507,16 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           {i18nService.t('memoryDreamHint')}
         </div>
         <div className="flex items-center gap-2">
-          <input
-            type="date"
-            value={dreamRunDate}
-            max={formatLocalDateInput(new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate() - 1))}
-            onChange={(event) => setDreamRunDate(event.target.value)}
-            className="rounded-lg border px-2 py-1 text-xs dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
-            disabled={dreamRunning || metabotId == null}
-          />
+          <div className="relative shrink-0" ref={dreamCalForceRef}>
+            <button
+              type="button"
+              onClick={() => { if (!(dreamRunning || metabotId == null)) openDreamCal('force', dreamCalForceRef); }}
+              disabled={dreamRunning || metabotId == null}
+              className="inline-flex h-[26px] items-center whitespace-nowrap rounded-[var(--shape-radius-sm)] border px-2 text-xs tabular-nums dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text transition-colors hover:border-claude-accent/60 disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {dreamRunDate}
+            </button>
+          </div>
           <button
             type="button"
             onClick={() => { void handleForceDream(); }}
@@ -1473,6 +1527,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             <ArrowPathIcon className={`h-3.5 w-3.5 ${dreamRunning ? 'animate-spin' : ''}`} />
             <span>{dreamRunning ? i18nService.t('dreamDiaryForceRunning') : i18nService.t('dreamDiaryForceDream')}</span>
           </button>
+          {renderDreamCalPopover()}
         </div>
       </div>
       {dreamNotice && (
@@ -1504,17 +1559,18 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                 </button>
               )}
             </div>
-            <label className="flex shrink-0 items-center gap-1 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
-              <span>{i18nService.t('dreamDiaryBrowseLabel')}</span>
-              <input
-                type="date"
-                value={dreamBrowseDate}
-                onChange={(event) => handleDreamBrowse(event.target.value)}
-                className="h-[26px] rounded-[var(--shape-radius-sm)] border px-2 text-xs dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
-              />
-            </label>
+            <div className="relative shrink-0" ref={dreamCalBrowseRef}>
+              <button
+                type="button"
+                onClick={() => openDreamCal('browse', dreamCalBrowseRef)}
+                className="inline-flex h-[26px] items-center gap-1 whitespace-nowrap rounded-[var(--shape-radius-sm)] border px-2 text-xs dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text transition-colors hover:border-claude-accent/60"
+              >
+                {dreamBrowseDate || i18nService.t('dreamDiaryBrowseLabel')}
+              </button>
+            </div>
           </div>
         </div>
+        {renderDreamCalPopover()}
         <div className="max-h-[520px] overflow-auto">
         {dreamLoading ? (
           <div className="px-3 py-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">{i18nService.t('loading')}</div>
