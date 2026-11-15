@@ -73,7 +73,15 @@ export function materializeLiveStageEntry(deps: {
   return { dir, filePath, uri: previewMetaappUriForPath(filePath), templateId: deps.templateId };
 }
 
-const DATA_IMAGE_RE = /^data:image\/([a-z0-9]+);base64,(.+)$/is;
+const DATA_IMAGE_RE = /^data:image\/([a-z0-9.+-]+)(?:;[^;,]+)*;base64,(.+)$/is;
+
+function extForMimeSubtype(subtype: string): string {
+  const lower = subtype.toLowerCase();
+  if (lower === 'jpeg') return 'jpg';
+  if (lower === 'svg+xml') return 'svg';
+  if (lower === 'x-icon' || lower === 'vnd.microsoft.icon') return 'ico';
+  return lower;
+}
 
 /**
  * Resolve an avatar reference for the stage page:
@@ -88,7 +96,7 @@ export function stageAssetFor(avatar: unknown, stageDir: string): string | undef
   if (/^https?:\/\//i.test(avatar)) return avatar;
   const match = DATA_IMAGE_RE.exec(avatar);
   if (!match) return undefined;
-  const ext = match[1].toLowerCase() === 'jpeg' ? 'jpg' : match[1].toLowerCase();
+  const ext = extForMimeSubtype(match[1]);
   if (!/^[a-z0-9]+$/.test(ext)) return undefined;
   const bytes = Buffer.from(match[2], 'base64');
   if (!bytes.length) return undefined;

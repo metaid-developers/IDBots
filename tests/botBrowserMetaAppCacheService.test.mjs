@@ -428,6 +428,35 @@ test('missing EOCD is reported as a truncated download when no Content-Length is
   );
 });
 
+test('local preview sessions remain valid beyond 30 minutes so long-lived stage tabs still resolve avatars', async () => {
+  const cacheRoot = await mkdtemp(path.join(os.tmpdir(), 'idbots-local-preview-ttl-'));
+  const stageDir = await mkdtemp(path.join(os.tmpdir(), 'idbots-local-preview-stage-'));
+  await writeFile(path.join(stageDir, 'stage.html'), '<!doctype html><html><body>Stage</body></html>', 'utf8');
+  let clock = 1_700_000_000_000;
+  const service = createBotBrowserMetaAppCacheService({
+    cacheRoot,
+    now: () => clock,
+  });
+
+  try {
+    const created = await service.createLocalPreviewSession({
+      artifactDir: stageDir,
+      indexFile: 'stage.html',
+    });
+    // Advance 3 hours (past the 30m remote preview TTL) and materialize a new avatar asset.
+    clock += 3 * 60 * 60 * 1000;
+    const avatarUrl = created.localPreviewUrl.replace(/stage\.html$/, 'worker.png');
+    await writeFile(path.join(stageDir, 'worker.png'), Buffer.from('png-bytes'));
+    const res = await fetch(avatarUrl);
+    assert.equal(res.status, 200);
+    assert.equal(await res.text(), 'png-bytes');
+  } finally {
+    await service.stop();
+    await rm(cacheRoot, { recursive: true, force: true });
+    await rm(stageDir, { recursive: true, force: true });
+  }
+});
+
 test('non-zip response body is rejected by the PK magic check', () => {
   const html = Buffer.from('<!doctype html><html><body>error</body></html>', 'utf8');
   assert.throws(

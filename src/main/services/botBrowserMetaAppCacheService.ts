@@ -137,6 +137,7 @@ const PREVIEW_PREFIX = '/browser-cache/metaapp-preview/';
 // port (with a warning), matching the pre-fix behavior.
 const PREVIEW_PORT_CANDIDATES = [47613, 47614, 47615];
 const PREVIEW_SESSION_TTL_MS = 30 * 60 * 1000;
+const LOCAL_PREVIEW_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_METAAPP_DOWNLOAD_REDIRECTS = 5;
 
 const MIME_TYPES: Record<string, string> = {
@@ -779,6 +780,7 @@ export function createBotBrowserMetaAppCacheService(
       writeHttpResponse(res, method, 404, 'Not Found', { 'Content-Type': 'text/plain; charset=utf-8' });
       return;
     }
+    session.expiresAt = now() + (session.previewId.startsWith('local-preview-') ? LOCAL_PREVIEW_SESSION_TTL_MS : PREVIEW_SESSION_TTL_MS);
 
     try {
       const filePath = await resolveAssetPath(session, requestPath.assetPath);
@@ -966,7 +968,7 @@ export function createBotBrowserMetaAppCacheService(
       artifactDir: input.artifactDir,
       indexFile: input.indexFile,
       createdAt,
-      expiresAt: createdAt + PREVIEW_SESSION_TTL_MS,
+      expiresAt: createdAt + LOCAL_PREVIEW_SESSION_TTL_MS,
       ...(input.viewer ? { viewer: true } : {}),
     };
     sessions.set(previewId, session);

@@ -9173,12 +9173,33 @@ const getBotBrowserProjection = () =>
 // Open delegated work for a Studio session, read from the orchestration
 // store. Shared by the Live Stage's delegation-aware completion and any
 // other surface that needs "is a teammate bot still working on this".
+const resolveLiveStageBuiltinAvatar = (avatar: unknown): string | undefined =>
+  resolveBuiltinAvatarDataUri(avatar, path.join(app.getAppPath(), app.isPackaged ? 'dist' : 'public'));
+
+const resolveLiveStageRemoteAvatar = async (avatar: unknown): Promise<string | undefined> => {
+  if (typeof avatar !== 'string') return undefined;
+  const reference = avatar.trim();
+  if (!reference) return undefined;
+  const nftRef = parseNftAvatarReference(reference);
+  if (nftRef) {
+    const resolved = await resolveNftAvatar(nftRef);
+    return resolved.avatarUrl ?? undefined;
+  }
+  const builtin = resolveLiveStageBuiltinAvatar(reference);
+  if (builtin) return builtin;
+  if (/^metafile:\/\//i.test(reference)) {
+    return (await resolvePinAssetSource(reference)) ?? undefined;
+  }
+  return undefined;
+};
+
 const studioDelegationLookupDeps = {
   listAttemptsForSourceSessions: (ids: string[]) => getOrchestrationStore().listAttemptsForSourceSessions(ids),
   getStep: (id: string) => getOrchestrationStore().getStep(id),
   getTaskForStep: (id: string) => getOrchestrationStore().getTaskForStep(id),
   getSession: (id: string) => getCoworkStore().getSessionWithoutMessages(id),
   getMetabotById: (id: number) => getMetabotStore().getMetabotById(id),
+  resolveAvatar: resolveLiveStageBuiltinAvatar,
 };
 const listOpenStudioDelegations = (sessionId: string) => listStudioOpenDelegations(studioDelegationLookupDeps, sessionId);
 // Projection discipline (2026-11-12 owner ruling): the gate counts ONLY
@@ -9244,7 +9265,8 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
       },
       assetRoot: path.join(app.getAppPath(), app.isPackaged ? 'dist/live-stage' : 'public/live-stage'),
       fallbackAvatarDataUri: `data:image/png;base64,${fs.readFileSync(fallbackAvatarPath).toString('base64')}`,
-      resolveAvatar: (avatar) => resolveBuiltinAvatarDataUri(avatar, path.join(app.getAppPath(), app.isPackaged ? 'dist' : 'public')),
+      resolveAvatar: resolveLiveStageBuiltinAvatar,
+      resolveAvatarAsync: resolveLiveStageRemoteAvatar,
       isSessionClaimed: (sessionId) => getStudioGenesisStageService().isClaimed(sessionId),
       beforeProjection: (sessionId) => getStudioGenesisStageService().beforeLiveStageProjection(sessionId),
     });
