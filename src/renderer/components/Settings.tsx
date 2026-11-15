@@ -3841,7 +3841,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
             {/* OWNER 2026-11-16 00:42: section label + segmented switch share
                 one row at the module's top-right; the label sits OUTSIDE the
                 module card, and the duplicated in-module title is gone. */}
-            <div className="flex items-center justify-between gap-3 pb-3">
+            <div className="flex items-center justify-between gap-3 pb-3 max-w-3xl px-4"> {/* px-4 + max-w-3xl: label/tray edges align with the module card below (OWNER 00:47: tray must not stick out past the module) */}
               <div>
                 <span className="text-base font-semibold text-claude-text dark:text-claude-darkText">
                   {i18nService.t(creditsSubTab === 'credits' ? 'meUsageInfoTitle' : 'trafficInfoTitle')}
@@ -3859,7 +3859,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                   key={sub}
                   type="button"
                   onClick={() => setCreditsSubTab(sub)}
-                  className={`flex h-full min-w-[96px] items-center justify-center px-4 text-sm font-medium leading-none transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
+                  className={`flex h-full min-w-[64px] items-center justify-center px-3 text-sm font-medium leading-none transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
                     creditsSubTab === sub
                       ? 'bg-claude-accent text-claude-accentInk'
                       : 'text-claude-textSecondary hover:bg-claude-surfaceHover/70 hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover/70 dark:hover:text-claude-darkText'
