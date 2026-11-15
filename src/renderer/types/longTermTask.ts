@@ -14,6 +14,15 @@
 /** Lifecycle flags stored on the task row. */
 export type LongTermTaskStage = 'defining' | 'active' | 'paused' | 'done' | 'cancelled';
 
+/** Task granularity: lightweight single-step card vs multi-stage project tree. */
+export type LongTermTaskKind = 'quick' | 'project';
+
+/**
+ * Canonical 3-state live model exposed to the owner and Twin in Studio mode:
+ * every open task is strictly in_progress, waiting_external, or waiting_owner.
+ */
+export type LongTermManagedState = 'in_progress' | 'waiting_external' | 'waiting_owner';
+
 /**
  * Kanban column (derived read-time, never persisted). Column order is the
  * display order: owner-attention first.
@@ -159,6 +168,10 @@ export interface LongTermTaskSummary {
   goal: string;
   stage: LongTermTaskStage;
   column: LongTermColumn;
+  /** 'quick' (single-step deliverable card) | 'project' (multi-stage decomposition). */
+  taskKind?: LongTermTaskKind;
+  /** Canonical 3-state live status (null when done/cancelled). */
+  managedState?: LongTermManagedState | null;
   acceptanceDelegate: boolean;
   /** URI of the visual plan page the owner confirmed before creation — the
    *  local .html file shown in the bubble (or pin:// when the owner asked for
@@ -216,6 +229,16 @@ export interface LongTermTaskCreateInput {
   definitionSessionId?: string | null;
   /** URI of the plan page the owner confirmed before this create call. */
   planArtifactUri?: string | null;
+  taskKind?: LongTermTaskKind;
+}
+
+export interface LongTermQuickTaskCreateInput {
+  title: string;
+  goal?: string;
+  acceptanceCriteria?: string[];
+  preferredChannel?: LongTermPreferredChannel;
+  expectedMinutes?: number;
+  definitionSessionId?: string | null;
 }
 
 export interface LongTermTaskUpdateInput {

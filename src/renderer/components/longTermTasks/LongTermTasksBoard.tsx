@@ -1,19 +1,18 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState } from '../../store';
 import { selectTask } from '../../store/slices/longTermTaskSlice';
 import { longTermTaskService } from '../../services/longTermTask';
 import { i18nService } from '../../services/i18n';
-import { LONG_TERM_COLUMN_LABEL_KEYS, LONG_TERM_COLUMN_ORDER, type LongTermColumn, type LongTermTaskSummary } from '../../types/longTermTask';
+import { selectTrackedTasksNeedingAttention } from '../../utils/trackedTaskAttention';
+import {
+  LONG_TERM_COLUMN_LABEL_KEYS,
+  LONG_TERM_COLUMN_ORDER,
+  type LongTermColumn,
+  type LongTermTaskSummary,
+} from '../../types/longTermTask';
 import LongTermTaskCard from './LongTermTaskCard';
 import LongTermTaskDetail from './LongTermTaskDetail';
-
-/**
- * Long-term task board (redesign) — status-column kanban, one page, all tasks.
- * Columns: waiting-owner first (attention), then in-progress, waiting-external,
- * defining, paused, done. Cards come from the main-process projection; this
- * component renders and navigates, never derives.
- */
 
 const COLUMN_DOT_CLASS: Record<LongTermColumn, string> = {
   waiting_owner: 'bg-amber-400',
@@ -33,17 +32,45 @@ const COLUMN_FRAME_CLASS: Record<LongTermColumn, string> = {
   done: 'dark:border-claude-darkBorder/30 border-claude-border/30',
 };
 
-const LongTermTasksBoard: React.FC = () => {
+interface LongTermTasksBoardProps {
+  onReturnToStudioChat?: () => void;
+}
+
+const LongTermTasksBoard: React.FC<LongTermTasksBoardProps> = ({ onReturnToStudioChat }) => {
   const dispatch = useDispatch();
   const { available, bridgeMissingReason, board, loading, selectedTaskId } = useSelector(
     (state: RootState) => state.longTermTask,
   );
+  const longTermBoard = useSelector((state: RootState) => state.longTermTask.board);
+  const longTermNeedsDecisionCount = useMemo(
+    () => selectTrackedTasksNeedingAttention({ longTermTask: { board: longTermBoard } }).longTerm,
+    [longTermBoard],
+  );
+
+  const threeStateSummary = useMemo(() => {
+    const counts = { waiting_owner: 0, in_progress: 0, waiting_external: 0 };
+    for (const card of board?.cards ?? []) {
+      if (card.stage === 'done' || card.stage === 'cancelled') continue;
+      const state = card.managedState
+        ?? (card.stage === 'defining' || card.stage === 'paused' || card.column === 'waiting_owner'
+          ? 'waiting_owner'
+          : card.column === 'waiting_external'
+            ? 'waiting_external'
+            : 'in_progress');
+      counts[state] += 1;
+    }
+    return counts;
+  }, [board]);
 
   useEffect(() => {
     void longTermTaskService.init();
   }, []);
 
   const openCreationSession = () => {
+    if (onReturnToStudioChat) {
+      onReturnToStudioChat();
+      return;
+    }
     window.dispatchEvent(
       new CustomEvent('cowork:newChatWithDraft', { detail: { text: i18nService.t('longTermTask.newTaskDraft') } }),
     );
@@ -58,14 +85,47 @@ const LongTermTasksBoard: React.FC = () => {
 
   return (
     <div className="flex h-full flex-col">
-      {/* Toolbar: creation entry + hint */}
-      <div className="flex shrink-0 items-center gap-3 px-4 pt-3">
-        <button type="button" onClick={openCreationSession} className="btn-idchat-primary-filled px-3 py-1.5 text-sm font-medium">
-          {i18nService.t('longTermTask.newTask')}
-        </button>
-        <p className="text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
-          {i18nService.t('longTermTask.newTaskHint')}
-        </p>
+      {/* Toolbar: creation entry + 3-state live summary pills */}
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 px-4 pt-3">
+        <div className="flex items-center gap-3">
+          <button type="button" onClick={openCreationSession} className="btn-idchat-primary-filled px-3 py-1.5 text-sm font-medium">
+            {i18nService.t('longTermTask.newTask')}
+          </button>
+          <p className="text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+            {i18nService.t('longTermTask.newTaskHint')}
+          </p>
+        </div>
+
+        <div
+          data-slot="studio-managed-task-summary"
+          className="flex items-center gap-2 text-xs"
+        >
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 text-amber-700 dark:text-amber-300">
+            {longTermNeedsDecisionCount > 0 ? (
+              <span
+                data-testid="long-term-tab-decision-indicator"
+                title={i18nService.t('trackedTaskNeedsDecision').replace('{count}', String(longTermNeedsDecisionCount))}
+                aria-label={i18nService.t('trackedTaskNeedsDecision').replace('{count}', String(longTermNeedsDecisionCount))}
+                role="img"
+                className="tracked-task-decision-indicator shrink-0"
+              />
+            ) : (
+              <span className="h-2 w-2 rounded-full bg-amber-400" />
+            )}
+            <span>{i18nService.t('longTermTask.column.waitingOwner')}</span>
+            <span className="tabular-nums font-semibold">{threeStateSummary.waiting_owner}</span>
+          </span>
+          <span className="inline-flex items-center gap-1.5 rounded-full border dark:border-claude-darkBorder/60 border-claude-border/60 px-2.5 py-0.5 dark:text-claude-darkTextSecondary text-claude-textSecondary">
+            <span className="h-2 w-2 rounded-full bg-sky-400" />
+            <span>{i18nService.t('longTermTask.column.inProgress')}</span>
+            <span className="tabular-nums font-semibold">{threeStateSummary.in_progress}</span>
+          </span>
+          <span className="inline-flex items-center gap-1.5 rounded-full border dark:border-claude-darkBorder/60 border-claude-border/60 px-2.5 py-0.5 dark:text-claude-darkTextSecondary text-claude-textSecondary">
+            <span className="h-2 w-2 rounded-full bg-violet-400" />
+            <span>{i18nService.t('longTermTask.column.waitingExternal')}</span>
+            <span className="tabular-nums font-semibold">{threeStateSummary.waiting_external}</span>
+          </span>
+        </div>
       </div>
 
       {!available && (
@@ -87,7 +147,6 @@ const LongTermTasksBoard: React.FC = () => {
         </div>
       )}
 
-      {/* Kanban columns */}
       {available && !isEmpty && (
         <div className="mt-3 flex-1 overflow-x-auto overflow-y-hidden">
           <div className="flex h-full gap-3 px-4 pb-3" style={{ minWidth: 'max-content' }}>

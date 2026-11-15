@@ -121,11 +121,14 @@ test('both badges are wired to the shared derivation and the amber decision dot'
   assert.doesNotMatch(sidebar, /trackedTaskNeedsDecision/);
   assert.doesNotMatch(sidebar, /decisionLabel/);
 
-  const view = readSource('src/renderer/components/scheduledTasks/ScheduledTasksView.tsx');
-  assert.match(view, /const longTermNeedsDecisionCount = useMemo/);
-  assert.match(view, /const longTermBoard = useSelector\(\(state: RootState\) => state\.longTermTask\.board\)/);
-  assert.match(view, /data-testid="long-term-tab-decision-indicator"/);
-  assert.match(view, /tracked-task-decision-indicator/);
+  const boardView = readSource('src/renderer/components/longTermTasks/LongTermTasksBoard.tsx');
+  assert.match(boardView, /const longTermNeedsDecisionCount = useMemo/);
+  assert.match(boardView, /const longTermBoard = useSelector\(\(state: RootState\) => state\.longTermTask\.board\)/);
+  assert.match(boardView, /data-testid="long-term-tab-decision-indicator"/);
+  assert.match(boardView, /tracked-task-decision-indicator/);
+
+  const botWorksScheduledView = readSource('src/renderer/components/scheduledTasks/ScheduledTasksView.tsx');
+  assert.doesNotMatch(botWorksScheduledView, /LongTermTasksBoard/, 'Managed Task Tree migrated out of BotWorks into Studio');
 
   const css = readSource('src/renderer/index.css');
   assert.match(css, /\.tracked-task-decision-indicator \{/);

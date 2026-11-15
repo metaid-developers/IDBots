@@ -115,6 +115,8 @@ export const MAX_ATTENTION_ESCALATIONS_PER_SUBTASK = 5;
  */
 const DEFAULT_WAITING_OWNER_REMINDER_MS = 12 * 3_600_000;
 const DEFAULT_EXTERNAL_REMINDER_MS = 4 * 3_600_000;
+/** External waits exceeding this cap escalate automatically to `waiting_owner` so a permanently unmet external condition never stalls silently forever. */
+export const DEFAULT_EXTERNAL_ESCALATE_TO_OWNER_MS = 24 * 3_600_000;
 const DEFAULT_FAILURE_STREAK_THRESHOLD = 2;
 const DEFAULT_EXPECTED_MINUTES = 240;
 const DEFAULT_ATTENTION_RETRY_MS = 30 * 60_000;
@@ -300,6 +302,8 @@ export interface LongTermAdvanceDeps {
   waitingOwnerReminderMs?: number;
   /** Quiet time before re-checking an untimed external wait (default 4h). */
   externalReminderMs?: number;
+  /** Maximum quiet duration in `waiting_external` before auto-escalating to `waiting_owner` (default 24h). */
+  externalEscalateToOwnerMs?: number;
   /** P1 supervision: worker dispatch attempts tied to the task (via its bound sessions). */
   listWorkerAttempts?: (taskId: string, subtaskId: string) => LongTermWorkerAttemptSummary[];
   listOrchestrationAttention?: (taskId: string, subtaskId: string) => LongTermAttentionSelection[];
@@ -580,6 +584,7 @@ export class LongTermAdvanceService {
   private readonly nudgeThrottleMs: number;
   private readonly waitingOwnerReminderMs: number;
   private readonly externalReminderMs: number;
+  private readonly externalEscalateToOwnerMs: number;
   private readonly failureStreakThreshold: number;
   private readonly defaultExpectedMinutes: number;
   private readonly sessionRotationThreshold: number;
@@ -595,6 +600,10 @@ export class LongTermAdvanceService {
     this.nudgeThrottleMs = Math.max(60_000, Math.trunc(deps.nudgeThrottleMs ?? DEFAULT_NUDGE_THROTTLE_MS));
     this.waitingOwnerReminderMs = Math.max(60_000, Math.trunc(deps.waitingOwnerReminderMs ?? DEFAULT_WAITING_OWNER_REMINDER_MS));
     this.externalReminderMs = Math.max(3_600_000, Math.trunc(deps.externalReminderMs ?? DEFAULT_EXTERNAL_REMINDER_MS));
+    this.externalEscalateToOwnerMs = Math.max(
+      this.externalReminderMs,
+      Math.trunc(deps.externalEscalateToOwnerMs ?? DEFAULT_EXTERNAL_ESCALATE_TO_OWNER_MS),
+    );
     this.failureStreakThreshold = Math.max(1, Math.trunc(deps.failureStreakThreshold ?? DEFAULT_FAILURE_STREAK_THRESHOLD));
     this.defaultExpectedMinutes = Math.max(1, Math.trunc(deps.defaultExpectedMinutes ?? DEFAULT_EXPECTED_MINUTES));
     this.sessionRotationThreshold = Math.max(10, Math.trunc(deps.sessionRotationThreshold ?? DEFAULT_SESSION_ROTATION_MESSAGES));
@@ -996,6 +1005,21 @@ export class LongTermAdvanceService {
         return [];
       }
       case 'waiting_external':
+        if (quietMs > this.externalEscalateToOwnerMs) {
+          const hours = Math.max(1, Math.round(quietMs / 3_600_000));
+          const escalatedNote = [
+            `背景与已完成进展：任务「${detail.title}」子项 #${current.ordinal}「${current.title}」处于等待外部条件状态。`,
+            `当前状况：外部等待已超过 ${hours} 小时仍未达成（原记录：${current.waitNote || '未填写详情'}）。`,
+            '需要你拍板的事项：是否由你介入推进外部条件、调整方案绕开该外部依赖，还是继续延长等待？',
+            '选项与利弊：1) [推荐] 由主人协助推进外部条件或调整路径；2) 设定新的明确截止时间继续等待；3) 跳过或取消该子项。',
+            '推荐项及理由：推荐选项 1——外部条件已超自动守候上限，继续盲等会拖慢整体交付。',
+            '拍板后的下一步：按你的决定立即恢复推进或更新计划。',
+          ].join('\n');
+          const parkedOwner = this.deps.store().waitSubtask(current.id, { kind: 'owner', note: escalatedNote }, 'system');
+          if (parkedOwner.ok) {
+            return [`attention: owner — external wait exceeded ${hours}h without resolution; escalated to waiting_owner`];
+          }
+        }
         if (current.waitUntil !== null && Date.parse(current.waitUntil) <= nowMs) {
           return [`timed wait expired — re-check the condition (${current.waitNote})`];
         }

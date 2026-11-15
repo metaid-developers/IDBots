@@ -29,10 +29,11 @@ routing question:
 
 | Shape | Route |
 | --- | --- |
-| Finishable in a few turns, single bot | Just do it in this cowork session |
-| Short job needing several bots | Group task (metabot-group-task) |
+| Casual chat / Q&A with zero file, code, or chain output | Just reply directly in Studio chat (no task card) |
+| Clear, bounded single-step deliverable (1 article, 1 concrete fix, 1 asset) | **Lightweight Quick Card — `longterm_task_quick_create` + immediate `local_worker_delegate`** |
+| Short job needing several bots in a shared on-chain room | Group task (metabot-group-task) |
 | Recurring / time-triggered | Scheduled task (scheduled-task) |
-| Days–weeks, blocking points, one owner (the user) | **Long-term task — this skill** |
+| Multi-stage project, fuzzy scope, or blocking points | **Multi-stage Project Tree — `longterm_task_create` (Steps 1–6 below)** |
 | On-chain multi-bot collaborative decomposition (competitive MetaTask) | MetaTask decomposition wizard (metatask-wizard skill) |
 
 If it's not a long-term task, say so and route — do not create one anyway.

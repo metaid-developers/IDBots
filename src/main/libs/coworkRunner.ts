@@ -10030,6 +10030,8 @@ export class CoworkRunner extends EventEmitter {
           stepId: typeof toolInput.stepId === 'string' ? toolInput.stepId : null,
           taskIntent: typeof toolInput.taskIntent === 'string' ? toolInput.taskIntent : null,
           idempotencyKey: typeof toolInput.idempotencyKey === 'string' ? toolInput.idempotencyKey : null,
+          longtermTaskId: typeof toolInput.longtermTaskId === 'string' ? toolInput.longtermTaskId : null,
+          longtermSubtaskId: typeof toolInput.longtermSubtaskId === 'string' ? toolInput.longtermSubtaskId : null,
         });
         this.studioChiefOfStaffTools?.markPresence(sessionId, 'idle');
         return { success: true, text: JSON.stringify({ ok: true, ...delegated }) };
@@ -13941,6 +13943,8 @@ export class CoworkRunner extends EventEmitter {
             stepId: z.string().optional(),
             taskIntent: z.string().optional(),
             idempotencyKey: z.string().optional(),
+            longtermTaskId: z.string().optional().describe('Optional Managed Task Tree id (ltt_...) to bind this Worker delegation to.'),
+            longtermSubtaskId: z.string().optional().describe('Optional Managed Task Tree subtask id (lts_...) to bind this Worker delegation to.'),
           },
           async (args) => {
             const result = await this.handleHostToolExecution({ toolName: 'local_worker_delegate', toolInput: args }, sessionId);

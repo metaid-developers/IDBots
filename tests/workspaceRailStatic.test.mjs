@@ -190,8 +190,8 @@ test('the Co-Work face no longer introduces itself in either column', () => {
   // restyle and has no second action row inside the panel.
   assert.match(sidebarSource, /data-slot="cowork-new-session"/);
   assert.match(sidebarSource, /data-slot="cowork-toggle-history"/);
-  assert.match(sidebarSource, /botBrowserCoworkNew/);
-  assert.match(sidebarSource, /botBrowserCoworkHistory/);
+  assert.match(sidebarSource, /studioClearScreen/);
+  assert.match(sidebarSource, /studioHistoryChapters/);
   assert.match(panelSource, /CoworkHistoryPanel/);
   assert.doesNotMatch(panelSource, /data-slot="cowork-panel-actions"/);
 
@@ -305,7 +305,7 @@ test('the rail models are the single source of both surfaces’ entries', () => 
   // implemented) + four home destinations, one of which is the creation action
   // rather than a list. The Co-Work bubble entry is retired (owner ruling
   // 2026-11-08 20:18) — it is the surface's default face, not a rail row.
-  for (const id of ['browser', 'metaapps', 'myBots', 'gigSquare']) {
+  for (const id of ['browser', 'tasks', 'metaapps', 'myBots', 'gigSquare']) {
     assert.ok(navigationSource.includes(`id: '${id}'`), `${id} is an internet destination`);
   }
   assert.doesNotMatch(navigationSource, /id: 'cowork'/);
@@ -317,7 +317,7 @@ test('the rail models are the single source of both surfaces’ entries', () => 
 
 test('the Co-Work face is the Internet default branch, not a rail pane', () => {
   const typesSource = read('src/renderer/features/botBrowser/types.ts');
-  assert.match(typesSource, /export type BotInternetPane = 'browser' \| 'gigSquare' \| 'metaapps' \| 'myBots';/);
+  assert.match(typesSource, /export type BotInternetPane = 'browser' \| 'tasks' \| 'gigSquare' \| 'metaapps' \| 'myBots';/);
   assert.match(typesSource, /export type BotHomeSection = 'longTerm' \| 'groupTasks' \| 'records';/);
   // Slice-1 fix: the destination is resolved through the shared table instead
   // of an inline pane literal, so the completeness guard can see every branch.

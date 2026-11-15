@@ -124,6 +124,7 @@ const MetaAppsView = React.lazy(() =>
   import('./components/metaapps').then((module) => ({ default: module.MetaAppsView })));
 const ScheduledTasksView = React.lazy(() =>
   import('./components/scheduledTasks').then((module) => ({ default: module.ScheduledTasksView })));
+const LongTermTasksBoard = React.lazy(() => import('./components/longTermTasks/LongTermTasksBoard'));
 const GroupTasksView = React.lazy(() =>
   import('./components/groupTasks').then((module) => ({ default: module.GroupTasksView })));
 const NewGroupTaskModal = React.lazy(() =>
@@ -1985,7 +1986,24 @@ const App: React.FC = () => {
   );
 
   const internetPaneKey = resolveInternetPaneRenderer(botBrowserShell.internetPane);
-  const internetCatalogContent = internetPaneKey === 'gigSquareView' ? (
+  const internetCatalogContent = internetPaneKey === 'studioTasksView' ? (
+    <div className="flex h-full flex-col">
+      <div className="draggable flex h-12 shrink-0 items-center justify-between border-b border-claude-border px-4 dark:border-claude-darkBorder">
+        <h1 className="text-lg font-semibold text-claude-text dark:text-claude-darkText">
+          {i18nService.t('railLongTermTasks')}
+        </h1>
+        <WindowTitleBar inline />
+      </div>
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <LongTermTasksBoard
+          onReturnToStudioChat={() => {
+            revealMiddleColumn();
+            botBrowserShell.selectInternetPane('browser');
+          }}
+        />
+      </div>
+    </div>
+  ) : internetPaneKey === 'gigSquareView' ? (
     <GigSquareView onOpenRemoteBotInBrowser={botBrowserShell.openRemoteBot} />
   ) : internetPaneKey === 'metaAppsView' ? (
     <MetaAppsView

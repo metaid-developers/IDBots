@@ -9579,6 +9579,35 @@ const getLongTermTaskStore = () => {
     // every owner path remembering to broadcast.
     longTermTaskStore.onSubtaskStatusChange((change) => {
       broadcastLongTermTaskUpdate([change.taskId], `subtask_${change.reason}`);
+      if (change.status === 'waiting_owner') {
+        try {
+          const twin = getMetabotStore().listMetabots().find((bot) => bot.metabot_type === 'twin' && bot.enabled);
+          const detail = longTermTaskStore?.getTask(change.taskId) ?? null;
+          const subtask = detail?.subtasks.find((item) => item.id === change.subtaskId) ?? null;
+          if (twin && detail && subtask) {
+            const note = subtask.waitNote.trim() || `${detail.title} · #${subtask.ordinal} ${subtask.title}`;
+            getStudioDecisionQueueStore().enqueue({
+              dedupeKey: `ltt_wait_owner:${detail.id}:${subtask.id}:${change.reason}`,
+              twinMetabotId: twin.id,
+              originStudioSessionId: detail.definitionSessionId,
+              longtermTaskId: detail.id,
+              longtermSubtaskId: subtask.id,
+              kind: change.reason === 'proposed' ? 'acceptance' : 'decision',
+              title: `${detail.title} · ${subtask.title}`,
+              backgroundSummary: detail.goal,
+              progressSummary: `Progress: ${detail.progress.accepted}/${detail.progress.total} accepted`,
+              question: note,
+              recommendation: note,
+              nextStep: 'Continue advancing the Managed Task Tree upon your ruling.',
+              reportHtmlPath: detail.planArtifactUri && !detail.planArtifactUri.startsWith('pin://')
+                ? detail.planArtifactUri
+                : null,
+            });
+          }
+        } catch {
+          // Queue mirroring must never break store status listeners.
+        }
+      }
     });
   }
   return longTermTaskStore;
@@ -9967,6 +9996,7 @@ const getTwinOrchestrationService = () => new TwinOrchestrationService({
   coworkRunner: getCoworkRunner(),
   // Hard gate: delegations from long-term-bound sessions always carry the anchor.
   longTermTaskStore: () => getLongTermTaskStore(),
+  isStudioSourceSession: (sid) => getStudioChiefOfStaffService().isStudioOwnerSession(sid),
   onStudioWorkerTerminalState: (event) =>
     getStudioChiefOfStaffService().onStudioWorkerTerminalState(event),
   directory: {
