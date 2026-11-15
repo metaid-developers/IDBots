@@ -1152,7 +1152,7 @@ const UserSettings: React.FC = () => {
                 disabled={nameSaving}
                 size={Math.max(nameDraft.length, i18nService.t('userSettingsNamePlaceholder').length * 2, 6)}
                 placeholder={i18nService.t('userSettingsNamePlaceholder')}
-                className="border-0 border-b border-[var(--color-primary)] bg-transparent px-0.5 pb-0.5 text-[15px] font-semibold text-claude-text dark:text-claude-darkText focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                className="border-0 border-b border-[var(--color-primary)] bg-transparent px-0.5 text-[15px] font-semibold leading-[34px] text-claude-text dark:text-claude-darkText focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
               />
               {canSaveName && (
                 <button

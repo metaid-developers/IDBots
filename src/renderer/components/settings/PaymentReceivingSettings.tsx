@@ -48,7 +48,7 @@ const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
 /** Save-success hint auto-dismisses after this long (stay-in-modal UX). */
 export const SAVE_SUCCESS_NOTICE_MS = 2_000;
 
-const inputClass = 'block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors';
+const inputClass = 'block w-full h-9 rounded-[8px] dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 text-sm transition-colors';
 const labelClass = 'block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary';
 const hintClass = 'text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary';
 
@@ -354,7 +354,7 @@ export const PaymentReceivingForm: React.FC = () => {
                 type="button"
                 onClick={() => imageInputRef.current?.click()}
                 disabled={saving}
-                className="px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50"
+                className="inline-flex h-9 items-center px-3 text-xs font-medium rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50"
               >
                 {i18nService.t('paymentInfoQrImagePick')}
               </button>
@@ -384,7 +384,7 @@ export const PaymentReceivingForm: React.FC = () => {
               type="button"
               onClick={() => { void handleClear(); }}
               disabled={saving || (!updatedAt && !form.qrContent && !form.alipayPid && !form.qrImageDataUrl)}
-              className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-xl border border-red-500/40 text-red-500 hover:bg-red-500/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              className="inline-flex h-9 items-center gap-1 px-3 text-xs font-medium rounded-[8px] border border-red-500/40 text-red-500 hover:bg-red-500/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <TrashIcon className="h-3.5 w-3.5" />
               {clearArmed ? i18nService.t('paymentInfoClearConfirm') : i18nService.t('paymentInfoClear')}
@@ -393,7 +393,7 @@ export const PaymentReceivingForm: React.FC = () => {
               type="button"
               onClick={() => { void handleSave(); }}
               disabled={saving}
-              className="px-3 py-1.5 text-xs font-medium rounded-xl border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:opacity-90 transition-opacity disabled:opacity-50"
+              className="inline-flex h-9 items-center gap-1 px-3 text-xs font-medium rounded-[8px] border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:opacity-90 transition-opacity disabled:opacity-50"
             >
               {saving ? i18nService.t('paymentInfoSaving') : i18nService.t('paymentInfoSave')}
             </button>
@@ -487,7 +487,7 @@ const PaymentReceivingSettingsModal: React.FC<{
           type="button"
           data-payment-modal-cancel="true"
           onClick={onClose}
-          className="px-4 py-2 text-sm rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+          className="inline-flex h-9 items-center px-4 text-sm rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
         >
           {i18nService.t('cancel')}
         </button>
