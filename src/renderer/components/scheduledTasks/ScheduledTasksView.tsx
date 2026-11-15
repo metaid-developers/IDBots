@@ -198,7 +198,7 @@ const ScheduledTasksView: React.FC<ScheduledTasksViewProps> = ({
 
       {/* L2 tabs（仅「定时任务」内）+ New Task button */}
       {showScheduledSubTabs && (
-        <div className="flex items-center justify-between border-b dark:border-claude-darkBorder border-claude-border px-4 shrink-0">
+        <div className="flex h-[46px] items-center justify-between border-b dark:border-claude-darkBorder border-claude-border px-4 shrink-0">
           <div className="flex">
             <button
               type="button"
