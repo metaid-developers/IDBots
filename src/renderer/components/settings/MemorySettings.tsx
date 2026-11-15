@@ -1494,7 +1494,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             </button>
             {dreamCalOpen === 'force' && dreamCalPos && (
               <div
-                className="fixed z-40 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-2xl p-2"
+                className="fixed z-40 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg shadow-2xl p-2"
                 style={{ top: dreamCalPos.top, left: dreamCalPos.left }}
               >
                 <MiniMonthCalendar
@@ -1559,7 +1559,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
               </button>
               {dreamCalOpen === 'browse' && dreamCalPos && (
                 <div
-                  className="fixed z-40 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-2xl p-2"
+                  className="fixed z-40 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg shadow-2xl p-2"
                   style={{ top: dreamCalPos.top, left: dreamCalPos.left }}
                 >
                   <MiniMonthCalendar
