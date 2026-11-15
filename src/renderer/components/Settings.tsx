@@ -3836,26 +3836,6 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
         // and the on-chain traffic quota page, restored verbatim.
         return (
           <div>
-            {/* Joined segmented pair (owner 2026-11-15 16:17): one tray, two
-                button-tabs — the selected face is a flat accent rectangle with
-                ink text, the tray's 1px border does the layering (same
-                segmented language as the Studio|BotWorks switcher). */}
-            <div className="inline-flex h-8 min-w-0 overflow-hidden rounded-[var(--shape-radius-md)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80">
-              {(['credits', 'traffic'] as const).map((sub) => (
-                <button
-                  key={sub}
-                  type="button"
-                  onClick={() => setCreditsSubTab(sub)}
-                  className={`non-draggable flex h-full min-w-[88px] items-center justify-center px-4 text-xs font-medium leading-none transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
-                    creditsSubTab === sub
-                      ? 'bg-claude-accent text-claude-accentInk'
-                      : 'text-claude-textSecondary hover:bg-claude-surfaceHover/70 hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover/70 dark:hover:text-claude-darkText'
-                  }`}
-                >
-                  {i18nService.t(sub === 'credits' ? 'usageCreditsSubTabCredits' : 'usageCreditsSubTabTraffic')}
-                </button>
-              ))}
-            </div>
             {creditsSubTab === 'credits' ? <MeUsageAndCredits /> : <TrafficSettings />}
           </div>
         );
@@ -3908,7 +3888,29 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
         <div className="relative flex-1 flex flex-col min-w-0 overflow-hidden dark:bg-claude-darkBg bg-claude-bg rounded-r-2xl">
           {/* Content header */}
           <div className="flex justify-between items-center px-6 pt-5 pb-3 shrink-0">
-            <h3 className="text-lg font-semibold dark:text-claude-darkText text-claude-text">{activeTabLabel}</h3>
+            {/* Credits & traffic view: the segmented 积分|流量 pair replaces the
+                text heading (owner 2026-11-15 16:31) — the buttons ARE the page
+                title; other tabs keep the plain h3 label. */}
+            {activeTab === 'traffic' ? (
+              <div className="inline-flex h-9 min-w-0 overflow-hidden rounded-[var(--shape-radius-md)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80">
+                {(['credits', 'traffic'] as const).map((sub) => (
+                  <button
+                    key={sub}
+                    type="button"
+                    onClick={() => setCreditsSubTab(sub)}
+                    className={`flex h-full min-w-[96px] items-center justify-center px-4 text-sm font-medium leading-none transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
+                      creditsSubTab === sub
+                        ? 'bg-claude-accent text-claude-accentInk'
+                        : 'text-claude-textSecondary hover:bg-claude-surfaceHover/70 hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover/70 dark:hover:text-claude-darkText'
+                    }`}
+                  >
+                    {i18nService.t(sub === 'credits' ? 'usageCreditsSubTabCredits' : 'usageCreditsSubTabTraffic')}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <h3 className="text-lg font-semibold dark:text-claude-darkText text-claude-text">{activeTabLabel}</h3>
+            )}
             <button
               onClick={onClose}
               className="dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:text-claude-darkText hover:text-claude-text p-1.5 dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-lg transition-colors"
