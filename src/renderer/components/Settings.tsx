@@ -3887,7 +3887,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
         {/* Right content */}
         <div className="relative flex-1 flex flex-col min-w-0 overflow-hidden dark:bg-claude-darkBg bg-claude-bg rounded-r-2xl">
           {/* Content header */}
-          <div className="flex justify-between items-center px-6 pt-5 pb-3 shrink-0">
+          <div className="flex justify-between items-center px-6 pt-4 pb-4 shrink-0">
             {/* Credits & traffic view: the segmented 积分|流量 pair replaces the
                 text heading (owner 2026-11-15 16:31) — the buttons ARE the page
                 title; other tabs keep the plain h3 label. */}
