@@ -63,7 +63,7 @@ const GroupTaskKickConfirmModal: React.FC<GroupTaskKickConfirmModalProps> = ({
               type="button"
               onClick={onCancel}
               disabled={kicking}
-              className="flex-1 px-4 py-2 text-sm rounded-lg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors disabled:opacity-50"
+              className="flex-1 px-4 py-2 text-sm rounded-[8px] dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors disabled:opacity-50"
             >
               {i18nService.t('cancel')}
             </button>
@@ -71,7 +71,7 @@ const GroupTaskKickConfirmModal: React.FC<GroupTaskKickConfirmModalProps> = ({
               type="button"
               onClick={onConfirm}
               disabled={kicking}
-              className="border border-red-600 flex-1 px-4 py-2 text-sm rounded-lg text-white transition-colors disabled:opacity-50 bg-red-500 hover:bg-red-600"
+              className="border border-red-600 flex-1 px-4 py-2 text-sm rounded-[8px] text-white transition-colors disabled:opacity-50 bg-red-500 hover:bg-red-600"
             >
               {kicking ? i18nService.t('groupTasksRemovingMember') : i18nService.t('groupTasksRemoveMember')}
             </button>

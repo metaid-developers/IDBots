@@ -149,7 +149,7 @@ test('the shape tokens the tray depends on exist in the theme block', () => {
   const css = readFileSync(new URL('../src/renderer/index.css', import.meta.url), 'utf8');
   const rootBlock = css.slice(css.indexOf(':root {'), css.indexOf('.dark {'));
   for (const [token, value] of [
-    ['--shape-radius-lg', '12px'],
+    ['--shape-radius-lg', '8px'],
     ['--shape-radius-md', '10px'],
     ['--shape-radius-sm', '8px'],
     ['--shape-radius-xs', '4px'],

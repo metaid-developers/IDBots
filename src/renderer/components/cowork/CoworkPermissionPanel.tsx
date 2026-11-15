@@ -523,7 +523,7 @@ const CoworkPermissionPanel: React.FC<CoworkPermissionPanelProps> = ({
               <button type="button" onClick={() => setCurrentStep((step) => Math.max(step - 1, 0))} disabled={isFirstStep || responding} className="p-1.5 rounded-lg text-claude-textSecondary dark:text-claude-darkTextSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover disabled:opacity-30" aria-label={i18nService.t('coworkQuestionWizardPrevious')}>
                 <ChevronLeftIcon className="h-4 w-4" />
               </button>
-              <button type="button" onClick={handleNextQuestion} disabled={isLastStep || responding || !isCurrentQuestionComplete} className="p-1.5 rounded-lg text-claude-textSecondary dark:text-claude-darkTextSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover disabled:opacity-30" aria-label={i18nService.t('coworkQuestionWizardNext')}>
+              <button type="button" onClick={handleNextQuestion} disabled={isLastStep || responding || !isCurrentQuestionComplete} className="p-1.5 rounded-[8px] text-claude-textSecondary dark:text-claude-darkTextSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover disabled:opacity-30" aria-label={i18nService.t('coworkQuestionWizardNext')}>
                 <ChevronRightIcon className="h-4 w-4" />
               </button>
             </div>

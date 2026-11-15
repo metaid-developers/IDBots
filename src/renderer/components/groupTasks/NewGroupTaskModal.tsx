@@ -248,7 +248,7 @@ const NewGroupTaskModal: React.FC<NewGroupTaskModalProps> = ({ onClose, onCreate
               <button
                 type="button"
                 onClick={onClose}
-                className="w-full px-4 py-2 text-sm rounded-lg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                className="w-full px-4 py-2 text-sm rounded-[8px] dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
               >
                 {i18nService.t('cancel')}
               </button>

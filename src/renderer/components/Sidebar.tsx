@@ -991,7 +991,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                             type="button"
                             onClick={handleExitBatchArchiveMode}
                             aria-label={i18nService.t('batchArchiveCancel')}
-                            className="inline-flex h-6 w-6 items-center justify-center rounded-md text-claude-textSecondary transition-colors hover:bg-claude-surfaceHover hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+                            className="inline-flex h-6 w-6 items-center justify-center rounded-[8px] text-claude-textSecondary transition-colors hover:bg-claude-surfaceHover hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
                           >
                             <XMarkIcon className="h-4 w-4" />
                           </button>
@@ -1017,7 +1017,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                             type="button"
                             onClick={handleEnterBatchArchiveMode}
                             aria-label={i18nService.t('batchArchive')}
-                            className="inline-flex h-6 w-6 items-center justify-center rounded-md text-claude-textSecondary transition-colors hover:bg-claude-surfaceHover hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+                            className="inline-flex h-6 w-6 items-center justify-center rounded-[8px] text-claude-textSecondary transition-colors hover:bg-claude-surfaceHover hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
                           >
                             <ArchiveBoxIcon className="h-4 w-4" />
                           </button>

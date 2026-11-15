@@ -154,7 +154,7 @@ const LongTermTaskDetail: React.FC<{ taskId: string }> = ({ taskId }) => {
         <button
           type="button"
           onClick={backToBoard}
-          className="rounded-lg p-1.5 dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover"
+          className="rounded-[8px] p-1.5 dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover"
           aria-label={i18nService.t('longTermTask.back')}
         >
           <ArrowLeftIcon className="h-5 w-5" />

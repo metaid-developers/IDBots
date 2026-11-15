@@ -127,7 +127,7 @@ const ScheduledTasksView: React.FC<ScheduledTasksViewProps> = ({
               <button
                 type="button"
                 onClick={onNewChat}
-                className="h-8 w-8 inline-flex items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                className="h-8 w-8 inline-flex items-center justify-center rounded-[8px] dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
               >
                 <ComposeIcon className="h-4 w-4" />
               </button>
@@ -137,7 +137,7 @@ const ScheduledTasksView: React.FC<ScheduledTasksViewProps> = ({
           {trackingTab === 'scheduled' && inScheduledSubView && (
             <button
               onClick={handleBackToList}
-              className="non-draggable p-2 rounded-lg dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary text-claude-textSecondary transition-colors"
+              className="non-draggable p-2 rounded-[8px] dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary text-claude-textSecondary transition-colors"
               aria-label={i18nService.t('back')}
             >
               <ArrowLeftIcon className="h-5 w-5" />

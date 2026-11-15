@@ -873,7 +873,7 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
                 <button
                   type="button"
                   onClick={backToPicker}
-                  className="rounded-lg border border-claude-border dark:border-claude-darkBorder px-3 py-1.5 text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary hover:bg-claude-surfaceHover hover:text-claude-text dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText"
+                  className="rounded-[8px] border border-claude-border dark:border-claude-darkBorder px-3 py-1.5 text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary hover:bg-claude-surfaceHover hover:text-claude-text dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText"
                 >
                   {i18nService.t('mePurchaseBack')}
                 </button>
@@ -1010,7 +1010,7 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
             type="button"
             onClick={onClose}
             aria-label={i18nService.t('close')}
-            className="rounded-lg p-1 text-claude-textSecondary dark:text-claude-darkTextSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+            className="rounded-[8px] p-1 text-claude-textSecondary dark:text-claude-darkTextSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
           >
             <XMarkIcon className="h-4 w-4" />
           </button>

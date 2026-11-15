@@ -260,7 +260,7 @@ const GigSquareRefundsModal: React.FC<GigSquareRefundsModalProps> = ({
               <button
                 type="button"
                 onClick={onRetry}
-                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-claude-textSecondary hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover"
+                className="inline-flex items-center gap-1.5 rounded-[8px] px-3 py-1.5 text-xs font-medium text-claude-textSecondary hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover"
               >
                 <ArrowPathIcon className="h-4 w-4" />
                 {i18nService.t('refresh')}
@@ -269,7 +269,7 @@ const GigSquareRefundsModal: React.FC<GigSquareRefundsModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg p-1.5 text-claude-textSecondary hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover"
+              className="rounded-[8px] p-1.5 text-claude-textSecondary hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover"
               aria-label={i18nService.t('close')}
             >
               <XMarkIcon className="h-5 w-5" />
@@ -319,7 +319,7 @@ const GigSquareRefundsModal: React.FC<GigSquareRefundsModalProps> = ({
               <button
                 type="button"
                 onClick={onRetry}
-                className="mt-3 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-red-500 hover:bg-red-500/10"
+                className="mt-3 inline-flex items-center gap-1.5 rounded-[8px] px-3 py-1.5 text-xs font-medium text-red-500 hover:bg-red-500/10"
               >
                 <ArrowPathIcon className="h-4 w-4" />
                 {i18nService.t('refresh')}

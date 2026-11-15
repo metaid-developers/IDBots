@@ -243,7 +243,7 @@ const MetaBotTokenTransferModal: React.FC<MetaBotTokenTransferModalProps> = ({
               <button
                 type="button"
                 onClick={onClose}
-                className="rounded-xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface px-6 py-2.5 text-sm font-medium dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+                className="rounded-[8px] border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface px-6 py-2.5 text-sm font-medium dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
               >
                 {i18nService.t('close')}
               </button>
@@ -251,7 +251,7 @@ const MetaBotTokenTransferModal: React.FC<MetaBotTokenTransferModalProps> = ({
                 type="button"
                 onClick={handleBuildPreview}
                 disabled={previewLoading || feeSummaryLoading}
-                className="rounded-xl border border-[var(--btn-primary-edge)] bg-claude-accent px-6 py-2.5 text-sm font-medium text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] disabled:opacity-50"
+                className="rounded-[8px] border border-[var(--btn-primary-edge)] bg-claude-accent px-6 py-2.5 text-sm font-medium text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] disabled:opacity-50"
               >
                 {previewLoading ? '...' : i18nService.t('transferNext')}
               </button>
@@ -302,7 +302,7 @@ const MetaBotTokenTransferModal: React.FC<MetaBotTokenTransferModalProps> = ({
                 type="button"
                 onClick={handleConfirm}
                 disabled={sending}
-                className="flex-1 rounded-xl border border-[var(--btn-primary-edge)] bg-claude-accent px-4 py-2.5 text-sm font-medium text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] disabled:opacity-50"
+                className="flex-1 rounded-[8px] border border-[var(--btn-primary-edge)] bg-claude-accent px-4 py-2.5 text-sm font-medium text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] disabled:opacity-50"
               >
                 {sending ? '...' : i18nService.t('transferConfirm')}
               </button>
@@ -354,7 +354,7 @@ const MetaBotTokenTransferModal: React.FC<MetaBotTokenTransferModalProps> = ({
               <button
                 type="button"
                 onClick={onClose}
-                className="flex-1 rounded-xl border border-[var(--btn-primary-edge)] bg-claude-accent px-4 py-2.5 text-sm font-medium text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] disabled:opacity-50"
+                className="flex-1 rounded-[8px] border border-[var(--btn-primary-edge)] bg-claude-accent px-4 py-2.5 text-sm font-medium text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] disabled:opacity-50"
               >
                 {i18nService.t('close')}
               </button>

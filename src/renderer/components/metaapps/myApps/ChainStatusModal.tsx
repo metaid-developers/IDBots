@@ -27,7 +27,7 @@ const ChainStatusModal: React.FC<ChainStatusModalProps> = ({ status, title, txid
 
           {status === 'pending' ? (
             <div className="mt-4 flex items-center gap-3">
-              <span className="inline-block h-4 w-4 rounded-full border-2 border-claude-accent border-t-transparent animate-spin" />
+              <span className="inline-block h-4 w-4 rounded-full border border-claude-accent border-t-transparent animate-spin" />
               <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
                 {t('myAppsChainPendingHint') || 'Confirming on the network. This usually takes a few seconds.'}
               </p>
@@ -60,7 +60,7 @@ const ChainStatusModal: React.FC<ChainStatusModalProps> = ({ status, title, txid
             <button
               type="button"
               onClick={onClose}
-              className="px-3 py-1.5 text-sm rounded-lg bg-claude-accent text-claude-accentInk hover:opacity-90 transition-opacity"
+              className="px-3 py-1.5 text-sm rounded-[8px] bg-claude-accent text-claude-accentInk hover:opacity-90 transition-opacity"
             >
               {t('close') || 'Close'}
             </button>

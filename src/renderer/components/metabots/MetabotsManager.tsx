@@ -606,7 +606,7 @@ const MetabotsManager: React.FC<MetabotsManagerProps> = ({
                     <button
                       type="button"
                       onClick={handleCancelForm}
-                      className="px-4 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+                      className="px-4 py-2 text-sm rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
                     >
                       {i18nService.t('cancel')}
                     </button>
@@ -638,7 +638,7 @@ const MetabotsManager: React.FC<MetabotsManagerProps> = ({
             aria-label={i18nService.t('back')}
             title={i18nService.t('back')}
             data-slot="metabot-edit-back"
-            className="p-1.5 rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+            className="p-1.5 rounded-[8px] dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
           >
             <ArrowLeftIcon className="h-4 w-4" />
           </button>
@@ -1103,7 +1103,7 @@ const MetabotsManager: React.FC<MetabotsManagerProps> = ({
         <button
           type="button"
           onClick={handleAdd}
-          className="px-3 py-2 text-sm rounded-xl border transition-colors dark:bg-claude-darkSurface bg-claude-surface dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover flex items-center gap-2"
+          className="px-3 py-2 text-sm rounded-[8px] border transition-colors dark:bg-claude-darkSurface bg-claude-surface dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover flex items-center gap-2"
         >
           <PlusCircleIcon className="h-4 w-4" />
           <span>{i18nService.t('metabotAdd')}</span>

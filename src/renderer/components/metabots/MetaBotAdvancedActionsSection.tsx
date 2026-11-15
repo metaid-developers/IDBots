@@ -102,7 +102,7 @@ const MetaBotAdvancedActionsSection: React.FC<MetaBotAdvancedActionsSectionProps
             type="button"
             data-slot="metabot-advanced-open-delete"
             onClick={onDelete}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-red-500/50 dark:border-red-500/50 text-red-600 dark:text-red-400 hover:bg-red-500/10 dark:hover:bg-red-500/10 transition-colors"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-[8px] border border-red-500/50 dark:border-red-500/50 text-red-600 dark:text-red-400 hover:bg-red-500/10 dark:hover:bg-red-500/10 transition-colors"
           >
             <TrashIcon className="h-4 w-4" aria-hidden />
             {i18nService.t('metabotDeleteBot')}

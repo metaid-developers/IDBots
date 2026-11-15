@@ -97,7 +97,7 @@ const RailButton: React.FC<{
       aria-label={label}
       aria-pressed={active}
       onClick={onClick}
-      className={`non-draggable relative inline-flex h-10 w-10 items-center justify-center rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
+      className={`non-draggable relative inline-flex h-10 w-10 items-center justify-center rounded-[8px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
         active
           ? 'dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover dark:text-claude-darkText text-claude-text'
           : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover hover:dark:text-claude-darkText hover:text-claude-text'

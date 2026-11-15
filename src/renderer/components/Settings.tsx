@@ -2523,7 +2523,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                         setTheme(option.value);
                         themeService.setTheme(option.value);
                       }}
-                      className={`flex flex-col items-center rounded-xl border-2 p-3 transition-colors cursor-pointer ${
+                      className={`flex flex-col items-center rounded-xl border p-3 transition-colors cursor-pointer ${
                         isSelected
                           ? 'border-claude-accent bg-claude-accent/5 dark:bg-claude-accent/10'
                           : 'dark:border-claude-darkBorder border-claude-border hover:border-claude-accent/50 dark:hover:border-claude-accent/50'
@@ -2645,7 +2645,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                   type="button"
                   onClick={handleOpenDataDirectory}
                   disabled={!dataDirectoryPath}
-                  className="shrink-0 px-4 py-2 text-sm font-medium rounded-xl transition-colors border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:pointer-events-none"
+                  className="shrink-0 px-4 py-2 text-sm font-medium rounded-[8px] transition-colors border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:pointer-events-none"
                 >
                   {i18nService.t('settingsDataDirectoryOpen')}
                 </button>
@@ -3106,7 +3106,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                       type="button"
                       onClick={handleImportProvidersClick}
                       disabled={isImportingProviders || isExportingProviders}
-                      className="inline-flex items-center px-2 py-1 text-[11px] font-medium rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      className="inline-flex items-center px-2 py-1 text-[11px] font-medium rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
                       {i18nService.t('import')}
                     </button>
@@ -3114,7 +3114,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                       type="button"
                       onClick={handleExportProviders}
                       disabled={isImportingProviders || isExportingProviders}
-                      className="inline-flex items-center px-2 py-1 text-[11px] font-medium rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      className="inline-flex items-center px-2 py-1 text-[11px] font-medium rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
                       {i18nService.t('export')}
                     </button>
@@ -3410,7 +3410,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                   type="button"
                   onClick={handleTestConnection}
                   disabled={isTesting || (providerRequiresApiKey(activeProvider) && !providers[activeProvider].apiKey)}
-                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   <SignalIcon className="h-3.5 w-3.5 mr-1.5" />
                   {isTesting ? i18nService.t('testing') : i18nService.t('testConnection')}
@@ -3675,7 +3675,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                   type="button"
                   onClick={handleTestCerebellumConnection}
                   disabled={isTestingCerebellum || (cerebellum.provider !== CEREBELLUM_FREE_PROVIDER && !cerebellum.apiKey.trim())}
-                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   <SignalIcon className="h-3.5 w-3.5 mr-1.5" />
                   {isTestingCerebellum ? i18nService.t('testing') : i18nService.t('testConnection')}
@@ -3785,7 +3785,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                               key={tier.title}
                               type="button"
                               onClick={() => handleSelectFeeTier(chain, tier.title)}
-                              className={`flex flex-col items-center py-1.5 px-1 rounded-md border-2 transition-all cursor-pointer ${
+                              className={`flex flex-col items-center py-1.5 px-1 rounded-md border transition-all cursor-pointer ${
                                 isSelected
                                   ? 'border-claude-accent bg-claude-accent/5 dark:bg-claude-accent/10'
                                   : 'dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg hover:border-claude-accent/40'
@@ -3918,7 +3918,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
             )}
             <button
               onClick={onClose}
-              className="dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:text-claude-darkText hover:text-claude-text p-1.5 dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-lg transition-colors"
+              className="dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:text-claude-darkText hover:text-claude-text p-1.5 dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-[8px] transition-colors"
             >
               <XMarkIcon className="h-5 w-5" />
             </button>
@@ -4009,7 +4009,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                   <button
                     type="button"
                     onClick={handleCancelModelEdit}
-                    className="p-1 dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:text-claude-darkText hover:text-claude-text rounded-md dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover"
+                    className="p-1 dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:text-claude-darkText hover:text-claude-text rounded-[8px] dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover"
                   >
                     <XMarkIcon className="h-4 w-4" />
                   </button>

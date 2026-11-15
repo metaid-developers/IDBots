@@ -687,7 +687,7 @@ const NodeRow: React.FC<{
         type="button"
         onClick={onToggleGroup}
         title={i18nService.t('metatask.groupToggleTip')}
-        className="shrink-0 p-0.5 rounded dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+        className="shrink-0 p-0.5 rounded-[8px] dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
       >
         {groupCollapsed ? (
           <ChevronRightIcon className="h-3.5 w-3.5" />

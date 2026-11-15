@@ -24,7 +24,7 @@ const CopyIdChip: React.FC<{ id: string }> = ({ id }) => {
       type="button"
       onClick={copy}
       title={i18nService.t('longTermTask.copyId').replace('{id}', id)}
-      className="non-draggable inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+      className="non-draggable inline-flex items-center gap-1 rounded-[8px] px-1.5 py-0.5 font-mono text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
     >
       {copied ? (
         <>

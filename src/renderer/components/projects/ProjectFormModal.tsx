@@ -166,7 +166,7 @@ const ProjectFormModal: React.FC<ProjectFormModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="p-1 rounded-lg text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-claude-text dark:hover:text-claude-darkText transition-colors"
+            className="p-1 rounded-[8px] text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-claude-text dark:hover:text-claude-darkText transition-colors"
           >
             <XMarkIcon className="h-5 w-5" />
           </button>

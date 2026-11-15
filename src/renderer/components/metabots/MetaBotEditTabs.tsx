@@ -623,7 +623,7 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
           type="button"
           onClick={onCancel}
           disabled={savingTab !== null}
-          className="px-3 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50"
+          className="px-3 py-2 text-sm rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50"
         >
           {i18nService.t('cancel')}
         </button>
@@ -1112,7 +1112,7 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
                 type="button"
                 onClick={handleAddAllowChatSkill}
                 disabled={!canAddSelectedAllowChatSkill}
-                className="shrink-0 px-3 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                className="shrink-0 px-3 py-2 text-sm rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
                 <PlusIcon className="h-4 w-4" />
                 <span>{i18nService.t('metabotAdd')}</span>

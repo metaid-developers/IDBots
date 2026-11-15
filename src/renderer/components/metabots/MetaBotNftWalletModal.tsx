@@ -249,7 +249,7 @@ const MetaBotNftWalletModal: React.FC<MetaBotNftWalletModalProps> = ({ metabot, 
                 type="button"
                 data-slot="metabot-nft-back"
                 onClick={goBack}
-                className="rounded p-1 text-claude-textSecondary transition-colors hover:bg-black/5 dark:text-claude-darkTextSecondary dark:hover:bg-white/10"
+                className="rounded-[8px] p-1 text-claude-textSecondary transition-colors hover:bg-black/5 dark:text-claude-darkTextSecondary dark:hover:bg-white/10"
                 aria-label={i18nService.t('metabotNftBack')}
               >
                 <ArrowLeftIcon className="h-4 w-4" />
@@ -278,7 +278,7 @@ const MetaBotNftWalletModal: React.FC<MetaBotNftWalletModalProps> = ({ metabot, 
             <button
               type="button"
               onClick={onClose}
-              className="rounded p-1.5 text-claude-textSecondary transition-colors hover:bg-black/5 dark:text-claude-darkTextSecondary dark:hover:bg-white/10"
+              className="rounded-[8px] p-1.5 text-claude-textSecondary transition-colors hover:bg-black/5 dark:text-claude-darkTextSecondary dark:hover:bg-white/10"
               aria-label={i18nService.t('close')}
             >
               <XMarkIcon className="h-4 w-4" />
@@ -589,7 +589,7 @@ const NftTransferFlow: React.FC<{
           <button
             type="button"
             onClick={onTransferred}
-            className="border border-[var(--btn-primary-edge)] flex-1 rounded-xl bg-claude-accent px-4 py-2.5 text-sm font-medium text-claude-accentInk hover:opacity-90"
+            className="border border-[var(--btn-primary-edge)] flex-1 rounded-[8px] bg-claude-accent px-4 py-2.5 text-sm font-medium text-claude-accentInk hover:opacity-90"
           >
             {i18nService.t('close')}
           </button>
@@ -643,7 +643,7 @@ const NftTransferFlow: React.FC<{
             data-slot="metabot-nft-transfer-confirm"
             onClick={handleConfirm}
             disabled={sending}
-            className="border border-[var(--btn-primary-edge)] flex-1 rounded-xl bg-claude-accent px-4 py-2.5 text-sm font-medium text-claude-accentInk hover:opacity-90 disabled:opacity-50"
+            className="border border-[var(--btn-primary-edge)] flex-1 rounded-[8px] bg-claude-accent px-4 py-2.5 text-sm font-medium text-claude-accentInk hover:opacity-90 disabled:opacity-50"
           >
             {sending ? '...' : i18nService.t('transferConfirm')}
           </button>
@@ -705,7 +705,7 @@ const NftTransferFlow: React.FC<{
         <button
           type="button"
           onClick={onCancel}
-          className="rounded-xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface px-6 py-2.5 text-sm font-medium dark:text-claude-darkText text-claude-text"
+          className="rounded-[8px] border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface px-6 py-2.5 text-sm font-medium dark:text-claude-darkText text-claude-text"
         >
           {i18nService.t('close')}
         </button>
@@ -830,7 +830,7 @@ const Mrc721SellFlow: React.FC<{
           <button
             type="button"
             onClick={onSold}
-            className="border border-[var(--btn-primary-edge)] flex-1 rounded-xl bg-claude-accent px-4 py-2.5 text-sm font-medium text-claude-accentInk hover:opacity-90"
+            className="border border-[var(--btn-primary-edge)] flex-1 rounded-[8px] bg-claude-accent px-4 py-2.5 text-sm font-medium text-claude-accentInk hover:opacity-90"
           >
             {i18nService.t('close')}
           </button>

@@ -138,7 +138,7 @@ const MessageFeedbackControls: React.FC<{
             <button
               type="button"
               onClick={handleSaveComment}
-              className="px-3 py-1.5 text-sm font-medium rounded-lg bg-claude-accent hover:opacity-90 text-claude-accentInk transition-colors"
+              className="px-3 py-1.5 text-sm font-medium rounded-[8px] bg-claude-accent hover:opacity-90 text-claude-accentInk transition-colors"
             >
               {i18nService.t('save')}
             </button>

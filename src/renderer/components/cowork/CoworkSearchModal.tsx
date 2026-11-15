@@ -109,7 +109,7 @@ const CoworkSearchModal: React.FC<CoworkSearchModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="p-2 rounded-lg glass-text-secondary hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+            className="p-2 rounded-[8px] glass-text-secondary hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
             aria-label={i18nService.t('close')}
           >
             <XMarkIcon className="h-5 w-5" />

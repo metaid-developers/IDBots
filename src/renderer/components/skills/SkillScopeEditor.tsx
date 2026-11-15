@@ -135,7 +135,7 @@ const SkillScopeEditor: React.FC<SkillScopeEditorProps> = ({ skill, metabots, on
       <button
         type="button"
         onClick={openEditor}
-        className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:border-claude-accent/60 hover:text-claude-accent transition-colors"
+        className="flex items-center gap-1 px-1.5 py-0.5 rounded-[8px] text-[10px] font-medium border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:border-claude-accent/60 hover:text-claude-accent transition-colors"
         title={i18nService.t('skillScopeEditorTitle')}
       >
         <span
@@ -240,7 +240,7 @@ const SkillScopeEditor: React.FC<SkillScopeEditorProps> = ({ skill, metabots, on
               type="button"
               onClick={handleSave}
               disabled={saving || (mode === 'bots' && checked.size === 0)}
-              className={`px-2.5 py-1 text-[11px] rounded-lg border transition-colors ${
+              className={`px-2.5 py-1 text-[11px] rounded-[8px] border transition-colors ${
                 confirming
                   ? 'border-amber-600 bg-amber-500 text-white hover:brightness-[0.96]'
                   : 'border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9]'

@@ -114,7 +114,7 @@ const CoworkHistoryPanel: React.FC<CoworkHistoryPanelProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex h-6 w-6 items-center justify-center rounded-md dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+            className="inline-flex h-6 w-6 items-center justify-center rounded-[8px] dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
             aria-label={i18nService.t('close')}
           >
             <XMarkIcon className="h-3.5 w-3.5" />

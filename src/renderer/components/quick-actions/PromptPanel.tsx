@@ -40,7 +40,7 @@ const PromptPanel: React.FC<PromptPanelProps> = ({ action, onPromptSelect, onBac
           <button
             type="button"
             onClick={onBack}
-            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-accent transition-colors"
+            className="inline-flex items-center gap-1 rounded-[8px] px-2 py-1 text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-accent transition-colors"
           >
             <ArrowLeftIcon className="h-3.5 w-3.5" />
             <span>{i18nService.t('back')}</span>

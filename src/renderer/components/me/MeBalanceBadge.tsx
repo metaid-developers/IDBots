@@ -159,7 +159,7 @@ const MeBalanceBadge: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
                 type="button"
                 onClick={handleRefresh}
                 title={i18nService.t('mePanelRefresh')}
-                className="p-1 rounded-lg text-claude-textSecondary dark:text-claude-darkTextSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                className="p-1 rounded-[8px] text-claude-textSecondary dark:text-claude-darkTextSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
               >
                 <ArrowPathIcon className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
               </button>

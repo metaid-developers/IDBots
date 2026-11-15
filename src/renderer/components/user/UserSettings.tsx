@@ -675,7 +675,7 @@ const UserSettings: React.FC = () => {
           type="button"
           onClick={onBack}
           aria-label={i18nService.t('back')}
-          className="p-1.5 rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+          className="p-1.5 rounded-[8px] dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
         >
           <ArrowLeftIcon className="h-4 w-4" />
         </button>

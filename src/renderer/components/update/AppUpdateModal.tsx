@@ -67,7 +67,7 @@ const AppUpdateModal: React.FC<AppUpdateModalProps> = ({
             onClick={onHide}
             title={i18nService.t('updateHidePanel')}
             aria-label={i18nService.t('updateHidePanel')}
-            className="absolute top-3 right-3 z-10 dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:text-claude-darkText hover:text-claude-text p-1.5 dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-lg transition-colors"
+            className="absolute top-3 right-3 z-10 dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:text-claude-darkText hover:text-claude-text p-1.5 dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-[8px] transition-colors"
           >
             <XMarkIcon className="h-4 w-4" />
           </button>

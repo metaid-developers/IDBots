@@ -259,7 +259,7 @@ const MyAppsTab: React.FC<MyAppsTabProps> = ({ onRunByPin }) => {
             <div className="flex items-center justify-center gap-3 pt-1">
               {owner.cursorStack.length > 1 ? (
                 <button type="button" onClick={owner.goPrev}
-                  className="px-2.5 py-1 text-xs rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text">
+                  className="px-2.5 py-1 text-xs rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text">
                   ‹ {t('prev') || 'Prev'}
                 </button>
               ) : null}
@@ -268,7 +268,7 @@ const MyAppsTab: React.FC<MyAppsTabProps> = ({ onRunByPin }) => {
               </span>
               {owner.nextCursor ? (
                 <button type="button" onClick={owner.goNext}
-                  className="px-2.5 py-1 text-xs rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text">
+                  className="px-2.5 py-1 text-xs rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text">
                   {t('next') || 'Next'} ›
                 </button>
               ) : null}

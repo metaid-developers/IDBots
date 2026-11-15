@@ -432,14 +432,14 @@ const McpServerFormModal: React.FC<McpServerFormModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="px-3 py-1.5 text-xs rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+              className="px-3 py-1.5 text-xs rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
             >
               {i18nService.t('cancel')}
             </button>
             <button
               type="button"
               onClick={handleSave}
-              className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] rounded-lg px-3 py-1.5 text-xs"
+              className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] rounded-[8px] px-3 py-1.5 text-xs"
             >
               {saveText}
             </button>

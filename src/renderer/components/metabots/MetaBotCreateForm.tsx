@@ -319,7 +319,7 @@ const MetaBotCreateForm: React.FC<MetaBotCreateFormProps> = ({
             type="button"
             onClick={onCancel}
             disabled={saving}
-            className="px-3 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50"
+            className="px-3 py-2 text-sm rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50"
           >
             {i18nService.t('cancel')}
           </button>

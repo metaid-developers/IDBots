@@ -23,14 +23,14 @@
   /* Cowork chat page background: neutral gray, no hue (the app-wide --bg-main
      keeps its slight blue cast for other views). */
   --cowork-chat-bg: #FAFAFA;
-  --rounded: 12px;
+  --rounded: 8px;
   --rounded-lg: 8px;
   --btn-primary-edge: rgba(0, 0, 0, 0.15);
   /* Shape language v2 — rect-flat family (owner ruling 2026-11-14 v2).
      Rectangles are the shape base; corners are softened by four radii only
      (12 / 10 / 8 / 4). No capsules, no offset shadows: depth comes from a
      1 px border plus a flat fill. Mode-invariant, so :root alone declares it. */
-  --shape-radius-lg: 12px;
+  --shape-radius-lg: 8px;
   --shape-radius-md: 10px;
   --shape-radius-sm: 8px;
   --shape-radius-xs: 4px;
@@ -51,7 +51,7 @@
   /* Neutral dark gray for the cowork chat page (same lightness neighborhood
      as --bg-main's #142030, without the blue cast). */
   --cowork-chat-bg: #1B1B1D;
-  --rounded: 12px;
+  --rounded: 8px;
   --rounded-lg: 8px;
   --btn-primary-edge: #6b7280;
 }

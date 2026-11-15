@@ -56,7 +56,7 @@ const UpdateNotificationModal: React.FC<UpdateNotificationModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border-color)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+            className="flex h-8 w-8 items-center justify-center rounded-[8px] border border-[var(--border-color)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
             aria-label={i18nService.t('close')}
           >
             <XMarkIcon className="h-5 w-5" />

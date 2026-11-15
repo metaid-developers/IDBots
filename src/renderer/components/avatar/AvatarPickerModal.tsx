@@ -137,7 +137,7 @@ const AvatarPickerModal: React.FC<AvatarPickerModalProps> = ({
                 type="button"
                 data-slot="avatar-picker-refresh"
                 onClick={load}
-                className="rounded p-1.5 text-claude-textSecondary transition-colors hover:bg-black/5 dark:text-claude-darkTextSecondary dark:hover:bg-white/10"
+                className="rounded-[8px] p-1.5 text-claude-textSecondary transition-colors hover:bg-black/5 dark:text-claude-darkTextSecondary dark:hover:bg-white/10"
                 aria-label={i18nService.t('metabotWalletAssetsRefresh')}
               >
                 <ArrowPathIcon className="h-4 w-4" />
@@ -146,7 +146,7 @@ const AvatarPickerModal: React.FC<AvatarPickerModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="rounded p-1.5 text-claude-textSecondary transition-colors hover:bg-black/5 dark:text-claude-darkTextSecondary dark:hover:bg-white/10"
+              className="rounded-[8px] p-1.5 text-claude-textSecondary transition-colors hover:bg-black/5 dark:text-claude-darkTextSecondary dark:hover:bg-white/10"
               aria-label={i18nService.t('close')}
             >
               <XMarkIcon className="h-4 w-4" />
@@ -288,7 +288,7 @@ const AvatarPickerModal: React.FC<AvatarPickerModalProps> = ({
                     type="button"
                     data-slot="avatar-picker-retry"
                     onClick={load}
-                    className="rounded-lg border dark:border-claude-darkBorder border-claude-border px-4 py-1.5 text-sm dark:text-claude-darkText text-claude-text"
+                    className="rounded-[8px] border dark:border-claude-darkBorder border-claude-border px-4 py-1.5 text-sm dark:text-claude-darkText text-claude-text"
                   >
                     {i18nService.t('metabotNftRetry')}
                   </button>

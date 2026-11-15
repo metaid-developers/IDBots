@@ -447,7 +447,7 @@ const EmailSkillConfig: React.FC<EmailSkillConfigProps> = ({ onClose }) => {
           type="button"
           onClick={handleConnectivityTest}
           disabled={isTesting || !canTest}
-          className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+          className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
         >
           <SignalIcon className="h-3.5 w-3.5 mr-1.5" />
           {isTesting ? i18nService.t('imConnectivityTesting') : i18nService.t('imConnectivityTest')}

@@ -108,7 +108,7 @@ const GroupTaskCloseConfirmModal: React.FC<GroupTaskCloseConfirmModalProps> = ({
               type="button"
               onClick={onCancel}
               disabled={closing}
-              className="flex-1 px-4 py-2 text-sm rounded-lg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors disabled:opacity-50"
+              className="flex-1 px-4 py-2 text-sm rounded-[8px] dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors disabled:opacity-50"
             >
               {i18nService.t('cancel')}
             </button>
@@ -116,7 +116,7 @@ const GroupTaskCloseConfirmModal: React.FC<GroupTaskCloseConfirmModalProps> = ({
               type="button"
               onClick={handleConfirm}
               disabled={closing || (isDone && rating == null)}
-              className={`flex-1 px-4 py-2 text-sm rounded-lg text-white transition-colors disabled:opacity-50 ${
+              className={`flex-1 px-4 py-2 text-sm rounded-[8px] text-white transition-colors disabled:opacity-50 ${
                 isDone ? 'bg-emerald-500 border border-emerald-600 hover:bg-emerald-600' : 'bg-red-500 border border-red-600 hover:bg-red-600'
               }`}
             >

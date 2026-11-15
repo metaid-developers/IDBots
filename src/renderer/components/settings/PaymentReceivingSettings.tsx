@@ -446,7 +446,7 @@ const PaymentReceivingSettingsModal: React.FC<{
           aria-label={i18nService.t('paymentSettingsModalClose')}
           title={i18nService.t('paymentSettingsModalClose')}
           onClick={onClose}
-          className="shrink-0 rounded-lg p-1 dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+          className="shrink-0 rounded-[8px] p-1 dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
         >
           <XMarkIcon className="h-5 w-5" />
         </button>
@@ -487,7 +487,7 @@ const PaymentReceivingSettingsModal: React.FC<{
           type="button"
           data-payment-modal-cancel="true"
           onClick={onClose}
-          className="px-4 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+          className="px-4 py-2 text-sm rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
         >
           {i18nService.t('cancel')}
         </button>

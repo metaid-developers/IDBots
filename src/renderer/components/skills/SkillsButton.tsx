@@ -31,7 +31,7 @@ const SkillsButton: React.FC<SkillsButtonProps> = ({
         ref={buttonRef}
         type="button"
         onClick={handleButtonClick}
-        className={`p-2 rounded-xl dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-accent dark:hover:text-claude-accent hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors ${className}`}
+        className={`p-2 rounded-[8px] dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-accent dark:hover:text-claude-accent hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors ${className}`}
         title="Skills"
       >
         <PuzzlePieceIcon className="h-5 w-5" />

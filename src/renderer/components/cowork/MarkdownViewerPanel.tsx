@@ -201,7 +201,7 @@ const MarkdownViewerPanel: React.FC<MarkdownViewerPanelProps> = ({ filePath, onC
         <button
           type="button"
           onClick={openExternally}
-          className="h-6 w-6 inline-flex shrink-0 items-center justify-center rounded-md dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+          className="h-6 w-6 inline-flex shrink-0 items-center justify-center rounded-[8px] dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
           aria-label={i18nService.t('markdownViewerOpenExternal')}
           title={i18nService.t('markdownViewerOpenExternal')}
         >
@@ -210,7 +210,7 @@ const MarkdownViewerPanel: React.FC<MarkdownViewerPanelProps> = ({ filePath, onC
         <button
           type="button"
           onClick={onClose}
-          className="h-6 w-6 inline-flex shrink-0 items-center justify-center rounded-md dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+          className="h-6 w-6 inline-flex shrink-0 items-center justify-center rounded-[8px] dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
           aria-label={i18nService.t('close')}
           title={i18nService.t('close')}
         >
@@ -230,7 +230,7 @@ const MarkdownViewerPanel: React.FC<MarkdownViewerPanelProps> = ({ filePath, onC
           <button
             type="button"
             onClick={openExternally}
-            className="rounded-lg border px-2.5 py-1 text-xs dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+            className="rounded-[8px] border px-2.5 py-1 text-xs dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
           >
             {i18nService.t('markdownViewerOpenExternal')}
           </button>

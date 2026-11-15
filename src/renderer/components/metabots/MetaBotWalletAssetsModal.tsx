@@ -145,7 +145,7 @@ const MvcNftDetailOverlay: React.FC<{ detail: MvcNftItemDetail; onClose: () => v
           <button
             type="button"
             onClick={onClose}
-            className="rounded p-1 text-claude-textSecondary transition-colors hover:bg-black/5 dark:text-claude-darkTextSecondary dark:hover:bg-white/10"
+            className="rounded-[8px] p-1 text-claude-textSecondary transition-colors hover:bg-black/5 dark:text-claude-darkTextSecondary dark:hover:bg-white/10"
             aria-label={i18nService.t('close')}
           >
             <XMarkIcon className="h-4 w-4" />
@@ -243,7 +243,7 @@ const MetaBotWalletAssetsModal: React.FC<MetaBotWalletAssetsModalProps> = ({
             <button
               type="button"
               onClick={onRefresh}
-              className="inline-flex items-center gap-2 rounded-xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface px-3 py-2 text-sm dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+              className="inline-flex items-center gap-2 rounded-[8px] border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface px-3 py-2 text-sm dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
             >
               <ArrowPathIcon className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
               {i18nService.t('metabotWalletAssetsRefresh')}
@@ -251,7 +251,7 @@ const MetaBotWalletAssetsModal: React.FC<MetaBotWalletAssetsModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface px-3 py-2 text-sm dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+              className="rounded-[8px] border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface px-3 py-2 text-sm dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
             >
               {i18nService.t('close')}
             </button>

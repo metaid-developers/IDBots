@@ -564,7 +564,7 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
                       type="button"
                       onClick={handleExitBatchArchiveMode}
                       aria-label={i18nService.t('batchArchiveCancel')}
-                      className="rounded p-1 text-claude-textSecondary transition-colors hover:bg-claude-surfaceHover hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText"
+                      className="rounded-[8px] p-1 text-claude-textSecondary transition-colors hover:bg-claude-surfaceHover hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText"
                     >
                       <XMarkIcon className="h-4 w-4" />
                     </button>
@@ -590,7 +590,7 @@ const HomeSidebar: React.FC<HomeSidebarProps> = ({
                       type="button"
                       onClick={handleEnterBatchArchiveMode}
                       aria-label={i18nService.t('batchArchive')}
-                      className="rounded p-1 text-claude-textSecondary transition-colors hover:bg-claude-accent/10 hover:text-claude-accent dark:text-claude-darkTextSecondary"
+                      className="rounded-[8px] p-1 text-claude-textSecondary transition-colors hover:bg-claude-accent/10 hover:text-claude-accent dark:text-claude-darkTextSecondary"
                     >
                       <ArchiveBoxIcon className="h-4 w-4" />
                     </button>

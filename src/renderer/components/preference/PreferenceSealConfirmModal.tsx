@@ -53,7 +53,7 @@ const PreferenceSealConfirmModal: React.FC<PreferenceSealConfirmModalProps> = ({
             type="button"
             onClick={onCancel}
             disabled={sealing}
-            className="flex-1 rounded-lg border border-[var(--border-color)] px-3 py-2 text-sm hover:bg-[var(--bg-hover)] disabled:opacity-50"
+            className="flex-1 rounded-[8px] border border-[var(--border-color)] px-3 py-2 text-sm hover:bg-[var(--bg-hover)] disabled:opacity-50"
           >
             {i18nService.t('preference.confirm.cancel')}
           </button>
@@ -61,7 +61,7 @@ const PreferenceSealConfirmModal: React.FC<PreferenceSealConfirmModalProps> = ({
             type="button"
             onClick={onConfirm}
             disabled={sealing}
-            className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] flex-1 rounded-lg px-3 py-2 text-sm font-medium disabled:opacity-50"
+            className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] flex-1 rounded-[8px] px-3 py-2 text-sm font-medium disabled:opacity-50"
           >
             {sealing ? i18nService.t('preference.confirm.sealing') : i18nService.t('preference.confirm.confirm')}
           </button>

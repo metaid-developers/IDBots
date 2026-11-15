@@ -53,7 +53,7 @@ const ChainBackupMnemonicReminderModal: React.FC<ChainBackupMnemonicReminderModa
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:opacity-90"
+              className="px-4 py-2 text-sm rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:opacity-90"
             >
               {i18nService.t('userSettingsChainBackupMnemonicReminderDismiss')}
             </button>

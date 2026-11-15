@@ -495,7 +495,7 @@ const McpManager: React.FC<McpManagerProps> = ({
             <button
               type="button"
               onClick={handleOpenCreateForm}
-              className="rounded-xl border-2 border-dashed dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:border-claude-accent hover:text-claude-accent dark:hover:border-claude-accent dark:hover:text-claude-accent transition-colors flex items-center justify-center min-h-[120px] text-sm"
+              className="rounded-[8px] border border-dashed dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:border-claude-accent hover:text-claude-accent dark:hover:border-claude-accent dark:hover:text-claude-accent transition-colors flex items-center justify-center min-h-[120px] text-sm"
             >
               + {i18nService.t('addMcpServer')}
             </button>
@@ -615,7 +615,7 @@ const McpManager: React.FC<McpManagerProps> = ({
                 type="button"
                 onClick={handleCancelDelete}
                 disabled={isDeleting}
-                className="px-3 py-1.5 text-xs rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                className="px-3 py-1.5 text-xs rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {i18nService.t('cancel')}
               </button>
@@ -623,7 +623,7 @@ const McpManager: React.FC<McpManagerProps> = ({
                 type="button"
                 onClick={handleConfirmDelete}
                 disabled={isDeleting}
-                className="border border-red-600 px-3 py-1.5 text-xs rounded-lg bg-red-500 text-white hover:bg-red-600 dark:bg-red-500 dark:hover:bg-red-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                className="border border-red-600 px-3 py-1.5 text-xs rounded-[8px] bg-red-500 text-white hover:bg-red-600 dark:bg-red-500 dark:hover:bg-red-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {i18nService.t('confirmDelete')}
               </button>

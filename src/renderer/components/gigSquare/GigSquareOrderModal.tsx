@@ -808,7 +808,7 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="text-xs px-2 py-1 rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+              className="text-xs px-2 py-1 rounded-[8px] dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
               disabled={status !== 'idle'}
             >
               {i18nService.t('close')}

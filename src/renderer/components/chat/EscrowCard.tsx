@@ -151,7 +151,7 @@ const EscrowCard: React.FC<{ data: EscrowCardData; now?: number }> = ({ data, no
                   type="button"
                   data-escrow-appeal-copy="true"
                   onClick={copyAppealTemplate}
-                  className="shrink-0 rounded px-1.5 py-px text-[10px] text-slate-400 transition-colors hover:bg-white/5 hover:text-slate-200"
+                  className="shrink-0 rounded-[8px] px-1.5 py-px text-[10px] text-slate-400 transition-colors hover:bg-white/5 hover:text-slate-200"
                 >
                   {appealCopied ? i18nService.t('escrowCardAppealCopied') : i18nService.t('escrowCardAppealCopy')}
                 </button>

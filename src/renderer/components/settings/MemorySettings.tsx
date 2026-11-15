@@ -1923,7 +1923,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             </div>
             <button
               type="button"
-              className="rounded-lg border px-2 py-1 text-[11px] dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary"
+              className="rounded-[8px] border px-2 py-1 text-[11px] dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary"
               onClick={async () => {
                 if (page.status === 'archived') await coworkService.restoreStandingPage(metabotId ?? 0, page.pageKey);
                 else await coworkService.removeStandingPage(metabotId ?? 0, page.pageKey);
@@ -1967,7 +1967,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         {standingAddError && <div className="mt-1 text-[11px] text-red-500">{standingAddError}</div>}
         <button
           type="button"
-          className="mt-2 rounded-lg border px-3 py-1 text-xs dark:border-claude-darkAccent border-claude-accent text-claude-accent dark:text-claude-darkAccent"
+          className="mt-2 rounded-[8px] border px-3 py-1 text-xs dark:border-claude-darkAccent border-claude-accent text-claude-accent dark:text-claude-darkAccent"
           onClick={async () => {
             setStandingAddError(null);
             const error = await coworkService.createStandingPage(metabotId ?? 0, standingNewName.trim(), standingNewQuestion.trim());
@@ -2111,7 +2111,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             <button
               type="button"
               onClick={resetCultureEditor}
-              className="rounded-lg border px-3 py-1 text-xs dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text"
+              className="rounded-[8px] border px-3 py-1 text-xs dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text"
             >
               {i18nService.t('cancel')}
             </button>

@@ -105,7 +105,7 @@ const AcceptanceSummaryCard: React.FC<{
           <button
             type="button"
             onClick={actions.onAccept}
-            className="border border-emerald-600 px-3 py-1.5 text-sm font-medium rounded-lg bg-emerald-500 text-white hover:bg-emerald-600 transition-colors"
+            className="border border-emerald-600 px-3 py-1.5 text-sm font-medium rounded-[8px] bg-emerald-500 text-white hover:bg-emerald-600 transition-colors"
           >
             {i18nService.t('groupTasksAcceptClose')}
           </button>
@@ -113,7 +113,7 @@ const AcceptanceSummaryCard: React.FC<{
             type="button"
             onClick={actions.onRework}
             disabled={actions.reworking}
-            className="px-3 py-1.5 text-sm font-medium rounded-lg text-amber-600 dark:text-amber-400 border border-amber-300 dark:border-amber-500/40 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors disabled:opacity-50"
+            className="px-3 py-1.5 text-sm font-medium rounded-[8px] text-amber-600 dark:text-amber-400 border border-amber-300 dark:border-amber-500/40 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors disabled:opacity-50"
           >
             {actions.reworking
               ? i18nService.t('groupTasksReopening')
