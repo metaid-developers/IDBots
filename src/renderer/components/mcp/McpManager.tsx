@@ -301,7 +301,7 @@ const McpManager: React.FC<McpManagerProps> = ({
             placeholder={i18nService.t('searchMcpServers')}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text dark:placeholder-claude-darkTextSecondary placeholder-claude-textSecondary border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-1 focus:ring-claude-accent"
+            className="w-full pl-8 pr-3 py-1.5 text-xs rounded-[var(--shape-radius-sm)] dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text dark:placeholder-claude-darkTextSecondary placeholder-claude-textSecondary border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-1 focus:ring-claude-accent"
           />
         </div>
         )}
@@ -459,7 +459,7 @@ const McpManager: React.FC<McpManagerProps> = ({
                       <button
                         type="button"
                         onClick={() => handleInstallFromRegistry(entry)}
-                        className="btn-idchat-primary-filled px-2.5 py-1 text-xs"
+                        className="btn-idchat-primary-filled inline-flex items-center justify-center px-2.5 py-1 text-xs rounded-[var(--shape-radius-sm)]"
                       >
                         {i18nService.t('mcpInstall')}
                       </button>

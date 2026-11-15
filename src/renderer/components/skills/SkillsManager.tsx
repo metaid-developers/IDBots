@@ -486,35 +486,38 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
           <button
             type="button"
             onClick={() => setCurrentTab('local')}
-            className={`px-3 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+            className={`relative px-3 py-2 text-sm font-medium transition-colors ${
               resolvedActiveTab === 'local'
-                ? 'dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text border-b-2 border-transparent -mb-[1px] pb-[5px]'
+                ? 'dark:text-claude-darkText text-claude-text'
                 : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:text-claude-darkText hover:text-claude-text'
             }`}
           >
             {i18nService.t('localSkills')}
+            <span className={`absolute bottom-0 left-0 right-0 h-0.5 rounded-full transition-colors ${resolvedActiveTab === 'local' ? 'bg-claude-accent' : 'bg-transparent'}`} />
           </button>
           <button
             type="button"
             onClick={() => setCurrentTab('official')}
-            className={`px-3 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+            className={`relative px-3 py-2 text-sm font-medium transition-colors ${
               resolvedActiveTab === 'official'
-                ? 'dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text border-b-2 border-transparent -mb-[1px] pb-[5px]'
+                ? 'dark:text-claude-darkText text-claude-text'
                 : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:text-claude-darkText hover:text-claude-text'
             }`}
           >
             {i18nService.t('officialRecommended')}
+            <span className={`absolute bottom-0 left-0 right-0 h-0.5 rounded-full transition-colors ${resolvedActiveTab === 'official' ? 'bg-claude-accent' : 'bg-transparent'}`} />
           </button>
           <button
             type="button"
             onClick={() => setCurrentTab('community')}
-            className={`px-3 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+            className={`relative px-3 py-2 text-sm font-medium transition-colors ${
               resolvedActiveTab === 'community'
-                ? 'dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text border-b-2 border-transparent -mb-[1px] pb-[5px]'
+                ? 'dark:text-claude-darkText text-claude-text'
                 : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:text-claude-darkText hover:text-claude-text'
             }`}
           >
             {i18nService.t('communitySkills')}
+            <span className={`absolute bottom-0 left-0 right-0 h-0.5 rounded-full transition-colors ${resolvedActiveTab === 'community' ? 'bg-claude-accent' : 'bg-transparent'}`} />
           </button>
           </div>
           {tabBarTrailing}
@@ -583,7 +586,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                           type="button"
                           onClick={() => handleInstallOfficialSkill(skill)}
                           disabled={installingSkillName !== null || isSyncingAll}
-                          className="btn-idchat-primary-filled inline-flex items-center gap-1.5 px-2.5 py-1 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="btn-idchat-primary-filled inline-flex items-center justify-center gap-1.5 px-2.5 py-1 text-xs rounded-[var(--shape-radius-sm)] disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {installingSkillName === skill.name ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" /> : null}
                           {installingSkillName === skill.name ? i18nService.t('skillOfficialLoading') : i18nService.t('skillDownload')}
@@ -594,7 +597,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                           type="button"
                           onClick={() => handleInstallOfficialSkill(skill)}
                           disabled={installingSkillName !== null || isSyncingAll}
-                          className="btn-idchat-primary-filled inline-flex items-center gap-1.5 px-2.5 py-1 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="btn-idchat-primary-filled inline-flex items-center justify-center gap-1.5 px-2.5 py-1 text-xs rounded-[var(--shape-radius-sm)] disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {installingSkillName === skill.name ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" /> : null}
                           {installingSkillName === skill.name ? i18nService.t('skillOfficialLoading') : i18nService.t('skillUpdate')}
@@ -668,7 +671,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                           type="button"
                           onClick={() => handleInstallCommunitySkill(skill)}
                           disabled={installingSkillName !== null}
-                          className="btn-idchat-primary-filled inline-flex items-center gap-1.5 px-2.5 py-1 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="btn-idchat-primary-filled inline-flex items-center justify-center gap-1.5 px-2.5 py-1 text-xs rounded-[var(--shape-radius-sm)] disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {installingSkillName === skill.name ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" /> : null}
                           {installingSkillName === skill.name ? i18nService.t('skillOfficialLoading') : i18nService.t('skillDownload')}
@@ -679,7 +682,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                           type="button"
                           onClick={() => handleInstallCommunitySkill(skill)}
                           disabled={installingSkillName !== null}
-                          className="btn-idchat-primary-filled inline-flex items-center gap-1.5 px-2.5 py-1 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="btn-idchat-primary-filled inline-flex items-center justify-center gap-1.5 px-2.5 py-1 text-xs rounded-[var(--shape-radius-sm)] disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {installingSkillName === skill.name ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" /> : null}
                           {installingSkillName === skill.name ? i18nService.t('skillOfficialLoading') : i18nService.t('skillUpdate')}
@@ -783,7 +786,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
             placeholder={i18nService.t('searchSkills')}
             value={skillSearchQuery}
             onChange={(e) => setSkillSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-3 py-2 text-sm rounded-xl dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text dark:placeholder-claude-darkTextSecondary placeholder-claude-textSecondary border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
+            className="w-full pl-9 pr-3 py-1.5 text-xs rounded-[var(--shape-radius-sm)] dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text dark:placeholder-claude-darkTextSecondary placeholder-claude-textSecondary border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
           />
         </div>
         <div className="relative">
@@ -791,7 +794,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
             ref={addSkillButtonRef}
             type="button"
             onClick={() => setIsAddSkillMenuOpen(prev => !prev)}
-            className="px-3 py-2 text-sm rounded-[var(--shape-radius-sm)] border transition-colors dark:bg-claude-darkSurface bg-claude-surface dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover flex items-center gap-2"
+            className="px-3 py-1.5 text-xs rounded-[var(--shape-radius-sm)] border transition-colors dark:bg-claude-darkSurface bg-claude-surface dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover flex items-center gap-2"
           >
             <PlusCircleIcon className="h-4 w-4" />
             <span>{i18nService.t('addSkill')}</span>
