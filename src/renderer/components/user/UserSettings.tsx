@@ -1038,23 +1038,23 @@ const UserSettings: React.FC = () => {
             <button
               type="button"
               onClick={() => setBackupModalOpen(true)}
-              className="inline-flex items-center px-3 py-1.5 text-xs font-medium justify-center rounded-[var(--shape-radius-sm)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+              className="inline-flex h-9 items-center px-3 text-xs font-medium justify-center gap-1.5 rounded-[var(--shape-radius-sm)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
             >
-              <KeyIcon className="h-3.5 w-3.5 mr-1.5" />
+              <KeyIcon className="h-3.5 w-3.5" />
               {i18nService.t('userSettingsBackupMnemonic')}
             </button>
             <button
               type="button"
               onClick={() => openLogoutModal('switch')}
-              className="inline-flex items-center px-3 py-1.5 text-xs font-medium justify-center rounded-[var(--shape-radius-sm)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+              className="inline-flex h-9 items-center px-3 text-xs font-medium justify-center gap-1.5 rounded-[var(--shape-radius-sm)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
             >
-              <ArrowRightStartOnRectangleIcon className="h-3.5 w-3.5 mr-1.5" />
+              <ArrowRightStartOnRectangleIcon className="h-3.5 w-3.5" />
               {i18nService.t('userSettingsSwitchAccount')}
             </button>
             <button
               type="button"
               onClick={() => openLogoutModal('logout')}
-              className="px-3 py-1.5 text-xs font-medium inline-flex items-center justify-center rounded-[var(--shape-radius-sm)] border border-red-600 bg-red-600 hover:bg-red-700 text-white transition-colors"
+              className="inline-flex h-9 items-center justify-center px-3 text-xs font-semibold rounded-[var(--shape-radius-sm)] border border-red-600 text-red-600 hover:bg-red-600/5 transition-colors"
             >
               {i18nService.t('userSettingsLogout')}
             </button>
