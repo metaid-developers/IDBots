@@ -31,6 +31,11 @@ const SkillScopeEditor: React.FC<SkillScopeEditorProps> = ({ skill, metabots, on
   const [confirming, setConfirming] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  // OWNER 01:56: the scope popover renders FIXED to the viewport — the card
+  // grid lives in an overflow-y-auto container that clipped the old
+  // absolute top-full popover for cards near the bottom ("rendered but
+  // hidden"). Coords are computed from the chip rect at open time.
+  const [popPos, setPopPos] = useState<{ top: number; right: number } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -57,6 +62,8 @@ const SkillScopeEditor: React.FC<SkillScopeEditorProps> = ({ skill, metabots, on
   const assignedIds = skill.assignedMetabotIds ?? [];
 
   const openEditor = () => {
+    const rect = rootRef.current?.getBoundingClientRect();
+    if (rect) setPopPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
     setMode(currentScope === 'global' ? 'all' : assignedIds.length > 0 ? 'bots' : 'library');
     setChecked(new Set(assignedIds));
     setConfirming(false);
@@ -151,7 +158,10 @@ const SkillScopeEditor: React.FC<SkillScopeEditorProps> = ({ skill, metabots, on
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full z-40 mt-1 w-64 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-2xl p-3">
+        <div
+          className="fixed z-40 w-64 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-2xl p-3"
+          style={popPos ? { top: popPos.top, right: popPos.right } : undefined}
+        >
           <div className="text-xs font-semibold dark:text-claude-darkText text-claude-text mb-2">
             {i18nService.t('skillScopeEditorTitle')}
           </div>
