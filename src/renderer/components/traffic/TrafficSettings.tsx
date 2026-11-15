@@ -40,7 +40,6 @@ import {
   ensureMeSnapshot,
   getMeSnapshot,
   isMeEffectivelySubscribed,
-  requestMeBalance,
   requestOpenMePurchase,
   subscribeMeSnapshot,
 } from '../me/mePointsStore';
@@ -438,7 +437,6 @@ const TrafficSettings: React.FC = () => {
   const [ledgerError, setLedgerError] = useState('');
   // ME credits billing (requirements v1.0): null until the first status read.
   const [meBilling, setMeBilling] = useState<TrafficMeBillingStatusInfo | null>(null);
-  const [meBillingRefreshing, setMeBillingRefreshing] = useState(false);
   const [orders, setOrders] = useState<TrafficSponsorOrderInfo[]>([]);
   const [ordersCursor, setOrdersCursor] = useState('');
   const [ordersLoading, setOrdersLoading] = useState(false);
@@ -634,15 +632,6 @@ const TrafficSettings: React.FC = () => {
     setMeBilling(status);
     return status.trafficBilling;
   }, [trafficApi]);
-
-  const refreshCredits = useCallback(async () => {
-    setMeBillingRefreshing(true);
-    try {
-      await Promise.all([refreshMeBilling(true), requestMeBalance({ forceRefresh: true })]);
-    } finally {
-      setMeBillingRefreshing(false);
-    }
-  }, [refreshMeBilling]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1279,17 +1268,6 @@ const TrafficSettings: React.FC = () => {
           <div className="flex justify-end gap-2">
             <button
               type="button"
-              className={ghostButtonClass}
-              onClick={() => void refreshCredits()}
-              disabled={meBillingRefreshing}
-            >
-              <span className="inline-flex items-center gap-1">
-                <ArrowPathIcon className={`h-4 w-4 ${meBillingRefreshing ? 'animate-spin' : ''}`} />
-                {i18nService.t('trafficCreditsRefresh')}
-              </span>
-            </button>
-            <button
-              type="button"
               className={primaryButtonClass}
               // Credit packs need an active paid plan (SUBSCRIPTION_REQUIRED),
               // so free-tier users land on the plans instead.
@@ -1326,6 +1304,19 @@ const TrafficSettings: React.FC = () => {
                 {balance ? formatTraffic(balance.balanceBytes) : '—'}
               </span>
               {balanceLoading && <ArrowPathIcon className="h-4 w-4 animate-spin dark:text-claude-darkTextSecondary text-claude-textSecondary" />}
+              <button
+                type="button"
+                onClick={() => {
+                  refreshBalance(true);
+                  loadCampaign();
+                }}
+                disabled={balanceLoading}
+                aria-label={i18nService.t('trafficRefresh')}
+                title={i18nService.t('trafficRefresh')}
+                className="non-draggable p-1 rounded-[var(--shape-radius-sm)] text-claude-textSecondary hover:text-claude-text hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary dark:hover:text-claude-darkText dark:hover:bg-claude-darkSurfaceHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <ArrowPathIcon className={`h-4 w-4 ${balanceLoading ? 'animate-spin' : ''}`} />
+              </button>
             </div>
             {balance && (
               <p className={`${hintClass} mt-1`}>
@@ -1335,19 +1326,8 @@ const TrafficSettings: React.FC = () => {
               </p>
             )}
           </div>
-          <div className="flex flex-col items-end gap-1 shrink-0">
+          <div className="flex flex-col items-end justify-center gap-1 shrink-0">
             <div className="flex gap-2">
-              <button
-                type="button"
-                className={ghostButtonClass}
-                onClick={() => {
-                  refreshBalance(true);
-                  loadCampaign();
-                }}
-                disabled={balanceLoading}
-              >
-                {i18nService.t('trafficRefresh')}
-              </button>
               <button
                 type="button"
                 className={ghostButtonClass}
