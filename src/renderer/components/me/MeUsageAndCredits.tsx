@@ -268,28 +268,33 @@ const MeUsageAndCredits: React.FC = () => {
           <h2 className="text-base font-semibold text-claude-text dark:text-claude-darkText">{i18nService.t('meUsageTitle')}</h2>
           <p className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">{i18nService.t('meUsageSubtitle')}</p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <button
-            type="button"
-            data-slot="me-usage-buy-credits"
-            onClick={() => requestOpenMePurchase('topup')}
-            className="btn-idchat-primary-filled inline-flex items-center justify-center text-xs font-medium"
-          >
-            {i18nService.t('meIncrementPackBuy')}
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleRefreshAll()}
-            className="inline-flex items-center gap-1.5 justify-center rounded-[var(--shape-radius-sm)] border border-claude-border dark:border-claude-darkBorder px-4 py-2 text-xs font-medium text-claude-text dark:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
-          >
-            <ArrowPathIcon className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-            {i18nService.t('freeQuotaRefresh')}
-          </button>
-        </div>
       </div>
 
-      {/* 双池概览 */}
-      <MeBalanceOverviewCard />
+      {/* 双池概览 — OWNER 2026-11-16 00:29: buy/refresh actions moved from the
+          page header into the overview card's bottom-right, next to the
+          weekly-reset note line. */}
+      <MeBalanceOverviewCard
+        footer={
+          <>
+            <button
+              type="button"
+              data-slot="me-usage-buy-credits"
+              onClick={() => requestOpenMePurchase('topup')}
+              className="btn-idchat-primary-filled inline-flex items-center justify-center text-xs font-medium"
+            >
+              {i18nService.t('meIncrementPackBuy')}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleRefreshAll()}
+              className="inline-flex items-center gap-1.5 justify-center rounded-[var(--shape-radius-sm)] border border-claude-border dark:border-claude-darkBorder px-4 py-2 text-xs font-medium text-claude-text dark:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+            >
+              <ArrowPathIcon className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+              {i18nService.t('freeQuotaRefresh')}
+            </button>
+          </>
+        }
+      />
 
       {/* 支付记录：订阅订单 + 充值订单合并展示 */}
       <div className="rounded-2xl border border-claude-border dark:border-claude-darkBorder bg-claude-surface dark:bg-claude-darkSurface/60 p-3.5">

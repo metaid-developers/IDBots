@@ -19,7 +19,7 @@ import {
 } from './mePointsStore';
 import { meTierDisplayName } from './IdbotsPlanCard';
 
-const MeBalanceOverviewCard: React.FC<{ note?: string }> = ({ note }) => {
+const MeBalanceOverviewCard: React.FC<{ note?: string; footer?: React.ReactNode }> = ({ note, footer }) => {
   const snapshot = React.useSyncExternalStore(subscribeMeSnapshot, getMeSnapshot, getMeSnapshot);
 
   const balance = snapshot.balance;
@@ -83,9 +83,14 @@ const MeBalanceOverviewCard: React.FC<{ note?: string }> = ({ note }) => {
           </p>
         </div>
       </div>
-      <p className="mt-2 border-t border-claude-border/50 dark:border-claude-darkBorder/50 pt-2 text-[10px] leading-relaxed text-claude-textSecondary dark:text-claude-darkTextSecondary">
-        {note ?? i18nService.t('mePanelNote')}
-      </p>
+      {/* OWNER 2026-11-16 00:29: action buttons (buy credits / refresh) live
+          at the card's bottom-right, after the weekly-reset note line. */}
+      <div className="mt-2 flex items-end justify-between gap-3 border-t border-claude-border/50 dark:border-claude-darkBorder/50 pt-2">
+        <p className="text-[10px] leading-relaxed text-claude-textSecondary dark:text-claude-darkTextSecondary">
+          {note ?? i18nService.t('mePanelNote')}
+        </p>
+        {footer ? <div className="flex shrink-0 items-center gap-2">{footer}</div> : null}
+      </div>
     </div>
   );
 };
