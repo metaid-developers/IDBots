@@ -63,7 +63,10 @@ const { DB_FILENAME } = require('../dist-electron/main/appConstants.js');
 Module._load = originalLoad;
 
 function read(relativePath) {
-  return fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
+  // Windows checkouts are CRLF; the line-anchored assertions below stay
+  // correct either way, but normalizing keeps future LF-anchored assertions
+  // safe too (§11.9, flagged by windows-test-risk-scan).
+  return fs.readFileSync(path.join(repoRoot, relativePath), 'utf8').replace(/\r\n/g, '\n');
 }
 
 test('Windows updater launches the signed NSIS executable directly and detaches it', async () => {
