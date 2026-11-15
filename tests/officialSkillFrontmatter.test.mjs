@@ -15,7 +15,10 @@ function skillFiles(dir) {
 test('every official skill has parseable YAML frontmatter', () => {
   const failures = [];
   for (const file of skillFiles('SKILLs')) {
-    const source = fs.readFileSync(file, 'utf8');
+    // Windows checkouts are CRLF: the `---\n` frontmatter delimiter never
+    // matches without normalizing the read source (§11.9; detonated on the
+    // first Windows CI run to reach this suite — v1.1.1 tag run 43718479371).
+    const source = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
     const match = source.match(/^---\n([\s\S]*?)\n---/);
     if (!match) {
       failures.push(`${file}: missing frontmatter`);
