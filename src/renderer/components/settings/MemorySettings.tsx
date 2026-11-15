@@ -175,6 +175,11 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const [dreamLoading, setDreamLoading] = useState(false);
   const [capabilityDrafts, setCapabilityDrafts] = useState<CapabilityDraftItem[]>([]);
   const [dreamExpandedId, setDreamExpandedId] = useState<string | null>(null);
+  // OWNER 03:23: the diary shows the last 7 nights by default; older nights
+  // are reached through the calendar index (date picker) instead of a
+  // 365-entry wall for a year-old bot.
+  const [dreamBrowseDate, setDreamBrowseDate] = useState('');
+  const [dreamShowAll, setDreamShowAll] = useState(false);
   const [dreamRunDate, setDreamRunDate] = useState<string>(() => {
     const now = new Date();
     return formatLocalDateInput(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1));
@@ -515,6 +520,22 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       .filter((run) => !dreamSummaries.some((summary) => summary.summaryDate === run.dreamDate))
       .map((run) => ({ kind: 'failed' as const, date: run.dreamDate, run })),
   ].sort((a, b) => b.date.localeCompare(a.date)), [dreamSummaries, dreamRuns]);
+
+  const DREAM_RECENT_COUNT = 7;
+  const visibleDreamEntries = useMemo(() => {
+    if (dreamBrowseDate) return dreamEntries.filter((entry) => entry.date === dreamBrowseDate);
+    if (dreamShowAll) return dreamEntries;
+    return dreamEntries.slice(0, DREAM_RECENT_COUNT);
+  }, [dreamEntries, dreamBrowseDate, dreamShowAll]);
+
+  const handleDreamBrowse = (value: string) => {
+    setDreamBrowseDate(value);
+    setDreamShowAll(false);
+    if (value) {
+      const hit = dreamEntries.find((entry) => entry.date === value);
+      if (hit && hit.kind === 'summary') setDreamExpandedId(hit.summary.id);
+    }
+  };
 
   const loadDream = useCallback(async () => {
     if (metabotId == null) {
@@ -1225,6 +1246,17 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           </div>
         )}
       </div>
+      {!dreamBrowseDate && dreamEntries.length > DREAM_RECENT_COUNT && (
+        <button
+          type="button"
+          onClick={() => setDreamShowAll((prev) => !prev)}
+          className="self-start rounded-[var(--shape-radius-sm)] border px-2 py-1 text-[11px] dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+        >
+          {dreamShowAll
+            ? i18nService.t('dreamDiaryShowLess')
+            : i18nService.t('dreamDiaryShowEarlier').replace('{count}', String(dreamEntries.length - DREAM_RECENT_COUNT))}
+        </button>
+      )}
     </div>
   );
 
@@ -1457,14 +1489,40 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       )}
       <DreamTelemetryPanel runs={dreamRuns} />
       <CapabilityDraftsPanel drafts={capabilityDrafts} loading={dreamLoading} />
+      {/* OWNER 03:23: calendar indexes nights; the list defaults to recent 7. */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+          <span>{`${i18nService.t('dreamDiaryBrowseCount').replace('{count}', String(dreamEntries.length))}`}</span>
+          {dreamBrowseDate && (
+            <button
+              type="button"
+              onClick={() => handleDreamBrowse('')}
+              className="rounded-[var(--shape-radius-sm)] border px-2 py-0.5 text-[11px] dark:border-claude-darkBorder border-claude-border hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+            >
+              {i18nService.t('dreamDiaryBrowseClear')}
+            </button>
+          )}
+        </div>
+        <label className="flex shrink-0 items-center gap-1 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+          <span>{i18nService.t('dreamDiaryBrowseLabel')}</span>
+          <input
+            type="date"
+            value={dreamBrowseDate}
+            onChange={(event) => handleDreamBrowse(event.target.value)}
+            className="h-[26px] rounded-[var(--shape-radius-sm)] border px-2 text-xs dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
+          />
+        </label>
+      </div>
       <div className="max-h-[520px] overflow-auto rounded-lg border dark:border-claude-darkBorder border-claude-border">
         {dreamLoading ? (
           <div className="px-3 py-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">{i18nService.t('loading')}</div>
         ) : dreamEntries.length === 0 ? (
           <div className="px-3 py-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">{i18nService.t('dreamDiaryEmpty')}</div>
+        ) : dreamBrowseDate && visibleDreamEntries.length === 0 ? (
+          <div className="px-3 py-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">{i18nService.t('dreamDiaryNoDateRecord')}</div>
         ) : (
           <div className="divide-y dark:divide-claude-darkBorder divide-claude-border">
-            {dreamEntries.map((entry) => {
+            {visibleDreamEntries.map((entry) => {
               if (entry.kind === 'failed') {
                 const { run } = entry;
                 const isTerminal = run.status === 'terminal-failed';
