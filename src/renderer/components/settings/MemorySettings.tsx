@@ -1089,16 +1089,19 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           {i18nService.t('memoryKnowledgeHint')}
         </div>
         <div className="flex items-center gap-2">
-          <select
+          {/* OWNER 02:59: native select popup broke the design language. */}
+          <ThemedSelect
+            id="knowledge-kind-filter"
+            compact
             value={knowledgeKind}
-            onChange={(event) => setKnowledgeKind(event.target.value as CoworkKnowledgeKind | 'all')}
-            className="rounded-lg border px-2 py-1 text-xs dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
-          >
-            <option value="all">{i18nService.t('memoryKnowledgeKindAll')}</option>
-            <option value="know_how">{i18nService.t('memoryKnowledgeKindKnowHow')}</option>
-            <option value="pitfall">{i18nService.t('memoryKnowledgeKindPitfall')}</option>
-            <option value="principle">{i18nService.t('memoryKnowledgeKindPrinciple')}</option>
-          </select>
+            onChange={(value) => setKnowledgeKind(value as CoworkKnowledgeKind | 'all')}
+            options={[
+              { value: 'all', label: i18nService.t('memoryKnowledgeKindAll') },
+              { value: 'know_how', label: i18nService.t('memoryKnowledgeKindKnowHow') },
+              { value: 'pitfall', label: i18nService.t('memoryKnowledgeKindPitfall') },
+              { value: 'principle', label: i18nService.t('memoryKnowledgeKindPrinciple') },
+            ]}
+          />
           <input
             type="text"
             value={knowledgeQuery}
@@ -1133,15 +1136,17 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                         </label>
                         <label className="block">
                           <span className="block mb-1 text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary">{i18nService.t('coworkMemoryCategoryAll')}</span>
-                          <select
+                          <ThemedSelect
+                            id="knowledge-draft-kind"
+                            compact
                             value={knowledgeDraftKind}
-                            onChange={(event) => setKnowledgeDraftKind(event.target.value as CoworkKnowledgeKind)}
-                            className="w-full rounded border px-2 py-1 text-xs dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
-                          >
-                            <option value="know_how">{i18nService.t('memoryKnowledgeKindKnowHow')}</option>
-                            <option value="pitfall">{i18nService.t('memoryKnowledgeKindPitfall')}</option>
-                            <option value="principle">{i18nService.t('memoryKnowledgeKindPrinciple')}</option>
-                          </select>
+                            onChange={(value) => setKnowledgeDraftKind(value as CoworkKnowledgeKind)}
+                            options={[
+                              { value: 'know_how', label: i18nService.t('memoryKnowledgeKindKnowHow') },
+                              { value: 'pitfall', label: i18nService.t('memoryKnowledgeKindPitfall') },
+                              { value: 'principle', label: i18nService.t('memoryKnowledgeKindPrinciple') },
+                            ]}
+                          />
                         </label>
                       </div>
                       <label className="block">
@@ -1173,21 +1178,24 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                   ) : (
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0 space-y-1">
+                        {/* OWNER 02:59: version became the FIRST equal-width pill;
+                            every pill shares min-w + centered text so 2/3/4-char
+                            labels align instead of ragging. */}
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className={`rounded-full border px-2 py-0.5 ${KNOWLEDGE_KIND_ACCENT[entry.kind]}`}>
+                          <span className="inline-flex min-w-[56px] items-center justify-center rounded-full border px-2 py-0.5 dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                            {`${i18nService.t('memoryKnowledgeVersion')} v${entry.version}`}
+                          </span>
+                          <span className={`inline-flex min-w-[56px] items-center justify-center rounded-full border px-2 py-0.5 ${KNOWLEDGE_KIND_ACCENT[entry.kind]}`}>
                             {getKnowledgeKindLabel(entry.kind)}
                           </span>
-                          <span className="rounded-full border px-2 py-0.5 dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                          <span className="inline-flex min-w-[56px] items-center justify-center rounded-full border px-2 py-0.5 dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary">
                             {getKnowledgeOriginLabel(entry.origin)}
                           </span>
                           {entry.status === 'archived' && (
-                            <span className="rounded-full border px-2 py-0.5 dark:border-claude-darkBorder border-claude-border opacity-60">
+                            <span className="inline-flex min-w-[56px] items-center justify-center rounded-full border px-2 py-0.5 dark:border-claude-darkBorder border-claude-border opacity-60">
                               {i18nService.t('memoryKnowledgeArchived')}
                             </span>
                           )}
-                          <span className="dark:text-claude-darkTextSecondary/70 text-claude-textSecondary/70">
-                            {`${i18nService.t('memoryKnowledgeVersion')} v${entry.version}`}
-                          </span>
                         </div>
                         <div className="font-medium dark:text-claude-darkText text-claude-text break-words">{entry.topic}</div>
                         <div className="dark:text-claude-darkTextSecondary text-claude-textSecondary break-words whitespace-pre-wrap">{entry.summary}</div>
