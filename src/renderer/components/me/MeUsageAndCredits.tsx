@@ -11,7 +11,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowPathIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
+import { ChevronRightIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import type { MeHistoryEntryInfo, MeSubscriptionOrderInfo, MeTopupOrderInfo } from '../../types/electron';
 import {
@@ -274,25 +274,17 @@ const MeUsageAndCredits: React.FC = () => {
           page header into the overview card's bottom-right, next to the
           weekly-reset note line. */}
       <MeBalanceOverviewCard
+        onRefresh={() => void handleRefreshAll()}
+        refreshing={refreshing}
         footer={
-          <>
-            <button
-              type="button"
-              data-slot="me-usage-buy-credits"
-              onClick={() => requestOpenMePurchase('topup')}
-              className="btn-idchat-primary-filled inline-flex items-center justify-center text-xs font-medium"
-            >
-              {i18nService.t('meIncrementPackBuy')}
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleRefreshAll()}
-              className="inline-flex items-center gap-1.5 justify-center rounded-[var(--shape-radius-sm)] border border-claude-border dark:border-claude-darkBorder px-4 py-2 text-xs font-medium text-claude-text dark:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
-            >
-              <ArrowPathIcon className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-              {i18nService.t('freeQuotaRefresh')}
-            </button>
-          </>
+          <button
+            type="button"
+            data-slot="me-usage-buy-credits"
+            onClick={() => requestOpenMePurchase('topup')}
+            className="btn-idchat-primary-filled inline-flex items-center justify-center text-xs font-medium"
+          >
+            {i18nService.t('meIncrementPackBuy')}
+          </button>
         }
       />
 
