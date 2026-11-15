@@ -1192,7 +1192,7 @@ const UserSettings: React.FC = () => {
         {/* Chain backup & restore: encrypted soul data to /protocols/metabot-backup.
             Also refreshes the public /info/bots discovery manifest, replacing the
             old standalone "sync bots to mobile" card. */}
-        <div className="flex items-start justify-between gap-3 rounded-xl border dark:border-claude-darkBorder border-claude-border px-4 py-3">
+        <div className="flex items-center justify-between gap-3 rounded-xl border dark:border-claude-darkBorder border-claude-border px-4 py-3">
           <div className="min-w-0">
             <p className="text-sm font-medium dark:text-claude-darkText text-claude-text">
               {i18nService.t('userSettingsChainBackupTitle')}
