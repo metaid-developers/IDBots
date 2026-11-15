@@ -1555,7 +1555,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                 onClick={() => openDreamCal('browse', dreamCalBrowseRef)}
                 className="inline-flex h-[26px] items-center gap-1 whitespace-nowrap rounded-[var(--shape-radius-sm)] border px-2 text-xs dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text transition-colors hover:border-claude-accent/60"
               >
-                {dreamBrowseDate || i18nService.t('dreamDiaryBrowseLabel')}
+                {dreamBrowseDate || formatLocalDateInput(new Date())}
               </button>
               {dreamCalOpen === 'browse' && dreamCalPos && (
                 <div
