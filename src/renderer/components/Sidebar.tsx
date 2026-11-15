@@ -719,11 +719,11 @@ const Sidebar: React.FC<SidebarProps> = ({
       onMouseLeave={(event) => {
         const nextTarget = event.relatedTarget as Node | null;
         if (nextTarget && event.currentTarget.contains(nextTarget)) return;
-        if (!event.currentTarget.contains(document.activeElement)) setStudioTitlePreviewOpen(false);
+        if (!event.currentTarget.contains(document.activeElement)) scheduleTitleHide();
       }}
       onBlur={(event) => {
         const leaveTarget = event.relatedTarget as Node | null;
-      if (!leaveTarget || !event.currentTarget.contains(leaveTarget)) setStudioTitlePreviewOpen(false);
+      if (!leaveTarget || !event.currentTarget.contains(leaveTarget)) scheduleTitleHide();
       }}
     >
       {/* Left-anchor order 2026-11-15: the identity row and the session
