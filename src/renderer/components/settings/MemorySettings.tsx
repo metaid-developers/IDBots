@@ -1155,7 +1155,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                         <button
                           type="button"
                           onClick={cancelEditKnowledge}
-                          className="rounded-[var(--shape-radius-md)] border px-2 py-1 text-[10px] dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                          className="rounded-[var(--shape-radius-sm)] border px-2 py-1 text-[10px] dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
                         >
                           {i18nService.t('cancel')}
                         </button>
@@ -1163,7 +1163,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                           type="button"
                           onClick={() => { void handleSaveKnowledgeEdit(); }}
                           disabled={!knowledgeDraftTopic.trim() || !knowledgeDraftSummary.trim()}
-                          className="rounded-[var(--shape-radius-md)] border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk px-2 py-1 text-[10px] font-medium hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] disabled:opacity-60"
+                          className="rounded-[var(--shape-radius-sm)] border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk px-2 py-1 text-[10px] font-medium hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] disabled:opacity-60"
                         >
                           {i18nService.t('save')}
                         </button>
@@ -1198,14 +1198,14 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                         <button
                           type="button"
                           onClick={() => startEditKnowledge(entry)}
-                          className="rounded-[var(--shape-radius-md)] border px-2 py-1 text-[10px] dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                          className="rounded-[var(--shape-radius-sm)] border px-2 py-1 text-[10px] dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
                         >
                           {i18nService.t('edit')}
                         </button>
                         <button
                           type="button"
                           onClick={() => { void handleDeleteKnowledge(entry); }}
-                          className="rounded-[var(--shape-radius-md)] border px-2 py-1 text-[10px] text-red-500 dark:border-claude-darkBorder border-claude-border hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                          className="rounded-[var(--shape-radius-sm)] border px-2 py-1 text-[10px] text-red-500 dark:border-claude-darkBorder border-claude-border hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
                         >
                           {i18nService.t('delete')}
                         </button>
@@ -2292,7 +2292,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       )}
 
       {/* Section tabs */}
-      <div className="inline-flex h-8 min-w-0 items-center overflow-hidden rounded-[var(--shape-radius-md)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80">
+      <div className="inline-flex h-8 min-w-0 items-center overflow-hidden rounded-[var(--shape-radius-sm)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80">
         {sectionTab('knowledge', i18nService.t('memorySectionKnowledge'), metabotId == null ? undefined : knowledgeCounts)}
         {sectionTab('contacts', i18nService.t('memorySectionContacts'), metabotId == null || contacts.length === 0 ? undefined : contacts.length)}
         {sectionTab('facts', i18nService.t('memorySectionFacts'), metabotId == null || !factsStats ? undefined : factsStats.created + factsStats.stale)}
@@ -2380,7 +2380,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
               <button
                 type="button"
                 onClick={resetEditor}
-                className="px-4 py-2 text-sm dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover inline-flex items-center justify-center rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border transition-colors"
+                className="px-4 py-2 text-sm dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover inline-flex items-center justify-center rounded-[var(--shape-radius-sm)] border dark:border-claude-darkBorder border-claude-border transition-colors"
               >
                 {i18nService.t('cancel')}
               </button>

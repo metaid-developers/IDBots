@@ -484,7 +484,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
             onClick={() => setCurrentTab('local')}
             className={`px-3 py-2 text-sm font-medium rounded-t-lg transition-colors ${
               resolvedActiveTab === 'local'
-                ? 'dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text border-b-2 border-transparent -mb-[1px]'
+                ? 'dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text border-b-2 border-transparent -mb-[1px] pb-[5px]'
                 : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:text-claude-darkText hover:text-claude-text'
             }`}
           >
@@ -495,7 +495,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
             onClick={() => setCurrentTab('official')}
             className={`px-3 py-2 text-sm font-medium rounded-t-lg transition-colors ${
               resolvedActiveTab === 'official'
-                ? 'dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text border-b-2 border-transparent -mb-[1px]'
+                ? 'dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text border-b-2 border-transparent -mb-[1px] pb-[5px]'
                 : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:text-claude-darkText hover:text-claude-text'
             }`}
           >
@@ -506,7 +506,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
             onClick={() => setCurrentTab('community')}
             className={`px-3 py-2 text-sm font-medium rounded-t-lg transition-colors ${
               resolvedActiveTab === 'community'
-                ? 'dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text border-b-2 border-transparent -mb-[1px]'
+                ? 'dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text border-b-2 border-transparent -mb-[1px] pb-[5px]'
                 : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:text-claude-darkText hover:text-claude-text'
             }`}
           >
@@ -785,7 +785,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
             ref={addSkillButtonRef}
             type="button"
             onClick={() => setIsAddSkillMenuOpen(prev => !prev)}
-            className="px-3 py-2 text-sm rounded-xl border transition-colors dark:bg-claude-darkSurface bg-claude-surface dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover flex items-center gap-2"
+            className="px-3 py-2 text-sm rounded-[var(--shape-radius-sm)] border transition-colors dark:bg-claude-darkSurface bg-claude-surface dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover flex items-center gap-2"
           >
             <PlusCircleIcon className="h-4 w-4" />
             <span>{i18nService.t('addSkill')}</span>

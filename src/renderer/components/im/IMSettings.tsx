@@ -793,7 +793,7 @@ const IMSettings: React.FC = () => {
       type="button"
       onClick={() => handleConnectivityTest(platform)}
       disabled={isLoading || testingPlatform === platform}
-      className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+      className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-[var(--shape-radius-sm)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
     >
       <SignalIcon className="h-3.5 w-3.5 mr-1.5" />
       {testingPlatform === platform

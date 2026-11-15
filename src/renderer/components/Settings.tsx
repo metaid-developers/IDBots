@@ -2783,7 +2783,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                 </div>
               </div>
 
-              <div className="inline-flex h-8 min-w-0 items-center overflow-hidden rounded-[var(--shape-radius-md)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80">
+              <div className="inline-flex h-8 min-w-0 items-center overflow-hidden rounded-[var(--shape-radius-sm)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80">
                 <button
                   type="button"
                   onClick={() => setArchivedSubTab('chats')}
@@ -3897,7 +3897,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                 text heading (owner 2026-11-15 16:31) — the buttons ARE the page
                 title; other tabs keep the plain h3 label. */}
             {activeTab === 'traffic' ? (
-              <div className="inline-flex h-9 min-w-0 self-end mb-1.5 overflow-hidden rounded-[var(--shape-radius-md)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80">
+              <div className="inline-flex h-9 min-w-0 self-end mb-1.5 overflow-hidden rounded-[var(--shape-radius-sm)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80">
                 {(['credits', 'traffic'] as const).map((sub) => (
                   <button
                     key={sub}
@@ -3970,7 +3970,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                 The container owns stroke + radius; the segments stay square
                 (overflow-hidden clips them flush). */}
             <div className="flex justify-end p-4 dark:border-claude-darkBorder border-claude-border border-t dark:bg-claude-darkBg bg-claude-bg shrink-0">
-              <div className="inline-flex overflow-hidden rounded-[10px] border dark:border-claude-darkBorder border-claude-border">
+              <div className="inline-flex overflow-hidden rounded-[var(--shape-radius-sm)] border dark:border-claude-darkBorder border-claude-border">
                 <button
                   type="button"
                   onClick={onClose}
