@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { i18nService } from '../../services/i18n';
 import { calendarCells, initialMonthView, monthOptionLabel, weekdayHeaderKeys, yearOptions } from '../../features/botBrowser/panelHistoryDateFilter';
+import ThemedSelect from './ThemedSelect';
 
 /**
  * OWNER 03:40: shared mini month calendar (the Studio CoworkHistoryPanel
@@ -26,30 +27,29 @@ const MiniMonthCalendar: React.FC<MiniMonthCalendarProps> = ({ markedDayKeys, se
   const cells = useMemo(() => calendarCells(monthView.year, monthView.month), [monthView]);
   const years = useMemo(() => yearOptions(pseudoSessions, monthView), [pseudoSessions, monthView]);
   const language = i18nService.getLanguage();
-  const selectClass = 'rounded-[var(--shape-radius-sm)] border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text px-1.5 py-0.5 text-[11px]';
   return (
     <div className="w-56">
+      {/* OWNER 03:46: year/month dropdowns use the unified ThemedSelect —
+          the native select popup broke the design language. */}
       <div className="flex items-center gap-1.5 px-1">
-        <select
-          className={selectClass}
-          value={monthView.year}
-          onChange={(event) => setMonthView((view) => ({ ...view, year: Number(event.target.value) }))}
-          aria-label="year"
-        >
-          {years.map((year) => (
-            <option key={year} value={year}>{year}</option>
-          ))}
-        </select>
-        <select
-          className={selectClass}
-          value={monthView.month}
-          onChange={(event) => setMonthView((view) => ({ ...view, month: Number(event.target.value) }))}
-          aria-label="month"
-        >
-          {Array.from({ length: 12 }, (_, month) => (
-            <option key={month} value={month}>{monthOptionLabel(month, language)}</option>
-          ))}
-        </select>
+        <div className="w-20">
+          <ThemedSelect
+            id="mini-cal-year"
+            compact
+            value={String(monthView.year)}
+            onChange={(value) => setMonthView((view) => ({ ...view, year: Number(value) }))}
+            options={years.map((year) => ({ value: String(year), label: String(year) }))}
+          />
+        </div>
+        <div className="flex-1 min-w-0">
+          <ThemedSelect
+            id="mini-cal-month"
+            compact
+            value={String(monthView.month)}
+            onChange={(value) => setMonthView((view) => ({ ...view, month: Number(value) }))}
+            options={Array.from({ length: 12 }, (_, month) => ({ value: String(month), label: monthOptionLabel(month, language) }))}
+          />
+        </div>
       </div>
       <div className="mt-1.5 grid grid-cols-7 gap-y-0.5">
         {weekdayHeaderKeys.map((key) => (
