@@ -3902,7 +3902,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
             {/* OWNER 2026-11-16 00:42: section label + segmented switch share
                 one row at the module's top-right; the label sits OUTSIDE the
                 module card, and the duplicated in-module title is gone. */}
-            <div className="flex items-center justify-end gap-3 pt-[21px] pb-[37px] max-w-3xl px-4"> {/* OWNER 01:03: 20px rhythm below the row — pb lives HERE so both faces (credits/traffic) share it; view containers carry no top padding */} {/* OWNER 00:55: label top and tray top BOTH sit 20px below the header divider (68+1border+4pt+~15pt-4=88 rendered); top-aligned so A/B faces never drift */}
+            <div className="flex items-center justify-between gap-3 pl-[29px] pt-[21px] pb-[37px] max-w-3xl pr-4"> {/* OWNER 01:03: 20px rhythm below the row — pb lives HERE so both faces (credits/traffic) share it; view containers carry no top padding */} {/* OWNER 00:55: label top and tray top BOTH sit 20px below the header divider (68+1border+4pt+~15pt-4=88 rendered); top-aligned so A/B faces never drift */}
               {/* OWNER 01:08: label + subtitle inline on ONE line so the row is
                   exactly as tall as the tray -> the tray's 20px above AND below
                   are both exact; OWNER 00:52/00:58: subtitle kept, both faces. */}
