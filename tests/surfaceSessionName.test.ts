@@ -145,7 +145,7 @@ test('render: draft state preserves the title row with a non-interactive spacer'
     }),
   );
   assert.match(markup, /data-slot="cowork-surface-session-name-spacer"/);
-  assert.match(markup, /flex h-9 w-full min-w-0 items-center gap-2 rounded-lg px-1 text-left text-sm font-medium/);
+  assert.match(markup, /h-6 w-full min-w-0 flex-none/);
   assert.doesNotMatch(markup, /data-slot="cowork-surface-session-name"/);
   assert.doesNotMatch(markup, /<input/);
   assert.doesNotMatch(markup, /<button/);
