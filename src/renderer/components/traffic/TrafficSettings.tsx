@@ -328,8 +328,8 @@ const LedgerTxIdBadge: React.FC<{ txId: string }> = ({ txId }) => {
 const cardClass = 'rounded-xl dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted px-4 py-3';
 const labelClass = 'block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary';
 const hintClass = 'text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary';
-const primaryButtonClass = 'px-3 py-2 text-sm rounded-[var(--rounded)] border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] disabled:opacity-50 disabled:cursor-not-allowed';
-const ghostButtonClass = 'px-3 py-2 text-sm rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
+const primaryButtonClass = 'px-3 py-2 text-sm rounded-[var(--shape-radius-md)] border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] disabled:opacity-50 disabled:cursor-not-allowed';
+const ghostButtonClass = 'px-3 py-2 text-sm rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
 
 const OverlayPanel: React.FC<{ children: React.ReactNode; onDismiss: () => void; widthClass?: string }> = ({
   children,
@@ -1212,7 +1212,11 @@ const TrafficSettings: React.FC = () => {
         <p className={`${hintClass} mb-3`}>
           {i18nService.t('trafficModeDesc')}
         </p>
-        <div className="inline-flex rounded-lg border dark:border-claude-darkBorder border-claude-border p-0.5">
+        {/* Joined segmented tray (owner 2026-11-15 16:23): same language as
+            the 积分|流量 pair and the Studio|BotWorks switcher — 1px tray
+            border, overflow-hidden, selected face is a flat accent rectangle
+            with ink text; no inset padding, no nested radii. */}
+        <div className="inline-flex h-8 min-w-0 overflow-hidden rounded-[var(--shape-radius-md)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80">
           {([
             { value: 'traffic' as const, title: i18nService.t('trafficModeTrafficTitle') },
             { value: 'selfpay' as const, title: i18nService.t('trafficModeSelfpayTitle') },
@@ -1224,10 +1228,10 @@ const TrafficSettings: React.FC = () => {
                 type="button"
                 disabled={settingsSaving || !settings}
                 onClick={() => handleSelectMode(option.value)}
-                className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
+                className={`flex h-full min-w-[88px] items-center justify-center px-4 text-xs font-medium leading-none transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
                   selected
                     ? 'bg-claude-accent text-claude-accentInk'
-                    : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-text dark:hover:text-claude-darkText'
+                    : 'text-claude-textSecondary hover:bg-claude-surfaceHover/70 hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover/70 dark:hover:text-claude-darkText'
                 } disabled:opacity-50 disabled:cursor-not-allowed`}
               >
                 {option.title}
