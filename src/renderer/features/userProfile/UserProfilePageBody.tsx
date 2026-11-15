@@ -62,28 +62,19 @@ const UserProfilePageBody: React.FC = () => {
     };
   }, []);
 
-  const identity = snapshot.identity;
-  const name = (identity?.name || '').trim();
   
   return (
     <>
-      {/* Identity header — slimmed to the name line only: the avatar and the
-          daily-note greeting moved into the 用户资料 card in UserSettings
-          (owner merge ruling 2026-11-15 23:08). */}
-      <div data-slot="user-profile-identity" className="flex items-center">
-        <p data-slot="user-profile-name" className="truncate text-base font-semibold dark:text-claude-darkText text-claude-text">
-          {!snapshot.loaded
-            ? copy.loading
-            : identity
-              ? name || copy.unnamed
-              : copy.noIdentity}
-        </p>
-      </div>
+      {/* Identity header removed (owner ruling 2026-11-15 23:16): the name
+          now lives only in the 用户资料 card; identity errors still surface
+          inline here. */}
+      <div data-slot="user-profile-identity-errors">
           {snapshot.error ? (
             <p className="mt-0.5 text-[11px] text-amber-600 dark:text-amber-400">{copy.identityLoadFailed}</p>
           ) : null}
+      </div>
 
-      <div className="mt-6">
+      <div className="mt-8">
         <MeCreditsPanel />
       </div>
 
