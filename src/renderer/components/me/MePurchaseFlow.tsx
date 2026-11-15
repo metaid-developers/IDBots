@@ -35,6 +35,7 @@ import {
   meDiscountFromPct,
   meGatewayCharge,
   meOrderGenerationSlotKey,
+  buildMePaymentReturnContext,
   mePaymentPhase,
   mePeriodPricing,
   meTierRank,
@@ -414,11 +415,13 @@ const MePurchaseFlow: React.FC<MePurchaseFlowProps> = ({ open, section, onSectio
             channel: 'desktop',
             gateway,
             idempotencyKey,
+            ...(buildMePaymentReturnContext(window) ?? {}),
           })
         : await window.electron.mePoints.submitTopupOrder({
             packageId: subjectId,
             gateway,
             idempotencyKey,
+            ...(buildMePaymentReturnContext(window) ?? {}),
           });
     };
     try {

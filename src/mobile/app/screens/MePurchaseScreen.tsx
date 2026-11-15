@@ -5,6 +5,7 @@ import {
   formatMeMoney,
   meCheckoutErrorKey,
   meOrderGenerationSlotKey,
+  buildMePaymentReturnContext,
   mePaymentPhase,
   readMeOrderGeneration,
   shouldRetryTerminalMeOrder,
@@ -290,6 +291,7 @@ export default function MePurchaseScreen(props: {
       periodDays: days,
       gateway,
       generation: initialGeneration,
+      ...(buildMePaymentReturnContext(window) ?? {}),
     });
     if (!request) return;
     submittingRef.current = true;
@@ -311,6 +313,7 @@ export default function MePurchaseScreen(props: {
           periodDays: days,
           gateway,
           generation: nextGeneration,
+          ...(buildMePaymentReturnContext(window) ?? {}),
         });
         if (retryRequest) {
           result = await submitMePurchaseOrder(window.electron.mePoints, retryRequest);

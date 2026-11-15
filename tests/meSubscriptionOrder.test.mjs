@@ -178,6 +178,21 @@ test('submit signs me:subscription_order:<ts>, posts planId/period/channel/gatew
   });
 });
 
+test('payment return context is forwarded with the signed subscription order', async () => {
+  const fetchImpl = createFetchStub(() => ({
+    orderId: 'me_sub_pwa', planId: 'me_standard', period: 'month', channel: 'mobile', status: 'created',
+  }));
+  initService(fetchImpl);
+  await submitMeSubscriptionOrder({
+    planId: 'me_standard', period: 'month', channel: 'mobile', gateway: 'paypal',
+    clientForm: 'pwa', returnTo: 'https://app.idbots.world/app/',
+  });
+  const body = bodyOf(fetchImpl.calls[0]);
+  assert.equal(body.clientForm, 'pwa');
+  assert.equal(body.returnTo, 'https://app.idbots.world/app/');
+  assert.equal(body.planId, 'me_standard');
+});
+
 test('a 404 (endpoint not deployed) fails once as featureUnavailable — never retried into a duplicate', async () => {
   const fetchImpl = createFetchStub(() => ({
     __httpStatus: 404,
