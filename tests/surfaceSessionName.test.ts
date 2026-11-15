@@ -83,7 +83,7 @@ test('render: default state is a read-only button showing the display title', ()
   assert.doesNotMatch(markup, /<input/);
 });
 
-test('session-name icon: MessageSquare replica rides the title row (owner icon ruling 2026-11-15 09:03)', () => {
+test('session-name icon: round MessageCircle replica rides the title row (owner icon ruling 2026-11-15 10:48, echoes twin avatar circle)', () => {
   const markup = renderToStaticMarkup(
     React.createElement(CoworkSurfaceSessionName, {
       sessionId: 'sess-1',
@@ -99,11 +99,11 @@ test('session-name icon: MessageSquare replica rides the title row (owner icon r
   const titleAt = markup.indexOf('>抓周</span>');
   assert.ok(iconAt > 0, 'icon rendered');
   assert.ok(titleAt > iconAt, 'icon precedes the title text');
-  // lucide `MessageSquare` path, verbatim (square bubble — NOT MessageCircle,
+  // lucide `MessageCircle` path, verbatim (ROUND bubble — echoes the twin
   // NOT a double-bubble variant).
   assert.match(
     markup,
-    /d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/,
+    /d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/,
   );
   // Mon design pins: 14 px square, secondary text color (dark twin), 6 px
   // gap, vertical centering rides the row's items-center, hover deepens via
