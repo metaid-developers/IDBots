@@ -5,7 +5,7 @@ import {
 } from './surfaceSessionName';
 
 /**
- * Inline replica of lucide-react's `MessageCircle` (24×24 stroke SVG, ISC; ROUND bubble echoing the twin avatar's circle,
+ * Square chat-bubble glyph inside a CIRCULAR frame (echoing the twin avatar's circle) — lucide MessageSquare path, verbatim (24×24 stroke SVG, ISC;
  * path verbatim from lucide) — owner icon ruling 2026-11-15 10:48 supersedes 09:03: the
  * round bubble echoes the twin avatar circle. lucide-react is NOT in package.json and the
  * worktree's node_modules is a symlink into the main checkout, so adding the
@@ -28,7 +28,7 @@ const SessionNameMessageSquareIcon: React.FC<{ className?: string }> = ({ classN
     aria-hidden="true"
     className={className}
   >
-    <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" />
+    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
   </svg>
 );
 
@@ -182,7 +182,9 @@ const CoworkSurfaceSessionName: React.FC<CoworkSurfaceSessionNameProps> = ({
       title={displayTitle}
       className="non-draggable group flex h-6 min-w-0 flex-none mx-[41.25px] w-[calc(100%-82.5px)] items-center rounded-lg gap-[6px] pl-0 pr-0 text-left text-sm font-medium leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 text-claude-text dark:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
     >
-      <SessionNameMessageSquareIcon className="w-[1em] h-[1em] flex-none text-claude-textSecondary transition-colors group-hover:text-claude-text dark:text-claude-darkTextSecondary dark:group-hover:text-claude-darkText" />
+      <span className="flex size-[1.5em] flex-none items-center justify-center rounded-full border border-claude-border dark:border-claude-darkBorder">
+        <SessionNameMessageSquareIcon className="w-[0.75em] h-[0.75em] text-claude-textSecondary transition-colors group-hover:text-claude-text dark:text-claude-darkTextSecondary dark:group-hover:text-claude-darkText" />
+      </span>
       <span className="min-w-0 truncate">{displayTitle}</span>
     </button>
   );
