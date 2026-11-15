@@ -1,4 +1,6 @@
 import ThemedSelect from '../ui/ThemedSelect';
+import Tooltip from '../ui/Tooltip';
+import { InformationCircleIcon } from '@heroicons/react/24/outline';
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
@@ -1246,17 +1248,6 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           </div>
         )}
       </div>
-      {!dreamBrowseDate && dreamEntries.length > DREAM_RECENT_COUNT && (
-        <button
-          type="button"
-          onClick={() => setDreamShowAll((prev) => !prev)}
-          className="self-start rounded-[var(--shape-radius-sm)] border px-2 py-1 text-[11px] dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
-        >
-          {dreamShowAll
-            ? i18nService.t('dreamDiaryShowLess')
-            : i18nService.t('dreamDiaryShowEarlier').replace('{count}', String(dreamEntries.length - DREAM_RECENT_COUNT))}
-        </button>
-      )}
     </div>
   );
 
@@ -1489,31 +1480,42 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       )}
       <DreamTelemetryPanel runs={dreamRuns} />
       <CapabilityDraftsPanel drafts={capabilityDrafts} loading={dreamLoading} />
-      {/* OWNER 03:23: calendar indexes nights; the list defaults to recent 7. */}
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
-          <span>{`${i18nService.t('dreamDiaryBrowseCount').replace('{count}', String(dreamEntries.length))}`}</span>
-          {dreamBrowseDate && (
-            <button
-              type="button"
-              onClick={() => handleDreamBrowse('')}
-              className="rounded-[var(--shape-radius-sm)] border px-2 py-0.5 text-[11px] dark:border-claude-darkBorder border-claude-border hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
-            >
-              {i18nService.t('dreamDiaryBrowseClear')}
-            </button>
-          )}
+      {/* OWNER 03:29: the diary module gets a titled card shell mirroring
+          the capability drafts panel — 日记本 header (count + hint + calendar
+          index), scroll body, footer expander. */}
+      <div className="rounded-lg border dark:border-claude-darkBorder border-claude-border">
+        <div className="px-3 py-2 border-b dark:border-claude-darkBorder border-claude-border">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="text-xs font-medium dark:text-claude-darkText text-claude-text whitespace-nowrap">
+                {i18nService.t('dreamDiaryBookTitle')}
+                {dreamEntries.length > 0 ? ` (${dreamEntries.length})` : ''}
+              </span>
+              <Tooltip content={i18nService.t('dreamDiaryHint')}>
+                <InformationCircleIcon className="h-3.5 w-3.5 dark:text-claude-darkTextTertiary text-claude-textTertiary cursor-help flex-shrink-0" />
+              </Tooltip>
+              {dreamBrowseDate && (
+                <button
+                  type="button"
+                  onClick={() => handleDreamBrowse('')}
+                  className="rounded-[var(--shape-radius-sm)] border px-2 py-0.5 text-[11px] dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                >
+                  {i18nService.t('dreamDiaryBrowseClear')}
+                </button>
+              )}
+            </div>
+            <label className="flex shrink-0 items-center gap-1 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              <span>{i18nService.t('dreamDiaryBrowseLabel')}</span>
+              <input
+                type="date"
+                value={dreamBrowseDate}
+                onChange={(event) => handleDreamBrowse(event.target.value)}
+                className="h-[26px] rounded-[var(--shape-radius-sm)] border px-2 text-xs dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
+              />
+            </label>
+          </div>
         </div>
-        <label className="flex shrink-0 items-center gap-1 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
-          <span>{i18nService.t('dreamDiaryBrowseLabel')}</span>
-          <input
-            type="date"
-            value={dreamBrowseDate}
-            onChange={(event) => handleDreamBrowse(event.target.value)}
-            className="h-[26px] rounded-[var(--shape-radius-sm)] border px-2 text-xs dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
-          />
-        </label>
-      </div>
-      <div className="max-h-[520px] overflow-auto rounded-lg border dark:border-claude-darkBorder border-claude-border">
+        <div className="max-h-[520px] overflow-auto">
         {dreamLoading ? (
           <div className="px-3 py-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">{i18nService.t('loading')}</div>
         ) : dreamEntries.length === 0 ? (
@@ -1617,6 +1619,20 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                 </div>
               );
             })}
+          </div>
+        )}
+        </div>
+        {!dreamBrowseDate && dreamEntries.length > DREAM_RECENT_COUNT && (
+          <div className="px-3 py-2 border-t dark:border-claude-darkBorder border-claude-border">
+            <button
+              type="button"
+              onClick={() => setDreamShowAll((prev) => !prev)}
+              className="rounded-[var(--shape-radius-sm)] border px-2 py-1 text-[11px] dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+            >
+              {dreamShowAll
+                ? i18nService.t('dreamDiaryShowLess')
+                : i18nService.t('dreamDiaryShowEarlier').replace('{count}', String(dreamEntries.length - DREAM_RECENT_COUNT))}
+            </button>
           </div>
         )}
       </div>
