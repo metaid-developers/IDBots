@@ -315,7 +315,7 @@ test('surface session-name slot: read-only default, inline editor, empty commit 
   // their text identically.
   assert.equal((componentSource.match(/min-w-0 flex-none/g) ?? []).length, 3, 'title lane on all three mounts (read-only + editor + draft spacer)');
   assert.equal((componentSource.match(/w-full min-w-0 flex-none/g) ?? []).length, 3, 'the lane is full-width on every mount');
-  assert.equal((componentSource.match(/text-center/g) ?? []).length, 2, 'both interactive mounts center the title');
+  assert.equal((componentSource.match(/text-left/g) ?? []).length, 2, 'both interactive mounts left-anchor the title');
   assert.match(componentSource, /text-base font-semibold/);
   assert.match(componentSource, /text-claude-text dark:text-claude-darkText/);
   // Owner 18:54 frameless-editor order: the inline editor carries NO box —
