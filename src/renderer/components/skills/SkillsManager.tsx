@@ -29,6 +29,8 @@ interface SkillsManagerProps {
   activeTab?: SkillsTab;
   hideTabBar?: boolean;
   onTabChange?: (tab: SkillsTab) => void;
+  /** Rendered at the right end of the tab bar row, above the divider. */
+  tabBarTrailing?: React.ReactNode;
 }
 
 const SkillsManager: React.FC<SkillsManagerProps> = ({
@@ -36,6 +38,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
   activeTab,
   hideTabBar = false,
   onTabChange,
+  tabBarTrailing,
 }) => {
   const dispatch = useDispatch();
   const skills = useSelector((state: RootState) => state.skill.skills);
@@ -478,7 +481,8 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
   return (
     <div className="space-y-4">
       {!hideTabBar && (
-        <div className="flex items-center gap-2 border-b dark:border-claude-darkBorder border-claude-border -mx-1 px-1">
+        <div className="flex items-center justify-between gap-2 border-b dark:border-claude-darkBorder border-claude-border -mx-1 px-1">
+          <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={() => setCurrentTab('local')}
@@ -512,6 +516,8 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
           >
             {i18nService.t('communitySkills')}
           </button>
+          </div>
+          {tabBarTrailing}
         </div>
       )}
 

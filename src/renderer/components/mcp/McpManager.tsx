@@ -30,6 +30,8 @@ interface McpManagerProps {
   hideTabBar?: boolean;
   hideSearch?: boolean;
   onTabChange?: (tab: McpTab) => void;
+  /** Rendered at the right end of the tab bar row, above the divider. */
+  tabBarTrailing?: React.ReactNode;
 }
 
 const McpManager: React.FC<McpManagerProps> = ({
@@ -37,6 +39,7 @@ const McpManager: React.FC<McpManagerProps> = ({
   hideTabBar = false,
   hideSearch = false,
   onTabChange,
+  tabBarTrailing,
 }) => {
   const dispatch = useDispatch();
   const servers = useSelector((state: RootState) => state.mcp.servers);
@@ -299,6 +302,7 @@ const McpManager: React.FC<McpManagerProps> = ({
               />
             </div>
           )}
+          {tabBarTrailing}
         </div>
       )}
 
