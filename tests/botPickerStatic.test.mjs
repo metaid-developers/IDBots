@@ -48,8 +48,14 @@ test('the Studio header rests at identity height and previews the title on hover
   const headerStart = sidebarSource.indexOf('data-slot="studio-task-header"');
   const headerTagEnd = sidebarSource.indexOf('>', headerStart);
   const headerTag = sidebarSource.slice(headerStart, headerTagEnd);
-  assert.match(headerTag, /showStudioTitle \? 'h-16' : 'h-9'/);
-  assert.match(headerTag, /transition-\[height\]/);
+  // The title lane is its own element under the task header (grace-collapse
+  // rework): the height transition lives on studio-title-preview, not on the
+  // header tag itself.
+  const previewStart = sidebarSource.indexOf('data-slot="studio-title-preview"');
+  const previewTag = sidebarSource.slice(previewStart, sidebarSource.indexOf('>', previewStart));
+  assert.match(previewTag, /showStudioTitle \? 'h-9' : 'h-0'/);
+  assert.match(previewTag, /transition-\[height\]/);
+  assert.ok(previewStart > headerStart, 'the title lane sits inside the task header');
 
   const headerSpan = sidebarSource.slice(
     headerStart,
@@ -59,15 +65,17 @@ test('the Studio header rests at identity height and previews the title on hover
   const nameAt = headerSpan.indexOf('<CoworkSurfaceSessionName');
   const newAt = headerSpan.indexOf('data-slot="cowork-new-session"');
   assert.ok(anchorAt !== -1, 'identity anchor present');
-  assert.ok(nameAt > anchorAt, 'session title sits below the left-anchored identity (left-anchor order 2026-11-15)');
+  assert.ok(nameAt > anchorAt, 'session title sits below the centered identity');
   assert.ok(newAt > nameAt, 'session actions remain in the same header');
   assert.match(headerSpan, /onMouseEnter/);
   assert.match(headerSpan, /onMouseLeave/);
   assert.match(headerSpan, /onFocus/);
   assert.match(headerSpan, /onBlur/);
   assert.match(headerSpan, /aria-hidden=\{!showStudioTitle\}/);
-  assert.match(headerSpan, /invisible pointer-events-none/);
-  assert.match(headerSpan, /absolute right-0 top-0/);
+  // The lane hides by collapsing its height (overflow-hidden + h-9/h-0 on
+  // studio-title-preview), not by an invisible overlay layer.
+  assert.match(previewTag, /overflow-hidden/);
+  assert.doesNotMatch(headerSpan, /invisible pointer-events-none/);
   assert.match(sidebarSource, /identityRowEl\.addEventListener\('mouseenter', openPreview\)/);
   assert.match(sidebarSource, /headerEl\.addEventListener\('mouseleave', closePreviewOnLeave\)/);
   assert.match(sidebarSource, /nextTarget && event\.currentTarget\.contains\(nextTarget\)/);
