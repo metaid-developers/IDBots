@@ -3892,7 +3892,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
               so the close button drifted when switching to 积分&流量. Fixed
               h-16 pins the close button on every tab. OWNER 17:09: the
               edge-hugging divider was noise — removed. */}
-          <div className="flex justify-between items-center px-6 h-16 shrink-0">
+          <div className="flex justify-between items-end px-6 pb-1.5 h-16 shrink-0">
             {/* Credits & traffic view: the segmented 积分|流量 pair replaces the
                 text heading (owner 2026-11-15 16:31) — the buttons ARE the page
                 title; other tabs keep the plain h3 label. */}
