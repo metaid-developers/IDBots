@@ -75,8 +75,8 @@ test('render: default state is a read-only button showing the display title', ()
   );
   assert.match(markup, /data-slot="cowork-surface-session-name"/);
   assert.match(markup, /抓周/);
-  assert.match(markup, /ml-1 inline-flex .* rounded-full border .* text-sm font-medium/);
-  assert.match(markup, /ml-1 inline-flex .* items-center gap-\[6px\] rounded-full border .* pl-\[6px\] pr-\[12px\] text-left/);
+  assert.match(markup, /flex h-9 min-w-0 max-w-full flex-none items-center gap-2 rounded-lg px-1 text-left text-sm font-medium/);
+  assert.match(markup, /group flex h-9 w-full min-w-0 items-center gap-2 rounded-lg px-1 text-left text-sm font-medium/);
   assert.match(markup, /text-sm font-medium/);
   assert.doesNotMatch(markup, /text-center/);
   assert.match(markup, /data-slot="cowork-surface-session-name-icon"/);
@@ -108,14 +108,14 @@ test('session-name icon: square bubble inside circular-frame pill rides the titl
   // Mon design pins: 14 px square, secondary text color (dark twin), 6 px
   // gap, vertical centering rides the row's items-center, hover deepens via
   // the button's group without touching the title's interaction.
-  assert.match(markup, /w-\[1em\] h-\[1em\]/);
+  assert.match(markup, /h-4 w-4 shrink-0/);
   assert.match(markup, /text-claude-textSecondary/);
   assert.match(markup, /dark:text-claude-darkTextSecondary/);
-  assert.match(markup, /gap-\[6px\]/);
+  assert.match(markup, /gap-2/);
   assert.match(markup, /group-hover:text-claude-text/);
   assert.match(markup, /aria-hidden="true"/);
-  // Pill bubble (owner 10:51): label state rides the left-aligned capsule.
-  assert.match(markup, /ml-1 inline-flex/);
+  // Title lane (owner 10:56): spans the tray width like the switcher.
+  assert.match(markup, /group flex h-9 w-full min-w-0 items-center/);
   // Owner 09:51 same-scale ruling: title typography = badge name typography
   // (text-sm font-medium leading-none — read from CoworkSurfaceIdentityBadge).
   assert.match(markup, /text-sm font-medium leading-none/);
@@ -145,7 +145,7 @@ test('render: draft state preserves the title row with a non-interactive spacer'
     }),
   );
   assert.match(markup, /data-slot="cowork-surface-session-name-spacer"/);
-  assert.match(markup, /ml-1 inline-flex .* rounded-full border .* text-sm font-medium/);
+  assert.match(markup, /flex h-9 min-w-0 max-w-full flex-none items-center gap-2 rounded-lg px-1 text-left text-sm font-medium/);
   assert.doesNotMatch(markup, /data-slot="cowork-surface-session-name"/);
   assert.doesNotMatch(markup, /<input/);
   assert.doesNotMatch(markup, /<button/);
