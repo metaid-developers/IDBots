@@ -1270,7 +1270,7 @@ const UserSettings: React.FC = () => {
               type="button"
               onClick={() => { void handleChainBackup(); }}
               disabled={chainBackupRunning || chainBackupRestoring}
-              className="btn-idchat-primary-filled text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+              className="btn-idchat-primary-filled inline-flex h-9 items-center justify-center gap-1.5 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <ArrowPathIcon className={`h-3.5 w-3.5 mr-1.5 inline ${chainBackupRunning ? 'animate-spin' : ''}`} />
               {chainBackupRunning
@@ -1283,7 +1283,7 @@ const UserSettings: React.FC = () => {
               type="button"
               onClick={() => { void handleChainRestore(); }}
               disabled={chainBackupRunning || chainBackupRestoring}
-              className="inline-flex items-center px-4 py-2 text-xs font-medium justify-center rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-[var(--shape-radius-lg)] px-4 text-xs font-medium border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <ArrowPathIcon className={`h-3.5 w-3.5 mr-1.5 inline ${chainBackupRestoring ? 'animate-spin' : ''}`} />
               {chainBackupRestoring ? i18nService.t('userSettingsChainBackupRestoreRunning') : i18nService.t('userSettingsChainBackupRestoreButton')}
