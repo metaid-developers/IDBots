@@ -75,7 +75,7 @@ test('render: default state is a read-only button showing the display title', ()
   );
   assert.match(markup, /data-slot="cowork-surface-session-name"/);
   assert.match(markup, /抓周/);
-  assert.match(markup, /flex h-9 min-w-0 max-w-full flex-none items-center gap-2 rounded-lg px-1 text-left text-sm font-medium/);
+  assert.match(markup, /flex h-9 w-full min-w-0 items-center gap-2 rounded-lg px-1 text-left text-sm font-medium/);
   assert.match(markup, /group flex h-9 w-full min-w-0 items-center gap-2 rounded-lg px-1 text-left text-sm font-medium/);
   assert.match(markup, /text-sm font-medium/);
   assert.doesNotMatch(markup, /text-center/);
@@ -145,7 +145,7 @@ test('render: draft state preserves the title row with a non-interactive spacer'
     }),
   );
   assert.match(markup, /data-slot="cowork-surface-session-name-spacer"/);
-  assert.match(markup, /flex h-9 min-w-0 max-w-full flex-none items-center gap-2 rounded-lg px-1 text-left text-sm font-medium/);
+  assert.match(markup, /flex h-9 w-full min-w-0 items-center gap-2 rounded-lg px-1 text-left text-sm font-medium/);
   assert.doesNotMatch(markup, /data-slot="cowork-surface-session-name"/);
   assert.doesNotMatch(markup, /<input/);
   assert.doesNotMatch(markup, /<button/);
