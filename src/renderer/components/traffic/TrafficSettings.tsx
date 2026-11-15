@@ -40,6 +40,7 @@ import {
   ensureMeSnapshot,
   getMeSnapshot,
   isMeEffectivelySubscribed,
+  requestMeBalance,
   requestOpenMePurchase,
   subscribeMeSnapshot,
 } from '../me/mePointsStore';
@@ -327,8 +328,8 @@ const LedgerTxIdBadge: React.FC<{ txId: string }> = ({ txId }) => {
 const cardClass = 'rounded-xl dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted px-4 py-3';
 const labelClass = 'block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary';
 const hintClass = 'text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary';
-const primaryButtonClass = 'inline-flex items-center justify-center px-3 py-2 text-sm rounded-[var(--shape-radius-md)] border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] disabled:opacity-50 disabled:cursor-not-allowed';
-const ghostButtonClass = 'inline-flex items-center justify-center px-3 py-2 text-sm rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
+const primaryButtonClass = 'px-3 py-2 text-sm rounded-[var(--rounded)] border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] disabled:opacity-50 disabled:cursor-not-allowed';
+const ghostButtonClass = 'px-3 py-2 text-sm rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
 
 const OverlayPanel: React.FC<{ children: React.ReactNode; onDismiss: () => void; widthClass?: string }> = ({
   children,
@@ -437,6 +438,7 @@ const TrafficSettings: React.FC = () => {
   const [ledgerError, setLedgerError] = useState('');
   // ME credits billing (requirements v1.0): null until the first status read.
   const [meBilling, setMeBilling] = useState<TrafficMeBillingStatusInfo | null>(null);
+  const [meBillingRefreshing, setMeBillingRefreshing] = useState(false);
   const [orders, setOrders] = useState<TrafficSponsorOrderInfo[]>([]);
   const [ordersCursor, setOrdersCursor] = useState('');
   const [ordersLoading, setOrdersLoading] = useState(false);
@@ -632,6 +634,15 @@ const TrafficSettings: React.FC = () => {
     setMeBilling(status);
     return status.trafficBilling;
   }, [trafficApi]);
+
+  const refreshCredits = useCallback(async () => {
+    setMeBillingRefreshing(true);
+    try {
+      await Promise.all([refreshMeBilling(true), requestMeBalance({ forceRefresh: true })]);
+    } finally {
+      setMeBillingRefreshing(false);
+    }
+  }, [refreshMeBilling]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1195,17 +1206,13 @@ const TrafficSettings: React.FC = () => {
         </div>
       ) : (
       <div>
-        <h4 className="text-sm font-medium dark:text-claude-darkText text-claude-text mb-2">
+        <h4 className="text-sm font-medium dark:text-claude-darkText text-claude-text mb-1">
           {i18nService.t('trafficModeTitle')}
         </h4>
         <p className={`${hintClass} mb-3`}>
           {i18nService.t('trafficModeDesc')}
         </p>
-        {/* Joined segmented tray (owner 2026-11-15 16:23): same language as
-            the 积分|流量 pair and the Studio|BotWorks switcher — 1px tray
-            border, overflow-hidden, selected face is a flat accent rectangle
-            with ink text; no inset padding, no nested radii. */}
-        <div className="inline-flex h-8 min-w-0 overflow-hidden rounded-[var(--shape-radius-md)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80">
+        <div className="inline-flex rounded-lg border dark:border-claude-darkBorder border-claude-border p-0.5">
           {([
             { value: 'traffic' as const, title: i18nService.t('trafficModeTrafficTitle') },
             { value: 'selfpay' as const, title: i18nService.t('trafficModeSelfpayTitle') },
@@ -1217,10 +1224,10 @@ const TrafficSettings: React.FC = () => {
                 type="button"
                 disabled={settingsSaving || !settings}
                 onClick={() => handleSelectMode(option.value)}
-                className={`flex h-full min-w-[88px] items-center justify-center px-4 text-xs font-medium leading-none transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
+                className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
                   selected
                     ? 'bg-claude-accent text-claude-accentInk'
-                    : 'text-claude-textSecondary hover:bg-claude-surfaceHover/70 hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover/70 dark:hover:text-claude-darkText'
+                    : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-text dark:hover:text-claude-darkText'
                 } disabled:opacity-50 disabled:cursor-not-allowed`}
               >
                 {option.title}
@@ -1268,6 +1275,17 @@ const TrafficSettings: React.FC = () => {
           <div className="flex justify-end gap-2">
             <button
               type="button"
+              className={ghostButtonClass}
+              onClick={() => void refreshCredits()}
+              disabled={meBillingRefreshing}
+            >
+              <span className="inline-flex items-center gap-1">
+                <ArrowPathIcon className={`h-4 w-4 ${meBillingRefreshing ? 'animate-spin' : ''}`} />
+                {i18nService.t('trafficCreditsRefresh')}
+              </span>
+            </button>
+            <button
+              type="button"
               className={primaryButtonClass}
               // Credit packs need an active paid plan (SUBSCRIPTION_REQUIRED),
               // so free-tier users land on the plans instead.
@@ -1303,19 +1321,7 @@ const TrafficSettings: React.FC = () => {
               >
                 {balance ? formatTraffic(balance.balanceBytes) : '—'}
               </span>
-              <button
-                type="button"
-                onClick={() => {
-                  refreshBalance(true);
-                  loadCampaign();
-                }}
-                disabled={balanceLoading}
-                aria-label={i18nService.t('trafficRefresh')}
-                title={i18nService.t('trafficRefresh')}
-                className="non-draggable p-1 rounded-[var(--shape-radius-sm)] text-claude-textSecondary hover:text-claude-text hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary dark:hover:text-claude-darkText dark:hover:bg-claude-darkSurfaceHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <ArrowPathIcon className={`h-4 w-4 ${balanceLoading ? 'animate-spin' : ''}`} />
-              </button>
+              {balanceLoading && <ArrowPathIcon className="h-4 w-4 animate-spin dark:text-claude-darkTextSecondary text-claude-textSecondary" />}
             </div>
             {balance && (
               <p className={`${hintClass} mt-1`}>
@@ -1325,8 +1331,19 @@ const TrafficSettings: React.FC = () => {
               </p>
             )}
           </div>
-          <div className="flex flex-col items-end justify-center gap-1 shrink-0 self-center">
+          <div className="flex flex-col items-end gap-1 shrink-0">
             <div className="flex gap-2">
+              <button
+                type="button"
+                className={ghostButtonClass}
+                onClick={() => {
+                  refreshBalance(true);
+                  loadCampaign();
+                }}
+                disabled={balanceLoading}
+              >
+                {i18nService.t('trafficRefresh')}
+              </button>
               <button
                 type="button"
                 className={ghostButtonClass}

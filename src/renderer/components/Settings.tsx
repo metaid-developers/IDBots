@@ -2766,10 +2766,10 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
         const totalArchivedGroupTaskPages = Math.max(1, Math.ceil(archivedGroupTasksTotal / ARCHIVED_CHATS_PAGE_SIZE));
         const totalArchivedA2AChatPages = Math.max(1, Math.ceil(archivedA2AChatsTotal / ARCHIVED_CHATS_PAGE_SIZE));
         const archivedTabButtonClass = (active: boolean) =>
-          `flex h-full min-w-0 items-center justify-center px-3 text-xs font-medium leading-none transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
+          `rounded-lg border px-3 py-1.5 text-xs transition-colors ${
             active
-              ? 'bg-claude-accent text-claude-accentInk'
-              : 'text-claude-textSecondary hover:bg-claude-surfaceHover/70 hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover/70 dark:hover:text-claude-darkText'
+              ? 'border-claude-accent bg-claude-accent/5 dark:bg-claude-accent/10 text-claude-accent dark:text-claude-darkAccent'
+              : 'dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
           }`;
         return (
           <div className="space-y-6">
@@ -2783,7 +2783,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                 </div>
               </div>
 
-              <div className="inline-flex h-8 min-w-0 items-center overflow-hidden rounded-[var(--shape-radius-md)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80">
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setArchivedSubTab('chats')}
@@ -3836,6 +3836,22 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
         // and the on-chain traffic quota page, restored verbatim.
         return (
           <div>
+            <div className="flex items-center gap-1 pb-4">
+              {(['credits', 'traffic'] as const).map((sub) => (
+                <button
+                  key={sub}
+                  type="button"
+                  onClick={() => setCreditsSubTab(sub)}
+                  className={`rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+                    creditsSubTab === sub
+                      ? 'border-claude-accent text-claude-accent dark:text-claude-darkAccent bg-claude-accent/5'
+                      : 'border-claude-border dark:border-claude-darkBorder text-claude-text dark:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
+                  }`}
+                >
+                  {i18nService.t(sub === 'credits' ? 'usageCreditsSubTabCredits' : 'usageCreditsSubTabTraffic')}
+                </button>
+              ))}
+            </div>
             {creditsSubTab === 'credits' ? <MeUsageAndCredits /> : <TrafficSettings />}
           </div>
         );
@@ -3887,35 +3903,8 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
         {/* Right content */}
         <div className="relative flex-1 flex flex-col min-w-0 overflow-hidden dark:bg-claude-darkBg bg-claude-bg rounded-r-2xl">
           {/* Content header */}
-          {/* Fixed-height header band (owner 2026-11-15 17:00): the tray tab
-              and the text-h3 tabs previously produced different row heights,
-              so the close button drifted when switching to 积分&流量. Fixed
-              h-16 pins the close button on every tab. OWNER 17:09: the
-              edge-hugging divider was noise — removed. */}
-          <div className="flex justify-between items-center px-6 h-16 shrink-0">
-            {/* Credits & traffic view: the segmented 积分|流量 pair replaces the
-                text heading (owner 2026-11-15 16:31) — the buttons ARE the page
-                title; other tabs keep the plain h3 label. */}
-            {activeTab === 'traffic' ? (
-              <div className="inline-flex h-9 min-w-0 self-end mb-1.5 overflow-hidden rounded-[var(--shape-radius-md)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80">
-                {(['credits', 'traffic'] as const).map((sub) => (
-                  <button
-                    key={sub}
-                    type="button"
-                    onClick={() => setCreditsSubTab(sub)}
-                    className={`flex h-full min-w-[96px] items-center justify-center px-4 text-sm font-medium leading-none transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
-                      creditsSubTab === sub
-                        ? 'bg-claude-accent text-claude-accentInk'
-                        : 'text-claude-textSecondary hover:bg-claude-surfaceHover/70 hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover/70 dark:hover:text-claude-darkText'
-                    }`}
-                  >
-                    {i18nService.t(sub === 'credits' ? 'usageCreditsSubTabCredits' : 'usageCreditsSubTabTraffic')}
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <h3 className="text-lg font-semibold dark:text-claude-darkText text-claude-text">{activeTabLabel}</h3>
-            )}
+          <div className="flex justify-between items-center px-6 pt-5 pb-3 shrink-0">
+            <h3 className="text-lg font-semibold dark:text-claude-darkText text-claude-text">{activeTabLabel}</h3>
             <button
               onClick={onClose}
               className="dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:text-claude-darkText hover:text-claude-text p-1.5 dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-lg transition-colors"
@@ -3946,7 +3935,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
             {/* Tab content */}
             <div
               ref={contentRef}
-              className="px-6 pb-4 flex-1 overflow-y-auto"
+              className="px-6 py-4 flex-1 overflow-y-auto"
             >
               <Suspense
                 fallback={
@@ -4110,7 +4099,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                   <button
                     type="button"
                     onClick={handleSaveNewModel}
-                    className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] inline-flex items-center justify-center rounded-[var(--shape-radius-sm)] px-3 py-1.5 text-xs"
+                    className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] rounded-[var(--rounded)] px-3 py-1.5 text-xs"
                   >
                     {i18nService.t('save')}
                   </button>

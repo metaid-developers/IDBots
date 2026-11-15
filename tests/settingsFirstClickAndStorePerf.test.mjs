@@ -21,7 +21,7 @@ test('macOS BrowserWindow enables acceptFirstMouse so unfocused first clicks act
   );
   assert.match(
     mainSource,
-    /if \(isMac\) \{[\s\S]*?const hideNativeLights[\s\S]*?setWindowButtonVisibility\(false\);/,
+    /if \(isMac && typeof win\.setWindowButtonVisibility === 'function'\)\s*\{\s*win\.setWindowButtonVisibility\(false\);\s*\}/,
   );
 });
 

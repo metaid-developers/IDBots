@@ -585,7 +585,7 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-sm font-medium inline-flex items-center justify-center rounded-[var(--shape-radius-md)] border border-claude-border dark:border-claude-darkBorder dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+              className="px-4 py-2 text-sm font-medium rounded-[var(--rounded)] border border-claude-border dark:border-claude-darkBorder dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
               disabled={isFormDisabled}
             >
               {i18nService.t('cancel')}
