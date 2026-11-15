@@ -327,8 +327,8 @@ const LedgerTxIdBadge: React.FC<{ txId: string }> = ({ txId }) => {
 const cardClass = 'rounded-xl dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted px-4 py-3';
 const labelClass = 'block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary';
 const hintClass = 'text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary';
-const primaryButtonClass = 'px-3 py-2 text-sm rounded-[var(--shape-radius-md)] border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] disabled:opacity-50 disabled:cursor-not-allowed';
-const ghostButtonClass = 'px-3 py-2 text-sm rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
+const primaryButtonClass = 'inline-flex items-center justify-center px-3 py-2 text-sm rounded-[var(--shape-radius-md)] border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] disabled:opacity-50 disabled:cursor-not-allowed';
+const ghostButtonClass = 'inline-flex items-center justify-center px-3 py-2 text-sm rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
 
 const OverlayPanel: React.FC<{ children: React.ReactNode; onDismiss: () => void; widthClass?: string }> = ({
   children,
