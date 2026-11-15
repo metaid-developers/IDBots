@@ -285,7 +285,7 @@ test('surface session-name slot: read-only default, inline editor, empty commit 
     componentSource,
     /d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/,
   );
-  assert.match(componentSource, /h-\[14px\] w-\[14px\]/);
+  assert.match(componentSource, /w-\[1em\] h-\[1em\]/);
   assert.match(componentSource, /gap-\[6px\]/);
   assert.match(componentSource, /text-claude-textSecondary/);
   assert.match(componentSource, /dark:text-claude-darkTextSecondary/);
@@ -301,7 +301,7 @@ test('surface session-name slot: read-only default, inline editor, empty commit 
   // pl, because the centered row only delivers Δ/2 under a pl change; all
   // THREE mount states carry the same shift so label / editor / spacer
   // never jump.
-  assert.match(componentSource, /translate-x-\[6px\]/);
+  assert.match(componentSource, /mx-\[41\.25px\]/);
   assert.equal(componentSource.split('translate-x-[6px]').length - 1, 3, 'label + editor + spacer all shifted');
   // Draft state (no open session) — superseded by the owner 18:54
   // left-anchor order: the slot renders a non-interactive spacer (same
@@ -326,8 +326,7 @@ test('surface session-name slot: read-only default, inline editor, empty commit 
   // same lane classes (h-6 w-full min-w-0 flex-none), so the row's geometry
   // holds across every state swap; the two interactive mounts are
   // LEFT-anchored (owner left-align ruling 2026-11-15, superseding center).
-  assert.equal((componentSource.match(/min-w-0 flex-none/g) ?? []).length, 3, 'title lane on all three mounts (read-only + editor + draft spacer)');
-  assert.equal((componentSource.match(/w-full min-w-0 flex-none/g) ?? []).length, 3, 'the lane is full-width on every mount');
+  assert.equal((componentSource.match(/min-w-0 flex-none mx-\[41\.25px\] w-\[calc\(100%-82\.5px\)\]/g) ?? []).length, 3, 'title lane on all three mounts (read-only + editor + draft spacer) — symmetric 41.25px insets, calc width (owner 2026-11-15 10:09)');
   assert.equal((componentSource.match(/text-left/g) ?? []).length, 2, 'both interactive mounts left-anchor the title');
   // Owner 09:51 visual-hierarchy ruling: the title's scale/weight/style must
   // EXACTLY match the identity badge's display name (text-sm font-medium

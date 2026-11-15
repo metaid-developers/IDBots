@@ -76,7 +76,7 @@ test('render: default state is a read-only button showing the display title', ()
   assert.match(markup, /data-slot="cowork-surface-session-name"/);
   assert.match(markup, /抓周/);
   assert.match(markup, /h-6 w-full/);
-  assert.match(markup, /items-center rounded-lg gap-\[6px\] pl-1 pr-4 text-left/);
+  assert.match(markup, /items-center rounded-lg gap-\[6px\] mx-\[41\.25px\] pl-0 text-left/);
   assert.match(markup, /text-sm font-medium/);
   assert.doesNotMatch(markup, /text-center/);
   assert.match(markup, /data-slot="cowork-surface-session-name-icon"/);
@@ -108,14 +108,14 @@ test('session-name icon: MessageSquare replica rides the title row (owner icon r
   // Mon design pins: 14 px square, secondary text color (dark twin), 6 px
   // gap, vertical centering rides the row's items-center, hover deepens via
   // the button's group without touching the title's interaction.
-  assert.match(markup, /h-\[14px\] w-\[14px\]/);
+  assert.match(markup, /w-\[1em\] h-\[1em\]/);
   assert.match(markup, /text-claude-textSecondary/);
   assert.match(markup, /dark:text-claude-darkTextSecondary/);
   assert.match(markup, /gap-\[6px\]/);
   assert.match(markup, /group-hover:text-claude-text/);
   assert.match(markup, /aria-hidden="true"/);
   // Stagger shift (owner 09:34): the label state rides translate-x-[6px].
-  assert.match(markup, /translate-x-\[6px\]/);
+  assert.match(markup, /mx-\[41\.25px\]/);
   // Owner 09:51 same-scale ruling: title typography = badge name typography
   // (text-sm font-medium leading-none — read from CoworkSurfaceIdentityBadge).
   assert.match(markup, /text-sm font-medium leading-none/);
