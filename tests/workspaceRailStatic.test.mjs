@@ -286,7 +286,7 @@ test('surface session-name slot: read-only default, inline editor, empty commit 
     /d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/,
   );
   assert.match(componentSource, /h-4 w-4 shrink-0/);
-  assert.match(componentSource, /gap-\[6px\]/);
+  assert.match(componentSource, /gap-2/);
   assert.match(componentSource, /text-claude-textSecondary/);
   assert.match(componentSource, /dark:text-claude-darkTextSecondary/);
   assert.doesNotMatch(componentSource, /from 'lucide-react'/);
