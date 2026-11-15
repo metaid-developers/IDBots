@@ -75,15 +75,15 @@ test('render: default state is a read-only button showing the display title', ()
   );
   assert.match(markup, /data-slot="cowork-surface-session-name"/);
   assert.match(markup, /抓周/);
-  assert.match(markup, /h-6 min-w-0 flex-none mx-\[41\.25px\] w-\[calc\(100%-82\.5px\)\]/);
-  assert.match(markup, /items-center rounded-lg gap-\[6px\] pl-0 pr-0 text-left/);
+  assert.match(markup, /ml-1 inline-flex .* rounded-full border .* text-sm font-medium/);
+  assert.match(markup, /ml-1 inline-flex .* items-center gap-\[6px\] rounded-full border .* pl-\[6px\] pr-\[12px\] text-left/);
   assert.match(markup, /text-sm font-medium/);
   assert.doesNotMatch(markup, /text-center/);
   assert.match(markup, /data-slot="cowork-surface-session-name-icon"/);
   assert.doesNotMatch(markup, /<input/);
 });
 
-test('session-name icon: round MessageCircle replica rides the title row (owner icon ruling 2026-11-15 10:48, echoes twin avatar circle)', () => {
+test('session-name icon: square bubble inside circular-frame pill rides the title row (owner rulings 10:48 circle frame → 10:51 elongated pill, left-aligned)', () => {
   const markup = renderToStaticMarkup(
     React.createElement(CoworkSurfaceSessionName, {
       sessionId: 'sess-1',
@@ -99,11 +99,11 @@ test('session-name icon: round MessageCircle replica rides the title row (owner 
   const titleAt = markup.indexOf('>抓周</span>');
   assert.ok(iconAt > 0, 'icon rendered');
   assert.ok(titleAt > iconAt, 'icon precedes the title text');
-  // lucide `MessageCircle` path, verbatim (ROUND bubble — echoes the twin
+  // lucide `MessageSquare` path, verbatim (square bubble — the pill frame
   // NOT a double-bubble variant).
   assert.match(
     markup,
-    /d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/,
+    /d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/,
   );
   // Mon design pins: 14 px square, secondary text color (dark twin), 6 px
   // gap, vertical centering rides the row's items-center, hover deepens via
@@ -145,7 +145,7 @@ test('render: draft state preserves the title row with a non-interactive spacer'
     }),
   );
   assert.match(markup, /data-slot="cowork-surface-session-name-spacer"/);
-  assert.match(markup, /h-6 min-w-0 flex-none mx-\[41\.25px\] w-\[calc\(100%-82\.5px\)\]/);
+  assert.match(markup, /ml-1 inline-flex .* rounded-full border .* text-sm font-medium/);
   assert.doesNotMatch(markup, /data-slot="cowork-surface-session-name"/);
   assert.doesNotMatch(markup, /<input/);
   assert.doesNotMatch(markup, /<button/);

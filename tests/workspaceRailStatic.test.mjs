@@ -274,7 +274,7 @@ test('surface session-name slot: read-only default, inline editor, empty commit 
   assert.match(componentSource, /const applyRenaming = \(next: boolean\) => \{/);
   assert.match(componentSource, /const applyRenaming = \(next: boolean\) => \{/);
   assert.equal(componentSource.split('applyRenaming(').length - 1, 3, 'exactly the three transition call sites');
-  // Owner icon ruling 2026-11-15 09:03: a MessageSquare chat-bubble prefix
+  // Owner icon rulings 09:03→10:51: square MessageSquare bubble inside an elongated pill frame, left-aligned
   // rides the title row — an INLINE lucide replica (14 px, secondary color,
   // 6 px gap, group-hover deepen), NOT a new dependency: lucide-react is not
   // in package.json and the worktree's node_modules symlinks into the main
@@ -301,7 +301,7 @@ test('surface session-name slot: read-only default, inline editor, empty commit 
   // pl, because the centered row only delivers Δ/2 under a pl change; all
   // THREE mount states carry the same shift so label / editor / spacer
   // never jump.
-  assert.match(componentSource, /mx-\[41\.25px\]/);
+  assert.match(componentSource, /ml-1 inline-flex/);
   assert.equal(componentSource.split('translate-x-[6px]').length - 1, 0, 'stagger translate retired (superseded by symmetric insets, owner 2026-11-15 10:09)');
   // Draft state (no open session) — superseded by the owner 18:54
   // left-anchor order: the slot renders a non-interactive spacer (same
@@ -326,7 +326,7 @@ test('surface session-name slot: read-only default, inline editor, empty commit 
   // same lane classes (h-6 w-full min-w-0 flex-none), so the row's geometry
   // holds across every state swap; the two interactive mounts are
   // LEFT-anchored (owner left-align ruling 2026-11-15, superseding center).
-  assert.equal((componentSource.match(/min-w-0 flex-none mx-\[41\.25px\] w-\[calc\(100%-82\.5px\)\]/g) ?? []).length, 3, 'title lane on all three mounts (read-only + editor + draft spacer) — symmetric 41.25px insets, calc width (owner 2026-11-15 10:09)');
+  assert.equal((componentSource.match(/ml-1 inline-flex/g) ?? []).length, 1, 'title pill left-aligned (owner 2026-11-15 10:51) — read-only mount carries the capsule');
   assert.equal((componentSource.match(/text-left/g) ?? []).length, 2, 'both interactive mounts left-anchor the title');
   // Owner 09:51 visual-hierarchy ruling: the title's scale/weight/style must
   // EXACTLY match the identity badge's display name (text-sm font-medium
