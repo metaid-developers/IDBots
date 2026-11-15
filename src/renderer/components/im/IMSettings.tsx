@@ -15,6 +15,7 @@ import { i18nService } from '../../services/i18n';
 import type { IMPlatform, IMConnectivityCheck, IMConnectivityTestResult, IMGatewayConfig, IMChannelPermissionMode } from '../../types/im';
 import type { QQGroupCandidateView } from '../../types/im';
 import { getVisibleIMPlatforms } from '../../utils/regionFilter';
+import ThemedSelect from '../ui/ThemedSelect';
 import MetaBotSelector, { type MetaBotForSelector } from '../cowork/MetaBotSelector';
 import {
   QQ_DAILY_REPLY_LIMIT_DEFAULT,
@@ -362,7 +363,10 @@ const IMSettings: React.FC = () => {
         <label className="block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
           {i18nService.t('imMatchedMetabot')}
         </label>
+        {/* OWNER 03:56: compact — the default large variant (px-5 py-3, text-base,
+            built-in label) doubled up with the label above and dwarfed the row. */}
         <MetaBotSelector
+          compact
           label={i18nService.t('imMatchedMetabot')}
           metabots={metabotOptions}
           selectedId={selectedMetabotId ?? null}
@@ -1201,13 +1205,15 @@ const IMSettings: React.FC = () => {
               <label className="block text-xs font-medium dark:text-claude-darkText text-claude-text">
                 {i18nService.t('weixinPermissionModeLabel')}
               </label>
-              <select
+              {/* OWNER 03:56: native select popup breaks the design language. */}
+              <ThemedSelect
+                id="weixin-permission-mode"
                 value={config.settings.channelPermissions?.weixinPermissionMode ?? 'inherit'}
-                onChange={(e) => {
+                onChange={(value) => {
                   dispatch(setIMSettings({
                     channelPermissions: {
                       ...config.settings.channelPermissions,
-                      weixinPermissionMode: e.target.value as IMChannelPermissionMode,
+                      weixinPermissionMode: value as IMChannelPermissionMode,
                     },
                   }));
                   void imService.updateConfig(store.getState().im.config).then((saved) => {
@@ -1217,14 +1223,14 @@ const IMSettings: React.FC = () => {
                     if (saved) void coworkService.refreshImSessionPermissionMode();
                   });
                 }}
-                className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors"
-              >
-                <option value="inherit">{i18nService.t('imPermissionModeInherit')}</option>
-                <option value="default">{i18nService.t('imPermissionModeDefault')}</option>
-                <option value="plan">{i18nService.t('imPermissionModePlan')}</option>
-                <option value="acceptEdits">{i18nService.t('imPermissionModeAcceptEdits')}</option>
-                <option value="bypassPermissions">{i18nService.t('imPermissionModeBypass')}</option>
-              </select>
+                options={[
+                  { value: 'inherit', label: i18nService.t('imPermissionModeInherit') },
+                  { value: 'default', label: i18nService.t('imPermissionModeDefault') },
+                  { value: 'plan', label: i18nService.t('imPermissionModePlan') },
+                  { value: 'acceptEdits', label: i18nService.t('imPermissionModeAcceptEdits') },
+                  { value: 'bypassPermissions', label: i18nService.t('imPermissionModeBypass') },
+                ]}
+              />
               <p className="text-[11px] leading-4 text-claude-textSecondary dark:text-claude-darkTextSecondary">
                 {i18nService.t('weixinPermissionModeHint')}
               </p>
@@ -1362,18 +1368,18 @@ const IMSettings: React.FC = () => {
               <label className="block text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
                 {i18nService.t('qqGroupPolicyLabel')}
               </label>
-              <select
+              <ThemedSelect
+                id="qq-group-policy"
                 value={config.qq.groupPolicy ?? 'allowlist'}
-                onChange={(e) => {
-                  const value = e.target.value as 'open' | 'allowlist' | 'disabled';
-                  void saveQQSecurity({ groupPolicy: value });
+                onChange={(value) => {
+                  void saveQQSecurity({ groupPolicy: value as 'open' | 'allowlist' | 'disabled' });
                 }}
-                className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm"
-              >
-                <option value="allowlist">{i18nService.t('qqGroupPolicyAllowlist')}</option>
-                <option value="open">{i18nService.t('qqGroupPolicyOpen')}</option>
-                <option value="disabled">{i18nService.t('qqGroupPolicyDisabled')}</option>
-              </select>
+                options={[
+                  { value: 'allowlist', label: i18nService.t('qqGroupPolicyAllowlist') },
+                  { value: 'open', label: i18nService.t('qqGroupPolicyOpen') },
+                  { value: 'disabled', label: i18nService.t('qqGroupPolicyDisabled') },
+                ]}
+              />
 
               {(config.qq.groupPolicy ?? 'allowlist') === 'allowlist' && (
                 <>
