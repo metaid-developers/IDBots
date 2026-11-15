@@ -76,7 +76,7 @@ test('render: default state is a read-only button showing the display title', ()
   assert.match(markup, /data-slot="cowork-surface-session-name"/);
   assert.match(markup, /抓周/);
   assert.match(markup, /flex h-9 w-full min-w-0 items-center gap-2 rounded-lg px-1 text-left text-sm font-medium/);
-  assert.match(markup, /group flex h-9 w-full min-w-0 items-center gap-2 rounded-lg px-1 text-left text-sm font-medium/);
+  assert.match(markup, /mb-2 flex h-9 w-full min-w-0 items-center gap-2 rounded-lg px-1 text-left text-sm font-medium/);
   assert.match(markup, /text-sm font-medium/);
   assert.doesNotMatch(markup, /text-center/);
   assert.match(markup, /data-slot="cowork-surface-session-name-icon"/);
@@ -115,7 +115,7 @@ test('session-name icon: square bubble inside circular-frame pill rides the titl
   assert.match(markup, /group-hover:text-claude-text/);
   assert.match(markup, /aria-hidden="true"/);
   // Title lane (owner 10:56): spans the tray width like the switcher.
-  assert.match(markup, /group flex h-9 w-full min-w-0 items-center/);
+  assert.match(markup, /mb-2 flex h-9 w-full min-w-0 items-center/);
   // Owner 09:51 same-scale ruling: title typography = badge name typography
   // (text-sm font-medium leading-none — read from CoworkSurfaceIdentityBadge).
   assert.match(markup, /text-sm font-medium leading-none/);
