@@ -591,27 +591,42 @@ export class DesktopAxLocator {
 // Tool surface
 // ---------------------------------------------------------------------------
 
+// A FULL JSON Schema, not a property map. The kernel registry passes plugin
+// `parameters` through verbatim onto the provider wire — only `defineTool`
+// compiles the flat spec form, and this tool registers raw — so a flat map
+// reached DeepSeek as `{"action": …}` with no object root and every turn was
+// rejected with 400 upstream_bad_request ("tools.NN.function.parameters must
+// be a JSON Schema of type object", 2026-11-16, deepseek-4.1-flash via the
+// official relay; GLM gateways tolerated it, so only DeepSeek turns died).
+// Same incident class as the 2026-11-11 host-tool guard (hostToolSchemaGuard),
+// which never sees in-process plugin registrations.
 const PARAMETERS = {
-  action: {
-    type: 'string',
-    enum: ['locate', 'click', 'type', 'set-value', 'scroll'],
-    description: 'locate = resolve only; the others act and (with expect_text) verify inside the same process call.',
+  type: 'object',
+  properties: {
+    action: {
+      type: 'string',
+      enum: ['locate', 'click', 'type', 'set-value', 'scroll'],
+      description: 'locate = resolve only; the others act and (with expect_text) verify inside the same process call.',
+    },
+    window_id: { type: 'string', description: 'agent-desktop window id from list_windows (e.g. "w-697046"); preferred over app.' },
+    app: { type: 'string', description: 'Application display name when no window_id is known.' },
+    role: { type: 'string', description: 'AX role to match (button, textfield, statictext, checkbox ...).' },
+    query_text: { type: 'string', description: 'Match name, value, title or description of the target.' },
+    query_name: { type: 'string', description: 'Match the accessible name/label.' },
+    exact: { type: 'boolean', description: 'Require case-insensitive exact matches.' },
+    value: { type: 'string', description: 'Payload for action=type or action=set-value.' },
+    direction: { type: 'string', enum: ['up', 'down', 'left', 'right'], description: 'Scroll direction (default down).' },
+    amount: { type: 'integer', description: 'Scroll wheel notches (default 1).' },
+    expect_role: { type: 'string', description: 'Role of the post-condition element; defaults to statictext.' },
+    expect_text: { type: 'string', description: 'Text that must appear after the action (the read-back proof, e.g. "count=1"). Without it the action is unverified.' },
+    point_x: { type: 'number', description: 'Visual fallback only: window-local X you read off the screenshot.' },
+    point_y: { type: 'number', description: 'Visual fallback only: window-local Y you read off the screenshot.' },
+    timeout_ms: { type: 'integer', description: 'Ref-resolution/actionability budget in ms (default 5000).' },
+    wait_timeout_ms: { type: 'integer', description: 'Post-condition wait budget in ms (default 5000).' },
   },
-  window_id: { type: 'string', description: 'agent-desktop window id from list_windows (e.g. "w-697046"); preferred over app.' },
-  app: { type: 'string', description: 'Application display name when no window_id is known.' },
-  role: { type: 'string', description: 'AX role to match (button, textfield, statictext, checkbox ...).' },
-  query_text: { type: 'string', description: 'Match name, value, title or description of the target.' },
-  query_name: { type: 'string', description: 'Match the accessible name/label.' },
-  exact: { type: 'boolean', description: 'Require case-insensitive exact matches.' },
-  value: { type: 'string', description: 'Payload for action=type or action=set-value.' },
-  direction: { type: 'string', enum: ['up', 'down', 'left', 'right'], description: 'Scroll direction (default down).' },
-  amount: { type: 'integer', description: 'Scroll wheel notches (default 1).' },
-  expect_role: { type: 'string', description: 'Role of the post-condition element; defaults to statictext.' },
-  expect_text: { type: 'string', description: 'Text that must appear after the action (the read-back proof, e.g. "count=1"). Without it the action is unverified.' },
-  point_x: { type: 'number', description: 'Visual fallback only: window-local X you read off the screenshot.' },
-  point_y: { type: 'number', description: 'Visual fallback only: window-local Y you read off the screenshot.' },
-  timeout_ms: { type: 'integer', description: 'Ref-resolution/actionability budget in ms (default 5000).' },
-  wait_timeout_ms: { type: 'integer', description: 'Post-condition wait budget in ms (default 5000).' },
+  // Open on purpose, matching the pre-fix behavior: execution parses
+  // defensively and nothing kernel-side validates raw-registered tool args.
+  additionalProperties: true,
 }
 
 // Kept permissive on purpose: the kernel validates the returned value against
