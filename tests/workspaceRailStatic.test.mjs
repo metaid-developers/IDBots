@@ -302,7 +302,7 @@ test('surface session-name slot: read-only default, inline editor, empty commit 
   // THREE mount states carry the same shift so label / editor / spacer
   // never jump.
   assert.match(componentSource, /mx-\[41\.25px\]/);
-  assert.equal(componentSource.split('translate-x-[6px]').length - 1, 3, 'label + editor + spacer all shifted');
+  assert.equal(componentSource.split('translate-x-[6px]').length - 1, 0, 'stagger translate retired (superseded by symmetric insets, owner 2026-11-15 10:09)');
   // Draft state (no open session) — superseded by the owner 18:54
   // left-anchor order: the slot renders a non-interactive spacer (same
   // flex-1 lane) instead of unmounting, so the identity component ahead of

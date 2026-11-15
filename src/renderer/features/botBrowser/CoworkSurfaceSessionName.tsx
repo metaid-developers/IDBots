@@ -114,7 +114,7 @@ const CoworkSurfaceSessionName: React.FC<CoworkSurfaceSessionNameProps> = ({
       <div
         data-slot="cowork-surface-session-name-spacer"
         aria-hidden="true"
-        className="h-6 w-full min-w-0 flex-none translate-x-[6px]"
+        className="h-6 min-w-0 flex-none mx-[41.25px] w-[calc(100%-82.5px)]"
       />
     );
   }
@@ -164,7 +164,7 @@ const CoworkSurfaceSessionName: React.FC<CoworkSurfaceSessionNameProps> = ({
           }
         }}
         onBlur={handleRenameBlur}
-        className="non-draggable h-6 min-w-0 flex-none mx-[41.25px] w-[calc(100%-82.5px)] w-[calc(100%-82.5px)] border-0 bg-transparent shadow-none pl-0 pr-0 text-left text-sm font-medium leading-none dark:text-claude-darkText text-claude-text outline-none focus:outline-none focus:ring-0"
+        className="non-draggable h-6 min-w-0 flex-none mx-[41.25px] w-[calc(100%-82.5px)] border-0 bg-transparent shadow-none pl-0 pr-0 text-left text-sm font-medium leading-none dark:text-claude-darkText text-claude-text outline-none focus:outline-none focus:ring-0"
       />
     );
   }
