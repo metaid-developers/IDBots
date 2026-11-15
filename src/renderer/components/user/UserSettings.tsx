@@ -1150,7 +1150,7 @@ const UserSettings: React.FC = () => {
                   if (nameError) setNameError('');
                 }}
                 disabled={nameSaving}
-                size={Math.max(nameDraft.length || 0, 6)}
+                size={Math.max(nameDraft.length, i18nService.t('userSettingsNamePlaceholder').length * 2, 6)}
                 placeholder={i18nService.t('userSettingsNamePlaceholder')}
                 className="border-0 border-b border-[var(--color-primary)] bg-transparent px-0.5 pb-0.5 text-[15px] font-semibold text-claude-text dark:text-claude-darkText focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
               />
@@ -1159,14 +1159,14 @@ const UserSettings: React.FC = () => {
                   type="button"
                   onClick={() => { void handleSaveName(); }}
                   disabled={nameSaving}
-                  className="shrink-0 text-[11px] font-medium text-indigo-600 dark:text-indigo-400 border border-indigo-300 dark:border-indigo-500/60 px-2 py-0.5 rounded-[6px] hover:bg-indigo-50 dark:hover:bg-indigo-500/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="shrink-0 inline-flex h-7 items-center justify-center px-3 text-xs font-medium rounded-[8px] bg-[var(--color-primary)] text-[#303133] border border-[var(--btn-primary-edge)] hover:brightness-105 disabled:opacity-50 disabled:cursor-not-allowed transition-[filter] cursor-pointer"
                 >
                   {nameSaving ? i18nService.t('saving') : i18nService.t('save')}
                 </button>
               )}
             </div>
             {signatureText && (
-              <p className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary truncate">
+              <p className="text-[13px] font-medium text-claude-text dark:text-claude-darkText truncate mt-1">
                 {signatureText}
               </p>
             )}
