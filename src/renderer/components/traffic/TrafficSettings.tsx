@@ -1303,7 +1303,6 @@ const TrafficSettings: React.FC = () => {
               >
                 {balance ? formatTraffic(balance.balanceBytes) : '—'}
               </span>
-              {balanceLoading && <ArrowPathIcon className="h-4 w-4 animate-spin dark:text-claude-darkTextSecondary text-claude-textSecondary" />}
               <button
                 type="button"
                 onClick={() => {
