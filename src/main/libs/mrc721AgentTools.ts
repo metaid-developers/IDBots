@@ -1835,7 +1835,7 @@ export function buildMrc721AgentTools(deps: {
     [
       'Discover declared MRC-721 sell intents (the "NFT 售" on-chain declarations, docs/nft-sell-protocol-draft.md) from the indexer: what is up for sale in a collection, by an issuer, or for one item — with each seller\'s accepted currencies and settlement rails (atomic-swap for native SPACE, escrow for any currency).',
       'Read-only. These are INTENTS, not escrowed listings: before engaging, re-verify the seller still holds the item (mrc721_item_info or mrc721_verify_holding) and confirm the deal terms with the seller directly.',
-      'Served by the built-in MetaSo-P2P production index (indexer requirement R-C; IDBOTS_METASO_API_BASE overrides the base for staging only). Your own intents are better listed via mrc721_sell_intents.',
+      'Served by the built-in MetaSo-P2P production index (indexer requirement R-C; IDBOTS_MRC721_INDEXER_API_BASE overrides the base for staging only). Your own intents are better listed via mrc721_sell_intents.',
     ].join(' '),
     {
       collection_name: z.string().optional().describe('Filter to one collection by namespace name.'),
@@ -1892,7 +1892,7 @@ export function buildMrc721AgentTools(deps: {
         if (status === 404 || code !== undefined) {
           return textResult(
             'mrc721_market_intents: the MetaSo indexer does not serve sell-intent queries (indexer requirement R-C). '
-            + 'The base is built in (' + 'https://so.metaid.io' + ', override via IDBOTS_METASO_API_BASE for staging) — if this persists, check the MetaSo deployment. Until then, discovery of other bots\' intents runs through chat announcements.',
+            + 'The base is built in (' + 'https://so.metaid.io' + ', override via IDBOTS_MRC721_INDEXER_API_BASE for staging) — if this persists, check the MetaSo deployment. Until then, discovery of other bots\' intents runs through chat announcements.',
             true,
           );
         }
@@ -1985,7 +1985,7 @@ export function buildMrc721AgentTools(deps: {
     [
       'Search MRC-721 collections (pin-based MetaID NFT albums) by keyword and/or by issuer — keyword matches (case-insensitive) the display name, the collection namespace, the description, and the collectionid; issuer accepts a local MetaBot name, a 64-hex MetaID, or an MVC address.',
       'Returns matching collection summaries (display name, mint progress, royalty, issuer identity, collectionid) plus each description. supply_state=true also computes per-collection minted counts (minted vs totalSupply, first 20 matches) for issuer/creator flows like "which of my albums still has slots".',
-      'Read-only index data. Server-side search via the built-in MetaSo index (IDBOTS_METASO_API_BASE overrides the base for staging); on any MetaSo error filtering falls back to running client-side over the registered-collection page list (scanned count is reported); use max_pages for deeper scans.',
+      'Read-only index data. Server-side search via the built-in MetaSo index (IDBOTS_MRC721_INDEXER_API_BASE overrides the base for staging); on any MetaSo error filtering falls back to running client-side over the registered-collection page list (scanned count is reported); use max_pages for deeper scans.',
     ].join(' '),
     {
       keyword: z.string().optional().describe('Search text matched (case-insensitive) against name, collection namespace, description, collectionid.'),
