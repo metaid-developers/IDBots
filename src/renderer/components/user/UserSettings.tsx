@@ -24,6 +24,7 @@ import {
 import { i18nService } from '../../services/i18n';
 import { coworkService } from '../../services/cowork';
 import { refreshUserProfileIdentity } from '../../features/userProfile/userProfileStore';
+import { readTwinDailyMessage, resolveSessionFallbackMessage } from '../../features/userProfile/twinDailyMessageService';
 import MnemonicWordGrid from './MnemonicWordGrid';
 import UserBackupMnemonicModal from './UserBackupMnemonicModal';
 import ChainBackupRestorePrompt from './ChainBackupRestorePrompt';
@@ -189,6 +190,34 @@ const UserSettings: React.FC = () => {
   const [chainBackupLastRun, setChainBackupLastRun] = useState<number | null>(null);
   const [subsidyRetrying, setSubsidyRetrying] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
+  const [twinName, setTwinName] = useState('');
+  const [dailyMessage, setDailyMessage] = useState('');
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const roster = await window.electron.metabot.list();
+        const bots = roster?.success && Array.isArray(roster.list) ? roster.list : [];
+        const twin = bots.find((bot) => bot.metabot_type === 'twin');
+        if (alive) setTwinName((twin?.name || '').trim());
+      } catch {
+        if (alive) setTwinName('');
+      }
+      const stored = readTwinDailyMessage();
+      if (alive) setDailyMessage(stored?.text ?? resolveSessionFallbackMessage());
+    };
+    void load();
+    const handleRosterChanged = () => { void load(); };
+    window.addEventListener('app:metabots-changed', handleRosterChanged);
+    return () => {
+      alive = false;
+      window.removeEventListener('app:metabots-changed', handleRosterChanged);
+    };
+  }, []);
+  const signatureText = [
+    twinName ? `${twinName} 今天想跟你说：` : '',
+    dailyMessage,
+  ].filter(Boolean).join('');
   const [nameSaving, setNameSaving] = useState(false);
   const [nameError, setNameError] = useState('');
   const [avatarEditing, setAvatarEditing] = useState(false);
@@ -1077,10 +1106,10 @@ const UserSettings: React.FC = () => {
             <NftAvatarFrame
               avatar={identity.avatar}
               fallbackSource={identity.avatar_fallback}
-              frameClassName="w-16 h-16 rounded-full"
+              frameClassName="w-16 h-16 rounded-[8px]"
               imgClassName="border dark:border-claude-darkBorder border-claude-border"
               fallback={(
-                <div className="flex w-16 h-16 items-center justify-center rounded-full dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border">
+                <div className="flex w-16 h-16 items-center justify-center rounded-[8px] dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border">
                   <span className="text-xl font-semibold dark:text-claude-darkTextSecondary text-claude-textSecondary">
                     {nameInitial}
                   </span>
@@ -1112,9 +1141,6 @@ const UserSettings: React.FC = () => {
             )}
           </div>
           <div className="flex-1 min-w-0 space-y-1.5">
-            <label className={labelClass}>
-              {i18nService.t('userSettingsNameLabel')}
-            </label>
             <div className="flex items-center gap-2">
               <input
                 type="text"
@@ -1124,18 +1150,26 @@ const UserSettings: React.FC = () => {
                   if (nameError) setNameError('');
                 }}
                 disabled={nameSaving}
+                size={Math.max(nameDraft.length || 0, 6)}
                 placeholder={i18nService.t('userSettingsNamePlaceholder')}
-                className={`${inputClass} ${nameMissing ? 'border-red-500 dark:border-red-500' : ''} disabled:opacity-50 disabled:cursor-not-allowed`}
+                className="border-0 border-b border-[var(--color-primary)] bg-transparent px-0.5 pb-0.5 text-[15px] font-semibold text-claude-text dark:text-claude-darkText focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
               />
-              <button
-                type="button"
-                onClick={() => { void handleSaveName(); }}
-                disabled={!canSaveName}
-                className="btn-idchat-primary-filled shrink-0 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {nameSaving ? i18nService.t('saving') : i18nService.t('save')}
-              </button>
+              {canSaveName && (
+                <button
+                  type="button"
+                  onClick={() => { void handleSaveName(); }}
+                  disabled={nameSaving}
+                  className="shrink-0 text-[11px] font-medium text-indigo-600 dark:text-indigo-400 border border-indigo-300 dark:border-indigo-500/60 px-2 py-0.5 rounded-[6px] hover:bg-indigo-50 dark:hover:bg-indigo-500/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {nameSaving ? i18nService.t('saving') : i18nService.t('save')}
+                </button>
+              )}
             </div>
+            {signatureText && (
+              <p className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary truncate">
+                {signatureText}
+              </p>
+            )}
             {nameError && (
               <div className="text-xs text-red-500 bg-red-500/10 px-3 py-2 rounded-lg">
                 {nameError}
