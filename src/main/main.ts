@@ -9294,6 +9294,55 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
       hasMultipleUserMessages: (sessionId) => getCoworkStore().hasMultipleUserMessages(sessionId),
       getMetabotById: (id) => getMetabotStore().getMetabotById(id),
       listOpenDelegations: listOpenStudioDelegations,
+      listCollaboratingWorkers: (sessionId) => {
+        const nowMs = Date.now();
+        const open = listOpenStudioDelegations(sessionId).map((entry) => ({
+          id: entry.attemptId,
+          name: entry.workerName ?? `Bot #${entry.workerMetabotId}`,
+          ...(entry.workerAvatar ? { avatar: entry.workerAvatar } : {}),
+          direction: (nowMs - entry.startedAt < 12_000 ? 'dispatch' : 'working') as 'dispatch' | 'working' | 'return',
+          title: entry.title,
+          startedAt: entry.startedAt,
+        }));
+        // Also surface recently completed attempts whose orchestration task is
+        // still in 'review' (Worker → Twin back-office verification flow!).
+        const openIds = new Set(open.map((item) => item.id));
+        const attempts = getOrchestrationStore().listAttemptsForSourceSessions([sessionId]) ?? [];
+        for (const attempt of attempts) {
+          if (openIds.has(attempt.id) || attempt.status !== 'completed') continue;
+          const finishedMs = Date.parse(attempt.finishedAt ?? '') || 0;
+          if (!finishedMs || nowMs - finishedMs > 5 * 60_000) continue;
+          const task = getOrchestrationStore().getTaskForStep(attempt.stepId);
+          if (!task || task.status !== 'review') continue;
+          const bot = getMetabotStore().getMetabotById(attempt.workerMetabotId);
+          open.push({
+            id: attempt.id,
+            name: bot?.name?.trim() || `Bot #${attempt.workerMetabotId}`,
+            direction: 'return',
+            title: String(task.ownerIntent ?? '').split('\n')[0].slice(0, 40),
+            startedAt: Date.parse(attempt.startedAt ?? attempt.queuedAt) || finishedMs,
+          });
+        }
+        return open.slice(0, 5);
+      },
+      getLiveTaskHud: () => {
+        const board = getLongTermTaskStore().listBoard();
+        const twin = getMetabotStore().listMetabots().find((bot) => bot.metabot_type === 'twin' && bot.enabled);
+        const queuedDecisions = twin ? getStudioDecisionQueueStore().listOpen(twin.id).length : 0;
+        const activeTasks = board.cards
+          .filter((card) => card.stage !== 'done' && card.stage !== 'cancelled' && card.managedState != null)
+          .slice(0, 4)
+          .map((card) => ({
+            id: card.id,
+            title: card.title,
+            state: card.managedState ?? 'in_progress',
+            accepted: card.progress.accepted,
+            total: Math.max(1, card.progress.total),
+            currentSubtask: card.currentSubtaskTitle,
+          }));
+        if (activeTasks.length === 0 && queuedDecisions === 0) return null;
+        return { queuedDecisions, tasks: activeTasks };
+      },
       getSettings: () => readStudioLiveStageSettings(getStoreOrNull()),
       getLanguage: () => getPersistedAppLanguage(),
       project: (input) => getBotBrowserProjection().project(input),
@@ -9904,6 +9953,11 @@ const broadcastLongTermTaskUpdate = (taskIds: string[], reason: string): void =>
   longTermTaskUpdateSeq += 1;
   const payload = { seq: longTermTaskUpdateSeq, taskIds, reason };
   broadcastToRenderers('longtermTask:update', payload);
+  try {
+    studioLiveStageService?.refreshChiefOfStaffHud();
+  } catch {
+    // Stage HUD refresh is best-effort.
+  }
 };
 
 let studioDecisionQueueStore: StudioDecisionQueueStore | null = null;

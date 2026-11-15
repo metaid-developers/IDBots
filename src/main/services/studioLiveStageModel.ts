@@ -46,6 +46,30 @@ export type LiveStageMetrics = {
   directorLatencyMs: number;
 };
 
+export type LiveStageCollaboratingWorker = {
+  id: string;
+  name: string;
+  avatar?: string;
+  /** Communication flow: 'dispatch' (Twin→Worker), 'working' (active), 'return' (Worker→Twin review). */
+  direction: 'dispatch' | 'working' | 'return';
+  title: string;
+  startedAt: number;
+};
+
+export type LiveStageTaskHudEntry = {
+  id: string;
+  title: string;
+  state: 'in_progress' | 'waiting_external' | 'waiting_owner';
+  accepted: number;
+  total: number;
+  currentSubtask?: string | null;
+};
+
+export type LiveStageTaskHud = {
+  queuedDecisions: number;
+  tasks: LiveStageTaskHudEntry[];
+};
+
 export type LiveStageState = {
   protocol: typeof LIVE_STAGE_PROTOCOL;
   sessionId: string;
@@ -100,6 +124,10 @@ export type LiveStageState = {
   interaction: LiveStageInteraction | null;
   pendingProjectionIds: string[];
   eventWindow: Array<{ family: LiveStageFamily; tool?: string; outcome?: string }>;
+  /** Concurrent Worker Bots collaborating with the Twin, with directional flow state. */
+  activeWorkers?: LiveStageCollaboratingWorker[];
+  /** Live graphical HUD of Managed Task Tree progress and queued owner decisions. */
+  taskHud?: LiveStageTaskHud | null;
   /**
    * Pre-claim draft identity patch (prepareDraft): renders bot name/avatar on
    * an unclaimed stage page without claiming it — the first real session

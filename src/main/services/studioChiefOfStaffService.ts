@@ -14,6 +14,7 @@ import {
   type StudioTwinPresenceSnapshot,
 } from './studioPresenceState';
 import type { TwinStampPublishItemInput } from '../libs/studioChiefOfStaffAgentTools';
+import { buildStudioDecisionReportHtml } from '../libs/studioDecisionReportHtml';
 
 export const STUDIO_CHIEF_OF_STAFF_INTERVAL_MS = 5_000;
 export const DEFAULT_SUPERVISION_COALESCE_MS = 1_200;
@@ -545,11 +546,34 @@ export class StudioChiefOfStaffService {
     this.deps.onStateChanged?.('briefing_started');
 
     try {
-      if (claimed.reportHtmlPath && fs.existsSync(claimed.reportHtmlPath) && this.deps.projectShowcaseHtml) {
+      let reportPath = claimed.reportHtmlPath;
+      if ((!reportPath || !fs.existsSync(reportPath)) && this.deps.projectShowcaseHtml) {
+        try {
+          const workspace = this.deps.resolveTwinWorkspace(twinId);
+          const reportsDir = path.join(workspace, 'reports');
+          fs.mkdirSync(reportsDir, { recursive: true });
+          const fallbackPath = path.join(reportsDir, `briefing-${claimed.id}.html`);
+          const openAll = this.deps.decisionQueueStore().listOpen(twinId);
+          fs.writeFileSync(
+            fallbackPath,
+            buildStudioDecisionReportHtml({
+              item: claimed,
+              queuePosition: 1,
+              queueTotal: Math.max(1, openAll.length),
+              language: this.deps.getAppLanguage?.() ?? 'zh',
+            }),
+            'utf8',
+          );
+          reportPath = fallbackPath;
+        } catch {
+          reportPath = null;
+        }
+      }
+      if (reportPath && fs.existsSync(reportPath) && this.deps.projectShowcaseHtml) {
         try {
           await this.deps.projectShowcaseHtml({
             sessionId: studioSessionId,
-            localPath: claimed.reportHtmlPath,
+            localPath: reportPath,
             title: claimed.title,
           });
         } catch (projErr) {

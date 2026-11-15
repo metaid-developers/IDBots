@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type { CoworkMessage, CoworkSession } from '../coworkStore';
 import type { BotBrowserProjectionInput, BotBrowserProjectionOutcome } from './botBrowserProjectionService';
 import type { StudioLiveStageSettings } from './studioLiveStageSettings';
-import { applyLiveStageSpeech, completeLiveStage, createLiveStageState, buildLiveStageInteraction, dismissLiveStageInteraction, isLiveStageWorkerReport, liveStageError, presentLiveStageInteraction, reduceLiveStageMessage, reportReadyLiveStage, waitingLiveStage, type LiveStageInteraction, type LiveStageState } from './studioLiveStageModel';
+import { applyLiveStageSpeech, completeLiveStage, createLiveStageState, buildLiveStageInteraction, dismissLiveStageInteraction, isLiveStageWorkerReport, liveStageError, presentLiveStageInteraction, reduceLiveStageMessage, reportReadyLiveStage, waitingLiveStage, type LiveStageCollaboratingWorker, type LiveStageInteraction, type LiveStageState, type LiveStageTaskHud } from './studioLiveStageModel';
 import { describeStudioTurnError } from '../shared/studioTurnErrorCopy';
 import type { StudioOpenDelegation } from './studioOpenDelegations';
 import { isLiveStagePageUri, materializeLiveStageEntry, stageAssetFor, type LiveStageEntry } from './studioLiveStageEntry';
@@ -130,6 +130,10 @@ export type StudioLiveStageServiceDeps = {
   now?: () => number;
   /** Open cross-session delegations for a session (orchestration store). */
   listOpenDelegations?(sessionId: string): StudioOpenDelegation[];
+  /** Multi-worker directional collaboration snapshot (dispatch / working / return). */
+  listCollaboratingWorkers?(sessionId: string): LiveStageCollaboratingWorker[];
+  /** Live Managed Task Tree progress + Decision Queue count for the stage HUD. */
+  getLiveTaskHud?(sessionId: string): LiveStageTaskHud | null;
   /** Pulls queued stage-card clicks over the patch frame channel. */
   drainInteractions?(tabId: number, sessionId?: string): Promise<unknown[]>;
   /** Resolves a pending permission in the cowork runner (main-side sink). */
@@ -315,9 +319,44 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
   // Commit a produced state: phaseStartedAt resets whenever the family
   // changes, except a 'waiting' reached while a delegation is in flight —
   // that clock measures from when the delegation started, not from now.
+  function enrichChiefOfStaffState(run: LiveStageRun, candidate: LiveStageState): LiveStageState {
+    let activeWorkers = candidate.activeWorkers;
+    let taskHud = candidate.taskHud;
+    if (deps.listCollaboratingWorkers) {
+      try {
+        const rawWorkers = deps.listCollaboratingWorkers(run.state.sessionId) ?? [];
+        activeWorkers = rawWorkers.map((worker) => {
+          const safe = safeAvatar(worker.avatar);
+          const asset = safe ? stageAvatarFor(run, safe) : worker.avatar;
+          return {
+            ...worker,
+            ...(asset ? { avatar: asset } : {}),
+          };
+        });
+      } catch {
+        // Degrade gracefully when worker lookup throws.
+      }
+    }
+    if (deps.getLiveTaskHud) {
+      try {
+        taskHud = deps.getLiveTaskHud(run.state.sessionId) ?? null;
+      } catch {
+        // Degrade gracefully when task HUD lookup throws.
+      }
+    }
+    if (activeWorkers === undefined && taskHud === undefined) {
+      return candidate;
+    }
+    return {
+      ...candidate,
+      ...(activeWorkers !== undefined ? { activeWorkers } : {}),
+      ...(taskHud !== undefined ? { taskHud } : {}),
+    };
+  }
+
   function commitRunState(run: LiveStageRun, nextState: LiveStageState): LiveStageState {
     if (nextState === run.state) return nextState;
-    let state = nextState;
+    let state = enrichChiefOfStaffState(run, nextState);
     if (state.family !== run.state.family) {
       const startedAt = state.family === 'waiting' && run.delegationStartedAt != null
         ? run.delegationStartedAt
@@ -1392,6 +1431,23 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     runs.delete(sessionId);
   }
 
+  function refreshChiefOfStaffHud(targetSessionId?: string): void {
+    currentSettings = deps.getSettings();
+    if (!currentSettings.enabled) return;
+    const targets = targetSessionId
+      ? (runs.has(targetSessionId) ? [runs.get(targetSessionId)!] : [])
+      : [...runs.values()];
+    for (const run of targets) {
+      if (!run.state.enabled) continue;
+      const refreshed = enrichChiefOfStaffState(run, {
+        ...run.state,
+        revision: run.state.revision + 1,
+      });
+      run.state = refreshed;
+      schedulePatch(run);
+    }
+  }
+
   return {
     prepareSession,
     showSession,
@@ -1407,6 +1463,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     projectReport,
     getStageEntry,
     updateSettings,
+    refreshChiefOfStaffHud,
     forget,
     getState: (sessionId: string): LiveStageState | null => runs.get(sessionId)?.state ?? null,
     getRunInternals: (sessionId: string) => runs.get(sessionId) ?? null,
