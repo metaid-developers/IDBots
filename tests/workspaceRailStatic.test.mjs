@@ -74,8 +74,10 @@ test('rail entries are icon buttons with hover tooltips, Settings pinned to the 
 });
 
 test('the rail top: lights strip, then the avatar slot on the band row; icons start below it (D-line final 2026-11-09)', () => {
-  // Row 1 = the lights' pure reservation (52 px mac / 12 px elsewhere).
-  assert.match(railSource, /isMac \? 'h-\[52px\]' : 'h-3'/);
+  // Row 1 = the lights' pure reservation (42.375 px mac per the 08:27
+  // baseline ruling — the tray's visible top lands on the bot-home panel
+  // header divider y=50.625; 12 px elsewhere).
+  assert.match(railSource, /isMac \? 'h-\[42\.375px\]' : 'h-3'/);
   // Row 2 = the identity AVATAR slot (Mac-WeChat form): the SAME 52 px height
   // as the mid column's band row (BotBrowserModeSwitch surface-header-bar),
   // content centered — the slot's centerline is the band labels' centerline,
@@ -83,10 +85,10 @@ test('the rail top: lights strip, then the avatar slot on the band row; icons st
   assert.match(railSource, /data-slot="workspace-rail-avatar-slot"/);
   assert.match(railSource, /className="flex h-\[52px\] w-full shrink-0 items-center justify-center"/);
   assert.match(railSource, /<UserProfileAvatarButton \/>/);
-  // Row 3: the nav's 8 px top margin puts the first icon at 52 + 52 + 8 =
-  // 112 px — below the avatar slot, never in the top cell.
+  // Row 3: the nav's 8 px top margin puts the first icon at 42.375 + 52 + 8 =
+  // 102.375 px — below the avatar slot, never in the top cell.
   assert.match(railSource, /className="mt-2 flex min-h-0 w-full flex-1 flex-col items-center/);
-  assert.equal(52 + 52 + 8, 112);
+  assert.equal(42.375 + 52 + 8, 102.375);
 });
 
 test('Settings and ME moved out of the middle column into the rail', () => {
@@ -158,11 +160,12 @@ test('the Home face mounts the same rail; its records column carries no rail ite
 test('the surface switcher sits in the mid column header — the rail top has no switcher', () => {
   // Owner ruling 2026-11-08 14:15: the switch left the 64 px rail so it can
   // show the current surface's NAME in a Codex-style capsule. The rail keeps
-  // its 52 px macOS traffic-light reservation plus the identity avatar slot
-  // (owner D-line final ruling 2026-11-09), and mounts no switcher.
+  // its 42.375 px macOS traffic-light reservation (08:27 baseline ruling)
+  // plus the identity avatar slot (owner D-line final ruling 2026-11-09),
+  // and mounts no switcher.
   assert.doesNotMatch(railSource, /BotBrowserModeSwitch/);
   assert.doesNotMatch(railSource, /surface-switch-trigger/);
-  assert.match(railSource, /isMac \? 'h-\[52px\]' : 'h-3'/);
+  assert.match(railSource, /isMac \? 'h-\[42\.375px\]' : 'h-3'/);
 
   assert.match(sidebarSource, /data-slot="mid-column-header"/);
   // The switcher rides the shared header bar below the traffic-light strip
