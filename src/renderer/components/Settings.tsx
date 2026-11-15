@@ -3841,9 +3841,9 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
             {/* OWNER 2026-11-16 00:42: section label + segmented switch share
                 one row at the module's top-right; the label sits OUTSIDE the
                 module card, and the duplicated in-module title is gone. */}
-            <div className="flex items-center justify-between gap-3 pb-3 max-w-3xl px-4"> {/* px-4 + max-w-3xl: label/tray edges align with the module card below (OWNER 00:47: tray must not stick out past the module) */}
+            <div className="flex items-start justify-between gap-3 pt-[3px] pb-3 max-w-3xl px-4"> {/* OWNER 00:55: label top and tray top BOTH sit 20px below the header divider (68+1border+4pt+~15pt-4=88 rendered); top-aligned so A/B faces never drift */}
               <div>
-                <span className="text-base font-semibold text-claude-text dark:text-claude-darkText">
+                <span className="mt-px block text-base font-semibold leading-none text-claude-text dark:text-claude-darkText">
                   {i18nService.t(creditsSubTab === 'credits' ? 'meUsageInfoTitle' : 'trafficInfoTitle')}
                 </span>
                 {/* OWNER 2026-11-16 00:42 steer: keep the small subtitle line — it lives under the label, outside the module. */}
