@@ -4,6 +4,34 @@ import {
   resolveSurfaceSessionDisplayTitle,
 } from './surfaceSessionName';
 
+/**
+ * Square chat-bubble glyph inside a CIRCULAR frame (echoing the twin avatar's circle) — lucide MessageSquare path, verbatim (24×24 stroke SVG, ISC;
+ * path verbatim from lucide) — owner icon ruling 2026-11-15 10:48 supersedes 09:03: the
+ * round bubble echoes the twin avatar circle. lucide-react is NOT in package.json and the
+ * worktree's node_modules is a symlink into the main checkout, so adding the
+ * dependency would mutate the main tree's graph; the decision to install (or
+ * keep this replica) belongs to the orchestrator. Mon design: square chat
+ * bubble (NOT MessageCircle, NOT double-bubble), 14px (verified already at 14 —
+ * the 09:51 ruling's "back from 16px" premise did not exist in this tree),
+ * secondary text color.
+ */
+const SessionNameMessageSquareIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg
+    data-slot="cowork-surface-session-name-icon"
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+    className={className}
+  >
+    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+  </svg>
+);
+
 interface CoworkSurfaceSessionNameProps {
   /** The Bot Internet face's open session id; null (draft) renders nothing. */
   sessionId: string | null;
@@ -22,10 +50,21 @@ interface CoworkSurfaceSessionNameProps {
    * updateSessionTitle dispatch syncs the list and the session header).
    */
   onRename: (sessionId: string, title: string) => void | Promise<void>;
+  /**
+   * Editing-state bridge for the studio header's grace-collapse logic
+   * (owner ruling 2026-11-15 09:17 clause ②): fires `true` when the inline
+   * editor opens and `false` when it closes (commit or cancel). While
+   * `true`, the header suppresses its auto-collapse entirely.
+   */
+  onRenameEditingChange?: (editing: boolean) => void;
 }
 
 /**
- * Centered, ellipsis-truncated session title below the Studio bot identity.
+ * Left-anchored, ellipsis-truncated session title below the Studio bot
+ * identity (owner order 2026-11-15: centered lane retired; the title's left
+ * edge rides pl-1 so its text lands on the identity avatar's left edge, and
+ * the size steps up one token (13px → text-base/15px at the 15px root) — the
+ * title is the hover-revealed element, exempt from the compact row's scale).
  * A click swaps the label for a frameless editor with identical metrics.
  * Enter or blur commits through the shared rename channel, Escape cancels,
  * and an empty or unchanged commit is a no-op. Drafts keep an empty spacer
@@ -36,6 +75,7 @@ const CoworkSurfaceSessionName: React.FC<CoworkSurfaceSessionNameProps> = ({
   title,
   fallbackTitle,
   onRename,
+  onRenameEditingChange,
 }) => {
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(title);
@@ -44,6 +84,14 @@ const CoworkSurfaceSessionName: React.FC<CoworkSurfaceSessionNameProps> = ({
   // flag so the input's blur (which fires as the editor unmounts) does not
   // double-commit over the Enter path.
   const ignoreNextBlurRef = useRef(false);
+
+  // Single funnel for the editing state: every transition (click into the
+  // editor, commit, cancel) ALSO bridges to the header's grace-collapse
+  // logic (owner ruling 2026-11-15 09:17 clause ② — editing pins the row).
+  const applyRenaming = (next: boolean) => {
+    setIsRenaming(next);
+    onRenameEditingChange?.(next);
+  };
 
   // Track the stored title while not editing, so external renames (list row,
   // transcript header, title refinement) keep the editor's pending value in
@@ -80,14 +128,14 @@ const CoworkSurfaceSessionName: React.FC<CoworkSurfaceSessionNameProps> = ({
     if (decision.action === 'rename') {
       void onRename(sessionId, decision.nextTitle);
     }
-    setIsRenaming(false);
+    applyRenaming(false);
   };
 
   const handleRenameCancel = (e?: React.SyntheticEvent) => {
     e?.stopPropagation();
     ignoreNextBlurRef.current = true;
     setRenameValue(title);
-    setIsRenaming(false);
+    applyRenaming(false);
   };
 
   const handleRenameBlur = (event: React.FocusEvent<HTMLInputElement>) => {
@@ -116,7 +164,7 @@ const CoworkSurfaceSessionName: React.FC<CoworkSurfaceSessionNameProps> = ({
           }
         }}
         onBlur={handleRenameBlur}
-        className="non-draggable h-6 w-full min-w-0 flex-none border-0 bg-transparent shadow-none px-4 text-center text-[13px] font-medium leading-none dark:text-claude-darkText text-claude-text outline-none focus:outline-none focus:ring-0"
+        className="non-draggable h-9 w-full min-w-0 flex-none border-0 bg-transparent shadow-none pl-[44px] pr-4 text-left text-sm font-medium leading-none dark:text-claude-darkText text-claude-text outline-none focus:outline-none focus:ring-0"
       />
     );
   }
@@ -128,12 +176,15 @@ const CoworkSurfaceSessionName: React.FC<CoworkSurfaceSessionNameProps> = ({
       onClick={(e) => {
         e.stopPropagation();
         setRenameValue(title);
-        setIsRenaming(true);
+        applyRenaming(true);
       }}
       aria-label={displayTitle}
       title={displayTitle}
-      className="non-draggable flex h-6 w-full min-w-0 flex-none items-center justify-center rounded-lg px-4 text-center text-[13px] font-medium leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 text-claude-text dark:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+      className="non-draggable group flex h-9 w-full min-w-0 items-center gap-2 rounded-lg px-1 text-left text-sm font-medium leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 text-claude-text dark:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
     >
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-claude-surfaceHover ring-1 ring-black/10 dark:bg-claude-darkSurfaceHover dark:ring-white/10">
+        <SessionNameMessageSquareIcon className="h-4 w-4 shrink-0 text-claude-textSecondary transition-colors group-hover:text-claude-text dark:text-claude-darkTextSecondary dark:group-hover:text-claude-darkText" />
+      </span>
       <span className="min-w-0 truncate">{displayTitle}</span>
     </button>
   );

@@ -170,9 +170,13 @@ const BotBrowserModeSwitch: React.FC<BotBrowserModeSwitchProps> = ({
         </div>
       </div>
       {actions ? (
+        // Left inset rides the band's pl-2 rhythm so the Studio face's
+        // left-aligned identity header starts on the tray's left edge;
+        // BotWorks' compact actions are right-aligned and only see the
+        // pr-2.5 (owner left-anchor order 2026-11-15).
         <div
           data-slot="surface-header-actions"
-          className="non-draggable flex min-h-7 w-full items-center justify-end gap-0.5 px-2.5"
+          className="non-draggable flex min-h-7 w-full items-center justify-end gap-0.5 pl-2 pr-2.5"
         >
           {actions}
         </div>

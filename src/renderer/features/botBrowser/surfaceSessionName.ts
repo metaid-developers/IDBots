@@ -25,6 +25,26 @@ export type SurfaceSessionRenameDecision =
   | { action: 'noop' };
 
 /**
+ * Grace window (ms) before the studio title preview collapses after the
+ * pointer leaves the studio header (owner ruling 2026-11-15 09:17: the
+ * title must NOT snap back the instant the pointer leaves — it lingers
+ * 2500 ms; re-entering the badge row or the title box inside the window
+ * cancels the pending collapse).
+ */
+export const SESSION_TITLE_HIDE_GRACE_MS = 2000;
+
+/**
+ * Decision math for the header-leave event. While the inline rename editor
+ * is open the preview NEVER auto-collapses (owner clause ②: editing pins
+ * the row; the hover rule resumes only after the edit commits or cancels)
+ * — `null` means "do not schedule any collapse timer"; otherwise the grace
+ * delay to wait before hiding.
+ */
+export function resolveTitleHideDelayMs(titleEditing: boolean): number | null {
+  return titleEditing ? null : SESSION_TITLE_HIDE_GRACE_MS;
+}
+
+/**
  * Display title for the read-only state: a blank stored title falls back to
  * the default title so the slot never renders an empty control.
  */
