@@ -119,12 +119,50 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     24: 'glsParticleRibbonFluid',
   };
 
-  // Specialize the monolithic WGSL effect when a stage only uses one style (e.g.
-  // Live Stage uses style 9 exclusively). Without specialization, Dawn/Tint emits
-  // all 14 procedural branches at all 4 glsPresetFluid call sites, making Windows
-  // DXC/FXC cold shader compilation exceed startup timeouts.
-  function buildOrbShaderSource(baseEffectSource, fixedStyle) {
-    let source = String(baseEffectSource || '');
+  function stripUnreachableWgslFunctions(code, rootNames) {
+    const fnRe = /^fn\s+([A-Za-z0-9_]+)\s*\(/gm;
+    const spans = [];
+    let match;
+    while ((match = fnRe.exec(code)) !== null) {
+      const start = match.index;
+      const name = match[1];
+      let depth = 0, index = start, started = false;
+      for (; index < code.length; index += 1) {
+        if (code[index] === '{') { depth += 1; started = true; }
+        else if (code[index] === '}') {
+          depth -= 1;
+          if (started && depth === 0) { index += 1; break; }
+        }
+      }
+      spans.push({ name, start, end: index, body: code.slice(start, index) });
+    }
+    const byName = new Map(spans.map((span) => [span.name, span]));
+    const keep = new Set(rootNames);
+    const queue = [...rootNames];
+    while (queue.length > 0) {
+      const current = byName.get(queue.pop());
+      if (!current) continue;
+      for (const call of current.body.matchAll(/\b([A-Za-z_][A-Za-z0-9_]*)\s*\(/g)) {
+        const callee = call[1];
+        if (byName.has(callee) && !keep.has(callee)) {
+          keep.add(callee);
+          queue.push(callee);
+        }
+      }
+    }
+    let out = '';
+    let cursor = 0;
+    for (const span of spans) {
+      out += code.slice(cursor, span.start);
+      if (keep.has(span.name)) out += span.body;
+      cursor = span.end;
+    }
+    out += code.slice(cursor);
+    return out;
+  }
+
+  function specializeOrbEffectSource(baseEffectSource, fixedStyle) {
+    let source = String(baseEffectSource || '').replace(/\r\n/g, '\n');
     if (Number.isInteger(fixedStyle) && PRESET_FLUID_BY_STYLE[fixedStyle]) {
       const fnName = PRESET_FLUID_BY_STYLE[fixedStyle];
       const strength = fixedStyle >= 18.5 ? '0.11' : (fixedStyle >= 15.5 ? '0.16' : '0.09');
@@ -140,11 +178,262 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
         .replace(/let style = i32\(u\.style \+ 0\.5\);/g, `let style = ${fixedStyle};`)
         .replace(/let s = i32\(u\.style \+ 0\.5\);/g, `let s = ${fixedStyle};`)
         .replace(/else \{ fcol = glsFluid\(fu, md, t\); \}/g, 'else { fcol = vec3<f32>(0.0); }');
+      if (fixedStyle !== 23) {
+        source = source.replace(
+          /fn glsRefractionNormal\(base: vec2<f32>, p: vec2<f32>, t: f32,\s*style: i32\) -> vec2<f32> \{[\s\S]*?\n\}/,
+          'fn glsRefractionNormal(base: vec2<f32>, p: vec2<f32>, t: f32, style: i32) -> vec2<f32> {\n  return base;\n}',
+        );
+      }
     }
-    return `${source}\n${entryPoints}`;
+    return source;
+  }
+
+  // Specialize and dead-code strip the monolithic WGSL effect when a stage uses
+  // one style (e.g. Live Stage style 9). Without stripping, Dawn/Tint + Windows
+  // DXC/FXC parse and lower all 51 procedural functions (~59 KB WGSL).
+  function buildOrbShaderSource(baseEffectSource, fixedStyle) {
+    const specialized = specializeOrbEffectSource(baseEffectSource, fixedStyle);
+    const combined = `${specialized}\n${entryPoints}`;
+    if (Number.isInteger(fixedStyle) && PRESET_FLUID_BY_STYLE[fixedStyle]) {
+      return stripUnreachableWgslFunctions(combined, ['vs_main', 'fs_main']);
+    }
+    return combined;
+  }
+
+  // Deterministic WGSL -> GLSL ES 3.00 transpiler for the arithmetic-only orb
+  // effect, keeping a single source of truth while letting ANGLE/D3D11 WebGL2
+  // render the exact same refractive liquid-glass orb when Windows WebGPU is
+  // blocklisted, WARP-only, or slow on older drivers.
+  function buildOrbGlslSource(baseEffectSource, fixedStyle) {
+    let code = specializeOrbEffectSource(baseEffectSource, fixedStyle);
+    if (Number.isInteger(fixedStyle) && PRESET_FLUID_BY_STYLE[fixedStyle]) {
+      code = stripUnreachableWgslFunctions(code, ['orbGlassLiquidAnim', 'glsContourScale']);
+    }
+    code = code.replace(/\/\/[^\n]*/g, '');
+
+    const mapType = (raw) => {
+      const t = raw.trim();
+      if (t === 'f32') return 'float';
+      if (t === 'i32') return 'int';
+      if (t === 'u32') return 'uint';
+      if (t === 'bool') return 'bool';
+      const vf = t.match(/^vec([234])<f32>$/);
+      if (vf) return `vec${vf[1]}`;
+      const vi = t.match(/^vec([234])<i32>$/);
+      if (vi) return `ivec${vi[1]}`;
+      return t;
+    };
+
+    const structFields = {};
+    code = code.replace(/struct\s+(\w+)\s*\{([\s\S]*?)\};?/g, (_m, name, body) => {
+      const fields = {};
+      const lines = [];
+      for (const part of body.split(',')) {
+        const fm = part.trim().match(/^(\w+)\s*:\s*([A-Za-z0-9_<>]+)$/);
+        if (!fm) continue;
+        const glType = mapType(fm[2]);
+        fields[fm[1]] = glType;
+        lines.push(`  ${glType} ${fm[1]};`);
+      }
+      structFields[name] = fields;
+      if (name === 'Uniforms') return `layout(std140) uniform Uniforms {\n${lines.join('\n')}\n} u;`;
+      return `struct ${name} {\n${lines.join('\n')}\n};`;
+    });
+    code = code.replace(/@group\(\d+\)\s*@binding\(\d+\)\s*var<uniform>\s+u\s*:\s*Uniforms\s*;/g, '');
+
+    const fnReturn = {
+      vec2: 'vec2', vec3: 'vec3', vec4: 'vec4', ivec2: 'ivec2', ivec3: 'ivec3', ivec4: 'ivec4',
+      float: 'float', int: 'int', uint: 'uint', bool: 'bool', MfRamp: 'MfRamp',
+      length: 'float', dot: 'float', atan: 'float', atan2: 'float', f32: 'float', i32: 'int', u32: 'uint',
+    };
+    for (const m of code.matchAll(/fn\s+(\w+)\s*\(([\s\S]*?)\)\s*->\s*([A-Za-z0-9_<>]+)/g)) {
+      fnReturn[m[1]] = mapType(m[3]);
+    }
+
+    const convertExpr = (expr) => expr
+      .replace(/,\s*\)/g, ')')
+      .replace(/\bvec([234])<f32>/g, 'vec$1')
+      .replace(/\bvec([234])<i32>/g, 'ivec$1')
+      .replace(/\bf32\s*\(/g, 'float(')
+      .replace(/\bi32\s*\(/g, 'int(')
+      .replace(/\bu32\s*\(/g, 'uint(')
+      .replace(/\batan2\s*\(/g, 'atan(')
+      .replace(/\bselect\s*\(/g, '_wgsl_select(');
+
+    const globalVars = {};
+    code = code.replace(/\bconst\s+(\w+)\s*:\s*([A-Za-z0-9_<>]+)\s*=\s*([^;]+);/g, (_m, name, t, rhs) => {
+      const glType = mapType(t);
+      globalVars[name] = glType;
+      return `const ${glType} ${name} = ${convertExpr(rhs)};`;
+    });
+
+    const matchParen = (s, idx) => {
+      let depth = 0;
+      for (let i = idx; i < s.length; i += 1) {
+        if (s[i] === '(') depth += 1;
+        else if (s[i] === ')') { depth -= 1; if (depth === 0) return i; }
+      }
+      return s.length - 1;
+    };
+    const stripParens = (s) => {
+      let out = '', depth = 0;
+      for (let i = 0; i < s.length; i += 1) {
+        if (s[i] === '(') depth += 1;
+        else if (s[i] === ')') depth -= 1;
+        else if (depth === 0) out += s[i];
+      }
+      return out;
+    };
+    const splitTopArgs = (s) => {
+      const args = [];
+      let depth = 0, start = 0;
+      for (let i = 0; i < s.length; i += 1) {
+        if (s[i] === '(') depth += 1;
+        else if (s[i] === ')') depth -= 1;
+        else if (s[i] === ',' && depth === 0) { args.push(s.slice(start, i).trim()); start = i + 1; }
+      }
+      if (s.slice(start).trim()) args.push(s.slice(start).trim());
+      return args;
+    };
+    const splitTopMath = (s) => {
+      const parts = [];
+      let depth = 0, start = 0;
+      for (let i = 0; i < s.length; i += 1) {
+        if (s[i] === '(') depth += 1;
+        else if (s[i] === ')') depth -= 1;
+        else if (depth === 0 && '+-*/'.includes(s[i])) {
+          const prev = s.slice(0, i).trimEnd();
+          if (!prev || '(+-*/,='.includes(prev[prev.length - 1])) continue;
+          parts.push(s.slice(start, i));
+          start = i + 1;
+        }
+      }
+      parts.push(s.slice(start));
+      return parts;
+    };
+    const swizzleType = (sw) => (sw.length >= 2 && sw.length <= 4 ? `vec${sw.length}` : 'float');
+
+    const inferType = (expr, scope) => {
+      const e = expr.trim();
+      if (/^(true|false)\b/.test(e) || /&&|\|\||==|!=|<=|>=|<|>/.test(stripParens(e))) return 'bool';
+      if (e.startsWith('(') && matchParen(e, 0) === e.length - 1) return inferType(e.slice(1, -1), scope);
+      const parts = splitTopMath(e);
+      if (parts.length > 1) {
+        const types = parts.map((p) => inferType(p, scope));
+        for (const rank of ['vec4', 'vec3', 'vec2', 'ivec4', 'ivec3', 'ivec2', 'int', 'float']) {
+          if (types.includes(rank)) return rank;
+        }
+        return types[0];
+      }
+      if (e.startsWith('-') || e.startsWith('+')) return inferType(e.slice(1), scope);
+      if (e.startsWith('!')) return 'bool';
+      const callMatch = e.match(/^([A-Za-z_]\w*)\s*\(/);
+      if (callMatch) {
+        const openIdx = e.indexOf('(');
+        const end = matchParen(e, openIdx);
+        const rest = e.slice(end + 1).trim();
+        let baseType = fnReturn[callMatch[1]];
+        if (!baseType) {
+          const args = splitTopArgs(e.slice(openIdx + 1, end));
+          if (callMatch[1] === '_wgsl_select' || callMatch[1] === 'select') baseType = inferType(args[0], scope);
+          else if (callMatch[1] === 'smoothstep' || callMatch[1] === 'step') baseType = inferType(args[args.length - 1], scope);
+          else baseType = inferType(args[0], scope);
+        }
+        return rest.startsWith('.') ? swizzleType(rest.slice(1)) : (baseType || 'float');
+      }
+      if (/^[A-Za-z_]\w*(\.[A-Za-z_]\w*)+$/.test(e)) {
+        const segs = e.split('.');
+        let cur = scope[segs[0]] || globalVars[segs[0]] || (segs[0] === 'u' ? 'Uniforms' : 'float');
+        for (let i = 1; i < segs.length; i += 1) {
+          cur = (structFields[cur] && structFields[cur][segs[i]]) || swizzleType(segs[i]);
+        }
+        return cur;
+      }
+      if (/^[A-Za-z_]\w*$/.test(e)) return scope[e] || globalVars[e] || 'float';
+      if (/^\d+$/.test(e)) return 'int';
+      return 'float';
+    };
+
+    const fnRe = /fn\s+(\w+)\s*\(([\s\S]*?)\)\s*->\s*([A-Za-z0-9_<>]+)\s*\{/g;
+    let result = '';
+    let pos = 0, fm;
+    while ((fm = fnRe.exec(code)) !== null) {
+      result += code.slice(pos, fm.index);
+      const fnName = fm[1];
+      const rawParams = fm[2];
+      const retType = mapType(fm[3]);
+      const bodyStart = fm.index + fm[0].length;
+      let depth = 1, idx = bodyStart;
+      for (; idx < code.length; idx += 1) {
+        if (code[idx] === '{') depth += 1;
+        else if (code[idx] === '}') { depth -= 1; if (depth === 0) break; }
+      }
+      const rawBody = code.slice(bodyStart, idx);
+      pos = idx + 1;
+      fnRe.lastIndex = pos;
+
+      const scope = {};
+      const glParams = splitTopArgs(rawParams).map((param) => {
+        const pm = param.match(/^(\w+)\s*:\s*([A-Za-z0-9_<>]+)$/);
+        const pt = mapType(pm[2]);
+        scope[pm[1]] = pt;
+        return `${pt} ${pm[1]}`;
+      }).join(', ');
+
+      let body = rawBody.replace(/for\s*\(\s*var\s+(\w+)\s*(?::\s*([A-Za-z0-9_<>]+))?\s*=\s*([^;]+);/g, (_m2, v, vt, init) => {
+        const gt = vt ? mapType(vt) : inferType(init, scope);
+        scope[v] = gt;
+        return `for (${gt} ${v} = ${convertExpr(init)};`;
+      });
+      body = body.replace(/\bvar\s+(\w+)\s*:\s*([A-Za-z0-9_<>]+)\s*;/g, (_m2, v, vt) => {
+        const gt = mapType(vt);
+        scope[v] = gt;
+        return `${gt} ${v};`;
+      });
+      body = body.replace(/\b(let|var)\s+(\w+)\s*:\s*([A-Za-z0-9_<>]+)\s*=\s*([^;]+);/g, (_m2, _kw, v, vt, rhs) => {
+        const gt = mapType(vt);
+        scope[v] = gt;
+        return `${gt} ${v} = ${convertExpr(rhs)};`;
+      });
+      body = body.replace(/\b(let|var)\s+(\w+)\s*=\s*([^;]+);/g, (_m2, _kw, v, rhs) => {
+        const conv = convertExpr(rhs);
+        const gt = inferType(conv, scope);
+        scope[v] = gt;
+        return `${gt} ${v} = ${conv};`;
+      });
+      body = convertExpr(body);
+      result += `${retType} ${fnName}(${glParams}) {${body}}`;
+    }
+    result += code.slice(pos);
+
+    return `#version 300 es
+precision highp float;
+precision highp int;
+in vec2 v_uv;
+out vec4 fragColor;
+float _wgsl_select(float f, float t, bool c) { return c ? t : f; }
+vec2 _wgsl_select(vec2 f, vec2 t, bool c) { return c ? t : f; }
+vec3 _wgsl_select(vec3 f, vec3 t, bool c) { return c ? t : f; }
+vec4 _wgsl_select(vec4 f, vec4 t, bool c) { return c ? t : f; }
+${result}
+void main() {
+  vec4 c = orbGlassLiquidAnim(v_uv);
+  vec2 fc = vec2(v_uv.x, 1.0 - v_uv.y) * u.size;
+  vec2 uv = (2.0 * fc - u.size) / max(min(u.size.x, u.size.y), 1.0);
+  float rad = max(u.radius, 0.05);
+  float t = u.time * u.speed;
+  float contourRad = rad * glsContourScale(uv, t, u.contourDeform);
+  vec2 q = (2.0 * fc - u.size) / u.size;
+  float fitEnd = 1.0;
+  float fitFeather = 2.0 / max(min(u.size.x, u.size.y), 1.0);
+  float fitStart = min(mix(contourRad, fitEnd, 0.5), fitEnd - fitFeather);
+  float fit = 1.0 - smoothstep(fitStart, fitEnd, max(abs(q.x), abs(q.y)));
+  fragColor = vec4(c.rgb * fit, c.a * fit);
+}`;
   }
 
   window.buildLiquidOrbShaderSource = buildOrbShaderSource;
+  window.buildLiquidOrbGlslSource = buildOrbGlslSource;
 
   async function acquireHardwareDevice(abortIfSignaled) {
     const candidates = [
@@ -182,69 +471,21 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     throw new Error('No WebGPU adapter');
   }
 
-  window.createLiquidOrbRenderer = async function createLiquidOrbRenderer(canvas, options = {}) {
-    const forcedCanvas = new URLSearchParams(window.location.search).get('orb') === 'canvas';
-    if (forcedCanvas) throw new Error('Canvas2D fallback requested');
-    if (!navigator.gpu) throw new Error('WebGPU is unavailable');
-    const startedAt = performance.now();
-    const sharedResources = options.sharedResources;
-    const signal = options.signal;
-    const ownsDevice = !sharedResources?.device;
-    let device = sharedResources?.device;
-    const abortIfSignaled = () => {
-      if (!signal?.aborted) return;
-      if (ownsDevice && device) {
-        try { device.destroy(); } catch { /* already lost */ }
-      }
-      throw new Error('WebGPU startup aborted');
-    };
-    abortIfSignaled();
-    if (!device) {
-      device = await acquireHardwareDevice(abortIfSignaled);
-    }
-    const context = canvas.getContext('webgpu');
-    if (!context) {
-      if (ownsDevice) device.destroy();
-      throw new Error('No WebGPU canvas context');
-    }
-    const format = navigator.gpu.getPreferredCanvasFormat();
-    context.configure({ device, format, alphaMode: 'premultiplied' });
-    const shader = sharedResources?.shader ?? device.createShaderModule({
-      code: buildOrbShaderSource(window.LiquidOrbEffectSource, options.fixedStyle),
-    });
-    if (!sharedResources?.shader) {
-      const compilation = await shader.getCompilationInfo();
-      abortIfSignaled();
-      const errors = compilation.messages.filter((message) => message.type === 'error');
-      if (errors.length) {
-        if (ownsDevice) device.destroy();
-        throw new Error(errors.map((message) => `${message.lineNum}:${message.linePos} ${message.message}`).join('\n'));
-      }
-    }
-    const pipelineDescriptor = {
-      layout: 'auto',
-      vertex: { module: shader, entryPoint: 'vs_main' },
-      fragment: { module: shader, entryPoint: 'fs_main', targets: [{
-        format,
-        blend: {
-          color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
-          alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' }
-        }
-      }] },
-      primitive: { topology: 'triangle-list' }
-    };
-    const pipeline = sharedResources?.pipeline ?? (
-      typeof device.createRenderPipelineAsync === 'function'
-        ? await device.createRenderPipelineAsync(pipelineDescriptor)
-        : device.createRenderPipeline(pipelineDescriptor)
-    );
-    abortIfSignaled();
+  const WEBGPU_STAGE_BUDGET_MS = 4500;
+  const GLSL_VERTEX_SHADER = `#version 300 es
+out vec2 v_uv;
+void main() {
+  vec2 p[3] = vec2[3](vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+  vec2 pos = p[gl_VertexID];
+  gl_Position = vec4(pos, 0.0, 1.0);
+  vec2 uv01 = (pos + vec2(1.0)) * 0.5;
+  v_uv = vec2(uv01.x, 1.0 - uv01.y);
+}`;
+
+  function startOrbController(canvas, options, startedAt, gpu) {
+    const { backend, device, shader, pipeline, drawFrame, disposeBackend, bindBackendErrors } = gpu;
+    canvas.dataset.orbBackend = backend;
     const values = new Float32Array(136);
-    const uniformBuffer = device.createBuffer({ size: values.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    const bindGroup = device.createBindGroup({
-      layout: pipeline.getBindGroupLayout(0),
-      entries: [{ binding: 0, resource: { buffer: uniformBuffer } }]
-    });
     const initialFamily = typeof options.initialFamily === 'string' && statePresets[options.initialFamily] ? options.initialFamily : 'received';
     let current = window.liquidOrbParamsForFamily(initialFamily);
     let target = window.liquidOrbParamsForFamily(initialFamily);
@@ -260,6 +501,13 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
       const width = Math.max(1, Math.floor(canvas.clientWidth * ratio));
       const height = Math.max(1, Math.floor(canvas.clientHeight * ratio));
       if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
+    }
+
+    function failController(error) {
+      if (disposed) return;
+      disposed = true;
+      cancelAnimationFrame(raf);
+      options.onError?.(error instanceof Error ? error : new Error(String(error)));
     }
 
     function frame(now) {
@@ -293,14 +541,7 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
           }
         }
         writeUniforms(values, canvas.width, canvas.height, phase, rendered);
-        device.queue.writeBuffer(uniformBuffer, 0, values);
-        const encoder = device.createCommandEncoder();
-        const pass = encoder.beginRenderPass({ colorAttachments: [{
-          view: context.getCurrentTexture().createView(),
-          clearValue: { r: 0, g: 0, b: 0, a: 0 }, loadOp: 'clear', storeOp: 'store'
-        }] });
-        pass.setPipeline(pipeline); pass.setBindGroup(0, bindGroup); pass.draw(3,1,0,0); pass.end();
-        device.queue.submit([encoder.finish()]);
+        drawFrame(values);
         if (!ready) {
           ready = true;
           canvas.dataset.firstFrameMs = String(Math.round(performance.now() - startedAt));
@@ -308,25 +549,11 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
         }
         if (!reduced) raf = requestAnimationFrame(frame);
       } catch (error) {
-        disposed = true;
-        cancelAnimationFrame(raf);
-        options.onError?.(error instanceof Error ? error : new Error(String(error)));
+        failController(error);
       }
     }
 
-    device.lost.then((info) => {
-      if (disposed) return;
-      disposed = true;
-      cancelAnimationFrame(raf);
-      options.onError?.(new Error(info.message || info.reason || 'WebGPU device lost'));
-    });
-    device.addEventListener('uncapturederror', (event) => {
-      event.preventDefault();
-      if (disposed) return;
-      disposed = true;
-      cancelAnimationFrame(raf);
-      options.onError?.(new Error(event.error.message));
-    });
+    bindBackendErrors?.(failController);
     raf = requestAnimationFrame(frame);
 
     function setReduced(value) {
@@ -341,6 +568,7 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     }
 
     return {
+      backend,
       setState(family, reduceMotion) {
         if (disposed) return;
         target = { ...baseParams, ...(statePresets[family] || statePresets.received) };
@@ -377,8 +605,254 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
       dispose(destroyDevice = true) {
         disposed = true;
         cancelAnimationFrame(raf);
-        if (destroyDevice) device.destroy();
+        disposeBackend(destroyDevice);
       }
     };
+  }
+
+  async function initWebGPUBackend(canvas, options, startedAt) {
+    if (!navigator.gpu) throw new Error('WebGPU is unavailable');
+    const sharedResources = options.sharedResources;
+    const outerSignal = options.signal;
+    const budgetAbort = typeof AbortController === 'function' ? new AbortController() : null;
+    let timedOut = false;
+    const budgetTimer = budgetAbort ? setTimeout(() => {
+      timedOut = true;
+      budgetAbort.abort();
+    }, WEBGPU_STAGE_BUDGET_MS) : 0;
+    const ownsDevice = !sharedResources?.device;
+    let device = sharedResources?.device;
+    const abortIfSignaled = () => {
+      if (!outerSignal?.aborted && !budgetAbort?.signal.aborted) return;
+      if (ownsDevice && device) {
+        try { device.destroy(); } catch { /* already lost */ }
+      }
+      throw new Error(timedOut ? 'WebGPU shader compilation timed out' : 'WebGPU startup aborted');
+    };
+    try {
+      abortIfSignaled();
+      if (!device) {
+        device = await acquireHardwareDevice(abortIfSignaled);
+      }
+      const format = navigator.gpu.getPreferredCanvasFormat();
+      const reusePipeline = Boolean(
+        sharedResources?.shader
+        && sharedResources?.pipeline
+        && sharedResources.shader.__fixedStyle === options.fixedStyle
+      );
+      const shader = reusePipeline ? sharedResources.shader : device.createShaderModule({
+        code: buildOrbShaderSource(window.LiquidOrbEffectSource, options.fixedStyle),
+      });
+      if (!reusePipeline) {
+        try { Object.defineProperty(shader, '__fixedStyle', { value: options.fixedStyle }); } catch { /* frozen mock */ }
+        const compilation = await shader.getCompilationInfo();
+        abortIfSignaled();
+        const errors = compilation.messages.filter((message) => message.type === 'error');
+        if (errors.length) {
+          if (ownsDevice) device.destroy();
+          throw new Error(errors.map((message) => `${message.lineNum}:${message.linePos} ${message.message}`).join('\n'));
+        }
+      }
+      const pipelineDescriptor = {
+        layout: 'auto',
+        vertex: { module: shader, entryPoint: 'vs_main' },
+        fragment: { module: shader, entryPoint: 'fs_main', targets: [{
+          format,
+          blend: {
+            color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+            alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' }
+          }
+        }] },
+        primitive: { topology: 'triangle-list' }
+      };
+      const pipeline = reusePipeline ? sharedResources.pipeline : (
+        typeof device.createRenderPipelineAsync === 'function'
+          ? await device.createRenderPipelineAsync(pipelineDescriptor)
+          : device.createRenderPipeline(pipelineDescriptor)
+      );
+      abortIfSignaled();
+      // Acquire the canvas context ONLY after device + shader + pipeline succeed,
+      // so a WebGPU failure leaves the canvas untouched for WebGL2 fallback.
+      const context = canvas.getContext('webgpu');
+      if (!context) {
+        if (ownsDevice) device.destroy();
+        throw new Error('No WebGPU canvas context');
+      }
+      context.configure({ device, format, alphaMode: 'premultiplied' });
+      const uniformBuffer = device.createBuffer({ size: 136 * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+      const bindGroup = device.createBindGroup({
+        layout: pipeline.getBindGroupLayout(0),
+        entries: [{ binding: 0, resource: { buffer: uniformBuffer } }]
+      });
+      return startOrbController(canvas, options, startedAt, {
+        backend: 'webgpu',
+        device,
+        shader,
+        pipeline,
+        drawFrame(values) {
+          device.queue.writeBuffer(uniformBuffer, 0, values);
+          const encoder = device.createCommandEncoder();
+          const pass = encoder.beginRenderPass({ colorAttachments: [{
+            view: context.getCurrentTexture().createView(),
+            clearValue: { r: 0, g: 0, b: 0, a: 0 }, loadOp: 'clear', storeOp: 'store'
+          }] });
+          pass.setPipeline(pipeline); pass.setBindGroup(0, bindGroup); pass.draw(3,1,0,0); pass.end();
+          device.queue.submit([encoder.finish()]);
+        },
+        bindBackendErrors(fail) {
+          device.lost.then((info) => {
+            fail(new Error(info.message || info.reason || 'WebGPU device lost'));
+          });
+          device.addEventListener('uncapturederror', (event) => {
+            event.preventDefault();
+            fail(new Error(event.error.message));
+          });
+        },
+        disposeBackend(destroyDevice) {
+          try { uniformBuffer.destroy?.(); } catch { /* already lost */ }
+          if (destroyDevice) {
+            try { device.destroy(); } catch { /* already lost */ }
+          }
+        },
+      });
+    } finally {
+      clearTimeout(budgetTimer);
+    }
+  }
+
+  function acquireWebGL2Context(canvas, allowSoftware) {
+    const baseAttrs = {
+      alpha: true,
+      premultipliedAlpha: true,
+      antialias: false,
+      depth: false,
+      stencil: false,
+      powerPreference: 'high-performance',
+    };
+    if (!allowSoftware) {
+      const strictGl = canvas.getContext('webgl2', { ...baseAttrs, failIfMajorPerformanceCaveat: true });
+      if (strictGl) return strictGl;
+    }
+    const gl = canvas.getContext('webgl2', baseAttrs);
+    if (!gl) return null;
+    if (!allowSoftware) {
+      const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+      const renderer = String(
+        (dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : '') || gl.getParameter(gl.RENDERER) || ''
+      );
+      if (/SwiftShader|Microsoft Basic Render|llvmpipe|Software Rasterizer/i.test(renderer)) {
+        try { gl.getExtension('WEBGL_lose_context')?.loseContext(); } catch { /* ignore */ }
+        throw new Error(`WebGL2 renderer is software fallback (${renderer})`);
+      }
+    }
+    return gl;
+  }
+
+  function initWebGL2Backend(canvas, options, startedAt, allowSoftware = false) {
+    if (options.signal?.aborted) throw new Error('WebGL2 startup aborted');
+    const gl = acquireWebGL2Context(canvas, allowSoftware);
+    if (!gl) throw new Error('No WebGL2 canvas context');
+
+    const compile = (type, source) => {
+      const shader = gl.createShader(type);
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        const log = gl.getShaderInfoLog(shader) || 'WebGL2 shader compile failed';
+        gl.deleteShader(shader);
+        throw new Error(log);
+      }
+      return shader;
+    };
+
+    let vs = null, fs = null, program = null, vao = null, ubo = null;
+    try {
+      vs = compile(gl.VERTEX_SHADER, GLSL_VERTEX_SHADER);
+      fs = compile(gl.FRAGMENT_SHADER, buildOrbGlslSource(window.LiquidOrbEffectSource, options.fixedStyle));
+      program = gl.createProgram();
+      gl.attachShader(program, vs);
+      gl.attachShader(program, fs);
+      gl.linkProgram(program);
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        throw new Error(gl.getProgramInfoLog(program) || 'WebGL2 program link failed');
+      }
+      const blockIndex = gl.getUniformBlockIndex(program, 'Uniforms');
+      if (blockIndex !== gl.INVALID_INDEX) {
+        gl.uniformBlockBinding(program, blockIndex, 0);
+      }
+      vao = gl.createVertexArray();
+      ubo = gl.createBuffer();
+      gl.bindBuffer(gl.UNIFORM_BUFFER, ubo);
+      gl.bufferData(gl.UNIFORM_BUFFER, 136 * 4, gl.DYNAMIC_DRAW);
+      gl.bindBufferBase(gl.UNIFORM_BUFFER, 0, ubo);
+    } catch (error) {
+      if (ubo) gl.deleteBuffer(ubo);
+      if (vao) gl.deleteVertexArray(vao);
+      if (program) gl.deleteProgram(program);
+      if (vs) gl.deleteShader(vs);
+      if (fs) gl.deleteShader(fs);
+      try { gl.getExtension('WEBGL_lose_context')?.loseContext(); } catch { /* ignore */ }
+      throw error;
+    }
+
+    let onLost = null;
+    return startOrbController(canvas, options, startedAt, {
+      backend: 'webgl2',
+      device: null,
+      shader: null,
+      pipeline: null,
+      drawFrame(values) {
+        if (gl.isContextLost()) throw new Error('WebGL2 context lost');
+        gl.viewport(0, 0, canvas.width, canvas.height);
+        gl.clearColor(0, 0, 0, 0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.useProgram(program);
+        gl.bindVertexArray(vao);
+        gl.bindBuffer(gl.UNIFORM_BUFFER, ubo);
+        gl.bufferSubData(gl.UNIFORM_BUFFER, 0, values);
+        gl.bindBufferBase(gl.UNIFORM_BUFFER, 0, ubo);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+      },
+      bindBackendErrors(fail) {
+        onLost = (event) => {
+          event.preventDefault();
+          fail(new Error('WebGL2 context lost'));
+        };
+        canvas.addEventListener?.('webglcontextlost', onLost);
+      },
+      disposeBackend() {
+        if (onLost) canvas.removeEventListener?.('webglcontextlost', onLost);
+        try {
+          gl.deleteBuffer(ubo);
+          gl.deleteVertexArray(vao);
+          gl.deleteProgram(program);
+          gl.deleteShader(vs);
+          gl.deleteShader(fs);
+          gl.getExtension('WEBGL_lose_context')?.loseContext();
+        } catch { /* already lost */ }
+      },
+    });
+  }
+
+  window.createLiquidOrbRenderer = async function createLiquidOrbRenderer(canvas, options = {}) {
+    const orbParam = new URLSearchParams(window.location?.search || '').get('orb');
+    if (orbParam === 'canvas') throw new Error('Canvas2D fallback requested');
+    const startedAt = performance.now();
+    const forceWebGL = orbParam === 'webgl' || orbParam === 'webgl2' || options.preferWebGL === true;
+    if (!forceWebGL) {
+      try {
+        return await initWebGPUBackend(canvas, options, startedAt);
+      } catch (webgpuError) {
+        if (options.signal?.aborted) throw webgpuError;
+        const message = webgpuError instanceof Error ? webgpuError.message : String(webgpuError);
+        console.warn('[LiquidOrb] WebGPU unavailable, falling back to WebGL2:', message);
+        try {
+          return initWebGL2Backend(canvas, options, startedAt, false);
+        } catch {
+          throw webgpuError;
+        }
+      }
+    }
+    return initWebGL2Backend(canvas, options, startedAt, orbParam === 'webgl2' || orbParam === 'webgl');
   };
 })();

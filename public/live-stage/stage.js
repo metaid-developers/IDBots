@@ -57,7 +57,7 @@
   const ctx = canvas.getContext('2d');
   const reducedMedia = window.matchMedia('(prefers-reduced-motion: reduce)');
   const orbLayers = new Set();
-  let orb = null, orbStarting = false, orbFailed = false;
+  let orb = null, orbStarting = false, orbFailed = false, orbPreferWebGL = false;
   let handoffKey = '', handoffTimer = 0;
   let interactionKey = '', interactionTimer = 0;
   const interactionQueue = [];
@@ -319,7 +319,7 @@
   }
 
   function disposeAllOrbLayers() {
-    const devices = new Set([...orbLayers].map((layer) => layer.controller?.getSharedResources().device).filter(Boolean));
+    const devices = new Set([...orbLayers].map((layer) => layer.controller?.getSharedResources()?.device).filter(Boolean));
     orbLayers.forEach((layer) => disposeOrbLayer(layer, false));
     devices.forEach((device) => device.destroy());
     orb = null;
@@ -342,6 +342,7 @@
       return;
     }
     const hadController = Boolean(layer.controller);
+    const failedBackend = layer.controller?.backend || layer.canvas?.dataset?.orbBackend;
     disposeOrbLayer(layer);
     orbStarting = false;
     // If the failing layer already obtained a controller (meaning device.lost
@@ -351,8 +352,15 @@
       orb = previous;
       previous.canvas.dataset.active = 'true';
       previous.controller.setReduced(effectiveReduced());
-      body.dataset.orbBackend = 'webgpu';
-      window.__liveStageBackend = 'webgpu';
+      const prevBackend = previous.controller.backend || 'webgpu';
+      body.dataset.orbBackend = prevBackend;
+      window.__liveStageBackend = prevBackend;
+    } else if (hadController && failedBackend === 'webgpu' && !orbPreferWebGL) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn('[LiveStage] WebGPU lost mid-session, switching to WebGL2:', message);
+      orbPreferWebGL = true;
+      disposeAllOrbLayers();
+      mountOrb(layer.family);
     } else {
       orb = null;
       fallbackOrb(error);
@@ -383,14 +391,16 @@
     window.createLiquidOrbRenderer(layerCanvas, {
       initialFamily: family,
       fixedStyle: style,
+      preferWebGL: orbPreferWebGL,
       startPhase: Number.isFinite(previousPhase) ? previousPhase * ((previous?.speed || 1) / (params.speed || 1)) : undefined,
       sharedResources: previous?.controller?.getSharedResources(),
       signal: abort?.signal,
       onReady: () => {
         clearTimeout(layer.startTimer);
         if (orb !== layer) return;
-        body.dataset.orbBackend = 'webgpu';
-        window.__liveStageBackend = 'webgpu';
+        const backend = layerCanvas.dataset.orbBackend || 'webgpu';
+        body.dataset.orbBackend = backend;
+        window.__liveStageBackend = backend;
         layerCanvas.getBoundingClientRect();
         layerCanvas.dataset.active = 'true';
         if (previous && previous !== layer && orbLayers.has(previous)) {

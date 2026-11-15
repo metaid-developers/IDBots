@@ -285,19 +285,32 @@
       : undefined;
     layer.speed = params.speed;
     window.createLiquidOrbRenderer(canvas, {
+      fixedStyle: style,
+      preferWebGL: Boolean(orb.preferWebGL),
       startPhase,
       sharedResources: previous?.controller?.getSharedResources?.() || undefined,
       signal: abort?.signal,
       onReady: () => {
         clearTimeout(layer.startTimer);
         if (orb.active !== layer || orb.backend === 'canvas') return;
-        orb.backend = 'webgpu';
+        orb.backend = canvas.dataset.orbBackend || 'webgpu';
         reveal();
       },
       onError: (error) => {
         clearTimeout(layer.startTimer);
         if (orb.active !== layer) {
           disposeLayer(layer, !previous?.controller);
+          return;
+        }
+        const failedBackend = layer.controller?.backend || canvas.dataset.orbBackend;
+        if (failedBackend === 'webgpu' && !orb.preferWebGL) {
+          orb.preferWebGL = true;
+          orb.mounting = false;
+          const devices = new Set(orb.layers.map((entry) => entry.controller?.getSharedResources?.()?.device).filter(Boolean));
+          [...orb.layers].forEach((entry) => disposeLayer(entry));
+          devices.forEach((device) => { try { device.destroy(); } catch { /* lost */ } });
+          orb.active = null;
+          mountLayer(orb.style, true);
           return;
         }
         switchToCanvas(error);

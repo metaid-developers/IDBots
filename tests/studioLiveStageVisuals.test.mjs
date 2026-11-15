@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 
-const read = (relative) => fs.readFileSync(path.resolve('public/live-stage', relative), 'utf8');
+const read = (relative) => fs.readFileSync(path.resolve('public/live-stage', relative), 'utf8').replace(/\r\n/g, '\n');
 
 test('orb families keep one dark-glass material with calm-only autonomous breathing', () => {
   const window = {};
@@ -244,7 +244,7 @@ test('WebGPU orb compiles pipelines asynchronously and tears down late timed-out
   assert.match(stage, /console\.warn\('\[LiveStage\] WebGPU fallback:', message\)/);
 });
 
-test('WebGPU orb specializes fixed-style WGSL for Windows shader compile speed and retries adapters', () => {
+test('WebGPU orb specializes and dead-code strips WGSL and provides a pixel-equivalent WebGL2 fallback', () => {
   const window = {};
   vm.runInNewContext(read('liquid-orb-effect.js'), { window });
   vm.runInNewContext(read('liquid-orb.js'), { window });
@@ -253,19 +253,44 @@ test('WebGPU orb specializes fixed-style WGSL for Windows shader compile speed a
   assert.match(specialized, /fn glsContourStrength\(\) -> f32 \{\s*\n\s*return 0\.09;\s*\n\}/);
   assert.match(specialized, /let style = 9;/);
   assert.match(specialized, /let s = 9;/);
-  assert.doesNotMatch(specialized, /glsAuroraFluid\(p, t\)/);
+  assert.doesNotMatch(specialized, /glsAuroraFluid/);
+  assert.doesNotMatch(specialized, /fn glsFluid\(/);
   assert.doesNotMatch(specialized, /else \{ fcol = glsFluid\(fu, md, t\); \}/);
+  assert.ok(specialized.length < window.LiquidOrbEffectSource.length * 0.5, 'dead-code stripping drops unused fluid presets');
+
+  const glsl = window.buildLiquidOrbGlslSource(window.LiquidOrbEffectSource, 9);
+  assert.match(glsl, /^#version 300 es/);
+  assert.match(glsl, /layout\(std140\) uniform Uniforms \{[\s\S]*?\} u;/);
+  assert.match(glsl, /vec3 glsSiriFluid\(vec2 p, float t\)/);
+  assert.doesNotMatch(glsl, /glsAuroraFluid/);
+  assert.doesNotMatch(glsl, /vec[234]<f32>|\batan2\(|\bselect\(/);
+
+  const fullGlsl = window.buildLiquidOrbGlslSource(window.LiquidOrbEffectSource);
+  assert.match(fullGlsl, /vec3 glsAuroraFluid\(vec2 p, float t\)/);
+  assert.doesNotMatch(fullGlsl, /vec[234]<f32>|\batan2\(|\bselect\(/);
 
   const orb = read('liquid-orb.js');
   assert.match(orb, /powerPreference: 'high-performance'/);
   assert.match(orb, /powerPreference: 'low-power'/);
   assert.match(orb, /featureLevel: 'compatibility'/);
   assert.match(orb, /adapter\.info\?\.isFallbackAdapter \|\| adapter\.isFallbackAdapter/);
+  assert.match(orb, /initWebGL2Backend\(canvas, options, startedAt, false\)/);
+  // WebGPU canvas context must be requested AFTER pipeline compilation so a
+  // failed/timed-out WebGPU startup leaves the canvas clean for WebGL2.
+  assert.ok(orb.indexOf('createRenderPipelineAsync(pipelineDescriptor)') < orb.indexOf("canvas.getContext('webgpu')"));
 
-  const main = fs.readFileSync(path.resolve('src/main/main.ts'), 'utf8');
+  const stage = read('stage.js');
+  assert.match(stage, /preferWebGL: orbPreferWebGL/);
+  assert.match(stage, /WebGPU lost mid-session, switching to WebGL2/);
+
+  const css = read('stage.css');
+  assert.match(css, /body\[data-orb-backend="webgl2"\] \.liquid-orb-canvas\[data-active="true"\]\{opacity:1\}/);
+  assert.match(css, /body\[data-orb-backend="webgl2"\] \.membrane\{border-color:transparent/);
+
+  const main = fs.readFileSync(path.resolve('src/main/main.ts'), 'utf8').replace(/\r\n/g, '\n');
   assert.match(main, /app\.getGPUFeatureStatus\(\)/);
   assert.match(main, /app\.getGPUInfo\('basic'\)/);
-  assert.match(main, /\\\[\(\?:LiveStage\|GenesisStage\)\\\]\|WebGPU/);
+  assert.match(main, /\\\[\(\?:LiveStage\|GenesisStage\|LiquidOrb\)\\\]\|WebGPU\|WebGL/);
 });
 
 test('worker visual sets avatar src without flickering and derives fallback initial from worker label', () => {

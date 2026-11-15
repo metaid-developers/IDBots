@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 
-const readOrb = (relative) => fs.readFileSync(path.resolve('public/live-stage', relative), 'utf8');
+const readOrb = (relative) => fs.readFileSync(path.resolve('public/live-stage', relative), 'utf8').replace(/\r\n/g, '\n');
 
 test('the shared orb renderer keeps direct params alongside state-driven Live Stage presets', () => {
   const source = readOrb('liquid-orb.js');
@@ -35,9 +35,11 @@ test('the WGSL contour accepts the Genesis distortion range', () => {
   assert.doesNotMatch(source, /clamp\(amount, 0\.0, 1\.0\) \* glsContourStrength\(\)/);
 });
 
-test('Genesis Stage enforces a WebGPU startup timeout so hung Windows drivers degrade to Canvas2D', () => {
-  const genesis = fs.readFileSync(path.resolve('public/genesis-stage/genesis.js'), 'utf8');
+test('Genesis Stage enforces a WebGPU startup timeout, specializes per-style shaders, and falls back through WebGL2 to Canvas2D', () => {
+  const genesis = fs.readFileSync(path.resolve('public/genesis-stage/genesis.js'), 'utf8').replace(/\r\n/g, '\n');
   assert.match(genesis, /const ORB_START_TIMEOUT_MS = 20000;/);
+  assert.match(genesis, /fixedStyle: style/);
+  assert.match(genesis, /preferWebGL: Boolean\(orb\.preferWebGL\)/);
   assert.match(genesis, /switchToCanvas\(new Error\('WebGPU orb was not ready in time'\)\)/);
   assert.match(genesis, /signal: abort\?\.signal/);
 });
