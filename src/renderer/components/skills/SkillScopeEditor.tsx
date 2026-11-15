@@ -179,7 +179,7 @@ const SkillScopeEditor: React.FC<SkillScopeEditorProps> = ({ skill, metabots, on
                   setMode(value);
                   setConfirming(false);
                 }}
-                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-left transition-colors ${
+                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-[var(--shape-radius-sm)] text-xs text-left transition-colors ${
                   mode === value
                     ? 'bg-claude-accent/10 text-claude-accent'
                     : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
@@ -212,7 +212,7 @@ const SkillScopeEditor: React.FC<SkillScopeEditorProps> = ({ skill, metabots, on
                     key={bot.id}
                     type="button"
                     onClick={() => toggleBot(bot.id)}
-                    className="w-full flex items-center gap-2 px-2 py-1 rounded-lg text-xs text-left dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                    className="w-full flex items-center gap-2 px-2 py-1 rounded-[var(--shape-radius-sm)] text-xs text-left dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
                   >
                     <span
                       className={`w-3.5 h-3.5 rounded border flex items-center justify-center flex-shrink-0 ${
@@ -242,7 +242,7 @@ const SkillScopeEditor: React.FC<SkillScopeEditorProps> = ({ skill, metabots, on
               type="button"
               onClick={() => setOpen(false)}
               disabled={saving}
-              className="px-2.5 py-1 text-[11px] rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+              className="px-2.5 py-1 text-[11px] rounded-[var(--shape-radius-sm)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
             >
               {i18nService.t('cancel')}
             </button>
