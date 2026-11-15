@@ -108,7 +108,7 @@ const CoworkSurfaceSessionName: React.FC<CoworkSurfaceSessionNameProps> = ({
       <div
         data-slot="cowork-surface-session-name-spacer"
         aria-hidden="true"
-        className="h-6 w-full min-w-0 flex-none"
+        className="h-6 w-full min-w-0 flex-none translate-x-[6px]"
       />
     );
   }
@@ -158,7 +158,7 @@ const CoworkSurfaceSessionName: React.FC<CoworkSurfaceSessionNameProps> = ({
           }
         }}
         onBlur={handleRenameBlur}
-        className="non-draggable h-6 w-full min-w-0 flex-none border-0 bg-transparent shadow-none px-4 text-center text-[13px] font-medium leading-none dark:text-claude-darkText text-claude-text outline-none focus:outline-none focus:ring-0"
+        className="non-draggable h-6 w-full min-w-0 flex-none translate-x-[6px] border-0 bg-transparent shadow-none px-4 text-center text-[13px] font-medium leading-none dark:text-claude-darkText text-claude-text outline-none focus:outline-none focus:ring-0"
       />
     );
   }
@@ -174,7 +174,7 @@ const CoworkSurfaceSessionName: React.FC<CoworkSurfaceSessionNameProps> = ({
       }}
       aria-label={displayTitle}
       title={displayTitle}
-      className="non-draggable group flex h-6 w-full min-w-0 flex-none items-center justify-center gap-[6px] rounded-lg px-4 text-center text-[13px] font-medium leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 text-claude-text dark:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+      className="non-draggable group flex h-6 w-full min-w-0 flex-none translate-x-[6px] items-center justify-center gap-[6px] rounded-lg px-4 text-center text-[13px] font-medium leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 text-claude-text dark:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
     >
       <SessionNameMessageSquareIcon className="h-[14px] w-[14px] flex-none text-claude-textSecondary transition-colors group-hover:text-claude-text dark:text-claude-darkTextSecondary dark:group-hover:text-claude-darkText" />
       <span className="min-w-0 truncate">{displayTitle}</span>

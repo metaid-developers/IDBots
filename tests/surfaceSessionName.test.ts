@@ -110,6 +110,8 @@ test('session-name icon: MessageSquare replica rides the title row (owner icon r
   assert.match(markup, /gap-\[6px\]/);
   assert.match(markup, /group-hover:text-claude-text/);
   assert.match(markup, /aria-hidden="true"/);
+  // Stagger shift (owner 09:34): the label state rides translate-x-[6px].
+  assert.match(markup, /translate-x-\[6px\]/);
 });
 
 test('render: blank stored title displays the default title', () => {
