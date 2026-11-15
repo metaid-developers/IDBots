@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronDownIcon, CheckIcon } from '@heroicons/react/24/outline';
+import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, CheckIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import type { SkillWithAssignment } from '../../types/skill';
 
@@ -29,6 +29,9 @@ const SkillScopeEditor: React.FC<SkillScopeEditorProps> = ({ skill, metabots, on
   const [mode, setMode] = useState<EditorMode>('library');
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [confirming, setConfirming] = useState(false);
+  // OWNER 03:03: two-step flow inside ONE unified panel — main mode list,
+  // then an in-panel 选 Bot sub-view with its own confirm footer.
+  const [view, setView] = useState<'main' | 'bots'>('main');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   // OWNER 01:56: the scope popover renders FIXED to the viewport — the card
@@ -68,6 +71,7 @@ const SkillScopeEditor: React.FC<SkillScopeEditorProps> = ({ skill, metabots, on
     setChecked(new Set(assignedIds));
     setConfirming(false);
     setError('');
+    setView('main');
     setOpen(true);
   };
 
@@ -84,26 +88,14 @@ const SkillScopeEditor: React.FC<SkillScopeEditorProps> = ({ skill, metabots, on
     setConfirming(false);
   };
 
-  const handleSave = async () => {
-    // Leaving "all bots" (or dropping ANY currently-assigned bot — including
-    // same-count swaps) takes effect immediately for the dropped bots —
-    // require one extra explicit confirmation click.
-    const assigned = new Set(assignedIds);
-    const narrowing =
-      (currentScope === 'global' && mode !== 'all')
-      || (mode === 'bots' && Array.from(assigned).some((id) => !checked.has(id)))
-      || mode === 'library';
-    if (narrowing && !confirming) {
-      setConfirming(true);
-      return;
-    }
+  const persist = async (nextMode: EditorMode, nextChecked: Set<number>) => {
     setSaving(true);
     setError('');
     try {
       const result = await window.electron.skills.setScope({
         id: skill.id,
-        scope: mode === 'all' ? 'global' : mode === 'bots' ? 'bots' : 'library',
-        metabotIds: mode === 'bots' ? Array.from(checked) : [],
+        scope: nextMode === 'all' ? 'global' : nextMode === 'bots' ? 'bots' : 'library',
+        metabotIds: nextMode === 'bots' ? Array.from(nextChecked) : [],
       });
       if (!result.success) {
         setError(result.error || i18nService.t('skillScopeSaveFailed'));
@@ -119,7 +111,42 @@ const SkillScopeEditor: React.FC<SkillScopeEditorProps> = ({ skill, metabots, on
     }
   };
 
-  if (skill.isBuiltIn || currentScope === 'bundled') {
+  const isNarrowing = (nextMode: EditorMode, nextChecked: Set<number>) =>
+    (currentScope === 'global' && nextMode !== 'all')
+    || (nextMode === 'bots' && Array.from(assignedIds).some((id) => !nextChecked.has(id)))
+    || nextMode === 'library';
+
+  // Row click on the main view: bots drills into the in-panel sub-view;
+  // non-narrowing modes apply immediately; narrowing asks once (amber 确认).
+  const applyMode = (next: EditorMode) => {
+    setError('');
+    if (next === 'bots') {
+      setMode('bots');
+      setChecked(new Set(assignedIds));
+      setConfirming(false);
+      setView('bots');
+      return;
+    }
+    setMode(next);
+    if (isNarrowing(next, new Set(assignedIds))) {
+      setConfirming(true);
+      return;
+    }
+    void persist(next, new Set());
+  };
+
+  const handleSave = async () => {
+    // Leaving "all bots" (or dropping ANY currently-assigned bot — including
+    // same-count swaps) takes effect immediately for the dropped bots —
+    // require one extra explicit confirmation click.
+    if (isNarrowing(mode, checked) && !confirming) {
+      setConfirming(true);
+      return;
+    }
+    await persist(mode, checked);
+  };
+
+    if (skill.isBuiltIn || currentScope === 'bundled') {
     return (
       <span
         className="px-1.5 py-0.5 rounded bg-claude-accent/10 text-claude-accent font-medium text-[10px] flex-shrink-0"
@@ -159,106 +186,139 @@ const SkillScopeEditor: React.FC<SkillScopeEditorProps> = ({ skill, metabots, on
 
       {open && (
         <div
-          className="fixed z-40 w-64 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-2xl p-3"
+          className="fixed z-40 w-64 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-2xl p-2"
           style={popPos ? { top: popPos.top, right: popPos.right } : undefined}
         >
-          <div className="text-xs font-semibold dark:text-claude-darkText text-claude-text mb-2">
-            {i18nService.t('skillScopeEditorTitle')}
-          </div>
-
-          <div className="space-y-1">
-            {([
-              ['all', i18nService.t('skillScopeAllBotsOption')],
-              ['bots', i18nService.t('skillScopeBotsOption')],
-              ['library', i18nService.t('skillScopeLibraryOption')],
-            ] as Array<[EditorMode, string]>).map(([value, text]) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => {
-                  setMode(value);
-                  setConfirming(false);
-                }}
-                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-[var(--shape-radius-sm)] text-xs text-left transition-colors ${
-                  mode === value
-                    ? 'bg-claude-accent/10 text-claude-accent'
-                    : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
-                }`}
-              >
-                <span
-                  className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center flex-shrink-0 ${
-                    mode === value ? 'border-claude-accent' : 'dark:border-claude-darkBorder border-claude-border'
-                  }`}
-                >
-                  {mode === value && <span className="w-1.5 h-1.5 rounded-full bg-claude-accent" />}
-                </span>
-                {text}
-              </button>
-            ))}
-          </div>
-
-          {mode === 'bots' && (
-            <div className="mt-2 max-h-40 overflow-y-auto">
-              <div className="text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
-                {i18nService.t('skillScopeSelectBots')}
+          {view === 'main' ? (
+            <>
+              <div className="text-xs font-semibold dark:text-claude-darkText text-claude-text mb-2 px-1">
+                {i18nService.t('skillScopeEditorTitle')}
               </div>
-              {metabots.length === 0 ? (
-                <div className="text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                  —
-                </div>
-              ) : (
-                metabots.map((bot) => (
-                  <button
-                    key={bot.id}
-                    type="button"
-                    onClick={() => toggleBot(bot.id)}
-                    className="w-full flex items-center gap-2 px-2 py-1 rounded-[var(--shape-radius-sm)] text-xs text-left dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
-                  >
-                    <span
-                      className={`w-3.5 h-3.5 rounded border flex items-center justify-center flex-shrink-0 ${
-                        checked.has(bot.id)
-                          ? 'bg-claude-accent border-claude-accent'
-                          : 'dark:border-claude-darkBorder border-claude-border'
+              <div className="space-y-1">
+                {([
+                  ['all', i18nService.t('skillScopeAllBotsOption')] as [EditorMode, string],
+                  ['bots', i18nService.t('skillScopeBotsOption')] as [EditorMode, string],
+                  ['library', i18nService.t('skillScopeLibraryOption')] as [EditorMode, string],
+                ]).map(([value, text]) => {
+                  const isCurrent = currentScope === (value === 'all' ? 'global' : value === 'bots' ? 'bots' : 'library')
+                    && (value !== 'bots' || assignedIds.length > 0);
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => applyMode(value)}
+                      className={`w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-[var(--shape-radius-sm)] text-xs text-left transition-colors ${
+                        isCurrent
+                          ? 'bg-claude-accent/10 text-claude-accent font-medium'
+                          : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
                       }`}
                     >
-                      {checked.has(bot.id) && <CheckIcon className="w-2.5 h-2.5 text-claude-accentInk" />}
-                    </span>
-                    <span className="truncate">{bot.name}</span>
-                  </button>
-                ))
+                      {text}
+                      <span className="flex items-center gap-1 flex-shrink-0">
+                        {isCurrent && <CheckIcon className="w-3.5 h-3.5 text-claude-accent" />}
+                        {value === 'bots' && !isCurrent && <ChevronRightIcon className="w-3.5 h-3.5 opacity-60" />}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {confirming && (
+                <>
+                  <p className="mt-2 text-[10px] leading-relaxed text-amber-600 dark:text-amber-400 px-1">
+                    {i18nService.t('skillScopeNarrowWarning')}
+                  </p>
+                  <div className="mt-2 flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { setConfirming(false); setMode(currentScope === 'global' ? 'all' : assignedIds.length > 0 ? 'bots' : 'library'); }}
+                      className="px-2.5 py-1 text-[11px] rounded-[var(--shape-radius-sm)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                    >
+                      {i18nService.t('cancel')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSave}
+                      disabled={saving}
+                      className="px-2.5 py-1 text-[11px] rounded-[var(--shape-radius-sm)] border border-amber-600 bg-amber-500 text-white hover:brightness-[0.96] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      {i18nService.t('communitySkillConfirm')}
+                    </button>
+                  </div>
+                </>
               )}
-            </div>
+              {error && <p className="mt-2 text-[10px] text-red-500 px-1">{error}</p>}
+            </>
+          ) : (
+            <>
+              <div className="flex items-center gap-1 mb-2 px-1">
+                <button
+                  type="button"
+                  onClick={() => { setView('main'); setConfirming(false); }}
+                  className="p-0.5 rounded-[var(--shape-radius-sm)] dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                  title={i18nService.t('cancel')}
+                >
+                  <ChevronLeftIcon className="w-4 h-4" />
+                </button>
+                <div className="text-xs font-semibold dark:text-claude-darkText text-claude-text">
+                  {i18nService.t('skillScopeSelectBots')}
+                </div>
+              </div>
+              <div className="max-h-40 overflow-y-auto space-y-0.5">
+                {metabots.length === 0 ? (
+                  <div className="text-[10px] px-2 dark:text-claude-darkTextSecondary text-claude-textSecondary">—</div>
+                ) : (
+                  metabots.map((bot) => (
+                    <button
+                      key={bot.id}
+                      type="button"
+                      onClick={() => toggleBot(bot.id)}
+                      className="w-full flex items-center gap-2 px-2 py-1 rounded-[var(--shape-radius-sm)] text-xs text-left dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                    >
+                      <span
+                        className={`w-3.5 h-3.5 rounded border flex items-center justify-center flex-shrink-0 ${
+                          checked.has(bot.id)
+                            ? 'bg-claude-accent border-claude-accent'
+                            : 'dark:border-claude-darkBorder border-claude-border'
+                        }`}
+                      >
+                        {checked.has(bot.id) && <CheckIcon className="w-2.5 h-2.5 text-claude-accentInk" />}
+                      </span>
+                      <span className="truncate">{bot.name}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+              {confirming && (
+                <p className="mt-2 text-[10px] leading-relaxed text-amber-600 dark:text-amber-400 px-1">
+                  {i18nService.t('skillScopeNarrowWarning')}
+                </p>
+              )}
+              {error && <p className="mt-2 text-[10px] text-red-500 px-1">{error}</p>}
+              <div className="mt-2 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setOpen(false)}
+                  disabled={saving}
+                  className="px-2.5 py-1 text-[11px] rounded-[var(--shape-radius-sm)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                >
+                  {i18nService.t('cancel')}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  disabled={saving || checked.size === 0}
+                  className={`px-2.5 py-1 text-[11px] rounded-[var(--shape-radius-sm)] border transition-colors ${
+                    confirming
+                      ? 'border-amber-600 bg-amber-500 text-white hover:brightness-[0.96]'
+                      : 'border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9]'
+                  } disabled:opacity-60 disabled:cursor-not-allowed`}
+                >
+                  {confirming ? i18nService.t('communitySkillConfirm') : i18nService.t('skillScopeConfirm')}
+                </button>
+              </div>
+            </>
           )}
-
-          {confirming && (
-            <p className="mt-2 text-[10px] leading-relaxed text-amber-600 dark:text-amber-400">
-              {i18nService.t('skillScopeNarrowWarning')}
-            </p>
-          )}
-          {error && <p className="mt-2 text-[10px] text-red-500">{error}</p>}
-
-          <div className="mt-3 flex items-center justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => setOpen(false)}
-              disabled={saving}
-              className="px-2.5 py-1 text-[11px] rounded-[var(--shape-radius-sm)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
-            >
-              {i18nService.t('cancel')}
-            </button>
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={saving || (mode === 'bots' && checked.size === 0)}
-              className={`px-2.5 py-1 text-[11px] rounded-[8px] border transition-colors ${
-                confirming
-                  ? 'border-amber-600 bg-amber-500 text-white hover:brightness-[0.96]'
-                  : 'border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9]'
-              } disabled:opacity-60 disabled:cursor-not-allowed`}
-            >
-              {confirming ? i18nService.t('communitySkillConfirm') : i18nService.t('skillScopeConfirm')}
-            </button>
-          </div>
         </div>
       )}
     </div>
