@@ -3857,7 +3857,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
       >
         {/* Left sidebar (slimmed ~1/5: 220px → 176px, per owner request) */}
         <div className="w-[176px] shrink-0 flex flex-col min-h-0 dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted border-r dark:border-claude-darkBorder border-claude-border rounded-l-2xl">
-          <div className="px-5 pt-5 pb-3 shrink-0">
+          <div className="pl-6 pr-5 pt-5 pb-3 shrink-0"> {/* pl-6: title sits on the 24px icon axis (nav px-3 + item px-3), Plan A 2026-11-16 */}
             <h2 className="text-lg font-semibold dark:text-claude-darkText text-claude-text">{i18nService.t('settings')}</h2>
           </div>
           <nav className="flex flex-col gap-0.5 px-3 pb-2 flex-1 min-h-0 overflow-y-auto">
