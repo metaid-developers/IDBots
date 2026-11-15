@@ -69,6 +69,8 @@ export interface DelegateLocalWorkerInput {
   stepId?: string | null;
   taskIntent?: string | null;
   idempotencyKey?: string | null;
+  longtermTaskId?: string | null;
+  longtermSubtaskId?: string | null;
 }
 
 export interface DelegateLocalWorkerResult {
@@ -122,6 +124,8 @@ export interface TwinOrchestrationServiceDeps {
    * is advisory; this service makes it structural).
    */
   longTermTaskStore?: () => LongTermTaskStore;
+  /** True when the delegating session is the owner's Studio conversation (auto-ledgers unlinked delegations as quick task cards). */
+  isStudioSourceSession?: (sessionId: string) => boolean;
   runWorkerTurn?: (params: RunOrchestratorSkillTurnParams) => Promise<string>;
   /**
    * Round-4 r6: worker-completion notification to the Twin. Defaults to the
@@ -134,6 +138,21 @@ export interface TwinOrchestrationServiceDeps {
    * implementation. Returns the insert result (never throws).
    */
   insertCrossSessionUserMessage?: TwinOrchestrationInsertCrossSessionMessageFn;
+  /**
+   * Studio Chief-of-Staff intercept: when the delegating source session is the
+   * owner's Studio conversation, route Worker terminal settlements into silent
+   * back-office supervision instead of injecting raw [ORCH-NOTIFY] messages
+   * into the owner's chat stream. Returning true suppresses front-office
+   * cross-session injection while keeping the notification claim/kv guard set.
+   */
+  onStudioWorkerTerminalState?: (event: {
+    task: OrchestrationTask;
+    attempt: OrchestrationAttempt;
+    workerName: string;
+    outcome: 'completed' | 'failed';
+    detail?: string | null;
+    notifySummaryText: string;
+  }) => boolean;
   /**
    * Round-4 r6: secondary, fast-path terminal-notification marker (kv key
    * `orch_notify:<taskId>:<attemptId>:<status>`). The durable arbiter is the
@@ -316,6 +335,18 @@ export class TwinOrchestrationService {
             ? `${detail.trim()} — host-initiated stop, not a worker fault; once the cause clears, re-dispatching should succeed`
             : (detail ?? '').trim() || 'WORKER_ATTEMPT_FAILED',
         ));
+      if (this.deps.onStudioWorkerTerminalState?.({
+        task,
+        attempt,
+        workerName,
+        outcome,
+        detail,
+        notifySummaryText: text,
+      })) {
+        this.deps.kv?.set(guardKey, '1');
+        console.log(`[TwinOrchestration] Studio back-office supervision notified (${task.id} → ${outcome})`);
+        return;
+      }
       const result = this.insertCrossSession({
         sourceSessionId: workerSessionId,
         targetSessionId,
@@ -750,10 +781,21 @@ export class TwinOrchestrationService {
    * prepend a freshly built anchor block. The exec skill asks the Twin to
    * include it; this service guarantees the worker always receives it.
    */
-  private withLongTermAnchor(sourceSessionId: string, objective: string): string {
+  private withLongTermAnchor(
+    sourceSessionId: string,
+    objective: string,
+    explicitContext?: { taskId: string; subtaskId: string } | null,
+  ): string {
     if (objective.includes(LONGTERM_ANCHOR_MARKER)) return objective;
     const store = this.deps.longTermTaskStore?.();
     if (!store) return objective;
+    if (explicitContext) {
+      const detail = store.getTask(explicitContext.taskId);
+      const sub = detail?.subtasks.find((item) => item.id === explicitContext.subtaskId) ?? null;
+      if (detail && sub) {
+        return `${buildDelegationAnchorBlock(detail, sub, getPersistedAppLanguage())}\n\n${objective}`;
+      }
+    }
     const hit = store.findBySessionId(sourceSessionId);
     if (!hit?.subtask) return objective;
     const detail = store.getTask(hit.task.id);
@@ -771,33 +813,71 @@ export class TwinOrchestrationService {
     if (!worker.enabled) throw new Error('WORKER_DISABLED');
     const objective = String(input.objective ?? '').trim();
     if (!objective) throw new Error('WORKER_OBJECTIVE_REQUIRED');
-    // Long-term delegation anchor (hard gate): a delegation issued from a
-    // long-term-bound session ALWAYS carries the <longterm_anchor> block —
-    // prepended here when the Twin left it out (skill discipline is advisory;
-    // this service makes it structural).
-    const delegatedObjective = this.withLongTermAnchor(sourceSessionId, objective);
 
-    // 方案 A: extract long-term task context from the source session if present.
-    // When the Twin delegates from a session bound to a long-term sub-project,
-    // the orchestration task inherits that linkage so terminal-state notifications
-    // can report back to the long-term task's definition session.
+    // Resolve Managed Task Tree linkage:
+    //  1) explicit longtermTaskId + longtermSubtaskId passed by the Twin;
+    //  2) bound session lookup (findBySessionId);
+    //  3) Studio zero-orphan auto-ledgering: an unlinked delegation from a
+    //     Studio owner session automatically creates a lightweight 'quick' task
+    //     card so 100% of Studio deliverables appear on the Managed Task Tree.
     let longtermContext: { taskId: string; subtaskId: string; reportSessionId: string } | null = null;
     const ltStore = this.deps.longTermTaskStore?.();
     if (ltStore) {
-      const hit = ltStore.findBySessionId(sourceSessionId);
-      if (hit?.subtask) {
-        // findBySessionId returns a summary; read the detail to get definitionSessionId.
-        const detail = ltStore.getTask(hit.task.id);
-        longtermContext = {
-          taskId: hit.task.id,
-          subtaskId: hit.subtask.id,
-          // Report to the long-term task's definition session (where the owner
-          // and Twin converse about this task), NOT the sub-task's bound session
-          // (the work session, which may differ).
-          reportSessionId: detail?.definitionSessionId ?? sourceSessionId,
-        };
+      const explicitTaskId = String(input.longtermTaskId ?? '').trim();
+      const explicitSubtaskId = String(input.longtermSubtaskId ?? '').trim();
+      if (explicitTaskId) {
+        const detail = ltStore.getTask(explicitTaskId);
+        const sub = detail
+          ? (explicitSubtaskId
+              ? detail.subtasks.find((item) => item.id === explicitSubtaskId)
+              : detail.subtasks.find((item) => item.id === detail.currentSubtaskId) ?? detail.subtasks[0])
+          : null;
+        if (detail && sub) {
+          longtermContext = {
+            taskId: detail.id,
+            subtaskId: sub.id,
+            reportSessionId: detail.definitionSessionId ?? sourceSessionId,
+          };
+        }
+      }
+      if (!longtermContext) {
+        const hit = ltStore.findBySessionId(sourceSessionId);
+        if (hit?.subtask) {
+          const detail = ltStore.getTask(hit.task.id);
+          longtermContext = {
+            taskId: hit.task.id,
+            subtaskId: hit.subtask.id,
+            reportSessionId: detail?.definitionSessionId ?? sourceSessionId,
+          };
+        }
+      }
+      if (!longtermContext && this.deps.isStudioSourceSession?.(sourceSessionId)) {
+        const quickTitle = String(input.taskIntent ?? objective).split('\n')[0].trim().slice(0, 80) || objective.slice(0, 80);
+        const quickCreated = ltStore.createQuickTask(
+          {
+            title: quickTitle,
+            goal: String(input.taskIntent ?? objective).trim(),
+            acceptanceCriteria: (input.acceptanceCriteria ?? []).map((item) => String(item)),
+            preferredChannel: 'delegate_bot',
+            definitionSessionId: sourceSessionId,
+          },
+          'twin',
+        );
+        if (quickCreated.ok && quickCreated.value && quickCreated.value.subtasks[0]) {
+          longtermContext = {
+            taskId: quickCreated.value.id,
+            subtaskId: quickCreated.value.subtasks[0].id,
+            reportSessionId: sourceSessionId,
+          };
+        }
       }
     }
+
+    const delegatedObjective = this.withLongTermAnchor(
+      sourceSessionId,
+      objective,
+      longtermContext ? { taskId: longtermContext.taskId, subtaskId: longtermContext.subtaskId } : null,
+    );
 
     const requestedIdempotencyKey = String(input.idempotencyKey ?? '').trim();
     if (requestedIdempotencyKey) {

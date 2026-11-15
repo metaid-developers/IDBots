@@ -133,6 +133,11 @@ import { buildMetabotPersonaPrompt } from './metabotPersonaPrompt';
 import { readBootstrapDoc } from './welcomeBootstrap';
 import { buildTwinProductPrimerSection, readTwinProductPrimer } from './twinProductPrimer';
 import { buildTwinFirstWorkerNudge } from './twinTeamNudge';
+import { evaluateStudioTwinToolGuard } from './studioToolGuard';
+import {
+  buildStudioChiefOfStaffAgentTools,
+  type StudioChiefOfStaffToolsControl,
+} from './studioChiefOfStaffAgentTools';
 import {
   clearCoworkSessionUpstream,
   resetCoworkSnipHeadTokens,
@@ -2509,6 +2514,10 @@ export interface CoworkRunnerOptions {
   /** Long-term task board (redesign): the Twin's create/drive/accept tools over
    *  LongTermTaskStore, registered for every cowork surface. */
   longTermTaskTools?: LongTermTaskAgentControl;
+  /** Studio Chief-of-Staff tools (decision queue, presence lock, Twin stamp publish). */
+  studioChiefOfStaffTools?: StudioChiefOfStaffToolsControl;
+  /** Live Studio decision-queue & active-briefing volatile context block. */
+  getStudioVolatileContextPrompt?: (sessionId: string) => string;
   /** MetaTask (chain-side quadrant four): participation tools (claim-with-guard
    *  / submit / verify / publish / amend) over the local projection + chain writes. */
   metataskTools?: MetaTaskAgentControl;
@@ -2918,6 +2927,8 @@ export class CoworkRunner extends EventEmitter {
   private metawebSurf?: MetawebSurfControl;
   private scheduledTaskTools?: ScheduledTaskAgentControl;
   private longTermTaskTools?: LongTermTaskAgentControl;
+  private studioChiefOfStaffTools?: StudioChiefOfStaffToolsControl;
+  private getStudioVolatileContextPrompt?: (sessionId: string) => string;
   private metataskTools?: MetaTaskAgentControl;
   private preferenceTools?: PreferenceAgentControl;
   private predictionTools?: PredictionAgentControl;
@@ -3140,6 +3151,8 @@ export class CoworkRunner extends EventEmitter {
     this.metawebSurf = options?.metawebSurf;
     this.scheduledTaskTools = options?.scheduledTaskTools;
     this.longTermTaskTools = options?.longTermTaskTools;
+    this.studioChiefOfStaffTools = options?.studioChiefOfStaffTools;
+    this.getStudioVolatileContextPrompt = options?.getStudioVolatileContextPrompt;
     this.metataskTools = options?.metataskTools;
     this.preferenceTools = options?.preferenceTools;
     this.predictionTools = options?.predictionTools;
@@ -6848,7 +6861,8 @@ export class CoworkRunner extends EventEmitter {
       'Remain available to the owner while delegated work runs. Never fabricate progress or completion. Treat a Worker handoff as evidence to review, not proof; verify deliverables and report blockers, retries, reassignment, and final evidence.',
       'Do not disclose private owner memory or unrelated conversation history in a delegated prompt. Do not broaden authority for payments, transfers, destructive actions, public publishing, or private messaging without the owner\'s explicit bounded approval.',
       'Do not personally perform specialist execution — editing code or files, writing deliverables, publishing, or similar hands-on work — when a suitable local Worker or a Group Task can carry it out. Delegate, supervise, verify, and report; complete a request yourself only when it is trivial and delegation would add no value.',
-      'Local Workers are preferred, never mandatory. When no suitable local Worker exists — including a fresh machine with only the Twin Bot — execute the work yourself with your own skills and tools, then verify and report; never refuse or stall the owner\'s request just because no Worker is available.',
+      'Local Workers are preferred, never mandatory. When no suitable local Worker exists — including a fresh machine with only the Twin Bot — execute the work yourself with your own skills and tools, then verify and report; never refuse or stall the owner\'s request just because no Worker is available. In Studio Chief-of-Staff mode, whenever a non-trivial deliverable lacks a matching specialist Worker on this machine, proactively propose hiring/creating that specialist Worker to the owner (via the team-builder skill or a hiring brief on the right-hand projector) before falling back to generalist execution.',
+      'In Studio conversations, cleanly separate casual chat from deliverable tasks: if a message needs no persistent local file, code change, media output, or on-chain write, reply conversationally with zero task overhead; if it requires concrete deliverables, align requirements up front (calling studio_presence_mark({ mode: "shaping" }) when waiting on owner clarification), record it in the task ledger, and delegate execution to Workers while staying immediately responsive to the owner. For Twin-signed on-chain publication of Worker-verified deliverables after owner approval, prefer twin_stamp_publish so broadcast runs asynchronously without blocking chat.',
       'Speak in plain user language, not internal jargon: align with what the owner sees in the UI, lead with the conclusion, and never hand the owner homework. Your purpose is to reduce the owner\'s mental load.',
       'Own the task lifecycle: when the goal is met, lead with that conclusion, summarize the delivered result, and move the task to review — or close out a finished one-off yourself — instead of stalling in executing and asking the owner what to do next. The UI the owner sees is the source of truth: refer to tasks by title (never #id), use the UI status words, and leave zero ambiguity about what happened and what, if anything, you still need from the owner.',
       'Your closing message IS the delivery: when a task finishes — whether you did it yourself or a Worker did — lead with the delivered result itself (what was produced and where it lives), and show every on-chain artifact as a full-text MetaWeb URI markdown link (pin:// / metaapp:// / metafile:// — complete URI, never abbreviated with an ellipsis). Verification notes, retries, and worker anecdotes come AFTER the result and stay brief: the owner delegated the task to get the finished outcome, not a process narrative.',
@@ -7714,6 +7728,15 @@ export class CoworkRunner extends EventEmitter {
       key: 'team-nudge',
       text: await this.buildTwinTeamNudgePrompt(sessionId),
     });
+    if (this.getStudioVolatileContextPrompt && !trustSuppressed) {
+      const studioBlock = this.getStudioVolatileContextPrompt(sessionId);
+      if (studioBlock) {
+        sections.push({
+          key: 'studio-chief-of-staff',
+          text: studioBlock,
+        });
+      }
+    }
     const goal = this.store.getSessionWithoutMessages(sessionId)?.goal ?? null;
     if (goal && goal.status === 'active' && !trustSuppressed) {
       sections.push({
@@ -10007,7 +10030,10 @@ export class CoworkRunner extends EventEmitter {
           stepId: typeof toolInput.stepId === 'string' ? toolInput.stepId : null,
           taskIntent: typeof toolInput.taskIntent === 'string' ? toolInput.taskIntent : null,
           idempotencyKey: typeof toolInput.idempotencyKey === 'string' ? toolInput.idempotencyKey : null,
+          longtermTaskId: typeof toolInput.longtermTaskId === 'string' ? toolInput.longtermTaskId : null,
+          longtermSubtaskId: typeof toolInput.longtermSubtaskId === 'string' ? toolInput.longtermSubtaskId : null,
         });
+        this.studioChiefOfStaffTools?.markPresence(sessionId, 'idle');
         return { success: true, text: JSON.stringify({ ok: true, ...delegated }) };
       }
 
@@ -13251,6 +13277,29 @@ export class CoworkRunner extends EventEmitter {
           reason: `Tool "${toolName}" is blocked in plan mode (read-only). Switch to default or acceptEdits mode to execute it.`,
         }
       }
+      const sessionMetaForStudio = this.store.getSessionWithoutMessages?.(sessionId) ?? this.store.getSession(sessionId);
+      const isStudioTwinFrontOffice = Boolean(
+        sessionMetaForStudio
+        && !sessionMetaForStudio.autoOrigin
+        && sessionMetaForStudio.sessionType === 'browser'
+        && sessionMetaForStudio.assistantMode === true
+        && this.isTwinSession(sessionId),
+      );
+      if (isStudioTwinFrontOffice) {
+        const studioVerdict = evaluateStudioTwinToolGuard({
+          isStudioTwinFrontOffice: true,
+          toolName,
+          toolInput,
+          workspaceRoot: activeSession?.workspaceRoot ?? sessionMetaForStudio?.cwd ?? process.cwd(),
+        });
+        if ('reason' in studioVerdict) {
+          coworkLog('INFO', 'evaluateDshToolPolicy', 'Studio Chief-of-Staff tool guardrail denied direct file mutation', {
+            sessionId,
+            toolName,
+          });
+          return { decision: 'deny', reason: studioVerdict.reason };
+        }
+      }
       // Dream-RSI practice sessions (design §3.5): every tool call passes the
       // practice guard — reads are free, side effects count against the risk
       // class's budget (0 for read_only), the run caps at
@@ -13894,6 +13943,8 @@ export class CoworkRunner extends EventEmitter {
             stepId: z.string().optional(),
             taskIntent: z.string().optional(),
             idempotencyKey: z.string().optional(),
+            longtermTaskId: z.string().optional().describe('Optional Managed Task Tree id (ltt_...) to bind this Worker delegation to.'),
+            longtermSubtaskId: z.string().optional().describe('Optional Managed Task Tree subtask id (lts_...) to bind this Worker delegation to.'),
           },
           async (args) => {
             const result = await this.handleHostToolExecution({ toolName: 'local_worker_delegate', toolInput: args }, sessionId);
@@ -14593,6 +14644,15 @@ export class CoworkRunner extends EventEmitter {
           // definitionSessionId to it, so a task born in chat keeps its birth
           // conversation visible to the heartbeat's venue rules — same
           // injection the scheduled/metatask tool factories get here.
+          sessionId,
+        })
+      );
+    }
+    if (this.studioChiefOfStaffTools) {
+      memoryTools.push(
+        ...buildStudioChiefOfStaffAgentTools({
+          tool,
+          control: this.studioChiefOfStaffTools,
           sessionId,
         })
       );

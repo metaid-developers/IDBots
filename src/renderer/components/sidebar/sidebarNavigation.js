@@ -130,12 +130,26 @@ export function getSurfaceMenuModel({ t }) {
  * (`INTERNET_PANE_FALLBACK_RENDERER` in components/layout/workspaceDestinations.js),
  * which is also where a stale `cowork` pane id degrades to.
  */
-export function getRailInternetNavModel({ t }) {
+export function getRailInternetNavModel({ t, needsDecisionCount = 0 }) {
+  const decisionCount = Number.isFinite(needsDecisionCount) && needsDecisionCount > 0
+    ? Math.floor(needsDecisionCount)
+    : 0;
+  const hasDecision = decisionCount > 0;
   return [
     {
       id: 'browser',
       label: t('botBrowser'),
       icon: 'globe',
+    },
+    {
+      id: 'tasks',
+      label: t('railLongTermTasks'),
+      icon: 'clock',
+      hasIndicator: hasDecision,
+      indicatorKind: hasDecision ? 'decision' : undefined,
+      indicatorLabel: hasDecision
+        ? t('trackedTaskNeedsDecision').replace('{count}', String(decisionCount))
+        : undefined,
     },
     {
       id: 'gigSquare',
@@ -160,20 +174,12 @@ export function getRailInternetNavModel({ t }) {
 }
 
 /**
- * Bot Home rail entries: a creation action plus the three task-list
- * destinations.
- *
- * The 长期任务 entry carries the attention dot: a parked owner decision
- * (waiting_owner) outranks "a task is running" — a running task needs nobody,
- * while a parked decision needs the OWNER. Both surface as the same amber dot,
- * so the decision wins and carries its own label/count.
+ * BotWorks (Bot Home) rail entries: creation action + scheduled cron tasks +
+ * group tasks + execution records. Managed Task Tree (`longTerm`) migrated to
+ * Studio (`tasks`), leaving BotWorks focused on Worker execution inspection
+ * and scheduled cron automation.
  */
-export function getRailHomeNavModel({ t, hasRunningScheduledTask, needsDecisionCount = 0 }) {
-  const decisionCount = Number.isFinite(needsDecisionCount) && needsDecisionCount > 0
-    ? Math.floor(needsDecisionCount)
-    : 0;
-  const hasDecision = decisionCount > 0;
-
+export function getRailHomeNavModel({ t, hasRunningScheduledTask }) {
   return [
     {
       id: 'newTask',
@@ -182,13 +188,10 @@ export function getRailHomeNavModel({ t, hasRunningScheduledTask, needsDecisionC
     },
     {
       id: 'longTerm',
-      label: t('railLongTermTasks'),
+      label: t('scheduledTasks'),
       icon: 'clock',
-      hasIndicator: Boolean(hasRunningScheduledTask) || hasDecision,
-      indicatorKind: hasDecision ? 'decision' : hasRunningScheduledTask ? 'running' : undefined,
-      indicatorLabel: hasDecision
-        ? t('trackedTaskNeedsDecision').replace('{count}', String(decisionCount))
-        : undefined,
+      hasIndicator: Boolean(hasRunningScheduledTask),
+      indicatorKind: hasRunningScheduledTask ? 'running' : undefined,
     },
     {
       id: 'groupTasks',

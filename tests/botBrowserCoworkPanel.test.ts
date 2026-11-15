@@ -39,6 +39,10 @@ test('filterVisiblePanelMessages hides tools, system, thinking, and delegation-i
     msg({ type: 'assistant', metadata: { isThinking: true } }),
     msg({ type: 'assistant', metadata: { isDelegationInternal: true } }),
     msg({ type: 'user', metadata: { isDelegationInternal: true } }),
+    msg({ type: 'user', content: '来自7c2814e1 的信息：<cross_session_message trust="untrusted">[ORCH-NOTIFY] worker done</cross_session_message>', metadata: { sourceChannel: 'idbots_cross_session' } }),
+    msg({ type: 'user', content: '[ORCH-NOTIFY] raw fallback' }),
+    msg({ type: 'user', content: 'heartbeat push', metadata: { origin: 'heartbeat' } }),
+    msg({ type: 'user', content: 'proactive briefing trigger', metadata: { origin: 'studio_briefing' } }),
   ];
   assert.equal(filterVisiblePanelMessages(input).length, 0);
 });

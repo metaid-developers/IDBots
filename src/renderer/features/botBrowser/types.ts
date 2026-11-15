@@ -21,7 +21,7 @@ export type BotBrowserSurfaceMode = 'home' | 'browser';
  * stale `cowork` id therefore resolves to that default, not to a pane of its
  * own.
  */
-export type BotInternetPane = 'browser' | 'gigSquare' | 'metaapps' | 'myBots';
+export type BotInternetPane = 'browser' | 'tasks' | 'gigSquare' | 'metaapps' | 'myBots';
 
 /**
  * The Bot Home middle column's list destinations. One is expanded at a time;

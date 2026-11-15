@@ -1050,3 +1050,8 @@ blob-report/
 
 # MetaWeb pins:batch receipt auditing (zero-dependency closed-form tool + fixtures)
 !tests/receiptAuditV3.test.mjs
+
+# Studio Chief-of-Staff mode (back-office supervision, decision queue, task tree, live stage)
+!tests/studioChiefOfStaffPhase1.test.mjs
+!tests/studioChiefOfStaffPhase2.test.mjs
+!tests/studioChiefOfStaffPhase3.test.mjs

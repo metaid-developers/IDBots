@@ -2267,6 +2267,14 @@
       ]
     },
     {
+      "path": "longtermTask.studioStatus",
+      "kind": "invoke",
+      "channel": "longtermTask:studioStatus",
+      "args": [
+        "input"
+      ]
+    },
+    {
       "path": "longtermTask.subtaskAdd",
       "kind": "invoke",
       "channel": "longtermTask:subtaskAdd",

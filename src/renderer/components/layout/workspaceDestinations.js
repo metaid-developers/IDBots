@@ -32,6 +32,7 @@
  */
 export const INTERNET_PANE_RENDERERS = Object.freeze({
   browser: 'botBrowserSurface',
+  tasks: 'studioTasksView',
   gigSquare: 'gigSquareView',
   metaapps: 'metaAppsView',
   myBots: 'metabotsView',
@@ -70,6 +71,7 @@ export const HOME_MAIN_VIEW_RENDERERS = Object.freeze({
  */
 export const PANE_RENDERER_KEYS = Object.freeze([
   'botBrowserSurface',
+  'studioTasksView',
   'gigSquareView',
   'metaAppsView',
   'metabotsView',

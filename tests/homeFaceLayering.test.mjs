@@ -254,21 +254,23 @@ test('the group-task door is the rail 多人任务 icon; the Home record list is
   assert.equal((i18nSource.match(/homeMidGroupSessionsTitle:/g) ?? []).length, 2);
 });
 
-test('the amber decision dot rides the rail 长期任务 entry on BOTH faces', () => {
-  // Three-column final ruling 2026-11-09: the Home face's dot lives on the
-  // RAIL's 长期任务 icon — the same rail mount serves both faces now, so the
-  // dot machinery is defined once and rendered on both surfaces. Same
-  // derivation, same condition, same class as the accepted dot work (the
-  // detail pins live in trackedTaskDecisionBadge.test.ts).
+test('the amber decision dot rides the Studio rail tasks entry while BotWorks keeps the running scheduled-task dot', () => {
   assert.match(railSource, /hasIndicator=\{item\.hasIndicator\}/);
   assert.match(railSource, /indicatorKind=\{item\.indicatorKind\}/);
-  const railModelBody = navModelSource.slice(
+  const internetRailBody = navModelSource.slice(
+    navModelSource.indexOf('export function getRailInternetNavModel'),
+    navModelSource.indexOf('export function getRailHomeNavModel'),
+  );
+  assert.match(internetRailBody, /hasIndicator: hasDecision/);
+  assert.match(internetRailBody, /indicatorKind: hasDecision \? 'decision' : undefined/);
+  assert.match(internetRailBody, /trackedTaskNeedsDecision/);
+
+  const homeRailBody = navModelSource.slice(
     navModelSource.indexOf('export function getRailHomeNavModel'),
     navModelSource.indexOf('export function getHomeSectionModel'),
   );
-  assert.match(railModelBody, /hasIndicator: Boolean\(hasRunningScheduledTask\) \|\| hasDecision/);
-  assert.match(railModelBody, /indicatorKind: hasDecision \? 'decision' : hasRunningScheduledTask \? 'running' : undefined/);
-  assert.match(railModelBody, /trackedTaskNeedsDecision/);
+  assert.match(homeRailBody, /hasIndicator: Boolean\(hasRunningScheduledTask\)/);
+  assert.match(homeRailBody, /indicatorKind: hasRunningScheduledTask \? 'running' : undefined/);
 
   // Neither middle column carries a second copy of the dot: the records
   // column dropped the sidebar-row copy with the rows themselves, and the

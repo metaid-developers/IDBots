@@ -687,7 +687,9 @@ export interface CoworkMessageMetadata {
    * group/private relay, orchestrator, ...). Absent on legacy messages; the
    * renderer falls back to heuristics and finally 'user'.
    */
-  origin?: 'user' | 'quick_action' | 'heartbeat' | 'schedule' | 'cross_session' | 'metaweb_group' | 'metaweb_private' | 'orchestrator' | 'group_task' | 'daily_report';
+  origin?: 'user' | 'quick_action' | 'heartbeat' | 'schedule' | 'cross_session' | 'metaweb_group' | 'metaweb_private' | 'orchestrator' | 'group_task' | 'daily_report' | 'studio_supervision' | 'studio_briefing';
+  originStudioSessionId?: string;
+  decisionQueueId?: string;
   /** Optional human-readable detail for the origin (e.g. scheduled task name). */
   originLabel?: string;
   /**

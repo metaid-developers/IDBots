@@ -7,9 +7,11 @@ import type {
   LongTermEvent,
   LongTermEventKind,
   LongTermEvidence,
+  LongTermManagedState,
   LongTermParticipant,
   LongTermPreferredChannel,
   LongTermProgress,
+  LongTermQuickTaskCreateInput,
   LongTermResult,
   LongTermSubtask,
   LongTermSubtaskDraft,
@@ -17,6 +19,7 @@ import type {
   LongTermSubtaskUpdateInput,
   LongTermTaskCreateInput,
   LongTermTaskDetail,
+  LongTermTaskKind,
   LongTermTaskStage,
   LongTermTaskSummary,
   LongTermTaskUpdateInput,
@@ -178,6 +181,22 @@ export function deriveColumn(
   return 'in_progress';
 }
 
+/**
+ * Pure: canonical 3-state live status exposed in Studio Chief-of-Staff mode.
+ * Every open task maps strictly to `in_progress`, `waiting_external`, or
+ * `waiting_owner`; terminal tasks (`done` / `cancelled`) map to `null`.
+ */
+export function deriveManagedState(
+  stage: LongTermTaskStage,
+  currentSubtaskStatus: LongTermSubtaskStatus | null,
+): LongTermManagedState | null {
+  if (stage === 'done' || stage === 'cancelled') return null;
+  if (stage === 'defining' || stage === 'paused') return 'waiting_owner';
+  if (currentSubtaskStatus === 'waiting_owner') return 'waiting_owner';
+  if (currentSubtaskStatus === 'waiting_external') return 'waiting_external';
+  return 'in_progress';
+}
+
 /** Pure: progress over non-skipped sub-tasks. */
 export function deriveProgress(subtasks: LongTermSubtask[]): LongTermProgress {
   const live = subtasks.filter((s) => s.status !== 'skipped');
@@ -214,6 +233,7 @@ interface TaskRow {
   title: string;
   goal: string;
   stage: LongTermTaskStage;
+  task_kind?: string | null;
   acceptance_delegate: number;
   current_subtask_id: string | null;
   definition_session_id: string | null;
@@ -381,6 +401,9 @@ export class LongTermTaskStore {
     if (!taskColumns.includes('plan_artifact_uri')) {
       this.db.run('ALTER TABLE long_term_tasks ADD COLUMN plan_artifact_uri TEXT');
     }
+    if (!taskColumns.includes('task_kind')) {
+      this.db.run("ALTER TABLE long_term_tasks ADD COLUMN task_kind TEXT NOT NULL DEFAULT 'project'");
+    }
     const subtaskColumns = this.getAll<{ name: unknown }>('PRAGMA table_info(long_term_subtasks)').map((row) => String(row.name));
     if (!subtaskColumns.includes('expected_minutes')) {
       this.db.run('ALTER TABLE long_term_subtasks ADD COLUMN expected_minutes INTEGER');
@@ -420,11 +443,13 @@ export class LongTermTaskStore {
   }
 
   private mapTask(row: TaskRow) {
+    const taskKind: LongTermTaskKind = row.task_kind === 'quick' ? 'quick' : 'project';
     return {
       id: row.id,
       title: row.title,
       goal: row.goal,
       stage: row.stage,
+      taskKind,
       acceptanceDelegate: row.acceptance_delegate === 1,
       currentSubtaskIdPinned: row.current_subtask_id ?? null,
       definitionSessionId: row.definition_session_id ?? null,
@@ -510,6 +535,7 @@ export class LongTermTaskStore {
     const task = this.mapTask(taskRow);
     const current = deriveCurrentSubtask(task.currentSubtaskIdPinned, subtasks);
     const column = deriveColumn(task.stage, current?.status ?? null);
+    const managedState = deriveManagedState(task.stage, current?.status ?? null);
     const counts = Object.fromEntries(SUBTASK_STATUSES.map((s) => [s, 0])) as Record<LongTermSubtaskStatus, number>;
     for (const subtask of subtasks) counts[subtask.status] += 1;
     return {
@@ -518,6 +544,8 @@ export class LongTermTaskStore {
       goal: task.goal,
       stage: task.stage,
       column: column ?? 'done',
+      taskKind: task.taskKind,
+      managedState,
       acceptanceDelegate: task.acceptanceDelegate,
       planArtifactUri: task.planArtifactUri,
       currentSubtaskId: current?.id ?? null,
@@ -549,11 +577,32 @@ export class LongTermTaskStore {
    * of group tasks sourced from them.
    */
   private listParticipantIds(taskRow: TaskRow, subtasks: LongTermSubtask[]): number[] {
+    const ids = new Set<number>();
+    let hasLongTermLinkageCol = false;
+    let linkedOrchAssignees: Array<{ id: unknown }> = [];
+    try {
+      const cols = this.getAll<{ name: unknown }>('PRAGMA table_info(orchestration_tasks)');
+      hasLongTermLinkageCol = cols.some((col) => String(col.name) === 'longterm_task_id');
+      if (hasLongTermLinkageCol) {
+        linkedOrchAssignees = this.getAll<{ id: unknown }>(
+          `SELECT DISTINCT s.assignee_metabot_id AS id
+             FROM orchestration_steps s
+             JOIN orchestration_tasks t ON t.id = s.task_id
+            WHERE t.longterm_task_id = ? AND s.assignee_metabot_id IS NOT NULL`,
+          [taskRow.id],
+        );
+        for (const row of linkedOrchAssignees) {
+          const id = Number(row.id);
+          if (Number.isFinite(id)) ids.add(id);
+        }
+      }
+    } catch {
+      hasLongTermLinkageCol = false;
+    }
     const sessionIds = [taskRow.definition_session_id, ...subtasks.map((sub) => sub.sessionId)]
       .filter((id): id is string => Boolean(id));
-    if (sessionIds.length === 0) return [];
+    if (sessionIds.length === 0) return [...ids].sort((a, b) => a - b);
     const placeholders = sessionIds.map(() => '?').join(',');
-    const ids = new Set<number>();
     const collect = (sql: string) => {
       for (const row of this.getAll<{ id: unknown }>(sql, sessionIds)) {
         const id = Number(row.id);
@@ -561,9 +610,15 @@ export class LongTermTaskStore {
       }
     };
     collect(`SELECT DISTINCT metabot_id AS id FROM cowork_sessions WHERE id IN (${placeholders}) AND metabot_id IS NOT NULL`);
-    collect(`SELECT DISTINCT s.assignee_metabot_id AS id FROM orchestration_steps s
-             JOIN orchestration_tasks t ON t.id = s.task_id
-             WHERE t.source_session_id IN (${placeholders}) AND s.assignee_metabot_id IS NOT NULL`);
+    if (!hasLongTermLinkageCol) {
+      collect(`SELECT DISTINCT s.assignee_metabot_id AS id FROM orchestration_steps s
+               JOIN orchestration_tasks t ON t.id = s.task_id
+               WHERE t.source_session_id IN (${placeholders}) AND s.assignee_metabot_id IS NOT NULL`);
+    } else if (linkedOrchAssignees.length === 0) {
+      collect(`SELECT DISTINCT s.assignee_metabot_id AS id FROM orchestration_steps s
+               JOIN orchestration_tasks t ON t.id = s.task_id
+               WHERE t.longterm_task_id IS NULL AND t.source_session_id IN (${placeholders}) AND s.assignee_metabot_id IS NOT NULL`);
+    }
     collect(`SELECT DISTINCT m.metabot_id AS id FROM group_task_members m
              JOIN group_tasks g ON g.id = m.task_id
              WHERE g.source_session_id IN (${placeholders}) AND m.metabot_id IS NOT NULL`);
@@ -598,10 +653,11 @@ export class LongTermTaskStore {
       }
       void subtaskIds;
     }
+    const taskKind: LongTermTaskKind = input.taskKind === 'quick' ? 'quick' : 'project';
     this.db.run(
-      `INSERT INTO long_term_tasks (id, title, goal, stage, acceptance_delegate, definition_session_id, plan_artifact_uri, created_at, updated_at)
-       VALUES (?, ?, ?, 'defining', 1, ?, ?, ?, ?)`,
-      [taskId, title, goal, input.definitionSessionId ?? null, asText(input.planArtifactUri ?? '').trim() || null, now, now],
+      `INSERT INTO long_term_tasks (id, title, goal, stage, task_kind, acceptance_delegate, definition_session_id, plan_artifact_uri, created_at, updated_at)
+       VALUES (?, ?, ?, 'defining', ?, 1, ?, ?, ?, ?)`,
+      [taskId, title, goal, taskKind, input.definitionSessionId ?? null, asText(input.planArtifactUri ?? '').trim() || null, now, now],
     );
     drafts.forEach((draft, index) => {
       const dependsOn = (draft.dependsOnOrdinals ?? []).map((ordinal) => subtaskIds[ordinal - 1]);
@@ -627,6 +683,58 @@ export class LongTermTaskStore {
     });
     this.addEvent(taskId, null, 'created', actor, `created as draft with ${drafts.length} sub-project(s): ${title}`);
     this.saveDb();
+    const detail = this.getTask(taskId);
+    return detail ? { ok: true, value: detail } : { ok: false, code: 'NOT_FOUND', error: 'creation failed' };
+  }
+
+  /**
+   * Create a lightweight single-step active task (`task_kind = 'quick'`) whose
+   * sole subtask begins immediately (`in_progress`). Used in Studio mode so
+   * clear, bounded 1-step deliverables enter the same unified Managed Task Tree
+   * without multi-round interrogation overhead.
+   */
+  createQuickTask(
+    input: LongTermQuickTaskCreateInput,
+    actor: LongTermActor,
+  ): LongTermResult<LongTermTaskDetail> {
+    const title = asText(input.title).trim();
+    const goal = asText(input.goal ?? input.title).trim();
+    if (!title) {
+      return { ok: false, code: 'VALIDATION', error: 'title is required' };
+    }
+    const taskId = `ltt_${uuidv4()}`;
+    const subtaskId = `lts_${uuidv4()}`;
+    const now = nowIso();
+    const channel = input.preferredChannel && CHANNELS.includes(input.preferredChannel)
+      ? input.preferredChannel
+      : 'delegate_bot';
+
+    this.db.run(
+      `INSERT INTO long_term_tasks (id, title, goal, stage, task_kind, acceptance_delegate, current_subtask_id, definition_session_id, created_at, updated_at)
+       VALUES (?, ?, ?, 'active', 'quick', 1, ?, ?, ?, ?)`,
+      [taskId, title, goal, subtaskId, input.definitionSessionId ?? null, now, now],
+    );
+    this.db.run(
+      `INSERT INTO long_term_subtasks
+       (id, task_id, ordinal, title, description, acceptance_criteria_json, status, depends_on_json, preferred_channel, notes, expected_minutes, created_at, updated_at)
+       VALUES (?, ?, 1, ?, ?, ?, 'in_progress', '[]', ?, '', ?, ?, ?)`,
+      [
+        subtaskId,
+        taskId,
+        title,
+        goal,
+        JSON.stringify(input.acceptanceCriteria ?? []),
+        channel,
+        asExpectedMinutes(input.expectedMinutes),
+        now,
+        now,
+      ],
+    );
+    this.addEvent(taskId, subtaskId, 'created', actor, `quick task created and activated: ${title}`);
+    this.addEvent(taskId, subtaskId, 'began', actor, `began quick task on channel ${channel}`);
+    this.saveDb();
+    const createdSubtask = this.getSubtask(subtaskId);
+    this.emitStatusChange(null, createdSubtask, 'began');
     const detail = this.getTask(taskId);
     return detail ? { ok: true, value: detail } : { ok: false, code: 'NOT_FOUND', error: 'creation failed' };
   }

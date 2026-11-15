@@ -260,6 +260,19 @@ class BrowserCoworkService {
   startNewDraft(): void {
     this.applySession(null);
   }
+
+  /**
+   * Single persistent Twin stream: "Clear Screen" archives the finished screen
+   * chapter (preserving tasks, memories, and history) and presents a clean
+   * screen bound to the same Twin Bot instead of piling up open sessions.
+   */
+  async clearCurrentScreen(): Promise<void> {
+    const current = store.getState().browserCowork.currentSession;
+    if (current && !isOptimisticSession(current)) {
+      await coworkService.archiveSession(current.id);
+    }
+    this.applySession(null);
+  }
 }
 
 export const browserCoworkService = new BrowserCoworkService();

@@ -190,17 +190,20 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
   );
 
   const internetItems: RailNavItem[] = useMemo(
-    () => getRailInternetNavModel({ t: (key: string) => i18nService.t(key) }).filter((item: RailNavItem) => !item.hidden),
-    [language],
+    () =>
+      getRailInternetNavModel({
+        t: (key: string) => i18nService.t(key),
+        needsDecisionCount: trackedTaskAttention.total,
+      }).filter((item: RailNavItem) => !item.hidden),
+    [trackedTaskAttention.total, language],
   );
   const homeItems: RailNavItem[] = useMemo(
     () =>
       getRailHomeNavModel({
         t: (key: string) => i18nService.t(key),
         hasRunningScheduledTask,
-        needsDecisionCount: trackedTaskAttention.total,
       }).filter((item: RailNavItem) => !item.hidden),
-    [hasRunningScheduledTask, trackedTaskAttention.total, language],
+    [hasRunningScheduledTask, language],
   );
 
   const handleHomeItem = (id: string) => {

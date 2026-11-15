@@ -42,13 +42,13 @@ const internetItems = getRailInternetNavModel({ t });
 const homeItems = getRailHomeNavModel({ t, hasRunningScheduledTask: false, needsDecisionCount: 0 });
 
 test('every Bot Internet rail entry has an explicit destination row (hidden entries included)', () => {
-  // Three VISIBLE destinations: the Co-Work bubble row is retired (owner ruling
-  // 2026-11-08 20:18) and Bot Hub stays implemented but hidden.
+  // Four VISIBLE destinations in Studio (browser, tasks, metaapps, myBots) +
+  // the hidden Bot Hub slot.
   assert.deepEqual(
     internetItems.filter((item) => !item.hidden).map((item) => item.id),
-    ['browser', 'metaapps', 'myBots'],
+    ['browser', 'tasks', 'metaapps', 'myBots'],
   );
-  assert.ok(internetItems.length >= 4, 'the hidden Bot Hub slot keeps its row too');
+  assert.ok(internetItems.length >= 5, 'the hidden Bot Hub slot keeps its row too');
   for (const item of internetItems) {
     assert.ok(
       Object.hasOwn(INTERNET_PANE_RENDERERS, item.id),
@@ -130,6 +130,7 @@ test('unknown or stale destinations fall back to a rendered pane (null is never 
 
 test('App implements a rendered branch for every renderer key in the table', () => {
   // Bot Internet catalogue switch.
+  assert.match(appSource, /internetPaneKey === 'studioTasksView'/);
   assert.match(appSource, /internetPaneKey === 'gigSquareView'/);
   assert.match(appSource, /internetPaneKey === 'metaAppsView'/);
   assert.match(appSource, /internetPaneKey === 'metabotsView'/);

@@ -615,8 +615,48 @@ export function buildLongTermTaskAgentTools(deps: {
     },
   );
 
+  const quickCreateTask = tool(
+    'longterm_task_quick_create',
+    'Create and immediately activate a lightweight single-step deliverable card (`taskKind: "quick"`, sole subtask `in_progress`) in the unified Studio Managed Task Tree. Use for clear, bounded 1-step deliverables (e.g. writing an article, fixing a concrete bug, generating a visual asset) where multi-round Socratic interrogation and a separate HTML plan page would be unnecessary friction. Pass the returned `id` and `subtasks[0].id` as `longtermTaskId` and `longtermSubtaskId` into `local_worker_delegate` so the task ledger, Live Stage HUD, and Owner Decision Queue track it end-to-end.',
+    {
+      title: z.string().min(1).describe('Short deliverable title.'),
+      goal: z.string().optional().describe('Concrete done-ness goal (defaults to title).'),
+      acceptanceCriteria: z.array(z.string()).optional().describe('Checkable acceptance criteria for the Worker output.'),
+      preferredChannel: z.enum(CHANNEL_ENUM).optional(),
+      expectedMinutes: z.number().int().positive().optional(),
+      definitionSessionId: z.string().optional(),
+    },
+    async (args: {
+      title?: string;
+      goal?: string;
+      acceptanceCriteria?: string[];
+      preferredChannel?: (typeof CHANNEL_ENUM)[number];
+      expectedMinutes?: number;
+      definitionSessionId?: string;
+    }) => {
+      try {
+        const result = store().createQuickTask(
+          {
+            title: String(args.title ?? ''),
+            goal: args.goal,
+            acceptanceCriteria: args.acceptanceCriteria ?? [],
+            preferredChannel: args.preferredChannel ?? 'delegate_bot',
+            expectedMinutes: args.expectedMinutes,
+            definitionSessionId: String(args.definitionSessionId ?? '').trim() || mountedSessionId || null,
+          },
+          'twin',
+        );
+        if (!result.ok) return textResult(`Refused (${result.code}): ${result.error}`, true);
+        return jsonResult(toAgentTaskDetailView(result.value));
+      } catch (error) {
+        return textResult(`Failed to quick-create task: ${error instanceof Error ? error.message : String(error)}`, true);
+      }
+    },
+  );
+
   return [
     createTask,
+    quickCreateTask,
     activateTask,
     listTasks,
     getTask,

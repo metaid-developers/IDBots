@@ -258,6 +258,35 @@
         ctx.fillStyle = 'rgba(197,169,255,.85)'; ctx.fill();
       });
     }
+    const activeWorkers = Array.isArray(state.activeWorkers) ? state.activeWorkers : [];
+    if (activeWorkers.length > 0) {
+      const twinPt = { x: cx, y: cy };
+      activeWorkers.slice(0, 5).forEach((workerEntry, index) => {
+        const wy = height * (.22 + index * .11);
+        const wx = width * .85;
+        const returning = workerEntry?.direction === 'return';
+        const fromPt = returning ? { x: wx, y: wy } : twinPt;
+        const toPt = returning ? twinPt : { x: wx, y: wy };
+        const ctrl = {
+          x: (fromPt.x + toPt.x) / 2,
+          y: Math.min(fromPt.y, toPt.y) - 36 - index * 6,
+        };
+        ctx.beginPath();
+        ctx.moveTo(fromPt.x, fromPt.y);
+        ctx.quadraticCurveTo(ctrl.x, ctrl.y, toPt.x, toPt.y);
+        ctx.strokeStyle = returning ? 'rgba(255,220,81,.32)' : 'rgba(155,244,255,.28)';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+        const prog = reduced ? .55 : (t * .28 + index * .21) % 1;
+        const inv = 1 - prog;
+        const px = inv * inv * fromPt.x + 2 * inv * prog * ctrl.x + prog * prog * toPt.x;
+        const py = inv * inv * fromPt.y + 2 * inv * prog * ctrl.y + prog * prog * toPt.y;
+        ctx.beginPath();
+        ctx.arc(px, py, 3.4, 0, Math.PI * 2);
+        ctx.fillStyle = returning ? 'rgba(255,220,81,.92)' : 'rgba(155,244,255,.9)';
+        ctx.fill();
+      });
+    }
     particles.forEach((particle, index) => {
       const angle = particle.angle + particle.phase + state.motion.seed * .0001;
       let x = cx + Math.cos(angle) * particle.radius * 1.1;
@@ -303,6 +332,126 @@
       value.textContent = participant;
       item.append(label, value);
       container.append(item);
+    });
+  }
+
+  function updateWorkerConstellation() {
+    const container = $('[data-worker-constellation]');
+    if (!container) return;
+    container.replaceChildren();
+    const list = Array.isArray(state.activeWorkers) ? state.activeWorkers.slice(0, 5) : [];
+    container.hidden = list.length <= 1;
+    if (list.length <= 1) return;
+    list.forEach((entry) => {
+      const row = document.createElement('div');
+      row.className = 'constellation-item';
+      const dir = entry?.direction === 'return' ? 'return' : entry?.direction === 'dispatch' ? 'dispatch' : 'working';
+      row.dataset.direction = dir;
+
+      const avatarSlot = document.createElement('div');
+      avatarSlot.className = 'constellation-avatar';
+      const validAvatar = typeof entry?.avatar === 'string' && /^(?:data:image\/|https?:\/\/|avatars\/)/i.test(entry.avatar) ? entry.avatar : '';
+      if (validAvatar) {
+        const img = document.createElement('img');
+        img.className = 'constellation-avatar';
+        img.src = validAvatar;
+        img.alt = '';
+        avatarSlot.replaceWith(img);
+        row.append(img);
+      } else {
+        avatarSlot.textContent = String(entry?.name || 'W').trim().slice(0, 1).toUpperCase() || 'W';
+        row.append(avatarSlot);
+      }
+
+      const meta = document.createElement('div');
+      meta.className = 'constellation-meta';
+      const head = document.createElement('div');
+      head.className = 'constellation-head';
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'constellation-name';
+      nameSpan.textContent = String(entry?.name || tr('协作 Bot', 'Worker'));
+      const flowBadge = document.createElement('span');
+      flowBadge.className = 'constellation-flow';
+      flowBadge.textContent = dir === 'return'
+        ? tr('← 回传核验', '← Returning')
+        : dir === 'dispatch'
+          ? tr('→ 派发指令', '→ Dispatch')
+          : tr('⟳ 执行中', '⟳ Working');
+      head.append(nameSpan, flowBadge);
+      meta.append(head);
+      if (entry?.title) {
+        const sub = document.createElement('div');
+        sub.className = 'constellation-sub';
+        sub.textContent = String(entry.title);
+        meta.append(sub);
+      }
+      row.append(meta);
+      container.append(row);
+    });
+  }
+
+  function updateTaskHud() {
+    const hud = $('[data-task-hud]');
+    if (!hud) return;
+    hud.replaceChildren();
+    const model = state.taskHud && typeof state.taskHud === 'object' ? state.taskHud : null;
+    const tasks = Array.isArray(model?.tasks) ? model.tasks.slice(0, 4) : [];
+    const queued = typeof model?.queuedDecisions === 'number' && model.queuedDecisions > 0 ? Math.floor(model.queuedDecisions) : 0;
+    if (tasks.length === 0 && queued === 0) {
+      hud.hidden = true;
+      return;
+    }
+    hud.hidden = false;
+    const header = document.createElement('div');
+    header.className = 'task-hud-head';
+    const heading = document.createElement('span');
+    heading.textContent = tr('实时任务树进度', 'Live Task Tree');
+    header.append(heading);
+    if (queued > 0) {
+      const qBadge = document.createElement('span');
+      qBadge.className = 'task-hud-queue';
+      qBadge.textContent = tr(`待拍板 ${queued}`, `${queued} awaiting`);
+      header.append(qBadge);
+    }
+    hud.append(header);
+
+    tasks.forEach((task) => {
+      const row = document.createElement('div');
+      row.className = 'task-hud-row';
+      const top = document.createElement('div');
+      top.className = 'task-hud-top';
+      const title = document.createElement('span');
+      title.className = 'task-hud-title';
+      title.textContent = String(task?.title || '');
+      const st = document.createElement('span');
+      st.className = 'task-hud-state';
+      const stKey = task?.state === 'waiting_owner' || task?.state === 'waiting_external' ? task.state : 'in_progress';
+      st.dataset.state = stKey;
+      st.textContent = stKey === 'waiting_owner'
+        ? tr('待你拍板', 'Needs you')
+        : stKey === 'waiting_external'
+          ? tr('等待外部', 'External wait')
+          : tr('进行中', 'In progress');
+      top.append(title, st);
+      row.append(top);
+
+      const total = Math.max(1, Number(task?.total) || 1);
+      const accepted = Math.max(0, Math.min(total, Number(task?.accepted) || 0));
+      const pct = Math.round((accepted / total) * 100);
+      const bar = document.createElement('div');
+      bar.className = 'task-hud-bar';
+      const track = document.createElement('div');
+      track.className = 'task-hud-track';
+      const fill = document.createElement('div');
+      fill.className = 'task-hud-fill';
+      fill.style.width = `${Math.max(accepted > 0 ? 10 : 4, pct)}%`;
+      track.append(fill);
+      const frac = document.createElement('span');
+      frac.className = 'task-hud-frac';
+      frac.textContent = `${accepted}/${total}`;
+      bar.append(track, frac);
+      row.append(bar);
+      hud.append(row);
     });
   }
 
@@ -929,6 +1078,8 @@
       metricsEl.hidden = true;
     }
     updateParticipants();
+    updateWorkerConstellation();
+    updateTaskHud();
     syncOrb(state.family);
     syncHandoff();
     renderInteraction();
