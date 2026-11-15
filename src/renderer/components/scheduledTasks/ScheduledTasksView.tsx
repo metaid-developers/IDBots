@@ -152,7 +152,7 @@ const ScheduledTasksView: React.FC<ScheduledTasksViewProps> = ({
 
       {/* L1 tabs：长期任务（默认在前） | 定时任务 */}
       {showTrackingTabs && (
-        <div className="flex items-center border-b dark:border-claude-darkBorder border-claude-border px-4 shrink-0">
+        <div className="flex h-[46px] items-center border-b dark:border-claude-darkBorder border-claude-border px-4 shrink-0">
           <div className="flex">
             <button
               type="button"
