@@ -749,7 +749,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         <div
           data-slot="studio-title-preview"
           aria-hidden={!showStudioTitle}
-          className={`h-[44px] w-full shrink-0 transition-[opacity,transform] duration-150 ${
+          className={`h-9 w-full shrink-0 transition-[opacity,transform] duration-150 ${
             showStudioTitle
               ? 'visible translate-y-0 opacity-100'
               : 'invisible pointer-events-none -translate-y-1 opacity-0'
@@ -1082,7 +1082,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           )}
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col px-2.5 pb-3 pt-[52px]">
+        <div className="flex min-h-0 flex-1 flex-col px-2.5 pb-3 pt-[37.75px]">
           <BotBrowserCoworkPanel
             onShowSkills={onShowSkills}
             onOpenNewProject={() => onShowSettings({ initialTab: 'projects', openNewProjectForm: true })}
