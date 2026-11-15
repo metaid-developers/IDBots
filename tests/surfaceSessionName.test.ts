@@ -76,7 +76,7 @@ test('render: default state is a read-only button showing the display title', ()
   assert.match(markup, /data-slot="cowork-surface-session-name"/);
   assert.match(markup, /抓周/);
   assert.match(markup, /h-6 min-w-0 flex-none mx-\[41\.25px\] w-\[calc\(100%-82\.5px\)\]/);
-  assert.match(markup, /items-center rounded-lg gap-\[6px\] mx-\[41\.25px\] pl-0 text-left/);
+  assert.match(markup, /items-center rounded-lg gap-\[6px\] pl-0 pr-0 text-left/);
   assert.match(markup, /text-sm font-medium/);
   assert.doesNotMatch(markup, /text-center/);
   assert.match(markup, /data-slot="cowork-surface-session-name-icon"/);
