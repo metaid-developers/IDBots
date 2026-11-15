@@ -29,7 +29,7 @@ import {
   sanitizeCliEnv,
   selectorOf,
 } from '../plugins/idbots-desktop-ax.mjs'
-import { defineTool, parameterSchemaSpecToJsonSchema } from '@deepseek-ai/dsh-tools'
+import { assertObjectJsonSchema } from '@deepseek-ai/dsh-tools'
 import { generateRuntimeConfig } from '../lib/generate-runtime-config.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -407,15 +407,24 @@ test('parse helpers read both find shapes and the acting post-condition', () => 
 // Kernel acceptance + mount
 // ---------------------------------------------------------------------------
 
-test('the real kernel tool compiler accepts the definition', () => {
+test('the registered schema is a wire-valid object-rooted JSON Schema', () => {
   const definition = buildDesktopAxTool({
     resolveBin: () => ({ bin: '/fake/agent-desktop', source: 'AGD_BIN', looked: [] }),
     makeLocator: ({ run, bin }) => new DesktopAxLocator({ run, bin }),
   })
-  assert.doesNotThrow(() => defineTool(definition))
-  const schema = parameterSchemaSpecToJsonSchema(definition.parameters)
-  assert.equal(schema.type, 'object')
-  assert.deepEqual([...schema.properties.action.enum].sort(), ['click', 'locate', 'scroll', 'set-value', 'type'].sort())
+  // The kernel registry passes plugin `parameters` through verbatim onto the
+  // provider wire — defineTool is NOT in the plugin registration path — so the
+  // definition must carry the full object schema itself. A flat property map
+  // here shipped as {"action": …} and every DeepSeek turn 400'd with
+  // "tools.NN.function.parameters must be a JSON Schema of type object"
+  // (2026-11-16) while GLM gateways tolerated it. assertObjectJsonSchema is
+  // the same object-root gate the kernel applies to structured-output schemas.
+  assert.doesNotThrow(() => assertObjectJsonSchema(definition.parameters))
+  assert.equal(definition.parameters.type, 'object')
+  assert.deepEqual(
+    [...definition.parameters.properties.action.enum].sort(),
+    ['click', 'locate', 'scroll', 'set-value', 'type'].sort(),
+  )
 })
 
 test('the tool schema carries none of the routes the cua guard denies', () => {
@@ -425,7 +434,7 @@ test('the tool schema carries none of the routes the cua guard denies', () => {
   })
   const denied = ['delivery_mode', 'scope', 'drag', 'modifier', 'modifiers', 'target', 'set_config', 'replay_trajectory', 'move_cursor']
   for (const key of denied) {
-    assert.equal(Object.hasOwn(definition.parameters, key), false, `desktop_ax must not expose ${key}`)
+    assert.equal(Object.hasOwn(definition.parameters.properties, key), false, `desktop_ax must not expose ${key}`)
   }
 })
 
