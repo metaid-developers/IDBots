@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ChevronDownIcon } from '@heroicons/react/24/outline';
+import { ChevronDownIcon, CheckIcon } from '@heroicons/react/24/outline';
 
 interface ThemedSelectProps {
   id: string;
@@ -19,6 +19,11 @@ const ThemedSelect: React.FC<ThemedSelectProps> = ({
   label,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
+  // OWNER 02:35: popover was absolute inside scroll containers — clipped for
+  // lower rows and stylistically off. Fixed to the viewport with coords from
+  // the trigger rect, in the unified dropdown grammar (rounded-xl card,
+  // compact options, accent check mark).
+  const [popPos, setPopPos] = useState<{ top: number; left: number; width: number } | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Find the selected option label
@@ -56,8 +61,12 @@ const ThemedSelect: React.FC<ThemedSelectProps> = ({
           <button
             id={id}
             type="button"
-            onClick={() => setIsOpen(!isOpen)}
-            className={`flex items-center justify-between w-full rounded-lg dark:bg-claude-darkSurface bg-claude-surface dark:border-claude-darkBorder border-claude-border border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/40 dark:text-claude-darkText text-claude-text px-4 py-2.5 text-sm ${className}`}
+            onClick={() => {
+              const rect = dropdownRef.current?.getBoundingClientRect();
+              if (rect) setPopPos({ top: rect.bottom + 4, left: rect.left, width: rect.width });
+              setIsOpen(!isOpen);
+            }}
+            className={`flex items-center justify-between w-full gap-1.5 rounded-[var(--shape-radius-sm)] border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text px-2 py-1.5 text-xs transition-colors hover:border-claude-accent/60 ${className}`}
             aria-haspopup="listbox"
             aria-expanded={isOpen}
           >
@@ -65,30 +74,31 @@ const ThemedSelect: React.FC<ThemedSelectProps> = ({
             <ChevronDownIcon className="w-4 h-4 ml-2" />
           </button>
 
-          {isOpen && (
-            <div className="absolute z-10 w-full mt-1 overflow-auto rounded-md popover-enter shadow-popover max-h-60 focus:outline-none">
-              <ul
-                className="py-1 overflow-auto text-sm dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border rounded-lg"
-                role="listbox"
-                aria-labelledby={id}
-              >
-                {options.map((option) => (
-                  <li
-                    key={option.value}
-                    className={`cursor-pointer select-none relative py-1.5 pl-3 pr-9 dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover ${
-                      option.value === value ? 'dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover' : ''
-                    }`}
-                    role="option"
-                    aria-selected={option.value === value}
-                    onClick={() => handleOptionClick(option.value)}
-                  >
-                    <span className={`block truncate dark:text-claude-darkText text-claude-text ${
-                      option.value === value ? 'font-medium' : 'font-normal'
-                    }`}>
-                      {option.label}
-                    </span>
-                  </li>
-                ))}
+          {isOpen && popPos && (
+            <div
+              className="fixed z-40 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-2xl p-1 popover-enter"
+              style={{ top: popPos.top, left: popPos.left, width: Math.max(popPos.width, 140) }}
+            >
+              <ul className="overflow-auto text-xs max-h-60 focus:outline-none" role="listbox" aria-labelledby={id}>
+                {options.map((option) => {
+                  const selected = option.value === value;
+                  return (
+                    <li
+                      key={option.value}
+                      className={`flex cursor-pointer select-none items-center justify-between gap-2 rounded-[var(--shape-radius-sm)] px-2 py-1.5 transition-colors ${
+                        selected
+                          ? 'bg-claude-accent/10 dark:text-claude-darkText text-claude-text'
+                          : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
+                      }`}
+                      role="option"
+                      aria-selected={selected}
+                      onClick={() => handleOptionClick(option.value)}
+                    >
+                      <span className={`truncate ${selected ? 'font-medium' : ''}`}>{option.label}</span>
+                      {selected && <CheckIcon className="h-3.5 w-3.5 text-claude-accent flex-shrink-0" />}
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           )}

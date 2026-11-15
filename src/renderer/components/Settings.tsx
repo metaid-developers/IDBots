@@ -1726,8 +1726,11 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
             {getProviderDisplayLabel(providerKey, config)}
           </span>
         </div>
-        <div className="flex items-center ml-2">
-          {isCustomProviderKey(providerKey) && (
+        {/* OWNER 02:35: fixed w-10 toggle slot (mirror the cerebellum row) so
+            the yellow pill aligns at the same x/y on every provider row;
+            non-custom rows reserve an invisible spacer for the trash slot. */}
+        <div className="flex items-center ml-1">
+          {isCustomProviderKey(providerKey) ? (
             <button
               type="button"
               title={i18nService.t('deleteProvider')}
@@ -1739,27 +1742,31 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
             >
               <TrashIcon className="h-3.5 w-3.5" />
             </button>
+          ) : (
+            <div className="w-6" />
           )}
-          <div
-            title={!canToggleProvider ? i18nService.t('configureApiKey') : undefined}
-            className={`w-7 h-4 rounded-full flex items-center transition-colors ${
-              config.enabled ? 'bg-claude-accent' : 'dark:bg-claude-darkBorder bg-claude-border'
-            } ${
-              canToggleProvider ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'
-            }`}
-            onClick={(e) => {
-              e.stopPropagation();
-              if (!canToggleProvider) {
-                return;
-              }
-              toggleProviderEnabled(providerKey);
-            }}
-          >
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center">
             <div
-              className={`w-3 h-3 rounded-full bg-white transform transition-transform ${
-                config.enabled ? 'translate-x-3.5' : 'translate-x-0.5'
+              title={!canToggleProvider ? i18nService.t('configureApiKey') : undefined}
+              className={`w-7 h-4 rounded-full flex items-center transition-colors ${
+                config.enabled ? 'bg-claude-accent' : 'dark:bg-claude-darkBorder bg-claude-border'
+              } ${
+                canToggleProvider ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'
               }`}
-            />
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!canToggleProvider) {
+                  return;
+                }
+                toggleProviderEnabled(providerKey);
+              }}
+            >
+              <div
+                className={`w-3 h-3 rounded-full bg-white transform transition-transform ${
+                  config.enabled ? 'translate-x-3.5' : 'translate-x-0.5'
+                }`}
+              />
+            </div>
           </div>
         </div>
       </div>

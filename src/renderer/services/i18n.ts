@@ -3588,7 +3588,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     // ── 积分增量包（持久桶：充值 / 赠送 / 收入，永不重置）──────────────
     meIncrementPackTitle: '积分增量包',
     meIncrementPackBuy: '购买积分',
-    meIncrementPackDetails: '查看获得详情',
+    meIncrementPackDetails: '查看详情',
     meIncrementPackAutoDeduct: '订阅额度用完后，自动从增量包扣除',
     meIncrementPackNote: '增量包积分不会被每周清空，也不会重置，永久有效；来源为充值、赠送与交易收入。',
     meIncrementPackToggleFailed: '保存失败，请稍后重试。',
