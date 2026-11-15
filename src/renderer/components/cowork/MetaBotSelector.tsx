@@ -42,6 +42,9 @@ interface MetaBotSelectorProps {
   placeholder: string;
   /** Compact rendering for narrow surfaces (e.g. the Bot Browser side panel). */
   compact?: boolean;
+  /** OWNER 03:56: 36px row (matches text inputs) without the large variant's
+      internal label and 51px height — used by the IM settings pickers. */
+  mid?: boolean;
   dropdownDirection?: 'up' | 'down';
   /**
    * Prepend an "All Bots" entry to the list. Picking it reports
@@ -85,6 +88,7 @@ const MetaBotSelector: React.FC<MetaBotSelectorProps> = ({
   label,
   placeholder,
   compact = false,
+  mid = false,
   dropdownDirection = 'down',
   allowAll = false,
   sessionCounts,
@@ -147,14 +151,18 @@ const MetaBotSelector: React.FC<MetaBotSelectorProps> = ({
   // width drag, list rows mounting above the trigger).
   useAnchorMoveWatcher(triggerRef, isOpen && useFixedDropdown, updateFixedDropdownPlacement);
 
-  const avatarSize = compact ? 'w-5 h-5' : 'w-7 h-7';
-  const avatarIcon = compact ? 'h-3 w-3' : 'h-4 w-4';
-  const buttonClass = compact
-    ? 'w-full flex items-center gap-1.5 rounded-lg dark:bg-claude-darkSurface bg-claude-surface dark:border-claude-darkBorder border-claude-border border px-2 py-1 text-xs focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/40 cursor-pointer'
-    : 'w-full flex items-center gap-2 rounded-lg dark:bg-claude-darkSurface bg-claude-surface dark:border-claude-darkBorder border-claude-border border px-5 py-3 text-base focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/40 cursor-pointer';
-  const optionClass = compact
-    ? 'w-full flex items-center gap-1.5 px-2 py-1.5 text-left text-xs hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors'
-    : 'w-full flex items-center gap-2 px-5 py-3 text-left text-base hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors';
+  const avatarSize = mid ? 'w-6 h-6' : compact ? 'w-5 h-5' : 'w-7 h-7';
+  const avatarIcon = mid ? 'h-3.5 w-3.5' : compact ? 'h-3 w-3' : 'h-4 w-4';
+  const buttonClass = mid
+    ? 'w-full flex items-center gap-2 h-[36px] rounded-[var(--shape-radius-sm)] dark:bg-claude-darkSurface bg-claude-surface dark:border-claude-darkBorder border-claude-border border px-3 text-sm focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/40 cursor-pointer'
+    : compact
+      ? 'w-full flex items-center gap-1.5 rounded-lg dark:bg-claude-darkSurface bg-claude-surface dark:border-claude-darkBorder border-claude-border border px-2 py-1 text-xs focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/40 cursor-pointer'
+      : 'w-full flex items-center gap-2 rounded-lg dark:bg-claude-darkSurface bg-claude-surface dark:border-claude-darkBorder border-claude-border border px-5 py-3 text-base focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/40 cursor-pointer';
+  const optionClass = mid
+    ? 'w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors'
+    : compact
+      ? 'w-full flex items-center gap-1.5 px-2 py-1.5 text-left text-xs hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors'
+      : 'w-full flex items-center gap-2 px-5 py-3 text-left text-base hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors';
   const countClass = 'flex-shrink-0 text-[10px] tabular-nums dark:text-claude-darkTextSecondary text-claude-textSecondary';
 
   const renderAllAvatar = (sizeClass: string, iconClass: string) => (
@@ -189,13 +197,13 @@ const MetaBotSelector: React.FC<MetaBotSelectorProps> = ({
   };
 
   return (
-    <div className={compact ? 'flex items-center min-w-0' : 'flex items-center justify-center gap-3'}>
-      {!compact && (
+    <div className={compact || mid ? 'flex items-center min-w-0' : 'flex items-center justify-center gap-3'}>
+      {!compact && !mid && (
         <label className="text-sm font-medium dark:text-claude-darkText text-claude-text shrink-0">
           {label}
         </label>
       )}
-      <div ref={containerRef} className={`relative ${compact ? 'min-w-0 flex-1' : 'min-w-[280px]'}`}>
+      <div ref={containerRef} className={`relative ${compact || mid ? 'min-w-0 flex-1' : 'min-w-[280px]'}`}>
         <button
           ref={triggerRef}
           type="button"

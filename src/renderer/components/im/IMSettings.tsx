@@ -366,7 +366,7 @@ const IMSettings: React.FC = () => {
         {/* OWNER 03:56: compact — the default large variant (px-5 py-3, text-base,
             built-in label) doubled up with the label above and dwarfed the row. */}
         <MetaBotSelector
-          compact
+          mid
           label={i18nService.t('imMatchedMetabot')}
           metabots={metabotOptions}
           selectedId={selectedMetabotId ?? null}
@@ -1208,7 +1208,6 @@ const IMSettings: React.FC = () => {
               {/* OWNER 03:56: native select popup breaks the design language. */}
               <ThemedSelect
                 id="weixin-permission-mode"
-                compact
                 value={config.settings.channelPermissions?.weixinPermissionMode ?? 'inherit'}
                 onChange={(value) => {
                   dispatch(setIMSettings({
@@ -1371,7 +1370,6 @@ const IMSettings: React.FC = () => {
               </label>
               <ThemedSelect
                 id="qq-group-policy"
-                compact
                 value={config.qq.groupPolicy ?? 'allowlist'}
                 onChange={(value) => {
                   void saveQQSecurity({ groupPolicy: value as 'open' | 'allowlist' | 'disabled' });
