@@ -322,19 +322,19 @@ const GroupTasksView: React.FC<GroupTasksViewProps> = ({
 
       {/* Mode tabs: local group tasks | Open Team | MetaTask.
           Segmented-control style mirrors the Settings Skills/MCP toggle. */}
-      <div className="flex items-stretch border-b dark:border-claude-darkBorder border-claude-border px-4 py-1 shrink-0">
+      <div className="flex items-stretch border-b dark:border-claude-darkBorder border-claude-border px-4 py-1.5 shrink-0">
         {/* Joined segmented tray (owner 2026-11-15 17:52): same language as
             the Skills|MCP switcher and the 积分|流量 header — 1px tray border,
             zero inset, overflow-hidden, selected face is a flat accent
             rectangle with ink text, labels flex-centered. */}
-        <div className="flex h-10 min-w-0 flex-1 overflow-hidden rounded-[var(--shape-radius-lg)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80">
+        <div className="-my-1.5 flex min-w-0 self-stretch overflow-hidden rounded-[var(--shape-radius-md)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80">
           {MODE_TABS.map((tab) => (
             <button
               key={tab.id}
               type="button"
               aria-pressed={mode === tab.id}
               onClick={() => setMode(tab.id)}
-              className={`flex h-full items-center justify-center px-4 text-sm font-medium leading-none transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
+              className={`flex h-full items-center justify-center px-3 text-sm font-medium leading-none transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
                 mode === tab.id
                   ? 'bg-claude-accent text-claude-accentInk'
                   : 'text-claude-textSecondary hover:bg-claude-surfaceHover/70 hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover/70 dark:hover:text-claude-darkText'
