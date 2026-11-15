@@ -114,7 +114,7 @@ const CoworkSurfaceSessionName: React.FC<CoworkSurfaceSessionNameProps> = ({
       <div
         data-slot="cowork-surface-session-name-spacer"
         aria-hidden="true"
-        className="h-6 min-w-0 flex-none mx-[41.25px] w-[calc(100%-82.5px)]"
+        className="h-6 w-full min-w-0 flex-none"
       />
     );
   }
@@ -164,7 +164,7 @@ const CoworkSurfaceSessionName: React.FC<CoworkSurfaceSessionNameProps> = ({
           }
         }}
         onBlur={handleRenameBlur}
-        className="non-draggable h-6 min-w-0 flex-none mx-[41.25px] w-[calc(100%-82.5px)] border-0 bg-transparent shadow-none pl-0 pr-0 text-left text-sm font-medium leading-none dark:text-claude-darkText text-claude-text outline-none focus:outline-none focus:ring-0"
+        className="non-draggable h-6 w-full min-w-0 flex-none border-0 bg-transparent shadow-none pl-1 pr-4 text-left text-sm font-medium leading-none dark:text-claude-darkText text-claude-text outline-none focus:outline-none focus:ring-0"
       />
     );
   }
@@ -180,11 +180,9 @@ const CoworkSurfaceSessionName: React.FC<CoworkSurfaceSessionNameProps> = ({
       }}
       aria-label={displayTitle}
       title={displayTitle}
-      className="non-draggable group flex h-6 min-w-0 flex-none mx-[41.25px] w-[calc(100%-82.5px)] items-center rounded-lg gap-[6px] pl-0 pr-0 text-left text-sm font-medium leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 text-claude-text dark:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+      className="non-draggable group ml-1 inline-flex h-6 min-w-0 max-w-[calc(100%-16px)] items-center gap-[6px] rounded-full border border-claude-border dark:border-claude-darkBorder pl-[6px] pr-[12px] text-left text-sm font-medium leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 text-claude-text dark:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
     >
-      <span className="flex size-[1.5em] flex-none items-center justify-center rounded-full border border-claude-border dark:border-claude-darkBorder">
-        <SessionNameMessageSquareIcon className="w-[0.75em] h-[0.75em] text-claude-textSecondary transition-colors group-hover:text-claude-text dark:text-claude-darkTextSecondary dark:group-hover:text-claude-darkText" />
-      </span>
+      <SessionNameMessageSquareIcon className="w-[1em] h-[1em] flex-none text-claude-textSecondary transition-colors group-hover:text-claude-text dark:text-claude-darkTextSecondary dark:group-hover:text-claude-darkText" />
       <span className="min-w-0 truncate">{displayTitle}</span>
     </button>
   );
