@@ -3948,22 +3948,33 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
               </Suspense>
             </div>
 
-            {/* Footer buttons */}
-            <div className="flex justify-end space-x-4 p-4 dark:border-claude-darkBorder border-claude-border border-t dark:bg-claude-darkBg bg-claude-bg shrink-0">
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-4 py-2 dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-[var(--rounded)] transition-colors text-sm font-medium border dark:border-claude-darkBorder border-claude-border"
-              >
-                {i18nService.t('cancel')}
-              </button>
-              <button
-                type="submit"
-                disabled={isSaving}
-                className="btn-idchat-primary-filled px-4 py-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isSaving ? i18nService.t('saving') : i18nService.t('save')}
-              </button>
+            {/* Footer buttons — joined pair experiment (owner ruling
+                2026-11-15 09:39): one bordered container (1 px stroke, 10 px
+                outer radius, overflow-hidden, zero-gap seamless, fill-only —
+                no divider) wraps the two segments, mirroring the
+                Studio|BotWorks segmented form. Cancel = plain surface
+                (transparent, primary text); Save = accent fill with ink
+                text. ONLY this main-dialog pair joins — the model-edit
+                sub-flow cancel/save pairs stay as-is pending owner review.
+                The container owns stroke + radius; the segments stay square
+                (overflow-hidden clips them flush). */}
+            <div className="flex justify-end p-4 dark:border-claude-darkBorder border-claude-border border-t dark:bg-claude-darkBg bg-claude-bg shrink-0">
+              <div className="inline-flex overflow-hidden rounded-[10px] border dark:border-claude-darkBorder border-claude-border">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-4 py-2 dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors text-sm font-medium active:scale-[0.98]"
+                >
+                  {i18nService.t('cancel')}
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSaving}
+                  className="px-4 py-2 text-sm font-medium bg-claude-accent text-claude-accentInk disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isSaving ? i18nService.t('saving') : i18nService.t('save')}
+                </button>
+              </div>
             </div>
           </form>
 
