@@ -263,7 +263,14 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
   // it resolves the installed local skill by name and reuses the standard
   // delete-confirm flow (same dialog, same skills:delete IPC as 本地技能).
   const handleUninstallMarketSkill = (skill: OfficialSkillItem) => {
-    const local = skills.find(s => s.name === skill.name);
+    // The market entry's `name` is the installed FOLDER name; a local skill's
+    // display `name` comes from SKILL.md frontmatter and may differ. Resolve
+    // by the parent folder of skillPath first, then fall back to display name.
+    const local = skills.find(s => {
+      const parts = s.skillPath.split(/[\\/]/);
+      const folder = parts[parts.length - 2];
+      return folder === skill.name;
+    }) || skills.find(s => s.name === skill.name);
     if (local) setSkillPendingDelete(local);
   };
 
@@ -1078,47 +1085,6 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
         </div>
       )}
 
-      {skillPendingDelete && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-          onClick={handleCancelDeleteSkill}
-        >
-          <div
-            className="w-full max-w-sm mx-4 rounded-2xl dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border shadow-2xl p-5"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="text-lg font-semibold dark:text-claude-darkText text-claude-text">
-              {i18nService.t('deleteSkill')}
-            </div>
-            <p className="mt-2 text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
-              {i18nService.t('skillDeleteConfirm').replace('{name}', skillPendingDelete.name)}
-            </p>
-            {skillActionError && (
-              <div className="mt-3 text-xs text-red-500">
-                {skillActionError}
-              </div>
-            )}
-            <div className="mt-4 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={handleCancelDeleteSkill}
-                disabled={isDeletingSkill}
-                className="px-3 py-1.5 text-xs rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                {i18nService.t('cancel')}
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmDeleteSkill}
-                disabled={isDeletingSkill}
-                className="border border-red-600 px-3 py-1.5 text-xs rounded-[8px] bg-red-500 text-gray-900 hover:bg-red-600 dark:bg-red-500 dark:hover:bg-red-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                {i18nService.t('confirmDelete')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {isGithubImportOpen && (
         <div
@@ -1180,6 +1146,47 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
         </div>
       )}
         </>
+      )}
+      {skillPendingDelete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          onClick={handleCancelDeleteSkill}
+        >
+          <div
+            className="w-full max-w-sm mx-4 rounded-2xl dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border shadow-2xl p-5"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="text-lg font-semibold dark:text-claude-darkText text-claude-text">
+              {i18nService.t('deleteSkill')}
+            </div>
+            <p className="mt-2 text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              {i18nService.t('skillDeleteConfirm').replace('{name}', skillPendingDelete.name)}
+            </p>
+            {skillActionError && (
+              <div className="mt-3 text-xs text-red-500">
+                {skillActionError}
+              </div>
+            )}
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={handleCancelDeleteSkill}
+                disabled={isDeletingSkill}
+                className="px-3 py-1.5 text-xs rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {i18nService.t('cancel')}
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteSkill}
+                disabled={isDeletingSkill}
+                className="border border-red-600 px-3 py-1.5 text-xs rounded-[8px] bg-red-500 text-gray-900 hover:bg-red-600 dark:bg-red-500 dark:hover:bg-red-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {i18nService.t('confirmDelete')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
