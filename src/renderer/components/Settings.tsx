@@ -3902,7 +3902,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
             {/* OWNER 2026-11-16 00:42: section label + segmented switch share
                 one row at the module's top-right; the label sits OUTSIDE the
                 module card, and the duplicated in-module title is gone. */}
-            <div className="flex items-center justify-between gap-3 pl-[15px] pt-[21px] pb-[37px] max-w-3xl pr-4"> {/* OWNER 01:03: 20px rhythm below the row — pb lives HERE so both faces (credits/traffic) share it; view containers carry no top padding */} {/* OWNER 00:55: label top and tray top BOTH sit 20px below the header divider (68+1border+4pt+~15pt-4=88 rendered); top-aligned so A/B faces never drift */}
+            <div className="flex items-center justify-between gap-3 pl-[15px] pt-[10px] pb-[25px] max-w-3xl pr-4"> {/* OWNER 11-16 05:45: header band breathes 25px on BOTH sides of the label+tray row — divider 25px above the tray top (band h-[79px], row pt-[10px]), block top 25px below the tray bottom (pb-[25px]); label+tray row is the anchor and does not move */} {/* OWNER 00:55: label top and tray top BOTH sit 20px below the header divider (68+1border+4pt+~15pt-4=88 rendered); top-aligned so A/B faces never drift */}
               {/* OWNER 01:08: label + subtitle inline on ONE line so the row is
                   exactly as tall as the tray -> the tray's 20px above AND below
                   are both exact; OWNER 00:52/00:58: subtitle kept, both faces. */}
@@ -3952,7 +3952,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
       >
         {/* Left sidebar (slimmed ~1/5: 220px → 176px, per owner request) */}
         <div className="w-[176px] shrink-0 flex flex-col min-h-0 dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted border-r dark:border-claude-darkBorder border-claude-border rounded-l-2xl">
-          <div className="pl-[54px] pr-5 pt-5 pb-[28px] shrink-0"> {/* OWNER 04:17: title text aligns with the 通用 nav item text (x+30): pl-6 put the title on the 24px icon axis, but the icon+gap push nav text 30px further right — measured on dev (设置 380 → 通用 410). pt-5: title stays ABOVE the header divider line (68px), level with the page header title; pb-28 pushes the nav list to start just BELOW that line — OWNER 2026-11-16 00:26: the 68px line splits the sidebar into title zone (above) / nav zone (below) */}
+          <div className="pl-[22px] pr-5 pt-[26px] pb-[28px] shrink-0"> {/* OWNER 11-16 06:08: 「设置」title sits 23px from the modal left edge and its center is level with the page-header label center (pt 20→26, measured 7.1px offset) — 04:17 nav-text alignment superseded by the 23px inset + one-level rulings — OWNER 2026-11-16 00:26: the 68px line splits the sidebar into title zone (above) / nav zone (below) */}
             <h2 className="text-lg font-semibold dark:text-claude-darkText text-claude-text">{i18nService.t('settings')}</h2>
           </div>
           <nav className="flex flex-col gap-0.5 px-3 pb-2 flex-1 min-h-0 overflow-y-auto">
@@ -3988,7 +3988,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
               divider at 68px below the top edge -> content]. Band = 68px tall
               with border-b; items-center puts the h3 tray and close on one
               line at 34px, and every category tab shares this header. */}
-          <div className="flex justify-between items-center px-6 h-[68px] shrink-0 border-b dark:border-claude-darkBorder border-claude-border">
+          <div className="flex justify-between items-center px-6 h-[79px] shrink-0 border-b dark:border-claude-darkBorder border-claude-border">
             {/* OWNER 2026-11-16 00:29: every tab keeps the plain h3 title above
                 the divider; the 积分|流量 segmented switch moved INTO the content
                 area (see the 'traffic' case) — title and view-switch are no

@@ -262,7 +262,7 @@ const MeUsageAndCredits: React.FC = () => {
   }, [orders, subOrders, loadOrders, now]);
 
   return (
-    <div className="h-full overflow-y-auto pr-4 pb-4 space-y-4 max-w-3xl"> {/* pt moved to the shared row above (20px rhythm) */}
+    <div className="h-full overflow-y-auto pr-4 pb-4 space-y-[10px] max-w-3xl"> {/* pt moved to the shared row above (20px rhythm) */}
       {/* OWNER 2026-11-16 00:42: the in-module title block (用量 & 积分 +
           subtitle) is gone — the section label now lives in the row above the
           module (用量信息 | 积分|流量 switch), outside this card. */}
@@ -273,7 +273,7 @@ const MeUsageAndCredits: React.FC = () => {
       {/* OWNER 04:08: cards keep their original width — only the header label
           row pulls flush to the panel title edge (this pl-4 wrapper holds the
           cards at the pre-alignment geometry). */}
-      <div className="space-y-4 pl-4">
+      <div className="space-y-[10px] pl-4">
       <MeBalanceOverviewCard
         onRefresh={() => void handleRefreshAll()}
         refreshing={refreshing}

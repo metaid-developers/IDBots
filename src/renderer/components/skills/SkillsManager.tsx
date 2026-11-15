@@ -821,7 +821,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
             placeholder={i18nService.t('searchSkills')}
             value={skillSearchQuery}
             onChange={(e) => setSkillSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-3 py-1.5 text-xs rounded-[var(--shape-radius-sm)] dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text dark:placeholder-claude-darkTextSecondary placeholder-claude-textSecondary border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
+            className="w-full h-[35px] pl-9 pr-3 text-xs rounded-[var(--shape-radius-sm)] dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text dark:placeholder-claude-darkTextSecondary placeholder-claude-textSecondary border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
           />
         </div>
         <div className="relative">
@@ -829,7 +829,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
             ref={addSkillButtonRef}
             type="button"
             onClick={() => setIsAddSkillMenuOpen(prev => !prev)}
-            className="px-3 py-1.5 text-xs rounded-[var(--shape-radius-sm)] border transition-colors dark:bg-claude-darkSurface bg-claude-surface dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover flex items-center gap-2"
+            className="h-[35px] px-3 text-xs rounded-[var(--shape-radius-sm)] border transition-colors dark:bg-claude-darkSurface bg-claude-surface dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover flex items-center gap-2"
           >
             <PlusCircleIcon className="h-4 w-4" />
             <span>{i18nService.t('addSkill')}</span>
