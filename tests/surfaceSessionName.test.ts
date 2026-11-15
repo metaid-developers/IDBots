@@ -114,8 +114,8 @@ test('session-name icon: square bubble inside circular-frame pill rides the titl
   assert.match(markup, /gap-\[6px\]/);
   assert.match(markup, /group-hover:text-claude-text/);
   assert.match(markup, /aria-hidden="true"/);
-  // Stagger shift (owner 09:34): the label state rides translate-x-[6px].
-  assert.match(markup, /mx-\[41\.25px\]/);
+  // Pill bubble (owner 10:51): label state rides the left-aligned capsule.
+  assert.match(markup, /ml-1 inline-flex/);
   // Owner 09:51 same-scale ruling: title typography = badge name typography
   // (text-sm font-medium leading-none — read from CoworkSurfaceIdentityBadge).
   assert.match(markup, /text-sm font-medium leading-none/);
