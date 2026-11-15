@@ -1325,7 +1325,7 @@ const TrafficSettings: React.FC = () => {
               </p>
             )}
           </div>
-          <div className="flex flex-col items-end justify-center gap-1 shrink-0">
+          <div className="flex flex-col items-end justify-center gap-1 shrink-0 self-center">
             <div className="flex gap-2">
               <button
                 type="button"
