@@ -3373,7 +3373,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     userSettingsChainBackupManifestSynced: '发现清单已同步（移动端/新设备可发现全部 Bot）',
     userSettingsChainBackupLastRun: '上次备份：{time}',
     userSettingsChainBackupNever: '从未备份',
-    userSettingsChainBackupRestoreButton: '从链上恢复',
+    userSettingsChainBackupRestoreButton: '恢复备份',
     userSettingsChainBackupRestoreRunning: '恢复中…',
     userSettingsChainBackupRestoreSuccess: '恢复完成',
     userSettingsChainBackupRestoreFailed: '恢复失败',
