@@ -60,7 +60,7 @@ const LongTermTasksBoard: React.FC = () => {
     <div className="flex h-full flex-col">
       {/* Toolbar: creation entry + hint */}
       <div className="flex shrink-0 items-center gap-3 px-4 pt-3">
-        <button type="button" onClick={openCreationSession} className="btn-idchat-primary-filled px-3 py-1.5 text-sm font-medium">
+        <button type="button" onClick={openCreationSession} className="btn-idchat-primary-filled inline-flex h-9 items-center justify-center rounded-[var(--shape-radius-lg)] px-3 text-sm font-medium">
           {i18nService.t('longTermTask.newTask')}
         </button>
         <p className="text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
