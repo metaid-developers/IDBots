@@ -3857,7 +3857,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
       >
         {/* Left sidebar (slimmed ~1/5: 220px → 176px, per owner request) */}
         <div className="w-[176px] shrink-0 flex flex-col min-h-0 dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted border-r dark:border-claude-darkBorder border-claude-border rounded-l-2xl">
-          <div className="pl-6 pr-5 pt-[76px] pb-3 shrink-0"> {/* pl-6: title on the 24px icon axis (Plan A). pt-76: OWNER 2026-11-16 00:24 — sidebar content starts just below the header divider line (68px), so the two zones share one horizontal boundary */}
+          <div className="pl-6 pr-5 pt-5 pb-[28px] shrink-0"> {/* pl-6: title on the 24px icon axis (Plan A). pt-5: title stays ABOVE the header divider line (68px), level with the page header title; pb-28 pushes the nav list to start just BELOW that line — OWNER 2026-11-16 00:26: the 68px line splits the sidebar into title zone (above) / nav zone (below) */}
             <h2 className="text-lg font-semibold dark:text-claude-darkText text-claude-text">{i18nService.t('settings')}</h2>
           </div>
           <nav className="flex flex-col gap-0.5 px-3 pb-2 flex-1 min-h-0 overflow-y-auto">
