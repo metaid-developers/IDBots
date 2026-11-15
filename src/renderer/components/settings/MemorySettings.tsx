@@ -1,3 +1,4 @@
+import ThemedSelect from '../ui/ThemedSelect';
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
@@ -2049,7 +2050,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
               key={kind}
               type="button"
               onClick={() => setCultureKindFilter(kind)}
-              className={`rounded-lg border px-2.5 py-1 text-xs transition-colors ${
+              className={`rounded-[var(--shape-radius-sm)] border px-2.5 py-1 text-xs transition-colors ${
                 active
                   ? 'border-claude-accent bg-claude-accent/5 text-claude-accent dark:bg-claude-accent/10 dark:text-claude-darkAccent'
                   : 'dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
@@ -2074,15 +2075,15 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           {editingCultureId != null ? i18nService.t('memoryCultureEdit') : i18nService.t('memoryCultureAdd')}
         </div>
         <div className="flex items-center gap-2">
-          <select
+          {/* OWNER 02:56: native select popup broke the design language —
+              unified ThemedSelect (compact) keeps the row height and centers. */}
+          <ThemedSelect
+            id="culture-draft-kind"
+            compact
             value={cultureDraft.kind}
-            onChange={(event) => setCultureDraft((prev) => ({ ...prev, kind: event.target.value as TeamCultureKind }))}
-            className="rounded-lg border px-2 py-1.5 text-xs dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
-          >
-            {(Object.keys(cultureKindLabels) as TeamCultureKind[]).map((kind) => (
-              <option key={kind} value={kind}>{cultureKindLabels[kind]}</option>
-            ))}
-          </select>
+            onChange={(value) => setCultureDraft((prev) => ({ ...prev, kind: value as TeamCultureKind }))}
+            options={(Object.keys(cultureKindLabels) as TeamCultureKind[]).map((kind) => ({ value: kind, label: cultureKindLabels[kind] }))}
+          />
           <input
             type="text"
             value={cultureDraft.topic}

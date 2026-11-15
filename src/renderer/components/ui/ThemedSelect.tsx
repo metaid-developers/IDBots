@@ -8,6 +8,7 @@ interface ThemedSelectProps {
   options: { value: string; label: string }[];
   className?: string;
   label?: string;
+  compact?: boolean;
 }
 
 const ThemedSelect: React.FC<ThemedSelectProps> = ({
@@ -17,6 +18,7 @@ const ThemedSelect: React.FC<ThemedSelectProps> = ({
   options,
   className = '',
   label,
+  compact = false,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   // OWNER 02:35: popover was absolute inside scroll containers — clipped for
@@ -66,7 +68,7 @@ const ThemedSelect: React.FC<ThemedSelectProps> = ({
               if (rect) setPopPos({ top: rect.bottom + 4, left: rect.left, width: rect.width });
               setIsOpen(!isOpen);
             }}
-            className={`flex items-center justify-between w-full gap-1.5 rounded-[var(--shape-radius-sm)] border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors hover:border-claude-accent/60 ${className}`}
+            className={`flex items-center justify-between w-full gap-1.5 rounded-[var(--shape-radius-sm)] border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text transition-colors hover:border-claude-accent/60 ${compact ? 'px-2 py-1.5 text-xs' : 'px-3 py-2 text-sm'} ${className}`}
             aria-haspopup="listbox"
             aria-expanded={isOpen}
           >
