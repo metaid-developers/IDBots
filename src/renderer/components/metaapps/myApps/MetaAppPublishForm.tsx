@@ -405,7 +405,7 @@ const MetaAppPublishForm: React.FC<MetaAppPublishFormProps> = ({
 
         <div className="px-5 py-3 border-t dark:border-claude-darkBorder border-claude-border flex justify-end gap-2">
           <button type="button" onClick={onCancel} disabled={submitting}
-            className="px-4 py-2 text-sm rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors">
+            className="px-4 py-2 text-sm inline-flex items-center justify-center rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors">
             {t('cancel') || 'Cancel'}
           </button>
           <button type="button" onClick={handleSubmit} disabled={submitting || !appName.trim() || !content.trim()}

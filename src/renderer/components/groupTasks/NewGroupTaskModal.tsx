@@ -199,7 +199,7 @@ const NewGroupTaskModal: React.FC<NewGroupTaskModalProps> = ({ onClose, onCreate
               type="button"
               onClick={onClose}
               disabled={submitting}
-              className="flex-1 px-4 py-2 text-sm rounded-[var(--rounded)] dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors disabled:opacity-50"
+              className="flex-1 px-4 py-2 text-sm inline-flex items-center justify-center rounded-[var(--shape-radius-md)] dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors disabled:opacity-50"
             >
               {i18nService.t('cancel')}
             </button>

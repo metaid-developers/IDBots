@@ -59,7 +59,7 @@ const MyAppsTab: React.FC<MyAppsTabProps> = ({ onRunByPin }) => {
         </div>
         <div className="flex items-center gap-2">
           <button type="button" onClick={owner.refresh} disabled={owner.loading || !selectedBot || !selectedBot?.mvcAddress}
-            className="px-4 py-2 text-xs rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors disabled:opacity-50">
+            className="px-4 py-2 text-xs inline-flex items-center justify-center rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors disabled:opacity-50">
             {t('refresh') || 'Refresh'}
           </button>
           <button type="button" onClick={() => owner.setModal({ kind: 'publish' })} disabled={!selectedBot || !selectedBot.mvcAddress}
@@ -238,11 +238,11 @@ const MyAppsTab: React.FC<MyAppsTabProps> = ({ onRunByPin }) => {
                         {t('run') || 'Run'}
                       </button>
                       <button type="button" onClick={(e) => { e.stopPropagation(); owner.setModal({ kind: 'edit', record }); }}
-                        className="px-4 py-2 text-[11px] rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text">
+                        className="px-4 py-2 text-[11px] inline-flex items-center justify-center rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text">
                         {t('edit') || 'Edit'}
                       </button>
                       <button type="button" onClick={(e) => { e.stopPropagation(); handleShare(record); }}
-                        className="px-4 py-2 text-[11px] rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text">
+                        className="px-4 py-2 text-[11px] inline-flex items-center justify-center rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text">
                         {t('share') || 'Share'}
                       </button>
                     </div>

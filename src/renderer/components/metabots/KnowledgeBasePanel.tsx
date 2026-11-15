@@ -461,7 +461,7 @@ const KnowledgeBasePanel: React.FC<KnowledgeBasePanelProps> = ({ metabotId }) =>
             data-slot="knowledge-base-create-submit"
             onClick={() => void handleCreate()}
             disabled={createSaving}
-            className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] rounded-[var(--rounded)] px-3 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] inline-flex items-center justify-center rounded-[var(--shape-radius-md)] px-3 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {createSaving ? i18nService.t('saving') : i18nService.t('create')}
           </button>

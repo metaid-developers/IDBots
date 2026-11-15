@@ -122,7 +122,7 @@ const MetaBotDeleteConfirmModal: React.FC<MetaBotDeleteConfirmModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-sm rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+              className="px-4 py-2 text-sm inline-flex items-center justify-center rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
             >
               {i18nService.t('cancel')}
             </button>
@@ -130,7 +130,7 @@ const MetaBotDeleteConfirmModal: React.FC<MetaBotDeleteConfirmModalProps> = ({
               type="button"
               onClick={handleConfirm}
               disabled={!canConfirm}
-              className="px-4 py-2 text-sm rounded-[var(--rounded)] border border-red-600 bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium"
+              className="px-4 py-2 text-sm inline-flex items-center justify-center rounded-[var(--shape-radius-md)] border border-red-600 bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium"
             >
               {canConfirm
                 ? i18nService.t('metabotBackedUpConfirmDelete')
