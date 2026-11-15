@@ -130,6 +130,13 @@ test("runtime stage ships assets required by unpackaged Studio services", () => 
   }
 });
 
+test("mobile app public assets include the default avatar used by the activity indicator", () => {
+  const desktopAsset = resolve(import.meta.dirname, "../public/default_metabot.png");
+  const mobileAsset = resolve(import.meta.dirname, "../src/mobile/app/public/default_metabot.png");
+  assert.ok(statSync(mobileAsset).isFile());
+  assert.deepEqual(readFileSync(mobileAsset), readFileSync(desktopAsset));
+});
+
 test("cloud image CI requires the control-plane and conformance legs", () => {
   const workflow = readFileSync(resolve(import.meta.dirname, "../.github/workflows/cloud-images.yml"), "utf8");
   assert.doesNotMatch(workflow, /hashFiles\('cloud\/control-plane\/Dockerfile'\)/);

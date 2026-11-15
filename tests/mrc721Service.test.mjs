@@ -32,6 +32,7 @@ const {
   scanMrc721CollectionNameForIssuer,
   verifyMrc721Holding,
   waitForMrc721CollectionInfo,
+  getMetasoApiBase,
 } = await import('../dist-electron/main/services/mrc721Service.js');
 
 // ---------------------------------------------------------------------------
@@ -55,6 +56,22 @@ function jsonResponse(body, status = 200) {
     headers: { 'content-type': 'application/json' },
   });
 }
+
+test('NFT index routing never uses the traffic-service base as a chain indexer', () => {
+  assert.equal(getMetasoApiBase({
+    IDBOTS_METASO_API_BASE: 'https://www.metaso.network/assist-open-api',
+  }), 'https://so.metaid.io');
+  assert.equal(getMetasoApiBase({
+    IDBOTS_METASO_API_BASE: 'https://www.metaso.network/assist-open-api/',
+  }), 'https://so.metaid.io');
+  assert.equal(getMetasoApiBase({
+    IDBOTS_METASO_API_BASE: 'https://indexer.example',
+  }), 'https://indexer.example');
+  assert.equal(getMetasoApiBase({
+    IDBOTS_METASO_API_BASE: 'https://www.metaso.network/assist-open-api',
+    IDBOTS_MRC721_INDEXER_API_BASE: 'https://indexer-override.example/',
+  }), 'https://indexer-override.example');
+});
 
 // ---------------------------------------------------------------------------
 // Validators + content builders

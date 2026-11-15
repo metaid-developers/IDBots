@@ -46,6 +46,25 @@ test('remote fallback fetches carry a default timeout signal', async () => {
   }
 });
 
+test('local indexer fallback preserves the remote query parameters', async () => {
+  const { fetchFromLocalOrFallback } = loadProxy();
+  const calls = [];
+  await withFetchStub(async (url) => {
+    calls.push(String(url));
+    return new Response('{"code":1,"data":{"list":[]}}', { status: 200 });
+  }, async () => {
+    process.env.IDBOTS_MAN_P2P_LOCAL_BASE = 'http://indexer.local';
+    await fetchFromLocalOrFallback(
+      '/api/mrc721/address/item',
+      'https://so.metaid.io/api/mrc721/address/item?address=holder&size=100',
+    );
+  });
+
+  assert.deepEqual(calls, [
+    'http://indexer.local/api/mrc721/address/item?address=holder&size=100',
+  ]);
+});
+
 test('caller-provided signals win over the default remote timeout', async () => {
   const { fetchFromLocalOrFallback, fetchContentWithFallback } = loadProxy();
   const callerSignal = AbortSignal.timeout(250);
