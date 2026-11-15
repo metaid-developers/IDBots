@@ -130,7 +130,7 @@ const CoworkHistoryPanel: React.FC<CoworkHistoryPanelProps> = ({
           </span>
           {/* OWNER 03:52: year/month dropdowns use the unified ThemedSelect
               (same grammar as Settings calendars) — native popups retired. */}
-          <div className="w-16">
+          <div className="w-fit">
             <ThemedSelect
               id="cowork-history-year"
               compact
@@ -140,7 +140,7 @@ const CoworkHistoryPanel: React.FC<CoworkHistoryPanelProps> = ({
               aria-label={`${i18nService.t('botBrowserHistoryDateFilter')} · ${monthView.year}`}
             />
           </div>
-          <div className="w-20">
+          <div className="w-fit">
             <ThemedSelect
               id="cowork-history-month"
               compact

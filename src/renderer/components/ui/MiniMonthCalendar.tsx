@@ -32,7 +32,7 @@ const MiniMonthCalendar: React.FC<MiniMonthCalendarProps> = ({ markedDayKeys, se
       {/* OWNER 03:46: year/month dropdowns use the unified ThemedSelect —
           the native select popup broke the design language. */}
       <div className="flex items-center gap-1.5 px-1">
-        <div className="w-20">
+        <div className="w-fit">
           <ThemedSelect
             id="mini-cal-year"
             compact
@@ -41,7 +41,7 @@ const MiniMonthCalendar: React.FC<MiniMonthCalendarProps> = ({ markedDayKeys, se
             options={years.map((year) => ({ value: String(year), label: String(year) }))}
           />
         </div>
-        <div className="flex-1 min-w-0">
+        <div className="w-fit">
           <ThemedSelect
             id="mini-cal-month"
             compact
