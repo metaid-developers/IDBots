@@ -251,10 +251,10 @@ const McpManager: React.FC<McpManagerProps> = ({
         />
       )}
 
-      {(!hideTabBar || !hideSearch) && (
+      {!hideTabBar && (
         <> 
-        {/* OWNER 01:27: divider now spans the full row (tabs + search); the
-            description line moved below the divider to mirror the skills face. */}
+        {/* OWNER 01:27+01:32: divider spans the full tabs row; search moved
+            BELOW the description (mirrors the skills face layout). */}
         <div className="flex items-center gap-3 border-b dark:border-claude-darkBorder border-claude-border pb-0">
           {!hideTabBar && (
             <div className="flex items-center mr-auto">
@@ -288,23 +288,23 @@ const McpManager: React.FC<McpManagerProps> = ({
             </div>
           )}
 
-          {!hideSearch && (
-            <div className="relative w-48">
-              <MagnifyingGlassIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
-              <input
-                type="text"
-                placeholder={i18nService.t('searchMcpServers')}
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text dark:placeholder-claude-darkTextSecondary placeholder-claude-textSecondary border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-1 focus:ring-claude-accent"
-              />
-            </div>
-          )}
           {tabBarTrailing}
         </div>
         <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
           {i18nService.t('mcpDescription')}
         </p>
+        {!hideSearch && (
+        <div className="relative">
+          <MagnifyingGlassIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
+          <input
+            type="text"
+            placeholder={i18nService.t('searchMcpServers')}
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text dark:placeholder-claude-darkTextSecondary placeholder-claude-textSecondary border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-1 focus:ring-claude-accent"
+          />
+        </div>
+        )}
         </>
       )}
 
