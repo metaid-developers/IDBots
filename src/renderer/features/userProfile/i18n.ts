@@ -53,6 +53,8 @@ export interface UserProfileCopy {
    * line's place): twin 每日寄语 — today's twin note, or the local fallback.
    */
   dailyMessageLabel: string;
+  /** Personal greeting template: '{name}' is replaced by the twin's display name. */
+  dailyMessageGreeting: string;
 
   /** Section heading: the account block extracted from Settings. */
   accountSectionTitle: string;
@@ -91,6 +93,7 @@ const ZH: UserProfileCopy = {
   identityLoadFailed: '身份读取失败，稍后可重试',
   noIdentity: '尚未创建本地身份',
   dailyMessageLabel: 'twin 每日寄语',
+  dailyMessageGreeting: '{name}，今天想对你说',
 
   accountSectionTitle: '账户',
   accountSectionHint: '身份、助记词与链上资料都由本机持有；这里的每一条操作与设置里完全一致。',
@@ -127,6 +130,7 @@ const EN: UserProfileCopy = {
   identityLoadFailed: 'Could not read the identity — try again shortly',
   noIdentity: 'No local identity yet',
   dailyMessageLabel: "Twin's daily note",
+  dailyMessageGreeting: '{name}, a note for you today',
 
   accountSectionTitle: 'Account',
   accountSectionHint: 'The identity, its mnemonic and the on-chain profile stay on this machine; every action here is the same one Settings offered.',

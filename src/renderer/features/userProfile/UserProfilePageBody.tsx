@@ -111,10 +111,12 @@ const UserProfilePageBody: React.FC = () => {
             title={dailyMessage}
             className="mt-0.5 min-w-0"
           >
-            <p className="text-[10px] font-medium tracking-wide text-claude-textSecondary dark:text-claude-darkTextSecondary">
-              {copy.dailyMessageLabel}
+            <p className="text-[11px] font-medium tracking-wide text-claude-textSecondary dark:text-claude-darkTextSecondary">
+              {name
+                ? copy.dailyMessageGreeting.replace('{name}', name)
+                : copy.dailyMessageLabel}
             </p>
-            <p className="mt-0.5 truncate text-[11px] leading-relaxed text-claude-textSecondary dark:text-claude-darkTextSecondary">
+            <p className="mt-0.5 truncate text-[13px] font-medium leading-relaxed text-claude-text dark:text-claude-darkText">
               {dailyMessage}
             </p>
           </div>
