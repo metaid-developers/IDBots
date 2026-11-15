@@ -327,7 +327,7 @@ const GroupTasksView: React.FC<GroupTasksViewProps> = ({
             the Skills|MCP switcher and the 积分|流量 header — 1px tray border,
             zero inset, overflow-hidden, selected face is a flat accent
             rectangle with ink text, labels flex-centered. */}
-        <div className="-my-1.5 flex min-w-0 self-stretch overflow-hidden rounded-[var(--shape-radius-md)] border border-claude-border bg-claude-bg dark:border-claude-darkBorder dark:bg-claude-darkBg">
+        <div className="flex h-10 min-w-0 flex-1 overflow-hidden rounded-[var(--shape-radius-md)] border border-claude-border bg-claude-bg dark:border-claude-darkBorder dark:bg-claude-darkBg">
           {MODE_TABS.map((tab) => (
             <button
               key={tab.id}
