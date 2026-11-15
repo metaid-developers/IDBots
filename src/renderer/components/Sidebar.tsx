@@ -715,7 +715,7 @@ const Sidebar: React.FC<SidebarProps> = ({
     <div
       ref={studioHeaderRef}
       data-slot="studio-task-header"
-      className={`relative flex w-full min-w-0 flex-col items-center gap-1 transition-[height] duration-150 ${showStudioTitle ? 'h-16' : 'h-9'}`}
+      className="relative flex w-full min-w-0 flex-col items-center gap-1"
       onMouseLeave={(event) => {
         const nextTarget = event.relatedTarget as Node | null;
         if (nextTarget && event.currentTarget.contains(nextTarget)) return;
