@@ -3836,16 +3836,20 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
         // and the on-chain traffic quota page, restored verbatim.
         return (
           <div>
-            <div className="flex items-center gap-1 pb-4">
+            {/* Joined segmented pair (owner 2026-11-15 16:17): one tray, two
+                button-tabs — the selected face is a flat accent rectangle with
+                ink text, the tray's 1px border does the layering (same
+                segmented language as the Studio|BotWorks switcher). */}
+            <div className="inline-flex h-8 min-w-0 overflow-hidden rounded-[var(--shape-radius-md)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80">
               {(['credits', 'traffic'] as const).map((sub) => (
                 <button
                   key={sub}
                   type="button"
                   onClick={() => setCreditsSubTab(sub)}
-                  className={`rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+                  className={`non-draggable flex h-full min-w-[88px] items-center justify-center px-4 text-xs font-medium leading-none transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
                     creditsSubTab === sub
-                      ? 'border-claude-accent text-claude-accent dark:text-claude-darkAccent bg-claude-accent/5'
-                      : 'border-claude-border dark:border-claude-darkBorder text-claude-text dark:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
+                      ? 'bg-claude-accent text-claude-accentInk'
+                      : 'text-claude-textSecondary hover:bg-claude-surfaceHover/70 hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover/70 dark:hover:text-claude-darkText'
                   }`}
                 >
                   {i18nService.t(sub === 'credits' ? 'usageCreditsSubTabCredits' : 'usageCreditsSubTabTraffic')}
