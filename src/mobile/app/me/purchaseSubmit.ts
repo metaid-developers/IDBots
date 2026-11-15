@@ -16,6 +16,8 @@ export interface MeSubscriptionOrderInput {
   voucherUrl?: string;
   voucherRemark?: string;
   idempotencyKey: string;
+  clientForm?: 'pwa' | 'native';
+  returnTo?: string;
 }
 
 export interface MeTopupOrderInput {
@@ -25,6 +27,8 @@ export interface MeTopupOrderInput {
   voucherUrl?: string;
   voucherRemark?: string;
   idempotencyKey: string;
+  clientForm?: 'pwa' | 'native';
+  returnTo?: string;
 }
 
 export type MePurchaseOrderRequest =
@@ -90,6 +94,8 @@ export function buildMePurchaseOrderRequest(args: {
   voucherRemark?: string;
   generation?: number;
   now?: number;
+  clientForm?: 'pwa' | 'native';
+  returnTo?: string;
 }): MePurchaseOrderRequest | null {
   const subjectId = args.section === 'subscribe' ? args.planId : args.packageId;
   if (!subjectId) return null;
@@ -108,6 +114,8 @@ export function buildMePurchaseOrderRequest(args: {
     voucherUrl: args.voucherUrl,
     voucherRemark: args.voucherRemark,
     idempotencyKey,
+    ...(args.clientForm ? { clientForm: args.clientForm } : {}),
+    ...(args.returnTo ? { returnTo: args.returnTo } : {}),
   };
   if (args.section === 'subscribe') {
     return {

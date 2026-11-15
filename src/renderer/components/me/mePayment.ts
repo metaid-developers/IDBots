@@ -88,6 +88,22 @@ export function bumpMeOrderGeneration(
   return next;
 }
 
+export interface MePaymentReturnContext {
+  clientForm: 'pwa' | 'native';
+  returnTo: string;
+}
+
+export function buildMePaymentReturnContext(runtime?: {
+  idbotsMobile?: { isMobile?: boolean; shell?: string };
+  location?: { href?: string };
+}): MePaymentReturnContext | null {
+  if (runtime?.idbotsMobile?.isMobile !== true) return null;
+  if (runtime.idbotsMobile.shell === 'capacitor') {
+    return { clientForm: 'native', returnTo: 'idbots://app/' };
+  }
+  return { clientForm: 'pwa', returnTo: runtime.location?.href ?? '' };
+}
+
 export function buildMeOrderIdempotencyKey(input: MeOrderIdempotencyInput): string {
   const dayStamp = new Date(input.now ?? Date.now()).toISOString().slice(0, 10);
   const base = input.section === 'subscribe'
@@ -248,7 +264,7 @@ export function mePaymentPhase(status: string | number): 'pending' | 'credited' 
   if (normalized === '3' || /^(confirmed|credited|active|completed|succeeded|success)$/.test(normalized)) {
     return 'credited';
   }
-  if (normalized === '4' || /^(closed|rejected|expired|cancelled|canceled|failed)$/.test(normalized)) {
+  if (normalized === '4' || normalized === '5' || /^(closed|rejected|expired|cancelled|canceled|failed|replaced)$/.test(normalized)) {
     return 'closed';
   }
   return 'pending';

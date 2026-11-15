@@ -27,6 +27,7 @@ import {
   submitMePurchaseOrder,
   type MePurchaseSubmitApi,
 } from '../src/mobile/app/me/purchaseSubmit.ts';
+import { buildMePaymentReturnContext } from '../src/renderer/components/me/mePayment.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SCREEN_SOURCE = readFileSync(
@@ -234,6 +235,30 @@ test('server payment handoff and proration survive the mobile submit projection'
   assert.equal(result.checkout?.qrCode, 'pay-now');
   assert.equal(result.checkout?.listAmountCny, 500);
   assert.equal(result.checkout?.creditAppliedCny, 50);
+});
+
+test('mobile payment return context reaches both purchase request types', () => {
+  const subscription = buildMePurchaseOrderRequest({
+    section: 'subscribe', planId: 'me_standard', period: 'month', gateway: 'paypal',
+    ...buildMePaymentReturnContext({
+      idbotsMobile: { isMobile: true, shell: 'pwa' },
+      location: { href: 'https://app.idbots.world/app/' },
+    })!,
+  });
+  assert.equal(subscription?.kind, 'subscribe');
+  if (subscription?.kind === 'subscribe') {
+    assert.equal(subscription.input.clientForm, 'pwa');
+    assert.equal(subscription.input.returnTo, 'https://app.idbots.world/app/');
+  }
+  const topup = buildMePurchaseOrderRequest({
+    section: 'topup', packageId: 'pkg-1', period: 'month', gateway: 'alipay',
+    ...buildMePaymentReturnContext({ idbotsMobile: { isMobile: true, shell: 'capacitor' } })!,
+  });
+  assert.equal(topup?.kind, 'topup');
+  if (topup?.kind === 'topup') {
+    assert.equal(topup.input.clientForm, 'native');
+    assert.equal(topup.input.returnTo, 'idbots://app/');
+  }
 });
 
 test('gateway choice is part of the subscription idempotency key', () => {
