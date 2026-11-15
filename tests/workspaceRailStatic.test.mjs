@@ -285,11 +285,17 @@ test('surface session-name slot: read-only default, inline editor, empty commit 
     componentSource,
     /d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/,
   );
-  assert.match(componentSource, /h-\[16px\] w-\[16px\]/);
+  assert.match(componentSource, /h-\[14px\] w-\[14px\]/);
   assert.match(componentSource, /gap-\[6px\]/);
   assert.match(componentSource, /text-claude-textSecondary/);
   assert.match(componentSource, /dark:text-claude-darkTextSecondary/);
   assert.doesNotMatch(componentSource, /from 'lucide-react'/);
+  // Same-scale contract (owner 09:51): the badge's display-name span and the
+  // session title MUST share the typography triple. The badge source is
+  // pinned here so a future change to either side flips this red.
+  const badgeSource = read('src/renderer/features/botBrowser/CoworkSurfaceIdentityBadge.tsx');
+  assert.match(badgeSource, /truncate text-sm font-medium leading-none/);
+  assert.match(componentSource, /text-sm font-medium leading-none/);
   // Stagger shift (owner ruling 2026-11-15 09:34): the title row (icon +
   // text) nudges 6 px right of the badge's left edge — via transform, NOT
   // pl, because the centered row only delivers Δ/2 under a pl change; all
@@ -318,12 +324,18 @@ test('surface session-name slot: read-only default, inline editor, empty commit 
   // centered lane. The invariant that survives: ALL THREE mounts — the
   // read-only button, the inline editor, AND the draft spacer — carry the
   // same lane classes (h-6 w-full min-w-0 flex-none), so the row's geometry
-  // holds across every state swap, and the two interactive mounts center
-  // their text identically.
+  // holds across every state swap; the two interactive mounts are
+  // LEFT-anchored (owner left-align ruling 2026-11-15, superseding center).
   assert.equal((componentSource.match(/min-w-0 flex-none/g) ?? []).length, 3, 'title lane on all three mounts (read-only + editor + draft spacer)');
   assert.equal((componentSource.match(/w-full min-w-0 flex-none/g) ?? []).length, 3, 'the lane is full-width on every mount');
   assert.equal((componentSource.match(/text-left/g) ?? []).length, 2, 'both interactive mounts left-anchor the title');
-  assert.match(componentSource, /text-base font-semibold/);
+  // Owner 09:51 visual-hierarchy ruling: the title's scale/weight/style must
+  // EXACTLY match the identity badge's display name (text-sm font-medium
+  // leading-none — read from CoworkSurfaceIdentityBadge.tsx, not guessed).
+  // The old text-[13px] pin is superseded: text-sm at this repo's 15px root
+  // computes 13.125px and CLASS-LEVEL parity keeps both names on the same
+  // scale through any future token change.
+  assert.match(componentSource, /text-sm font-medium leading-none/);
   assert.match(componentSource, /text-claude-text dark:text-claude-darkText/);
   // Owner 18:54 frameless-editor order: the inline editor carries NO box —
   // transparent background, no border, no ring, no shadow; the 13 px medium
@@ -335,7 +347,7 @@ test('surface session-name slot: read-only default, inline editor, empty commit 
   assert.match(editorClassName, /border-0/);
   assert.match(editorClassName, /focus:ring-0/);
   assert.match(editorClassName, /shadow-none/);
-  assert.match(editorClassName, /text-base font-medium/);
+  assert.match(editorClassName, /text-sm font-medium leading-none/);
   assert.doesNotMatch(editorClassName, /border-claude|ring-2|ring-claude|bg-claude-darkBg|bg-claude-bg|rounded-lg/);
   assert.match(componentSource, /className="min-w-0 truncate"/);
 });
