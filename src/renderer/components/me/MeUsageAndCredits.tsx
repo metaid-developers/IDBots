@@ -273,7 +273,7 @@ const MeUsageAndCredits: React.FC = () => {
       {/* OWNER 04:08: cards keep their original width — only the header label
           row pulls flush to the panel title edge (this pl-4 wrapper holds the
           cards at the pre-alignment geometry). */}
-      <div className="pl-4">
+      <div className="space-y-4 pl-4">
       <MeBalanceOverviewCard
         onRefresh={() => void handleRefreshAll()}
         refreshing={refreshing}
