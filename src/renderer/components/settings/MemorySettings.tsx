@@ -209,30 +209,6 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     [dreamSummaries],
   );
 
-  const renderDreamCalPopover = () => {
-    if (!dreamCalOpen || !dreamCalPos) return null;
-    const isBrowse = dreamCalOpen === 'browse';
-    return (
-      <div
-        className="fixed z-40 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-2xl p-2"
-        style={{ top: dreamCalPos.top, left: dreamCalPos.left }}
-      >
-        <MiniMonthCalendar
-          markedDayKeys={dreamMarkedDayKeys}
-          selectedDayKey={isBrowse ? (dreamBrowseDate || null) : dreamRunDate}
-          onPick={(dayKey) => {
-            if (isBrowse) {
-              handleDreamBrowse(dreamBrowseDate === dayKey ? '' : dayKey);
-              setDreamCalOpen(null);
-            } else {
-              setDreamRunDate(dayKey);
-              setDreamCalOpen(null);
-            }
-          }}
-        />
-      </div>
-    );
-  };
   const [dreamShowAll, setDreamShowAll] = useState(false);
   const [dreamRunDate, setDreamRunDate] = useState<string>(() => {
     const now = new Date();
@@ -1516,6 +1492,21 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             >
               {dreamRunDate}
             </button>
+            {dreamCalOpen === 'force' && dreamCalPos && (
+              <div
+                className="fixed z-40 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-2xl p-2"
+                style={{ top: dreamCalPos.top, left: dreamCalPos.left }}
+              >
+                <MiniMonthCalendar
+                  markedDayKeys={dreamMarkedDayKeys}
+                  selectedDayKey={dreamRunDate}
+                  onPick={(dayKey) => {
+                    setDreamRunDate(dayKey);
+                    setDreamCalOpen(null);
+                  }}
+                />
+              </div>
+            )}
           </div>
           <button
             type="button"
@@ -1527,7 +1518,6 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             <ArrowPathIcon className={`h-3.5 w-3.5 ${dreamRunning ? 'animate-spin' : ''}`} />
             <span>{dreamRunning ? i18nService.t('dreamDiaryForceRunning') : i18nService.t('dreamDiaryForceDream')}</span>
           </button>
-          {renderDreamCalPopover()}
         </div>
       </div>
       {dreamNotice && (
@@ -1567,10 +1557,24 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
               >
                 {dreamBrowseDate || i18nService.t('dreamDiaryBrowseLabel')}
               </button>
+              {dreamCalOpen === 'browse' && dreamCalPos && (
+                <div
+                  className="fixed z-40 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-2xl p-2"
+                  style={{ top: dreamCalPos.top, left: dreamCalPos.left }}
+                >
+                  <MiniMonthCalendar
+                    markedDayKeys={dreamMarkedDayKeys}
+                    selectedDayKey={dreamBrowseDate || null}
+                    onPick={(dayKey) => {
+                      handleDreamBrowse(dreamBrowseDate === dayKey ? '' : dayKey);
+                      setDreamCalOpen(null);
+                    }}
+                  />
+                </div>
+              )}
             </div>
           </div>
         </div>
-        {renderDreamCalPopover()}
         <div className="max-h-[520px] overflow-auto">
         {dreamLoading ? (
           <div className="px-3 py-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">{i18nService.t('loading')}</div>
