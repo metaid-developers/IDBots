@@ -9,22 +9,41 @@ Unicode true
   !error "IDBOTS_NSIS_OUTPUT must point to a temporary output exe"
 !endif
 
+!include "LogicLib.nsh"
+
 !define APP_EXECUTABLE_FILENAME "IDBots.exe"
 !define APP_DESCRIPTION "IDBots"
 !define APP_ID "ai.idbots.app"
-!include "${IDBOTS_NSIS_SCRIPT}"
+!define PRODUCT_NAME "IDBots"
+!define SHORTCUT_NAME "IDBots"
+!define INSTALL_REGISTRY_KEY "Software\ai.idbots.app"
 
-Var newDesktopLink
-Var appExe
+!macro _HarnessFlag _a _b _t _f
+  StrCmp "0" "1" `${_t}` `${_f}`
+!macroend
+!define isUpdated `"" _HarnessFlag ""`
+!define UAC_IsInnerInstance `"" _HarnessFlag ""`
+!define UAC_IsAdmin `"" _HarnessFlag ""`
 
 !macro WinShell::SetLnkAUMI shortcut appId
   DetailPrint "SetLnkAUMI ${shortcut} ${appId}"
 !macroend
 
+LangString appRunning 0 "IDBots is running."
+LangString appCannotBeClosed 0 "IDBots cannot be closed."
+
+!include "${IDBOTS_NSIS_SCRIPT}"
+
+Var newDesktopLink
+Var newStartMenuLink
+Var appExe
+
 OutFile "${IDBOTS_NSIS_OUTPUT}"
 Section "harness"
   StrCpy $newDesktopLink "$DESKTOP\IDBots.lnk"
+  StrCpy $newStartMenuLink "$SMPROGRAMS\IDBots.lnk"
   StrCpy $appExe "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
+  !insertmacro customCheckAppRunning
   !insertmacro customInit
   !insertmacro customInstall
 SectionEnd

@@ -205,7 +205,7 @@
     return { ...BASE, ...look.params };
   }
 
-  const ORB_START_TIMEOUT_MS = 6000;
+  const ORB_START_TIMEOUT_MS = 20000;
 
   function disposeLayer(layer, destroyDevice = false) {
     if (!layer) return;
@@ -226,7 +226,9 @@
     devices.forEach((device) => { try { device.destroy(); } catch { /* lost */ } });
     orb.active = null;
     orb.backend = 'canvas';
-    window.__genesisOrbError = reason instanceof Error ? reason.message : String(reason || '');
+    const message = reason instanceof Error ? reason.message : String(reason || '');
+    window.__genesisOrbError = message;
+    console.warn('[GenesisStage] WebGPU fallback:', message);
     mountLayer(orb.style, true);
   }
 

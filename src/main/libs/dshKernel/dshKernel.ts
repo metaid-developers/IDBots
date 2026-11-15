@@ -280,6 +280,9 @@ export class DshKernel {
       environment: () => mergeDshRuntimeProcessEnv({ configEnv: config.env }),
       description: 'idbots-dsh-runtime',
       initializeTimeoutMs: this.opts.initializeTimeoutMs ?? dshInitializeTimeoutMs(config),
+      shutdownTimeoutMs: 800,
+      disposeEofGraceMs: 1_500,
+      disposeGraceMs: 1_000,
     })
     client.start()
     const first = config.providers[0]

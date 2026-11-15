@@ -82,7 +82,7 @@ test('Windows updater launches the signed NSIS executable directly and detaches 
 
   assert.equal(await pending, 4321);
   assert.equal(invocation[0], 'C:\\Users\\user\\AppData\\Local\\Temp\\IDBots Setup.exe');
-  assert.deepEqual(invocation[1], []);
+  assert.deepEqual(invocation[1], ['--updated']);
   assert.equal(invocation[2].detached, true);
   assert.equal(invocation[2].stdio, 'ignore');
   assert.equal(invocation[2].windowsHide, false);
@@ -105,14 +105,45 @@ test('Windows updater reports a launcher failure instead of quitting into no ins
   assert.doesNotMatch(source, /wscript\.exe|ExecutionPolicy Bypass|idbots-update-.*\.ps1/);
 });
 
-test('NSIS relies on the default running-app flow and restores only a missing desktop shortcut', () => {
+test('NSIS customCheckAppRunning closes IDBots and INSTDIR child processes safely and repairs broken shortcuts', () => {
   const source = read('scripts/nsis-installer.nsh');
-  assert.doesNotMatch(source, /nsExec::ExecToLog\s+'taskkill/);
+  assert.doesNotMatch(source, /taskkill[^"\n]*\/T/i);
+  assert.match(source, /!macro customCheckAppRunning/);
+  assert.match(source, /IDBOTS_TARGET_DIR/);
+  assert.match(source, /IDBOTS_OLD_USER_DIR/);
+  assert.match(source, /IDBOTS_OLD_MACHINE_DIR/);
+  assert.match(source, /taskkill\.exe" \/F \/IM "\$\{APP_EXECUTABLE_FILENAME\}" \/FI "PID ne \$R8"/);
+  assert.match(source, /ExecShellWait "runas" "\$SYSDIR\\taskkill\.exe"/);
+  assert.match(source, /\$\{If\} \$\{UAC_IsInnerInstance\}[\s\S]*?!insertmacro customCheckAppRunning/);
   assert.match(source, /IfFileExists "\$APPDATA\\IDBots\\idbots\.sqlite" _idbots_data_check_done 0/);
   assert.match(source, /!macro customInstall/);
   assert.match(source, /IfFileExists "\$newDesktopLink"/);
   assert.match(source, /CreateShortCut "\$newDesktopLink" "\$appExe"/);
   assert.equal((source.match(/CreateShortCut/g) || []).length, 1);
+  assert.match(source, /IDBOTS_STARTMENU_LINK/);
+  assert.match(source, /User Pinned\\TaskBar/);
+  // PowerShell variables inside NSIS strings must be escaped as $$ to avoid makensis -WX warnings.
+  assert.doesNotMatch(source, /(?<!\$)\$(?:ErrorActionPreference|env:|PID\b)/);
+});
+
+test('desktop shutdown enforces a cleanup watchdog, closes HTTP keep-alive connections, and caps child teardown waits', () => {
+  const main = read('src/main/main.ts');
+  const dshKernel = read('src/main/libs/dshKernel/dshKernel.ts');
+  const skillServices = read('src/main/skillServices.ts');
+  const compatProxy = read('src/main/libs/coworkOpenAICompatProxy.ts');
+  const metaAppServer = read('src/main/services/metaAppLocalServer.ts');
+  const webToolsProxy = read('src/main/services/dshWebToolsProxy.ts');
+
+  assert.match(main, /DESKTOP_CLEANUP_TIMEOUT_MS\s*=\s*5_000/);
+  assert.match(main, /finishCleanupAndExit/);
+  assert.match(dshKernel, /shutdownTimeoutMs:\s*800/);
+  assert.match(dshKernel, /disposeEofGraceMs:\s*1_500/);
+  assert.match(dshKernel, /disposeGraceMs:\s*1_000/);
+  assert.match(skillServices, /taskkill/);
+  assert.doesNotMatch(skillServices, /setTimeout\(resolve,\s*2000\)/);
+  assert.match(compatProxy, /server\.closeAllConnections\?\.\(\)/);
+  assert.match(metaAppServer, /localServer\.closeAllConnections\?\.\(\)/);
+  assert.match(webToolsProxy, /server\.closeAllConnections\?\.\(\)/);
 });
 
 test('startup uses asynchronous pre-migration backup with bounded visible progress', () => {

@@ -334,10 +334,30 @@ export class SkillServiceManager {
       console.log('[SkillServices] Stopping Web Search Bridge Server...');
 
       if (this.webSearchPid) {
+        const pidToKill = this.webSearchPid;
         try {
-          process.kill(this.webSearchPid, 'SIGTERM');
+          process.kill(pidToKill, 'SIGTERM');
         } catch (error) {
           console.warn('[SkillServices] Failed to kill process:', error);
+        }
+        if (process.platform === 'win32') {
+          try {
+            spawnSync('taskkill', ['/PID', String(pidToKill), '/T', '/F'], {
+              stdio: 'ignore',
+              windowsHide: true,
+            });
+          } catch {
+            // Best effort
+          }
+        }
+        const deadline = Date.now() + 1500;
+        while (Date.now() < deadline) {
+          try {
+            process.kill(pidToKill, 0);
+          } catch {
+            break;
+          }
+          await new Promise(resolve => setTimeout(resolve, 50));
         }
       }
 
@@ -345,9 +365,6 @@ export class SkillServiceManager {
       if (fs.existsSync(pidFile)) {
         fs.unlinkSync(pidFile);
       }
-
-      // Wait for graceful shutdown
-      await new Promise(resolve => setTimeout(resolve, 2000));
 
       console.log('[SkillServices] Web Search Bridge Server stopped');
       this.webSearchPid = null;
