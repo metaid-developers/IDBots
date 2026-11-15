@@ -1085,10 +1085,10 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const renderKnowledge = () => (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-2">
-        <div className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+        <div className="flex-1 min-w-0 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
           {i18nService.t('memoryKnowledgeHint')}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           {/* OWNER 02:59: native select popup broke the design language. */}
           <ThemedSelect
             id="knowledge-kind-filter"
@@ -1107,7 +1107,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             value={knowledgeQuery}
             onChange={(event) => setKnowledgeQuery(event.target.value)}
             placeholder={i18nService.t('memoryKnowledgeSearchPlaceholder')}
-            className="w-48 rounded-lg border px-2 py-1 text-xs dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
+            className="h-[26px] w-48 shrink-0 rounded-[var(--shape-radius-sm)] border px-2 text-xs leading-none dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
           />
         </div>
       </div>
@@ -1298,12 +1298,13 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
   const renderFacts = () => (
     <div className="space-y-3">
+      {/* OWNER 03:03: hint shrinks, controls never compress/wrap (已归档 + 新增条目 were squeezing into wrapped lines). */}
       <div className="flex items-center justify-between gap-2">
-        <div className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+        <div className="flex-1 min-w-0 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
           {i18nService.t('memoryFactsHint')}
         </div>
-        <div className="flex items-center gap-2">
-          <label className="flex cursor-pointer items-center gap-1 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+        <div className="flex shrink-0 items-center gap-2">
+          <label className="flex shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
             <input
               type="checkbox"
               checked={factsShowArchived}
@@ -1316,13 +1317,13 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             value={factsQuery}
             onChange={(event) => setFactsQuery(event.target.value)}
             placeholder={i18nService.t('coworkMemorySearchPlaceholder')}
-            className="w-48 rounded-lg border px-2 py-1 text-xs dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
+            className="h-[26px] w-48 shrink-0 rounded-[var(--shape-radius-sm)] border px-2 text-xs leading-none dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
           />
           <button
             type="button"
             onClick={() => { resetEditor(); setShowModal(true); }}
             disabled={metabotId == null}
-            className="btn-idchat-primary-filled inline-flex items-center justify-center px-3 py-1 text-xs disabled:opacity-60"
+            className="btn-idchat-primary-filled inline-flex h-[26px] shrink-0 items-center justify-center whitespace-nowrap rounded-[var(--shape-radius-sm)] px-3 text-xs disabled:opacity-60"
           >
             <PlusCircleIcon className="h-3.5 w-3.5 mr-1" />
             {i18nService.t('coworkMemoryCrudCreate')}
