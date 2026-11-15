@@ -710,7 +710,7 @@ const UserSettings: React.FC = () => {
         <button
           type="button"
           onClick={() => setView('import')}
-          className="flex flex-col items-center gap-1.5 justify-center rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border px-4 py-4 transition-colors hover:border-claude-accent/60 dark:hover:border-claude-accent/60 dark:hover:bg-claude-darkSurfaceHover/60 hover:bg-claude-surfaceHover/60"
+          className="flex flex-col items-center gap-1.5 rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border px-4 py-4 transition-colors hover:border-claude-accent/60 dark:hover:border-claude-accent/60 dark:hover:bg-claude-darkSurfaceHover/60 hover:bg-claude-surfaceHover/60"
         >
           <KeyIcon className="h-6 w-6 text-claude-accent" />
           <span className="text-sm font-medium dark:text-claude-darkText text-claude-text">
@@ -723,7 +723,7 @@ const UserSettings: React.FC = () => {
         <button
           type="button"
           onClick={() => setView('create')}
-          className="flex flex-col items-center gap-1.5 justify-center rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border px-4 py-4 transition-colors hover:border-claude-accent/60 dark:hover:border-claude-accent/60 dark:hover:bg-claude-darkSurfaceHover/60 hover:bg-claude-surfaceHover/60"
+          className="flex flex-col items-center gap-1.5 rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border px-4 py-4 transition-colors hover:border-claude-accent/60 dark:hover:border-claude-accent/60 dark:hover:bg-claude-darkSurfaceHover/60 hover:bg-claude-surfaceHover/60"
         >
           <UserPlusIcon className="h-6 w-6 text-claude-accent" />
           <span className="text-sm font-medium dark:text-claude-darkText text-claude-text">
@@ -845,7 +845,7 @@ const UserSettings: React.FC = () => {
         <button
           type="button"
           onClick={() => { void handleCopy(createdWords.join(' ')); }}
-          className="inline-flex items-center px-4 py-2 text-sm font-medium justify-center rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+          className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
         >
           <ClipboardDocumentIcon className="h-3.5 w-3.5 mr-1.5" />
           {i18nService.t('copy')}
@@ -1038,7 +1038,7 @@ const UserSettings: React.FC = () => {
             <button
               type="button"
               onClick={() => setBackupModalOpen(true)}
-              className="inline-flex items-center px-3 py-1.5 text-xs font-medium justify-center rounded-[var(--shape-radius-sm)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+              className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
             >
               <KeyIcon className="h-3.5 w-3.5 mr-1.5" />
               {i18nService.t('userSettingsBackupMnemonic')}
@@ -1046,7 +1046,7 @@ const UserSettings: React.FC = () => {
             <button
               type="button"
               onClick={() => openLogoutModal('switch')}
-              className="inline-flex items-center px-3 py-1.5 text-xs font-medium justify-center rounded-[var(--shape-radius-sm)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+              className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
             >
               <ArrowRightStartOnRectangleIcon className="h-3.5 w-3.5 mr-1.5" />
               {i18nService.t('userSettingsSwitchAccount')}
@@ -1054,7 +1054,7 @@ const UserSettings: React.FC = () => {
             <button
               type="button"
               onClick={() => openLogoutModal('logout')}
-              className="px-3 py-1.5 text-xs font-medium inline-flex items-center justify-center rounded-[var(--shape-radius-sm)] border border-red-600 bg-red-600 hover:bg-red-700 text-white transition-colors"
+              className="px-3 py-1.5 text-xs font-medium rounded-[var(--rounded)] border border-red-600 bg-red-600 hover:bg-red-700 text-white transition-colors"
             >
               {i18nService.t('userSettingsLogout')}
             </button>
@@ -1283,7 +1283,7 @@ const UserSettings: React.FC = () => {
               type="button"
               onClick={() => { void handleChainRestore(); }}
               disabled={chainBackupRunning || chainBackupRestoring}
-              className="inline-flex items-center px-4 py-2 text-xs font-medium justify-center rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="inline-flex items-center px-4 py-2 text-xs font-medium rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <ArrowPathIcon className={`h-3.5 w-3.5 mr-1.5 inline ${chainBackupRestoring ? 'animate-spin' : ''}`} />
               {chainBackupRestoring ? i18nService.t('userSettingsChainBackupRestoreRunning') : i18nService.t('userSettingsChainBackupRestoreButton')}
@@ -1374,7 +1374,7 @@ const UserSettings: React.FC = () => {
                     type="button"
                     onClick={() => setLogoutModalOpen(false)}
                     disabled={logoutLoading}
-                    className="px-4 py-2 text-sm inline-flex items-center justify-center rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="px-4 py-2 text-sm rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {i18nService.t('cancel')}
                   </button>
@@ -1382,7 +1382,7 @@ const UserSettings: React.FC = () => {
                     type="button"
                     onClick={() => { void handleLogout(); }}
                     disabled={logoutLoading}
-                    className="px-4 py-2 text-sm inline-flex items-center justify-center rounded-[var(--shape-radius-md)] border border-red-600 bg-red-600 hover:bg-red-700 text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    className="px-4 py-2 text-sm rounded-[var(--rounded)] border border-red-600 bg-red-600 hover:bg-red-700 text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                   >
                     {i18nService.t(logoutMode === 'switch' ? 'userSettingsSwitchConfirm' : 'userSettingsLogoutConfirm')}
                   </button>

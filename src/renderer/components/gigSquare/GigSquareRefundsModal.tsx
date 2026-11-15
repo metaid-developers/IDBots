@@ -278,14 +278,14 @@ const GigSquareRefundsModal: React.FC<GigSquareRefundsModalProps> = ({
         </div>
 
         <div className="border-b border-claude-border px-5 py-3 dark:border-claude-darkBorder">
-          <div className="inline-flex h-8 min-w-0 overflow-hidden rounded-[var(--shape-radius-md)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80">
+          <div className="inline-flex rounded-xl bg-claude-surfaceMuted p-1 dark:bg-claude-darkSurfaceMuted">
             <button
               type="button"
               onClick={() => setTab('pendingForMe')}
-              className={`flex h-full min-w-[72px] items-center justify-center px-4 text-sm font-medium leading-none transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
+              className={`rounded-lg px-3.5 py-2 text-xs font-medium transition ${
                 resolvedTab === 'pendingForMe'
-                  ? 'bg-claude-accent text-claude-accentInk'
-                  : 'text-claude-textSecondary hover:bg-claude-surfaceHover/70 hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover/70 dark:hover:text-claude-darkText'
+                  ? 'bg-[var(--bg-panel)] text-claude-text dark:bg-claude-darkSurface dark:text-claude-darkText'
+                  : 'text-claude-textSecondary hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:text-claude-darkText'
               }`}
             >
               {i18nService.t('gigSquareRefundsTabPending')}
@@ -293,10 +293,10 @@ const GigSquareRefundsModal: React.FC<GigSquareRefundsModalProps> = ({
             <button
               type="button"
               onClick={() => setTab('initiatedByMe')}
-              className={`flex h-full min-w-[72px] items-center justify-center px-4 text-sm font-medium leading-none transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
+              className={`rounded-lg px-3.5 py-2 text-xs font-medium transition ${
                 resolvedTab === 'initiatedByMe'
-                  ? 'bg-claude-accent text-claude-accentInk'
-                  : 'text-claude-textSecondary hover:bg-claude-surfaceHover/70 hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover/70 dark:hover:text-claude-darkText'
+                  ? 'bg-[var(--bg-panel)] text-claude-text dark:bg-claude-darkSurface dark:text-claude-darkText'
+                  : 'text-claude-textSecondary hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:text-claude-darkText'
               }`}
             >
               {i18nService.t('gigSquareRefundsTabInitiated')}

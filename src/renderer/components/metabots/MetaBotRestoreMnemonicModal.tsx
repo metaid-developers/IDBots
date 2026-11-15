@@ -208,7 +208,7 @@ const MetaBotRestoreMnemonicModal: React.FC<MetaBotRestoreMnemonicModalProps> = 
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-sm inline-flex items-center justify-center rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+              className="px-4 py-2 text-sm rounded-[var(--rounded)] border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
             >
               {i18nService.t('close')}
             </button>
@@ -244,7 +244,7 @@ const MetaBotRestoreMnemonicModal: React.FC<MetaBotRestoreMnemonicModalProps> = 
               <button
                 type="button"
                 onClick={handleRetry}
-                className="px-4 py-2 text-sm inline-flex items-center justify-center rounded-[var(--shape-radius-md)] border border-amber-400 text-amber-700 dark:text-amber-300 hover:bg-amber-50/40 dark:hover:bg-amber-500/10"
+                className="px-4 py-2 text-sm rounded-[var(--rounded)] border border-amber-400 text-amber-700 dark:text-amber-300 hover:bg-amber-50/40 dark:hover:bg-amber-500/10"
               >
                 {i18nService.t('metabotRestoreRetry')}
               </button>
