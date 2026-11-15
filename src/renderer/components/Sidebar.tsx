@@ -672,11 +672,12 @@ const Sidebar: React.FC<SidebarProps> = ({
     // editor) pins the row via the editing guard in scheduleTitleHide.
     const closePreviewOnLeave = () => {
       pointerInStudioHeaderRef.current = false;
-      if (headerEl.contains(document.activeElement)) return;
+      if (!document.activeElement || headerEl.contains(document.activeElement)) return;
       scheduleTitleHide();
     };
     const closePreviewOnFocusOut = (event: FocusEvent) => {
-      if (!headerEl.contains(event.relatedTarget as Node | null)) scheduleTitleHide();
+      const focusTarget = event.relatedTarget as Node | null;
+      if (!focusTarget || !headerEl.contains(focusTarget)) scheduleTitleHide();
     };
     identityRowEl.addEventListener('mouseenter', openPreview);
     identityRowEl.addEventListener('focusin', openPreview);
@@ -721,7 +722,8 @@ const Sidebar: React.FC<SidebarProps> = ({
         if (!event.currentTarget.contains(document.activeElement)) setStudioTitlePreviewOpen(false);
       }}
       onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setStudioTitlePreviewOpen(false);
+        const leaveTarget = event.relatedTarget as Node | null;
+      if (!leaveTarget || !event.currentTarget.contains(leaveTarget)) setStudioTitlePreviewOpen(false);
       }}
     >
       {/* Left-anchor order 2026-11-15: the identity row and the session
