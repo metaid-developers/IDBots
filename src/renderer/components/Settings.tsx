@@ -2806,7 +2806,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                 </div>
               </div>
 
-              <div className="inline-flex h-8 min-w-0 items-center overflow-hidden rounded-[var(--shape-radius-sm)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80">
+              <div className="inline-flex h-[36px] min-w-0 items-center overflow-hidden rounded-[var(--shape-radius-sm)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80">
                 <button
                   type="button"
                   onClick={() => setArchivedSubTab('chats')}
@@ -2848,7 +2848,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                         return next;
                       });
                     }}
-                    className="flex w-full items-center justify-between gap-1.5 rounded-[var(--shape-radius-sm)] border px-2 py-1.5 text-xs dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text transition-colors hover:border-claude-accent/60"
+                    className="flex h-[36px] w-full items-center justify-between gap-1.5 rounded-[var(--shape-radius-sm)] border px-3 text-sm dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text transition-colors hover:border-claude-accent/60"
                   >
                     <span className="truncate">
                       {archivedChatsMetabotId
@@ -2913,11 +2913,11 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
 
               <div className="max-h-[500px] overflow-auto rounded-lg border dark:border-claude-darkBorder border-claude-border">
                 {archivedChatsLoading ? (
-                  <div className="px-3 py-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  <div className="flex h-[36px] items-center px-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
                     {i18nService.t('loading')}
                   </div>
                 ) : archivedChats.length === 0 ? (
-                  <div className="px-3 py-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  <div className="flex h-[36px] items-center px-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
                     {i18nService.t('archivedChatsEmpty')}
                   </div>
                 ) : (
@@ -2995,11 +2995,11 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
 
                   <div className="max-h-[500px] overflow-auto rounded-lg border dark:border-claude-darkBorder border-claude-border">
                     {archivedGroupTasksLoading ? (
-                      <div className="px-3 py-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                      <div className="flex h-[36px] items-center px-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
                         {i18nService.t('loading')}
                       </div>
                     ) : archivedGroupTasks.length === 0 ? (
-                      <div className="px-3 py-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                      <div className="flex h-[36px] items-center px-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
                         {i18nService.t('archivedGroupTasksEmpty')}
                       </div>
                     ) : (
@@ -3075,11 +3075,11 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
 
                   <div className="max-h-[500px] overflow-auto rounded-lg border dark:border-claude-darkBorder border-claude-border">
                     {archivedA2AChatsLoading ? (
-                      <div className="px-3 py-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                      <div className="flex h-[36px] items-center px-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
                         {i18nService.t('loading')}
                       </div>
                     ) : archivedA2AChats.length === 0 ? (
-                      <div className="px-3 py-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                      <div className="flex h-[36px] items-center px-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
                         {i18nService.t('archivedChatsEmpty')}
                       </div>
                     ) : (
