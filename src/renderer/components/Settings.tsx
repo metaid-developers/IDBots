@@ -3841,7 +3841,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
             {/* OWNER 2026-11-16 00:42: section label + segmented switch share
                 one row at the module's top-right; the label sits OUTSIDE the
                 module card, and the duplicated in-module title is gone. */}
-            <div className="flex items-start justify-between gap-3 pt-[3px] pb-3 max-w-3xl px-4"> {/* OWNER 00:55: label top and tray top BOTH sit 20px below the header divider (68+1border+4pt+~15pt-4=88 rendered); top-aligned so A/B faces never drift */}
+            <div className="flex items-start justify-between gap-3 pt-[3px] pb-[20px] max-w-3xl px-4"> {/* OWNER 01:03: 20px rhythm below the row — pb lives HERE so both faces (credits/traffic) share it; view containers carry no top padding */} {/* OWNER 00:55: label top and tray top BOTH sit 20px below the header divider (68+1border+4pt+~15pt-4=88 rendered); top-aligned so A/B faces never drift */}
               <div>
                 <span className="mt-px block text-base font-semibold leading-none text-claude-text dark:text-claude-darkText">
                   {i18nService.t(creditsSubTab === 'credits' ? 'meUsageInfoTitle' : 'trafficInfoTitle')}
