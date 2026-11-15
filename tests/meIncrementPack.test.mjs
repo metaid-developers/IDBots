@@ -300,9 +300,14 @@ test('d16681f server contract lands without further client changes; closed ≠ r
 });
 
 test('credits & traffic tab hosts two sub-pages (credits default, traffic restored verbatim)', () => {
-  // The on-chain traffic page is imported back and rendered verbatim as the
-  // second sub-tab; ME credits stay the default landing page.
-  assert.match(settingsSource, /import TrafficSettings from '\.\/traffic\/TrafficSettings';/);
+  // The on-chain traffic page is rendered verbatim as the second sub-tab; ME
+  // credits stay the default landing page. First-click response work
+  // (53b1268aa) moved the import to React.lazy — the tab still mounts the
+  // same TrafficSettings component.
+  assert.match(
+    settingsSource,
+    /const TrafficSettings = React\.lazy\(\(\) => import\('\.\/traffic\/TrafficSettings'\)\);/,
+  );
   assert.match(settingsSource, /const \[creditsSubTab, setCreditsSubTab\] = useState<'credits' \| 'traffic'>\('credits'\)/);
   assert.match(settingsSource, /creditsSubTab === 'credits' \? <MeUsageAndCredits \/> : <TrafficSettings \/>/);
   assert.match(settingsSource, /usageCreditsSubTabCredits/);
