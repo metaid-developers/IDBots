@@ -161,12 +161,23 @@ test('startup uses asynchronous pre-migration backup with bounded visible progre
   assert.match(progress, /clearTimeout\(timer\)/);
 });
 
+// setTimeout(0) races setImmediate — under CI load the window's creation
+// timer can land after two setImmediate hops (arm64 flake, run 43717315955).
+// Poll until the expected state shows up instead of sleeping fixed hops.
+async function waitFor(predicate, what, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) {
+      throw new Error(`timed out waiting for ${what}`);
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
 test('slow backup progress appears and always closes; fast backup creates no window', async () => {
   FakeBrowserWindow.instances = [];
   const slow = scheduleStartupBackupProgress(0);
-  await new Promise((resolve) => setImmediate(resolve));
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(FakeBrowserWindow.instances.length, 1);
+  await waitFor(() => FakeBrowserWindow.instances.length === 1, 'the slow backup progress window');
   const progressWindow = FakeBrowserWindow.instances[0];
   assert.equal(progressWindow.showCalls, 1);
   assert.match(decodeURIComponent(progressWindow.loadedUrl), /Backing up your data before the update/);
