@@ -749,7 +749,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         <div
           data-slot="studio-title-preview"
           aria-hidden={!showStudioTitle}
-          className={`h-6 w-full shrink-0 transition-[opacity,transform] duration-150 ${
+          className={`h-[44px] w-full shrink-0 transition-[opacity,transform] duration-150 ${
             showStudioTitle
               ? 'visible translate-y-0 opacity-100'
               : 'invisible pointer-events-none -translate-y-1 opacity-0'
