@@ -1131,7 +1131,7 @@ const TrafficSettings: React.FC = () => {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 px-4 pb-4 max-w-3xl"> {/* OWNER 01:13: same px-4/max-w as the credits view — B-face blocks align with the 流量信息 label above */}
       {/* apiBase override banner: the override input lives in the collapsed
           Advanced section, so surface it here while active — billing and
           sponsor writes are leaving production (2026-09 staging-residue incident). */}
