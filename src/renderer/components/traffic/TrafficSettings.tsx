@@ -1206,7 +1206,7 @@ const TrafficSettings: React.FC = () => {
         </div>
       ) : (
       <div>
-        <h4 className="text-sm font-medium dark:text-claude-darkText text-claude-text mb-1">
+        <h4 className="text-sm font-medium dark:text-claude-darkText text-claude-text mb-2">
           {i18nService.t('trafficModeTitle')}
         </h4>
         <p className={`${hintClass} mb-3`}>
