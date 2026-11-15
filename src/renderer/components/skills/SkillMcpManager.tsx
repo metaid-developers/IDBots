@@ -56,21 +56,23 @@ const SkillMcpManager: React.FC<SkillMcpManagerProps> = ({ onStartTaskWithSkill 
     </div>
   );
 
+  // OWNER 2026-11-16 01:35 FINAL: variant A — the 技能|MCP tray rides each
+  // view's own tab bar (same row as 本地技能…/已安装…, above the divider);
+  // page lifted so the bar sits 20px below the header divider.
   return (
     <div className="space-y-4 pt-[3px]">
-      <div className="flex justify-end items-center h-9">
-        {modeTray}
-      </div>
       {state.mode === 'skills' ? (
         <SkillsManager
           onStartTaskWithSkill={onStartTaskWithSkill}
           activeTab={state.skillsTab}
           onTabChange={handleSkillTabChange}
+          tabBarTrailing={modeTray}
         />
       ) : (
         <McpManager
           activeTab={state.mcpTab}
           onTabChange={handleMcpTabChange}
+          tabBarTrailing={modeTray}
         />
       )}
     </div>
