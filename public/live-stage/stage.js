@@ -306,7 +306,7 @@
     });
   }
 
-  const ORB_START_TIMEOUT_MS = 6000;
+  const ORB_START_TIMEOUT_MS = 20000;
 
   function disposeOrbLayer(layer, destroyDevice = false) {
     if (!layer) return;
@@ -331,7 +331,9 @@
     disposeAllOrbLayers();
     body.dataset.orbBackend = 'canvas';
     window.__liveStageBackend = 'canvas';
-    window.__liveStageOrbError = error instanceof Error ? error.message : String(error);
+    const message = error instanceof Error ? error.message : String(error);
+    window.__liveStageOrbError = message;
+    console.warn('[LiveStage] WebGPU fallback:', message);
   }
 
   function failOrbLayer(layer, previous, error) {
@@ -380,6 +382,7 @@
     const previousPhase = previous?.controller?.getPhase();
     window.createLiquidOrbRenderer(layerCanvas, {
       initialFamily: family,
+      fixedStyle: style,
       startPhase: Number.isFinite(previousPhase) ? previousPhase * ((previous?.speed || 1) / (params.speed || 1)) : undefined,
       sharedResources: previous?.controller?.getSharedResources(),
       signal: abort?.signal,

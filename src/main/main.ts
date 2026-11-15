@@ -21029,11 +21029,13 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
       startupLog('main frame did-finish-load');
       emitWindowState(win);
     });
-    if (isDev) {
-      win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+      if (isDev) {
         console.log(`[Renderer:${level}] ${sourceId}:${line} ${message}`);
-      });
-    }
+      } else if (/\[(?:LiveStage|GenesisStage)\]|WebGPU/i.test(String(message))) {
+        console.warn(`[Renderer:${level}] ${message}`);
+      }
+    });
 
     // [关键代码] 显式告诉 Electron 使用系统的代理配置
     // 这会涵盖绝大多数 VPN（如 Clash, V2Ray 等开启了"系统代理"模式的情况）
@@ -21487,6 +21489,34 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     startupLog('initApp begin');
     await app.whenReady();
     startupLog('app.whenReady resolved');
+
+    if (!isServerMode()) {
+      try {
+        const gpuStatus = app.getGPUFeatureStatus() as unknown as Record<string, unknown>;
+        console.log('[GPU] Feature status:', JSON.stringify({
+          webgpu: gpuStatus.webgpu,
+          webgl: gpuStatus.webgl,
+          webgl2: gpuStatus.webgl2,
+          gpu_compositing: gpuStatus.gpu_compositing,
+          '2d_canvas': gpuStatus['2d_canvas'],
+        }));
+        void app.getGPUInfo('basic').then((info) => {
+          const rawDevices = Array.isArray((info as { gpuDevice?: unknown[] } | null)?.gpuDevice)
+            ? (info as { gpuDevice: Array<{ vendorId?: number; deviceId?: number; active?: boolean; driverVendor?: string; driverVersion?: string }> }).gpuDevice
+            : [];
+          const devices = rawDevices.map((d) => ({
+            vendorId: d.vendorId,
+            deviceId: d.deviceId,
+            active: d.active,
+            driverVendor: d.driverVendor,
+            driverVersion: d.driverVersion,
+          }));
+          console.log('[GPU] Basic info:', JSON.stringify(devices));
+        }).catch(() => {});
+      } catch (error) {
+        console.warn('[GPU] Failed to read GPU status:', error);
+      }
+    }
 
     // Indexer requests must be attributable in server logs (ops ticket
     // 2026-11-08: 20 tenant instances shared the bare `node` UA). Tenant

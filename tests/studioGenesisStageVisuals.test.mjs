@@ -37,7 +37,7 @@ test('the WGSL contour accepts the Genesis distortion range', () => {
 
 test('Genesis Stage enforces a WebGPU startup timeout so hung Windows drivers degrade to Canvas2D', () => {
   const genesis = fs.readFileSync(path.resolve('public/genesis-stage/genesis.js'), 'utf8');
-  assert.match(genesis, /const ORB_START_TIMEOUT_MS = 6000;/);
+  assert.match(genesis, /const ORB_START_TIMEOUT_MS = 20000;/);
   assert.match(genesis, /switchToCanvas\(new Error\('WebGPU orb was not ready in time'\)\)/);
   assert.match(genesis, /signal: abort\?\.signal/);
 });
