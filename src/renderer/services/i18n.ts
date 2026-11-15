@@ -3522,6 +3522,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     freeQuotaNotice: 'ID.Bots 内置额度是 IDBots 为新用户提供的零门槛体验额度，无需任何配置即可开始对话。额度总量有限，建议尽早配置自己的模型服务商，以确保机器人持续稳定可用。',
     freeQuotaEnableFailed: '启用失败：{error}',
     freeQuotaExhaustedBanner: '免费额度已用完。配置自己的模型 API Key 后即可继续对话。',
+    meQuotaExhaustedBannerDesktop: '当前可用 ME 积分或本周额度已用完。可前往充值/升级，或配置自己的模型 API Key 继续对话。',
+    meDailyLimitBannerDesktop: '今日 ME 计量日限额已达上限，将于次日 00:00 重置；也可以配置自己的模型 API Key 继续对话。',
     freeQuotaGoSettings: '去配置',
     freeQuotaExhaustedNotice: '免费额度已用完：请选择任意模型服务商并填入 API Key。',
     quotaNudgeLow: 'ID.Bots 免费额度剩余约 {pct}%（{resetIn}），仍有 {bots} 个 Bot 的大脑在使用免费额度。',
@@ -3534,6 +3536,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     quotaNudgeSwitchSuccess: '已把 {count} 个 Bot 的大脑切换到 {name}',
     quotaNudgeSwitchFailed: '切换失败：{error}',
     quotaExhaustedBannerMobile: '额度已用完。充值后即可继续对话。',
+    meDailyLimitBannerMobile: '今日 ME 计量日限额已达上限，将于次日 00:00 自动重置。',
     quotaExhaustedRechargeMobile: '去充值',
     // ── S9 ME 积分（双池账本 · 一个数字）──────────────────────────────
     usageCreditsTab: '积分 & 流量',
@@ -7329,6 +7332,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     freeQuotaNotice: 'The built-in ID.Bots quota is a zero-setup starter allowance IDBots offers to new users — you can start chatting without any configuration. The quota is limited, so set up your own LLM provider soon to keep your bots running.',
     freeQuotaEnableFailed: 'Failed to enable: {error}',
     freeQuotaExhaustedBanner: 'Free quota exhausted. Add your own model API key to keep chatting.',
+    meQuotaExhaustedBannerDesktop: 'Available ME credits or weekly plan quota exhausted. Top up/upgrade, or add your own model API key to keep chatting.',
+    meDailyLimitBannerDesktop: 'Today\'s ME metering daily limit has been reached and resets at 00:00; or add your own model API key to keep chatting.',
     freeQuotaGoSettings: 'Configure',
     freeQuotaExhaustedNotice: 'Free quota exhausted: pick any provider below and enter its API key.',
     quotaNudgeLow: 'ID.Bots quota is down to ~{pct}% (resets {resetIn}); {bots} bot(s) still run on it.',
@@ -7341,6 +7346,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     quotaNudgeSwitchSuccess: 'Switched {count} bot(s) to {name}',
     quotaNudgeSwitchFailed: 'Switch failed: {error}',
     quotaExhaustedBannerMobile: 'Quota exhausted. Recharge to keep chatting.',
+    meDailyLimitBannerMobile: 'Today\'s ME metering daily limit has been reached and resets automatically at 00:00.',
     quotaExhaustedRechargeMobile: 'Recharge',
     // ── S9 ME points (double-pool ledger · one number) ─────────────────
     usageCreditsTab: 'Credits & Traffic',

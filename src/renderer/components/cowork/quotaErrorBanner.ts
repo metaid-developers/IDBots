@@ -46,13 +46,35 @@ export const isFreeQuotaErrorLive = (
  * identity never had purchased quota). Same live-state rule as above — both
  * codes are annotated into the error text by the OpenAI-compat proxy.
  */
-export const QUOTA_EXHAUSTED_CODES = [FREE_QUOTA_EXHAUSTED_CODE, 'quota_exhausted'];
+export const QUOTA_EXHAUSTED_CODES = [
+  FREE_QUOTA_EXHAUSTED_CODE,
+  'quota_exhausted',
+  'insufficient_me',
+  'me_insufficient',
+  'me_daily_limit',
+  'ME_DAILY_LIMIT',
+  'INSUFFICIENT_ME',
+];
+
+export type LiveQuotaErrorKind = 'free' | 'me_quota' | 'me_daily_limit';
+
+export const liveQuotaErrorKind = (
+  messages: ReadonlyArray<CoworkMessage> | null | undefined,
+  status: CoworkSessionStatus | null | undefined,
+): LiveQuotaErrorKind | null => {
+  if (status !== 'error') return null;
+  const latestError = lastA2AErrorDetail([...(messages ?? [])], Number.POSITIVE_INFINITY);
+  if (latestError === null) return null;
+  const lower = latestError.toLowerCase();
+  if (lower.includes('me_daily_limit')) return 'me_daily_limit';
+  if (lower.includes('insufficient_me') || lower.includes('me_insufficient') || lower.includes('quota_exhausted')) {
+    return lower.includes(FREE_QUOTA_EXHAUSTED_CODE) ? 'free' : 'me_quota';
+  }
+  if (lower.includes(FREE_QUOTA_EXHAUSTED_CODE)) return 'free';
+  return null;
+};
 
 export const isQuotaExhaustedErrorLive = (
   messages: ReadonlyArray<CoworkMessage> | null | undefined,
   status: CoworkSessionStatus | null | undefined,
-): boolean => {
-  if (status !== 'error') return false;
-  const latestError = lastA2AErrorDetail([...(messages ?? [])], Number.POSITIVE_INFINITY);
-  return latestError !== null && QUOTA_EXHAUSTED_CODES.some((code) => latestError.includes(code));
-};
+): boolean => liveQuotaErrorKind(messages, status) !== null;

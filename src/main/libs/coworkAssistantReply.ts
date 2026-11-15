@@ -166,7 +166,7 @@ export function isTransientDshTurnError(outcome: { kind?: string; error?: { code
  * provider error bodies (OpenAI-compat relays, DeepSeek, aggregator gateways).
  * ASCII upstream error fingerprints only — never natural-language intent.
  */
-const QUOTA_ERROR_MESSAGE_FINGERPRINT = /insufficient[ _-]?(credits?|quota|balance|funds)|quota[ _-]?exceeded|billing[ _-]?limit/i;
+const QUOTA_ERROR_MESSAGE_FINGERPRINT = /insufficient[ _-]?(credits?|quota|balance|funds|me)|me_insufficient|me_daily_limit|quota[ _-]?exceeded|billing[ _-]?limit/i;
 
 /** True when a DSH turn outcome failed because the provider account ran out
  *  of spendable credit/balance — the kernel-normalized `QUOTA` code, or an
@@ -193,15 +193,23 @@ export function extractRelayQuotaExhaustedCode(message: unknown): string | null 
   return match ? match[1].toLowerCase() : null;
 }
 
+/** Extracts ME-authoritative relay machine error codes (normalized to lowercase). */
+export function extractOfficialRelayMeErrorCode(message: unknown): 'me_daily_limit' | 'insufficient_me' | 'me_insufficient' | null {
+  const match = /(me_daily_limit|insufficient_me|me_insufficient)/i.exec(String(message ?? ''));
+  return match ? (match[1].toLowerCase() as 'me_daily_limit' | 'insufficient_me' | 'me_insufficient') : null;
+}
+
 /** Stable machine code stamped on the cowork stream error for a quota death. */
 export const LLM_QUOTA_EXHAUSTED_ERROR_CODE = 'LLM_QUOTA_EXHAUSTED';
 
 /**
  * Metadata for the `cowork:stream:error` payload for legacy quota deaths and
- * ME-authoritative insufficiency — undefined for every other failure.
+ * ME-authoritative insufficiency/daily-limit — undefined for every other failure.
  */
 export function relayQuotaErrorMetadata(message: unknown): { errorCode: string } | undefined {
-  if (/INSUFFICIENT_ME/i.test(String(message ?? ''))) return { errorCode: 'INSUFFICIENT_ME' };
+  const meCode = extractOfficialRelayMeErrorCode(message);
+  if (meCode === 'me_daily_limit') return { errorCode: 'ME_DAILY_LIMIT' };
+  if (meCode === 'insufficient_me' || meCode === 'me_insufficient') return { errorCode: 'INSUFFICIENT_ME' };
   return extractRelayQuotaExhaustedCode(message) ? { errorCode: LLM_QUOTA_EXHAUSTED_ERROR_CODE } : undefined;
 }
 
@@ -235,11 +243,34 @@ export function buildFreeRelayQuotaNotice(
   meBalance?: MeBalanceForQuotaNotice,
 ): string {
   const code = relayQuotaCode ?? 'free_quota_exhausted';
-  if (serverMode && meBalance && meBalanceSpendableMilli(meBalance) > 0) {
+  const normalizedCode = code.trim().toLowerCase();
+  if (normalizedCode === 'me_daily_limit') {
+    return serverMode
+      ? t(
+        `（今日 ME 计量日限额已达上限，将于次日 00:00 自动重置。错误代码：me_daily_limit。）`,
+        ` (Today's ME metering daily limit has been reached and resets automatically at 00:00. Error code: me_daily_limit.)`,
+      )
+      : t(
+        `（今日 ME 计量日限额已达上限，将于次日 00:00 自动重置；也可以到 设置 > 模型 添加自己的模型服务商 API Key 继续对话。错误代码：me_daily_limit。）`,
+        ` (Today's ME metering daily limit has been reached and resets automatically at 00:00; you can also add your own model provider API key in Settings > Models to keep chatting. Error code: me_daily_limit.)`,
+      );
+  }
+  if (meBalance && meBalanceSpendableMilli(meBalance) > 0) {
     return t(
       `（官方模型服务的配额状态与您的 ME 余额不一致，本次请求未获受理。请稍后重试，无需重复充值。错误代码：${RELAY_ME_ADMISSION_MISMATCH_CODE}。）`,
       ` (The official model service's quota state disagrees with your ME balance, so this request was not accepted. Retry shortly; you do not need to recharge again. Error code: ${RELAY_ME_ADMISSION_MISMATCH_CODE}.)`,
     );
+  }
+  if (normalizedCode === 'insufficient_me' || normalizedCode === 'me_insufficient' || normalizedCode === 'quota_exhausted') {
+    return serverMode
+      ? t(
+        `（当前可用 ME 积分不足。可在「我的」页面开通套餐或充值后继续对话。错误代码：${code}。）`,
+        ` (Your currently spendable ME credits are insufficient. Subscribe or top up on the Me page to keep chatting. Error code: ${code}.)`,
+      )
+      : t(
+        `（当前可用 ME 积分或本周套餐额度不足。可前往「我的」页面升级套餐或充值，也可以到 设置 > 模型 添加自己的模型服务商 API Key 继续对话。错误代码：${code}。）`,
+        ` (Your currently spendable ME credits or weekly plan allowance are insufficient. Subscribe or top up on the Me page, or add your own model provider API key in Settings > Models to keep chatting. Error code: ${code}.)`,
+      );
   }
   return serverMode
     ? t(
