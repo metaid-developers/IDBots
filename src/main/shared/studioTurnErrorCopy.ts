@@ -19,9 +19,24 @@ type StudioTurnErrorRule = {
 
 const RULES: StudioTurnErrorRule[] = [
   {
-    pattern: /free_quota_exhausted|quota|insufficient[_ ]?(balance|quota)|余额|402/i,
+    pattern: /me_daily_limit/i,
+    zh: { reason: '今日 ME 计量日限额已达上限', hint: '将在次日 00:00 重置，也可换个模型；说「继续」我就接着做。' },
+    en: { reason: "Today's ME metering daily limit is reached", hint: 'It resets at 00:00, or switch models; say “continue” and I\'ll pick it up.' },
+  },
+  {
+    pattern: /insufficient_me|me_insufficient|ME_ADMISSION_MISMATCH/i,
+    zh: { reason: '当前可用 ME 积分不足', hint: '充值、升级套餐或换个模型后，说「继续」我就接着做。' },
+    en: { reason: 'Available ME credits are insufficient', hint: 'Top up, upgrade, or switch models, then say “continue”.' },
+  },
+  {
+    pattern: /free_quota_exhausted/i,
     zh: { reason: '模型的免费额度用完了', hint: '换个模型或晚点再试；说「继续」我就接着做。' },
     en: { reason: "The model's free quota is used up", hint: 'Switch models or try later; say “continue” and I\'ll pick it up.' },
+  },
+  {
+    pattern: /quota_exhausted|quota|insufficient[_ ]?(balance|quota|credits?|funds)|余额|402/i,
+    zh: { reason: '模型额度或余额不足', hint: '充值、换个模型或晚点再试；说「继续」我就接着做。' },
+    en: { reason: 'Model quota or balance is used up', hint: 'Top up, switch models, or try later; say “continue” and I\'ll pick it up.' },
   },
   {
     pattern: /429|rate.?limit|too many requests/i,

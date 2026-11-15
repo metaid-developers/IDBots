@@ -105,7 +105,7 @@ import ComposeIcon from '../icons/ComposeIcon';
 import WindowTitleBar from '../window/WindowTitleBar';
 import { getCompactFolderName } from '../../utils/path';
 import { buildCompactedNoticeText, extractCompactedCounts, formatCompactTokens } from './compactedNotice';
-import { isQuotaExhaustedErrorLive } from './quotaErrorBanner';
+import { liveQuotaErrorKind } from './quotaErrorBanner';
 import { isRenderableAvatarSource as isSharedRenderableAvatarSource, toRenderableAvatarSource } from '../../utils/avatarSource';
 import {
   hasSupportedImageExtension,
@@ -2745,10 +2745,11 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   // whole transcript — see quotaErrorBanner.ts for why. Covers both machine
   // codes: free_quota_exhausted (never had purchased quota) and the new C4
   // quota_exhausted (purchased pool used up).
-  const quotaExhausted = useMemo(
-    () => isQuotaExhaustedErrorLive(currentSession?.messages, currentSession?.status),
+  const quotaErrorKind = useMemo(
+    () => liveQuotaErrorKind(currentSession?.messages, currentSession?.status),
     [currentSession?.messages, currentSession?.status],
   );
+  const quotaExhausted = quotaErrorKind !== null;
   // Runtime split for the banner action (REQ-A-25): desktop keeps the
   // Settings > Models shortcut; the mobile web app offers recharge instead
   // (no Settings > Models surface exists there — see
@@ -5073,7 +5074,15 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
             <div className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
               <ExclamationTriangleIcon className="h-4 w-4 text-red-500 shrink-0" />
               <span className="text-xs text-red-700 dark:text-red-300">
-                {i18nService.t(isMobile ? 'quotaExhaustedBannerMobile' : 'freeQuotaExhaustedBanner')}
+                {i18nService.t(
+                  isMobile
+                    ? (quotaErrorKind === 'me_daily_limit' ? 'meDailyLimitBannerMobile' : 'quotaExhaustedBannerMobile')
+                    : (quotaErrorKind === 'me_daily_limit'
+                        ? 'meDailyLimitBannerDesktop'
+                        : quotaErrorKind === 'me_quota'
+                          ? 'meQuotaExhaustedBannerDesktop'
+                          : 'freeQuotaExhaustedBanner'),
+                )}
               </span>
               {isMobile ? (
                 // Mobile web (REQ-A-25): no Settings > Models surface — the

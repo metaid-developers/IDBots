@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import {
   FREE_QUOTA_EXHAUSTED_CODE,
   isFreeQuotaErrorLive,
+  isQuotaExhaustedErrorLive,
+  liveQuotaErrorKind,
 } from '../src/renderer/components/cowork/quotaErrorBanner';
 import type { CoworkMessage, CoworkSessionStatus } from '../src/renderer/types/cowork';
 
@@ -87,4 +89,12 @@ test('non-error messages mentioning the code never trigger the banner', () => {
   assert.equal(live(messages, 'error'), false);
   assert.equal(live([], 'error'), false);
   assert.equal(live(undefined, 'error'), false);
+});
+
+test('me_daily_limit and insufficient_me/quota_exhausted classify distinct banner kinds', () => {
+  assert.equal(liveQuotaErrorKind([user(), systemError('DSH turn failed: me_daily_limit')], 'error'), 'me_daily_limit');
+  assert.equal(liveQuotaErrorKind([user(), systemError('DSH turn failed: insufficient_me')], 'error'), 'me_quota');
+  assert.equal(liveQuotaErrorKind([user(), systemError('DSH turn failed: quota_exhausted')], 'error'), 'me_quota');
+  assert.equal(liveQuotaErrorKind([user(), systemError(QUOTA_ERROR)], 'error'), 'free');
+  assert.equal(isQuotaExhaustedErrorLive([user(), systemError('DSH turn failed: me_daily_limit')], 'error'), true);
 });

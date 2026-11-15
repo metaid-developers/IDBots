@@ -544,6 +544,10 @@ test('observeError renders honest owner-facing copy for quota and compaction fai
 
   assert.equal(describeStudioTurnError('free_quota_exhausted', 'zh').reason, '模型的免费额度用完了');
   assert.equal(describeStudioTurnError('free_quota_exhausted', 'en').reason, "The model's free quota is used up");
+  assert.equal(describeStudioTurnError('me_daily_limit', 'zh').reason, '今日 ME 计量日限额已达上限');
+  assert.equal(describeStudioTurnError('me_daily_limit', 'en').reason, "Today's ME metering daily limit is reached");
+  assert.equal(describeStudioTurnError('insufficient_me', 'zh').reason, '当前可用 ME 积分不足');
+  assert.equal(describeStudioTurnError('quota_exhausted', 'zh').reason, '模型额度或余额不足');
   assert.equal(describeStudioTurnError('mysterious failure', 'zh').reason, '运行时出了点问题');
 });
 

@@ -71,7 +71,7 @@ import {
   parseFollowUpDeclaration,
   resolveFollowUpAction,
 } from '../cerebellum/sessionFollowUpGate';
-import { CONFIG_HARD_FALLBACK_RESUME_PROMPT, CONTINUE_TURN_REASONING_EFFORT, DEEPSEEK_RESPONSES_REASONING_PLACEHOLDER, EMPTY_TERMINAL_TURN_CONTINUE_PROMPT, FINALIZATION_TURN_CONTINUE_PROMPT, isEmptyTerminalSdkResult, isAuthDshTurnError, isBodyLimitDshTurnError, isConfigModelMissingDshTurnError, isMalformedToolCallDshTurnError, isModelSwitchCompactionFailedDshTurnError, isOverflowDshTurnError, isQuotaDshTurnError, isRuntimeBootDshTurnError, isTransientDshTurnError, isWontHealDshTurnError, shouldAutoReviewDshToolCall, MALFORMED_TOOL_CALL_TURN_CONTINUE_PROMPT, OVERFLOW_TURN_RESUME_PROMPT, relayQuotaErrorMetadata, extractRelayQuotaExhaustedCode, TRANSIENT_TURN_RESUME_PROMPT, TRUNCATED_TURN_CONTINUE_PROMPT, buildFreeRelayQuotaNotice, meBalanceSpendableMilli } from './coworkAssistantReply';
+import { CONFIG_HARD_FALLBACK_RESUME_PROMPT, CONTINUE_TURN_REASONING_EFFORT, DEEPSEEK_RESPONSES_REASONING_PLACEHOLDER, EMPTY_TERMINAL_TURN_CONTINUE_PROMPT, FINALIZATION_TURN_CONTINUE_PROMPT, isEmptyTerminalSdkResult, isAuthDshTurnError, isBodyLimitDshTurnError, isConfigModelMissingDshTurnError, isMalformedToolCallDshTurnError, isModelSwitchCompactionFailedDshTurnError, isOverflowDshTurnError, isQuotaDshTurnError, isRuntimeBootDshTurnError, isTransientDshTurnError, isWontHealDshTurnError, shouldAutoReviewDshToolCall, MALFORMED_TOOL_CALL_TURN_CONTINUE_PROMPT, OVERFLOW_TURN_RESUME_PROMPT, relayQuotaErrorMetadata, extractRelayQuotaExhaustedCode, extractOfficialRelayMeErrorCode, TRANSIENT_TURN_RESUME_PROMPT, TRUNCATED_TURN_CONTINUE_PROMPT, buildFreeRelayQuotaNotice, meBalanceSpendableMilli } from './coworkAssistantReply';
 import {
   filterSdkInternalDiagnostics,
   isSdkInternalDiagnostic,
@@ -12823,20 +12823,23 @@ export class CoworkRunner extends EventEmitter {
           && isTransientDshTurnError(outcome);
         const runtimeBootTerminalDeath = ladderNoTargetKind === 'no-alternative'
           && isRuntimeBootDshTurnError(outcome);
+        const meRelayQuotaCode = extractOfficialRelayMeErrorCode(outcome.error?.message);
         const legacyRelayQuotaCode = extractRelayQuotaExhaustedCode(outcome.error?.message);
-        const relayQuotaCode = legacyRelayQuotaCode
+        const relayQuotaCode = meRelayQuotaCode
+          ?? legacyRelayQuotaCode
           ?? (/INSUFFICIENT_ME/i.test(outcome.error?.message ?? '') ? 'INSUFFICIENT_ME' : null);
         const freeRelayQuotaDeath = quotaTerminalDeath
           && (isFreeQuotaProvider(lastAttemptRoute.provider) || relayQuotaCode !== null);
         let officialRelayMeBalance: Awaited<ReturnType<typeof getMeBalance>> | undefined;
-        if (isServerMode() && freeRelayQuotaDeath && isFreeQuotaProvider(lastAttemptRoute.provider)) {
+        if (freeRelayQuotaDeath && isFreeQuotaProvider(lastAttemptRoute.provider) && relayQuotaCode !== 'me_daily_limit') {
           try {
             officialRelayMeBalance = await getMeBalance({ forceRefresh: true });
           } catch {
             officialRelayMeBalance = undefined;
           }
         }
-        const relayMeAdmissionMismatch = officialRelayMeBalance !== undefined
+        const relayMeAdmissionMismatch = relayQuotaCode !== 'me_daily_limit'
+          && officialRelayMeBalance !== undefined
           && meBalanceSpendableMilli(officialRelayMeBalance) > 0;
         const noModelConfiguredNotice = ladderNoTargetKind === 'no-alternative'
           && !quotaTerminalDeath && !transportTerminalDeath && !runtimeBootTerminalDeath
@@ -12929,11 +12932,21 @@ export class CoworkRunner extends EventEmitter {
         const ladderSemantics = ladderNoTargetKind === 'no-alternative'
           ? (quotaTerminalDeath
               ? (freeRelayQuotaDeath
-                  ? (relayMeAdmissionMismatch
+                  ? (relayQuotaCode === 'me_daily_limit'
+                      ? tApp(
+                          `今日 ME 计量日限额已达上限（最后错误码 ${outcome.error?.code ?? 'ME_DAILY_LIMIT'}）`,
+                          `Today's ME metering daily limit reached (last error code ${outcome.error?.code ?? 'ME_DAILY_LIMIT'})`
+                        )
+                      : relayMeAdmissionMismatch
                       ? tApp(
                           `官方模型服务配额状态与 ME 余额不一致（您的 ME 余额仍可用；最后错误码 ${outcome.error?.code ?? 'QUOTA'}）`,
                           `The official model service quota state disagrees with your ME balance (your ME credits are still spendable; last error code ${outcome.error?.code ?? 'QUOTA'})`
                         )
+                      : (relayQuotaCode === 'insufficient_me' || relayQuotaCode === 'me_insufficient' || relayQuotaCode === 'INSUFFICIENT_ME' || relayQuotaCode === 'quota_exhausted')
+                        ? tApp(
+                            `当前可用 ME 积分或本周套餐额度不足（最后错误码 ${outcome.error?.code ?? 'QUOTA'}）`,
+                            `Your currently spendable ME credits or weekly plan allowance are insufficient (last error code ${outcome.error?.code ?? 'QUOTA'})`
+                          )
                       : tApp(
                           isServerMode()
                             ? `当前可用 ME 积分不足（最后错误码 ${outcome.error?.code ?? 'QUOTA'}）`
