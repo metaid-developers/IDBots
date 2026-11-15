@@ -11,7 +11,7 @@ import { imService } from '../services/im';
 import { APP_ID, EXPORT_FORMAT_TYPE, EXPORT_PASSWORD } from '../constants/app';
 import ErrorMessage from './ErrorMessage';
 import FreeQuotaCard from './FreeQuotaCard';
-import { XMarkIcon, Cog6ToothIcon, PlusCircleIcon, TrashIcon, PencilIcon, SignalIcon, CheckCircleIcon, XCircleIcon, CubeIcon, ChatBubbleLeftIcon, ArchiveBoxIcon, PuzzlePieceIcon, BriefcaseIcon, BoltIcon, ArrowPathIcon, QuestionMarkCircleIcon } from '@heroicons/react/24/outline';
+import { XMarkIcon, Cog6ToothIcon, PlusCircleIcon, TrashIcon, PencilIcon, SignalIcon, CheckCircleIcon, XCircleIcon, CubeIcon, ChatBubbleLeftIcon, ArchiveBoxIcon, PuzzlePieceIcon, BriefcaseIcon, BoltIcon, ArrowPathIcon, QuestionMarkCircleIcon, ChevronDownIcon, CheckIcon } from '@heroicons/react/24/outline';
 import BrainIcon from './icons/BrainIcon';
 import { fetchProviderModelList, providerSupportsModelListSync } from '../services/providerModels';
 import { testCerebellumConnection } from '../services/cerebellumConnection';
@@ -575,6 +575,22 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
   const [archivedChatsQuery, setArchivedChatsQuery] = useState<string>('');
   const [archivedChatsSearchContent, setArchivedChatsSearchContent] = useState<boolean>(false);
   const [archivedChatsMetabotId, setArchivedChatsMetabotId] = useState<number | null>(null);
+  // OWNER 01:48: native <select> popup breaks the design language — custom
+  // dropdown in the unified tray grammar (chip + fixed popover + check mark).
+  const [archivedBotSelectOpen, setArchivedBotSelectOpen] = useState(false);
+  const [archivedBotSelectPos, setArchivedBotSelectPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const archivedBotSelectRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!archivedBotSelectOpen) return;
+    const handleClick = (event: MouseEvent) => {
+      if (!archivedBotSelectRef.current?.contains(event.target as Node)) {
+        setArchivedBotSelectOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [archivedBotSelectOpen]);
   const [archivedChatsPage, setArchivedChatsPage] = useState<number>(0);
   const [archivedChatsTotal, setArchivedChatsTotal] = useState<number>(0);
   const [archivedChatsNotice, setArchivedChatsNotice] = useState<string | null>(null);
@@ -2810,21 +2826,59 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
               {archivedSubTab === 'chats' ? (
                 <>
                 <div className="flex items-center justify-between gap-3">
-                <select
-                  value={archivedChatsMetabotId ?? ''}
-                  onChange={(event) => {
-                    const next = Number(event.target.value);
-                    setArchivedChatsMetabotId(Number.isFinite(next) && next > 0 ? next : null);
-                  }}
-                  className="min-w-[160px] rounded-lg border px-2 py-1.5 text-xs dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
-                >
-                  <option value="">{i18nService.t('archivedChatsAllBots')}</option>
-                  {coworkMemoryMetabots.map((metabot) => (
-                    <option key={metabot.id} value={metabot.id}>
-                      {metabot.name}
-                    </option>
-                  ))}
-                </select>
+                {/* OWNER 01:48: native <select> replaced by the unified custom
+                    dropdown (chip in the tray grammar + fixed popover) — the
+                    OS-native popup broke the design language. */}
+                <div className="relative min-w-[160px]" ref={archivedBotSelectRef} data-select-open="unset">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const rect = archivedBotSelectRef.current?.getBoundingClientRect();
+                      if (rect) setArchivedBotSelectPos({ top: rect.bottom + 4, left: rect.left, width: rect.width });
+                      setArchivedBotSelectOpen(prev => {
+                        const next = !prev;
+                        if (archivedBotSelectRef.current) archivedBotSelectRef.current.dataset.selectOpen = String(next);
+                        return next;
+                      });
+                    }}
+                    className="flex w-full items-center justify-between gap-1.5 rounded-[var(--shape-radius-sm)] border px-2 py-1.5 text-xs dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text transition-colors hover:border-claude-accent/60"
+                  >
+                    <span className="truncate">
+                      {archivedChatsMetabotId
+                        ? (coworkMemoryMetabots.find(m => m.id === archivedChatsMetabotId)?.name ?? i18nService.t('archivedChatsAllBots'))
+                        : i18nService.t('archivedChatsAllBots')}
+                    </span>
+                    <ChevronDownIcon className="h-3.5 w-3.5 flex-shrink-0" />
+                  </button>
+                  {archivedBotSelectOpen && archivedBotSelectPos && (
+                    <div
+                      className="fixed z-40 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-2xl p-1"
+                      style={{ top: archivedBotSelectPos.top, left: archivedBotSelectPos.left, width: Math.max(archivedBotSelectPos.width, 160) }}
+                    >
+                      {[{ id: 0, name: i18nService.t('archivedChatsAllBots') }, ...coworkMemoryMetabots].map((opt) => {
+                        const selected = archivedChatsMetabotId === (opt.id > 0 ? opt.id : null);
+                        return (
+                          <button
+                            key={opt.id || 'all'}
+                            type="button"
+                            onClick={() => {
+                              setArchivedChatsMetabotId(opt.id > 0 ? opt.id : null);
+                              setArchivedBotSelectOpen(false);
+                            }}
+                            className={`flex w-full items-center justify-between gap-2 rounded-[var(--shape-radius-sm)] px-2 py-1.5 text-xs transition-colors text-left ${
+                              selected
+                                ? 'bg-claude-accent/10 dark:text-claude-darkText text-claude-text'
+                                : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
+                            }`}
+                          >
+                            <span className="truncate">{opt.name}</span>
+                            {selected && <CheckIcon className="h-3.5 w-3.5 text-claude-accent flex-shrink-0" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="flex items-center gap-3">
