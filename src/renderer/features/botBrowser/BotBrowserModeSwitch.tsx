@@ -13,11 +13,11 @@ interface BotBrowserModeSwitchProps {
    */
   actions?: React.ReactNode;
   /**
-   * Gap ABOVE the band row. macOS 52 — a traffic-light strip as tall as the
-   * rail's mac top track, so the band row starts exactly at the lights row's
-   * bottom edge (the lights, trafficLightPosition y=20, never share the
-   * band's row). Elsewhere 12 px of quiet air. An explicit value is accepted
-   * so tests can pin BOTH platform branches without a DOM.
+   * Gap ABOVE the band row. macOS 42.375 — sized so the tray's visible top
+   * edge lands on the bot-home panel's header divider (y=50.625; owner
+   * baseline ruling 2026-11-15 08:27). Elsewhere 12 px of quiet air. An
+   * explicit value is accepted so tests can pin BOTH platform branches
+   * without a DOM.
    */
   topGapPx?: number;
 }
@@ -28,12 +28,14 @@ interface SurfaceSegment {
 }
 
 /**
- * macOS: a 52 px traffic-light strip precedes the band row — the same height
- * as the rail's mac top track, so the band row starts exactly at the strip's
- * bottom edge and the lights (trafficLightPosition y=20) own the first row
- * alone (owner red-box order 2026-11-09 10:58).
+ * macOS: a 42.375 px strip precedes the band row (owner baseline change
+ * 2026-11-15 08:27: the tray's visible top edge lands on the bot-home
+ * panel's header divider line — measured y=50.625; 50.625 − tray centering
+ * offset 7.25 − 1 px tray border = 42.375, supersedes the y=45 tabstrip
+ * baseline). The rail's mac top track mirrors this height so the rail's
+ * avatar slot stays aligned with the band row.
  */
-export const TOP_GAP_MAC_PX = 52;
+export const TOP_GAP_MAC_PX = 42.375;
 /** Non-macOS: no system corner to share, keep a quiet 12 px breath. */
 export const TOP_GAP_DEFAULT_PX = 12;
 
@@ -134,13 +136,15 @@ const BotBrowserModeSwitch: React.FC<BotBrowserModeSwitchProps> = ({
           className="flex items-center"
         >
           {/* macOS draws its own mini lights here (main.ts hides the native
-              buttons); other platforms render nothing — the strip stays a
-              pure drag gap. */}
+              buttons); other platforms render nothing. Owner gap-center
+              ruling 2026-11-15 08:21: the dots center between the window
+              content top and the tray's border-top — the pt offset lives in
+              MacWindowLights. */}
           <MacWindowLights />
         </div>
       ) : null}
-      {/* Row 2: the band — one full row BELOW the traffic lights' 52 px strip
-          on macOS. The container stays a drag handle; the tray is the
+      {/* Row 2: the band — one full row BELOW the 52 px top-gap strip on
+          macOS. The container stays a drag handle; the tray is the
           non-draggable content. The identity avatar does NOT ride this row
           any more (owner D-line final ruling 2026-11-09): it lives in the
           rail's top slot (WorkspaceRail workspace-rail-avatar-slot). */}

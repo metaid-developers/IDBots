@@ -222,25 +222,27 @@ test('both faces mount the SAME band; the session actions ride the row below', (
 });
 
 /**
- * Owner red-box order 2026-11-09 10:58 (supersedes the 10:29 row-1 reading):
- * on macOS a 52 px traffic-light strip precedes the band row (TOP_GAP_MAC_PX
- * = 52) — the lights own row 1 alone and the identity+band row starts at the
- * strip's bottom edge; elsewhere a 12 px gap precedes it. Both platform
- * branches are pinned through the explicit `topGapPx` prop, because a Node
- * render has no window.
+ * Owner red-box order 2026-11-09 10:58, strip re-sized by the 08:27
+ * baseline ruling (2026-11-15): on macOS a 42.375 px strip precedes the
+ * band row (TOP_GAP_MAC_PX = 42.375 — the tray's visible top edge lands on
+ * the bot-home panel's header divider y=50.625) — the lights own row 1
+ * alone and the identity+band row starts at the strip's bottom edge;
+ * elsewhere a 12 px gap precedes it. Both platform branches are pinned
+ * through the explicit `topGapPx` prop, because a Node render has no
+ * window.
  */
-test('macOS: a 52 px traffic-light strip precedes the band row; elsewhere 12 px', () => {
+test('macOS: a 42.375 px strip precedes the band row; elsewhere 12 px', () => {
   const mac = render('home', { topGapPx: TOP_GAP_MAC_PX });
   const other = render('home', { topGapPx: TOP_GAP_DEFAULT_PX });
 
-  assert.equal(TOP_GAP_MAC_PX, 52);
+  assert.equal(TOP_GAP_MAC_PX, 42.375);
   assert.equal(TOP_GAP_DEFAULT_PX, 12);
 
   // macOS: the 52 px gap node is the FIRST element of the header — the lights'
   // own row, pure air, strictly above the band row.
   assert.match(mac, /data-slot="surface-header-top-gap"/);
-  assert.ok(mac.includes('data-top-gap-px="52"'));
-  assert.ok(mac.includes('height:52px'));
+  assert.ok(mac.includes('data-top-gap-px="42.375"'));
+  assert.ok(mac.includes('height:42.375px'));
   assert.ok(
     mac.indexOf('surface-header-top-gap') < mac.indexOf('surface-header-bar'),
     'the lights strip must precede the band row',
@@ -289,18 +291,19 @@ test('neither face mounts an identity entry in the header (it lives in the rail)
  * D-line geometry (static, not a browser measurement), owner red-box order
  * 2026-11-09 10:58: on mac the traffic lights own row 1 alone and the whole
  * identity+band row falls BELOW it —
- *   lights          = MacWindowLights: 8 px dots centered in the strip ->
- *                     extent 22-30 (center 26), strictly inside the 0-52
- *                     rail's mac top track)
- *   band row top    = TOP_GAP_MAC_PX = 52 on BOTH faces (the rail face's
+ *   lights          = MacWindowLights: 10 px dots gap-centered in the strip
+ *                     (owner 2026-11-15 08:21, re-aimed 08:27) -> extent
+ *                     19.8125-29.8125 (center 24.8125 = (0 + tray top
+ *                     49.625)/2), strictly inside the 0-42.375 strip
+ *   band row top    = TOP_GAP_MAC_PX = 42.375 on BOTH faces (the rail face's
  *                     lights live over the rail column's strip, so the mid
- *                     column needs the same 52 px strip above its header)
- *   home menu top   = 52 (lights strip) + 52 (band row) + 8 (row pt-2) = 112
- * The rail face's icons start at 52 + 52 + 8 = 112 px (D-line final ruling
+ *                     column needs the same 42.375 px strip above its header)
+ *   home menu top   = 42.375 (lights strip) + 52 (band row) + 8 (row pt-2) = 102.375
+ * The rail face's icons start at 42.375 + 52 + 8 = 102.375 px (D-line final
  * 2026-11-09: below the rail's avatar slot) — an independent column, never
  * part of the header row the owner ordered down.
  */
-test('mac: the band row starts below the 52 px traffic-light strip on both faces', () => {
+test('mac: the band row starts below the 42.375 px traffic-light strip on both faces', () => {
   const railSource = readFileSync(
     new URL('../src/renderer/components/layout/WorkspaceRail.tsx', import.meta.url),
     'utf8',
@@ -310,8 +313,9 @@ test('mac: the band row starts below the 52 px traffic-light strip on both faces
     'utf8',
   );
 
-  // The rail keeps its 52 px mac strip — that strip IS the lights' row.
-  assert.match(railSource, /isMac \? 'h-\[52px\]' : 'h-3'/);
+  // The rail keeps its 42.375 px mac strip (08:27 baseline) — that strip IS
+  // the lights' row.
+  assert.match(railSource, /isMac \? 'h-\[42\.375px\]' : 'h-3'/);
   assert.match(railSource, /className="mt-2 flex min-h-0 w-full flex-1 flex-col items-center/);
 
   // The lights' true position: center y=20, so their extent stays inside 0–52.
@@ -334,12 +338,13 @@ test('mac: the band row starts below the 52 px traffic-light strip on both faces
   );
   assert.match(mainWindowSource, /frame: false,/);
   assert.match(mainWindowSource, /titleBarOverlay: getTitleBarOverlayOptions\(\)/);
-  // The drawn dots mount in the top-gap strip: 8 px, centered -> extent 22-30.
+  // The drawn dots mount in the top-gap strip, gap-centered (owner 08:21):
+  // 10 px -> extent 19.8125-29.8125 (center 24.8125 = (0 + tray top 49.625)/2).
   assert.match(switchSource, /<MacWindowLights \/>/);
 
-  // The switch's mac branch: a 52 px strip precedes the band row; the row
-  // keeps its 52 px height and the retired lights inset is gone.
-  assert.match(switchSource, /TOP_GAP_MAC_PX = 52/);
+  // The switch's mac branch: a 42.375 px strip precedes the band row; the
+  // row keeps its 52 px height and the retired lights inset is gone.
+  assert.match(switchSource, /TOP_GAP_MAC_PX = 42\.375/);
   assert.match(switchSource, /flex h-\[52px\] w-full min-w-0 items-center gap-2 pl-2 pr-2\.5/);
   assert.doesNotMatch(switchSource, /pt-1/);
   assert.doesNotMatch(switchSource, /pl-16/);
@@ -356,29 +361,49 @@ test('mac: the band row starts below the 52 px traffic-light strip on both faces
   assert.match(homeSidebarSource, /px-2\.5 pt-1/);
   assert.doesNotMatch(homeSidebarSource, /justify-between gap-1\.5 px-3 pt-2/);
 
-  const lightsTop = 26 - 4; // MacWindowLights: 8 px dot, centered in the strip
-  const lightsBottom = 26 + 4;
-  const bandRowTop = 52;
-  // D-line final ruling 2026-11-09: the rail column is [52 strip][52 avatar
-  // slot][mt-2 8] — the first function icon starts at 112, below the avatar,
-  // never in the top cell.
-  const railIconTop = 52 + 52 + 8;
-  const homeMenuTop = 52 + 52 + 8;
-  assert.ok(lightsTop >= 0 && lightsBottom <= bandRowTop, 'lights stay inside the strip');
-  assert.equal(bandRowTop, 52);
-  assert.equal(railIconTop, 112);
-  assert.equal(homeMenuTop, 112);
+  const lightsTop = 24.8125 - 5; // MacWindowLights: 10 px dot, gap-centered (owner 08:21, re-aimed 08:27)
+  const lightsBottom = 24.8125 + 5;
+  const bandRowTop = 42.375;
+  // D-line final ruling 2026-11-09, strip re-sized by the 08:27 baseline
+  // ruling: the rail column is [42.375 strip][52 avatar slot][mt-2 8] — the
+  // first function icon starts at 102.375, below the avatar, never in the
+  // top cell.
+  const railIconTop = 42.375 + 52 + 8;
+  const homeMenuTop = 42.375 + 52 + 8;
+  // Owner gap-center ruling 2026-11-15 08:21 (supersedes the 08:20
+  // tray-center alignment; re-aimed by the 08:27 baseline): the dot center
+  // sits midway between the window content top (y=0) and the tray's
+  // border-top edge — NOT on the tray's center line. Tray top = band row
+  // top + (row height − tray height)/2 = 42.375 + (52 − 37.5)/2 = 49.625,
+  // so the center must be 49.625 / 2 = 24.8125 (the component's
+  // pt-[7.25px] + items-center lands exactly there), and the tray's 1 px
+  // border band ends exactly on the bot-home divider row: 49.625 + 1 =
+  // 50.625.
+  const contentTop = 0;
+  const trayBorderTop = bandRowTop + (52 - 37.5) / 2;
+  const dotCenter = (lightsTop + lightsBottom) / 2;
+  assert.equal(trayBorderTop, 49.625);
+  assert.equal(dotCenter, trayBorderTop / 2, 'dot center = midpoint of window-top → tray-top');
+  assert.equal(dotCenter - contentTop, trayBorderTop - dotCenter, 'owner formula: both distances equal');
+  assert.equal(trayBorderTop + 1, 50.625, 'tray visible top band ends on the bot-home divider row');
+  assert.ok(lightsTop >= 0 && lightsBottom <= bandRowTop, 'lights stay inside the top strip');
+  assert.equal(bandRowTop, 42.375);
+  assert.equal(railIconTop, 102.375);
+  assert.equal(homeMenuTop, 102.375);
 });
 
 
-test('mac mini lights: three 8px dots, close | minimize | zoom, drag container, IPC wiring', () => {
+test('mac mini lights: three 10px dots, close | minimize | zoom, drag container, IPC wiring', () => {
   // Sizes are px literals — the app root font is 15px, so rem-scaled classes
   // drift (exact-fill arithmetic must stay in px; shape-language v2).
-  assert.match(lightsSource, /MAC_LIGHT_DOT_PX = 8/);
-  assert.match(lightsSource, /MAC_LIGHT_DOT_GAP_PX = 8/);
-  assert.match(lightsSource, /MAC_LIGHT_INSET_PX = 12/);
-  assert.match(lightsSource, /className="draggable flex items-center pl-\[12px\] gap-\[8px\]"/);
-  assert.match(lightsSource, /non-draggable h-\[8px\] w-\[8px\] rounded-full/);
+  assert.match(lightsSource, /MAC_LIGHT_DOT_PX = 10/);
+  assert.match(lightsSource, /MAC_LIGHT_DOT_GAP_PX = 10/);
+  assert.match(lightsSource, /MAC_LIGHT_INSET_PX = 15/);
+  // pt-[7.25px] = (52 − 37.5)/2 shifts the strip's items-center so the dot
+  // center lands at trayTop/2 = 24.8125 (owner gap-center ruling 08:21,
+  // tray re-aimed 08:27: tray top 49.625, divider row 50.625).
+  assert.match(lightsSource, /className="draggable flex items-center pt-\[7\.25px\] pl-\[15px\] gap-\[10px\]"/);
+  assert.match(lightsSource, /non-draggable h-\[10px\] w-\[10px\] rounded-full/);
   // The three actions ride the EXISTING window-control bridge: preload
   // window.close / window.minimize / window.toggleMaximize -> send channels
   // window-close / window-minimize / window-maximize -> ipcMain.on handlers.
@@ -400,16 +425,16 @@ test('mac mini lights: three 8px dots, close | minimize | zoom, drag container, 
   assert.match(mac, /data-window-action="close"[^>]*aria-label="Close"/);
   assert.match(mac, /data-window-action="minimize"[^>]*aria-label="Minimize"/);
   assert.match(mac, /data-window-action="zoom"[^>]*aria-label="Zoom"/);
-  assert.match(mac, /h-\[8px\] w-\[8px\]/);
-  assert.match(mac, /pl-\[12px\] gap-\[8px\]/);
-  assert.match(mac, /draggable flex items-center/);
-  assert.match(mac, /non-draggable h-\[8px\]/);
+  assert.match(mac, /h-\[10px\] w-\[10px\]/);
+  assert.match(mac, /pl-\[15px\] gap-\[10px\]/);
+  assert.match(mac, /draggable flex items-center pt-\[7\.25px\]/);
+  assert.match(mac, /non-draggable h-\[10px\]/);
   for (const color of Object.values(MAC_LIGHT_DOT_COLORS)) {
     assert.ok(mac.includes(color), `dot color ${color} rides the inline style`);
   }
-  assert.equal(MAC_LIGHT_DOT_PX, 8);
-  assert.equal(MAC_LIGHT_DOT_GAP_PX, 8);
-  assert.equal(MAC_LIGHT_INSET_PX, 12);
+  assert.equal(MAC_LIGHT_DOT_PX, 10);
+  assert.equal(MAC_LIGHT_DOT_GAP_PX, 10);
+  assert.equal(MAC_LIGHT_INSET_PX, 15);
 });
 
 test('mac mini lights render NOTHING off darwin (win32 / linux / Node renders)', () => {
@@ -418,11 +443,18 @@ test('mac mini lights render NOTHING off darwin (win32 / linux / Node renders)',
   assert.equal(renderToStaticMarkup(<MacWindowLights />), '', 'no prop + no window (Node) renders nothing');
 });
 
-test('the drawn lights ride the top-gap strip of the shared header (both faces)', () => {
+test('the drawn lights ride the top-gap strip, centered in the window-top → tray-top gap (both faces)', () => {
+  // SUPERSEDED TWICE (owner 2026-11-15): the 08:20 ruling moved the dots
+  // into the band row beside the tray; the 08:21 correction re-aimed them —
+  // center the dots in the GAP between the window content top and the
+  // tray's border-top — so they are back in the 52 px strip (with the
+  // pt-[7.25px] offset) and the band row + tray keep the fd4e93d1 geometry.
   const gapStart = switchSource.indexOf('data-slot="surface-header-top-gap"');
-  const gapEnd = switchSource.indexOf('data-slot="surface-header-bar"', gapStart);
-  assert.ok(gapEnd > gapStart, 'band-row anchor found');
-  const gapSlice = switchSource.slice(gapStart, gapEnd);
-  assert.ok(gapSlice.includes('<MacWindowLights />'), 'lights mount inside the gap strip');
-  assert.match(gapSlice, /className="flex items-center"/, 'the gap strip centers the dots');
+  const barStart = switchSource.indexOf('data-slot="surface-header-bar"', gapStart);
+  assert.ok(barStart > gapStart, 'band-row anchor found after the strip');
+  const gapSlice = switchSource.slice(gapStart, barStart);
+  assert.ok(gapSlice.includes('<MacWindowLights />'), 'lights mount inside the top-gap strip');
+  const trayStart = switchSource.indexOf('data-slot="bot-browser-mode-segments"', barStart);
+  const barSlice = switchSource.slice(barStart, trayStart);
+  assert.ok(!barSlice.includes('MacWindowLights'), 'the band row carries only the tray again');
 });
