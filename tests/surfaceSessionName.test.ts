@@ -112,6 +112,11 @@ test('session-name icon: MessageSquare replica rides the title row (owner icon r
   assert.match(markup, /aria-hidden="true"/);
   // Stagger shift (owner 09:34): the label state rides translate-x-[6px].
   assert.match(markup, /translate-x-\[6px\]/);
+  // Owner 09:51 same-scale ruling: title typography = badge name typography
+  // (text-sm font-medium leading-none — read from CoworkSurfaceIdentityBadge).
+  assert.match(markup, /text-sm font-medium leading-none/);
+  assert.match(markup, /text-claude-text/);
+  assert.match(markup, /dark:text-claude-darkText/);
 });
 
 test('render: blank stored title displays the default title', () => {
