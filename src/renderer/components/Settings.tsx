@@ -3887,7 +3887,14 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
         {/* Right content */}
         <div className="relative flex-1 flex flex-col min-w-0 overflow-hidden dark:bg-claude-darkBg bg-claude-bg rounded-r-2xl">
           {/* Content header */}
-          <div className="flex justify-between items-center px-6 pt-6 pb-4 shrink-0">
+          {/* Fixed-height header band (owner 2026-11-15 17:00): the tray tab
+              and the text-h3 tabs previously produced different row heights,
+              so the close button drifted when switching to 积分&流量. Fixed
+              h-16 pins the close button on every tab (invisible on tabs that
+              show the plain h3). OWNER 17:04 revision: the divider sits ABOVE
+              the tray — the tray IS this page's header — and ONLY the
+              credits&traffic tab carries it; other tabs stay untouched. */}
+          <div className={`flex justify-between items-center px-6 h-16 shrink-0 ${activeTab === 'traffic' ? 'border-t dark:border-claude-darkBorder border-claude-border' : ''}`}>
             {/* Credits & traffic view: the segmented 积分|流量 pair replaces the
                 text heading (owner 2026-11-15 16:31) — the buttons ARE the page
                 title; other tabs keep the plain h3 label. */}
