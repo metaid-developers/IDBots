@@ -3941,7 +3941,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
             {/* Tab content */}
             <div
               ref={contentRef}
-              className="px-6 py-4 flex-1 overflow-y-auto"
+              className="px-6 pb-4 flex-1 overflow-y-auto"
             >
               <Suspense
                 fallback={
