@@ -27,6 +27,7 @@ import { SleepGuardBadge } from './SleepGuardBadge';
 import BotBrowserCoworkPanel from '../features/botBrowser/BotBrowserCoworkPanel';
 import BotBrowserModeSwitch from '../features/botBrowser/BotBrowserModeSwitch';
 import CoworkSurfaceSessionName from '../features/botBrowser/CoworkSurfaceSessionName';
+import { resolveTitleHideDelayMs } from '../features/botBrowser/surfaceSessionName';
 import { UserProfilePage } from '../features/userProfile';
 import { defaultSidebarWidth } from '../utils/sidebarWidth';
 import type { BotBrowserSurfaceMode, BotHomeSection } from '../features/botBrowser/types';
@@ -197,6 +198,48 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [studioTitlePreviewOpen, setStudioTitlePreviewOpen] = useState(false);
   const studioHeaderRef = useRef<HTMLDivElement>(null);
   const studioIdentityRowRef = useRef<HTMLDivElement>(null);
+  // Grace-collapse machinery (owner ruling 2026-11-15 09:17): leaving the
+  // studio header schedules a 2500 ms collapse instead of snapping shut;
+  // re-entering (or focusing into the inline editor) cancels the pending
+  // timer; while the inline editor is open the preview NEVER auto-collapses
+  // (clause ②) and the hover rule resumes only after the edit ends.
+  const titleHideTimerRef = useRef<number | null>(null);
+  const titleEditingRef = useRef(false);
+  const pointerInStudioHeaderRef = useRef(false);
+  const cancelTitleHideTimer = () => {
+    if (titleHideTimerRef.current !== null) {
+      window.clearTimeout(titleHideTimerRef.current);
+      titleHideTimerRef.current = null;
+    }
+  };
+  const scheduleTitleHide = () => {
+    cancelTitleHideTimer();
+    const delay = resolveTitleHideDelayMs(titleEditingRef.current);
+    if (delay === null) return;
+    titleHideTimerRef.current = window.setTimeout(() => {
+      titleHideTimerRef.current = null;
+      // Re-check at fire time: entering the editor during the grace window
+      // pins the row (clause ② applies to the whole window, not just the
+      // leave instant).
+      if (titleEditingRef.current) return;
+      setStudioTitlePreviewOpen(false);
+    }, delay);
+  };
+  const handleSessionTitleEditingChange = (editing: boolean) => {
+    titleEditingRef.current = editing;
+    if (editing) {
+      cancelTitleHideTimer();
+      return;
+    }
+    // Edit ended — resume the hover rule: pointer still inside the header
+    // keeps the preview open (the next real leave schedules the grace);
+    // pointer already outside gets the same 2500 ms grace a leave gives.
+    if (pointerInStudioHeaderRef.current) {
+      cancelTitleHideTimer();
+    } else {
+      scheduleTitleHide();
+    }
+  };
   const dispatch = useDispatch();
   // Which task-record category the home history list shows. Persisted across
   // app restarts; the header + tabs stay fixed while only the list scrolls.
@@ -610,20 +653,30 @@ const Sidebar: React.FC<SidebarProps> = ({
     const fromList = sessions.find((session) => session.id === browserOpenSessionId);
     return fromList?.title ?? browserOpenSessionFallbackTitle ?? '';
   }, [browserOpenSessionId, sessions, browserOpenSessionFallbackTitle]);
-  useEffect(() => setStudioTitlePreviewOpen(false), [browserOpenSessionId]);
+  useEffect(() => {
+    cancelTitleHideTimer();
+    setStudioTitlePreviewOpen(false);
+  }, [browserOpenSessionId]);
   useEffect(() => {
     if (mode === 'home') return undefined;
     const headerEl = studioHeaderRef.current;
     const identityRowEl = studioIdentityRowRef.current;
     if (!headerEl || !identityRowEl) return undefined;
     const openPreview = () => {
+      pointerInStudioHeaderRef.current = true;
+      cancelTitleHideTimer();
       if (browserOpenSessionId) setStudioTitlePreviewOpen(true);
     };
+    // Grace collapse (owner ruling 09:17): the leave schedules a 2500 ms
+    // hide instead of snapping; focus kept INSIDE the header (the inline
+    // editor) pins the row via the editing guard in scheduleTitleHide.
     const closePreviewOnLeave = () => {
-      if (!headerEl.contains(document.activeElement)) setStudioTitlePreviewOpen(false);
+      pointerInStudioHeaderRef.current = false;
+      if (headerEl.contains(document.activeElement)) return;
+      scheduleTitleHide();
     };
     const closePreviewOnFocusOut = (event: FocusEvent) => {
-      if (!headerEl.contains(event.relatedTarget as Node | null)) setStudioTitlePreviewOpen(false);
+      if (!headerEl.contains(event.relatedTarget as Node | null)) scheduleTitleHide();
     };
     identityRowEl.addEventListener('mouseenter', openPreview);
     identityRowEl.addEventListener('focusin', openPreview);
@@ -634,6 +687,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       identityRowEl.removeEventListener('focusin', openPreview);
       headerEl.removeEventListener('mouseleave', closePreviewOnLeave);
       headerEl.removeEventListener('focusout', closePreviewOnFocusOut);
+      cancelTitleHideTimer();
     };
   }, [mode, browserOpenSessionId]);
   const showStudioTitle = Boolean(browserOpenSessionId && studioTitlePreviewOpen);
@@ -704,6 +758,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             title={browserOpenSessionTitle}
             fallbackTitle={i18nService.t('coworkNewSession')}
             onRename={listOnRenameSession}
+            onRenameEditingChange={handleSessionTitleEditingChange}
           />
         </div>
       ) : null}
