@@ -3838,7 +3838,22 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
         // below the header divider, no longer doubling as the page title.
         return (
           <div className="pb-4">
-            <div className="inline-flex h-9 min-w-0 overflow-hidden rounded-[var(--shape-radius-sm)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80">
+            {/* OWNER 2026-11-16 00:42: section label + segmented switch share
+                one row at the module's top-right; the label sits OUTSIDE the
+                module card, and the duplicated in-module title is gone. */}
+            <div className="flex items-center justify-between gap-3 pb-3">
+              <div>
+                <span className="text-base font-semibold text-claude-text dark:text-claude-darkText">
+                  {i18nService.t(creditsSubTab === 'credits' ? 'meUsageInfoTitle' : 'trafficInfoTitle')}
+                </span>
+                {/* OWNER 2026-11-16 00:42 steer: keep the small subtitle line — it lives under the label, outside the module. */}
+                {creditsSubTab === 'credits' && (
+                  <p className="mt-0.5 text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                    {i18nService.t('meUsageSubtitle')}
+                  </p>
+                )}
+              </div>
+              <div className="inline-flex h-9 min-w-0 shrink-0 overflow-hidden rounded-[var(--shape-radius-sm)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80">
               {(['credits', 'traffic'] as const).map((sub) => (
                 <button
                   key={sub}
@@ -3853,6 +3868,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                   {i18nService.t(sub === 'credits' ? 'usageCreditsSubTabCredits' : 'usageCreditsSubTabTraffic')}
                 </button>
               ))}
+            </div>
             </div>
             {creditsSubTab === 'credits' ? <MeUsageAndCredits /> : <TrafficSettings />}
           </div>

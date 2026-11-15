@@ -263,12 +263,9 @@ const MeUsageAndCredits: React.FC = () => {
 
   return (
     <div className="h-full overflow-y-auto px-4 py-4 space-y-4 max-w-3xl">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h2 className="text-base font-semibold text-claude-text dark:text-claude-darkText">{i18nService.t('meUsageTitle')}</h2>
-          <p className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">{i18nService.t('meUsageSubtitle')}</p>
-        </div>
-      </div>
+      {/* OWNER 2026-11-16 00:42: the in-module title block (用量 & 积分 +
+          subtitle) is gone — the section label now lives in the row above the
+          module (用量信息 | 积分|流量 switch), outside this card. */}
 
       {/* 双池概览 — OWNER 2026-11-16 00:29: buy/refresh actions moved from the
           page header into the overview card's bottom-right, next to the
