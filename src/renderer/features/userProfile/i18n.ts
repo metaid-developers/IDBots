@@ -93,7 +93,7 @@ const ZH: UserProfileCopy = {
   identityLoadFailed: '身份读取失败，稍后可重试',
   noIdentity: '尚未创建本地身份',
   dailyMessageLabel: 'twin 每日寄语',
-  dailyMessageGreeting: '{name}，今天想对你说',
+  dailyMessageGreeting: '{name} 今天想跟你说：',
 
   accountSectionTitle: '账户',
   accountSectionHint: '身份、助记词与链上资料都由本机持有；这里的每一条操作与设置里完全一致。',

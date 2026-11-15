@@ -51,6 +51,21 @@ const UserProfilePageBody: React.FC = () => {
     return stored?.text ?? resolveSessionFallbackMessage();
   }, []);
 
+  // The greeting speaks in the USER-SIDE TWIN's voice — resolve the twin's
+  // display name from the local roster (metabot_type === 'twin'). No twin on
+  // the machine → fall back to the neutral dailyMessageLabel.
+  const [twinName, setTwinName] = React.useState('');
+  const loadTwinName = React.useCallback(async () => {
+    try {
+      const roster = await window.electron.metabot.list();
+      const bots = roster?.success && Array.isArray(roster.list) ? roster.list : [];
+      const twin = bots.find((bot) => bot.metabot_type === 'twin');
+      setTwinName((twin?.name || '').trim());
+    } catch {
+      setTwinName('');
+    }
+  }, []);
+
   // While the page is open, keep the identity header in step with the account
   // block below it. The block owns the writes; these are the only signals it
   // emits that can move the identity (a chain restore re-reads the roster) plus
@@ -62,11 +77,17 @@ const UserProfilePageBody: React.FC = () => {
     };
     window.addEventListener('app:metabots-changed', handleRefresh);
     window.addEventListener('focus', handleRefresh);
+    void loadTwinName();
+    const handleTwinRefresh = () => {
+      void loadTwinName();
+    };
+    window.addEventListener('app:metabots-changed', handleTwinRefresh);
     return () => {
       window.removeEventListener('app:metabots-changed', handleRefresh);
       window.removeEventListener('focus', handleRefresh);
+      window.removeEventListener('app:metabots-changed', handleTwinRefresh);
     };
-  }, []);
+  }, [loadTwinName]);
 
   const identity = snapshot.identity;
   const name = (identity?.name || '').trim();
@@ -112,9 +133,11 @@ const UserProfilePageBody: React.FC = () => {
             className="mt-0.5 min-w-0"
           >
             <p className="text-[11px] font-medium tracking-wide text-claude-textSecondary dark:text-claude-darkTextSecondary">
-              {name
-                ? copy.dailyMessageGreeting.replace('{name}', name)
-                : copy.dailyMessageLabel}
+              {twinName
+                ? `${twinName} 今天想跟你说：`
+                : name
+                  ? copy.dailyMessageGreeting.replace('{name}', name)
+                  : copy.dailyMessageLabel}
             </p>
             <p className="mt-0.5 truncate text-[13px] font-medium leading-relaxed text-claude-text dark:text-claude-darkText">
               {dailyMessage}
