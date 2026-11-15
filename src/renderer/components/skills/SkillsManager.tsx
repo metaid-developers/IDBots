@@ -504,7 +504,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
   return (
     <div className="space-y-4">
       {!hideTabBar && (
-        <div className="sticky top-[4px] z-10 flex items-center justify-between gap-2 border-b dark:border-claude-darkBorder border-claude-border -mx-1 px-1 bg-claude-bg dark:bg-claude-darkBg"> {/* OWNER 02:17: pinned — only the list scrolls under it */}
+        <div className="sticky top-[-15px] z-10 flex items-center justify-between gap-2 border-b dark:border-claude-darkBorder border-claude-border -mx-1 px-1 bg-claude-bg dark:bg-claude-darkBg"> {/* OWNER 02:17: pinned — only the list scrolls under it */}
           <div className="flex items-center gap-2">
           <button
             type="button"
