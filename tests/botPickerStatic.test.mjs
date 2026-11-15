@@ -59,7 +59,7 @@ test('the Studio header rests at identity height and previews the title on hover
   const nameAt = headerSpan.indexOf('<CoworkSurfaceSessionName');
   const newAt = headerSpan.indexOf('data-slot="cowork-new-session"');
   assert.ok(anchorAt !== -1, 'identity anchor present');
-  assert.ok(nameAt > anchorAt, 'session title sits below the centered identity');
+  assert.ok(nameAt > anchorAt, 'session title sits below the left-anchored identity (left-anchor order 2026-11-15)');
   assert.ok(newAt > nameAt, 'session actions remain in the same header');
   assert.match(headerSpan, /onMouseEnter/);
   assert.match(headerSpan, /onMouseLeave/);

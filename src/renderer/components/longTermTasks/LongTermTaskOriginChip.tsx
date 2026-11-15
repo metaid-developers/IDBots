@@ -50,7 +50,7 @@ const LongTermTaskOriginChip: React.FC<{ sessionId: string | null | undefined }>
       type="button"
       onClick={() => window.dispatchEvent(new CustomEvent('longtermTask:viewTask', { detail: { taskId: hit.taskId } }))}
       title={i18nService.t('longTermTask.origin.open')}
-      className="non-draggable inline-flex shrink-0 items-center gap-1 rounded-full border border-claude-accent/40 bg-claude-accent/10 px-2 py-0.5 text-[10px] font-semibold transition-colors hover:border-claude-accent/70 dark:text-claude-darkText text-claude-text"
+      className="non-draggable inline-flex shrink-0 items-center gap-1 rounded-[var(--shape-radius-md)] border border-claude-accent/40 bg-claude-accent/10 px-2 py-0.5 text-[10px] font-semibold transition-colors hover:border-claude-accent/70 dark:text-claude-darkText text-claude-text"
     >
       <Squares2X2Icon className="h-3 w-3" />
       {i18nService.t('longTermTask.origin.label')}

@@ -170,7 +170,7 @@ const LongTermTaskDetail: React.FC<{ taskId: string }> = ({ taskId }) => {
           <button
             type="button"
             onClick={() => void runAction(() => longTermTaskService.setStage({ taskId: detail.id, action: 'pause' }))}
-            className="rounded-lg border dark:border-claude-darkBorder border-claude-border px-3 py-1 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover"
+            className="rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border px-3 py-1 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover"
           >
             {i18nService.t('longTermTask.action.pause')}
           </button>
@@ -179,7 +179,7 @@ const LongTermTaskDetail: React.FC<{ taskId: string }> = ({ taskId }) => {
           <button
             type="button"
             onClick={() => void runAction(() => longTermTaskService.setStage({ taskId: detail.id, action: 'resume' }))}
-            className="btn-idchat-primary-filled rounded-lg px-3 py-1 text-xs font-medium"
+            className="rounded-[var(--shape-radius-md)] border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk px-3 py-1 text-xs font-medium hover:brightness-[0.96] active:brightness-[0.9] transition-[filter]"
           >
             {i18nService.t('longTermTask.action.resume')}
           </button>
@@ -188,7 +188,7 @@ const LongTermTaskDetail: React.FC<{ taskId: string }> = ({ taskId }) => {
           <button
             type="button"
             onClick={() => setConfirming('complete')}
-            className="rounded-lg bg-emerald-600/90 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-600"
+            className="rounded-[var(--shape-radius-md)] border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk px-3 py-1 text-xs font-medium hover:brightness-[0.96] active:brightness-[0.9] transition-[filter]"
             title={i18nService.t('longTermTask.action.completeHint')}
           >
             {i18nService.t('longTermTask.action.complete')}
@@ -198,7 +198,7 @@ const LongTermTaskDetail: React.FC<{ taskId: string }> = ({ taskId }) => {
           <button
             type="button"
             onClick={() => setConfirming('cancelTask')}
-            className="rounded-lg border border-red-500/30 px-3 py-1 text-xs text-red-500 hover:bg-red-500/10"
+            className="rounded-[var(--shape-radius-md)] border border-red-500/30 px-3 py-1 text-xs text-red-500 hover:bg-red-500/10"
           >
             {i18nService.t('longTermTask.action.cancelTask')}
           </button>
@@ -531,14 +531,14 @@ const LongTermTaskDetail: React.FC<{ taskId: string }> = ({ taskId }) => {
                 <button
                   type="button"
                   onClick={() => openSessionWithDraft(selectedSubtask, false)}
-                  className="btn-idchat-primary-filled rounded-lg px-3 py-1.5 text-xs font-medium"
+                  className="rounded-[var(--shape-radius-md)] border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk px-3 py-1.5 text-xs font-medium hover:brightness-[0.96] active:brightness-[0.9] transition-[filter]"
                 >
                   {i18nService.t('longTermTask.action.openSession')}
                 </button>
                 <button
                   type="button"
                   onClick={() => openSessionWithDraft(selectedSubtask, true)}
-                  className="rounded-lg border dark:border-claude-darkBorder border-claude-border px-3 py-1.5 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover"
+                  className="rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border px-3 py-1.5 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover"
                 >
                   {i18nService.t('longTermTask.action.editViaChat')}
                 </button>
@@ -546,7 +546,7 @@ const LongTermTaskDetail: React.FC<{ taskId: string }> = ({ taskId }) => {
                   <button
                     type="button"
                     onClick={() => void runAction(() => longTermTaskService.beginSubtask(detail.id, selectedSubtask.id))}
-                    className="rounded-lg border dark:border-claude-darkBorder border-claude-border px-3 py-1.5 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover"
+                    className="rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border px-3 py-1.5 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover"
                   >
                     {i18nService.t('longTermTask.action.begin')}
                   </button>
@@ -555,7 +555,7 @@ const LongTermTaskDetail: React.FC<{ taskId: string }> = ({ taskId }) => {
                   <button
                     type="button"
                     onClick={() => void runAction(() => longTermTaskService.unblockSubtask(detail.id, selectedSubtask.id))}
-                    className="rounded-lg border dark:border-claude-darkBorder border-claude-border px-3 py-1.5 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover"
+                    className="rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border px-3 py-1.5 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover"
                   >
                     {i18nService.t('longTermTask.action.unblock')}
                   </button>
@@ -565,7 +565,7 @@ const LongTermTaskDetail: React.FC<{ taskId: string }> = ({ taskId }) => {
                     <button
                       type="button"
                       onClick={() => void runAction(() => longTermTaskService.acceptSubtask(detail.id, selectedSubtask.id))}
-                      className="rounded-lg bg-emerald-600/90 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-600"
+                      className="rounded-[var(--shape-radius-md)] border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk px-3 py-1.5 text-xs font-medium hover:brightness-[0.96] active:brightness-[0.9] transition-[filter]"
                     >
                       {i18nService.t('longTermTask.action.accept')}
                     </button>
@@ -575,7 +575,7 @@ const LongTermTaskDetail: React.FC<{ taskId: string }> = ({ taskId }) => {
                         setRejectingId(selectedSubtask.id);
                         setRejectText('');
                       }}
-                      className="rounded-lg border border-red-500/40 px-3 py-1.5 text-xs text-red-500 hover:bg-red-500/10"
+                      className="rounded-[var(--shape-radius-md)] border border-red-500/40 px-3 py-1.5 text-xs text-red-500 hover:bg-red-500/10"
                     >
                       {i18nService.t('longTermTask.action.reject')}
                     </button>
@@ -588,7 +588,7 @@ const LongTermTaskDetail: React.FC<{ taskId: string }> = ({ taskId }) => {
                       setSkippingId(selectedSubtask.id);
                       setSkipReason('');
                     }}
-                    className="rounded-lg border dark:border-claude-darkBorder border-claude-border px-3 py-1.5 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover"
+                    className="rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border px-3 py-1.5 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover"
                     title={i18nService.t('longTermTask.action.skipHint')}
                   >
                     {i18nService.t('longTermTask.action.skip')}
@@ -645,7 +645,7 @@ const LongTermTaskDetail: React.FC<{ taskId: string }> = ({ taskId }) => {
                       onClick={() =>
                         void runAction(() => longTermTaskService.rejectSubtask(detail.id, selectedSubtask.id, rejectText.trim())).then(() => setRejectingId(null))
                       }
-                      className="rounded-lg bg-red-500/90 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+                      className="border border-red-600 rounded-lg bg-red-500/90 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
                     >
                       {i18nService.t('longTermTask.rejectConfirm')}
                     </button>

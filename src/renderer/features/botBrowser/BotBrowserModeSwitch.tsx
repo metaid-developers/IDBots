@@ -1,5 +1,6 @@
 import React, { useRef } from 'react';
 import { i18nService } from '../../services/i18n';
+import MacWindowLights from './MacWindowLights';
 import type { BotBrowserSurfaceMode } from './types';
 
 interface BotBrowserModeSwitchProps {
@@ -12,11 +13,11 @@ interface BotBrowserModeSwitchProps {
    */
   actions?: React.ReactNode;
   /**
-   * Gap ABOVE the band row. macOS 52 — a traffic-light strip as tall as the
-   * rail's mac top track, so the band row starts exactly at the lights row's
-   * bottom edge (the lights, trafficLightPosition y=20, never share the
-   * band's row). Elsewhere 12 px of quiet air. An explicit value is accepted
-   * so tests can pin BOTH platform branches without a DOM.
+   * Gap ABOVE the band row. macOS 42.375 — sized so the tray's visible top
+   * edge lands on the bot-home panel's header divider (y=50.625; owner
+   * baseline ruling 2026-11-15 08:27). Elsewhere 12 px of quiet air. An
+   * explicit value is accepted so tests can pin BOTH platform branches
+   * without a DOM.
    */
   topGapPx?: number;
 }
@@ -27,12 +28,14 @@ interface SurfaceSegment {
 }
 
 /**
- * macOS: a 52 px traffic-light strip precedes the band row — the same height
- * as the rail's mac top track, so the band row starts exactly at the strip's
- * bottom edge and the lights (trafficLightPosition y=20) own the first row
- * alone (owner red-box order 2026-11-09 10:58).
+ * macOS: a 42.375 px strip precedes the band row (owner baseline change
+ * 2026-11-15 08:27: the tray's visible top edge lands on the bot-home
+ * panel's header divider line — measured y=50.625; 50.625 − tray centering
+ * offset 7.25 − 1 px tray border = 42.375, supersedes the y=45 tabstrip
+ * baseline). The rail's mac top track mirrors this height so the rail's
+ * avatar slot stays aligned with the band row.
  */
-export const TOP_GAP_MAC_PX = 52;
+export const TOP_GAP_MAC_PX = 42.375;
 /** Non-macOS: no system corner to share, keep a quiet 12 px breath. */
 export const TOP_GAP_DEFAULT_PX = 12;
 
@@ -46,13 +49,13 @@ const readPlatformTopGapPx = (): number => {
 };
 
 const segmentClass = (active: boolean) => [
-  'non-draggable inline-flex h-[34px] min-w-0 items-center justify-center rounded-[10px] px-2 text-xs font-medium leading-none transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40',
+  'non-draggable inline-flex h-full min-w-0 items-center justify-center px-2 text-xs font-medium leading-none transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40',
   active
-    // Yellow fill + dark ink from the accent tokens, plus the baseline's 3 px
-    // grey offset edge (the same `--btn-primary-edge` the primary button uses).
-    // The band's 2 px padding + 1 px border leave exactly 3 px for that edge,
-    // so the cell never overflows the tray the way the primary-button class did.
-    ? 'bg-claude-accent text-claude-accentInk shadow-[3px_3px_0_var(--btn-primary-edge)]'
+    // Flat accent fill + dark ink from the accent tokens. The v2 rect-flat
+    // ruling (2026-11-14) retires the baseline's 3 px grey offset edge: the
+    // selected face is carried by the fill alone, and the tray's 1 px border
+    // does the layering the shadow used to do.
+    ? 'bg-claude-accent text-claude-accentInk'
     : 'text-claude-textSecondary hover:bg-claude-surfaceHover/70 hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover/70 dark:hover:text-claude-darkText',
 ].join(' ');
 
@@ -62,7 +65,10 @@ const segmentClass = (active: boolean) => [
  * final ruling 2026-11-09 (identity moved to the rail's top slot):
  *
  *   [ traffic lights alone ]                          <- row 1: the lights'
- *                                                       own 52 px strip
+ *                                                       own strip (38.75 px
+ *                                                       on mac, sized to the
+ *                                                       browser-tabstrip
+ *                                                       divider line)
  *   [ Studio | BotWorks ]                             <- row 2: the band, BELOW
  *                                                      the lights row — no
  *                                                      identity slot here any
@@ -79,6 +85,16 @@ const segmentClass = (active: boolean) => [
  * Studio | BotWorks. Semantics are unchanged: radiogroup + two radios,
  * aria-checked, one roving tab stop, Arrow/Home/End movement; the same two
  * callbacks drive the switch.
+ *
+ * Shape language v2 (owner ruling 2026-11-14, rect-flat family): the tray and
+ * its two cells are rectangular now — the cells sit FLUSH (no tray padding and
+ * no divider, exactly the reference `.seg`), the selected face is a flat accent
+ * fill, and the old capsule radius plus the 3 px offset shadow are retired.
+ * The tray clips its cells (overflow-hidden) so the fill's outer corners follow
+ * the tray's 12 px arc and the 1 px border stays visible all the way round. An
+ * inset fill (the earlier p-0.5) read as two square tiles pasted inside a
+ * rounded frame — owner rejected that on 2026-11-14. The radiogroup semantics
+ * above are deliberately untouched.
  */
 const BotBrowserModeSwitch: React.FC<BotBrowserModeSwitchProps> = ({
   mode,
@@ -130,10 +146,18 @@ const BotBrowserModeSwitch: React.FC<BotBrowserModeSwitchProps> = ({
           data-slot="surface-header-top-gap"
           data-top-gap-px={resolvedTopGapPx}
           style={{ height: `${resolvedTopGapPx}px` }}
-        />
+          className="flex items-center"
+        >
+          {/* macOS draws its own mini lights here (main.ts hides the native
+              buttons); other platforms render nothing. Owner gap-center
+              ruling 2026-11-15 08:21: the dots center between the window
+              content top and the tray's border-top — the pt offset lives in
+              MacWindowLights. */}
+          <MacWindowLights />
+        </div>
       ) : null}
-      {/* Row 2: the band — one full row BELOW the traffic lights' 52 px strip
-          on macOS. The container stays a drag handle; the tray is the
+      {/* Row 2: the band — one full row BELOW the 52 px top-gap strip on
+          macOS. The container stays a drag handle; the tray is the
           non-draggable content. The identity avatar does NOT ride this row
           any more (owner D-line final ruling 2026-11-09): it lives in the
           rail's top slot (WorkspaceRail workspace-rail-avatar-slot). */}
@@ -147,7 +171,7 @@ const BotBrowserModeSwitch: React.FC<BotBrowserModeSwitchProps> = ({
           role="radiogroup"
           aria-label={`${i18nService.t('surfaceSwitcherLabel')}: ${segments[0].label} / ${segments[1].label}`}
           onKeyDown={handleKeyDown}
-          className="non-draggable grid h-10 min-w-0 flex-1 grid-cols-2 gap-1 rounded-xl border border-claude-border/70 bg-claude-bg/80 p-0.5 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80"
+          className="non-draggable grid h-10 min-w-0 flex-1 grid-cols-2 gap-0 overflow-hidden rounded-[var(--shape-radius-lg)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80"
         >
           {segments.map((segment) => {
             const active = mode === segment.id;
@@ -170,9 +194,13 @@ const BotBrowserModeSwitch: React.FC<BotBrowserModeSwitchProps> = ({
         </div>
       </div>
       {actions ? (
+        // Left inset rides the band's pl-2 rhythm so the Studio face's
+        // left-aligned identity header starts on the tray's left edge;
+        // BotWorks' compact actions are right-aligned and only see the
+        // pr-2.5 (owner left-anchor order 2026-11-15).
         <div
           data-slot="surface-header-actions"
-          className="non-draggable flex min-h-7 w-full items-center justify-end gap-0.5 px-2.5"
+          className="non-draggable flex min-h-7 w-full items-center justify-end gap-0.5 pl-2 pr-2.5"
         >
           {actions}
         </div>

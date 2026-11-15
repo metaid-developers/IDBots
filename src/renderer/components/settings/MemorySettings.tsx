@@ -1065,15 +1065,15 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         key={key}
         type="button"
         onClick={() => setActiveSection(key)}
-        className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+        className={`flex h-full min-w-0 items-center justify-center gap-1.5 px-3 text-xs font-medium leading-none transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
           active
-            ? 'border-claude-accent bg-claude-accent/5 text-claude-accent dark:bg-claude-accent/10 dark:text-claude-darkAccent'
-            : 'dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
+            ? 'bg-claude-accent text-claude-accentInk'
+            : 'text-claude-textSecondary hover:bg-claude-surfaceHover/70 hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover/70 dark:hover:text-claude-darkText'
         }`}
       >
         <span>{label}</span>
         {typeof count === 'number' && (
-          <span className={`rounded-full px-1.5 text-[10px] ${active ? 'bg-claude-accent/15' : 'dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover'}`}>
+          <span className={`rounded-full px-1.5 text-[10px] ${active ? 'bg-claude-accentInk/15 text-claude-accentInk' : 'dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover'}`}>
             {count}
           </span>
         )}
@@ -1155,7 +1155,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                         <button
                           type="button"
                           onClick={cancelEditKnowledge}
-                          className="rounded border px-2 py-1 text-[10px] dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                          className="rounded-[var(--shape-radius-md)] border px-2 py-1 text-[10px] dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
                         >
                           {i18nService.t('cancel')}
                         </button>
@@ -1163,7 +1163,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                           type="button"
                           onClick={() => { void handleSaveKnowledgeEdit(); }}
                           disabled={!knowledgeDraftTopic.trim() || !knowledgeDraftSummary.trim()}
-                          className="btn-idchat-primary-filled rounded px-2 py-1 text-[10px] disabled:opacity-60"
+                          className="rounded-[var(--shape-radius-md)] border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk px-2 py-1 text-[10px] font-medium hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] disabled:opacity-60"
                         >
                           {i18nService.t('save')}
                         </button>
@@ -1198,14 +1198,14 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                         <button
                           type="button"
                           onClick={() => startEditKnowledge(entry)}
-                          className="rounded border px-2 py-1 text-[10px] dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                          className="rounded-[var(--shape-radius-md)] border px-2 py-1 text-[10px] dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
                         >
                           {i18nService.t('edit')}
                         </button>
                         <button
                           type="button"
                           onClick={() => { void handleDeleteKnowledge(entry); }}
-                          className="rounded border px-2 py-1 text-[10px] text-red-500 dark:border-claude-darkBorder border-claude-border hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                          className="rounded-[var(--shape-radius-md)] border px-2 py-1 text-[10px] text-red-500 dark:border-claude-darkBorder border-claude-border hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
                         >
                           {i18nService.t('delete')}
                         </button>
@@ -1857,7 +1857,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                     type="button"
                     onClick={() => { void handleSaveHygiene(); }}
                     disabled={hygieneSaving}
-                    className="btn-idchat-primary-filled inline-flex items-center justify-center px-4 py-1.5 text-xs disabled:opacity-60"
+                    className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] rounded-lg inline-flex items-center justify-center px-4 py-1.5 text-xs disabled:opacity-60"
                   >
                     {hygieneSaving ? i18nService.t('saving') : i18nService.t('memoryHygieneSave')}
                   </button>
@@ -2103,7 +2103,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             type="button"
             onClick={() => { void handleSaveCulture(); }}
             disabled={!cultureDraft.topic.trim() || !cultureDraft.text.trim()}
-            className="btn-idchat-primary-filled inline-flex items-center px-3 py-1 text-xs disabled:opacity-60"
+            className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] rounded-lg inline-flex items-center px-3 py-1 text-xs disabled:opacity-60"
           >
             {i18nService.t('memoryCultureSave')}
           </button>
@@ -2292,7 +2292,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       )}
 
       {/* Section tabs */}
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="inline-flex h-8 min-w-0 items-center overflow-hidden rounded-[var(--shape-radius-md)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80">
         {sectionTab('knowledge', i18nService.t('memorySectionKnowledge'), metabotId == null ? undefined : knowledgeCounts)}
         {sectionTab('contacts', i18nService.t('memorySectionContacts'), metabotId == null || contacts.length === 0 ? undefined : contacts.length)}
         {sectionTab('facts', i18nService.t('memorySectionFacts'), metabotId == null || !factsStats ? undefined : factsStats.created + factsStats.stale)}
@@ -2380,7 +2380,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
               <button
                 type="button"
                 onClick={resetEditor}
-                className="px-3 py-1.5 text-sm dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-xl border dark:border-claude-darkBorder border-claude-border transition-colors"
+                className="px-4 py-2 text-sm dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover inline-flex items-center justify-center rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border transition-colors"
               >
                 {i18nService.t('cancel')}
               </button>
@@ -2388,7 +2388,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                 type="button"
                 onClick={() => { void handleSaveFact(); }}
                 disabled={!draftText.trim() || factsLoading}
-                className="btn-idchat-primary-filled px-3 py-1.5 text-sm"
+                className="btn-idchat-primary-filled text-sm"
               >
                 {i18nService.t('save')}
               </button>

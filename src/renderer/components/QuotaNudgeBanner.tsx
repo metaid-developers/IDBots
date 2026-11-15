@@ -149,7 +149,7 @@ const QuotaNudgeBanner: React.FC<QuotaNudgeBannerProps> = ({ onOpenModelSettings
           onClick={handleDismiss}
           aria-label={i18nService.t('quotaNudgeDismiss')}
           title={i18nService.t('quotaNudgeDismiss')}
-          className={`shrink-0 rounded-full p-1 transition-colors ${
+          className={`shrink-0 rounded-[var(--shape-radius-md)] p-1 transition-colors ${
             exhausted
               ? 'text-red-500 hover:bg-red-100 dark:hover:bg-red-900/40'
               : 'text-amber-600 hover:bg-amber-100 dark:hover:bg-amber-900/40'

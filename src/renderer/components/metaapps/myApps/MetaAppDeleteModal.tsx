@@ -38,7 +38,7 @@ const MetaAppDeleteModal: React.FC<MetaAppDeleteModalProps> = ({ record, busy, o
             type="button"
             onClick={onConfirm}
             disabled={busy}
-            className="px-3 py-1.5 text-sm rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50"
+            className="border border-red-600 px-3 py-1.5 text-sm rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50"
           >
             {busy ? (t('deleting') || 'Deleting…') : (t('delete') || 'Delete')}
           </button>

@@ -118,7 +118,7 @@ export const GigSquareSkillPicker: React.FC<GigSquareSkillPickerProps> = ({
                   type="button"
                   onClick={() => handleRemoveSkill(skill.id)}
                   disabled={disabled}
-                  className="inline-flex h-4 w-4 items-center justify-center rounded-full text-claude-textSecondary hover:bg-black/10 disabled:cursor-not-allowed disabled:opacity-50 dark:text-claude-darkTextSecondary dark:hover:bg-white/10"
+                  className="inline-flex h-4 w-4 items-center justify-center rounded-[var(--shape-radius-md)] text-claude-textSecondary hover:bg-black/10 disabled:cursor-not-allowed disabled:opacity-50 dark:text-claude-darkTextSecondary dark:hover:bg-white/10"
                   aria-label={i18nService.t('metabotDelete')}
                   title={i18nService.t('metabotDelete')}
                 >

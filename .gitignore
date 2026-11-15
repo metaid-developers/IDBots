@@ -1047,6 +1047,3 @@ blob-report/
 !tests/loggingAndMessageIndexPerf.test.mjs
 !tests/streamingMarkdownBlocks.test.ts
 !tests/storageHygieneAndDailyReportPerf.test.mjs
-
-# MetaWeb pins:batch receipt auditing (zero-dependency closed-form tool + fixtures)
-!tests/receiptAuditV3.test.mjs

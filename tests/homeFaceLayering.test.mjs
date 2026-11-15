@@ -160,6 +160,37 @@ test('the record type has exactly ONE entry point: the sidebar text tabs', () =>
   assert.match(homeSidebarSource, /if \(stored === 'a2a'\) return stored;/);
 });
 
+test('the record-scope row speaks the v2 rect-flat grammar (32 px mid tier)', () => {
+  // Owner ruling 2026-11-14: the lower 本地对话 | 线上对话 row must use the SAME
+  // segmented template as the surface switcher above — rectangular tray, flush
+  // cells, flat accent fill clipped by the tray arc, no divider, no capsule.
+  const start = homeSidebarSource.indexOf('data-slot="home-session-scope"');
+  const tag = homeSidebarSource.slice(start, homeSidebarSource.indexOf('>', start));
+  for (const token of ['grid-cols-2', 'h-[32px]', 'gap-0', 'overflow-hidden', 'rounded-[var(--shape-radius-md)]']) {
+    assert.ok(tag.includes(token), `record-scope tray is missing ${token}`);
+  }
+  // The capsule grammar is retired: no 8 px pill tray, no gutter, no padding,
+  // and no divider line between the two signs.
+  assert.ok(!tag.includes('rounded-lg'), 'the record-scope tray must not carry rounded-lg');
+  assert.ok(!/\bborder-l\b/.test(tag), 'no divider in the record-scope tray');
+  for (const gone of ['p-1', 'gap-1', 'rounded-full']) {
+    assert.ok(!tag.split(' ').includes(gone), `record-scope tray still carries ${gone}`);
+  }
+
+  // The cell own class string, whole template literal (the active/inactive
+  // branches live after the base string; the tooltip's own rounded-md sits
+  // OUTSIDE it, so scoping to the literal keeps this check honest).
+  const classStart = homeSidebarSource.indexOf('non-draggable group relative inline-flex', start);
+  const cellClass = homeSidebarSource.slice(classStart, homeSidebarSource.indexOf('`}', classStart));
+  for (const token of ['h-full', 'transition-colors', 'bg-claude-accent']) {
+    assert.ok(cellClass.includes(token), `record-scope cell is missing ${token}`);
+  }
+  for (const gone of ['h-7', 'rounded-md', 'transition-all']) {
+    assert.ok(!cellClass.includes(gone), `record-scope cell still carries ${gone}`);
+  }
+  assert.ok(!/\bborder-l\b/.test(cellClass), 'no seam divider on the record-scope cells');
+});
+
 test('the records body keeps the accepted by-Bot grouped template', () => {
   // ONE component, two data sources: the same session list is fed the local
   // bucket or the online bucket; nothing groups per face.

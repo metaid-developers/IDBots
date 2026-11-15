@@ -973,7 +973,7 @@ const MetafileLightboxModal: React.FC<{
           onClick={onClose}
           title={i18nService.t('a2aClosePreview')}
           aria-label={i18nService.t('a2aClosePreview')}
-          className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25"
+          className="inline-flex h-9 w-9 items-center justify-center rounded-[var(--shape-radius-md)] bg-white/15 text-white transition-colors hover:bg-white/25"
         >
           <XMarkIcon className="h-5 w-5" />
         </button>
@@ -989,7 +989,7 @@ const MetafileLightboxModal: React.FC<{
             }}
             title={i18nService.t('a2aPrevPreview')}
             aria-label={i18nService.t('a2aPrevPreview')}
-            className="absolute left-4 top-1/2 -translate-y-1/2 inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25"
+            className="absolute left-4 top-1/2 -translate-y-1/2 inline-flex h-10 w-10 items-center justify-center rounded-[var(--shape-radius-md)] bg-white/15 text-white transition-colors hover:bg-white/25"
           >
             <ChevronLeftIcon className="h-5 w-5" />
           </button>
@@ -1001,7 +1001,7 @@ const MetafileLightboxModal: React.FC<{
             }}
             title={i18nService.t('a2aNextPreview')}
             aria-label={i18nService.t('a2aNextPreview')}
-            className="absolute right-4 top-1/2 -translate-y-1/2 inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25"
+            className="absolute right-4 top-1/2 -translate-y-1/2 inline-flex h-10 w-10 items-center justify-center rounded-[var(--shape-radius-md)] bg-white/15 text-white transition-colors hover:bg-white/25"
           >
             <ChevronRightIcon className="h-5 w-5" />
           </button>

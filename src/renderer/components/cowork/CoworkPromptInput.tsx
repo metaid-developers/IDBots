@@ -1132,7 +1132,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   };
 
   const containerClass = isLarge
-    ? 'relative rounded-[22px] border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-card focus-within:shadow-elevated'
+    ? 'relative rounded-[22px] border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface'
     : 'relative flex flex-wrap items-end gap-2 p-3 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface';
 
   // Adaptive-composer layout fixes (office purity pass #2 ④, 2026-11-10):
@@ -1722,7 +1722,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   <button
                     type="button"
                     onClick={handleStopClick}
-                    className="p-2 rounded-full bg-claude-surfaceHover hover:bg-claude-border text-claude-text transition-all shadow-subtle hover:shadow-card active:scale-95"
+                    className="p-2 rounded-[var(--shape-radius-md)] bg-claude-surfaceHover hover:bg-claude-border text-claude-text transition-colors"
                     aria-label={i18nService.t('stop')}
                   >
                     <StopIcon className="h-5 w-5" />
@@ -1732,7 +1732,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                     type="button"
                     onClick={() => { void handleSubmit(); }}
                     disabled={!canSubmit}
-                    className="p-2 rounded-full bg-claude-surfaceHover hover:bg-claude-border text-claude-text transition-all shadow-subtle hover:shadow-card active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="p-2 rounded-[var(--shape-radius-md)] bg-claude-surfaceHover hover:bg-claude-border text-claude-text transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     aria-label={isSteerSubmit ? i18nService.t('coworkSendSteer') : i18nService.t('sendMessage')}
                   >
                     <ArrowUpIcon className="h-5 w-5" />
@@ -1801,7 +1801,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               <button
                 type="button"
                 onClick={handleStopClick}
-                className="flex-shrink-0 p-2 rounded-full bg-claude-surfaceHover hover:bg-claude-border text-claude-text transition-all shadow-subtle hover:shadow-card active:scale-95"
+                className="flex-shrink-0 p-2 rounded-[var(--shape-radius-md)] bg-claude-surfaceHover hover:bg-claude-border text-claude-text transition-colors"
                 aria-label={i18nService.t('stop')}
               >
                 <StopIcon className="h-4 w-4" />
@@ -1811,7 +1811,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 type="button"
                 onClick={() => { void handleSubmit(); }}
                 disabled={!canSubmit}
-                className="flex-shrink-0 p-2 rounded-full bg-claude-surfaceHover hover:bg-claude-border text-claude-text transition-all shadow-subtle hover:shadow-card active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex-shrink-0 p-2 rounded-[var(--shape-radius-md)] bg-claude-surfaceHover hover:bg-claude-border text-claude-text transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 aria-label={isSteerSubmit ? i18nService.t('coworkSendSteer') : i18nService.t('sendMessage')}
               >
                 <ArrowUpIcon className="h-4 w-4" />
@@ -1898,7 +1898,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 draftFieldRef.current?.set(suggestion);
                 textareaRef.current?.focus();
               }}
-              className="inline-flex items-center gap-1 rounded-full border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface px-3 py-1.5 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:bg-claude-darkSurfaceInset hover:bg-claude-surfaceInset hover:dark:text-claude-darkText hover:text-claude-text transition-colors max-w-full text-left"
+              className="inline-flex items-center gap-1 rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface px-3 py-1.5 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:bg-claude-darkSurfaceInset hover:bg-claude-surfaceInset hover:dark:text-claude-darkText hover:text-claude-text transition-colors max-w-full text-left"
             >
               <SparklesIcon className="h-3 w-3 flex-shrink-0 text-claude-accent" />
               <span className="truncate">{suggestion}</span>

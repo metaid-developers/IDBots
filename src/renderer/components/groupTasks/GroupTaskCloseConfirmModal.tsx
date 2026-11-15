@@ -117,7 +117,7 @@ const GroupTaskCloseConfirmModal: React.FC<GroupTaskCloseConfirmModalProps> = ({
               onClick={handleConfirm}
               disabled={closing || (isDone && rating == null)}
               className={`flex-1 px-4 py-2 text-sm rounded-lg text-white transition-colors disabled:opacity-50 ${
-                isDone ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-red-500 hover:bg-red-600'
+                isDone ? 'bg-emerald-500 border border-emerald-600 hover:bg-emerald-600' : 'bg-red-500 border border-red-600 hover:bg-red-600'
               }`}
             >
               {i18nService.t(titleKey)}

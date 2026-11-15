@@ -192,7 +192,7 @@ export const PanelMessage: React.FC<{
           type="button"
           data-panel-reaction-chip={currentReaction}
           onClick={() => onToggleReaction(message, currentReaction)}
-          className="rounded-full border border-current/20 px-1.5 py-px text-[10px] leading-3 transition-opacity hover:opacity-70 dark:text-claude-darkTextSecondary text-claude-textSecondary"
+          className="rounded-[var(--shape-radius-md)] border border-current/20 px-1.5 py-px text-[10px] leading-3 transition-opacity hover:opacity-70 dark:text-claude-darkTextSecondary text-claude-textSecondary"
         >
           {currentReaction === 'up' ? '👍' : '👎'}
         </button>

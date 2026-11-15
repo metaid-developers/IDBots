@@ -15,23 +15,11 @@ const sourcePath = path.join(
 );
 
 test('CoworkSessionDetail refreshes the header git branch when it changes', () => {
-  // Windows checkouts are CRLF; the multi-line regexes below are anchored on
-  // LF — normalize once at read time (§11.9).
-  const source = fs.readFileSync(sourcePath, 'utf8').replace(/\r\n/g, '\n');
+  const source = fs.readFileSync(sourcePath, 'utf8');
 
-  // While a session is actively running, the branch chip re-reads the working
-  // directory on a streaming poll. perf-p2 (0bde55b02) replaced the idle 3s
-  // poll with a 15s active-session-only interval so an idle app never churns
-  // child-process probes; focus/visibility still cover the idle flows.
-  assert.match(source, /const GIT_BRANCH_STREAMING_POLL_MS = 15_000;/);
-  assert.match(
-    source,
-    /if \(!sessionActivelyRunning\) return;\s*\n\s*const interval = window\.setInterval\(\(\) => \{\s*\n\s*void refreshGitBranchRef\.current\?\.\(\);\s*\n\s*\}, GIT_BRANCH_STREAMING_POLL_MS\);/,
-  );
-
-  // One immediate probe when the gated effect runs, before the interval —
-  // entering a session refreshes the chip even when nothing is streaming.
-  assert.match(source, /void refreshGitBranchRef\.current\?\.\(\);\s*\n\s*if \(!sessionActivelyRunning\) return;/);
+  // The branch chip must re-read the working directory on an interval so a
+  // `git checkout` outside the app shows up without reopening the session.
+  assert.match(source, /window\.setInterval\(poll, 3000\)/);
 
   // Immediate refreshes on window focus and tab re-visibility cover the
   // common "switched branch in a terminal, came back" flow.
@@ -49,10 +37,10 @@ test('CoworkSessionDetail refreshes the header git branch when it changes', () =
   assert.match(source, /probeInFlight/);
   assert.match(source, /if \(!active \|\| probeInFlight \|\| document\.visibilityState !== 'visible'\) return;/);
 
-  // Failure counting survives the streaming-poll rework (0bde55b02 removed
-  // the three-strike auto-stop): a failed probe reports null and the
-  // active-session interval keeps trying; focus/visibility still re-probe so
-  // a later `git init` is picked up.
+  // Consecutive failures (the normal "not a git repo" case) stop the
+  // interval after three probes; focus/visibility still re-probe so a later
+  // `git init` is picked up.
+  assert.match(source, /consecutiveFailures >= 3/);
   assert.match(source, /consecutiveFailures = branch === null \? consecutiveFailures \+ 1 : 0/);
 
   // The poll must be torn down with the effect (no leaks across sessions).
