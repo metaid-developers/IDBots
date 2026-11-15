@@ -290,6 +290,13 @@ test('surface session-name slot: read-only default, inline editor, empty commit 
   assert.match(componentSource, /text-claude-textSecondary/);
   assert.match(componentSource, /dark:text-claude-darkTextSecondary/);
   assert.doesNotMatch(componentSource, /from 'lucide-react'/);
+  // Stagger shift (owner ruling 2026-11-15 09:34): the title row (icon +
+  // text) nudges 6 px right of the badge's left edge — via transform, NOT
+  // pl, because the centered row only delivers Δ/2 under a pl change; all
+  // THREE mount states carry the same shift so label / editor / spacer
+  // never jump.
+  assert.match(componentSource, /translate-x-\[6px\]/);
+  assert.equal(componentSource.split('translate-x-[6px]').length - 1, 3, 'label + editor + spacer all shifted');
   // Draft state (no open session) — superseded by the owner 18:54
   // left-anchor order: the slot renders a non-interactive spacer (same
   // flex-1 lane) instead of unmounting, so the identity component ahead of
