@@ -1082,7 +1082,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           )}
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col px-2.5 pb-3 pt-1">
+        <div className="flex min-h-0 flex-1 flex-col px-2.5 pb-3 pt-[52px]">
           <BotBrowserCoworkPanel
             onShowSkills={onShowSkills}
             onOpenNewProject={() => onShowSettings({ initialTab: 'projects', openNewProjectForm: true })}
