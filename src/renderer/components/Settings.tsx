@@ -3841,16 +3841,17 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
             {/* OWNER 2026-11-16 00:42: section label + segmented switch share
                 one row at the module's top-right; the label sits OUTSIDE the
                 module card, and the duplicated in-module title is gone. */}
-            <div className="flex items-start justify-between gap-3 pt-[3px] pb-[20px] max-w-3xl px-4"> {/* OWNER 01:03: 20px rhythm below the row — pb lives HERE so both faces (credits/traffic) share it; view containers carry no top padding */} {/* OWNER 00:55: label top and tray top BOTH sit 20px below the header divider (68+1border+4pt+~15pt-4=88 rendered); top-aligned so A/B faces never drift */}
-              <div>
+            <div className="flex items-start justify-between gap-3 pt-[3px] pb-[19px] max-w-3xl px-4"> {/* OWNER 01:03: 20px rhythm below the row — pb lives HERE so both faces (credits/traffic) share it; view containers carry no top padding */} {/* OWNER 00:55: label top and tray top BOTH sit 20px below the header divider (68+1border+4pt+~15pt-4=88 rendered); top-aligned so A/B faces never drift */}
+              {/* OWNER 01:08: label + subtitle inline on ONE line so the row is
+                  exactly as tall as the tray -> the tray's 20px above AND below
+                  are both exact; OWNER 00:52/00:58: subtitle kept, both faces. */}
+              <div className="flex items-baseline gap-2.5">
                 <span className="mt-px block text-base font-semibold leading-none text-claude-text dark:text-claude-darkText">
                   {i18nService.t(creditsSubTab === 'credits' ? 'meUsageInfoTitle' : 'trafficInfoTitle')}
                 </span>
-                {/* OWNER 00:52 steer: keep the small subtitle; OWNER 00:58: BOTH
-                    faces carry one (symmetric rows => zero drift on switch). */}
-                <p className="mt-0.5 text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                <span className="text-[11px] leading-none text-claude-textSecondary dark:text-claude-darkTextSecondary">
                   {i18nService.t(creditsSubTab === 'credits' ? 'meUsageSubtitle' : 'trafficInfoSubtitle')}
-                </p>
+                </span>
               </div>
               <div className="inline-flex h-9 min-w-0 shrink-0 overflow-hidden rounded-[var(--shape-radius-sm)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80">
               {(['credits', 'traffic'] as const).map((sub) => (

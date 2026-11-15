@@ -103,7 +103,7 @@ const MeBalanceOverviewCard: React.FC<{
       </div>
       {/* OWNER 2026-11-16 00:29: action buttons (buy credits / refresh) live
           at the card's bottom-right, after the weekly-reset note line. */}
-      <div className="mt-2 flex items-end justify-between gap-3 border-t border-claude-border/50 dark:border-claude-darkBorder/50 pt-2">
+      <div className="mt-2 flex items-center justify-between gap-3 border-t border-claude-border/50 dark:border-claude-darkBorder/50 pt-3.5"> {/* OWNER 01:08: buy button vertically centered between the divider and the card bottom edge */}
         <p className="text-[10px] leading-relaxed text-claude-textSecondary dark:text-claude-darkTextSecondary">
           {note ?? i18nService.t('mePanelNote')}
         </p>
