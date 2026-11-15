@@ -350,8 +350,8 @@ const GroupTasksView: React.FC<GroupTasksViewProps> = ({
           bar): status filters plus the New Group Task button under Local,
           initiated/joined under OpenTeam; the MetaTask tab brings its own
           header, so it renders no sub row here. */}
+      {/* Same 46px band height as the mode tray band — divider spacing equalized (owner 2026-11-15 18:16). */}
       {mode !== 'metaTask' && (
-        {/* Same 46px band height as the mode tray band — divider spacing equalized (owner 2026-11-15 18:16). */}
         <div className="flex h-[46px] items-center justify-between border-b dark:border-claude-darkBorder border-claude-border px-4 shrink-0">
           <div className="flex">
             {subTabs.map((tab) => (
