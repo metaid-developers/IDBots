@@ -317,6 +317,10 @@ import {
   type WalletToolsControl,
 } from './walletAgentTools';
 import {
+  buildBtcMultisigAgentTools,
+  type BtcMultisigToolsControl,
+} from './btcMultisigAgentTools';
+import {
   buildMrc721AgentTools,
   type Mrc721ToolsControl,
 } from './mrc721AgentTools';
@@ -2545,6 +2549,12 @@ export interface CoworkRunnerOptions {
    */
   walletTools?: WalletToolsControl;
   /**
+   * BTC / MRC20 P2WSH multisig tools. Present on every cowork surface when
+   * wired. Signing and broadcast each open an owner dialog that times out
+   * closed. An on-chain skill calls these; IDBots does not bundle that skill.
+   */
+  btcMultisigTools?: BtcMultisigToolsControl;
+  /**
    * When set, every cowork session gets the mrc721_* tools (MRC-721 pin-based
    * MetaID NFTs): collection issue/mint/transfer from the session bot's own
    * wallet plus index reads (holdings, collections, item/collection detail).
@@ -2934,6 +2944,7 @@ export class CoworkRunner extends EventEmitter {
   private predictionTools?: PredictionAgentControl;
   private metaFileUpload?: MetaFileUploadControl;
   private walletTools?: WalletToolsControl;
+  private btcMultisigTools?: BtcMultisigToolsControl;
   private mrc721Tools?: Mrc721ToolsControl;
   private escrowTools?: { control: EscrowAgentToolsControl; orders: EscrowOrderStore };
   private visionRelay?: VisionRelayControl;
@@ -3158,6 +3169,7 @@ export class CoworkRunner extends EventEmitter {
     this.predictionTools = options?.predictionTools;
     this.metaFileUpload = options?.metaFileUpload;
     this.walletTools = options?.walletTools;
+    this.btcMultisigTools = options?.btcMultisigTools;
     this.mrc721Tools = options?.mrc721Tools;
     this.escrowTools = options?.escrowTools;
     this.visionRelay = options?.visionRelay;
@@ -8652,6 +8664,29 @@ export class CoworkRunner extends EventEmitter {
         estimated_fee_sats: info.estimatedFeeSats,
       } as Record<string, unknown>,
       'allow'
+    );
+    return outcome === 'approved';
+  }
+
+  /**
+   * Owner gate for multisig signing and broadcast. Timeout is deny: an
+   * unanswered prompt must not attach a signature or publish a transaction.
+   */
+  private async confirmBtcMultisigAction(
+    sessionId: string,
+    question: string,
+    toolName: 'wallet_btc_sign_psbt' | 'wallet_btc_broadcast',
+  ): Promise<boolean> {
+    const activeSession = this.activeSessions.get(sessionId);
+    if (!activeSession) return false;
+    const outcome = await this.requestSafetyApproval(
+      sessionId,
+      activeSession.abortController.signal,
+      activeSession,
+      question,
+      toolName,
+      {},
+      'deny',
     );
     return outcome === 'approved';
   }
@@ -14876,6 +14911,20 @@ export class CoworkRunner extends EventEmitter {
           resolveMetabotId: (sid) => this.getMemoryBackend().resolveMetabotIdForMemory(sid) ?? undefined,
           confirmExternalTransfer: (info) => this.confirmExternalTransfer(sessionId, info),
         })
+      );
+    }
+    // Multisig tools are separate from wallet_transfer: they sign only P2WSH
+    // multisig inputs, and both signing and broadcast time out closed.
+    if (this.btcMultisigTools) {
+      memoryTools.push(
+        ...buildBtcMultisigAgentTools({
+          tool,
+          control: this.btcMultisigTools,
+          sessionId,
+          resolveMetabotId: (sid) => this.getMemoryBackend().resolveMetabotIdForMemory(sid) ?? undefined,
+          confirmSign: (question) => this.confirmBtcMultisigAction(sessionId, question, 'wallet_btc_sign_psbt'),
+          confirmBroadcast: (question) => this.confirmBtcMultisigAction(sessionId, question, 'wallet_btc_broadcast'),
+        }),
       );
     }
     // MRC-721 tools (pin-based MetaID NFTs): issue/mint/transfer from the

@@ -213,6 +213,8 @@ import {
   type WalletQueryChain,
 } from './services/walletQueryService';
 import { executeWalletMvcTransfer } from './services/walletTransferService';
+import { openMetabotBtcWallet, signBtcPsbtPartial } from './services/btcPartialSign';
+import { broadcastBtcTx, fetchBtcUtxos } from './libs/btcApi';
 import { executeMvcNftTransfer, executeMvcNftTrade, getMvcNftBalance, getMvcNftChainSellUtxo, getMvcNftSellOrders } from './services/mvcNftService';
 import { executeMvcTokenSellTrade, getMvcFtTokenBalance, verifyMvcTokenSellListing } from './services/mvcTokenSellService';
 import {
@@ -8509,6 +8511,35 @@ const getCoworkRunner = () => {
             { ...input, store: getMetabotStore() },
           ),
         ),
+      },
+      // BTC P2WSH multisig tools used by an on-chain skill. Signing stays in
+      // this process and refuses personal (non-multisig) inputs.
+      btcMultisigTools: {
+        listBtcUtxos: async (address: string) => {
+          const list = await fetchBtcUtxos(address, false);
+          return list.map((item) => ({
+            txid: item.txId,
+            vout: item.outputIndex,
+            value: item.satoshis,
+          }));
+        },
+        getBtcSignerIdentity: (metabotId: number) => {
+          const record = getMetabotStore().getMetabotWalletByMetabotId(metabotId);
+          if (!record?.mnemonic?.trim()) throw new Error(`MetaBot wallet not found: ${metabotId}`);
+          const wallet = openMetabotBtcWallet({ mnemonic: record.mnemonic, path: record.path });
+          const publicKey = wallet.getPublicKey();
+          return {
+            address: wallet.getAddress(),
+            publicKey: Buffer.isBuffer(publicKey) ? publicKey.toString('hex') : String(publicKey),
+          };
+        },
+        signBtcPsbtPartial: (metabotId: number, input: { psbtHex: string; inputIndexes?: number[] }) => {
+          const record = getMetabotStore().getMetabotWalletByMetabotId(metabotId);
+          if (!record?.mnemonic?.trim()) throw new Error(`MetaBot wallet not found: ${metabotId}`);
+          const wallet = openMetabotBtcWallet({ mnemonic: record.mnemonic, path: record.path });
+          return signBtcPsbtPartial(wallet, input);
+        },
+        broadcastBtcTx: (rawTx: string) => broadcastBtcTx(rawTx),
       },
       // escrow_* tool backends (S3 generalized escrow, first-round slice):
       // party resolution through the local roster plus the shared escrow
