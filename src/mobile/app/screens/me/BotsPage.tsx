@@ -6,6 +6,7 @@ import { useMetabots, type BotOperationResult } from '../../hooks/useMetabots';
 import type { EditorBrainOption } from '../../components/BotEditorForm';
 import { BotEditorForm } from '../../components/BotEditorForm';
 import { BotAvatar } from '../../components/BotAvatar';
+import { TwinBadge } from '../../components/TwinBadge';
 import { BottomSheet } from '../../components/BottomSheet';
 import { sortBotsForList } from '../../botList';
 import { SecondaryPageShell } from './SecondaryPageShell';
@@ -92,7 +93,10 @@ export function BotsPage(props: {
           >
             <BotAvatar name={bot.name} avatar={bot.avatar} testId={`bot-avatar-${bot.id}`} />
             <div className="twin-list-copy">
-              <p className="twin-list-title truncate">{bot.name}</p>
+              <p className="twin-list-title truncate">
+                  {bot.name}
+                  {bot.metabot_type === 'twin' ? <span className="ml-2 inline-flex"><TwinBadge /></span> : null}
+                </p>
               {bot.role ? (
                 <p className="twin-list-subtitle truncate" data-testid={`bot-role-${bot.id}`}>
                   {bot.role}

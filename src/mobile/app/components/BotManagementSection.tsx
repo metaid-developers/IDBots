@@ -5,6 +5,7 @@ import type { MobileMetabot } from '../../bridge/types';
 import { useMetabots, type BotOperationResult } from '../hooks/useMetabots';
 import { sortBotsForList } from '../botList';
 import { BotAvatar } from './BotAvatar';
+import { TwinBadge } from './TwinBadge';
 import { BotEditorForm, type EditorBrainOption } from './BotEditorForm';
 import { BottomSheet } from './BottomSheet';
 import { Section } from './Section';
@@ -74,9 +75,11 @@ export function BotManagementSection(): JSX.Element {
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[15px] text-[var(--text-primary)]">
                   {bot.name}
-                  <span className={`ml-2 text-xs ${bot.metabot_type === 'twin' ? 'text-[var(--color-primary)]' : 'text-[var(--text-secondary)]'}`}>
-                    {t(bot.metabot_type === 'twin' ? 'mobile.me.botType.twin' : 'mobile.me.botType.worker')}
-                  </span>
+                  {bot.metabot_type === 'twin' ? (
+                    <span className="ml-2 inline-flex"><TwinBadge /></span>
+                  ) : (
+                    <span className="ml-2 text-xs text-[var(--text-secondary)]">{t('mobile.me.botType.worker')}</span>
+                  )}
                 </p>
                 {bot.role ? (
                   <p className="truncate text-xs text-[var(--text-secondary)]" data-testid={`bot-role-${bot.id}`}>

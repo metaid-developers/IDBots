@@ -5,6 +5,7 @@ import type { MobileMetabot } from '../../bridge/types';
 import type { BotOperationResult, MobileBotInput } from '../hooks/useMetabots';
 import { defaultBotBrains } from '../botDefaults';
 import { BotAvatar } from './BotAvatar';
+import { TwinBadge } from './TwinBadge';
 import { fileToAvatarDataUrl } from '../avatarUpload';
 import AvatarPickerModal, { type AvatarPickerNftItem } from '../../../renderer/components/avatar/AvatarPickerModal';
 import {
@@ -212,6 +213,7 @@ function BrainBlock(props: {
 function FallbackBrainBlock(props: {
   options: EditorBrainOption[];
   brain: EditorBrainOption | null;
+  primaryBrain: EditorBrainOption | null;
   effort: string;
   busy: boolean;
   onBrainChange: (option: EditorBrainOption | null) => void;
@@ -235,7 +237,7 @@ function FallbackBrainBlock(props: {
         >
           <option value="">{t('mobile.me.botFallbackNone')}</option>
           {props.options
-            .filter((option) => !props.brain || brainValue(option) !== brainValue(props.brain))
+            .filter((option) => !props.primaryBrain || brainValue(option) !== brainValue(props.primaryBrain))
             .map((option) => (
               <option key={`${option.providerKey}\n${option.modelId}`} value={brainValue(option)}>
                 {option.label}
@@ -319,7 +321,7 @@ function AvatarField(props: {
           ownerGlobalMetaId={props.ownerGlobalMetaId}
           loadNfts={loadNfts}
           maxLocalBytes={200 * 1024}
-          allowBuiltin={false}
+          allowBuiltin={true}
           allowNft={Boolean(props.botId)}
           readLocalFile={fileToAvatarDataUrl}
           onPick={(reference) => {
@@ -495,6 +497,11 @@ export function BotEditorForm(props: {
       {/* Identity pair: name + role are the only create-mode fields and stay
           top-level in edit mode (desktop persona parity). */}
       <div className="twin-panel twin-panel-padded">
+        {bot?.metabot_type === 'twin' ? (
+          <div className="mb-1 flex justify-end" data-testid="bot-editor-twin">
+            <TwinBadge />
+          </div>
+        ) : null}
         <Field htmlFor="bot-name" label={t('mobile.me.botNameLabel')}>
           <input
             id="bot-name"
@@ -545,6 +552,7 @@ export function BotEditorForm(props: {
             <FallbackBrainBlock
               options={options}
               brain={fallbackBrain}
+              primaryBrain={brain}
               effort={fallbackEffort}
               busy={busy}
               onBrainChange={(option) => {
@@ -638,6 +646,7 @@ export function BotEditorForm(props: {
             <FallbackBrainBlock
               options={options}
               brain={fallbackBrain}
+              primaryBrain={brain}
               effort={fallbackEffort}
               busy={busy}
               onBrainChange={(option) => {

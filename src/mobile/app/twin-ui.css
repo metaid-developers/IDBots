@@ -439,6 +439,22 @@ textarea.twin-input {
   box-shadow: 0 2px 8px rgba(40, 45, 55, 0.1);
 }
 
+.twin-badge {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--twin-accent) 35%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--twin-accent) 12%, var(--twin-surface));
+  color: var(--twin-accent);
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+}
+
 .twin-chip {
   min-height: 38px;
   display: inline-flex;
