@@ -50,8 +50,8 @@ export type LiveStageCollaboratingWorker = {
   id: string;
   name: string;
   avatar?: string;
-  /** Communication flow: 'dispatch' (Twin→Worker), 'working' (active), 'return' (Worker→Twin review). */
-  direction: 'dispatch' | 'working' | 'return';
+  /** Communication flow: 'dispatch' (Twin→Worker), 'working' / 'waiting' (active/waiting), 'return' / 'verifying' (Worker→Twin review). */
+  direction: 'dispatch' | 'working' | 'waiting' | 'return' | 'verifying';
   title: string;
   startedAt: number;
 };
@@ -757,6 +757,8 @@ export type LiveStageDelegationWait = {
   title?: string;
   /** Total open delegations; >1 renders "X 等 n 位" / "X and n-1 more". */
   total?: number;
+  /** Distinguish waiting on Worker execution vs back-office Twin verification. */
+  phase?: 'worker_running' | 'back_office_verifying';
   /** Earliest delegation start (epoch ms) — the elapsed clock measures from here. */
   startedAt?: number;
   nowMs?: number;
@@ -783,22 +785,36 @@ export function waitingLiveStage(state: LiveStageState, wait: LiveStageDelegatio
       : node);
     scene.participants = scene.participants.map((participant, index) => index === 1 ? workerLabel : participant);
   }
+  const verifying = wait.phase === 'back_office_verifying';
   const title = wait.title?.replace(/\s+/g, ' ').trim();
-  const caption = title
+  const headline = verifying
+    ? (language === 'zh' ? `${workerLabel} 已交回，正在核验结果` : `${workerLabel} returned — verifying now`)
+    : scene.headline;
+  const kicker = verifying
+    ? (language === 'zh' ? '后台核验中' : 'Verifying')
+    : scene.kicker;
+  const caption = verifying
     ? (language === 'zh'
-      ? `${clip(title, 60)}。交回来后我会核对，再向你汇报。`
-      : `${clip(title, 60)}. When it's back I'll check it and report to you.`)
-    : scene.caption;
+        ? `${title ? `${clip(title, 54)} · ` : ''}正在后台核查产出与验收标准，整理完毕立即向你汇报。`
+        : `${title ? `${clip(title, 54)} · ` : ''}Checking deliverables in the back office; I'll report right after.`)
+    : title
+      ? (language === 'zh'
+        ? `${clip(title, 60)}。交回来后我会核对，再向你汇报。`
+        : `${clip(title, 60)}. When it's back I'll check it and report to you.`)
+      : scene.caption;
   return {
     ...state,
     ...scene,
+    kicker,
+    headline,
     caption,
     captionSource: 'specific',
+    speechRest: undefined,
     family: 'waiting',
     handoff: null,
     phaseStartedAt: wait.startedAt ?? nowMs,
     revision: state.revision + 1,
-    motion: { ...state.motion, preset: 'waiting', energy: .4, durationMs: 720 },
+    motion: { ...state.motion, preset: 'waiting', energy: .36, durationMs: 720 },
     eventWindow: [...state.eventWindow, { family: 'waiting' as const }].slice(-8),
   };
 }

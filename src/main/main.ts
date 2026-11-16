@@ -9299,7 +9299,28 @@ const studioDelegationLookupDeps = {
   getMetabotById: (id: number) => getMetabotStore().getMetabotById(id),
   resolveAvatar: resolveLiveStageBuiltinAvatar,
 };
-const listOpenStudioDelegations = (sessionId: string) => listStudioOpenDelegations(studioDelegationLookupDeps, sessionId);
+const listRawOpenStudioDelegations = (sessionId: string) =>
+  listStudioOpenDelegations(studioDelegationLookupDeps, sessionId);
+const listOpenStudioDelegations = (sessionId: string) => {
+  const open = listRawOpenStudioDelegations(sessionId);
+  if (open.length > 0) return open;
+  const verifying = studioChiefOfStaffService?.getActiveSupervisionForSession(sessionId) ?? null;
+  if (!verifying) return open;
+  const bot = getMetabotStore().getMetabotById(verifying.workerMetabotId);
+  const avatar = bot?.avatar && /^(?:data:image\/|https?:\/\/)/i.test(bot.avatar)
+    ? bot.avatar
+    : resolveLiveStageBuiltinAvatar(bot?.avatar);
+  return [{
+    attemptId: `verify:${verifying.attemptId}`,
+    workerMetabotId: verifying.workerMetabotId,
+    workerName: verifying.workerName,
+    ...(avatar ? { workerAvatar: avatar } : {}),
+    ...(verifying.workerSessionId ? { workerSessionId: verifying.workerSessionId } : {}),
+    title: verifying.title,
+    phase: 'back_office_verifying' as const,
+    startedAt: verifying.startedAt,
+  }];
+};
 // Projection discipline (2026-11-12 owner ruling): the gate counts ONLY
 // attempts whose own status is queued/running — a timed-out attempt is
 // already marked completed before the Twin is notified and can still
@@ -9330,7 +9351,13 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
           id: entry.attemptId,
           name: entry.workerName ?? `Bot #${entry.workerMetabotId}`,
           ...(entry.workerAvatar ? { avatar: entry.workerAvatar } : {}),
-          direction: (nowMs - entry.startedAt < 12_000 ? 'dispatch' : 'working') as 'dispatch' | 'working' | 'return',
+          direction: (
+            entry.phase === 'back_office_verifying'
+              ? 'verifying'
+              : nowMs - entry.startedAt < 12_000
+                ? 'dispatch'
+                : 'working'
+          ) as 'dispatch' | 'working' | 'waiting' | 'return' | 'verifying',
           title: entry.title,
           startedAt: entry.startedAt,
         }));
@@ -9374,14 +9401,16 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
           const sessionBorn = candidates.find((c) => ltStore.getTask(c.id)?.definitionSessionId === sessionId);
           if (sessionBorn) focusedId = sessionBorn.id;
         }
-        if (!focusedId && candidates.length > 0) {
-          const activeFirst = candidates.find((c) => c.stage === 'active' && c.managedState === 'in_progress') ?? candidates[0];
-          focusedId = activeFirst.id;
+        // Issue 1 (owner feedback 2026-11-16): NEVER fall back to highlighting
+        // an unrelated historical task when the current Studio session has not
+        // yet created or focused a task of its own.
+        if (!focusedId && queuedDecisions === 0) {
+          return null;
         }
 
         const ordered = [...candidates].sort((a, b) => {
-          if (a.id === focusedId) return -1;
-          if (b.id === focusedId) return 1;
+          if (focusedId && a.id === focusedId) return -1;
+          if (focusedId && b.id === focusedId) return 1;
           return String(b.updatedAt).localeCompare(String(a.updatedAt));
         });
 
@@ -9392,7 +9421,7 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
           accepted: card.progress.accepted,
           total: Math.max(1, card.progress.total),
           currentSubtask: card.currentSubtaskTitle,
-          isCurrent: card.id === focusedId,
+          isCurrent: Boolean(focusedId && card.id === focusedId),
         }));
         return { queuedDecisions, tasks: activeTasks };
       },
@@ -10084,11 +10113,14 @@ const getStudioChiefOfStaffService = () => {
           .cards.some((card) => card.stage === 'defining' && ltStore.getTask(card.id)?.definitionSessionId === sid);
       },
       listOpenSiblingDelegations: (studioSessionId) =>
-        listOpenStudioDelegations(studioSessionId).map((entry) => ({
+        listRawOpenStudioDelegations(studioSessionId).map((entry) => ({
           attemptId: entry.attemptId,
+          workerMetabotId: entry.workerMetabotId,
           workerName: entry.workerName ?? `bot-${entry.workerMetabotId}`,
+          workerSessionId: entry.workerSessionId,
           title: entry.title,
           status: 'running',
+          startedAt: entry.startedAt,
         })),
       projectShowcaseHtml: async (input) => {
         const projInput = {
@@ -10174,6 +10206,7 @@ const getTwinOrchestrationService = () => new TwinOrchestrationService({
   // Hard gate: delegations from long-term-bound sessions always carry the anchor.
   longTermTaskStore: () => getLongTermTaskStore(),
   isStudioSourceSession: (sid) => getStudioChiefOfStaffService().isStudioOwnerSession(sid),
+  getFocusedTaskForSession: (sid) => getStudioChiefOfStaffService().getFocusedTaskId(sid),
   onStudioWorkerTerminalState: (event) =>
     getStudioChiefOfStaffService().onStudioWorkerTerminalState(event),
   directory: {

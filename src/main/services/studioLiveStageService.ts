@@ -716,7 +716,8 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
         ...(first.workerAvatarRef ? { rawAvatarRef: first.workerAvatarRef } : {}),
       };
     }
-    const signature = JSON.stringify([delegations.length, first.workerName ?? '', workerAvatar ?? '', first.title ?? '', startedAt]);
+    const phase = first.phase === 'back_office_verifying' ? 'back_office_verifying' : 'worker_running';
+    const signature = JSON.stringify([delegations.length, first.workerName ?? '', workerAvatar ?? '', first.title ?? '', startedAt, phase]);
     if (run.state.family === 'waiting' && run.waitingSignature === signature) return;
     run.waitingSignature = signature;
     // The delegation clock starts at the earliest worker start, not at the
@@ -727,6 +728,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       workerAvatar,
       title: first.title,
       total: delegations.length,
+      phase,
       startedAt,
       nowMs: now(),
     });

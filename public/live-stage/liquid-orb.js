@@ -53,7 +53,7 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     'metaweb-research': { style: 9, speed: .95, radius: .72, warp: 3.7, contourDeform: .6, glassOpacity: .64, edgeGlow: .08 },
     making: { style: 9, speed: .9, radius: .72, warp: 3.8, contourDeform: .7, glassOpacity: .64, edgeGlow: .08 },
     delegation: { style: 9, speed: 1, radius: .72, warp: 3.8, contourDeform: .65, glassOpacity: .64, edgeGlow: .08 },
-    waiting: { style: 9, speed: .5, radius: .72, warp: 3.2, contourDeform: .28, glassOpacity: .64, edgeGlow: .08 },
+    waiting: { style: 9, speed: .46, radius: .72, warp: 2.95, contourDeform: .18, glassOpacity: .64, edgeGlow: .08 },
     'worker-report': { style: 9, speed: .9, radius: .72, warp: 3.6, contourDeform: .5, glassOpacity: .64, edgeGlow: .08 },
     verification: { style: 9, speed: .72, radius: .72, warp: 3.4, contourDeform: .38, glassOpacity: .64, edgeGlow: .08 },
     'browser-action': { style: 9, speed: .92, radius: .72, warp: 3.6, contourDeform: .48, glassOpacity: .64, edgeGlow: .08 },
@@ -69,6 +69,7 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
   window.liquidOrbActivityForFamily = (family) => {
     if (family === 'reasoning') return 'thinking';
     if (family === 'speaking') return 'speaking';
+    if (family === 'waiting') return 'waiting';
     if (family === 'idle' || family === 'owner-needed' || family === 'problem' || family === 'report-ready' || family === 'complete') return 'resting';
     return 'working';
   };

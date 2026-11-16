@@ -71,6 +71,14 @@ export interface DelegateLocalWorkerInput {
   idempotencyKey?: string | null;
   longtermTaskId?: string | null;
   longtermSubtaskId?: string | null;
+  /**
+   * When false/omitted in Studio mode, re-delegating to the SAME Worker on the
+   * SAME Managed Task automatically cancels & stops that Worker's obsolete
+   * in-flight attempt so mid-flight direction updates never spawn colliding
+   * parallel runs. Set true ONLY when the same Worker must genuinely execute
+   * two independent parallel tasks simultaneously.
+   */
+  parallelSameWorker?: boolean;
 }
 
 export interface DelegateLocalWorkerResult {
@@ -126,6 +134,8 @@ export interface TwinOrchestrationServiceDeps {
   longTermTaskStore?: () => LongTermTaskStore;
   /** True when the delegating session is the owner's Studio conversation (auto-ledgers unlinked delegations as quick task cards). */
   isStudioSourceSession?: (sessionId: string) => boolean;
+  /** Active focused Managed Task id for a Studio session, reused across iterative revision rounds. */
+  getFocusedTaskForSession?: (sessionId: string) => string | null;
   runWorkerTurn?: (params: RunOrchestratorSkillTurnParams) => Promise<string>;
   /**
    * Round-4 r6: worker-completion notification to the Twin. Defaults to the
@@ -864,6 +874,23 @@ export class TwinOrchestrationService {
         }
       }
       if (!longtermContext && this.deps.isStudioSourceSession?.(sourceSessionId)) {
+        const focusedTaskId = this.deps.getFocusedTaskForSession?.(sourceSessionId)?.trim() || '';
+        if (focusedTaskId) {
+          const focusedDetail = ltStore.getTask(focusedTaskId);
+          if (focusedDetail && focusedDetail.stage === 'active') {
+            const sub = focusedDetail.subtasks.find((item) => item.id === focusedDetail.currentSubtaskId)
+              ?? focusedDetail.subtasks[0];
+            if (sub) {
+              longtermContext = {
+                taskId: focusedDetail.id,
+                subtaskId: sub.id,
+                reportSessionId: focusedDetail.definitionSessionId ?? sourceSessionId,
+              };
+            }
+          }
+        }
+      }
+      if (!longtermContext && this.deps.isStudioSourceSession?.(sourceSessionId)) {
         const quickTitle = String(input.taskIntent ?? objective).split('\n')[0].trim().slice(0, 80) || objective.slice(0, 80);
         const quickCreated = ltStore.createQuickTask(
           {
@@ -881,6 +908,36 @@ export class TwinOrchestrationService {
             subtaskId: quickCreated.value.subtasks[0].id,
             reportSessionId: sourceSessionId,
           };
+        }
+      }
+    }
+
+    // Mid-flight course-correction supersede (Issue 5, session 23d32653):
+    // when the owner adjusts direction mid-flight ("可以让他出三个版本") and the
+    // Twin re-dispatches the SAME Worker on the SAME Studio task without
+    // `parallelSameWorker: true`, automatically cancel & stop that Worker's
+    // obsolete in-flight run so two colliding runs never execute side-by-side.
+    if (
+      this.deps.isStudioSourceSession?.(sourceSessionId)
+      && input.parallelSameWorker !== true
+      && !effectiveOrchTaskId
+    ) {
+      const targetLtId = longtermContext?.taskId ?? null;
+      const priorAttempts = this.deps.orchestrationStore.listAttemptsForSourceSessions([sourceSessionId]) ?? [];
+      const supersededTaskIds = new Set<string>();
+      for (const priorAttempt of priorAttempts) {
+        if (priorAttempt.workerMetabotId !== workerMetabotId) continue;
+        if (!['queued', 'running', 'timed_out'].includes(priorAttempt.status)) continue;
+        const priorTask = this.deps.orchestrationStore.getTaskForStep(priorAttempt.stepId);
+        if (!priorTask || !['planning', 'running'].includes(priorTask.status)) continue;
+        if (targetLtId && priorTask.longtermTaskId && priorTask.longtermTaskId !== targetLtId) continue;
+        if (supersededTaskIds.has(priorTask.id)) continue;
+        supersededTaskIds.add(priorTask.id);
+        try {
+          await this.cancelTask(sourceSessionId, priorTask.id);
+          console.log(`[TwinOrchestration] Auto-superseded in-flight task ${priorTask.id} for Worker #${workerMetabotId} on updated Studio instruction`);
+        } catch (cancelErr) {
+          console.warn(`[TwinOrchestration] Auto-supersede cancel failed for ${priorTask.id}: ${cancelErr instanceof Error ? cancelErr.message : String(cancelErr)}`);
         }
       }
     }

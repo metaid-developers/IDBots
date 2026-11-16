@@ -10032,6 +10032,7 @@ export class CoworkRunner extends EventEmitter {
           idempotencyKey: typeof toolInput.idempotencyKey === 'string' ? toolInput.idempotencyKey : null,
           longtermTaskId: typeof toolInput.longtermTaskId === 'string' ? toolInput.longtermTaskId : null,
           longtermSubtaskId: typeof toolInput.longtermSubtaskId === 'string' ? toolInput.longtermSubtaskId : null,
+          parallelSameWorker: toolInput.parallelSameWorker === true,
         });
         this.studioChiefOfStaffTools?.markPresence(sessionId, 'idle');
         return { success: true, text: JSON.stringify({ ok: true, ...delegated }) };
@@ -13945,6 +13946,7 @@ export class CoworkRunner extends EventEmitter {
             idempotencyKey: z.string().optional(),
             longtermTaskId: z.string().optional().describe('Optional Managed Task Tree id (ltt_...) to bind this Worker delegation to.'),
             longtermSubtaskId: z.string().optional().describe('Optional Managed Task Tree subtask id (lts_...) to bind this Worker delegation to.'),
+            parallelSameWorker: z.boolean().optional().describe('Leave false/omitted when updating or revising an in-flight instruction for the SAME Worker (the host will automatically stop their obsolete in-flight run and replace it cleanly). Set true ONLY when you intentionally want the exact same Worker running two separate parallel jobs at once.'),
           },
           async (args) => {
             const result = await this.handleHostToolExecution({ toolName: 'local_worker_delegate', toolInput: args }, sessionId);

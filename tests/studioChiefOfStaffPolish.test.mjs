@@ -55,7 +55,7 @@ test('Issue 1 & 6: Live Stage measures live DOM card endpoints, hides duplicate 
   assert.match(stageJs, /const cardRect = cardEl\.getBoundingClientRect\(\)/);
   assert.doesNotMatch(stageJs, /height \* \(\.22 \+ index \* \.11\)/, 'guessed percentage Y anchors retired');
   assert.match(stageJs, /id === 'worker' && constellationActive/, 'single hybrid-worker bubble hides when constellation is active');
-  assert.match(stageJs, /restingScene[\s\S]{0,180}direction === 'dispatch' \|\| entry\?\.direction === 'working'/, 'completed turns never leave stale return curves');
+  assert.match(stageJs, /restingScene[\s\S]{0,320}direction === 'dispatch'[\s\S]{0,120}direction === 'working'/, 'completed turns never leave stale return curves');
 
   // Focused task highlighted on top + collapsible background tasks:
   assert.match(stageJs, /task-hud-current-pill/);

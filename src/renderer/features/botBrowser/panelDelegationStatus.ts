@@ -20,6 +20,7 @@ export interface PanelOpenDelegation {
   workerAvatar?: string;
   workerSessionId?: string;
   title: string;
+  phase?: 'worker_running' | 'back_office_verifying';
   /** Epoch ms (delegation start, queuedAt fallback). */
   startedAt: number;
 }
@@ -70,6 +71,18 @@ export function buildPanelDelegationStatusCopy(
     || (language === 'zh' ? '你的 Twin' : 'your Twin');
   const workerName = (primary.workerName ?? '').trim()
     || (language === 'zh' ? '协作 Bot' : 'a teammate bot');
+  if (primary.phase === 'back_office_verifying') {
+    const elapsed = formatPanelDelegationElapsed(nowMs - primary.startedAt, language);
+    return {
+      line1: language === 'zh'
+        ? `${workerName} 已交回成果，${twin} 正在后台核验中 · 已 ${elapsed}`
+        : `${workerName} returned results — ${twin} is verifying · ${elapsed}`,
+      line2: language === 'zh'
+        ? `请稍候，${twin} 核验整理完毕后立即向你汇报`
+        : `Hang tight — ${twin} will report as soon as verification finishes`,
+      primary,
+    };
+  }
   const line1 = sorted.length === 1
     ? i18nService.tIn(language, 'panelDelegationWorkingOne')
         .replace('{worker}', workerName)
