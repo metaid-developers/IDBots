@@ -337,7 +337,7 @@ const WelcomeFlow: React.FC<WelcomeFlowProps> = ({ onEnterWithBot, onEnterWithou
           <div className="flex flex-col items-end gap-2">
             {status === 'working' && (
               <div className="flex items-center gap-2 text-sm text-content-secondary">
-                <span className="h-4 w-4 animate-spin rounded-full border-2 border-[rgb(var(--color-accent-text))] border-t-transparent" />
+                <span className="h-4 w-4 animate-spin rounded-full border border-[rgb(var(--color-accent-text))] border-t-transparent" />
                 {i18nService.t('welcomeSettingUp')}
               </div>
             )}

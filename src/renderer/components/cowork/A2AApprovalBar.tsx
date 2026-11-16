@@ -69,7 +69,7 @@ const A2AApprovalBar: React.FC<{ permission: CoworkPermissionRequest }> = ({ per
           type="button"
           disabled={responding}
           onClick={() => respond(buildAllowResult(permission))}
-          className="btn-idchat-primary-filled rounded-lg px-4 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+          className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] rounded-lg px-4 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
         >
           {responding ? i18nService.t('processing') : i18nService.t('coworkApprove')}
         </button>

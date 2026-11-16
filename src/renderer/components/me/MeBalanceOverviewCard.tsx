@@ -17,9 +17,16 @@ import {
   meResetParts,
   subscribeMeSnapshot,
 } from './mePointsStore';
+import { ArrowPathIcon } from '@heroicons/react/24/outline';
 import { meTierDisplayName } from './IdbotsPlanCard';
 
-const MeBalanceOverviewCard: React.FC<{ note?: string }> = ({ note }) => {
+const MeBalanceOverviewCard: React.FC<{
+  note?: string;
+  footer?: React.ReactNode;
+  /** OWNER 2026-11-16 00:40: refresh is an inline icon after 本周额度, not a footer box button. */
+  onRefresh?: () => void;
+  refreshing?: boolean;
+}> = ({ note, footer, onRefresh, refreshing }) => {
   const snapshot = React.useSyncExternalStore(subscribeMeSnapshot, getMeSnapshot, getMeSnapshot);
 
   const balance = snapshot.balance;
@@ -61,6 +68,17 @@ const MeBalanceOverviewCard: React.FC<{ note?: string }> = ({ note }) => {
             <span className="rounded-full bg-claude-accent/10 px-2 py-0.5 text-[10px] font-medium text-claude-accent dark:text-claude-darkAccent">
               {meTierDisplayName(currentPlan, activePlanId || 'free')}
             </span>
+            {onRefresh ? (
+              <button
+                type="button"
+                aria-label={i18nService.t('freeQuotaRefresh')}
+                title={i18nService.t('freeQuotaRefresh')}
+                onClick={onRefresh}
+                className="ml-0.5 inline-flex h-5 w-5 items-center justify-center rounded-[var(--shape-radius-sm)] text-claude-textSecondary hover:bg-claude-surfaceHover hover:text-claude-text dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText transition-colors"
+              >
+                <ArrowPathIcon className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+              </button>
+            ) : null}
           </p>
           <p className="mt-1 text-lg font-semibold tabular-nums text-claude-text dark:text-claude-darkText">
             {balance ? `${formatMe(remainingMe)} / ${formatMe(grantMe)}` : '—'}
@@ -83,9 +101,14 @@ const MeBalanceOverviewCard: React.FC<{ note?: string }> = ({ note }) => {
           </p>
         </div>
       </div>
-      <p className="mt-2 border-t border-claude-border/50 dark:border-claude-darkBorder/50 pt-2 text-[10px] leading-relaxed text-claude-textSecondary dark:text-claude-darkTextSecondary">
-        {note ?? i18nService.t('mePanelNote')}
-      </p>
+      {/* OWNER 2026-11-16 00:29: action buttons (buy credits / refresh) live
+          at the card's bottom-right, after the weekly-reset note line. */}
+      <div className="mt-2 flex items-center justify-between gap-3 border-t border-claude-border/50 dark:border-claude-darkBorder/50 pt-3.5"> {/* OWNER 01:08: buy button vertically centered between the divider and the card bottom edge */}
+        <p className="text-[10px] leading-relaxed text-claude-textSecondary dark:text-claude-darkTextSecondary">
+          {note ?? i18nService.t('mePanelNote')}
+        </p>
+        {footer ? <div className="flex shrink-0 items-center gap-2">{footer}</div> : null}
+      </div>
     </div>
   );
 };

@@ -61,7 +61,7 @@ const AgentGameConsentCard: React.FC<AgentGameConsentCardProps> = ({ info, onRes
           </div>
           <button
             onClick={handleDeny}
-            className="p-2 rounded-lg dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary text-claude-textSecondary transition-colors"
+            className="p-2 rounded-[8px] dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary text-claude-textSecondary transition-colors"
             aria-label="Close"
           >
             <XMarkIcon className="h-5 w-5" />
@@ -96,13 +96,13 @@ const AgentGameConsentCard: React.FC<AgentGameConsentCardProps> = ({ info, onRes
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t dark:border-claude-darkBorder border-claude-border">
           <button
             onClick={handleDeny}
-            className="px-4 py-2 rounded-lg text-sm font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+            className="px-4 py-2 rounded-[8px] border dark:border-claude-darkBorder border-claude-border text-sm font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
           >
             Deny
           </button>
           <button
             onClick={() => onRespond(true)}
-            className="px-4 py-2 rounded-lg text-sm font-medium btn-idchat-primary-filled"
+            className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] px-4 py-2 rounded-lg text-sm font-medium "
           >
             Authorize
           </button>

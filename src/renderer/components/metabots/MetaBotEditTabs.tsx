@@ -623,7 +623,7 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
           type="button"
           onClick={onCancel}
           disabled={savingTab !== null}
-          className="px-3 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50"
+          className="px-3 py-2 text-sm rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50"
         >
           {i18nService.t('cancel')}
         </button>
@@ -632,7 +632,7 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
           data-slot={`metabot-edit-save-${tab}`}
           onClick={() => void handleSaveTab(tab)}
           disabled={savingTab !== null}
-          className="btn-idchat-primary-filled px-3 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+          className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] inline-flex items-center justify-center rounded-[var(--shape-radius-md)] px-3 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {savingTab === tab ? i18nService.t('saving') : i18nService.t('metabotSaveAndSyncChain')}
         </button>
@@ -886,7 +886,7 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
                 <span className="relative inline-flex shrink-0 group">
                   <button
                     type="button"
-                    className="rounded-full p-0.5 dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-accent dark:hover:text-claude-accent transition-colors"
+                    className="rounded-[var(--shape-radius-md)] p-0.5 dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-accent dark:hover:text-claude-accent transition-colors"
                     aria-label={i18nService.t('metabotPrimaryLlmHint')}
                   >
                     <QuestionMarkCircleIcon className="h-4 w-4" />
@@ -1112,7 +1112,7 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
                 type="button"
                 onClick={handleAddAllowChatSkill}
                 disabled={!canAddSelectedAllowChatSkill}
-                className="shrink-0 px-3 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                className="shrink-0 px-3 py-2 text-sm rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
                 <PlusIcon className="h-4 w-4" />
                 <span>{i18nService.t('metabotAdd')}</span>
@@ -1131,7 +1131,7 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
                     <button
                       type="button"
                       onClick={() => handleRemoveAllowChatSkill(skillId)}
-                      className="inline-flex h-4 w-4 items-center justify-center rounded-full text-claude-textSecondary dark:text-claude-darkTextSecondary hover:bg-black/10 dark:hover:bg-white/10"
+                      className="inline-flex h-4 w-4 items-center justify-center rounded-[var(--shape-radius-md)] text-claude-textSecondary dark:text-claude-darkTextSecondary hover:bg-black/10 dark:hover:bg-white/10"
                       aria-label={i18nService.t('metabotDelete')}
                       title={i18nService.t('metabotDelete')}
                     >

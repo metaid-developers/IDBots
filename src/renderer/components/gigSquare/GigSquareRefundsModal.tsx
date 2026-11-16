@@ -260,7 +260,7 @@ const GigSquareRefundsModal: React.FC<GigSquareRefundsModalProps> = ({
               <button
                 type="button"
                 onClick={onRetry}
-                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-claude-textSecondary hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover"
+                className="inline-flex items-center gap-1.5 rounded-[8px] px-3 py-1.5 text-xs font-medium text-claude-textSecondary hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover"
               >
                 <ArrowPathIcon className="h-4 w-4" />
                 {i18nService.t('refresh')}
@@ -269,7 +269,7 @@ const GigSquareRefundsModal: React.FC<GigSquareRefundsModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg p-1.5 text-claude-textSecondary hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover"
+              className="rounded-[8px] p-1.5 text-claude-textSecondary hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover"
               aria-label={i18nService.t('close')}
             >
               <XMarkIcon className="h-5 w-5" />
@@ -278,14 +278,14 @@ const GigSquareRefundsModal: React.FC<GigSquareRefundsModalProps> = ({
         </div>
 
         <div className="border-b border-claude-border px-5 py-3 dark:border-claude-darkBorder">
-          <div className="inline-flex rounded-xl bg-claude-surfaceMuted p-1 dark:bg-claude-darkSurfaceMuted">
+          <div className="inline-flex h-8 min-w-0 overflow-hidden rounded-[var(--shape-radius-md)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80">
             <button
               type="button"
               onClick={() => setTab('pendingForMe')}
-              className={`rounded-lg px-3.5 py-2 text-xs font-medium transition ${
+              className={`flex h-full min-w-[72px] items-center justify-center px-4 text-sm font-medium leading-none transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
                 resolvedTab === 'pendingForMe'
-                  ? 'bg-[var(--bg-panel)] text-claude-text shadow-sm dark:bg-claude-darkSurface dark:text-claude-darkText'
-                  : 'text-claude-textSecondary hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:text-claude-darkText'
+                  ? 'bg-claude-accent text-claude-accentInk'
+                  : 'text-claude-textSecondary hover:bg-claude-surfaceHover/70 hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover/70 dark:hover:text-claude-darkText'
               }`}
             >
               {i18nService.t('gigSquareRefundsTabPending')}
@@ -293,10 +293,10 @@ const GigSquareRefundsModal: React.FC<GigSquareRefundsModalProps> = ({
             <button
               type="button"
               onClick={() => setTab('initiatedByMe')}
-              className={`rounded-lg px-3.5 py-2 text-xs font-medium transition ${
+              className={`flex h-full min-w-[72px] items-center justify-center px-4 text-sm font-medium leading-none transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
                 resolvedTab === 'initiatedByMe'
-                  ? 'bg-[var(--bg-panel)] text-claude-text shadow-sm dark:bg-claude-darkSurface dark:text-claude-darkText'
-                  : 'text-claude-textSecondary hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:text-claude-darkText'
+                  ? 'bg-claude-accent text-claude-accentInk'
+                  : 'text-claude-textSecondary hover:bg-claude-surfaceHover/70 hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover/70 dark:hover:text-claude-darkText'
               }`}
             >
               {i18nService.t('gigSquareRefundsTabInitiated')}
@@ -319,7 +319,7 @@ const GigSquareRefundsModal: React.FC<GigSquareRefundsModalProps> = ({
               <button
                 type="button"
                 onClick={onRetry}
-                className="mt-3 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-red-500 hover:bg-red-500/10"
+                className="mt-3 inline-flex items-center gap-1.5 rounded-[8px] px-3 py-1.5 text-xs font-medium text-red-500 hover:bg-red-500/10"
               >
                 <ArrowPathIcon className="h-4 w-4" />
                 {i18nService.t('refresh')}
@@ -412,7 +412,7 @@ const GigSquareRefundsModal: React.FC<GigSquareRefundsModalProps> = ({
                             type="button"
                             onClick={() => void onProcessRefund(item.orderId)}
                             disabled={isAnyRefundProcessing}
-                            className="btn-idchat-primary px-2.5 py-1.5 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-60"
+                            className="border border-[var(--color-primary)] bg-[var(--bg-panel)] text-claude-text hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] rounded-lg px-2.5 py-1.5 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             {isProcessing
                               ? i18nService.t('gigSquareRefundsProcessing')

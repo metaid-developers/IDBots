@@ -190,7 +190,7 @@ const PermissionOverlayCard: React.FC<{
         <button
           type="button"
           onClick={handleOpenSession}
-          className="inline-flex shrink-0 items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium text-claude-accent transition-colors hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+          className="inline-flex shrink-0 items-center gap-1 rounded-[8px] px-2.5 py-1.5 text-xs font-medium text-claude-accent transition-colors hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
         >
           {i18nService.t('coworkGlobalPermissionOpenSession')}
           <ArrowRightIcon className="h-3.5 w-3.5" />

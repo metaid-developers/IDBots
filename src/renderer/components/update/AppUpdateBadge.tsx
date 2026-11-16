@@ -83,8 +83,8 @@ const AppUpdateBadge: React.FC<AppUpdateBadgeProps> = ({
 
   const isError = tone === 'error';
   const className = isError
-    ? 'non-draggable inline-flex items-center gap-1.5 rounded-full border border-red-500/30 bg-red-500/12 px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-500/18 dark:text-red-400 transition-colors'
-    : 'non-draggable inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/12 px-3 py-1 text-xs font-medium text-emerald-600 hover:bg-emerald-500/18 dark:text-emerald-400 transition-colors';
+    ? 'non-draggable inline-flex items-center gap-1.5 rounded-[var(--shape-radius-md)] border border-red-500/30 bg-red-500/12 px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-500/18 dark:text-red-400 transition-colors'
+    : 'non-draggable inline-flex items-center gap-1.5 rounded-[var(--shape-radius-md)] border border-emerald-500/30 bg-emerald-500/12 px-3 py-1 text-xs font-medium text-emerald-600 hover:bg-emerald-500/18 dark:text-emerald-400 transition-colors';
 
   return (
     // 面板作为 wrapper 的 DOM 子节点（fixed 定位），鼠标在按钮与面板间移动不会触发 leave。

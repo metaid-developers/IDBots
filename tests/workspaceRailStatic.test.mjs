@@ -409,3 +409,17 @@ test('the Co-Work face is the Internet default branch, not a rail pane', () => {
   assert.match(destinationsSource, /INTERNET_PANE_FALLBACK_RENDERER = 'coworkLanding'/);
   assert.match(destinationsSource, /resolveInternetPaneRenderer\(pane\) \{\s*return INTERNET_PANE_RENDERERS\[pane\] \?\? INTERNET_PANE_FALLBACK_RENDERER;/);
 });
+
+test('the rail closes on its right edge with a 1px hairline (flat stroke, no shadow)', () => {
+  // Flat-shape language v2 (owner ruling 2026-11-14, batch 2): the function
+  // zone separates from the mid column by a 1px stroke on the rail's right
+  // edge — var(--border-color) at the header-divider alpha with the dark
+  // variant spelled out (both claude tokens resolve to var(--border-color),
+  // the same pair the switch tray already uses). Stroke ONLY: no elevation
+  // shadow rides the rail container.
+  const asideStart = railSource.indexOf('<aside');
+  const asideEnd = railSource.indexOf('>', asideStart);
+  const asideTag = railSource.slice(asideStart, asideEnd);
+  assert.match(asideTag, /border-r border-claude-border\/60 dark:border-claude-darkBorder\/60/);
+  assert.ok(!asideTag.includes('shadow'), 'the rail divider is stroke-only: no shadow classes');
+});

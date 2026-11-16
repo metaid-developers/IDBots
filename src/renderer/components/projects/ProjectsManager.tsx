@@ -208,7 +208,7 @@ const ProjectsManager: React.FC<{ autoOpenCreateForm?: boolean }> = ({ autoOpenC
                     }`}
                   >
                     <span
-                      className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-md transition-transform ${
+                      className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
                         project.enabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
                       }`}
                     />
@@ -262,7 +262,7 @@ const ProjectsManager: React.FC<{ autoOpenCreateForm?: boolean }> = ({ autoOpenC
                 type="button"
                 onClick={handleCancelDelete}
                 disabled={isDeleting}
-                className="px-3 py-1.5 text-xs rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                className="px-3 py-1.5 text-xs rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {i18nService.t('cancel')}
               </button>
@@ -270,7 +270,7 @@ const ProjectsManager: React.FC<{ autoOpenCreateForm?: boolean }> = ({ autoOpenC
                 type="button"
                 onClick={handleConfirmDelete}
                 disabled={isDeleting}
-                className="px-3 py-1.5 text-xs rounded-lg bg-red-500 text-gray-900 hover:bg-red-600 dark:bg-red-500 dark:hover:bg-red-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                className="border border-red-600 px-3 py-1.5 text-xs rounded-[8px] bg-red-500 text-white hover:bg-red-600 dark:bg-red-500 dark:hover:bg-red-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {i18nService.t('confirmDelete')}
               </button>

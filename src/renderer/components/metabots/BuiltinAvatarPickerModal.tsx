@@ -41,7 +41,7 @@ const BuiltinAvatarPickerModal: React.FC<BuiltinAvatarPickerModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="shrink-0 rounded p-1.5 text-claude-textSecondary transition-colors hover:bg-black/5 dark:text-claude-darkTextSecondary dark:hover:bg-white/10"
+            className="shrink-0 rounded-[8px] p-1.5 text-claude-textSecondary transition-colors hover:bg-black/5 dark:text-claude-darkTextSecondary dark:hover:bg-white/10"
             aria-label={i18nService.t('close')}
           >
             <XMarkIcon className="h-4 w-4" />

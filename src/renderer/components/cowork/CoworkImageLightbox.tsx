@@ -45,7 +45,7 @@ const CoworkImageLightbox: React.FC<CoworkImageLightboxProps> = ({ src, onClose,
         onClick={onClose}
         aria-label="Close"
         title="Close"
-        className="absolute right-4 top-4 rounded-full bg-black/50 p-1.5 text-white transition-colors hover:bg-black/70"
+        className="absolute right-4 top-4 rounded-[var(--shape-radius-md)] bg-black/50 p-1.5 text-white transition-colors hover:bg-black/70"
       >
         <XMarkIcon className="h-5 w-5" />
       </button>

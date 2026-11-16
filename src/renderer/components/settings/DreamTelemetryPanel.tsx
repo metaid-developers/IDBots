@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { InformationCircleIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import Tooltip from '../ui/Tooltip';
@@ -94,11 +94,100 @@ const slotGeometry = (count: number): { slotW: number; barW: number } => {
   return { slotW, barW: Math.min(6, Math.max(1, slotW * 0.6)) };
 };
 
-const ChartSvg: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <svg viewBox={`0 0 ${CHART_W} ${CHART_H}`} preserveAspectRatio="none" className="w-full h-14 block">
-    {children}
-  </svg>
+const shortDate = (date: string): string => (date.length >= 10 ? date.slice(5) : date);
+
+const HoverDot: React.FC<{ x: number; y: number; color: string }> = ({ x, y, color }) => (
+  <circle cx={x} cy={y} r={2.4} fill={color} stroke="#ffffff" strokeWidth={0.8} vector-effect="non-scaling-stroke" />
 );
+
+// OWNER 03:16: Binance-grade polish for the four sparklines — dashed
+// gridlines + solid baseline, min/max + date labels, and a hover crosshair
+// with a value bubble (the native <title> tooltips read as sloppy).
+const ChartShell: React.FC<{
+  count: number;
+  tooltips: string[];
+  yMaxLabel: string;
+  dateFirst: string;
+  dateLast: string;
+  render: (hoverIndex: number | null) => React.ReactNode;
+}> = ({ count, tooltips, yMaxLabel, dateFirst, dateLast, render }) => {
+  const [hover, setHover] = useState<number | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+  const frac = hover == null ? null : count > 1 ? hover / (count - 1) : 0.5;
+  const handleMove = (event: React.MouseEvent) => {
+    const rect = ref.current?.getBoundingClientRect();
+    if (!rect || rect.width === 0) return;
+    const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+    setHover(count <= 1 ? 0 : Math.round(ratio * (count - 1)));
+  };
+  const tipLeft = frac == null ? '50%' : `${(frac * 100).toFixed(2)}%`;
+  const tipShift = frac == null ? '-50%' : frac > 0.72 ? '-100%' : frac < 0.28 ? '0%' : '-50%';
+  return (
+    <div>
+      <div
+        ref={ref}
+        className="relative h-14 select-none"
+        onMouseMove={handleMove}
+        onMouseLeave={() => setHover(null)}
+      >
+        <svg viewBox={`0 0 ${CHART_W} ${CHART_H}`} preserveAspectRatio="none" className="w-full h-full block">
+          {[1 / 3, 2 / 3].map((f) => (
+            <line
+              key={`grid-${f}`}
+              x1={0}
+              x2={CHART_W}
+              y1={PAD_TOP + innerH() * (1 - f)}
+              y2={PAD_TOP + innerH() * (1 - f)}
+              stroke="#94a3b8"
+              strokeOpacity={0.22}
+              strokeDasharray="2 3"
+              strokeWidth={1}
+              vector-effect="non-scaling-stroke"
+            />
+          ))}
+          <line
+            x1={0}
+            x2={CHART_W}
+            y1={PAD_TOP + innerH()}
+            y2={PAD_TOP + innerH()}
+            stroke="#94a3b8"
+            strokeOpacity={0.35}
+            strokeWidth={1}
+            vector-effect="non-scaling-stroke"
+          />
+          {render(hover)}
+          {frac != null && (
+            <line
+              x1={frac * CHART_W}
+              x2={frac * CHART_W}
+              y1={PAD_TOP - 2}
+              y2={PAD_TOP + innerH()}
+              stroke="#94a3b8"
+              strokeOpacity={0.6}
+              strokeWidth={1}
+              vector-effect="non-scaling-stroke"
+            />
+          )}
+        </svg>
+        <div className="pointer-events-none absolute right-1 top-0 text-[9px] leading-none tabular-nums dark:text-claude-darkTextSecondary/70 text-claude-textSecondary/70">
+          {yMaxLabel}
+        </div>
+        {hover != null && tooltips[hover] && (
+          <div
+            className="pointer-events-none absolute top-0 z-10 whitespace-nowrap rounded-[var(--shape-radius-sm)] border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface px-1.5 py-0.5 text-[9px] leading-none shadow-sm dark:text-claude-darkText text-claude-text tabular-nums"
+            style={{ left: tipLeft, transform: `translateX(${tipShift}) translateY(-110%)` }}
+          >
+            {tooltips[hover]}
+          </div>
+        )}
+      </div>
+      <div className="mt-0.5 flex justify-between text-[9px] leading-none tabular-nums dark:text-claude-darkTextSecondary/60 text-claude-textSecondary/60">
+        <span>{dateFirst}</span>
+        <span>{dateLast}</span>
+      </div>
+    </div>
+  );
+};
 
 interface ChartCardProps {
   title: string;
@@ -198,11 +287,28 @@ const DreamTelemetryPanel: React.FC<DreamTelemetryPanelProps> = ({ runs }) => {
   // Chart 5 (P2 frozen exam): sparse weekly scores on a 0..1 scale. Rendered
   // only when at least one exam run exists — bots without exams keep the
   // panel exactly as it was.
+  const dateFirst = days.length > 0 ? shortDate(days[0].date) : '';
+  const dateLast = days.length > 0 ? shortDate(days[days.length - 1].date) : '';
+  const failureTooltips = days.map((day) => {
+    const noFeedback = day.hasExplicitFeedback === false;
+    return `${day.date} · ${day.negativePoints == null ? '–' : day.negativePoints}${noFeedback ? ` · ${i18nService.t('dreamTelemetryNoFeedback')}` : ''}`;
+  });
+  const sedimentTooltips = days.map((day, index) => `${day.date} · ${i18nService.t('dreamTelemetrySedimentSkills')} ${skillsCumulative[index]} · ${i18nService.t('dreamTelemetrySedimentLessons')} ${lessonsCumulative[index]}`);
+  const trustTooltips = days.map((day, index) => {
+    const value = refsValues[index];
+    return `${day.date} · ${value == null ? '–' : `${value.toFixed(0)}%`}${day.totalRefs ? ` (${day.unmatchedRefs}/${day.totalRefs})` : ''}`;
+  });
+  const gateTooltips = days.map((day, index) => {
+    const gate = gateDays[index];
+    if (!gate) return `${day.date} · –`;
+    return `${day.date} · ✓${gate.validated} ✗${gate.rejected} ?${gate.unresolved}`;
+  });
   const examValues = days.map((day) => day.examScore);
+  const examTooltips = days.map((day, index) => `${day.date} · ${examValues[index] == null ? '–' : `${(examValues[index] as number) * 100}%`}`);
   const examLatest = lastNonNull(examValues);
   const hasExamData = examValues.some((value) => value != null);
 
-  const renderFailureBars = () =>
+  const renderFailureBars = (hoverIndex: number | null) =>
     days.map((day, index) => {
       const value = day.negativePoints;
       const x = PAD_X + failureGeometry.slotW * index + (failureGeometry.slotW - failureGeometry.barW) / 2;
@@ -248,6 +354,7 @@ const DreamTelemetryPanel: React.FC<DreamTelemetryPanelProps> = ({ runs }) => {
           </rect>
         );
       }
+      const hovered = hoverIndex === index;
       return (
         <rect
           key={`${day.date}-neg`}
@@ -255,15 +362,14 @@ const DreamTelemetryPanel: React.FC<DreamTelemetryPanelProps> = ({ runs }) => {
           y={PAD_TOP + innerH() - height}
           width={failureGeometry.barW}
           height={height}
+          rx={1}
           fill={COLOR_AMBER}
-          fillOpacity={0.45}
-        >
-          <title>{`${day.date} · ${value}`}</title>
-        </rect>
+          fillOpacity={hovered ? 1 : 0.45}
+        />
       );
     });
 
-  const renderGateBars = () =>
+  const renderGateBars = (hoverIndex: number | null) =>
     days.map((day, index) => {
       const gate = gateDays[index];
       if (!gate) return null;
@@ -285,8 +391,9 @@ const DreamTelemetryPanel: React.FC<DreamTelemetryPanelProps> = ({ runs }) => {
             y={yCursor}
             width={gateGeometry.barW}
             height={height}
+            rx={1}
             fill={segment.color}
-            fillOpacity={0.85}
+            fillOpacity={hoverIndex == null ? 0.85 : hoverIndex === index ? 1 : 0.4}
           />
         );
       });
@@ -308,21 +415,34 @@ const DreamTelemetryPanel: React.FC<DreamTelemetryPanelProps> = ({ runs }) => {
             </div>
           )}
         >
-          <ChartSvg>
-            {renderFailureBars()}
-            {toSegments(toPoints(failureMa, failureMax)).map((segment, index) => (
-              <polyline
-                key={index}
-                points={pointsAttr(segment)}
-                fill="none"
-                stroke={COLOR_AMBER}
-                strokeWidth={1.5}
-                vector-effect="non-scaling-stroke"
-                strokeLinejoin="round"
-                strokeLinecap="round"
-              />
-            ))}
-          </ChartSvg>
+          <ChartShell
+            count={days.length}
+            tooltips={failureTooltips}
+            yMaxLabel={String(failureMax)}
+            dateFirst={dateFirst}
+            dateLast={dateLast}
+            render={(hover) => (
+              <>
+                {renderFailureBars(hover)}
+                {toSegments(toPoints(failureMa, failureMax)).map((segment, index) => (
+                  <polyline
+                    key={index}
+                    points={pointsAttr(segment)}
+                    fill="none"
+                    stroke={COLOR_AMBER}
+                    strokeWidth={1.5}
+                    vector-effect="non-scaling-stroke"
+                    strokeLinejoin="round"
+                    strokeLinecap="round"
+                  />
+                ))}
+                {hover != null && failureMa[hover] != null && (() => {
+                  const point = toPoints(failureMa, failureMax)[hover];
+                  return point ? <HoverDot x={point.x} y={point.y} color={COLOR_AMBER} /> : null;
+                })()}
+              </>
+            )}
+          />
         </ChartCard>
 
         <ChartCard
@@ -336,32 +456,51 @@ const DreamTelemetryPanel: React.FC<DreamTelemetryPanelProps> = ({ runs }) => {
             </div>
           )}
         >
-          <ChartSvg>
-            {toSegments(toPoints(skillsCumulative, sedimentMax)).map((segment, index) => (
-              <polyline
-                key={`skills-${index}`}
-                points={pointsAttr(segment)}
-                fill="none"
-                stroke={COLOR_EMERALD}
-                strokeWidth={1.5}
-                vector-effect="non-scaling-stroke"
-                strokeLinejoin="round"
-                strokeLinecap="round"
-              />
-            ))}
-            {toSegments(toPoints(lessonsCumulative, sedimentMax)).map((segment, index) => (
-              <polyline
-                key={`lessons-${index}`}
-                points={pointsAttr(segment)}
-                fill="none"
-                stroke={COLOR_SKY}
-                strokeWidth={1.5}
-                vector-effect="non-scaling-stroke"
-                strokeLinejoin="round"
-                strokeLinecap="round"
-              />
-            ))}
-          </ChartSvg>
+          <ChartShell
+            count={days.length}
+            tooltips={sedimentTooltips}
+            yMaxLabel={String(sedimentMax)}
+            dateFirst={dateFirst}
+            dateLast={dateLast}
+            render={(hover) => (
+              <>
+                {toSegments(toPoints(skillsCumulative, sedimentMax)).map((segment, index) => (
+                  <polyline
+                    key={`skills-${index}`}
+                    points={pointsAttr(segment)}
+                    fill="none"
+                    stroke={COLOR_EMERALD}
+                    strokeWidth={1.5}
+                    vector-effect="non-scaling-stroke"
+                    strokeLinejoin="round"
+                    strokeLinecap="round"
+                  />
+                ))}
+                {toSegments(toPoints(lessonsCumulative, sedimentMax)).map((segment, index) => (
+                  <polyline
+                    key={`lessons-${index}`}
+                    points={pointsAttr(segment)}
+                    fill="none"
+                    stroke={COLOR_SKY}
+                    strokeWidth={1.5}
+                    vector-effect="non-scaling-stroke"
+                    strokeLinejoin="round"
+                    strokeLinecap="round"
+                  />
+                ))}
+                {hover != null && (() => {
+                  const sk = toPoints(skillsCumulative, sedimentMax)[hover];
+                  const ls = toPoints(lessonsCumulative, sedimentMax)[hover];
+                  return (
+                    <>
+                      {sk ? <HoverDot x={sk.x} y={sk.y} color={COLOR_EMERALD} /> : null}
+                      {ls ? <HoverDot x={ls.x} y={ls.y} color={COLOR_SKY} /> : null}
+                    </>
+                  );
+                })()}
+              </>
+            )}
+          />
         </ChartCard>
 
         <ChartCard
@@ -369,20 +508,33 @@ const DreamTelemetryPanel: React.FC<DreamTelemetryPanelProps> = ({ runs }) => {
           headline={refsLatest == null ? '–' : `${refsLatest.toFixed(0)}%${refsLatestCounts ? ` (${refsLatestCounts})` : ''}`}
           tooltip={i18nService.t('dreamTelemetryDiaryTrustHint')}
         >
-          <ChartSvg>
-            {toSegments(toPoints(refsValues, refsMax)).map((segment, index) => (
-              <polyline
-                key={index}
-                points={pointsAttr(segment)}
-                fill="none"
-                stroke={COLOR_RED}
-                strokeWidth={1.5}
-                vector-effect="non-scaling-stroke"
-                strokeLinejoin="round"
-                strokeLinecap="round"
-              />
-            ))}
-          </ChartSvg>
+          <ChartShell
+            count={days.length}
+            tooltips={trustTooltips}
+            yMaxLabel="100%"
+            dateFirst={dateFirst}
+            dateLast={dateLast}
+            render={(hover) => (
+              <>
+                {toSegments(toPoints(refsValues, refsMax)).map((segment, index) => (
+                  <polyline
+                    key={index}
+                    points={pointsAttr(segment)}
+                    fill="none"
+                    stroke={COLOR_RED}
+                    strokeWidth={1.5}
+                    vector-effect="non-scaling-stroke"
+                    strokeLinejoin="round"
+                    strokeLinecap="round"
+                  />
+                ))}
+                {hover != null && refsValues[hover] != null && (() => {
+                  const point = toPoints(refsValues, refsMax)[hover];
+                  return point ? <HoverDot x={point.x} y={point.y} color={COLOR_RED} /> : null;
+                })()}
+              </>
+            )}
+          />
         </ChartCard>
 
         <ChartCard
@@ -390,7 +542,14 @@ const DreamTelemetryPanel: React.FC<DreamTelemetryPanelProps> = ({ runs }) => {
           headline={String(gateTotalChecked)}
           tooltip={i18nService.t('dreamTelemetryGateHint')}
         >
-          <ChartSvg>{renderGateBars()}</ChartSvg>
+          <ChartShell
+            count={days.length}
+            tooltips={gateTooltips}
+            yMaxLabel={String(gateMax)}
+            dateFirst={dateFirst}
+            dateLast={dateLast}
+            render={(hover) => renderGateBars(hover)}
+          />
         </ChartCard>
         {hasExamData && (
           <ChartCard
@@ -398,29 +557,38 @@ const DreamTelemetryPanel: React.FC<DreamTelemetryPanelProps> = ({ runs }) => {
             headline={examLatest == null ? '–' : `${(examLatest * 100).toFixed(0)}%`}
             tooltip={i18nService.t('dreamTelemetryExamHint')}
           >
-            <ChartSvg>
-              {toSegments(toPoints(examValues, 1)).map((segment, index) => (
-                <polyline
-                  key={index}
-                  points={pointsAttr(segment)}
-                  fill="none"
-                  stroke={COLOR_EMERALD}
-                  strokeWidth={1.5}
-                  vector-effect="non-scaling-stroke"
-                  strokeLinejoin="round"
-                  strokeLinecap="round"
-                />
-              ))}
-              {toPoints(examValues, 1).map((point, index) => point && (
-                <circle
-                  key={index}
-                  cx={point.x}
-                  cy={point.y}
-                  r={1.6}
-                  fill={COLOR_EMERALD}
-                />
-              ))}
-            </ChartSvg>
+            <ChartShell
+              count={days.length}
+              tooltips={examTooltips}
+              yMaxLabel="100%"
+              dateFirst={dateFirst}
+              dateLast={dateLast}
+              render={(hover) => (
+                <>
+                  {toSegments(toPoints(examValues, 1)).map((segment, index) => (
+                    <polyline
+                      key={index}
+                      points={pointsAttr(segment)}
+                      fill="none"
+                      stroke={COLOR_EMERALD}
+                      strokeWidth={1.5}
+                      vector-effect="non-scaling-stroke"
+                      strokeLinejoin="round"
+                      strokeLinecap="round"
+                    />
+                  ))}
+                  {toPoints(examValues, 1).map((point, index) => point && (
+                    <circle
+                      key={index}
+                      cx={point.x}
+                      cy={point.y}
+                      r={hover === index ? 2.4 : 1.6}
+                      fill={COLOR_EMERALD}
+                    />
+                  ))}
+                </>
+              )}
+            />
           </ChartCard>
         )}
       </div>

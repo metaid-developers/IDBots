@@ -4,6 +4,7 @@ import { i18nService } from '../../services/i18n';
 import type { CoworkSessionSummary } from '../../types/cowork';
 import CoworkSessionItem from '../../components/cowork/CoworkSessionItem';
 import BotPickerChip, { type BotPickerChipBot } from './BotPickerChip';
+import ThemedSelect from '../../components/ui/ThemedSelect';
 import {
   activeDayKeysOfMonth,
   calendarCells,
@@ -74,9 +75,6 @@ const CoworkHistoryPanel: React.FC<CoworkHistoryPanelProps> = ({
     (a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)),
   );
 
-  const selectClass =
-    'rounded-md border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-white px-1.5 py-0.5 text-[11px] dark:text-claude-darkText text-claude-text focus:outline-none focus:ring-2 focus:ring-claude-accent/40';
-
   return (
     <div
       data-slot="cowork-history-panel"
@@ -114,7 +112,7 @@ const CoworkHistoryPanel: React.FC<CoworkHistoryPanelProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex h-6 w-6 items-center justify-center rounded-md dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+            className="inline-flex h-6 w-6 items-center justify-center rounded-[8px] dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover hover:dark:text-claude-darkText hover:text-claude-text transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
             aria-label={i18nService.t('close')}
           >
             <XMarkIcon className="h-3.5 w-3.5" />
@@ -130,26 +128,28 @@ const CoworkHistoryPanel: React.FC<CoworkHistoryPanelProps> = ({
           <span className="text-[11px] font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
             {i18nService.t('botBrowserHistoryDateFilter')}
           </span>
-          <select
-            className={selectClass}
-            value={monthView.year}
-            onChange={(event) => setMonthView((view) => ({ ...view, year: Number(event.target.value) }))}
-            aria-label={`${i18nService.t('botBrowserHistoryDateFilter')} · ${monthView.year}`}
-          >
-            {years.map((year) => (
-              <option key={year} value={year}>{year}</option>
-            ))}
-          </select>
-          <select
-            className={selectClass}
-            value={monthView.month}
-            onChange={(event) => setMonthView((view) => ({ ...view, month: Number(event.target.value) }))}
-            aria-label={`${i18nService.t('botBrowserHistoryDateFilter')} · ${monthOptionLabel(monthView.month, language)}`}
-          >
-            {Array.from({ length: 12 }, (_, month) => (
-              <option key={month} value={month}>{monthOptionLabel(month, language)}</option>
-            ))}
-          </select>
+          {/* OWNER 03:52: year/month dropdowns use the unified ThemedSelect
+              (same grammar as Settings calendars) — native popups retired. */}
+          <div className="w-fit">
+            <ThemedSelect
+              id="cowork-history-year"
+              compact
+              value={String(monthView.year)}
+              onChange={(value) => setMonthView((view) => ({ ...view, year: Number(value) }))}
+              options={years.map((year) => ({ value: String(year), label: String(year) }))}
+              aria-label={`${i18nService.t('botBrowserHistoryDateFilter')} · ${monthView.year}`}
+            />
+          </div>
+          <div className="w-fit">
+            <ThemedSelect
+              id="cowork-history-month"
+              compact
+              value={String(monthView.month)}
+              onChange={(value) => setMonthView((view) => ({ ...view, month: Number(value) }))}
+              options={Array.from({ length: 12 }, (_, month) => ({ value: String(month), label: monthOptionLabel(month, language) }))}
+              aria-label={`${i18nService.t('botBrowserHistoryDateFilter')} · ${monthOptionLabel(monthView.month, language)}`}
+            />
+          </div>
           {selectedDayKey ? (
             <button
               type="button"

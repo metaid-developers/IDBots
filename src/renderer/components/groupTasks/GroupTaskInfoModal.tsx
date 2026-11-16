@@ -46,7 +46,7 @@ const GroupTaskInfoModal: React.FC<GroupTaskInfoModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="p-1 rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+            className="p-1 rounded-[8px] dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
             aria-label={i18nService.t('close')}
           >
             <XMarkIcon className="h-5 w-5" />
@@ -138,7 +138,7 @@ const GroupTaskInfoModal: React.FC<GroupTaskInfoModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="w-full px-4 py-2 text-sm rounded-lg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+            className="w-full px-4 py-2 text-sm rounded-[8px] dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
           >
             {i18nService.t('close')}
           </button>

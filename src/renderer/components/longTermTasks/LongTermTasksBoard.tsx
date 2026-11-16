@@ -88,7 +88,7 @@ const LongTermTasksBoard: React.FC<LongTermTasksBoardProps> = ({ onReturnToStudi
       {/* Toolbar: creation entry + 3-state live summary pills */}
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 px-4 pt-3">
         <div className="flex items-center gap-3">
-          <button type="button" onClick={openCreationSession} className="btn-idchat-primary-filled px-3 py-1.5 text-sm font-medium">
+          <button type="button" onClick={openCreationSession} className="btn-idchat-primary-filled inline-flex h-9 items-center justify-center rounded-[var(--shape-radius-lg)] px-3 text-sm font-medium">
             {i18nService.t('longTermTask.newTask')}
           </button>
           <p className="text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">

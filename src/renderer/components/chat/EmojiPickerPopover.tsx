@@ -349,7 +349,7 @@ const EmojiMenuButton: React.FC<EmojiMenuButtonProps> = ({
         disabled={disabled}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="flex items-center justify-center p-1.5 rounded-lg text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover dark:hover:text-claude-darkText hover:text-claude-text transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:dark:hover:bg-transparent"
+        className="flex items-center justify-center p-1.5 rounded-[8px] text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover dark:hover:text-claude-darkText hover:text-claude-text transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:dark:hover:bg-transparent"
         title={i18nService.t('composerEmojiTitle')}
         aria-label={i18nService.t('composerEmojiTitle')}
       >

@@ -500,7 +500,7 @@ const InlineMetaAppBlock: React.FC<InlineMetaAppBlockProps> = ({ uri, title }) =
             <button
               type="button"
               onClick={openInBrowser}
-              className="mt-2 inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-claude-accent transition-colors hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+              className="mt-2 inline-flex items-center gap-1 rounded-[8px] px-2 py-1 text-[11px] font-medium text-claude-accent transition-colors hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
             >
               <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" />
               {i18nService.t('metaAppEmbedOpenInBrowser')}

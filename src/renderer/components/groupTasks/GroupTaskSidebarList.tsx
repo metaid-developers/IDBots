@@ -250,7 +250,7 @@ export const GroupTaskSidebarRow: React.FC<GroupTaskSidebarRowProps> = ({
             <button
               ref={api.actionButtonRef}
               onClick={api.openMenu}
-              className="p-1 rounded-md bg-claude-surfaceMuted dark:bg-claude-darkSurfaceMuted dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurface hover:bg-claude-surface transition-colors"
+              className="p-1 rounded-[8px] bg-claude-surfaceMuted dark:bg-claude-darkSurfaceMuted dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurface hover:bg-claude-surface transition-colors"
               aria-label={actionLabel}
             >
               {task.pinned ? (

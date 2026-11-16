@@ -611,7 +611,7 @@ const RefundStatusCard: React.FC<{
                   type="button"
                   onClick={onProcessRefund}
                   disabled={isProcessingRefund}
-                  className="rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="rounded-[8px] bg-orange-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {isProcessingRefund
                     ? i18nService.t('coworkRefundCardProcessingAction')
@@ -629,7 +629,7 @@ const RefundStatusCard: React.FC<{
             <button
               type="button"
               onClick={onDismiss}
-              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md dark:text-claude-darkTextSecondary text-claude-textSecondary transition-colors hover:bg-black/10 hover:text-claude-text dark:hover:bg-white/10 dark:hover:text-claude-darkText"
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] dark:text-claude-darkTextSecondary text-claude-textSecondary transition-colors hover:bg-black/10 hover:text-claude-text dark:hover:bg-white/10 dark:hover:text-claude-darkText"
               title={i18nService.t('close')}
               aria-label={i18nService.t('close')}
             >
@@ -1232,7 +1232,7 @@ const CopyButton: React.FC<{
   return (
     <button
       onClick={handleCopy}
-      className={`p-1.5 rounded-md dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-all duration-200 ${
+      className={`p-1.5 rounded-[8px] dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-all duration-200 ${
         visible ? 'opacity-100' : 'opacity-0 pointer-events-none'
       }`}
       title={i18nService.t('copyToClipboard')}
@@ -1871,7 +1871,7 @@ const A2AGuidanceControls = React.memo(({
             type="button"
             onClick={onEndConversation}
             disabled={isEnding}
-            className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-red-500/30 px-3 text-xs font-medium text-red-600 transition-colors hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-60 dark:text-red-400"
+            className="inline-flex h-8 items-center justify-center gap-1.5 rounded-[8px] border border-red-500/30 px-3 text-xs font-medium text-red-600 transition-colors hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-60 dark:text-red-400"
           >
             <StopCircleIcon className="h-4 w-4" />
             {isEnding ? i18nService.t('a2aSessionEnding') : i18nService.t('a2aSessionEndConversation')}
@@ -1893,7 +1893,7 @@ const A2AGuidanceControls = React.memo(({
             <button
               type="submit"
               disabled={isSubmittingA2AGuidance || !guidanceText.trim()}
-              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-claude-accent px-3 text-xs font-medium text-claude-accentInk transition-colors hover:bg-claude-accent/90 disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-[8px] border border-[var(--btn-primary-edge)] bg-claude-accent px-3 text-xs font-medium text-claude-accentInk transition-colors hover:bg-claude-accent/90 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <PaperAirplaneIcon className="h-4 w-4" />
               {isSubmittingA2AGuidance ? i18nService.t('a2aGuidanceSubmitting') : i18nService.t('a2aGuidanceSend')}
@@ -4649,7 +4649,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               <button
                 type="button"
                 onClick={onNewChat}
-                className="h-8 w-8 inline-flex items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                className="h-8 w-8 inline-flex items-center justify-center rounded-[8px] dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
               >
                 <ComposeIcon className="h-4 w-4" />
               </button>
@@ -4776,7 +4776,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               aria-label={i18nService.t('coworkConversationSearch')}
               aria-expanded={isConversationSearchOpen}
               aria-controls="cowork-conversation-search"
-              className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors active:scale-[0.96] ${
+              className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
                 isConversationSearchOpen
                   ? 'bg-claude-surfaceHover text-claude-text dark:bg-claude-darkSurfaceHover dark:text-claude-darkText'
                   : 'text-claude-textSecondary hover:bg-claude-surfaceHover hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText'
@@ -4789,7 +4789,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
           <button
             type="button"
             onClick={handleOpenFolder}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover dark:hover:text-claude-darkText hover:text-claude-text transition-colors"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover dark:hover:text-claude-darkText hover:text-claude-text transition-colors"
             aria-label={i18nService.t('coworkOpenFolder')}
           >
             {boundProject?.icon ? (
@@ -4812,7 +4812,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
             ref={actionButtonRef}
             type="button"
             onClick={openMenu}
-            className="p-1.5 rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+            className="p-1.5 rounded-[8px] dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
             aria-label={i18nService.t('coworkSessionActions')}
           >
             <EllipsisHorizontalIcon className="h-5 w-5" />
@@ -5026,7 +5026,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                 onClick={handleScrollToBottomClick}
                 title={i18nService.t('coworkScrollToBottom')}
                 aria-label={i18nService.t('coworkScrollToBottom')}
-                className="pointer-events-auto -mt-[34px] flex h-[34px] w-[34px] items-center justify-center rounded-full border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-elevated dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+                className="pointer-events-auto -mt-[34px] flex h-[34px] w-[34px] items-center justify-center rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
               >
                 <ChevronDownIcon className="h-3.5 w-3.5" />
               </button>

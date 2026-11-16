@@ -205,7 +205,7 @@ export const PanelMessage: React.FC<{
           type="button"
           data-panel-reaction-chip={currentReaction}
           onClick={() => onToggleReaction(message, currentReaction)}
-          className="rounded-full border border-current/20 px-1.5 py-px text-[10px] leading-3 transition-opacity hover:opacity-70 dark:text-claude-darkTextSecondary text-claude-textSecondary"
+          className="rounded-[var(--shape-radius-md)] border border-current/20 px-1.5 py-px text-[10px] leading-3 transition-opacity hover:opacity-70 dark:text-claude-darkTextSecondary text-claude-textSecondary"
         >
           {currentReaction === 'up' ? '👍' : '👎'}
         </button>
@@ -273,7 +273,7 @@ export const PanelMessage: React.FC<{
             <button
               type="button"
               onClick={onTurnFailureContinue}
-              className="mt-2 rounded-lg px-2.5 py-1 text-xs font-medium dark:bg-claude-accent/15 dark:text-claude-accent text-claude-accent bg-claude-accent/10 hover:bg-claude-accent/20 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+              className="mt-2 rounded-[8px] px-2.5 py-1 text-xs font-medium dark:bg-claude-accent/15 dark:text-claude-accent text-claude-accent bg-claude-accent/10 hover:bg-claude-accent/20 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
             >
               {i18nService.t('panelTurnFailureContinue')}
             </button>
@@ -1121,7 +1121,7 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
               <button
                 type="button"
                 onClick={onOpenBotHome}
-                className="mt-3 inline-flex items-center rounded-lg px-2 py-1 -ml-1 text-xs font-medium dark:text-claude-accent text-claude-accent hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+                className="mt-3 inline-flex items-center rounded-[8px] px-2 py-1 -ml-1 text-xs font-medium dark:text-claude-accent text-claude-accent hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
               >
                 {i18nService.t('botInternetGoBotWorks')}
               </button>

@@ -403,7 +403,7 @@ export const NftCardDetailModal: React.FC<{ data: NftCardData; onClose: () => vo
           <button
             type="button"
             onClick={onClose}
-            className="rounded p-1 text-claude-textSecondary transition-colors hover:bg-black/5 dark:text-claude-darkTextSecondary dark:hover:bg-white/10"
+            className="rounded-[8px] p-1 text-claude-textSecondary transition-colors hover:bg-black/5 dark:text-claude-darkTextSecondary dark:hover:bg-white/10"
             aria-label="Close NFT detail"
           >
             <XMarkIcon className="h-4 w-4" />
@@ -477,7 +477,7 @@ const NftCard: React.FC<{ data: NftCardData; className?: string }> = ({ data, cl
           onClick={openDetail}
           title="View NFT details"
           aria-label={`View NFT details: ${title}`}
-          className="flex h-full w-full flex-col overflow-hidden rounded-xl border border-claude-border bg-claude-surface text-left shadow-subtle transition-shadow hover:shadow-md dark:border-claude-darkBorder dark:bg-claude-darkSurface"
+          className="flex h-full w-full flex-col overflow-hidden rounded-[8px] border border-claude-border bg-claude-surface text-left shadow-subtle transition-shadow hover:shadow-md dark:border-claude-darkBorder dark:bg-claude-darkSurface"
         >
           <div className="relative">
             <NftCardImage data={healed} />

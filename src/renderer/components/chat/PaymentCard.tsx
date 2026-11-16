@@ -196,7 +196,7 @@ const PaymentCard: React.FC<{ data: PaymentCardData }> = ({ data }) => {
               type="button"
               onClick={handleLaunch}
               disabled={!canLaunch || phase === 'launching'}
-              className="w-full rounded-lg bg-[#1677FF] px-3 py-2 text-[13px] font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              className="w-full rounded-[8px] bg-[#1677FF] px-3 py-2 text-[13px] font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {phase === 'launching' ? '正在拉起支付宝…' : '前往支付宝付款'}
             </button>
@@ -273,7 +273,7 @@ const PaymentCard: React.FC<{ data: PaymentCardData }> = ({ data }) => {
           <button
             type="button"
             onClick={handlePaidConfirm}
-            className="w-full rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-[13px] font-medium text-emerald-600 transition-colors hover:bg-emerald-500/20 dark:text-emerald-400"
+            className="w-full rounded-[8px] border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-[13px] font-medium text-emerald-600 transition-colors hover:bg-emerald-500/20 dark:text-emerald-400"
           >
             付款后回来点我已支付
           </button>

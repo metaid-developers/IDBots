@@ -509,7 +509,7 @@ const InlineHtmlReportBlock: React.FC<InlineHtmlReportBlockProps> = ({
           <button
             type="button"
             onClick={openInSidePanel}
-            className="h-6 w-6 inline-flex shrink-0 items-center justify-center rounded-md dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+            className="h-6 w-6 inline-flex shrink-0 items-center justify-center rounded-[8px] dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
             aria-label={i18nService.t('htmlReportOpenInPanel')}
             title={i18nService.t('htmlReportOpenInPanel')}
           >
@@ -519,7 +519,7 @@ const InlineHtmlReportBlock: React.FC<InlineHtmlReportBlockProps> = ({
         <button
           type="button"
           onClick={toggleView}
-          className="h-6 w-6 inline-flex shrink-0 items-center justify-center rounded-md dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+          className="h-6 w-6 inline-flex shrink-0 items-center justify-center rounded-[8px] dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
           aria-label={view === 'render' ? i18nService.t('htmlReportViewSource') : i18nService.t('htmlReportViewRendered')}
           title={view === 'render' ? i18nService.t('htmlReportViewSource') : i18nService.t('htmlReportViewRendered')}
         >
@@ -528,7 +528,7 @@ const InlineHtmlReportBlock: React.FC<InlineHtmlReportBlockProps> = ({
         <button
           type="button"
           onClick={exportImage}
-          className="h-6 w-6 inline-flex shrink-0 items-center justify-center rounded-md dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+          className="h-6 w-6 inline-flex shrink-0 items-center justify-center rounded-[8px] dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
           aria-label={i18nService.t('htmlReportDownloadImage')}
           title={i18nService.t('htmlReportDownloadImage')}
         >
@@ -577,7 +577,7 @@ const InlineHtmlReportBlock: React.FC<InlineHtmlReportBlockProps> = ({
           <button
             type="button"
             onClick={openFullReport}
-            className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-claude-accent transition-colors hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+            className="inline-flex shrink-0 items-center gap-1 rounded-[8px] px-2 py-1 text-[11px] font-medium text-claude-accent transition-colors hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
           >
             <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" />
             {i18nService.t('htmlReportOpenFullReport')}

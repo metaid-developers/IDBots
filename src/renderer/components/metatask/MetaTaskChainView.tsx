@@ -486,7 +486,7 @@ const MetaTaskChainView: React.FC<{
                   const isYou = rosterIds.has(cand.submitter);
                   const disputeRing =
                     node.disputed && node.submission?.pinId === cand.pinId ? (
-                      <span className="pointer-events-none absolute -inset-1 rounded-xl border-2 border-amber-500 dark:border-amber-400" />
+                      <span className="pointer-events-none absolute -inset-1 rounded-xl border border-amber-500 dark:border-amber-400" />
                     ) : null;
                   return (
                     <button

@@ -74,7 +74,7 @@ const FeedbackNudgeHint: React.FC<{
         <button
           type="button"
           onClick={handleDismiss}
-          className="p-0.5 rounded-md dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary text-claude-textSecondary transition-colors"
+          className="p-0.5 rounded-[8px] dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary text-claude-textSecondary transition-colors"
           title={i18nService.t('close')}
           aria-label={i18nService.t('close')}
         >

@@ -92,7 +92,7 @@ export const GigSquareSkillPicker: React.FC<GigSquareSkillPickerProps> = ({
           type="button"
           onClick={handleAddSkill}
           disabled={!canAddCandidate}
-          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-claude-border px-3 py-2 text-sm text-claude-text transition-colors hover:bg-claude-surfaceHover disabled:cursor-not-allowed disabled:opacity-50 dark:border-claude-darkBorder dark:text-claude-darkText dark:hover:bg-claude-darkSurfaceHover"
+          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-[8px] border border-claude-border px-3 py-2 text-sm text-claude-text transition-colors hover:bg-claude-surfaceHover disabled:cursor-not-allowed disabled:opacity-50 dark:border-claude-darkBorder dark:text-claude-darkText dark:hover:bg-claude-darkSurfaceHover"
         >
           <PlusIcon className="h-4 w-4" />
           <span>{i18nService.t('metabotAdd')}</span>
@@ -118,7 +118,7 @@ export const GigSquareSkillPicker: React.FC<GigSquareSkillPickerProps> = ({
                   type="button"
                   onClick={() => handleRemoveSkill(skill.id)}
                   disabled={disabled}
-                  className="inline-flex h-4 w-4 items-center justify-center rounded-full text-claude-textSecondary hover:bg-black/10 disabled:cursor-not-allowed disabled:opacity-50 dark:text-claude-darkTextSecondary dark:hover:bg-white/10"
+                  className="inline-flex h-4 w-4 items-center justify-center rounded-[var(--shape-radius-md)] text-claude-textSecondary hover:bg-black/10 disabled:cursor-not-allowed disabled:opacity-50 dark:text-claude-darkTextSecondary dark:hover:bg-white/10"
                   aria-label={i18nService.t('metabotDelete')}
                   title={i18nService.t('metabotDelete')}
                 >

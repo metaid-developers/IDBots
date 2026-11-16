@@ -61,7 +61,7 @@ const CandidateFrame: React.FC<{
       <button
         type="button"
         onClick={onReload}
-        className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
+        className="inline-flex items-center gap-1 rounded-[8px] px-1.5 py-0.5 text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
       >
         <ArrowPathIcon className="h-3.5 w-3.5" />
         {t('preference.panel.reload')}
@@ -353,7 +353,7 @@ const PreferenceComparePanel: React.FC<PreferenceComparePanelProps> = ({ roundPi
             type="button"
             onClick={onClose}
             aria-label={t('preference.panel.close')}
-            className="rounded-lg p-1.5 text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
+            className="rounded-[8px] p-1.5 text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
           >
             <XMarkIcon className="h-5 w-5" />
           </button>

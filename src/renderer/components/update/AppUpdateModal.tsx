@@ -67,7 +67,7 @@ const AppUpdateModal: React.FC<AppUpdateModalProps> = ({
             onClick={onHide}
             title={i18nService.t('updateHidePanel')}
             aria-label={i18nService.t('updateHidePanel')}
-            className="absolute top-3 right-3 z-10 dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:text-claude-darkText hover:text-claude-text p-1.5 dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-lg transition-colors"
+            className="absolute top-3 right-3 z-10 dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:text-claude-darkText hover:text-claude-text p-1.5 dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-[8px] transition-colors"
           >
             <XMarkIcon className="h-4 w-4" />
           </button>
@@ -106,14 +106,14 @@ const AppUpdateModal: React.FC<AppUpdateModalProps> = ({
               <button
                 type="button"
                 onClick={onCancel}
-                className="px-3 py-1.5 text-sm rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+                className="px-4 py-2 text-sm inline-flex items-center justify-center rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
               >
                 {i18nService.t('updateAvailableCancel')}
               </button>
               <button
                 type="button"
                 onClick={onConfirm}
-                className="btn-idchat-primary-filled px-3 py-1.5 text-sm"
+                className="btn-idchat-primary-filled text-sm"
               >
                 {readyToInstall ? i18nService.t('updateInstallNow') : i18nService.t('updateAvailableConfirm')}
               </button>
@@ -140,14 +140,14 @@ const AppUpdateModal: React.FC<AppUpdateModalProps> = ({
               <button
                 type="button"
                 onClick={onCancel}
-                className="px-3 py-1.5 text-sm rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+                className="px-4 py-2 text-sm inline-flex items-center justify-center rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
               >
                 {i18nService.t('updateLater')}
               </button>
               <button
                 type="button"
                 onClick={onConfirm}
-                className="btn-idchat-primary-filled px-3 py-1.5 text-sm"
+                className="btn-idchat-primary-filled text-sm"
               >
                 {i18nService.t('updateRestartNow')}
               </button>
@@ -203,7 +203,7 @@ const AppUpdateModal: React.FC<AppUpdateModalProps> = ({
                 <button
                   type="button"
                   onClick={onConfirm}
-                  className="btn-idchat-primary-filled px-3 py-1.5 text-sm"
+                  className="btn-idchat-primary-filled text-sm"
                 >
                   {i18nService.t('updateInstallNow')}
                 </button>
@@ -211,7 +211,7 @@ const AppUpdateModal: React.FC<AppUpdateModalProps> = ({
                 <button
                   type="button"
                   onClick={onCancelDownload}
-                  className="px-3 py-1.5 text-sm rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+                  className="px-4 py-2 text-sm inline-flex items-center justify-center rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
                 >
                   {i18nService.t('updateDownloadCancel')}
                 </button>
@@ -261,14 +261,14 @@ const AppUpdateModal: React.FC<AppUpdateModalProps> = ({
               <button
                 type="button"
                 onClick={onCancel}
-                className="px-3 py-1.5 text-sm rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+                className="px-4 py-2 text-sm inline-flex items-center justify-center rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
               >
                 {i18nService.t('updateAvailableCancel')}
               </button>
               <button
                 type="button"
                 onClick={onRetry}
-                className="btn-idchat-primary-filled px-3 py-1.5 text-sm"
+                className="btn-idchat-primary-filled text-sm"
               >
                 {i18nService.t('updateRetry')}
               </button>

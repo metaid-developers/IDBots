@@ -7,6 +7,12 @@ import BotBrowserModeSwitch, {
   TOP_GAP_DEFAULT_PX,
   TOP_GAP_MAC_PX,
 } from '../src/renderer/features/botBrowser/BotBrowserModeSwitch';
+import MacWindowLights, {
+  MAC_LIGHT_DOT_COLORS,
+  MAC_LIGHT_DOT_GAP_PX,
+  MAC_LIGHT_DOT_PX,
+  MAC_LIGHT_INSET_PX,
+} from '../src/renderer/features/botBrowser/MacWindowLights';
 import type { BotBrowserSurfaceMode } from '../src/renderer/features/botBrowser/types';
 
 const switchSource = readFileSync(
@@ -23,6 +29,10 @@ const homeSidebarSource = readFileSync(
 );
 const panelSource = readFileSync(
   new URL('../src/renderer/features/botBrowser/BotBrowserCoworkPanel.tsx', import.meta.url),
+  'utf8',
+);
+const lightsSource = readFileSync(
+  new URL('../src/renderer/features/botBrowser/MacWindowLights.tsx', import.meta.url),
   'utf8',
 );
 
@@ -83,7 +93,9 @@ test('the current face is the checked, yellow-filled radio', () => {
   const homeButton = home.slice(start, home.indexOf('</button>', start));
   assert.match(homeButton, /bg-claude-accent/);
   assert.match(homeButton, /text-claude-accentInk/);
-  assert.match(homeButton, /shadow-\[3px_3px_0_var\(--btn-primary-edge\)\]/);
+  // v2 rect-flat (owner ruling 2026-11-14): the selected face is a FLAT fill —
+  // the old 3 px grey offset edge is retired, so depth is border + colour only.
+  assert.doesNotMatch(homeButton, /shadow-\[/);
   assert.match(home, /aria-checked="true" tabindex="0"/);
 
   const browserStart = home.indexOf('data-surface="browser"');
@@ -99,18 +111,57 @@ test('the current face is the checked, yellow-filled radio', () => {
   assert.equal((browser.match(/bg-claude-accent\b/g) ?? []).length, 1);
 });
 
-test('the tray keeps the baseline segmented grammar', () => {
+test('the tray keeps the rect-flat segmented grammar (v2, owner ruling 2026-11-14)', () => {
   const markup = render('browser');
   const trayStart = markup.indexOf('data-slot="bot-browser-mode-segments"');
   const tray = markup.slice(trayStart, markup.indexOf('>', trayStart));
-  for (const token of ['grid-cols-2', 'rounded-xl', 'gap-1', 'p-0.5', 'border-claude-border/70']) {
+  for (const token of ['grid-cols-2', 'rounded-[var(--shape-radius-lg)]', 'gap-0', 'overflow-hidden', 'border-claude-border/70']) {
     assert.ok(tray.includes(token), `tray is missing ${token}`);
   }
-  const buttonStart = markup.indexOf('data-slot="surface-switch-option"');
-  const button = markup.slice(buttonStart, markup.indexOf('>', buttonStart));
-  for (const token of ['h-[34px]', 'rounded-[10px]', 'text-xs', 'font-medium']) {
-    assert.ok(button.includes(token), `segment is missing ${token}`);
+  // The capsule grammar is retired: no pill radius, no gutter between cells.
+  assert.ok(!tray.includes('rounded-xl'), 'the tray must not carry the retired capsule radius');
+  assert.ok(!tray.split(' ').includes('gap-1'), 'the cells sit flush (gap-0), not on a gutter');
+  // The fill must meet the border (reference .seg has no tray padding). An
+  // inset fill read as two tiles pasted inside a rounded frame — owner rejected.
+  assert.ok(!tray.split(' ').includes('p-0.5'), 'the tray has no inner padding; the fill meets the 1px border');
+
+  const firstStart = markup.indexOf('data-slot="surface-switch-option"');
+  const first = markup.slice(firstStart, markup.indexOf('>', firstStart));
+  const secondStart = markup.indexOf('data-slot="surface-switch-option"', firstStart + 1);
+  const second = markup.slice(secondStart, markup.indexOf('>', secondStart));
+  for (const token of ['h-full', 'text-xs', 'font-medium', 'transition-colors']) {
+    assert.ok(first.includes(token), `segment is missing ${token}`);
   }
+  // The cell itself is square and flat — the tray owns the only radius.
+  for (const segment of [first, second]) {
+    assert.ok(!segment.includes('rounded-[10px]'), 'the per-cell radius is retired');
+    assert.ok(!segment.includes('shadow-[3px'), 'the offset hard shadow is retired');
+    assert.ok(!segment.includes('transition-all'), 'colour-only transition, no layout tween');
+    // No divider between the cells at all (owner ruling 2026-11-14): the two
+    // cells are one surface, split by fill alone.
+    assert.ok(!/\bborder-l\b/.test(segment), 'no seam divider — the split is fill only');
+  }
+});
+
+test('the shape tokens the tray depends on exist in the theme block', () => {
+  const css = readFileSync(new URL('../src/renderer/index.css', import.meta.url), 'utf8');
+  const rootBlock = css.slice(css.indexOf(':root {'), css.indexOf('.dark {'));
+  for (const [token, value] of [
+    ['--shape-radius-lg', '8px'],
+    ['--shape-radius-md', '10px'],
+    ['--shape-radius-sm', '8px'],
+    ['--shape-radius-xs', '4px'],
+  ] as const) {
+    assert.match(
+      rootBlock,
+      new RegExp(`${token}:\\s*${value};`),
+      `theme block is missing ${token}: ${value}`,
+    );
+  }
+  // The rect-flat ruling is recorded where the tokens live.
+  assert.match(rootBlock, /rect-flat/);
+  assert.match(rootBlock, /owner ruling 2026-11-14/);
+  assert.match(rootBlock, /no capsules, no offset shadows/i);
 });
 
 test('both faces land the pill + band at the same column inset, below the lights', () => {
@@ -283,20 +334,25 @@ test('neither face mounts an identity entry in the header (it lives in the rail)
 
 /**
  * D-line geometry (static, not a browser measurement), owner red-box order
- * 2026-11-09 10:58: on mac the traffic lights own row 1 alone and the whole
- * identity+band row falls BELOW it —
- *   lights          = trafficLightPosition y=20, dot ≈12 px → extent ≈14–26,
- *                     strictly inside the 0–52 strip (same height as the
- *                     rail's mac top track)
- *   band row top    = TOP_GAP_MAC_PX = 52 on BOTH faces (the rail face's
- *                     lights live over the rail column's strip, so the mid
- *                     column needs the same 42.375 px strip above its header)
- *   home menu top   = 52 (lights strip) + 52 (band row) + 8 (row pt-2) = 112
- * The rail face's icons start at 52 + 52 + 8 = 112 px (D-line final ruling
- * 2026-11-09: below the rail's avatar slot) — an independent column, never
- * part of the header row the owner ordered down.
+ * 2026-11-09 10:58, amended by the owner baseline 2026-11-15 08:27: on mac
+ * the traffic lights own row 1 alone and the whole identity+band row falls
+ * BELOW it —
+ *   lights          = MacWindowLights: 10 px dots at pt-[7.25px] in the
+ *                     strip -> extent 7.25-17.25 (center 12.25), strictly
+ *                     inside the 0-42.375 strip, never touching the band row
+ *   band row top    = TOP_GAP_MAC_PX = 42.375 on BOTH faces (the strip is
+ *                     sized so the tray's VISIBLE top border lands on the
+ *                     bot-home panel's header divider y=50.625, owner
+ *                     baseline 2026-11-15 08:27; the rail face needs the
+ *                     same strip for the shared avatar/labels centerline)
+ *   home menu top   = 42.375 (lights strip) + 52 (band row) + 8 (row pt-2)
+ *                     = 102.375
+ * The rail face's icons start at 42.375 + 52 + 8 = 102.375 px (D-line final
+ * ruling 2026-11-09: below the rail's avatar slot; height amended by the
+ * 08:27 baseline change) — an independent column, never part of the header
+ * row the owner ordered down.
  */
-test('mac: the band row starts below the 52 px traffic-light strip on both faces', () => {
+test('mac: the band row starts below the 42.375 px traffic-light strip on both faces', () => {
   const railSource = readFileSync(
     new URL('../src/renderer/components/layout/WorkspaceRail.tsx', import.meta.url),
     'utf8',
@@ -306,19 +362,40 @@ test('mac: the band row starts below the 52 px traffic-light strip on both faces
     'utf8',
   );
 
-  // The rail keeps its 42.375 px mac strip (08:27 baseline ruling) — that
-  // strip IS the lights' row.
+  // The rail keeps its 42.375 px mac strip — that strip IS the lights' row,
+  // kept in lockstep with the switch's TOP_GAP_MAC_PX (baseline change
+  // 2026-11-15 08:27) so the avatar's centerline rides the band labels'.
   assert.match(railSource, /isMac \? 'h-\[42\.375px\]' : 'h-3'/);
   assert.match(railSource, /className="mt-2 flex min-h-0 w-full flex-1 flex-col items-center/);
 
-  // Native lights are GONE (WeChat-style route): the app hides the native
-  // buttons and the renderer draws its own mini lights, so no
-  // trafficLightPosition tuning remains.
-  assert.doesNotMatch(mainWindowSource, /trafficLightPosition/);
-  assert.match(mainWindowSource, /setWindowButtonVisibility\(false\)/);
+  // The lights' true position: pt-[7.25px] inside the 42.375 px strip
+  // (extent 7.25–17.25), so they stay strictly above the band row.
+  // SUPERSEDED (mini-lights ruling 2026-11-14, owner): the native lights
+  // are gone — main.ts drops the darwin branch to the plain hidden style,
+  // retires the reposition option, and removes the native buttons after
+  // creation; the renderer's MacWindowLights owns the strip instead. The
+  // non-darwin branches are pinned UNCHANGED (behavior frozen there).
+  const winCreateIdx = mainWindowSource.indexOf('const win = new BrowserWindow({');
+  const darwinBranch = mainWindowSource.slice(
+    mainWindowSource.indexOf('...(isMac', winCreateIdx),
+    mainWindowSource.indexOf(': isWindows', winCreateIdx),
+  );
+  assert.match(darwinBranch, /titleBarStyle: 'hidden' as const/);
+  assert.doesNotMatch(mainWindowSource, /titleBarStyle: 'hiddenInset'/);
+  assert.doesNotMatch(mainWindowSource, /trafficLightPosition: \{/);
+  // Hotfix eb3c579f shape: creation-time hide + ready-to-show re-apply
+  // (macOS re-shows native buttons when a still-hidden window first shows).
+  assert.match(mainWindowSource, /const hideNativeLights = \(\) => \{/);
+  assert.match(mainWindowSource, /win\.setWindowButtonVisibility\(false\);/);
+  assert.match(mainWindowSource, /win\.once\('ready-to-show', hideNativeLights\);/);
+  assert.match(mainWindowSource, /frame: false,/);
+  assert.match(mainWindowSource, /titleBarOverlay: getTitleBarOverlayOptions\(\)/);
+  // The drawn dots mount in the top-gap strip: 10 px, pt-[7.25px] -> extent
+  // 7.25-17.25 inside the 0-42.375 strip.
+  assert.match(switchSource, /<MacWindowLights \/>/);
 
-  // The switch's mac branch: a 42.375 px strip precedes the band row; the
-  // row keeps its 52 px height and the retired lights inset is gone.
+  // The switch's mac branch: a 42.375 px strip precedes the band row; the row
+  // keeps its 52 px height and the retired lights inset is gone.
   assert.match(switchSource, /TOP_GAP_MAC_PX = 42\.375/);
   assert.match(switchSource, /flex h-\[52px\] w-full min-w-0 items-center gap-2 pl-2 pr-2\.5/);
   assert.doesNotMatch(switchSource, /pt-1/);
@@ -336,16 +413,74 @@ test('mac: the band row starts below the 52 px traffic-light strip on both faces
   assert.match(homeSidebarSource, /px-2\.5 pt-1/);
   assert.doesNotMatch(homeSidebarSource, /justify-between gap-1\.5 px-3 pt-2/);
 
-  const lightsTop = 20 - 6;
-  const lightsBottom = 20 + 6;
-  const bandRowTop = 52;
-  // D-line final ruling 2026-11-09: the rail column is [52 strip][52 avatar
-  // slot][mt-2 8] — the first function icon starts at 112, below the avatar,
-  // never in the top cell.
-  const railIconTop = 52 + 52 + 8;
-  const homeMenuTop = 52 + 52 + 8;
+  const lightsTop = 7.25; // MacWindowLights: 10 px dot, pt-[7.25px] in the gap strip
+  const lightsBottom = 7.25 + 10;
+  const bandRowTop = 42.375;
+  // D-line final ruling 2026-11-09, height amended by the baseline change
+  // 2026-11-15 08:27: the rail column is [42.375 strip][52 avatar slot][mt-2 8] —
+  // the first function icon starts at 102.375, below the avatar, never in the
+  // top cell.
+  const railIconTop = 42.375 + 52 + 8;
+  const homeMenuTop = 42.375 + 52 + 8;
   assert.ok(lightsTop >= 0 && lightsBottom <= bandRowTop, 'lights stay inside the strip');
-  assert.equal(bandRowTop, 52);
-  assert.equal(railIconTop, 112);
-  assert.equal(homeMenuTop, 112);
+  assert.equal(bandRowTop, 42.375);
+  assert.equal(railIconTop, 102.375);
+  assert.equal(homeMenuTop, 102.375);
+});
+
+
+test('mac mini lights: three 10px dots, close | minimize | zoom, drag container, IPC wiring', () => {
+  // Sizes are px literals — the app root font is 15px, so rem-scaled classes
+  // drift (exact-fill arithmetic must stay in px; shape-language v2).
+  assert.match(lightsSource, /MAC_LIGHT_DOT_PX = 10/);
+  assert.match(lightsSource, /MAC_LIGHT_DOT_GAP_PX = 10/);
+  assert.match(lightsSource, /MAC_LIGHT_INSET_PX = 15/);
+  assert.match(lightsSource, /className="draggable flex items-center pt-\[7\.25px\] pl-\[15px\] gap-\[10px\]"/);
+  assert.match(lightsSource, /non-draggable h-\[10px\] w-\[10px\] rounded-full/);
+  // The three actions ride the EXISTING window-control bridge: preload
+  // window.close / window.minimize / window.toggleMaximize -> send channels
+  // window-close / window-minimize / window-maximize -> ipcMain.on handlers.
+  assert.match(lightsSource, /window\.electron\.window\.close\(\)/);
+  assert.match(lightsSource, /window\.electron\.window\.minimize\(\)/);
+  assert.match(lightsSource, /window\.electron\.window\.toggleMaximize\(\)/);
+  const closeIdx = lightsSource.indexOf("action: 'close'");
+  const minIdx = lightsSource.indexOf("action: 'minimize'");
+  const zoomIdx = lightsSource.indexOf("action: 'zoom'");
+  assert.ok(closeIdx >= 0 && closeIdx < minIdx && minIdx < zoomIdx, 'dots run close, minimize, zoom');
+
+  const mac = renderToStaticMarkup(<MacWindowLights platform="darwin" />);
+  assert.equal((mac.match(/<button /g) ?? []).length, 3);
+  assert.ok(
+    mac.indexOf('data-window-action="close"') < mac.indexOf('data-window-action="minimize"')
+      && mac.indexOf('data-window-action="minimize"') < mac.indexOf('data-window-action="zoom"'),
+    'markup order: close, minimize, zoom',
+  );
+  assert.match(mac, /data-window-action="close"[^>]*aria-label="Close"/);
+  assert.match(mac, /data-window-action="minimize"[^>]*aria-label="Minimize"/);
+  assert.match(mac, /data-window-action="zoom"[^>]*aria-label="Zoom"/);
+  assert.match(mac, /h-\[10px\] w-\[10px\]/);
+  assert.match(mac, /pl-\[15px\] gap-\[10px\]/);
+  assert.match(mac, /draggable flex items-center/);
+  assert.match(mac, /non-draggable h-\[10px\]/);
+  for (const color of Object.values(MAC_LIGHT_DOT_COLORS)) {
+    assert.ok(mac.includes(color), `dot color ${color} rides the inline style`);
+  }
+  assert.equal(MAC_LIGHT_DOT_PX, 10);
+  assert.equal(MAC_LIGHT_DOT_GAP_PX, 10);
+  assert.equal(MAC_LIGHT_INSET_PX, 15);
+});
+
+test('mac mini lights render NOTHING off darwin (win32 / linux / Node renders)', () => {
+  assert.equal(renderToStaticMarkup(<MacWindowLights platform="win32" />), '');
+  assert.equal(renderToStaticMarkup(<MacWindowLights platform="linux" />), '');
+  assert.equal(renderToStaticMarkup(<MacWindowLights />), '', 'no prop + no window (Node) renders nothing');
+});
+
+test('the drawn lights ride the top-gap strip, centered in the window-top → tray-top gap (both faces)', () => {
+  const gapStart = switchSource.indexOf('data-slot="surface-header-top-gap"');
+  const gapEnd = switchSource.indexOf('data-slot="surface-header-bar"', gapStart);
+  assert.ok(gapEnd > gapStart, 'band-row anchor found');
+  const gapSlice = switchSource.slice(gapStart, gapEnd);
+  assert.ok(gapSlice.includes('<MacWindowLights />'), 'lights mount inside the gap strip');
+  assert.match(lightsSource, /pt-\[7\.25px\]/, 'the dots ride the gap-center offset (tray-top/2)');
 });

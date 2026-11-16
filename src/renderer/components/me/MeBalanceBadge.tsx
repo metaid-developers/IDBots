@@ -134,7 +134,7 @@ const MeBalanceBadge: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
         className={
           compact
             ? `flex h-10 w-10 items-center justify-center rounded-xl border transition-colors bg-claude-surface/80 dark:bg-claude-darkSurface/80 hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover ${badgeClass}`
-            : `flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors bg-claude-surface/80 dark:bg-claude-darkSurface/80 hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover ${badgeClass}`
+            : `flex items-center gap-1.5 rounded-[var(--shape-radius-md)] border px-2.5 py-1 text-xs font-medium transition-colors bg-claude-surface/80 dark:bg-claude-darkSurface/80 hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover ${badgeClass}`
         }
       >
         <MeCoinIcon className={compact ? 'h-5 w-5' : 'h-3.5 w-3.5'} />
@@ -159,7 +159,7 @@ const MeBalanceBadge: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
                 type="button"
                 onClick={handleRefresh}
                 title={i18nService.t('mePanelRefresh')}
-                className="p-1 rounded-lg text-claude-textSecondary dark:text-claude-darkTextSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                className="p-1 rounded-[8px] text-claude-textSecondary dark:text-claude-darkTextSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
               >
                 <ArrowPathIcon className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
               </button>
@@ -256,7 +256,7 @@ const MeBalanceBadge: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
                         setPanelOpen(false);
                         requestOpenMePurchase('topup');
                       }}
-                      className="btn-idchat-primary-filled flex-1 rounded-lg px-2 py-1.5 text-[11px] font-medium"
+                      className="btn-idchat-primary-filled flex-1 !rounded-lg px-2 py-1.5 text-[11px] font-medium"
                     >
                       {i18nService.t('mePanelRecharge')}
                     </button>

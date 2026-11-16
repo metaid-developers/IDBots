@@ -19,8 +19,8 @@ interface CoworkAttachmentPreviewProps {
   onRemove: (path: string) => void;
 }
 
-const PILL_REMOVE_CLASS = 'ml-0.5 rounded-full p-0.5 hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover';
-const THUMB_REMOVE_CLASS = 'rounded-full bg-black/55 p-0.5 text-white hover:bg-black/75';
+const PILL_REMOVE_CLASS = 'ml-0.5 rounded-[var(--shape-radius-md)] p-0.5 hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover';
+const THUMB_REMOVE_CLASS = 'rounded-[var(--shape-radius-md)] bg-black/55 p-0.5 text-white hover:bg-black/75';
 
 /**
  * One attachment chip in the composer. Non-image files keep the filename pill

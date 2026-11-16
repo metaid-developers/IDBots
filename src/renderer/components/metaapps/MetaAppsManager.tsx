@@ -366,7 +366,7 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({
               avatar: authorBrowserTarget.avatar,
             });
           }}
-          className="min-w-0 flex items-center gap-2 rounded-full text-left transition-shadow hover:ring-2 hover:ring-claude-accent/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/60"
+          className="min-w-0 flex items-center gap-2 rounded-[var(--shape-radius-sm)] text-left transition-shadow hover:ring-2 hover:ring-claude-accent/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/60"
         >
           {authorContent}
         </button>
@@ -569,7 +569,7 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({
             type="button"
             disabled={isCommunityLoading || !hasPreviousCommunityPage}
             onClick={handlePreviousCommunityPage}
-            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border hover:border-claude-accent/50 hover:text-claude-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-[8px] text-xs dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border hover:border-claude-accent/50 hover:text-claude-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {i18nService.t('metaAppsPreviousPage')}
           </button>
@@ -577,7 +577,7 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({
             type="button"
             disabled={isCommunityLoading || !hasNextCommunityPage}
             onClick={handleNextCommunityPage}
-            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border hover:border-claude-accent/50 hover:text-claude-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-[8px] text-xs dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border hover:border-claude-accent/50 hover:text-claude-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {i18nService.t('metaAppsNextPage')}
           </button>

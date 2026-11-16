@@ -849,7 +849,7 @@ const MetafileMediaPreview: React.FC<{
           title={i18nService.t('a2aZoomPreview')}
           aria-label={i18nService.t('a2aZoomPreview')}
           data-metafile-zoom="video"
-          className="absolute right-1.5 top-1.5 inline-flex h-6 w-6 items-center justify-center rounded-md bg-black/65 text-white opacity-85 transition-opacity hover:bg-black/85 hover:opacity-100"
+          className="absolute right-1.5 top-1.5 inline-flex h-6 w-6 items-center justify-center rounded-[8px] bg-black/65 text-white opacity-85 transition-opacity hover:bg-black/85 hover:opacity-100"
         >
           <ArrowsPointingOutIcon className="h-3.5 w-3.5" />
         </button>
@@ -916,7 +916,7 @@ const MetafileImagePreview: React.FC<{
         onClick={onZoom}
         title={i18nService.t('a2aZoomPreview')}
         aria-label={i18nService.t('a2aZoomPreview')}
-        className="pointer-events-none absolute right-1.5 top-1.5 inline-flex h-6 w-6 items-center justify-center rounded-md bg-black/60 text-white opacity-80 transition-opacity group-hover:opacity-100"
+        className="pointer-events-none absolute right-1.5 top-1.5 inline-flex h-6 w-6 items-center justify-center rounded-[8px] bg-black/60 text-white opacity-80 transition-opacity group-hover:opacity-100"
       >
         <ArrowsPointingOutIcon className="h-3.5 w-3.5" />
       </button>
@@ -974,7 +974,7 @@ const MetafileLightboxModal: React.FC<{
           onClick={onClose}
           title={i18nService.t('a2aClosePreview')}
           aria-label={i18nService.t('a2aClosePreview')}
-          className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25"
+          className="inline-flex h-9 w-9 items-center justify-center rounded-[var(--shape-radius-md)] bg-white/15 text-white transition-colors hover:bg-white/25"
         >
           <XMarkIcon className="h-5 w-5" />
         </button>
@@ -990,7 +990,7 @@ const MetafileLightboxModal: React.FC<{
             }}
             title={i18nService.t('a2aPrevPreview')}
             aria-label={i18nService.t('a2aPrevPreview')}
-            className="absolute left-4 top-1/2 -translate-y-1/2 inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25"
+            className="absolute left-4 top-1/2 -translate-y-1/2 inline-flex h-10 w-10 items-center justify-center rounded-[var(--shape-radius-md)] bg-white/15 text-white transition-colors hover:bg-white/25"
           >
             <ChevronLeftIcon className="h-5 w-5" />
           </button>
@@ -1002,7 +1002,7 @@ const MetafileLightboxModal: React.FC<{
             }}
             title={i18nService.t('a2aNextPreview')}
             aria-label={i18nService.t('a2aNextPreview')}
-            className="absolute right-4 top-1/2 -translate-y-1/2 inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25"
+            className="absolute right-4 top-1/2 -translate-y-1/2 inline-flex h-10 w-10 items-center justify-center rounded-[var(--shape-radius-md)] bg-white/15 text-white transition-colors hover:bg-white/25"
           >
             <ChevronRightIcon className="h-5 w-5" />
           </button>
@@ -1142,7 +1142,7 @@ const MetafilePreviewCard: React.FC<{
               onClick={handleZoom}
               title={i18nService.t('a2aZoomPreview')}
               aria-label={i18nService.t('a2aZoomPreview')}
-              className="inline-flex h-6 w-6 items-center justify-center rounded-md border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:opacity-80 transition-opacity"
+              className="inline-flex h-6 w-6 items-center justify-center rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:opacity-80 transition-opacity"
             >
               <ArrowsPointingOutIcon className="h-3.5 w-3.5" />
             </button>

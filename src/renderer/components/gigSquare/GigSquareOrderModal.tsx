@@ -808,7 +808,7 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="text-xs px-2 py-1 rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+              className="text-xs px-2 py-1 rounded-[8px] dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
               disabled={status !== 'idle'}
             >
               {i18nService.t('close')}
@@ -1071,14 +1071,14 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
               <button
                 type="button"
                 onClick={() => setShowConfirmModal(false)}
-                className="px-3 py-2 text-sm font-medium rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+                className="px-4 py-2 text-sm font-medium inline-flex items-center justify-center rounded-[var(--shape-radius-md)] border border-claude-border dark:border-claude-darkBorder dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
               >
                 {i18nService.t('close')}
               </button>
               <button
                 type="button"
                 onClick={handleConfirmPayment}
-                className="btn-idchat-primary px-4 py-2 text-sm font-medium"
+                className="btn-idchat-primary text-sm font-medium"
               >
                 {i18nService.t('gigSquareConfirm')}
               </button>

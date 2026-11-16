@@ -11,7 +11,7 @@ import { imService } from '../services/im';
 import { APP_ID, EXPORT_FORMAT_TYPE, EXPORT_PASSWORD } from '../constants/app';
 import ErrorMessage from './ErrorMessage';
 import FreeQuotaCard from './FreeQuotaCard';
-import { XMarkIcon, Cog6ToothIcon, PlusCircleIcon, TrashIcon, PencilIcon, SignalIcon, CheckCircleIcon, XCircleIcon, CubeIcon, ChatBubbleLeftIcon, ArchiveBoxIcon, PuzzlePieceIcon, BriefcaseIcon, BoltIcon, ArrowPathIcon, QuestionMarkCircleIcon } from '@heroicons/react/24/outline';
+import { XMarkIcon, Cog6ToothIcon, PlusCircleIcon, TrashIcon, PencilIcon, SignalIcon, CheckCircleIcon, XCircleIcon, CubeIcon, ChatBubbleLeftIcon, ArchiveBoxIcon, PuzzlePieceIcon, BriefcaseIcon, BoltIcon, ArrowPathIcon, QuestionMarkCircleIcon, ChevronDownIcon, CheckIcon } from '@heroicons/react/24/outline';
 import BrainIcon from './icons/BrainIcon';
 import { fetchProviderModelList, providerSupportsModelListSync } from '../services/providerModels';
 import { testCerebellumConnection } from '../services/cerebellumConnection';
@@ -575,6 +575,22 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
   const [archivedChatsQuery, setArchivedChatsQuery] = useState<string>('');
   const [archivedChatsSearchContent, setArchivedChatsSearchContent] = useState<boolean>(false);
   const [archivedChatsMetabotId, setArchivedChatsMetabotId] = useState<number | null>(null);
+  // OWNER 01:48: native <select> popup breaks the design language — custom
+  // dropdown in the unified tray grammar (chip + fixed popover + check mark).
+  const [archivedBotSelectOpen, setArchivedBotSelectOpen] = useState(false);
+  const [archivedBotSelectPos, setArchivedBotSelectPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const archivedBotSelectRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!archivedBotSelectOpen) return;
+    const handleClick = (event: MouseEvent) => {
+      if (!archivedBotSelectRef.current?.contains(event.target as Node)) {
+        setArchivedBotSelectOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [archivedBotSelectOpen]);
   const [archivedChatsPage, setArchivedChatsPage] = useState<number>(0);
   const [archivedChatsTotal, setArchivedChatsTotal] = useState<number>(0);
   const [archivedChatsNotice, setArchivedChatsNotice] = useState<string | null>(null);
@@ -1692,7 +1708,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
         onClick={() => handleProviderChange(providerKey)}
         className={`flex items-center p-2 rounded-xl cursor-pointer transition-colors group ${
           activeProvider === providerKey && !showCerebellumSettings
-            ? 'bg-claude-accent/10 dark:bg-claude-accent/20 border border-claude-accent/30 shadow-subtle'
+            ? 'bg-claude-accent/10 dark:bg-claude-accent/20 border border-claude-accent/30'
             : 'dark:bg-claude-darkSurface/50 bg-claude-surface hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover border border-transparent'
         }`}
       >
@@ -1710,8 +1726,11 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
             {getProviderDisplayLabel(providerKey, config)}
           </span>
         </div>
-        <div className="flex items-center ml-2">
-          {isCustomProviderKey(providerKey) && (
+        {/* OWNER 02:35: fixed w-10 toggle slot (mirror the cerebellum row) so
+            the yellow pill aligns at the same x/y on every provider row;
+            non-custom rows reserve an invisible spacer for the trash slot. */}
+        <div className="flex items-center ml-1">
+          {isCustomProviderKey(providerKey) ? (
             <button
               type="button"
               title={i18nService.t('deleteProvider')}
@@ -1723,27 +1742,31 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
             >
               <TrashIcon className="h-3.5 w-3.5" />
             </button>
+          ) : (
+            <div className="w-6" />
           )}
-          <div
-            title={!canToggleProvider ? i18nService.t('configureApiKey') : undefined}
-            className={`w-7 h-4 rounded-full flex items-center transition-colors ${
-              config.enabled ? 'bg-claude-accent' : 'dark:bg-claude-darkBorder bg-claude-border'
-            } ${
-              canToggleProvider ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'
-            }`}
-            onClick={(e) => {
-              e.stopPropagation();
-              if (!canToggleProvider) {
-                return;
-              }
-              toggleProviderEnabled(providerKey);
-            }}
-          >
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center">
             <div
-              className={`w-3 h-3 rounded-full bg-white shadow-md transform transition-transform ${
-                config.enabled ? 'translate-x-3.5' : 'translate-x-0.5'
+              title={!canToggleProvider ? i18nService.t('configureApiKey') : undefined}
+              className={`w-7 h-4 rounded-full flex items-center transition-colors ${
+                config.enabled ? 'bg-claude-accent' : 'dark:bg-claude-darkBorder bg-claude-border'
+              } ${
+                canToggleProvider ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'
               }`}
-            />
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!canToggleProvider) {
+                  return;
+                }
+                toggleProviderEnabled(providerKey);
+              }}
+            >
+              <div
+                className={`w-3 h-3 rounded-full bg-white transform transition-transform ${
+                  config.enabled ? 'translate-x-3.5' : 'translate-x-0.5'
+                }`}
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -2523,7 +2546,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                         setTheme(option.value);
                         themeService.setTheme(option.value);
                       }}
-                      className={`flex flex-col items-center rounded-xl border-2 p-3 transition-colors cursor-pointer ${
+                      className={`flex flex-col items-center rounded-xl border p-3 transition-colors cursor-pointer ${
                         isSelected
                           ? 'border-claude-accent bg-claude-accent/5 dark:bg-claude-accent/10'
                           : 'dark:border-claude-darkBorder border-claude-border hover:border-claude-accent/50 dark:hover:border-claude-accent/50'
@@ -2645,7 +2668,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                   type="button"
                   onClick={handleOpenDataDirectory}
                   disabled={!dataDirectoryPath}
-                  className="shrink-0 px-4 py-2 text-sm font-medium rounded-xl transition-colors border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none"
+                  className="shrink-0 px-4 py-2 text-sm font-medium rounded-[8px] transition-colors border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:pointer-events-none"
                 >
                   {i18nService.t('settingsDataDirectoryOpen')}
                 </button>
@@ -2766,10 +2789,10 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
         const totalArchivedGroupTaskPages = Math.max(1, Math.ceil(archivedGroupTasksTotal / ARCHIVED_CHATS_PAGE_SIZE));
         const totalArchivedA2AChatPages = Math.max(1, Math.ceil(archivedA2AChatsTotal / ARCHIVED_CHATS_PAGE_SIZE));
         const archivedTabButtonClass = (active: boolean) =>
-          `rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+          `flex h-full min-w-0 items-center justify-center px-3 text-xs font-medium leading-none transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
             active
-              ? 'border-claude-accent bg-claude-accent/5 dark:bg-claude-accent/10 text-claude-accent dark:text-claude-darkAccent'
-              : 'dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
+              ? 'bg-claude-accent text-claude-accentInk'
+              : 'text-claude-textSecondary hover:bg-claude-surfaceHover/70 hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover/70 dark:hover:text-claude-darkText'
           }`;
         return (
           <div className="space-y-6">
@@ -2783,7 +2806,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="inline-flex h-[36px] min-w-0 items-center overflow-hidden rounded-[var(--shape-radius-sm)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80">
                 <button
                   type="button"
                   onClick={() => setArchivedSubTab('chats')}
@@ -2810,21 +2833,59 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
               {archivedSubTab === 'chats' ? (
                 <>
                 <div className="flex items-center justify-between gap-3">
-                <select
-                  value={archivedChatsMetabotId ?? ''}
-                  onChange={(event) => {
-                    const next = Number(event.target.value);
-                    setArchivedChatsMetabotId(Number.isFinite(next) && next > 0 ? next : null);
-                  }}
-                  className="min-w-[160px] rounded-lg border px-2 py-1.5 text-xs dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
-                >
-                  <option value="">{i18nService.t('archivedChatsAllBots')}</option>
-                  {coworkMemoryMetabots.map((metabot) => (
-                    <option key={metabot.id} value={metabot.id}>
-                      {metabot.name}
-                    </option>
-                  ))}
-                </select>
+                {/* OWNER 01:48: native <select> replaced by the unified custom
+                    dropdown (chip in the tray grammar + fixed popover) — the
+                    OS-native popup broke the design language. */}
+                <div className="relative min-w-[160px]" ref={archivedBotSelectRef} data-select-open="unset">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const rect = archivedBotSelectRef.current?.getBoundingClientRect();
+                      if (rect) setArchivedBotSelectPos({ top: rect.bottom + 4, left: rect.left, width: rect.width });
+                      setArchivedBotSelectOpen(prev => {
+                        const next = !prev;
+                        if (archivedBotSelectRef.current) archivedBotSelectRef.current.dataset.selectOpen = String(next);
+                        return next;
+                      });
+                    }}
+                    className="flex h-[36px] w-full items-center justify-between gap-1.5 rounded-[var(--shape-radius-sm)] border px-3 text-sm dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text transition-colors hover:border-claude-accent/60"
+                  >
+                    <span className="truncate">
+                      {archivedChatsMetabotId
+                        ? (coworkMemoryMetabots.find(m => m.id === archivedChatsMetabotId)?.name ?? i18nService.t('archivedChatsAllBots'))
+                        : i18nService.t('archivedChatsAllBots')}
+                    </span>
+                    <ChevronDownIcon className="h-3.5 w-3.5 flex-shrink-0" />
+                  </button>
+                  {archivedBotSelectOpen && archivedBotSelectPos && (
+                    <div
+                      className="fixed z-40 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-2xl p-1"
+                      style={{ top: archivedBotSelectPos.top, left: archivedBotSelectPos.left, width: Math.max(archivedBotSelectPos.width, 160) }}
+                    >
+                      {[{ id: 0, name: i18nService.t('archivedChatsAllBots') }, ...coworkMemoryMetabots].map((opt) => {
+                        const selected = archivedChatsMetabotId === (opt.id > 0 ? opt.id : null);
+                        return (
+                          <button
+                            key={opt.id || 'all'}
+                            type="button"
+                            onClick={() => {
+                              setArchivedChatsMetabotId(opt.id > 0 ? opt.id : null);
+                              setArchivedBotSelectOpen(false);
+                            }}
+                            className={`flex w-full items-center justify-between gap-2 rounded-[var(--shape-radius-sm)] px-2 py-1.5 text-xs transition-colors text-left ${
+                              selected
+                                ? 'bg-claude-accent/10 dark:text-claude-darkText text-claude-text'
+                                : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
+                            }`}
+                          >
+                            <span className="truncate">{opt.name}</span>
+                            {selected && <CheckIcon className="h-3.5 w-3.5 text-claude-accent flex-shrink-0" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="flex items-center gap-3">
@@ -2852,11 +2913,11 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
 
               <div className="max-h-[500px] overflow-auto rounded-lg border dark:border-claude-darkBorder border-claude-border">
                 {archivedChatsLoading ? (
-                  <div className="px-3 py-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  <div className="flex h-[36px] items-center px-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
                     {i18nService.t('loading')}
                   </div>
                 ) : archivedChats.length === 0 ? (
-                  <div className="px-3 py-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  <div className="flex h-[36px] items-center px-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
                     {i18nService.t('archivedChatsEmpty')}
                   </div>
                 ) : (
@@ -2934,11 +2995,11 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
 
                   <div className="max-h-[500px] overflow-auto rounded-lg border dark:border-claude-darkBorder border-claude-border">
                     {archivedGroupTasksLoading ? (
-                      <div className="px-3 py-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                      <div className="flex h-[36px] items-center px-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
                         {i18nService.t('loading')}
                       </div>
                     ) : archivedGroupTasks.length === 0 ? (
-                      <div className="px-3 py-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                      <div className="flex h-[36px] items-center px-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
                         {i18nService.t('archivedGroupTasksEmpty')}
                       </div>
                     ) : (
@@ -3014,11 +3075,11 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
 
                   <div className="max-h-[500px] overflow-auto rounded-lg border dark:border-claude-darkBorder border-claude-border">
                     {archivedA2AChatsLoading ? (
-                      <div className="px-3 py-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                      <div className="flex h-[36px] items-center px-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
                         {i18nService.t('loading')}
                       </div>
                     ) : archivedA2AChats.length === 0 ? (
-                      <div className="px-3 py-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                      <div className="flex h-[36px] items-center px-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
                         {i18nService.t('archivedChatsEmpty')}
                       </div>
                     ) : (
@@ -3106,7 +3167,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                       type="button"
                       onClick={handleImportProvidersClick}
                       disabled={isImportingProviders || isExportingProviders}
-                      className="inline-flex items-center px-2 py-1 text-[11px] font-medium rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+                      className="inline-flex items-center px-2 py-1 text-[11px] font-medium rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
                       {i18nService.t('import')}
                     </button>
@@ -3114,7 +3175,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                       type="button"
                       onClick={handleExportProviders}
                       disabled={isImportingProviders || isExportingProviders}
-                      className="inline-flex items-center px-2 py-1 text-[11px] font-medium rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+                      className="inline-flex items-center px-2 py-1 text-[11px] font-medium rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
                       {i18nService.t('export')}
                     </button>
@@ -3143,7 +3204,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
               <div
                 className={`flex w-full items-center rounded-xl border p-2 transition-colors ${
                   showCerebellumSettings
-                    ? 'border-claude-accent/30 bg-claude-accent/10 dark:bg-claude-accent/20 shadow-subtle'
+                    ? 'border-claude-accent/30 bg-claude-accent/10 dark:bg-claude-accent/20'
                     : 'border-transparent dark:bg-claude-darkSurface/50 bg-claude-surface hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
                 }`}
               >
@@ -3153,7 +3214,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                     setShowProviderTemplatePicker(false);
                     setShowCerebellumSettings(true);
                   }}
-                  className="-my-2 flex min-h-10 min-w-0 flex-1 items-center text-left transition-transform active:scale-[0.96]"
+                  className="-my-2 flex min-h-10 min-w-0 flex-1 items-center text-left transition-transform"
                 >
                   <span className="mr-2 flex h-7 w-7 shrink-0 items-center justify-center dark:text-claude-darkText text-claude-text">
                     <BrainIcon className="h-5 w-5" />
@@ -3168,13 +3229,13 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                   aria-checked={cerebellum.enabled}
                   aria-label={i18nService.t('cerebellumEnabled')}
                   onClick={() => handleCerebellumConfigChange('enabled', !cerebellum.enabled)}
-                  className="-my-2 ml-1 flex h-10 w-10 shrink-0 items-center justify-center transition-transform active:scale-[0.96]"
+                  className="-my-2 ml-1 flex h-10 w-10 shrink-0 items-center justify-center transition-transform"
                 >
                   <span className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${
                     cerebellum.enabled ? 'bg-claude-accent' : 'dark:bg-claude-darkBorder bg-claude-border'
                   }`}
                   >
-                    <span className={`h-3 w-3 rounded-full bg-white shadow-md transform transition-transform ${
+                    <span className={`h-3 w-3 rounded-full bg-white transform transition-transform ${
                       cerebellum.enabled ? 'translate-x-3.5' : 'translate-x-0.5'
                     }`}
                     />
@@ -3410,7 +3471,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                   type="button"
                   onClick={handleTestConnection}
                   disabled={isTesting || (providerRequiresApiKey(activeProvider) && !providers[activeProvider].apiKey)}
-                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   <SignalIcon className="h-3.5 w-3.5 mr-1.5" />
                   {isTesting ? i18nService.t('testing') : i18nService.t('testConnection')}
@@ -3675,7 +3736,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                   type="button"
                   onClick={handleTestCerebellumConnection}
                   disabled={isTestingCerebellum || (cerebellum.provider !== CEREBELLUM_FREE_PROVIDER && !cerebellum.apiKey.trim())}
-                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   <SignalIcon className="h-3.5 w-3.5 mr-1.5" />
                   {isTestingCerebellum ? i18nService.t('testing') : i18nService.t('testConnection')}
@@ -3785,7 +3846,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                               key={tier.title}
                               type="button"
                               onClick={() => handleSelectFeeTier(chain, tier.title)}
-                              className={`flex flex-col items-center py-1.5 px-1 rounded-md border-2 transition-all cursor-pointer ${
+                              className={`flex flex-col items-center py-1.5 px-1 rounded-md border transition-all cursor-pointer ${
                                 isSelected
                                   ? 'border-claude-accent bg-claude-accent/5 dark:bg-claude-accent/10'
                                   : 'dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg hover:border-claude-accent/40'
@@ -3834,23 +3895,41 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
       case 'traffic': {
         // 「积分 & 流量」: two sub-pages — the ME credits page (default)
         // and the on-chain traffic quota page, restored verbatim.
+        // OWNER 2026-11-16 00:29: the segmented 积分|流量 switch lives here,
+        // below the header divider, no longer doubling as the page title.
         return (
-          <div>
-            <div className="flex items-center gap-1 pb-4">
+          <div className="pb-4">
+            {/* OWNER 2026-11-16 00:42: section label + segmented switch share
+                one row at the module's top-right; the label sits OUTSIDE the
+                module card, and the duplicated in-module title is gone. */}
+            <div className="flex items-center justify-between gap-3 pl-[15px] pt-[10px] pb-[25px] max-w-3xl pr-4"> {/* OWNER 11-16 05:45: header band breathes 25px on BOTH sides of the label+tray row — divider 25px above the tray top (band h-[79px], row pt-[10px]), block top 25px below the tray bottom (pb-[25px]); label+tray row is the anchor and does not move */} {/* OWNER 00:55: label top and tray top BOTH sit 20px below the header divider (68+1border+4pt+~15pt-4=88 rendered); top-aligned so A/B faces never drift */}
+              {/* OWNER 01:08: label + subtitle inline on ONE line so the row is
+                  exactly as tall as the tray -> the tray's 20px above AND below
+                  are both exact; OWNER 00:52/00:58: subtitle kept, both faces. */}
+              <div className="flex items-baseline gap-2.5">
+                <span className="mt-px block text-base font-semibold leading-none text-claude-text dark:text-claude-darkText">
+                  {i18nService.t(creditsSubTab === 'credits' ? 'meUsageInfoTitle' : 'trafficInfoTitle')}
+                </span>
+                <span className="text-[11px] leading-none text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                  {i18nService.t(creditsSubTab === 'credits' ? 'meUsageSubtitle' : 'trafficInfoSubtitle')}
+                </span>
+              </div>
+              <div className="inline-flex h-9 min-w-0 shrink-0 overflow-hidden rounded-[var(--shape-radius-sm)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80">
               {(['credits', 'traffic'] as const).map((sub) => (
                 <button
                   key={sub}
                   type="button"
                   onClick={() => setCreditsSubTab(sub)}
-                  className={`rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+                  className={`flex h-full min-w-[64px] items-center justify-center px-3 text-sm font-medium leading-none transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
                     creditsSubTab === sub
-                      ? 'border-claude-accent text-claude-accent dark:text-claude-darkAccent bg-claude-accent/5'
-                      : 'border-claude-border dark:border-claude-darkBorder text-claude-text dark:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
+                      ? 'bg-claude-accent text-claude-accentInk'
+                      : 'text-claude-textSecondary hover:bg-claude-surfaceHover/70 hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover/70 dark:hover:text-claude-darkText'
                   }`}
                 >
                   {i18nService.t(sub === 'credits' ? 'usageCreditsSubTabCredits' : 'usageCreditsSubTabTraffic')}
                 </button>
               ))}
+            </div>
             </div>
             {creditsSubTab === 'credits' ? <MeUsageAndCredits /> : <TrafficSettings />}
           </div>
@@ -3873,7 +3952,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
       >
         {/* Left sidebar (slimmed ~1/5: 220px → 176px, per owner request) */}
         <div className="w-[176px] shrink-0 flex flex-col min-h-0 dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted border-r dark:border-claude-darkBorder border-claude-border rounded-l-2xl">
-          <div className="px-5 pt-5 pb-3 shrink-0">
+          <div className="pl-[22px] pr-5 pt-[26px] pb-[28px] shrink-0"> {/* OWNER 11-16 06:08: 「设置」title sits 23px from the modal left edge and its center is level with the page-header label center (pt 20→26, measured 7.1px offset) — 04:17 nav-text alignment superseded by the 23px inset + one-level rulings — OWNER 2026-11-16 00:26: the 68px line splits the sidebar into title zone (above) / nav zone (below) */}
             <h2 className="text-lg font-semibold dark:text-claude-darkText text-claude-text">{i18nService.t('settings')}</h2>
           </div>
           <nav className="flex flex-col gap-0.5 px-3 pb-2 flex-1 min-h-0 overflow-y-auto">
@@ -3903,11 +3982,21 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
         {/* Right content */}
         <div className="relative flex-1 flex flex-col min-w-0 overflow-hidden dark:bg-claude-darkBg bg-claude-bg rounded-r-2xl">
           {/* Content header */}
-          <div className="flex justify-between items-center px-6 pt-5 pb-3 shrink-0">
+          {/* Header band, OWNER 2026-11-16 00:10 mirror ruling: the footer is
+              [divider at 68px above the bottom edge -> buttons -> edge], so the
+              header mirrors it as [edge -> title/tray/close centered -> 1px
+              divider at 68px below the top edge -> content]. Band = 68px tall
+              with border-b; items-center puts the h3 tray and close on one
+              line at 34px, and every category tab shares this header. */}
+          <div className="flex justify-between items-center px-6 h-[79px] shrink-0 border-b dark:border-claude-darkBorder border-claude-border">
+            {/* OWNER 2026-11-16 00:29: every tab keeps the plain h3 title above
+                the divider; the 积分|流量 segmented switch moved INTO the content
+                area (see the 'traffic' case) — title and view-switch are no
+                longer the same object. */}
             <h3 className="text-lg font-semibold dark:text-claude-darkText text-claude-text">{activeTabLabel}</h3>
             <button
               onClick={onClose}
-              className="dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:text-claude-darkText hover:text-claude-text p-1.5 dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-lg transition-colors"
+              className="dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:text-claude-darkText hover:text-claude-text p-1.5 dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-[8px] transition-colors"
             >
               <XMarkIcon className="h-5 w-5" />
             </button>
@@ -3935,7 +4024,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
             {/* Tab content */}
             <div
               ref={contentRef}
-              className="px-6 py-4 flex-1 overflow-y-auto"
+              className="px-6 pt-4 pb-4 flex-1 overflow-y-auto"
             >
               <Suspense
                 fallback={
@@ -3948,22 +4037,33 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
               </Suspense>
             </div>
 
-            {/* Footer buttons */}
-            <div className="flex justify-end space-x-4 p-4 dark:border-claude-darkBorder border-claude-border border-t dark:bg-claude-darkBg bg-claude-bg shrink-0">
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-4 py-2 dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-xl transition-colors text-sm font-medium border dark:border-claude-darkBorder border-claude-border active:scale-[0.98]"
-              >
-                {i18nService.t('cancel')}
-              </button>
-              <button
-                type="submit"
-                disabled={isSaving}
-                className="btn-idchat-primary-filled px-4 py-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isSaving ? i18nService.t('saving') : i18nService.t('save')}
-              </button>
+            {/* Footer buttons — joined pair experiment (owner ruling
+                2026-11-15 09:39): one bordered container (1 px stroke, 10 px
+                outer radius, overflow-hidden, zero-gap seamless, fill-only —
+                no divider) wraps the two segments, mirroring the
+                Studio|BotWorks segmented form. Cancel = plain surface
+                (transparent, primary text); Save = accent fill with ink
+                text. ONLY this main-dialog pair joins — the model-edit
+                sub-flow cancel/save pairs stay as-is pending owner review.
+                The container owns stroke + radius; the segments stay square
+                (overflow-hidden clips them flush). */}
+            <div className="flex justify-end p-4 dark:border-claude-darkBorder border-claude-border border-t dark:bg-claude-darkBg bg-claude-bg shrink-0">
+              <div className="inline-flex overflow-hidden rounded-[var(--shape-radius-sm)] border dark:border-claude-darkBorder border-claude-border">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-4 py-2 dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors text-sm font-medium active:scale-[0.98]"
+                >
+                  {i18nService.t('cancel')}
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSaving}
+                  className="px-4 py-2 text-sm font-medium bg-claude-accent text-claude-accentInk disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isSaving ? i18nService.t('saving') : i18nService.t('save')}
+                </button>
+              </div>
             </div>
           </form>
 
@@ -3987,7 +4087,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                   <button
                     type="button"
                     onClick={handleCancelModelEdit}
-                    className="p-1 dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:text-claude-darkText hover:text-claude-text rounded-md dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover"
+                    className="p-1 dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:text-claude-darkText hover:text-claude-text rounded-[8px] dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover"
                   >
                     <XMarkIcon className="h-4 w-4" />
                   </button>
@@ -4088,7 +4188,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                   <button
                     type="button"
                     onClick={handleSaveNewModel}
-                    className="btn-idchat-primary-filled px-3 py-1.5 text-xs"
+                    className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] inline-flex items-center justify-center rounded-[var(--shape-radius-sm)] px-3 py-1.5 text-xs"
                   >
                     {i18nService.t('save')}
                   </button>
@@ -4132,7 +4232,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                   <button
                     type="button"
                     onClick={() => handleDeleteCustomProvider(pendingDeleteProvider)}
-                    className="px-3 py-1.5 text-xs font-medium rounded-xl bg-red-500 text-white hover:bg-red-600 transition-colors active:scale-[0.98]"
+                    className="px-3 py-1.5 text-xs font-medium rounded-xl border border-red-600 bg-red-500 text-white hover:bg-red-600 transition-colors"
                   >
                     {i18nService.t('confirm')}
                   </button>

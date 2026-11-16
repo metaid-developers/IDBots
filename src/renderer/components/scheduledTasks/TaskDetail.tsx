@@ -139,7 +139,7 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ task, onRequestDelete }) => {
           <button
             type="button"
             onClick={handleEdit}
-            className="p-2 rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+            className="p-2 rounded-[8px] dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
             title={i18nService.t('scheduledTasksEdit')}
           >
             <PencilIcon className="w-4 h-4" />
@@ -148,7 +148,7 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ task, onRequestDelete }) => {
             type="button"
             onClick={handleRunNow}
             disabled={!!task.state.runningAtMs}
-            className="p-2 rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors disabled:opacity-50"
+            className="p-2 rounded-[8px] dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors disabled:opacity-50"
             title={i18nService.t('scheduledTasksRun')}
           >
             <PlayIcon className="w-4 h-4" />
@@ -156,7 +156,7 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ task, onRequestDelete }) => {
           <button
             type="button"
             onClick={handleDelete}
-            className="p-2 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+            className="p-2 rounded-[8px] text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
             title={i18nService.t('scheduledTasksDelete')}
           >
             <TrashIcon className="w-4 h-4" />

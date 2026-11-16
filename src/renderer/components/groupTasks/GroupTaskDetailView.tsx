@@ -65,7 +65,7 @@ const RoomIdBadge: React.FC<{ groupId: string }> = ({ groupId }) => {
       onClick={() => void handleCopy()}
       title={i18nService.t(copied ? 'groupTasksRoomIdCopied' : 'groupTasksCopyRoomId')}
       aria-label={i18nService.t(copied ? 'groupTasksRoomIdCopied' : 'groupTasksCopyRoomId')}
-      className="non-draggable inline-flex shrink-0 items-center gap-1 rounded-full border dark:border-claude-darkBorder border-claude-border px-2 py-0.5 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+      className="non-draggable inline-flex shrink-0 items-center gap-1 rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border px-2 py-0.5 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
     >
       <span className="font-mono">{shortGroupId(groupId)}</span>
       {copied
@@ -607,7 +607,7 @@ const GroupTaskDetailView: React.FC<GroupTaskDetailViewProps> = ({
         <button
           type="button"
           onClick={onBack}
-          className="px-4 py-2 text-sm rounded-lg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+          className="px-4 py-2 text-sm rounded-[8px] dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
         >
           {i18nService.t('back')}
         </button>
@@ -653,7 +653,7 @@ const GroupTaskDetailView: React.FC<GroupTaskDetailViewProps> = ({
               <button
                 type="button"
                 onClick={onNewChat}
-                className="h-8 w-8 inline-flex items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                className="h-8 w-8 inline-flex items-center justify-center rounded-[8px] dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
               >
                 <ComposeIcon className="h-4 w-4" />
               </button>
@@ -662,7 +662,7 @@ const GroupTaskDetailView: React.FC<GroupTaskDetailViewProps> = ({
           )}
           <button
             onClick={onBack}
-            className="non-draggable p-2 rounded-lg dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary text-claude-textSecondary transition-colors"
+            className="non-draggable p-2 rounded-[8px] dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary text-claude-textSecondary transition-colors"
             aria-label={i18nService.t('back')}
           >
             <ArrowLeftIcon className="h-5 w-5" />
@@ -704,7 +704,7 @@ const GroupTaskDetailView: React.FC<GroupTaskDetailViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setConfirmAction('done')}
-                  className="px-2.5 py-1 text-xs font-medium rounded-lg whitespace-nowrap shrink-0 bg-emerald-500 text-white hover:bg-emerald-600 transition-colors"
+                  className="border border-emerald-600 px-2.5 py-1 text-xs font-medium rounded-lg whitespace-nowrap shrink-0 bg-emerald-500 text-white hover:bg-emerald-600 transition-colors"
                 >
                   {i18nService.t('groupTasksAcceptClose')}
                 </button>

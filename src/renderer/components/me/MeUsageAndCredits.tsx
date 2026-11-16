@@ -11,7 +11,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowPathIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
+import { ChevronRightIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import type { MeHistoryEntryInfo, MeSubscriptionOrderInfo, MeTopupOrderInfo } from '../../types/electron';
 import {
@@ -262,34 +262,32 @@ const MeUsageAndCredits: React.FC = () => {
   }, [orders, subOrders, loadOrders, now]);
 
   return (
-    <div className="h-full overflow-y-auto px-4 py-4 space-y-4 max-w-3xl">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h2 className="text-base font-semibold text-claude-text dark:text-claude-darkText">{i18nService.t('meUsageTitle')}</h2>
-          <p className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">{i18nService.t('meUsageSubtitle')}</p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
+    <div className="h-full overflow-y-auto pr-4 pb-4 space-y-[10px] max-w-3xl"> {/* pt moved to the shared row above (20px rhythm) */}
+      {/* OWNER 2026-11-16 00:42: the in-module title block (用量 & 积分 +
+          subtitle) is gone — the section label now lives in the row above the
+          module (用量信息 | 积分|流量 switch), outside this card. */}
+
+      {/* 双池概览 — OWNER 2026-11-16 00:29: buy/refresh actions moved from the
+          page header into the overview card's bottom-right, next to the
+          weekly-reset note line. */}
+      {/* OWNER 04:08: cards keep their original width — only the header label
+          row pulls flush to the panel title edge (this pl-4 wrapper holds the
+          cards at the pre-alignment geometry). */}
+      <div className="space-y-[10px] pl-4">
+      <MeBalanceOverviewCard
+        onRefresh={() => void handleRefreshAll()}
+        refreshing={refreshing}
+        footer={
           <button
             type="button"
             data-slot="me-usage-buy-credits"
             onClick={() => requestOpenMePurchase('topup')}
-            className="btn-idchat-primary-filled inline-flex items-center justify-center rounded-xl px-3 py-1.5 text-xs font-medium"
+            className="btn-idchat-primary-filled inline-flex items-center justify-center text-xs font-medium"
           >
             {i18nService.t('meIncrementPackBuy')}
           </button>
-          <button
-            type="button"
-            onClick={() => void handleRefreshAll()}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-claude-border dark:border-claude-darkBorder px-2.5 py-1.5 text-[11px] font-medium text-claude-text dark:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
-          >
-            <ArrowPathIcon className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-            {i18nService.t('freeQuotaRefresh')}
-          </button>
-        </div>
-      </div>
-
-      {/* 双池概览 */}
-      <MeBalanceOverviewCard />
+        }
+      />
 
       {/* 支付记录：订阅订单 + 充值订单合并展示 */}
       <div className="rounded-2xl border border-claude-border dark:border-claude-darkBorder bg-claude-surface dark:bg-claude-darkSurface/60 p-3.5">
@@ -356,7 +354,7 @@ const MeUsageAndCredits: React.FC = () => {
                 key={type || 'all'}
                 type="button"
                 onClick={() => setTypeFilter(type)}
-                className={`rounded-full border px-2 py-0.5 text-[10px] transition-colors ${
+                className={`rounded-[var(--shape-radius-sm)] border px-2 py-0.5 text-[10px] transition-colors ${
                   typeFilter === type
                     ? 'border-claude-accent text-claude-accent dark:text-claude-darkAccent bg-claude-accent/5'
                     : 'border-claude-border dark:border-claude-darkBorder text-claude-textSecondary dark:text-claude-darkTextSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
@@ -445,6 +443,8 @@ const MeUsageAndCredits: React.FC = () => {
             )}
           </div>
         )}
+      </div>
+
       </div>
 
       <p className="pb-2 text-center text-[10px] text-claude-textSecondary dark:text-claude-darkTextSecondary">

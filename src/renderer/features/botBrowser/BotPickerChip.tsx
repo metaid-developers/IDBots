@@ -155,7 +155,7 @@ const BotPickerChip: React.FC<BotPickerChipProps> = ({
         aria-haspopup="menu"
         onClick={onToggleMenu}
         className={`flex min-w-0 max-w-full items-center transition-colors hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover ${
-          compact ? 'h-7 gap-1.5 rounded-md px-1' : 'h-9 gap-2 rounded-lg px-1.5'
+          compact ? 'h-7 gap-1.5 rounded-[8px] px-1' : 'h-9 gap-2 rounded-[8px] px-1.5'
         }`}
       >
         <ChipIdentity metabot={chipMetabot} compact={compact} />

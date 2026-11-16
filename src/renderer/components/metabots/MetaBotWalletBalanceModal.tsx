@@ -212,7 +212,7 @@ const MetaBotWalletBalanceModal: React.FC<MetaBotWalletBalanceModalProps> = ({
               <button
                 type="button"
                 onClick={onClose}
-                className="rounded-xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface px-3 py-2 text-sm dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+                className="rounded-[8px] border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface px-3 py-2 text-sm dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
               >
                 {i18nService.t('close')}
               </button>

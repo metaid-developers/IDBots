@@ -98,7 +98,7 @@ const ScheduledTasksView: React.FC<ScheduledTasksViewProps> = ({
               <button
                 type="button"
                 onClick={onNewChat}
-                className="h-8 w-8 inline-flex items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                className="h-8 w-8 inline-flex items-center justify-center rounded-[8px] dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
               >
                 <ComposeIcon className="h-4 w-4" />
               </button>
@@ -108,7 +108,7 @@ const ScheduledTasksView: React.FC<ScheduledTasksViewProps> = ({
           {inScheduledSubView && (
             <button
               onClick={handleBackToList}
-              className="non-draggable p-2 rounded-lg dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary text-claude-textSecondary transition-colors"
+              className="non-draggable p-2 rounded-[8px] dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary text-claude-textSecondary transition-colors"
               aria-label={i18nService.t('back')}
             >
               <ArrowLeftIcon className="h-5 w-5" />
@@ -122,7 +122,7 @@ const ScheduledTasksView: React.FC<ScheduledTasksViewProps> = ({
       </div>
 
       {showScheduledSubTabs && (
-        <div className="flex items-center justify-between border-b dark:border-claude-darkBorder border-claude-border px-4 shrink-0">
+        <div className="flex h-[46px] items-center justify-between border-b dark:border-claude-darkBorder border-claude-border px-4 shrink-0">
           <div className="flex">
             <button
               type="button"
@@ -149,7 +149,7 @@ const ScheduledTasksView: React.FC<ScheduledTasksViewProps> = ({
             <button
               type="button"
               onClick={() => dispatch(setViewMode('create'))}
-              className="btn-idchat-primary-filled px-3 py-1 text-sm font-medium"
+              className="btn-idchat-primary-filled inline-flex h-9 items-center justify-center rounded-[var(--shape-radius-lg)] px-3 text-sm font-medium"
             >
               {i18nService.t('scheduledTasksNewTask')}
             </button>

@@ -750,7 +750,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                 <button
                   type="button"
                   onClick={handleBackToList}
-                  className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-claude-textSecondary hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover"
+                  className="inline-flex items-center gap-1 rounded-[8px] px-2 py-1 text-xs font-medium text-claude-textSecondary hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover"
                 >
                   <ChevronLeftIcon className="h-4 w-4" />
                   {i18nService.t('gigSquareMyServicesBack')}
@@ -771,7 +771,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
             <button
               type="button"
               onClick={handleRefresh}
-              className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-claude-textSecondary hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover"
+              className="inline-flex items-center gap-1.5 rounded-[8px] px-3 py-1.5 text-xs font-medium text-claude-textSecondary hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover"
             >
               <ArrowPathIcon className="h-4 w-4" />
               {i18nService.t('refresh')}
@@ -779,7 +779,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg p-1.5 text-claude-textSecondary hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover"
+              className="rounded-[8px] p-1.5 text-claude-textSecondary hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover"
               aria-label={i18nService.t('close')}
             >
               <XMarkIcon className="h-5 w-5" />
@@ -938,7 +938,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                             <button
                               type="button"
                               onClick={() => handleOpenDetail(service)}
-                              className="btn-idchat-primary whitespace-nowrap px-2.5 py-1 text-[11px] font-medium"
+                              className="border border-[var(--color-primary)] bg-[var(--bg-panel)] text-claude-text hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] rounded-lg whitespace-nowrap px-2.5 py-1 text-[11px] font-medium"
                             >
                               {i18nService.t('gigSquareMyServicesActionDetail')}
                             </button>
@@ -1252,7 +1252,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                 type="button"
                 onClick={handlePrevPage}
                 disabled={!canGoPrev}
-                className="inline-flex items-center gap-1 rounded-lg border border-claude-border px-2.5 py-1.5 text-xs font-medium text-claude-textSecondary disabled:cursor-not-allowed disabled:opacity-50 dark:border-claude-darkBorder dark:text-claude-darkTextSecondary"
+                className="inline-flex items-center gap-1 rounded-[8px] border border-claude-border px-2.5 py-1.5 text-xs font-medium text-claude-textSecondary disabled:cursor-not-allowed disabled:opacity-50 dark:border-claude-darkBorder dark:text-claude-darkTextSecondary"
               >
                 <ChevronLeftIcon className="h-4 w-4" />
                 {i18nService.t('gigSquareMyServicesPrevPage')}
@@ -1264,7 +1264,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                 type="button"
                 onClick={handleNextPage}
                 disabled={!canGoNext}
-                className="inline-flex items-center gap-1 rounded-lg border border-claude-border px-2.5 py-1.5 text-xs font-medium text-claude-textSecondary disabled:cursor-not-allowed disabled:opacity-50 dark:border-claude-darkBorder dark:text-claude-darkTextSecondary"
+                className="inline-flex items-center gap-1 rounded-[8px] border border-claude-border px-2.5 py-1.5 text-xs font-medium text-claude-textSecondary disabled:cursor-not-allowed disabled:opacity-50 dark:border-claude-darkBorder dark:text-claude-darkTextSecondary"
               >
                 {i18nService.t('gigSquareMyServicesNextPage')}
                 <ChevronRightIcon className="h-4 w-4" />
@@ -1299,7 +1299,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                   type="button"
                   onClick={closeRevokeModal}
                   disabled={mutationBusyServiceId === revokeTargetService.id}
-                  className="rounded-lg p-1.5 text-claude-textSecondary hover:bg-claude-surfaceHover disabled:cursor-not-allowed disabled:opacity-60 dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover"
+                  className="rounded-[8px] p-1.5 text-claude-textSecondary hover:bg-claude-surfaceHover disabled:cursor-not-allowed disabled:opacity-60 dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover"
                   aria-label={i18nService.t('close')}
                 >
                   <XMarkIcon className="h-5 w-5" />
@@ -1319,7 +1319,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                   type="button"
                   onClick={() => void handleConfirmRevoke()}
                   disabled={mutationBusyServiceId === revokeTargetService.id}
-                  className="btn-idchat-primary-filled px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-60"
+                  className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] rounded-lg px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {mutationBusyServiceId === revokeTargetService.id
                     ? i18nService.t('gigSquarePublishSubmitting')
@@ -1623,7 +1623,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                   type="button"
                   onClick={() => void handleSubmitModify()}
                   disabled={isModifySubmitDisabled}
-                  className="btn-idchat-primary-filled px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-60"
+                  className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] rounded-lg px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {isModifySubmitting
                     ? i18nService.t('gigSquarePublishSubmitting')

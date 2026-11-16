@@ -556,7 +556,7 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
             <button
               type="button"
               onClick={handleCopy}
-              className="absolute top-2 right-2 z-10 p-1.5 rounded-md bg-gray-700/80 text-gray-300 hover:bg-gray-600 transition-colors opacity-0 group-hover:opacity-100"
+              className="absolute top-2 right-2 z-10 p-1.5 rounded-[8px] bg-gray-700/80 text-gray-300 hover:bg-gray-600 transition-colors opacity-0 group-hover:opacity-100"
               title={i18nService.t('copyToClipboard')}
               aria-label={i18nService.t('copyToClipboard')}
             >
@@ -582,7 +582,7 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
           <button
             type="button"
             onClick={handleCopy}
-            className="p-1.5 rounded-md dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+            className="p-1.5 rounded-[8px] dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
             title={i18nService.t('copyToClipboard')}
             aria-label={i18nService.t('copyToClipboard')}
           >

@@ -1,6 +1,4 @@
 import React, { useEffect } from 'react';
-import { UserCircleIcon } from '@heroicons/react/24/outline';
-import NftAvatarFrame from '../../components/metabots/NftAvatarFrame';
 import UserSettings from '../../components/user/UserSettings';
 import MeCreditsPanel from './MeCreditsPanel';
 import { useUserProfileCopy } from './i18n';
@@ -9,7 +7,6 @@ import {
   refreshUserProfileIdentity,
   subscribeUserProfileIdentity,
 } from './userProfileStore';
-import { readTwinDailyMessage, resolveSessionFallbackMessage } from './twinDailyMessageService';
 
 /**
  * The BODY of the user page (owner ruling 2026-11-09 10:05, D line).
@@ -46,10 +43,7 @@ const UserProfilePageBody: React.FC = () => {
   // The daily-note slot: today's twin-written note when the field carries one,
   // otherwise the session-stable random fallback line. Read ONCE per mount —
   // the pick must stay identical across re-renders of the same session.
-  const dailyMessage = React.useMemo(() => {
-    const stored = readTwinDailyMessage();
-    return stored?.text ?? resolveSessionFallbackMessage();
-  }, []);
+
 
   // While the page is open, keep the identity header in step with the account
   // block below it. The block owns the writes; these are the only signals it
@@ -68,63 +62,19 @@ const UserProfilePageBody: React.FC = () => {
     };
   }, []);
 
-  const identity = snapshot.identity;
-  const name = (identity?.name || '').trim();
-  const initial = (name || copy.unnamed).trim().charAt(0).toUpperCase();
-
+  
   return (
     <>
-      {/* Identity header — the avatar goes through the shared frame export. */}
-      <div data-slot="user-profile-identity" className="flex items-center gap-4">
-        <NftAvatarFrame
-          avatar={identity?.avatar ?? null}
-          fallbackSource={identity?.avatar_fallback}
-          frameClassName="h-16 w-16 rounded-2xl"
-          imgClassName="border dark:border-claude-darkBorder border-claude-border"
-          fallback={
-            snapshot.loaded && !identity ? (
-              <span
-                aria-hidden="true"
-                className="inline-flex h-16 w-16 items-center justify-center rounded-2xl border border-dashed border-claude-border text-lg font-medium text-claude-textSecondary dark:border-claude-darkBorder dark:text-claude-darkTextSecondary"
-              >
-                {initial}
-              </span>
-            ) : (
-              <UserCircleIcon
-                aria-hidden="true"
-                className="h-16 w-16 dark:text-claude-darkTextSecondary text-claude-textSecondary"
-              />
-            )
-          }
-          alt={name || copy.unnamed}
-        />
-        <div className="min-w-0">
-          <p data-slot="user-profile-name" className="truncate text-base font-semibold dark:text-claude-darkText text-claude-text">
-            {!snapshot.loaded
-              ? copy.loading
-              : identity
-                ? name || copy.unnamed
-                : copy.noIdentity}
-          </p>
-          <div
-            data-slot="user-profile-daily-message"
-            title={dailyMessage}
-            className="mt-0.5 min-w-0"
-          >
-            <p className="text-[10px] font-medium tracking-wide text-claude-textSecondary dark:text-claude-darkTextSecondary">
-              {copy.dailyMessageLabel}
-            </p>
-            <p className="mt-0.5 truncate text-[11px] leading-relaxed text-claude-textSecondary dark:text-claude-darkTextSecondary">
-              {dailyMessage}
-            </p>
-          </div>
+      {/* Identity header removed (owner ruling 2026-11-15 23:16): the name
+          now lives only in the 用户资料 card; identity errors still surface
+          inline here. */}
+      <div data-slot="user-profile-identity-errors">
           {snapshot.error ? (
             <p className="mt-0.5 text-[11px] text-amber-600 dark:text-amber-400">{copy.identityLoadFailed}</p>
           ) : null}
-        </div>
       </div>
 
-      <div className="mt-6">
+      <div className="mt-8">
         <MeCreditsPanel />
       </div>
 

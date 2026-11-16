@@ -97,7 +97,7 @@ const MeCreditsPanel: React.FC = () => {
           onClick={handleRefresh}
           title={copy.meRefresh}
           aria-label={copy.meRefresh}
-          className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-claude-textSecondary transition-colors hover:bg-claude-surfaceHover hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-[8px] text-claude-textSecondary transition-colors hover:bg-claude-surfaceHover hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
         >
           <ArrowPathIcon className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
         </button>
@@ -165,7 +165,7 @@ const MeCreditsPanel: React.FC = () => {
                 type="button"
                 onClick={() => openUserProfilePlansPage('topup')}
                 data-slot="user-profile-me-recharge"
-                className="btn-idchat-primary-filled flex-1 rounded-lg px-3 py-2 text-xs font-medium"
+                className="btn-idchat-primary-filled flex-1 !rounded-lg px-3 py-2 text-xs font-medium"
               >
                 {copy.meRecharge}
               </button>

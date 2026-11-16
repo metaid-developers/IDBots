@@ -3,6 +3,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import {
   ArrowPathIcon,
   ArrowUpTrayIcon,
+  CheckBadgeIcon,
   ExclamationTriangleIcon,
   FolderOpenIcon,
   LinkIcon,
@@ -29,6 +30,8 @@ interface SkillsManagerProps {
   activeTab?: SkillsTab;
   hideTabBar?: boolean;
   onTabChange?: (tab: SkillsTab) => void;
+  /** Rendered at the right end of the tab bar row, above the divider. */
+  tabBarTrailing?: React.ReactNode;
 }
 
 const SkillsManager: React.FC<SkillsManagerProps> = ({
@@ -36,6 +39,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
   activeTab,
   hideTabBar = false,
   onTabChange,
+  tabBarTrailing,
 }) => {
   const dispatch = useDispatch();
   const skills = useSelector((state: RootState) => state.skill.skills);
@@ -255,6 +259,21 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
     setCommunitySkillPendingDownload(null);
   };
 
+  // OWNER 01:50: 已安装 ghost badge on market faces gains a real uninstall —
+  // it resolves the installed local skill by name and reuses the standard
+  // delete-confirm flow (same dialog, same skills:delete IPC as 本地技能).
+  const handleUninstallMarketSkill = (skill: OfficialSkillItem) => {
+    // The market entry's `name` is the installed FOLDER name; a local skill's
+    // display `name` comes from SKILL.md frontmatter and may differ. Resolve
+    // by the parent folder of skillPath first, then fall back to display name.
+    const local = skills.find(s => {
+      const parts = s.skillPath.split(/[\\/]/);
+      const folder = parts[parts.length - 2];
+      return folder === skill.name;
+    }) || skills.find(s => s.name === skill.name);
+    if (local) setSkillPendingDelete(local);
+  };
+
   const handleInstallOfficialSkill = async (skill: OfficialSkillItem) => {
     if (installingSkillName || isSyncingAll) return;
     if (skill.status !== 'download' && skill.status !== 'update') return;
@@ -354,6 +373,13 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
     }
     if (result.skills) {
       dispatch(setSkills(result.skills));
+    }
+    if (resolvedActiveTab === 'official' || resolvedActiveTab === 'community') {
+      const updated = await window.electron.idbots.getOfficialSkillsStatus();
+      if (updated.success && updated.skills) {
+        setOfficialSkills(updated.skills);
+        setCommunitySkills(updated.skills);
+      }
     }
     setIsDeletingSkill(false);
     setSkillPendingDelete(null);
@@ -478,40 +504,46 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
   return (
     <div className="space-y-4">
       {!hideTabBar && (
-        <div className="flex items-center gap-2 border-b dark:border-claude-darkBorder border-claude-border -mx-1 px-1">
+        <div className="sticky top-[-15px] z-10 flex items-center justify-between gap-2 border-b dark:border-claude-darkBorder border-claude-border -mx-1 px-1 bg-claude-bg dark:bg-claude-darkBg"> {/* OWNER 02:17: pinned — only the list scrolls under it */}
+          <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={() => setCurrentTab('local')}
-            className={`px-3 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+            className={`relative px-3 py-2 text-sm font-medium transition-colors ${
               resolvedActiveTab === 'local'
-                ? 'dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text border-b-2 border-transparent -mb-[1px]'
+                ? 'dark:text-claude-darkText text-claude-text'
                 : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:text-claude-darkText hover:text-claude-text'
             }`}
           >
             {i18nService.t('localSkills')}
+            <span className={`absolute bottom-0 left-0 right-0 h-0.5 rounded-full transition-colors ${resolvedActiveTab === 'local' ? 'bg-claude-accent' : 'bg-transparent'}`} />
           </button>
           <button
             type="button"
             onClick={() => setCurrentTab('official')}
-            className={`px-3 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+            className={`relative px-3 py-2 text-sm font-medium transition-colors ${
               resolvedActiveTab === 'official'
-                ? 'dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text border-b-2 border-transparent -mb-[1px]'
+                ? 'dark:text-claude-darkText text-claude-text'
                 : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:text-claude-darkText hover:text-claude-text'
             }`}
           >
             {i18nService.t('officialRecommended')}
+            <span className={`absolute bottom-0 left-0 right-0 h-0.5 rounded-full transition-colors ${resolvedActiveTab === 'official' ? 'bg-claude-accent' : 'bg-transparent'}`} />
           </button>
           <button
             type="button"
             onClick={() => setCurrentTab('community')}
-            className={`px-3 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+            className={`relative px-3 py-2 text-sm font-medium transition-colors ${
               resolvedActiveTab === 'community'
-                ? 'dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text border-b-2 border-transparent -mb-[1px]'
+                ? 'dark:text-claude-darkText text-claude-text'
                 : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:text-claude-darkText hover:text-claude-text'
             }`}
           >
             {i18nService.t('communitySkills')}
+            <span className={`absolute bottom-0 left-0 right-0 h-0.5 rounded-full transition-colors ${resolvedActiveTab === 'community' ? 'bg-claude-accent' : 'bg-transparent'}`} />
           </button>
+          </div>
+          {tabBarTrailing}
         </div>
       )}
 
@@ -560,7 +592,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
               {officialSkills.map((skill) => (
                 <div
                   key={skill.name}
-                  className="rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 p-3 transition-colors"
+                  className="flex flex-col rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 p-3 transition-colors"
                 >
                   <div className="flex items-start justify-between mb-2">
                     <div className="flex items-center gap-2 min-w-0">
@@ -577,7 +609,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                           type="button"
                           onClick={() => handleInstallOfficialSkill(skill)}
                           disabled={installingSkillName !== null || isSyncingAll}
-                          className="btn-idchat-primary-filled inline-flex items-center gap-1.5 px-2.5 py-1 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="btn-idchat-primary-filled inline-flex items-center justify-center gap-1.5 px-2.5 py-1 text-xs rounded-[var(--shape-radius-sm)] disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {installingSkillName === skill.name ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" /> : null}
                           {installingSkillName === skill.name ? i18nService.t('skillOfficialLoading') : i18nService.t('skillDownload')}
@@ -588,16 +620,22 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                           type="button"
                           onClick={() => handleInstallOfficialSkill(skill)}
                           disabled={installingSkillName !== null || isSyncingAll}
-                          className="btn-idchat-primary-filled inline-flex items-center gap-1.5 px-2.5 py-1 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="btn-idchat-primary-filled inline-flex items-center justify-center gap-1.5 px-2.5 py-1 text-xs rounded-[var(--shape-radius-sm)] disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {installingSkillName === skill.name ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" /> : null}
                           {installingSkillName === skill.name ? i18nService.t('skillOfficialLoading') : i18nService.t('skillUpdate')}
                         </button>
                       )}
                       {skill.status === 'installed' && (
-                        <span className="px-2.5 py-1 text-xs rounded-lg dark:bg-claude-darkBorder bg-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary cursor-not-allowed">
+                        <button
+                          type="button"
+                          title={i18nService.t('deleteSkill')}
+                          onClick={() => handleUninstallMarketSkill(skill)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-[var(--shape-radius-sm)] border border-claude-border/70 dark:border-claude-darkBorder/70 text-claude-textSecondary dark:text-claude-darkTextSecondary hover:border-red-500/50 hover:text-red-500 transition-colors cursor-pointer"
+                        >
+                          <CheckBadgeIcon className="h-3.5 w-3.5" />
                           {i18nService.t('skillInstalled')}
-                        </span>
+                        </button>
                       )}
                       {skill.status === 'conflict' && (
                         <span
@@ -615,7 +653,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                       {skill.description}
                     </p>
                   )}
-                  <div className="text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  <div className="mt-auto pt-1 text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
                     v{skill.remoteVersion}
                     {skill.status === 'update' && skill.localVersion ? ` (v${skill.localVersion} → v${skill.remoteVersion})` : ''}
                   </div>
@@ -645,7 +683,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
               {communitySkills.map((skill) => (
                 <div
                   key={skill.name}
-                  className="rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 p-3 transition-colors"
+                  className="flex flex-col rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 p-3 transition-colors"
                 >
                   <div className="flex items-start justify-between mb-2">
                     <div className="flex items-center gap-2 min-w-0">
@@ -662,7 +700,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                           type="button"
                           onClick={() => handleInstallCommunitySkill(skill)}
                           disabled={installingSkillName !== null}
-                          className="btn-idchat-primary-filled inline-flex items-center gap-1.5 px-2.5 py-1 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="btn-idchat-primary-filled inline-flex items-center justify-center gap-1.5 px-2.5 py-1 text-xs rounded-[var(--shape-radius-sm)] disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {installingSkillName === skill.name ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" /> : null}
                           {installingSkillName === skill.name ? i18nService.t('skillOfficialLoading') : i18nService.t('skillDownload')}
@@ -673,16 +711,22 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                           type="button"
                           onClick={() => handleInstallCommunitySkill(skill)}
                           disabled={installingSkillName !== null}
-                          className="btn-idchat-primary-filled inline-flex items-center gap-1.5 px-2.5 py-1 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="btn-idchat-primary-filled inline-flex items-center justify-center gap-1.5 px-2.5 py-1 text-xs rounded-[var(--shape-radius-sm)] disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {installingSkillName === skill.name ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" /> : null}
                           {installingSkillName === skill.name ? i18nService.t('skillOfficialLoading') : i18nService.t('skillUpdate')}
                         </button>
                       )}
                       {skill.status === 'installed' && (
-                        <span className="px-2.5 py-1 text-xs rounded-lg dark:bg-claude-darkBorder bg-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary cursor-not-allowed">
+                        <button
+                          type="button"
+                          title={i18nService.t('deleteSkill')}
+                          onClick={() => handleUninstallMarketSkill(skill)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-[var(--shape-radius-sm)] border border-claude-border/70 dark:border-claude-darkBorder/70 text-claude-textSecondary dark:text-claude-darkTextSecondary hover:border-red-500/50 hover:text-red-500 transition-colors cursor-pointer"
+                        >
+                          <CheckBadgeIcon className="h-3.5 w-3.5" />
                           {i18nService.t('skillInstalled')}
-                        </span>
+                        </button>
                       )}
                       {skill.status === 'conflict' && (
                         <span
@@ -700,7 +744,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                       {skill.description}
                     </p>
                   )}
-                  <div className="text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  <div className="mt-auto pt-1 text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
                     v{skill.remoteVersion}
                     {skill.status === 'update' && skill.localVersion ? ` (v${skill.localVersion} → v${skill.remoteVersion})` : ''}
                   </div>
@@ -741,7 +785,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                         type="button"
                         onClick={() => handleReinstallMissingSkill(entry)}
                         disabled={reinstallingMissingSkillId !== null}
-                        className="btn-idchat-primary-filled inline-flex items-center gap-1 px-2 py-1 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] rounded-lg inline-flex items-center gap-1 px-2 py-1 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {reinstallingMissingSkillId === entry.id ? <ArrowPathIcon className="h-3 w-3 animate-spin" /> : null}
                         {i18nService.t('missingSkillReinstall')}
@@ -777,7 +821,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
             placeholder={i18nService.t('searchSkills')}
             value={skillSearchQuery}
             onChange={(e) => setSkillSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-3 py-2 text-sm rounded-xl dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text dark:placeholder-claude-darkTextSecondary placeholder-claude-textSecondary border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
+            className="w-full h-[35px] pl-9 pr-3 text-xs rounded-[var(--shape-radius-sm)] dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text dark:placeholder-claude-darkTextSecondary placeholder-claude-textSecondary border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
           />
         </div>
         <div className="relative">
@@ -785,7 +829,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
             ref={addSkillButtonRef}
             type="button"
             onClick={() => setIsAddSkillMenuOpen(prev => !prev)}
-            className="px-3 py-2 text-sm rounded-xl border transition-colors dark:bg-claude-darkSurface bg-claude-surface dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover flex items-center gap-2"
+            className="h-[35px] px-3 text-xs rounded-[var(--shape-radius-sm)] border transition-colors dark:bg-claude-darkSurface bg-claude-surface dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover flex items-center gap-2"
           >
             <PlusCircleIcon className="h-4 w-4" />
             <span>{i18nService.t('addSkill')}</span>
@@ -858,7 +902,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
           filteredSkills.map((skill) => (
             <div
               key={skill.id}
-              className="rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 p-3 transition-colors hover:border-claude-accent/50"
+              className="flex flex-col rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 p-3 transition-colors hover:border-claude-accent/50"
             >
               <div className="flex items-start justify-between mb-2">
                 <div className="flex items-center gap-2 min-w-0">
@@ -887,7 +931,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                     onClick={() => handleToggleSkill(skill.id)}
                   >
                     <div
-                      className={`w-3.5 h-3.5 rounded-full bg-white shadow-md transform transition-transform ${
+                      className={`w-3.5 h-3.5 rounded-full bg-white transform transition-transform ${
                         skill.enabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
                       }`}
                     />
@@ -906,7 +950,9 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                 </p>
               </Tooltip>
 
-              <div className="flex items-center justify-between gap-2 mt-1">
+              {/* OWNER 01:56: scope chip + date pinned to the card's bottom-left
+                  (mt-auto) so varying description lengths can't drift the row. */}
+              <div className="flex items-center justify-between gap-2 mt-auto pt-1">
                 <div className="flex items-center gap-2 text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary min-w-0">
                   {skill.isOfficial && (
                     <>
@@ -982,7 +1028,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                 type="button"
                 onClick={handleCancelCommunitySkillInstall}
                 disabled={installingSkillName !== null}
-                className="px-3 py-1.5 text-xs rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                className="px-3 py-1.5 text-xs rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {i18nService.t('cancel')}
               </button>
@@ -990,7 +1036,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                 type="button"
                 onClick={handleConfirmInstallCommunitySkill}
                 disabled={installingSkillName !== null}
-                className="px-3 py-1.5 text-xs rounded-lg btn-idchat-primary-filled transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] px-3 py-1.5 text-xs rounded-[8px] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {installingSkillName === communitySkillPendingDownload.name ? i18nService.t('skillOfficialLoading') : i18nService.t('communitySkillConfirm')}
               </button>
@@ -1024,7 +1070,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                 type="button"
                 onClick={handleCancelForgetMissingSkill}
                 disabled={isForgettingMissingSkill}
-                className="px-3 py-1.5 text-xs rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                className="px-3 py-1.5 text-xs rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {i18nService.t('cancel')}
               </button>
@@ -1032,7 +1078,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                 type="button"
                 onClick={handleConfirmForgetMissingSkill}
                 disabled={isForgettingMissingSkill}
-                className="px-3 py-1.5 text-xs rounded-lg bg-red-500 text-gray-900 hover:bg-red-600 dark:bg-red-500 dark:hover:bg-red-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                className="border border-red-600 px-3 py-1.5 text-xs rounded-[8px] bg-red-500 text-gray-900 hover:bg-red-600 dark:bg-red-500 dark:hover:bg-red-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {i18nService.t('confirmDelete')}
               </button>
@@ -1041,47 +1087,6 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
         </div>
       )}
 
-      {skillPendingDelete && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-          onClick={handleCancelDeleteSkill}
-        >
-          <div
-            className="w-full max-w-sm mx-4 rounded-2xl dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border shadow-2xl p-5"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="text-lg font-semibold dark:text-claude-darkText text-claude-text">
-              {i18nService.t('deleteSkill')}
-            </div>
-            <p className="mt-2 text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
-              {i18nService.t('skillDeleteConfirm').replace('{name}', skillPendingDelete.name)}
-            </p>
-            {skillActionError && (
-              <div className="mt-3 text-xs text-red-500">
-                {skillActionError}
-              </div>
-            )}
-            <div className="mt-4 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={handleCancelDeleteSkill}
-                disabled={isDeletingSkill}
-                className="px-3 py-1.5 text-xs rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                {i18nService.t('cancel')}
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmDeleteSkill}
-                disabled={isDeletingSkill}
-                className="px-3 py-1.5 text-xs rounded-lg bg-red-500 text-gray-900 hover:bg-red-600 dark:bg-red-500 dark:hover:bg-red-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                {i18nService.t('confirmDelete')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {isGithubImportOpen && (
         <div
@@ -1143,6 +1148,47 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
         </div>
       )}
         </>
+      )}
+      {skillPendingDelete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          onClick={handleCancelDeleteSkill}
+        >
+          <div
+            className="w-full max-w-sm mx-4 rounded-2xl dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border shadow-2xl p-5"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="text-lg font-semibold dark:text-claude-darkText text-claude-text">
+              {i18nService.t('deleteSkill')}
+            </div>
+            <p className="mt-2 text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              {i18nService.t('skillDeleteConfirm').replace('{name}', skillPendingDelete.name)}
+            </p>
+            {skillActionError && (
+              <div className="mt-3 text-xs text-red-500">
+                {skillActionError}
+              </div>
+            )}
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={handleCancelDeleteSkill}
+                disabled={isDeletingSkill}
+                className="px-3 py-1.5 text-xs rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {i18nService.t('cancel')}
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteSkill}
+                disabled={isDeletingSkill}
+                className="border border-red-600 px-3 py-1.5 text-xs rounded-[8px] bg-red-500 text-gray-900 hover:bg-red-600 dark:bg-red-500 dark:hover:bg-red-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {i18nService.t('confirmDelete')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

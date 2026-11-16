@@ -1,5 +1,5 @@
 import React, { Suspense, useEffect } from 'react';
-import { ArrowLeftIcon } from '@heroicons/react/24/outline';
+import { XMarkIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import MePurchaseFlow from '../../components/me/MePurchaseFlow';
 import { useUserProfileCopy } from './i18n';
@@ -102,9 +102,9 @@ const UserProfilePage: React.FC = () => {
             onClick={onPlans ? closeUserProfilePlansPage : closeUserProfile}
             aria-label={copy.close}
             title={copy.close}
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-claude-border bg-claude-surfaceInset text-claude-textSecondary transition-colors hover:bg-claude-surfaceHover hover:text-claude-text dark:border-claude-darkBorder dark:bg-claude-darkSurfaceInset dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] border border-claude-border bg-claude-surfaceInset text-claude-textSecondary transition-colors hover:bg-claude-surfaceHover hover:text-claude-text dark:border-claude-darkBorder dark:bg-claude-darkSurfaceInset dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
           >
-            <ArrowLeftIcon className="h-4 w-4" />
+            <XMarkIcon className="h-4 w-4" />
           </button>
           <h2 className="min-w-0 truncate text-sm font-semibold dark:text-claude-darkText text-claude-text">
             {onPlans ? plansTitle : copy.title}

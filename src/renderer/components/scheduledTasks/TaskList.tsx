@@ -149,7 +149,7 @@ const TaskListItem: React.FC<TaskListItemProps> = ({ task, onRequestDelete }) =>
           }`}
         >
           <span
-            className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white transition-transform shadow-sm ${
+            className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white transition-transform ${
               task.enabled ? 'translate-x-3' : 'translate-x-0'
             }`}
           />

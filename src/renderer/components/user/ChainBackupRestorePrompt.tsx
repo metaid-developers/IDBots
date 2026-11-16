@@ -54,7 +54,7 @@ const ChainBackupRestorePrompt: React.FC<ChainBackupRestorePromptProps> = ({
               type="button"
               onClick={onCancel}
               disabled={restoring}
-              className="px-4 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-4 py-2 text-sm rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {i18nService.t('userSettingsChainBackupImportGuideLater')}
             </button>

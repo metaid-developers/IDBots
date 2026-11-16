@@ -30,6 +30,8 @@ interface McpManagerProps {
   hideTabBar?: boolean;
   hideSearch?: boolean;
   onTabChange?: (tab: McpTab) => void;
+  /** Rendered at the right end of the tab bar row, above the divider. */
+  tabBarTrailing?: React.ReactNode;
 }
 
 const McpManager: React.FC<McpManagerProps> = ({
@@ -37,6 +39,7 @@ const McpManager: React.FC<McpManagerProps> = ({
   hideTabBar = false,
   hideSearch = false,
   onTabChange,
+  tabBarTrailing,
 }) => {
   const dispatch = useDispatch();
   const servers = useSelector((state: RootState) => state.mcp.servers);
@@ -241,11 +244,6 @@ const McpManager: React.FC<McpManagerProps> = ({
 
   return (
     <div className="space-y-4">
-      {/* Description */}
-      <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
-        {i18nService.t('mcpDescription')}
-      </p>
-
       {actionError && (
         <ErrorMessage
           message={actionError}
@@ -253,10 +251,13 @@ const McpManager: React.FC<McpManagerProps> = ({
         />
       )}
 
-      {(!hideTabBar || !hideSearch) && (
-        <div className="flex items-center gap-3">
+      {!hideTabBar && (
+        <> 
+        {/* OWNER 01:27+01:32: divider spans the full tabs row; search moved
+            BELOW the description (mirrors the skills face layout). */}
+        <div className="sticky top-[-15px] z-10 flex items-center gap-3 border-b dark:border-claude-darkBorder border-claude-border pb-0 bg-claude-bg dark:bg-claude-darkBg"> {/* OWNER 02:17: pinned bar */}
           {!hideTabBar && (
-            <div className="flex items-center border-b dark:border-claude-darkBorder border-claude-border mr-auto">
+            <div className="flex items-center mr-auto">
               <button type="button" onClick={() => setCurrentTab('installed')} className={tabClass('installed')}>
                 {i18nService.t('mcpInstalled')}
                 {servers.length > 0 && (
@@ -287,19 +288,24 @@ const McpManager: React.FC<McpManagerProps> = ({
             </div>
           )}
 
-          {!hideSearch && (
-            <div className="relative w-48">
-              <MagnifyingGlassIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
-              <input
-                type="text"
-                placeholder={i18nService.t('searchMcpServers')}
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text dark:placeholder-claude-darkTextSecondary placeholder-claude-textSecondary border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-1 focus:ring-claude-accent"
-              />
-            </div>
-          )}
+          {tabBarTrailing}
         </div>
+        <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
+          {i18nService.t('mcpDescription')}
+        </p>
+        {!hideSearch && (
+        <div className="relative">
+          <MagnifyingGlassIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
+          <input
+            type="text"
+            placeholder={i18nService.t('searchMcpServers')}
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full h-[35px] pl-8 pr-3 text-xs rounded-[var(--shape-radius-sm)] dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text dark:placeholder-claude-darkTextSecondary placeholder-claude-textSecondary border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-1 focus:ring-claude-accent"
+          />
+        </div>
+        )}
+        </>
       )}
 
       {/* ── Tab: Installed ──────────────────────────────── */}
@@ -358,7 +364,7 @@ const McpManager: React.FC<McpManagerProps> = ({
                       onClick={() => handleToggleEnabled(server.id)}
                     >
                       <div
-                        className={`w-3.5 h-3.5 rounded-full bg-white shadow-md transform transition-transform ${
+                        className={`w-3.5 h-3.5 rounded-full bg-white transform transition-transform ${
                           server.enabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
                         }`}
                       />
@@ -453,7 +459,7 @@ const McpManager: React.FC<McpManagerProps> = ({
                       <button
                         type="button"
                         onClick={() => handleInstallFromRegistry(entry)}
-                        className="btn-idchat-primary-filled px-2.5 py-1 text-xs"
+                        className="btn-idchat-primary-filled inline-flex items-center justify-center px-2.5 py-1 text-xs rounded-[var(--shape-radius-sm)]"
                       >
                         {i18nService.t('mcpInstall')}
                       </button>
@@ -495,7 +501,7 @@ const McpManager: React.FC<McpManagerProps> = ({
             <button
               type="button"
               onClick={handleOpenCreateForm}
-              className="rounded-xl border-2 border-dashed dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:border-claude-accent hover:text-claude-accent dark:hover:border-claude-accent dark:hover:text-claude-accent transition-colors flex items-center justify-center min-h-[120px] text-sm"
+              className="rounded-[8px] border border-dashed dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:border-claude-accent hover:text-claude-accent dark:hover:border-claude-accent dark:hover:text-claude-accent transition-colors flex items-center justify-center min-h-[120px] text-sm"
             >
               + {i18nService.t('addMcpServer')}
             </button>
@@ -547,7 +553,7 @@ const McpManager: React.FC<McpManagerProps> = ({
                         onClick={() => handleToggleEnabled(server.id)}
                       >
                         <div
-                          className={`w-3.5 h-3.5 rounded-full bg-white shadow-md transform transition-transform ${
+                          className={`w-3.5 h-3.5 rounded-full bg-white transform transition-transform ${
                             server.enabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
                           }`}
                         />
@@ -615,7 +621,7 @@ const McpManager: React.FC<McpManagerProps> = ({
                 type="button"
                 onClick={handleCancelDelete}
                 disabled={isDeleting}
-                className="px-3 py-1.5 text-xs rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                className="px-3 py-1.5 text-xs rounded-[8px] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {i18nService.t('cancel')}
               </button>
@@ -623,7 +629,7 @@ const McpManager: React.FC<McpManagerProps> = ({
                 type="button"
                 onClick={handleConfirmDelete}
                 disabled={isDeleting}
-                className="px-3 py-1.5 text-xs rounded-lg bg-red-500 text-gray-900 hover:bg-red-600 dark:bg-red-500 dark:hover:bg-red-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                className="border border-red-600 px-3 py-1.5 text-xs rounded-[8px] bg-red-500 text-white hover:bg-red-600 dark:bg-red-500 dark:hover:bg-red-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {i18nService.t('confirmDelete')}
               </button>

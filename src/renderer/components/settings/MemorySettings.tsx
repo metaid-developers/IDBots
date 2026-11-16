@@ -1,4 +1,8 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import ThemedSelect from '../ui/ThemedSelect';
+import MiniMonthCalendar from '../ui/MiniMonthCalendar';
+import Tooltip from '../ui/Tooltip';
+import { InformationCircleIcon } from '@heroicons/react/24/outline';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
 import { useSelector } from 'react-redux';
@@ -174,6 +178,38 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const [dreamLoading, setDreamLoading] = useState(false);
   const [capabilityDrafts, setCapabilityDrafts] = useState<CapabilityDraftItem[]>([]);
   const [dreamExpandedId, setDreamExpandedId] = useState<string | null>(null);
+  // OWNER 03:23: the diary shows the last 7 nights by default; older nights
+  // are reached through the calendar index (date picker) instead of a
+  // 365-entry wall for a year-old bot.
+  const [dreamBrowseDate, setDreamBrowseDate] = useState('');
+  const [dreamCalOpen, setDreamCalOpen] = useState<'browse' | 'force' | null>(null);
+  const [dreamCalPos, setDreamCalPos] = useState<{ top: number; left: number } | null>(null);
+  const dreamCalBrowseRef = useRef<HTMLDivElement>(null);
+  const dreamCalForceRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!dreamCalOpen) return;
+    const close = (event: MouseEvent) => {
+      const inBrowse = dreamCalBrowseRef.current?.contains(event.target as Node);
+      const inForce = dreamCalForceRef.current?.contains(event.target as Node);
+      if (!inBrowse && !inForce) setDreamCalOpen(null);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [dreamCalOpen]);
+
+  const openDreamCal = (which: 'browse' | 'force', ref: React.RefObject<HTMLDivElement>) => {
+    const rect = ref.current?.getBoundingClientRect();
+    if (rect) setDreamCalPos({ top: rect.bottom + 4, left: Math.max(8, rect.right - 224) });
+    setDreamCalOpen((prev) => (prev === which ? null : which));
+  };
+
+  const dreamMarkedDayKeys = useMemo(
+    () => new Set(dreamSummaries.map((summary) => summary.summaryDate)),
+    [dreamSummaries],
+  );
+
+  const [dreamShowAll, setDreamShowAll] = useState(false);
   const [dreamRunDate, setDreamRunDate] = useState<string>(() => {
     const now = new Date();
     return formatLocalDateInput(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1));
@@ -514,6 +550,22 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       .filter((run) => !dreamSummaries.some((summary) => summary.summaryDate === run.dreamDate))
       .map((run) => ({ kind: 'failed' as const, date: run.dreamDate, run })),
   ].sort((a, b) => b.date.localeCompare(a.date)), [dreamSummaries, dreamRuns]);
+
+  const DREAM_RECENT_COUNT = 7;
+  const visibleDreamEntries = useMemo(() => {
+    if (dreamBrowseDate) return dreamEntries.filter((entry) => entry.date === dreamBrowseDate);
+    if (dreamShowAll) return dreamEntries;
+    return dreamEntries.slice(0, DREAM_RECENT_COUNT);
+  }, [dreamEntries, dreamBrowseDate, dreamShowAll]);
+
+  const handleDreamBrowse = (value: string) => {
+    setDreamBrowseDate(value);
+    setDreamShowAll(false);
+    if (value) {
+      const hit = dreamEntries.find((entry) => entry.date === value);
+      if (hit && hit.kind === 'summary') setDreamExpandedId(hit.summary.id);
+    }
+  };
 
   const loadDream = useCallback(async () => {
     if (metabotId == null) {
@@ -1065,15 +1117,15 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         key={key}
         type="button"
         onClick={() => setActiveSection(key)}
-        className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+        className={`flex h-full min-w-0 items-center justify-center gap-1.5 px-3 text-xs font-medium leading-none transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${
           active
-            ? 'border-claude-accent bg-claude-accent/5 text-claude-accent dark:bg-claude-accent/10 dark:text-claude-darkAccent'
-            : 'dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
+            ? 'border border-claude-accent bg-claude-accent/10 text-claude-accent'
+            : 'border border-transparent text-claude-textSecondary hover:bg-claude-surfaceHover/70 hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover/70 dark:hover:text-claude-darkText'
         }`}
       >
         <span>{label}</span>
         {typeof count === 'number' && (
-          <span className={`rounded-full px-1.5 text-[10px] ${active ? 'bg-claude-accent/15' : 'dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover'}`}>
+          <span className={`rounded-full px-1.5 text-[10px] ${active ? 'bg-claude-accent/15 text-claude-accent' : 'dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover'}`}>
             {count}
           </span>
         )}
@@ -1083,29 +1135,30 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
   const renderKnowledge = () => (
     <div className="space-y-3">
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
-          {i18nService.t('memoryKnowledgeHint')}
-        </div>
-        <div className="flex items-center gap-2">
-          <select
-            value={knowledgeKind}
-            onChange={(event) => setKnowledgeKind(event.target.value as CoworkKnowledgeKind | 'all')}
-            className="rounded-lg border px-2 py-1 text-xs dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
-          >
-            <option value="all">{i18nService.t('memoryKnowledgeKindAll')}</option>
-            <option value="know_how">{i18nService.t('memoryKnowledgeKindKnowHow')}</option>
-            <option value="pitfall">{i18nService.t('memoryKnowledgeKindPitfall')}</option>
-            <option value="principle">{i18nService.t('memoryKnowledgeKindPrinciple')}</option>
-          </select>
-          <input
-            type="text"
-            value={knowledgeQuery}
-            onChange={(event) => setKnowledgeQuery(event.target.value)}
-            placeholder={i18nService.t('memoryKnowledgeSearchPlaceholder')}
-            className="w-48 rounded-lg border px-2 py-1 text-xs dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
-          />
-        </div>
+      <div className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+        {i18nService.t('memoryKnowledgeHint')}
+      </div>
+      <div className="flex items-center gap-2">
+        {/* OWNER 02:59: native select popup broke the design language. */}
+        <ThemedSelect
+          id="knowledge-kind-filter"
+          compact
+          value={knowledgeKind}
+          onChange={(value) => setKnowledgeKind(value as CoworkKnowledgeKind | 'all')}
+          options={[
+            { value: 'all', label: i18nService.t('memoryKnowledgeKindAll') },
+            { value: 'know_how', label: i18nService.t('memoryKnowledgeKindKnowHow') },
+            { value: 'pitfall', label: i18nService.t('memoryKnowledgeKindPitfall') },
+            { value: 'principle', label: i18nService.t('memoryKnowledgeKindPrinciple') },
+          ]}
+        />
+        <input
+          type="text"
+          value={knowledgeQuery}
+          onChange={(event) => setKnowledgeQuery(event.target.value)}
+          placeholder={i18nService.t('memoryKnowledgeSearchPlaceholder')}
+          className="h-[26px] min-w-0 flex-1 rounded-[var(--shape-radius-sm)] border px-2 text-xs leading-none dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
+        />
       </div>
       <div className="max-h-[520px] overflow-auto rounded-lg border dark:border-claude-darkBorder border-claude-border">
         {knowledgeLoading ? (
@@ -1132,15 +1185,17 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                         </label>
                         <label className="block">
                           <span className="block mb-1 text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary">{i18nService.t('coworkMemoryCategoryAll')}</span>
-                          <select
+                          <ThemedSelect
+                            id="knowledge-draft-kind"
+                            compact
                             value={knowledgeDraftKind}
-                            onChange={(event) => setKnowledgeDraftKind(event.target.value as CoworkKnowledgeKind)}
-                            className="w-full rounded border px-2 py-1 text-xs dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
-                          >
-                            <option value="know_how">{i18nService.t('memoryKnowledgeKindKnowHow')}</option>
-                            <option value="pitfall">{i18nService.t('memoryKnowledgeKindPitfall')}</option>
-                            <option value="principle">{i18nService.t('memoryKnowledgeKindPrinciple')}</option>
-                          </select>
+                            onChange={(value) => setKnowledgeDraftKind(value as CoworkKnowledgeKind)}
+                            options={[
+                              { value: 'know_how', label: i18nService.t('memoryKnowledgeKindKnowHow') },
+                              { value: 'pitfall', label: i18nService.t('memoryKnowledgeKindPitfall') },
+                              { value: 'principle', label: i18nService.t('memoryKnowledgeKindPrinciple') },
+                            ]}
+                          />
                         </label>
                       </div>
                       <label className="block">
@@ -1155,7 +1210,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                         <button
                           type="button"
                           onClick={cancelEditKnowledge}
-                          className="rounded border px-2 py-1 text-[10px] dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                          className="rounded-[var(--shape-radius-sm)] border px-2 py-1 text-[10px] dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
                         >
                           {i18nService.t('cancel')}
                         </button>
@@ -1163,7 +1218,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                           type="button"
                           onClick={() => { void handleSaveKnowledgeEdit(); }}
                           disabled={!knowledgeDraftTopic.trim() || !knowledgeDraftSummary.trim()}
-                          className="btn-idchat-primary-filled rounded px-2 py-1 text-[10px] disabled:opacity-60"
+                          className="rounded-[var(--shape-radius-sm)] border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk px-2 py-1 text-[10px] font-medium hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] disabled:opacity-60"
                         >
                           {i18nService.t('save')}
                         </button>
@@ -1172,21 +1227,24 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                   ) : (
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0 space-y-1">
+                        {/* OWNER 02:59: version became the FIRST equal-width pill;
+                            every pill shares min-w + centered text so 2/3/4-char
+                            labels align instead of ragging. */}
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className={`rounded-full border px-2 py-0.5 ${KNOWLEDGE_KIND_ACCENT[entry.kind]}`}>
+                          <span className="inline-flex min-w-[56px] items-center justify-center rounded-full border px-2 py-0.5 dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                            {`${i18nService.t('memoryKnowledgeVersion')} v${entry.version}`}
+                          </span>
+                          <span className={`inline-flex min-w-[56px] items-center justify-center rounded-full border px-2 py-0.5 ${KNOWLEDGE_KIND_ACCENT[entry.kind]}`}>
                             {getKnowledgeKindLabel(entry.kind)}
                           </span>
-                          <span className="rounded-full border px-2 py-0.5 dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                          <span className="inline-flex min-w-[56px] items-center justify-center rounded-full border px-2 py-0.5 dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary">
                             {getKnowledgeOriginLabel(entry.origin)}
                           </span>
                           {entry.status === 'archived' && (
-                            <span className="rounded-full border px-2 py-0.5 dark:border-claude-darkBorder border-claude-border opacity-60">
+                            <span className="inline-flex min-w-[56px] items-center justify-center rounded-full border px-2 py-0.5 dark:border-claude-darkBorder border-claude-border opacity-60">
                               {i18nService.t('memoryKnowledgeArchived')}
                             </span>
                           )}
-                          <span className="dark:text-claude-darkTextSecondary/70 text-claude-textSecondary/70">
-                            {`${i18nService.t('memoryKnowledgeVersion')} v${entry.version}`}
-                          </span>
                         </div>
                         <div className="font-medium dark:text-claude-darkText text-claude-text break-words">{entry.topic}</div>
                         <div className="dark:text-claude-darkTextSecondary text-claude-textSecondary break-words whitespace-pre-wrap">{entry.summary}</div>
@@ -1198,14 +1256,14 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                         <button
                           type="button"
                           onClick={() => startEditKnowledge(entry)}
-                          className="rounded border px-2 py-1 text-[10px] dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                          className="rounded-[var(--shape-radius-sm)] border px-2 py-1 text-[10px] dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
                         >
                           {i18nService.t('edit')}
                         </button>
                         <button
                           type="button"
                           onClick={() => { void handleDeleteKnowledge(entry); }}
-                          className="rounded border px-2 py-1 text-[10px] text-red-500 dark:border-claude-darkBorder border-claude-border hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                          className="rounded-[var(--shape-radius-sm)] border px-2 py-1 text-[10px] text-red-500 dark:border-claude-darkBorder border-claude-border hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
                         >
                           {i18nService.t('delete')}
                         </button>
@@ -1289,36 +1347,36 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
   const renderFacts = () => (
     <div className="space-y-3">
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
-          {i18nService.t('memoryFactsHint')}
-        </div>
-        <div className="flex items-center gap-2">
-          <label className="flex cursor-pointer items-center gap-1 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
-            <input
-              type="checkbox"
-              checked={factsShowArchived}
-              onChange={(event) => setFactsShowArchived(event.target.checked)}
-            />
-            {i18nService.t('memoryFactsShowArchived')}
-          </label>
+      {/* OWNER 03:14: hint on its own line; controls on a dedicated row
+          (已归档 · search · 新增条目) so nothing crams or wraps. */}
+      <div className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+        {i18nService.t('memoryFactsHint')}
+      </div>
+      <div className="flex items-center gap-2">
+        <label className="flex shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
           <input
-            type="text"
-            value={factsQuery}
-            onChange={(event) => setFactsQuery(event.target.value)}
-            placeholder={i18nService.t('coworkMemorySearchPlaceholder')}
-            className="w-48 rounded-lg border px-2 py-1 text-xs dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
+            type="checkbox"
+            checked={factsShowArchived}
+            onChange={(event) => setFactsShowArchived(event.target.checked)}
           />
-          <button
-            type="button"
-            onClick={() => { resetEditor(); setShowModal(true); }}
-            disabled={metabotId == null}
-            className="btn-idchat-primary-filled inline-flex items-center justify-center px-3 py-1 text-xs disabled:opacity-60"
-          >
-            <PlusCircleIcon className="h-3.5 w-3.5 mr-1" />
-            {i18nService.t('coworkMemoryCrudCreate')}
-          </button>
-        </div>
+          {i18nService.t('memoryFactsShowArchived')}
+        </label>
+        <input
+          type="text"
+          value={factsQuery}
+          onChange={(event) => setFactsQuery(event.target.value)}
+          placeholder={i18nService.t('coworkMemorySearchPlaceholder')}
+          className="h-[26px] min-w-0 flex-1 rounded-[var(--shape-radius-sm)] border px-2 text-xs leading-none dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
+        />
+        <button
+          type="button"
+          onClick={() => { resetEditor(); setShowModal(true); }}
+          disabled={metabotId == null}
+          className="btn-idchat-primary-filled inline-flex h-[26px] shrink-0 items-center justify-center whitespace-nowrap rounded-[var(--shape-radius-sm)] px-3 text-xs disabled:opacity-60"
+        >
+          <PlusCircleIcon className="h-3.5 w-3.5 mr-1" />
+          {i18nService.t('coworkMemoryCrudCreate')}
+        </button>
       </div>
       {factsStats && (
         <div className="text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
@@ -1425,14 +1483,31 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           {i18nService.t('memoryDreamHint')}
         </div>
         <div className="flex items-center gap-2">
-          <input
-            type="date"
-            value={dreamRunDate}
-            max={formatLocalDateInput(new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate() - 1))}
-            onChange={(event) => setDreamRunDate(event.target.value)}
-            className="rounded-lg border px-2 py-1 text-xs dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
-            disabled={dreamRunning || metabotId == null}
-          />
+          <div className="relative shrink-0" ref={dreamCalForceRef}>
+            <button
+              type="button"
+              onClick={() => { if (!(dreamRunning || metabotId == null)) openDreamCal('force', dreamCalForceRef); }}
+              disabled={dreamRunning || metabotId == null}
+              className="inline-flex h-[26px] items-center whitespace-nowrap rounded-[var(--shape-radius-sm)] border px-2 text-xs tabular-nums dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text transition-colors hover:border-claude-accent/60 disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {dreamRunDate}
+            </button>
+            {dreamCalOpen === 'force' && dreamCalPos && (
+              <div
+                className="fixed z-40 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg shadow-2xl p-2"
+                style={{ top: dreamCalPos.top, left: dreamCalPos.left }}
+              >
+                <MiniMonthCalendar
+                  markedDayKeys={dreamMarkedDayKeys}
+                  selectedDayKey={dreamRunDate}
+                  onPick={(dayKey) => {
+                    setDreamRunDate(dayKey);
+                    setDreamCalOpen(null);
+                  }}
+                />
+              </div>
+            )}
+          </div>
           <button
             type="button"
             onClick={() => { void handleForceDream(); }}
@@ -1450,14 +1525,66 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       )}
       <DreamTelemetryPanel runs={dreamRuns} />
       <CapabilityDraftsPanel drafts={capabilityDrafts} loading={dreamLoading} />
-      <div className="max-h-[520px] overflow-auto rounded-lg border dark:border-claude-darkBorder border-claude-border">
+      {/* OWNER 03:29: the diary module gets a titled card shell mirroring
+          the capability drafts panel — 日记本 header (count + hint + calendar
+          index), scroll body, footer expander. */}
+      <div className="rounded-lg border dark:border-claude-darkBorder border-claude-border">
+        <div className="px-3 py-2 border-b dark:border-claude-darkBorder border-claude-border">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="text-xs font-medium dark:text-claude-darkText text-claude-text whitespace-nowrap">
+                {i18nService.t('dreamDiaryBookTitle')}
+                {dreamEntries.length > 0 ? ` (${dreamEntries.length})` : ''}
+              </span>
+              <Tooltip content={i18nService.t('dreamDiaryHint')}>
+                <InformationCircleIcon className="h-3.5 w-3.5 dark:text-claude-darkTextTertiary text-claude-textTertiary cursor-help flex-shrink-0" />
+              </Tooltip>
+              {dreamBrowseDate && (
+                <button
+                  type="button"
+                  onClick={() => handleDreamBrowse('')}
+                  className="rounded-[var(--shape-radius-sm)] border px-2 py-0.5 text-[11px] dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                >
+                  {i18nService.t('dreamDiaryBrowseClear')}
+                </button>
+              )}
+            </div>
+            <div className="relative shrink-0" ref={dreamCalBrowseRef}>
+              <button
+                type="button"
+                onClick={() => openDreamCal('browse', dreamCalBrowseRef)}
+                className="inline-flex h-[26px] items-center gap-1 whitespace-nowrap rounded-[var(--shape-radius-sm)] border px-2 text-xs dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text transition-colors hover:border-claude-accent/60"
+              >
+                {dreamBrowseDate || formatLocalDateInput(new Date())}
+              </button>
+              {dreamCalOpen === 'browse' && dreamCalPos && (
+                <div
+                  className="fixed z-40 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg shadow-2xl p-2"
+                  style={{ top: dreamCalPos.top, left: dreamCalPos.left }}
+                >
+                  <MiniMonthCalendar
+                    markedDayKeys={dreamMarkedDayKeys}
+                    selectedDayKey={dreamBrowseDate || null}
+                    onPick={(dayKey) => {
+                      handleDreamBrowse(dreamBrowseDate === dayKey ? '' : dayKey);
+                      setDreamCalOpen(null);
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+        <div className="max-h-[520px] overflow-auto">
         {dreamLoading ? (
           <div className="px-3 py-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">{i18nService.t('loading')}</div>
         ) : dreamEntries.length === 0 ? (
           <div className="px-3 py-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">{i18nService.t('dreamDiaryEmpty')}</div>
+        ) : dreamBrowseDate && visibleDreamEntries.length === 0 ? (
+          <div className="px-3 py-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">{i18nService.t('dreamDiaryNoDateRecord')}</div>
         ) : (
           <div className="divide-y dark:divide-claude-darkBorder divide-claude-border">
-            {dreamEntries.map((entry) => {
+            {visibleDreamEntries.map((entry) => {
               if (entry.kind === 'failed') {
                 const { run } = entry;
                 const isTerminal = run.status === 'terminal-failed';
@@ -1552,6 +1679,20 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                 </div>
               );
             })}
+          </div>
+        )}
+        </div>
+        {!dreamBrowseDate && dreamEntries.length > DREAM_RECENT_COUNT && (
+          <div className="px-3 py-2 border-t dark:border-claude-darkBorder border-claude-border">
+            <button
+              type="button"
+              onClick={() => setDreamShowAll((prev) => !prev)}
+              className="rounded-[var(--shape-radius-sm)] border px-2 py-1 text-[11px] dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+            >
+              {dreamShowAll
+                ? i18nService.t('dreamDiaryShowLess')
+                : i18nService.t('dreamDiaryShowEarlier').replace('{count}', String(dreamEntries.length - DREAM_RECENT_COUNT))}
+            </button>
           </div>
         )}
       </div>
@@ -1857,7 +1998,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                     type="button"
                     onClick={() => { void handleSaveHygiene(); }}
                     disabled={hygieneSaving}
-                    className="btn-idchat-primary-filled inline-flex items-center justify-center px-4 py-1.5 text-xs disabled:opacity-60"
+                    className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] rounded-lg inline-flex items-center justify-center px-4 py-1.5 text-xs disabled:opacity-60"
                   >
                     {hygieneSaving ? i18nService.t('saving') : i18nService.t('memoryHygieneSave')}
                   </button>
@@ -1923,7 +2064,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             </div>
             <button
               type="button"
-              className="rounded-lg border px-2 py-1 text-[11px] dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary"
+              className="rounded-[8px] border px-2 py-1 text-[11px] dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary"
               onClick={async () => {
                 if (page.status === 'archived') await coworkService.restoreStandingPage(metabotId ?? 0, page.pageKey);
                 else await coworkService.removeStandingPage(metabotId ?? 0, page.pageKey);
@@ -1967,7 +2108,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         {standingAddError && <div className="mt-1 text-[11px] text-red-500">{standingAddError}</div>}
         <button
           type="button"
-          className="mt-2 rounded-lg border px-3 py-1 text-xs dark:border-claude-darkAccent border-claude-accent text-claude-accent dark:text-claude-darkAccent"
+          className="mt-2 rounded-[8px] border px-3 py-1 text-xs dark:border-claude-darkAccent border-claude-accent text-claude-accent dark:text-claude-darkAccent"
           onClick={async () => {
             setStandingAddError(null);
             const error = await coworkService.createStandingPage(metabotId ?? 0, standingNewName.trim(), standingNewQuestion.trim());
@@ -2049,7 +2190,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
               key={kind}
               type="button"
               onClick={() => setCultureKindFilter(kind)}
-              className={`rounded-lg border px-2.5 py-1 text-xs transition-colors ${
+              className={`inline-flex h-[26px] items-center justify-center rounded-[var(--shape-radius-sm)] border px-2.5 text-xs leading-none transition-colors ${
                 active
                   ? 'border-claude-accent bg-claude-accent/5 text-claude-accent dark:bg-claude-accent/10 dark:text-claude-darkAccent'
                   : 'dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
@@ -2064,7 +2205,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           value={cultureQuery}
           onChange={(event) => setCultureQuery(event.target.value)}
           placeholder={i18nService.t('memoryCultureSearchPlaceholder')}
-          className="min-w-[160px] flex-1 rounded-lg border px-2 py-1.5 text-xs dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
+          className="h-[26px] min-w-[160px] flex-1 rounded-[var(--shape-radius-sm)] border px-2 text-xs leading-none dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
         />
       </div>
 
@@ -2074,15 +2215,15 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           {editingCultureId != null ? i18nService.t('memoryCultureEdit') : i18nService.t('memoryCultureAdd')}
         </div>
         <div className="flex items-center gap-2">
-          <select
+          {/* OWNER 02:56: native select popup broke the design language —
+              unified ThemedSelect (compact) keeps the row height and centers. */}
+          <ThemedSelect
+            id="culture-draft-kind"
+            compact
             value={cultureDraft.kind}
-            onChange={(event) => setCultureDraft((prev) => ({ ...prev, kind: event.target.value as TeamCultureKind }))}
-            className="rounded-lg border px-2 py-1.5 text-xs dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
-          >
-            {(Object.keys(cultureKindLabels) as TeamCultureKind[]).map((kind) => (
-              <option key={kind} value={kind}>{cultureKindLabels[kind]}</option>
-            ))}
-          </select>
+            onChange={(value) => setCultureDraft((prev) => ({ ...prev, kind: value as TeamCultureKind }))}
+            options={(Object.keys(cultureKindLabels) as TeamCultureKind[]).map((kind) => ({ value: kind, label: cultureKindLabels[kind] }))}
+          />
           <input
             type="text"
             value={cultureDraft.topic}
@@ -2103,7 +2244,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             type="button"
             onClick={() => { void handleSaveCulture(); }}
             disabled={!cultureDraft.topic.trim() || !cultureDraft.text.trim()}
-            className="btn-idchat-primary-filled inline-flex items-center px-3 py-1 text-xs disabled:opacity-60"
+            className="border border-[var(--btn-primary-edge)] bg-claude-accent text-claude-accentInk hover:brightness-[0.96] active:brightness-[0.9] transition-[filter] rounded-lg inline-flex items-center px-3 py-1 text-xs disabled:opacity-60"
           >
             {i18nService.t('memoryCultureSave')}
           </button>
@@ -2111,7 +2252,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             <button
               type="button"
               onClick={resetCultureEditor}
-              className="rounded-lg border px-3 py-1 text-xs dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text"
+              className="rounded-[8px] border px-3 py-1 text-xs dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text"
             >
               {i18nService.t('cancel')}
             </button>
@@ -2292,7 +2433,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       )}
 
       {/* Section tabs */}
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="inline-flex h-8 min-w-0 items-center overflow-hidden rounded-[var(--shape-radius-sm)] border border-claude-border/70 bg-claude-bg/80 dark:border-claude-darkBorder/70 dark:bg-claude-darkBg/80">
         {sectionTab('knowledge', i18nService.t('memorySectionKnowledge'), metabotId == null ? undefined : knowledgeCounts)}
         {sectionTab('contacts', i18nService.t('memorySectionContacts'), metabotId == null || contacts.length === 0 ? undefined : contacts.length)}
         {sectionTab('facts', i18nService.t('memorySectionFacts'), metabotId == null || !factsStats ? undefined : factsStats.created + factsStats.stale)}
@@ -2380,7 +2521,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
               <button
                 type="button"
                 onClick={resetEditor}
-                className="px-3 py-1.5 text-sm dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-xl border dark:border-claude-darkBorder border-claude-border transition-colors"
+                className="px-4 py-2 text-sm dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover inline-flex items-center justify-center rounded-[var(--shape-radius-sm)] border dark:border-claude-darkBorder border-claude-border transition-colors"
               >
                 {i18nService.t('cancel')}
               </button>
@@ -2388,7 +2529,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                 type="button"
                 onClick={() => { void handleSaveFact(); }}
                 disabled={!draftText.trim() || factsLoading}
-                className="btn-idchat-primary-filled px-3 py-1.5 text-sm"
+                className="btn-idchat-primary-filled text-sm"
               >
                 {i18nService.t('save')}
               </button>

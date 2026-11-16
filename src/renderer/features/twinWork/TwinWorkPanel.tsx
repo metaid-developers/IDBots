@@ -114,7 +114,7 @@ export const TwinWorkSearchField: React.FC<TwinWorkSearchFieldProps> = ({
           onClick={onClear}
           aria-label={copy.clearSearch}
           title={copy.clearSearch}
-          className="shrink-0 rounded p-0.5 dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:text-claude-darkText hover:text-claude-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+          className="shrink-0 rounded-[8px] p-0.5 dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:text-claude-darkText hover:text-claude-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
         >
           <XMarkIcon className="h-3.5 w-3.5" />
         </button>

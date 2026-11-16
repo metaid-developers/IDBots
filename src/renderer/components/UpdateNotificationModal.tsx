@@ -56,7 +56,7 @@ const UpdateNotificationModal: React.FC<UpdateNotificationModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border-color)] text-[var(--text-secondary)] transition-all hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] hover:scale-105 active:scale-95"
+            className="flex h-8 w-8 items-center justify-center rounded-[8px] border border-[var(--border-color)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
             aria-label={i18nService.t('close')}
           >
             <XMarkIcon className="h-5 w-5" />
@@ -125,7 +125,7 @@ const UpdateNotificationModal: React.FC<UpdateNotificationModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="btn-idchat-primary-filled rounded-lg px-5 py-2 text-sm font-medium transition-all hover:scale-105 active:scale-95"
+            className="btn-idchat-primary-filled text-sm font-medium transition-[filter]"
           >
             {i18nService.t('gotIt')}
           </button>

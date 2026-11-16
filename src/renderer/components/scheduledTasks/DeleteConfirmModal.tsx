@@ -40,14 +40,14 @@ const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
             <button
               type="button"
               onClick={onCancel}
-              className="flex-1 px-4 py-2 text-sm rounded-lg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+              className="flex-1 px-4 py-2 text-sm rounded-[8px] dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
             >
               {i18nService.t('cancel')}
             </button>
             <button
               type="button"
               onClick={onConfirm}
-              className="flex-1 px-4 py-2 text-sm rounded-lg bg-red-500 text-white hover:bg-red-600 transition-colors"
+              className="border border-red-600 flex-1 px-4 py-2 text-sm rounded-[8px] bg-red-500 text-white hover:bg-red-600 transition-colors"
             >
               {i18nService.t('scheduledTasksDelete')}
             </button>

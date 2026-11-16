@@ -164,7 +164,7 @@ const LongTermTaskCard: React.FC<{ card: LongTermTaskSummary; onOpen: (taskId: s
               stop(event);
               void runVerdict(() => longTermTaskService.acceptSubtask(card.id, subtaskId));
             }}
-            className="rounded-md bg-emerald-600/90 px-2 py-1 text-[11px] font-medium text-white hover:bg-emerald-600"
+            className="border border-emerald-600 rounded-md bg-emerald-600/90 px-2 py-1 text-[11px] font-medium text-white hover:bg-emerald-600"
           >
             {i18nService.t('longTermTask.action.accept')}
           </button>
@@ -199,7 +199,7 @@ const LongTermTaskCard: React.FC<{ card: LongTermTaskSummary; onOpen: (taskId: s
                 stop(event);
                 void runVerdict(() => longTermTaskService.rejectSubtask(card.id, subtaskId, rejectText.trim())).then(() => setRejecting(false));
               }}
-              className="rounded-md bg-red-500/90 px-2 py-1 text-[11px] font-medium text-white disabled:opacity-50"
+              className="border border-red-600 rounded-md bg-red-500/90 px-2 py-1 text-[11px] font-medium text-white disabled:opacity-50"
             >
               {i18nService.t('longTermTask.rejectConfirm')}
             </button>
