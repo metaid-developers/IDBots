@@ -319,7 +319,7 @@ test('credits & traffic tab hosts two sub-pages (credits default, traffic restor
   assert.match(i18nSource, /usageCreditsSubTabTraffic: '流量'/);
 });
 
-test('credits overview card uses 增量包（不过期） layout and usage header adds 购买积分 left of refresh', () => {
+test('credits overview card uses 增量包（不过期） layout and 购买积分 stays on the card footer', () => {
   const overviewSource = read('src/renderer/components/me/MeBalanceOverviewCard.tsx');
   assert.match(i18nSource, /meIncrementPackBuy: '购买积分'/);
   assert.match(i18nSource, /meUsagePersistent: '增量包（不过期）'/);
@@ -329,9 +329,15 @@ test('credits overview card uses 增量包（不过期） layout and usage heade
   assert.match(overviewSource, /mePanelBonus/);
   assert.match(overviewSource, /mePanelEarned/);
 
-  const buyIdx = usageSource.indexOf("data-slot=\"me-usage-buy-credits\"");
-  const refreshIdx = usageSource.indexOf("i18nService.t('freeQuotaRefresh')");
-  assert.ok(buyIdx >= 0 && refreshIdx > buyIdx, '购买积分 button must sit left of refresh');
+  // OWNER 2026-11-16 00:41: buy/refresh moved from the page header into the
+  // overview card — 购买积分 stays as the card's footer button (bottom-right)
+  // and the footer refresh is retired in favor of the inline icon after the
+  // 本周额度 label.
+  assert.match(usageSource, /data-slot="me-usage-buy-credits"/);
   assert.match(usageSource, /requestOpenMePurchase\('topup'\)/);
   assert.match(usageSource, /i18nService\.t\('meIncrementPackBuy'\)/);
+  assert.doesNotMatch(usageSource, /freeQuotaRefresh/);
+  const weeklyIdx = overviewSource.indexOf("i18nService.t('mePanelWeekly')");
+  const refreshIdx = overviewSource.indexOf("aria-label={i18nService.t('freeQuotaRefresh')}");
+  assert.ok(weeklyIdx >= 0 && refreshIdx > weeklyIdx, 'refresh sits inline after the 本周额度 label');
 });

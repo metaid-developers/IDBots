@@ -136,8 +136,9 @@ test('the inline date-filter block renders the dropdowns and the Monday-first gr
   const markup = render([session({ id: 'a' })]);
   assert.match(markup, /data-slot="cowork-history-date-filter"/);
   assert.ok(markup.includes(i18nService.t('botBrowserHistoryDateFilter')));
-  // Two dropdowns (year + month).
-  assert.equal((markup.match(/<select/g) ?? []).length, 2);
+  // Two dropdowns (year + month). Since 308a6f2f0 the unified ThemedSelect
+  // replaced the native popups, so the contract counts its listbox triggers.
+  assert.equal((markup.match(/aria-haspopup="listbox"/g) ?? []).length, 2);
   // Weekday header reads Monday-first (the reference form: 一~周日历网格).
   const monday = markup.indexOf(i18nService.t('scheduledTasksFormWeekMon'));
   const sunday = markup.indexOf(i18nService.t('scheduledTasksFormWeekSun'));
