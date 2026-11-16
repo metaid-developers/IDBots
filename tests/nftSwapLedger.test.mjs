@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
 
 import { SwapLedger, LEDGER_STATES } from '../SKILLs/nft-swap/cli/lib/swap-ledger.mjs';
 
@@ -192,4 +193,41 @@ test('all states are enumerated and detectable rows list by state', () => {
     const { row } = ledger.recordDetection(deposit(11));
     assert.deepEqual(ledger.rowsByStates(['detected']).map((r) => r.id), [row.id]);
   });
+});
+
+test('additive migration adds item_desc_pin_id to a ledger created before the column existed', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'nft-swap-ledger-migrate-'));
+  const dbPath = path.join(dir, 'old.sqlite');
+  const seed = new DatabaseSync(dbPath);
+  seed.exec(`
+    CREATE TABLE swap_ledger (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, genesis TEXT NOT NULL, code_hash TEXT NOT NULL,
+      token_index INTEGER NOT NULL, state TEXT NOT NULL, sensible_id TEXT, deposit_txid TEXT,
+      deposit_vout INTEGER, deposit_outpoint TEXT UNIQUE, deposit_height INTEGER, detected_at INTEGER,
+      claim_channel TEXT, claim_message_id TEXT, claimant_address TEXT, claimed_at INTEGER,
+      item_path TEXT, mint_pin_id TEXT, mint_txids TEXT, dual_check_json TEXT, minted_at INTEGER,
+      confirm_json TEXT, transfer_txid TEXT, transfer_count INTEGER, transfer_stable_since INTEGER,
+      sent_at INTEGER, burn_batch_id TEXT, burn_txid TEXT, burned_at INTEGER, reject_reason TEXT,
+      refund_txid TEXT, refunded_at INTEGER, fee_sats_json TEXT, notes TEXT, updated_at INTEGER NOT NULL
+    );
+  `);
+  seed.close();
+
+  const ledger = new SwapLedger(dbPath);
+  try {
+    const columns = ledger.db.prepare('PRAGMA table_info(swap_ledger)').all().map((c) => c.name);
+    assert.ok(columns.includes('item_desc_pin_id'));
+    const { row } = ledger.recordDetection(deposit(1));
+    ledger.claim(row.id, { channel: 'chat', messageId: 'm', claimantAddress: 'x' });
+    ledger.recordMintBroadcast(row.id, { itemPath: 'item-0001', mintPinId: 'a'.repeat(64) + 'i0', txids: [] });
+    ledger.recordItemDescPin(row.id, { itemDescPinId: 'd'.repeat(64) + 'i0' });
+    assert.equal(ledger.rowById(row.id).item_desc_pin_id, 'd'.repeat(64) + 'i0');
+  } finally {
+    ledger.close();
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // leftover temp dirs are harmless
+    }
+  }
 });

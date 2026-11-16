@@ -23,8 +23,12 @@ export const ISSUER_CONFIG = Object.freeze({
     '047a0ca1a83f2962d53921237219e1b13067d03d7582fcea50bf720052ff8dca0cbbe1f1814fd95288bf280bac04368af9eee422f727eec08a62348ea6f6cef54e',
 
   /** Vault subaddress = fixed derivation index under the same issuer account
-   *  (owner ruling 2026-11-05: index 1). Polling filters by THIS address only. */
+   *  (owner ruling 2026-11-05: index 1). Polling filters by THIS address only.
+   *  The address value is the M0-ratified derivation written into the pilot
+   *  config by restore-issuer (equals cowork_config nft_swap_pilot_config
+   *  vaultAddress). Public address only — no key material. */
   vaultPath: "m/44'/236'/0'/0/1",
+  vaultAddress: '1Mw6q8iZ2dYXd6vYwdYfd3ybUKNnWKj8ET',
 
   /** New MRC-721 collection (owner naming ruling 2026-11-05). */
   collectionName: 'metabot-avatar',
