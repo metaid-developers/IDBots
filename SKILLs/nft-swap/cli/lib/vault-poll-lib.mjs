@@ -11,6 +11,15 @@
  * The vault address is polled EXCLUSIVELY (owner ruling: vault = fixed
  * subaddress m/44'/236'/0'/0/1; the issuer address is never mixed in —
  * prereview #11).
+ *
+ * Wire shape re-measured 2026-11-16 against
+ * `/wallet-api/v4/mvc/address/contract/nft/utxo-list?net=livenet&address=<vault>`:
+ * rows are CAMELCASE — `txId` / `txIndex` / `codeHash` (the satoshi amount is
+ * singular `satoshi` there; this reader's `satoshis` alias is still legacy and
+ * unused by the engine). Reading only the lower-case names silently blanked the
+ * triple and misjudged a correct deposit as foreign. Both spellings are now
+ * accepted. The same page also repeats its row on the `flag=0` follow-up page,
+ * so outpoints are deduped before returning.
  */
 
 export const VAULT_POLL_PAGE_CAP = 50;
@@ -30,6 +39,7 @@ export const MVP_CONFIRMATIONS = 6;
  */
 export async function fetchVaultTokenRows({ address, net = 'livenet', baseUrl = 'https://www.metalet.space', fetchImpl = fetch }) {
   const rows = [];
+  const seenOutpoints = new Set();
   let flag;
   for (let page = 0; page < VAULT_POLL_PAGE_CAP; page++) {
     const params = new URLSearchParams({ net, address });
@@ -42,16 +52,23 @@ export async function fetchVaultTokenRows({ address, net = 'livenet', baseUrl = 
     const list = Array.isArray(json?.data?.list) ? json.data.list : [];
     if (!list.length) break;
     for (const item of list) {
-      rows.push({
-        txid: String(item.txid || ''),
-        outIndex: Number(item.outIndex ?? item.vout ?? 0),
+      const row = {
+        // real v4 wire names are camelCase (measured 2026-11-16, see header);
+        // lower-case aliases cover the mvcNftService-shaped fixture rows
+        txid: String(item.txid ?? item.txId ?? ''),
+        outIndex: Number(item.outIndex ?? item.vout ?? item.txIndex ?? 0),
         genesis: String(item.genesis || ''),
-        codehash: String(item.codehash || ''),
+        codehash: String(item.codehash ?? item.codeHash ?? ''),
         tokenIndex: Number(item.tokenIndex ?? 0),
         sensibleId: item.sensibleId != null ? String(item.sensibleId) : null,
         height: Number(item.height ?? -1),
         satoshis: Number(item.satoshis ?? item.value ?? 0),
-      });
+      };
+      // the `flag=0` follow-up page repeats the same row — one outpoint counts once
+      const outpoint = `${row.txid}:${row.outIndex}`;
+      if (seenOutpoints.has(outpoint)) continue;
+      seenOutpoints.add(outpoint);
+      rows.push(row);
     }
     const nextFlag = list[list.length - 1]?.flag;
     if (!nextFlag || nextFlag === flag) break; // flag-unchanged termination (house pattern)
