@@ -2976,6 +2976,9 @@ const requestCalendarPermission = async (): Promise<boolean> => {
 
 
 // 配置应用
+if (isWindows) {
+  app.setAppUserModelId('ai.idbots.app');
+}
 if (isLinux) {
   if (disableLinuxSandbox) {
     app.commandLine.appendSwitch('no-sandbox');
@@ -21314,7 +21317,7 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
       if (isDev) {
         console.log(`[Renderer:${level}] ${sourceId}:${line} ${message}`);
-      } else if (/\[(?:LiveStage|GenesisStage)\]|WebGPU/i.test(String(message))) {
+      } else if (/\[(?:LiveStage|GenesisStage|LiquidOrb)\]|WebGPU|WebGL/i.test(String(message))) {
         console.warn(`[Renderer:${level}] ${message}`);
       }
     });

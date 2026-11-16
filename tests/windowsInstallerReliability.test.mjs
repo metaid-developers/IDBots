@@ -125,8 +125,24 @@ test('NSIS customCheckAppRunning closes IDBots and INSTDIR child processes safel
   assert.equal((source.match(/CreateShortCut/g) || []).length, 1);
   assert.match(source, /IDBOTS_STARTMENU_LINK/);
   assert.match(source, /User Pinned\\TaskBar/);
+  // Fast native tasklist/findstr gates avoid cold-spawning PowerShell + CIM on normal upgrades.
+  assert.doesNotMatch(source, /gcim\s+Win32_Process/i);
+  assert.match(source, /!macro _IDBOTS_FIND_MAIN_EXE/);
+  assert.match(source, /!macro _IDBOTS_FIND_BUNDLED_CANDIDATES/);
+  assert.match(source, /IdbotsPrevUserDir/);
+  assert.match(source, /IdbotsPrevMachineDir/);
+  // Finish-page "Run IDBots" launches $appExe directly instead of $launchLink (.lnk)
+  // so --updated arguments and UAC/non-elevated modes always start IDBots.exe.
+  assert.match(source, /!macro customFinishPage/);
+  assert.match(source, /Function StartApp/);
+  assert.match(source, /UAC_AsUser_Call Function _IdbotsLaunchFromUserProcess/);
+  assert.match(source, /\$\{StdUtils\.ExecShellAsUser\} \$0 "\$appExe" "open" "\$1"/);
+  assert.doesNotMatch(source, /"\$launchLink"/);
   // PowerShell variables inside NSIS strings must be escaped as $$ to avoid makensis -WX warnings.
   assert.doesNotMatch(source, /(?<!\$)\$(?:ErrorActionPreference|env:|PID\b)/);
+
+  const main = read('src/main/main.ts');
+  assert.match(main, /app\.setAppUserModelId\('ai\.idbots\.app'\)/);
 });
 
 test('desktop shutdown enforces a cleanup watchdog, closes HTTP keep-alive connections, and caps child teardown waits', () => {
