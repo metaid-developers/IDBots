@@ -231,7 +231,11 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
       data-rail-surface={mode}
       aria-label={i18nService.t('workspaceRailLabel')}
       onDoubleClick={handleRailDoubleClick}
-      className="relative z-30 flex w-16 shrink-0 flex-col items-center dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted border-r border-claude-border/60 dark:border-claude-darkBorder/60"
+      /* Dark hairline must be a literal alpha-capable color (white/10):
+         the claude border tokens resolve to var(--border-color), on which
+         Tailwind silently drops the /60 modifier — the full-strength
+         #6b7280 read as a bright white line in dark mode (11-17 report). */
+      className="relative z-30 flex w-16 shrink-0 flex-col items-center dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted border-r border-claude-border/60 dark:border-white/10"
     >
       {/* Row 1 is the pure traffic-light reservation (42.375 px on mac —
           owner baseline ruling 2026-11-15 08:27: sized so the tray's visible

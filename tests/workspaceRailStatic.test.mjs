@@ -413,13 +413,17 @@ test('the Co-Work face is the Internet default branch, not a rail pane', () => {
 test('the rail closes on its right edge with a 1px hairline (flat stroke, no shadow)', () => {
   // Flat-shape language v2 (owner ruling 2026-11-14, batch 2): the function
   // zone separates from the mid column by a 1px stroke on the rail's right
-  // edge — var(--border-color) at the header-divider alpha with the dark
-  // variant spelled out (both claude tokens resolve to var(--border-color),
-  // the same pair the switch tray already uses). Stroke ONLY: no elevation
-  // shadow rides the rail container.
+  // edge. Dark mode must use a literal alpha-capable color (white/10): the
+  // claude border tokens resolve to var(--border-color), on which Tailwind
+  // silently drops the /60 modifier — the full-strength #6b7280 rendered as
+  // a bright white line against the #0b1323 rail (11-17 report). Light mode
+  // keeps border-claude-border/60 (falls back to the full border color,
+  // unchanged from the shipped look). Stroke ONLY: no elevation shadow
+  // rides the rail container.
   const asideStart = railSource.indexOf('<aside');
   const asideEnd = railSource.indexOf('>', asideStart);
   const asideTag = railSource.slice(asideStart, asideEnd);
-  assert.match(asideTag, /border-r border-claude-border\/60 dark:border-claude-darkBorder\/60/);
+  assert.match(asideTag, /border-r border-claude-border\/60 dark:border-white\/10/);
+  assert.doesNotMatch(asideTag, /dark:border-claude-darkBorder/);
   assert.ok(!asideTag.includes('shadow'), 'the rail divider is stroke-only: no shadow classes');
 });
