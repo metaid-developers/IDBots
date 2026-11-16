@@ -27,6 +27,7 @@ import { SleepGuardBadge } from './SleepGuardBadge';
 import BotBrowserCoworkPanel from '../features/botBrowser/BotBrowserCoworkPanel';
 import BotBrowserModeSwitch from '../features/botBrowser/BotBrowserModeSwitch';
 import CoworkSurfaceSessionName from '../features/botBrowser/CoworkSurfaceSessionName';
+import { resolveTitleHideDelayMs } from '../features/botBrowser/surfaceSessionName';
 import { UserProfilePage } from '../features/userProfile';
 import { defaultSidebarWidth } from '../utils/sidebarWidth';
 import type { BotBrowserSurfaceMode, BotHomeSection } from '../features/botBrowser/types';
@@ -209,6 +210,48 @@ const Sidebar: React.FC<SidebarProps> = ({
   }>({ queuedCount: 0, presenting: false, showBadge: false });
   const studioHeaderRef = useRef<HTMLDivElement>(null);
   const studioIdentityRowRef = useRef<HTMLDivElement>(null);
+  // Grace-collapse machinery (owner ruling 2026-11-15 09:17): leaving the
+  // studio header schedules a 2500 ms collapse instead of snapping shut;
+  // re-entering (or focusing into the inline editor) cancels the pending
+  // timer; while the inline editor is open the preview NEVER auto-collapses
+  // (clause ②) and the hover rule resumes only after the edit ends.
+  const titleHideTimerRef = useRef<number | null>(null);
+  const titleEditingRef = useRef(false);
+  const pointerInStudioHeaderRef = useRef(false);
+  const cancelTitleHideTimer = () => {
+    if (titleHideTimerRef.current !== null) {
+      window.clearTimeout(titleHideTimerRef.current);
+      titleHideTimerRef.current = null;
+    }
+  };
+  const scheduleTitleHide = () => {
+    cancelTitleHideTimer();
+    const delay = resolveTitleHideDelayMs(titleEditingRef.current);
+    if (delay === null) return;
+    titleHideTimerRef.current = window.setTimeout(() => {
+      titleHideTimerRef.current = null;
+      // Re-check at fire time: entering the editor during the grace window
+      // pins the row (clause ② applies to the whole window, not just the
+      // leave instant).
+      if (titleEditingRef.current) return;
+      setStudioTitlePreviewOpen(false);
+    }, delay);
+  };
+  const handleSessionTitleEditingChange = (editing: boolean) => {
+    titleEditingRef.current = editing;
+    if (editing) {
+      cancelTitleHideTimer();
+      return;
+    }
+    // Edit ended — resume the hover rule: pointer still inside the header
+    // keeps the preview open (the next real leave schedules the grace);
+    // pointer already outside gets the same 2500 ms grace a leave gives.
+    if (pointerInStudioHeaderRef.current) {
+      cancelTitleHideTimer();
+    } else {
+      scheduleTitleHide();
+    }
+  };
   const dispatch = useDispatch();
 
   useEffect(() => {
@@ -674,20 +717,31 @@ const Sidebar: React.FC<SidebarProps> = ({
     const fromList = sessions.find((session) => session.id === browserOpenSessionId);
     return fromList?.title ?? browserOpenSessionFallbackTitle ?? '';
   }, [browserOpenSessionId, sessions, browserOpenSessionFallbackTitle]);
-  useEffect(() => setStudioTitlePreviewOpen(false), [browserOpenSessionId]);
+  useEffect(() => {
+    cancelTitleHideTimer();
+    setStudioTitlePreviewOpen(false);
+  }, [browserOpenSessionId]);
   useEffect(() => {
     if (mode === 'home') return undefined;
     const headerEl = studioHeaderRef.current;
     const identityRowEl = studioIdentityRowRef.current;
     if (!headerEl || !identityRowEl) return undefined;
     const openPreview = () => {
+      pointerInStudioHeaderRef.current = true;
+      cancelTitleHideTimer();
       if (browserOpenSessionId) setStudioTitlePreviewOpen(true);
     };
+    // Grace collapse (owner ruling 09:17): the leave schedules a 2500 ms
+    // hide instead of snapping; focus kept INSIDE the header (the inline
+    // editor) pins the row via the editing guard in scheduleTitleHide.
     const closePreviewOnLeave = () => {
-      if (!headerEl.contains(document.activeElement)) setStudioTitlePreviewOpen(false);
+      pointerInStudioHeaderRef.current = false;
+      if (!document.activeElement || headerEl.contains(document.activeElement)) return;
+      scheduleTitleHide();
     };
     const closePreviewOnFocusOut = (event: FocusEvent) => {
-      if (!headerEl.contains(event.relatedTarget as Node | null)) setStudioTitlePreviewOpen(false);
+      const focusTarget = event.relatedTarget as Node | null;
+      if (!focusTarget || !headerEl.contains(focusTarget)) scheduleTitleHide();
     };
     identityRowEl.addEventListener('mouseenter', openPreview);
     identityRowEl.addEventListener('focusin', openPreview);
@@ -698,6 +752,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       identityRowEl.removeEventListener('focusin', openPreview);
       headerEl.removeEventListener('mouseleave', closePreviewOnLeave);
       headerEl.removeEventListener('focusout', closePreviewOnFocusOut);
+      cancelTitleHideTimer();
     };
   }, [mode, browserOpenSessionId]);
   const showStudioTitle = Boolean(browserOpenSessionId && studioTitlePreviewOpen);
@@ -724,19 +779,25 @@ const Sidebar: React.FC<SidebarProps> = ({
     <div
       ref={studioHeaderRef}
       data-slot="studio-task-header"
-      className={`relative flex w-full min-w-0 flex-col items-center gap-1 transition-[height] duration-150 ${showStudioTitle ? 'h-16' : 'h-9'}`}
+      className="relative flex w-full min-w-0 flex-col items-center gap-1"
       onMouseLeave={(event) => {
         const nextTarget = event.relatedTarget as Node | null;
         if (nextTarget && event.currentTarget.contains(nextTarget)) return;
-        if (!event.currentTarget.contains(document.activeElement)) setStudioTitlePreviewOpen(false);
+        if (!event.currentTarget.contains(document.activeElement)) scheduleTitleHide();
       }}
       onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setStudioTitlePreviewOpen(false);
+        const leaveTarget = event.relatedTarget as Node | null;
+      if (!leaveTarget || !event.currentTarget.contains(leaveTarget)) scheduleTitleHide();
       }}
     >
+      {/* Left-anchor order 2026-11-15: the identity row and the session
+          title sit on the header's LEFT padding edge (the actions slot's
+          pl-2, matching the switcher tray's left border) instead of the
+          retired centered lane — the max-w guard below only caps growth
+          toward the right-hand button cluster. */}
       <div
         ref={studioIdentityRowRef}
-        className="flex h-9 w-full min-w-0 shrink-0 items-center justify-center"
+        className="flex h-9 w-full min-w-0 shrink-0 items-center"
         onMouseEnter={() => {
           if (browserOpenSessionId) setStudioTitlePreviewOpen(true);
         }}
@@ -744,7 +805,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           if (browserOpenSessionId) setStudioTitlePreviewOpen(true);
         }}
       >
-        <div className="flex min-w-0 max-w-[calc(100%_-_8rem)] items-center justify-center">
+        <div className="flex min-w-0 max-w-[calc(100%_-_8rem)] items-center">
           <div data-slot="cowork-header-identity-anchor" className="contents" />
         </div>
       </div>
@@ -752,10 +813,8 @@ const Sidebar: React.FC<SidebarProps> = ({
         <div
           data-slot="studio-title-preview"
           aria-hidden={!showStudioTitle}
-          className={`h-6 w-full shrink-0 transition-[opacity,transform] duration-150 ${
-            showStudioTitle
-              ? 'visible translate-y-0 opacity-100'
-              : 'invisible pointer-events-none -translate-y-1 opacity-0'
+          className={`w-full shrink-0 overflow-hidden transition-[height] duration-150 ${
+            showStudioTitle ? 'h-9' : 'h-0'
           }`}
         >
           <CoworkSurfaceSessionName
@@ -763,6 +822,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             title={browserOpenSessionTitle}
             fallbackTitle={i18nService.t('coworkNewSession')}
             onRename={listOnRenameSession}
+            onRenameEditingChange={handleSessionTitleEditingChange}
           />
         </div>
       ) : null}
@@ -1093,7 +1153,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           )}
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col px-2.5 pb-3 pt-1">
+        <div className="flex min-h-0 flex-1 flex-col px-2.5 pb-3">
           <BotBrowserCoworkPanel
             onShowSkills={onShowSkills}
             onOpenNewProject={() => onShowSettings({ initialTab: 'projects', openNewProjectForm: true })}

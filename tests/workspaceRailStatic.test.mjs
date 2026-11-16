@@ -184,12 +184,12 @@ test('the Home face mounts the same rail; its records column carries no rail ite
 test('the surface switcher sits in the mid column header — the rail top has no switcher', () => {
   // Owner ruling 2026-11-08 14:15: the switch left the 64 px rail so it can
   // show the current surface's NAME in a Codex-style capsule. The rail keeps
-  // its 42.375 px macOS traffic-light reservation (08:27 baseline ruling)
-  // plus the identity avatar slot (owner D-line final ruling 2026-11-09),
-  // and mounts no switcher.
+  // its 42.375 px macOS traffic-light reservation plus the identity avatar slot
+  // (owner D-line final ruling 2026-11-09), and mounts no switcher.
   assert.doesNotMatch(railSource, /BotBrowserModeSwitch/);
   assert.doesNotMatch(railSource, /surface-switch-trigger/);
   assert.match(railSource, /isMac \? 'h-\[42\.375px\]' : 'h-3'/);
+  assert.match(railSource, /className="mt-2 flex min-h-0 w-full flex-1 flex-col items-center/);
 
   assert.match(sidebarSource, /data-slot="mid-column-header"/);
   // The switcher rides the shared header bar below the traffic-light strip
@@ -269,6 +269,15 @@ test('surface header: the open session name is the actions row’s LEFT title; �
   // The slot wires the EXISTING rename channel (coworkService.renameSession
   // via listOnRenameSession) — never a second IPC path.
   assert.match(sidebarSource, /onRename=\{listOnRenameSession\}/);
+  // Grace-collapse machinery (owner ruling 2026-11-15 09:17): the header
+  // schedules a 2500 ms hide on leave (never snaps), cancels it on
+  // re-enter, and the inline editor pins the row (clause ②) — the delay
+  // comes from the shared pure module, not a local literal.
+  assert.match(sidebarSource, /resolveTitleHideDelayMs\(titleEditingRef\.current\)/);
+  assert.match(sidebarSource, /if \(titleEditingRef\.current\) return;/);
+  assert.match(sidebarSource, /cancelTitleHideTimer\(\)/);
+  assert.match(sidebarSource, /pointerInStudioHeaderRef\.current = false;/);
+  assert.match(sidebarSource, /onRenameEditingChange=\{handleSessionTitleEditingChange\}/);
 });
 
 test('surface session-name slot: read-only default, inline editor, empty commit falls back (item ④ contract)', () => {
@@ -281,6 +290,43 @@ test('surface session-name slot: read-only default, inline editor, empty commit 
   assert.match(componentSource, /if \(e\.key === 'Enter'\)/);
   assert.match(componentSource, /if \(e\.key === 'Escape'\)/);
   assert.match(componentSource, /onBlur=\{handleRenameBlur\}/);
+  // Grace-collapse bridge (owner ruling 2026-11-15 09:17): the component
+  // bridges its editing state to the header (clause ② — editing pins the
+  // row) through onRenameEditingChange via the applyRenaming funnel, at ALL
+  // THREE transitions (enter / commit / cancel).
+  assert.match(componentSource, /onRenameEditingChange\?\./);
+  assert.match(componentSource, /const applyRenaming = \(next: boolean\) => \{/);
+  assert.match(componentSource, /const applyRenaming = \(next: boolean\) => \{/);
+  assert.equal(componentSource.split('applyRenaming(').length - 1, 3, 'exactly the three transition call sites');
+  // Owner icon rulings 09:03→10:51: square MessageSquare bubble inside an elongated pill frame, left-aligned
+  // rides the title row — an INLINE lucide replica (14 px, secondary color,
+  // 6 px gap, group-hover deepen), NOT a new dependency: lucide-react is not
+  // in package.json and the worktree's node_modules symlinks into the main
+  // checkout, so installing would mutate the main tree's graph.
+  assert.match(componentSource, /const SessionNameMessageSquareIcon/);
+  assert.match(componentSource, /data-slot="cowork-surface-session-name-icon"/);
+  assert.match(
+    componentSource,
+    /d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/,
+  );
+  assert.match(componentSource, /h-4 w-4 shrink-0/);
+  assert.match(componentSource, /gap-2/);
+  assert.match(componentSource, /text-claude-textSecondary/);
+  assert.match(componentSource, /dark:text-claude-darkTextSecondary/);
+  assert.doesNotMatch(componentSource, /from 'lucide-react'/);
+  // Same-scale contract (owner 09:51): the badge's display-name span and the
+  // session title MUST share the typography triple. The badge source is
+  // pinned here so a future change to either side flips this red.
+  const badgeSource = read('src/renderer/features/botBrowser/CoworkSurfaceIdentityBadge.tsx');
+  assert.match(badgeSource, /truncate text-sm font-medium leading-none/);
+  assert.match(componentSource, /text-sm font-medium leading-none/);
+  // Stagger shift (owner ruling 2026-11-15 09:34): the title row (icon +
+  // text) nudges 6 px right of the badge's left edge — via transform, NOT
+  // pl, because the centered row only delivers Δ/2 under a pl change; all
+  // THREE mount states carry the same shift so label / editor / spacer
+  // never jump.
+  assert.match(componentSource, /flex h-8 w-8 shrink-0 items-center justify-center rounded-full/);
+  assert.equal(componentSource.split('translate-x-[6px]').length - 1, 0, 'stagger translate retired (superseded by symmetric insets, owner 2026-11-15 10:09)');
   // Draft state (no open session) — superseded by the owner 18:54
   // left-anchor order: the slot renders a non-interactive spacer (same
   // flex-1 lane) instead of unmounting, so the identity component ahead of
@@ -302,12 +348,17 @@ test('surface session-name slot: read-only default, inline editor, empty commit 
   // centered lane. The invariant that survives: ALL THREE mounts — the
   // read-only button, the inline editor, AND the draft spacer — carry the
   // same lane classes (h-6 w-full min-w-0 flex-none), so the row's geometry
-  // holds across every state swap, and the two interactive mounts center
-  // their text identically.
-  assert.equal((componentSource.match(/min-w-0 flex-none/g) ?? []).length, 3, 'title lane on all three mounts (read-only + editor + draft spacer)');
-  assert.equal((componentSource.match(/w-full min-w-0 flex-none/g) ?? []).length, 3, 'the lane is full-width on every mount');
-  assert.equal((componentSource.match(/text-center/g) ?? []).length, 2, 'both interactive mounts center the title');
-  assert.match(componentSource, /text-\[13px\] font-medium/);
+  // holds across every state swap; the two interactive mounts are
+  // LEFT-anchored (owner left-align ruling 2026-11-15, superseding center).
+  assert.equal((componentSource.match(/flex h-9 w-full min-w-0 items-center/g) ?? []).length, 1, 'title lane spans tray width like the Studio|BotWorks switcher (owner 2026-11-15 10:56)');
+  assert.equal((componentSource.match(/text-left/g) ?? []).length, 2, 'both interactive mounts left-anchor the title');
+  // Owner 09:51 visual-hierarchy ruling: the title's scale/weight/style must
+  // EXACTLY match the identity badge's display name (text-sm font-medium
+  // leading-none — read from CoworkSurfaceIdentityBadge.tsx, not guessed).
+  // The old text-[13px] pin is superseded: text-sm at this repo's 15px root
+  // computes 13.125px and CLASS-LEVEL parity keeps both names on the same
+  // scale through any future token change.
+  assert.match(componentSource, /text-sm font-medium leading-none/);
   assert.match(componentSource, /text-claude-text dark:text-claude-darkText/);
   // Owner 18:54 frameless-editor order: the inline editor carries NO box —
   // transparent background, no border, no ring, no shadow; the 13 px medium
@@ -319,7 +370,7 @@ test('surface session-name slot: read-only default, inline editor, empty commit 
   assert.match(editorClassName, /border-0/);
   assert.match(editorClassName, /focus:ring-0/);
   assert.match(editorClassName, /shadow-none/);
-  assert.match(editorClassName, /text-\[13px\] font-medium/);
+  assert.match(editorClassName, /text-sm font-medium leading-none/);
   assert.doesNotMatch(editorClassName, /border-claude|ring-2|ring-claude|bg-claude-darkBg|bg-claude-bg|rounded-lg/);
   assert.match(componentSource, /className="min-w-0 truncate"/);
 });
