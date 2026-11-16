@@ -50,6 +50,8 @@ export type LiveStageCollaboratingWorker = {
   id: string;
   name: string;
   avatar?: string;
+  /** Optional unresolved chain avatar (`nft://` or `metafile://`) resolved asynchronously while `avatar` renders immediately. */
+  avatarRef?: string;
   /** Communication flow: 'dispatch' (Twin→Worker), 'working' / 'waiting' (active/waiting), 'return' / 'verifying' (Worker→Twin review). */
   direction: 'dispatch' | 'working' | 'waiting' | 'return' | 'verifying';
   title: string;
@@ -479,9 +481,15 @@ export function describeLiveStageActivity(
 
   if (name === 'bash' || name === 'shell') {
     const description = str(input.description);
+    // In a Chinese UI, models often fill `bash` schema's `description` in raw
+    // technical English ("Show vault-poll and verify-claim CLI usage"). Never
+    // surface pure-Latin developer descriptions on a Chinese Live Stage — let
+    // the clean localized scene caption stay in charge unless the description
+    // actually carries Chinese text.
+    const languageAppropriate = language === 'en' || /[\u3400-\u9fff]/.test(description);
     return {
       headline: text(language, '正在电脑上处理', 'Working on the computer'),
-      ...(description && description.length <= 120 ? { caption: description } : {}),
+      ...(description && description.length <= 120 && languageAppropriate ? { caption: description } : {}),
     };
   }
   if (name === 'read' || name === 'read_image') {
@@ -641,7 +649,13 @@ export function reduceLiveStageMessage(
   } else if (message.type === 'tool_result') {
     const id = typeof message.metadata?.toolUseId === 'string' ? message.metadata.toolUseId : '';
     if (pendingProjectionIds.includes(id)) {
-      family = message.metadata.isError ? 'problem' : 'report-ready';
+      // Only a successful projection switches the stage to 'report-ready'. A
+      // guard-rejected mid-turn projection (e.g. Worker still running) is
+      // handled in-turn by the model on the very next step — never flash the
+      // terminal "这一轮没能完成 / 说「继续」" problem screen for a live turn!
+      if (!message.metadata.isError) {
+        family = 'report-ready';
+      }
       pendingProjectionIds = pendingProjectionIds.filter((pendingId) => pendingId !== id);
     }
   }

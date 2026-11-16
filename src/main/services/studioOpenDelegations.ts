@@ -115,7 +115,7 @@ export function listStudioOpenDelegations(
       return typeof resolved === 'string' && SAFE_AVATAR_PATTERN.test(resolved) ? resolved : undefined;
     };
     const avatar = pickSafeAvatar(metabot?.avatar) ?? pickSafeAvatar(metabot?.avatar_fallback);
-    const unresolvedRef = !avatar && typeof metabot?.avatar === 'string' && /^(?:metafile|nft):\/\//i.test(metabot.avatar.trim())
+    const unresolvedRef = typeof metabot?.avatar === 'string' && /^(?:metafile|nft):\/\//i.test(metabot.avatar.trim())
       ? metabot.avatar.trim()
       : undefined;
     const startedMs = Date.parse(attempt.startedAt ?? '') || queuedMs;

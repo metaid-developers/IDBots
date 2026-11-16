@@ -3439,6 +3439,65 @@ export class CoworkRunner extends EventEmitter {
     const activeSession = this.activeSessions.get(sessionId);
     if (!activeSession) return { accepted: false, reason: 'inactive' };
     if (activeSession.executionMode !== 'local') return { accepted: false, reason: 'sandbox' };
+
+    // Bidirectional AskUserQuestion sync (Studio left chat <-> right Live Stage):
+    // When an interactive AskUserQuestion card is waiting for the owner, typing
+    // in the left chat composer ("A", "A，gogo", or free-form notes) answers
+    // that pending question directly instead of cancelling the active turn!
+    const pendingPerm = activeSession.pendingPermission;
+    if (
+      pendingPerm
+      && pendingPerm.toolName === 'AskUserQuestion'
+      && this.pendingPermissions.has(pendingPerm.requestId)
+    ) {
+      const rawQuestions = Array.isArray((pendingPerm.toolInput as { questions?: unknown })?.questions)
+        ? ((pendingPerm.toolInput as { questions: Array<{ question?: string; options?: Array<{ label?: string }> }> }).questions)
+        : [];
+      const trimmed = text.trim();
+      const answers: Record<string, string> = {};
+      for (const q of rawQuestions) {
+        const qText = typeof q?.question === 'string' ? q.question : '';
+        if (!qText) continue;
+        const opts = Array.isArray(q.options)
+          ? q.options.filter((o): o is { label: string } => typeof o?.label === 'string' && o.label.trim().length > 0)
+          : [];
+        let mapped = trimmed;
+        const exact = opts.find((o) => o.label.trim() === trimmed);
+        if (exact) {
+          mapped = exact.label;
+        } else {
+          const letterMatch = /^([A-Za-z])(?:$|[\s,，.。、:：)）·—-]+([\s\S]*)$)/.exec(trimmed);
+          const digitMatch = /^([1-9])(?:$|[\s,，.。、:：)）·—-]+([\s\S]*)$)/.exec(trimmed);
+          let chosenIdx = -1;
+          let extraNote = '';
+          if (letterMatch) {
+            const idx = letterMatch[1].toUpperCase().charCodeAt(0) - 65;
+            if (idx >= 0 && idx < opts.length) {
+              chosenIdx = idx;
+              extraNote = (letterMatch[2] ?? '').trim();
+            }
+          } else if (digitMatch) {
+            const idx = Number(digitMatch[1]) - 1;
+            if (idx >= 0 && idx < opts.length) {
+              chosenIdx = idx;
+              extraNote = (digitMatch[2] ?? '').trim();
+            }
+          }
+          if (chosenIdx >= 0) {
+            mapped = extraNote ? `${opts[chosenIdx].label}|||${extraNote}` : opts[chosenIdx].label;
+          }
+        }
+        answers[qText] = mapped;
+      }
+      this.respondToPermission(pendingPerm.requestId, {
+        behavior: 'allow',
+        updatedInput: { answers },
+      });
+      queueMicrotask(() => {
+        this.emit('steerSettled', sessionId, submissionId);
+      });
+      return { accepted: true, delivered: Promise.resolve() };
+    }
     // DSH-kernel turns steer natively with interrupt-on-steer (hub.steer
     // cancels the active turn with keepInbox FIRST, then submits the steer —
     // the correction wakes the follow-up turn immediately); delivery settles
@@ -18003,6 +18062,16 @@ export class CoworkRunner extends EventEmitter {
    * started, or the output was unusable — no bubble beats a canned or wrong
    * one.
    */
+  private isTerseFollowUpRulingPrompt(sessionId: string, userPrompt: string): boolean {
+    const trimmed = userPrompt.trim();
+    if (!trimmed || trimmed.length > 24) return false;
+    if (!/^(?:[A-Da-d1-9](?:$|[\s,，.。、:：)）·—-][\s\S]{0,20})|继续|continue|重试|过|好|好的|可以|行|同意|确认|验收)$/i.test(trimmed)) {
+      return false;
+    }
+    const msgs = this.store.getSession(sessionId)?.messages ?? [];
+    return msgs.some((m) => m.type === 'assistant' && !m.metadata?.isThinking && (m.content ?? '').trim().length > 0);
+  }
+
   private async emitTurnAckReplyBubble(
     sessionId: string,
     userPrompt: string,
@@ -18010,6 +18079,7 @@ export class CoworkRunner extends EventEmitter {
     turnSerial: number,
   ): Promise<void> {
     if (resolveTurnAckActivity(userPrompt) === 'verify_delivery') return;
+    if (this.isTerseFollowUpRulingPrompt(sessionId, userPrompt)) return;
     const ackAbort = new AbortController();
     const budgetTimer = setTimeout(() => ackAbort.abort(), TURN_ACK_TOTAL_BUDGET_MS);
     budgetTimer.unref?.();
@@ -18122,6 +18192,7 @@ export class CoworkRunner extends EventEmitter {
     turn: ActiveSession,
     turnSerial: number,
   ): Promise<void> {
+    if (this.isTerseFollowUpRulingPrompt(sessionId, userPrompt)) return;
     const statusGoalAbort = new AbortController();
     const budgetTimer = setTimeout(() => statusGoalAbort.abort(), TURN_ACK_TOTAL_BUDGET_MS);
     budgetTimer.unref?.();

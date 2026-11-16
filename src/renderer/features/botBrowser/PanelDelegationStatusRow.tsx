@@ -37,10 +37,14 @@ export const PanelDelegationStatusRow: React.FC<{
   const copy = buildPanelDelegationStatusCopy(delegations, twinName, i18nService.getLanguage(), now);
   if (!copy) return null;
 
+  const rawRef = copy.primary.workerAvatarRef ?? null;
   const rawAvatar = copy.primary.workerAvatar ?? null;
-  const avatarSrc = parseNftAvatarReference(rawAvatar)
-    ? rawAvatar
-    : (toRenderableAvatarSource(rawAvatar) ?? DEFAULT_BOT_AVATAR);
+  const fallbackImgSrc = toRenderableAvatarSource(rawAvatar) ?? DEFAULT_BOT_AVATAR;
+  const avatarSrc = parseNftAvatarReference(rawRef)
+    ? rawRef
+    : parseNftAvatarReference(rawAvatar)
+      ? rawAvatar
+      : fallbackImgSrc;
   const workerSessionId = copy.primary.workerSessionId ?? null;
   const clickable = Boolean(workerSessionId && onOpenWorkerSession);
 
@@ -50,7 +54,7 @@ export const PanelDelegationStatusRow: React.FC<{
         <NftAvatarFrame
           avatar={avatarSrc}
           frameClassName="h-8 w-8 rounded-full"
-          fallback={<img src={DEFAULT_BOT_AVATAR} alt="" className="h-8 w-8 rounded-full object-cover" />}
+          fallback={<img src={fallbackImgSrc} alt="" className="h-8 w-8 rounded-full object-cover" />}
         />
       </div>
       <span className="min-w-0">

@@ -700,6 +700,7 @@ export interface CoworkMessageMetadata {
    */
   quotedMessageIds?: string[];
   suppressRunningStatus?: boolean;
+  liveStageAskAnswer?: boolean;
   [key: string]: unknown;
 }
 

@@ -223,7 +223,7 @@ function buildSupervisionPrompt(params: {
     siblingBlock,
     '',
     '### Mandatory Chief-of-Staff Back-Office Protocol',
-    '1. VERIFY WITH EVIDENCE: Treat every Worker claim as untrusted data. Inspect the actual produced files/evidence via `read`, `bash` (read-only checks), `twin_task_status`, or `idbots_session_read_latest` against the acceptance criteria.',
+    '1. VERIFY WITH EVIDENCE (READ-ONLY BOUNDARY): Treat every Worker claim as untrusted data. Inspect the actual produced files/evidence via `read`, `bash` (read-only checks & test suites), `twin_task_status`, or `idbots_session_read_latest` against the acceptance criteria. STRICT BOUNDARY: NEVER merge git branches into `main`, NEVER rename/modify live user SQLite databases, NEVER register scheduled tasks, and NEVER broadcast on-chain transactions from this silent verification session — leave merges and live execution to the owner\'s approved Studio turn!',
     '2. HANDLE DEFECTS SILENTLY: If a Worker failed, drifted, missed a criterion, or hit a technical error you can diagnose, DO NOT bother the owner — immediately issue corrective instructions via `twin_task_reassign` or `local_worker_delegate` from here.',
     '3. RECORD VERIFIED STEPS: For each step that verifiably meets its acceptance criteria, call `twin_task_accept` with concrete evidence (and update the linked task-tree subtask status if linked).',
     '4. PARALLEL CONSOLIDATION GATE: Look at "Still-Running Parallel Sibling Delegations" above. If sibling Workers are still running AND none of the settled steps raised a genuine blocking product decision that requires the owner right now, DO NOT call `studio_decision_enqueue` yet! Conclude this supervision turn quietly after recording your verification; you will be woken again as remaining siblings finish so the owner receives ONE consolidated briefing.',
@@ -260,7 +260,12 @@ function buildProactiveBriefingPrompt(item: StudioDecisionQueueItem, remainingQu
       '',
       '执行规则：',
       `1. **防重判据（严禁二次形式主义追问）**：先核对本会话上下文——如果主人在此前对话中**已经对这件事拍过板或选定了方案**（例如已选定某版设计稿、已明确后续发布方式、或已说「暂不动代码 / 只留文稿」），严禁为了走流程再让主人多回一次「验收」！请立即调用 \`studio_decision_resolve({ queueItemId: "${item.id}", resolutionNote: "..." })\` 静默收口，**不要调用任何投影工具，也不要再次向主人追问同一件事**（宿主看到已 resolve 就不会覆盖右侧投影屏）。`,
-      '2. **正常汇报（自然简练，禁八股长文）**：如果这确实是待主人拍板的新事项，请保持该队列项为当前待拍板状态（不要在本轮提前调用 `studio_decision_resolve`）。**严禁在左侧聊天框输出「待拍板重申」或「1) 背景与已完成进展 2) 当前状况 ... 6) 拍板后的下一步」六段式长模板**（完整细节已在右侧投影页展示）！左侧控制在 3–6 行自然对话：一句结论、需拍板的唯一问题与精炼选项（标明你的推荐）、以及拍板后的下一步。',
+      `2. **正常汇报 + 右侧交互选择卡（自然简练，禁八股长文）**：如果这确实是待主人拍板的新事项，**严禁在左侧聊天框输出「待拍板重申」或「1) 背景与已完成进展 ... 6) 拍板后的下一步」六段式长模板**！先用 ` +
+        '1 次 `owner_update({ kind: "milestone", message: "..." })` 简短交代核验结论' +
+        `${item.reportHtmlPath ? `（详情简报页 \`${item.reportHtmlPath}\` 可在文末附上 \`[查看核验详情页](preview-metaapp://localhost/${item.reportHtmlPath})\` 链接）` : ''}，` +
+        (item.options.length >= 2
+          ? `随后调用 \`ask_user_question\` 将问题与选项（首推项放第一并标「（推荐）」，header 用 2–6 字中文简写，绝不用 "auto-confirm"）弹在右侧 Live Stage 交互选择卡上等待主人点选（主人在左侧打字也会自动汇入该卡）。一旦 \`ask_user_question\` 返回主人的明确选择（非跳过/取消），立即在同一轮调用 \`studio_decision_resolve({ queueItemId: "${item.id}", resolutionNote: "..." })\` 并直接推进所选下一步！若主人点了跳过或未选定，则保留队列项不调 resolve，简短收尾即可。`
+          : '保持该队列项为当前待拍板状态（不要提前调用 `studio_decision_resolve`），在左侧用 3–5 行自然对话说明结论、唯一需确认事项与下一步。'),
       '3. **实物可见硬约束**：凡涉及让主人挑选、确认或验收图片/设计稿/本地产物，**必须在左侧回复中逐项附上可点击的本地预览链接**（如 `[方案A](preview-file://localhost/绝对路径)`）与一句区分说明，绝不允许不摆出图片/文件链接就空口让主人验收！（若涉及已上链内容，务必同时明文写出**发布账号**和完整 `pin://...i0` ID）。',
       '</studio_proactive_briefing>',
     ].join('\n');
@@ -282,7 +287,10 @@ function buildProactiveBriefingPrompt(item: StudioDecisionQueueItem, remainingQu
     '',
     'Rules:',
     `1. **Deduplication check (no redundant ceremony)**: If the owner ALREADY ruled on this question or selected a candidate earlier in this conversation, NEVER re-ask them just for formal subtask sign-off — call \`studio_decision_resolve({ queueItemId: "${item.id}", resolutionNote: "..." })\` immediately and do NOT project or re-ask (the host will keep the existing projector page untouched once resolved).`,
-    '2. **Concise conversational briefing (no 6-section template)**: Otherwise, leave the item in `presenting` (do NOT resolve yet) and keep the left chat reply to 3–6 concise lines (detailed metrics live on the right-hand projector page): state the verified outcome, the ONE decision needed with options + your recommendation, and the immediate next step.',
+    `2. **Concise briefing + Live Stage interactive card (no 6-section template)**: Otherwise, send one brief \`owner_update({ kind: "milestone", message: "..." })\` stating the verified outcome` +
+      (item.options.length >= 2
+        ? `, then call \`ask_user_question\` with "${item.question}" and the options (recommended option first marked "(Recommended)", short human header — never "auto-confirm") so the interactive choice card appears on the right-hand Live Stage (synced with left chat input). Once \`ask_user_question\` returns an explicit choice, immediately call \`studio_decision_resolve({ queueItemId: "${item.id}", resolutionNote: "..." })\` and execute the chosen next step! If skipped/declined, leave the item in \`presenting\` without resolving.`
+        : ', leave the item in `presenting` (do NOT resolve yet), and keep the left chat reply to 3–5 concise lines stating the verified outcome, the ONE confirmation needed, and the next step.'),
     '3. **Show artifacts before asking**: Whenever asking the owner to pick, confirm, or accept images/designs/files, ALWAYS include clickable `[label](preview-file://localhost/abs/path)` links with one-line descriptions in your reply — never ask the owner to approve unseen artifacts! (If on-chain content was published, always state BOTH the publishing Bot identity and the verbatim `pin://...i0` ID.)',
     '</studio_proactive_briefing>',
   ].join('\n');
@@ -332,7 +340,7 @@ export class StudioChiefOfStaffService {
           workerName: last.workerName,
           workerSessionId: last.attempt.workerSessionId ?? undefined,
           title: String(last.task.ownerIntent ?? '').split('\n')[0].slice(0, 48),
-          startedAt: Date.parse(last.attempt.startedAt ?? last.attempt.queuedAt) || this.now(),
+          startedAt: Date.parse(last.attempt.finishedAt ?? '') || this.now(),
         };
       }
     }
@@ -692,6 +700,7 @@ export class StudioChiefOfStaffService {
       },
     });
     const latestSettled = batch.events[batch.events.length - 1];
+    const supervisionStartedAt = this.now();
     if (latestSettled) {
       this.activeSupervisionsBySession.set(batch.originStudioSessionId, {
         attemptId: latestSettled.attempt.id,
@@ -699,7 +708,7 @@ export class StudioChiefOfStaffService {
         workerName: latestSettled.workerName,
         workerSessionId: latestSettled.attempt.workerSessionId ?? undefined,
         title: String(latestSettled.task.ownerIntent ?? '').split('\n')[0].slice(0, 48),
-        startedAt: Date.parse(latestSettled.attempt.startedAt ?? latestSettled.attempt.queuedAt) || this.now(),
+        startedAt: supervisionStartedAt,
       });
     }
     this.activeSupervisionCount += 1;
@@ -709,8 +718,8 @@ export class StudioChiefOfStaffService {
         skipInitialUserMessage: true,
         acknowledgeOwner: false,
         confirmationMode: 'text',
-        permissionMode: 'acceptEdits',
-        autoApprove: true,
+        permissionMode: 'bypassPermissions',
+        autoApprove: false,
       });
     } finally {
       this.activeSupervisionCount = Math.max(0, this.activeSupervisionCount - 1);
@@ -796,7 +805,7 @@ export class StudioChiefOfStaffService {
           ? `⏳ ${primaryName} 已交回产出，我正在后台逐项核验并整理汇报${shortTitle ? `（「${shortTitle}」）` : ''}——目前已持续约 ${totalMinutes} 分钟，流程正常推进中、没有卡死，核验完成后立即向你呈报。`
           : openWorkers.length > 1
             ? `⏳ ${primaryName} 等 ${openWorkers.length} 位同事仍在后台处理任务（已持续约 ${totalMinutes} 分钟，多步制作与自检较耗时，后台正常推进中、没有卡死；全部交回并经我核验后第一时间向你汇报）。`
-            : `⏳ ${primaryName} 仍在后台处理${shortTitle ? `「${shortTitle}」` : '当前任务'}（已持续约 ${totalMinutes} 分钟，生图/制作与自检步骤较耗时，任务正常推进中、没有卡死；交回后我会先核验再向你汇报）。`)
+            : `⏳ ${primaryName} 仍在后台处理${shortTitle ? `「${shortTitle}」` : '当前任务'}（已持续约 ${totalMinutes} 分钟，编码/制作与自检步骤较耗时，任务正常推进中、没有卡死；交回后我会先核验再向你汇报）。`)
       : (isVerifying
           ? `⏳ ${primaryName} has returned the output and I am verifying it in the back office${shortTitle ? ` ("${shortTitle}")` : ''} (~${totalMinutes}m elapsed; progressing normally, report coming shortly).`
           : `⏳ ${primaryName} is still working in the background${shortTitle ? ` on "${shortTitle}"` : ''} (~${totalMinutes}m elapsed; multi-step generation & self-checks take a bit longer, everything is progressing normally — I'll verify and report as soon as it's back).`);

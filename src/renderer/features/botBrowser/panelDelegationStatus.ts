@@ -18,6 +18,7 @@ export interface PanelOpenDelegation {
   workerMetabotId: number;
   workerName?: string;
   workerAvatar?: string;
+  workerAvatarRef?: string;
   workerSessionId?: string;
   title: string;
   phase?: 'worker_running' | 'back_office_verifying';
