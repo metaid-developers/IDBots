@@ -54,6 +54,8 @@ export type StudioOpenDelegation = {
   workerAvatarRef?: string;
   workerSessionId?: string;
   title: string;
+  /** Optional stage phase ('worker_running' default; 'back_office_verifying' during Twin supervision). */
+  phase?: 'worker_running' | 'back_office_verifying';
   /** Epoch ms; `startedAt` when known, otherwise `queuedAt`. */
   startedAt: number;
 };

@@ -18,6 +18,26 @@ import { buildStudioDecisionReportHtml } from '../libs/studioDecisionReportHtml'
 
 export const STUDIO_CHIEF_OF_STAFF_INTERVAL_MS = 5_000;
 export const DEFAULT_SUPERVISION_COALESCE_MS = 1_200;
+/**
+ * Progressive waiting reassurance schedule (owner ruling 2026-11-16):
+ * 1st notice after 5m of quiet waiting, then +10m (15m total), +15m (30m total),
+ * +20m (50m total, and every +20m thereafter). Never fixed 5-minute spam.
+ */
+export const DEFAULT_WAITING_REASSURANCE_INTERVALS_MS: readonly number[] = [
+  5 * 60_000,
+  10 * 60_000,
+  15 * 60_000,
+  20 * 60_000,
+];
+
+export interface ActiveStudioSupervisionEntry {
+  attemptId: string;
+  workerMetabotId: number;
+  workerName: string;
+  workerSessionId?: string;
+  title: string;
+  startedAt: number;
+}
 
 export interface StudioWorkerSettlementEvent {
   task: OrchestrationTask;
@@ -30,9 +50,13 @@ export interface StudioWorkerSettlementEvent {
 
 export interface StudioSiblingDelegationSummary {
   attemptId: string;
+  workerMetabotId?: number;
   workerName: string;
+  workerSessionId?: string;
+  longtermTaskId?: string | null;
   title: string;
   status: string;
+  startedAt?: number;
 }
 
 export interface StudioChiefOfStaffSessionStore {
@@ -125,6 +149,7 @@ export interface StudioChiefOfStaffDeps {
   };
   supervisionCoalesceMs?: number;
   idleDebounceMs?: number;
+  waitingReassuranceIntervalsMs?: readonly number[];
   now?: () => number;
   emitLog?: (line: string) => void;
 }
@@ -266,16 +291,48 @@ export class StudioChiefOfStaffService {
   private readonly pendingBatches = new Map<string, PendingSupervisionBatch>();
   private supervisionChain = new Map<string, Promise<void>>();
   private readonly focusedTaskBySession = new Map<string, string>();
+  private readonly activeSupervisionsBySession = new Map<string, ActiveStudioSupervisionEntry>();
+  private readonly waitingReassuranceState = new Map<string, {
+    waitBeganMs: number;
+    lastNoticeMs: number;
+    rungIndex: number;
+    signature: string;
+  }>();
   private activeSupervisionCount = 0;
   private heartbeatInFlight = false;
   private readonly now: () => number;
   private readonly emitLog: (line: string) => void;
   private readonly coalesceMs: number;
+  private readonly reassuranceIntervalsMs: readonly number[];
 
   constructor(private readonly deps: StudioChiefOfStaffDeps) {
     this.now = deps.now ?? Date.now;
     this.emitLog = deps.emitLog ?? ((line: string) => console.log(line));
     this.coalesceMs = Math.max(0, deps.supervisionCoalesceMs ?? DEFAULT_SUPERVISION_COALESCE_MS);
+    this.reassuranceIntervalsMs = deps.waitingReassuranceIntervalsMs?.length
+      ? deps.waitingReassuranceIntervalsMs
+      : DEFAULT_WAITING_REASSURANCE_INTERVALS_MS;
+  }
+
+  getActiveSupervisionForSession(sessionId: string | null | undefined): ActiveStudioSupervisionEntry | null {
+    const sid = (sessionId ?? '').trim();
+    if (!sid) return null;
+    const live = this.activeSupervisionsBySession.get(sid);
+    if (live) return live;
+    for (const batch of this.pendingBatches.values()) {
+      if (batch.originStudioSessionId === sid && batch.events.length > 0) {
+        const last = batch.events[batch.events.length - 1];
+        return {
+          attemptId: last.attempt.id,
+          workerMetabotId: last.attempt.workerMetabotId,
+          workerName: last.workerName,
+          workerSessionId: last.attempt.workerSessionId ?? undefined,
+          title: String(last.task.ownerIntent ?? '').split('\n')[0].slice(0, 48),
+          startedAt: Date.parse(last.attempt.startedAt ?? last.attempt.queuedAt) || this.now(),
+        };
+      }
+    }
+    return null;
   }
 
   focusTask(sessionId: string | null | undefined, longtermTaskId: string | null | undefined): void {
@@ -354,9 +411,19 @@ export class StudioChiefOfStaffService {
     const hasDefiningDraftInStudio = activeStudioSessionId
       ? Boolean(this.deps.hasDefiningDraftForSession?.(activeStudioSessionId))
       : false;
+    const openWorkers = activeStudioSessionId
+      ? (this.deps.listOpenSiblingDelegations?.(activeStudioSessionId) ?? [])
+      : [];
+    const activeSupervision = this.getActiveSupervisionForSession(activeStudioSessionId);
     const explicitShapingHoldReason = this.presenceTracker.getActiveShapingHoldReason(
       activeStudioSessionId,
       nowMs,
+    ) ?? (
+      openWorkers.length > 0
+        ? `delegated Worker (${openWorkers[0].workerName}) is currently executing`
+        : activeSupervision
+          ? `back-office verification in progress for ${activeSupervision.workerName}`
+          : null
     );
     const lastNonBriefingTurnEndedAtMs = this.presenceTracker.getLastNonBriefingTurnEndedAtMs(
       activeStudioSessionId,
@@ -381,10 +448,26 @@ export class StudioChiefOfStaffService {
     const twinId = this.deps.resolveTwinMetabotId();
     if (twinId == null) return '';
     const openItems = this.deps.decisionQueueStore().listOpen(twinId);
-    if (openItems.length === 0) return '';
+    const openWorkers = this.deps.listOpenSiblingDelegations?.(sessionId) ?? [];
+    const blocks: string[] = [];
+
+    if (openWorkers.length > 0) {
+      const workerLines = openWorkers.map((w) =>
+        `- Worker "${w.workerName}"${w.workerMetabotId != null ? ` (workerMetabotId=${w.workerMetabotId})` : ''}: "${w.title}"${w.workerSessionId ? ` [session=IDBots://${w.workerSessionId}]` : ''}`,
+      );
+      blocks.push([
+        '<studio_active_workers>',
+        `Currently executing Worker delegation(s) for this Studio conversation (${openWorkers.length}):`,
+        ...workerLines,
+        'Mid-flight course-correction rule:',
+        '- If the owner is ADJUSTING or REVISING instructions for a task that one of the Workers above is STILL executing right now (e.g. "let them generate 3 versions instead"), re-delegate to that SAME `workerMetabotId` WITHOUT setting `parallelSameWorker` — the host will automatically cancel and stop their obsolete in-flight run so two runs never collide! (Or call `twin_task_cancel` if cancelling outright.)',
+        '- Always end a delegation reply by explicitly telling the owner who is now working in the background and that they can wait for your verified report (or bring up another topic anytime).',
+        '</studio_active_workers>',
+      ].join('\n'));
+    }
+
     const presenting = openItems.find((item) => item.status === 'presenting') ?? null;
     const queuedCount = openItems.filter((item) => item.status === 'queued').length;
-    const blocks: string[] = [];
 
     if (presenting) {
       blocks.push([
@@ -395,8 +478,8 @@ export class StudioChiefOfStaffService {
         `Planned next step: ${presenting.nextStep}`,
         `Queued items waiting behind this one: ${queuedCount}`,
         'Routing rule for THIS owner message:',
-        `- If the owner is answering, approving, modifying, or rejecting "${presenting.title}": call \`studio_decision_resolve({ queueItemId: "${presenting.id}", resolutionNote: "..." })\` FIRST, then immediately trigger the approved next step (delegate rework/next step via \`local_worker_delegate\`, or run \`twin_stamp_publish\` if they approved Twin-signed chain publication).`,
-        `- If the owner ignores this briefing or raises a DIFFERENT topic / new task request: call \`studio_decision_defer({ queueItemId: "${presenting.id}" })\` FIRST (so this item returns safely to the front of the queue), then focus 100% on the owner's new request!`,
+        `- If the owner is answering, approving, critiquing, revising, or rejecting "${presenting.title}" (including asking for a modified v2/v3 instead of A/B/C!): call \`studio_decision_resolve({ queueItemId: "${presenting.id}", resolutionNote: "..." })\` FIRST (NEVER \`studio_decision_defer\` when they responded to this item!), then immediately trigger the approved next step and clearly state who is working and that you will verify and report once ready.`,
+        `- ONLY call \`studio_decision_defer({ queueItemId: "${presenting.id}" })\` when the owner completely ignores "${presenting.title}" to start an UNRELATED topic!`,
         '</active_studio_briefing>',
       ].join('\n'));
     } else if (queuedCount > 0) {
@@ -531,7 +614,19 @@ export class StudioChiefOfStaffService {
         originStudioSessionId: batch.originStudioSessionId,
       },
     });
+    const latestSettled = batch.events[batch.events.length - 1];
+    if (latestSettled) {
+      this.activeSupervisionsBySession.set(batch.originStudioSessionId, {
+        attemptId: latestSettled.attempt.id,
+        workerMetabotId: latestSettled.attempt.workerMetabotId,
+        workerName: latestSettled.workerName,
+        workerSessionId: latestSettled.attempt.workerSessionId ?? undefined,
+        title: String(latestSettled.task.ownerIntent ?? '').split('\n')[0].slice(0, 48),
+        startedAt: Date.parse(latestSettled.attempt.startedAt ?? latestSettled.attempt.queuedAt) || this.now(),
+      });
+    }
     this.activeSupervisionCount += 1;
+    this.deps.onStateChanged?.('supervision_started');
     try {
       await this.deps.coworkRunner().startSession(supervisionSessionId, prompt, {
         skipInitialUserMessage: true,
@@ -542,6 +637,7 @@ export class StudioChiefOfStaffService {
       });
     } finally {
       this.activeSupervisionCount = Math.max(0, this.activeSupervisionCount - 1);
+      this.activeSupervisionsBySession.delete(batch.originStudioSessionId);
       this.deps.onStateChanged?.('supervision_completed');
     }
   }
@@ -553,13 +649,106 @@ export class StudioChiefOfStaffService {
    * HTML briefing onto the right-hand screen, and triggers a proactive Twin
    * briefing turn in the active Studio conversation.
    */
+  private checkProgressiveWaitingReassurance(
+    studioSessionId: string | null,
+    nowMs: number,
+  ): CoworkMessage | null {
+    if (!studioSessionId) return null;
+    if (this.deps.coworkRunner().isSessionActive(studioSessionId)) return null;
+
+    const openWorkers = this.deps.listOpenSiblingDelegations?.(studioSessionId) ?? [];
+    const activeSup = this.getActiveSupervisionForSession(studioSessionId);
+    if (openWorkers.length === 0 && !activeSup) {
+      this.waitingReassuranceState.delete(studioSessionId);
+      return null;
+    }
+
+    const primaryName = openWorkers[0]?.workerName ?? activeSup?.workerName ?? 'Worker';
+    const primaryTitle = openWorkers[0]?.title ?? activeSup?.title ?? '';
+    const isVerifying = openWorkers.length === 0 && Boolean(activeSup);
+    const signature = openWorkers.length > 0
+      ? `workers:${openWorkers.map((w) => w.attemptId).sort().join(',')}`
+      : `verify:${activeSup!.attemptId}`;
+
+    const session = this.deps.coworkStore().getSession(studioSessionId);
+    const messages = Array.isArray(session?.messages) ? session!.messages : [];
+    let latestVisibleNonReassuranceAt = 0;
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const msg = messages[i];
+      if (!msg) continue;
+      const meta = msg.metadata as Record<string, unknown> | undefined;
+      if (meta?.isDelegationInternal || meta?.waitingReassurance) continue;
+      if (msg.type === 'user' || (msg.type === 'assistant' && !meta?.isThinking)) {
+        const ts = typeof msg.timestamp === 'number' ? msg.timestamp : 0;
+        if (ts > latestVisibleNonReassuranceAt) {
+          latestVisibleNonReassuranceAt = ts;
+        }
+        break;
+      }
+    }
+
+    const earliestWorkerStart = openWorkers.length > 0
+      ? openWorkers.reduce((min, w) => Math.min(min, w.startedAt ?? nowMs), openWorkers[0].startedAt ?? nowMs)
+      : (activeSup?.startedAt ?? nowMs);
+    const baselineMs = Math.max(earliestWorkerStart, latestVisibleNonReassuranceAt || earliestWorkerStart);
+
+    let state = this.waitingReassuranceState.get(studioSessionId);
+    if (!state || state.signature !== signature || baselineMs > state.lastNoticeMs) {
+      state = {
+        waitBeganMs: earliestWorkerStart,
+        lastNoticeMs: baselineMs,
+        rungIndex: 0,
+        signature,
+      };
+      this.waitingReassuranceState.set(studioSessionId, state);
+    }
+
+    const intervals = this.reassuranceIntervalsMs;
+    const neededIntervalMs = intervals[Math.min(state.rungIndex, intervals.length - 1)];
+    if (nowMs - state.lastNoticeMs < neededIntervalMs) {
+      return null;
+    }
+
+    state.lastNoticeMs = nowMs;
+    state.rungIndex += 1;
+    const totalMinutes = Math.max(1, Math.round((nowMs - state.waitBeganMs) / 60_000));
+    const language = this.deps.getAppLanguage?.() ?? 'zh';
+    const shortTitle = primaryTitle.replace(/\s+/g, ' ').trim().slice(0, 36);
+    const content = language === 'zh'
+      ? (isVerifying
+          ? `⏳ ${primaryName} 已交回产出，我正在后台逐项核验并整理汇报${shortTitle ? `（「${shortTitle}」）` : ''}——目前已持续约 ${totalMinutes} 分钟，流程正常推进中、没有卡死，核验完成后立即向你呈报。`
+          : openWorkers.length > 1
+            ? `⏳ ${primaryName} 等 ${openWorkers.length} 位同事仍在后台处理任务（已持续约 ${totalMinutes} 分钟，多步制作与自检较耗时，后台正常推进中、没有卡死；全部交回并经我核验后第一时间向你汇报）。`
+            : `⏳ ${primaryName} 仍在后台处理${shortTitle ? `「${shortTitle}」` : '当前任务'}（已持续约 ${totalMinutes} 分钟，生图/制作与自检步骤较耗时，任务正常推进中、没有卡死；交回后我会先核验再向你汇报）。`)
+      : (isVerifying
+          ? `⏳ ${primaryName} has returned the output and I am verifying it in the back office${shortTitle ? ` ("${shortTitle}")` : ''} (~${totalMinutes}m elapsed; progressing normally, report coming shortly).`
+          : `⏳ ${primaryName} is still working in the background${shortTitle ? ` on "${shortTitle}"` : ''} (~${totalMinutes}m elapsed; multi-step generation & self-checks take a bit longer, everything is progressing normally — I'll verify and report as soon as it's back).`);
+
+    const msg = this.deps.coworkStore().addMessage(studioSessionId, {
+      type: 'assistant',
+      content,
+      metadata: { waitingReassurance: true } as CoworkMessage['metadata'],
+    });
+    this.deps.emitSessionMessage?.(studioSessionId, msg);
+    return msg;
+  }
+
   async runHeartbeatTick(nowMs: number = this.now()): Promise<{
     presentedItemId: string | null;
+    reassuranceMessageId?: string | null;
     presence: StudioTwinPresenceSnapshot;
   }> {
     const snapshot = this.getPresenceSnapshot(nowMs);
     if (this.heartbeatInFlight) {
       return { presentedItemId: null, presence: snapshot };
+    }
+    const reassuranceMsg = this.checkProgressiveWaitingReassurance(snapshot.activeStudioSessionId, nowMs);
+    if (reassuranceMsg) {
+      return {
+        presentedItemId: null,
+        reassuranceMessageId: reassuranceMsg.id,
+        presence: this.getPresenceSnapshot(nowMs),
+      };
     }
     const twinId = this.deps.resolveTwinMetabotId();
     if (

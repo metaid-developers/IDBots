@@ -216,7 +216,8 @@
     const t = reduced ? state.motion.seed * .01 : now / 1000;
     const dt = particleClock.last === 0 ? 0 : Math.min(.1, Math.max(0, (now - particleClock.last) / 1000));
     particleClock.last = now;
-    const activityTarget = PARTICLE_ACTIVITY[window.liquidOrbActivityForFamily(state.family)] ?? 1;
+    const rawBucket = window.liquidOrbActivityForFamily(state.family);
+    const activityTarget = rawBucket === 'waiting' ? .95 : (PARTICLE_ACTIVITY[rawBucket] ?? 1);
     particleClock.activity += (activityTarget - particleClock.activity) * (1 - Math.exp(-dt / .8));
     if (!reduced && dt > 0) {
       // Integrated phase must never see a non-finite energy: one NaN step
@@ -286,7 +287,9 @@
             x: orbCenter.x + (dx / dist) * orbRadius,
             y: orbCenter.y + (dy / dist) * orbRadius,
           };
-          const returning = cardEl.dataset.direction === 'return';
+          const dir = cardEl.dataset.direction || 'working';
+          const returning = dir === 'return' || dir === 'verifying';
+          const lowFreqWait = state.family === 'waiting' || dir === 'waiting' || dir === 'verifying';
           const fromPt = returning ? cardAnchor : orbAnchor;
           const toPt = returning ? orbAnchor : cardAnchor;
           const midY = (fromPt.y + toPt.y) / 2;
@@ -295,12 +298,17 @@
             x: (fromPt.x + toPt.x) / 2,
             y: midY - bend,
           };
+          ctx.save();
+          if (lowFreqWait) {
+            ctx.setLineDash([5, 7]);
+          }
           ctx.beginPath();
           ctx.moveTo(fromPt.x, fromPt.y);
           ctx.quadraticCurveTo(ctrl.x, ctrl.y, toPt.x, toPt.y);
           ctx.strokeStyle = returning ? 'rgba(255,220,81,.44)' : 'rgba(155,244,255,.38)';
-          ctx.lineWidth = 1.45;
+          ctx.lineWidth = lowFreqWait ? 1.35 : 1.45;
           ctx.stroke();
+          ctx.restore();
 
           // Directional chevron arrowhead at destination endpoint (`toPt`):
           const tanX = toPt.x - ctrl.x;
@@ -316,14 +324,19 @@
           ctx.lineWidth = 1.6;
           ctx.stroke();
 
-          const prog = reduced ? .55 : (t * .32 + index * .23) % 1;
-          const inv = 1 - prog;
-          const px = inv * inv * fromPt.x + 2 * inv * prog * ctrl.x + prog * prog * toPt.x;
-          const py = inv * inv * fromPt.y + 2 * inv * prog * ctrl.y + prog * prog * toPt.y;
-          ctx.beginPath();
-          ctx.arc(px, py, 3.5, 0, Math.PI * 2);
-          ctx.fillStyle = returning ? 'rgba(255,220,81,.96)' : 'rgba(155,244,255,.94)';
-          ctx.fill();
+          // Low-frequency calm heartbeat pulse when waiting; brisk pulse when dispatching:
+          const speed = lowFreqWait ? .11 : .32;
+          const pulseCount = lowFreqWait ? 2 : 1;
+          for (let pIdx = 0; pIdx < pulseCount; pIdx += 1) {
+            const prog = reduced ? (.35 + pIdx * .35) : (t * speed + index * .23 + pIdx * .5) % 1;
+            const inv = 1 - prog;
+            const px = inv * inv * fromPt.x + 2 * inv * prog * ctrl.x + prog * prog * toPt.x;
+            const py = inv * inv * fromPt.y + 2 * inv * prog * ctrl.y + prog * prog * toPt.y;
+            ctx.beginPath();
+            ctx.arc(px, py, lowFreqWait ? 2.8 : 3.5, 0, Math.PI * 2);
+            ctx.fillStyle = returning ? 'rgba(255,220,81,.92)' : 'rgba(155,244,255,.9)';
+            ctx.fill();
+          }
         });
       }
     }
@@ -385,14 +398,21 @@
     // 'return' nodes or lines hanging over a finished screen.
     const restingScene = state.family === 'idle' || state.family === 'complete' || state.family === 'report-ready';
     const list = restingScene
-      ? rawList.filter((entry) => entry?.direction === 'dispatch' || entry?.direction === 'working')
+      ? rawList.filter((entry) =>
+          entry?.direction === 'dispatch'
+          || entry?.direction === 'working'
+          || entry?.direction === 'waiting'
+          || entry?.direction === 'verifying',
+        )
       : rawList;
     container.hidden = list.length === 0;
     if (list.length === 0) return;
     list.forEach((entry) => {
       const row = document.createElement('div');
       row.className = 'constellation-item';
-      const dir = entry?.direction === 'return' ? 'return' : entry?.direction === 'dispatch' ? 'dispatch' : 'working';
+      const validDirs = new Set(['dispatch', 'working', 'waiting', 'return', 'verifying']);
+      const rawDir = validDirs.has(entry?.direction) ? entry.direction : 'working';
+      const dir = state.family === 'waiting' && rawDir === 'working' ? 'waiting' : rawDir;
       row.dataset.direction = dir;
 
       const avatarSlot = document.createElement('div');
@@ -419,11 +439,15 @@
       nameSpan.textContent = String(entry?.name || tr('协作 Bot', 'Worker'));
       const flowBadge = document.createElement('span');
       flowBadge.className = 'constellation-flow';
-      flowBadge.textContent = dir === 'return'
-        ? tr('← 回传核验', '← Returning')
-        : dir === 'dispatch'
-          ? tr('→ 派发指令', '→ Dispatch')
-          : tr('⟳ 执行中', '⟳ Working');
+      flowBadge.textContent = dir === 'verifying'
+        ? tr('← 后台核验中', '← Verifying')
+        : dir === 'return'
+          ? tr('← 回传核验', '← Returning')
+          : dir === 'waiting'
+            ? tr('⏳ 等待交回', '⏳ Waiting')
+            : dir === 'dispatch'
+              ? tr('→ 派发指令', '→ Dispatch')
+              : tr('⟳ 执行中', '⟳ Working');
       head.append(nameSpan, flowBadge);
       meta.append(head);
       if (entry?.title) {
@@ -519,10 +543,13 @@
     hud.append(header);
 
     if (tasks.length > 0) {
-      const primary = tasks[0];
-      hud.append(buildTaskHudRow(primary, primary?.isCurrent !== false));
+      const currentIdx = tasks.findIndex((t) => t?.isCurrent === true);
+      const primary = currentIdx >= 0 ? tasks[currentIdx] : null;
+      if (primary) {
+        hud.append(buildTaskHudRow(primary, true));
+      }
 
-      const others = tasks.slice(1);
+      const others = primary ? tasks.filter((_, i) => i !== currentIdx) : tasks;
       if (others.length > 0) {
         const toggle = document.createElement('button');
         toggle.type = 'button';
@@ -682,10 +709,20 @@
 
   function layoutHandoff() {
     const stage = $('.live-stage').getBoundingClientRect();
-    if (stage.width < 1 || stage.height < 1) return;
-    const worker = $('.hybrid-worker').getBoundingClientRect();
+    if (stage.width < 1 || stage.height < 1) return false;
+    const constellationEl = $('[data-worker-constellation]');
+    const firstCard = constellationEl && !constellationEl.hidden
+      ? constellationEl.querySelector('.constellation-item')
+      : null;
+    const hybridWorkerEl = $('.hybrid-worker');
+    const targetEl = firstCard || (hybridWorkerEl && !hybridWorkerEl.hidden ? hybridWorkerEl : null);
+    if (!targetEl) return false;
+    const worker = targetEl.getBoundingClientRect();
     const orb = $('.membrane').getBoundingClientRect();
-    const from = { x: worker.left + worker.width / 2 - stage.left, y: worker.top + worker.height / 2 - stage.top };
+    if (worker.width < 4 || worker.height < 4 || orb.width < 4 || orb.height < 4) return false;
+    const from = firstCard
+      ? { x: worker.left - stage.left - 4, y: worker.top + worker.height / 2 - stage.top }
+      : { x: worker.left + worker.width / 2 - stage.left, y: worker.top + worker.height / 2 - stage.top };
     const to = { x: orb.left + orb.width / 2 - stage.left, y: orb.top + orb.height / 2 - stage.top };
     const control = {
       x: (from.x + to.x) / 2,
@@ -695,6 +732,7 @@
     $('[data-handoff-flow]').setAttribute('viewBox', `0 0 ${stage.width} ${stage.height}`);
     $('[data-handoff-track]').setAttribute('d', path);
     $('[data-handoff-motion]').setAttribute('path', path);
+    return true;
   }
 
   function stopHandoff() {
@@ -786,7 +824,10 @@
     motion.setAttribute('keyPoints', handoff.direction === 'return' ? '0;1' : '1;0');
     flow.classList.remove('is-leaving');
     label.classList.remove('is-leaving');
-    layoutHandoff();
+    if (!layoutHandoff()) {
+      stopHandoff();
+      return;
+    }
     flow.removeAttribute('hidden');
     label.hidden = false;
     try {
@@ -1098,7 +1139,8 @@
     if (!elapsed) return;
     const began = typeof state.phaseStartedAt === 'number' && state.phaseStartedAt > 0 ? state.phaseStartedAt : 0;
     const ms = began ? Date.now() - began : 0;
-    if (ms >= 20000 && ELAPSED_FAMILIES.has(state.family)) {
+    const minElapsedMs = state.family === 'waiting' ? 3000 : 20000;
+    if (ms >= minElapsedMs && ELAPSED_FAMILIES.has(state.family)) {
       elapsed.hidden = false;
       elapsed.textContent = ` · ${formatElapsed(ms)}`;
     } else {
