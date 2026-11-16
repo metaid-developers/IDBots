@@ -137,8 +137,6 @@ interface WorkspaceRailProps {
   onSelectHomeSection: (section: BotHomeSection) => void;
   onNewChat: () => void;
   onShowSettings: () => void;
-  /** Update dot (rendered above Settings when one is available). */
-  updateBadge?: React.ReactNode;
   /** Whether the rail pins its own Settings entry to the bottom. Default
    * true. Since the 设置按钮共享化 (总裁办侧栏微调批单 2026-11-09 12:23,
    * superseding the 11:16 order) BOTH faces default to true — the rail's
@@ -173,7 +171,6 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
   onSelectHomeSection,
   onNewChat,
   onShowSettings,
-  updateBadge,
   showSettings = true,
 }) => {
   const isMac = window.electron.platform === 'darwin';
@@ -297,7 +294,10 @@ export const WorkspaceRail: React.FC<WorkspaceRailProps> = ({
         </nav>
       )}
       <div className="mt-auto flex w-full flex-col items-center gap-1.5 px-1.5 pb-3 pt-1">
-        {updateBadge ? <div className="flex w-full justify-center">{updateBadge}</div> : null}
+        {/* The update badge does NOT ride the rail (it squeezed into the 64px
+            column on the browser face): BOTH faces render it in their mid
+            column's header instead — HomeSidebar's actions row on the home
+            face, Sidebar's Studio task header row on the browser face. */}
         {showSettings ? (
           <RailButton
             itemId="settings"

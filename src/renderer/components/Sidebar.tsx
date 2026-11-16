@@ -80,6 +80,12 @@ interface SidebarProps {
   width?: number;
   /** True while the shell animates the width (seam drag OR the double-click snap tween); strips the width transition so the pointer/tween stays the single animator. */
   isResizing?: boolean;
+  /** The app-update badge, rendered in the Studio task header's top-right
+   * actions row — the SAME "below the Studio/BotWorks band" position the
+   * HomeSidebar carries it on the BotWorks face (one badge per screen). It
+   * used to ride WorkspaceRail's bottom block on this face only, which
+   * squeezed it into the 64 px icon column. */
+  updateBadge?: React.ReactNode;
 }
 
 /**
@@ -159,6 +165,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   isCollapsed,
   width = defaultSidebarWidth('home'),
   isResizing = false,
+  updateBadge,
 }) => {
   const sessions = useSelector((state: RootState) => state.cowork.sessions);
   // Bot Browser co-work sessions (session_type = 'browser') live on the Bot
@@ -740,6 +747,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         </div>
       ) : null}
       <div className="absolute right-0 top-0 flex h-9 items-center gap-0.5">
+        {updateBadge}
         {studioDecisionQueueSummary.showBadge ? (
           <span
             data-slot="studio-decision-queue-badge"
