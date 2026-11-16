@@ -21552,7 +21552,7 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
             // the native traffic lights' size is system-pinned — the
             // reposition options below only ever MOVED them. The app now
             // hides the native buttons (see setWindowButtonVisibility
-            // after creation) and the renderer draws WeChat-scale 8px
+            // after creation) and the renderer draws WeChat-scale 10px
             // dots (MacWindowLights, mounted in the mid column's top
             // strip), so darwin drops to the plain hidden style.
             titleBarStyle: 'hidden' as const,

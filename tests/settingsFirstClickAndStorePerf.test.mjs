@@ -13,7 +13,7 @@ test('macOS BrowserWindow enables acceptFirstMouse so unfocused first clicks act
   // 'hiddenInset' + trafficLightPosition — the native lights' size is
   // system-pinned, so main.ts falls back to the plain 'hidden' style and
   // removes the native buttons after creation; the renderer draws WeChat-
-  // scale 8px dots (MacWindowLights). acceptFirstMouse is retained, which
+  // scale 10px dots (MacWindowLights). acceptFirstMouse is retained, which
   // is this test's original intent.
   assert.match(
     mainSource,
