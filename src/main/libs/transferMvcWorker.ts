@@ -185,7 +185,14 @@ async function main(): Promise<void> {
   const hdpk = mneObj.toHDPrivateKey('', network as any);
   const addressIndexMatch = pathStr.match(/\/0\/(\d+)$/);
   const addressIndex = addressIndexMatch ? parseInt(addressIndexMatch[1], 10) : 0;
-  const derivePath = `m/44'/10001'/0'/0/${addressIndex}`;
+  // A restored legacy-NFT issuer identity lives on the BSV BIP44 coin type
+  // (`m/44'/236'/0'/0/<n>`). Deriving that path at 10001 yields a different,
+  // empty address, so every transfer from such a bot dies with
+  // "Not enough balance" even when its wallet is funded. Mirror the rule
+  // createPinWorker already applies: only the exact 236 shape changes; any
+  // other path keeps the legacy 10001 derivation byte-for-byte.
+  const coinType = /^m\/44'\/236'\/0'\/0\/\d+$/.test(pathStr.trim()) ? 236 : 10001;
+  const derivePath = `m/44'/${coinType}'/0'/0/${addressIndex}`;
   const childPk = hdpk.deriveChild(derivePath);
   const fromAddress = childPk.publicKey.toAddress(network as any).toString();
   const addressObj = new mvc.Address(fromAddress, network as any);

@@ -1,5 +1,5 @@
 import { TxComposer, mvc } from 'meta-contract';
-import { getMvcWallet, parseAddressIndexFromPath } from '../services/metabotWalletService';
+import { getMvcWalletFromPath } from '../services/metabotWalletService';
 import {
   getUtxoOutpointKey,
   pickUtxo,
@@ -235,8 +235,14 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const addressIndex = parseAddressIndexFromPath(pathStr);
-  const mvcWallet = await getMvcWallet(mnemonic, addressIndex);
+  // Derive from the FULL wallet path, not just its address index: a restored
+  // legacy-NFT issuer identity lives on the BSV coin type
+  // (`m/44'/236'/0'/0/<n>`), and the index-only `getMvcWallet` re-derives at
+  // 10001 — a different, empty address, so every transfer from such a bot
+  // fails with "Not enough balance" while its wallet is fully funded.
+  // `getMvcWalletFromPath` keeps the legacy 10001 derivation for every other
+  // path shape (same helper the MVC-NFT transfer worker already uses).
+  const mvcWallet = await getMvcWalletFromPath(mnemonic, pathStr);
   const senderWif = mvcWallet.getPrivateKey();
   const senderAddress = mvcWallet.getAddress();
   const excludeOutpoints = normalizeExcludeOutpoints(payload.excludeOutpoints);
