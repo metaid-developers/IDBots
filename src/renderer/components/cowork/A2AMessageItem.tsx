@@ -18,6 +18,7 @@ import { pickRenderableAvatarSource as pickSharedRenderableAvatarSource } from '
 import NftAvatarFrame from '../metabots/NftAvatarFrame';
 import { parseNftAvatarReference } from '../metabots/nftAvatarPresentation.js';
 import MarkdownContent from '../MarkdownContent';
+import { ImagePreviewStrip, splitUserAttachmentLines } from './UserAttachmentBody';
 import FriendBadge from './FriendBadge';
 import { mapWechatBracketCodesForDisplay } from '../chat/wechatEmojiDisplay';
 import {
@@ -1382,6 +1383,13 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
   // bound to THIS A2A session (source-signing slice).
   const tradeActivity = detectTradeActivity(contentToRender, { sessionId });
   const metafileItems = extractMetafileItems(contentToRender);
+  // A peer's `/protocols/simplefilemsg` (image/file message) arrives as a body
+  // whose attachment marker line names the locally decrypted file. Split that
+  // line out at DISPLAY time — the stored transcript keeps it, the runner uses
+  // it to stage the file for the model — and render the pictures it names as
+  // thumbnails instead of raw paths. Same single implementation the cowork
+  // user bubble uses.
+  const { body: peerBodyToRender, imagePaths: peerImagePaths } = splitUserAttachmentLines(contentToRender);
   const markdownClassName = messengerMarkdownClassName(displayRight);
   const txidPreview = formatA2ATxidPreview(txid);
 
@@ -1408,7 +1416,8 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
           {/* Display-time WeChat bracket-code mapping; the raw message
               (copy, delivery parsing, chain data) is untouched. emojiImages:
               catalog emoji render as bundled Twemoji artwork (display-only). */}
-          <MarkdownContent content={mapWechatBracketCodesForDisplay(contentToRender)} className={markdownClassName} emojiImages />
+          <MarkdownContent content={mapWechatBracketCodesForDisplay(peerBodyToRender)} className={markdownClassName} emojiImages />
+          {peerImagePaths.length > 0 && <ImagePreviewStrip imagePaths={peerImagePaths} inline />}
         </div>
         {metafileItems.length > 0 && (
           <MetafileGallery items={metafileItems} alignEnd={displayRight} />

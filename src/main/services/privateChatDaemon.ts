@@ -15,6 +15,13 @@ import {
   ecdhDecrypt,
   ecdhEncrypt,
 } from './metaWebCrypto';
+import {
+  buildPrivateChatFileMessageContent,
+  isPrivateChatFileMessageProtocol,
+  materializePrivateChatFileMessage,
+  parsePrivateChatFileMessagePayload,
+  type PrivateChatFileAttachment,
+} from './privateChatFileMessage';
 import { performChatCompletionForOrchestrator } from './cognitiveChatCompletion';
 import { metabotBrainOptions, normalizeMetabotLlmId, type BrainRescueInfo } from './llmFallback';
 import { classifyOneShotLlmTerminalError, type OneShotLlmTerminalKind } from '../libs/llmTerminalError';
@@ -167,7 +174,9 @@ export interface PrivateChatMessageRow {
   from_chat_pubkey: string | null;
   to_metaid: string;
   to_global_metaid: string | null;
+  protocol?: string | null;
   content: string | null;
+  content_type?: string | null;
   encryption: string | null;
   reply_pin: string | null;
   raw_data: string | null;
@@ -1112,7 +1121,7 @@ function buildOrderDispatchKey(
 
 function parsePrivateChatRows(db: Database): PrivateChatMessageRow[] {
   const result = db.exec(
-    `SELECT id, pin_id, tx_id, from_metaid, from_global_metaid, from_name, from_avatar, from_chat_pubkey, to_metaid, to_global_metaid, content, encryption, reply_pin, raw_data
+    `SELECT id, pin_id, tx_id, from_metaid, from_global_metaid, from_name, from_avatar, from_chat_pubkey, to_metaid, to_global_metaid, protocol, content, content_type, encryption, reply_pin, raw_data
      FROM private_chat_messages WHERE is_processed = 0 ORDER BY id ASC`
   );
   if (!result[0]?.values?.length) return [];
@@ -4611,6 +4620,8 @@ async function processOne(
     // keep the original skip behavior via the gates re-checked afterward.
     let plaintext = '';
     let sharedSecretForReply = '';
+    /** Set when the row is a `/protocols/simplefilemsg` whose attachment was materialized. */
+    let fileAttachment: PrivateChatFileAttachment | null = null;
     if (wallet?.mnemonic?.trim() && fromChatPubkey) {
       if (privateChatDecryptFailedIds.has(row.id)) {
         // Already known undecryptable for this daemon run; skip quietly while
@@ -4642,51 +4653,86 @@ async function processOne(
         `[PrivateChat] ECDH ready: from_chat_pubkey(first/last16)=${fromChatPubkey.slice(0, 16)}...${fromChatPubkey.slice(-16)} sha256Secret(first/last16)=${sharedSecretSha256.slice(0, 16)}...${sharedSecretSha256.slice(-16)}`
       );
 
+      // ---- File messages (/protocols/simplefilemsg) ---------------------
+      // A file message is a PLAINTEXT JSON payload whose `attachment` is a
+      // metafile URI; the file BODY (not the payload) is AES-encrypted with
+      // the ECDH shared secret. The text path below would try to AES-decrypt
+      // the URI string itself, fail, and leave the row unprocessed forever —
+      // the message never reaches the conversation and the owner sees nothing.
+      // Handle the protocol here: parse the payload, decrypt the body, and
+      // hand the message a body that carries the app-wide attachment marker
+      // line so the renderer shows the picture and the model can read it.
       const contentInDb = (row.content ?? '').trim();
       const contentInRawData = getCipherTextFromRawData(
         typeof row.raw_data === 'string' ? row.raw_data : null
       );
-      const cipherText = contentInRawData || contentInDb;
-      if (!cipherText && !contentInDb) {
-        markProcessed(db, row.id, saveDb);
-        return;
-      }
+      const fileMessagePayload = isPrivateChatFileMessageProtocol(row.protocol)
+        ? parsePrivateChatFileMessagePayload(contentInRawData || contentInDb, row.content_type ?? null)
+        : null;
 
-      const shouldDecrypt =
-        !!contentInRawData || looksLikeEncryptedPrivateContent(contentInDb);
-      plaintext = contentInDb;
-      sharedSecretForReply = sharedSecretSha256;
-      if (shouldDecrypt) {
-        const plainBySha256 = tryDecryptWithSecret(cipherText, sharedSecretSha256);
-        if (plainBySha256 != null) {
-          plaintext = plainBySha256;
-          sharedSecretForReply = sharedSecretSha256;
-        } else {
-          const plainByRaw = tryDecryptWithSecret(cipherText, sharedSecretRaw);
-          if (plainByRaw != null) {
-            plaintext = plainByRaw;
-            sharedSecretForReply = sharedSecretRaw;
-            emitLog('[PrivateChat] Decrypt fallback: using raw shared secret for legacy payload.');
+      if (fileMessagePayload) {
+        fileAttachment = await materializePrivateChatFileMessage({
+          payload: fileMessagePayload,
+          // sha256 variant first (what the reference client uses for file
+          // bodies), then the raw secret — same fallback order as the text path.
+          sharedSecretCandidates: [sharedSecretSha256, sharedSecretRaw],
+          emitLog,
+        });
+        plaintext = buildPrivateChatFileMessageContent({
+          payload: fileMessagePayload,
+          attachment: fileAttachment,
+        });
+        sharedSecretForReply = sharedSecretSha256;
+        emitLog(
+          `[PrivateChat] File message ${row.id} (${fileMessagePayload.fileType || 'unknown type'}): ${
+            fileAttachment
+              ? `attachment materialized at ${fileAttachment.localPath}`
+              : 'attachment unavailable, stored a visible notice instead'
+          }`
+        );
+      } else {
+        const cipherText = contentInRawData || contentInDb;
+        if (!cipherText && !contentInDb) {
+          markProcessed(db, row.id, saveDb);
+          return;
+        }
+
+        const shouldDecrypt =
+          !!contentInRawData || looksLikeEncryptedPrivateContent(contentInDb);
+        plaintext = contentInDb;
+        sharedSecretForReply = sharedSecretSha256;
+        if (shouldDecrypt) {
+          const plainBySha256 = tryDecryptWithSecret(cipherText, sharedSecretSha256);
+          if (plainBySha256 != null) {
+            plaintext = plainBySha256;
+            sharedSecretForReply = sharedSecretSha256;
           } else {
-            // Loss-stop: an undecryptable message must NOT be marked
-            // processed, otherwise the ciphertext is silently consumed and
-            // can never be retried (e.g. once an app update adds the missing
-            // key variant). Keep is_processed = 0 and only remember the id so
-            // the 5s poll loop skips the repeated ECDH/decrypt work;
-            // stopPrivateChatDaemon clears the set, so every daemon start
-            // retries these rows once.
-            privateChatDecryptFailedIds.add(row.id);
-            emitLog(
-              `[PrivateChat] Keep message ${row.id} unprocessed: decrypt failed for both sha256/raw shared secret`
-            );
-            return;
+            const plainByRaw = tryDecryptWithSecret(cipherText, sharedSecretRaw);
+            if (plainByRaw != null) {
+              plaintext = plainByRaw;
+              sharedSecretForReply = sharedSecretRaw;
+              emitLog('[PrivateChat] Decrypt fallback: using raw shared secret for legacy payload.');
+            } else {
+              // Loss-stop: an undecryptable message must NOT be marked
+              // processed, otherwise the ciphertext is silently consumed and
+              // can never be retried (e.g. once an app update adds the missing
+              // key variant). Keep is_processed = 0 and only remember the id so
+              // the 5s poll loop skips the repeated ECDH/decrypt work;
+              // stopPrivateChatDaemon clears the set, so every daemon start
+              // retries these rows once.
+              privateChatDecryptFailedIds.add(row.id);
+              emitLog(
+                `[PrivateChat] Keep message ${row.id} unprocessed: decrypt failed for both sha256/raw shared secret`
+              );
+              return;
+            }
           }
         }
-      }
-      if (!plaintext.trim()) {
-        emitLog(`[PrivateChat] Skip message ${row.id}: plaintext empty after decode`);
-        markProcessed(db, row.id, saveDb);
-        return;
+        if (!plaintext.trim()) {
+          emitLog(`[PrivateChat] Skip message ${row.id}: plaintext empty after decode`);
+          markProcessed(db, row.id, saveDb);
+          return;
+        }
       }
     } else {
       // Without the wallet or the peer chat pubkey the ciphertext is
@@ -4696,7 +4742,17 @@ async function processOne(
       const contentInRawData = getCipherTextFromRawData(
         typeof row.raw_data === 'string' ? row.raw_data : null
       );
-      if (!contentInRawData && contentInDb && !looksLikeEncryptedPrivateContent(contentInDb)) {
+      const undecryptableFileMessage = isPrivateChatFileMessageProtocol(row.protocol)
+        ? parsePrivateChatFileMessagePayload(contentInRawData || contentInDb, row.content_type ?? null)
+        : null;
+      if (undecryptableFileMessage) {
+        // No wallet ⇒ the body cannot be decrypted, but the message itself
+        // must still be visible rather than silently parked.
+        plaintext = buildPrivateChatFileMessageContent({
+          payload: undecryptableFileMessage,
+          attachment: null,
+        });
+      } else if (!contentInRawData && contentInDb && !looksLikeEncryptedPrivateContent(contentInDb)) {
         plaintext = contentInDb;
       }
     }
@@ -5983,6 +6039,19 @@ async function processOne(
         // banner markers above.
         ...(noReplyText ? { privateChatNoReplyText: true } : {}),
         ...(absorbedRepeat ? { privateChatRepeatAbsorbed: true } : {}),
+        // File messages (/protocols/simplefilemsg): the decrypted attachment
+        // rides the bubble metadata so the renderer can tell a picture from a
+        // plain text line without re-parsing the body.
+        ...(fileAttachment ? {
+          privateChatFileAttachment: {
+            kind: fileAttachment.kind,
+            localPath: fileAttachment.localPath,
+            mimeType: fileAttachment.mimeType,
+            fileName: fileAttachment.fileName,
+            metafileUri: fileAttachment.metafileUri,
+            size: fileAttachment.size,
+          },
+        } : {}),
         ...(episodeStarted ? {
           refreshSessionSummary: true,
           a2aEpisodeStarted: true,

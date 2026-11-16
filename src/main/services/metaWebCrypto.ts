@@ -143,6 +143,36 @@ export function ecdhDecrypt(cipherText: string, sharedSecret: string): string {
 }
 
 /**
+ * Private chat FILE payload (`/protocols/simplefilemsg`, `encrypt: "aes"`).
+ *
+ * The file BODY is raw AES-256-CBC ciphertext, not the base64/OpenSSL string
+ * `ecdhDecrypt` handles, so it needs a binary path: key = the ECDH shared
+ * secret's 32 raw bytes, IV = the same 16-ASCII-`0` block, PKCS7 padding. This
+ * mirrors the reference client (IDChat `src/utils/crypto.ts` →
+ * `ecdhDecryptForPrivateImg`), which is what produces these pins.
+ *
+ * @returns the decrypted bytes, or null when the body does not decrypt with
+ * this secret (wrong key variant, truncated body, or an unencrypted file).
+ */
+export function decryptPrivateFileBuffer(
+  cipherBytes: Buffer,
+  sharedSecretHex: string
+): Buffer | null {
+  const secretStr = String(sharedSecretHex ?? '').trim();
+  if (!cipherBytes?.length || !/^[0-9a-fA-F]{64}$/.test(secretStr)) return null;
+  try {
+    const decipher = nodeCrypto.createDecipheriv(
+      'aes-256-cbc',
+      Buffer.from(secretStr, 'hex'),
+      Buffer.from('0000000000000000', 'utf8')
+    );
+    return Buffer.concat([decipher.update(cipherBytes), decipher.final()]);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Fixed salt so that encrypt("hello", sharedSecret) is deterministic and matches wallet output
  * when the same ECDH shared secret is used (same mnemonic path and peer chat pubkey).
  * Salt from known-good OpenSSL ciphertext for compatibility.
