@@ -21,6 +21,7 @@
 // Harness note (same convention as mobileQuotaExhausted.test.tsx): renderer
 // assertions are server-rendered; handler wiring is asserted by markup.
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -203,4 +204,20 @@ test('dismissed errors stay hidden after storage restoration without deleting ot
   ]);
   assert.deepEqual(visible.map((message) => message.id), ['assistant-1', 'user-1']);
   assert.deepEqual(parseDismissedErrorIds(values.get('idbots.mobile.chat.dismissedErrors.v1') ?? null), ['d1', 'd2']);
+});
+
+
+test('composer has no send button and keeps Enter-to-send with IME/newline guards', () => {
+  restoreDismissedErrorsFromStorage(null);
+  const markup = renderToStaticMarkup(
+    <ChatScreen chat={chatFixture({ draft: 'hello' })} bots={[]} onOpenRecharge={() => undefined} />,
+  );
+  assert.ok(!markup.includes('data-testid="composer-send"'));
+  assert.ok(markup.includes('data-testid="chat-composer-input"'));
+  assert.ok(markup.includes('enterKeyHint="send"'));
+
+  const source = readFileSync(new URL('../src/mobile/app/screens/ChatScreen.tsx', import.meta.url), 'utf8');
+  assert.match(source, /event\.key !== 'Enter' \|\| event\.shiftKey \|\| event\.nativeEvent\.isComposing/);
+  assert.match(source, /event\.preventDefault\(\);/);
+  assert.match(source, /if \(canSubmit\) submit\(\);/);
 });
