@@ -1713,6 +1713,10 @@ export class DshTurnHub {
     return known && known.key !== currentProviderKey ? [known] : []
   }
 
+  getPreservedRoute(dshSessionId: string): DshTurnProviderRoute | undefined {
+    return this.routeByDsh.get(dshSessionId) ?? this.readRouteHint(dshSessionId)
+  }
+
   /** Host-owned hint directory, a sibling of the versioned session root so
    *  kernel session-root migrations never touch it. */
   private routeHintDir(): string {

@@ -42,7 +42,13 @@ if (!runtimeReady) {
       assert.fail('dsh-compaction-basic is installed but the overflow-shrink patch is missing — run `node scripts/apply-dsh-kernel-patches.cjs`')
     })
   } else {
-    const { BasicCompactionEngine, overflowShrinkRetainTokens, isOverflowSummaryError } = await import(compactionBasicLib)
+    const {
+      BasicCompactionEngine,
+      overflowShrinkRetainTokens,
+      isOverflowSummaryError,
+      isSingleCheckpointRange,
+      isNonShrinkingSummaryError,
+    } = await import(compactionBasicLib)
     const { LlmError, CONTEXT_WINDOW_EXCEEDED_CODE } = await import(path.join(runtimeDir, 'node_modules', '@deepseek-ai', 'dsh-llm', 'lib', 'index.js'))
 
     const GATEWAY_400 = '400: {"message":"{\\"error\\":{\\"message\\":\\"The prompt exceeds the context window this endpoint can start from. Compact the conversation and retry.\\",\\"type\\":\\"invalid_request_error\\",\\"param\\":\\"messages\\",\\"code\\":\\"context_length_exceeded\\"}}","type":"invalid_request_error"}'
@@ -215,7 +221,101 @@ if (!runtimeReady) {
       // Wording fallback: the rendered chain matches the provider overflow
       // text even without the adapter code.
       assert.equal(isOverflowSummaryError(new Error(GATEWAY_400)), true)
+      assert.equal(isOverflowSummaryError(new Error('413: {"code":"request_too_large","message":"request body too large"}')), true)
       assert.equal(isOverflowSummaryError(new Error('summary unavailable')), false)
+    })
+
+    test('model-switch compactPressure skips lone-checkpoint re-summarization (1784 >= 1784) by shrinking retainTokens', async () => {
+      // Simulate session 23d32653: node 100 is an already-compacted 1784-token
+      // checkpoint, nodes 101..104 are 30K each (120K retained tail + 100K header = 221.8K >= 220K threshold).
+      const liveNodes = [
+        { seq: 100, tokens: 1784, heuristicTokens: 1784, isCheckpoint: true },
+        { seq: 101, tokens: 55_000, heuristicTokens: 55_000 },
+        { seq: 102, tokens: 55_000, heuristicTokens: 55_000 },
+        { seq: 103, tokens: 55_000, heuristicTokens: 55_000 },
+        { seq: 104, tokens: 55_000, heuristicTokens: 55_000 },
+      ]
+      const attempts = []
+      const ctx = {
+        reflect: { provide() {} },
+        on() {},
+        logger: { info() {}, warn() {} },
+        llm: {
+          resolveModelInfo: async () => ({
+            context: { contextWindow: 1_000_000 },
+            defaultMaxTokens: 320_000,
+          }),
+        },
+        tokenMeter: {
+          measure: () => ({
+            nodes: liveNodes.map(({ seq, tokens, heuristicTokens }) => ({ seq, tokens, heuristicTokens })),
+            totalTokens: liveNodes.reduce((sum, n) => sum + n.tokens, 0) + 20_000,
+          }),
+          estimateMessage: () => 0,
+        },
+        get: () => undefined,
+      }
+      const agent = {
+        options: {},
+        session: {
+          seq: 200,
+          requestHeader: () => ({ config: { provider: 'deepseek-official', model: 'deepseek-flash' } }),
+          get surface() {
+            return { nodes: liveNodes.map((n) => n.seq), replaceGeneration: 1 }
+          },
+          eventAt: (seq) => {
+            const found = liveNodes.find((n) => n.seq === seq)
+            return {
+              seq,
+              type: 'user/message',
+              data: found?.isCheckpoint ? { source: { kind: 'compaction' }, content: [{ type: 'text', text: '<compacted-summary>x</compacted-summary>' }] } : {},
+            }
+          },
+          append: () => ({ seq: -1, data: {} }),
+        },
+      }
+      class SwitchEngine extends BasicCompactionEngine {
+        async compactRegion(start, end) {
+          attempts.push([start, end])
+          if (start === 100 && end === 100) {
+            throw new Error('summary is not smaller than the shadowed content (1784 estimated framed tokens >= 1784)')
+          }
+          const startIdx = liveNodes.findIndex((n) => n.seq === start)
+          const endIdx = liveNodes.findIndex((n) => n.seq === end)
+          const removed = liveNodes.splice(startIdx, endIdx - startIdx + 1, {
+            seq: 150,
+            tokens: 2000,
+            heuristicTokens: 2000,
+            isCheckpoint: true,
+          })
+          return {
+            compactionId: 'sw',
+            shadowedRange: { start, end },
+            shadowedSeqs: removed.map((n) => n.seq),
+            shadowedTokenCount: removed.reduce((s, n) => s + n.tokens, 0),
+            summary: [],
+            startSeq: 1,
+            summarySeq: 2,
+            endSeq: 3,
+          }
+        }
+      }
+      const engine = new SwitchEngine(ctx, {
+        auto: false,
+        modelPolicies: [
+          { provider: 'idbots', model: 'deepseek-4.1-flash', thresholdRatio: 0.22, headroomTokens: 40_000 },
+        ],
+      })
+      assert.equal(isSingleCheckpointRange(agent.session, { start: 100, end: 100 }), true)
+      assert.equal(isNonShrinkingSummaryError(new Error('summary is not smaller than the shadowed content (1784 estimated framed tokens >= 1784)')), true)
+      const res = await engine.compactPressure(
+        agent,
+        { config: { provider: 'idbots', model: 'deepseek-4.1-flash' } },
+        undefined,
+        true,
+      )
+      assert.ok(res !== null, 'model-switch compaction succeeds instead of throwing 1784 >= 1784')
+      assert.ok(attempts.every(([s, e]) => !(s === 100 && e === 100)), 'never re-summarizes a lone checkpoint against itself')
     })
   }
 }

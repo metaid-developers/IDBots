@@ -143,6 +143,11 @@ const KNOWN_MODEL_LIMITS: Record<string, Partial<Pick<CoworkModelLimits, 'contex
     maxOutputTokens: DEEPSEEK_V4_FLASH_MAX_OUTPUT_TOKENS,
     supportsVision: true,
   },
+  'deepseek-4.1-flash': {
+    contextWindow: DEEPSEEK_V4_FLASH_CONTEXT_WINDOW,
+    maxOutputTokens: DEEPSEEK_V4_FLASH_MAX_OUTPUT_TOKENS,
+    supportsVision: true,
+  },
   'deepseek-v4-pro': {
     contextWindow: DEEPSEEK_V4_PRO_CONTEXT_WINDOW,
     maxOutputTokens: DEEPSEEK_V4_PRO_MAX_OUTPUT_TOKENS,
@@ -238,14 +243,14 @@ function normalizeModelId(value: unknown): string {
  */
 function deepseekV4FamilyLimits(modelId: string): Partial<Pick<CoworkModelLimits, 'contextWindow' | 'maxOutputTokens' | 'supportsVision'>> | undefined {
   const segment = (modelId.split('/').pop() ?? modelId).toLowerCase();
-  if (segment.startsWith('deepseek-flash')) {
+  if (segment.startsWith('deepseek-flash') || segment.startsWith('deepseek-4.1-flash')) {
     return {
       contextWindow: DEEPSEEK_V4_FLASH_CONTEXT_WINDOW,
       maxOutputTokens: DEEPSEEK_V4_FLASH_MAX_OUTPUT_TOKENS,
       supportsVision: true,
     };
   }
-  if (!segment.startsWith('deepseek-v4')) return undefined;
+  if (!segment.startsWith('deepseek-v4') && !segment.startsWith('deepseek-4.')) return undefined;
   return {
     contextWindow: DEEPSEEK_V4_FLASH_CONTEXT_WINDOW,
     maxOutputTokens: DEEPSEEK_V4_FLASH_MAX_OUTPUT_TOKENS,

@@ -83,7 +83,7 @@ export function buildOwnerTurnInputPrompt(text: string): string {
   return [
     '<owner_message>',
     'This turn was opened by the human OWNER sending the message below in the chat. It is the ONLY new owner input this turn — the other blocks in this user message (local time, memory projections, catalogs) are per-turn background context, not the owner\'s words.',
-    'If the message is terse (a digit, a single word — e.g. "1", "A", "过"), it answers the most recent question or pending decision you put to the owner: locate that question in the recent conversation (for long-term tasks, also the task journal), map the reply to its options, and act on the ruling. Never claim the owner has not replied while this block is present.',
+    'If the message is terse (a digit, a single option letter/word — e.g. "1", "A", "过"), it answers the most recent question or pending decision you put to the owner: locate that question in the recent conversation (for long-term tasks, also the task journal), map the reply to its options, and act on the ruling. Exception: bare continuation cues ("继续", "continue", "重试", "retry", "接着做") after an interrupted/failed turn or after an unanswered critique mean "resume your interrupted work and answer my pending request" — NEVER treat a bare "继续" as selecting Option A or authorizing irreversible on-chain publishing/minting unless the owner already explicitly approved that exact action! Never claim the owner has not replied while this block is present.',
     '',
     text,
     '</owner_message>',

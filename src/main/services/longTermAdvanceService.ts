@@ -321,6 +321,8 @@ export interface LongTermAdvanceDeps {
   attentionRetryMs?: number;
   /** Maximum consecutive unresolved actions before Owner escalation. */
   attentionMaxAttempts?: number;
+  /** True when `sessionId` is a persistent Studio owner session managed by StudioChiefOfStaffService. */
+  isStudioOwnerSession?: (sessionId: string) => boolean;
 }
 
 /**
@@ -689,6 +691,21 @@ export class LongTermAdvanceService {
       // nothing. The convergence notes are bookkeeping, so the event anchor
       // moves with them (same as the live-venue rebind above).
       const waitingVenueId = this.resolveOwnerVenue(detail, engagement);
+      // Studio Chief-of-Staff boundary (session 23d32653 incident): quick
+      // delegation cards born in a persistent Studio conversation are supervised
+      // and briefed exclusively by StudioChiefOfStaffService + StudioDecisionQueueStore.
+      // Never inject LongTermAdvanceService's 6-section "待拍板重申" heartbeat turns
+      // into the owner's Studio conversation.
+      if (
+        detail.taskKind === 'quick'
+        && (
+          (detail.definitionSessionId && this.deps.isStudioOwnerSession?.(detail.definitionSessionId))
+          || (waitingVenueId && this.deps.isStudioOwnerSession?.(waitingVenueId))
+        )
+      ) {
+        report.skipped.push({ taskId: card.id, reason: 'studio quick task is managed by StudioChiefOfStaffService' });
+        continue;
+      }
       if (waitingVenueId !== null) {
         let converged = false;
         for (const sub of detail.subtasks) {
@@ -811,6 +828,11 @@ export class LongTermAdvanceService {
         continue;
       }
       const ownerFacing = this.isOwnerFacing(reasons);
+      const studioOwnerVenue = Boolean(waitingVenueId && this.deps.isStudioOwnerSession?.(waitingVenueId));
+      if (studioOwnerVenue && this.isOwnerFacingTurn(reasons, current)) {
+        report.skipped.push({ taskId: card.id, reason: 'studio owner session decisions are presented by StudioChiefOfStaffService' });
+        continue;
+      }
       // Never stack a second turn onto a task the twin is already executing
       // one for — in ANY related session, not just the bound one (the live
       // conversation may have drifted to a previous sub-project's session).
@@ -1303,7 +1325,15 @@ export class LongTermAdvanceService {
     // context). Suppression semantics stay reason-based (isOwnerFacing) —
     // this predicate only decides WHERE, not WHETHER.
     const ownerFacingTurn = this.isOwnerFacingTurn(reasons, current);
-    const ownerVenueId = ownerFacingTurn ? this.resolveOwnerVenue(detail, engagement) : null;
+    const rawOwnerVenueId = ownerFacingTurn ? this.resolveOwnerVenue(detail, engagement) : null;
+    // Never run a LongTermAdvanceService heartbeat turn directly inside a
+    // front-office Studio owner session: Studio decisions ride StudioDecisionQueueStore,
+    // and background convergence/work runs in a dedicated [长期] session so
+    // bureaucratic "待拍板重申" prompts never pollute the Studio conversation.
+    const ownerVenueId = rawOwnerVenueId && this.deps.isStudioOwnerSession?.(rawOwnerVenueId)
+      ? null
+      : rawOwnerVenueId;
+    const boundIsStudioOwner = Boolean(boundSessionId && this.deps.isStudioOwnerSession?.(boundSessionId));
     if (ownerVenueId !== null) {
       sessionId = ownerVenueId;
       reusedSession = true;
@@ -1319,7 +1349,7 @@ export class LongTermAdvanceService {
           `[LongTermAdvance] converged task "${detail.title}" sub-project #${current.ordinal} owner-facing line to the owner's session ${ownerVenueId}`,
         );
       }
-    } else if (boundSessionId && coworkStore.getSession(boundSessionId)) {
+    } else if (boundSessionId && !boundIsStudioOwner && coworkStore.getSession(boundSessionId)) {
       const messageCount = coworkStore.countSessionMessages?.(boundSessionId) ?? 0;
       // Rotation is heartbeat-session hygiene and applies ONLY to sessions the
       // heartbeat created itself (auto-origin 'longterm'). A session the owner

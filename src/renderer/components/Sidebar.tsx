@@ -237,9 +237,29 @@ const Sidebar: React.FC<SidebarProps> = ({
     };
     void syncStudioStatus();
     const unsub = ltApi.onUpdate ? ltApi.onUpdate(() => { void syncStudioStatus(); }) : undefined;
+    const coworkApi = window.electron?.cowork;
+    const unsubMsg = coworkApi?.onStreamMessage
+      ? coworkApi.onStreamMessage(({ sessionId, message }) => {
+          if (
+            (!browserOpenSessionId || sessionId === browserOpenSessionId)
+            && (message.type === 'user' || message.type === 'tool_use')
+          ) {
+            void syncStudioStatus();
+          }
+        })
+      : undefined;
+    const unsubComplete = coworkApi?.onStreamComplete
+      ? coworkApi.onStreamComplete(() => { void syncStudioStatus(); })
+      : undefined;
+    const unsubError = coworkApi?.onStreamError
+      ? coworkApi.onStreamError(() => { void syncStudioStatus(); })
+      : undefined;
     return () => {
       cancelled = true;
       unsub?.();
+      unsubMsg?.();
+      unsubComplete?.();
+      unsubError?.();
     };
   }, [mode, browserOpenSessionId]);
   // Which task-record category the home history list shows. Persisted across

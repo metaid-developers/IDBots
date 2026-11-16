@@ -11575,6 +11575,7 @@ export class CoworkStore implements MemoryBackend {
       's.metabot_id = ?',
       'COALESCE(s.hidden_from_session_list, 0) = 0',
       's.archived_at IS NULL',
+      "s.title NOT LIKE '[督办] %'",
       // Same thread-aggregation rule as listSessions: a superseded A2A
       // episode stays out; the thread's latest episode represents it.
       `NOT EXISTS (

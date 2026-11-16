@@ -7357,19 +7357,65 @@ const getCoworkRunner = () => {
           return [];
         }
       },
-      delegateLocalWorker: (sessionId, input) => getTwinOrchestrationService().delegateLocalWorker(sessionId, input),
+      delegateLocalWorker: async (sessionId, input) => {
+        const res = await getTwinOrchestrationService().delegateLocalWorker(sessionId, input);
+        try {
+          const cos = getStudioChiefOfStaffService();
+          if (cos.isStudioOwnerSession(sessionId)) {
+            const twin = getMetabotStore().listMetabots().find((bot) => bot.metabot_type === 'twin' && bot.enabled);
+            if (twin) {
+              for (const openItem of getStudioDecisionQueueStore().listOpen(twin.id)) {
+                const belongsToSession = openItem.presentedSessionId === sessionId
+                  || (openItem.originStudioSessionId === sessionId && openItem.presentedAt != null);
+                if (belongsToSession) {
+                  getStudioDecisionQueueStore().resolve(
+                    openItem.id,
+                    'auto-resolved: owner issued revision or follow-up delegation in Studio',
+                  );
+                }
+              }
+            }
+            const focusedId = cos.getFocusedTaskId(sessionId);
+            if (focusedId) {
+              const ltDetail = getLongTermTaskStore().getTask(focusedId);
+              for (const sub of ltDetail?.subtasks ?? []) {
+                if (sub.status === 'waiting_owner') {
+                  getLongTermTaskStore().unblockSubtask(sub.id, 'system', 'owner issued follow-up delegation in Studio');
+                }
+              }
+            }
+            broadcastLongTermTaskUpdate([], 'studio_delegation_dispatched');
+          } else if (cos.getOriginStudioSessionForSupervision(sessionId)) {
+            broadcastLongTermTaskUpdate([], 'studio_supervision_redelegated');
+          }
+        } catch {
+          // Best-effort Studio queue/status convergence.
+        }
+        return res;
+      },
       twinTaskStatus: (sessionId, taskId) => getTwinOrchestrationService().getTaskStatus(sessionId, taskId),
       twinTaskAccept: (sessionId, input) => getTwinOrchestrationService().acceptStep(sessionId, input),
       twinTaskCancel: (sessionId, taskId) => getTwinOrchestrationService().cancelTask(sessionId, taskId),
-      twinTaskReassign: (sessionId, input) => getTwinOrchestrationService().reassignLocalWorker(sessionId, {
-        stepId: String(input.stepId ?? ''),
-        workerMetabotId: Number(input.workerMetabotId),
-        objective: typeof input.objective === 'string' ? input.objective : undefined,
-        acceptanceCriteria: Array.isArray(input.acceptanceCriteria) ? input.acceptanceCriteria : undefined,
-        context: typeof input.context === 'string' ? input.context : null,
-        permissionScope: input.permissionScope && typeof input.permissionScope === 'object' ? input.permissionScope as Record<string, unknown> : undefined,
-        idempotencyKey: typeof input.idempotencyKey === 'string' ? input.idempotencyKey : null,
-      }),
+      twinTaskReassign: async (sessionId, input) => {
+        const res = await getTwinOrchestrationService().reassignLocalWorker(sessionId, {
+          stepId: String(input.stepId ?? ''),
+          workerMetabotId: Number(input.workerMetabotId),
+          objective: typeof input.objective === 'string' ? input.objective : undefined,
+          acceptanceCriteria: Array.isArray(input.acceptanceCriteria) ? input.acceptanceCriteria : undefined,
+          context: typeof input.context === 'string' ? input.context : null,
+          permissionScope: input.permissionScope && typeof input.permissionScope === 'object' ? input.permissionScope as Record<string, unknown> : undefined,
+          idempotencyKey: typeof input.idempotencyKey === 'string' ? input.idempotencyKey : null,
+        });
+        try {
+          const cos = getStudioChiefOfStaffService();
+          if (cos.isStudioOwnerSession(sessionId) || cos.getOriginStudioSessionForSupervision(sessionId)) {
+            broadcastLongTermTaskUpdate([], 'studio_delegation_reassigned');
+          }
+        } catch {
+          // Best-effort status broadcast.
+        }
+        return res;
+      },
       openMetaApp: async (input) => {
         return openMetaApp({
           appId: input.appId,
@@ -7950,6 +7996,23 @@ const getCoworkRunner = () => {
             resolved.id,
             `superseded by resolution of ${resolved.id}`,
           );
+          try {
+            if (resolved.longtermTaskId && resolved.longtermSubtaskId) {
+              const ltDetail = getLongTermTaskStore().getTask(resolved.longtermTaskId);
+              const ltSub = ltDetail?.subtasks.find((s) => s.id === resolved.longtermSubtaskId);
+              if (ltSub?.status === 'waiting_owner') {
+                const noteText = String(resolutionNote ?? '').trim();
+                const isRejection = /不验收|退回|否掉|重做|重画|修改|reject|rework/i.test(noteText);
+                if (resolved.kind === 'acceptance' && !isRejection) {
+                  getLongTermTaskStore().acceptSubtask(ltSub.id, 'owner', noteText || 'accepted via Studio ruling');
+                } else {
+                  getLongTermTaskStore().unblockSubtask(ltSub.id, 'owner', noteText || 'ruling received in Studio');
+                }
+              }
+            }
+          } catch {
+            // Best-effort task-tree convergence.
+          }
           return { ok: true, item: resolved };
         },
         deferDecision: (_sid, queueItemId) => {
@@ -8860,6 +8923,9 @@ const getCoworkRunner = () => {
       // session before the Live Stage decides whether to create its run.
       getStudioGenesisStageService().observeMessage(sessionId, message);
       getStudioLiveStageService().observeMessage(sessionId, message);
+      if (message?.type === 'user' && getStudioChiefOfStaffService().isStudioOwnerSession(sessionId)) {
+        broadcastLongTermTaskUpdate([], 'studio_turn_started');
+      }
       if (!shouldForwardCoworkStreamEvent(getCoworkStore(), sessionId)) {
         return;
       }
@@ -8986,6 +9052,9 @@ const getCoworkRunner = () => {
       getStudioLiveStageService().observeComplete(sessionId);
       if (getStudioChiefOfStaffService().isStudioOwnerSession(sessionId)) {
         getStudioChiefOfStaffService().presenceTracker.recordNonBriefingTurnEnd(sessionId);
+        broadcastLongTermTaskUpdate([], 'studio_turn_completed');
+      } else if (getStudioChiefOfStaffService().getOriginStudioSessionForSupervision(sessionId)) {
+        broadcastLongTermTaskUpdate([], 'studio_supervision_turn_completed');
       }
       // A session finished: recompute the sleep guard so the blocker is
       // released as soon as no other work source is active.
@@ -8999,6 +9068,12 @@ const getCoworkRunner = () => {
     coworkRunner.on('error', (sessionId: string, error: string, metadata?: { errorCode?: string }) => {
       getStudioGenesisStageService().observeError(sessionId);
       getStudioLiveStageService().observeError(sessionId, error);
+      if (
+        getStudioChiefOfStaffService().isStudioOwnerSession(sessionId)
+        || getStudioChiefOfStaffService().getOriginStudioSessionForSupervision(sessionId)
+      ) {
+        broadcastLongTermTaskUpdate([], 'studio_turn_errored');
+      }
       recomputeSleepGuard();
       if (!shouldForwardCoworkStreamEvent(getCoworkStore(), sessionId)) {
         return;
@@ -9292,7 +9367,15 @@ const resolveLiveStageRemoteAvatar = async (avatar: unknown): Promise<string | u
 };
 
 const studioDelegationLookupDeps = {
-  listAttemptsForSourceSessions: (ids: string[]) => getOrchestrationStore().listAttemptsForSourceSessions(ids),
+  listAttemptsForSourceSessions: (ids: string[]) => {
+    const expanded = new Set<string>(ids);
+    for (const id of ids) {
+      for (const supId of studioChiefOfStaffService?.getSupervisionSessionIdsForStudio(id) ?? []) {
+        expanded.add(supId);
+      }
+    }
+    return getOrchestrationStore().listAttemptsForStudioSessions([...expanded]);
+  },
   getStep: (id: string) => getOrchestrationStore().getStep(id),
   getTaskForStep: (id: string) => getOrchestrationStore().getTaskForStep(id),
   getSession: (id: string) => getCoworkStore().getSessionWithoutMessages(id),
@@ -9389,7 +9472,15 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
         const ltStore = getLongTermTaskStore();
         const board = ltStore.listBoard();
         const twin = getMetabotStore().listMetabots().find((bot) => bot.metabot_type === 'twin' && bot.enabled);
-        const queuedDecisions = twin ? getStudioDecisionQueueStore().listOpen(twin.id).length : 0;
+        const studioBusy = Boolean(
+          sessionId && (
+            getCoworkRunner().isSessionActive(sessionId)
+            || listOpenStudioDelegations(sessionId).length > 0
+            || getStudioChiefOfStaffService().isSupervisionBusy()
+          ),
+        );
+        const rawQueuedDecisions = twin ? getStudioDecisionQueueStore().listOpen(twin.id).length : 0;
+        const queuedDecisions = studioBusy ? 0 : rawQueuedDecisions;
         const candidates = board.cards
           .filter((card) => card.stage !== 'done' && card.stage !== 'cancelled' && card.managedState != null)
           .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
@@ -9414,15 +9505,19 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
           return String(b.updatedAt).localeCompare(String(a.updatedAt));
         });
 
-        const activeTasks = ordered.slice(0, 8).map((card) => ({
-          id: card.id,
-          title: card.title,
-          state: card.managedState ?? 'in_progress',
-          accepted: card.progress.accepted,
-          total: Math.max(1, card.progress.total),
-          currentSubtask: card.currentSubtaskTitle,
-          isCurrent: Boolean(focusedId && card.id === focusedId),
-        }));
+        const activeTasks = ordered.slice(0, 8).map((card) => {
+          const isCurrent = Boolean(focusedId && card.id === focusedId);
+          const rawState = card.managedState ?? 'in_progress';
+          return {
+            id: card.id,
+            title: card.title,
+            state: isCurrent && studioBusy && rawState === 'waiting_owner' ? 'in_progress' : rawState,
+            accepted: card.progress.accepted,
+            total: Math.max(1, card.progress.total),
+            currentSubtask: card.currentSubtaskTitle,
+            isCurrent,
+          };
+        });
         return { queuedDecisions, tasks: activeTasks };
       },
       getSettings: () => readStudioLiveStageSettings(getStoreOrNull()),
@@ -9723,10 +9818,19 @@ const getLongTermTaskStore = () => {
           const twin = getMetabotStore().listMetabots().find((bot) => bot.metabot_type === 'twin' && bot.enabled);
           const detail = longTermTaskStore?.getTask(change.taskId) ?? null;
           const subtask = detail?.subtasks.find((item) => item.id === change.subtaskId) ?? null;
+          const isStudioOrigin = Boolean(
+            detail?.definitionSessionId && getStudioChiefOfStaffService().isStudioOwnerSession(detail.definitionSessionId),
+          );
+          const studioTurnAlreadySpeaking = Boolean(
+            isStudioOrigin && detail?.definitionSessionId && getCoworkRunner().isSessionActive(detail.definitionSessionId),
+          );
+          const isQuickStudioCard = Boolean(isStudioOrigin && detail?.taskKind === 'quick');
           if (
             twin
             && detail
             && subtask
+            && !studioTurnAlreadySpeaking
+            && !isQuickStudioCard
             && !getStudioDecisionQueueStore().hasRecentOrOpenForTask(twin.id, detail.id)
           ) {
             const note = subtask.waitNote.trim() || `${detail.title}`;
@@ -9849,6 +9953,7 @@ const getLongTermAdvanceService = () => {
           return [];
         }
       },
+      isStudioOwnerSession: (sid) => getStudioChiefOfStaffService().isStudioOwnerSession(sid),
     });
   }
   return longTermAdvanceService;
