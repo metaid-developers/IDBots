@@ -2106,9 +2106,11 @@ const App: React.FC = () => {
                 superseding the 11:16 order): ONE shared implementation (the
                 rail's bottom RailButton + Cog6ToothIcon), ONE onShowSettings
                 chain (handleShowSettings), and the records column's old
-                「⚙ 设置」 text row is gone. The update badge keeps living in
-                the records column's header actions row (the rail gets none —
-                one badge per screen). */}
+                「⚙ 设置」 text row is gone. The update badge lives in BOTH
+                faces' mid-column header (below the Studio/BotWorks band — the
+                HomeSidebar actions row here, the Studio task header's
+                top-right row on the browser face); the rail gets none on
+                either face (one badge per screen). */}
             <WorkspaceRail
               mode={botBrowserShell.surfaceMode}
               internetPane={botBrowserShell.internetPane}
@@ -2166,7 +2168,6 @@ const App: React.FC = () => {
                 handleBlankNewChat();
               }}
               onShowSettings={() => handleShowSettings()}
-              updateBadge={updateBadge}
             />
             <Sidebar
               onShowLogin={handleShowLogin}
@@ -2189,6 +2190,7 @@ const App: React.FC = () => {
               isCollapsed={isSidebarCollapsed}
               width={sidebarWidth}
               isResizing={isSidebarResizing || isSidebarTweening}
+              updateBadge={isSidebarCollapsed ? null : updateBadge}
             />
           </>
         )}

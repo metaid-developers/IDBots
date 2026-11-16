@@ -61,16 +61,40 @@ test('rail entries are icon buttons with hover tooltips, Settings pinned to the 
   assert.match(railSource, /data-slot="rail-item"/);
   // The label is the accessible name (the tooltip carries the visible text).
   assert.match(railSource, /aria-label=\{label\}/);
-  // Bottom block: the update dot, then Settings — and nothing else. The old
-  // compact ME badge is retired from this corner (owner 2026-11-09 10:05, D5):
-  // the standalone user page is the ONE home of the ME credits panel.
+  // Bottom block: Settings — and nothing else. The old compact ME badge is
+  // retired from this corner (owner 2026-11-09 10:05, D5): the standalone
+  // user page is the ONE home of the ME credits panel. The update dot left
+  // too (2026-11-16: it squeezed into the 64px column on the browser face) —
+  // both faces now render it in their mid column's header, never the rail.
   const bottom = railSource.slice(railSource.indexOf('<div className="mt-auto'));
-  assert.ok(bottom.includes('updateBadge'));
+  assert.doesNotMatch(bottom, /updateBadge/);
   assert.match(bottom, /i18nService\.t\('settings'\)/);
   // Pin the JSX usage AND the import (a prose comment naming the retired
   // component is fine — the mount and the import must not come back).
   assert.doesNotMatch(railSource, /<MeBalanceBadge/);
   assert.doesNotMatch(railSource, /import MeBalanceBadge/);
+});
+
+test('the update badge rides BOTH faces mid-column headers, never the rail', () => {
+  // The badge must sit BELOW the Studio/BotWorks band on both faces:
+  // HomeSidebar renders it in the shared header's actions row, the browser
+  // face's Sidebar renders it in the Studio task header's top-right row.
+  // WorkspaceRail carries no updateBadge prop any more (its bottom block
+  // squeezed the badge into the 64px icon column on the browser face).
+  assert.doesNotMatch(railSource, /updateBadge\??:/);
+  assert.match(homeSidebarSource, /updateBadge\?: React\.ReactNode;/);
+  assert.match(sidebarSource, /updateBadge\?: React\.ReactNode;/);
+  // App feeds the badge to the home face's records column and the browser
+  // face's Sidebar — same collapsed guard shape as the other faces.
+  assert.match(appSource, /updateBadge=\{isSidebarCollapsed \? null : updateBadge\}/);
+  assert.equal(
+    (appSource.match(/updateBadge=\{isSidebarCollapsed \? null : updateBadge\}/g) ?? []).length,
+    2,
+    'exactly the two mid-column mounts carry the collapsed-guard badge',
+  );
+  // The Studio task header's top-right actions row hosts the badge beside the
+  // decision-queue badge and the new-session/history buttons.
+  assert.match(sidebarSource, /absolute right-0 top-0 flex h-9 items-center gap-0\.5">\s*\{updateBadge\}/);
 });
 
 test('the rail top: lights strip, then the avatar slot on the band row; icons start below it (D-line final 2026-11-09)', () => {
