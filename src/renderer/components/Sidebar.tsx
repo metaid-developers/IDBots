@@ -198,7 +198,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [studioDecisionQueueSummary, setStudioDecisionQueueSummary] = useState<{
     queuedCount: number;
     presenting: boolean;
-  }>({ queuedCount: 0, presenting: false });
+    showBadge: boolean;
+  }>({ queuedCount: 0, presenting: false, showBadge: false });
   const studioHeaderRef = useRef<HTMLDivElement>(null);
   const studioIdentityRowRef = useRef<HTMLDivElement>(null);
   const dispatch = useDispatch();
@@ -212,9 +213,15 @@ const Sidebar: React.FC<SidebarProps> = ({
       try {
         const res = await ltApi.studioStatus({ activeSessionId: browserOpenSessionId });
         if (!cancelled && res?.success && res.presence) {
+          const presenting = res.presence.presentingItem != null;
+          const queuedCount = res.presence.queuedCount ?? 0;
+          const showBadge = typeof res.showDecisionBadge === 'boolean'
+            ? res.showDecisionBadge
+            : (presenting || queuedCount > 0);
           setStudioDecisionQueueSummary({
-            queuedCount: res.presence.queuedCount ?? 0,
-            presenting: res.presence.presentingItem != null,
+            queuedCount,
+            presenting,
+            showBadge,
           });
         }
       } catch {
@@ -733,15 +740,15 @@ const Sidebar: React.FC<SidebarProps> = ({
         </div>
       ) : null}
       <div className="absolute right-0 top-0 flex h-9 items-center gap-0.5">
-        {studioDecisionQueueSummary.presenting || studioDecisionQueueSummary.queuedCount > 0 ? (
+        {studioDecisionQueueSummary.showBadge ? (
           <span
             data-slot="studio-decision-queue-badge"
             className="mr-1 inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300"
           >
             <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-            {studioDecisionQueueSummary.queuedCount > 0
-              ? i18nService.t('studioDecisionQueueBadge').replace('{count}', String(studioDecisionQueueSummary.queuedCount))
-              : i18nService.t('studioDecisionPresentingBadge')}
+            {studioDecisionQueueSummary.presenting
+              ? i18nService.t('studioDecisionPresentingBadge')
+              : i18nService.t('studioDecisionQueueBadge').replace('{count}', String(studioDecisionQueueSummary.queuedCount))}
           </span>
         ) : null}
         <button

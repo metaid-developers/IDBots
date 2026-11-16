@@ -60,6 +60,7 @@
   let orb = null, orbStarting = false, orbFailed = false, orbPreferWebGL = false;
   let handoffKey = '', handoffTimer = 0;
   let interactionKey = '', interactionTimer = 0;
+  let hudOthersExpanded = false;
   const interactionQueue = [];
   const interactionSelections = new Map();
   let width = 0, height = 0, raf = 0;
@@ -245,7 +246,9 @@
           y: inverse * inverse * from.y + 2 * inverse * progress * control.y + progress * progress * to.y
         };
       };
+      const constellationVisible = Boolean($('[data-worker-constellation]') && !$('[data-worker-constellation]').hidden);
       state.topology.edges.forEach(([fromId, toId], index) => {
+        if (constellationVisible && (fromId === 'worker' || toId === 'worker')) return;
         if (!nodes[fromId] || !nodes[toId]) return;
         const from = points[fromId], to = points[toId];
         if (!from || !to) return;
@@ -258,34 +261,71 @@
         ctx.fillStyle = 'rgba(197,169,255,.85)'; ctx.fill();
       });
     }
-    const activeWorkers = Array.isArray(state.activeWorkers) ? state.activeWorkers : [];
-    if (activeWorkers.length > 0) {
-      const twinPt = { x: cx, y: cy };
-      activeWorkers.slice(0, 5).forEach((workerEntry, index) => {
-        const wy = height * (.22 + index * .11);
-        const wx = width * .85;
-        const returning = workerEntry?.direction === 'return';
-        const fromPt = returning ? { x: wx, y: wy } : twinPt;
-        const toPt = returning ? twinPt : { x: wx, y: wy };
-        const ctrl = {
-          x: (fromPt.x + toPt.x) / 2,
-          y: Math.min(fromPt.y, toPt.y) - 36 - index * 6,
+    const constellationEl = $('[data-worker-constellation]');
+    if (constellationEl && !constellationEl.hidden) {
+      const stageRect = $('.live-stage').getBoundingClientRect();
+      const orbRect = $('.membrane').getBoundingClientRect();
+      if (stageRect.width > 0 && orbRect.width > 0) {
+        const orbCenter = {
+          x: orbRect.left + orbRect.width / 2 - stageRect.left,
+          y: orbRect.top + orbRect.height / 2 - stageRect.top,
         };
-        ctx.beginPath();
-        ctx.moveTo(fromPt.x, fromPt.y);
-        ctx.quadraticCurveTo(ctrl.x, ctrl.y, toPt.x, toPt.y);
-        ctx.strokeStyle = returning ? 'rgba(255,220,81,.32)' : 'rgba(155,244,255,.28)';
-        ctx.lineWidth = 1.2;
-        ctx.stroke();
-        const prog = reduced ? .55 : (t * .28 + index * .21) % 1;
-        const inv = 1 - prog;
-        const px = inv * inv * fromPt.x + 2 * inv * prog * ctrl.x + prog * prog * toPt.x;
-        const py = inv * inv * fromPt.y + 2 * inv * prog * ctrl.y + prog * prog * toPt.y;
-        ctx.beginPath();
-        ctx.arc(px, py, 3.4, 0, Math.PI * 2);
-        ctx.fillStyle = returning ? 'rgba(255,220,81,.92)' : 'rgba(155,244,255,.9)';
-        ctx.fill();
-      });
+        const orbRadius = Math.max(44, orbRect.width * .48);
+        const cards = constellationEl.querySelectorAll('.constellation-item');
+        cards.forEach((cardEl, index) => {
+          const cardRect = cardEl.getBoundingClientRect();
+          if (cardRect.width < 4 || cardRect.height < 4) return;
+          const cardAnchor = {
+            x: cardRect.left - stageRect.left - 4,
+            y: cardRect.top + cardRect.height / 2 - stageRect.top,
+          };
+          const dx = cardAnchor.x - orbCenter.x;
+          const dy = cardAnchor.y - orbCenter.y;
+          const dist = Math.hypot(dx, dy) || 1;
+          const orbAnchor = {
+            x: orbCenter.x + (dx / dist) * orbRadius,
+            y: orbCenter.y + (dy / dist) * orbRadius,
+          };
+          const returning = cardEl.dataset.direction === 'return';
+          const fromPt = returning ? cardAnchor : orbAnchor;
+          const toPt = returning ? orbAnchor : cardAnchor;
+          const midY = (fromPt.y + toPt.y) / 2;
+          const bend = Math.min(34, Math.max(12, Math.abs(dx) * .12));
+          const ctrl = {
+            x: (fromPt.x + toPt.x) / 2,
+            y: midY - bend,
+          };
+          ctx.beginPath();
+          ctx.moveTo(fromPt.x, fromPt.y);
+          ctx.quadraticCurveTo(ctrl.x, ctrl.y, toPt.x, toPt.y);
+          ctx.strokeStyle = returning ? 'rgba(255,220,81,.44)' : 'rgba(155,244,255,.38)';
+          ctx.lineWidth = 1.45;
+          ctx.stroke();
+
+          // Directional chevron arrowhead at destination endpoint (`toPt`):
+          const tanX = toPt.x - ctrl.x;
+          const tanY = toPt.y - ctrl.y;
+          const angle = Math.atan2(tanY, tanX);
+          const headLen = 7;
+          ctx.beginPath();
+          ctx.moveTo(toPt.x, toPt.y);
+          ctx.lineTo(toPt.x - headLen * Math.cos(angle - .46), toPt.y - headLen * Math.sin(angle - .46));
+          ctx.moveTo(toPt.x, toPt.y);
+          ctx.lineTo(toPt.x - headLen * Math.cos(angle + .46), toPt.y - headLen * Math.sin(angle + .46));
+          ctx.strokeStyle = returning ? 'rgba(255,220,81,.88)' : 'rgba(155,244,255,.85)';
+          ctx.lineWidth = 1.6;
+          ctx.stroke();
+
+          const prog = reduced ? .55 : (t * .32 + index * .23) % 1;
+          const inv = 1 - prog;
+          const px = inv * inv * fromPt.x + 2 * inv * prog * ctrl.x + prog * prog * toPt.x;
+          const py = inv * inv * fromPt.y + 2 * inv * prog * ctrl.y + prog * prog * toPt.y;
+          ctx.beginPath();
+          ctx.arc(px, py, 3.5, 0, Math.PI * 2);
+          ctx.fillStyle = returning ? 'rgba(255,220,81,.96)' : 'rgba(155,244,255,.94)';
+          ctx.fill();
+        });
+      }
     }
     particles.forEach((particle, index) => {
       const angle = particle.angle + particle.phase + state.motion.seed * .0001;
@@ -339,9 +379,16 @@
     const container = $('[data-worker-constellation]');
     if (!container) return;
     container.replaceChildren();
-    const list = Array.isArray(state.activeWorkers) ? state.activeWorkers.slice(0, 5) : [];
-    container.hidden = list.length <= 1;
-    if (list.length <= 1) return;
+    const rawList = Array.isArray(state.activeWorkers) ? state.activeWorkers.slice(0, 5) : [];
+    // When the turn has settled (idle / complete / report-ready), only show
+    // workers that are still actively dispatched/working — never leave stale
+    // 'return' nodes or lines hanging over a finished screen.
+    const restingScene = state.family === 'idle' || state.family === 'complete' || state.family === 'report-ready';
+    const list = restingScene
+      ? rawList.filter((entry) => entry?.direction === 'dispatch' || entry?.direction === 'working')
+      : rawList;
+    container.hidden = list.length === 0;
+    if (list.length === 0) return;
     list.forEach((entry) => {
       const row = document.createElement('div');
       row.className = 'constellation-item';
@@ -390,12 +437,68 @@
     });
   }
 
+  function buildTaskHudRow(task, highlightCurrent) {
+    const row = document.createElement('div');
+    row.className = highlightCurrent ? 'task-hud-row is-current' : 'task-hud-row';
+    const top = document.createElement('div');
+    top.className = 'task-hud-top';
+    const titleWrap = document.createElement('div');
+    titleWrap.className = 'task-hud-title-wrap';
+    if (highlightCurrent) {
+      const pinBadge = document.createElement('span');
+      pinBadge.className = 'task-hud-current-pill';
+      pinBadge.textContent = tr('当前任务', 'Active');
+      titleWrap.append(pinBadge);
+    }
+    const title = document.createElement('span');
+    title.className = 'task-hud-title';
+    title.textContent = String(task?.title || '');
+    titleWrap.append(title);
+
+    const st = document.createElement('span');
+    st.className = 'task-hud-state';
+    const stKey = task?.state === 'waiting_owner' || task?.state === 'waiting_external' ? task.state : 'in_progress';
+    st.dataset.state = stKey;
+    st.textContent = stKey === 'waiting_owner'
+      ? tr('待你拍板', 'Needs you')
+      : stKey === 'waiting_external'
+        ? tr('等待外部', 'External wait')
+        : tr('进行中', 'In progress');
+    top.append(titleWrap, st);
+    row.append(top);
+
+    if (highlightCurrent && task?.currentSubtask && task.currentSubtask !== task.title) {
+      const subLine = document.createElement('div');
+      subLine.className = 'task-hud-sub';
+      subLine.textContent = String(task.currentSubtask);
+      row.append(subLine);
+    }
+
+    const total = Math.max(1, Number(task?.total) || 1);
+    const accepted = Math.max(0, Math.min(total, Number(task?.accepted) || 0));
+    const pct = Math.round((accepted / total) * 100);
+    const bar = document.createElement('div');
+    bar.className = 'task-hud-bar';
+    const track = document.createElement('div');
+    track.className = 'task-hud-track';
+    const fill = document.createElement('div');
+    fill.className = 'task-hud-fill';
+    fill.style.width = `${Math.max(accepted > 0 ? 10 : 4, pct)}%`;
+    track.append(fill);
+    const frac = document.createElement('span');
+    frac.className = 'task-hud-frac';
+    frac.textContent = `${accepted}/${total}`;
+    bar.append(track, frac);
+    row.append(bar);
+    return row;
+  }
+
   function updateTaskHud() {
     const hud = $('[data-task-hud]');
     if (!hud) return;
     hud.replaceChildren();
     const model = state.taskHud && typeof state.taskHud === 'object' ? state.taskHud : null;
-    const tasks = Array.isArray(model?.tasks) ? model.tasks.slice(0, 4) : [];
+    const tasks = Array.isArray(model?.tasks) ? model.tasks.slice(0, 8) : [];
     const queued = typeof model?.queuedDecisions === 'number' && model.queuedDecisions > 0 ? Math.floor(model.queuedDecisions) : 0;
     if (tasks.length === 0 && queued === 0) {
       hud.hidden = true;
@@ -405,7 +508,7 @@
     const header = document.createElement('div');
     header.className = 'task-hud-head';
     const heading = document.createElement('span');
-    heading.textContent = tr('实时任务树进度', 'Live Task Tree');
+    heading.textContent = tr('实时任务进度', 'Task Progress');
     header.append(heading);
     if (queued > 0) {
       const qBadge = document.createElement('span');
@@ -415,44 +518,35 @@
     }
     hud.append(header);
 
-    tasks.forEach((task) => {
-      const row = document.createElement('div');
-      row.className = 'task-hud-row';
-      const top = document.createElement('div');
-      top.className = 'task-hud-top';
-      const title = document.createElement('span');
-      title.className = 'task-hud-title';
-      title.textContent = String(task?.title || '');
-      const st = document.createElement('span');
-      st.className = 'task-hud-state';
-      const stKey = task?.state === 'waiting_owner' || task?.state === 'waiting_external' ? task.state : 'in_progress';
-      st.dataset.state = stKey;
-      st.textContent = stKey === 'waiting_owner'
-        ? tr('待你拍板', 'Needs you')
-        : stKey === 'waiting_external'
-          ? tr('等待外部', 'External wait')
-          : tr('进行中', 'In progress');
-      top.append(title, st);
-      row.append(top);
+    if (tasks.length > 0) {
+      const primary = tasks[0];
+      hud.append(buildTaskHudRow(primary, primary?.isCurrent !== false));
 
-      const total = Math.max(1, Number(task?.total) || 1);
-      const accepted = Math.max(0, Math.min(total, Number(task?.accepted) || 0));
-      const pct = Math.round((accepted / total) * 100);
-      const bar = document.createElement('div');
-      bar.className = 'task-hud-bar';
-      const track = document.createElement('div');
-      track.className = 'task-hud-track';
-      const fill = document.createElement('div');
-      fill.className = 'task-hud-fill';
-      fill.style.width = `${Math.max(accepted > 0 ? 10 : 4, pct)}%`;
-      track.append(fill);
-      const frac = document.createElement('span');
-      frac.className = 'task-hud-frac';
-      frac.textContent = `${accepted}/${total}`;
-      bar.append(track, frac);
-      row.append(bar);
-      hud.append(row);
-    });
+      const others = tasks.slice(1);
+      if (others.length > 0) {
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'task-hud-more-toggle';
+        const otherList = document.createElement('div');
+        otherList.className = 'task-hud-others';
+        otherList.hidden = !hudOthersExpanded;
+        const syncToggleLabel = () => {
+          toggle.textContent = hudOthersExpanded
+            ? tr(`▾ 收起其他任务 (${others.length})`, `▾ Hide other tasks (${others.length})`)
+            : tr(`▸ 其他任务 (${others.length})`, `▸ Other tasks (${others.length})`);
+        };
+        syncToggleLabel();
+        toggle.addEventListener('click', () => {
+          hudOthersExpanded = !hudOthersExpanded;
+          otherList.hidden = !hudOthersExpanded;
+          syncToggleLabel();
+        });
+        others.forEach((otherTask) => {
+          otherList.append(buildTaskHudRow(otherTask, false));
+        });
+        hud.append(toggle, otherList);
+      }
+    }
   }
 
   const ORB_START_TIMEOUT_MS = 20000;
@@ -1016,6 +1110,7 @@
   function applyState() {
     body.dataset.enabled = String(state.enabled);
     body.dataset.family = state.family;
+    body.dataset.speechRest = state.speechRest === true ? 'true' : 'false';
     body.dataset.activity = window.liquidOrbActivityForFamily(state.family);
     body.dataset.topology = state.topology.mode;
     body.dataset.motion = effectiveReduced() ? 'reduced' : 'full';
@@ -1034,7 +1129,9 @@
     // projected report URI is present, labelled from the current language.
     const reportUri = typeof state.reportUri === 'string' ? state.reportUri : '';
     const canOpenReport = reportUri.startsWith('preview-metaapp://localhost/');
+    body.dataset.hasReport = canOpenReport ? 'true' : 'false';
     reportOpen.disabled = !canOpenReport;
+    if (reportReadyText) reportReadyText.textContent = tr('汇报就绪', 'Report ready');
     const reportOpenLabel = $('[data-report-open-label]');
     if (reportOpenLabel) reportOpenLabel.textContent = canOpenReport ? tr('打开汇报', 'Open report') : tr('正在打开最终页面', 'Opening the final page');
     $('[data-bot-name]').textContent = state.botName;
@@ -1059,17 +1156,27 @@
     const titleEl = $('[data-core-title]');
     if (state.family === 'speaking') {
       titleEl.removeAttribute('data-length');
+    } else if (state.speechRest === true) {
+      titleEl.removeAttribute('data-length');
     } else {
       const headlineLength = Array.from(state.headline || '').length;
       titleEl.dataset.length = headlineLength <= 16 ? 'short' : headlineLength <= 40 ? 'medium' : 'long';
     }
     updateElapsed();
+    updateWorkerConstellation();
+    const constellationActive = Boolean($('[data-worker-constellation]') && !$('[data-worker-constellation]').hidden);
     const nodes = Object.fromEntries(state.topology.nodes.map((node) => [node.id, node]));
-    // Only satellite nodes that exist in the topology are shown — the model
-    // never invents source/evidence nodes for families that have none.
+    // Only satellite nodes that exist in the topology are shown — and when the
+    // Worker constellation is active, the single `.hybrid-worker` bubble hides
+    // so multi-worker runs never paint a duplicate summary circle underneath.
     const nodeSlots = { source: $('.hybrid-source'), worker: $('.hybrid-worker'), evidence: $('.hybrid-evidence') };
     for (const [id, element] of Object.entries(nodeSlots)) {
-      if (element) element.hidden = state.topology.mode !== 'structured' || !nodes[id];
+      if (!element) continue;
+      if (id === 'worker' && constellationActive) {
+        element.hidden = true;
+      } else {
+        element.hidden = state.topology.mode !== 'structured' || !nodes[id];
+      }
     }
     $('[data-node-source]').textContent = nodes.source?.label || tr('来源', 'Source');
     $('[data-node-worker]').textContent = nodes.worker?.label || tr('协作 Bot', 'Worker');
@@ -1088,7 +1195,6 @@
       metricsEl.hidden = true;
     }
     updateParticipants();
-    updateWorkerConstellation();
     updateTaskHud();
     syncOrb(state.family);
     syncHandoff();

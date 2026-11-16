@@ -2000,6 +2000,7 @@ interface IElectronAPI {
         presentingItem: { id: string; title: string; kind: string } | null;
         queuedCount: number;
       };
+      showDecisionBadge?: boolean;
       openDecisions?: Array<{
         id: string;
         status: 'queued' | 'presenting' | 'resolved' | 'cancelled';

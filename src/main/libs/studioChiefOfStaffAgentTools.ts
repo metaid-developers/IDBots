@@ -50,6 +50,10 @@ export interface StudioChiefOfStaffToolsControl {
     mode: 'shaping' | 'idle',
     reason?: string,
   ): { ok: true } | { ok: false; error: string };
+  focusTask?(
+    sessionId: string,
+    longtermTaskId: string,
+  ): { ok: true; taskId: string } | { ok: false; error: string };
   dispatchTwinStampPublish?(
     sessionId: string,
     input: {
@@ -231,6 +235,23 @@ export function buildStudioChiefOfStaffAgentTools(params: {
   );
 
   const tools: unknown[] = [enqueueTool, listTool, resolveTool, deferTool, presenceTool];
+
+  if (control.focusTask) {
+    tools.push(
+      tool(
+        'studio_task_focus',
+        'Pin a specific Managed Task Tree card (`ltt_...`) as the active/focused task at the top of the Studio Live Stage progress HUD when the owner shifts conversation to that task. Twin Bot only.',
+        {
+          longtermTaskId: z.string().min(1).describe('Task ID (ltt_...) currently being discussed or advanced.'),
+        },
+        async (args) => {
+          const res = control.focusTask!(sessionId, args.longtermTaskId);
+          if ('error' in res) return textResult(`studio_task_focus refused: ${res.error}`, true);
+          return textResult(JSON.stringify({ ok: true, focusedTaskId: res.taskId }));
+        },
+      ),
+    );
+  }
 
   if (control.dispatchTwinStampPublish) {
     tools.push(

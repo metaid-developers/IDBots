@@ -820,11 +820,23 @@ export class TwinOrchestrationService {
     //  3) Studio zero-orphan auto-ledgering: an unlinked delegation from a
     //     Studio owner session automatically creates a lightweight 'quick' task
     //     card so 100% of Studio deliverables appear on the Managed Task Tree.
+    // Auto-coerce Managed Task Tree ids (`ltt_...` / `lts_...`) if the model
+    // accidentally passed them in `taskId` / `stepId` instead of
+    // `longtermTaskId` / `longtermSubtaskId` (prevents wasted retry turns).
+    const rawTaskId = String(input.taskId ?? '').trim();
+    const rawStepId = String(input.stepId ?? '').trim();
+    const coercedLongtermTaskId = String(input.longtermTaskId ?? '').trim()
+      || (rawTaskId.startsWith('ltt_') ? rawTaskId : '');
+    const coercedLongtermSubtaskId = String(input.longtermSubtaskId ?? '').trim()
+      || (rawStepId.startsWith('lts_') ? rawStepId : '');
+    const effectiveOrchTaskId = rawTaskId && !rawTaskId.startsWith('ltt_') ? rawTaskId : null;
+    const effectiveOrchStepId = rawStepId && !rawStepId.startsWith('lts_') ? rawStepId : null;
+
     let longtermContext: { taskId: string; subtaskId: string; reportSessionId: string } | null = null;
     const ltStore = this.deps.longTermTaskStore?.();
     if (ltStore) {
-      const explicitTaskId = String(input.longtermTaskId ?? '').trim();
-      const explicitSubtaskId = String(input.longtermSubtaskId ?? '').trim();
+      const explicitTaskId = coercedLongtermTaskId;
+      const explicitSubtaskId = coercedLongtermSubtaskId;
       if (explicitTaskId) {
         const detail = ltStore.getTask(explicitTaskId);
         const sub = detail
@@ -905,8 +917,8 @@ export class TwinOrchestrationService {
       }
     }
 
-    let task = input.taskId ? this.deps.orchestrationStore.getTask(input.taskId) : null;
-    if (input.taskId && !task) throw new Error('ORCHESTRATION_TASK_NOT_FOUND');
+    let task = effectiveOrchTaskId ? this.deps.orchestrationStore.getTask(effectiveOrchTaskId) : null;
+    if (effectiveOrchTaskId && !task) throw new Error('ORCHESTRATION_TASK_NOT_FOUND');
     if (task && (task.twinMetabotId !== twin.id || task.ownerGlobalMetaId.toLowerCase() !== ownerGlobalMetaId.toLowerCase())) {
       throw new Error('ORCHESTRATION_TASK_OWNER_MISMATCH');
     }
@@ -929,8 +941,8 @@ export class TwinOrchestrationService {
       });
     }
 
-    let step = input.stepId ? this.deps.orchestrationStore.getStep(input.stepId) : null;
-    if (input.stepId && (!step || step.taskId !== task.id)) throw new Error('ORCHESTRATION_STEP_NOT_FOUND');
+    let step = effectiveOrchStepId ? this.deps.orchestrationStore.getStep(effectiveOrchStepId) : null;
+    if (effectiveOrchStepId && (!step || step.taskId !== task.id)) throw new Error('ORCHESTRATION_STEP_NOT_FOUND');
     if (!step) {
       const existingSteps = this.deps.orchestrationStore.listSteps(task.id);
       step = this.deps.orchestrationStore.createStep({

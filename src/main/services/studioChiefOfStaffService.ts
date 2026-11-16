@@ -98,6 +98,13 @@ export interface StudioChiefOfStaffDeps {
     localPath: string;
     title: string;
   }) => Promise<unknown>;
+  didSessionProjectSince?: (sessionId: string, sinceMs: number) => boolean;
+  resolvePublisherIdentity?: (metabotId: number) => {
+    name: string;
+    role: string;
+    globalMetaId?: string | null;
+    address?: string | null;
+  };
   emitSessionMessage?: (sessionId: string, message: CoworkMessage) => void;
   onStateChanged?: (reason: string) => void;
   createPin?: (
@@ -196,7 +203,9 @@ function buildSupervisionPrompt(params: {
     '3. RECORD VERIFIED STEPS: For each step that verifiably meets its acceptance criteria, call `twin_task_accept` with concrete evidence (and update the linked task-tree subtask status if linked).',
     '4. PARALLEL CONSOLIDATION GATE: Look at "Still-Running Parallel Sibling Delegations" above. If sibling Workers are still running AND none of the settled steps raised a genuine blocking product decision that requires the owner right now, DO NOT call `studio_decision_enqueue` yet! Conclude this supervision turn quietly after recording your verification; you will be woken again as remaining siblings finish so the owner receives ONE consolidated briefing.',
     '5. ENQUEUE FOR OWNER RULING / FINAL ACCEPTANCE: Only when (a) all parallel steps for this deliverable stage are verified and ready for owner acceptance / stamp sign-off, OR (b) a genuine product/scope ambiguity or irreversible authorization blocks progress:',
-    `   - First write ONE clean, self-contained visual HTML briefing page into "${reportsDir}/<descriptive-name>.html" (inline CSS, zero external assets, clear status badge at top, verified deliverables/metrics table, options + your recommendation, and next step).`,
+    '   - STRICT SCOPE DISCIPLINE: Respect the owner\'s exact stated scope. If the owner asked for research/drafts only ("先不要上链 / 暂不动代码"), enqueue an `acceptance` briefing of the verified drafts — do NOT invent unrequested code-change options that pressure the owner!',
+    '   - DO NOT DOUBLE-ENQUEUE: Once you call `studio_decision_enqueue`, do NOT also call `longterm_subtask_wait(kind="owner")` for the same question.',
+    `   - First write ONE clean, self-contained visual HTML briefing page into "${reportsDir}/<descriptive-name>.html" (inline CSS, zero external assets, clear status badge at top, verified deliverables/metrics table, options + your recommendation, and next step; if any on-chain pin was published, show BOTH the publishing Bot account name/MetaID AND the full verbatim \`pin://...i0\` ID).`,
     `   - Then call \`studio_decision_enqueue\` with \`originStudioSessionId: "${originStudioSessionId}"\`, \`reportHtmlPath\` set to that exact absolute HTML path, and all six decision-brief fields in ${language === 'zh' ? 'Chinese (中文)' : 'English'}.`,
     '</studio_back_office_supervision>',
   ].join('\n');
@@ -213,7 +222,7 @@ function buildProactiveBriefingPrompt(item: StudioDecisionQueueItem, remainingQu
     return [
       '<studio_proactive_briefing>',
       '你现在正在主人的 Studio 常驻主会话中主动发起一次「超级助理汇报」。',
-      '注意：这条触发指令对主人不可见，主人只会看到你接下来的回复以及右侧已自动切出的投影页面。',
+      '注意：这条触发指令对主人不可见，主人只会看到你接下来的回复以及右侧投影页面。',
       `队列项 ID: ${item.id} | 类型: ${item.kind} | 队列剩余待拍板数: ${remainingQueuedCount}`,
       `标题: ${item.title}`,
       `背景: ${item.backgroundSummary}`,
@@ -222,9 +231,11 @@ function buildProactiveBriefingPrompt(item: StudioDecisionQueueItem, remainingQu
       `选项:\n${optionsText}`,
       `你的首推建议与理由: ${item.recommendation}`,
       `主人拍板后的下一步: ${item.nextStep}`,
-      ...(item.reportHtmlPath ? [`右侧投影屏已自动打开详情页: ${item.reportHtmlPath}（本轮无需再重复调用 projection_begin 或重写 HTML，直接引用右侧大屏即可）`] : []),
+      ...(item.reportHtmlPath ? [`预备投影详情页路径: ${item.reportHtmlPath}`] : []),
       '',
-      '请直接以超级助理的口吻向主人简洁、清晰地汇报：先说结论和已完成核验的进展，再点明唯一需要他拍板的问题、你的推荐项及拍板后的下一步，引导他结合右侧大屏直接回复拍板（一次只聚焦这一件事，绝不混杂内部 ID 或机器标签）。',
+      '执行规则：',
+      `1. **防重判据**：先核对本会话上下文——如果主人在此前对话中**已经对这件事拍过板**（例如已明确说「暂不动代码 / 只留文稿」），请立即调用 \`studio_decision_resolve({ queueItemId: "${item.id}", resolutionNote: "..." })\` 静默收口，**不要调用任何投影工具，也不要再次向主人追问同一件事**（一句话告知已按既定裁定归档即可，宿主看到已 resolve 就不会覆盖右侧投影屏）。`,
+      '2. **正常汇报**：如果这确实是待主人拍板/验收的新事项，请保持该队列项为当前待拍板状态（不要在本轮提前调用 `studio_decision_resolve`），直接向主人简洁汇报结论、唯一需拍板的问题、推荐项与下一步（宿主会在本轮收尾自动把简报页投到右侧大屏并生成投影链接；若涉及已上链内容，务必同时明文写出**发布账号**和完整 `pin://...i0` ID）。',
       '</studio_proactive_briefing>',
     ].join('\n');
   }
@@ -232,7 +243,7 @@ function buildProactiveBriefingPrompt(item: StudioDecisionQueueItem, remainingQu
   return [
     '<studio_proactive_briefing>',
     'You are proactively initiating a Chief-of-Staff briefing in the owner\'s persistent Studio conversation.',
-    'Note: this trigger block is invisible to the owner; they will only see your reply and the right-hand projector page already opened for them.',
+    'Note: this trigger block is invisible to the owner; they will only see your reply and the right-hand projector page.',
     `Queue item ID: ${item.id} | Kind: ${item.kind} | Remaining queued behind this: ${remainingQueuedCount}`,
     `Title: ${item.title}`,
     `Background: ${item.backgroundSummary}`,
@@ -241,9 +252,11 @@ function buildProactiveBriefingPrompt(item: StudioDecisionQueueItem, remainingQu
     `Options:\n${optionsText}`,
     `Your recommendation: ${item.recommendation}`,
     `Next step after owner ruling: ${item.nextStep}`,
-    ...(item.reportHtmlPath ? [`Right-hand projector already displays: ${item.reportHtmlPath} (do NOT call projection_begin again this turn; reference the projected page directly).`] : []),
+    ...(item.reportHtmlPath ? [`Prepared briefing HTML path: ${item.reportHtmlPath}`] : []),
     '',
-    'Speak directly to the owner as their Chief of Staff: lead with the verified outcome, state the ONE decision/acceptance needed, give your recommended call and what happens immediately after, and point to the right-side screen for full visual detail (never expose internal IDs or raw tags).',
+    'Rules:',
+    `1. **Deduplication check**: If the owner ALREADY ruled on this exact question earlier in this conversation, call \`studio_decision_resolve({ queueItemId: "${item.id}", resolutionNote: "..." })\` immediately and do NOT project or re-ask (the host will keep the existing projector page untouched once resolved).`,
+    '2. **Genuine briefing**: Otherwise, leave the item in `presenting` (do NOT resolve yet) and speak concisely: lead with the verified outcome, state the ONE decision/acceptance needed, give your recommended call and immediate next step (if on-chain content was published, always state BOTH the publishing Bot identity and the verbatim `pin://...i0` ID).',
     '</studio_proactive_briefing>',
   ].join('\n');
 }
@@ -252,6 +265,8 @@ export class StudioChiefOfStaffService {
   readonly presenceTracker = new StudioPresenceTracker();
   private readonly pendingBatches = new Map<string, PendingSupervisionBatch>();
   private supervisionChain = new Map<string, Promise<void>>();
+  private readonly focusedTaskBySession = new Map<string, string>();
+  private activeSupervisionCount = 0;
   private heartbeatInFlight = false;
   private readonly now: () => number;
   private readonly emitLog: (line: string) => void;
@@ -261,6 +276,23 @@ export class StudioChiefOfStaffService {
     this.now = deps.now ?? Date.now;
     this.emitLog = deps.emitLog ?? ((line: string) => console.log(line));
     this.coalesceMs = Math.max(0, deps.supervisionCoalesceMs ?? DEFAULT_SUPERVISION_COALESCE_MS);
+  }
+
+  focusTask(sessionId: string | null | undefined, longtermTaskId: string | null | undefined): void {
+    const sid = (sessionId ?? '').trim();
+    const tid = (longtermTaskId ?? '').trim();
+    if (!sid || !tid) return;
+    this.focusedTaskBySession.set(sid, tid);
+  }
+
+  getFocusedTaskId(sessionId: string | null | undefined): string | null {
+    const sid = (sessionId ?? '').trim();
+    if (!sid) return null;
+    return this.focusedTaskBySession.get(sid) ?? null;
+  }
+
+  isSupervisionBusy(): boolean {
+    return this.activeSupervisionCount > 0 || this.pendingBatches.size > 0;
   }
 
   isStudioOwnerSession(sessionId: string | null | undefined): boolean {
@@ -405,7 +437,10 @@ export class StudioChiefOfStaffService {
       this.pendingBatches.set(scopeKey, batch);
     }
     batch.events.push(event);
-    if (event.task.longtermTaskId) batch.longtermTaskId = event.task.longtermTaskId;
+    if (event.task.longtermTaskId) {
+      batch.longtermTaskId = event.task.longtermTaskId;
+      this.focusTask(originSessionId, event.task.longtermTaskId);
+    }
     if (event.task.longtermSubtaskId) batch.longtermSubtaskId = event.task.longtermSubtaskId;
 
     if (batch.timer) clearTimeout(batch.timer);
@@ -496,14 +531,19 @@ export class StudioChiefOfStaffService {
         originStudioSessionId: batch.originStudioSessionId,
       },
     });
-    await this.deps.coworkRunner().startSession(supervisionSessionId, prompt, {
-      skipInitialUserMessage: true,
-      acknowledgeOwner: false,
-      confirmationMode: 'text',
-      permissionMode: 'acceptEdits',
-      autoApprove: true,
-    });
-    this.deps.onStateChanged?.('supervision_completed');
+    this.activeSupervisionCount += 1;
+    try {
+      await this.deps.coworkRunner().startSession(supervisionSessionId, prompt, {
+        skipInitialUserMessage: true,
+        acknowledgeOwner: false,
+        confirmationMode: 'text',
+        permissionMode: 'acceptEdits',
+        autoApprove: true,
+      });
+    } finally {
+      this.activeSupervisionCount = Math.max(0, this.activeSupervisionCount - 1);
+      this.deps.onStateChanged?.('supervision_completed');
+    }
   }
 
   /**
@@ -541,49 +581,15 @@ export class StudioChiefOfStaffService {
       return { presentedItemId: null, presence: this.getPresenceSnapshot(nowMs) };
     }
 
+    if (claimed.longtermTaskId) {
+      this.focusTask(studioSessionId, claimed.longtermTaskId);
+    }
     this.heartbeatInFlight = true;
     this.presenceTracker.setBriefingTurnRunning(studioSessionId, true);
     this.deps.onStateChanged?.('briefing_started');
 
     try {
-      let reportPath = claimed.reportHtmlPath;
-      if ((!reportPath || !fs.existsSync(reportPath)) && this.deps.projectShowcaseHtml) {
-        try {
-          const workspace = this.deps.resolveTwinWorkspace(twinId);
-          const reportsDir = path.join(workspace, 'reports');
-          fs.mkdirSync(reportsDir, { recursive: true });
-          const fallbackPath = path.join(reportsDir, `briefing-${claimed.id}.html`);
-          const openAll = this.deps.decisionQueueStore().listOpen(twinId);
-          fs.writeFileSync(
-            fallbackPath,
-            buildStudioDecisionReportHtml({
-              item: claimed,
-              queuePosition: 1,
-              queueTotal: Math.max(1, openAll.length),
-              language: this.deps.getAppLanguage?.() ?? 'zh',
-            }),
-            'utf8',
-          );
-          reportPath = fallbackPath;
-        } catch {
-          reportPath = null;
-        }
-      }
-      if (reportPath && fs.existsSync(reportPath) && this.deps.projectShowcaseHtml) {
-        try {
-          await this.deps.projectShowcaseHtml({
-            sessionId: studioSessionId,
-            localPath: reportPath,
-            title: claimed.title,
-          });
-        } catch (projErr) {
-          this.emitLog(
-            `[StudioChiefOfStaff] Showcase projection failed for ${claimed.id}: ` +
-              `${projErr instanceof Error ? projErr.message : String(projErr)}`,
-          );
-        }
-      }
-
+      const turnStartedMs = this.now();
       const remainingQueued = this.deps.decisionQueueStore()
         .listOpen(twinId)
         .filter((item) => item.status === 'queued').length;
@@ -608,8 +614,60 @@ export class StudioChiefOfStaffService {
         acknowledgeOwner: false,
       });
 
+      // Project onto the right-hand showcase ONLY if the Twin kept this item
+      // in `presenting` (meaning it genuinely requires an owner ruling right
+      // now — NOT auto-closed as already answered!) and did not already project
+      // its own fresh page during the turn.
+      const postTurnItem = this.deps.decisionQueueStore().getById(claimed.id);
+      const alreadyProjectedInTurn = Boolean(
+        this.deps.didSessionProjectSince?.(studioSessionId, turnStartedMs),
+      );
+      if (
+        postTurnItem?.status === 'presenting'
+        && !alreadyProjectedInTurn
+        && this.deps.projectShowcaseHtml
+      ) {
+        let reportPath = postTurnItem.reportHtmlPath;
+        if (!reportPath || !fs.existsSync(reportPath)) {
+          try {
+            const workspace = this.deps.resolveTwinWorkspace(twinId);
+            const reportsDir = path.join(workspace, 'reports');
+            fs.mkdirSync(reportsDir, { recursive: true });
+            const fallbackPath = path.join(reportsDir, `briefing-${postTurnItem.id}.html`);
+            const openAll = this.deps.decisionQueueStore().listOpen(twinId);
+            fs.writeFileSync(
+              fallbackPath,
+              buildStudioDecisionReportHtml({
+                item: postTurnItem,
+                queuePosition: 1,
+                queueTotal: Math.max(1, openAll.length),
+                language,
+              }),
+              'utf8',
+            );
+            reportPath = fallbackPath;
+          } catch {
+            reportPath = null;
+          }
+        }
+        if (reportPath && fs.existsSync(reportPath)) {
+          try {
+            await this.deps.projectShowcaseHtml({
+              sessionId: studioSessionId,
+              localPath: reportPath,
+              title: postTurnItem.title,
+            });
+          } catch (projErr) {
+            this.emitLog(
+              `[StudioChiefOfStaff] Showcase projection failed for ${postTurnItem.id}: ` +
+                `${projErr instanceof Error ? projErr.message : String(projErr)}`,
+            );
+          }
+        }
+      }
+
       return {
-        presentedItemId: claimed.id,
+        presentedItemId: postTurnItem?.status === 'presenting' ? claimed.id : null,
         presence: this.getPresenceSnapshot(this.now()),
       };
     } catch (error) {
@@ -791,6 +849,16 @@ export class StudioChiefOfStaffService {
 
     const workspace = this.deps.resolveTwinWorkspace(params.twinId);
     const reportsDir = path.join(workspace, 'reports');
+    const publisher = this.deps.resolvePublisherIdentity?.(params.twinId) ?? {
+      name: `Bot #${params.twinId}`,
+      role: 'Twin',
+    };
+    const publisherLine = [
+      `${publisher.name} (${publisher.role})`,
+      publisher.globalMetaId ? `MetaID: ${publisher.globalMetaId}` : '',
+      publisher.address ? `Address: ${publisher.address}` : '',
+    ].filter(Boolean).join(' · ');
+
     let reportHtmlPath: string | null = null;
     try {
       fs.mkdirSync(reportsDir, { recursive: true });
@@ -798,18 +866,20 @@ export class StudioChiefOfStaffService {
       const rowsHtml = receipts
         .map((r) => r.error
           ? `<tr><td>${escapeHtml(r.title)}</td><td style="color:#b91c1c">Failed: ${escapeHtml(r.error)}</td><td>-</td></tr>`
-          : `<tr><td>${escapeHtml(r.title)}</td><td><code>pin://${escapeHtml(r.pinId)}</code></td><td>${r.cost} sats</td></tr>`)
+          : `<tr><td>${escapeHtml(r.title)}</td><td><a href="pin://${escapeHtml(r.pinId)}"><code>pin://${escapeHtml(r.pinId)}</code></a></td><td>${r.cost} sats</td></tr>`)
         .join('\n');
       fs.writeFileSync(
         filePath,
-        `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>On-Chain Stamp Receipt</title>` +
+        `<!DOCTYPE html><html lang="zh"><head><meta charset="UTF-8"><title>链上盖章发布凭证</title>` +
           `<style>body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;background:#f5f6f8;color:#15181c;padding:28px;margin:0}` +
           `.card{max-width:860px;margin:0 auto;background:#fff;border-radius:16px;padding:24px;box-shadow:0 2px 12px rgba(0,0,0,.05)}` +
           `.badge{display:inline-block;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:600;background:#dcfce7;color:#166534;margin-bottom:10px}` +
+          `.signer{margin-top:8px;padding:10px 12px;border-radius:10px;background:#f8fafc;border:1px solid #e2e8f0;font-size:12px;color:#334155;word-break:break-all}` +
           `table{width:100%;border-collapse:collapse;margin-top:16px;font-size:13px}th,td{text-align:left;padding:10px 8px;border-bottom:1px solid #e5e7eb}code{font-size:12px;word-break:break-all}</style></head>` +
-          `<body><div class="card"><span class="badge">Twin Stamp Published</span><h1 style="font-size:20px;margin:0 0 8px">On-Chain Publication Receipt (${receipts.filter((r) => !r.error).length}/${receipts.length})</h1>` +
-          `<p style="font-size:13px;color:#4b5563;margin:0">Approved: ${escapeHtml(params.approvalNote)}</p>` +
-          `<table><thead><tr><th>Deliverable</th><th>MetaWeb Pin URI</th><th>Network Fee</th></tr></thead><tbody>${rowsHtml}</tbody></table></div></body></html>`,
+          `<body><div class="card"><span class="badge">总裁办盖章上链凭证</span><h1 style="font-size:20px;margin:0 0 8px">链上发布回执（成功 ${receipts.filter((r) => !r.error).length}/${receipts.length}）</h1>` +
+          `<div class="signer"><strong>发布账号：</strong>${escapeHtml(publisherLine)}</div>` +
+          `<p style="font-size:13px;color:#4b5563;margin:10px 0 0">批准依据：${escapeHtml(params.approvalNote)}</p>` +
+          `<table><thead><tr><th>标题</th><th>完整链上 Pin ID（点击打开）</th><th>网络费用</th></tr></thead><tbody>${rowsHtml}</tbody></table></div></body></html>`,
         'utf8',
       );
       reportHtmlPath = filePath;
@@ -819,9 +889,14 @@ export class StudioChiefOfStaffService {
 
     const okCount = receipts.filter((r) => !r.error).length;
     const language = this.deps.getAppLanguage?.() ?? 'zh';
-    const pinLines = receipts
-      .map((r) => r.error ? `- ${r.title}: FAILED (${r.error})` : `- [${r.title}](pin://${r.pinId})`)
-      .join('\n');
+    const pinLines = [
+      language === 'zh' ? `发布账号：${publisherLine}` : `Published by: ${publisherLine}`,
+      ...receipts.map((r) =>
+        r.error
+          ? `- ${r.title}: FAILED (${r.error})`
+          : `- [${r.title}](pin://${r.pinId}) — Pin ID: \`pin://${r.pinId}\``,
+      ),
+    ].join('\n');
 
     const enqueueInput: EnqueueStudioDecisionInput = {
       dedupeKey: `stamp_receipt:${params.jobId}`,

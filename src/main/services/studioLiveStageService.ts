@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type { CoworkMessage, CoworkSession } from '../coworkStore';
 import type { BotBrowserProjectionInput, BotBrowserProjectionOutcome } from './botBrowserProjectionService';
 import type { StudioLiveStageSettings } from './studioLiveStageSettings';
-import { applyLiveStageSpeech, completeLiveStage, createLiveStageState, buildLiveStageInteraction, dismissLiveStageInteraction, isLiveStageWorkerReport, liveStageError, presentLiveStageInteraction, reduceLiveStageMessage, reportReadyLiveStage, waitingLiveStage, type LiveStageCollaboratingWorker, type LiveStageInteraction, type LiveStageState, type LiveStageTaskHud } from './studioLiveStageModel';
+import { applyLiveStageSpeech, completeLiveStage, createLiveStageState, buildLiveStageInteraction, dismissLiveStageInteraction, isLiveStageInternalTrigger, isLiveStageWorkerReport, liveStageError, presentLiveStageInteraction, reduceLiveStageMessage, reportReadyLiveStage, waitingLiveStage, type LiveStageCollaboratingWorker, type LiveStageInteraction, type LiveStageState, type LiveStageTaskHud } from './studioLiveStageModel';
 import { describeStudioTurnError } from '../shared/studioTurnErrorCopy';
 import type { StudioOpenDelegation } from './studioOpenDelegations';
 import { isLiveStagePageUri, materializeLiveStageEntry, stageAssetFor, type LiveStageEntry } from './studioLiveStageEntry';
@@ -1013,6 +1013,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       console.warn(`[StudioLiveStage] observe ${sessionId} type=${message.type} id=${message.id} enabled=${currentSettings.enabled} director=${currentSettings.directorEnabled}`);
     }
     if (!currentSettings.enabled) return;
+    if (isLiveStageInternalTrigger(message)) return;
     const humanOrigin = message.type === 'user' && !isLiveStageWorkerReport(message)
       && (!message.metadata?.origin || message.metadata.origin === 'user' || message.metadata.origin === 'quick_action');
     let run = runs.get(sessionId);

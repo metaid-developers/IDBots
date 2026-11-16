@@ -262,6 +262,55 @@ export class StudioDecisionQueueStore {
     return rows.map((row) => this.mapRow(row));
   }
 
+  /**
+   * True when an item for `longtermTaskId` is already open (`queued` / `presenting`)
+   * OR was created/updated within `recentWindowMs` — prevents store status
+   * listeners from auto-enqueuing redundant fallback duplicates right after the
+   * Twin already enqueued or resolved a richer briefing for the same task.
+   */
+  hasRecentOrOpenForTask(
+    twinMetabotId: number,
+    longtermTaskId: string,
+    recentWindowMs: number = 30 * 60_000,
+    nowMs: number = Date.now(),
+  ): boolean {
+    const taskId = asString(longtermTaskId);
+    if (!taskId) return false;
+    const cutoffIso = new Date(nowMs - Math.max(0, recentWindowMs)).toISOString();
+    const rows = this.queryAll(
+      `SELECT id FROM studio_decision_queue
+        WHERE twin_metabot_id = ?
+          AND longterm_task_id = ?
+          AND (status IN ('queued', 'presenting') OR updated_at >= ?)
+        LIMIT 1`,
+      [twinMetabotId, taskId, cutoffIso],
+    );
+    return rows.length > 0;
+  }
+
+  cancelSiblingQueuedForTask(
+    twinMetabotId: number,
+    longtermTaskId: string | null,
+    exceptId: string,
+    reason: string = 'superseded by owner ruling',
+    atIso: string = nowIso(),
+  ): number {
+    const taskId = asString(longtermTaskId);
+    if (!taskId) return 0;
+    const siblings = this.queryAll(
+      `SELECT id FROM studio_decision_queue
+        WHERE twin_metabot_id = ?
+          AND longterm_task_id = ?
+          AND id != ?
+          AND status = 'queued'`,
+      [twinMetabotId, taskId, asString(exceptId)],
+    );
+    for (const row of siblings) {
+      this.cancel(String(row.id ?? ''), reason, atIso);
+    }
+    return siblings.length;
+  }
+
   enqueue(input: EnqueueStudioDecisionInput, atIso: string = nowIso()): {
     item: StudioDecisionQueueItem;
     reused: boolean;

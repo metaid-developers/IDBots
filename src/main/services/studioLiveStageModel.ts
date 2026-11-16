@@ -63,6 +63,8 @@ export type LiveStageTaskHudEntry = {
   accepted: number;
   total: number;
   currentSubtask?: string | null;
+  /** True for the single task currently active/focused in this Studio conversation. */
+  isCurrent?: boolean;
 };
 
 export type LiveStageTaskHud = {
@@ -128,6 +130,8 @@ export type LiveStageState = {
   activeWorkers?: LiveStageCollaboratingWorker[];
   /** Live graphical HUD of Managed Task Tree progress and queued owner decisions. */
   taskHud?: LiveStageTaskHud | null;
+  /** True when `complete` preserves the final `speaking` headline so font metrics stay steady. */
+  speechRest?: boolean;
   /**
    * Pre-claim draft identity patch (prepareDraft): renders bot name/avatar on
    * an unclaimed stage page without claiming it — the first real session
@@ -313,6 +317,22 @@ export function isLiveStageWorkerReport(message: CoworkMessage): boolean {
   return message.type === 'user' && (metadata?.origin === 'cross_session' || metadata?.sourceChannel === 'idbots_cross_session');
 }
 
+export function isLiveStageInternalTrigger(message: CoworkMessage): boolean {
+  if (message.type !== 'user') return false;
+  if (isLiveStageWorkerReport(message)) return false;
+  const metadata = message.metadata as Record<string, unknown> | undefined;
+  if (metadata?.isDelegationInternal === true) return true;
+  if (
+    metadata?.origin === 'studio_briefing'
+    || metadata?.origin === 'studio_supervision'
+    || metadata?.origin === 'heartbeat'
+  ) {
+    return true;
+  }
+  const trimmed = String(message.content ?? '').trimStart();
+  return /^<(?:studio_proactive_briefing|studio_back_office_supervision|active_studio_briefing)\b/i.test(trimmed);
+}
+
 const clip = (value: string, max: number): string => (value.length > max ? `${value.slice(0, Math.max(0, max - 1))}…` : value);
 
 /** First sentence-ending punctuation index (inclusive), or -1. */
@@ -402,6 +422,8 @@ export function liveStageSpeechCopy(markdown: string): { headline: string; capti
 /** Strip markdown to plain prose for stage display (no raw syntax on the projector). */
 export function markdownToPlainText(markdown: string): string {
   return String(markdown ?? '')
+    .replace(/<(?:studio_proactive_briefing|studio_back_office_supervision|active_studio_briefing|studio_queue_awareness)\b[^>]*>[\s\S]*?<\/(?:studio_proactive_briefing|studio_back_office_supervision|active_studio_briefing|studio_queue_awareness)>/gi, ' ')
+    .replace(/<\/?(?:studio|active_studio|cross_session_message|worker_report)[a-z0-9_]*[^>]*>/gi, ' ')
     .replace(/```[\s\S]*?(?:```|$)/g, ' ')
     .replace(/`([^`\n]*)`/g, '$1')
     .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
@@ -549,6 +571,7 @@ export function reduceLiveStageMessage(
   const metadata = message.metadata as Record<string, unknown> | undefined;
   // Host projection receipts are bookkeeping bubbles, not the bot speaking.
   if (metadata?.projectorReport) return state;
+  if (isLiveStageInternalTrigger(message)) return state;
   let family = state.family;
   let headline: string | undefined;
   let caption: string | undefined;
@@ -696,6 +719,8 @@ export function completeLiveStage(state: LiveStageState, nowMs = Date.now()): Li
     headline: keepSpeech ? state.headline : scene.headline,
     caption: keepSpeech ? state.caption : scene.caption,
     captionSource: keepSpeech ? state.captionSource : 'default',
+    speechRest: keepSpeech ? true : undefined,
+    reportUri: state.reportUri,
     family: 'complete',
     handoff: null,
     phaseStartedAt: nowMs,

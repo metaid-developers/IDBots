@@ -1055,3 +1055,4 @@ blob-report/
 !tests/studioChiefOfStaffPhase1.test.mjs
 !tests/studioChiefOfStaffPhase2.test.mjs
 !tests/studioChiefOfStaffPhase3.test.mjs
+!tests/studioChiefOfStaffPolish.test.mjs
