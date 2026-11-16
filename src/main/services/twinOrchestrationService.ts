@@ -844,12 +844,13 @@ export class TwinOrchestrationService {
 
     let longtermContext: { taskId: string; subtaskId: string; reportSessionId: string } | null = null;
     const ltStore = this.deps.longTermTaskStore?.();
+    const isStudioSession = Boolean(this.deps.isStudioSourceSession?.(sourceSessionId));
     if (ltStore) {
       const explicitTaskId = coercedLongtermTaskId;
       const explicitSubtaskId = coercedLongtermSubtaskId;
       if (explicitTaskId) {
         const detail = ltStore.getTask(explicitTaskId);
-        const sub = detail
+        const sub = detail && detail.stage !== 'done' && detail.stage !== 'cancelled'
           ? (explicitSubtaskId
               ? detail.subtasks.find((item) => item.id === explicitSubtaskId)
               : detail.subtasks.find((item) => item.id === detail.currentSubtaskId) ?? detail.subtasks[0])
@@ -862,22 +863,56 @@ export class TwinOrchestrationService {
           };
         }
       }
+      // In Studio mode, if re-dispatching the SAME Worker mid-flight (course
+      // correction without `parallelSameWorker: true`), reuse that Worker's
+      // active quick task card so we update it in place; otherwise, never glue
+      // an independent parallel Studio delegation onto another Worker's quick
+      // card or onto an already-finished (`done`) card!
+      if (!longtermContext && isStudioSession && input.parallelSameWorker !== true && !effectiveOrchTaskId) {
+        const priorAttempts = this.deps.orchestrationStore.listAttemptsForSourceSessions([sourceSessionId]) ?? [];
+        for (const priorAttempt of priorAttempts) {
+          if (priorAttempt.workerMetabotId !== workerMetabotId) continue;
+          if (!['queued', 'running', 'timed_out'].includes(priorAttempt.status)) continue;
+          const priorTask = this.deps.orchestrationStore.getTaskForStep(priorAttempt.stepId);
+          if (!priorTask || !['planning', 'running'].includes(priorTask.status) || !priorTask.longtermTaskId) continue;
+          const priorLt = ltStore.getTask(priorTask.longtermTaskId);
+          const priorSub = priorLt && priorLt.stage === 'active'
+            ? (priorLt.subtasks.find((s) => s.id === priorTask.longtermSubtaskId) ?? priorLt.subtasks[0])
+            : null;
+          if (priorLt && priorSub) {
+            longtermContext = {
+              taskId: priorLt.id,
+              subtaskId: priorSub.id,
+              reportSessionId: priorLt.definitionSessionId ?? sourceSessionId,
+            };
+            break;
+          }
+        }
+      }
       if (!longtermContext) {
         const hit = ltStore.findBySessionId(sourceSessionId);
         if (hit?.subtask) {
           const detail = ltStore.getTask(hit.task.id);
-          longtermContext = {
-            taskId: hit.task.id,
-            subtaskId: hit.subtask.id,
-            reportSessionId: detail?.definitionSessionId ?? sourceSessionId,
-          };
+          const reusableInSession = Boolean(
+            detail
+            && detail.stage !== 'done'
+            && detail.stage !== 'cancelled'
+            && (!isStudioSession || detail.taskKind !== 'quick'),
+          );
+          if (detail && reusableInSession) {
+            longtermContext = {
+              taskId: hit.task.id,
+              subtaskId: hit.subtask.id,
+              reportSessionId: detail.definitionSessionId ?? sourceSessionId,
+            };
+          }
         }
       }
-      if (!longtermContext && this.deps.isStudioSourceSession?.(sourceSessionId)) {
+      if (!longtermContext && isStudioSession) {
         const focusedTaskId = this.deps.getFocusedTaskForSession?.(sourceSessionId)?.trim() || '';
         if (focusedTaskId) {
           const focusedDetail = ltStore.getTask(focusedTaskId);
-          if (focusedDetail && focusedDetail.stage === 'active') {
+          if (focusedDetail && focusedDetail.stage === 'active' && focusedDetail.taskKind !== 'quick') {
             const sub = focusedDetail.subtasks.find((item) => item.id === focusedDetail.currentSubtaskId)
               ?? focusedDetail.subtasks[0];
             if (sub) {
@@ -890,7 +925,7 @@ export class TwinOrchestrationService {
           }
         }
       }
-      if (!longtermContext && this.deps.isStudioSourceSession?.(sourceSessionId)) {
+      if (!longtermContext && isStudioSession) {
         const quickTitle = String(input.taskIntent ?? objective).split('\n')[0].trim().slice(0, 80) || objective.slice(0, 80);
         const quickCreated = ltStore.createQuickTask(
           {

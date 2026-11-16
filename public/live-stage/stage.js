@@ -544,12 +544,15 @@
 
     if (tasks.length > 0) {
       const currentIdx = tasks.findIndex((t) => t?.isCurrent === true);
-      const primary = currentIdx >= 0 ? tasks[currentIdx] : null;
-      if (primary) {
-        hud.append(buildTaskHudRow(primary, true));
-      }
+      const currentTasks = tasks.filter((t) => t?.isCurrent === true).slice(0, 4);
+      currentTasks.forEach((curTask) => {
+        hud.append(buildTaskHudRow(curTask, true));
+      });
 
-      const others = primary ? tasks.filter((_, i) => i !== currentIdx) : tasks;
+      const shownCurrentIds = new Set(currentTasks.map((t) => t?.id));
+      const others = currentIdx >= 0
+        ? tasks.filter((t) => !shownCurrentIds.has(t?.id))
+        : tasks;
       if (others.length > 0) {
         const toggle = document.createElement('button');
         toggle.type = 'button';
@@ -711,18 +714,20 @@
     const stage = $('.live-stage').getBoundingClientRect();
     if (stage.width < 1 || stage.height < 1) return false;
     const constellationEl = $('[data-worker-constellation]');
-    const firstCard = constellationEl && !constellationEl.hidden
-      ? constellationEl.querySelector('.constellation-item')
-      : null;
+    // When the worker constellation is visible, `drawParticles` already draws
+    // the clean canvas curve + chevron + pulse to every constellation card;
+    // suppress the legacy SVG `[data-handoff-flow]` dashed arc so delegation
+    // never renders a second overlapping curved dashed line.
+    if (constellationEl && !constellationEl.hidden && constellationEl.querySelector('.constellation-item')) {
+      return false;
+    }
     const hybridWorkerEl = $('.hybrid-worker');
-    const targetEl = firstCard || (hybridWorkerEl && !hybridWorkerEl.hidden ? hybridWorkerEl : null);
+    const targetEl = hybridWorkerEl && !hybridWorkerEl.hidden ? hybridWorkerEl : null;
     if (!targetEl) return false;
     const worker = targetEl.getBoundingClientRect();
     const orb = $('.membrane').getBoundingClientRect();
     if (worker.width < 4 || worker.height < 4 || orb.width < 4 || orb.height < 4) return false;
-    const from = firstCard
-      ? { x: worker.left - stage.left - 4, y: worker.top + worker.height / 2 - stage.top }
-      : { x: worker.left + worker.width / 2 - stage.left, y: worker.top + worker.height / 2 - stage.top };
+    const from = { x: worker.left + worker.width / 2 - stage.left, y: worker.top + worker.height / 2 - stage.top };
     const to = { x: orb.left + orb.width / 2 - stage.left, y: orb.top + orb.height / 2 - stage.top };
     const control = {
       x: (from.x + to.x) / 2,

@@ -7492,6 +7492,11 @@ const getCoworkRunner = () => {
         openUri: (input) => sendBotBrowserOpenUri(input),
         execute: (command) => getBotBrowserTabBridge().execute(command),
         projectionBlockedReason: (sessionId: string) => studioProjectionBlockedReason(sessionId, 'preview'),
+        isBackgroundSession: (sessionId: string) => {
+          const sess = getCoworkStore().getSessionWithoutMessages(sessionId);
+          if (!sess) return false;
+          return sess.sessionType !== 'browser' || Boolean(sess.autoOrigin);
+        },
         projectReport: async (input) => {
           const outcome = await getStudioLiveStageService().projectReport(
             input,
@@ -9527,10 +9532,11 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
         const ltStore = getLongTermTaskStore();
         const board = ltStore.listBoard();
         const twin = getMetabotStore().listMetabots().find((bot) => bot.metabot_type === 'twin' && bot.enabled);
+        const openDelegations = sessionId ? listOpenStudioDelegations(sessionId) : [];
         const studioBusy = Boolean(
           sessionId && (
             getCoworkRunner().isSessionActive(sessionId)
-            || listOpenStudioDelegations(sessionId).length > 0
+            || openDelegations.length > 0
             || getStudioChiefOfStaffService().isSupervisionBusy()
           ),
         );
@@ -9539,29 +9545,74 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
         const candidates = board.cards
           .filter((card) => card.stage !== 'done' && card.stage !== 'cancelled' && card.managedState != null)
           .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
-        if (candidates.length === 0 && queuedDecisions === 0) return null;
+        const candidateById = new Map(candidates.map((c) => [c.id, c]));
 
+        // Track ALL parallel active tasks belonging to this Studio conversation:
+        //  1) explicit focused task;
+        //  2) active tasks born in `sessionId` (`definitionSessionId === sessionId`);
+        //  3) active tasks linked by currently open/verifying Studio delegations;
+        //  4) synthesized live rows for open Studio delegations whose linked
+        //     `longtermTaskId` was already closed (`done`) or absent.
+        const currentIds = new Set<string>();
         const explicitFocus = getStudioChiefOfStaffService().getFocusedTaskId(sessionId);
-        let focusedId = explicitFocus && candidates.some((c) => c.id === explicitFocus) ? explicitFocus : null;
-        if (!focusedId && sessionId) {
-          const sessionBorn = candidates.find((c) => ltStore.getTask(c.id)?.definitionSessionId === sessionId);
-          if (sessionBorn) focusedId = sessionBorn.id;
+        if (explicitFocus && candidateById.has(explicitFocus)) {
+          currentIds.add(explicitFocus);
         }
-        // Issue 1 (owner feedback 2026-11-16): NEVER fall back to highlighting
-        // an unrelated historical task when the current Studio session has not
-        // yet created or focused a task of its own.
-        if (!focusedId && queuedDecisions === 0) {
+        if (sessionId) {
+          for (const card of candidates) {
+            if (ltStore.getTask(card.id)?.definitionSessionId === sessionId) {
+              currentIds.add(card.id);
+            }
+          }
+        }
+        const synthesizedCurrent: Array<{
+          id: string;
+          title: string;
+          state: 'in_progress' | 'waiting_external' | 'waiting_owner';
+          accepted: number;
+          total: number;
+          currentSubtask?: string | null;
+          isCurrent: boolean;
+        }> = [];
+        const seenSynthOrchIds = new Set<string>();
+        for (const entry of openDelegations) {
+          const rawAttemptId = entry.attemptId.replace(/^verify:/, '');
+          const attempt = getOrchestrationStore().getAttempt(rawAttemptId);
+          const orchTask = attempt ? getOrchestrationStore().getTaskForStep(attempt.stepId) : null;
+          const ltId = orchTask?.longtermTaskId ?? null;
+          if (ltId && candidateById.has(ltId)) {
+            currentIds.add(ltId);
+          } else {
+            const synthKey = orchTask?.id ?? rawAttemptId;
+            if (seenSynthOrchIds.has(synthKey)) continue;
+            seenSynthOrchIds.add(synthKey);
+            synthesizedCurrent.push({
+              id: `orch:${synthKey}`,
+              title: entry.title || orchTask?.ownerIntent || '后台协作任务',
+              state: 'in_progress',
+              accepted: 0,
+              total: 1,
+              currentSubtask: entry.workerName
+                ? (entry.phase === 'back_office_verifying' ? `${entry.workerName} 已交回 · 后台核验中` : `${entry.workerName} 执行中`)
+                : null,
+              isCurrent: true,
+            });
+          }
+        }
+
+        if (currentIds.size === 0 && synthesizedCurrent.length === 0 && queuedDecisions === 0) {
           return null;
         }
 
         const ordered = [...candidates].sort((a, b) => {
-          if (focusedId && a.id === focusedId) return -1;
-          if (focusedId && b.id === focusedId) return 1;
+          const aCur = currentIds.has(a.id) ? 1 : 0;
+          const bCur = currentIds.has(b.id) ? 1 : 0;
+          if (aCur !== bCur) return bCur - aCur;
           return String(b.updatedAt).localeCompare(String(a.updatedAt));
         });
 
-        const activeTasks = ordered.slice(0, 8).map((card) => {
-          const isCurrent = Boolean(focusedId && card.id === focusedId);
+        const mappedCards = ordered.map((card) => {
+          const isCurrent = currentIds.has(card.id);
           const rawState = card.managedState ?? 'in_progress';
           return {
             id: card.id,
@@ -9573,6 +9624,7 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
             isCurrent,
           };
         });
+        const activeTasks = [...synthesizedCurrent, ...mappedCards].slice(0, 8);
         return { queuedDecisions, tasks: activeTasks };
       },
       getSettings: () => readStudioLiveStageSettings(getStoreOrNull()),

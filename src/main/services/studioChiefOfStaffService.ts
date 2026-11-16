@@ -471,9 +471,10 @@ export class StudioChiefOfStaffService {
         '<studio_active_workers>',
         `Currently executing Worker delegation(s) for this Studio conversation (${openWorkers.length}):`,
         ...workerLines,
-        'Mid-flight course-correction rule:',
+        'Mid-flight course-correction & parallel-task rules:',
         '- If the owner is ADJUSTING or REVISING instructions for a task that one of the Workers above is STILL executing right now (e.g. "let them generate 3 versions instead"), re-delegate to that SAME `workerMetabotId` WITHOUT setting `parallelSameWorker` — the host will automatically cancel and stop their obsolete in-flight run so two runs never collide! (Or call `twin_task_cancel` if cancelling outright.)',
-        '- Always end a delegation reply by explicitly telling the owner who is now working in the background and that they can wait for your verified report (or bring up another topic anytime).',
+        '- If the owner brings up an UNRELATED new request while Workers above are busy: (a) for a quick question/inspection you can answer within this turn, answer it directly without creating a task card; (b) for a substantive new deliverable (e.g. "have Eleven make 3 cover images", "write/audit a module"), immediately delegate it to an available Worker via `local_worker_delegate` (do NOT pass the other Worker\'s `longtermTaskId`, so the host auto-creates an independent parallel task card on the right-hand Task Progress HUD!) or register a task card so no parallel owner request is ever forgotten.',
+        '- Always end a delegation reply by explicitly telling the owner which Worker(s) are now running in parallel in the background and that they will receive verified reports.',
         '</studio_active_workers>',
       ].join('\n'));
     }

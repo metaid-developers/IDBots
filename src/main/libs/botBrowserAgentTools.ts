@@ -73,6 +73,12 @@ export type BotBrowserControl = {
    */
   projectionBlockedReason?(sessionId: string): string | null;
   /**
+   * True when `sessionId` is a background / A2A / unattended session rather
+   * than an owner-facing Studio (`browser`) session — prevents background/A2A
+   * canary previews from hijacking the owner's foreground Bot Browser tab!
+   */
+  isBackgroundSession?(sessionId: string): boolean;
+  /**
    * Capture the active (or a specified) Bot Browser tab as an image. Resolves
    * with the base64 image bytes, mimeType, and dimensions. Rejects (or the
    * renderer reports an error) when the Bot Browser surface is not visible.
@@ -535,16 +541,17 @@ export function buildBotBrowserAgentTools(deps: {
     },
     async (args: { uri: string; newTab?: boolean }) => {
       const uri = args.uri.trim();
+      const shouldActivate = !controlBotBrowser.isBackgroundSession?.(sessionId);
       try {
         if (args.newTab) {
-          const result = await controlBotBrowser.execute({ action: 'open-tab', uri, sessionId, role: 'showcase' });
+          const result = await controlBotBrowser.execute({ action: 'open-tab', uri, sessionId, role: 'showcase', activate: shouldActivate });
           const [stageTabId, showcaseTabId] = await Promise.all([
             resolveSessionRoleTabId(controlBotBrowser, sessionId, 'stage'),
             resolveSessionRoleTabId(controlBotBrowser, sessionId, 'showcase'),
           ]);
           return textResult(`Opened ${uri} in the session's showcase tab. Current tabs (* = active):\n${formatBotBrowserTabs(result, { stageTabId, showcaseTabId })}`);
         }
-        await controlBotBrowser.execute({ action: 'navigate-tab', uri, sessionId, role: 'showcase', activate: true });
+        await controlBotBrowser.execute({ action: 'navigate-tab', uri, sessionId, role: 'showcase', activate: shouldActivate });
         return textResult(`Navigated the session's showcase tab to ${uri}.`);
       } catch (error) {
         return textResult(`Failed to open ${uri} in Bot Browser: ${error instanceof Error ? error.message : String(error)}. ${SURFACE_HINT}`, true);
@@ -616,12 +623,13 @@ export function buildBotBrowserAgentTools(deps: {
           return textResult(`Failed to project ${localPath} onto the projector: ${error instanceof Error ? error.message : String(error)}. ${SURFACE_HINT}`, true);
         }
       }
+      const shouldActivate = !controlBotBrowser.isBackgroundSession?.(sessionId);
       try {
         if (args.newTab === false) {
-          await controlBotBrowser.execute({ action: 'navigate-tab', uri, sessionId, role: 'showcase', activate: true });
+          await controlBotBrowser.execute({ action: 'navigate-tab', uri, sessionId, role: 'showcase', activate: shouldActivate });
           return textResult(`Navigated the session's showcase tab to preview ${localPath}. Tell the user to reload the tab after you make further edits.`);
         }
-        const result = await controlBotBrowser.execute({ action: 'open-tab', uri, sessionId, role: 'showcase' });
+        const result = await controlBotBrowser.execute({ action: 'open-tab', uri, sessionId, role: 'showcase', activate: shouldActivate });
         const [stageTabId, showcaseTabId] = await Promise.all([
           resolveSessionRoleTabId(controlBotBrowser, sessionId, 'stage'),
           resolveSessionRoleTabId(controlBotBrowser, sessionId, 'showcase'),
@@ -894,8 +902,18 @@ export function buildBotBrowserScreenshotTool(deps: {
           return textResult('quality must be between 0 and 100.', true);
         }
 
+        const isBg = Boolean(controlBotBrowser.isBackgroundSession?.(sessionId));
+        let prevActiveTabId: number | null = null;
+        let navigated = false;
         try {
-          let navigated = false;
+          if (isBg) {
+            try {
+              const beforeSnap = await controlBotBrowser.execute({ action: 'get-active-tab' });
+              prevActiveTabId = beforeSnap.activeTab?.id ?? null;
+            } catch {
+              prevActiveTabId = null;
+            }
+          }
           const uri = args.uri?.trim();
           if (uri) {
             if (args.newTab) {
@@ -968,6 +986,10 @@ export function buildBotBrowserScreenshotTool(deps: {
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           return textResult(`Failed to capture Bot Browser screenshot: ${message}. ${SURFACE_HINT}`, true);
+        } finally {
+          if (isBg && navigated && prevActiveTabId != null) {
+            await controlBotBrowser.execute({ action: 'switch-tab', tabId: prevActiveTabId }).catch(() => undefined);
+          }
         }
       },
     ),
