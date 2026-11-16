@@ -15,11 +15,17 @@ async function pendingOrderId(page: import('@playwright/test').Page): Promise<st
   return text.trim();
 }
 
+async function chooseMePlan(page: import('@playwright/test').Page, planTestId: string): Promise<void> {
+  await page.locator('[data-testid="me-points-hero"] .me-hero-button-primary').click();
+  await expect(page.getByTestId('me-purchase-page')).toBeVisible();
+  await page.getByTestId(planTestId).click();
+}
+
 test.describe('ME purchase & topup', () => {
   test('free tier: server checkout → credited → subscription order in usage', async ({ page }, testInfo) => {
     await page.goto('/app/');
     await page.getByRole('button', { name: 'Me' }).click();
-    await page.getByTestId('me-tier-me_pro').click();
+    await chooseMePlan(page, 'me-tier-me_pro');
     await expect(page.getByTestId('me-purchase-page')).toBeVisible();
     await expect(page.getByTestId('me-purchase-page').getByRole('heading', { name: 'Choose a plan' })).toBeVisible();
     await attachScreen(testInfo, page, 'me-purchase-subscribe');
@@ -81,7 +87,7 @@ test.describe('ME purchase & topup', () => {
     });
     await page.getByRole('button', { name: 'Me' }).click();
     await page.locator('[data-testid="me-points-hero"] button[aria-label="Retry"]').click();
-    await page.getByTestId('me-tier-me_max').click();
+    await chooseMePlan(page, 'me-tier-me_max');
     await page.getByTestId('me-purchase-submit').click();
     await expect(page.getByTestId('me-upgrade-confirm')).toBeVisible();
     await expect(page.getByTestId('me-payment-pending')).toHaveCount(0);
@@ -92,7 +98,7 @@ test.describe('ME purchase & topup', () => {
   test('reload restores the same pending order from the order list without recreating it', async ({ page }) => {
     await page.goto('/app/');
     await page.getByRole('button', { name: 'Me' }).click();
-    await page.getByTestId('me-tier-me_pro').click();
+    await chooseMePlan(page, 'me-tier-me_pro');
     await page.getByTestId('me-purchase-submit').click();
     await expect(page.getByTestId('me-payment-pending')).toBeVisible();
     const orderId = await pendingOrderId(page);

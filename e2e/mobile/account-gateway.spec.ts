@@ -7,6 +7,12 @@ async function pendingOrderId(page: Page): Promise<string> {
   return (await page.locator('.me-checkout-order').innerText()).trim();
 }
 
+async function chooseMePlan(page: Page, planTestId: string): Promise<void> {
+  await page.locator('[data-testid="me-points-hero"] .me-hero-button-primary').click();
+  await expect(page.getByTestId('me-purchase-page')).toBeVisible();
+  await page.getByTestId(planTestId).click();
+}
+
 async function installMeOrderStatus(page: Page, orderId: string, status: string): Promise<void> {
   await page.evaluate(({ orderId: id, status: nextStatus }) => {
     window.electron.mePoints.getSubscriptionOrder = async ({ orderId: requestedId }) => ({
@@ -36,14 +42,14 @@ test.describe('gateway account and daily use', () => {
   test('ME order recovery, exactly-once balance and the next chat use real C2 @gateway', async ({ page }, testInfo) => {
     await page.goto('/app/');
     await page.getByRole('button', { name: 'Me', exact: true }).click();
-    await page.getByTestId('me-tier-me_pro').click();
+    await chooseMePlan(page, 'me-tier-me_pro');
     await page.getByTestId('me-purchase-submit').click();
     await expect(page.getByTestId('me-payment-pending')).toBeVisible();
     const orderId = await pendingOrderId(page);
     expect(orderId).toBe('gw-me-subscription-1');
 
     await page.getByRole('button', { name: 'Close' }).click();
-    await page.getByTestId('me-tier-me_pro').click();
+    await chooseMePlan(page, 'me-tier-me_pro');
     await expect(page.locator('.me-checkout-order')).toHaveText(orderId);
     await page.reload();
     await page.getByRole('button', { name: 'Me', exact: true }).click();
@@ -74,7 +80,7 @@ test.describe('gateway account and daily use', () => {
   test('an expired unpaid ME order reconciles to credited without a duplicate @gateway', async ({ page }) => {
     await page.goto('/app/');
     await page.getByRole('button', { name: 'Me', exact: true }).click();
-    await page.getByTestId('me-tier-me_pro').click();
+    await chooseMePlan(page, 'me-tier-me_pro');
     await page.getByTestId('me-period-quarter').click();
     await page.getByTestId('me-purchase-submit').click();
     await expect(page.getByTestId('me-payment-pending')).toBeVisible();
@@ -84,13 +90,14 @@ test.describe('gateway account and daily use', () => {
     await page.reload();
     await installMeOrderStatus(page, orderId, 'submitted');
     await page.getByRole('button', { name: 'Me', exact: true }).click();
-    await page.getByTestId('me-tier-me_pro').click();
+    await chooseMePlan(page, 'me-tier-me_pro');
     await expect(page.locator('.me-checkout-order')).toHaveText(orderId);
 
     await installMeOrderStatus(page, orderId, 'confirmed');
     await page.getByTestId('me-payment-check').click();
     await expect(page.getByTestId('me-purchase-submitted')).toBeVisible();
     await page.getByRole('button', { name: 'Done' }).click();
+    await chooseMePlan(page, 'me-tier-me_pro');
     await expect(page.getByTestId('me-tier-me_pro')).toBeEnabled();
     const matchingOrders = await page.evaluate(async (id) => {
       const result = await window.electron.mePoints.getSubscriptionOrders();

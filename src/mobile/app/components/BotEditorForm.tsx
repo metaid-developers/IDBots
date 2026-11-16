@@ -3,7 +3,9 @@ import { ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
 import { t } from '../../i18n';
 import type { MobileMetabot } from '../../bridge/types';
 import type { BotOperationResult, MobileBotInput } from '../hooks/useMetabots';
+import { defaultBotBrains } from '../botDefaults';
 import { BotAvatar } from './BotAvatar';
+import { TwinBadge } from './TwinBadge';
 import { fileToAvatarDataUrl } from '../avatarUpload';
 import AvatarPickerModal, { type AvatarPickerNftItem } from '../../../renderer/components/avatar/AvatarPickerModal';
 import {
@@ -18,12 +20,10 @@ import {
 /**
  * MetaBot create/edit forms, split per the UE rework (2026-10-29, A5):
  *
- * - CREATE: only Name + Role. Nothing else — no Advanced section, no tabs.
- *   Humans don't slowly fill a dozen fields at birth; everything else is
- *   completed afterwards through Edit. The real createMetaBotOnChain
- *   contract requires a primary model (`requireMetabotLlmIdForCreate`), so
- *   the form transparently auto-fills the first catalog model and says so
- *   in copy — UI transparency, not a relaxed backend contract.
+ * - CREATE: Name + Role plus primary/fallback brain defaults. No tabs or
+ *   advanced sections. The primary defaults to ID.Bots deepseek-flash and the
+ *   fallback to glm-5.3-flash when the catalog carries them; both effort
+ *   selectors start on Auto (null, the runner's automatic effort rung).
  * - EDIT: full desktop-aligned field set in five tabs (Basic / Persona /
  *   Model / Chat settings / Other), mirroring the desktop edit tabs'
  *   ownership: avatar+bio (Basic), soul+goal (Persona), primary+fallback
@@ -213,6 +213,7 @@ function BrainBlock(props: {
 function FallbackBrainBlock(props: {
   options: EditorBrainOption[];
   brain: EditorBrainOption | null;
+  primaryBrain: EditorBrainOption | null;
   effort: string;
   busy: boolean;
   onBrainChange: (option: EditorBrainOption | null) => void;
@@ -236,7 +237,7 @@ function FallbackBrainBlock(props: {
         >
           <option value="">{t('mobile.me.botFallbackNone')}</option>
           {props.options
-            .filter((option) => !props.brain || brainValue(option) !== brainValue(props.brain))
+            .filter((option) => !props.primaryBrain || brainValue(option) !== brainValue(props.primaryBrain))
             .map((option) => (
               <option key={`${option.providerKey}\n${option.modelId}`} value={brainValue(option)}>
                 {option.label}
@@ -320,7 +321,7 @@ function AvatarField(props: {
           ownerGlobalMetaId={props.ownerGlobalMetaId}
           loadNfts={loadNfts}
           maxLocalBytes={200 * 1024}
-          allowBuiltin={false}
+          allowBuiltin={true}
           allowNft={Boolean(props.botId)}
           readLocalFile={fileToAvatarDataUrl}
           onPick={(reference) => {
@@ -371,8 +372,12 @@ export function BotEditorForm(props: {
   const [bio, setBio] = useState(bot?.bio ?? '');
   const [avatar, setAvatar] = useState<string | null>(bot?.avatar ?? null);
   const [avatarTouched, setAvatarTouched] = useState(false);
+  const initialDefaultBrains = defaultBotBrains(options);
+  const brainTouchedRef = useRef(false);
+  const fallbackBrainTouchedRef = useRef(false);
   const [brain, setBrain] = useState<EditorBrainOption | null>(() => {
-    if (!bot?.llm_id) return options[0] ?? null;
+    if (!bot) return initialDefaultBrains.primary;
+    if (!bot.llm_id) return initialDefaultBrains.primary;
     const current = options.find(
       (option) => option.modelId === bot.llm_id && option.providerKey === (bot.llm_provider ?? ''),
     );
@@ -384,7 +389,8 @@ export function BotEditorForm(props: {
   });
   const [effort, setEffort] = useState(bot?.llm_effort ?? '');
   const [fallbackBrain, setFallbackBrain] = useState<EditorBrainOption | null>(() => {
-    if (!bot?.fallback_llm_id) return null;
+    if (!bot) return initialDefaultBrains.fallback;
+    if (!bot.fallback_llm_id) return null;
     return {
       providerKey: bot.fallback_llm_provider ?? '',
       modelId: bot.fallback_llm_id,
@@ -403,6 +409,13 @@ export function BotEditorForm(props: {
   const [a2aByeCooldownMs, setA2aByeCooldownMs] = useState<number>(
     bot?.a2a_bye_cooldown_ms ?? DEFAULT_A2A_BYE_COOLDOWN_MS,
   );
+  const optionsSignature = options.map(brainValue).join('\u0001');
+  useEffect(() => {
+    if (isEdit) return;
+    const defaults = defaultBotBrains(options);
+    if (!brainTouchedRef.current) setBrain(defaults.primary);
+    if (!fallbackBrainTouchedRef.current) setFallbackBrain(defaults.fallback);
+  }, [isEdit, optionsSignature]);
   const [balance, setBalance] = useState<{ loading: boolean; value?: string; error?: string }>({ loading: Boolean(bot) });
 
   // Dirty detection (A6, IA-PLAN §2.5 rule 2): any editor field differing
@@ -484,6 +497,11 @@ export function BotEditorForm(props: {
       {/* Identity pair: name + role are the only create-mode fields and stay
           top-level in edit mode (desktop persona parity). */}
       <div className="twin-panel twin-panel-padded">
+        {bot?.metabot_type === 'twin' ? (
+          <div className="mb-1 flex justify-end" data-testid="bot-editor-twin">
+            <TwinBadge />
+          </div>
+        ) : null}
         <Field htmlFor="bot-name" label={t('mobile.me.botNameLabel')}>
           <input
             id="bot-name"
@@ -511,12 +529,40 @@ export function BotEditorForm(props: {
       </div>
 
       {!isEdit ? (
-        <div data-testid="bot-create-guide" className="rounded-xl bg-[var(--bg-main)] p-3">
-          <p className={`mb-1 ${labelClass}`}>{t('mobile.me.botCreateBasicTitle')}</p>
-          <p className="text-sm text-[var(--text-primary)]">{t('mobile.me.botNameMinNote')}</p>
-          <p className="mt-1 text-xs text-[var(--text-secondary)]">{t('mobile.me.botCreateGuide')}</p>
-          <p className="mt-1 text-xs text-[var(--text-secondary)]">{t('mobile.me.botDefaultBrainNote')}</p>
-        </div>
+        <>
+          <div data-testid="bot-create-guide" className="rounded-xl bg-[var(--bg-main)] p-3">
+            <p className={`mb-1 ${labelClass}`}>{t('mobile.me.botCreateBasicTitle')}</p>
+            <p className="text-sm text-[var(--text-primary)]">{t('mobile.me.botNameMinNote')}</p>
+            <p className="mt-1 text-xs text-[var(--text-secondary)]">{t('mobile.me.botCreateGuide')}</p>
+            <p className="mt-1 text-xs text-[var(--text-secondary)]">{t('mobile.me.botDefaultBrainNote')}</p>
+          </div>
+          <div className="mt-3 flex flex-col gap-3" data-testid="bot-create-brains">
+            <BrainBlock
+              options={options}
+              brain={brain}
+              effort={effort}
+              busy={busy}
+              selectable={options.length > 0}
+              onBrainChange={(option) => {
+                brainTouchedRef.current = true;
+                setBrain(option);
+              }}
+              onEffortChange={setEffort}
+            />
+            <FallbackBrainBlock
+              options={options}
+              brain={fallbackBrain}
+              primaryBrain={brain}
+              effort={fallbackEffort}
+              busy={busy}
+              onBrainChange={(option) => {
+                fallbackBrainTouchedRef.current = true;
+                setFallbackBrain(option);
+              }}
+              onEffortChange={setFallbackEffort}
+            />
+          </div>
+        </>
       ) : (
         <>
           <TabStrip tabs={tabs} value={tab} disabled={busy} onChange={setTab} />
@@ -591,15 +637,22 @@ export function BotEditorForm(props: {
               effort={effort}
               busy={busy}
               selectable={isEdit || options.length > 0}
-              onBrainChange={setBrain}
+              onBrainChange={(option) => {
+                brainTouchedRef.current = true;
+                setBrain(option);
+              }}
               onEffortChange={setEffort}
             />
             <FallbackBrainBlock
               options={options}
               brain={fallbackBrain}
+              primaryBrain={brain}
               effort={fallbackEffort}
               busy={busy}
-              onBrainChange={setFallbackBrain}
+              onBrainChange={(option) => {
+                fallbackBrainTouchedRef.current = true;
+                setFallbackBrain(option);
+              }}
               onEffortChange={setFallbackEffort}
             />
           </div>

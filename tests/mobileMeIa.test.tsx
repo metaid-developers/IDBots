@@ -66,6 +66,8 @@ test('primary page renders user card, ME points hero and the registry rows', () 
   assert.match(html, /data-testid="me-points-hero"/);
   assert.match(html, /data-testid="me-balance-chip"/);
   assert.match(html, /data-testid="me-topup-locked"/);
+  assert.doesNotMatch(html, /data-testid="me-tier-cards"/);
+  assert.doesNotMatch(html, /data-testid="me-tiers-empty"/);
   // The old traffic/quota balance card is retired (S9 §3).
   assert.doesNotMatch(html, /data-testid="balance-card"/);
   for (const entry of ME_ENTRIES) {

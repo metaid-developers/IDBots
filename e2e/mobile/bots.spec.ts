@@ -21,7 +21,7 @@ test.describe('Bot lifecycle and configuration', () => {
     await openBots(page);
     await page.getByTestId('bot-create').click();
     const form = page.getByTestId('bot-form');
-    // A5 rework: create mode is name+role ONLY — no tabs, no advanced area.
+    // Create mode keeps the simple name+role flow with default brains and no tabs.
     await expect(form.getByTestId('bot-advanced-toggle')).toHaveCount(0);
     await expect(form.getByTestId('bot-tab-basic')).toHaveCount(0);
     await form.getByLabel('Name').fill('WP3 Worker');
@@ -138,8 +138,7 @@ test.describe('Bot lifecycle and configuration', () => {
     const row = botRow(page, 'WP3 Pending');
     await expect(row).toBeVisible({ timeout: 30_000 });
     expect(await page.evaluate(() => (window as unknown as { __botCreateCalls: number }).__botCreateCalls)).toBe(1);
-    // The edit page still opens for the pending bot with skills collapsed
-    // (create is name+role only since the A5 rework).
+    // The edit page still opens for the pending bot with skills collapsed.
     await row.click();
     await expect(page.getByTestId('me-page-bot-edit')).toBeVisible();
     await expect(page.getByTestId('bot-form').getByTestId('bot-skills-toggle')).toHaveAttribute('aria-expanded', 'false');
@@ -148,15 +147,17 @@ test.describe('Bot lifecycle and configuration', () => {
     await attachScreen(testInfo, page, 'bot-pending-row-stable');
   });
 
-  test('creating with only name and role succeeds (name+role-only path)', async ({ page }, testInfo) => {
+  test('creating with name and role uses the default primary and fallback brains', async ({ page }, testInfo) => {
     await openBots(page);
     await page.getByTestId('bot-create').click();
     const form = page.getByTestId('bot-form');
-    // Guidance copy is visible on the create sheet; the A5 rework removed
-    // the Advanced area entirely — only Name + Role exist at birth.
     await expect(form.getByTestId('bot-create-guide')).toContainText('Twin Bot');
     await expect(form.getByTestId('bot-advanced-toggle')).toHaveCount(0);
     await expect(form.getByTestId('bot-tab-basic')).toHaveCount(0);
+    await expect(form.getByTestId('bot-model')).toHaveValue('idbots\ndeepseek-flash');
+    await expect(form.getByTestId('bot-fallback-model')).toHaveValue('idbots\nglm-5.3-flash');
+    await expect(form.getByTestId('bot-effort')).toHaveValue('');
+    await expect(form.getByTestId('bot-fallback-effort')).toHaveValue('');
     await form.getByLabel('Name').fill('Minimal Bot');
     await form.getByLabel('Role').fill('Starter helper');
     await form.getByTestId('bot-save').click();
@@ -170,5 +171,16 @@ test.describe('Bot lifecycle and configuration', () => {
     await expect(page.getByTestId('bot-form').getByTestId('bot-skills-toggle')).toHaveAttribute('aria-expanded', 'false');
     await page.getByTestId('me-secondary-back').click();
     await attachScreen(testInfo, page, 'bot-create-name-role-only');
+  });
+
+  test('Twin badge and the desktop built-in avatar catalog are available', async ({ page }) => {
+    await openBots(page);
+    await expect(page.getByTestId('bot-row-1').getByTestId('bot-twin-badge')).toHaveText('Twin');
+    await page.getByTestId('bot-row-1').click();
+    await expect(page.getByTestId('bot-editor-twin').getByTestId('bot-twin-badge')).toHaveText('Twin');
+    await page.getByTestId('bot-avatar-change').click();
+    await page.locator('[data-slot="avatar-source-builtin"]').click();
+    await expect(page.locator('[data-slot="metabot-builtin-avatar-picker-tile"]')).toHaveCount(20);
+    await expect(page.locator('[data-slot="metabot-builtin-avatar-picker-tile"] img').first()).toBeVisible();
   });
 });

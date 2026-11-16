@@ -11,12 +11,10 @@ import { BotAvatar } from '../components/BotAvatar';
 import { BottomSheet } from '../components/BottomSheet';
 import { MeBalanceChip } from '../components/MeBalanceChip';
 import { MePointsHero } from '../components/MePointsHero';
-import { MeTierCards } from '../components/MeTierCards';
 import {
   ensureMeOverview,
   isMeSubscribed,
   meActivePlanId,
-  meActiveTierKey,
   meSubscriptionExpiryMs,
   meCurrentPlan,
   meFromMilli,
@@ -49,10 +47,10 @@ import { AboutPage } from './me/AboutPage';
  * Me tab (REQ-E-14), A6 settings IA rework (IA-PLAN v1) + S9 ME points home.
  *
  * The primary page is now the points home: a merged ME balance hero with the
- * four-bucket ledger, the current plan / weekly progress line, the three-tier
- * sales cards and the upgrade/renew path — followed by the registry-rendered
- * settings rows. The old traffic page is gone; `usage` is the merged
- * Usage & credits page (S9 §3).
+ * four-bucket ledger, the current plan / weekly progress line and the
+ * upgrade/renew path — followed by the registry-rendered settings rows. The
+ * full plan catalog stays inside the upgrade panel. The old traffic page is
+ * gone; `usage` is the merged Usage & credits page (S9 §3).
  *
  * Navigation: every entry pushes a secondary page on a local stack riding on
  * history entries, so Android system back / browser back and the top-bar back
@@ -160,7 +158,6 @@ export default function MeScreen(props: {
 
   const subscribed = isMeSubscribed(me.subscription);
   const activePlanId = meActivePlanId(me.subscription);
-  const activeTierKey = meActiveTierKey(me.subscription);
   const expiryMs = meSubscriptionExpiryMs(me.subscription);
   const currentPlan = useMemo(
     () => meCurrentPlan(me.plans, me.subscription),
@@ -374,17 +371,6 @@ export default function MeScreen(props: {
           onRecharge={openRecharge}
           onOpenUsage={() => pushRoute('usage')}
           onRetry={refreshPoints}
-        />
-        <MeTierCards
-          plans={me.plans}
-          loading={me.plansLoading}
-          error={me.plansError}
-          activePlanId={activePlanId}
-          activeTierKey={activeTierKey}
-          subscribed={subscribed}
-          selectedPlanId=""
-          onChoose={(planId) => openUpgrade(planId)}
-          onRetry={() => void refreshMeCatalog()}
         />
         {ME_ENTRY_GROUPS.map((group) => (
           <div key={group.group}>

@@ -20,6 +20,7 @@ import path from 'node:path';
 const require = createRequire(import.meta.url);
 
 const bootstrap = require('../dist-electron/main/server/bootstrap.js');
+const { resolveBootstrapTwinBrain } = require('../dist-electron/main/server/bootstrapSteps.js');
 const readiness = require('../dist-electron/main/gateway/readiness.js');
 const { SqliteStore } = require('../dist-electron/main/sqliteStore.js');
 
@@ -76,6 +77,29 @@ function collectPhases(onStateChange) {
     },
   };
 }
+
+test('the first mobile Twin pairs the ID.Bots DeepSeek flash primary with GLM-5.3 Flash fallback', () => {
+  const brain = resolveBootstrapTwinBrain({
+    providers: {
+      idbots: {
+        enabled: true,
+        models: [{ id: 'deepseek-4.1-flash' }, { id: 'glm-5.3-flash' }],
+      },
+      zhipu: {
+        enabled: true,
+        apiKey: 'configured',
+        models: [{ id: 'glm-other' }],
+      },
+    },
+    model: { defaultProvider: 'zhipu', defaultModel: 'glm-other' },
+  });
+  assert.deepEqual(brain, {
+    llmId: 'deepseek-4.1-flash',
+    llmProvider: 'idbots',
+    fallbackLlmId: 'glm-5.3-flash',
+    fallbackLlmProvider: 'idbots',
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Retry schedule (REQ-A-8: 30s → 60s → 120s → 300s constant cap)

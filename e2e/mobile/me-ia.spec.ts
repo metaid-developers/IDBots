@@ -47,6 +47,16 @@ test.describe('A6 settings IA', () => {
     await attachScreen(testInfo, page, 'a6-primary-registry');
   });
 
+  test('home hides the duplicate plan catalog while Upgrade keeps the full chooser', async ({ page }) => {
+    await openMe(page);
+    await expect(page.getByTestId('me-tier-cards')).toHaveCount(0);
+    await expect(page.getByTestId('me-tiers-empty')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Upgrade plan', exact: true }).click();
+    await expect(page.getByTestId('me-purchase-page')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Choose a plan' })).toBeVisible();
+    await expect(page.getByTestId('me-tier-cards')).toBeVisible();
+  });
+
   test('every registry entry pushes its secondary page and back pops it', async ({ page }) => {
     await openMe(page);
     const entries: Array<{ row: string; page: string }> = [

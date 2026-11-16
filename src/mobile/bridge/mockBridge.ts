@@ -1270,6 +1270,7 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
             name: 'ID.Bots',
             models: [
               { id: 'deepseek-flash', name: 'DeepSeek Flash', contextWindow: 1000000, maxOutputTokens: 100000 },
+              { id: 'glm-5.3-flash', name: 'GLM-5.3 Flash', contextWindow: 1000000, maxOutputTokens: 128000 },
               { id: 'glm-flash', name: 'GLM Flash', contextWindow: 128000, maxOutputTokens: 32768 },
             ],
           },
@@ -1345,6 +1346,9 @@ export function createMobileMockBridge(options: MockBridgeOptions = {}): MobileM
       llm_id: 'deepseek-flash',
       llm_provider: 'idbots',
       llm_effort: null,
+      fallback_llm_id: 'glm-5.3-flash',
+      fallback_llm_provider: 'idbots',
+      fallback_llm_effort: null,
       mvc_address: 'mock-mvc-twin',
       metabot_info_pinid: 'mock-info-twin',
       chain_sync_state: 'synced',

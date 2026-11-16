@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Bars3Icon, PlusIcon, PaperClipIcon, FaceSmileIcon, StopIcon, EllipsisHorizontalIcon, MagnifyingGlassIcon, PencilSquareIcon, TrashIcon, XMarkIcon, ArrowDownIcon, PaperAirplaneIcon } from '@heroicons/react/24/outline';
+import { Bars3Icon, PlusIcon, PaperClipIcon, FaceSmileIcon, StopIcon, EllipsisHorizontalIcon, MagnifyingGlassIcon, PencilSquareIcon, TrashIcon, XMarkIcon, ArrowDownIcon } from '@heroicons/react/24/outline';
 import MarkdownContent from '@/components/MarkdownContent';
 import MobileArtifactPreview from '../components/MobileArtifactPreview';
 import CoworkPermissionPanel from '@/components/cowork/CoworkPermissionPanel';
@@ -27,6 +27,7 @@ import { useVoiceInput } from '../voice/useVoiceInput';
 import { VoiceButton, VoiceErrorBanner } from '../voice/VoiceButton';
 import { sendVoiceMessage, type HoldCancelReason } from '../voice/holdToSend';
 import { artifactBrowserUri } from '../artifacts';
+import { dismissErrorMessage, filterDismissedErrorMessages } from '../dismissedErrors';
 
 type Chat = ReturnType<typeof useChat>;
 
@@ -414,7 +415,7 @@ function DiagnosticCopyButton({ message, sessionId }: { message: ChatMessageView
   );
 }
 
-function MessageRow({ message, sessionId, onOpenFile, onOpenUri }: { message: ChatMessageView; sessionId: string | null; onOpenFile: (filePath: string) => boolean; onOpenUri?: (uri: string) => void }): JSX.Element {
+function MessageRow({ message, sessionId, onOpenFile, onOpenUri, onDismissError }: { message: ChatMessageView; sessionId: string | null; onOpenFile: (filePath: string) => boolean; onOpenUri?: (uri: string) => void; onDismissError: (id: string) => void }): JSX.Element {
   if (message.role === 'user') {
     return (
       <div className="twin-message flex justify-end">
@@ -431,19 +432,31 @@ function MessageRow({ message, sessionId, onOpenFile, onOpenUri }: { message: Ch
       <div className="twin-message flex justify-start">
         {/* select-text keeps the reason long-pressable on phones where the
             clipboard API is unavailable (copy button's documented fallback). */}
-        <div className="twin-message-error select-text whitespace-pre-wrap break-words" data-testid="error-bubble">
-          {/* Display-only mapping (wechatEmojiDisplay.ts); catalog emoji
-              render as bundled Twemoji images (alt = codepoint). Same
-              display convention as the user/assistant bubbles. */}
-          <TwemojiText text={mapWechatBracketCodesForDisplay(messageText(message))} />
-          {message.diagnosticReason ? (
-            <p className="mt-1 break-words text-[11px] font-normal opacity-80" data-testid="chat-diagnostic-reason">
-              {`${t('mobile.chat.diagnostic.reasonLabel')}: ${message.diagnosticReason}`}
-            </p>
-          ) : null}
-          {message.diagnostic === 'turnFailed' ? (
-            <DiagnosticCopyButton message={message} sessionId={sessionId} />
-          ) : null}
+        <div className="twin-message-error relative select-text whitespace-pre-wrap break-words" data-testid="error-bubble">
+          <button
+            type="button"
+            onClick={() => onDismissError(message.id)}
+            className="absolute right-0 top-0 flex min-h-[36px] min-w-[36px] items-center justify-center rounded-full opacity-70 active:opacity-100"
+            aria-label={t('mobile.chat.dismissError')}
+            title={t('mobile.chat.dismissError')}
+            data-testid="chat-error-dismiss"
+          >
+            <XMarkIcon className="h-4 w-4" aria-hidden />
+          </button>
+          <div className="pr-7">
+            {/* Display-only mapping (wechatEmojiDisplay.ts); catalog emoji
+                render as bundled Twemoji images (alt = codepoint). Same
+                display convention as the user/assistant bubbles. */}
+            <TwemojiText text={mapWechatBracketCodesForDisplay(messageText(message))} />
+            {message.diagnosticReason ? (
+              <p className="mt-1 break-words text-[11px] font-normal opacity-80" data-testid="chat-diagnostic-reason">
+                {`${t('mobile.chat.diagnostic.reasonLabel')}: ${message.diagnosticReason}`}
+              </p>
+            ) : null}
+            {message.diagnostic === 'turnFailed' ? (
+              <DiagnosticCopyButton message={message} sessionId={sessionId} />
+            ) : null}
+          </div>
         </div>
       </div>
     );
@@ -513,6 +526,12 @@ export default function ChatScreen(props: {
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
   const [emojiPanelOpen, setEmojiPanelOpen] = useState(false);
   const [previewPath, setPreviewPath] = useState<string | null>(null);
+  const [, refreshDismissedErrors] = useState(0);
+  const visibleMessages = filterDismissedErrorMessages(chat.messages);
+  const hideError = (id: string) => {
+    dismissErrorMessage(id);
+    refreshDismissedErrors((version) => version + 1);
+  };
   // Refs (caret notes: emojiTextInsert.ts).
   const listRef = useRef<HTMLDivElement | null>(null);
   // Scroll guard (autoScroll.ts): follow new content only while the
@@ -727,7 +746,7 @@ export default function ChatScreen(props: {
               {t('mobile.chat.loadEarlier')}
             </button>
           ) : null}
-          {chat.messages.length === 0 ? (
+          {visibleMessages.length === 0 ? (
             <div className="twin-empty h-full">
               <p className="twin-empty-title">
                 {chat.restoring ? t('mobile.common.loading') : t('mobile.chat.emptyTitle')}
@@ -735,7 +754,7 @@ export default function ChatScreen(props: {
               {!chat.restoring ? <p className="twin-empty-copy">{t('mobile.chat.emptyBody')}</p> : null}
             </div>
           ) : (
-            chat.messages.map((message) => <MessageRow key={message.id} message={message} sessionId={chat.sessionId ?? null} onOpenFile={openPreview} onOpenUri={props.onOpenUri} />)
+            visibleMessages.map((message) => <MessageRow key={message.id} message={message} sessionId={chat.sessionId ?? null} onOpenFile={openPreview} onOpenUri={props.onOpenUri} onDismissError={hideError} />)
           )}
           {['starting', 'running', 'steering', 'stopping', 'waiting_permission', 'offline_unknown'].includes(turnPhase) ? (
             <div className="px-2" data-testid="turn-phase">
@@ -852,16 +871,6 @@ export default function ChatScreen(props: {
             </button>
           ) : (
             <>
-              <button
-                type="button"
-                onClick={submit}
-                disabled={!canSubmit}
-                aria-label={t('mobile.chat.send')}
-                className="twin-icon-button twin-icon-button-primary twin-composer-tail"
-                data-testid="composer-send"
-              >
-                <PaperAirplaneIcon className="h-5 w-5" aria-hidden />
-              </button>
               <div className="twin-composer-tail">
                 <VoiceButton
                 state={voice.state}

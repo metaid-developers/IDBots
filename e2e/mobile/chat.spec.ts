@@ -103,6 +103,25 @@ test.describe('chat', () => {
     await expect(quotaCard).toBeVisible();
   });
 
+  test('dismissed error bubbles keep their dismissal marker after a reload', async ({ page }) => {
+    await page.goto('/app/');
+    await sendMessage(page, 'check my quota');
+    await expect(page.getByTestId('error-bubble')).toBeVisible({ timeout: 30_000 });
+    await page.getByTestId('chat-error-dismiss').click();
+    await expect(page.getByTestId('error-bubble')).toHaveCount(0);
+
+    const dismissedIds = await page.evaluate(() => JSON.parse(
+      localStorage.getItem('idbots.mobile.chat.dismissedErrors.v1') ?? '[]',
+    ) as string[]);
+    expect(dismissedIds).toHaveLength(1);
+    await page.reload();
+    const restoredIds = await page.evaluate(() => JSON.parse(
+      localStorage.getItem('idbots.mobile.chat.dismissedErrors.v1') ?? '[]',
+    ) as string[]);
+    expect(restoredIds).toEqual(dismissedIds);
+    await expect(page.getByTestId('error-bubble')).toHaveCount(0);
+  });
+
   test('multiple attachments survive reload and enter the final prompt in order', async ({ page }, testInfo) => {
     await page.goto('/app/');
     await page.getByRole('button', { name: 'Sessions' }).click();
