@@ -131,7 +131,12 @@ export async function createHostAdapter({ userDataPath, metabotId, repoRoot = RE
     },
 
     async transferItem({ pinId, toAddress }) {
-      const result = await metabotNft.transferMetabotMrc721(store, {
+      // The NFT services expect the MetaBOT store surface (getMetabotById /
+      // getMetabotWalletByMetabotId) — the app's IPC layer passes
+      // getMetabotStore() here too (metabotNftIpc.ts). Passing the plain
+      // SqliteStore fails at runtime with "store.getMetabotById is not a
+      // function" AFTER the mint has already been broadcast.
+      const result = await metabotNft.transferMetabotMrc721(metabotStore, {
         metabotId,
         pinId,
         toAddress,
@@ -146,7 +151,7 @@ export async function createHostAdapter({ userDataPath, metabotId, repoRoot = RE
     },
 
     async transferLegacyToken({ genesis, codehash, tokenIndex, toAddress }) {
-      const result = await metabotNft.transferMetabotMvcNft(store, {
+      const result = await metabotNft.transferMetabotMvcNft(metabotStore, {
         metabotId,
         genesis,
         codehash,
