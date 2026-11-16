@@ -7472,11 +7472,15 @@ const getCoworkRunner = () => {
                   `📽️ [本轮汇报已更新到投影屏](${outcome.uri})`,
                   `📽️ [Turn report updated on the projector](${outcome.uri})`,
                 );
-            getCoworkStore().addMessage(input.sessionId, {
+            const receiptMsg = getCoworkStore().addMessage(input.sessionId, {
               type: 'assistant',
               content,
               metadata: { projectorReport: { uri: outcome.uri, announced: outcome.announced } },
             });
+            lastStudioProjectionAtMs.set(input.sessionId, Date.now());
+            if (shouldForwardCoworkStreamEvent(getCoworkStore(), input.sessionId)) {
+              emitCoworkStreamMessage(input.sessionId, receiptMsg);
+            }
           } catch {
             // Receipt is best-effort.
           }
@@ -7920,12 +7924,16 @@ const getCoworkRunner = () => {
         enqueueDecision: (sid, input) => {
           const twin = getMetabotStore().listMetabots().find((bot) => bot.metabot_type === 'twin' && bot.enabled);
           if (!twin) return { ok: false, error: 'TWIN_NOT_FOUND' };
+          const originSid = input.originStudioSessionId
+            ?? (getStudioChiefOfStaffService().isStudioOwnerSession(sid) ? sid : getStudioChiefOfStaffService().resolveActiveStudioSessionId(twin.id));
           const enqueued = getStudioDecisionQueueStore().enqueue({
             ...input,
             twinMetabotId: twin.id,
-            originStudioSessionId: input.originStudioSessionId
-              ?? (getStudioChiefOfStaffService().isStudioOwnerSession(sid) ? sid : getStudioChiefOfStaffService().resolveActiveStudioSessionId(twin.id)),
+            originStudioSessionId: originSid,
           });
+          if (originSid && enqueued.item.longtermTaskId) {
+            getStudioChiefOfStaffService().focusTask(originSid, enqueued.item.longtermTaskId);
+          }
           return { ok: true, ...enqueued };
         },
         listOpenDecisions: () => {
@@ -7936,6 +7944,12 @@ const getCoworkRunner = () => {
         resolveDecision: (_sid, queueItemId, resolutionNote) => {
           const resolved = getStudioDecisionQueueStore().resolve(queueItemId, resolutionNote);
           if (!resolved) return { ok: false, error: 'QUEUE_ITEM_NOT_FOUND' };
+          getStudioDecisionQueueStore().cancelSiblingQueuedForTask(
+            resolved.twinMetabotId,
+            resolved.longtermTaskId,
+            resolved.id,
+            `superseded by resolution of ${resolved.id}`,
+          );
           return { ok: true, item: resolved };
         },
         deferDecision: (_sid, queueItemId) => {
@@ -7953,6 +7967,19 @@ const getCoworkRunner = () => {
           }
           broadcastLongTermTaskUpdate([], `studio_presence_${mode}`);
           return { ok: true };
+        },
+        focusTask: (sid, longtermTaskId) => {
+          const detail = getLongTermTaskStore().getTask(longtermTaskId);
+          if (!detail) return { ok: false, error: 'TASK_NOT_FOUND' };
+          const twin = getMetabotStore().listMetabots().find((bot) => bot.metabot_type === 'twin' && bot.enabled);
+          const studioSid = getStudioChiefOfStaffService().isStudioOwnerSession(sid)
+            ? sid
+            : getStudioChiefOfStaffService().resolveActiveStudioSessionId(twin?.id ?? null);
+          if (studioSid) {
+            getStudioChiefOfStaffService().focusTask(studioSid, detail.id);
+          }
+          broadcastLongTermTaskUpdate([detail.id], 'studio_task_focus');
+          return { ok: true, taskId: detail.id };
         },
         dispatchTwinStampPublish: (sid, input) =>
           getStudioChiefOfStaffService().dispatchTwinStampPublish(sid, input),
@@ -9308,15 +9335,18 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
           startedAt: entry.startedAt,
         }));
         // Also surface recently completed attempts whose orchestration task is
-        // still in 'review' (Worker → Twin back-office verification flow!).
+        // genuinely awaiting Twin back-office verification — excluding any step
+        // already accepted via twin_task_accept or belonging to a done task.
         const openIds = new Set(open.map((item) => item.id));
         const attempts = getOrchestrationStore().listAttemptsForSourceSessions([sessionId]) ?? [];
         for (const attempt of attempts) {
           if (openIds.has(attempt.id) || attempt.status !== 'completed') continue;
           const finishedMs = Date.parse(attempt.finishedAt ?? '') || 0;
-          if (!finishedMs || nowMs - finishedMs > 5 * 60_000) continue;
+          if (!finishedMs || nowMs - finishedMs > 2 * 60_000) continue;
           const task = getOrchestrationStore().getTaskForStep(attempt.stepId);
           if (!task || task.status !== 'review') continue;
+          if (getOrchestrationStore().listStepAcceptances(attempt.stepId).length > 0) continue;
+          if (task.longtermTaskId && getLongTermTaskStore().getTask(task.longtermTaskId)?.stage === 'done') continue;
           const bot = getMetabotStore().getMetabotById(attempt.workerMetabotId);
           open.push({
             id: attempt.id,
@@ -9328,22 +9358,42 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
         }
         return open.slice(0, 5);
       },
-      getLiveTaskHud: () => {
-        const board = getLongTermTaskStore().listBoard();
+      getLiveTaskHud: (sessionId) => {
+        const ltStore = getLongTermTaskStore();
+        const board = ltStore.listBoard();
         const twin = getMetabotStore().listMetabots().find((bot) => bot.metabot_type === 'twin' && bot.enabled);
         const queuedDecisions = twin ? getStudioDecisionQueueStore().listOpen(twin.id).length : 0;
-        const activeTasks = board.cards
+        const candidates = board.cards
           .filter((card) => card.stage !== 'done' && card.stage !== 'cancelled' && card.managedState != null)
-          .slice(0, 4)
-          .map((card) => ({
-            id: card.id,
-            title: card.title,
-            state: card.managedState ?? 'in_progress',
-            accepted: card.progress.accepted,
-            total: Math.max(1, card.progress.total),
-            currentSubtask: card.currentSubtaskTitle,
-          }));
-        if (activeTasks.length === 0 && queuedDecisions === 0) return null;
+          .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+        if (candidates.length === 0 && queuedDecisions === 0) return null;
+
+        const explicitFocus = getStudioChiefOfStaffService().getFocusedTaskId(sessionId);
+        let focusedId = explicitFocus && candidates.some((c) => c.id === explicitFocus) ? explicitFocus : null;
+        if (!focusedId && sessionId) {
+          const sessionBorn = candidates.find((c) => ltStore.getTask(c.id)?.definitionSessionId === sessionId);
+          if (sessionBorn) focusedId = sessionBorn.id;
+        }
+        if (!focusedId && candidates.length > 0) {
+          const activeFirst = candidates.find((c) => c.stage === 'active' && c.managedState === 'in_progress') ?? candidates[0];
+          focusedId = activeFirst.id;
+        }
+
+        const ordered = [...candidates].sort((a, b) => {
+          if (a.id === focusedId) return -1;
+          if (b.id === focusedId) return 1;
+          return String(b.updatedAt).localeCompare(String(a.updatedAt));
+        });
+
+        const activeTasks = ordered.slice(0, 8).map((card) => ({
+          id: card.id,
+          title: card.title,
+          state: card.managedState ?? 'in_progress',
+          accepted: card.progress.accepted,
+          total: Math.max(1, card.progress.total),
+          currentSubtask: card.currentSubtaskTitle,
+          isCurrent: card.id === focusedId,
+        }));
         return { queuedDecisions, tasks: activeTasks };
       },
       getSettings: () => readStudioLiveStageSettings(getStoreOrNull()),
@@ -9630,14 +9680,30 @@ const getLongTermTaskStore = () => {
     // cheap, and it keeps this hook correct on its own instead of depending on
     // every owner path remembering to broadcast.
     longTermTaskStore.onSubtaskStatusChange((change) => {
+      try {
+        const detailForFocus = longTermTaskStore?.getTask(change.taskId) ?? null;
+        if (detailForFocus?.definitionSessionId && getStudioChiefOfStaffService().isStudioOwnerSession(detailForFocus.definitionSessionId)) {
+          getStudioChiefOfStaffService().focusTask(detailForFocus.definitionSessionId, detailForFocus.id);
+        }
+      } catch {
+        // Focus update is best-effort.
+      }
       broadcastLongTermTaskUpdate([change.taskId], `subtask_${change.reason}`);
       if (change.status === 'waiting_owner') {
         try {
           const twin = getMetabotStore().listMetabots().find((bot) => bot.metabot_type === 'twin' && bot.enabled);
           const detail = longTermTaskStore?.getTask(change.taskId) ?? null;
           const subtask = detail?.subtasks.find((item) => item.id === change.subtaskId) ?? null;
-          if (twin && detail && subtask) {
-            const note = subtask.waitNote.trim() || `${detail.title} · #${subtask.ordinal} ${subtask.title}`;
+          if (
+            twin
+            && detail
+            && subtask
+            && !getStudioDecisionQueueStore().hasRecentOrOpenForTask(twin.id, detail.id)
+          ) {
+            const note = subtask.waitNote.trim() || `${detail.title}`;
+            const title = detail.title === subtask.title
+              ? detail.title
+              : `${detail.title} · ${subtask.title}`;
             getStudioDecisionQueueStore().enqueue({
               dedupeKey: `ltt_wait_owner:${detail.id}:${subtask.id}:${change.reason}`,
               twinMetabotId: twin.id,
@@ -9645,12 +9711,12 @@ const getLongTermTaskStore = () => {
               longtermTaskId: detail.id,
               longtermSubtaskId: subtask.id,
               kind: change.reason === 'proposed' ? 'acceptance' : 'decision',
-              title: `${detail.title} · ${subtask.title}`,
+              title,
               backgroundSummary: detail.goal,
-              progressSummary: `Progress: ${detail.progress.accepted}/${detail.progress.total} accepted`,
+              progressSummary: `已完成核验子项 ${detail.progress.accepted} / ${detail.progress.total}`,
               question: note,
-              recommendation: note,
-              nextStep: 'Continue advancing the Managed Task Tree upon your ruling.',
+              recommendation: '',
+              nextStep: '按你的拍板结论立即执行或归档结项',
               reportHtmlPath: detail.planArtifactUri && !detail.planArtifactUri.startsWith('pin://')
                 ? detail.planArtifactUri
                 : null,
@@ -9703,11 +9769,21 @@ const getLongTermAdvanceService = () => {
       getAppLanguage: () => getPersistedAppLanguage(),
       listOrchestrationAttention: (taskId: string, subtaskId: string) => {
         try {
+          const ltDetail = getLongTermTaskStore().getTask(taskId);
+          if (!ltDetail || ltDetail.stage === 'done' || ltDetail.stage === 'cancelled') {
+            return [];
+          }
           return getOrchestrationStore().listTasksForLongTermSubtask(taskId, subtaskId).map((task) => {
-            const steps = getOrchestrationStore().listSteps(task.id).map((step) => ({
-              ...step,
-              attempts: getOrchestrationStore().listAttempts(step.id),
-            }));
+            const steps = getOrchestrationStore().listSteps(task.id).map((step) => {
+              const accepted = getOrchestrationStore().listStepAcceptances(step.id).length > 0;
+              return {
+                // Once Twin verified and accepted the step via twin_task_accept,
+                // an advisory Worker humanAction on that step is settled — never
+                // re-sync it back onto the task tree as a fresh waiting_owner!
+                ...(accepted && step.status === 'waiting_input' ? { ...step, status: 'completed' as const } : step),
+                attempts: getOrchestrationStore().listAttempts(step.id),
+              };
+            });
             return {
               orchestrationTaskId: task.id,
               attention: deriveOrchestrationAttention(task, steps),
@@ -9965,6 +10041,7 @@ const broadcastLongTermTaskUpdate = (taskIds: string[], reason: string): void =>
 
 let studioDecisionQueueStore: StudioDecisionQueueStore | null = null;
 let preferredStudioOpenSessionId: string | null = null;
+const lastStudioProjectionAtMs = new Map<string, number>();
 const getStudioDecisionQueueStore = () => {
   if (!studioDecisionQueueStore) {
     const sqliteStore = getStore();
@@ -10013,13 +10090,56 @@ const getStudioChiefOfStaffService = () => {
           title: entry.title,
           status: 'running',
         })),
-      projectShowcaseHtml: (input) =>
-        getBotBrowserProjection().project({
+      projectShowcaseHtml: async (input) => {
+        const projInput = {
           sessionId: input.sessionId,
           localPath: input.localPath,
           title: input.title,
-          role: 'showcase',
-        }),
+        };
+        const outcome = await getStudioLiveStageService().projectReport(
+          projInput,
+          () => getBotBrowserProjection().project({
+            ...projInput,
+            role: 'showcase',
+            reveal: true,
+          }),
+        );
+        lastStudioProjectionAtMs.set(input.sessionId, Date.now());
+        try {
+          const label = input.title?.trim() || tApp('本轮汇报', 'Turn report');
+          const content = outcome.announced
+            ? tApp(
+                `📽️ [${label} 已投影到右侧投影屏](${outcome.uri})`,
+                `📽️ [${label} projected to the projector](${outcome.uri})`,
+              )
+            : tApp(
+                `📽️ [本轮汇报已更新到投影屏](${outcome.uri})`,
+                `📽️ [Turn report updated on the projector](${outcome.uri})`,
+              );
+          const receiptMsg = getCoworkStore().addMessage(input.sessionId, {
+            type: 'assistant',
+            content,
+            metadata: { projectorReport: { uri: outcome.uri, announced: outcome.announced } },
+          });
+          if (shouldForwardCoworkStreamEvent(getCoworkStore(), input.sessionId)) {
+            emitCoworkStreamMessage(input.sessionId, receiptMsg);
+          }
+        } catch {
+          // Receipt is best-effort.
+        }
+        return outcome;
+      },
+      didSessionProjectSince: (sid, sinceMs) =>
+        (lastStudioProjectionAtMs.get(sid) ?? 0) >= sinceMs,
+      resolvePublisherIdentity: (metabotId) => {
+        const bot = getMetabotStore().getMetabotById(metabotId);
+        return {
+          name: bot?.name?.trim() || `Bot #${metabotId}`,
+          role: bot?.metabot_type === 'twin' ? 'Twin 分身' : 'Worker',
+          globalMetaId: bot?.globalmetaid ?? null,
+          address: bot?.mvc_address ?? null,
+        };
+      },
       emitSessionMessage: (sid, message) => {
         if (!shouldForwardCoworkStreamEvent(getCoworkStore(), sid)) return;
         emitCoworkStreamMessage(sid, message);
@@ -16603,9 +16723,23 @@ if (!gotTheLock) {
       const presence = getStudioChiefOfStaffService().getPresenceSnapshot();
       const twin = getMetabotStore().listMetabots().find((bot) => bot.metabot_type === 'twin' && bot.enabled);
       const openDecisions = twin ? getStudioDecisionQueueStore().listOpen(twin.id) : [];
+      const activeSid = presence.activeStudioSessionId;
+      const studioTurnRunning = activeSid
+        ? getCoworkRunner().isSessionActive(activeSid)
+        : false;
+      const openWorkerCount = activeSid ? listOpenStudioDelegations(activeSid).length : 0;
+      const supervisionBusy = getStudioChiefOfStaffService().isSupervisionBusy();
+      // Badge discipline (owner feedback 2026-11-16): light up ONLY when active
+      // execution has stopped AND an owner ruling/acceptance is genuinely open.
+      const showDecisionBadge =
+        !studioTurnRunning
+        && openWorkerCount === 0
+        && !supervisionBusy
+        && openDecisions.length > 0;
       return {
         success: true,
         presence,
+        showDecisionBadge,
         openDecisions,
       };
     } catch (error) {

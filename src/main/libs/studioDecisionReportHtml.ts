@@ -48,6 +48,30 @@ function badgeCopy(kind: StudioDecisionQueueItem['kind'], language: 'zh' | 'en')
   }
 }
 
+function dedupeTitle(rawTitle: string): string {
+  const parts = String(rawTitle ?? '')
+    .split(/\s*·\s*/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (parts.length >= 2 && parts[0] === parts[1]) {
+    return [parts[0], ...parts.slice(2)].join(' · ');
+  }
+  return String(rawTitle ?? '').trim();
+}
+
+function cleanMachineFallback(raw: string, fallback: string): string {
+  const trimmed = String(raw ?? '').trim();
+  if (!trimmed) return fallback;
+  if (/^Continue advancing the Managed Task Tree/i.test(trimmed)) {
+    return fallback;
+  }
+  const progMatch = trimmed.match(/^Progress:\s*(\d+)\s*\/\s*(\d+)\s*accepted$/i);
+  if (progMatch) {
+    return `已完成核验子项 ${progMatch[1]} / ${progMatch[2]}`;
+  }
+  return trimmed;
+}
+
 /**
  * Generates a self-contained, single-screen executive HTML projection page
  * for a Studio Owner Decision Queue item when no custom HTML file was supplied.
@@ -61,6 +85,15 @@ export function buildStudioDecisionReportHtml(input: {
 }): string {
   const lang = input.language ?? 'zh';
   const { item } = input;
+  const displayTitle = dedupeTitle(item.title);
+  const displayProgress = cleanMachineFallback(
+    item.progressSummary,
+    lang === 'zh' ? '已完成后台核验' : 'Verified in back office',
+  );
+  const displayNextStep = cleanMachineFallback(
+    item.nextStep,
+    lang === 'zh' ? '按你的拍板结论立即执行或归档结项' : 'Proceed immediately per your ruling',
+  );
   const badge = badgeCopy(item.kind, lang);
   const queueTag = input.queueTotal && input.queueTotal > 1
     ? (lang === 'zh'
@@ -84,9 +117,16 @@ export function buildStudioDecisionReportHtml(input: {
     : '';
 
   const evidenceHtml = item.evidence.length > 0
-    ? `<div class="section"><h2>${lang === 'zh' ? '已核验交付物与证据' : 'Verified Deliverables & Evidence'}</h2><ul class="ev">` +
+    ? `<div class="section"><h2>${lang === 'zh' ? '已核验交付物与链上凭证' : 'Verified Deliverables & On-Chain Receipts'}</h2><ul class="ev">` +
       item.evidence
-        .map((ev) => `<li><span class="ev-kind">${esc(ev.kind)}</span><code>${esc(ev.uri)}</code>${ev.note ? ` — ${esc(ev.note)}` : ''}</li>`)
+        .map((ev) => {
+          const uri = String(ev.uri ?? '').trim();
+          const linkable = /^(?:pin|metaapp|preview-file|preview-metaapp):\/\//i.test(uri);
+          const uriHtml = linkable
+            ? `<a href="${esc(uri)}"><code>${esc(uri)}</code></a>`
+            : `<code>${esc(uri)}</code>`;
+          return `<li><span class="ev-kind">${esc(ev.kind)}</span>${uriHtml}${ev.note ? ` — ${esc(ev.note)}` : ''}</li>`;
+        })
         .join('') +
       `</ul></div>`
     : '';
@@ -100,7 +140,7 @@ export function buildStudioDecisionReportHtml(input: {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(item.title)}</title>
+<title>${esc(displayTitle)}</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;background:#f4f6f9;color:#15181e;line-height:1.6;padding:28px}
@@ -141,7 +181,7 @@ export function buildStudioDecisionReportHtml(input: {
       <span class="badge">${esc(badge.label)}</span>
       ${queueTag ? `<span class="queue">${esc(queueTag)}</span>` : ''}
     </div>
-    <h1>${esc(item.title)}</h1>
+    <h1>${esc(displayTitle)}</h1>
     ${progressHtml}
     <div class="grid">
       <div class="box">
@@ -150,7 +190,7 @@ export function buildStudioDecisionReportHtml(input: {
       </div>
       <div class="box">
         <h3>${lang === 'zh' ? '已完成核验进度' : 'Verified Progress'}</h3>
-        <p>${esc(item.progressSummary || '-')}</p>
+        <p>${esc(displayProgress)}</p>
       </div>
     </div>
     <section class="decision-hero">
@@ -162,11 +202,11 @@ export function buildStudioDecisionReportHtml(input: {
     <div class="footer">
       <div class="box">
         <h3>${lang === 'zh' ? '助理首推建议与理由' : 'Recommended Call'}</h3>
-        <p>${esc(item.recommendation || '-')}</p>
+        <p>${esc(item.recommendation && item.recommendation !== item.question ? item.recommendation : (lang === 'zh' ? '请结合上方背景直接回复拍板' : 'Reply in chat with your call'))}</p>
       </div>
       <div class="box">
         <h3>${lang === 'zh' ? '拍板后的下一步动作' : 'Immediate Next Step'}</h3>
-        <p>${esc(item.nextStep || '-')}</p>
+        <p>${esc(displayNextStep)}</p>
       </div>
     </div>
   </main>
