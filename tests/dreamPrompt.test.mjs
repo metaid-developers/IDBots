@@ -591,7 +591,7 @@ test('buildDreamPrompt renders the day\'s chain writes and reads with gists', ()
   assert.ok(user.includes('介绍 MetaWeb 的基本用法'), 'read gist prefers the summary');
   assert.ok(user.includes('写入链上内容 2 条'), 'inventory counts writes');
   assert.ok(user.includes('阅读链上内容 1 条'), 'inventory counts reads');
-  assert.equal(DREAM_VERSION, 18, 'dream algorithm version tracks the latest prompt change');
+  assert.equal(DREAM_VERSION, 19, 'dream algorithm version tracks the latest prompt change');
 });
 
 test('buildDreamPrompt hides chain content sections when empty or in fragment mode', () => {

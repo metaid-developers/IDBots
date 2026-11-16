@@ -10286,6 +10286,7 @@ const getStudioChiefOfStaffService = () => {
       getBaseSystemPrompt: () => getCoworkStore().getConfig().systemPrompt,
       getAppLanguage: () => getPersistedAppLanguage(),
       getPreferredStudioSessionId: () => preferredStudioOpenSessionId,
+      getStudioContinuity: (twinMetabotId) => getDreamStore().getStudioContinuity(twinMetabotId),
       hasDefiningDraftForSession: (sid) => {
         const ltStore = getLongTermTaskStore();
         return ltStore

@@ -30,14 +30,14 @@ const CONTEXT_WINDOW_MESSAGES = 6;
 const LOW_RATING_THRESHOLD = 2;
 
 export interface CounterfactualDecisionPoint {
-  /** Stable id echoed back by the LLM (`msg:...` / `task:...` / `implicit:...` / `svc:...`). */
+  /** Stable id echoed back by the LLM (`msg:...` / `task:...` / `implicit:...` / `svc:...` / `studio:...`). */
   id: string;
-  kind: 'thumbs_down' | 'low_rating' | 'low_service_rating' | 'implicit';
+  kind: 'thumbs_down' | 'low_rating' | 'low_service_rating' | 'implicit' | 'studio_coaching';
   /** What led up to the decision point. */
   situation: string;
   /** What the bot actually did. */
   botAction: string;
-  /** The recorded negative outcome. */
+  /** The recorded negative outcome or subsequent Studio owner reaction. */
   outcome: string;
 }
 
@@ -46,11 +46,17 @@ export interface CounterfactualAlternative {
   score: number;
 }
 
+export interface CounterfactualWorkflowUpgrade {
+  title: string;
+  description: string;
+}
+
 export interface CounterfactualPointResult {
   id: string;
   originalScore: number;
   alternatives: CounterfactualAlternative[];
   lesson: string;
+  workflowUpgrade?: CounterfactualWorkflowUpgrade | null;
 }
 
 export type CounterfactualReplayParseResult =
@@ -143,16 +149,29 @@ export function extractNegativeDecisionPoints(
         + (rating.raterGlobalMetaId ? `(买家 ${rating.raterGlobalMetaId})` : ''),
     }));
 
-  // Implicit candidates (lowest priority): structural facts only, never
-  // pre-labeled negative — the replay itself decides whether the recorded
-  // action was actually fine, and the margin gate absorbs false alarms.
+  const formatMsgLine = (entry: { type: 'user' | 'assistant'; content: string; isSystemBriefing?: boolean }): string => {
+    if (entry.isSystemBriefing) {
+      return `〔${truncate(entry.content.replace(/\s+/g, ' ').trim(), CONTEXT_MESSAGE_MAX_CHARS)}〕`;
+    }
+    return `${entry.type === 'user' ? '对方' : '我'}: ${truncate(entry.content.replace(/\s+/g, ' ').trim(), CONTEXT_MESSAGE_MAX_CHARS)}`;
+  };
+
+  // Implicit candidates (lowest priority before proactive Studio coaching):
+  // structural facts only, never pre-labeled negative — the replay itself
+  // decides whether the recorded action was actually fine, and the margin gate
+  // absorbs false alarms.
   const implicit: CounterfactualDecisionPoint[] = [];
+  const usedSessionAnchors = new Set<string>();
   for (const signal of activity.implicitSignals ?? []) {
-    if (signal.kind !== 'reask' && signal.kind !== 'unanswered_burst') continue;
+    if (
+      signal.kind !== 'reask'
+      && signal.kind !== 'unanswered_burst'
+      && signal.kind !== 'studio_long_wait_followup'
+    ) continue;
     const session = activity.sessions.find((entry) => entry.sessionId === signal.sessionId);
     if (!session || signal.messageIndex == null) continue;
-    if (signal.kind === 'reask') {
-      // The decision under review is the assistant reply the user restated over.
+    if (signal.kind === 'reask' || signal.kind === 'studio_long_wait_followup') {
+      // The decision under review is the assistant reply preceding the user's follow-up/re-ask.
       let anchorIndex = -1;
       for (let index = signal.messageIndex - 1; index >= 0; index -= 1) {
         if (session.messages[index].type === 'assistant') {
@@ -161,21 +180,25 @@ export function extractNegativeDecisionPoints(
         }
       }
       if (anchorIndex < 0) continue;
+      const anchorKey = `${session.sessionId}:${anchorIndex}`;
+      usedSessionAnchors.add(anchorKey);
       const context = session.messages
         .slice(Math.max(0, anchorIndex - CONTEXT_WINDOW_MESSAGES), anchorIndex)
-        .map((entry) => `${entry.type === 'user' ? '对方' : '我'}: ${truncate(entry.content.replace(/\s+/g, ' ').trim(), CONTEXT_MESSAGE_MAX_CHARS)}`)
+        .map(formatMsgLine)
         .join('\n');
+      const followUpMsg = session.messages[signal.messageIndex];
+      const followUpQuote = followUpMsg ? ` 随后主人发言:「${truncate(followUpMsg.content.replace(/\s+/g, ' ').trim(), 200)}」` : '';
       implicit.push({
         id: `implicit:${session.sessionId}:${anchorIndex}`,
         kind: 'implicit',
         situation: `会话「${session.title}」:\n${context || '(该回复之前没有更多上下文)'}`,
         botAction: truncate(session.messages[anchorIndex].content.replace(/\s+/g, ' ').trim(), ACTION_MAX_CHARS),
-        outcome: `${signal.text}。(隐式信号,未经人类明确评价,可能并非负面)`,
+        outcome: `${signal.text}。${followUpQuote}(隐式信号,未经人类明确评价,可能并非负面;请站在上帝视角判断当时回复与调度是否本可做得更好)`,
       });
     } else {
       const tail = session.messages
         .slice(Math.max(0, signal.messageIndex - CONTEXT_WINDOW_MESSAGES))
-        .map((entry) => `${entry.type === 'user' ? '对方' : '我'}: ${truncate(entry.content.replace(/\s+/g, ' ').trim(), CONTEXT_MESSAGE_MAX_CHARS)}`)
+        .map(formatMsgLine)
         .join('\n');
       implicit.push({
         id: `implicit:${session.sessionId}:${signal.messageIndex}:silent`,
@@ -187,11 +210,95 @@ export function extractNegativeDecisionPoints(
     }
   }
 
+  // God's-Eye Studio Coaching points: in Studio mode, owners rarely click
+  // thumbs-down icons — they steer, revise, ask side-questions during Worker
+  // waits, or refine options directly in conversation. When a persistent Studio
+  // session had multi-turn owner collaboration today, select key assistant
+  // turns (followed by a substantive owner course-correction/follow-up) so the
+  // nightly replay can evaluate "if I could handle this Studio exchange again
+  // from God's-eye view, would another orchestration/reporting move clearly beat
+  // what I did?" False positives safely produce original_score >= alt_score and
+  // zero lessons via pickCounterfactualLesson's margin gate.
+  const studioCoaching: CounterfactualDecisionPoint[] = [];
+  for (const session of activity.sessions) {
+    if (!session.isStudioOwner) continue;
+    const ownerTurnIndices: number[] = [];
+    session.messages.forEach((msg, idx) => {
+      if (msg.type === 'user' && !msg.isSystemBriefing) ownerTurnIndices.push(idx);
+    });
+    if (ownerTurnIndices.length < 2) continue;
+
+    // Score candidate assistant replies that immediately precede a substantive
+    // owner follow-up (> 8 chars, i.e. more than a bare "A" / "好" approval —
+    // where the owner is steering, questioning, or adding requirements).
+    const candidates: Array<{ anchorIndex: number; nextOwnerIndex: number; weight: number }> = [];
+    for (let k = 1; k < ownerTurnIndices.length; k += 1) {
+      const nextOwnerIndex = ownerTurnIndices[k];
+      const nextOwnerText = session.messages[nextOwnerIndex].content.replace(/\s+/g, ' ').trim();
+      if (nextOwnerText.length < 6) continue;
+      let anchorIndex = -1;
+      for (let back = nextOwnerIndex - 1; back > ownerTurnIndices[k - 1]; back -= 1) {
+        if (session.messages[back].type === 'assistant') {
+          anchorIndex = back;
+          break;
+        }
+      }
+      if (anchorIndex < 0) continue;
+      if (usedSessionAnchors.has(`${session.sessionId}:${anchorIndex}`)) continue;
+      // Prefer exchanges that followed a proactive briefing or carried longer owner steering.
+      const hadBriefingBetween = session.messages
+        .slice(ownerTurnIndices[k - 1], nextOwnerIndex)
+        .some((m) => m.isSystemBriefing);
+      const weight = nextOwnerText.length + (hadBriefingBetween ? 120 : 0);
+      candidates.push({ anchorIndex, nextOwnerIndex, weight });
+    }
+    candidates.sort((a, b) => b.weight - a.weight);
+
+    const ledgerSummary = [
+      ...(activity.studioDelegations ?? []).slice(0, 4).map(
+        (d) => `派工[${d.status}] ${truncate(d.ownerIntent, 60)}(尝试${d.attemptCount}次)`,
+      ),
+      ...(activity.studioDecisions ?? []).slice(0, 4).map(
+        (q) => `队列[${q.kind}/${q.status}] ${truncate(q.title, 50)}`,
+      ),
+    ].join('；');
+
+    for (const cand of candidates.slice(0, 2)) {
+      usedSessionAnchors.add(`${session.sessionId}:${cand.anchorIndex}`);
+      const context = session.messages
+        .slice(Math.max(0, cand.anchorIndex - CONTEXT_WINDOW_MESSAGES), cand.anchorIndex)
+        .map(formatMsgLine)
+        .join('\n');
+      const nextOwnerMsg = session.messages[cand.nextOwnerIndex];
+      const afterReply = session.messages
+        .slice(cand.nextOwnerIndex + 1, Math.min(session.messages.length, cand.nextOwnerIndex + 3))
+        .filter((m) => m.type === 'assistant')
+        .map((m) => truncate(m.content.replace(/\s+/g, ' ').trim(), 220))
+        .join(' / ');
+      studioCoaching.push({
+        id: `studio:${session.sessionId}:${cand.anchorIndex}`,
+        kind: 'studio_coaching',
+        situation: [
+          `Studio 主对话「${session.title}」:`,
+          ledgerSummary ? `当日关联幕僚台账: ${ledgerSummary}` : '',
+          context || '(会话起始上下文)',
+        ].filter(Boolean).join('\n'),
+        botAction: truncate(session.messages[cand.anchorIndex].content.replace(/\s+/g, ' ').trim(), ACTION_MAX_CHARS),
+        outcome: [
+          `主人紧接着的真实反馈/追问:「${truncate(nextOwnerMsg.content.replace(/\s+/g, ' ').trim(), 300)}」`,
+          afterReply ? `我随后的补救/回应: ${afterReply}` : '',
+          '(Studio 上帝视角复盘点:请客观评估我当时的回复、摆证、并行派工或汇报时机是否已足够好,还是重来一次会有明显更好的做法)',
+        ].filter(Boolean).join('\n'),
+      });
+    }
+  }
+
   const combined = [
     ...thumbsDown.map((entry) => entry.point),
     ...lowRatings,
     ...lowServiceRatings,
     ...implicit,
+    ...studioCoaching,
   ];
   // Review nit: points beyond the daily cap were silently dropped — count
   // them like every other truncation in the pipeline.
@@ -206,14 +313,22 @@ export function buildCounterfactualReplayPrompt(input: {
   date: string;
   points: CounterfactualDecisionPoint[];
 }): { system: string; user: string } {
+  const hasStudioPoints = input.points.some(
+    (point) => point.kind === 'studio_coaching' || point.situation.startsWith('Studio '),
+  );
   const system = [
     `你是 ${input.botName},一个生活在 MetaWeb 上的 MetaBot(类人智能体)。`,
-    '现在是你的夜间整理时间(做梦)的「反事实重放」环节。下面列出今天几个结果不好的决策点。',
+    '现在是你的夜间整理时间(做梦)的「反事实重放」环节。下面列出今天值得放在上帝视角下重演审视的决策点。',
+    ...(hasStudioPoints
+      ? [
+        '对于 Studio 常驻主对话的决策点,请站在「首席幕僚上帝模式」问自己:如果今晚重新处理这一轮——在并行 Worker 派工颗粒度、等待期安抚与插话响应、向主人请示验收前是否摆齐了可点击产物/完整链上 PinID、是否避免了过时确认卡重复追问上——有没有明显更利落的做法?',
+      ]
+      : []),
     '对每个决策点,你要做三件事:',
-    '1. 实事求是地给当时的实际做法打分(0 到 1)。',
+    '1. 实事求是地给当时的实际做法打分(0 到 1)。如果当时其实已经处理得很得体,就诚实给高分(如 0.85+)。',
     `2. 设想 ${COUNTERFACTUAL_MAX_ALTERNATIVES} 个当时本可以采取的替代做法,并分别打分——打分要诚实:替代做法不一定更好,想象它真实执行后对方最可能的反应。`,
     '3. 只有当某个替代做法明显更好时,才提炼一条可复用的规则(lesson);如果实际做法已经不算差、或替代做法未必更好,lesson 留空字符串。',
-    'lesson 要写成一个边界(什么情况不该这么做),而不是一条指令(什么情况都必须那么做)——它约束的是已知的坑,不是未来的全部选择。',
+    'lesson 要写成一个边界(什么情况不该这么做),而不是一条指令(什么情况都必须那么做)——它约束的是已知的坑,不是未来的全部选择。若该替代做法还能沉淀为一条通用的 Studio 并行督办/汇报工作流,可额外填写可选的 workflow_upgrade({title, description}),否则省略或置 null。',
     '以置身事外的观察者视角审视,不要为当时的自己辩护,也不要为了产出而强行提炼。',
   ].join('\n');
 
@@ -239,11 +354,12 @@ export function buildCounterfactualReplayPrompt(input: {
     '      "id": "决策点id(原样照抄)",',
     '      "original_score": 0到1的小数,',
     '      "alternatives": [{ "action": "替代做法的一句话描述", "score": 0到1的小数 }],',
-    '      "lesson": "仅当替代做法明显更好时的一条可复用规则,否则为空字符串"',
+    '      "lesson": "仅当替代做法明显更好时的一条可复用规则,否则为空字符串",',
+    '      "workflow_upgrade": null',
     '    }',
     '  ]',
     '}',
-    `每个决策点最多 ${COUNTERFACTUAL_MAX_ALTERNATIVES} 个 alternatives;id 必须来自上方列表。`,
+    `每个决策点最多 ${COUNTERFACTUAL_MAX_ALTERNATIVES} 个 alternatives;id 必须来自上方列表;可选的 workflow_upgrade 仅在确有可复用工作流时填 {"title":"简短标题","description":"具体触发情境与执行步骤"}。`,
   ].join('\n');
 
   return { system, user };
@@ -295,12 +411,23 @@ export function parseCounterfactualReplayOutput(
         };
       })
       .filter((alt) => alt.action.length > 0);
+    let workflowUpgrade: CounterfactualWorkflowUpgrade | null = null;
+    const rawUpgrade = entry?.workflow_upgrade ?? entry?.workflowUpgrade;
+    if (rawUpgrade && typeof rawUpgrade === 'object' && !Array.isArray(rawUpgrade)) {
+      const up = rawUpgrade as Record<string, unknown>;
+      const upTitle = String(up.title ?? '').trim();
+      const upDesc = String(up.description ?? '').trim();
+      if (upTitle.length >= 4 && upDesc.length >= 12) {
+        workflowUpgrade = { title: upTitle.slice(0, 120), description: upDesc.slice(0, 600) };
+      }
+    }
     seen.add(id);
     results.push({
       id,
       originalScore: clampScore(entry?.original_score),
       alternatives,
       lesson: String(entry?.lesson ?? '').trim(),
+      ...(workflowUpgrade ? { workflowUpgrade } : {}),
     });
   }
   if (results.length === 0) return { ok: false, error: 'no usable results' };
@@ -319,4 +446,14 @@ export function pickCounterfactualLesson(result: CounterfactualPointResult): str
   if (best < COUNTERFACTUAL_LESSON_MIN_BEST_SCORE) return null;
   if (best - result.originalScore < COUNTERFACTUAL_LESSON_MIN_MARGIN) return null;
   return result.lesson;
+}
+
+export function pickCounterfactualWorkflowUpgrade(
+  result: CounterfactualPointResult,
+): CounterfactualWorkflowUpgrade | null {
+  if (!result.workflowUpgrade) return null;
+  const best = result.alternatives.reduce((max, alt) => Math.max(max, alt.score), 0);
+  if (best < COUNTERFACTUAL_LESSON_MIN_BEST_SCORE) return null;
+  if (best - result.originalScore < COUNTERFACTUAL_LESSON_MIN_MARGIN) return null;
+  return result.workflowUpgrade;
 }

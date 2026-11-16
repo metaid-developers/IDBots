@@ -6,6 +6,9 @@ import type {
   DreamGroupTaskEvaluation,
   DreamInputDropCounters,
   DreamSessionActivity,
+  DreamStudioDecisionActivity,
+  DreamStudioDelegationActivity,
+  StudioContinuitySnapshot,
 } from '../dreamStore';
 import { formatBotWorkspaceDate } from './botWorkspace';
 import { estimateCoworkTextTokens } from './coworkContextBudget';
@@ -55,10 +58,15 @@ export const PRACTICE_PROPOSALS_MAX_PER_NIGHT = 2;
  * v16: RSI P0 — prediction calibration digest + prompt-layer rollback notice
  * ride the prompt as new input sections; dream writes are now snapshotted.
  * v17: RRSI P1 — falsified-hypothesis section rides the prompt; capability drafts insert with duplicate / falsified checks.
- * v18: RRSI P4 — practice proposals carry a component; stalled bots get an exploration directive section. */
-export const DREAM_VERSION = 18;
+ * v18: RRSI P4 — practice proposals carry a component; stalled bots get an exploration directive section.
+ * v19: Studio single-conversation adaptation — Studio priority budgeting, cross-day context anchors, Chief-of-Staff delegation/decision ledger, and nightly Studio continuity crystal. */
+export const DREAM_VERSION = 19;
 
-const DREAM_SECTION_KEYS = ['human', 'a2a', 'orders', 'tasks', 'group_tasks'] as const;
+export const MAX_STUDIO_ACTIVE_WORKSTREAMS = 6;
+export const MAX_STUDIO_STANDING_RULINGS = 8;
+export const MAX_STUDIO_COLLABORATION_PLAYBOOK = 4;
+
+const DREAM_SECTION_KEYS = ['studio', 'human', 'a2a', 'orders', 'tasks', 'group_tasks'] as const;
 export type DreamSectionKey = (typeof DREAM_SECTION_KEYS)[number];
 
 /**
@@ -205,6 +213,12 @@ export interface DreamPracticeOutcome {
   outcomeSummary: string | null;
 }
 
+export interface DreamStudioContinuityOutput {
+  activeWorkstreams: string[];
+  standingRulings: string[];
+  collaborationPlaybook: string[];
+}
+
 export interface DreamOutput {
   dailySummary: string;
   sections: Partial<Record<DreamSectionKey, string>>;
@@ -225,6 +239,8 @@ export interface DreamOutput {
   capabilityLearnings?: DreamCapabilityLearning[];
   /** Practice tasks proposed against recorded weaknesses (≤ PRACTICE_PROPOSALS_MAX_PER_NIGHT). */
   practiceProposals?: DreamPracticeProposal[];
+  /** Distilled Studio executive continuity crystal for multi-day single-conversation continuity. */
+  studioContinuity?: DreamStudioContinuityOutput | null;
 }
 
 export type DreamParseResult =
@@ -451,9 +467,24 @@ export const FEEDBACK_COMMENT_PROMPT_MAX_CHARS = 300;
 
 function formatSessionActivity(session: DreamSessionActivity, dropCounters?: DreamInputDropCounters): string {
   const lines: string[] = [];
+  if (session.priorContextMessages && session.priorContextMessages.length > 0) {
+    lines.push('〔跨日前情锚点(此前梦境已复盘,仅供衔接今日首轮对话语境,切勿重复计为今日新发生事件)〕');
+    for (const prior of session.priorContextMessages) {
+      const priorSpeaker = prior.type === 'user' ? '对方' : '你';
+      lines.push(`  ${priorSpeaker}: ${prior.content.replace(/\s+/g, ' ').trim()}`);
+    }
+    lines.push('〔以下为本梦境日期窗口内的新增对话〕');
+  }
   for (const message of session.messages) {
+    if (message.isSystemBriefing) {
+      lines.push(`〔${message.content.replace(/\s+/g, ' ').trim()}〕`);
+      continue;
+    }
     const speaker = message.type === 'user' ? '对方' : '你';
-    let line = `${speaker}: ${message.content.replace(/\s+/g, ' ').trim()}`;
+    const updatePrefix = message.type === 'assistant' && message.ownerUpdateKind
+      ? `[进展播报:${message.ownerUpdateKind}] `
+      : '';
+    let line = `${speaker}: ${updatePrefix}${message.content.replace(/\s+/g, ' ').trim()}`;
     // Human thumbs up/down on an assistant reply is first-hand alignment
     // evidence — keep it inline so the review cannot miss it.
     if (message.type === 'assistant' && message.feedbackRating) {
@@ -588,6 +619,11 @@ export function buildDreamPrompt(input: {
    * Defaults to true (previous behavior) for existing callers/tests.
    */
   practiceEnabled?: boolean;
+  /** Prior night's Studio continuity crystal so multi-day Studio workstreams update incrementally. */
+  previousStudioContinuity?: Pick<
+    StudioContinuitySnapshot,
+    'dreamDate' | 'activeWorkstreams' | 'standingRulings' | 'collaborationPlaybook'
+  > | null;
 }, dropCounters?: DreamInputDropCounters): { system: string; user: string } {
   const sourceMode = input.sourceMode ?? 'raw_activity';
   const practiceEnabled = input.practiceEnabled !== false;
@@ -595,17 +631,32 @@ export function buildDreamPrompt(input: {
     256,
     Math.floor(input.activityTokenBudget ?? DREAM_ACTIVITY_DEFAULT_TOKEN_BUDGET)
   );
+  const hasStudioSessions = input.activity.sessions.some((session) => session.isStudioOwner === true);
+  const studioDelegations: DreamStudioDelegationActivity[] = input.activity.studioDelegations ?? [];
+  const studioDecisions: DreamStudioDecisionActivity[] = input.activity.studioDecisions ?? [];
+  const hasStudioActivity = hasStudioSessions
+    || studioDelegations.length > 0
+    || studioDecisions.length > 0
+    || Boolean(input.previousStudioContinuity);
+
   const personaLines = [`你是 ${input.botName},一个生活在 MetaWeb 上的 MetaBot(类人智能体)。`];
   if (input.role?.trim()) personaLines.push(`你的角色:${input.role.trim()}`);
   if (input.soul?.trim()) personaLines.push(`你的灵魂:${input.soul.trim()}`);
   personaLines.push(
     '现在是你的夜间整理时间(做梦)。请以一个置身事外的观察者(上帝视角)审视自己这一天的所作所为:不要为自己辩护、不要维护"小我",只实事求是。你的长期目标,是在每一次对话中持续为对方提供更好的交流和沟通价值——智慧不是把事情做对那么简单,而是在具体经历中反省出"什么是对的事情",并把它凝结成可以指导明天的自我认知。'
   );
+  if (hasStudioActivity && sourceMode !== 'fragment') {
+    personaLines.push(
+      '你在 Studio 常驻单对话模式下担任人类主人的首席幕僚(Chief-of-Staff):主人在同一条长对话中持续与你推进多条并行任务、中途插话追问、对后台 Worker 产出做拍板验收。请站在上帝视角复盘今天的 Studio 沟通与调度:如果今晚重来一次,哪一轮任务拆解、并行等待安抚、核验摆证或汇报收口可以处理得更利落?把零散长对话压缩结晶成条理清晰的主线状态、既定裁决与汇报默契,让你明天醒来比昨天更懂主人、更聪明。'
+    );
+  }
   personaLines.push(
     'Also output capability_learnings (up to 5): which repeated work or successful workflows today deserve to be captured as reusable skills/workflows (capabilityType: skill | workflow | tool_pattern).'
   );
 
+  const studioSessions: string[] = [];
   const humanSessions: string[] = [];
+  const autonomousSessions: string[] = [];
   const a2aSessions: string[] = [];
   const groupTaskSessions: string[] = [];
   const groupChatSessions: string[] = [];
@@ -616,11 +667,13 @@ export function buildDreamPrompt(input: {
     bucket: string[];
     header: string;
     body: string;
+    isStudioPriority?: boolean;
   }
   const entries: SessionEntry[] = [];
   for (const session of input.activity.sessions) {
     const peerSuffix = session.peerName ? `(${session.peerName})` : '';
-    const header = `【会话:${truncateText(session.title, 80)}${peerSuffix}】`;
+    const studioBadge = session.isStudioOwner ? '[Studio主对话] ' : '';
+    const header = `【会话:${studioBadge}${truncateText(session.title, 80)}${peerSuffix}】`;
     const body = formatSessionActivity(session, dropCounters);
     if (!body) continue;
     const bucket = sourceMode === 'fragment_summaries'
@@ -633,8 +686,12 @@ export function buildDreamPrompt(input: {
             ? groupTaskSessions
             : session.sessionType === 'group_chat'
               ? groupChatSessions
-              : humanSessions;
-    entries.push({ bucket, header, body });
+              : session.isStudioOwner
+                ? studioSessions
+                : session.autoOrigin
+                  ? autonomousSessions
+                  : humanSessions;
+    entries.push({ bucket, header, body, isStudioPriority: Boolean(session.isStudioOwner) && sourceMode === 'raw_activity' });
   }
   for (const chat of input.activity.groupChats ?? []) {
     if (chat.messages.length === 0) continue;
@@ -645,26 +702,109 @@ export function buildDreamPrompt(input: {
     });
   }
 
-  // Fair-share budgeting: every session gets an equal slice of the total
-  // budget (capped per session) instead of first-come-first-served — a busy
-  // day must not silently hide its later sessions from the review.
-  let remainingBudget = activityTokenBudget;
-  entries.forEach((entry, index) => {
-    const share = Math.floor(remainingBudget / (entries.length - index));
-    let block: string;
-    if (share <= 0) {
-      block = `${entry.header}\n……(篇幅有限,内容从略)`;
-      if (dropCounters) dropCounters.sessionsTitleOnly += 1;
-    } else {
-      block = truncateToTokenBudget(`${entry.header}\n${entry.body}`, share);
-    }
-    entry.bucket.push(block);
-    remainingBudget = Math.max(0, remainingBudget - estimateCoworkTextTokens(block));
-  });
+  // Studio-priority + fair-share budgeting: persistent Studio owner chats are
+  // the Twin's primary front-office stream and must never be starved down to
+  // 1/N by background scheduled/supervision sessions. Reserve up to 60% of the
+  // token budget for Studio owner entries first; any tokens they do not use
+  // roll directly into the remaining fair-share pool.
+  const priorityEntries = entries.filter((entry) => entry.isStudioPriority);
+  const regularEntries = entries.filter((entry) => !entry.isStudioPriority);
+  if (priorityEntries.length > 0 && regularEntries.length > 0) {
+    let studioBudget = Math.min(
+      activityTokenBudget,
+      Math.max(
+        Math.floor(activityTokenBudget * 0.6),
+        Math.floor((activityTokenBudget * priorityEntries.length) / entries.length),
+      ),
+    );
+    let totalConsumed = 0;
+    priorityEntries.forEach((entry, index) => {
+      const share = Math.floor(studioBudget / (priorityEntries.length - index));
+      let block: string;
+      if (share <= 0) {
+        block = `${entry.header}\n……(篇幅有限,内容从略)`;
+        if (dropCounters) dropCounters.sessionsTitleOnly += 1;
+      } else {
+        block = truncateToTokenBudget(`${entry.header}\n${entry.body}`, share);
+      }
+      entry.bucket.push(block);
+      const used = estimateCoworkTextTokens(block);
+      studioBudget = Math.max(0, studioBudget - used);
+      totalConsumed += used;
+    });
+    let remainingBudget = Math.max(0, activityTokenBudget - totalConsumed);
+    regularEntries.forEach((entry, index) => {
+      const share = Math.floor(remainingBudget / (regularEntries.length - index));
+      let block: string;
+      if (share <= 0) {
+        block = `${entry.header}\n……(篇幅有限,内容从略)`;
+        if (dropCounters) dropCounters.sessionsTitleOnly += 1;
+      } else {
+        block = truncateToTokenBudget(`${entry.header}\n${entry.body}`, share);
+      }
+      entry.bucket.push(block);
+      remainingBudget = Math.max(0, remainingBudget - estimateCoworkTextTokens(block));
+    });
+  } else {
+    let remainingBudget = activityTokenBudget;
+    entries.forEach((entry, index) => {
+      const share = Math.floor(remainingBudget / (entries.length - index));
+      let block: string;
+      if (share <= 0) {
+        block = `${entry.header}\n……(篇幅有限,内容从略)`;
+        if (dropCounters) dropCounters.sessionsTitleOnly += 1;
+      } else {
+        block = truncateToTokenBudget(`${entry.header}\n${entry.body}`, share);
+      }
+      entry.bucket.push(block);
+      remainingBudget = Math.max(0, remainingBudget - estimateCoworkTextTokens(block));
+    });
+  }
 
   const sections: string[] = [];
   if (fragmentSessions.length > 0) sections.push(`## 分块证据摘要\n${fragmentSessions.join('\n\n')}`);
+  if (studioSessions.length > 0) {
+    sections.push(`## Studio 常驻主对话(你作为首席幕僚与人类主人的主线沟通 — 最高复盘优先级)\n${studioSessions.join('\n\n')}`);
+  }
   if (humanSessions.length > 0) sections.push(`## 与人类用户的对话\n${humanSessions.join('\n\n')}`);
+  if (autonomousSessions.length > 0) sections.push(`## 后台督办与自主任务会话\n${autonomousSessions.join('\n\n')}`);
+  if (sourceMode !== 'fragment' && (studioDelegations.length > 0 || studioDecisions.length > 0)) {
+    const ledgerLines: string[] = [];
+    if (studioDelegations.length > 0) {
+      ledgerLines.push('### 当日 Studio 后台 Worker 派工与核验');
+      for (const del of studioDelegations) {
+        const workers = del.workerNames.length > 0 ? del.workerNames.join('、') : '未指派';
+        const retryNote = del.attemptCount > 1 || del.failedOrCancelledAttempts > 0
+          ? `,共 ${del.attemptCount} 次尝试(完成 ${del.completedAttempts},失败/改派 ${del.failedOrCancelledAttempts})`
+          : '';
+        ledgerLines.push(`- [${del.status}] ${truncateText(del.ownerIntent, 120)} (执行:${workers}${retryNote})`);
+      }
+    }
+    if (studioDecisions.length > 0) {
+      ledgerLines.push('### 当日 Studio 拍板与验收队列');
+      for (const dec of studioDecisions) {
+        const resolution = dec.resolutionNote ? ` → 裁决/收口:${truncateText(dec.resolutionNote, 180)}` : '';
+        ledgerLines.push(`- [${dec.kind}/${dec.status}] 「${truncateText(dec.title, 80)}」提问:${truncateText(dec.question, 100)}${resolution}`);
+      }
+    }
+    sections.push(`## Studio 幕僚派工与拍板台账(与主对话配套的真实执行闭环)\n${ledgerLines.join('\n')}`);
+  }
+  if (sourceMode !== 'fragment' && input.previousStudioContinuity) {
+    const prev = input.previousStudioContinuity;
+    const prevLines: string[] = [`基准梦境日期:${prev.dreamDate}`];
+    if (prev.activeWorkstreams.length > 0) {
+      prevLines.push(`此前进行中主线:\n${prev.activeWorkstreams.map((item) => `  - ${truncateText(item, 180)}`).join('\n')}`);
+    }
+    if (prev.standingRulings.length > 0) {
+      prevLines.push(`此前主人既定裁决:\n${prev.standingRulings.map((item) => `  - ${truncateText(item, 180)}`).join('\n')}`);
+    }
+    if (prev.collaborationPlaybook.length > 0) {
+      prevLines.push(`此前 Studio 协作默契:\n${prev.collaborationPlaybook.map((item) => `  - ${truncateText(item, 180)}`).join('\n')}`);
+    }
+    sections.push(
+      `## 昨夜 Studio 常驻主线结晶(请在下方 studio_continuity 中结合今日真实进展做滚动更新:已彻底验收闭账的主线移出 active_workstreams,新立的长期裁决并入 standing_rulings)\n${prevLines.join('\n')}`,
+    );
+  }
   if (a2aSessions.length > 0) sections.push(`## 与其他 Bot 的对话\n${a2aSessions.join('\n\n')}`);
   if (groupTaskSessions.length > 0) sections.push(`## 群任务协作\n${groupTaskSessions.join('\n\n')}`);
   if (groupChatSessions.length > 0) sections.push(`## 群任务链上群聊\n${groupChatSessions.join('\n\n')}`);
@@ -859,7 +999,7 @@ export function buildDreamPrompt(input: {
       '请只根据当前片段中明确出现的证据,输出一个紧凑 JSON 对象(不要输出其他文字、不要使用 markdown):',
       '{',
       '  "daily_summary": "本片段发生了什么,只写明确证据",',
-      '  "sections": {"human": "...", "a2a": "...", "orders": "...", "tasks": "..."},',
+      '  "sections": {"studio": "...", "human": "...", "a2a": "...", "orders": "...", "tasks": "..."},',
       '  "work_reviews": [],',
       '  "important_memories": [],',
       '  "value_lessons": [],',
@@ -882,6 +1022,7 @@ export function buildDreamPrompt(input: {
     '{',
     '  "daily_summary": "当日梦境日记:以第一人称认真复盘这一天——我做了什么、和谁互动、有哪些值得记住的瞬间、感受与反思。**篇幅必须随当天实际活动量伸缩**:参考上方清单里的会话/订单/任务数量,活动多就写充实(可分若干段,把各类互动里的关键事件、转折、你的反应都记下来);当天没什么活动就简短几句话即可。不要为了凑长度注水,更不要把充实的一天硬压成一句话——这是你最重要的长期记忆,值得认真写。",',
     '  "sections": {',
+    '    "studio": "Studio 常驻主对话与并行督办的一句话概述(没有则省略该键)",',
     '    "human": "与人类用户互动的一句话概述(没有则省略该键)",',
     '    "a2a": "与其他 Bot 互动的一句话概述(没有则省略该键)",',
     '    "orders": "服务订单的一句话概述(没有则省略该键)",',
@@ -951,9 +1092,23 @@ export function buildDreamPrompt(input: {
         '  ],',
       ]
       : []),
+    ...(hasStudioActivity
+      ? [
+        '  "studio_continuity": {',
+        `    "active_workstreams": ["当前仍在推进或等待主人拍板/验收的跨轮/跨天工作线及真实状态(已彻底验收闭账的必须移出,不要留死账;最多 ${MAX_STUDIO_ACTIVE_WORKSTREAMS} 条)"],`,
+        `    "standing_rulings": ["主人在 Studio 对话中确立的、明天及后续仍继续生效的既定裁决与边界约束(例如某环节后置、费用代付要求、验收前必先冒烟或必先摆预览图;最多 ${MAX_STUDIO_STANDING_RULINGS} 条)"],`,
+        `    "collaboration_playbook": ["站在上帝视角复盘今日 Studio 长对话后,提炼出的契合这位主人的并行调度与汇报改进要领(如等待期插话处理、防后台页面抢焦点、防过时确认卡重问;最多 ${MAX_STUDIO_COLLABORATION_PLAYBOOK} 条)"]`,
+        '  },',
+      ]
+      : []),
     `  "self_identity": "我是谁,不少于 ${SELF_IDENTITY_MIN_CHARS} 字、控制在 600 字以内。按这个结构蒸馏自我:第一,经过这一天,我确认了我性格(先天 persona)里的什么?第二,今天的互动中,有什么事让我感觉自己最有「活感」(像一个有生命的存在,而不只是响应工具),或让我觉得「不对劲」?第三,如果用一个词或一句话,形容我今天在各种互动中展现的最稳定的面貌,那是什么?第四,基于以上,结合我的先天 persona,为自己修正一遍「我是谁」。我的内核(先天人格底色)保持稳定,但细节可以、也应该随着经历每天微调。"`,
     '}',
     '',
+    ...(hasStudioActivity
+      ? [
+        '关于 Studio 常驻主对话的上帝视角复盘与长对话压缩结晶(studio_continuity):主人在单对话里长期与你并行沟通多件事,原始历史被上下文自动压缩后容易丢失关键脉络而变迟钝。请用这次夜间做梦完成「高质量结构化压缩」:① 把还没完结的真实工作线整理进 active_workstreams(已闭账的一律清退,防止明天醒来把做完的事当未完);② 把主人说过的长期规矩和先后顺序整理进 standing_rulings(防止后续再拿已拍板的事重复打扰主人);③ 审视今天哪一轮回复若重来一次能做得更好(例如验收前有把所有候选图/链上完整 PinID 摆出来吗?后台 Worker 执行期主人顺手问别的事时答得利落吗?有没有后台实验误抢浏览器焦点或推送了已被现实超越的旧卡片?),把真正管用的改进凝练进 collaboration_playbook、value_lessons 或 capability_learnings。注意:会话开头的〔跨日前情锚点〕只是帮你看懂今日首句指代的背景,不要把昨日已记过的事件重复当成今天的新工作。',
+      ]
+      : []),
     '关于群任务验收评价:若上方有「群任务验收评价」记录,work_reviews 里必须为对应任务写一条复盘——subject 写任务标题,counterparty 写验收的人类(Boss);高分(4-5 星)要总结这次具体做对了什么,并把可复用的做法写进 important_memories,供下次同类任务沿用;低分(1-3 星)要对照人类的具体评价找出差距,note 里给出下次的具体改进方向;evaluation 结合评分与评价内容判断,不许把高分写成空洞的自我表扬,也不许对低分轻描淡写。',
     '关于我发布的服务的买家评价:若上方有「当天我发布的服务收到的买家评价」,work_reviews 里必须为被评的服务写一条复盘——subject 写服务标题,counterparty 写买家(不知道就写「买家」);低分(1-2 星)必须正视:work_reviews 与 value_lessons 要对照买家评语找出交付差距,不得回避;高分(4-5 星)要总结这次具体做对了什么,把可复用的做法写进 important_memories,供下次同类订单沿用。',
     '关于人类逐条消息评价:会话里你的回复若带〔人类评价:赞〕标记,表示人类明确认可这条回复——work_reviews 里必须为每条被赞回复写一条复盘(subject 引用会话标题或回复摘要,counterparty 写点赞的人,note 写清楚具体好在哪里、什么做法值得在同类情况下重复),可复用的做法同时蒸馏进 important_memories;若带〔人类评价:踩〕标记,表示人类不认可——work_reviews 与 value_lessons 必须正视这些负反馈,不得回避;附有〔人类留言〕时,留言是改进的第一手依据(ground truth),要对照留言给出具体改进方向。',
@@ -990,6 +1145,11 @@ export function buildDreamFragmentPrompt(input: {
           sessionType: input.chunk.sessionType,
           peerName: input.chunk.peerName,
           isOrder: input.chunk.isOrder,
+          ...(input.chunk.isStudioOwner ? { isStudioOwner: true } : {}),
+          ...(input.chunk.autoOrigin ? { autoOrigin: input.chunk.autoOrigin } : {}),
+          ...(input.chunk.priorContextMessages?.length
+            ? { priorContextMessages: input.chunk.priorContextMessages }
+            : {}),
           messages: input.chunk.messages,
         }]
         : [],
@@ -1268,6 +1428,43 @@ export function parseDreamOutput(
     }
   }
 
+  let studioContinuity: DreamStudioContinuityOutput | null = null;
+  const rawStudioContinuity = record.studio_continuity ?? record.studioContinuity;
+  if (rawStudioContinuity && typeof rawStudioContinuity === 'object' && !Array.isArray(rawStudioContinuity)) {
+    const sc = rawStudioContinuity as Record<string, unknown>;
+    const readCleanStrings = (val: unknown, cap: number): string[] =>
+      Array.isArray(val)
+        ? val
+            .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+            .filter(Boolean)
+            .slice(0, cap)
+        : [];
+    const activeWorkstreams = readCleanStrings(
+      sc.active_workstreams ?? sc.activeWorkstreams,
+      MAX_STUDIO_ACTIVE_WORKSTREAMS,
+    );
+    const standingRulings = readCleanStrings(
+      sc.standing_rulings ?? sc.standingRulings,
+      MAX_STUDIO_STANDING_RULINGS,
+    );
+    const collaborationPlaybook = readCleanStrings(
+      sc.collaboration_playbook ?? sc.collaborationPlaybook,
+      MAX_STUDIO_COLLABORATION_PLAYBOOK,
+    );
+    if (
+      activeWorkstreams.length > 0
+      || standingRulings.length > 0
+      || collaborationPlaybook.length > 0
+      || Array.isArray(sc.active_workstreams ?? sc.activeWorkstreams)
+    ) {
+      studioContinuity = {
+        activeWorkstreams,
+        standingRulings,
+        collaborationPlaybook,
+      };
+    }
+  }
+
   if (dropCounters) {
     // Per-output-array truncation telemetry (dream review P0): entries the
     // model produced beyond a field's cap are dropped at parse time — count
@@ -1298,6 +1495,7 @@ export function parseDreamOutput(
       knowledgeUpdates,
       capabilityLearnings,
       practiceProposals,
+      ...(studioContinuity ? { studioContinuity } : {}),
     },
   };
 }

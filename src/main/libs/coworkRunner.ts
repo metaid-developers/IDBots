@@ -4153,6 +4153,40 @@ export class CoworkRunner extends EventEmitter {
     return this.getSessionMemoryPolicy(sessionId).memoryEnabled;
   }
 
+  private unwrapOwnerTurnEnvelope(text: string): string {
+    const raw = String(text ?? '');
+    const openIdx = raw.indexOf('<owner_message>');
+    const closeIdx = raw.lastIndexOf('</owner_message>');
+    if (openIdx >= 0 && closeIdx > openIdx) {
+      const inner = raw.slice(openIdx + '<owner_message>'.length, closeIdx).trim();
+      const blankSplit = inner.split(/\r?\n\r?\n/);
+      if (blankSplit.length >= 2 && blankSplit[0].startsWith('This turn was opened by the human OWNER')) {
+        return blankSplit.slice(1).join('\n\n').trim();
+      }
+      return inner;
+    }
+    return raw.trim();
+  }
+
+  private isSyntheticInternalUserMessage(message: CoworkMessage): boolean {
+    const meta = (message.metadata ?? {}) as Record<string, unknown>;
+    if (
+      meta.isDelegationInternal === true
+      || meta.origin === 'studio_briefing'
+      || meta.origin === 'studio_supervision'
+      || meta.origin === 'heartbeat'
+      || meta.origin === 'cross_session'
+      || meta.sourceChannel === 'idbots_cross_session'
+    ) {
+      return true;
+    }
+    const trimmed = String(message.content ?? '').trim();
+    return (
+      trimmed.startsWith('<studio_proactive_briefing>')
+      || trimmed.startsWith('<studio_back_office_supervision>')
+    );
+  }
+
   private applyTurnMemoryUpdatesForSession(sessionId: string): void {
     const policy = this.getSessionMemoryPolicy(sessionId);
     if (!policy.memoryEnabled || !this.isSessionMemoryWriteEnabled(sessionId)) {
@@ -4163,12 +4197,23 @@ export class CoworkRunner extends EventEmitter {
     if (!session || session.messages.length === 0) {
       return;
     }
+    // Unattended automation sessions ([督办], [长期], [定时], [编排任务]) execute
+    // host-generated prompts rather than human owner turns — never extract
+    // owner profile/preference memories from their prompts.
+    if (session.autoOrigin) {
+      return;
+    }
 
     let lastUser: CoworkMessage | null = null;
     let lastUserIndex = -1;
     for (let index = session.messages.length - 1; index >= 0; index -= 1) {
       const message = session.messages[index];
       if (message.type === 'user' && message.content?.trim()) {
+        // If the most recent user-role entry was a host-injected briefing or
+        // cross-session notification, do not extract owner memories for this turn.
+        if (this.isSyntheticInternalUserMessage(message)) {
+          return;
+        }
         lastUser = message;
         lastUserIndex = index;
         break;
@@ -4178,10 +4223,16 @@ export class CoworkRunner extends EventEmitter {
       return;
     }
 
+    const cleanUserText = this.unwrapOwnerTurnEnvelope(lastUser.content);
+    if (!cleanUserText) {
+      return;
+    }
+
     const isValidAssistantMessage = (message: CoworkMessage): boolean => {
       if (message.type !== 'assistant') return false;
       if (!message.content?.trim()) return false;
       if (message.metadata?.isThinking) return false;
+      if (message.metadata?.waitingReassurance || message.metadata?.turnAckReply) return false;
       return true;
     };
 
@@ -4203,7 +4254,7 @@ export class CoworkRunner extends EventEmitter {
     this.turnMemoryQueue.push({
       key,
       sessionId,
-      userText: lastUser.content,
+      userText: cleanUserText,
       assistantText,
       implicitEnabled: policy.memoryImplicitUpdateEnabled,
       memoryLlmJudgeEnabled: policy.memoryLlmJudgeEnabled,
@@ -7101,7 +7152,11 @@ export class CoworkRunner extends EventEmitter {
     // telemetry write must never break a turn.
     if (provenTechniques.length > 0 && experienceBlock.includes('<proven_techniques>')) {
       try {
-        this.store.markCapabilityDraftsInjected(provenTechniques.map((draft) => draft.id));
+        const renderedTechniqueCount = (experienceBlock.match(/<technique\b/g) || []).length;
+        const renderedIds = provenTechniques
+          .slice(0, Math.max(1, renderedTechniqueCount))
+          .map((draft) => draft.id);
+        this.store.markCapabilityDraftsInjected(renderedIds);
       } catch {
         // telemetry is best-effort
       }
@@ -9685,6 +9740,13 @@ export class CoworkRunner extends EventEmitter {
       }
       if (!compactResult.compacted) {
         this.addSystemMessage(sessionId, tApp('还没有可压缩的历史。', 'No compactable history yet.'));
+      } else {
+        // In-place DSH compaction shadows earlier turns (including Turn 1's
+        // volatile identity/memory/skills/studio blocks) without changing
+        // claudeSessionId. Invalidate the dedup state so the next turn cleanly
+        // re-anchors those distilled blocks in the compacted window.
+        this.volatileDedupBySessionId.delete(sessionId);
+        if (activeSession) activeSession.pendingCacheBreakReason = 'compaction';
       }
       if (activeSession) activeSession.pendingManualCompact = false;
       this.pendingManualCompactSessions.delete(sessionId);
@@ -12321,7 +12383,19 @@ export class CoworkRunner extends EventEmitter {
             // when the same turn also failed auto-compaction (the 2026-09-28
             // compaction-deadlock incident).
             const messageMeta = (message as { metadata?: Record<string, unknown> } | null)?.metadata;
-            if (messageMeta?.compaction === true && messageMeta?.isError === true) compactionFailedThisTurn = true;
+            if (messageMeta?.compaction === true) {
+              if (messageMeta?.isError === true) {
+                compactionFailedThisTurn = true;
+              } else {
+                // Auto-compaction replaced the shadowed history span in-place
+                // while keeping the same dsh: session handle. Clear volatile
+                // dedup hashes so the next turn re-injects self-identity,
+                // experience guidance, Studio continuity crystal, and catalogs
+                // instead of losing them forever after the first compaction.
+                this.volatileDedupBySessionId.delete(sessionId);
+                activeSession.pendingCacheBreakReason = 'compaction';
+              }
+            }
             // Only settled visible text closes the opening window. A speculative
             // streaming placeholder may still fold into hidden process text.
             if (
@@ -16881,6 +16955,9 @@ export class CoworkRunner extends EventEmitter {
         const preTokens = Number.isFinite(meta?.pre_tokens) ? Number(meta.pre_tokens) : null;
         const postTokens = Number.isFinite(meta?.post_tokens) ? Number(meta.post_tokens) : null;
         const durationMs = Number.isFinite(meta?.duration_ms) ? Number(meta.duration_ms) : null;
+        this.volatileDedupBySessionId.delete(sessionId);
+        const activeCompacted = this.activeSessions.get(sessionId);
+        if (activeCompacted) activeCompacted.pendingCacheBreakReason = 'compaction';
         this.addSystemMessage(sessionId, '', {
           sdkCompactBoundary: { trigger, preTokens, postTokens, durationMs },
         });
@@ -18112,7 +18189,7 @@ export class CoworkRunner extends EventEmitter {
    * one.
    */
   private isTerseFollowUpRulingPrompt(sessionId: string, userPrompt: string): boolean {
-    const trimmed = userPrompt.trim();
+    const trimmed = this.unwrapOwnerTurnEnvelope(userPrompt);
     if (!trimmed || trimmed.length > 24) return false;
     if (!/^(?:[A-Da-d1-9](?:$|[\s,，.。、:：)）·—-][\s\S]{0,20})|继续|continue|重试|过|好|好的|可以|行|同意|确认|验收)$/i.test(trimmed)) {
       return false;
@@ -18123,10 +18200,18 @@ export class CoworkRunner extends EventEmitter {
 
   private async emitTurnAckReplyBubble(
     sessionId: string,
-    userPrompt: string,
+    rawUserPrompt: string,
     turn: ActiveSession,
     turnSerial: number,
   ): Promise<void> {
+    if (
+      rawUserPrompt.includes('<studio_proactive_briefing>')
+      || rawUserPrompt.includes('<studio_back_office_supervision>')
+    ) {
+      return;
+    }
+    const userPrompt = this.unwrapOwnerTurnEnvelope(rawUserPrompt);
+    if (!userPrompt) return;
     if (resolveTurnAckActivity(userPrompt) === 'verify_delivery') return;
     if (this.isTerseFollowUpRulingPrompt(sessionId, userPrompt)) return;
     const ackAbort = new AbortController();
@@ -18138,7 +18223,15 @@ export class CoworkRunner extends EventEmitter {
       const gatePromise = this.cerebellumTurnAckGate
         ? this.cerebellumTurnAckGate({ currentUserText: userPrompt }).catch(() => null)
         : null;
-      const sessionTitle = this.store.getSession(sessionId)?.title ?? null;
+      const persistedSession = this.store.getSession(sessionId);
+      // In a persistent single-conversation Studio stream, `session.title` stays
+      // pinned to Turn 1's topic even days and dozens of topics later — feeding
+      // it into the contextless ack model caused Turn-1 topic hallucinations on
+      // short follow-ups ("你确认还没好吗" → "我还在梳理 IDBots 的 NFT 功能").
+      const omitStaleStudioTitle =
+        this.isAssistantModeOwnerChatSession(sessionId)
+        && (persistedSession?.messages?.length ?? 0) >= 6;
+      const sessionTitle = omitStaleStudioTitle ? null : (persistedSession?.title ?? null);
       let generatedReply = await generateTurnAckReply(userPrompt, sessionTitle, ackAbort.signal);
       let deferredForDirectReply = false;
       if (gatePromise) {

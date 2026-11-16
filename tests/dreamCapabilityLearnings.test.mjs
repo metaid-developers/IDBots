@@ -254,7 +254,7 @@ test('end-to-end: runNow persists capability_learnings as drafts (R4.2)', async 
     assert.equal(drafts[0].dreamDate, DAY);
     assert.equal(drafts[0].capabilityType, 'workflow');
     assert.equal(drafts[0].status, 'draft');
-    assert.equal(DREAM_VERSION, 18, 'dream version should be bumped for the new output channel');
+    assert.equal(DREAM_VERSION, 19, 'dream version should be bumped for the new output channel');
   } finally {
     cleanup();
   }

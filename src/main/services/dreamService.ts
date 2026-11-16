@@ -1,6 +1,13 @@
 import { createHash } from 'node:crypto';
 import type { CapabilityFalsifiedHypothesis, CoworkStore, CoworkUserMemory } from '../coworkStore';
-import type { DreamDayActivity, DreamInputDropCounters, DreamStore, MetabotPrediction, PromptLayerSnapshot } from '../dreamStore';
+import type {
+  DreamDayActivity,
+  DreamInputDropCounters,
+  DreamStore,
+  MetabotPrediction,
+  PromptLayerSnapshot,
+  StudioContinuitySnapshot,
+} from '../dreamStore';
 import { countDreamInputDrops, createDreamInputDropCounters } from '../dreamStore';
 import type { MetaIDExperienceStore } from '../metaidExperienceStore';
 import type { MetaIDImpressionStore } from '../metaidImpressionStore';
@@ -74,6 +81,7 @@ import {
   hasExplicitHumanFeedback,
   parseCounterfactualReplayOutput,
   pickCounterfactualLesson,
+  pickCounterfactualWorkflowUpgrade,
 } from '../libs/counterfactualReplayPrompt';
 import {
   buildPositiveReplayPrompt,
@@ -1093,6 +1101,7 @@ export class DreamService {
       rollbackNotice?: string | null;
       falsifiedHypotheses?: Array<{ title: string; reason: string }>;
       explorationDirective?: string | null;
+      previousStudioContinuity?: StudioContinuitySnapshot | null;
     },
     /** Silent-drop counters for prompt-building and parse caps (telemetry). */
     dropCounters?: DreamInputDropCounters,
@@ -1128,6 +1137,7 @@ export class DreamService {
         falsifiedHypotheses: dreamExtras?.falsifiedHypotheses,
         explorationDirective: dreamExtras?.explorationDirective,
         practiceEnabled,
+        previousStudioContinuity: dreamExtras?.previousStudioContinuity,
       }, dropCounters);
       const output = await this.generateAndParse(
         metabot.id,
@@ -1160,6 +1170,7 @@ export class DreamService {
         falsifiedHypotheses: dreamExtras?.falsifiedHypotheses,
         explorationDirective: dreamExtras?.explorationDirective,
         practiceEnabled,
+        previousStudioContinuity: dreamExtras?.previousStudioContinuity,
       }, dropCounters);
       const output = await this.generateAndParse(
         metabot.id,
@@ -1191,6 +1202,8 @@ export class DreamService {
       activity.groupTasks,
       activity.chainWrites ?? [],
       activity.chainReads ?? [],
+      activity.studioDelegations ?? [],
+      activity.studioDecisions ?? [],
     );
     const prompt = buildDreamPrompt({
       botName: metabot.name,
@@ -1210,6 +1223,7 @@ export class DreamService {
       falsifiedHypotheses: dreamExtras?.falsifiedHypotheses,
       explorationDirective: dreamExtras?.explorationDirective,
       practiceEnabled,
+      previousStudioContinuity: dreamExtras?.previousStudioContinuity,
     }, dropCounters);
     const output = await this.generateAndParse(
       metabot.id,
@@ -1287,7 +1301,10 @@ export class DreamService {
       const surfEndedAtMs = Date.now();
       const { startMs, endMs } = getDayBoundsMs(date);
       const dropCounters = createDreamInputDropCounters();
-      const activity = this.deps.dreamStore.getActivityForDate(metabotId, startMs, endMs, dropCounters);
+      const activity = this.deps.dreamStore.getActivityForDate(metabotId, startMs, endMs, dropCounters, {
+        dreamDate: date,
+        honorSessionCursors: !isRepair,
+      });
       // Mechanical implicit-signal collection: structural facts only, attached
       // before prompt building so the dream itself judges what they mean.
       activity.implicitSignals = extractImplicitSignals(activity, dropCounters);
@@ -1316,6 +1333,8 @@ export class DreamService {
         && (activity.chainWrites?.length ?? 0) === 0
         && (activity.chainReads?.length ?? 0) === 0
         && (activity.serviceRatings?.length ?? 0) === 0
+        && (activity.studioDelegations?.length ?? 0) === 0
+        && (activity.studioDecisions?.length ?? 0) === 0
         && impressionSubjects.length === 0
         && !surfReport
       ) {
@@ -1405,6 +1424,15 @@ export class DreamService {
         );
         falsifiedHypotheses = [];
       }
+      let previousStudioContinuity: StudioContinuitySnapshot | null = null;
+      try {
+        const currentContinuity = this.deps.dreamStore.getStudioContinuity(metabotId);
+        if (currentContinuity && currentContinuity.dreamDate < date) {
+          previousStudioContinuity = currentContinuity;
+        }
+      } catch {
+        previousStudioContinuity = null;
+      }
       const prepared = await this.prepareDreamPromptAndOutput(
         metabot,
         date,
@@ -1420,6 +1448,7 @@ export class DreamService {
           rollbackNotice: retentionGate.notice,
           falsifiedHypotheses,
           explorationDirective: exploration.directive,
+          previousStudioContinuity,
         },
         dropCounters,
       );
@@ -3488,23 +3517,50 @@ export class DreamService {
         return { points: points.length, lessons: 0, pointsByKind };
       }
       const seenLessons = new Set<string>();
+      const workflowDrafts: Array<{
+        title: string;
+        description: string;
+        capabilityType: 'workflow';
+        origin: string;
+      }> = [];
+      const seenWorkflowTitles = new Set<string>();
       let written = 0;
       for (const result of parsed.results) {
         const lesson = pickCounterfactualLesson(result);
-        if (!lesson || seenLessons.has(lesson)) continue;
-        seenLessons.add(lesson);
-        this.deps.coworkStore.createUserMemory({
-          metabotId: metabot.id,
-          text: `${lesson}(源自:反事实重放 ${date})`,
-          scopeKind: 'owner',
-          scopeKey: 'owner:self',
-          usageClass: 'value_boundary',
-          origin: 'dream',
-          isExplicit: true,
-          forceNew: true,
-          source: { sourceType: 'dream', sourceChannel: 'dream', dreamDate: date },
-        });
-        written += 1;
+        if (lesson && !seenLessons.has(lesson)) {
+          seenLessons.add(lesson);
+          this.deps.coworkStore.createUserMemory({
+            metabotId: metabot.id,
+            text: `${lesson}(源自:反事实重放 ${date})`,
+            scopeKind: 'owner',
+            scopeKey: 'owner:self',
+            usageClass: 'value_boundary',
+            origin: 'dream',
+            isExplicit: true,
+            forceNew: true,
+            source: { sourceType: 'dream', sourceChannel: 'dream', dreamDate: date },
+          });
+          written += 1;
+        }
+        const upgrade = pickCounterfactualWorkflowUpgrade(result);
+        if (upgrade && !seenWorkflowTitles.has(upgrade.title.toLowerCase())) {
+          seenWorkflowTitles.add(upgrade.title.toLowerCase());
+          workflowDrafts.push({
+            title: upgrade.title,
+            description: upgrade.description,
+            capabilityType: 'workflow',
+            origin: 'studio_replay',
+          });
+        }
+      }
+      if (workflowDrafts.length > 0) {
+        try {
+          this.deps.coworkStore.insertCapabilityDraftsChecked(metabot.id, date, workflowDrafts);
+        } catch (error) {
+          console.warn(
+            `[DreamService] Replay workflow draft insert failed for metabot ${metabot.id} date ${date}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
       }
       if (written > 0) {
         console.log(
@@ -4181,6 +4237,16 @@ export class DreamService {
       const text = (read.contentExcerpt || read.summary || '').trim();
       if (text) rawChunks.push(text);
     }
+    for (const del of activity.studioDelegations ?? []) {
+      if (del.ownerIntent.trim()) {
+        knownNames.add(del.ownerIntent.trim());
+        rawChunks.push(del.ownerIntent.trim());
+      }
+    }
+    for (const dec of activity.studioDecisions ?? []) {
+      if (dec.title.trim()) knownNames.add(dec.title.trim());
+      if (dec.resolutionNote?.trim()) rawChunks.push(dec.resolutionNote.trim());
+    }
     if (surfReport?.trim()) rawChunks.push(surfReport.trim());
     const rawText = rawChunks.join('\n');
 
@@ -4367,23 +4433,36 @@ export class DreamService {
         if (latestIdentityDate && date < latestIdentityDate) {
           console.log(`[DreamService] Skip self-identity update for metabot ${metabotId}: date ${date} older than current source ${latestIdentityDate}`);
         } else {
-          const existing = this.deps.coworkStore.listUserMemories({
+          const allIdentityRows = this.deps.coworkStore.listUserMemories({
             metabotId,
             scopeKind: 'owner',
             scopeKey: 'owner:self',
             usageClass: 'self_identity',
             status: 'all',
-            limit: 1,
-          })[0];
-          if (existing) {
+            limit: 50,
+          });
+          const liveIdentityRows = allIdentityRows.filter((row) => row.status !== 'deleted');
+          const canonical = liveIdentityRows[0] ?? allIdentityRows[0];
+          if (canonical) {
             this.deps.coworkStore.updateUserMemory({
-              id: existing.id,
+              id: canonical.id,
               metabotId,
               text: output.selfIdentity,
+              status: 'created',
               usageClass: 'self_identity',
               allowProtected: true,
               source: { sourceType: 'dream', sourceChannel: 'dream', dreamDate: date },
             });
+            for (const staleDuplicate of liveIdentityRows.slice(1)) {
+              if (staleDuplicate.id === canonical.id) continue;
+              this.deps.coworkStore.deleteUserMemory({
+                id: staleDuplicate.id,
+                metabotId,
+                scopeKind: 'owner',
+                scopeKey: 'owner:self',
+                allowProtected: true,
+              });
+            }
           } else {
             this.deps.coworkStore.createUserMemory({
               metabotId,
@@ -4399,6 +4478,47 @@ export class DreamService {
             });
           }
         }
+      }
+    }
+
+    // Advance per-session dream cursors monotonically so multi-day Studio
+    // conversations record the exact message boundary covered by this date.
+    try {
+      this.deps.dreamStore.advanceSessionCursorsForDate(metabotId, date, activity.sessions);
+    } catch (error) {
+      console.warn(
+        `[DreamService] Advancing session dream cursors failed for metabot ${metabotId} date ${date}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    // Persist nightly Studio continuity crystal (distilled workstreams,
+    // standing owner rulings, and collaboration playbook for long Studio chats).
+    if (output.studioContinuity && !isRepair) {
+      try {
+        const sc = output.studioContinuity;
+        const summaryParts: string[] = [];
+        if (sc.activeWorkstreams.length > 0) {
+          summaryParts.push(`Active: ${sc.activeWorkstreams.join(' | ')}`);
+        }
+        if (sc.standingRulings.length > 0) {
+          summaryParts.push(`Rulings: ${sc.standingRulings.join(' | ')}`);
+        }
+        if (sc.collaborationPlaybook.length > 0) {
+          summaryParts.push(`Playbook: ${sc.collaborationPlaybook.join(' | ')}`);
+        }
+        this.deps.dreamStore.upsertStudioContinuity({
+          metabotId,
+          dreamDate: date,
+          activeWorkstreams: sc.activeWorkstreams,
+          standingRulings: sc.standingRulings,
+          collaborationPlaybook: sc.collaborationPlaybook,
+          summaryMarkdown: summaryParts.join('\n'),
+          llmId,
+        });
+      } catch (error) {
+        console.warn(
+          `[DreamService] Studio continuity crystal write failed for metabot ${metabotId} date ${date}: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
     }
 
