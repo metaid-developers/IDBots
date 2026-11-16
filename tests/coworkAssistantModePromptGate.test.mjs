@@ -100,8 +100,12 @@ test('the assistant-mode prompt hard-pins the owner_update protocol, language, t
   const promptSource = readFileSync(join(here, '../src/main/libs/assistantModePrompt.ts'), 'utf8');
   // Language + tone hard prohibitions (unchanged incidents: 2026-10-13
   // English monologue, 2026-10-22 asymmetric language rule).
+  // 2026-11-17: the hard rule now also covers user-visible tool
+  // `description`/`title` fields, so the pin follows the strengthened
+  // phrasing (head + tail, split to stay robust to the quoted field name).
   assert.ok(
-    promptSource.includes('NEVER narrate in English'),
+    promptSource.includes('NEVER narrate or fill user-visible tool')
+      && promptSource.includes('fields in English inside a non-English conversation'),
     'the language rule must be a hard prohibition (English narration only when the user writes English)',
   );
   assert.ok(
@@ -192,7 +196,7 @@ test('the language rule is symmetric — English is as mandatory as 中文', () 
     'the permissive English phrasing regressed once and flipped English installs to Chinese output; English must be mandatory, not permitted',
   );
   assert.ok(
-    promptSource.includes('the user writes English → every narration and the final reply are in English'),
+    promptSource.includes('the user writes English → every narration, tool description/title, and the final reply are in English'),
     'the rule must state the English direction as mandatory, mirroring the 中文 direction',
   );
   assert.ok(
