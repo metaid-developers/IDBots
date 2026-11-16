@@ -504,6 +504,10 @@ man_base_data_pebble/
 !tests/walletAgentTools.test.mjs
 !tests/btcMultisig.test.ts
 !tests/btcMultisigWiring.test.mjs
+!tests/btcMultisigSecurity.test.ts
+!tests/safetyGateSteer.test.ts
+!tests/safetyGateBypass.test.mjs
+!tests/orchestratorPermissionOwnerOnly.test.ts
 !tests/mvcNftTrade.test.mjs
 !tests/metaidRpcWalletToolsRoutes.test.mjs
 !tests/groupChatAgentTools.test.mjs

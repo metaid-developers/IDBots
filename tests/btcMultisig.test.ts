@@ -54,7 +54,7 @@ test('a built PSBT spends the multisig script and reports the fee', () => {
     witnessScriptHex: descriptor.witnessScriptHex,
     inputs: [{ txid: TXID, vout: 0, value: 100_000 }],
     outputs: [{ address: destination, value: 90_000 }],
-  });
+  }).psbtHex;
   const summary = summarizePsbt(psbtHex);
   assert.equal(summary.feeSats, 10_000);
   assert.equal(summary.outputs[0].address, destination);
@@ -70,7 +70,7 @@ test('two partial signatures combine and finalize, and a personal input is not s
     witnessScriptHex: descriptor.witnessScriptHex,
     inputs: [{ txid: TXID, vout: 1, value: 80_000 }],
     outputs: [{ address: descriptor.address, value: 70_000 }],
-  });
+  }).psbtHex;
   const first = signBtcPsbtPartial(keys[0], { psbtHex: unsigned });
   const second = signBtcPsbtPartial(keys[1], { psbtHex: unsigned });
   assert.equal(summarizePsbt(first.psbtHex).inputs[0].partialSigs, 1);
@@ -110,7 +110,7 @@ test('partial sign always asks the wallet not to finalize', () => {
     witnessScriptHex: descriptor.witnessScriptHex,
     inputs: [{ txid: TXID, vout: 0, value: 20_000 }],
     outputs: [{ address: descriptor.address, value: 15_000 }],
-  });
+  }).psbtHex;
   let seen: { autoFinalized?: boolean; toSignInputs?: Array<{ index: number }> } | null = null;
   const signed = signBtcPsbtPartial({
     signTx(_type, params) {
@@ -171,7 +171,7 @@ test('sign and broadcast wait for the owner and do not run when declined', async
     witnessScriptHex: descriptor.witnessScriptHex,
     inputs: [{ txid: TXID, vout: 0, value: 50_000 }],
     outputs: [{ address: descriptor.address, value: 40_000 }],
-  });
+  }).psbtHex;
   buildBtcMultisigAgentTools({
     tool: tool as any,
     control,
@@ -240,7 +240,7 @@ test('approved sign returns the partial PSBT and approved broadcast returns the 
     witnessScriptHex: descriptor.witnessScriptHex,
     inputs: [{ txid: TXID, vout: 0, value: 50_000 }],
     outputs: [{ address: descriptor.address, value: 40_000 }],
-  });
+  }).psbtHex;
   const questions: string[] = [];
   buildBtcMultisigAgentTools({
     tool: tool as any,
