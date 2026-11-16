@@ -100,13 +100,27 @@ export function classifyVaultRows(rows, album) {
  * @param {string} args.vaultAddress
  * @param {number} [args.minConfirmations]
  * @param {number} [args.chainTipHeight]  current chain tip; omit to use height>=0 as "confirmed enough" (test mode)
+ * @param {(txid: string) => Promise<number>} [args.confirmationsResolver] authoritative per-tx confirmation
+ *        count (manapi `/api/tx/status`); when supplied it overrides the height arithmetic
  * @returns {Promise<{ newDeposits: any[], matured: any[], foreign: any[], unconfirmed: any[], scanned: number }>}
  */
-export async function pollVault({ ledger, album, vaultAddress, minConfirmations = MVP_CONFIRMATIONS, chainTipHeight, fetchImpl = fetch }) {
+export async function pollVault({
+  ledger,
+  album,
+  vaultAddress,
+  minConfirmations = MVP_CONFIRMATIONS,
+  chainTipHeight,
+  fetchImpl = fetch,
+  confirmationsResolver,
+}) {
   const rows = await fetchVaultTokenRows({ address: vaultAddress, fetchImpl });
   const { matched, foreign } = classifyVaultRows(rows, album);
 
-  const confirmationsOf = (row) => {
+  const confirmationsOf = async (row) => {
+    if (confirmationsResolver) {
+      const confs = Number(await confirmationsResolver(row.txid));
+      return Number.isFinite(confs) ? Math.max(0, confs) : 0;
+    }
     if (row.height < 0) return 0;
     if (!Number.isFinite(chainTipHeight) || chainTipHeight == null) return MVP_CONFIRMATIONS; // test mode: mined = mature
     return Math.max(0, chainTipHeight - row.height + 1);
@@ -117,7 +131,7 @@ export async function pollVault({ ledger, album, vaultAddress, minConfirmations 
   const unconfirmed = [];
 
   for (const row of matched) {
-    const confs = confirmationsOf(row);
+    const confs = await confirmationsOf(row);
     const existing = ledger.rowByOutpoint(`${row.txid}:${row.outIndex}`);
     if (confs < minConfirmations) {
       unconfirmed.push({ ...row, confirmations: confs });

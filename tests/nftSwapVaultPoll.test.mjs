@@ -186,3 +186,27 @@ test('utxo-list server error propagates (no silent empty-vault success)', async 
     /utxo-list failed/,
   );
 });
+
+test('pollVault prefers the authoritative per-tx confirmation resolver over height math', async () => {
+  await withTempLedger('resolver', async (ledger) => {
+    const { fetchImpl } = fakeApi([{ list: [albumRow(900, 'r1', 800_000)], nextFlag: undefined }]);
+    const seen = [];
+    const result = await pollVault({
+      ledger,
+      album: ALBUM,
+      vaultAddress: VAULT,
+      minConfirmations: 6,
+      chainTipHeight: 800_005, // height math alone would call this matured
+      fetchImpl,
+      confirmationsResolver: async (txid) => {
+        seen.push(txid);
+        return 2; // but the chain reports only 2 confirmations
+      },
+    });
+    assert.deepEqual(seen, ['r1'.padEnd(64, '0')]);
+    assert.equal(result.newDeposits.length, 0);
+    assert.equal(result.unconfirmed.length, 1);
+    assert.equal(result.unconfirmed[0].confirmations, 2);
+    assert.equal(ledger.rowsByStates(['detected']).length, 0);
+  });
+});

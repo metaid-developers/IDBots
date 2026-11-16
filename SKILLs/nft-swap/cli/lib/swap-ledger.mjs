@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS swap_ledger (
   claimed_at INTEGER,
   item_path TEXT,
   mint_pin_id TEXT,
+  item_desc_pin_id TEXT,
   mint_txids TEXT,
   dual_check_json TEXT,
   minted_at INTEGER,
@@ -117,6 +118,19 @@ export class SwapLedger {
     this.db.exec('PRAGMA journal_mode = WAL;');
     this.db.exec('PRAGMA busy_timeout = 5000;');
     this.db.exec(SCHEMA);
+    this.#migrate();
+  }
+
+  /**
+   * Additive migration for ledgers created by the first M1 cut (before
+   * item_desc_pin_id existed). CREATE TABLE IF NOT EXISTS never alters an
+   * existing table, so the column is added explicitly.
+   */
+  #migrate() {
+    const columns = this.db.prepare('PRAGMA table_info(swap_ledger)').all().map((c) => c.name);
+    if (!columns.includes('item_desc_pin_id')) {
+      this.db.exec('ALTER TABLE swap_ledger ADD COLUMN item_desc_pin_id TEXT');
+    }
   }
 
   close() {
@@ -150,6 +164,29 @@ export class SwapLedger {
 
   rowByOutpoint(outpoint) {
     return this.db.prepare('SELECT * FROM swap_ledger WHERE deposit_outpoint = ?').get(outpoint) ?? null;
+  }
+
+  /** Newest row for a tokenIndex regardless of state (CLI row resolution). */
+  latestRowByToken(genesis, tokenIndex) {
+    return (
+      this.db
+        .prepare('SELECT * FROM swap_ledger WHERE genesis = ? AND token_index = ? ORDER BY id DESC LIMIT 1')
+        .get(genesis, tokenIndex) ?? null
+    );
+  }
+
+  /**
+   * Rows that already carry a minted pin for this tokenIndex (mint_pending
+   * onward). Used to prove "one tokenIndex is swapped at most once in its
+   * whole lifetime" before a mint/adoption is allowed (PRD §6).
+   */
+  mintedRowsByToken(genesis, tokenIndex) {
+    return this.db
+      .prepare(
+        `SELECT * FROM swap_ledger WHERE genesis = ? AND token_index = ? AND mint_pin_id IS NOT NULL
+           AND state IN ('mint_pending','minted','send_pending','sent','burn_pending','burned') ORDER BY id`,
+      )
+      .all(genesis, tokenIndex);
   }
 
   /**
@@ -233,6 +270,27 @@ export class SwapLedger {
       mint_txids: JSON.stringify(txids ?? []),
       dual_check_json: JSON.stringify(dualCheck ?? {}),
     });
+  }
+
+  /**
+   * item_desc pin broadcast (display layer). Deliberately NOT a state change:
+   * the mint pin is the swap's chain proof; item_desc is retryable display
+   * metadata. Recording its pinId makes a retry idempotent instead of paying
+   * for a second item_desc write (per-field first-write-wins would ignore it,
+   * but the fee would still be spent).
+   */
+  recordItemDescPin(rowId, { itemDescPinId }) {
+    const row = this.rowById(rowId);
+    if (!row) throw new Error(`ledger row not found: ${rowId}`);
+    if (row.state !== 'mint_pending') {
+      throw new Error(`item_desc can only be recorded in mint_pending (row ${rowId} is ${row.state})`);
+    }
+    if (!itemDescPinId) throw new Error('recordItemDescPin requires the item_desc pinId');
+    this.db
+      .prepare('UPDATE swap_ledger SET item_desc_pin_id = ?, updated_at = ? WHERE id = ?')
+      .run(itemDescPinId, Date.now(), rowId);
+    this.#event(rowId, 'item_desc_broadcast', row.state, row.state, { item_desc_pin_id: itemDescPinId });
+    return this.rowById(rowId);
   }
 
   /** §5.6 confirm pipeline passed (creatorMinted + createAddress + output fields). */
