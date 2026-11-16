@@ -29,7 +29,7 @@ const panelSource = readFileSync(
 /**
  * Owner red-box order 2026-11-09 10:58 (supersedes the 10:29 row-1 reading),
  * amended by the D-line final ruling 2026-11-09: row 1 = the traffic lights
- * ALONE (a 52 px strip on macOS); row 2 = the two-cell segmented band ALONE,
+ * ALONE (a 42.375 px strip on macOS); row 2 = the two-cell segmented band ALONE,
  * dropped below the lights row on BOTH faces — the identity avatar moved to
  * the rail's top slot, so this header mounts no entry at all. Two text cells,
  * yellow fill on the current face, no mark / no chevron / no menu; radiogroup
@@ -212,25 +212,31 @@ test('both faces mount the SAME band; the session actions ride the row below', (
 });
 
 /**
- * Owner red-box order 2026-11-09 10:58 (supersedes the 10:29 row-1 reading):
- * on macOS a 52 px traffic-light strip precedes the band row (TOP_GAP_MAC_PX
- * = 52) — the lights own row 1 alone and the identity+band row starts at the
- * strip's bottom edge; elsewhere a 12 px gap precedes it. Both platform
+ * Owner baseline order 2026-11-15 08:27 (supersedes the 11-09 10:58 y=45
+ * tabstrip baseline): on macOS a 42.375 px traffic-light strip precedes the
+ * band row (TOP_GAP_MAC_PX = 42.375) — the lights own row 1 alone and the
+ * identity+band row starts at the strip's bottom edge, with the strip sized
+ * so the tray's VISIBLE top border lands on the bot-home panel's header
+ * divider (y=50.625); elsewhere a 12 px gap precedes it. Both platform
  * branches are pinned through the explicit `topGapPx` prop, because a Node
  * render has no window.
  */
-test('macOS: a 52 px traffic-light strip precedes the band row; elsewhere 12 px', () => {
+test('macOS: a 42.375 px traffic-light strip precedes the band row; elsewhere 12 px', () => {
   const mac = render('home', { topGapPx: TOP_GAP_MAC_PX });
   const other = render('home', { topGapPx: TOP_GAP_DEFAULT_PX });
 
-  assert.equal(TOP_GAP_MAC_PX, 52);
+  assert.equal(TOP_GAP_MAC_PX, 42.375);
   assert.equal(TOP_GAP_DEFAULT_PX, 12);
 
-  // macOS: the 52 px gap node is the FIRST element of the header — the lights'
-  // own row, pure air, strictly above the band row.
+  // macOS: the 42.375 px gap node is the FIRST element of the header — the
+  // lights' own row, strictly above the band row (tray top edge lands on the
+  // bot-home divider y=50.625, owner baseline 2026-11-15 08:27). The strip
+  // mounts the self-drawn MacWindowLights (main.ts hides the native buttons;
+  // in a Node render the platform probe is undefined so the component itself
+  // renders null — the marker check below is a source-level guard).
   assert.match(mac, /data-slot="surface-header-top-gap"/);
-  assert.ok(mac.includes('data-top-gap-px="52"'));
-  assert.ok(mac.includes('height:52px'));
+  assert.ok(mac.includes('data-top-gap-px="42.375"'));
+  assert.ok(mac.includes('height:42.375px'));
   assert.ok(
     mac.indexOf('surface-header-top-gap') < mac.indexOf('surface-header-bar'),
     'the lights strip must precede the band row',
@@ -284,7 +290,7 @@ test('neither face mounts an identity entry in the header (it lives in the rail)
  *                     rail's mac top track)
  *   band row top    = TOP_GAP_MAC_PX = 52 on BOTH faces (the rail face's
  *                     lights live over the rail column's strip, so the mid
- *                     column needs the same 52 px strip above its header)
+ *                     column needs the same 42.375 px strip above its header)
  *   home menu top   = 52 (lights strip) + 52 (band row) + 8 (row pt-2) = 112
  * The rail face's icons start at 52 + 52 + 8 = 112 px (D-line final ruling
  * 2026-11-09: below the rail's avatar slot) — an independent column, never
@@ -300,16 +306,20 @@ test('mac: the band row starts below the 52 px traffic-light strip on both faces
     'utf8',
   );
 
-  // The rail keeps its 52 px mac strip — that strip IS the lights' row.
-  assert.match(railSource, /isMac \? 'h-\[52px\]' : 'h-3'/);
+  // The rail keeps its 42.375 px mac strip (08:27 baseline ruling) — that
+  // strip IS the lights' row.
+  assert.match(railSource, /isMac \? 'h-\[42\.375px\]' : 'h-3'/);
   assert.match(railSource, /className="mt-2 flex min-h-0 w-full flex-1 flex-col items-center/);
 
-  // The lights' true position: center y=20, so their extent stays inside 0–52.
-  assert.match(mainWindowSource, /trafficLightPosition: \{ x: 12, y: 20 \}/);
+  // Native lights are GONE (WeChat-style route): the app hides the native
+  // buttons and the renderer draws its own mini lights, so no
+  // trafficLightPosition tuning remains.
+  assert.doesNotMatch(mainWindowSource, /trafficLightPosition/);
+  assert.match(mainWindowSource, /setWindowButtonVisibility\(false\)/);
 
-  // The switch's mac branch: a 52 px strip precedes the band row; the row
-  // keeps its 52 px height and the retired lights inset is gone.
-  assert.match(switchSource, /TOP_GAP_MAC_PX = 52/);
+  // The switch's mac branch: a 42.375 px strip precedes the band row; the
+  // row keeps its 52 px height and the retired lights inset is gone.
+  assert.match(switchSource, /TOP_GAP_MAC_PX = 42\.375/);
   assert.match(switchSource, /flex h-\[52px\] w-full min-w-0 items-center gap-2 pl-2 pr-2\.5/);
   assert.doesNotMatch(switchSource, /pt-1/);
   assert.doesNotMatch(switchSource, /pl-16/);
