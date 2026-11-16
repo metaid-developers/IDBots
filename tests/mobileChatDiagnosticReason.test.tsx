@@ -33,6 +33,12 @@ import {
   projectChatMessages,
 } from '../src/mobile/app/chatProjection.ts';
 import { mobileI18n, t } from '../src/mobile/i18n.ts';
+import {
+  dismissErrorMessage,
+  filterDismissedErrorMessages,
+  parseDismissedErrorIds,
+  restoreDismissedErrorsFromStorage,
+} from '../src/mobile/app/dismissedErrors.ts';
 import type { CoworkMessage } from '../src/renderer/types/cowork.ts';
 import type { useChat } from '../src/mobile/app/hooks/useChat.ts';
 
@@ -157,4 +163,44 @@ test('quota rows are untouched: raw machine code visible, no reason line', () =>
   }
   assert.ok(views[0]?.text.includes('free_quota_exhausted'));
   assert.ok(views[1]?.text.includes('quota_exhausted'));
+});
+
+
+test('every red error bubble exposes a hide action, including raw quota errors', () => {
+  restoreDismissedErrorsFromStorage(null);
+  const views = projectChatMessages([
+    message('d1', 'system', 'Error: DSH turn failed: socket hang up'),
+    message('d2', 'system', 'Error: DSH turn failed: quota_exhausted'),
+  ]);
+  const markup = renderToStaticMarkup(
+    <ChatScreen chat={chatFixture({ messages: views })} bots={[]} onOpenRecharge={() => undefined} />,
+  );
+  assert.equal(markup.match(/data-testid="chat-error-dismiss"/g)?.length, 2);
+  assert.ok(markup.includes(t('mobile.chat.dismissError')));
+});
+
+test('dismissed errors stay hidden after storage restoration without deleting other messages', (t) => {
+  t.after(() => restoreDismissedErrorsFromStorage(null));
+  assert.deepEqual(parseDismissedErrorIds('not-json'), []);
+  assert.deepEqual(parseDismissedErrorIds('["e1","e1",null,""]'), ['e1']);
+
+  const values = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value); },
+  };
+  restoreDismissedErrorsFromStorage(storage);
+  dismissErrorMessage('d1', storage);
+  dismissErrorMessage('d1', storage);
+  dismissErrorMessage('d2', storage);
+
+  restoreDismissedErrorsFromStorage(storage);
+  const visible = filterDismissedErrorMessages([
+    { id: 'd1', role: 'error' },
+    { id: 'd2', role: 'error' },
+    { id: 'assistant-1', role: 'assistant' },
+    { id: 'user-1', role: 'user' },
+  ]);
+  assert.deepEqual(visible.map((message) => message.id), ['assistant-1', 'user-1']);
+  assert.deepEqual(parseDismissedErrorIds(values.get('idbots.mobile.chat.dismissedErrors.v1') ?? null), ['d1', 'd2']);
 });
