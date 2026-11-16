@@ -272,48 +272,19 @@ const isCommandCodeGatewayRoute = (provider) => {
  *  `z-ai/glm-5.3-flash`, `zai-org/GLM-5.3`. */
 const isGlmFamilyModelId = (modelId) => /(?:^|\/)glm-/i.test(String(modelId ?? ''))
 
-/** DeepSeek-family model id in any gateway spelling: `deepseek-flash`,
- *  `deepseek-4.1-flash`, `deepseek-v4-flash`, `deepseek/deepseek-flash`. */
-const isDeepSeekFamilyModelId = (modelId) => /(?:^|\/)deepseek-(?:v4|flash|4\.1)/i.test(String(modelId ?? ''))
-
-/** ID.Bots relay (assist-base-service deployed on MetaSo): the subscription
- *  free-relay route (`metaid-free`). Keyed like the Command Code check — the
- *  provider key OR the relay host — so alternate provider rows pointing at
- *  the same deployment stay covered. */
-const IDBOTS_RELAY_GATEWAY_HOST = 'metaso.network'
-
-const isIdbotsRelayRoute = (provider) => {
-  if (provider?.key === 'metaid-free') return true
-  try {
-    const host = new URL(String(provider?.baseUrl ?? '')).hostname.toLowerCase()
-    return host === IDBOTS_RELAY_GATEWAY_HOST || host.endsWith(`.${IDBOTS_RELAY_GATEWAY_HOST}`)
-  } catch {
-    return false
-  }
-}
-
-/** ID.Bots relay × DeepSeek-family routes enforce a far smaller real request
- *  window than the catalog declares. 2026-11-12 session cw-4b78a0fd on
- *  `metaid-free/deepseek-4.1-flash` (declared 1,048,576): the relay's own
- *  usage report accepted a 259,414-token request, then rejected the next one
- *  (~262K real growth) with `CONTEXT_WINDOW_EXCEEDED` — the real window is
- *  the 256K (262,144) SKU class while the catalog row says 1M. The default
- *  large-window threshold (0.8 → 838,860) therefore never fired, every
- *  subsequent turn died with the request 400 plus an unusable reactive
- *  compaction, and only the bot fallback brain could carry the session
- *  (10-15s-class fallback tax per turn). 0.22 × 1,048,576 = 230,697 sits
- *  ~31K under the last accepted request, leaving a tool-heavy step of growth
- *  between pre-step checks; the compaction-basic overflow-shrink kernel
- *  patch (scripts/dsh-kernel-patches) stays the safety net if the relay
- *  moves the line. Scoped to this relay + DeepSeek family ids — the relay's
- *  GLM routes have no such observation yet. */
-const COMPACTION_THRESHOLD_RATIO_IDBOTS_RELAY_DEEPSEEK = 0.22
-const COMPACTION_RETAIN_RATIO_IDBOTS_RELAY_DEEPSEEK = 0.04
-
+/** ID.Bots relay (assist-base-service on MetaSo) previously needed a 0.22
+ *  threshold × 0.04 retainRatio carve-out for DeepSeek-family routes: an
+ *  upstream provider in the relay's chain served a real ~256K window under a
+ *  1M catalog row (2026-11-12 cw-4b78a0fd, CONTEXT_WINDOW_EXCEEDED at ~262K).
+ *  The fix moved server-side — assist-base-service now fails context-overflow
+ *  rejections over to the next chain provider (context_overflow class,
+ *  abs e402759), so a short-window SKU gets routed around per request instead
+ *  of dragging the route down. Product decision: the catalog advertises 1M
+ *  and clients plan for 1M — providers that cannot serve it are removed from
+ *  the relay's chains rather than lowering the client-side threshold. */
 const compactionThresholdRatio = (provider, modelId, window) => {
   if (window < COMPACTION_SMALL_WINDOW_TOKENS) return COMPACTION_THRESHOLD_RATIO_SMALL_WINDOW
   if (isCommandCodeGatewayRoute(provider) && isGlmFamilyModelId(modelId)) return COMPACTION_THRESHOLD_RATIO_COMMANDCODE_GLM
-  if (isIdbotsRelayRoute(provider) && isDeepSeekFamilyModelId(modelId)) return COMPACTION_THRESHOLD_RATIO_IDBOTS_RELAY_DEEPSEEK
   return COMPACTION_THRESHOLD_RATIO_DEFAULT
 }
 
@@ -345,9 +316,6 @@ const compactionModelPolicies = (providers) => {
         provider: routeKey,
         model: model.id,
         thresholdRatio,
-        ...(thresholdRatio === COMPACTION_THRESHOLD_RATIO_IDBOTS_RELAY_DEEPSEEK
-          ? { retainRatio: COMPACTION_RETAIN_RATIO_IDBOTS_RELAY_DEEPSEEK }
-          : {}),
         headroomTokens,
       })
     }

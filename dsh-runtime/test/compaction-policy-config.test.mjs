@@ -107,11 +107,11 @@ const sessionRoot = () => fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-compact-pol
   console.log('PASS  models without a context window get no policy entry')
 }
 
-// ID.Bots relay (metaid-free / metaso.network) × DeepSeek-family: the relay
-// enforces a ~256K real request window under a 1M catalog declaration
-// (2026-11-12 cw-4b78a0fd: a 259,414-token request was accepted, the next one
-// rejected with CONTEXT_WINDOW_EXCEEDED) — the proactive threshold pins to
-// 22% so it fires below the real line, mirroring the Command Code GLM tier.
+// ID.Bots relay (metaid-free / metaso.network) routes keep the default 0.8
+// tier: the relay's old ~256K real-window carve-out (thresholdRatio 0.22 +
+// retainRatio 0.04) was reverted once the relay started failing
+// context-overflow rejections over to the next chain provider — the catalog
+// contract is advertise-1M/serve-1M, not lower the client threshold.
 {
   const root = sessionRoot()
   const config = generateRuntimeConfig({
@@ -133,24 +133,19 @@ const sessionRoot = () => fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-compact-pol
   const policies = compactionEntry(config).config.modelPolicies
   assert.deepEqual(
     policies.find((p) => p.provider === 'metaid-free' && p.model === 'deepseek-4.1-flash'),
-    { provider: 'metaid-free', model: 'deepseek-4.1-flash', thresholdRatio: 0.22, headroomTokens: 41943 },
-    'relay×DeepSeek pins the 22% threshold',
+    { provider: 'metaid-free', model: 'deepseek-4.1-flash', thresholdRatio: 0.8, headroomTokens: 41943 },
+    'relay×DeepSeek keeps the default tier and no retainRatio override',
   )
   assert.equal(
     policies.find((p) => p.provider === 'metaid-free' && p.model === 'glm-5.3-flash').thresholdRatio,
     0.8,
-    'relay×GLM keeps the default tier — no such observation on the relay yet',
+    'relay×GLM keeps the default tier',
   )
   assert.equal(
     policies.find((p) => p.provider === 'deepseek-official' && p.model === 'deepseek-flash').thresholdRatio,
     0.8,
     'official DeepSeek keeps the default tier',
   )
-  assert.equal(
-    policies.find((p) => p.provider === 'other-relay' && p.model === 'deepseek-4.1-flash').thresholdRatio,
-    0.8,
-    'lookalike hosts do not trigger the scoped tier',
-  )
   fs.rmSync(root, { recursive: true, force: true })
-  console.log('PASS  ID.Bots relay×DeepSeek pins 22%; GLM/official/lookalike hosts keep the default tier')
+  console.log('PASS  ID.Bots relay routes keep the default 0.8 compaction tier')
 }
