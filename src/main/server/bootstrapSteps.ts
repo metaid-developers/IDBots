@@ -187,6 +187,41 @@ export function createServerBootstrapFacts(
   };
 }
 
+export function resolveBootstrapTwinBrain(config: AppConfigRow): {
+  llmId: string;
+  llmProvider?: string;
+  fallbackLlmId?: string;
+  fallbackLlmProvider?: string;
+} | null {
+  const freeProvider = config.providers?.[LLM_FREE_PROVIDER_KEY] ?? config.providers?.[LLM_FREE_PROVIDER_LEGACY_KEY];
+  const freeModelId = freeProvider?.enabled ? pickFreeProviderDefaultModelId(freeProvider.models) : '';
+  if (freeModelId) {
+    const freeFallback = (freeProvider.models ?? []).find((model: { id?: string }) => model?.id === 'glm-5.3-flash');
+    if (freeFallback) {
+      return {
+        llmId: freeModelId,
+        llmProvider: LLM_FREE_PROVIDER_KEY,
+        fallbackLlmId: freeFallback.id,
+        fallbackLlmProvider: LLM_FREE_PROVIDER_KEY,
+      };
+    }
+    const defaultModel = String(config.model?.defaultModel ?? '').trim();
+    for (const key of collectUsablePaidProviderKeys(config)) {
+      const models = (config.providers?.[key]?.models ?? []).filter((model: { id?: string } | null) => typeof model?.id === 'string' && model.id);
+      if (models.length === 0) continue;
+      const modelId = defaultModel && models.some((model: { id?: string }) => model.id === defaultModel)
+        ? defaultModel
+        : (models[0].id as string);
+      return { llmId: freeModelId, llmProvider: LLM_FREE_PROVIDER_KEY, fallbackLlmId: modelId, fallbackLlmProvider: key };
+    }
+    return { llmId: freeModelId, llmProvider: LLM_FREE_PROVIDER_KEY };
+  }
+  const fallbackModelId = String(config.model?.defaultModel ?? '').trim();
+  if (!fallbackModelId) return null;
+  const fallbackProvider = canonicalFreeProviderKey(config.model?.defaultProvider);
+  return { llmId: fallbackModelId, ...(fallbackProvider ? { llmProvider: fallbackProvider } : {}) };
+}
+
 export function createServerBootstrapStepExecutors(
   deps: ServerBootstrapRuntimeDeps,
 ): ServerBootstrapStepExecutors {
@@ -204,40 +239,9 @@ export function createServerBootstrapStepExecutors(
 
   const findTwin = () => deps.getMetabotStore().listMetabots().find((m) => m.metabot_type === 'twin') ?? null;
 
-  /**
-   * The Twin's brain: the provisioned free provider's default model
-   * (deepseek-flash when the catalog carries it), else the configured
-   * default (mirrors WelcomeFlow.resolveTwinBrain). A free primary
-   * is paired with a backup brain seeded from the first usable self-configured
-   * provider when one exists, so an exhausted free allowance never silently
-   * kills the twin before the owner learns the brain settings.
-   */
-  const resolveTwinBrain = (): {
-    llmId: string;
-    llmProvider?: string;
-    fallbackLlmId?: string;
-    fallbackLlmProvider?: string;
-  } | null => {
-    const config = (deps.getSqliteStore()?.get<AppConfigRow>('app_config') ?? {}) as AppConfigRow;
-    const freeProvider = config.providers?.[LLM_FREE_PROVIDER_KEY] ?? config.providers?.[LLM_FREE_PROVIDER_LEGACY_KEY];
-    const freeModelId = freeProvider?.enabled ? pickFreeProviderDefaultModelId(freeProvider.models) : '';
-    if (freeModelId) {
-      const defaultModel = String(config.model?.defaultModel ?? '').trim();
-      for (const key of collectUsablePaidProviderKeys(config)) {
-        const models = (config.providers?.[key]?.models ?? []).filter((model) => typeof model?.id === 'string' && model.id);
-        if (models.length === 0) continue;
-        const modelId = defaultModel && models.some((model) => model.id === defaultModel)
-          ? defaultModel
-          : (models[0].id as string);
-        return { llmId: freeModelId, llmProvider: LLM_FREE_PROVIDER_KEY, fallbackLlmId: modelId, fallbackLlmProvider: key };
-      }
-      return { llmId: freeModelId, llmProvider: LLM_FREE_PROVIDER_KEY };
-    }
-    const fallbackModelId = String(config.model?.defaultModel ?? '').trim();
-    if (!fallbackModelId) return null;
-    const fallbackProvider = canonicalFreeProviderKey(config.model?.defaultProvider);
-    return { llmId: fallbackModelId, ...(fallbackProvider ? { llmProvider: fallbackProvider } : {}) };
-  };
+  const resolveTwinBrain = () => resolveBootstrapTwinBrain(
+    (deps.getSqliteStore()?.get<AppConfigRow>('app_config') ?? {}) as AppConfigRow,
+  );
 
   return {
     // Step 1 — user identity (create when missing; locale seeding rides this
