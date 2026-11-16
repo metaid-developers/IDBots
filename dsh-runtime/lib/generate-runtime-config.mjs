@@ -308,6 +308,7 @@ const isIdbotsRelayRoute = (provider) => {
  *  moves the line. Scoped to this relay + DeepSeek family ids — the relay's
  *  GLM routes have no such observation yet. */
 const COMPACTION_THRESHOLD_RATIO_IDBOTS_RELAY_DEEPSEEK = 0.22
+const COMPACTION_RETAIN_RATIO_IDBOTS_RELAY_DEEPSEEK = 0.04
 
 const compactionThresholdRatio = (provider, modelId, window) => {
   if (window < COMPACTION_SMALL_WINDOW_TOKENS) return COMPACTION_THRESHOLD_RATIO_SMALL_WINDOW
@@ -339,10 +340,14 @@ const compactionModelPolicies = (providers) => {
       const headroomTokens = compactionHeadroomTokens(model?.contextWindow)
       if (headroomTokens === undefined || !model?.id) continue
       const window = Math.floor(model.contextWindow)
+      const thresholdRatio = compactionThresholdRatio(provider, model.id, window)
       byTarget.set(JSON.stringify([routeKey, model.id]), {
         provider: routeKey,
         model: model.id,
-        thresholdRatio: compactionThresholdRatio(provider, model.id, window),
+        thresholdRatio,
+        ...(thresholdRatio === COMPACTION_THRESHOLD_RATIO_IDBOTS_RELAY_DEEPSEEK
+          ? { retainRatio: COMPACTION_RETAIN_RATIO_IDBOTS_RELAY_DEEPSEEK }
+          : {}),
         headroomTokens,
       })
     }

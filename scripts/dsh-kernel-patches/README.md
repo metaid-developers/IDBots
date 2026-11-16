@@ -225,9 +225,14 @@ newer half retained verbatim), re-measures, and retries — up to four rungs
 checkpoint, after which the kernel's existing `{ kind: "retry" }` resends the
 request against the shrunken surface. Non-overflow errors, cancellation, and
 an unshrinkable (single-node) region rethrow immediately so the original
-request error is preserved exactly as upstream does. The two helpers are
-exported for the regression test `tests/dshCompactionOverflowShrink.test.mjs`,
-which drives the real patched engine with a stubbed `compactRegion`.
+request error is preserved exactly as upstream does. The two helpers plus `isSingleCheckpointRange` / `isNonShrinkingSummaryError`
+are exported for the regression test `tests/dshCompactionOverflowShrink.test.mjs`,
+which drives the real patched engine with a stubbed `compactRegion`. The same
+patch also covers 413 `request_too_large` body-cap overflows and hardens
+model-switch `compactPressure` (session `23d32653` `1784 >= 1784` incident):
+`retainTokens` shrinks progressively across retries instead of re-summarizing a
+single `<compacted-summary>` checkpoint node against itself, and falls back to
+summarizing on the target model when the previous route's summarizer fails.
 
 ## Adding / rebasing a patch
 

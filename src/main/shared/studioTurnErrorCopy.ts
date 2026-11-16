@@ -44,6 +44,11 @@ const RULES: StudioTurnErrorRule[] = [
     en: { reason: 'The model service is busy and rate-limited', hint: 'Wait a moment, then say “continue”.' },
   },
   {
+    pattern: /Cannot switch to .*: context compaction failed/i,
+    zh: { reason: '切换的新模型上下文窗口暂时装不下当前长历史', hint: '可换回原模型或上下文更大的模型，直接说「继续」即可接着做。' },
+    en: { reason: 'Switching models hit a context compaction failed limit for this long conversation', hint: 'Switch back or choose a larger-window model, then say “continue” and I\'ll pick it up.' },
+  },
+  {
     pattern: /compaction|context window|context length|maximum context|too long/i,
     zh: { reason: '对话太长，整理上下文时出了问题', hint: '可以新开一个对话，或说「继续」让我再试一次。' },
     en: { reason: 'The conversation grew too long and context compaction failed', hint: 'Start a new conversation, or say “continue” and I\'ll try again.' },

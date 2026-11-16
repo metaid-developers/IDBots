@@ -1,4 +1,4 @@
-index 613b975a..bddc00e4 100644
+index 613b975a0..88c481f5d 100644
 --- a/dsh-runtime/node_modules/@deepseek-ai/dsh-compaction-basic/lib/index.js
 +++ b/dsh-runtime/node_modules/@deepseek-ai/dsh-compaction-basic/lib/index.js
 @@ -1,6 +1,6 @@
@@ -9,7 +9,7 @@ index 613b975a..bddc00e4 100644
  import { assertNever, deepFreeze } from "@deepseek-ai/dsh-util-values";
  import { randomUUID } from "node:crypto";
  import { isDeepStrictEqual } from "node:util";
-@@ -432,6 +432,52 @@ function selectCompactableRange(session, measurement, retainTokens) {
+@@ -432,6 +432,70 @@ function selectCompactableRange(session, measurement, retainTokens) {
  	};
  }
  /**
@@ -18,20 +18,38 @@ index 613b975a..bddc00e4 100644
 +* region that overflowed before the original request error is preserved.
 +*/
 +const OVERFLOW_SHRINK_MAX_ATTEMPTS = 4;
++const BODY_LIMIT_SUMMARY_ERROR_RE = /\b413\b|request[ _-](entity[ _-])?too[ _-]large/i;
 +/**
 +* IDBots patch (overflow-shrink): whether a failed summarization was itself
-+* rejected for exceeding the route's context window — the adapter's
-+* `CONTEXT_WINDOW_EXCEEDED` code anywhere on the cause chain, or provider
-+* overflow wording in the rendered chain (a gateway 400 whose body carries
-+* `context_length_exceeded`).
++* rejected for exceeding the route's context window or transport body cap — the
++* adapter's `CONTEXT_WINDOW_EXCEEDED` code anywhere on the cause chain, provider
++* overflow wording, or an HTTP 413 `request_too_large` rejection.
 +* @param error - the caught summarization failure.
-+* @returns true only for a context-window overflow of the summary request.
++* @returns true only for a context-window or body-cap overflow of the summary request.
 +*/
 +function isOverflowSummaryError(error) {
 +	for (let current = error; typeof current === "object" && current !== null; current = current.cause) {
 +		if (current.code === CONTEXT_WINDOW_EXCEEDED_CODE) return true;
 +	}
-+	return isContextWindowExceededError(errorChain(error));
++	const rendered = errorChain(error);
++	return isContextWindowExceededError(rendered) || BODY_LIMIT_SUMMARY_ERROR_RE.test(rendered);
++}
++/**
++* IDBots patch (model-switch-seamless): whether a candidate compaction span is
++* solely an already-landed `<compacted-summary>` checkpoint node. Re-summarizing
++* a lone checkpoint into the identical 8-section template produces a summary >=
++* the checkpoint itself (`1784 >= 1784`, session 23d32653) and aborts model switches.
++*/
++function isSingleCheckpointRange(session, range) {
++	if (range === null || range.start !== range.end) return false;
++	const event = session.eventAt(range.start);
++	if (event?.type !== "user/message") return false;
++	if (event.data?.source?.kind === "compaction") return true;
++	const blocks = Array.isArray(event.data?.content) ? event.data.content : [];
++	return blocks.some((block) => block?.type === "text" && typeof block.text === "string" && block.text.includes(SUMMARY_OPEN_TAG));
++}
++function isNonShrinkingSummaryError(error) {
++	return errorChain(error).includes("summary is not smaller than the shadowed content");
 +}
 +/**
 +* IDBots patch (overflow-shrink): the retained-tail budget whose
@@ -62,7 +80,40 @@ index 613b975a..bddc00e4 100644
  * Run the single compaction transaction over one selected positional span.
  * Selection and validation are read-only. Idle/log validation and
  * `compaction/start` are synchronously adjacent, so the durable opening marker is
-@@ -936,10 +982,35 @@ var BasicCompactionEngine = class extends CompactionEngine {
+@@ -821,6 +885,7 @@ var BasicCompactionEngine = class extends CompactionEngine {
+ 	warnedPressureConfigTargets = /* @__PURE__ */ new Set();
+ 	overflowRetries = /* @__PURE__ */ new WeakMap();
+ 	overflowAgents = /* @__PURE__ */ new WeakMap();
++	fallbackSummaryTarget = /* @__PURE__ */ new WeakMap();
+ 	constructor(ctx, config = {}) {
+ 		super(ctx);
+ 		this.config = resolveConfig(config);
+@@ -877,7 +942,8 @@ var BasicCompactionEngine = class extends CompactionEngine {
+ 			if (agent !== void 0) this.overflowRetries.delete(agent);
+ 		});
+ 		ctx.on("agent/request-error", async ({ agent, failure, signal }, next) => {
+-			if (failure.code !== CONTEXT_WINDOW_EXCEEDED_CODE || signal.aborted) return next();
++			const isBodyLimit = BODY_LIMIT_SUMMARY_ERROR_RE.test(String(failure?.message ?? ""));
++			if (failure.code !== CONTEXT_WINDOW_EXCEEDED_CODE && !isBodyLimit || signal.aborted) return next();
+ 			this.overflowAgents.set(agent.session, agent);
+ 			const target = routedTarget(agent.session);
+ 			if (target === void 0) return next();
+@@ -916,7 +982,13 @@ var BasicCompactionEngine = class extends CompactionEngine {
+ 	*/
+ 	async summarize(input, agent, signal) {
+ 		const target = conversationTarget(agent);
+-		const config = target === void 0 ? this.config : resolveTargetPolicy(this.config, target);
++		const baseConfig = target === void 0 ? this.config : resolveTargetPolicy(this.config, target);
++		const overrideTarget = this.fallbackSummaryTarget.get(agent);
++		const config = overrideTarget === void 0 ? baseConfig : {
++			...baseConfig,
++			summarizationProvider: overrideTarget.provider,
++			summarizationModel: overrideTarget.model
++		};
+ 		return summarizeWithLlm(this.ctx, config, input, agent, signal);
+ 	}
+ 	/**
+@@ -936,10 +1008,35 @@ var BasicCompactionEngine = class extends CompactionEngine {
  			case "pressure": return this.compactPressure(agent, header, signal, false);
  			case "context-overflow": {
  				this.ctx.get("toolResultPruner")?.pruneSession(agent.session);
@@ -102,9 +153,81 @@ index 613b975a..bddc00e4 100644
  			}
  			/* v8 ignore next -- closed-union exhaustiveness guard */
  			default: assertNever(trigger, "compaction trigger");
-@@ -1041,4 +1112,4 @@ var BasicCompactionEngine = class extends CompactionEngine {
+@@ -963,18 +1060,65 @@ var BasicCompactionEngine = class extends CompactionEngine {
+ 			measurement = meter.measure(agent.session, header);
+ 		}
+ 		if (measurement.totalTokens < spec.thresholdTokens) return null;
++		// IDBots patch (model-switch-seamless): progressively shrink retainTokens
++		// across pressure retries so tight-threshold routes (e.g. 0.22 on ID.Bots
++		// relay) never re-select a lone checkpoint node (`1784 >= 1784`) or fail
++		// when system+tools + initial retainTokens exceed thresholdTokens, and fall
++		// back to the new target model when the previous route's summarizer fails.
+ 		let result = null;
+-		for (let attempt = 0; attempt <= spec.compactionRetries; attempt += 1) {
+-			const range = selectCompactableRange(agent.session, measurement, spec.retainTokens);
+-			if (range === null) {
+-				if (result === null && !requireBelowThreshold) return null;
++		let retainTokens = spec.retainTokens;
++		const maxAttempts = Math.max(spec.compactionRetries, requireBelowThreshold ? 3 : spec.compactionRetries);
++		const shrinkRetain = (current, isLastNext) => isLastNext || current <= 2048 ? 0 : Math.floor(current / 2);
++		for (let attempt = 0; attempt <= maxAttempts; attempt += 1) {
++			let range = selectCompactableRange(agent.session, measurement, retainTokens);
++			while (range !== null && isSingleCheckpointRange(agent.session, range) && retainTokens > 0) {
++				retainTokens = shrinkRetain(retainTokens, false);
++				range = selectCompactableRange(agent.session, measurement, retainTokens);
++			}
++			if (range === null || isSingleCheckpointRange(agent.session, range)) {
++				if (result !== null || !requireBelowThreshold || range !== null && isSingleCheckpointRange(agent.session, range)) return result;
+ 				throw new Error(`no safe compaction range can reduce context below threshold (${measurement.totalTokens} estimated tokens >= threshold ${spec.thresholdTokens})`);
+ 			}
+-			result = await this.compactRegion(range.start, range.end, agent, signal);
++			try {
++				result = await this.compactRegion(range.start, range.end, agent, signal);
++			} catch (error) {
++				if (signal?.aborted === true) throw error;
++				if (isNonShrinkingSummaryError(error)) {
++					if (retainTokens > 0) {
++						retainTokens = shrinkRetain(retainTokens, attempt + 1 >= maxAttempts);
++						measurement = meter.measure(agent.session, header);
++						continue;
++					}
++					this.ctx.logger.warn(`pressure compaction summary did not shrink (${error.message}); continuing without aborting`);
++					return result;
++				}
++				const previous = routedTarget(agent.session);
++				const canFallbackToTarget = requireBelowThreshold && target.provider.length > 0 && target.model.length > 0 && (previous === void 0 || previous.provider !== target.provider || previous.model !== target.model) && !isNonShrinkingSummaryError(error);
++				if (!canFallbackToTarget) throw error;
++				this.ctx.logger.warn(`pre-switch compaction on previous route failed (${error instanceof Error ? error.message : String(error)}); retrying summarization on target ${target.provider}/${target.model}`);
++				this.fallbackSummaryTarget.set(agent, {
++					provider: target.provider,
++					model: target.model
++				});
++				try {
++					result = await this.compactRegion(range.start, range.end, agent, signal);
++				} catch (fallbackError) {
++					if (signal?.aborted === true) throw fallbackError;
++					if (isNonShrinkingSummaryError(fallbackError)) return result;
++					throw fallbackError;
++				} finally {
++					this.fallbackSummaryTarget.delete(agent);
++				}
++			}
+ 			measurement = meter.measure(agent.session, header);
+ 			if (measurement.totalTokens < spec.thresholdTokens) return result;
++			if (retainTokens > 0) retainTokens = shrinkRetain(retainTokens, attempt + 1 >= maxAttempts);
++		}
++		if (result !== null) {
++			this.ctx.logger.warn(`compaction reduced history to ${measurement.totalTokens} estimated tokens (threshold ${spec.thresholdTokens}); proceeding with best-effort reduction`);
++			return result;
+ 		}
+-		throw new Error(`compaction still above threshold after ${spec.compactionRetries + 1} compaction attempts (${measurement.totalTokens} estimated tokens >= threshold ${spec.thresholdTokens})`);
++		throw new Error(`compaction still above threshold after ${maxAttempts + 1} compaction attempts (${measurement.totalTokens} estimated tokens >= threshold ${spec.thresholdTokens})`);
+ 	}
+ 	/**
+ 	* Compact one inclusive positional range from the agent-owned surface using
+@@ -1041,4 +1185,4 @@ var BasicCompactionEngine = class extends CompactionEngine {
  	}
  };
  //#endregion
 -export { BasicCompactionEngine, BasicCompactionEngine as default };
-+export { BasicCompactionEngine, BasicCompactionEngine as default, isOverflowSummaryError, overflowShrinkRetainTokens };
++export { BasicCompactionEngine, BasicCompactionEngine as default, isNonShrinkingSummaryError, isOverflowSummaryError, isSingleCheckpointRange, overflowShrinkRetainTokens };

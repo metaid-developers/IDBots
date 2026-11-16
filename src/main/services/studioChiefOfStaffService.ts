@@ -259,8 +259,9 @@ function buildProactiveBriefingPrompt(item: StudioDecisionQueueItem, remainingQu
       ...(item.reportHtmlPath ? [`预备投影详情页路径: ${item.reportHtmlPath}`] : []),
       '',
       '执行规则：',
-      `1. **防重判据**：先核对本会话上下文——如果主人在此前对话中**已经对这件事拍过板**（例如已明确说「暂不动代码 / 只留文稿」），请立即调用 \`studio_decision_resolve({ queueItemId: "${item.id}", resolutionNote: "..." })\` 静默收口，**不要调用任何投影工具，也不要再次向主人追问同一件事**（一句话告知已按既定裁定归档即可，宿主看到已 resolve 就不会覆盖右侧投影屏）。`,
-      '2. **正常汇报**：如果这确实是待主人拍板/验收的新事项，请保持该队列项为当前待拍板状态（不要在本轮提前调用 `studio_decision_resolve`），直接向主人简洁汇报结论、唯一需拍板的问题、推荐项与下一步（宿主会在本轮收尾自动把简报页投到右侧大屏并生成投影链接；若涉及已上链内容，务必同时明文写出**发布账号**和完整 `pin://...i0` ID）。',
+      `1. **防重判据（严禁二次形式主义追问）**：先核对本会话上下文——如果主人在此前对话中**已经对这件事拍过板或选定了方案**（例如已选定某版设计稿、已明确后续发布方式、或已说「暂不动代码 / 只留文稿」），严禁为了走流程再让主人多回一次「验收」！请立即调用 \`studio_decision_resolve({ queueItemId: "${item.id}", resolutionNote: "..." })\` 静默收口，**不要调用任何投影工具，也不要再次向主人追问同一件事**（宿主看到已 resolve 就不会覆盖右侧投影屏）。`,
+      '2. **正常汇报（自然简练，禁八股长文）**：如果这确实是待主人拍板的新事项，请保持该队列项为当前待拍板状态（不要在本轮提前调用 `studio_decision_resolve`）。**严禁在左侧聊天框输出「待拍板重申」或「1) 背景与已完成进展 2) 当前状况 ... 6) 拍板后的下一步」六段式长模板**（完整细节已在右侧投影页展示）！左侧控制在 3–6 行自然对话：一句结论、需拍板的唯一问题与精炼选项（标明你的推荐）、以及拍板后的下一步。',
+      '3. **实物可见硬约束**：凡涉及让主人挑选、确认或验收图片/设计稿/本地产物，**必须在左侧回复中逐项附上可点击的本地预览链接**（如 `[方案A](preview-file://localhost/绝对路径)`）与一句区分说明，绝不允许不摆出图片/文件链接就空口让主人验收！（若涉及已上链内容，务必同时明文写出**发布账号**和完整 `pin://...i0` ID）。',
       '</studio_proactive_briefing>',
     ].join('\n');
   }
@@ -280,8 +281,9 @@ function buildProactiveBriefingPrompt(item: StudioDecisionQueueItem, remainingQu
     ...(item.reportHtmlPath ? [`Prepared briefing HTML path: ${item.reportHtmlPath}`] : []),
     '',
     'Rules:',
-    `1. **Deduplication check**: If the owner ALREADY ruled on this exact question earlier in this conversation, call \`studio_decision_resolve({ queueItemId: "${item.id}", resolutionNote: "..." })\` immediately and do NOT project or re-ask (the host will keep the existing projector page untouched once resolved).`,
-    '2. **Genuine briefing**: Otherwise, leave the item in `presenting` (do NOT resolve yet) and speak concisely: lead with the verified outcome, state the ONE decision/acceptance needed, give your recommended call and immediate next step (if on-chain content was published, always state BOTH the publishing Bot identity and the verbatim `pin://...i0` ID).',
+    `1. **Deduplication check (no redundant ceremony)**: If the owner ALREADY ruled on this question or selected a candidate earlier in this conversation, NEVER re-ask them just for formal subtask sign-off — call \`studio_decision_resolve({ queueItemId: "${item.id}", resolutionNote: "..." })\` immediately and do NOT project or re-ask (the host will keep the existing projector page untouched once resolved).`,
+    '2. **Concise conversational briefing (no 6-section template)**: Otherwise, leave the item in `presenting` (do NOT resolve yet) and keep the left chat reply to 3–6 concise lines (detailed metrics live on the right-hand projector page): state the verified outcome, the ONE decision needed with options + your recommendation, and the immediate next step.',
+    '3. **Show artifacts before asking**: Whenever asking the owner to pick, confirm, or accept images/designs/files, ALWAYS include clickable `[label](preview-file://localhost/abs/path)` links with one-line descriptions in your reply — never ask the owner to approve unseen artifacts! (If on-chain content was published, always state BOTH the publishing Bot identity and the verbatim `pin://...i0` ID.)',
     '</studio_proactive_briefing>',
   ].join('\n');
 }
@@ -292,6 +294,8 @@ export class StudioChiefOfStaffService {
   private supervisionChain = new Map<string, Promise<void>>();
   private readonly focusedTaskBySession = new Map<string, string>();
   private readonly activeSupervisionsBySession = new Map<string, ActiveStudioSupervisionEntry>();
+  private readonly supervisionToOriginStudio = new Map<string, string>();
+  private readonly studioToSupervisionIds = new Map<string, Set<string>>();
   private readonly waitingReassuranceState = new Map<string, {
     waitBeganMs: number;
     lastNoticeMs: number;
@@ -478,7 +482,9 @@ export class StudioChiefOfStaffService {
         `Planned next step: ${presenting.nextStep}`,
         `Queued items waiting behind this one: ${queuedCount}`,
         'Routing rule for THIS owner message:',
-        `- If the owner is answering, approving, critiquing, revising, or rejecting "${presenting.title}" (including asking for a modified v2/v3 instead of A/B/C!): call \`studio_decision_resolve({ queueItemId: "${presenting.id}", resolutionNote: "..." })\` FIRST (NEVER \`studio_decision_defer\` when they responded to this item!), then immediately trigger the approved next step and clearly state who is working and that you will verify and report once ready.`,
+        `- If the owner is answering, approving, critiquing, revising, or rejecting "${presenting.title}" (including asking for a modified v2/v3 or asking you to list/show the images first!): call \`studio_decision_resolve({ queueItemId: "${presenting.id}", resolutionNote: "..." })\` FIRST when they gave a clear decision or revision order (NEVER \`studio_decision_defer\` when they responded to this item!), then immediately trigger the requested revision/next step.`,
+        `- If the owner says they cannot decide yet because you did NOT show the images/files ("把图列出来再让我验收"), show every candidate/final image link clearly right now and keep waiting for their explicit pick/confirmation — DO NOT execute any on-chain minting/publishing yet!`,
+        `- Irreversible on-chain guard: NEVER treat a bare continuation cue ("继续", "continue", "重试") as implicit approval to mint, upload, or spend on-chain unless the owner already explicitly authorized that exact on-chain execution.`,
         `- ONLY call \`studio_decision_defer({ queueItemId: "${presenting.id}" })\` when the owner completely ignores "${presenting.title}" to start an UNRELATED topic!`,
         '</active_studio_briefing>',
       ].join('\n'));
@@ -491,14 +497,81 @@ export class StudioChiefOfStaffService {
     return blocks.join('\n\n');
   }
 
+  private rememberSupervisionLink(supervisionSessionId: string, originStudioSessionId: string): void {
+    const supId = supervisionSessionId.trim();
+    const studioId = originStudioSessionId.trim();
+    if (!supId || !studioId) return;
+    this.supervisionToOriginStudio.set(supId, studioId);
+    let set = this.studioToSupervisionIds.get(studioId);
+    if (!set) {
+      set = new Set<string>();
+      this.studioToSupervisionIds.set(studioId, set);
+    }
+    set.add(supId);
+    this.deps.kv?.set(`studio_supervision_origin:${supId}`, studioId);
+    this.deps.kv?.set(`studio_supervision_list:${studioId}`, [...set]);
+  }
+
+  getOriginStudioSessionForSupervision(sessionId: string | null | undefined): string | null {
+    const sid = (sessionId ?? '').trim();
+    if (!sid) return null;
+    const mem = this.supervisionToOriginStudio.get(sid);
+    if (mem && this.isStudioOwnerSession(mem)) return mem;
+    const persisted = this.deps.kv?.get<string>(`studio_supervision_origin:${sid}`);
+    if (persisted && this.isStudioOwnerSession(persisted)) {
+      this.rememberSupervisionLink(sid, persisted);
+      return persisted;
+    }
+    return null;
+  }
+
+  getSupervisionSessionIdsForStudio(studioSessionId: string | null | undefined): string[] {
+    const sid = (studioSessionId ?? '').trim();
+    if (!sid) return [];
+    const set = new Set<string>(this.studioToSupervisionIds.get(sid) ?? []);
+    const persisted = this.deps.kv?.get<string[]>(`studio_supervision_list:${sid}`);
+    if (Array.isArray(persisted)) {
+      for (const item of persisted) {
+        if (typeof item === 'string' && item.trim()) set.add(item.trim());
+      }
+    }
+    const directSup = this.deps.kv?.get<string>(`studio_supervision_session:studio:${sid}`);
+    if (typeof directSup === 'string' && directSup.trim()) set.add(directSup.trim());
+    const focusedTaskId = this.getFocusedTaskId(sid);
+    if (focusedTaskId) {
+      const lttSup = this.deps.kv?.get<string>(`studio_supervision_session:ltt:${focusedTaskId}`);
+      if (typeof lttSup === 'string' && lttSup.trim()) set.add(lttSup.trim());
+    }
+    return [...set];
+  }
+
+  resolveOriginStudioSessionForTask(task: {
+    sourceSessionId?: string | null;
+    longtermReportSessionId?: string | null;
+  }): string | null {
+    const sourceSid = (task.sourceSessionId ?? '').trim();
+    if (sourceSid) {
+      if (this.isStudioOwnerSession(sourceSid)) return sourceSid;
+      const fromSup = this.getOriginStudioSessionForSupervision(sourceSid);
+      if (fromSup) return fromSup;
+    }
+    const reportSid = (task.longtermReportSessionId ?? '').trim();
+    if (reportSid && this.isStudioOwnerSession(reportSid)) {
+      if (sourceSid) this.rememberSupervisionLink(sourceSid, reportSid);
+      return reportSid;
+    }
+    return null;
+  }
+
   /**
-   * Intercepts Worker terminal transitions originating from a Studio session.
+   * Intercepts Worker terminal transitions originating from a Studio session
+   * (including re-delegations issued from its silent back-office `[督办]` session).
    * Returns true when handled (suppressing [ORCH-NOTIFY] injection into the
    * owner's front-office Studio session).
    */
   onStudioWorkerTerminalState(event: StudioWorkerSettlementEvent): boolean {
-    const originSessionId = (event.task.sourceSessionId ?? '').trim();
-    if (!this.isStudioOwnerSession(originSessionId)) {
+    const originSessionId = this.resolveOriginStudioSessionForTask(event.task);
+    if (!originSessionId) {
       return false;
     }
 
@@ -547,6 +620,8 @@ export class StudioChiefOfStaffService {
     const store = this.deps.coworkStore();
     const existingId = this.deps.kv?.get<string>(kvKey);
     if (existingId && store.getSession(existingId)) {
+      this.rememberSupervisionLink(existingId, batch.originStudioSessionId);
+      store.updateSession(existingId, { hiddenFromSessionList: true });
       return existingId;
     }
     const workspace = this.deps.resolveTwinWorkspace(batch.twinMetabotId);
@@ -561,7 +636,9 @@ export class StudioChiefOfStaffService {
       'standard',
     );
     store.setSessionAutoOrigin?.(session.id, 'orchestration');
+    store.updateSession(session.id, { hiddenFromSessionList: true });
     this.deps.kv?.set(kvKey, session.id);
+    this.rememberSupervisionLink(session.id, batch.originStudioSessionId);
     return session.id;
   }
 

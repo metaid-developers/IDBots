@@ -7714,7 +7714,8 @@ export class CoworkRunner extends EventEmitter {
         });
       }
     }
-    if (this.getBrowserContextPrompt && !trustSuppressed) {
+    const isProactiveStudioBriefingTurn = prompt.includes('<studio_proactive_briefing>');
+    if (this.getBrowserContextPrompt && !trustSuppressed && !isProactiveStudioBriefingTurn) {
       // Browser tab state is live; fetch async and degrade silently on failure.
       sections.push({
         key: 'browser',
@@ -7724,10 +7725,12 @@ export class CoworkRunner extends EventEmitter {
     // Active session goal (/goal command): rides the per-turn tail like the
     // other volatile blocks; a stable goal text costs nothing after its first
     // injection thanks to content-hash dedup.
-    sections.push({
-      key: 'team-nudge',
-      text: await this.buildTwinTeamNudgePrompt(sessionId),
-    });
+    if (!isProactiveStudioBriefingTurn) {
+      sections.push({
+        key: 'team-nudge',
+        text: await this.buildTwinTeamNudgePrompt(sessionId),
+      });
+    }
     if (this.getStudioVolatileContextPrompt && !trustSuppressed) {
       const studioBlock = this.getStudioVolatileContextPrompt(sessionId);
       if (studioBlock) {
@@ -7744,15 +7747,17 @@ export class CoworkRunner extends EventEmitter {
         text: buildGoalPromptSection(goal),
       });
     }
-    if (!disableRemoteServicesPrompt) {
+    if (!disableRemoteServicesPrompt && !isProactiveStudioBriefingTurn) {
       // Memory-disabled profiles reach the gate's first consumer here; the
       // bundled call itself already started at function entry, so the await
       // only waits out whatever remains of the shared race budget.
       await awaitVolatileGate();
       if (shouldInjectVolatile('remote-services')) {
+        const mentionsRemoteService = /远程|在线.*(?:bot|服务)|服务市场|服务广场|remote.?service|online.?bot|metaweb.*service/i.test(prompt);
         sections.push({
           key: 'remote-services',
           text: this.getRemoteServicesPrompt?.() ?? '',
+          minChangeCooldownTurns: mentionsRemoteService ? 0 : 6,
         });
         // Cerebellum shortlist rides next to the untouched directory: top-3
         // re-read + a one-line suggestion. The directory block itself stays
@@ -7778,7 +7783,7 @@ export class CoworkRunner extends EventEmitter {
     // re-injects the changed block — the cacheable system-prompt head never
     // moves. Sessions in 'inline' (sandbox) or 'legacy' mode already carry
     // their catalog in the system prompt and skip this entirely.
-    if (this.activeSessions.get(sessionId)?.skillsCatalogMode === 'volatile' && !trustSuppressed) {
+    if (this.activeSessions.get(sessionId)?.skillsCatalogMode === 'volatile' && !trustSuppressed && !isProactiveStudioBriefingTurn) {
       sections.push({
         key: 'skills-catalog',
         text: this.coworkSkillPromptsProvider?.(this.store.getMetabotIdForSession(sessionId))?.catalog ?? '',
@@ -7835,8 +7840,16 @@ export class CoworkRunner extends EventEmitter {
     const activeForDedup = this.activeSessions.get(sessionId);
     const generation = activeForDedup?.claudeSessionId ?? null;
     let dedupState = this.volatileDedupBySessionId.get(sessionId);
-    if (!dedupState || dedupState.generation !== generation) {
-      // Fresh or reset SDK session: previous injections are not in history.
+    if (!dedupState) {
+      dedupState = createVolatileDedupState(generation);
+      this.volatileDedupBySessionId.set(sessionId, dedupState);
+    } else if (dedupState.generation === null && generation !== null) {
+      // Turn 1 ran with claudeSessionId === null and minted `generation` at
+      // turn end: Turn 1's blocks ARE in this SDK/DSH session's history, so
+      // promote generation in place instead of re-injecting ~85KB on Turn 2.
+      dedupState.generation = generation;
+    } else if (dedupState.generation !== generation) {
+      // Reset or switched SDK session: previous injections are not in history.
       dedupState = createVolatileDedupState(generation);
       this.volatileDedupBySessionId.set(sessionId, dedupState);
     }
@@ -11732,7 +11745,45 @@ export class CoworkRunner extends EventEmitter {
           '</instant_ack>',
         ].join('\n')
         : ''
-      const volatileHead = [localTimePrompt, volatileBlocks, instantAckNotice]
+      const unansweredPriorOwnerNotice = (() => {
+        try {
+          const turnOutcome = this.store.getSessionTurnOutcome?.(sessionId);
+          if (!turnOutcome?.lastFailedAtMs || turnOutcome.lastFailedAtMs <= (turnOutcome.lastCompletedAtMs ?? 0)) {
+            return '';
+          }
+          const sessionRecord = this.store.getSession(sessionId);
+          const msgs = Array.isArray(sessionRecord?.messages) ? sessionRecord!.messages : [];
+          const cutoffMs = turnOutcome.lastCompletedAtMs ?? 0;
+          const rawCurrent = prompt.replace(/^<owner_message>[\s\S]*?\n\n([\s\S]*?)\n<\/owner_message>$/, '$1').trim();
+          let priorUnanswered = '';
+          for (let i = msgs.length - 1; i >= 0; i -= 1) {
+            const m = msgs[i];
+            if (!m || m.type !== 'user') continue;
+            const ts = typeof m.timestamp === 'number' ? m.timestamp : 0;
+            if (ts <= cutoffMs) break;
+            if (ts > turnOutcome.lastFailedAtMs + 1_000) continue;
+            const meta = m.metadata as Record<string, unknown> | undefined;
+            if (meta?.isDelegationInternal || meta?.origin === 'heartbeat' || meta?.origin === 'studio_briefing' || meta?.sourceChannel === 'idbots_cross_session') {
+              continue;
+            }
+            const text = String(m.content ?? '').trim();
+            if (!text || text === rawCurrent) continue;
+            priorUnanswered = text;
+            break;
+          }
+          if (!priorUnanswered) return '';
+          return [
+            '<unanswered_previous_owner_message>',
+            'IMPORTANT CONTINUITY RECOVERY: Your immediately preceding turn failed with a runtime/model error BEFORE you could process or answer the owner\'s previous message below (which may not appear in your prior model-visible transcript):',
+            `"""\n${priorUnanswered}\n"""`,
+            'If the owner\'s new message below is a continuation cue (e.g. "继续", "continue", "重试", "retry"), you MUST answer and fulfill THAT unanswered owner message above first — NEVER interpret "继续" as approving an earlier pending proposal or authorizing irreversible on-chain publishing/minting!',
+            '</unanswered_previous_owner_message>',
+          ].join('\n');
+        } catch {
+          return '';
+        }
+      })();
+      const volatileHead = [localTimePrompt, volatileBlocks, unansweredPriorOwnerNotice, instantAckNotice]
         .filter((section) => section?.trim())
         .join('\n\n')
       // Kernel-owned session titles derive from the FIRST human message in
@@ -12798,6 +12849,64 @@ export class CoworkRunner extends EventEmitter {
             );
             outcome = await runGuardedTurn(TRANSIENT_TURN_RESUME_PROMPT, undefined, fallbackRoute);
           }
+        }
+      }
+
+      if (
+        outcome.kind === 'error'
+        && !activeSession.abortController.signal.aborted
+        && isModelSwitchCompactionFailedDshTurnError(outcome)
+      ) {
+        const preserved = hub.getPreservedRoute(dshSessionId);
+        const preservedRoute: DshProviderRouteInfo | null = preserved
+          && (preserved.key !== route.provider || preserved.model !== route.model)
+          && preserved.baseUrl
+          && preserved.apiKey
+          ? {
+              provider: preserved.key === 'deepseek-official' ? 'deepseek' : preserved.key,
+              apiFormat: preserved.apiFormat,
+              baseUrl: preserved.baseUrl,
+              apiKey: preserved.apiKey,
+              model: preserved.model,
+            }
+          : null;
+        const switchRescueRoute = preservedRoute
+          ?? this.resolveSessionFallbackDshRoute(sessionId, route)
+          ?? this.resolveCurrentDefaultDshRoute(sessionId, route).route;
+        if (
+          switchRescueRoute
+          && (switchRescueRoute.provider !== route.provider || switchRescueRoute.model !== route.model)
+        ) {
+          coworkLog(
+            'WARN',
+            'runDshSessionLocal',
+            'Model-switch pre-compaction failed before message admission — seamlessly continuing turn on preserved/rescue route',
+            {
+              sessionId,
+              attemptedRoute: { provider: route.provider, model: route.model },
+              rescueRoute: { provider: switchRescueRoute.provider, model: switchRescueRoute.model },
+              cause: outcome.error?.message,
+            },
+          );
+          const attemptedProviderLabel = isFreeQuotaProvider(route.provider) ? FREE_PROVIDER_DISPLAY_NAME : route.provider;
+          const rescueProviderLabel = isFreeQuotaProvider(switchRescueRoute.provider) ? FREE_PROVIDER_DISPLAY_NAME : switchRescueRoute.provider;
+          this.addSystemMessage(
+            sessionId,
+            tApp(
+              `目标模型 ${route.model}（${attemptedProviderLabel}）暂时无法直接装下当前长历史，本轮已自动保持在 ${switchRescueRoute.model}（${rescueProviderLabel}）继续回复，对话不受影响。`,
+              `Target model ${route.model} (${attemptedProviderLabel}) could not fit the current long history directly; automatically continued this turn on ${switchRescueRoute.model} (${rescueProviderLabel}) without interrupting your conversation.`,
+            ),
+            {
+              dshRouteFallback: true,
+              dshModelSwitchPreserved: true,
+              fromProvider: route.provider,
+              fromModel: route.model,
+              toProvider: switchRescueRoute.provider,
+              toModel: switchRescueRoute.model,
+            },
+          );
+          lastAttemptRoute = switchRescueRoute;
+          outcome = await runGuardedTurn(effectiveDshPrompt, promptImages, switchRescueRoute);
         }
       }
 

@@ -104,3 +104,24 @@ test('a custom provider key riding the Command Code host is detected by baseUrl'
   assert.equal(policy.provider, 'mycc')
   assert.equal(policy.thresholdRatio, 0.5)
 })
+
+test('ID.Bots relay DeepSeek routes pair thresholdRatio 0.22 with scaled retainRatio 0.04 so system+tools+tail never deadlocks threshold', () => {
+  const config = generateRuntimeConfig(baseInput([
+    {
+      key: 'idbots',
+      apiFormat: 'openai',
+      baseUrl: 'https://www.metaso.network/assist-open-api/v2/assist/llm/v1',
+      apiKeyEnv: 'IDBOTS_KEY',
+      models: [
+        { id: 'deepseek-4.1-flash', contextWindow: 1_000_000 },
+        { id: 'glm-5.3-flash', contextWindow: 1_048_576 },
+      ],
+    },
+  ]))
+  const dsPolicy = compactionPolicyFor(config, 'deepseek-4.1-flash')
+  assert.equal(dsPolicy.thresholdRatio, 0.22)
+  assert.equal(dsPolicy.retainRatio, 0.04)
+  const glmPolicy = compactionPolicyFor(config, 'glm-5.3-flash')
+  assert.equal(glmPolicy.thresholdRatio, 0.8)
+  assert.equal(glmPolicy.retainRatio, undefined)
+})

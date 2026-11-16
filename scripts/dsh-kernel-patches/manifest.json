@@ -104,7 +104,7 @@
     },
     {
       "patch": "@deepseek-ai+dsh-compaction-basic+0.2.2-rc.1.patch",
-      "why": "context-overflow recovery shrinks the summarized region (older half per rung) when the summarization request itself overflows the route's context window — without it a provider whose real prompt cap sits below the declared window (Command Code GLM, 2026-10-27 session 2c70849f) fails every turn with the same 400 and only a fallback brain on another provider can compact",
+      "why": "context-overflow recovery shrinks the summarized region (older half per rung, including 413 body-cap overflows) when summarization itself overflows; model-switch pressure compaction shrinks retainTokens progressively, skips lone-checkpoint re-summarization (`1784 >= 1784` incident 23d32653), and falls back to the target model when the previous route's summarizer fails",
       "targets": [
         {
           "file": "dsh-runtime/node_modules/@deepseek-ai/dsh-compaction-basic/lib/index.js",
@@ -114,6 +114,11 @@
         {
           "file": "dsh-runtime/node_modules/@deepseek-ai/dsh-compaction-basic/lib/index.js",
           "match": "overflowShrinkRetainTokens(measurement, range, retainTokens)",
+          "count": 2
+        },
+        {
+          "file": "dsh-runtime/node_modules/@deepseek-ai/dsh-compaction-basic/lib/index.js",
+          "match": "IDBots patch (model-switch-seamless)",
           "count": 2
         }
       ]
