@@ -107,9 +107,14 @@ test('mobile hero renders the expiry line and MeScreen feeds it from the subscri
   const screen = read('src/mobile/app/screens/MeScreen.tsx');
   assert.match(screen, /expiryMs=\{expiryMs\}/);
   assert.match(screen, /meSubscriptionExpiryMs\(me\.subscription\)/);
-  // The home-page tier cards ride the same downgrade guard as the purchase screen.
-  assert.match(screen, /activeTierKey=\{activeTierKey\}/);
-  assert.match(screen, /subscribed=\{subscribed\}/);
+  // fa9c96e81 retired the home-page tier cards — the full catalog and its
+  // downgrade guard moved into the purchase screen (mirrors mobileMeIa).
+  assert.doesNotMatch(screen, /MeTierCards/);
+  // The tier cards that DO render ride the same downgrade guard as before.
+  const purchase = read('src/mobile/app/screens/MePurchaseScreen.tsx');
+  assert.match(purchase, /activeTierKey=\{activeTierKey\}/);
+  assert.match(purchase, /subscribed=\{subscribed\}/);
+  assert.match(purchase, /isMePlanDowngrade\(activeTierKey, plan\.tier\)/);
 });
 
 test('expiry copy exists in BOTH locales on desktop and mobile', () => {
