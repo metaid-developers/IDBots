@@ -105,7 +105,7 @@ test('a custom provider key riding the Command Code host is detected by baseUrl'
   assert.equal(policy.thresholdRatio, 0.5)
 })
 
-test('ID.Bots relay DeepSeek routes pair thresholdRatio 0.22 with scaled retainRatio 0.04 so system+tools+tail never deadlocks threshold', () => {
+test('ID.Bots relay routes keep the default 0.8 threshold and no retainRatio override', () => {
   const config = generateRuntimeConfig(baseInput([
     {
       key: 'idbots',
@@ -119,8 +119,8 @@ test('ID.Bots relay DeepSeek routes pair thresholdRatio 0.22 with scaled retainR
     },
   ]))
   const dsPolicy = compactionPolicyFor(config, 'deepseek-4.1-flash')
-  assert.equal(dsPolicy.thresholdRatio, 0.22)
-  assert.equal(dsPolicy.retainRatio, 0.04)
+  assert.equal(dsPolicy.thresholdRatio, 0.8)
+  assert.equal(dsPolicy.retainRatio, undefined)
   const glmPolicy = compactionPolicyFor(config, 'glm-5.3-flash')
   assert.equal(glmPolicy.thresholdRatio, 0.8)
   assert.equal(glmPolicy.retainRatio, undefined)
