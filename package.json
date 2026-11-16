@@ -43,6 +43,7 @@
     "test:nft-swap": "node --test tests/nftSwapLedger.test.mjs tests/nftSwapVaultPoll.test.mjs",
     "test:receipt-audit": "node --test tests/receiptAuditV3.test.mjs",
     "test:wallet": "pnpm run compile:electron && node --test tests/metabotWalletService.test.mjs tests/metabotWallet236CoinType.test.mjs",
+    "test:btc-multisig": "npx tsx --test tests/btcMultisig.test.ts && node --test tests/btcMultisigWiring.test.mjs",
     "test:mrc721": "pnpm run compile:electron && node --test tests/mrc721Service.test.mjs tests/mrc721AgentTools.test.mjs tests/mrc721AtomicSwap.test.mjs tests/buildMvcTransferRawTxWorker.test.mjs && npx tsx --test tests/mrc721SellIntentService.test.mjs tests/botBrowserMrc721Buy.test.mjs tests/mrc721OpenOfferTx.test.mjs tests/mrc721OpenOfferService.test.mjs",
     "test:nft": "pnpm run compile:electron && node --test tests/metabotNftService.test.mjs tests/metabotNftIpc.test.mjs tests/metabotNftPresentation.test.mjs tests/nftCardHealService.test.mjs tests/nftCaService.test.mjs tests/nftAvatarService.test.mjs tests/metabotWalletAssetService.test.mjs tests/metabotWalletAssetsModal.test.mjs tests/walletNftCardAttach.test.mjs",
     "test:s3-escrow": "npx tsx --test tests/escrowOrderStateMachine.test.ts tests/escrowCardMarkdown.test.tsx && pnpm run compile:electron && node --test tests/escrowAgentTools.test.mjs",
