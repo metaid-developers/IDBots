@@ -138,6 +138,8 @@ export type StudioLiveStageServiceDeps = {
   drainInteractions?(tabId: number, sessionId?: string): Promise<unknown[]>;
   /** Resolves a pending permission in the cowork runner (main-side sink). */
   respondToPermission?(requestId: string, result: Record<string, unknown>): void;
+  /** Mirrors a right-hand Live Stage AskUserQuestion answer into the left Studio chat panel so both surfaces stay unified. */
+  onStageAskAnswered?(sessionId: string, summaryText: string): void;
   interactionPollMs?: number;
   /** Open-delegation recheck cadence while the stage waits on workers. */
   delegationRecheckMs?: number;
@@ -326,10 +328,16 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       try {
         const rawWorkers = deps.listCollaboratingWorkers(run.state.sessionId) ?? [];
         activeWorkers = rawWorkers.map((worker) => {
-          const safe = safeAvatar(worker.avatar);
-          const asset = safe ? stageAvatarFor(run, safe) : worker.avatar;
+          const ref = unresolvedAvatarRef(worker.avatarRef ?? worker.avatar);
+          if (ref && !resolvedAsyncAvatars.has(ref)) {
+            resolveWorkerAvatarAsync(run, ref, worker.name);
+          }
+          const resolvedChain = ref ? resolvedAsyncAvatars.get(ref) : undefined;
+          const safe = safeAvatar(resolvedChain ?? worker.avatar);
+          const asset = safe ? stageAvatarFor(run, safe) : undefined;
+          const { avatarRef: _omitRef, ...rest } = worker;
           return {
-            ...worker,
+            ...rest,
             ...(asset ? { avatar: asset } : {}),
           };
         });
@@ -704,9 +712,10 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
   function applyDelegationWait(run: LiveStageRun, delegations: StudioOpenDelegation[]): void {
     const first = delegations[0];
     const startedAt = delegations.reduce((min, entry) => Math.min(min, entry.startedAt), first.startedAt);
-    const rawAvatar = safeAvatar(first.workerAvatar) ?? (first.workerAvatarRef ? resolvedAsyncAvatars.get(first.workerAvatarRef) : undefined);
+    const resolvedRef = first.workerAvatarRef ? resolvedAsyncAvatars.get(first.workerAvatarRef) : undefined;
+    const rawAvatar = safeAvatar(resolvedRef ?? first.workerAvatar);
     const workerAvatar = stageAvatarFor(run, rawAvatar);
-    if (!workerAvatar && first.workerAvatarRef) {
+    if (!resolvedRef && first.workerAvatarRef) {
       resolveWorkerAvatarAsync(run, first.workerAvatarRef, first.workerName);
     }
     if (first.workerName || workerAvatar || first.workerAvatarRef) {
@@ -906,6 +915,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       pendingAvatarRefs: new Set(),
       draftClaimPending,
     };
+    run.state = enrichChiefOfStaffState(run, run.state);
     if (run.template.status === 'fallback') {
       console.warn(`[StudioLiveStage] template fallback for ${sessionId}: ${run.template.reason}`);
     }
@@ -1015,7 +1025,18 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       console.warn(`[StudioLiveStage] observe ${sessionId} type=${message.type} id=${message.id} enabled=${currentSettings.enabled} director=${currentSettings.directorEnabled}`);
     }
     if (!currentSettings.enabled) return;
-    if (isLiveStageInternalTrigger(message)) return;
+    if (message.metadata?.liveStageAskAnswer === true) return;
+    if (isLiveStageInternalTrigger(message)) {
+      if (message.metadata?.origin === 'studio_briefing') {
+        const stale = runs.get(sessionId);
+        if (stale) {
+          teardownRun(stale);
+          runs.delete(sessionId);
+        }
+        ensureRun(sessionId);
+      }
+      return;
+    }
     const humanOrigin = message.type === 'user' && !isLiveStageWorkerReport(message)
       && (!message.metadata?.origin || message.metadata.origin === 'user' || message.metadata.origin === 'quick_action');
     let run = runs.get(sessionId);
@@ -1245,6 +1266,19 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       return false;
     }
     console.log(`[StudioLiveStage] stage answer ${interaction.requestId} (${interaction.kind}) for ${run.state.sessionId}`);
+    if (interaction.kind === 'ask' && record.behavior === 'allow' && record.skip !== true) {
+      const updated = (result.updatedInput ?? {}) as { answers?: Record<string, string> };
+      const pickedLines = Object.values(updated.answers ?? {})
+        .map((val) => String(val ?? '').split('|||').map((part) => part.trim()).filter(Boolean).join(' · '))
+        .filter(Boolean);
+      if (pickedLines.length > 0) {
+        try {
+          deps.onStageAskAnswered?.(run.state.sessionId, pickedLines.join('\n'));
+        } catch {
+          // Best-effort left-chat mirror.
+        }
+      }
+    }
     deps.respondToPermission?.(interaction.requestId, result);
     run.state = dismissLiveStageInteraction(run.state, interaction.requestId);
     stopInteractionPolling(run);
@@ -1315,7 +1349,14 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       : {};
     const interaction = buildLiveStageInteraction(candidate, randomBytes(16).toString('hex'));
     if (!interaction) return 'declined';
-    run.state = presentLiveStageInteraction(run.state, interaction, now());
+    if (interaction.kind === 'ask') {
+      try {
+        void deps.activateStageTab?.(sessionId);
+      } catch {
+        // Best-effort stage tab reveal when asking the owner to choose.
+      }
+    }
+    run.state = enrichChiefOfStaffState(run, presentLiveStageInteraction(run.state, interaction, now()));
     startInteractionPolling(run);
     schedulePatch(run);
     console.log(`[StudioLiveStage] present ${interaction.kind} ${interaction.requestId} on ${sessionId}'s stage`);

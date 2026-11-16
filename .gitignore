@@ -1060,3 +1060,4 @@ blob-report/
 !tests/studioChiefOfStaffPolish.test.mjs
 !tests/studioWaitingAndAmend.test.mjs
 !tests/studioSeamlessSwitchAndFlow.test.mjs
+!tests/studioGlmStageAndAsk.test.mjs

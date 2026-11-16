@@ -9382,6 +9382,26 @@ const studioDelegationLookupDeps = {
   getMetabotById: (id: number) => getMetabotStore().getMetabotById(id),
   resolveAvatar: resolveLiveStageBuiltinAvatar,
 };
+const resolveMetabotStageAvatarBundle = (bot: { avatar?: string | null; avatar_fallback?: string | null } | null | undefined): {
+  avatar?: string;
+  avatarRef?: string;
+} => {
+  const pickRenderable = (candidate: unknown): string | undefined => {
+    if (typeof candidate !== 'string' || !candidate) return undefined;
+    if (/^(?:data:image\/|https?:\/\/)/i.test(candidate)) return candidate;
+    const builtin = resolveLiveStageBuiltinAvatar(candidate);
+    return builtin && /^(?:data:image\/|https?:\/\/)/i.test(builtin) ? builtin : undefined;
+  };
+  const avatar = pickRenderable(bot?.avatar) ?? pickRenderable(bot?.avatar_fallback);
+  const avatarRef = typeof bot?.avatar === 'string' && /^(?:metafile|nft):\/\//i.test(bot.avatar.trim())
+    ? bot.avatar.trim()
+    : undefined;
+  return {
+    ...(avatar ? { avatar } : {}),
+    ...(avatarRef ? { avatarRef } : {}),
+  };
+};
+
 const listRawOpenStudioDelegations = (sessionId: string) =>
   listStudioOpenDelegations(studioDelegationLookupDeps, sessionId);
 const listOpenStudioDelegations = (sessionId: string) => {
@@ -9390,14 +9410,13 @@ const listOpenStudioDelegations = (sessionId: string) => {
   const verifying = studioChiefOfStaffService?.getActiveSupervisionForSession(sessionId) ?? null;
   if (!verifying) return open;
   const bot = getMetabotStore().getMetabotById(verifying.workerMetabotId);
-  const avatar = bot?.avatar && /^(?:data:image\/|https?:\/\/)/i.test(bot.avatar)
-    ? bot.avatar
-    : resolveLiveStageBuiltinAvatar(bot?.avatar);
+  const { avatar, avatarRef } = resolveMetabotStageAvatarBundle(bot);
   return [{
     attemptId: `verify:${verifying.attemptId}`,
     workerMetabotId: verifying.workerMetabotId,
     workerName: verifying.workerName,
     ...(avatar ? { workerAvatar: avatar } : {}),
+    ...(avatarRef ? { workerAvatarRef: avatarRef } : {}),
     ...(verifying.workerSessionId ? { workerSessionId: verifying.workerSessionId } : {}),
     title: verifying.title,
     phase: 'back_office_verifying' as const,
@@ -9434,6 +9453,7 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
           id: entry.attemptId,
           name: entry.workerName ?? `Bot #${entry.workerMetabotId}`,
           ...(entry.workerAvatar ? { avatar: entry.workerAvatar } : {}),
+          ...(entry.workerAvatarRef ? { avatarRef: entry.workerAvatarRef } : {}),
           direction: (
             entry.phase === 'back_office_verifying'
               ? 'verifying'
@@ -9446,11 +9466,12 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
         }));
         // Also surface recently completed attempts whose orchestration task is
         // genuinely awaiting Twin back-office verification — excluding any step
-        // already accepted via twin_task_accept or belonging to a done task.
-        const openIds = new Set(open.map((item) => item.id));
-        const attempts = getOrchestrationStore().listAttemptsForSourceSessions([sessionId]) ?? [];
+        // already accepted via twin_task_accept, already represented by a
+        // `verify:<attemptId>` entry above, or belonging to a done task.
+        const openAttemptIds = new Set(open.map((item) => item.id.replace(/^verify:/, '')));
+        const attempts = studioDelegationLookupDeps.listAttemptsForSourceSessions([sessionId]) ?? [];
         for (const attempt of attempts) {
-          if (openIds.has(attempt.id) || attempt.status !== 'completed') continue;
+          if (openAttemptIds.has(attempt.id) || attempt.status !== 'completed') continue;
           const finishedMs = Date.parse(attempt.finishedAt ?? '') || 0;
           if (!finishedMs || nowMs - finishedMs > 2 * 60_000) continue;
           const task = getOrchestrationStore().getTaskForStep(attempt.stepId);
@@ -9458,12 +9479,15 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
           if (getOrchestrationStore().listStepAcceptances(attempt.stepId).length > 0) continue;
           if (task.longtermTaskId && getLongTermTaskStore().getTask(task.longtermTaskId)?.stage === 'done') continue;
           const bot = getMetabotStore().getMetabotById(attempt.workerMetabotId);
+          const { avatar, avatarRef } = resolveMetabotStageAvatarBundle(bot);
           open.push({
             id: attempt.id,
             name: bot?.name?.trim() || `Bot #${attempt.workerMetabotId}`,
+            ...(avatar ? { avatar } : {}),
+            ...(avatarRef ? { avatarRef } : {}),
             direction: 'return',
             title: String(task.ownerIntent ?? '').split('\n')[0].slice(0, 40),
-            startedAt: Date.parse(attempt.startedAt ?? attempt.queuedAt) || finishedMs,
+            startedAt: finishedMs,
           });
         }
         return open.slice(0, 5);
@@ -9555,6 +9579,26 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
           getCoworkRunner().respondToPermission(requestId, result as unknown as PermissionResult);
         } catch (error) {
           console.warn(`[StudioLiveStage] stage answer for ${requestId} failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      },
+      onStageAskAnswered: (sessionId, summaryText) => {
+        const clean = String(summaryText ?? '').trim();
+        if (!clean) return;
+        const msg = getCoworkStore().addMessage(sessionId, {
+          type: 'user',
+          content: clean,
+          metadata: {
+            origin: 'user',
+            liveStageAskAnswer: true,
+            submissionMode: 'continue',
+            submissionResult: 'completed',
+          },
+        });
+        if (shouldForwardCoworkStreamEvent(getCoworkStore(), sessionId)) {
+          broadcastToRenderers('cowork:stream:message', {
+            sessionId,
+            message: sanitizeCoworkMessageForIpc(msg),
+          });
         }
       },
       assetRoot: path.join(app.getAppPath(), app.isPackaged ? 'dist/live-stage' : 'public/live-stage'),

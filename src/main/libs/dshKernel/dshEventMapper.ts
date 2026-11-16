@@ -554,7 +554,13 @@ export class DshEventMapper {
    */
   private postReasoningTextMayStream(text: string): boolean {
     if (this.textOpen) return true
-    if (!this.toolRideTextFolds()) return true
+    // In Assistant Mode (Studio), every model family — including reasoning GLM —
+    // folds tool-riding text into thinking (lines 289 & 673). Without gating
+    // post-reasoning text by POST_REASONING_TEXT_HOLD_UNITS on GLM as well,
+    // every pre-tool transitional sentence ("先用 jq 读一下…") opens a visible
+    // bubble on char #1 and then vanishes/retracts when the tool-call arrives.
+    // Effort-off steps (`!this.reasoningSeenThisStep`) still stream immediately.
+    if (!this.toolRideTextFolds() && !this.assistantMode()) return true
     if (this.reasoningBlockLive) return false
     if (!this.reasoningSeenThisStep) return true
     return text.length >= POST_REASONING_TEXT_HOLD_UNITS
