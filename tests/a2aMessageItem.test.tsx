@@ -916,3 +916,26 @@ test('A2A friend badge never renders on the local bot side', () => {
 
   assert.doesNotMatch(markup, /data-friend-badge/);
 });
+
+test('A2A file-message bubble renders the attachment as a picture, not as a raw path line', () => {
+  const txid = '2'.repeat(64);
+  const localPath = String.raw`C:\Users\tester\AppData\Roaming\IDBots\private-chat-inbound\image.jpg`;
+  const markup = renderToStaticMarkup(
+    <A2AMessageItem
+      message={{
+        id: 'msg-file-1',
+        type: 'user',
+        content: `[Image]\nAttachment path: ${localPath}`,
+        timestamp: 1_744_444_444_000,
+        metadata: { direction: 'incoming', txid },
+      }}
+      peerName="Peer Bot"
+    />
+  );
+
+  // The caption stays; the marker line is consumed by the display-time splitter
+  // so the path never leaks into the bubble as text.
+  assert.match(markup, /\[Image\]/);
+  assert.doesNotMatch(markup, /Attachment path:/);
+  assert.doesNotMatch(markup, /private-chat-inbound/);
+});
