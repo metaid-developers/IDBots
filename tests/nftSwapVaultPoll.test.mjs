@@ -94,7 +94,8 @@ test('fetchVaultTokenRows enforces the 50-page hard cap', async () => {
     return {
       json: async () => ({
         code: 0,
-        data: { list: [{ ...albumRow(seq, `p${seq}`), flag: `f${seq}` }] },
+        // zero-padded seed: `p1` + zero padding would collide with `p10`
+        data: { list: [{ ...albumRow(seq, `p${String(seq).padStart(3, '0')}`), flag: `f${seq}` }] },
       }),
     };
   };
@@ -185,6 +186,92 @@ test('utxo-list server error propagates (no silent empty-vault success)', async 
     () => fetchVaultTokenRows({ address: VAULT, fetchImpl }),
     /utxo-list failed/,
   );
+});
+
+// Verbatim wallet-api v4 payload, fetched 2026-11-16 from
+// /wallet-api/v4/mvc/address/contract/nft/utxo-list?net=livenet&address=<vault>.
+// The real wire names are camelCase (txId / txIndex / codeHash / satoshi); the
+// deposit was still in the mempool at fetch time, hence height -1.
+const REAL_V4_ROW_2671 = {
+  address: VAULT,
+  txId: 'cffd1f5514c5289adf3b1e15d45011dfaa2db403d8a2d9f41e85e1ec79e4e5d7',
+  txIndex: 0,
+  codeHash: 'e205939ad9956673ce7da9fbd40514b30f66dc35',
+  genesis: '005d69cba8c80e6978157e146f998c21288a9d49',
+  sensibleId: '4e7a7d3e3e748c09f1eff46fe504c5fdc389014eab3e316685004d770225ea5300000000',
+  height: -1,
+  metaTxId: '45988353a6933f5fb3700691a3ffb54621fe42f8f7be2208832dfa7fd49d3ee5',
+  metaOutputIndex: 0,
+  tokenSupply: 9560,
+  tokenIndex: 2671,
+  satoshi: 4101,
+  satoshiString: '4101',
+  name: 'MetaBot Avatar - Arms 8',
+};
+
+test('fetchVaultTokenRows normalizes the real v4 camelCase payload (txId/txIndex/codeHash)', async () => {
+  const { fetchImpl } = fakeApi([{ list: [REAL_V4_ROW_2671], nextFlag: undefined }]);
+  const rows = await fetchVaultTokenRows({ address: VAULT, fetchImpl });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].txid, REAL_V4_ROW_2671.txId);
+  assert.equal(rows[0].outIndex, 0);
+  assert.equal(rows[0].codehash, REAL_V4_ROW_2671.codeHash);
+  assert.equal(rows[0].tokenIndex, 2671);
+
+  // 2026-11-16 regression: this row was classified foreign because the empty
+  // normalization made the triple compare blank-vs-blank.
+  const { matched, foreign } = classifyVaultRows(rows, ALBUM);
+  assert.equal(foreign.length, 0);
+  assert.equal(matched.length, 1);
+  assert.equal(matched[0].txid, REAL_V4_ROW_2671.txId);
+
+  await withTempLedger('v4-shape', async (ledger) => {
+    const { fetchImpl: fetchAgain } = fakeApi([{ list: [REAL_V4_ROW_2671], nextFlag: undefined }]);
+    const result = await pollVault({
+      ledger,
+      album: ALBUM,
+      vaultAddress: VAULT,
+      fetchImpl: fetchAgain,
+      confirmationsResolver: async () => 6, // production path: manapi /api/tx/status
+    });
+    assert.equal(result.foreign.length, 0);
+    assert.equal(result.newDeposits.length, 1);
+    assert.equal(result.newDeposits[0].tokenIndex, 2671);
+    assert.equal(ledger.rowsByStates(['rejected']).length, 0);
+  });
+});
+
+test('fetchVaultTokenRows dedupes an outpoint repeated across flag pages (real flag="0" replay)', async () => {
+  // Measured 2026-11-16: page 1 returns the row carrying flag "0"; the flag=0
+  // follow-up page returns the very same row and the cursor stops advancing.
+  // Before the fix this reported scanned=2 for a single deposit.
+  const { fetchImpl, calls } = fakeApi([
+    { list: [REAL_V4_ROW_2671], nextFlag: '0' },
+    { list: [REAL_V4_ROW_2671], nextFlag: '0' },
+  ]);
+  const rows = await fetchVaultTokenRows({ address: VAULT, fetchImpl });
+  assert.equal(calls.length, 2); // both pages really were fetched
+  assert.match(calls[1], /flag=0/);
+  assert.equal(rows.length, 1);
+  assert.equal(`${rows[0].txid}:${rows[0].outIndex}`, `${REAL_V4_ROW_2671.txId}:0`);
+
+  await withTempLedger('v4-dedupe', async (ledger) => {
+    const { fetchImpl: fetchAgain } = fakeApi([
+      { list: [REAL_V4_ROW_2671], nextFlag: '0' },
+      { list: [REAL_V4_ROW_2671], nextFlag: '0' },
+    ]);
+    const result = await pollVault({
+      ledger,
+      album: ALBUM,
+      vaultAddress: VAULT,
+      fetchImpl: fetchAgain,
+      confirmationsResolver: async () => 6,
+    });
+    assert.equal(result.scanned, 1);
+    assert.equal(result.newDeposits.length, 1);
+    // the duplicate used to surface a second time as an already-tracked "matured" row
+    assert.equal(result.matured.length, 0);
+  });
 });
 
 test('pollVault prefers the authoritative per-tx confirmation resolver over height math', async () => {
