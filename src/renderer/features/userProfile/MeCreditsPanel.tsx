@@ -90,18 +90,7 @@ const MeCreditsPanel: React.FC = () => {
 
   return (
     <section data-slot="user-profile-me" className="space-y-3">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold dark:text-claude-darkText text-claude-text">{copy.meSectionTitle}</h3>
-        <button
-          type="button"
-          onClick={handleRefresh}
-          title={copy.meRefresh}
-          aria-label={copy.meRefresh}
-          className="inline-flex h-7 w-7 items-center justify-center rounded-[8px] text-claude-textSecondary transition-colors hover:bg-claude-surfaceHover hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
-        >
-          <ArrowPathIcon className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-        </button>
-      </div>
+      <h3 className="text-sm font-semibold dark:text-claude-darkText text-claude-text">{copy.meSectionTitle}</h3>
 
       {unavailable ? (
         <p className="rounded-xl border border-claude-border/60 px-3 py-3 text-xs leading-relaxed text-claude-textSecondary dark:border-claude-darkBorder/60 dark:text-claude-darkTextSecondary">
@@ -111,7 +100,22 @@ const MeCreditsPanel: React.FC = () => {
         <>
           <div className="rounded-xl border border-claude-border/60 bg-claude-surfaceInset/60 px-4 py-3 dark:border-claude-darkBorder/60 dark:bg-claude-darkSurfaceInset/40">
             <div className="flex items-baseline justify-between gap-3">
-              <span className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">{copy.meTotal}</span>
+              {/* The refresh button lives next to the label it refreshes
+                  (owner ruling 2026-11-18, moved out of the title row). Label +
+                  button form one items-center group, vertically centered on the
+                  label line; the number keeps its baseline seat on the right. */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">{copy.meTotal}</span>
+                <button
+                  type="button"
+                  onClick={handleRefresh}
+                  title={copy.meRefresh}
+                  aria-label={copy.meRefresh}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-[8px] text-claude-textSecondary transition-colors hover:bg-claude-surfaceHover hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover dark:hover:text-claude-darkText focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+                >
+                  <ArrowPathIcon className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
               <span className="text-2xl font-semibold tabular-nums text-claude-text dark:text-claude-darkText">
                 {loading ? '…' : formatMe(totalMe)}
                 <span className="ml-1 text-xs font-normal text-claude-textSecondary dark:text-claude-darkTextSecondary">ME</span>

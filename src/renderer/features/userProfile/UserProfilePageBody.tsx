@@ -74,9 +74,10 @@ const UserProfilePageBody: React.FC = () => {
           ) : null}
       </div>
 
-      <div className="mt-8">
-        <MeCreditsPanel />
-      </div>
+      {/* The dead mt-8 residue left with the identity header (owner ruling
+          2026-11-18): the ME block now sits directly on the scroll container's
+          py-5, symmetric with the left/right inset. */}
+      <MeCreditsPanel />
 
       <section data-slot="user-profile-account" className="mt-8">
         <h3 className="text-sm font-semibold dark:text-claude-darkText text-claude-text">{copy.accountSectionTitle}</h3>
