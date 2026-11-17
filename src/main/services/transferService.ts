@@ -32,6 +32,8 @@ import {
 } from './mvcFundingRecoveryService';
 import { requestMvcGasSubsidy } from './mvcSubsidyService';
 import { broadcastBtcTx as broadcastBtcTxViaProvider, fetchBtcUtxos as fetchBtcUtxosViaProvider } from '../libs/btcApi';
+import { BTC_MIN_SPENDABLE_SATS, isBtcSpendableSats } from './btcSpendPolicy';
+import { summarizeRawTx } from './btcMultisigScript';
 
 const METALET_HOST = 'https://www.metalet.space';
 const NET = 'livenet';
@@ -192,7 +194,9 @@ export async function buildTransferPreview(
     if (!Number.isFinite(amountSats) || amountSats < 600) throw new Error('Invalid amount');
   } else if (params.chain === 'btc') {
     amountSats = Math.floor(new Decimal(params.amountSpaceOrDoge).mul(SATOSHI_PER_UNIT).toNumber());
-    if (amountSats < 546) throw new Error('Minimum 546 satoshis');
+    if (!isBtcSpendableSats(amountSats)) {
+      throw new Error(`Minimum BTC transfer is ${BTC_MIN_SPENDABLE_SATS} satoshis`);
+    }
   } else {
     amountSats = Math.floor(new Decimal(params.amountSpaceOrDoge).mul(SATOSHI_PER_UNIT).toNumber());
     if (amountSats < MIN_DOGE_TRANSFER_SATOSHIS) throw new Error('Minimum 0.01 DOGE');
@@ -681,7 +685,7 @@ export async function runMvcTransferWorkerWithSessionRecovery(params: {
 }
 
 /**
- * Execute SPACE (MVC) or DOGE transfer. Does not implement BTC.
+ * Execute a native-coin transfer: SPACE (MVC), DOGE, or BTC.
  * MVC uses a subprocess worker to avoid meta-contract instanceof issues in Electron main.
  */
 export async function executeTransfer(
@@ -850,7 +854,14 @@ export async function executeTransfer(
 
     if (params.chain === 'btc') {
       const amountSatoshis = Math.floor(new Decimal(params.amountSpaceOrDoge).mul(SATOSHI_PER_UNIT).toNumber());
-      if (amountSatoshis < 546) return { success: false, error: 'Minimum transfer is 546 satoshis' };
+      // Metalet 1b3f93a: the floor is exactly 1000 sats (999 refused, 1000
+      // allowed); a smaller output would be frozen by the carrier rule.
+      if (!isBtcSpendableSats(amountSatoshis)) {
+        return {
+          success: false,
+          error: `Minimum BTC transfer is ${BTC_MIN_SPENDABLE_SATS} satoshis: smaller outputs are frozen by the inscription-carrier rule`,
+        };
+      }
       console.log('[Transfer] BTC: signing', { amountSatoshis, feeRate: params.feeRate });
       const btcWallet = getBtcWalletForTransfer(wallet.mnemonic, addressIndex);
       const btcAddress = btcWallet.getAddress();
@@ -862,6 +873,17 @@ export async function executeTransfer(
         feeRate: params.feeRate,
         changeAddress: btcAddress,
       });
+      // Post-sign audit: the SDK folds change <546 sat into the fee but will
+      // happily create a 546..999 sat change output, which our own UTXO filter
+      // (and the carrier rule) would then never spend again. Refuse rather
+      // than strand funds.
+      const stranded = summarizeRawTx(btcRawTx).outputs.filter((output) => !isBtcSpendableSats(output.value));
+      if (stranded.length > 0) {
+        return {
+          success: false,
+          error: `BTC transfer would create an output of ${stranded.map((output) => `${output.value} sats`).join(', ')}; outputs below ${BTC_MIN_SPENDABLE_SATS} sats cannot be spent under the inscription-carrier rule. Adjust the amount (it changes the change output). Nothing was broadcast.`,
+        };
+      }
       const broadcastTxId = await broadcastBtcTx(btcRawTx);
       console.log('[Transfer] BTC success txId:', broadcastTxId);
       return { success: true, txId: broadcastTxId };
