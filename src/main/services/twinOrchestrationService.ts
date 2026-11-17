@@ -552,6 +552,54 @@ export class TwinOrchestrationService {
     const currentTask = store.getTask(task.id);
     if (!currentTask || currentTask.status === 'completed' || currentTask.status === 'cancelled') return;
 
+    const latestAttemptBeforeSettle = store.getAttempt(attempt.id) ?? attempt;
+    const ltStore = this.deps.longTermTaskStore?.();
+    if (ltStore && currentTask.longtermSubtaskId) {
+      try {
+        const ltSub = ltStore.getSubtask(currentTask.longtermSubtaskId);
+        if (ltSub && ltSub.status !== 'accepted' && ltSub.status !== 'skipped') {
+          const alreadySelfRegistered = Boolean(
+            ltSub.submission
+            && latestAttemptBeforeSettle.workerSessionId
+            && ltSub.submission.workerSessionId === latestAttemptBeforeSettle.workerSessionId,
+          );
+          if (!alreadySelfRegistered) {
+            const outcome =
+              handoff.state === 'failed'
+                ? 'failed'
+                : handoff.state === 'waiting_external'
+                  ? 'waiting_external'
+                  : handoff.state === 'blocked'
+                    ? 'blocked'
+                    : 'ready_for_review';
+            ltStore.submitSubtaskWork(
+              ltSub.id,
+              {
+                outcome,
+                workerMetabotId: worker.id,
+                workerSessionId: latestAttemptBeforeSettle.workerSessionId ?? null,
+                attemptId: attempt.id,
+                summary:
+                  (handoff.summary || replyText).trim().slice(0, 1200) || `Worker ${worker.name} finished turn`,
+                artifacts: (handoff.deliverables ?? []).map((item) => ({
+                  kind: 'other',
+                  uri: String(item ?? '').trim(),
+                })).filter((a) => Boolean(a.uri)),
+                blockers: handoff.blockers ?? [],
+              },
+              `worker:${worker.id}`,
+            );
+          } else {
+            ltStore.releaseSubtaskLease(ltSub.id, attempt.id);
+          }
+        }
+      } catch (ltErr) {
+        console.warn(
+          `[TwinOrchestration] Subtask blackboard sync warning (${currentTask.longtermSubtaskId}): ${ltErr instanceof Error ? ltErr.message : String(ltErr)}`,
+        );
+      }
+    }
+
     if (handoff.state === 'failed') {
       const message = handoff.parseError || handoff.blockers[0] || handoff.summary || 'WORKER_ATTEMPT_FAILED';
       store.updateAttempt(attempt.id, 'failed', { result, error: message });
@@ -633,6 +681,18 @@ export class TwinOrchestrationService {
         onSessionCreated: (sessionId) => {
           this.deps.orchestrationStore.updateStepStatus(step.id, 'running', { activeAttemptId: attempt.id });
           this.deps.orchestrationStore.updateAttempt(attempt.id, 'running', { workerSessionId: sessionId });
+          if (task.longtermTaskId && task.longtermSubtaskId) {
+            try {
+              const lt = this.deps.longTermTaskStore?.();
+              lt?.linkSession(task.longtermTaskId, sessionId, {
+                subtaskId: task.longtermSubtaskId,
+                role: 'worker_exec',
+              });
+              lt?.touchSubtaskActivity(task.longtermSubtaskId);
+            } catch {
+              // Best-effort worker session link.
+            }
+          }
         },
         // Recovery hooks: when the skill-turn watchdog fires at 300s the worker
         // session keeps running inside CoworkRunner. These callbacks align the
@@ -694,6 +754,11 @@ export class TwinOrchestrationService {
           this.deps.orchestrationStore.updateAttempt(attempt.id, 'timed_out', { error: message });
         } else {
           this.deps.orchestrationStore.updateAttempt(attempt.id, 'failed', { error: message });
+          if (task.longtermSubtaskId) {
+            try {
+              this.deps.longTermTaskStore?.()?.releaseSubtaskLease(task.longtermSubtaskId, attempt.id);
+            } catch { /* ignore */ }
+          }
           // Round-4 r6: direct-failure terminal state → notify the Twin.
           this.notifyTwinTerminalState(
             task,
@@ -770,6 +835,11 @@ export class TwinOrchestrationService {
       store.updateStepStatus(currentStep.id, 'failed');
     }
     const currentTask = store.getTaskForStep(currentAttempt.stepId);
+    if (currentTask?.longtermSubtaskId) {
+      try {
+        this.deps.longTermTaskStore?.()?.releaseSubtaskLease(currentTask.longtermSubtaskId, attemptId);
+      } catch { /* ignore */ }
+    }
     if (currentTask && currentTask.status === 'running') {
       store.updateTaskStatus(currentTask.id, 'failed');
     }
@@ -856,11 +926,51 @@ export class TwinOrchestrationService {
               : detail.subtasks.find((item) => item.id === detail.currentSubtaskId) ?? detail.subtasks[0])
           : null;
         if (detail && sub) {
-          longtermContext = {
-            taskId: detail.id,
-            subtaskId: sub.id,
-            reportSessionId: detail.definitionSessionId ?? sourceSessionId,
-          };
+          // Guard 1 (Studio separate-Worker quick card protection): if the Twin
+          // accidentally passed a 1-subtask `quick` card onto an unrelated
+          // second Worker while the first Worker holds that quick card (e.g.
+          // Eleven cover art passed `ltt_edb45cf8` belonging to 阿码), do NOT
+          // hijack the other Worker's quick card — fall through so Studio
+          // creates an independent parallel task card for this Worker.
+          const activeLeaseAttempt = sub.leaseAttemptId
+            ? this.deps.orchestrationStore.getAttempt(sub.leaseAttemptId)
+            : null;
+          const activeLeaseRunning = Boolean(
+            activeLeaseAttempt && ['queued', 'running', 'timed_out'].includes(activeLeaseAttempt.status),
+          );
+          const hijackingOtherWorkersQuickCard = Boolean(
+            isStudioSession
+            && detail.taskKind === 'quick'
+            && detail.subtasks.length === 1
+            && !explicitSubtaskId
+            && sub.assigneeMetabotId != null
+            && sub.assigneeMetabotId !== workerMetabotId
+            && (activeLeaseRunning || sub.submission != null),
+          );
+          if (!hijackingOtherWorkersQuickCard) {
+            // Guard 2 (Cross-session Subtask Lease Lock — prevents 2026-11-17
+            // G1 two-session duplicate-branch merge collision): refuse if
+            // ANOTHER session actively holds a running lease on this subtask.
+            const leaseOwnerTask =
+              activeLeaseRunning && activeLeaseAttempt
+                ? this.deps.orchestrationStore.getTaskForStep(activeLeaseAttempt.stepId)
+                : null;
+            if (
+              activeLeaseRunning
+              && activeLeaseAttempt
+              && leaseOwnerTask?.sourceSessionId
+              && leaseOwnerTask.sourceSessionId !== sourceSessionId
+            ) {
+              throw new Error(
+                `SUBTASK_ALREADY_LEASED: Subtask "${sub.title}" (${sub.id}) is already actively leased by attempt ${activeLeaseAttempt.id} in session ${leaseOwnerTask.sourceSessionId} (Worker #${activeLeaseAttempt.workerMetabotId}). Call task_get("${detail.id}") to inspect its progress instead of launching a duplicate branch.`,
+              );
+            }
+            longtermContext = {
+              taskId: detail.id,
+              subtaskId: sub.id,
+              reportSessionId: detail.definitionSessionId ?? sourceSessionId,
+            };
+          }
         }
       }
       // In Studio mode, if re-dispatching the SAME Worker mid-flight (course
@@ -915,13 +1025,20 @@ export class TwinOrchestrationService {
       }
       if (!longtermContext && isStudioSession) {
         const quickTitle = String(input.taskIntent ?? objective).split('\n')[0].trim().slice(0, 80) || objective.slice(0, 80);
+        const originMessageId =
+          (this.deps.coworkStore as unknown as { getLatestHumanMessageId?: (sid: string) => string | null })
+            .getLatestHumanMessageId?.(sourceSessionId) ?? null;
         const quickCreated = ltStore.createQuickTask(
           {
             title: quickTitle,
             goal: String(input.taskIntent ?? objective).trim(),
             acceptanceCriteria: (input.acceptanceCriteria ?? []).map((item) => String(item)),
             preferredChannel: 'delegate_bot',
+            assigneeMetabotId: worker.id,
             definitionSessionId: sourceSessionId,
+            originSessionId: sourceSessionId,
+            originMessageId,
+            originChannel: 'studio',
           },
           'twin',
         );
@@ -1056,6 +1173,22 @@ export class TwinOrchestrationService {
       workerMetabotId: worker.id,
       prompt: delegatedObjective,
     });
+    if (ltStore && longtermContext) {
+      ltStore.claimSubtaskLease(
+        longtermContext.subtaskId,
+        {
+          assigneeMetabotId: worker.id,
+          attemptId: attempt.id,
+          forceSupersede: true,
+        },
+        'twin',
+      );
+      ltStore.linkSession(longtermContext.taskId, sourceSessionId, {
+        subtaskId: longtermContext.subtaskId,
+        role: isStudioSession ? 'origin' : 'discussion',
+        ...(isStudioSession ? { channel: 'studio' as const } : {}),
+      });
+    }
     // 清单 #12: a retry supersedes this step's earlier failed attempt — mark
     // its worker session so the UI shows "already retried" instead of a bare
     // error that reads like an abandoned task.
@@ -1226,6 +1359,13 @@ export class TwinOrchestrationService {
         .filter((sessionId) => sessionId.length > 0),
     );
     const cancelled = this.deps.orchestrationStore.cancelTaskCascade(status.task.id);
+    if (status.task.longtermSubtaskId) {
+      try {
+        for (const attemptId of status.steps.flatMap((s) => s.attempts.map((a) => a.id))) {
+          this.deps.longTermTaskStore?.()?.releaseSubtaskLease(status.task.longtermSubtaskId, attemptId);
+        }
+      } catch { /* ignore */ }
+    }
     // Cancel the attempt records alone used to orphan the live worker
     // sessions: they kept streaming (or sat wedged on a pending permission)
     // while the UI showed them as 'running' forever. Stopping them here

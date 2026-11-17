@@ -81,6 +81,9 @@ export type LongTermEventKind =
   | 'created'
   | 'replanned'
   | 'began'
+  | 'assigned'
+  | 'progress'
+  | 'submitted'
   | 'proposed'
   | 'accepted'
   | 'rejected'
@@ -94,10 +97,77 @@ export type LongTermEventKind =
   | 'completed'
   | 'note';
 
-export type LongTermActor = 'owner' | 'twin' | 'system';
+export type LongTermActor = 'owner' | 'twin' | 'system' | `worker:${number}`;
+
+export type TaskOriginChannel =
+  | 'studio'
+  | 'botworks'
+  | 'mobile'
+  | 'telegram'
+  | 'im'
+  | 'a2a'
+  | 'schedule'
+  | 'other';
+
+export type TaskSessionLinkRole =
+  | 'origin'
+  | 'discussion'
+  | 'worker_exec'
+  | 'supervision'
+  | 'channel_bridge';
+
+export interface TaskSessionLink {
+  taskId: string;
+  sessionId: string;
+  subtaskId: string | null;
+  role: TaskSessionLinkRole;
+  channel: TaskOriginChannel | null;
+  anchorMessageId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type LongTermReason =
+  | 'manual'
+  | 'participants'
+  | 'expected_duration'
+  | 'elapsed_span'
+  | 'multi_stage';
+
+export interface LongTermBadgeThresholds {
+  minParticipants: number;
+  minExpectedMinutes: number;
+  minActiveAgeMs: number;
+  minMultiStageSubtasks: number;
+}
+
+export interface TaskDeliverableArtifact {
+  /** dir | file | metaapp | metafile | pin | url | branch | other */
+  kind: string;
+  uri: string;
+  label?: string;
+  sha256?: string;
+}
+
+export type TaskWorkerSubmissionOutcome =
+  | 'ready_for_review'
+  | 'blocked'
+  | 'waiting_external'
+  | 'failed';
+
+export interface TaskWorkerSubmission {
+  outcome: TaskWorkerSubmissionOutcome;
+  workerMetabotId: number;
+  workerSessionId: string | null;
+  summary: string;
+  artifacts: TaskDeliverableArtifact[];
+  evidence: LongTermEvidence[];
+  blockers: string[];
+  submittedAt: string;
+}
 
 export interface LongTermEvidence {
-  /** dir | metaapp | pin | url | other */
+  /** dir | metaapp | metafile | pin | url | other */
   kind: string;
   uri: string;
   note?: string;
@@ -131,6 +201,19 @@ export interface LongTermSubtask {
   /** Linked on-chain MetaTask root pinId when this sub-project's execution
    *  channel is a chain-side multi-bot task (referenced, not mixed in). */
   metataskRoot: string | null;
+  /** Assigned Bot id currently responsible for executing this subtask. */
+  assigneeMetabotId?: number | null;
+  /** Active execution lease attempt id preventing duplicate parallel dispatches. */
+  leaseAttemptId?: string | null;
+  leaseClaimedAt?: string | null;
+  /** Latest liveness heartbeat / tool activity timestamp from the assignee Bot. */
+  lastActivityAt?: string | null;
+  /** Live step progress note registered by the assignee Bot. */
+  progressNote?: string;
+  /** Structured Worker completion/blocker submission registered directly on the subtask. */
+  submission?: TaskWorkerSubmission | null;
+  originSessionId?: string | null;
+  originMessageId?: string | null;
   acceptedBy: 'owner' | 'twin' | null;
   createdAt: string;
   updatedAt: string;
@@ -170,6 +253,12 @@ export interface LongTermTaskSummary {
   column: LongTermColumn;
   /** 'quick' (single-step deliverable card) | 'project' (multi-stage decomposition). */
   taskKind?: LongTermTaskKind;
+  /** True when the task qualifies for the `[长期]` (Long-Term) complexity/span badge. */
+  isLongTerm?: boolean;
+  /** Objective reasons why `isLongTerm` evaluated to true (empty for standard tasks). */
+  longTermReasons?: LongTermReason[];
+  /** Explicit override: true = forced long-term, false = forced standard, null/undefined = auto. */
+  isLongTermOverride?: boolean | null;
   /** Canonical 3-state live status (null when done/cancelled). */
   managedState?: LongTermManagedState | null;
   acceptanceDelegate: boolean;
@@ -177,9 +266,20 @@ export interface LongTermTaskSummary {
    *  local .html file shown in the bubble (or pin:// when the owner asked for
    *  an on-chain copy). Null when creation skipped the plan page. */
   planArtifactUri: string | null;
+  /** Originating session & anchor message pointers (many-to-many session decoupled). */
+  originSessionId?: string | null;
+  originMessageId?: string | null;
+  anchorMessageIds?: string[];
+  originChannel?: TaskOriginChannel | null;
   currentSubtaskId: string | null;
   currentSubtaskTitle: string | null;
   currentSubtaskStatus: LongTermSubtaskStatus | null;
+  /** Assigned Bot id on the current focus subtask, if any. */
+  currentAssigneeMetabotId?: number | null;
+  /** Live Worker progress note on the current focus subtask, if any. */
+  currentProgressNote?: string | null;
+  /** Latest liveness pulse timestamp on the current focus subtask, if any. */
+  currentLastActivityAt?: string | null;
   /** Present when the current sub-task waits on something (wait_note). */
   currentWaitNote: string | null;
   /** The current sub-task's expected-duration budget in minutes (null = default). */
@@ -202,6 +302,7 @@ export interface LongTermTaskDetail extends LongTermTaskSummary {
   /** Newest first, capped. */
   events: LongTermEvent[];
   definitionSessionId: string | null;
+  sessionLinks?: TaskSessionLink[];
 }
 
 export interface LongTermBoard {
@@ -220,6 +321,8 @@ export interface LongTermSubtaskDraft {
   notes?: string;
   /** Expected duration in minutes; null/invalid = use the supervision default. */
   expectedMinutes?: number;
+  /** Optional initial assignee Bot id for this subtask. */
+  assigneeMetabotId?: number | null;
 }
 
 export interface LongTermTaskCreateInput {
@@ -227,6 +330,12 @@ export interface LongTermTaskCreateInput {
   goal: string;
   subtasks: LongTermSubtaskDraft[];
   definitionSessionId?: string | null;
+  originSessionId?: string | null;
+  originMessageId?: string | null;
+  anchorMessageIds?: string[];
+  originChannel?: TaskOriginChannel | null;
+  isLongTerm?: boolean | null;
+  intentScore?: unknown;
   /** URI of the plan page the owner confirmed before this create call. */
   planArtifactUri?: string | null;
   taskKind?: LongTermTaskKind;
@@ -238,7 +347,63 @@ export interface LongTermQuickTaskCreateInput {
   acceptanceCriteria?: string[];
   preferredChannel?: LongTermPreferredChannel;
   expectedMinutes?: number;
+  assigneeMetabotId?: number | null;
   definitionSessionId?: string | null;
+  originSessionId?: string | null;
+  originMessageId?: string | null;
+  anchorMessageIds?: string[];
+  originChannel?: TaskOriginChannel | null;
+  isLongTerm?: boolean | null;
+  intentScore?: unknown;
+}
+
+export interface UnifiedTaskCreateInput {
+  title: string;
+  goal?: string;
+  /** 1..N subtasks with optional serial/parallel `dependsOnOrdinals`. Defaults to 1 subtask when omitted. */
+  subtasks?: LongTermSubtaskDraft[];
+  acceptanceCriteria?: string[];
+  preferredChannel?: LongTermPreferredChannel;
+  expectedMinutes?: number;
+  /** Default true: immediately activates task and begins eligible dependency-free subtask(s). Set false for defining drafts. */
+  activateImmediately?: boolean;
+  isLongTerm?: boolean | null;
+  definitionSessionId?: string | null;
+  originSessionId?: string | null;
+  originMessageId?: string | null;
+  anchorMessageIds?: string[];
+  originChannel?: TaskOriginChannel | null;
+  planArtifactUri?: string | null;
+  intentScore?: unknown;
+}
+
+export interface TaskSearchOptions {
+  query?: string;
+  stage?: LongTermTaskStage | LongTermTaskStage[];
+  managedState?: LongTermManagedState;
+  isLongTerm?: boolean;
+  assigneeMetabotId?: number;
+  sessionId?: string;
+  includeDone?: boolean;
+  limit?: number;
+}
+
+export interface TaskActiveRadarEntry {
+  id: string;
+  title: string;
+  stage: LongTermTaskStage;
+  managedState: LongTermManagedState;
+  isLongTerm: boolean;
+  progress: LongTermProgress;
+  currentSubtaskId: string | null;
+  currentSubtaskTitle: string | null;
+  currentSubtaskStatus: LongTermSubtaskStatus | null;
+  assigneeMetabotId: number | null;
+  assigneeName: string | null;
+  progressNote: string | null;
+  waitNote: string | null;
+  originSessionId: string | null;
+  updatedAt: string;
 }
 
 export interface LongTermTaskUpdateInput {
@@ -246,6 +411,7 @@ export interface LongTermTaskUpdateInput {
   title?: string;
   goal?: string;
   acceptanceDelegate?: boolean;
+  isLongTerm?: boolean | null;
   /** Set/replace the plan-page URI (no clear — the page stays owed). */
   planArtifactUri?: string | null;
 }
@@ -259,6 +425,7 @@ export interface LongTermSubtaskUpdateInput {
   preferredChannel?: LongTermPreferredChannel | null;
   notes?: string;
   ordinal?: number;
+  assigneeMetabotId?: number | null;
   /** Set or clear the expected-duration budget (null clears back to the default). */
   expectedMinutes?: number | null;
   /** Link/unlink an on-chain MetaTask root as this sub-project's execution channel. */
@@ -267,7 +434,7 @@ export interface LongTermSubtaskUpdateInput {
 
 export interface LongTermResult<T> {
   ok: boolean;
-  code?: 'NOT_FOUND' | 'VALIDATION' | 'FORBIDDEN';
+  code?: 'NOT_FOUND' | 'VALIDATION' | 'FORBIDDEN' | 'CONFLICT';
   error?: string;
   value?: T;
 }

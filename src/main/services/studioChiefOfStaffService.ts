@@ -155,6 +155,10 @@ export interface StudioChiefOfStaffDeps {
   supervisionCoalesceMs?: number;
   idleDebounceMs?: number;
   waitingReassuranceIntervalsMs?: readonly number[];
+  /** Cheap local SQLite watermark of active tasks to broadcast live Worker DB updates on each 5s tick. */
+  getTaskWatermark?: () => string;
+  /** Live Worker progress checkpoint recorded on a Managed Task (`progress_note`). */
+  getTaskProgressNote?: (longtermTaskId: string | null | undefined) => string | null;
   now?: () => number;
   emitLog?: (line: string) => void;
 }
@@ -250,9 +254,9 @@ function buildSupervisionPrompt(params: {
     ...(pendingTodosBlock ? ['', pendingTodosBlock] : []),
     '',
     '### Mandatory Chief-of-Staff Back-Office Protocol',
-    '1. VERIFY WITH EVIDENCE (READ-ONLY BOUNDARY): Treat every Worker claim as untrusted data. Inspect the actual produced files/evidence via `read`, `bash` (read-only checks & test suites), `twin_task_status`, or `idbots_session_read_latest` against the acceptance criteria. STRICT BOUNDARY: NEVER merge git branches into `main`, NEVER rename/modify live user SQLite databases, NEVER register scheduled tasks, and NEVER broadcast on-chain transactions from this silent verification session — leave merges and live execution to the owner\'s approved Studio turn!',
+    '1. VERIFY FROM THE TASK OBJECT & EVIDENCE (READ-ONLY BOUNDARY): Call `task_get` first when a Managed Task is linked (inspecting the Worker\'s structured `submission`, `artifacts`, and `evidence` registered on the subtask), then independently verify the actual produced files/evidence via `read`, `bash` (read-only checks & test suites), `twin_task_status`, or `idbots_session_read_latest` against the acceptance criteria. STRICT BOUNDARY: NEVER merge git branches into `main`, NEVER rename/modify live user SQLite databases, NEVER register scheduled tasks, and NEVER broadcast on-chain transactions from this silent verification session — leave merges and live execution to the owner\'s approved Studio turn!',
     '2. HANDLE DEFECTS SILENTLY: If a Worker failed, drifted, missed a criterion, or hit a technical error you can diagnose, DO NOT bother the owner — immediately issue corrective instructions via `twin_task_reassign` or `local_worker_delegate` from here.',
-    '3. RECORD VERIFIED STEPS: For each step that verifiably meets its acceptance criteria, call `twin_task_accept` with concrete evidence (and update the linked task-tree subtask status if linked).',
+    '3. RECORD VERIFIED STEPS & ADVANCE SERIAL DAG: For each orchestration step that verifiably meets its acceptance criteria, call `twin_task_accept` with concrete evidence. If the linked Task has INTERMEDIATE subtasks whose completion unlocks downstream serial subtasks, call `task_subtask_accept` on that intermediate subtask and immediately dispatch the newly unlocked ready subtask(s)! CRITICAL OWNER-RULING GATE: NEVER call `longterm_subtask_accept` / `task_subtask_accept` on the FINAL open deliverable of a task from back-office supervision — the final deliverable/plan MUST stay in `waiting_owner` (等你拍板) until the owner reviews the presented briefing and approves!',
     '4. PARALLEL CONSOLIDATION GATE: Look at "Still-Running Parallel Sibling Delegations" above. If sibling Workers are still running AND none of the settled steps raised a genuine blocking product decision that requires the owner right now, DO NOT call `studio_decision_enqueue` yet! Conclude this supervision turn quietly after recording your verification; you will be woken again as remaining siblings finish so the owner receives ONE consolidated briefing.',
     '5. ENQUEUE FOR OWNER RULING / FINAL ACCEPTANCE: Only when (a) all parallel steps for this deliverable stage are verified and ready for owner acceptance / stamp sign-off, OR (b) a genuine product/scope ambiguity or irreversible authorization blocks progress:',
     '   - STRICT SCOPE DISCIPLINE: Respect the owner\'s exact stated scope. If the owner asked for research/drafts only ("先不要上链 / 暂不动代码"), enqueue an `acceptance` briefing of the verified drafts — do NOT invent unrequested code-change options that pressure the owner!',
@@ -340,6 +344,7 @@ export class StudioChiefOfStaffService {
   }>();
   private activeSupervisionCount = 0;
   private heartbeatInFlight = false;
+  private lastObservedTaskWatermark: string | null = null;
   private readonly now: () => number;
   private readonly emitLog: (line: string) => void;
   private readonly coalesceMs: number;
@@ -864,6 +869,10 @@ export class StudioChiefOfStaffService {
 
     const primaryName = openWorkers[0]?.workerName ?? activeSup?.workerName ?? 'Worker';
     const primaryTitle = openWorkers[0]?.title ?? activeSup?.title ?? '';
+    const primaryLongtermTaskId = openWorkers[0]?.longtermTaskId ?? null;
+    const liveProgressNote = primaryLongtermTaskId
+      ? (this.deps.getTaskProgressNote?.(primaryLongtermTaskId) ?? '').trim()
+      : '';
     const isVerifying = openWorkers.length === 0 && Boolean(activeSup);
     const signature = openWorkers.length > 0
       ? `workers:${openWorkers.map((w) => w.attemptId).sort().join(',')}`
@@ -916,15 +925,17 @@ export class StudioChiefOfStaffService {
     const workerNamesSummary = openWorkers.length > 1
       ? [...new Set(openWorkers.map((w) => w.workerName).filter(Boolean))].slice(0, 2).join('、')
       : primaryName;
+    const progressSuffixZh = liveProgressNote ? `；当前登记进展：「${clipCleanTitle(liveProgressNote, 60)}」` : '';
+    const progressSuffixEn = liveProgressNote ? `; latest checkpoint: "${clipCleanTitle(liveProgressNote, 60)}"` : '';
     const content = language === 'zh'
       ? (isVerifying
           ? `⏳ ${primaryName} 已交回产出，我正在后台逐项核验并整理汇报${shortTitle ? `（「${shortTitle}」）` : ''}——目前已持续约 ${totalMinutes} 分钟，流程正常推进中、没有卡死，核验完成后立即向你呈报。`
           : openWorkers.length > 1
-            ? `⏳ ${workerNamesSummary}${openWorkers.length > 2 ? ` 等 ${openWorkers.length} 位同事` : ` ${openWorkers.length} 位同事`}仍在后台并行处理任务（已持续约 ${totalMinutes} 分钟，多步制作与自检较耗时，后台正常推进中、没有卡死；全部交回并经我核验后第一时间向你汇报）。`
-            : `⏳ ${primaryName} 仍在后台处理${shortTitle ? `「${shortTitle}」` : '当前任务'}（已持续约 ${totalMinutes} 分钟，编码/制作与自检步骤较耗时，任务正常推进中、没有卡死；交回后我会先核验再向你汇报）。`)
+            ? `⏳ ${workerNamesSummary}${openWorkers.length > 2 ? ` 等 ${openWorkers.length} 位同事` : ` ${openWorkers.length} 位同事`}仍在后台并行处理任务（已持续约 ${totalMinutes} 分钟${progressSuffixZh}，多步制作与自检较耗时，后台正常推进中、没有卡死；全部交回并经我核验后第一时间向你汇报）。`
+            : `⏳ ${primaryName} 仍在后台处理${shortTitle ? `「${shortTitle}」` : '当前任务'}（已持续约 ${totalMinutes} 分钟${progressSuffixZh}，编码/制作与自检步骤较耗时，任务正常推进中、没有卡死；交回后我会先核验再向你汇报）。`)
       : (isVerifying
           ? `⏳ ${primaryName} has returned the output and I am verifying it in the back office${shortTitle ? ` ("${shortTitle}")` : ''} (~${totalMinutes}m elapsed; progressing normally, report coming shortly).`
-          : `⏳ ${primaryName} is still working in the background${shortTitle ? ` on "${shortTitle}"` : ''} (~${totalMinutes}m elapsed; multi-step generation & self-checks take a bit longer, everything is progressing normally — I'll verify and report as soon as it's back).`);
+          : `⏳ ${primaryName} is still working in the background${shortTitle ? ` on "${shortTitle}"` : ''} (~${totalMinutes}m elapsed${progressSuffixEn}; multi-step generation & self-checks take a bit longer, everything is progressing normally — I'll verify and report as soon as it's back).`);
 
     const msg = this.deps.coworkStore().addMessage(studioSessionId, {
       type: 'assistant',
@@ -938,17 +949,32 @@ export class StudioChiefOfStaffService {
   async runHeartbeatTick(nowMs: number = this.now()): Promise<{
     presentedItemId: string | null;
     reassuranceMessageId?: string | null;
+    taskWatermarkChanged?: boolean;
     presence: StudioTwinPresenceSnapshot;
   }> {
+    let taskWatermarkChanged = false;
+    if (this.deps.getTaskWatermark) {
+      try {
+        const currentWatermark = this.deps.getTaskWatermark();
+        if (this.lastObservedTaskWatermark !== null && this.lastObservedTaskWatermark !== currentWatermark) {
+          taskWatermarkChanged = true;
+          this.deps.onStateChanged?.('task_db_updated');
+        }
+        this.lastObservedTaskWatermark = currentWatermark;
+      } catch {
+        // Best-effort watermark check.
+      }
+    }
     const snapshot = this.getPresenceSnapshot(nowMs);
     if (this.heartbeatInFlight) {
-      return { presentedItemId: null, presence: snapshot };
+      return { presentedItemId: null, ...(taskWatermarkChanged ? { taskWatermarkChanged: true } : {}), presence: snapshot };
     }
     const reassuranceMsg = this.checkProgressiveWaitingReassurance(snapshot.activeStudioSessionId, nowMs);
     if (reassuranceMsg) {
       return {
         presentedItemId: null,
         reassuranceMessageId: reassuranceMsg.id,
+        ...(taskWatermarkChanged ? { taskWatermarkChanged: true } : {}),
         presence: this.getPresenceSnapshot(nowMs),
       };
     }
@@ -959,7 +985,11 @@ export class StudioChiefOfStaffService {
       || snapshot.queuedCount === 0
       || !snapshot.activeStudioSessionId
     ) {
-      return { presentedItemId: null, presence: snapshot };
+      return {
+        presentedItemId: null,
+        ...(taskWatermarkChanged ? { taskWatermarkChanged: true } : {}),
+        presence: snapshot,
+      };
     }
 
     const studioSessionId = snapshot.activeStudioSessionId;

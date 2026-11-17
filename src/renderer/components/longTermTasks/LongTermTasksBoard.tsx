@@ -1,10 +1,16 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState } from '../../store';
 import { selectTask } from '../../store/slices/longTermTaskSlice';
 import { longTermTaskService } from '../../services/longTermTask';
 import { i18nService } from '../../services/i18n';
 import { selectTrackedTasksNeedingAttention } from '../../utils/trackedTaskAttention';
+import {
+  filterTaskBoardCards,
+  partitionDoneArchiveCards,
+  sortColumnCards,
+  type TaskBoardTierFilter,
+} from '../../utils/taskBoardOrganization';
 import {
   LONG_TERM_COLUMN_LABEL_KEYS,
   LONG_TERM_COLUMN_ORDER,
@@ -47,6 +53,10 @@ const LongTermTasksBoard: React.FC<LongTermTasksBoardProps> = ({ onReturnToStudi
     [longTermBoard],
   );
 
+  const [tierFilter, setTierFilter] = useState<TaskBoardTierFilter>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showOlderArchived, setShowOlderArchived] = useState(false);
+
   const threeStateSummary = useMemo(() => {
     const counts = { waiting_owner: 0, in_progress: 0, waiting_external: 0 };
     for (const card of board?.cards ?? []) {
@@ -61,6 +71,16 @@ const LongTermTasksBoard: React.FC<LongTermTasksBoardProps> = ({ onReturnToStudi
     }
     return counts;
   }, [board]);
+
+  const allCards = useMemo(() => board?.cards ?? [], [board]);
+  const filteredCards = useMemo(
+    () => filterTaskBoardCards(allCards, { tier: tierFilter, query: searchQuery }),
+    [allCards, tierFilter, searchQuery],
+  );
+  const filteredById = useMemo(
+    () => new Map<string, LongTermTaskSummary>(filteredCards.map((card) => [card.id, card])),
+    [filteredCards],
+  );
 
   useEffect(() => {
     void longTermTaskService.init();
@@ -80,18 +100,53 @@ const LongTermTasksBoard: React.FC<LongTermTasksBoardProps> = ({ onReturnToStudi
     return <LongTermTaskDetail taskId={selectedTaskId} />;
   }
 
-  const cardById = new Map<string, LongTermTaskSummary>((board?.cards ?? []).map((card) => [card.id, card]));
-  const isEmpty = (board?.cards.length ?? 0) === 0;
+  const isEmpty = allCards.length === 0;
+  const hasActiveSearch = searchQuery.trim().length > 0;
 
   return (
     <div className="flex h-full flex-col">
-      {/* Toolbar: creation entry + 3-state live summary pills */}
+      {/* Toolbar: creation entry + tier filters/search + 3-state live summary pills */}
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 px-4 pt-3">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <button type="button" onClick={openCreationSession} className="btn-idchat-primary-filled inline-flex h-9 items-center justify-center rounded-[var(--shape-radius-lg)] px-3 text-sm font-medium">
             {i18nService.t('longTermTask.newTask')}
           </button>
-          <p className="text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+          <div
+            data-slot="task-board-tier-filter"
+            className="inline-flex items-center rounded-lg border dark:border-claude-darkBorder/60 border-claude-border/60 p-0.5 text-xs"
+          >
+            {(['all', 'long_term', 'standard'] as const).map((mode) => {
+              const labelKey =
+                mode === 'all'
+                  ? 'longTermTask.filter.all'
+                  : mode === 'long_term'
+                    ? 'longTermTask.filter.longTerm'
+                    : 'longTermTask.filter.standard';
+              const active = tierFilter === mode;
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setTierFilter(mode)}
+                  className={`rounded-md px-2.5 py-1 font-medium transition ${
+                    active
+                      ? 'dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover dark:text-claude-darkText text-claude-text'
+                      : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:opacity-90'
+                  }`}
+                >
+                  {i18nService.t(labelKey)}
+                </button>
+              );
+            })}
+          </div>
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder={i18nService.t('longTermTask.searchPlaceholder')}
+            className="h-8 w-52 rounded-lg border dark:border-claude-darkBorder/60 border-claude-border/60 dark:bg-claude-darkSurface bg-claude-surface px-2.5 text-xs dark:text-claude-darkText text-claude-text placeholder:opacity-60"
+          />
+          <p className="hidden xl:block text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
             {i18nService.t('longTermTask.newTaskHint')}
           </p>
         </div>
@@ -152,9 +207,19 @@ const LongTermTasksBoard: React.FC<LongTermTasksBoardProps> = ({ onReturnToStudi
           <div className="flex h-full gap-3 px-4 pb-3" style={{ minWidth: 'max-content' }}>
             {LONG_TERM_COLUMN_ORDER.map((column) => {
               const columnDef = board?.columns.find((entry) => entry.column === column);
-              const cards = (columnDef?.cardIds ?? [])
-                .map((id) => cardById.get(id))
+              const rawCards = (columnDef?.cardIds ?? [])
+                .map((id) => filteredById.get(id))
                 .filter((card): card is LongTermTaskSummary => Boolean(card));
+              const cards = sortColumnCards(column, rawCards);
+              const isDoneCol = column === 'done';
+              const { recentDone, archivedDone } = isDoneCol
+                ? partitionDoneArchiveCards(cards)
+                : { recentDone: cards, archivedDone: [] as LongTermTaskSummary[] };
+              const visibleCards = isDoneCol && !hasActiveSearch ? recentDone : cards;
+              const openCard = (taskId: string) => {
+                dispatch(selectTask(taskId));
+                void longTermTaskService.loadTask(taskId);
+              };
               return (
                 <section
                   key={column}
@@ -168,16 +233,42 @@ const LongTermTasksBoard: React.FC<LongTermTasksBoardProps> = ({ onReturnToStudi
                     <span className="text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">{cards.length}</span>
                   </header>
                   <div className="flex-1 space-y-2 overflow-y-auto p-2">
-                    {cards.map((card) => (
+                    {visibleCards.map((card) => (
                       <LongTermTaskCard
                         key={card.id}
                         card={card}
-                        onOpen={(taskId) => {
-                          dispatch(selectTask(taskId));
-                          void longTermTaskService.loadTask(taskId);
-                        }}
+                        onOpen={openCard}
                       />
                     ))}
+                    {isDoneCol && !hasActiveSearch && archivedDone.length > 0 && (
+                      <div className="pt-1">
+                        <button
+                          type="button"
+                          data-slot="done-archive-fold-toggle"
+                          onClick={() => setShowOlderArchived((prev) => !prev)}
+                          className="w-full rounded-lg border border-dashed dark:border-claude-darkBorder/50 border-claude-border/50 px-2.5 py-1.5 text-left text-[11px] font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary hover:opacity-90"
+                        >
+                          {i18nService
+                            .t(
+                              showOlderArchived
+                                ? 'longTermTask.archive.olderToggleHide'
+                                : 'longTermTask.archive.olderToggleShow',
+                            )
+                            .replace('{count}', String(archivedDone.length))}
+                        </button>
+                        {showOlderArchived && (
+                          <div className="mt-2 space-y-2">
+                            {archivedDone.map((card) => (
+                              <LongTermTaskCard
+                                key={card.id}
+                                card={card}
+                                onOpen={openCard}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </section>
               );

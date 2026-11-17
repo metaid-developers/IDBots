@@ -85,6 +85,13 @@ import {
   type CerebellumEffortChoiceQuestion,
   type CerebellumEffortDistribution,
 } from './effortSelector';
+import {
+  buildBundledTaskIntentQuestions,
+  parseTaskIntentAnswers,
+  type CerebellumTaskIntentChoiceQuestion,
+  type TaskIntentAssessment,
+  type TaskIntentRubricConfig,
+} from './taskIntentRubric';
 
 export const CEREBELLUM_TURN_DECISION_TIMEOUT_MS = 1500;
 export const CEREBELLUM_BUNDLE_MAX_MEMORIES = 15;
@@ -112,6 +119,10 @@ export interface CerebellumTurnDecisionSet {
   includeGate: boolean;
   /** Whether to coalesce the auto reasoning-effort Choice question into this bundle. */
   includeEffort?: boolean;
+  /** Whether to coalesce the 5-factor Task vs. Dialogue intent rubric into this bundle. */
+  includeTaskIntent?: boolean;
+  /** Optional parameter overrides for the 5-factor Task vs. Dialogue rubric. */
+  taskIntentConfig?: Partial<TaskIntentRubricConfig> | null;
 }
 
 /**
@@ -127,6 +138,8 @@ export interface CerebellumTurnDecisionSelection {
   services: CerebellumRemoteServiceCandidate[];
   includeGate: boolean;
   includeEffort: boolean;
+  includeTaskIntent?: boolean;
+  taskIntentConfig?: Partial<TaskIntentRubricConfig> | null;
 }
 
 export type CerebellumTurnQuestion =
@@ -134,7 +147,8 @@ export type CerebellumTurnQuestion =
   | { $tpl: string; index: number }
   | CerebellumSkillChoiceQuestion
   | CerebellumRemoteServiceChoiceQuestion
-  | CerebellumEffortChoiceQuestion;
+  | CerebellumEffortChoiceQuestion
+  | CerebellumTaskIntentChoiceQuestion;
 
 export interface CerebellumTurnDecisionRequest {
   state: {
@@ -155,6 +169,7 @@ export interface CerebellumTurnDecisionResults {
   serviceRanking: CerebellumRemoteServiceRankEntry[] | null;
   gateVerdicts: Record<string, boolean> | null;
   effortDistribution?: CerebellumEffortDistribution | null;
+  taskIntentAssessment?: TaskIntentAssessment | null;
 }
 
 /**
@@ -277,6 +292,7 @@ export function selectTurnDecisionCandidates(
     : [];
   const includeGate = decisions.includeGate;
   const includeEffort = decisions.includeEffort === true;
+  const includeTaskIntent = decisions.includeTaskIntent === true;
   if (
     memories.length === 0
     && knowledge.length === 0
@@ -284,10 +300,21 @@ export function selectTurnDecisionCandidates(
     && services.length === 0
     && !includeGate
     && !includeEffort
+    && !includeTaskIntent
   ) {
     return null;
   }
-  return { currentUserText, memories, knowledge, skills, services, includeGate, includeEffort };
+  return {
+    currentUserText,
+    memories,
+    knowledge,
+    skills,
+    services,
+    includeGate,
+    includeEffort,
+    ...(includeTaskIntent ? { includeTaskIntent: true } : {}),
+    ...(decisions.taskIntentConfig ? { taskIntentConfig: decisions.taskIntentConfig } : {}),
+  };
 }
 
 /**
@@ -347,6 +374,7 @@ export function buildTurnDecisionRequest(input: {
       ...buildRemoteServiceChoiceQuestions(selection.services),
       ...(selection.includeGate ? buildVolatileGateQuestions() : {}),
       ...(selection.includeEffort ? buildBundledEffortQuestion() : {}),
+      ...(selection.includeTaskIntent ? buildBundledTaskIntentQuestions() : {}),
       ...knQuestions,
     },
   };
@@ -382,6 +410,13 @@ export function parseTurnDecisionAnswers(
   };
   if (selection.includeEffort) {
     baseResults.effortDistribution = parseEffortSelectorAnswers(payload);
+  }
+  if (selection.includeTaskIntent) {
+    baseResults.taskIntentAssessment = parseTaskIntentAnswers(
+      payload,
+      { userText: selection.currentUserText },
+      selection.taskIntentConfig,
+    );
   }
   return baseResults;
 }

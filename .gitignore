@@ -1074,3 +1074,9 @@ blob-report/
 !tests/studioDreamMemoryContinuity.test.mjs
 !tests/studioScrollHudAndLines.test.mjs
 !tests/studioRestoreWatchdogTodoParallel.test.mjs
+
+# First-class unified Task model & 5-factor intent rubric
+!tests/firstClassTaskPhase1.test.mjs
+!tests/firstClassTaskPhase2.test.mjs
+!tests/firstClassTaskPhase3.test.mjs
+!tests/firstClassTaskPhase4.test.mjs
