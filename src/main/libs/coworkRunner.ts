@@ -139,6 +139,10 @@ import {
   type StudioChiefOfStaffToolsControl,
 } from './studioChiefOfStaffAgentTools';
 import {
+  buildTwinTodoAgentTools,
+  type TwinTodoToolsControl,
+} from './twinTodoAgentTools';
+import {
   clearCoworkSessionUpstream,
   resetCoworkSnipHeadTokens,
   resolveCoworkBillingSource,
@@ -575,7 +579,7 @@ export const ASSISTANT_OWNER_WAIT_MAX_MS = 30 * 60_000;
 // anything). AskUserQuestion is excluded (handled separately).
 const READ_ONLY_TOOL_NAMES = new Set([
   'read', 'read_image', 'view', 'ls', 'glob', 'grep', 'list',
-  'todo_write', 'todowrite', 'taskget', 'tasklist',
+  'todo_write', 'todowrite', 'taskget', 'tasklist', 'twin_todo',
   'owner_update',
   'project_query',  // local Projects metadata lookup; no side effects
   'web_search', 'websearch', 'webfetch',  // informational; network policy handled separately
@@ -2535,6 +2539,8 @@ export interface CoworkRunnerOptions {
   longTermTaskTools?: LongTermTaskAgentControl;
   /** Studio Chief-of-Staff tools (decision queue, presence lock, Twin stamp publish). */
   studioChiefOfStaffTools?: StudioChiefOfStaffToolsControl;
+  /** Twin persistent memory-tier todo checklist tools (`twin_todo`). */
+  twinTodoTools?: TwinTodoToolsControl;
   /** Live Studio decision-queue & active-briefing volatile context block. */
   getStudioVolatileContextPrompt?: (sessionId: string) => string;
   /** MetaTask (chain-side quadrant four): participation tools (claim-with-guard
@@ -2953,6 +2959,7 @@ export class CoworkRunner extends EventEmitter {
   private scheduledTaskTools?: ScheduledTaskAgentControl;
   private longTermTaskTools?: LongTermTaskAgentControl;
   private studioChiefOfStaffTools?: StudioChiefOfStaffToolsControl;
+  private twinTodoTools?: TwinTodoToolsControl;
   private getStudioVolatileContextPrompt?: (sessionId: string) => string;
   private metataskTools?: MetaTaskAgentControl;
   private preferenceTools?: PreferenceAgentControl;
@@ -3178,6 +3185,7 @@ export class CoworkRunner extends EventEmitter {
     this.scheduledTaskTools = options?.scheduledTaskTools;
     this.longTermTaskTools = options?.longTermTaskTools;
     this.studioChiefOfStaffTools = options?.studioChiefOfStaffTools;
+    this.twinTodoTools = options?.twinTodoTools;
     this.getStudioVolatileContextPrompt = options?.getStudioVolatileContextPrompt;
     this.metataskTools = options?.metataskTools;
     this.preferenceTools = options?.preferenceTools;
@@ -12198,11 +12206,23 @@ export class CoworkRunner extends EventEmitter {
       // timestamps feed the P1-2 hard cap: a call whose result never arrives
       // must not exempt the stall watchdog indefinitely.
       const dshInFlightToolUses = new Map<string, number>();
+      const dshHumanWaitToolUseIds = new Set<string>();
       let dshAnonInFlightToolStarts: number[] = [];
+      let dshAnonHumanWaitCount = 0;
       // Set when this turn attempt logs a failed auto-compaction; consumed by
       // the overflow gate below (bodyless 400 + failed compaction ⇒ overflow).
       let compactionFailedThisTurn = false;
-      const dshInFlightToolCallCount = () => dshInFlightToolUses.size + dshAnonInFlightToolStarts.length;
+      const dshInFlightToolCallCount = () =>
+        dshInFlightToolUses.size
+        + dshHumanWaitToolUseIds.size
+        + dshAnonInFlightToolStarts.length
+        + dshAnonHumanWaitCount;
+      const refreshDshInFlightToolTimestamps = (atMs: number = Date.now()) => {
+        for (const key of dshInFlightToolUses.keys()) {
+          dshInFlightToolUses.set(key, atMs);
+        }
+        dshAnonInFlightToolStarts = dshAnonInFlightToolStarts.map(() => atMs);
+      };
       const trackDshToolActivity = (message: unknown) => {
         const type = (message as { type?: string } | null)?.type;
         const messageMeta = (message as {
@@ -12218,6 +12238,8 @@ export class CoworkRunner extends EventEmitter {
           const replyWasDelivered = activeSession.assistantOwnerFinalReplyDelivered === true;
           activeSession.assistantOwnerFinalReplyDelivered = false;
           const toolName = typeof messageMeta?.toolName === 'string' ? messageMeta.toolName.trim() : '';
+          const lowerTool = toolName.toLowerCase();
+          const isHumanWaitTool = lowerTool === 'ask_user_question' || lowerTool === 'askuserquestion';
           activeSession.assistantOwnerCurrentTool = toolName
             ? {
                 name: toolName,
@@ -12227,14 +12249,26 @@ export class CoworkRunner extends EventEmitter {
               }
             : null;
           if (replyWasDelivered) this.armAssistantOwnerWaitTimer(sessionId, activeSession);
-          if (toolUseId) {
+          if (isHumanWaitTool) {
+            // `ask_user_question` waits on a human click (possibly overnight on
+            // the Studio Live Stage choice card) — never age it against the
+            // lost-subprocess `dshToolCallHardCapMs`!
+            if (toolUseId) dshHumanWaitToolUseIds.add(toolUseId);
+            else dshAnonHumanWaitCount += 1;
+          } else if (toolUseId) {
             if (!dshInFlightToolUses.has(toolUseId)) dshInFlightToolUses.set(toolUseId, Date.now());
           } else {
             dshAnonInFlightToolStarts.push(Date.now());
           }
         } else if (type === 'tool_result') {
-          if (toolUseId) dshInFlightToolUses.delete(toolUseId);
-          else dshAnonInFlightToolStarts = dshAnonInFlightToolStarts.slice(1);
+          if (toolUseId) {
+            dshInFlightToolUses.delete(toolUseId);
+            dshHumanWaitToolUseIds.delete(toolUseId);
+          } else if (dshAnonHumanWaitCount > 0) {
+            dshAnonHumanWaitCount -= 1;
+          } else {
+            dshAnonInFlightToolStarts = dshAnonInFlightToolStarts.slice(1);
+          }
         }
       };
       const clearDshStallWatchdog = () => {
@@ -12263,14 +12297,26 @@ export class CoworkRunner extends EventEmitter {
         dshStallTimer = setTimeout(() => {
           dshStallTimer = null;
           if (activeSession.abortController.signal.aborted) return;
-          if (activeSession.pendingPermission || dshInFlightToolCallCount() > 0) {
-            // P1-2 hard cap: an in-flight tool call whose result never
-            // arrives (runtime lost the subprocess) used to re-arm this
+          if (
+            activeSession.pendingPermission
+            || dshHumanWaitToolUseIds.size > 0
+            || dshAnonHumanWaitCount > 0
+          ) {
+            // A human-facing prompt (`ask_user_question` choice card or an
+            // owner-gated permission dialog) is waiting on the person — EVEN
+            // WHILE its host tool_use sits open in DSH! Never trip the 60m
+            // subprocess hard cap while waiting on a human, and keep in-flight
+            // timestamps fresh so answering hours later resumes cleanly.
+            refreshDshInFlightToolTimestamps();
+            armDshStallWatchdog();
+            return;
+          }
+          if (dshInFlightToolCallCount() > 0) {
+            // P1-2 hard cap: an unattended in-flight tool call whose result
+            // never arrives (runtime lost the subprocess) used to re-arm this
             // watchdog forever, pinning the session in "running" for hours.
             // Past the cap, cancel + force-settle so the turn ends with a
-            // timeout error written back to the session. A pending
-            // permission dialog alone (a human is the slow party) still
-            // re-arms forever — only aged tool calls trip the cap.
+            // timeout error written back to the session.
             const expiredCount =
               collectExpiredToolCalls(dshInFlightToolUses.values(), Date.now(), this.dshToolCallHardCapMs)
               + collectExpiredToolCalls(dshAnonInFlightToolStarts, Date.now(), this.dshToolCallHardCapMs);
@@ -12380,7 +12426,9 @@ export class CoworkRunner extends EventEmitter {
         // Fresh guarded attempt → clean tool ledger (a cancelled/steered
         // previous attempt may leave calls whose results never settle).
         dshInFlightToolUses.clear();
+        dshHumanWaitToolUseIds.clear();
         dshAnonInFlightToolStarts = [];
+        dshAnonHumanWaitCount = 0;
         armDshStallWatchdog();
         // Active session goal (/goal command): its own prompt section every
         // turn until paused or cleared; a goal set mid-run applies here.
@@ -12591,6 +12639,8 @@ export class CoworkRunner extends EventEmitter {
                 if (activeSession.pendingPermission?.requestId === ask.id) {
                   activeSession.pendingPermission = null;
                 }
+                refreshDshInFlightToolTimestamps();
+                armDshStallWatchdog();
                 return hub.respondApproval(ask.id, result.behavior === 'allow' ? 'allowed-once' : 'rejected');
               })
               .catch((error) => coworkLog('WARN', 'runDshSessionLocal', 'approval respond failed', { error: String(error) }));
@@ -12693,8 +12743,13 @@ export class CoworkRunner extends EventEmitter {
                 this.emit('permissionResolved', sessionId, ask.id);
                 // The ask is resolved in every branch below (declined or
                 // answered): drop the session-level follow-up marker the
-                // pending ask created.
+                // pending ask created and reset stall clocks after human wait.
                 this.clearAskUserFollowUp(sessionId);
+                if (activeSession.pendingPermission?.requestId === ask.id) {
+                  activeSession.pendingPermission = null;
+                }
+                refreshDshInFlightToolTimestamps();
+                armDshStallWatchdog();
                 if (result.behavior !== 'allow') {
                   void hub.respondAsk(ask.id, (ask.questions ?? []).map((q) => ({
                     id: q.id,
@@ -12747,6 +12802,12 @@ export class CoworkRunner extends EventEmitter {
           // the SAME task_started/task_progress/task_notification channel the
           // Claude path emits — the panel's Redux consumes them unchanged.
           onSubagentEvent: (event) => {
+            // Active background subagent lifecycle progress proves the runtime
+            // is healthy and advancing — keep the stall timer and in-flight
+            // subagent wait clocks fresh so legitimate long subagent runs are
+            // never killed mid-work.
+            refreshDshInFlightToolTimestamps();
+            armDshStallWatchdog();
             if (event.kind === 'started') {
               if (event.sessionId && event.sessionId !== dshSessionId) {
                 copyDshSkillSessionEnvFile(app.getPath('userData'), dshSessionId, event.sessionId);
@@ -14989,6 +15050,16 @@ export class CoworkRunner extends EventEmitter {
           tool,
           control: this.studioChiefOfStaffTools,
           sessionId,
+        })
+      );
+    }
+    if (this.twinTodoTools && sessionMemoryReadEnabled) {
+      memoryTools.push(
+        ...buildTwinTodoAgentTools({
+          tool,
+          control: this.twinTodoTools,
+          sessionId,
+          readOnly: !sessionMemoryWriteEnabled,
         })
       );
     }
@@ -18265,6 +18336,7 @@ export class CoworkRunner extends EventEmitter {
     if (
       rawUserPrompt.includes('<studio_proactive_briefing>')
       || rawUserPrompt.includes('<studio_back_office_supervision>')
+      || /<cross_session_message\b[\s\S]*?\[DISPATCH-REPORT\]/i.test(rawUserPrompt)
     ) {
       return;
     }
@@ -18388,16 +18460,29 @@ export class CoworkRunner extends EventEmitter {
    */
   private async emitTurnStatusGoal(
     sessionId: string,
-    userPrompt: string,
+    rawUserPrompt: string,
     turn: ActiveSession,
     turnSerial: number,
   ): Promise<void> {
+    if (
+      rawUserPrompt.includes('<studio_proactive_briefing>')
+      || rawUserPrompt.includes('<studio_back_office_supervision>')
+      || /<cross_session_message\b[\s\S]*?\[DISPATCH-REPORT\]/i.test(rawUserPrompt)
+    ) {
+      return;
+    }
+    const userPrompt = this.unwrapOwnerTurnEnvelope(rawUserPrompt);
+    if (!userPrompt) return;
     if (this.isTerseFollowUpRulingPrompt(sessionId, userPrompt)) return;
     const statusGoalAbort = new AbortController();
     const budgetTimer = setTimeout(() => statusGoalAbort.abort(), TURN_ACK_TOTAL_BUDGET_MS);
     budgetTimer.unref?.();
     try {
-      const sessionTitle = this.store.getSession(sessionId)?.title ?? null;
+      const persistedSession = this.store.getSession(sessionId);
+      const omitStaleStudioTitle =
+        this.isAssistantModeOwnerChatSession(sessionId)
+        && (persistedSession?.messages?.length ?? 0) >= 6;
+      const sessionTitle = omitStaleStudioTitle ? null : (persistedSession?.title ?? null);
       const phrase = await generateTurnStatusGoal(userPrompt, sessionTitle, statusGoalAbort.signal);
       if (statusGoalAbort.signal.aborted || !phrase) return;
       if (this.activeSessions.get(sessionId) !== turn

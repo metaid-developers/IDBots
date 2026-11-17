@@ -115,16 +115,23 @@ export interface PersistedBrowserSessionPage {
   title: string | null;
 }
 
+export type PersistedBrowserSessionRole = 'stage' | 'showcase';
+
 type BrowserViewState = {
   sessionId: string | null;
   sessionPages: Record<string, PersistedBrowserSessionPage>;
+  sessionActiveRoles: Record<string, PersistedBrowserSessionRole>;
 };
 
 function loadBrowserViewState(): BrowserViewState {
   try {
     const raw = window.localStorage.getItem(BROWSER_VIEW_STATE_KEY);
-    if (!raw) return { sessionId: null, sessionPages: {} };
-    const parsed = JSON.parse(raw) as { sessionId?: unknown; sessionPages?: unknown };
+    if (!raw) return { sessionId: null, sessionPages: {}, sessionActiveRoles: {} };
+    const parsed = JSON.parse(raw) as {
+      sessionId?: unknown;
+      sessionPages?: unknown;
+      sessionActiveRoles?: unknown;
+    };
     const sessionPages: Record<string, PersistedBrowserSessionPage> = {};
     const entries = parsed?.sessionPages && typeof parsed.sessionPages === 'object' && !Array.isArray(parsed.sessionPages)
       ? Object.entries(parsed.sessionPages)
@@ -138,23 +145,36 @@ function loadBrowserViewState(): BrowserViewState {
         title: typeof page.title === 'string' && page.title.trim() ? page.title.trim() : null,
       };
     }
+    const sessionActiveRoles: Record<string, PersistedBrowserSessionRole> = {};
+    const roleEntries = parsed?.sessionActiveRoles && typeof parsed.sessionActiveRoles === 'object' && !Array.isArray(parsed.sessionActiveRoles)
+      ? Object.entries(parsed.sessionActiveRoles)
+      : [];
+    for (const [sessionId, role] of roleEntries) {
+      if (!sessionId.trim()) continue;
+      if (role === 'stage' || role === 'showcase') {
+        sessionActiveRoles[sessionId.trim()] = role;
+      }
+    }
     return {
       sessionId: typeof parsed?.sessionId === 'string' && parsed.sessionId.trim()
         ? parsed.sessionId.trim()
         : null,
       sessionPages,
+      sessionActiveRoles,
     };
   } catch {
-    return { sessionId: null, sessionPages: {} };
+    return { sessionId: null, sessionPages: {}, sessionActiveRoles: {} };
   }
 }
 
 function saveBrowserViewState(state: BrowserViewState): void {
   try {
     const hasPages = Object.keys(state.sessionPages).length > 0;
+    const hasRoles = Object.keys(state.sessionActiveRoles).length > 0;
     window.localStorage.setItem(BROWSER_VIEW_STATE_KEY, JSON.stringify({
       sessionId: state.sessionId,
       ...(hasPages ? { sessionPages: state.sessionPages } : {}),
+      ...(hasRoles ? { sessionActiveRoles: state.sessionActiveRoles } : {}),
     }));
   } catch {
     // Best effort, same as the view state above.
@@ -171,6 +191,31 @@ export function savePersistedBrowserSessionId(sessionId: string | null): void {
 
 export function loadPersistedBrowserSessionPages(): Record<string, PersistedBrowserSessionPage> {
   return loadBrowserViewState().sessionPages;
+}
+
+export function loadPersistedBrowserSessionActiveRoles(): Record<string, PersistedBrowserSessionRole> {
+  return loadBrowserViewState().sessionActiveRoles;
+}
+
+export function savePersistedBrowserSessionActiveRole(
+  sessionId: string,
+  role: PersistedBrowserSessionRole,
+): void {
+  const normalizedSessionId = sessionId.trim();
+  if (!normalizedSessionId) return;
+  const state = loadBrowserViewState();
+  const previous = state.sessionActiveRoles[normalizedSessionId] ?? 'stage';
+  if (previous === role) return;
+  delete state.sessionActiveRoles[normalizedSessionId];
+  if (role === 'showcase') {
+    state.sessionActiveRoles[normalizedSessionId] = 'showcase';
+    const roleIds = Object.keys(state.sessionActiveRoles);
+    while (roleIds.length > MAX_BROWSER_SESSION_PAGES) {
+      const oldest = roleIds.shift();
+      if (oldest) delete state.sessionActiveRoles[oldest];
+    }
+  }
+  saveBrowserViewState(state);
 }
 
 export function savePersistedBrowserSessionPage(

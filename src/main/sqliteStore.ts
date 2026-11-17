@@ -1151,6 +1151,30 @@ export class SqliteStore {
     `);
 
     this.db.run(`
+      CREATE TABLE IF NOT EXISTS metabot_todos (
+        id TEXT PRIMARY KEY,
+        metabot_id INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        task_id TEXT,
+        session_id TEXT,
+        project_key TEXT,
+        note TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        completed_at TEXT
+      );
+    `);
+    this.db.run(`
+      CREATE INDEX IF NOT EXISTS idx_metabot_todos_bot_status
+      ON metabot_todos(metabot_id, status, updated_at DESC);
+    `);
+    this.db.run(`
+      CREATE INDEX IF NOT EXISTS idx_metabot_todos_bot_task
+      ON metabot_todos(metabot_id, task_id, status);
+    `);
+
+    this.db.run(`
       CREATE TABLE IF NOT EXISTS cowork_conversation_mappings (
         channel TEXT NOT NULL,
         external_conversation_id TEXT NOT NULL,

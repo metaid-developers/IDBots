@@ -1070,3 +1070,4 @@ blob-report/
 !tests/studioGlmStageAndAsk.test.mjs
 !tests/studioDreamMemoryContinuity.test.mjs
 !tests/studioScrollHudAndLines.test.mjs
+!tests/studioRestoreWatchdogTodoParallel.test.mjs

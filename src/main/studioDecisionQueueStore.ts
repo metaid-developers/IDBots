@@ -297,18 +297,29 @@ export class StudioDecisionQueueStore {
   ): number {
     const taskId = asString(longtermTaskId);
     if (!taskId) return 0;
+    const resolvedItem = this.getById(exceptId);
+    // Only auto-cancel redundant status-listener fallback cards (`lt_status:...`)
+    // or identical-dedupeKey duplicates — NEVER wipe an independent sibling
+    // decision enqueued by back-office supervision on the same task (e.g. a
+    // security-review merge ruling queued behind a cover-image pick).
     const siblings = this.queryAll(
-      `SELECT id FROM studio_decision_queue
+      `SELECT id, dedupe_key FROM studio_decision_queue
         WHERE twin_metabot_id = ?
           AND longterm_task_id = ?
           AND id != ?
           AND status = 'queued'`,
       [twinMetabotId, taskId, asString(exceptId)],
     );
+    let cancelled = 0;
     for (const row of siblings) {
+      const siblingDedupe = asString(row.dedupe_key);
+      const isAutoFallback = siblingDedupe.startsWith('lt_status:');
+      const isSameDedupe = Boolean(resolvedItem?.dedupeKey && siblingDedupe === resolvedItem.dedupeKey);
+      if (!isAutoFallback && !isSameDedupe) continue;
       this.cancel(String(row.id ?? ''), reason, atIso);
+      cancelled += 1;
     }
-    return siblings.length;
+    return cancelled;
   }
 
   enqueue(input: EnqueueStudioDecisionInput, atIso: string = nowIso()): {
