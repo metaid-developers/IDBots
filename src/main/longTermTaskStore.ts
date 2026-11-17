@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { SqliteDatabase as Database } from './sqliteTypes';
 import type {
   LongTermActor,
+  LongTermBadgeThresholds,
   LongTermBoard,
   LongTermColumn,
   LongTermEvent,
@@ -12,6 +13,7 @@ import type {
   LongTermPreferredChannel,
   LongTermProgress,
   LongTermQuickTaskCreateInput,
+  LongTermReason,
   LongTermResult,
   LongTermSubtask,
   LongTermSubtaskDraft,
@@ -23,6 +25,15 @@ import type {
   LongTermTaskStage,
   LongTermTaskSummary,
   LongTermTaskUpdateInput,
+  TaskActiveRadarEntry,
+  TaskDeliverableArtifact,
+  TaskOriginChannel,
+  TaskSearchOptions,
+  TaskSessionLink,
+  TaskSessionLinkRole,
+  TaskWorkerSubmission,
+  TaskWorkerSubmissionOutcome,
+  UnifiedTaskCreateInput,
 } from '../renderer/types/longTermTask';
 import { LONG_TERM_COLUMN_ORDER } from '../renderer/types/longTermTask';
 
@@ -133,7 +144,47 @@ const WAIT_NOTE_MAX_CHARS = 4000;
 
 /** Allowed evidence kinds (LongTermEvidence.kind) — anything else bypasses
  *  the per-kind URI shape checks and is refused. */
-const EVIDENCE_KINDS = ['dir', 'metaapp', 'pin', 'url', 'other'];
+const EVIDENCE_KINDS = ['dir', 'metaapp', 'metafile', 'pin', 'url', 'other'];
+
+const ORIGIN_CHANNELS: readonly TaskOriginChannel[] = [
+  'studio',
+  'botworks',
+  'mobile',
+  'telegram',
+  'im',
+  'a2a',
+  'schedule',
+  'other',
+];
+
+const SESSION_LINK_ROLES: readonly TaskSessionLinkRole[] = [
+  'origin',
+  'discussion',
+  'worker_exec',
+  'supervision',
+  'channel_bridge',
+];
+
+const SUBMISSION_OUTCOMES: readonly TaskWorkerSubmissionOutcome[] = [
+  'ready_for_review',
+  'blocked',
+  'waiting_external',
+  'failed',
+];
+
+/**
+ * Configurable thresholds for the automatic `[长期]` (`isLongTerm`) badge:
+ * 1) participating bots >= 3 (> 2 bots);
+ * 2) total/max expected duration >= 1440 min (1 day);
+ * 3) active open lifecycle span > 24h;
+ * 4) multi-stage task tree with >= 4 non-skipped subtasks.
+ */
+export const DEFAULT_LONG_TERM_BADGE_THRESHOLDS: LongTermBadgeThresholds = {
+  minParticipants: 3,
+  minExpectedMinutes: 1440,
+  minActiveAgeMs: 24 * 3_600_000,
+  minMultiStageSubtasks: 4,
+};
 
 /**
  * waitUntil must be a full ISO timestamp WITH an explicit timezone designator
@@ -165,6 +216,82 @@ function parseJsonArray<T>(raw: unknown): T[] {
   } catch {
     return [];
   }
+}
+
+function parseJsonObject<T>(raw: unknown): T | null {
+  if (typeof raw !== 'string' || !raw.trim()) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+function asNullableInt(value: unknown): number | null {
+  const num = typeof value === 'number' ? value : Number(value);
+  return Number.isInteger(num) && num > 0 ? num : null;
+}
+
+/**
+ * Pure: compute whether a task carries the `[长期]` (`isLongTerm`) badge and why.
+ * An explicit `override` (`true` / `false`) takes precedence over auto heuristics.
+ */
+export function deriveIsLongTerm(params: {
+  override: boolean | null;
+  participantCount: number;
+  subtasks: LongTermSubtask[];
+  stage: LongTermTaskStage;
+  createdAtIso: string;
+  doneAtIso?: string | null;
+  nowMs?: number;
+  thresholds?: LongTermBadgeThresholds;
+}): { isLongTerm: boolean; reasons: LongTermReason[] } {
+  const {
+    override,
+    participantCount,
+    subtasks,
+    stage,
+    createdAtIso,
+    doneAtIso,
+    nowMs = Date.now(),
+    thresholds = DEFAULT_LONG_TERM_BADGE_THRESHOLDS,
+  } = params;
+
+  if (override === true) {
+    return { isLongTerm: true, reasons: ['manual'] };
+  }
+  if (override === false) {
+    return { isLongTerm: false, reasons: [] };
+  }
+
+  const reasons: LongTermReason[] = [];
+  if (participantCount >= thresholds.minParticipants) {
+    reasons.push('participants');
+  }
+
+  const liveSubtasks = subtasks.filter((s) => s.status !== 'skipped');
+  const summedExpected = liveSubtasks.reduce((sum, s) => sum + (s.expectedMinutes ?? 0), 0);
+  if (summedExpected >= thresholds.minExpectedMinutes) {
+    reasons.push('expected_duration');
+  }
+
+  const createdMs = Date.parse(createdAtIso);
+  const endMs = stage === 'done' && doneAtIso ? Date.parse(doneAtIso) : nowMs;
+  if (
+    stage !== 'cancelled'
+    && Number.isFinite(createdMs)
+    && Number.isFinite(endMs)
+    && endMs - createdMs >= thresholds.minActiveAgeMs
+  ) {
+    reasons.push('elapsed_span');
+  }
+
+  if (liveSubtasks.length >= thresholds.minMultiStageSubtasks) {
+    reasons.push('multi_stage');
+  }
+
+  return { isLongTerm: reasons.length > 0, reasons };
 }
 
 /** Pure: the kanban column of a task, from its stage + current sub-task. */
@@ -234,9 +361,15 @@ interface TaskRow {
   goal: string;
   stage: LongTermTaskStage;
   task_kind?: string | null;
+  is_long_term_override?: number | null;
   acceptance_delegate: number;
   current_subtask_id: string | null;
   definition_session_id: string | null;
+  origin_session_id?: string | null;
+  origin_message_id?: string | null;
+  anchor_message_ids_json?: string | null;
+  origin_channel?: string | null;
+  intent_score_json?: string | null;
   plan_artifact_uri: string | null;
   created_at: string;
   updated_at: string;
@@ -261,10 +394,29 @@ interface SubtaskRow {
   notes: string;
   expected_minutes: number | null;
   metatask_root: string | null;
+  assignee_metabot_id?: number | null;
+  lease_attempt_id?: string | null;
+  lease_claimed_at?: string | null;
+  last_activity_at?: string | null;
+  progress_note?: string | null;
+  submission_json?: string | null;
+  origin_session_id?: string | null;
+  origin_message_id?: string | null;
   accepted_by: string | null;
   created_at: string;
   updated_at: string;
   accepted_at: string | null;
+}
+
+interface SessionLinkRow {
+  task_id: string;
+  session_id: string;
+  subtask_id: string | null;
+  role: string;
+  channel: string | null;
+  anchor_message_id: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 interface EventRow {
@@ -282,13 +434,25 @@ export class LongTermTaskStore {
   private readonly saveDb: () => void;
   /** Resolves metabot ids to display rows (name + avatar) for participant chips. */
   private readonly resolveParticipants: (ids: number[]) => LongTermParticipant[];
+  private readonly badgeThresholds: LongTermBadgeThresholds;
   /** Status-transition subscribers (main wires the push broadcast here). */
   private readonly statusListeners = new Set<LongTermSubtaskStatusListener>();
 
-  constructor(db: Database, saveDb: () => void, options?: { resolveParticipants?: (ids: number[]) => LongTermParticipant[] }) {
+  constructor(
+    db: Database,
+    saveDb: () => void,
+    options?: {
+      resolveParticipants?: (ids: number[]) => LongTermParticipant[];
+      badgeThresholds?: Partial<LongTermBadgeThresholds>;
+    },
+  ) {
     this.db = db;
     this.saveDb = saveDb;
     this.resolveParticipants = options?.resolveParticipants ?? ((ids) => ids.map((id) => ({ id, name: `#${id}`, avatar: null })));
+    this.badgeThresholds = {
+      ...DEFAULT_LONG_TERM_BADGE_THRESHOLDS,
+      ...(options?.badgeThresholds ?? {}),
+    };
     this.ensureTables();
   }
 
@@ -404,6 +568,24 @@ export class LongTermTaskStore {
     if (!taskColumns.includes('task_kind')) {
       this.db.run("ALTER TABLE long_term_tasks ADD COLUMN task_kind TEXT NOT NULL DEFAULT 'project'");
     }
+    if (!taskColumns.includes('is_long_term_override')) {
+      this.db.run('ALTER TABLE long_term_tasks ADD COLUMN is_long_term_override INTEGER');
+    }
+    if (!taskColumns.includes('origin_session_id')) {
+      this.db.run('ALTER TABLE long_term_tasks ADD COLUMN origin_session_id TEXT');
+    }
+    if (!taskColumns.includes('origin_message_id')) {
+      this.db.run('ALTER TABLE long_term_tasks ADD COLUMN origin_message_id TEXT');
+    }
+    if (!taskColumns.includes('anchor_message_ids_json')) {
+      this.db.run("ALTER TABLE long_term_tasks ADD COLUMN anchor_message_ids_json TEXT NOT NULL DEFAULT '[]'");
+    }
+    if (!taskColumns.includes('origin_channel')) {
+      this.db.run('ALTER TABLE long_term_tasks ADD COLUMN origin_channel TEXT');
+    }
+    if (!taskColumns.includes('intent_score_json')) {
+      this.db.run('ALTER TABLE long_term_tasks ADD COLUMN intent_score_json TEXT');
+    }
     const subtaskColumns = this.getAll<{ name: unknown }>('PRAGMA table_info(long_term_subtasks)').map((row) => String(row.name));
     if (!subtaskColumns.includes('expected_minutes')) {
       this.db.run('ALTER TABLE long_term_subtasks ADD COLUMN expected_minutes INTEGER');
@@ -416,6 +598,47 @@ export class LongTermTaskStore {
     if (!subtaskColumns.includes('metatask_root')) {
       this.db.run('ALTER TABLE long_term_subtasks ADD COLUMN metatask_root TEXT');
     }
+    if (!subtaskColumns.includes('assignee_metabot_id')) {
+      this.db.run('ALTER TABLE long_term_subtasks ADD COLUMN assignee_metabot_id INTEGER');
+    }
+    if (!subtaskColumns.includes('lease_attempt_id')) {
+      this.db.run('ALTER TABLE long_term_subtasks ADD COLUMN lease_attempt_id TEXT');
+    }
+    if (!subtaskColumns.includes('lease_claimed_at')) {
+      this.db.run('ALTER TABLE long_term_subtasks ADD COLUMN lease_claimed_at TEXT');
+    }
+    if (!subtaskColumns.includes('last_activity_at')) {
+      this.db.run('ALTER TABLE long_term_subtasks ADD COLUMN last_activity_at TEXT');
+    }
+    if (!subtaskColumns.includes('progress_note')) {
+      this.db.run("ALTER TABLE long_term_subtasks ADD COLUMN progress_note TEXT NOT NULL DEFAULT ''");
+    }
+    if (!subtaskColumns.includes('submission_json')) {
+      this.db.run('ALTER TABLE long_term_subtasks ADD COLUMN submission_json TEXT');
+    }
+    if (!subtaskColumns.includes('origin_session_id')) {
+      this.db.run('ALTER TABLE long_term_subtasks ADD COLUMN origin_session_id TEXT');
+    }
+    if (!subtaskColumns.includes('origin_message_id')) {
+      this.db.run('ALTER TABLE long_term_subtasks ADD COLUMN origin_message_id TEXT');
+    }
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS task_session_links (
+        task_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        subtask_id TEXT,
+        role TEXT NOT NULL DEFAULT 'discussion',
+        channel TEXT,
+        anchor_message_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (task_id, session_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_task_session_links_session
+        ON task_session_links(session_id, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_task_session_links_task
+        ON task_session_links(task_id, updated_at DESC);
+    `);
     this.saveDb();
   }
 
@@ -444,15 +667,35 @@ export class LongTermTaskStore {
 
   private mapTask(row: TaskRow) {
     const taskKind: LongTermTaskKind = row.task_kind === 'quick' ? 'quick' : 'project';
+    const isLongTermOverride =
+      row.is_long_term_override === 1 ? true : row.is_long_term_override === 0 ? false : null;
+    const originChannel = ORIGIN_CHANNELS.includes(row.origin_channel as TaskOriginChannel)
+      ? (row.origin_channel as TaskOriginChannel)
+      : null;
+    const definitionSessionId = row.definition_session_id ?? null;
+    const originSessionId = (row.origin_session_id ?? '').trim() || definitionSessionId;
+    const originMessageId = (row.origin_message_id ?? '').trim() || null;
+    const anchorMessageIds = (() => {
+      const list = parseJsonArray<string>(row.anchor_message_ids_json);
+      if (originMessageId && !list.includes(originMessageId)) {
+        return [originMessageId, ...list];
+      }
+      return list;
+    })();
     return {
       id: row.id,
       title: row.title,
       goal: row.goal,
       stage: row.stage,
       taskKind,
+      isLongTermOverride,
       acceptanceDelegate: row.acceptance_delegate === 1,
       currentSubtaskIdPinned: row.current_subtask_id ?? null,
-      definitionSessionId: row.definition_session_id ?? null,
+      definitionSessionId,
+      originSessionId,
+      originMessageId,
+      anchorMessageIds,
+      originChannel,
       planArtifactUri: row.plan_artifact_uri ?? null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -461,6 +704,8 @@ export class LongTermTaskStore {
   }
 
   private mapSubtask(row: SubtaskRow): LongTermSubtask {
+    const assigneeMetabotId = asNullableInt(row.assignee_metabot_id);
+    const submission = parseJsonObject<TaskWorkerSubmission>(row.submission_json);
     return {
       id: row.id,
       taskId: row.task_id,
@@ -487,10 +732,37 @@ export class LongTermTaskStore {
       notes: row.notes ?? '',
       expectedMinutes: row.expected_minutes ?? null,
       metataskRoot: row.metatask_root ?? null,
+      assigneeMetabotId,
+      leaseAttemptId: (row.lease_attempt_id ?? '').trim() || null,
+      leaseClaimedAt: (row.lease_claimed_at ?? '').trim() || null,
+      lastActivityAt: (row.last_activity_at ?? '').trim() || null,
+      progressNote: row.progress_note ?? '',
+      submission,
+      originSessionId: (row.origin_session_id ?? '').trim() || null,
+      originMessageId: (row.origin_message_id ?? '').trim() || null,
       acceptedBy: row.accepted_by === 'owner' || row.accepted_by === 'twin' ? row.accepted_by : null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       acceptedAt: row.accepted_at ?? null,
+    };
+  }
+
+  private mapSessionLink(row: SessionLinkRow): TaskSessionLink {
+    const role: TaskSessionLinkRole = SESSION_LINK_ROLES.includes(row.role as TaskSessionLinkRole)
+      ? (row.role as TaskSessionLinkRole)
+      : 'discussion';
+    const channel: TaskOriginChannel | null = ORIGIN_CHANNELS.includes(row.channel as TaskOriginChannel)
+      ? (row.channel as TaskOriginChannel)
+      : null;
+    return {
+      taskId: row.task_id,
+      sessionId: row.session_id,
+      subtaskId: row.subtask_id ?? null,
+      role,
+      channel,
+      anchorMessageId: row.anchor_message_id ?? null,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
     };
   }
 
@@ -538,6 +810,17 @@ export class LongTermTaskStore {
     const managedState = deriveManagedState(task.stage, current?.status ?? null);
     const counts = Object.fromEntries(SUBTASK_STATUSES.map((s) => [s, 0])) as Record<LongTermSubtaskStatus, number>;
     for (const subtask of subtasks) counts[subtask.status] += 1;
+    const participantIds = this.listParticipantIds(taskRow, subtasks);
+    const participants = this.resolveParticipants(participantIds);
+    const badge = deriveIsLongTerm({
+      override: task.isLongTermOverride,
+      participantCount: participants.length,
+      subtasks,
+      stage: task.stage,
+      createdAtIso: task.createdAt,
+      doneAtIso: task.doneAt,
+      thresholds: this.badgeThresholds,
+    });
     return {
       id: task.id,
       title: task.title,
@@ -545,12 +828,22 @@ export class LongTermTaskStore {
       stage: task.stage,
       column: column ?? 'done',
       taskKind: task.taskKind,
+      isLongTerm: badge.isLongTerm,
+      longTermReasons: badge.reasons,
+      isLongTermOverride: task.isLongTermOverride,
       managedState,
       acceptanceDelegate: task.acceptanceDelegate,
       planArtifactUri: task.planArtifactUri,
+      originSessionId: task.originSessionId,
+      originMessageId: task.originMessageId,
+      anchorMessageIds: task.anchorMessageIds,
+      originChannel: task.originChannel,
       currentSubtaskId: current?.id ?? null,
       currentSubtaskTitle: current?.title ?? null,
       currentSubtaskStatus: current?.status ?? null,
+      currentAssigneeMetabotId: current?.assigneeMetabotId ?? null,
+      currentProgressNote: current && current.progressNote ? current.progressNote : null,
+      currentLastActivityAt: current?.lastActivityAt ?? null,
       currentWaitNote: current && current.waitNote ? current.waitNote : null,
       currentExpectedMinutes: current?.expectedMinutes ?? null,
       progress: deriveProgress(subtasks),
@@ -563,7 +856,7 @@ export class LongTermTaskStore {
       decisionSessionIds: subtasks
         .filter((sub) => sub.status === 'waiting_owner' && sub.sessionId)
         .map((sub) => sub.sessionId as string),
-      participants: this.resolveParticipants(this.listParticipantIds(taskRow, subtasks)),
+      participants,
       createdAt: task.createdAt,
       updatedAt: task.updatedAt,
       doneAt: task.doneAt,
@@ -571,13 +864,20 @@ export class LongTermTaskStore {
   }
 
   /**
-   * Participating bots, derived read-time from the task's sessions: the bot
-   * that ran each bound session (the Twin on longterm/definition sessions) ∪
-   * workers delegated from those sessions (orchestration assignees) ∪ members
-   * of group tasks sourced from them.
+   * Participating bots, derived read-time from the task's sessions + explicit
+   * subtask assignees: the bot that ran each bound/linked session ∪ explicit
+   * subtask assignees ∪ workers delegated from those sessions ∪ group-task members.
    */
   private listParticipantIds(taskRow: TaskRow, subtasks: LongTermSubtask[]): number[] {
     const ids = new Set<number>();
+    for (const sub of subtasks) {
+      if (typeof sub.assigneeMetabotId === 'number' && Number.isFinite(sub.assigneeMetabotId)) {
+        ids.add(sub.assigneeMetabotId);
+      }
+      if (sub.submission && Number.isFinite(sub.submission.workerMetabotId) && sub.submission.workerMetabotId > 0) {
+        ids.add(sub.submission.workerMetabotId);
+      }
+    }
     let hasLongTermLinkageCol = false;
     let linkedOrchAssignees: Array<{ id: unknown }> = [];
     try {
@@ -599,8 +899,22 @@ export class LongTermTaskStore {
     } catch {
       hasLongTermLinkageCol = false;
     }
-    const sessionIds = [taskRow.definition_session_id, ...subtasks.map((sub) => sub.sessionId)]
-      .filter((id): id is string => Boolean(id));
+    const linkedSessionIds = this.getAll<{ session_id: unknown }>(
+      'SELECT session_id FROM task_session_links WHERE task_id = ?',
+      [taskRow.id],
+    )
+      .map((r) => asText(r.session_id).trim())
+      .filter(Boolean);
+    const sessionIds = [
+      ...new Set(
+        [
+          taskRow.definition_session_id,
+          taskRow.origin_session_id,
+          ...subtasks.map((sub) => sub.sessionId),
+          ...linkedSessionIds,
+        ].filter((id): id is string => Boolean(id)),
+      ),
+    ];
     if (sessionIds.length === 0) return [...ids].sort((a, b) => a - b);
     const placeholders = sessionIds.map(() => '?').join(',');
     const collect = (sql: string) => {
@@ -654,17 +968,50 @@ export class LongTermTaskStore {
       void subtaskIds;
     }
     const taskKind: LongTermTaskKind = input.taskKind === 'quick' ? 'quick' : 'project';
+    const originSessionId = asText(input.originSessionId ?? input.definitionSessionId ?? '').trim() || null;
+    const definitionSessionId = asText(input.definitionSessionId ?? originSessionId ?? '').trim() || null;
+    const originMessageId = asText(input.originMessageId ?? '').trim() || null;
+    const anchorIds = Array.from(
+      new Set([
+        ...(originMessageId ? [originMessageId] : []),
+        ...(input.anchorMessageIds ?? []).map((m) => asText(m).trim()).filter(Boolean),
+      ]),
+    );
+    const originChannel = ORIGIN_CHANNELS.includes(input.originChannel as TaskOriginChannel)
+      ? (input.originChannel as TaskOriginChannel)
+      : null;
+    const isLongTermOverride =
+      input.isLongTerm === true ? 1 : input.isLongTerm === false ? 0 : null;
+    const intentScoreJson =
+      input.intentScore !== undefined && input.intentScore !== null
+        ? JSON.stringify(input.intentScore)
+        : null;
     this.db.run(
-      `INSERT INTO long_term_tasks (id, title, goal, stage, task_kind, acceptance_delegate, definition_session_id, plan_artifact_uri, created_at, updated_at)
-       VALUES (?, ?, ?, 'defining', ?, 1, ?, ?, ?, ?)`,
-      [taskId, title, goal, taskKind, input.definitionSessionId ?? null, asText(input.planArtifactUri ?? '').trim() || null, now, now],
+      `INSERT INTO long_term_tasks (id, title, goal, stage, task_kind, is_long_term_override, acceptance_delegate, definition_session_id, origin_session_id, origin_message_id, anchor_message_ids_json, origin_channel, intent_score_json, plan_artifact_uri, created_at, updated_at)
+       VALUES (?, ?, ?, 'defining', ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        taskId,
+        title,
+        goal,
+        taskKind,
+        isLongTermOverride,
+        definitionSessionId,
+        originSessionId,
+        originMessageId,
+        JSON.stringify(anchorIds),
+        originChannel,
+        intentScoreJson,
+        asText(input.planArtifactUri ?? '').trim() || null,
+        now,
+        now,
+      ],
     );
     drafts.forEach((draft, index) => {
       const dependsOn = (draft.dependsOnOrdinals ?? []).map((ordinal) => subtaskIds[ordinal - 1]);
       this.db.run(
         `INSERT INTO long_term_subtasks
-         (id, task_id, ordinal, title, description, acceptance_criteria_json, status, depends_on_json, preferred_channel, notes, expected_minutes, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)`,
+         (id, task_id, ordinal, title, description, acceptance_criteria_json, status, depends_on_json, preferred_channel, notes, expected_minutes, assignee_metabot_id, origin_session_id, origin_message_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           subtaskIds[index],
           taskId,
@@ -676,11 +1023,27 @@ export class LongTermTaskStore {
           draft.preferredChannel && CHANNELS.includes(draft.preferredChannel) ? draft.preferredChannel : null,
           asText(draft.notes ?? ''),
           asExpectedMinutes(draft.expectedMinutes),
+          asNullableInt(draft.assigneeMetabotId),
+          originSessionId,
+          originMessageId,
           now,
           now,
         ],
       );
     });
+    if (originSessionId) {
+      this.upsertSessionLinkRow(taskId, originSessionId, {
+        role: 'origin',
+        channel: originChannel,
+        anchorMessageId: originMessageId,
+      }, now);
+    }
+    if (definitionSessionId && definitionSessionId !== originSessionId) {
+      this.upsertSessionLinkRow(taskId, definitionSessionId, {
+        role: 'discussion',
+        channel: originChannel,
+      }, now);
+    }
     this.addEvent(taskId, null, 'created', actor, `created as draft with ${drafts.length} sub-project(s): ${title}`);
     this.saveDb();
     const detail = this.getTask(taskId);
@@ -697,44 +1060,243 @@ export class LongTermTaskStore {
     input: LongTermQuickTaskCreateInput,
     actor: LongTermActor,
   ): LongTermResult<LongTermTaskDetail> {
+    return this.createUnifiedTask(
+      {
+        title: input.title,
+        goal: input.goal,
+        acceptanceCriteria: input.acceptanceCriteria,
+        preferredChannel: input.preferredChannel,
+        expectedMinutes: input.expectedMinutes,
+        subtasks: [
+          {
+            title: input.title,
+            description: input.goal ?? input.title,
+            acceptanceCriteria: input.acceptanceCriteria ?? [],
+            preferredChannel: input.preferredChannel ?? 'delegate_bot',
+            expectedMinutes: input.expectedMinutes,
+            assigneeMetabotId: input.assigneeMetabotId ?? null,
+          },
+        ],
+        activateImmediately: true,
+        isLongTerm: input.isLongTerm,
+        definitionSessionId: input.definitionSessionId,
+        originSessionId: input.originSessionId ?? input.definitionSessionId,
+        originMessageId: input.originMessageId,
+        anchorMessageIds: input.anchorMessageIds,
+        originChannel: input.originChannel,
+        intentScore: input.intentScore,
+      },
+      actor,
+      'quick',
+    );
+  }
+
+  /**
+   * Unified first-class Task creator: handles both 1-step deliverables and
+   * multi-subtask serial/parallel DAG decompositions in a single model.
+   * When `activateImmediately` is true (default), the task enters `active`
+   * immediately and begins all dependency-free subtasks (`dependsOn.length === 0`)
+   * so the Studio bottom-right HUD mounts the task right away.
+   */
+  createUnifiedTask(
+    input: UnifiedTaskCreateInput,
+    actor: LongTermActor,
+    explicitKind?: LongTermTaskKind,
+  ): LongTermResult<LongTermTaskDetail> {
     const title = asText(input.title).trim();
     const goal = asText(input.goal ?? input.title).trim();
     if (!title) {
       return { ok: false, code: 'VALIDATION', error: 'title is required' };
     }
+    const defaultChannel: LongTermPreferredChannel =
+      input.preferredChannel && CHANNELS.includes(input.preferredChannel)
+        ? input.preferredChannel
+        : 'delegate_bot';
+    const drafts: LongTermSubtaskDraft[] =
+      Array.isArray(input.subtasks) && input.subtasks.length > 0
+        ? input.subtasks
+        : [
+            {
+              title,
+              description: goal,
+              acceptanceCriteria: input.acceptanceCriteria ?? [],
+              preferredChannel: defaultChannel,
+              expectedMinutes: input.expectedMinutes,
+            },
+          ];
+
+    for (let index = 0; index < drafts.length; index += 1) {
+      const draft = drafts[index];
+      if (!asText(draft.title).trim()) {
+        return { ok: false, code: 'VALIDATION', error: `subtask #${index + 1} has no title` };
+      }
+      for (const ordinal of draft.dependsOnOrdinals ?? []) {
+        if (!Number.isInteger(ordinal) || ordinal < 1 || ordinal > drafts.length || ordinal === index + 1) {
+          return { ok: false, code: 'VALIDATION', error: `subtask #${index + 1} has an invalid dependsOn ordinal ${ordinal}` };
+        }
+      }
+    }
+
+    const activateImmediately = input.activateImmediately !== false;
     const taskId = `ltt_${uuidv4()}`;
-    const subtaskId = `lts_${uuidv4()}`;
+    const subtaskIds = drafts.map(() => `lts_${uuidv4()}`);
+    // Cycle check across the draft DAG before inserting.
+    const depMap = new Map<string, string[]>();
+    drafts.forEach((draft, idx) => {
+      depMap.set(
+        subtaskIds[idx],
+        (draft.dependsOnOrdinals ?? []).map((ord) => subtaskIds[ord - 1]),
+      );
+    });
+    const visiting = new Set<string>();
+    const visited = new Set<string>();
+    const hasCycle = (nodeId: string): boolean => {
+      if (visited.has(nodeId)) return false;
+      if (visiting.has(nodeId)) return true;
+      visiting.add(nodeId);
+      for (const dep of depMap.get(nodeId) ?? []) {
+        if (hasCycle(dep)) return true;
+      }
+      visiting.delete(nodeId);
+      visited.add(nodeId);
+      return false;
+    };
+    for (const id of subtaskIds) {
+      if (hasCycle(id)) {
+        return { ok: false, code: 'VALIDATION', error: 'dependency cycle detected in subtasks' };
+      }
+    }
+
     const now = nowIso();
-    const channel = input.preferredChannel && CHANNELS.includes(input.preferredChannel)
-      ? input.preferredChannel
-      : 'delegate_bot';
+    const taskKind: LongTermTaskKind =
+      explicitKind ?? (drafts.length === 1 && activateImmediately ? 'quick' : 'project');
+    const stage: LongTermTaskStage = activateImmediately ? 'active' : 'defining';
+    const originSessionId = asText(input.originSessionId ?? input.definitionSessionId ?? '').trim() || null;
+    const definitionSessionId = asText(input.definitionSessionId ?? originSessionId ?? '').trim() || null;
+    const originMessageId = asText(input.originMessageId ?? '').trim() || null;
+    const anchorIds = Array.from(
+      new Set([
+        ...(originMessageId ? [originMessageId] : []),
+        ...(input.anchorMessageIds ?? []).map((m) => asText(m).trim()).filter(Boolean),
+      ]),
+    );
+    const originChannel = ORIGIN_CHANNELS.includes(input.originChannel as TaskOriginChannel)
+      ? (input.originChannel as TaskOriginChannel)
+      : null;
+    const isLongTermOverride =
+      input.isLongTerm === true ? 1 : input.isLongTerm === false ? 0 : null;
+    const intentScoreJson =
+      input.intentScore !== undefined && input.intentScore !== null
+        ? JSON.stringify(input.intentScore)
+        : null;
+
+    const initialBegunIds: string[] = [];
+    if (activateImmediately) {
+      drafts.forEach((draft, idx) => {
+        if ((draft.dependsOnOrdinals ?? []).length === 0) {
+          initialBegunIds.push(subtaskIds[idx]);
+        }
+      });
+    }
+    const pinnedSubtaskId = initialBegunIds[0] ?? null;
 
     this.db.run(
-      `INSERT INTO long_term_tasks (id, title, goal, stage, task_kind, acceptance_delegate, current_subtask_id, definition_session_id, created_at, updated_at)
-       VALUES (?, ?, ?, 'active', 'quick', 1, ?, ?, ?, ?)`,
-      [taskId, title, goal, subtaskId, input.definitionSessionId ?? null, now, now],
-    );
-    this.db.run(
-      `INSERT INTO long_term_subtasks
-       (id, task_id, ordinal, title, description, acceptance_criteria_json, status, depends_on_json, preferred_channel, notes, expected_minutes, created_at, updated_at)
-       VALUES (?, ?, 1, ?, ?, ?, 'in_progress', '[]', ?, '', ?, ?, ?)`,
+      `INSERT INTO long_term_tasks (id, title, goal, stage, task_kind, is_long_term_override, acceptance_delegate, current_subtask_id, definition_session_id, origin_session_id, origin_message_id, anchor_message_ids_json, origin_channel, intent_score_json, plan_artifact_uri, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        subtaskId,
         taskId,
         title,
         goal,
-        JSON.stringify(input.acceptanceCriteria ?? []),
-        channel,
-        asExpectedMinutes(input.expectedMinutes),
+        stage,
+        taskKind,
+        isLongTermOverride,
+        pinnedSubtaskId,
+        definitionSessionId,
+        originSessionId,
+        originMessageId,
+        JSON.stringify(anchorIds),
+        originChannel,
+        intentScoreJson,
+        asText(input.planArtifactUri ?? '').trim() || null,
         now,
         now,
       ],
     );
-    this.addEvent(taskId, subtaskId, 'created', actor, `quick task created and activated: ${title}`);
-    this.addEvent(taskId, subtaskId, 'began', actor, `began quick task on channel ${channel}`);
+
+    const begunSet = new Set(initialBegunIds);
+    drafts.forEach((draft, index) => {
+      const subId = subtaskIds[index];
+      const dependsOn = depMap.get(subId) ?? [];
+      const isBegun = begunSet.has(subId);
+      const channel =
+        draft.preferredChannel && CHANNELS.includes(draft.preferredChannel)
+          ? draft.preferredChannel
+          : drafts.length === 1
+            ? defaultChannel
+            : null;
+      this.db.run(
+        `INSERT INTO long_term_subtasks
+         (id, task_id, ordinal, title, description, acceptance_criteria_json, status, depends_on_json, preferred_channel, notes, expected_minutes, assignee_metabot_id, last_activity_at, origin_session_id, origin_message_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          subId,
+          taskId,
+          index + 1,
+          asText(draft.title).trim(),
+          asText(draft.description ?? (drafts.length === 1 ? goal : '')),
+          JSON.stringify(draft.acceptanceCriteria ?? (drafts.length === 1 ? input.acceptanceCriteria ?? [] : [])),
+          isBegun ? 'in_progress' : 'pending',
+          JSON.stringify(dependsOn),
+          channel,
+          asText(draft.notes ?? ''),
+          asExpectedMinutes(draft.expectedMinutes ?? (drafts.length === 1 ? input.expectedMinutes : undefined)),
+          asNullableInt(draft.assigneeMetabotId),
+          isBegun ? now : null,
+          originSessionId,
+          originMessageId,
+          now,
+          now,
+        ],
+      );
+    });
+
+    if (originSessionId) {
+      this.upsertSessionLinkRow(taskId, originSessionId, {
+        role: 'origin',
+        channel: originChannel,
+        anchorMessageId: originMessageId,
+      }, now);
+    }
+    if (definitionSessionId && definitionSessionId !== originSessionId) {
+      this.upsertSessionLinkRow(taskId, definitionSessionId, {
+        role: 'discussion',
+        channel: originChannel,
+      }, now);
+    }
+
+    this.addEvent(
+      taskId,
+      initialBegunIds.length === 1 ? initialBegunIds[0] : null,
+      'created',
+      actor,
+      activateImmediately
+        ? `${taskKind === 'quick' ? 'quick ' : ''}task created and activated (${drafts.length} subtask(s)): ${title}`
+        : `created as draft with ${drafts.length} sub-project(s): ${title}`,
+    );
+    for (const begunId of initialBegunIds) {
+      const begunSub = this.getSubtask(begunId);
+      this.addEvent(
+        taskId,
+        begunId,
+        'began',
+        actor,
+        `began subtask #${begunSub?.ordinal ?? 1} on channel ${begunSub?.preferredChannel ?? 'undecided'}`,
+      );
+    }
     this.saveDb();
-    const createdSubtask = this.getSubtask(subtaskId);
-    this.emitStatusChange(null, createdSubtask, 'began');
+    for (const begunId of initialBegunIds) {
+      this.emitStatusChange(null, this.getSubtask(begunId), 'began');
+    }
     const detail = this.getTask(taskId);
     return detail ? { ok: true, value: detail } : { ok: false, code: 'NOT_FOUND', error: 'creation failed' };
   }
@@ -814,7 +1376,7 @@ export class LongTermTaskStore {
       .filter((sub) => sub.status !== 'accepted' && sub.status !== 'skipped');
     for (const sub of open) {
       this.db.run(
-        "UPDATE long_term_subtasks SET status = 'skipped', wait_note = '', wait_until = NULL, updated_at = ? WHERE id = ?",
+        "UPDATE long_term_subtasks SET status = 'skipped', wait_note = '', wait_until = NULL, lease_attempt_id = NULL, lease_claimed_at = NULL, updated_at = ? WHERE id = ?",
         [now, sub.id],
       );
       this.addEvent(taskId, sub.id, 'skipped', actor, `closed with task completion (was ${sub.status})`);
@@ -860,6 +1422,14 @@ export class LongTermTaskStore {
         changes.push(`acceptance_delegate=${next === 1 ? 'on' : 'off'}`);
       }
     }
+    if (input.isLongTerm !== undefined) {
+      const nextOverride = input.isLongTerm === true ? 1 : input.isLongTerm === false ? 0 : null;
+      const curOverride = row.is_long_term_override ?? null;
+      if (nextOverride !== curOverride) {
+        this.db.run('UPDATE long_term_tasks SET is_long_term_override = ? WHERE id = ?', [nextOverride, row.id]);
+        changes.push(`is_long_term=${nextOverride === 1 ? 'true' : nextOverride === 0 ? 'false' : 'auto'}`);
+      }
+    }
     if (typeof input.planArtifactUri === 'string') {
       const nextUri = input.planArtifactUri.trim();
       if (nextUri && nextUri !== (row.plan_artifact_uri ?? '')) {
@@ -886,7 +1456,14 @@ export class LongTermTaskStore {
       'SELECT * FROM long_term_events WHERE task_id = ? ORDER BY id DESC LIMIT 200',
       [taskId],
     ).map((event) => this.mapEvent(event));
-    return { ...summary, subtasks, events, definitionSessionId: row.definition_session_id ?? null };
+    const sessionLinks = this.listSessionLinks(taskId);
+    return {
+      ...summary,
+      subtasks,
+      events,
+      definitionSessionId: row.definition_session_id ?? null,
+      sessionLinks,
+    };
   }
 
   listBoard(): LongTermBoard {
@@ -1015,6 +1592,12 @@ export class LongTermTaskStore {
       set('acceptance_criteria_json', JSON.stringify(input.acceptanceCriteria), 'acceptance criteria');
     }
     if (typeof input.notes === 'string' && input.notes !== current.notes) set('notes', input.notes, 'notes');
+    if (input.assigneeMetabotId !== undefined) {
+      const nextAssignee = input.assigneeMetabotId === null ? null : asNullableInt(input.assigneeMetabotId);
+      if ((nextAssignee !== null || input.assigneeMetabotId === null) && nextAssignee !== (current.assigneeMetabotId ?? null)) {
+        set('assignee_metabot_id', nextAssignee, 'assignee');
+      }
+    }
     if (input.expectedMinutes !== undefined) {
       const next = asExpectedMinutes(input.expectedMinutes);
       if ((next !== null || input.expectedMinutes === null) && next !== current.expectedMinutes) {
@@ -1237,7 +1820,7 @@ export class LongTermTaskStore {
     }
     const now = nowIso();
     this.db.run(
-      "UPDATE long_term_subtasks SET status = 'accepted', accepted_by = ?, accepted_at = ?, wait_note = '', wait_until = NULL, updated_at = ? WHERE id = ?",
+      "UPDATE long_term_subtasks SET status = 'accepted', accepted_by = ?, accepted_at = ?, wait_note = '', wait_until = NULL, lease_attempt_id = NULL, lease_claimed_at = NULL, updated_at = ? WHERE id = ?",
       [actor, now, now, subtaskId],
     );
     // Clear the focus pin when it pointed here so derivation moves on.
@@ -1292,7 +1875,7 @@ export class LongTermTaskStore {
     }
     const now = nowIso();
     this.db.run(
-      "UPDATE long_term_subtasks SET status = 'skipped', wait_note = '', wait_until = NULL, updated_at = ? WHERE id = ?",
+      "UPDATE long_term_subtasks SET status = 'skipped', wait_note = '', wait_until = NULL, lease_attempt_id = NULL, lease_claimed_at = NULL, updated_at = ? WHERE id = ?",
       [now, subtaskId],
     );
     if (task.current_subtask_id === subtaskId) {
@@ -1321,7 +1904,10 @@ export class LongTermTaskStore {
     }
     const text = asText(feedback).trim();
     if (!text) return { ok: false, code: 'VALIDATION', error: 'feedback is required (it steers the next iteration)' };
-    this.db.run("UPDATE long_term_subtasks SET status = 'in_progress', updated_at = ? WHERE id = ?", [nowIso(), subtaskId]);
+    this.db.run(
+      "UPDATE long_term_subtasks SET status = 'in_progress', lease_attempt_id = NULL, lease_claimed_at = NULL, updated_at = ? WHERE id = ?",
+      [nowIso(), subtaskId],
+    );
     this.addEvent(current.taskId, subtaskId, 'rejected', actor, text.slice(0, 1000));
     this.touch(current.taskId);
     this.saveDb();
@@ -1359,17 +1945,545 @@ export class LongTermTaskStore {
     if (!trimmed) return { ok: false, code: 'VALIDATION', error: 'sessionId is required' };
     const history = [...current.sessionHistory];
     if (!history.includes(trimmed)) history.push(trimmed);
+    const now = nowIso();
     this.db.run('UPDATE long_term_subtasks SET session_id = ?, session_history_json = ?, updated_at = ? WHERE id = ?', [
       trimmed,
       JSON.stringify(history),
-      nowIso(),
+      now,
       subtaskId,
     ]);
+    this.upsertSessionLinkRow(current.taskId, trimmed, { subtaskId, role: 'discussion' }, now);
     this.addEvent(current.taskId, subtaskId, 'note', actor, `session bound: ${trimmed}`);
     this.touch(current.taskId);
     this.saveDb();
     const updated = this.getSubtask(subtaskId);
     return updated ? { ok: true, value: updated } : { ok: false, code: 'NOT_FOUND', error: 'sub-project not found' };
+  }
+
+  // ── session links, worker blackboard, leases & fast search ───────────────
+
+  private upsertSessionLinkRow(
+    taskId: string,
+    sessionId: string,
+    options: {
+      subtaskId?: string | null;
+      role?: TaskSessionLinkRole;
+      channel?: TaskOriginChannel | null;
+      anchorMessageId?: string | null;
+    } = {},
+    atIso: string = nowIso(),
+  ): void {
+    const sid = asText(sessionId).trim();
+    if (!sid) return;
+    const role: TaskSessionLinkRole =
+      options.role && SESSION_LINK_ROLES.includes(options.role) ? options.role : 'discussion';
+    const channel: TaskOriginChannel | null =
+      options.channel && ORIGIN_CHANNELS.includes(options.channel) ? options.channel : null;
+    const subtaskId = asText(options.subtaskId ?? '').trim() || null;
+    const anchorMessageId = asText(options.anchorMessageId ?? '').trim() || null;
+    this.db.run(
+      `INSERT INTO task_session_links (task_id, session_id, subtask_id, role, channel, anchor_message_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(task_id, session_id) DO UPDATE SET
+         subtask_id = COALESCE(excluded.subtask_id, task_session_links.subtask_id),
+         role = CASE WHEN task_session_links.role = 'origin' THEN 'origin' ELSE excluded.role END,
+         channel = COALESCE(excluded.channel, task_session_links.channel),
+         anchor_message_id = COALESCE(excluded.anchor_message_id, task_session_links.anchor_message_id),
+         updated_at = excluded.updated_at`,
+      [taskId, sid, subtaskId, role, channel, anchorMessageId, atIso, atIso],
+    );
+  }
+
+  linkSession(
+    taskId: string,
+    sessionId: string,
+    options: {
+      subtaskId?: string | null;
+      role?: TaskSessionLinkRole;
+      channel?: TaskOriginChannel | null;
+      anchorMessageId?: string | null;
+    } = {},
+  ): LongTermResult<TaskSessionLink> {
+    const row = this.getTaskRow(taskId);
+    if (!row) return { ok: false, code: 'NOT_FOUND', error: 'task not found' };
+    const sid = asText(sessionId).trim();
+    if (!sid) return { ok: false, code: 'VALIDATION', error: 'sessionId is required' };
+    this.upsertSessionLinkRow(taskId, sid, options);
+    this.saveDb();
+    const linkRow = this.getOne<SessionLinkRow>(
+      'SELECT * FROM task_session_links WHERE task_id = ? AND session_id = ?',
+      [taskId, sid],
+    );
+    return linkRow
+      ? { ok: true, value: this.mapSessionLink(linkRow) }
+      : { ok: false, code: 'NOT_FOUND', error: 'session link failed' };
+  }
+
+  listSessionLinks(taskId: string): TaskSessionLink[] {
+    return this.getAll<SessionLinkRow>(
+      'SELECT * FROM task_session_links WHERE task_id = ? ORDER BY updated_at DESC',
+      [taskId],
+    ).map((r) => this.mapSessionLink(r));
+  }
+
+  /**
+   * List all tasks associated with `sessionId` (many-to-many: origin, linked
+   * discussions, bound subtasks, or session history), open tasks first.
+   */
+  listTasksForSession(sessionId: string): LongTermTaskSummary[] {
+    const sid = asText(sessionId).trim();
+    if (!sid) return [];
+    const matchedIds = new Set<string>();
+    for (const r of this.getAll<{ task_id: string }>('SELECT task_id FROM task_session_links WHERE session_id = ?', [sid])) {
+      if (r.task_id) matchedIds.add(r.task_id);
+    }
+    for (const r of this.getAll<{ id: string }>(
+      'SELECT id FROM long_term_tasks WHERE definition_session_id = ? OR origin_session_id = ?',
+      [sid, sid],
+    )) {
+      if (r.id) matchedIds.add(r.id);
+    }
+    for (const r of this.getAll<SubtaskRow>(
+      'SELECT * FROM long_term_subtasks WHERE session_id = ? OR instr(session_history_json, ?) > 0',
+      [sid, sid],
+    )) {
+      if (r.session_id === sid || parseJsonArray<string>(r.session_history_json).includes(sid)) {
+        matchedIds.add(r.task_id);
+      }
+    }
+    const out: LongTermTaskSummary[] = [];
+    for (const id of matchedIds) {
+      const row = this.getTaskRow(id);
+      if (!row || row.stage === 'cancelled') continue;
+      const subtasks = this.listSubtaskRows(row.id).map((s) => this.mapSubtask(s));
+      out.push(this.toSummary(row, subtasks));
+    }
+    return out.sort((a, b) => {
+      const aOpen = a.stage === 'done' ? 1 : 0;
+      const bOpen = b.stage === 'done' ? 1 : 0;
+      if (aOpen !== bOpen) return aOpen - bOpen;
+      return b.updatedAt.localeCompare(a.updatedAt);
+    });
+  }
+
+  /**
+   * Claim an exclusive execution lease on an open subtask so two parallel
+   * sessions cannot accidentally build conflicting branches for the same item
+   * (prevents the 2026-11-17 G1 duplicate-execution merge collision).
+   */
+  claimSubtaskLease(
+    subtaskId: string,
+    input: {
+      assigneeMetabotId: number;
+      attemptId: string;
+      workerSessionId?: string | null;
+      forceSupersede?: boolean;
+    },
+    actor: LongTermActor,
+  ): LongTermResult<LongTermSubtask> {
+    const current = this.getSubtask(subtaskId);
+    if (!current) return { ok: false, code: 'NOT_FOUND', error: 'subtask not found' };
+    if (current.status === 'accepted' || current.status === 'skipped') {
+      return { ok: false, code: 'VALIDATION', error: `cannot claim lease on ${current.status} subtask` };
+    }
+    const task = this.getTaskRow(current.taskId);
+    if (!task || task.stage === 'done' || task.stage === 'cancelled') {
+      return { ok: false, code: 'VALIDATION', error: `task is ${task?.stage ?? 'missing'}` };
+    }
+    const attemptId = asText(input.attemptId).trim();
+    const assigneeId = asNullableInt(input.assigneeMetabotId);
+    if (!attemptId || !assigneeId) {
+      return { ok: false, code: 'VALIDATION', error: 'assigneeMetabotId and attemptId are required' };
+    }
+    if (
+      current.leaseAttemptId
+      && current.leaseAttemptId !== attemptId
+      && input.forceSupersede !== true
+    ) {
+      return {
+        ok: false,
+        code: 'CONFLICT',
+        error: `subtask ${subtaskId} is already claimed by active attempt ${current.leaseAttemptId} (assignee bot #${current.assigneeMetabotId ?? 'unknown'})`,
+      };
+    }
+    const now = nowIso();
+    const nextStatus: LongTermSubtaskStatus =
+      current.status === 'pending' ? 'in_progress' : current.status;
+    this.db.run(
+      `UPDATE long_term_subtasks
+          SET status = ?,
+              assignee_metabot_id = ?,
+              lease_attempt_id = ?,
+              lease_claimed_at = ?,
+              last_activity_at = ?,
+              updated_at = ?
+        WHERE id = ?`,
+      [nextStatus, assigneeId, attemptId, now, now, now, subtaskId],
+    );
+    if (input.workerSessionId) {
+      this.upsertSessionLinkRow(
+        current.taskId,
+        input.workerSessionId,
+        { subtaskId, role: 'worker_exec' },
+        now,
+      );
+    }
+    this.addEvent(
+      current.taskId,
+      subtaskId,
+      'assigned',
+      actor,
+      `assigned to bot #${assigneeId} (attempt ${attemptId})`,
+    );
+    this.touch(current.taskId);
+    this.saveDb();
+    const updated = this.getSubtask(subtaskId);
+    this.emitStatusChange(current, updated, 'assigned');
+    return updated ? { ok: true, value: updated } : { ok: false, code: 'NOT_FOUND', error: 'subtask not found' };
+  }
+
+  releaseSubtaskLease(subtaskId: string, attemptId?: string | null): LongTermResult<LongTermSubtask> {
+    const current = this.getSubtask(subtaskId);
+    if (!current) return { ok: false, code: 'NOT_FOUND', error: 'subtask not found' };
+    if (attemptId && current.leaseAttemptId && current.leaseAttemptId !== attemptId) {
+      return { ok: true, value: current };
+    }
+    if (!current.leaseAttemptId) {
+      return { ok: true, value: current };
+    }
+    this.db.run(
+      'UPDATE long_term_subtasks SET lease_attempt_id = NULL, lease_claimed_at = NULL, updated_at = ? WHERE id = ?',
+      [nowIso(), subtaskId],
+    );
+    this.touch(current.taskId);
+    this.saveDb();
+    const updated = this.getSubtask(subtaskId);
+    return updated ? { ok: true, value: updated } : { ok: false, code: 'NOT_FOUND', error: 'subtask not found' };
+  }
+
+  /**
+   * Zero-token runtime liveness pulse: updates `last_activity_at` (and optional
+   * short activity summary) while a Worker or Twin session is actively running.
+   */
+  touchSubtaskActivity(subtaskId: string, activityAtIso: string = nowIso(), progressNote?: string): boolean {
+    const current = this.getSubtask(subtaskId);
+    if (!current) return false;
+    if (typeof progressNote === 'string' && progressNote.trim()) {
+      this.db.run(
+        'UPDATE long_term_subtasks SET last_activity_at = ?, progress_note = ?, updated_at = ? WHERE id = ?',
+        [activityAtIso, progressNote.trim().slice(0, 280), activityAtIso, subtaskId],
+      );
+      this.touch(current.taskId);
+    } else {
+      this.db.run('UPDATE long_term_subtasks SET last_activity_at = ? WHERE id = ?', [activityAtIso, subtaskId]);
+    }
+    this.saveDb();
+    return true;
+  }
+
+  /**
+   * Worker/Bot self-registered step progress checkpoint (journalled + surfaced
+   * live on the Studio HUD and Task Board).
+   */
+  recordSubtaskProgress(
+    subtaskId: string,
+    input: { note: string; activityAtIso?: string },
+    actor: LongTermActor,
+  ): LongTermResult<LongTermSubtask> {
+    const current = this.getSubtask(subtaskId);
+    if (!current) return { ok: false, code: 'NOT_FOUND', error: 'subtask not found' };
+    if (current.status === 'accepted' || current.status === 'skipped') {
+      return { ok: false, code: 'VALIDATION', error: `cannot record progress on ${current.status} subtask` };
+    }
+    const note = asText(input.note).trim().slice(0, 280);
+    if (!note) return { ok: false, code: 'VALIDATION', error: 'progress note is required' };
+    const now = input.activityAtIso || nowIso();
+    this.db.run(
+      'UPDATE long_term_subtasks SET progress_note = ?, last_activity_at = ?, updated_at = ? WHERE id = ?',
+      [note, now, now, subtaskId],
+    );
+    this.addEvent(current.taskId, subtaskId, 'progress', actor, note);
+    this.touch(current.taskId);
+    this.saveDb();
+    const updated = this.getSubtask(subtaskId);
+    return updated ? { ok: true, value: updated } : { ok: false, code: 'NOT_FOUND', error: 'subtask not found' };
+  }
+
+  /**
+   * Worker self-registers its completion / blocker submission directly onto the
+   * Subtask blackboard (artifacts, evidence, summary, outcome) instead of
+   * relying solely on natural-language chat handoff text.
+   */
+  submitSubtaskWork(
+    subtaskId: string,
+    input: {
+      outcome: TaskWorkerSubmissionOutcome;
+      workerMetabotId: number;
+      workerSessionId?: string | null;
+      summary: string;
+      artifacts?: TaskDeliverableArtifact[];
+      evidence?: LongTermEvidence[];
+      blockers?: string[];
+      attemptId?: string | null;
+    },
+    actor: LongTermActor,
+  ): LongTermResult<LongTermSubtask> {
+    const current = this.getSubtask(subtaskId);
+    if (!current) return { ok: false, code: 'NOT_FOUND', error: 'subtask not found' };
+    if (current.status === 'accepted' || current.status === 'skipped') {
+      return { ok: false, code: 'VALIDATION', error: `cannot submit work on ${current.status} subtask` };
+    }
+    if (!SUBMISSION_OUTCOMES.includes(input.outcome)) {
+      return { ok: false, code: 'VALIDATION', error: `invalid outcome "${String(input.outcome)}"` };
+    }
+    const summary = asText(input.summary).trim();
+    if (!summary) return { ok: false, code: 'VALIDATION', error: 'submission summary is required' };
+
+    const incomingEvidence = (input.evidence ?? []).filter((e) => e && asText(e.uri).trim());
+    if (incomingEvidence.length > 0) {
+      const evidenceError = this.validateEvidenceInput(incomingEvidence);
+      if (evidenceError) return { ok: false, code: 'VALIDATION', error: evidenceError };
+    }
+
+    const mergedEvidence = [...current.evidence];
+    for (const item of incomingEvidence) {
+      if (!mergedEvidence.some((existing) => existing.kind === item.kind && existing.uri === item.uri)) {
+        mergedEvidence.push(item);
+      }
+    }
+
+    const artifacts: TaskDeliverableArtifact[] = (input.artifacts ?? [])
+      .filter((a) => a && asText(a.uri).trim())
+      .map((a) => ({
+        kind: asText(a.kind).trim() || 'other',
+        uri: asText(a.uri).trim(),
+        ...(a.label ? { label: asText(a.label).trim() } : {}),
+        ...(a.sha256 ? { sha256: asText(a.sha256).trim() } : {}),
+      }));
+
+    const now = nowIso();
+    const submission: TaskWorkerSubmission = {
+      outcome: input.outcome,
+      workerMetabotId: asNullableInt(input.workerMetabotId) ?? 0,
+      workerSessionId: asText(input.workerSessionId ?? '').trim() || null,
+      summary: summary.slice(0, 2000),
+      artifacts,
+      evidence: incomingEvidence,
+      blockers: (input.blockers ?? []).map((b) => asText(b).trim()).filter(Boolean),
+      submittedAt: now,
+    };
+
+    const nextStatus: LongTermSubtaskStatus =
+      input.outcome === 'waiting_external' ? 'waiting_external' : 'in_progress';
+    const nextProgress =
+      input.outcome === 'ready_for_review'
+        ? `submitted for review: ${summary.slice(0, 180)}`
+        : `${input.outcome}: ${(submission.blockers[0] || summary).slice(0, 180)}`;
+    const releaseLease =
+      !input.attemptId || !current.leaseAttemptId || current.leaseAttemptId === input.attemptId;
+
+    this.db.run(
+      `UPDATE long_term_subtasks
+          SET status = ?,
+              evidence_json = ?,
+              submission_json = ?,
+              progress_note = ?,
+              last_activity_at = ?,
+              lease_attempt_id = CASE WHEN ? = 1 THEN NULL ELSE lease_attempt_id END,
+              lease_claimed_at = CASE WHEN ? = 1 THEN NULL ELSE lease_claimed_at END,
+              wait_note = CASE WHEN ? = 'waiting_external' THEN ? ELSE wait_note END,
+              updated_at = ?
+        WHERE id = ?`,
+      [
+        nextStatus,
+        JSON.stringify(mergedEvidence),
+        JSON.stringify(submission),
+        nextProgress,
+        now,
+        releaseLease ? 1 : 0,
+        releaseLease ? 1 : 0,
+        input.outcome,
+        (submission.blockers[0] || summary).slice(0, WAIT_NOTE_MAX_CHARS),
+        now,
+        subtaskId,
+      ],
+    );
+    if (submission.workerSessionId) {
+      this.upsertSessionLinkRow(
+        current.taskId,
+        submission.workerSessionId,
+        { subtaskId, role: 'worker_exec' },
+        now,
+      );
+    }
+    const artifactSummary =
+      artifacts.length > 0 ? ` [${artifacts.map((a) => a.uri).join(', ')}]` : '';
+    this.addEvent(
+      current.taskId,
+      subtaskId,
+      'submitted',
+      actor,
+      `${input.outcome}: ${summary.slice(0, 800)}${artifactSummary}`,
+    );
+    this.touch(current.taskId);
+    this.saveDb();
+    const updated = this.getSubtask(subtaskId);
+    this.emitStatusChange(current, updated, 'submitted');
+    return updated ? { ok: true, value: updated } : { ok: false, code: 'NOT_FOUND', error: 'subtask not found' };
+  }
+
+  /**
+   * Compact radar of all non-terminal tasks on this machine (<2KB typical),
+   * prioritized by `waiting_owner` and `in_progress` so Twin Bot has instant
+   * awareness of every active task without spilling huge JSON payloads.
+   */
+  listActiveTasksCompact(limit = 25): TaskActiveRadarEntry[] {
+    const cap = Math.max(1, Math.min(100, Math.trunc(limit)));
+    const rows = this.getAll<TaskRow>(
+      "SELECT * FROM long_term_tasks WHERE stage NOT IN ('done', 'cancelled') ORDER BY updated_at DESC LIMIT ?",
+      [cap],
+    );
+    const entries: TaskActiveRadarEntry[] = [];
+    for (const row of rows) {
+      const subtasks = this.listSubtaskRows(row.id).map((s) => this.mapSubtask(s));
+      const summary = this.toSummary(row, subtasks);
+      if (!summary.managedState) continue;
+      const assigneeId = summary.currentAssigneeMetabotId ?? null;
+      const assigneeParticipant =
+        assigneeId != null ? summary.participants.find((p) => p.id === assigneeId) ?? null : null;
+      entries.push({
+        id: summary.id,
+        title: summary.title,
+        stage: summary.stage,
+        managedState: summary.managedState,
+        isLongTerm: Boolean(summary.isLongTerm),
+        progress: summary.progress,
+        currentSubtaskId: summary.currentSubtaskId,
+        currentSubtaskTitle: summary.currentSubtaskTitle,
+        currentSubtaskStatus: summary.currentSubtaskStatus,
+        assigneeMetabotId: assigneeId,
+        assigneeName: assigneeParticipant?.name ?? null,
+        progressNote: summary.currentProgressNote ?? null,
+        waitNote: summary.currentWaitNote ? summary.currentWaitNote.slice(0, 200) : null,
+        originSessionId: summary.originSessionId ?? null,
+        updatedAt: summary.updatedAt,
+      });
+    }
+    const orderWeight: Record<LongTermManagedState, number> = {
+      in_progress: 0,
+      waiting_owner: 1,
+      waiting_external: 2,
+    };
+    return entries.sort(
+      (a, b) => orderWeight[a.managedState] - orderWeight[b.managedState] || b.updatedAt.localeCompare(a.updatedAt),
+    );
+  }
+
+  /**
+   * Fast full-board search across open and archived/done tasks (matches task
+   * title/goal, subtask titles/descriptions/notes/progress/artifacts, and
+   * event journal details).
+   */
+  searchTasks(options: TaskSearchOptions = {}): LongTermTaskSummary[] {
+    const includeDone = options.includeDone !== false;
+    const limit = Math.max(1, Math.min(100, Math.trunc(options.limit ?? 25)));
+    const rawQuery = asText(options.query ?? '').trim().toLowerCase();
+    const tokens = rawQuery
+      ? rawQuery.split(/\s+/).map((t) => t.trim()).filter(Boolean)
+      : [];
+
+    const stageFilter = options.stage
+      ? Array.isArray(options.stage)
+        ? new Set(options.stage)
+        : new Set([options.stage])
+      : null;
+
+    const sessionFilterIds = options.sessionId
+      ? new Set(this.listTasksForSession(options.sessionId).map((t) => t.id))
+      : null;
+
+    const rows = this.getAll<TaskRow>(
+      includeDone
+        ? "SELECT * FROM long_term_tasks WHERE stage != 'cancelled' ORDER BY updated_at DESC"
+        : "SELECT * FROM long_term_tasks WHERE stage NOT IN ('done', 'cancelled') ORDER BY updated_at DESC",
+    );
+
+    const scored: Array<{ summary: LongTermTaskSummary; score: number }> = [];
+    for (const row of rows) {
+      if (stageFilter && !stageFilter.has(row.stage)) continue;
+      if (sessionFilterIds && !sessionFilterIds.has(row.id)) continue;
+
+      const subtasks = this.listSubtaskRows(row.id).map((s) => this.mapSubtask(s));
+      if (
+        typeof options.assigneeMetabotId === 'number'
+        && !subtasks.some((s) => s.assigneeMetabotId === options.assigneeMetabotId)
+      ) {
+        continue;
+      }
+
+      const summary = this.toSummary(row, subtasks);
+      if (options.managedState && summary.managedState !== options.managedState) continue;
+      if (typeof options.isLongTerm === 'boolean' && Boolean(summary.isLongTerm) !== options.isLongTerm) continue;
+
+      if (tokens.length === 0) {
+        scored.push({ summary, score: summary.stage === 'done' ? 0 : 10 });
+        continue;
+      }
+
+      const titleHay = `${summary.title} ${summary.id}`.toLowerCase();
+      const bodyHay = [
+        summary.goal,
+        ...subtasks.map((s) =>
+          [
+            s.title,
+            s.description,
+            s.notes,
+            s.progressNote ?? '',
+            s.waitNote,
+            ...s.evidence.map((e) => `${e.uri} ${e.note ?? ''}`),
+            ...(s.submission
+              ? [
+                  s.submission.summary,
+                  ...s.submission.artifacts.map((a) => `${a.uri} ${a.label ?? ''}`),
+                ]
+              : []),
+          ].join(' '),
+        ),
+      ]
+        .join(' ')
+        .toLowerCase();
+
+      let matchedAll = true;
+      let score = summary.stage === 'done' ? 0 : 5;
+      for (const tok of tokens) {
+        const inTitle = titleHay.includes(tok);
+        const inBody = bodyHay.includes(tok);
+        if (inTitle) {
+          score += 10;
+        } else if (inBody) {
+          score += 4;
+        } else {
+          const eventHit = this.getOne<{ one: number }>(
+            'SELECT 1 AS one FROM long_term_events WHERE task_id = ? AND lower(detail) LIKE ? LIMIT 1',
+            [row.id, `%${tok}%`],
+          );
+          if (eventHit) {
+            score += 2;
+          } else {
+            matchedAll = false;
+            break;
+          }
+        }
+      }
+      if (matchedAll) {
+        scored.push({ summary, score });
+      }
+    }
+
+    return scored
+      .sort((a, b) => b.score - a.score || b.summary.updatedAt.localeCompare(a.summary.updatedAt))
+      .slice(0, limit)
+      .map((entry) => entry.summary);
   }
 
   addNote(taskId: string, subtaskId: string | null, text: string, actor: LongTermActor): LongTermResult<null> {
@@ -1548,10 +2662,25 @@ export class LongTermTaskStore {
       const subtasks = this.listSubtaskRows(taskRow.id).map((row) => this.mapSubtask(row));
       return { task: this.toSummary(taskRow, subtasks), subtask: this.mapSubtask(subRow) };
     }
-    const taskRow = this.getOne<TaskRow>('SELECT * FROM long_term_tasks WHERE definition_session_id = ?', [trimmed]);
+    const taskRow = this.getOne<TaskRow>(
+      'SELECT * FROM long_term_tasks WHERE definition_session_id = ? OR origin_session_id = ? ORDER BY updated_at DESC LIMIT 1',
+      [trimmed, trimmed],
+    );
     if (taskRow) {
       const subtasks = this.listSubtaskRows(taskRow.id).map((row) => this.mapSubtask(row));
       return { task: this.toSummary(taskRow, subtasks), subtask: null };
+    }
+    const linkRow = this.getOne<SessionLinkRow>(
+      'SELECT * FROM task_session_links WHERE session_id = ? ORDER BY updated_at DESC LIMIT 1',
+      [trimmed],
+    );
+    if (linkRow) {
+      const linkedTaskRow = this.getTaskRow(linkRow.task_id);
+      if (linkedTaskRow) {
+        const subtasks = this.listSubtaskRows(linkedTaskRow.id).map((row) => this.mapSubtask(row));
+        const sub = linkRow.subtask_id ? subtasks.find((s) => s.id === linkRow.subtask_id) ?? null : null;
+        return { task: this.toSummary(linkedTaskRow, subtasks), subtask: sub };
+      }
     }
     // Substring prefilter, then exact membership on the parsed history (a
     // session id that is merely a substring of a recorded one must not match).
@@ -1579,11 +2708,16 @@ export class LongTermTaskStore {
     if (!row) return [];
     const ids = new Set<string>();
     if (row.definition_session_id) ids.add(row.definition_session_id);
+    if (row.origin_session_id) ids.add(row.origin_session_id);
+    for (const link of this.listSessionLinks(taskId)) {
+      if (link.sessionId) ids.add(link.sessionId);
+    }
     for (const subRow of this.listSubtaskRows(taskId)) {
       for (const id of parseJsonArray<string>(subRow.session_history_json)) {
         if (id) ids.add(id);
       }
       if (subRow.session_id) ids.add(subRow.session_id);
+      if (subRow.origin_session_id) ids.add(subRow.origin_session_id);
     }
     return [...ids];
   }
