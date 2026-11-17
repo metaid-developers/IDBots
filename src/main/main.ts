@@ -172,6 +172,7 @@ import { shouldAcquireSingleInstanceLock, shouldRefuseSharedUserData } from './l
 import { mockCreateWalletAndFund, mockPushConfigToChain } from './services/chainActionMock';
 import { createMetaBotWallet, getPrivateKeyBufferForEcdh } from './services/metabotWalletService';
 import { PaymentInfoStore } from './services/paymentInfoStore';
+import { readPaymentReceivingInfo } from './services/paymentCardEmitter';
 import {
   decryptPaymentInfo,
   derivePaymentInfoKey,
@@ -8590,6 +8591,17 @@ const getCoworkRunner = () => {
             getMetabotStore().getMetabotById(metabotId)?.name?.trim() || null,
         },
         orders: getEscrowOrderStore(),
+      },
+      // payment_card_emit tool backend (G1): reads the single encrypted
+      // receiving-info row, derives the payment key from the local identity
+      // and decrypts — all inside readPaymentReceivingInfo, so the mnemonic,
+      // the key and the ciphertext never reach a tool reply. Zero funds flow:
+      // the emitter has no wallet/chain import.
+      paymentCards: {
+        readReceivingInfo: () => readPaymentReceivingInfo({
+          getIdentity: () => getUserIdentityStore().get(),
+          readCipher: () => getPaymentInfoStore().get(),
+        }),
       },
       // send_private_chat tool backend (replacing metabot-chat-privatechat).
       // Mirrors the skill script: resolve the peer chatpubkey on-chain, then
