@@ -14,10 +14,11 @@ import path from 'node:path';
 // cards of the viewed day live inside one height-bounded, internally
 // scrolling container whose max height never depends on runs.length, so 1
 // run and 20 runs occupy the same vertical budget. These assertions also pin
-// the day-index contract: the header hosts the mini month calendar, days
-// with runs are marked, the newest recorded day is the default selection,
-// and the manual refresh button is GONE (freshness is the push-based
-// refreshToken channel, owner ruling 2026-11-18 01:47).
+// the day-index contract: the header keeps a diary-style date chip that pops
+// the mini month calendar in a fixed overlay (NEVER resident, owner ruling
+// 2026-11-18 02:0x), days with runs are marked, the newest recorded day is
+// the default selection, and the manual refresh button is GONE (freshness is
+// the push-based refreshToken channel, owner ruling 2026-11-18 01:47).
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
 const PANEL = 'src/renderer/components/metabots/SurfReportsPanel.tsx';
@@ -148,14 +149,42 @@ test('day-index load behaviour and expand semantics are pinned', () => {
   assert.match(source, /surfReportDigestToggle/);
 });
 
-test('the header hosts the calendar index wired to the day state', () => {
+test('the header keeps a diary-style date chip that pops the calendar overlay', () => {
   const source = read(PANEL);
 
   assert.match(source, /import MiniMonthCalendar from '\.\.\/ui\/MiniMonthCalendar';/);
-  assert.match(source, /<MiniMonthCalendar\b/, 'the calendar must be rendered');
+  assert.match(source, /<MiniMonthCalendar\b/, 'the calendar must still be rendered');
   assert.match(source, /markedDayKeys=\{markedDayKeys\}/, 'days with runs must mark the calendar');
   assert.match(source, /selectedDayKey=\{selectedDay\}/, 'the picked day must drive the selection');
-  assert.match(source, /onPick=\{pickDay\}/, 'picking a day must load that day');
   // Day keys become half-open UTC ranges for the store query.
   assert.match(source, /dayKeyToUtcRangeIso/);
+
+  // Owner 2026-11-18 02:0x: no resident calendar. The chip labels the
+  // selected day and opens the popup; the calendar renders ONLY inside the
+  // fixed overlay that the chip toggles, and a pick closes it.
+  const chipClassIndex = source.indexOf('h-[26px]');
+  assert.ok(chipClassIndex > 0, 'the date chip must use the dream-diary 26px chip classes');
+  const overlayClassIndex = source.indexOf(
+    'fixed z-40 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg shadow-2xl p-2',
+  );
+  assert.ok(overlayClassIndex > chipClassIndex, 'the popup overlay must follow the date chip');
+  const calIndex = source.indexOf('<MiniMonthCalendar');
+  assert.ok(
+    calIndex > overlayClassIndex,
+    'the calendar must render inside the popup overlay, not resident in the header',
+  );
+  assert.ok(!source.includes('onPick={pickDay}'), 'a pick must also close the popup, so onPick is wrapped');
+
+  assert.match(source, /\{selectedDay \?\? ''\}/, 'the chip label is the selected day key');
+  assert.match(
+    source,
+    /setCalPos\(\{ top: rect\.bottom \+ 4, left: Math\.max\(8, rect\.right - 224\) \}\)/,
+    'popup position mirrors the dream-diary anchor math',
+  );
+  assert.match(
+    source,
+    /onPick=\{\(dayKey\) => \{\s*pickDay\(dayKey\);\s*setCalOpen\(false\);\s*\}\}/,
+    'picking a day loads that day and closes the popup',
+  );
+  assert.match(source, /document\.addEventListener\('mousedown', close\)/, 'an outside click closes the popup');
 });

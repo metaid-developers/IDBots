@@ -1,11 +1,13 @@
 /**
  * MetaWeb surf run-history panel ("AI 冲浪" reports), indexed by day.
  *
- * A mini month calendar sits in the header where the manual refresh button
- * used to live: days that hold surf runs carry a marker dot, and picking a
- * day lists that day's runs (newest first) with the same expandable report
- * cards. The panel opens on the most recent day that has records, so the
- * newest report is visible immediately instead of a blank list.
+ * The header keeps a diary-style date chip (the MemorySettings dream-diary
+ * pattern): the chip labels the selected day, and clicking it pops a fixed
+ * mini month calendar beside the chip — days that hold surf runs carry a
+ * marker dot, and picking a day lists that day's runs (newest first) with
+ * the same expandable report cards, then closes the popup. The calendar is
+ * never resident: the panel opens straight onto the most recent day that
+ * has records, so the newest report is visible immediately.
  *
  * Freshness is push-based: the parent bumps refreshToken on every
  * surfStatusChanged event for this bot, which reloads the day markers and
@@ -99,6 +101,28 @@ const SurfReportsPanel: React.FC<SurfReportsPanelProps> = ({ metabotId, refreshT
   // user away from the day they are reading.
   const seededBotRef = useRef<number | null>(null);
 
+  // Diary-style calendar popup (the MemorySettings dream-diary pattern):
+  // hidden until the date chip is clicked, positioned once from the chip's
+  // rect, closed by an outside click, a day pick, or a bot switch.
+  const [calOpen, setCalOpen] = useState(false);
+  const [calPos, setCalPos] = useState<{ top: number; left: number } | null>(null);
+  const calAnchorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!calOpen) return;
+    const close = (event: MouseEvent) => {
+      if (!calAnchorRef.current?.contains(event.target as Node)) setCalOpen(false);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [calOpen]);
+
+  const openCal = () => {
+    const rect = calAnchorRef.current?.getBoundingClientRect();
+    if (rect) setCalPos({ top: rect.bottom + 4, left: Math.max(8, rect.right - 224) });
+    setCalOpen((prev) => !prev);
+  };
+
   const loadRunsForDay = useCallback(async (dayKey: string) => {
     const range = dayKeyToUtcRangeIso(dayKey);
     if (!range) {
@@ -174,10 +198,11 @@ const SurfReportsPanel: React.FC<SurfReportsPanelProps> = ({ metabotId, refreshT
     };
   }, [metabotId, refreshToken, loadRunsForDay]);
 
-  // Collapse any expanded report when switching bots.
+  // Collapse any expanded report and the calendar popup when switching bots.
   useEffect(() => {
     setExpandedRunId(null);
     setExpandedDigestRunId(null);
+    setCalOpen(false);
   }, [metabotId]);
 
   // The list lives in a height-capped scroll box, so a freshly expanded run
@@ -297,11 +322,30 @@ const SurfReportsPanel: React.FC<SurfReportsPanelProps> = ({ metabotId, refreshT
           </span>
         </div>
         {loaded && runDays.length > 0 ? (
-          <MiniMonthCalendar
-            markedDayKeys={markedDayKeys}
-            selectedDayKey={selectedDay}
-            onPick={pickDay}
-          />
+          <div className="relative shrink-0" ref={calAnchorRef}>
+            <button
+              type="button"
+              onClick={openCal}
+              className="inline-flex h-[26px] items-center whitespace-nowrap rounded-[var(--shape-radius-sm)] border px-2 text-xs tabular-nums dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text transition-colors hover:border-claude-accent/60"
+            >
+              {selectedDay ?? ''}
+            </button>
+            {calOpen && calPos && (
+              <div
+                className="fixed z-40 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg shadow-2xl p-2"
+                style={{ top: calPos.top, left: calPos.left }}
+              >
+                <MiniMonthCalendar
+                  markedDayKeys={markedDayKeys}
+                  selectedDayKey={selectedDay}
+                  onPick={(dayKey) => {
+                    pickDay(dayKey);
+                    setCalOpen(false);
+                  }}
+                />
+              </div>
+            )}
+          </div>
         ) : null}
       </div>
       {panelError ? (
