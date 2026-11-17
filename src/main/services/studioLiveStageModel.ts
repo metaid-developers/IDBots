@@ -1,4 +1,5 @@
 import type { CoworkMessage } from '../coworkStore';
+import type { LongTermTaskSummary } from '../../renderer/types/longTermTask';
 
 export const LIVE_STAGE_PROTOCOL = 'idbots.live-stage.v1' as const;
 
@@ -65,7 +66,13 @@ export type LiveStageTaskHudEntry = {
   accepted: number;
   total: number;
   currentSubtask?: string | null;
-  /** True for the single task currently active/focused in this Studio conversation. */
+  /** True when the task qualifies for the `[长期]` (Long-Term) complexity/span badge. */
+  isLongTerm?: boolean;
+  /** Assigned Bot name currently working on this task, if any. */
+  assigneeName?: string | null;
+  /** Live Worker milestone progress checkpoint, if any. */
+  progressNote?: string | null;
+  /** True for tasks expanded in the active HUD (every machine-wide `in_progress` task + session-focused tasks). */
   isCurrent?: boolean;
 };
 
@@ -73,6 +80,87 @@ export type LiveStageTaskHud = {
   queuedDecisions: number;
   tasks: LiveStageTaskHudEntry[];
 };
+
+/**
+ * Pure builder for the Studio Live Stage bottom-right Task HUD:
+ * - Expands (`isCurrent: true`) ALL actively executing (`stage === 'active' && state === 'in_progress'`)
+ *   tasks on this machine PLUS tasks explicitly focused/born in the current Studio session.
+ * - Folds (`isCurrent: false`) inactive/parked tasks (`paused`, `defining`, `waiting_external`,
+ *   or background `waiting_owner` cards from other sessions) underneath the toggle.
+ */
+export function buildStudioLiveTaskHud(params: {
+  cards: readonly LongTermTaskSummary[];
+  sessionOwnedTaskIds: ReadonlySet<string>;
+  synthesizedCurrent?: LiveStageTaskHudEntry[];
+  studioBusy: boolean;
+  rawQueuedDecisions: number;
+  maxTasks?: number;
+}): LiveStageTaskHud | null {
+  const {
+    cards,
+    sessionOwnedTaskIds,
+    synthesizedCurrent = [],
+    studioBusy,
+    rawQueuedDecisions,
+    maxTasks = 10,
+  } = params;
+
+  const candidates = cards
+    .filter((card) => card.stage !== 'done' && card.stage !== 'cancelled' && card.managedState != null)
+    .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+
+  const waitingOwnerBoardCount = candidates.filter((c) => c.managedState === 'waiting_owner').length;
+  const queuedDecisions = studioBusy ? 0 : Math.max(rawQueuedDecisions, waitingOwnerBoardCount);
+
+  if (candidates.length === 0 && synthesizedCurrent.length === 0 && queuedDecisions === 0) {
+    return null;
+  }
+
+  const mappedCards: LiveStageTaskHudEntry[] = candidates.map((card) => {
+    const inThisSession = sessionOwnedTaskIds.has(card.id);
+    const rawState = card.managedState ?? 'in_progress';
+    const effectiveState =
+      inThisSession && studioBusy && rawState === 'waiting_owner' ? 'in_progress' : rawState;
+    const isActivelyAdvancing = card.stage === 'active' && effectiveState === 'in_progress';
+    const isCurrent = isActivelyAdvancing || inThisSession;
+    const assignee =
+      card.currentAssigneeMetabotId != null
+        ? card.participants.find((p) => p.id === card.currentAssigneeMetabotId)?.name ?? null
+        : null;
+    const subParts: string[] = [];
+    if (assignee) subParts.push(assignee);
+    if (card.currentProgressNote) {
+      subParts.push(card.currentProgressNote);
+    } else if (card.currentSubtaskTitle && card.currentSubtaskTitle !== card.title) {
+      subParts.push(card.currentSubtaskTitle);
+    }
+    return {
+      id: card.id,
+      title: card.title,
+      state: effectiveState,
+      accepted: card.progress.accepted,
+      total: Math.max(1, card.progress.total),
+      currentSubtask: subParts.length > 0 ? subParts.join(' · ') : card.currentSubtaskTitle,
+      ...(card.isLongTerm ? { isLongTerm: true } : {}),
+      ...(assignee ? { assigneeName: assignee } : {}),
+      ...(card.currentProgressNote ? { progressNote: card.currentProgressNote } : {}),
+      isCurrent,
+    };
+  });
+
+  mappedCards.sort((a, b) => {
+    const aCur = a.isCurrent ? 1 : 0;
+    const bCur = b.isCurrent ? 1 : 0;
+    if (aCur !== bCur) return bCur - aCur;
+    const aProg = a.state === 'in_progress' ? 1 : 0;
+    const bProg = b.state === 'in_progress' ? 1 : 0;
+    if (aProg !== bProg) return bProg - aProg;
+    return 0;
+  });
+
+  const activeTasks = [...synthesizedCurrent, ...mappedCards].slice(0, maxTasks);
+  return { queuedDecisions, tasks: activeTasks };
+}
 
 export type LiveStageState = {
   protocol: typeof LIVE_STAGE_PROTOCOL;

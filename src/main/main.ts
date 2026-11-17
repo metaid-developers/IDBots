@@ -77,6 +77,12 @@ import { selectEffortWithCerebellum } from './cerebellum/effortSelector';
 import { classifyTurnAckNeedWithCerebellum } from './cerebellum/ackGate';
 import { askCerebellumIntuition } from './cerebellum/intuitionTool';
 import { runCerebellumTurnDecisions } from './cerebellum/turnDecisionBundle';
+import type { TaskIntentAssessment } from './cerebellum/taskIntentRubric';
+import {
+  computeActiveTaskWatermark,
+  formatActiveTasksRadarPromptBlock,
+  WorkerLivenessPulseTracker,
+} from './services/taskHeartbeatRadar';
 import {
   CEREBELLUM_SKILL_SHORTLIST_MIN_POOL,
   CEREBELLUM_SKILL_SHORTLIST_TOP_K,
@@ -270,6 +276,15 @@ import { getNftCaRegistry } from './services/nftCaService';
 import { parseNftAvatarReference, prepareNftAvatarForIdentity, resolveLatestNftAvatarForIdentity, resolveNftAvatar } from './services/nftAvatarService';
 import { initTrafficAccountService, registerTrafficAccountIpcHandlers } from './services/trafficAccountService';
 import { initMePointsService, registerMePointsIpcHandlers } from './services/mePointsService';
+import {
+  getMeChargeBalance,
+  isMeChargeConfirmationRequired,
+  listMeFreezes,
+  meCapture,
+  meFreeze,
+  mePay,
+  meRelease,
+} from './services/meChargeService';
 import { startCreditPullLoop, type CreditPullLoop } from './services/creditPullService';
 import { initBundleService, registerBundleIpcHandlers } from './services/bundleService';
 import { initLlmRelayService, registerLlmRelayIpcHandlers, getLlmRelayQuota } from './services/llmRelayService';
@@ -585,6 +600,7 @@ import {
   initBotBrowserProjectionService,
 } from './services/botBrowserProjectionService';
 import { createStudioLiveStageService, type StudioLiveStageService } from './services/studioLiveStageService';
+import { buildStudioLiveTaskHud } from './services/studioLiveStageModel';
 import { listStudioOpenDelegations } from './services/studioOpenDelegations';
 import { describeStudioProjectionBlock } from './services/studioProjectionGate';
 import { applyStudioLiveStagePatch, drainStudioLiveStageInteractions, executeStageFrameScript } from './services/studioLiveStageFrame';
@@ -3991,6 +4007,7 @@ const createCerebellumTurnDecisionCaller = () =>
     memories: ReadonlyArray<{ id: string; text: string }>;
     knowledge: ReadonlyArray<{ id: string; topic: string; summary: string; kind: string }>;
     includeEffort?: boolean;
+    includeTaskIntent?: boolean;
   }): Promise<{
     memoryScores: ReadonlyMap<string, number> | null;
     knowledgeScores: ReadonlyMap<string, number> | null;
@@ -3998,6 +4015,7 @@ const createCerebellumTurnDecisionCaller = () =>
     serviceRanking: Array<{ id: string; name: string; description: string; probability: number }> | null;
     gateVerdicts: Record<string, boolean> | null;
     effortDistribution?: Record<'off' | 'low' | 'high' | 'max', number> | null;
+    taskIntentAssessment?: TaskIntentAssessment | null;
   } | null> => {
     const context = await resolveCerebellumCallContext();
     if (!context) {
@@ -4047,6 +4065,7 @@ const createCerebellumTurnDecisionCaller = () =>
         services: services.length >= CEREBELLUM_REMOTE_SERVICE_SHORTLIST_MIN_POOL ? services : [],
         includeGate: true,
         includeEffort: input.includeEffort === true,
+        includeTaskIntent: input.includeTaskIntent === true,
       },
       onPayload: (stats) => {
         coworkLog('INFO', 'cerebellum:turnPayload', 'Cerebellum turn decision bundle payload', {
@@ -4096,6 +4115,7 @@ const createCerebellumTurnDecisionCaller = () =>
         }) ?? null,
       gateVerdicts: outcome.gateVerdicts,
       effortDistribution: outcome.effortDistribution ?? null,
+      taskIntentAssessment: outcome.taskIntentAssessment ?? null,
     };
   };
 
@@ -7968,6 +7988,46 @@ const getCoworkRunner = () => {
       longTermTaskTools: {
         store: () => getLongTermTaskStore(),
         getAppLanguage: () => getPersistedAppLanguage(),
+        resolveSessionIdentity: (sid) => {
+          const metabotId = getCoworkStore().getMetabotIdForSession(sid);
+          const bot = metabotId != null ? getMetabotStore().getMetabotById(metabotId) : null;
+          const isTwin = Boolean(bot && bot.enabled && bot.metabot_type === 'twin');
+          const session = getCoworkStore().getSession(sid);
+          const sourceCtx = getCoworkStore().getConversationSourceContextBySession(sid);
+          const srcChannelLower = String(sourceCtx.sourceChannel ?? '').toLowerCase();
+          const extIdLower = String(sourceCtx.externalConversationId ?? '').toLowerCase();
+          const originChannel = getStudioChiefOfStaffService().isStudioOwnerSession(sid)
+            ? 'studio'
+            : srcChannelLower === 'telegram' || extIdLower.startsWith('telegram:')
+              ? 'telegram'
+              : srcChannelLower === 'mobile' || extIdLower.startsWith('mobile:')
+                ? 'mobile'
+                : srcChannelLower && srcChannelLower !== 'cowork_ui' && srcChannelLower !== 'orchestrator'
+                  ? 'im'
+                  : session?.sessionType === 'a2a'
+                    ? 'a2a'
+                    : session?.autoOrigin === 'schedule'
+                      ? 'schedule'
+                      : 'botworks';
+          return {
+            actor: isTwin ? 'twin' : metabotId != null ? (`worker:${metabotId}` as const) : 'twin',
+            metabotId: metabotId ?? null,
+            isTwin: metabotId == null ? true : isTwin,
+            originChannel,
+          };
+        },
+        resolveLatestUserMessageId: (sid) => getCoworkStore().getLatestHumanMessageId(sid),
+        readOriginContextSlice: (params) =>
+          getCoworkStore().getMessageContextSlice(params.sessionId, {
+            anchorMessageIds: params.anchorMessageIds,
+            windowTurns: params.windowTurns,
+          }),
+        onTaskCreatedOrFocused: (sid, taskId) => {
+          if (getStudioChiefOfStaffService().isStudioOwnerSession(sid)) {
+            getStudioChiefOfStaffService().focusTask(sid, taskId);
+          }
+          broadcastLongTermTaskUpdate([taskId], 'task_created_or_focused');
+        },
       },
       studioChiefOfStaffTools: {
         isTwinSession: (sid) => {
@@ -7992,6 +8052,39 @@ const getCoworkRunner = () => {
           });
           if (originSid && enqueued.item.longtermTaskId) {
             getStudioChiefOfStaffService().focusTask(originSid, enqueued.item.longtermTaskId);
+          }
+          // Owner Ruling #3: whenever a task decision or acceptance briefing is
+          // enqueued for the owner, converge its open target subtask onto
+          // `waiting_owner` (等你拍板) so the Task Board & HUD never leave a
+          // finished deliverable falsely reading as `in_progress` or auto-`done`.
+          try {
+            if (enqueued.item.longtermTaskId) {
+              const ltStore = getLongTermTaskStore();
+              const ltDetail = ltStore.getTask(enqueued.item.longtermTaskId);
+              if (ltDetail && ltDetail.stage === 'active') {
+                const targetSubId = enqueued.item.longtermSubtaskId ?? ltDetail.currentSubtaskId;
+                const targetSub = targetSubId
+                  ? ltDetail.subtasks.find((s) => s.id === targetSubId) ?? null
+                  : null;
+                if (targetSub && targetSub.status === 'in_progress') {
+                  const briefNote = `${input.title}: ${input.question}`.slice(0, 1500);
+                  if (enqueued.item.kind === 'acceptance' && (input.evidence?.length ?? 0) > 0) {
+                    const propRes = ltStore.proposeSubtask(
+                      targetSub.id,
+                      { evidence: input.evidence!, summary: briefNote },
+                      'twin',
+                    );
+                    if (!propRes.ok) {
+                      ltStore.waitSubtask(targetSub.id, { kind: 'owner', note: briefNote }, 'twin');
+                    }
+                  } else {
+                    ltStore.waitSubtask(targetSub.id, { kind: 'owner', note: briefNote }, 'twin');
+                  }
+                }
+              }
+            }
+          } catch {
+            // Best-effort subtask waiting_owner sync.
           }
           return { ok: true, ...enqueued };
         },
@@ -8087,6 +8180,15 @@ const getCoworkRunner = () => {
       },
       getStudioVolatileContextPrompt: (sid) =>
         getStudioChiefOfStaffService().buildVolatileTurnContext(sid),
+      getActiveTasksRadarPrompt: (sid) => {
+        const session = getCoworkStore().getSession(sid);
+        if (!session || session.sessionType === 'a2a') return '';
+        const metabotId = session.metabotId ?? getCoworkStore().getMetabotIdForSession(sid);
+        const bot = metabotId != null ? getMetabotStore().getMetabotById(metabotId) : null;
+        if (!bot || !bot.enabled || bot.metabot_type !== 'twin') return '';
+        const radarEntries = getLongTermTaskStore().listActiveTasksCompact(18);
+        return formatActiveTasksRadarPromptBlock(radarEntries, { currentSessionId: sid });
+      },
       // MetaTask (chain-side quadrant four): participation tools — claim with
       // replay guard, #8/#9-disciplined verify drafts, publish invariants.
       // Same chain-write pipeline as post_buzz (createPinForSession per bot).
@@ -8592,6 +8694,38 @@ const getCoworkRunner = () => {
         },
         orders: getEscrowOrderStore(),
       },
+      // me_charge tool backend (G3): the buyer-side ME spend leg. The signer
+      // is the SESSION BOT's own wallet (mnemonic+path stay in this process;
+      // the service derives the identity address from the same key material,
+      // so the header can never disagree with the signature). ME movement is
+      // off-chain ledger bookkeeping — no chain-write budget, the ME service's
+      // bot daily pay limit is the cap.
+      meChargeTools: {
+        getMetabotMvcAddress: (metabotId) =>
+          getMetabotStore().getMetabotById(metabotId)?.mvc_address ?? null,
+        // Per-charge owner confirmation, default ON. The switch is the kv
+        // setting me_charge_require_confirmation (same global kv store as
+        // wallet_transfer_external_confirm_enabled); read at call time so a
+        // flip takes effect without a restart, and a read failure stays ON.
+        requireConfirmation: () => isMeChargeConfirmationRequired(getStore()),
+        balance: ({ metabotId }) => getMeChargeBalance({ signer: meChargeSigner(metabotId) }),
+        freeze: ({ metabotId, ...rest }) => meFreeze({ signer: meChargeSigner(metabotId), ...rest }),
+        capture: ({ metabotId, ...rest }) => meCapture({ signer: meChargeSigner(metabotId), ...rest }),
+        release: ({ metabotId, ...rest }) => meRelease({ signer: meChargeSigner(metabotId), ...rest }),
+        pay: ({ metabotId, ...rest }) => mePay({ signer: meChargeSigner(metabotId), ...rest }),
+        listFreezes: ({ metabotId, limit }) => listMeFreezes({ signer: meChargeSigner(metabotId), limit }),
+        // Purchase guard read: the payee must be the item's CURRENT holder.
+        fetchItemInfo: async (pinId) => {
+          const item = await fetchMrc721ItemInfo({ pinId });
+          if (!item) return null;
+          return {
+            pinId: item.itemPinId,
+            ...(item.collectionName ? { collectionName: item.collectionName } : {}),
+            ...(item.ownerAddress ? { ownerAddress: item.ownerAddress } : {}),
+            ...(item.number != null ? { itemNumber: String(item.number) } : {}),
+          };
+        },
+      },
       // payment_card_emit tool backend (G1): reads the single encrypted
       // receiving-info row, derives the payment key from the local identity
       // and decrypts — all inside readPaymentReceivingInfo, so the mnemonic,
@@ -8995,12 +9129,41 @@ const getCoworkRunner = () => {
         },
     });
 
+    const workerLivenessPulse = new WorkerLivenessPulseTracker({
+      resolveSubtaskIdsForSession: (sid) => {
+        const ltStore = getLongTermTaskStore();
+        const linked = ltStore.listTasksForSession(sid);
+        const matched: string[] = [];
+        for (const summary of linked) {
+          if (summary.stage !== 'active') continue;
+          const detail = ltStore.getTask(summary.id);
+          for (const sub of detail?.subtasks ?? []) {
+            if (sub.status === 'in_progress' && (sub.sessionId === sid || detail?.sessionLinks?.some((l) => l.sessionId === sid && l.subtaskId === sub.id))) {
+              matched.push(sub.id);
+            }
+          }
+        }
+        return matched;
+      },
+      touchSubtask: (subtaskId, iso) => getLongTermTaskStore().touchSubtaskActivity(subtaskId, iso),
+      onBroadcast: () => broadcastLongTermTaskUpdate([], 'worker_liveness_pulse'),
+    });
+
     // Set up event listeners to forward to renderer
     coworkRunner.on('message', (sessionId: string, message: any) => {
       // The Genesis Stage sees every message first: a work tool releases the
       // session before the Live Stage decides whether to create its run.
       getStudioGenesisStageService().observeMessage(sessionId, message);
       getStudioLiveStageService().observeMessage(sessionId, message);
+      if (message?.type === 'tool_use' || message?.type === 'assistant') {
+        try {
+          workerLivenessPulse.observeActivity(sessionId, {
+            toolName: message?.metadata?.toolName ?? null,
+          });
+        } catch {
+          // Best-effort worker liveness pulse.
+        }
+      }
       if (message?.type === 'user' && getStudioChiefOfStaffService().isStudioOwnerSession(sessionId)) {
         broadcastLongTermTaskUpdate([], 'studio_turn_started');
       }
@@ -9583,32 +9746,25 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
           ),
         );
         const rawQueuedDecisions = twin ? getStudioDecisionQueueStore().listOpen(twin.id).length : 0;
-        const queuedDecisions = studioBusy ? 0 : rawQueuedDecisions;
-        const candidates = board.cards
-          .filter((card) => card.stage !== 'done' && card.stage !== 'cancelled' && card.managedState != null)
-          .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
-        const candidateById = new Map(candidates.map((c) => [c.id, c]));
+        const openCards = board.cards.filter(
+          (card) => card.stage !== 'done' && card.stage !== 'cancelled' && card.managedState != null,
+        );
+        const candidateById = new Map(openCards.map((c) => [c.id, c]));
 
-        // Track ALL parallel active tasks belonging to this Studio conversation:
-        //  1) all active focused tasks of this Studio session (MRU history);
-        //  2) active tasks born in `sessionId` (`definitionSessionId === sessionId`);
-        //  3) active tasks linked by currently open/verifying Studio delegations;
-        //  4) synthesized live rows for open Studio delegations whose linked
-        //     `longtermTaskId` was already closed (`done`), absent, or belongs
-        //     to another conversation's project card with a distinct Studio goal.
-        const currentIds = new Set<string>();
+        const sessionOwnedIds = new Set<string>();
         for (const focusedId of getStudioChiefOfStaffService().getFocusedTaskIds(sessionId)) {
           if (candidateById.has(focusedId)) {
-            currentIds.add(focusedId);
+            sessionOwnedIds.add(focusedId);
           }
         }
         if (sessionId) {
-          for (const card of candidates) {
-            if (ltStore.getTask(card.id)?.definitionSessionId === sessionId) {
-              currentIds.add(card.id);
+          for (const linked of ltStore.listTasksForSession(sessionId)) {
+            if (candidateById.has(linked.id)) {
+              sessionOwnedIds.add(linked.id);
             }
           }
         }
+
         const synthesizedCurrent: Array<{
           id: string;
           title: string;
@@ -9638,9 +9794,9 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
             && entryTitle !== linkedCard.currentSubtaskTitle,
           );
           if (linkedCard && !hijackedForeignProjectCard) {
-            currentIds.add(linkedCard.id);
+            sessionOwnedIds.add(linkedCard.id);
           } else {
-            if (linkedCard) currentIds.add(linkedCard.id);
+            if (linkedCard) sessionOwnedIds.add(linkedCard.id);
             const synthKey = orchTask?.id ?? rawAttemptId;
             if (seenSynthOrchIds.has(synthKey)) continue;
             seenSynthOrchIds.add(synthKey);
@@ -9658,32 +9814,13 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
           }
         }
 
-        if (currentIds.size === 0 && synthesizedCurrent.length === 0 && queuedDecisions === 0) {
-          return null;
-        }
-
-        const ordered = [...candidates].sort((a, b) => {
-          const aCur = currentIds.has(a.id) ? 1 : 0;
-          const bCur = currentIds.has(b.id) ? 1 : 0;
-          if (aCur !== bCur) return bCur - aCur;
-          return String(b.updatedAt).localeCompare(String(a.updatedAt));
+        return buildStudioLiveTaskHud({
+          cards: openCards,
+          sessionOwnedTaskIds: sessionOwnedIds,
+          synthesizedCurrent,
+          studioBusy,
+          rawQueuedDecisions,
         });
-
-        const mappedCards = ordered.map((card) => {
-          const isCurrent = currentIds.has(card.id);
-          const rawState = card.managedState ?? 'in_progress';
-          return {
-            id: card.id,
-            title: card.title,
-            state: isCurrent && studioBusy && rawState === 'waiting_owner' ? 'in_progress' : rawState,
-            accepted: card.progress.accepted,
-            total: Math.max(1, card.progress.total),
-            currentSubtask: card.currentSubtaskTitle,
-            isCurrent,
-          };
-        });
-        const activeTasks = [...synthesizedCurrent, ...mappedCards].slice(0, 8);
-        return { queuedDecisions, tasks: activeTasks };
       },
       getSettings: () => readStudioLiveStageSettings(getStoreOrNull()),
       getLanguage: () => getPersistedAppLanguage(),
@@ -10138,6 +10275,16 @@ const getLongTermAdvanceService = () => {
           return [];
         }
       },
+      isSubtaskLeaseAlive: (leaseAttemptId: string) => {
+        try {
+          const attempt = getOrchestrationStore().getAttempt(leaseAttemptId);
+          if (!attempt || !['queued', 'running', 'timed_out'].includes(attempt.status)) return false;
+          if (!attempt.workerSessionId) return attempt.status === 'queued';
+          return getCoworkRunner().isSessionActive(attempt.workerSessionId);
+        } catch {
+          return false;
+        }
+      },
       isStudioOwnerSession: (sid) => getStudioChiefOfStaffService().isStudioOwnerSession(sid),
     });
   }
@@ -10417,15 +10564,27 @@ const getStudioChiefOfStaffService = () => {
           .cards.some((card) => card.stage === 'defining' && ltStore.getTask(card.id)?.definitionSessionId === sid);
       },
       listOpenSiblingDelegations: (studioSessionId) =>
-        listRawOpenStudioDelegations(studioSessionId).map((entry) => ({
-          attemptId: entry.attemptId,
-          workerMetabotId: entry.workerMetabotId,
-          workerName: entry.workerName ?? `bot-${entry.workerMetabotId}`,
-          workerSessionId: entry.workerSessionId,
-          title: entry.title,
-          status: 'running',
-          startedAt: entry.startedAt,
-        })),
+        listRawOpenStudioDelegations(studioSessionId).map((entry) => {
+          const rawAttemptId = String(entry.attemptId ?? '').replace(/^verify:/, '');
+          const attempt = rawAttemptId ? getOrchestrationStore().getAttempt(rawAttemptId) : null;
+          const orchTask = attempt ? getOrchestrationStore().getTaskForStep(attempt.stepId) : null;
+          return {
+            attemptId: entry.attemptId,
+            workerMetabotId: entry.workerMetabotId,
+            workerName: entry.workerName ?? `bot-${entry.workerMetabotId}`,
+            workerSessionId: entry.workerSessionId,
+            longtermTaskId: orchTask?.longtermTaskId ?? null,
+            title: entry.title,
+            status: 'running',
+            startedAt: entry.startedAt,
+          };
+        }),
+      getTaskWatermark: () =>
+        computeActiveTaskWatermark(getLongTermTaskStore().listActiveTasksCompact(30)),
+      getTaskProgressNote: (ltTaskId) => {
+        if (!ltTaskId) return null;
+        return getLongTermTaskStore().getTask(ltTaskId)?.currentProgressNote ?? null;
+      },
       projectShowcaseHtml: async (input) => {
         const projInput = {
           sessionId: input.sessionId,
@@ -10540,6 +10699,21 @@ const getMetabotStore = () => {
     metabotStore = new MetabotStore(sqliteStore.getDatabase(), sqliteStore.getSaveFunction());
   }
   return metabotStore;
+};
+
+/**
+ * ME signer for one MetaBot: the bot's OWN wallet (mnemonic+path). ME
+ * signatures cannot be delegated — the server verifies the signature against
+ * X-Identity-Address, so a ledger debit is only ever produced by the paying
+ * identity's key, on this machine. The returned material never leaves the
+ * calling service (meChargeService signs in memory and drops it).
+ */
+const meChargeSigner = (metabotId: number): { mnemonic: string; path: string } => {
+  const wallet = getMetabotStore().getMetabotWalletByMetabotId(metabotId);
+  if (!wallet?.mnemonic?.trim()) {
+    throw new Error(`MetaBot ${metabotId} has no wallet; ME cannot be spent without the payer's own key`);
+  }
+  return { mnemonic: wallet.mnemonic, path: wallet.path };
 };
 
 let userIdentityStore: UserIdentityStore | null = null;

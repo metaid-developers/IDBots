@@ -309,6 +309,11 @@ import {
 } from './practiceInteractionGuard';
 import { buildScheduledTaskAgentTools, type ScheduledTaskAgentControl } from './scheduledTaskAgentTools';
 import { buildLongTermTaskAgentTools, type LongTermTaskAgentControl } from './longTermTaskAgentTools';
+import {
+  buildPortableTaskIntentRubricSpec,
+  formatTaskIntentPromptHint,
+  type TaskIntentAssessment,
+} from '../cerebellum/taskIntentRubric';
 import { buildMetataskAgentTools, type MetaTaskAgentControl } from './metataskAgentTools';
 import { buildPreferenceAgentTools, type PreferenceAgentControl } from './preferenceAgentTools';
 import { buildPredictionAgentTools, type PredictionAgentControl } from './predictionAgentTools';
@@ -336,6 +341,11 @@ import {
   buildEscrowAgentTools,
   type EscrowAgentToolsControl,
 } from './escrowAgentTools';
+import {
+  buildMeChargeAgentTools,
+  type MeChargeConfirmationInfo,
+  type MeChargeToolsControl,
+} from './meChargeAgentTools';
 import {
   buildPaymentCardAgentTools,
   type PaymentCardAgentToolsControl,
@@ -2547,6 +2557,8 @@ export interface CoworkRunnerOptions {
   twinTodoTools?: TwinTodoToolsControl;
   /** Live Studio decision-queue & active-briefing volatile context block. */
   getStudioVolatileContextPrompt?: (sessionId: string) => string;
+  /** Machine-wide active Task radar volatile block shared across Studio, BotWorks, Mobile, and IM/Telegram. */
+  getActiveTasksRadarPrompt?: (sessionId: string) => string;
   /** MetaTask (chain-side quadrant four): participation tools (claim-with-guard
    *  / submit / verify / publish / amend) over the local projection + chain writes. */
   metataskTools?: MetaTaskAgentControl;
@@ -2595,6 +2607,13 @@ export interface CoworkRunnerOptions {
    * mrc721_transfer / wallet tools).
    */
   escrowTools?: { control: EscrowAgentToolsControl; orders: EscrowOrderStore };
+  /**
+   * When set, every cowork session gets me_charge (G3): the buyer-side ME
+   * spend leg — status / freeze / capture / release / pay, signed with the
+   * SESSION BOT's own wallet. Off-chain ledger bookkeeping (no MVC tx), so no
+   * chain-write budget; the ME service's own bot daily pay limit is the cap.
+   */
+  meChargeTools?: MeChargeToolsControl;
   /**
    * When set, every cowork session gets payment_card_emit (G1): the tool reads
    * the owner's S3 encrypted receiving info (decrypted in the main process)
@@ -2709,6 +2728,8 @@ export interface CoworkRunnerOptions {
     knowledge: ReadonlyArray<{ id: string; topic: string; summary: string; kind: string }>;
     /** Coalesce auto-effort classification into the same /v1/systemone call. */
     includeEffort?: boolean;
+    /** Coalesce 5-factor Task vs. Dialogue intent scoring into the same /v1/systemone call. */
+    includeTaskIntent?: boolean;
   }) => Promise<{
     memoryScores: ReadonlyMap<string, number> | null;
     knowledgeScores: ReadonlyMap<string, number> | null;
@@ -2726,6 +2747,7 @@ export interface CoworkRunnerOptions {
     }> | null;
     gateVerdicts: Record<string, boolean> | null;
     effortDistribution?: Record<'off' | 'low' | 'high' | 'max', number> | null;
+    taskIntentAssessment?: TaskIntentAssessment | null;
   } | null>;
   /**
    * Optional cerebellum re-rank for conversation_search hits. A score map
@@ -2975,6 +2997,7 @@ export class CoworkRunner extends EventEmitter {
   private studioChiefOfStaffTools?: StudioChiefOfStaffToolsControl;
   private twinTodoTools?: TwinTodoToolsControl;
   private getStudioVolatileContextPrompt?: (sessionId: string) => string;
+  private getActiveTasksRadarPrompt?: (sessionId: string) => string;
   private metataskTools?: MetaTaskAgentControl;
   private preferenceTools?: PreferenceAgentControl;
   private predictionTools?: PredictionAgentControl;
@@ -2983,6 +3006,7 @@ export class CoworkRunner extends EventEmitter {
   private btcMultisigTools?: BtcMultisigToolsControl;
   private mrc721Tools?: Mrc721ToolsControl;
   private escrowTools?: { control: EscrowAgentToolsControl; orders: EscrowOrderStore };
+  private meChargeTools?: MeChargeToolsControl;
   private paymentCards?: PaymentCardAgentToolsControl;
   private visionRelay?: VisionRelayControl;
   private mediaTools?: MediaToolsControl;
@@ -3202,6 +3226,7 @@ export class CoworkRunner extends EventEmitter {
     this.studioChiefOfStaffTools = options?.studioChiefOfStaffTools;
     this.twinTodoTools = options?.twinTodoTools;
     this.getStudioVolatileContextPrompt = options?.getStudioVolatileContextPrompt;
+    this.getActiveTasksRadarPrompt = options?.getActiveTasksRadarPrompt;
     this.metataskTools = options?.metataskTools;
     this.preferenceTools = options?.preferenceTools;
     this.predictionTools = options?.predictionTools;
@@ -3210,6 +3235,7 @@ export class CoworkRunner extends EventEmitter {
     this.btcMultisigTools = options?.btcMultisigTools;
     this.mrc721Tools = options?.mrc721Tools;
     this.escrowTools = options?.escrowTools;
+    this.meChargeTools = options?.meChargeTools;
     this.paymentCards = options?.paymentCards;
     this.visionRelay = options?.visionRelay;
     this.mediaTools = options?.mediaTools;
@@ -7048,6 +7074,8 @@ export class CoworkRunner extends EventEmitter {
       'Speak in plain user language, not internal jargon: align with what the owner sees in the UI, lead with the conclusion, and never hand the owner homework. Your purpose is to reduce the owner\'s mental load.',
       'Own the task lifecycle: when the goal is met, lead with that conclusion, summarize the delivered result, and move the task to review — or close out a finished one-off yourself — instead of stalling in executing and asking the owner what to do next. The UI the owner sees is the source of truth: refer to tasks by title (never #id), use the UI status words, and leave zero ambiguity about what happened and what, if anything, you still need from the owner.',
       'Your closing message IS the delivery: when a task finishes — whether you did it yourself or a Worker did — lead with the delivered result itself (what was produced and where it lives), and show every on-chain artifact as a full-text MetaWeb URI markdown link (pin:// / metaapp:// / metafile:// — complete URI, never abbreviated with an ellipsis). Verification notes, retries, and worker anecdotes come AFTER the result and stay brief: the owner delegated the task to get the finished outcome, not a process narrative.',
+      'Tasks are first-class entities across all sessions and channels (Studio, BotWorks, Mobile, IM/Telegram); sessions are merely interaction channels. Use `task_list_active` and `task_search` at high priority to recall in-flight or historical tasks immediately, create tracked cards via `task_create` (1-step or serial/parallel DAG) whenever an intent produces a deliverable or external action without asking "should I create a task?", coordinate with Workers through the shared Task object (`task_get`, `task_context_read`, Worker `task_subtask_submit`), and park finished proposals/deliverables in `waiting_owner` (`task_subtask_propose` / `studio_decision_enqueue`) so the owner inspects the detailed result before final sign-off.',
+      buildPortableTaskIntentRubricSpec(),
     ].join('\n');
   }
 
@@ -7727,6 +7755,15 @@ export class CoworkRunner extends EventEmitter {
     );
     const activeForDecisions = this.activeSessions.get(sessionId);
     const includeBundledEffort = Boolean(activeForDecisions?.needsBundledEffort);
+    const isSyntheticSystemTurn =
+      prompt.includes('<studio_proactive_briefing>')
+      || prompt.includes('<studio_back_office_supervision>')
+      || prompt.includes('<cross_session_message');
+    const includeBundledTaskIntent = Boolean(
+      this.isTwinSession(sessionId)
+      && !trustSuppressed
+      && !isSyntheticSystemTurn,
+    );
     const decisionsStartedAt = Date.now();
     const decisionsPromise: ReturnType<NonNullable<CoworkRunnerOptions['cerebellumTurnDecisions']>> | null =
       this.cerebellumTurnDecisions && prompt.trim()
@@ -7746,6 +7783,7 @@ export class CoworkRunner extends EventEmitter {
             kind: entry.kind,
           })),
           ...(includeBundledEffort ? { includeEffort: true } : {}),
+          ...(includeBundledTaskIntent ? { includeTaskIntent: true } : {}),
         }).then((res) => {
           activeForDecisions?.bundledEffortResolver?.(res?.effortDistribution ?? null);
           return res;
@@ -7916,6 +7954,29 @@ export class CoworkRunner extends EventEmitter {
         key: 'team-nudge',
         text: await this.buildTwinTeamNudgePrompt(sessionId),
       });
+    }
+    if (this.getActiveTasksRadarPrompt && !trustSuppressed) {
+      try {
+        const radarBlock = this.getActiveTasksRadarPrompt(sessionId);
+        if (radarBlock) {
+          sections.push({
+            key: 'active-tasks-radar',
+            text: radarBlock,
+          });
+        }
+      } catch {
+        // Radar injection is best-effort.
+      }
+    }
+    if (includeBundledTaskIntent) {
+      const intentAssessment = (await awaitTurnDecisions())?.taskIntentAssessment ?? null;
+      if (intentAssessment) {
+        sections.push({
+          key: 'task-intent-assessment',
+          text: formatTaskIntentPromptHint(intentAssessment),
+          alwaysInject: true,
+        });
+      }
     }
     if (this.getStudioVolatileContextPrompt && !trustSuppressed) {
       const studioBlock = this.getStudioVolatileContextPrompt(sessionId);
@@ -8784,6 +8845,73 @@ export class CoworkRunner extends EventEmitter {
         estimated_fee_sats: info.estimatedFeeSats,
       } as Record<string, unknown>,
       'allow'
+    );
+    return outcome === 'approved';
+  }
+
+  /**
+   * Per-charge owner gate for me_charge (freeze / capture / pay). Runs BEFORE
+   * the ME ledger is touched, so a refusal is a no-op on the balance rather
+   * than a rollback. 60s card; an unanswered card is a denial (timeoutDefault
+   * 'deny'); `ownerOnly` keeps the orchestrator text relay from answering it
+   * inside a delegated worker/group-task session. No ActiveSession means no
+   * owner seat (background / unattended turn): the charge is refused.
+   */
+  private async confirmMeCharge(sessionId: string, info: MeChargeConfirmationInfo): Promise<boolean> {
+    const activeSession = this.activeSessions.get(sessionId);
+    if (!activeSession) {
+      return false;
+    }
+    const me = (milli: number) => `${(milli / 1000).toFixed(3).replace(/\.?0+$/, '')} ME`;
+    const actionLabel = info.action === 'freeze'
+      ? tApp('冻结', 'freeze')
+      : info.action === 'capture' ? tApp('结算', 'capture') : tApp('直接支付', 'pay');
+    const effect = info.action === 'freeze'
+      ? tApp(
+        '冻结会立即从余额扣住这笔 ME，卖方交割后才结算；未结算前可释放回余额。',
+        'A freeze holds the ME from the balance immediately; it settles only when you capture after delivery, and can be released before that.',
+      )
+      : info.action === 'capture'
+        ? tApp(
+          '结算会把冻结的 ME 真正付给收款方（进入其 earned 池），不可撤销。',
+          'Capture turns the hold into a real payment to the payee (their earned pool). This cannot be undone.',
+        )
+        : tApp(
+          '直接支付会立即把 ME 转给收款方，不可撤销。',
+          'Pay transfers the ME immediately and cannot be undone.',
+        );
+    const question = tApp(
+      `Agent 准备用 ME 积分发起一笔扣款（${actionLabel}，账本内转移，不涉及链上资产）：\n` +
+      `- 金额: ${me(info.amountMilli)}\n` +
+      `- 收款方: ${info.payee || '(未知)'}\n` +
+      `- 订单号: ${info.orderId}\n` +
+      `- 用途: ${info.refType || 'freeze_order'}${info.refId ? ' / ' + info.refId : ''}\n` +
+      `${effect}\n` +
+      '是否允许这一笔扣款？（需要你本人确认；60 秒内未回答视为拒绝）',
+      `The agent is about to charge ME (${actionLabel}) — an off-chain ledger transfer, no chain assets:\n` +
+      `- amount: ${me(info.amountMilli)}\n` +
+      `- payee: ${info.payee || '(unknown)'}\n` +
+      `- order: ${info.orderId}\n` +
+      `- purpose: ${info.refType || 'freeze_order'}${info.refId ? ' / ' + info.refId : ''}\n` +
+      `${effect}\n` +
+      'Allow this charge? (the owner must confirm; unanswered after 60s = denied)',
+    );
+    const outcome = await this.requestSafetyApproval(
+      sessionId,
+      activeSession.abortController.signal,
+      activeSession,
+      question,
+      'me_charge',
+      {
+        action: info.action,
+        amount_milli: info.amountMilli,
+        payee: info.payee,
+        order_id: info.orderId,
+        ...(info.refType ? { ref_type: info.refType } : {}),
+        ...(info.refId ? { ref_id: info.refId } : {}),
+      } as Record<string, unknown>,
+      'deny',
+      { ownerOnly: true },
     );
     return outcome === 'approved';
   }
@@ -15222,6 +15350,27 @@ export class CoworkRunner extends EventEmitter {
           orders: this.escrowTools.orders,
           sessionId,
           resolveMetabotId: (sid) => this.getMemoryBackend().resolveMetabotIdForMemory(sid) ?? undefined,
+        })
+      );
+    }
+    // me_charge (G3): the buyer-side ME spend leg, shared by the NFT purchase
+    // flow and (S8) paid chat / skill fees. Mounted BEFORE the payment-card
+    // block so a purchase session sees the payment tool next to mrc721_*.
+    if (this.meChargeTools) {
+      const meChargeTools = this.meChargeTools;
+      memoryTools.push(
+        ...buildMeChargeAgentTools({
+          tool,
+          control: meChargeTools,
+          sessionId,
+          resolveMetabotId: (sid) => this.getMemoryBackend().resolveMetabotIdForMemory(sid) ?? undefined,
+          // Per-charge owner gate (G3 follow-up): every freeze/capture/pay
+          // asks here FIRST. The switch is default-ON; turning it off restores
+          // the previous ungated behaviour exactly.
+          confirmation: {
+            isRequired: () => meChargeTools.requireConfirmation?.() !== false,
+            confirm: (info) => this.confirmMeCharge(sessionId, info),
+          },
         })
       );
     }
