@@ -34,7 +34,13 @@ test('③ the rail mounts at the transcript edge inside a relative wrapper', () 
   // clears the 14px (w-3.5) floating rail + the 1px ring-1 overhang + a
   // 5px safety gap, so bubbles and the jump ring never paint under the
   // locator rail.
-  assert.match(panelSource, /<div ref=\{listRef\} className="h-full space-y-2\.5 overflow-y-auto overflow-x-hidden pl-1 pr-5 pb-2 \[scrollbar-width:none\] \[&::-webkit-scrollbar\]:hidden">/);
+  // 2026-11-17 rework (supersedes the single-attribute JSX form this pin
+  // carried): the Studio scroll-HUD line added onScroll={handleListScroll}
+  // for at-bottom tracking + auto-pagination, so the scroller went
+  // multi-attribute. The lane-reserving className is unchanged byte for
+  // byte — this pin keeps matching it together with the ref/onScroll wiring
+  // on the same element.
+  assert.match(panelSource, /ref=\{listRef\}\s*\n\s*onScroll=\{handleListScroll\}\s*\n\s*className="h-full space-y-2\.5 overflow-y-auto overflow-x-hidden pl-1 pr-5 pb-2 \[scrollbar-width:none\] \[&::-webkit-scrollbar\]:hidden"/);
   assert.match(panelSource, /<PanelMessageLocatorRail/);
   assert.match(panelSource, /containerRef=\{listRef\}/);
   assert.match(panelSource, /rows=\{locatorRows\}/);
@@ -51,9 +57,23 @@ test('③ every PanelMessage root carries the measurable row id', () => {
   assert.equal(hits.length, 4, 'user, assistant-mode, professional and failure-card roots all tagged');
 });
 
-test('③ the transcript auto-scroll-to-bottom behavior is untouched', () => {
-  assert.match(panelSource, /const list = listRef\.current;\s*\n\s*if \(list\) \{\s*\n\s*list\.scrollTop = list\.scrollHeight;/);
+test('③ the transcript auto-scroll sticks to the live tail and re-engages deliberately', () => {
+  // 2026-11-17 rework (supersedes the "behavior is untouched" pin, which
+  // asserted the old unconditional scrollToBottom): the Studio scroll-HUD
+  // line turned the effect conditional — the transcript still snaps to the
+  // bottom on every message/stream update, but only while the owner is
+  // already at the live tail (shouldAutoScrollRef, 96px at-bottom threshold
+  // maintained by handleListScroll), so reading history is never yanked
+  // back down. pinningScrollRef marks programmatic writes so they do not
+  // clear the flag; the floating scroll-to-bottom button re-engages it.
+  assert.match(panelSource, /const list = listRef\.current;\s*\n\s*if \(list && shouldAutoScrollRef\.current\) \{\s*\n\s*pinningScrollRef\.current = true;\s*\n\s*list\.scrollTop = list\.scrollHeight;\s*\n\s*pinningScrollRef\.current = false;\s*\n\s*\}/);
   assert.match(panelSource, /\}, \[visibleMessages\.length, isStreaming\]\);/);
+  // The gate: only genuinely-at-bottom proximity keeps auto-scroll armed,
+  // and loading earlier history opts out explicitly.
+  assert.match(panelSource, /shouldAutoScrollRef\.current = distanceToBottom <= 96;/);
+  assert.match(panelSource, /shouldAutoScrollRef\.current = false;\s*\n\s*setIsLoadingEarlier\(true\);/);
+  // The scroll-to-bottom button restores the live-tail follow.
+  assert.match(panelSource, /scroller\.scrollTop = scroller\.scrollHeight;\s*\n\s*pinningScrollRef\.current = false;\s*\n\s*shouldAutoScrollRef\.current = true;/);
   // The rail reads scroll state only: it never writes scrollTop outside the
   // two interaction mappings (drag handle / click jump).
   const writes = railSource.match(/container\.scrollTop\s*=/g) ?? [];
