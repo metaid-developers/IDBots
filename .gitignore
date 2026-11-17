@@ -96,6 +96,7 @@ tests/*
 !tests/escrowOrderStateMachine.test.ts
 !tests/escrowCardMarkdown.test.tsx
 !tests/escrowAgentTools.test.mjs
+!tests/paymentCardAgentTools.test.ts
 !tests/nftCaService.test.mjs
 !tests/nftAvatarService.test.mjs
 !tests/mrc721SellIntentService.test.mjs

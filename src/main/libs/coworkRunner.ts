@@ -336,6 +336,10 @@ import {
   buildEscrowAgentTools,
   type EscrowAgentToolsControl,
 } from './escrowAgentTools';
+import {
+  buildPaymentCardAgentTools,
+  type PaymentCardAgentToolsControl,
+} from './paymentCardAgentTools';
 import type { EscrowOrderStore } from '../services/escrowOrderStore';
 import type { ExternalTransferInfo } from '../services/walletTransferService';
 import {
@@ -2592,6 +2596,14 @@ export interface CoworkRunnerOptions {
    */
   escrowTools?: { control: EscrowAgentToolsControl; orders: EscrowOrderStore };
   /**
+   * When set, every cowork session gets the payment_emit_card tool (S3 fiat
+   * payment card, G1): it reads the OWNER's locally stored + encrypted
+   * receiving info through this control and returns the same ```pay-card
+   * fence the renderer parses. Zero funds flow — no wallet call, no chain
+   * write; the payer pays the payee directly in Alipay.
+   */
+  paymentCardTools?: PaymentCardAgentToolsControl;
+  /**
    * When set, every cowork session gets the describe_image tool backed by
    * recognizeImageViaRelay() (services/visionRelayService.ts). The relay's
    * VLM reads a local image and returns a text description + OCR, so sessions
@@ -2969,6 +2981,7 @@ export class CoworkRunner extends EventEmitter {
   private btcMultisigTools?: BtcMultisigToolsControl;
   private mrc721Tools?: Mrc721ToolsControl;
   private escrowTools?: { control: EscrowAgentToolsControl; orders: EscrowOrderStore };
+  private paymentCardTools?: PaymentCardAgentToolsControl;
   private visionRelay?: VisionRelayControl;
   private mediaTools?: MediaToolsControl;
   private metabotManage?: MetabotManageControl;
@@ -3195,6 +3208,7 @@ export class CoworkRunner extends EventEmitter {
     this.btcMultisigTools = options?.btcMultisigTools;
     this.mrc721Tools = options?.mrc721Tools;
     this.escrowTools = options?.escrowTools;
+    this.paymentCardTools = options?.paymentCardTools;
     this.visionRelay = options?.visionRelay;
     this.mediaTools = options?.mediaTools;
     this.metabotManage = options?.metabotManage;
@@ -15206,6 +15220,19 @@ export class CoworkRunner extends EventEmitter {
           orders: this.escrowTools.orders,
           sessionId,
           resolveMetabotId: (sid) => this.getMemoryBackend().resolveMetabotIdForMemory(sid) ?? undefined,
+        })
+      );
+    }
+    // payment_emit_card (S3 fiat payment card, G1): the session bot reads the
+    // OWNER's locally stored + encrypted receiving info and emits the same
+    // ```pay-card fence the renderer's paymentCardSyntax parses. Zero funds
+    // flow — no wallet call and no chain write live in this tool; the payer
+    // pays the payee directly in Alipay.
+    if (this.paymentCardTools) {
+      memoryTools.push(
+        ...buildPaymentCardAgentTools({
+          tool,
+          control: this.paymentCardTools,
         })
       );
     }

@@ -8591,6 +8591,34 @@ const getCoworkRunner = () => {
         },
         orders: getEscrowOrderStore(),
       },
+      // payment_emit_card tool backend (S3 fiat payment card, G1): the ONLY
+      // thing this control does is a local decrypt of the owner's saved
+      // receiving info — no wallet, no transfer, no chain write (the payer
+      // pays the payee directly in Alipay, platform zero-funds-flow). The
+      // mnemonic is used only to derive the at-rest storage key and never
+      // leaves this closure; failures surface a reason string, never the
+      // ciphertext or the plaintext.
+      paymentCardTools: {
+        readReceivingInfo: () => {
+          try {
+            const identity = getUserIdentityStore().get();
+            if (!identity?.mnemonic || !identity.globalmetaid?.trim()) {
+              return { status: 'unavailable' as const, reason: 'the local user identity is not available' };
+            }
+            const row = getPaymentInfoStore().get();
+            if (!row) return { status: 'missing' as const };
+            const key = derivePaymentInfoKey(identity.mnemonic, identity.globalmetaid.trim());
+            return { status: 'ok' as const, info: decryptPaymentInfo(key, row.cipher) };
+          } catch (error) {
+            const errMsg = error instanceof Error ? error.message : String(error);
+            console.error('[PaymentCard] saved receiving info unreadable:', errMsg);
+            return {
+              status: 'unavailable' as const,
+              reason: 'the saved receiving info could not be decrypted on this machine',
+            };
+          }
+        },
+      },
       // send_private_chat tool backend (replacing metabot-chat-privatechat).
       // Mirrors the skill script: resolve the peer chatpubkey on-chain, then
       // sendEncryptedSimplemsg() owns ECDH key derivation + AES + the
