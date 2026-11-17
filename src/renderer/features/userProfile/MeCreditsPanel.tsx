@@ -99,7 +99,7 @@ const MeCreditsPanel: React.FC = () => {
       ) : (
         <>
           <div className="rounded-xl border border-claude-border/60 bg-claude-surfaceInset/60 px-4 py-3 dark:border-claude-darkBorder/60 dark:bg-claude-darkSurfaceInset/40">
-            <div className="flex items-baseline justify-between gap-3">
+            <div className="flex items-center justify-between gap-3">
               {/* The refresh button lives next to the label it refreshes
                   (owner ruling 2026-11-18, moved out of the title row). Label +
                   button form one items-center group, vertically centered on the
