@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  assertMultisigInputsSignable,
   buildMultisigPsbt,
   combinePsbts,
   createMultisigAddress,
@@ -36,6 +37,9 @@ function errorText(error: unknown): string {
 }
 
 function signQuestion(summary: PsbtSummary): string {
+  const inputs = summary.inputs
+    .map((input) => `- ${input.txid}:${input.vout}  ${input.value == null ? 'unknown' : `${input.value} sats`}`)
+    .join('\n');
   const outputs = summary.outputs
     .map((output) => `- ${output.address}  ${output.value} sats`)
     .join('\n');
@@ -43,7 +47,8 @@ function signQuestion(summary: PsbtSummary): string {
   return [
     '用本机 MetaBot 的钥匙为这张多签 PSBT 签名。只签名，不广播。',
     'Sign this multisig PSBT with the local MetaBot key. This signs only. It does not broadcast.',
-    `inputs: ${summary.inputCount}`,
+    'inputs:',
+    inputs,
     `fee: ${fee}`,
     'outputs:',
     outputs,
@@ -55,10 +60,12 @@ function broadcastQuestion(rawTx: string): string {
   const outputs = summary.outputs
     .map((output) => `- ${output.address}  ${output.value} sats`)
     .join('\n');
+  const outputTotal = summary.outputs.reduce((sum, output) => sum + output.value, 0);
   return [
     '即将广播一笔已完成的比特币交易。广播不可撤销。',
     'Broadcast a fully signed Bitcoin transaction. Broadcasting is irreversible.',
     `txid: ${summary.txid}`,
+    `outputs_total: ${outputTotal} sats`,
     'outputs:',
     outputs,
   ].join('\n');
@@ -109,16 +116,17 @@ export function buildBtcMultisigAgentTools(deps: {
 
   const utxos = tool(
     'wallet_btc_utxos',
-    'List plain BTC UTXOs for an address, including a multisig P2WSH address. Read-only. Use the txid, vout, and value when building a multisig PSBT. This list omits inscription UTXOs, so do not use it to find MRC20 token coins.',
+    'List plain BTC UTXOs for an address, including a multisig P2WSH address. Read-only. Use the txid, vout, and value when building a multisig PSBT. The provider list is UNFILTERED: it can contain inscription and MRC20 token UTXOs, so confirm each outpoint before spending it as plain BTC and never use it to locate MRC20 coins.',
     {
       address: z.string().min(1).describe('Bitcoin address to inspect.'),
     },
     async (args: { address: string }) => {
       try {
         const list = await control.listBtcUtxos(args.address.trim());
-        if (list.length === 0) return textResult(`address: ${args.address.trim()}\nutxos: none`);
+        const warning = 'warning: the provider list is unfiltered — it can include inscription / MRC20 token UTXOs; confirm each outpoint before spending it as plain BTC.';
+        if (list.length === 0) return textResult(`address: ${args.address.trim()}\nutxos: none\n${warning}`);
         const lines = list.map((item) => `- ${item.txid}:${item.vout}  ${item.value} sats`);
-        return textResult([`address: ${args.address.trim()}`, `count: ${list.length}`, ...lines].join('\n'));
+        return textResult([`address: ${args.address.trim()}`, `count: ${list.length}`, ...lines, warning].join('\n'));
       } catch (error) {
         return textResult(`wallet_btc_utxos failed: ${errorText(error)}`, true);
       }
@@ -169,15 +177,16 @@ export function buildBtcMultisigAgentTools(deps: {
       outputs: Array<{ address: string; value: number }>;
     }) => {
       try {
-        const psbtHex = buildMultisigPsbt({
+        const built = buildMultisigPsbt({
           witnessScriptHex: args.witness_script,
           inputs: args.inputs,
           outputs: args.outputs,
         });
-        const summary = summarizePsbt(psbtHex);
         return textResult([
-          `psbt_hex: ${psbtHex}`,
-          `fee_sats: ${summary.feeSats}`,
+          `psbt_hex: ${built.psbtHex}`,
+          `fee_sats: ${built.feeSats}`,
+          `fee_rate_sat_vb: ${built.feeRateSatVb}`,
+          ...(built.warning ? [`warning: ${built.warning}`] : []),
         ].join('\n'));
       } catch (error) {
         return textResult(`wallet_btc_build_multisig_psbt failed: ${errorText(error)}`, true);
@@ -239,6 +248,14 @@ export function buildBtcMultisigAgentTools(deps: {
       try {
         const indexes = selectMultisigInputIndexes(args.psbt_hex, args.input_indexes);
         if (indexes.length === 0) throw new Error('no multisig input to sign');
+        // Fail before the owner prompt when this key cannot actually sign the
+        // selected inputs (not in the script / prevout mismatch).
+        const identity = control.getBtcSignerIdentity(metabotId);
+        assertMultisigInputsSignable({
+          psbtHex: args.psbt_hex,
+          indexes,
+          publicKey: identity.publicKey,
+        });
         summary = summarizePsbt(args.psbt_hex);
       } catch (error) {
         return textResult(`wallet_btc_sign_psbt failed: ${errorText(error)}`, true);

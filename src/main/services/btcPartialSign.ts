@@ -4,12 +4,17 @@ import {
   CoinType,
   SignType,
 } from '@metalet/utxo-wallet-service';
-import { selectMultisigInputIndexes } from './btcMultisigScript';
+import {
+  assertMultisigInputsSignable,
+  selectMultisigInputIndexes,
+} from './btcMultisigScript';
 
 const SIGHASH_ALL = 1;
 
 export interface BtcPsbtSigner {
   signTx(...args: any[]): { psbtHex?: string; rawTx?: string };
+  /** BtcWallet exposes the signing key's public key; optional for stubs. */
+  getPublicKey?(): Buffer | Uint8Array;
 }
 
 function addressIndexFromPath(path: string | null | undefined): number {
@@ -42,6 +47,13 @@ export function signBtcPsbtPartial(
   const indexes = selectMultisigInputIndexes(input.psbtHex, input.inputIndexes);
   if (indexes.length === 0) {
     throw new Error('no multisig input to sign');
+  }
+  // Defence in depth: when the signer can name its key, prove the selected
+  // inputs are P2WSH(multisig) redeemable by it and that each witnessScript is
+  // the script its prevout commits to — before the wallet is touched at all.
+  if (typeof signer.getPublicKey === 'function') {
+    const publicKey = Buffer.from(signer.getPublicKey()).toString('hex');
+    assertMultisigInputsSignable({ psbtHex: input.psbtHex, indexes, publicKey });
   }
   const signed = signer.signTx(SignType.SIGN_PSBT, {
     psbtHex: input.psbtHex,

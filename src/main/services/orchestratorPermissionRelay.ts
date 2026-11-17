@@ -240,6 +240,12 @@ function handlePermissionRequest(
   // the daemon logged "not authorized" with the owner never clicking. The
   // renderer's global CoworkPermissionOverlay is the one and only seat.
   if (runner.isPermissionSuspended?.(request.requestId)) return;
+  // Owner-only gates (multisig sign / broadcast) must be answered by a person.
+  // This relay is mounted on delegated worker and group-task sessions, where
+  // the "next user message" is the delegating BOT — relaying the gate would
+  // let that bot satisfy the owner approval. The renderer overlay keeps the
+  // request visible and the deny watchdog still closes it.
+  if (runner.isPermissionOwnerOnly?.(request.requestId)) return;
   // Structured owner questions (AskUserQuestion with no safety context and no
   // stamped timeoutDefault) DO stay on this relay, but as a wait-forever
   // prompt: relayTimeoutResult arms no countdown for them, so the old

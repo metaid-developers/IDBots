@@ -321,6 +321,10 @@ import {
   type BtcMultisigToolsControl,
 } from './btcMultisigAgentTools';
 import {
+  isSafetyApprovalToolInput,
+  planSafetyGateSteerAnswer,
+} from './safetyGateSteer';
+import {
   buildMrc721AgentTools,
   type Mrc721ToolsControl,
 } from './mrc721AgentTools';
@@ -1565,6 +1569,9 @@ export interface PermissionRequest {
   expiresAt?: number | null;
   // Which button the watchdog presses, and which button shows the countdown.
   timeoutDefault?: PermissionTimeoutDefault | null;
+  // True when only a human seat may answer (renderer overlay / IM owner chat),
+  // never the orchestrator text relay inside a delegated worker session.
+  ownerOnly?: boolean;
 }
 
 export type LocalBufferedSteer = {
@@ -1954,6 +1961,14 @@ interface PendingPermission {
    * these to the renderer overlay.
    */
   suspended?: boolean;
+  /**
+   * True for gates a BOT must never answer: the multisig sign/broadcast owner
+   * approval. The orchestrator text relay runs inside delegated worker and
+   * group-task sessions, where the "next user message" is another bot — it
+   * must skip these requests so only the renderer overlay (a human click) can
+   * approve them. The deny watchdog still applies.
+   */
+  ownerOnly?: boolean;
 }
 
 type SystemPromptProfileId = 'default' | 'service_order_a2a' | 'private_chat_a2a' | 'memory_read_only_automation';
@@ -3456,59 +3471,80 @@ export class CoworkRunner extends EventEmitter {
     // When an interactive AskUserQuestion card is waiting for the owner, typing
     // in the left chat composer ("A", "A，gogo", or free-form notes) answers
     // that pending question directly instead of cancelling the active turn!
+    //
+    // Host SAFETY gates ride the same tool but are not questions: their answer
+    // is consent to an irreversible action. Free-form text — including the
+    // deny option's own label — must never be read as consent, because
+    // requestSafetyApproval accepts a bare `allow` as approval. Only an exact
+    // option label (or the canonical 允许/拒绝 words) answers a gate; anything
+    // else falls through to the normal steer path and leaves the gate pending.
     const pendingPerm = activeSession.pendingPermission;
     if (
       pendingPerm
       && pendingPerm.toolName === 'AskUserQuestion'
       && this.pendingPermissions.has(pendingPerm.requestId)
     ) {
-      const rawQuestions = Array.isArray((pendingPerm.toolInput as { questions?: unknown })?.questions)
-        ? ((pendingPerm.toolInput as { questions: Array<{ question?: string; options?: Array<{ label?: string }> }> }).questions)
-        : [];
-      const trimmed = text.trim();
-      const answers: Record<string, string> = {};
-      for (const q of rawQuestions) {
-        const qText = typeof q?.question === 'string' ? q.question : '';
-        if (!qText) continue;
-        const opts = Array.isArray(q.options)
-          ? q.options.filter((o): o is { label: string } => typeof o?.label === 'string' && o.label.trim().length > 0)
-          : [];
-        let mapped = trimmed;
-        const exact = opts.find((o) => o.label.trim() === trimmed);
-        if (exact) {
-          mapped = exact.label;
-        } else {
-          const letterMatch = /^([A-Za-z])(?:$|[\s,，.。、:：)）·—-]+([\s\S]*)$)/.exec(trimmed);
-          const digitMatch = /^([1-9])(?:$|[\s,，.。、:：)）·—-]+([\s\S]*)$)/.exec(trimmed);
-          let chosenIdx = -1;
-          let extraNote = '';
-          if (letterMatch) {
-            const idx = letterMatch[1].toUpperCase().charCodeAt(0) - 65;
-            if (idx >= 0 && idx < opts.length) {
-              chosenIdx = idx;
-              extraNote = (letterMatch[2] ?? '').trim();
-            }
-          } else if (digitMatch) {
-            const idx = Number(digitMatch[1]) - 1;
-            if (idx >= 0 && idx < opts.length) {
-              chosenIdx = idx;
-              extraNote = (digitMatch[2] ?? '').trim();
-            }
-          }
-          if (chosenIdx >= 0) {
-            mapped = extraNote ? `${opts[chosenIdx].label}|||${extraNote}` : opts[chosenIdx].label;
-          }
-        }
-        answers[qText] = mapped;
+      const gatePlan = planSafetyGateSteerAnswer(pendingPerm.toolInput, text);
+      if (gatePlan.action !== 'pass') {
+        this.respondToPermission(pendingPerm.requestId, gatePlan.action === 'deny'
+          ? { behavior: 'deny', message: 'Operation denied from the chat composer.' }
+          : { behavior: 'allow', updatedInput: { answers: gatePlan.answers } });
+        queueMicrotask(() => {
+          this.emit('steerSettled', sessionId, submissionId);
+        });
+        return { accepted: true, delivered: Promise.resolve() };
       }
-      this.respondToPermission(pendingPerm.requestId, {
-        behavior: 'allow',
-        updatedInput: { answers },
-      });
-      queueMicrotask(() => {
-        this.emit('steerSettled', sessionId, submissionId);
-      });
-      return { accepted: true, delivered: Promise.resolve() };
+      // A safety gate with no matching answer is not a steer either: leave the
+      // prompt pending and let the text behave as a normal steer.
+      if (!isSafetyApprovalToolInput(pendingPerm.toolInput)) {
+        const rawQuestions = Array.isArray((pendingPerm.toolInput as { questions?: unknown })?.questions)
+          ? ((pendingPerm.toolInput as { questions: Array<{ question?: string; options?: Array<{ label?: string }> }> }).questions)
+          : [];
+        const trimmed = text.trim();
+        const answers: Record<string, string> = {};
+        for (const q of rawQuestions) {
+          const qText = typeof q?.question === 'string' ? q.question : '';
+          if (!qText) continue;
+          const opts = Array.isArray(q.options)
+            ? q.options.filter((o): o is { label: string } => typeof o?.label === 'string' && o.label.trim().length > 0)
+            : [];
+          let mapped = trimmed;
+          const exact = opts.find((o) => o.label.trim() === trimmed);
+          if (exact) {
+            mapped = exact.label;
+          } else {
+            const letterMatch = /^([A-Za-z])(?:$|[\s,，.。、:：)）·—-]+([\s\S]*)$)/.exec(trimmed);
+            const digitMatch = /^([1-9])(?:$|[\s,，.。、:：)）·—-]+([\s\S]*)$)/.exec(trimmed);
+            let chosenIdx = -1;
+            let extraNote = '';
+            if (letterMatch) {
+              const idx = letterMatch[1].toUpperCase().charCodeAt(0) - 65;
+              if (idx >= 0 && idx < opts.length) {
+                chosenIdx = idx;
+                extraNote = (letterMatch[2] ?? '').trim();
+              }
+            } else if (digitMatch) {
+              const idx = Number(digitMatch[1]) - 1;
+              if (idx >= 0 && idx < opts.length) {
+                chosenIdx = idx;
+                extraNote = (digitMatch[2] ?? '').trim();
+              }
+            }
+            if (chosenIdx >= 0) {
+              mapped = extraNote ? `${opts[chosenIdx].label}|||${extraNote}` : opts[chosenIdx].label;
+            }
+          }
+          answers[qText] = mapped;
+        }
+        this.respondToPermission(pendingPerm.requestId, {
+          behavior: 'allow',
+          updatedInput: { answers },
+        });
+        queueMicrotask(() => {
+          this.emit('steerSettled', sessionId, submissionId);
+        });
+        return { accepted: true, delivered: Promise.resolve() };
+      }
     }
     // DSH-kernel turns steer natively with interrupt-on-steer (hub.steer
     // cancels the active turn with keepInbox FIRST, then submits the steer —
@@ -8379,13 +8415,17 @@ export class CoworkRunner extends EventEmitter {
     question: string,
     requestedToolName: string,
     requestedToolInput: Record<string, unknown>,
-    timeoutDefault: PermissionTimeoutDefault = 'deny'
+    timeoutDefault: PermissionTimeoutDefault = 'deny',
+    options?: { ownerOnly?: boolean },
   ): Promise<'approved' | 'denied' | 'timeout' | 'aborted'> {
     const request: PermissionRequest = {
       requestId: uuidv4(),
       toolName: 'AskUserQuestion',
       toolInput: this.buildSafetyQuestionInput(question, requestedToolName, requestedToolInput),
     };
+    if (options?.ownerOnly) {
+      request.ownerOnly = true;
+    }
 
     stampPermissionDeadline(request, timeoutDefault);
     activeSession.pendingPermission = request;
@@ -8393,6 +8433,7 @@ export class CoworkRunner extends EventEmitter {
 
     const result = await this.waitForPermissionResponse(sessionId, request.requestId, signal, {
       timeoutBehavior: timeoutDefault,
+      ownerOnly: options?.ownerOnly === true,
     });
     if (activeSession.abortController.signal.aborted || signal.aborted) {
       return 'aborted';
@@ -8742,6 +8783,10 @@ export class CoworkRunner extends EventEmitter {
       toolName,
       {},
       'deny',
+      // Only a human seat may approve fund-moving multisig steps; the
+      // orchestrator text relay would otherwise let the delegating bot's
+      // "允许" answer this gate inside a worker session.
+      { ownerOnly: true },
     );
     return outcome === 'approved';
   }
@@ -10086,6 +10131,17 @@ export class CoworkRunner extends EventEmitter {
    */
   isPermissionSuspended(requestId: string): boolean {
     return this.pendingPermissions.get(requestId)?.suspended === true;
+  }
+
+  /**
+   * True while this pending permission may only be answered by a human seat
+   * (renderer overlay / IM owner chat). The orchestrator text relay — which
+   * runs inside delegated worker and group-task sessions where the next user
+   * message is another BOT — must skip these so a bot cannot satisfy an owner
+   * approval.
+   */
+  isPermissionOwnerOnly(requestId: string): boolean {
+    return this.pendingPermissions.get(requestId)?.ownerOnly === true;
   }
 
   private isMetabotTypeSession(sessionId: string, metabotType: 'twin' | 'welcome'): boolean {
@@ -17911,6 +17967,7 @@ export class CoworkRunner extends EventEmitter {
       timeoutMs?: number | null;
       emitRequest?: PermissionRequest;
       timeoutBehavior?: PermissionTimeoutDefault;
+      ownerOnly?: boolean;
     }
   ): Promise<PermissionResult> {
     // timeoutMs: null suspends the request INDEFINITELY (no watchdog) — for
@@ -17947,6 +18004,7 @@ export class CoworkRunner extends EventEmitter {
         sessionId,
         resolve: finalize,
         suspended: timeoutMs === null,
+        ownerOnly: options?.ownerOnly === true,
       });
 
       // Optional raise-time emit (requestSuspendedApproval): broadcast only
