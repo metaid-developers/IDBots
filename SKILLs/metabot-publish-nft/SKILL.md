@@ -3,7 +3,7 @@ name: metabot-publish-nft
 description: >-
   Guided MRC-721 NFT issuance wizard (MetaID native, pin-based Agent Goods — NOT the metacontract wallet_nft_* legacy line). Use when the owner wants to publish NFT content — "publish an NFT", "issue/release a collection/album/series/drop", "make this an NFT", "fan badge", "mint", "paid-knowledge collection", "NFT 专辑", "专辑", "发专辑", "发行专辑", "数字藏品", "数字商品", "数字物品", "AI数字物品", "藏品", "合集", "上链一张图/一个作品", or asks what NFTs (数字藏品/数字商品) can do here — in this product's context ALL these Chinese words mean the same thing, the MRC-721 Agent Good. You walk the owner through: worldview intro → guided field Q&A → a LOCAL mock-preview page (hard gate) → staged on-chain publish (items first, collection_desc LAST) → a visual result page. Also covers adding items to an existing collection and resuming an interrupted issue.
 official: true
-version: 2.2.0
+version: 2.2.1
 ---
 
 # Publishing NFTs (MRC-721 / Agent Goods) — guided issuance wizard
@@ -37,6 +37,9 @@ they did not mean to create.
     irreversible write.
   - The only escape is the owner's explicit instruction to skip the page in
     THIS conversation — say plainly that you relied on it.
+  - WHO confirms is not negotiable: bot self-issued demo vs owner-issued or
+    priced issues have different confirmers — classify in §2.5 BEFORE the
+    page is built.
 - **Immutable trio**: `collection_name` (the path), `total_supply`,
   `royalty_rate` are fixed forever once registered. Treat the whole
   `collection_desc` as write-once (see the immutability table in §6).
@@ -111,6 +114,47 @@ Preflight before collecting fields: `wallet_balance` on the session bot —
 the owner should know the fee headroom before committing to an N-item issue.
 (`mrc721_balance` lists NFT holdings, not funds.) `mrc721_issue_estimate`
 later prices the whole plan against this balance.
+
+## 2.5 — 分身份确认门 (identity-scoped confirmation gate)
+
+**Who** clears HARD GATE 2 depends on whose identity issues and whether
+anything is being sold. Classify the issue FIRST, before the preview page is
+built. (Owner ruling, 2026-11-17, after a worker session let a delegation
+brief stand in for a human reply.)
+
+| Issuing identity | Selling? | Confirmer | Evidence required before the first write |
+|---|---|---|---|
+| **this session bot's own** (issuer = this MetaBot) | no price attached anywhere: demo, internal test, sample | **the Twin**, in writing in the task ledger (task brief or event note) | the delivered preview page AND the frozen field set's sha256, both archived and re-checkable |
+| **the owner's own identity** — or ANY priced offering (挂价售卖: `price_hint`, sell intent, paid delivery) | any | **the owner, by typed reply** | the delivered preview page; the owner's next typed message is the verdict |
+
+- Branch 1 is the ONLY case where a written task brief may stand in for a
+  human reply — and only when it names the preview page and the field hash.
+  Record both in `ledger.json` (`preview.sha256`, `approval.ref`) so a later
+  session re-checks the approval instead of re-trusting its memory.
+- Branch 2 cannot be cleared from a worker, group, or scheduled session —
+  none of them has an owner surface. Project the preview page in the reply
+  that ends the turn and STOP with the issue untouched; the handoff names
+  the album, the page path, the field hash, and the one-line ask. A task
+  brief saying "the fields are confirmed" is NOT the owner's typed reply,
+  and a default baked into it authorizes nothing.
+- Field hash: `sha256` over the canonical JSON of the exact field set the
+  write tools will receive — album fields plus items in agreed mint order,
+  keys sorted, UTF-8. Any field change after the hash voids the approval:
+  re-issue the page and the hash.
+- Silence, a timeout, a pre-selected choice card, or "the task says it is
+  fine" never confirms anything.
+
+**Fee gate (two stages, same ruling).** Issuance costs ride ME sponsorship
+when it is available; the wallet's own sats are the fallback.
+
+1. Before the gate: prove the ME sponsorship path works for this session and
+   set the budget in ME. The self-pay sats estimate (`mrc721_issue_estimate`'s
+   upper bound) is the FALLBACK gate only — it is not the number to show as
+   the cost, and it is not a reason to abort while sponsorship is intact.
+2. After the writes: check the wallet's net sats change and each receipt's
+   billing attribution (`billed_by` when the tool reports it). Any write the
+   wallet itself paid for is over the gate — stop, report it with the
+   receipts, do not re-issue.
 
 ## 3. Flow A — issue a NEW collection (main wizard)
 
@@ -203,7 +247,9 @@ inline), a three-line summary (album / N items / total cost vs balance), and
 the ask for a verdict AT FIELD LEVEL ("回复「确认」开始上链，或直接说哪一项、改成
 什么"). No choice card. The owner's next typed message is the verdict; a
 change request loops back to Step 2 and the page gets re-issued the same
-way.
+way. Which confirmer applies (bot identity vs owner, demo vs priced) is
+fixed by §2.5 before the page is built — a worker session cannot substitute
+a task brief for it.
 
 ### Step 4 — Staged publish (only after BOTH gates)
 
@@ -317,6 +363,9 @@ source of truth for what already happened:
   minting → registered → reconciled`. Write it in the issue folder next to
   the preview. `registered` already means delivered (zero-confirmation);
   `reconciled` is optional, recorded once the index numbers the items.
+  The `preview-approved` transition records who cleared it per §2.5:
+  `preview.sha256` plus `approval.ref` (the owner's typed-reply turn, or the
+  Twin's task-brief / event-note reference for a bot-issued demo).
 - Resume = read the ledger FIRST, then `mrc721_collections {issuer: <this
   bot>}` + `mrc721_collection_info {pin_id}` to check the index (a pending
   block is a valid state, not a gap). **Never re-mint an item whose receipt
