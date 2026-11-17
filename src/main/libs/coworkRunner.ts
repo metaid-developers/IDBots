@@ -336,6 +336,10 @@ import {
   buildEscrowAgentTools,
   type EscrowAgentToolsControl,
 } from './escrowAgentTools';
+import {
+  buildPaymentCardAgentTools,
+  type PaymentCardAgentToolsControl,
+} from './paymentCardAgentTools';
 import type { EscrowOrderStore } from '../services/escrowOrderStore';
 import type { ExternalTransferInfo } from '../services/walletTransferService';
 import {
@@ -2592,6 +2596,16 @@ export interface CoworkRunnerOptions {
    */
   escrowTools?: { control: EscrowAgentToolsControl; orders: EscrowOrderStore };
   /**
+   * When set, every cowork session gets payment_card_emit (G1): the tool reads
+   * the owner's S3 encrypted receiving info (decrypted in the main process)
+   * and emits a real `pay-card` fence — the 设置 → 收款信息 → 卡 path without
+   * a one-off script. Zero funds flow and no chain-write budget: a card only
+   * tells the payer where to send money point-to-point. Mounted without a
+   * session-bot requirement: the card belongs to the machine's owner, so every
+   * provider bot session (and the owner's own demo session) can issue one.
+   */
+  paymentCards?: PaymentCardAgentToolsControl;
+  /**
    * When set, every cowork session gets the describe_image tool backed by
    * recognizeImageViaRelay() (services/visionRelayService.ts). The relay's
    * VLM reads a local image and returns a text description + OCR, so sessions
@@ -2969,6 +2983,7 @@ export class CoworkRunner extends EventEmitter {
   private btcMultisigTools?: BtcMultisigToolsControl;
   private mrc721Tools?: Mrc721ToolsControl;
   private escrowTools?: { control: EscrowAgentToolsControl; orders: EscrowOrderStore };
+  private paymentCards?: PaymentCardAgentToolsControl;
   private visionRelay?: VisionRelayControl;
   private mediaTools?: MediaToolsControl;
   private metabotManage?: MetabotManageControl;
@@ -3195,6 +3210,7 @@ export class CoworkRunner extends EventEmitter {
     this.btcMultisigTools = options?.btcMultisigTools;
     this.mrc721Tools = options?.mrc721Tools;
     this.escrowTools = options?.escrowTools;
+    this.paymentCards = options?.paymentCards;
     this.visionRelay = options?.visionRelay;
     this.mediaTools = options?.mediaTools;
     this.metabotManage = options?.metabotManage;
@@ -15206,6 +15222,19 @@ export class CoworkRunner extends EventEmitter {
           orders: this.escrowTools.orders,
           sessionId,
           resolveMetabotId: (sid) => this.getMemoryBackend().resolveMetabotIdForMemory(sid) ?? undefined,
+        })
+      );
+    }
+    // payment_card_emit (G1): the owner's encrypted receiving info → a real
+    // pay-card fence. Mounted unconditionally (no session-bot resolution and
+    // no memory gate): invoicing must work in every provider bot session, and
+    // the card belongs to the machine's owner, not to the acting bot. Zero
+    // funds flow — the control only reads + decrypts locally.
+    if (this.paymentCards) {
+      memoryTools.push(
+        ...buildPaymentCardAgentTools({
+          tool,
+          control: this.paymentCards,
         })
       );
     }
