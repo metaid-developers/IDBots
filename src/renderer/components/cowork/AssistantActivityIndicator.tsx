@@ -236,7 +236,7 @@ export const AssistantActivityIndicator: React.FC<{
         // Host bookkeeping calls never drive the status line: owner_update's
         // visible output IS the narration bubble, and projection_begin's is
         // the projected page — neither is "tool work in progress".
-        if (toolName === 'owner_update' || toolName === 'projection_begin') continue;
+        if (toolName === 'owner_update' || toolName === 'projection_begin' || toolName === 'twin_todo') continue;
         const id = msg.metadata?.toolUseId;
         if (typeof id === 'string' && !toolResultIds.has(id)) {
           return {

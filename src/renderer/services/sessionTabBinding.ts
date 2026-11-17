@@ -6,8 +6,10 @@ import type {
 import type { CoworkSession, CoworkSessionSummary } from '../types/cowork';
 import { browserUrisMatch } from '../../main/shared/browserUriMatch';
 import {
+  loadPersistedBrowserSessionActiveRoles,
   loadPersistedBrowserSessionId,
   loadPersistedBrowserSessionPages,
+  savePersistedBrowserSessionActiveRole,
   savePersistedBrowserSessionId,
   savePersistedBrowserSessionPage,
   type PersistedBrowserSessionPage,
@@ -101,6 +103,7 @@ export function createSessionTabBinding(): SessionTabBinding {
   let prepareDraftPromise: Promise<number | null> | null = null;
   const sessionTabs = new Map<string, TabBinding>();
   const sessionPages = new Map<string, PersistedBrowserSessionPage>();
+  const sessionActiveRoles = new Map<string, SessionTabRole>();
   let pagesLoaded = false;
   let restoreStarted = false;
   let queue: Promise<void> = Promise.resolve();
@@ -118,6 +121,25 @@ export function createSessionTabBinding(): SessionTabBinding {
     for (const [sessionId, page] of Object.entries(loadPersistedBrowserSessionPages())) {
       sessionPages.set(sessionId, page);
     }
+    for (const [sessionId, role] of Object.entries(loadPersistedBrowserSessionActiveRoles())) {
+      sessionActiveRoles.set(sessionId, role);
+    }
+  };
+
+  const rememberActiveRole = (sessionId: string, role: SessionTabRole): void => {
+    ensurePagesLoaded();
+    const normalized = sessionId.trim();
+    if (!normalized) return;
+    sessionActiveRoles.delete(normalized);
+    if (role === 'showcase') {
+      sessionActiveRoles.set(normalized, 'showcase');
+      while (sessionActiveRoles.size > MAX_BOUND_TABS) {
+        const oldest = sessionActiveRoles.keys().next();
+        if (oldest.done) break;
+        sessionActiveRoles.delete(oldest.value);
+      }
+    }
+    savePersistedBrowserSessionActiveRole(normalized, role);
   };
 
   const pageFor = (sessionId: string): PersistedBrowserSessionPage | null => {
@@ -364,6 +386,7 @@ export function createSessionTabBinding(): SessionTabBinding {
     }
 
     if (!target) throw new Error('The stage tab could not be confirmed.');
+    if (input.activate) rememberActiveRole(input.sessionId, 'stage');
     return finish(input.action, target.id, fallback);
   };
 
@@ -483,6 +506,7 @@ export function createSessionTabBinding(): SessionTabBinding {
     if (!target) throw new Error('The session tab could not be confirmed.');
     const committedUri = uri || uriOf(target);
     if (committedUri) rememberPage(input.sessionId, committedUri, titleOf(target));
+    if (input.activate) rememberActiveRole(input.sessionId, 'showcase');
     return finish(input.action, target.id, fallback);
   };
 
@@ -617,21 +641,33 @@ export function createSessionTabBinding(): SessionTabBinding {
     }
   });
 
-  const reveal = async (sessionId: string): Promise<void> => {
+  const reveal = async (
+    sessionId: string,
+    options?: { restoreLastActiveRole?: boolean },
+  ): Promise<void> => {
+    ensurePagesLoaded();
     const snapshot = await listTabs();
     const tabs = snapshot?.tabs ?? [];
-    // The Live Stage is the session's front door: reveal its bound stage tab,
-    // or open the stage entry as the stage role — never the showcase tab
-    // (reports stay reachable through their own tab or the stage's report
-    // button). Both paths then ask main to (re)deliver the stage state.
+    const page = pageFor(sessionId);
+    const wantShowcaseActive = options?.restoreLastActiveRole === true
+      && page != null
+      && sessionActiveRoles.get(sessionId) === 'showcase';
+    // Reveal the session's bound stage tab (or open the persistent stage entry
+    // as the stage role), AND when the session also has a persisted showcase
+    // report page (`pageFor(sessionId)`), restore its showcase tab beside the
+    // stage tab so reopening the app reconstructs the full Studio workspace
+    // (both Live Stage and report tab, honoring whichever tab was last active).
     const stageTab = liveBoundTab(sessionId, 'stage', tabs);
+    let stageAvailable = Boolean(stageTab);
     if (stageTab) {
-      if (!stageTab.isActive) {
+      if (!wantShowcaseActive && !stageTab.isActive) {
         await controlTabs({ action: 'switch-tab', tabId: stageTab.id });
+        rememberActiveRole(sessionId, 'stage');
       }
     } else {
       const stageUri = await stageEntryUri();
       if (stageUri) {
+        stageAvailable = true;
         await ensureSessionTab({
           sessionId,
           role: 'stage',
@@ -643,15 +679,33 @@ export function createSessionTabBinding(): SessionTabBinding {
       } else {
         // No stage entry available (prewarm IPC missing): keep the legacy
         // behavior of restoring the session's last showcase page.
-        const page = pageFor(sessionId);
         await ensureSessionTab({
           sessionId,
           role: 'showcase',
           action: 'open-tab',
           uri: page?.uri,
+          ...(page?.title ? { label: page.title } : {}),
           activate: true,
           matchByUri: true,
         });
+      }
+    }
+    if (stageAvailable && page) {
+      const afterStageTabs = (await listTabs())?.tabs ?? tabs;
+      const showcaseTab = liveBoundTab(sessionId, 'showcase', afterStageTabs);
+      if (!showcaseTab) {
+        await ensureSessionTab({
+          sessionId,
+          role: 'showcase',
+          action: 'open-tab',
+          uri: page.uri,
+          ...(page.title ? { label: page.title } : {}),
+          activate: wantShowcaseActive,
+          matchByUri: true,
+        });
+      } else if (wantShowcaseActive && !showcaseTab.isActive) {
+        await controlTabs({ action: 'switch-tab', tabId: showcaseTab.id });
+        rememberActiveRole(sessionId, 'showcase');
       }
     }
     try {
@@ -685,7 +739,7 @@ export function createSessionTabBinding(): SessionTabBinding {
           session = sessionId ? await host.openSession(sessionId) : null;
         }
         if (!session) return;
-        await reveal(session.id);
+        await reveal(session.id, { restoreLastActiveRole: true });
       } catch {
         // Boot never fails because a convenience restore could not load a tab.
       }
@@ -754,8 +808,10 @@ export function createSessionTabBinding(): SessionTabBinding {
       if (!bound.isActive) {
         const switched = await controlTabs({ action: 'switch-tab', tabId: bound.id });
         if (!switched) throw new Error(`Bot Browser tab ${bound.id} could not be activated.`);
+        rememberActiveRole(command.sessionId, role);
         return finish('switch-tab', bound.id, switched);
       }
+      rememberActiveRole(command.sessionId, role);
       return { ...snapshot, action: 'switch-tab', sessionTab: bound };
     }
     const result = await controlTabs(command);
@@ -790,11 +846,18 @@ export function createSessionTabBinding(): SessionTabBinding {
     if (!Number.isInteger(tabId) || tabId <= 0) return;
     if (message.event === 'tab-closed') {
       const owner = ownerOfTab(tabId);
-      if (owner) sessionTabs.delete(tabKey(owner.sessionId, owner.role));
+      if (owner) {
+        sessionTabs.delete(tabKey(owner.sessionId, owner.role));
+        if (owner.role === 'showcase') rememberActiveRole(owner.sessionId, 'stage');
+      }
       if (pendingDraftTabId === tabId) pendingDraftTabId = null;
       return;
     }
     const owner = ownerOfTab(tabId);
+    if (message.event === 'tab-activated') {
+      if (owner) rememberActiveRole(owner.sessionId, owner.role);
+      return;
+    }
     if (message.event === 'navigation-committed') {
       const uri = String(message.payload?.uri ?? '').trim();
       if (!uri) return;

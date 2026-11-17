@@ -1208,3 +1208,98 @@ test('restoreLastSession after prepareDraftTab reuses the stage tab when the bro
     storage.restore();
   }
 });
+
+test('Studio restart: restoreLastSession restores BOTH the Live Stage tab and the showcase report tab, honoring whichever role was active before exit', async () => {
+  const reportUri = 'preview-metaapp://localhost/Users/tusm/reports/2026-11-17-multisig-security-final.html';
+  const storage = installStageEntry(STAGE_ENTRY_URI);
+  try {
+    // Before quitting: session-a has both its stage tab and a projected showcase report tab (active).
+    const firstBridge = createFakeTabBridge();
+    const firstHost = createFakeHost(firstBridge);
+    firstHost.sessions.set('session-a', sessionOf('session-a', reportUri));
+    firstHost.setOpen('session-a');
+    const firstBinding = createSessionTabBinding();
+    firstBinding.attach(firstHost.host);
+    firstBinding.rememberOpenSession('session-a');
+
+    await firstBinding.controlSessionTab({
+      action: 'open-tab',
+      sessionId: 'session-a',
+      role: 'stage',
+      uri: STAGE_ENTRY_URI,
+      activate: true,
+    });
+    const showcaseOpened = await firstBinding.controlSessionTab({
+      action: 'open-tab',
+      sessionId: 'session-a',
+      role: 'showcase',
+      uri: reportUri,
+      label: '多签终审汇报',
+      activate: true,
+    });
+    assert.ok(showcaseOpened.sessionTab);
+
+    // Relaunch #1 (user quit while viewing the showcase report tab): BOTH tabs must exist and showcase stays active!
+    const relaunchBridge1 = createFakeTabBridge();
+    const relaunchHost1 = createFakeHost(relaunchBridge1);
+    relaunchHost1.sessions.set('session-a', sessionOf('session-a', reportUri));
+    const relaunchBinding1 = createSessionTabBinding();
+    relaunchBinding1.attach(relaunchHost1.host);
+    await relaunchBinding1.restoreLastSession();
+
+    const restoredStage1 = await relaunchBinding1.controlSessionTab({
+      action: 'get-tabs',
+      sessionId: 'session-a',
+      role: 'stage',
+    });
+    const restoredShowcase1 = await relaunchBinding1.controlSessionTab({
+      action: 'get-tabs',
+      sessionId: 'session-a',
+      role: 'showcase',
+    });
+    assert.ok(restoredStage1.sessionTab, 'Live Stage tab is restored');
+    assert.equal(restoredStage1.sessionTab?.uri, STAGE_ENTRY_URI);
+    assert.ok(restoredShowcase1.sessionTab, 'showcase report tab is ALSO restored alongside Live Stage');
+    assert.equal(restoredShowcase1.sessionTab?.uri, reportUri);
+    assert.equal(
+      relaunchBridge1.activeTabId,
+      restoredShowcase1.sessionTab?.id,
+      'showcase report tab stays focused when it was active before quitting',
+    );
+
+    // User clicks back onto the Live Stage tab (`tab-activated`), then quits and relaunches (#2):
+    relaunchBinding1.handleBrowserEvent({
+      type: 'agent-browser:event',
+      version: 1,
+      event: 'tab-activated',
+      payload: { tabId: restoredStage1.sessionTab!.id, uri: STAGE_ENTRY_URI },
+    });
+
+    const relaunchBridge2 = createFakeTabBridge();
+    const relaunchHost2 = createFakeHost(relaunchBridge2);
+    relaunchHost2.sessions.set('session-a', sessionOf('session-a', reportUri));
+    const relaunchBinding2 = createSessionTabBinding();
+    relaunchBinding2.attach(relaunchHost2.host);
+    await relaunchBinding2.restoreLastSession();
+
+    const restoredStage2 = await relaunchBinding2.controlSessionTab({
+      action: 'get-tabs',
+      sessionId: 'session-a',
+      role: 'stage',
+    });
+    const restoredShowcase2 = await relaunchBinding2.controlSessionTab({
+      action: 'get-tabs',
+      sessionId: 'session-a',
+      role: 'showcase',
+    });
+    assert.ok(restoredStage2.sessionTab, 'Live Stage tab is restored');
+    assert.ok(restoredShowcase2.sessionTab, 'showcase report tab is still restored in the tab bar');
+    assert.equal(
+      relaunchBridge2.activeTabId,
+      restoredStage2.sessionTab?.id,
+      'Live Stage tab stays focused when user was viewing Live Stage before quitting',
+    );
+  } finally {
+    storage.restore();
+  }
+});

@@ -876,7 +876,7 @@ export class TwinOrchestrationService {
           const priorTask = this.deps.orchestrationStore.getTaskForStep(priorAttempt.stepId);
           if (!priorTask || !['planning', 'running'].includes(priorTask.status) || !priorTask.longtermTaskId) continue;
           const priorLt = ltStore.getTask(priorTask.longtermTaskId);
-          const priorSub = priorLt && priorLt.stage === 'active'
+          const priorSub = priorLt && priorLt.stage === 'active' && priorLt.taskKind === 'quick'
             ? (priorLt.subtasks.find((s) => s.id === priorTask.longtermSubtaskId) ?? priorLt.subtasks[0])
             : null;
           if (priorLt && priorSub) {
@@ -893,11 +893,16 @@ export class TwinOrchestrationService {
         const hit = ltStore.findBySessionId(sourceSessionId);
         if (hit?.subtask) {
           const detail = ltStore.getTask(hit.task.id);
+          // In Studio single-conversation mode, multiple unrelated tasks share
+          // the same Studio session; only bind onto a project card when the
+          // Twin explicitly passes `longtermTaskId` (never via implicit session
+          // or last-focused-briefing fallback, which swallowed parallel Studio
+          // work orders into whichever project card popped last).
           const reusableInSession = Boolean(
             detail
             && detail.stage !== 'done'
             && detail.stage !== 'cancelled'
-            && (!isStudioSession || detail.taskKind !== 'quick'),
+            && !isStudioSession,
           );
           if (detail && reusableInSession) {
             longtermContext = {
@@ -905,23 +910,6 @@ export class TwinOrchestrationService {
               subtaskId: hit.subtask.id,
               reportSessionId: detail.definitionSessionId ?? sourceSessionId,
             };
-          }
-        }
-      }
-      if (!longtermContext && isStudioSession) {
-        const focusedTaskId = this.deps.getFocusedTaskForSession?.(sourceSessionId)?.trim() || '';
-        if (focusedTaskId) {
-          const focusedDetail = ltStore.getTask(focusedTaskId);
-          if (focusedDetail && focusedDetail.stage === 'active' && focusedDetail.taskKind !== 'quick') {
-            const sub = focusedDetail.subtasks.find((item) => item.id === focusedDetail.currentSubtaskId)
-              ?? focusedDetail.subtasks[0];
-            if (sub) {
-              longtermContext = {
-                taskId: focusedDetail.id,
-                subtaskId: sub.id,
-                reportSessionId: focusedDetail.definitionSessionId ?? sourceSessionId,
-              };
-            }
           }
         }
       }

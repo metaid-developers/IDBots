@@ -1,4 +1,6 @@
 import { randomBytes } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import type { CoworkMessage, CoworkSession } from '../coworkStore';
 import type { BotBrowserProjectionInput, BotBrowserProjectionOutcome } from './botBrowserProjectionService';
 import type { StudioLiveStageSettings } from './studioLiveStageSettings';
@@ -164,7 +166,20 @@ export type StudioLiveStageServiceDeps = {
   resolveAvatar?(avatar: unknown): string | undefined;
   /** Resolve a remote avatar reference (metafile:// or nft://) to a data/http URI. */
   resolveAvatarAsync?(avatar: unknown): Promise<string | undefined>;
+  /** Optional custom persistence hooks for session Live Stage snapshots across app restarts. */
+  loadPersistedState?(sessionId: string): LiveStageState | null;
+  savePersistedState?(sessionId: string, state: LiveStageState): void;
+  deletePersistedState?(sessionId: string): void;
 };
+
+const MAX_PERSISTED_STAGE_SESSIONS = 80;
+const STEADY_PERSISTED_FAMILIES = new Set<LiveStageState['family']>([
+  'complete',
+  'report-ready',
+  'problem',
+  'waiting',
+  'idle',
+]);
 
 export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
   const runs = new Map<string, LiveStageRun>();
@@ -173,6 +188,101 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
   const now = deps.now ?? Date.now;
   let turnCounter = 0;
   let currentSettings = deps.getSettings();
+  let diskSnapshotMap: Map<string, LiveStageState> | null = null;
+
+  const snapshotFilePath = (): string | null =>
+    deps.stageRoot ? path.join(deps.stageRoot, 'session-states.json') : null;
+
+  const ensureDiskSnapshotsLoaded = (): Map<string, LiveStageState> => {
+    if (diskSnapshotMap) return diskSnapshotMap;
+    diskSnapshotMap = new Map<string, LiveStageState>();
+    const file = snapshotFilePath();
+    if (!file) return diskSnapshotMap;
+    try {
+      if (!fs.existsSync(file)) return diskSnapshotMap;
+      const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as {
+        sessions?: Record<string, LiveStageState>;
+      };
+      if (parsed?.sessions && typeof parsed.sessions === 'object' && !Array.isArray(parsed.sessions)) {
+        for (const [sid, state] of Object.entries(parsed.sessions)) {
+          if (sid.trim() && state && typeof state === 'object' && typeof state.family === 'string') {
+            diskSnapshotMap.set(sid.trim(), state);
+          }
+        }
+      }
+    } catch {
+      // Corrupt or unreadable snapshot cache degrades cleanly to fresh reconstruction.
+    }
+    return diskSnapshotMap;
+  };
+
+  const flushDiskSnapshots = (): void => {
+    const file = snapshotFilePath();
+    if (!file || !diskSnapshotMap) return;
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      const sessionsObj: Record<string, LiveStageState> = {};
+      for (const [sid, state] of diskSnapshotMap.entries()) {
+        sessionsObj[sid] = state;
+      }
+      const tmp = `${file}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify({ version: 1, sessions: sessionsObj }), 'utf8');
+      fs.renameSync(tmp, file);
+    } catch {
+      // Snapshot persistence is best-effort and must never disrupt live turns.
+    }
+  };
+
+  const sanitizeSnapshotForStorage = (state: LiveStageState): LiveStageState => ({
+    ...state,
+    interaction: null,
+    handoff: null,
+    draft: undefined,
+  });
+
+  const persistSessionStageState = (sessionId: string, state: LiveStageState): void => {
+    const sid = sessionId.trim();
+    if (!sid || state.draft === true) return;
+    const clean = sanitizeSnapshotForStorage(state);
+    if (deps.savePersistedState) {
+      try { deps.savePersistedState(sid, clean); } catch { /* ignore */ }
+      return;
+    }
+    if (!deps.stageRoot) return;
+    const map = ensureDiskSnapshotsLoaded();
+    map.delete(sid);
+    map.set(sid, clean);
+    while (map.size > MAX_PERSISTED_STAGE_SESSIONS) {
+      const oldest = map.keys().next();
+      if (oldest.done) break;
+      map.delete(oldest.value);
+    }
+    flushDiskSnapshots();
+  };
+
+  const loadPersistedSessionStageState = (sessionId: string): LiveStageState | null => {
+    const sid = sessionId.trim();
+    if (!sid) return null;
+    if (deps.loadPersistedState) {
+      try { return deps.loadPersistedState(sid); } catch { return null; }
+    }
+    if (!deps.stageRoot) return null;
+    return ensureDiskSnapshotsLoaded().get(sid) ?? null;
+  };
+
+  const removePersistedSessionStageState = (sessionId: string): void => {
+    const sid = sessionId.trim();
+    if (!sid) return;
+    if (deps.deletePersistedState) {
+      try { deps.deletePersistedState(sid); } catch { /* ignore */ }
+      return;
+    }
+    if (!deps.stageRoot) return;
+    const map = ensureDiskSnapshotsLoaded();
+    if (map.delete(sid)) {
+      flushDiskSnapshots();
+    }
+  };
 
   const brainFor = (session: CoworkSession) => {
     const metabot = session.metabotId == null ? null : deps.getMetabotById(session.metabotId);
@@ -375,6 +485,12 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       run.delegationStartedAt = state.phaseStartedAt;
     }
     run.state = state;
+    if (
+      STEADY_PERSISTED_FAMILIES.has(state.family)
+      || (state.family === 'speaking' && state.captionSource === 'specific')
+    ) {
+      persistSessionStageState(state.sessionId, state);
+    }
     return state;
   }
 
@@ -843,7 +959,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     }, DIRECTOR_COALESCE_MS);
   }
 
-  function ensureRun(sessionId: string, options?: { idle?: boolean }): LiveStageRun | null {
+  function ensureRun(sessionId: string, options?: { idle?: boolean; deferProject?: boolean }): LiveStageRun | null {
     const session = deps.getSession(sessionId);
     if (!currentSettings.enabled || !session || session.sessionType !== 'browser' || session.assistantMode !== true) return null;
     if (deps.isSessionClaimed?.(sessionId)) return null;
@@ -923,6 +1039,167 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     if (process.env.NODE_ENV === 'development') {
       console.warn(`[StudioLiveStage] run created ${sessionId} turn=${turnId} director=${currentSettings.directorEnabled}`);
     }
+    if (!options?.deferProject) {
+      projectStage(run);
+    }
+    return run;
+  }
+
+  function showcaseReportUriFromSession(session: CoworkSession, saved?: LiveStageState | null): string | null {
+    for (const candidate of [saved?.reportUri, session.browserUri]) {
+      const trimmed = typeof candidate === 'string' ? candidate.trim() : '';
+      if (trimmed.startsWith('preview-metaapp://localhost/') && !isLiveStagePageUri(trimmed)) {
+        return trimmed;
+      }
+    }
+    const messages = Array.isArray(session.messages) ? session.messages : [];
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const proj = (messages[i]?.metadata as { projectorReport?: { uri?: unknown } } | undefined)?.projectorReport;
+      const uri = typeof proj?.uri === 'string' ? proj.uri.trim() : '';
+      if (uri.startsWith('preview-metaapp://localhost/') && !isLiveStagePageUri(uri)) {
+        return uri;
+      }
+    }
+    return null;
+  }
+
+  function latestAssistantSummaryFromSession(session: CoworkSession): string | null {
+    const messages = Array.isArray(session.messages) ? session.messages : [];
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const msg = messages[i];
+      if (!msg || msg.type !== 'assistant') continue;
+      const meta = msg.metadata as Record<string, unknown> | undefined;
+      if (
+        meta?.isThinking === true
+        || meta?.turnAckReply === true
+        || meta?.waitingReassurance === true
+        || meta?.projectorReport != null
+      ) {
+        continue;
+      }
+      const text = String(msg.content ?? '').trim();
+      if (text) return text;
+    }
+    return null;
+  }
+
+  function restoreSessionRun(sessionId: string): LiveStageRun | null {
+    const session = deps.getSession(sessionId);
+    const run = ensureRun(sessionId, { idle: true, deferProject: true });
+    if (!run || !session) return run;
+
+    const nowMs = now();
+    const saved = loadPersistedSessionStageState(sessionId);
+    const persistedReportUri = showcaseReportUriFromSession(session, saved);
+    const delegations = openDelegationsFor(run);
+
+    if (persistedReportUri) {
+      run.state = { ...run.state, reportUri: persistedReportUri };
+      run.reportProjected = true;
+    }
+
+    if (delegations.length > 0) {
+      run.finished = true;
+      run.awaitingDelegation = true;
+      applyDelegationWait(run, delegations);
+      run.deliveredRevision = -1;
+      projectStage(run);
+      scheduleDelegationRecheck(run);
+      return run;
+    }
+
+    if (saved) {
+      const baseIdentity = {
+        protocol: run.state.protocol,
+        sessionId,
+        turnId: run.state.turnId,
+        turnStartedAt: nowMs,
+        enabled: run.state.enabled,
+        botName: run.state.botName,
+        botAvatar: run.state.botAvatar,
+        language: deps.getLanguage(),
+        interaction: null,
+        handoff: null,
+        draft: undefined,
+      };
+      let hydrated: LiveStageState = {
+        ...saved,
+        ...baseIdentity,
+        ...(persistedReportUri ? { reportUri: persistedReportUri } : {}),
+        revision: Math.max(1, (saved.revision ?? 0) + 1),
+      };
+      if (!STEADY_PERSISTED_FAMILIES.has(saved.family)) {
+        // App exited mid-turn: settle the restored stage cleanly to its
+        // report-ready or completed scene while preserving any real spoken copy.
+        if (persistedReportUri) {
+          hydrated = reportReadyLiveStage(hydrated, persistedReportUri, nowMs);
+          if (saved.captionSource === 'specific' && saved.headline) {
+            hydrated = {
+              ...hydrated,
+              headline: saved.headline,
+              ...(saved.caption ? { caption: saved.caption } : {}),
+              captionSource: 'specific',
+            };
+          }
+        } else if (saved.captionSource === 'specific' && saved.headline) {
+          hydrated = completeLiveStage(
+            { ...hydrated, family: 'speaking', captionSource: 'specific' },
+            nowMs,
+          );
+        } else {
+          const fallbackSpeech = latestAssistantSummaryFromSession(session);
+          if (fallbackSpeech) {
+            hydrated = completeLiveStage(applyLiveStageSpeech(run.state, fallbackSpeech, nowMs), nowMs);
+          } else {
+            hydrated = { ...run.state, ...(persistedReportUri ? { reportUri: persistedReportUri } : {}) };
+          }
+        }
+      } else if (saved.family === 'waiting') {
+        // Delegations have since finished while the app was closed: settle to
+        // report-ready or complete rather than showing a phantom wait.
+        hydrated = persistedReportUri
+          ? reportReadyLiveStage(hydrated, persistedReportUri, nowMs)
+          : completeLiveStage(hydrated, nowMs);
+      } else if (saved.family === 'idle' && persistedReportUri) {
+        hydrated = reportReadyLiveStage(hydrated, persistedReportUri, nowMs);
+      }
+      run.state = enrichChiefOfStaffState(run, hydrated);
+      run.finished = run.state.family !== 'idle';
+      run.errored = run.state.family === 'problem';
+      run.reportProjected = Boolean(run.state.reportUri);
+      run.deliveredRevision = -1;
+      projectStage(run);
+      return run;
+    }
+
+    // Fallback reconstruction for sessions that predate snapshot persistence:
+    // rebuild the stage's last resting state from `session.browserUri` and the
+    // latest assistant conclusion so reopening an existing Studio conversation
+    // keeps its report button and summary instead of wiping to blank idle.
+    const lastSummary = latestAssistantSummaryFromSession(session);
+    let reconstructed = run.state;
+    if (lastSummary) {
+      reconstructed = applyLiveStageSpeech(reconstructed, lastSummary, nowMs);
+    }
+    if (persistedReportUri) {
+      const spokenHeadline = lastSummary ? reconstructed.headline : '';
+      const spokenCaption = lastSummary ? reconstructed.caption : '';
+      reconstructed = reportReadyLiveStage(reconstructed, persistedReportUri, nowMs);
+      if (spokenHeadline) {
+        reconstructed = {
+          ...reconstructed,
+          headline: spokenHeadline,
+          ...(spokenCaption ? { caption: spokenCaption } : {}),
+          captionSource: 'specific',
+        };
+      }
+    } else if (lastSummary) {
+      reconstructed = completeLiveStage(reconstructed, nowMs);
+    }
+    run.state = enrichChiefOfStaffState(run, reconstructed);
+    run.finished = run.state.family !== 'idle';
+    run.reportProjected = Boolean(run.state.reportUri);
+    run.deliveredRevision = -1;
     projectStage(run);
     return run;
   }
@@ -967,7 +1244,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
       projectStage(existing);
       return;
     }
-    ensureRun(sessionId, { idle: true });
+    restoreSessionRun(sessionId);
   }
 
   /**
@@ -1473,6 +1750,7 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     const run = runs.get(sessionId);
     if (run) teardownRun(run);
     runs.delete(sessionId);
+    removePersistedSessionStageState(sessionId);
   }
 
   function refreshChiefOfStaffHud(targetSessionId?: string): void {
@@ -1513,6 +1791,9 @@ export function createStudioLiveStageService(deps: StudioLiveStageServiceDeps) {
     getRunInternals: (sessionId: string) => runs.get(sessionId) ?? null,
     dispose: () => {
       for (const run of runs.values()) {
+        if (run.state.family !== 'idle' || run.state.reportUri) {
+          persistSessionStageState(run.state.sessionId, run.state);
+        }
         teardownRun(run);
       }
       runs.clear();

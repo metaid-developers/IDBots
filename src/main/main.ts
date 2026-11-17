@@ -132,6 +132,8 @@ import { OpenTeamMembershipStore } from './openTeamMembershipStore';
 import { DialogueCognitionStore } from './dialogueCognitionStore';
 import { OrchestrationStore } from './orchestrationStore';
 import { StudioDecisionQueueStore } from './studioDecisionQueueStore';
+import { TwinTodoStore } from './twinTodoStore';
+import { inferProjectKeyFromWorkspace } from './libs/twinTodoAgentTools';
 import {
   StudioChiefOfStaffService,
   STUDIO_CHIEF_OF_STAFF_INTERVAL_MS,
@@ -7367,6 +7369,7 @@ const getCoworkRunner = () => {
             const twin = getMetabotStore().listMetabots().find((bot) => bot.metabot_type === 'twin' && bot.enabled);
             if (twin) {
               for (const openItem of getStudioDecisionQueueStore().listOpen(twin.id)) {
+                if (openItem.status !== 'presenting') continue;
                 const belongsToSession = openItem.presentedSessionId === sessionId
                   || (openItem.originStudioSessionId === sessionId && openItem.presentedAt != null);
                 if (belongsToSession) {
@@ -7389,6 +7392,8 @@ const getCoworkRunner = () => {
             broadcastLongTermTaskUpdate([], 'studio_delegation_dispatched');
           } else if (cos.getOriginStudioSessionForSupervision(sessionId)) {
             broadcastLongTermTaskUpdate([], 'studio_supervision_redelegated');
+          } else if (res?.task?.longtermTaskId) {
+            broadcastLongTermTaskUpdate([res.task.longtermTaskId], 'delegation_dispatched');
           }
         } catch {
           // Best-effort Studio queue/status convergence.
@@ -8053,6 +8058,31 @@ const getCoworkRunner = () => {
         },
         dispatchTwinStampPublish: (sid, input) =>
           getStudioChiefOfStaffService().dispatchTwinStampPublish(sid, input),
+      },
+      twinTodoTools: {
+        isEnabledForSession: (sid) => {
+          const sess = getCoworkStore().getSessionWithoutMessages(sid);
+          if (!sess?.metabotId) return false;
+          const bot = getMetabotStore().getMetabotById(sess.metabotId);
+          return Boolean(bot && bot.metabot_type === 'twin');
+        },
+        resolveMetabotId: (sid) => {
+          const sess = getCoworkStore().getSessionWithoutMessages(sid);
+          if (sess?.metabotId) return sess.metabotId;
+          const twin = getMetabotStore().listMetabots().find((bot) => bot.metabot_type === 'twin' && bot.enabled);
+          return twin?.id ?? null;
+        },
+        resolveSessionDefaults: (sid) => {
+          const originStudioSid = getStudioChiefOfStaffService().getOriginStudioSessionForSupervision(sid);
+          const effectiveSid = originStudioSid || sid;
+          const sess = getCoworkStore().getSessionWithoutMessages(effectiveSid)
+            ?? getCoworkStore().getSessionWithoutMessages(sid);
+          return {
+            sessionId: effectiveSid || null,
+            projectKey: inferProjectKeyFromWorkspace(sess?.projectId ?? null, sess?.cwd ?? null),
+          };
+        },
+        store: () => getTwinTodoStore(),
       },
       getStudioVolatileContextPrompt: (sid) =>
         getStudioChiefOfStaffService().buildVolatileTurnContext(sid),
@@ -9548,15 +9578,17 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
         const candidateById = new Map(candidates.map((c) => [c.id, c]));
 
         // Track ALL parallel active tasks belonging to this Studio conversation:
-        //  1) explicit focused task;
+        //  1) all active focused tasks of this Studio session (MRU history);
         //  2) active tasks born in `sessionId` (`definitionSessionId === sessionId`);
         //  3) active tasks linked by currently open/verifying Studio delegations;
         //  4) synthesized live rows for open Studio delegations whose linked
-        //     `longtermTaskId` was already closed (`done`) or absent.
+        //     `longtermTaskId` was already closed (`done`), absent, or belongs
+        //     to another conversation's project card with a distinct Studio goal.
         const currentIds = new Set<string>();
-        const explicitFocus = getStudioChiefOfStaffService().getFocusedTaskId(sessionId);
-        if (explicitFocus && candidateById.has(explicitFocus)) {
-          currentIds.add(explicitFocus);
+        for (const focusedId of getStudioChiefOfStaffService().getFocusedTaskIds(sessionId)) {
+          if (candidateById.has(focusedId)) {
+            currentIds.add(focusedId);
+          }
         }
         if (sessionId) {
           for (const card of candidates) {
@@ -9580,15 +9612,29 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
           const attempt = getOrchestrationStore().getAttempt(rawAttemptId);
           const orchTask = attempt ? getOrchestrationStore().getTaskForStep(attempt.stepId) : null;
           const ltId = orchTask?.longtermTaskId ?? null;
-          if (ltId && candidateById.has(ltId)) {
-            currentIds.add(ltId);
+          const linkedCard = ltId ? candidateById.get(ltId) ?? null : null;
+          const linkedDetail = ltId ? ltStore.getTask(ltId) : null;
+          const entryTitle = String(entry.title || orchTask?.ownerIntent || '').trim();
+          const hijackedForeignProjectCard = Boolean(
+            linkedCard
+            && linkedDetail
+            && linkedDetail.taskKind === 'project'
+            && linkedDetail.definitionSessionId !== sessionId
+            && orchTask?.sourceSessionId === sessionId
+            && entryTitle
+            && entryTitle !== linkedCard.title
+            && entryTitle !== linkedCard.currentSubtaskTitle,
+          );
+          if (linkedCard && !hijackedForeignProjectCard) {
+            currentIds.add(linkedCard.id);
           } else {
+            if (linkedCard) currentIds.add(linkedCard.id);
             const synthKey = orchTask?.id ?? rawAttemptId;
             if (seenSynthOrchIds.has(synthKey)) continue;
             seenSynthOrchIds.add(synthKey);
             synthesizedCurrent.push({
               id: `orch:${synthKey}`,
-              title: entry.title || orchTask?.ownerIntent || '后台协作任务',
+              title: entryTitle || '后台协作任务',
               state: 'in_progress',
               accepted: 0,
               total: 1,
@@ -10301,8 +10347,19 @@ const broadcastLongTermTaskUpdate = (taskIds: string[], reason: string): void =>
 };
 
 let studioDecisionQueueStore: StudioDecisionQueueStore | null = null;
+let twinTodoStore: TwinTodoStore | null = null;
 let preferredStudioOpenSessionId: string | null = null;
 const lastStudioProjectionAtMs = new Map<string, number>();
+const getTwinTodoStore = () => {
+  if (!twinTodoStore) {
+    const sqliteStore = getStore();
+    twinTodoStore = new TwinTodoStore(
+      sqliteStore.getDatabase(),
+      sqliteStore.getSaveFunction(),
+    );
+  }
+  return twinTodoStore;
+};
 const getStudioDecisionQueueStore = () => {
   if (!studioDecisionQueueStore) {
     const sqliteStore = getStore();
@@ -10339,6 +10396,8 @@ const getStudioChiefOfStaffService = () => {
       getAppLanguage: () => getPersistedAppLanguage(),
       getPreferredStudioSessionId: () => preferredStudioOpenSessionId,
       getStudioContinuity: (twinMetabotId) => getDreamStore().getStudioContinuity(twinMetabotId),
+      listPendingTwinTodos: (twinMetabotId) =>
+        getTwinTodoStore().list({ metabotId: twinMetabotId, includeDone: false, limit: 15 }),
       hasDefiningDraftForSession: (sid) => {
         const ltStore = getLongTermTaskStore();
         return ltStore

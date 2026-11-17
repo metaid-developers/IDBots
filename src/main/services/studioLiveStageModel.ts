@@ -296,6 +296,7 @@ export function createLiveStageState(context: LiveStageSessionContext): LiveStag
 
 function familyForTool(toolName: string): LiveStageFamily | null {
   const name = toolName.toLowerCase();
+  if (name === 'twin_todo' || name === 'todo_write' || name === 'todowrite') return null;
   if (name === 'ask_user_question') return 'owner-needed';
   if (name === 'local_worker_delegate' || name === 'idbots_session_insert_user_message' || name === 'twin_task_reassign') return 'delegation';
   if (name === 'longterm_subtask_wait' || name === 'twin_task_status') return 'waiting';

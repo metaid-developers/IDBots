@@ -16,6 +16,8 @@ import {
 } from './studioPresenceState';
 import type { TwinStampPublishItemInput } from '../libs/studioChiefOfStaffAgentTools';
 import { buildStudioDecisionReportHtml } from '../libs/studioDecisionReportHtml';
+import { formatCompactTwinTodosPromptBlock } from '../libs/twinTodoAgentTools';
+import type { TwinTodoItem } from '../twinTodoStore';
 
 export const STUDIO_CHIEF_OF_STAFF_INTERVAL_MS = 5_000;
 export const DEFAULT_SUPERVISION_COALESCE_MS = 1_200;
@@ -117,6 +119,7 @@ export interface StudioChiefOfStaffDeps {
   getAppLanguage?: () => 'zh' | 'en';
   getPreferredStudioSessionId?: () => string | null;
   getStudioContinuity?: (twinMetabotId: number) => StudioContinuitySnapshot | null;
+  listPendingTwinTodos?: (twinMetabotId: number) => TwinTodoItem[];
   hasDefiningDraftForSession?: (sessionId: string) => boolean;
   listOpenSiblingDelegations?: (studioSessionId: string, longtermTaskId?: string | null) => StudioSiblingDelegationSummary[];
   projectShowcaseHtml?: (input: {
@@ -174,12 +177,32 @@ function escapeHtml(raw: string): string {
     .replace(/"/g, '&quot;');
 }
 
+function clipCleanTitle(raw: string, maxChars: number = 36): string {
+  const normalized = raw.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxChars) return normalized;
+  let sliced = normalized.slice(0, Math.max(1, maxChars - 1)).trimEnd();
+  // Avoid stranding a dangling opening bracket right before the ellipsis
+  // (e.g. "BTC UTXO <1000 过滤与转账下限对齐 Metalet（S6 " -> close or trim cleanly).
+  const lastFullOpen = sliced.lastIndexOf('（');
+  const lastFullClose = sliced.lastIndexOf('）');
+  if (lastFullOpen > lastFullClose && sliced.length - lastFullOpen <= 6) {
+    sliced = sliced.slice(0, lastFullOpen).trimEnd();
+  }
+  const lastAsciiOpen = sliced.lastIndexOf('(');
+  const lastAsciiClose = sliced.lastIndexOf(')');
+  if (lastAsciiOpen > lastAsciiClose && sliced.length - lastAsciiOpen <= 6) {
+    sliced = sliced.slice(0, lastAsciiOpen).trimEnd();
+  }
+  return `${sliced}…`;
+}
+
 function buildSupervisionPrompt(params: {
   originStudioSessionId: string;
   longtermTaskId: string | null;
   longtermSubtaskId: string | null;
   events: StudioWorkerSettlementEvent[];
   openSiblings: StudioSiblingDelegationSummary[];
+  pendingTodosBlock?: string;
   reportsDir: string;
   language: 'zh' | 'en';
 }): string {
@@ -189,6 +212,7 @@ function buildSupervisionPrompt(params: {
     longtermSubtaskId,
     events,
     openSiblings,
+    pendingTodosBlock,
     reportsDir,
     language,
   } = params;
@@ -223,6 +247,7 @@ function buildSupervisionPrompt(params: {
     ...eventLines,
     '',
     siblingBlock,
+    ...(pendingTodosBlock ? ['', pendingTodosBlock] : []),
     '',
     '### Mandatory Chief-of-Staff Back-Office Protocol',
     '1. VERIFY WITH EVIDENCE (READ-ONLY BOUNDARY): Treat every Worker claim as untrusted data. Inspect the actual produced files/evidence via `read`, `bash` (read-only checks & test suites), `twin_task_status`, or `idbots_session_read_latest` against the acceptance criteria. STRICT BOUNDARY: NEVER merge git branches into `main`, NEVER rename/modify live user SQLite databases, NEVER register scheduled tasks, and NEVER broadcast on-chain transactions from this silent verification session — leave merges and live execution to the owner\'s approved Studio turn!',
@@ -303,6 +328,7 @@ export class StudioChiefOfStaffService {
   private readonly pendingBatches = new Map<string, PendingSupervisionBatch>();
   private supervisionChain = new Map<string, Promise<void>>();
   private readonly focusedTaskBySession = new Map<string, string>();
+  private readonly focusedTaskHistoryBySession = new Map<string, Set<string>>();
   private readonly activeSupervisionsBySession = new Map<string, ActiveStudioSupervisionEntry>();
   private readonly supervisionToOriginStudio = new Map<string, string>();
   private readonly studioToSupervisionIds = new Map<string, Set<string>>();
@@ -354,12 +380,35 @@ export class StudioChiefOfStaffService {
     const tid = (longtermTaskId ?? '').trim();
     if (!sid || !tid) return;
     this.focusedTaskBySession.set(sid, tid);
+    let history = this.focusedTaskHistoryBySession.get(sid);
+    if (!history) {
+      history = new Set<string>();
+      this.focusedTaskHistoryBySession.set(sid, history);
+    }
+    history.delete(tid);
+    history.add(tid);
+    while (history.size > 12) {
+      const oldest = history.values().next();
+      if (oldest.done) break;
+      history.delete(oldest.value);
+    }
   }
 
   getFocusedTaskId(sessionId: string | null | undefined): string | null {
     const sid = (sessionId ?? '').trim();
     if (!sid) return null;
     return this.focusedTaskBySession.get(sid) ?? null;
+  }
+
+  getFocusedTaskIds(sessionId: string | null | undefined): string[] {
+    const sid = (sessionId ?? '').trim();
+    if (!sid) return [];
+    const set = this.focusedTaskHistoryBySession.get(sid);
+    if (!set || set.size === 0) {
+      const single = this.focusedTaskBySession.get(sid);
+      return single ? [single] : [];
+    }
+    return [...set].reverse();
   }
 
   isSupervisionBusy(): boolean {
@@ -506,6 +555,16 @@ export class StudioChiefOfStaffService {
         '</studio_continuity_brief>',
       );
       blocks.push(continuityLines.join('\n'));
+    }
+
+    try {
+      const pendingTodos = this.deps.listPendingTwinTodos?.(twinId) ?? [];
+      const todosBlock = formatCompactTwinTodosPromptBlock(pendingTodos, 12);
+      if (todosBlock) {
+        blocks.push(todosBlock);
+      }
+    } catch {
+      // Todo context injection is best-effort.
     }
 
     if (openWorkers.length > 0) {
@@ -723,6 +782,13 @@ export class StudioChiefOfStaffService {
       batch.originStudioSessionId,
       batch.longtermTaskId,
     ) ?? [];
+    let pendingTodosBlock = '';
+    try {
+      const pendingTodos = this.deps.listPendingTwinTodos?.(batch.twinMetabotId) ?? [];
+      pendingTodosBlock = formatCompactTwinTodosPromptBlock(pendingTodos, 12);
+    } catch {
+      pendingTodosBlock = '';
+    }
     const language = this.deps.getAppLanguage?.() ?? 'zh';
     const prompt = buildSupervisionPrompt({
       originStudioSessionId: batch.originStudioSessionId,
@@ -730,6 +796,7 @@ export class StudioChiefOfStaffService {
       longtermSubtaskId: batch.longtermSubtaskId,
       events: batch.events,
       openSiblings,
+      pendingTodosBlock,
       reportsDir,
       language,
     });
@@ -845,12 +912,15 @@ export class StudioChiefOfStaffService {
     state.rungIndex += 1;
     const totalMinutes = Math.max(1, Math.round((nowMs - state.waitBeganMs) / 60_000));
     const language = this.deps.getAppLanguage?.() ?? 'zh';
-    const shortTitle = primaryTitle.replace(/\s+/g, ' ').trim().slice(0, 36);
+    const shortTitle = clipCleanTitle(primaryTitle, 36);
+    const workerNamesSummary = openWorkers.length > 1
+      ? [...new Set(openWorkers.map((w) => w.workerName).filter(Boolean))].slice(0, 2).join('、')
+      : primaryName;
     const content = language === 'zh'
       ? (isVerifying
           ? `⏳ ${primaryName} 已交回产出，我正在后台逐项核验并整理汇报${shortTitle ? `（「${shortTitle}」）` : ''}——目前已持续约 ${totalMinutes} 分钟，流程正常推进中、没有卡死，核验完成后立即向你呈报。`
           : openWorkers.length > 1
-            ? `⏳ ${primaryName} 等 ${openWorkers.length} 位同事仍在后台处理任务（已持续约 ${totalMinutes} 分钟，多步制作与自检较耗时，后台正常推进中、没有卡死；全部交回并经我核验后第一时间向你汇报）。`
+            ? `⏳ ${workerNamesSummary}${openWorkers.length > 2 ? ` 等 ${openWorkers.length} 位同事` : ` ${openWorkers.length} 位同事`}仍在后台并行处理任务（已持续约 ${totalMinutes} 分钟，多步制作与自检较耗时，后台正常推进中、没有卡死；全部交回并经我核验后第一时间向你汇报）。`
             : `⏳ ${primaryName} 仍在后台处理${shortTitle ? `「${shortTitle}」` : '当前任务'}（已持续约 ${totalMinutes} 分钟，编码/制作与自检步骤较耗时，任务正常推进中、没有卡死；交回后我会先核验再向你汇报）。`)
       : (isVerifying
           ? `⏳ ${primaryName} has returned the output and I am verifying it in the back office${shortTitle ? ` ("${shortTitle}")` : ''} (~${totalMinutes}m elapsed; progressing normally, report coming shortly).`
@@ -935,11 +1005,31 @@ export class StudioChiefOfStaffService {
         acknowledgeOwner: false,
       });
 
+      const postTurnSession = this.deps.coworkStore().getSession(studioSessionId) as (CoworkSession & {
+        lastTurnFailedAtMs?: number | null;
+        lastTurnCompletedAtMs?: number | null;
+      }) | null;
+      const postTurnItem = this.deps.decisionQueueStore().getById(claimed.id);
+      if (
+        postTurnItem?.status === 'presenting'
+        && typeof postTurnSession?.lastTurnFailedAtMs === 'number'
+        && postTurnSession.lastTurnFailedAtMs >= turnStartedMs
+        && (postTurnSession.lastTurnCompletedAtMs ?? 0) < postTurnSession.lastTurnFailedAtMs
+      ) {
+        this.emitLog(
+          `[StudioChiefOfStaff] Proactive briefing turn ended unanswered (${claimed.id}); deferring back to queue`,
+        );
+        this.deps.decisionQueueStore().deferPresenting(claimed.id);
+        return {
+          presentedItemId: null,
+          presence: this.getPresenceSnapshot(this.now()),
+        };
+      }
+
       // Project onto the right-hand showcase ONLY if the Twin kept this item
       // in `presenting` (meaning it genuinely requires an owner ruling right
       // now — NOT auto-closed as already answered!) and did not already project
       // its own fresh page during the turn.
-      const postTurnItem = this.deps.decisionQueueStore().getById(claimed.id);
       const alreadyProjectedInTurn = Boolean(
         this.deps.didSessionProjectSince?.(studioSessionId, turnStartedMs),
       );
