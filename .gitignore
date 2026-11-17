@@ -1006,6 +1006,9 @@ blob-report/
 !tests/meI18nParity.test.mjs
 # ME history and order payload compatibility
 !tests/mePointsHistory.test.mjs
+!tests/meChargeService.test.mjs
+!tests/meChargeAgentTools.test.mjs
+!tests/meChargeConfirmationGate.test.mjs
 # Settings > Models provider template catalog (ZCode port) + layout anchors
 !tests/providerTemplateCatalog.test.ts
 !tests/seedreamImageExtension.test.mjs
