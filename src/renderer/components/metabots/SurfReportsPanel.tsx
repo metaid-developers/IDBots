@@ -1,17 +1,22 @@
 /**
- * MetaWeb surf run-history panel ("AI 冲浪" reports).
+ * MetaWeb surf run-history panel ("AI 冲浪" reports), indexed by day.
  *
- * Lists the bot's recent surf runs (newest first) with a status badge, the
- * run trigger, its start time and a one-line stats summary; clicking a run
- * expands/collapses its full markdown surf report. Reloads on mount, on the
- * metabotId change, on the refresh button, and whenever the parent bumps
- * refreshToken (the surfStatusChanged broadcast for this bot).
+ * A mini month calendar sits in the header where the manual refresh button
+ * used to live: days that hold surf runs carry a marker dot, and picking a
+ * day lists that day's runs (newest first) with the same expandable report
+ * cards. The panel opens on the most recent day that has records, so the
+ * newest report is visible immediately instead of a blank list.
+ *
+ * Freshness is push-based: the parent bumps refreshToken on every
+ * surfStatusChanged event for this bot, which reloads the day markers and
+ * re-reads the selected day's runs — there is no manual refresh.
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowPathIcon, ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import MarkdownContent from '../MarkdownContent';
+import MiniMonthCalendar from '../ui/MiniMonthCalendar';
 import type { MetawebSurfRunInfo, MetawebSurfRunStats, MetawebSurfRunStatus, MetawebSurfTrigger } from '../../types/metawebSurf';
 
 interface SurfReportsPanelProps {
@@ -23,7 +28,6 @@ interface SurfReportsPanelProps {
 // Replicated from MetawebStudyJobsPanel (kept in sync with the edit-tab chrome).
 const hintClass = 'text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1';
 const cardClass = 'rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 p-4 space-y-3';
-const actionBtnClass = 'inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
 
 const STATUS_BADGE_CLASS: Record<MetawebSurfRunStatus, string> = {
   running: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/30',
@@ -62,17 +66,48 @@ const formatRunStats = (stats: MetawebSurfRunStats): string => {
   return parts.join(' · ');
 };
 
+/**
+ * Half-open UTC-day boundaries (`>=` start, `<` end) of a `YYYY-MM-DD` day
+ * key, as ISO strings for the store's range query. Day attribution follows
+ * `created_at`'s own UTC prefix — the same coordinate system as the
+ * `listRunDays` markers — so a marker dot, the day it selects, and the runs
+ * that day view loads always agree.
+ */
+const dayKeyToUtcRangeIso = (dayKey: string): { dayStartIso: string; dayEndIso: string } | null => {
+  const startMs = Date.parse(`${dayKey}T00:00:00.000Z`);
+  if (!Number.isFinite(startMs)) return null;
+  return {
+    dayStartIso: new Date(startMs).toISOString(),
+    dayEndIso: new Date(startMs + 24 * 60 * 60 * 1000).toISOString(),
+  };
+};
+
 const SurfReportsPanel: React.FC<SurfReportsPanelProps> = ({ metabotId, refreshToken }) => {
   const [runs, setRuns] = useState<MetawebSurfRunInfo[]>([]);
+  const [runDays, setRunDays] = useState<string[]>([]);
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [panelError, setPanelError] = useState('');
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const [expandedDigestRunId, setExpandedDigestRunId] = useState<string | null>(null);
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  // Current selection, readable inside the load effect without becoming a
+  // dependency (a pick re-loads its day itself; the effect must not re-fire).
+  const selectedDayRef = useRef<string | null>(null);
+  // Which bot's day index has seeded the default selection in this mounted
+  // panel. A bot switch re-seeds; a push (refreshToken) must never yank the
+  // user away from the day they are reading.
+  const seededBotRef = useRef<number | null>(null);
 
-  const loadRuns = useCallback(async () => {
+  const loadRunsForDay = useCallback(async (dayKey: string) => {
+    const range = dayKeyToUtcRangeIso(dayKey);
+    if (!range) {
+      setRuns([]);
+      setLoaded(true);
+      return;
+    }
     try {
-      const result = await window.electron.surf.listRuns(metabotId, 20);
+      const result = await window.electron.surf.listRunsByDay(metabotId, range.dayStartIso, range.dayEndIso);
       if (result.success && result.runs) {
         setRuns(result.runs);
         setPanelError('');
@@ -86,11 +121,58 @@ const SurfReportsPanel: React.FC<SurfReportsPanelProps> = ({ metabotId, refreshT
     }
   }, [metabotId]);
 
-  // (Re)load when a different bot is loaded into the same mounted editor and
-  // whenever a surf run for this bot starts or finishes (refreshToken bump).
+  const pickDay = useCallback((dayKey: string) => {
+    selectedDayRef.current = dayKey;
+    setSelectedDay(dayKey);
+    void loadRunsForDay(dayKey);
+  }, [loadRunsForDay]);
+
+  // (Re)load the day index when a different bot is loaded into the same
+  // mounted editor and whenever a surf run for this bot starts or finishes
+  // (refreshToken bump — the push channel that replaced the manual refresh
+  // button). On the first load for a bot the newest day with records becomes
+  // the selection, so the panel opens on the freshest report; afterwards the
+  // user's picked day is kept and only re-read.
   useEffect(() => {
-    void loadRuns();
-  }, [loadRuns, refreshToken]);
+    let cancelled = false;
+    void (async () => {
+      const seed = seededBotRef.current !== metabotId;
+      try {
+        const result = await window.electron.surf.listRunDays(metabotId);
+        if (cancelled) return;
+        if (!result.success || !result.days) {
+          setPanelError(result.error || i18nService.t('surfReportsLoadFailed'));
+          setLoaded(true);
+          return;
+        }
+        setRunDays(result.days);
+        if (seed) {
+          seededBotRef.current = metabotId;
+          const newestDay = result.days[0] ?? null;
+          selectedDayRef.current = newestDay;
+          setSelectedDay(newestDay);
+          if (newestDay) {
+            await loadRunsForDay(newestDay);
+            return;
+          }
+          setRuns([]);
+          setLoaded(true);
+          return;
+        }
+        const current = selectedDayRef.current;
+        if (current) {
+          await loadRunsForDay(current);
+        }
+      } catch (error) {
+        if (cancelled) return;
+        setPanelError(error instanceof Error ? error.message : i18nService.t('surfReportsLoadFailed'));
+        setLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [metabotId, refreshToken, loadRunsForDay]);
 
   // Collapse any expanded report when switching bots.
   useEffect(() => {
@@ -109,6 +191,8 @@ const SurfReportsPanel: React.FC<SurfReportsPanelProps> = ({ metabotId, refreshT
       card.scrollIntoView({ block: 'nearest' });
     }
   }, [expandedRunId]);
+
+  const markedDayKeys = useMemo(() => new Set(runDays), [runDays]);
 
   const renderRunCard = (run: MetawebSurfRunInfo) => {
     const expanded = expandedRunId === run.id;
@@ -202,7 +286,7 @@ const SurfReportsPanel: React.FC<SurfReportsPanelProps> = ({ metabotId, refreshT
 
   return (
     <div className="space-y-3" data-slot="surf-reports-panel">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider dark:text-claude-darkTextSecondary text-claude-textSecondary">
           <span>{i18nService.t('surfReportsTitle')}</span>
           <span
@@ -212,21 +296,20 @@ const SurfReportsPanel: React.FC<SurfReportsPanelProps> = ({ metabotId, refreshT
             {runs.length}
           </span>
         </div>
-        <button
-          type="button"
-          data-slot="surf-reports-refresh"
-          onClick={() => void loadRuns()}
-          className={actionBtnClass}
-        >
-          <ArrowPathIcon className="h-4 w-4" aria-hidden />
-          {i18nService.t('surfReportsRefresh')}
-        </button>
+        {loaded && runDays.length > 0 ? (
+          <MiniMonthCalendar
+            markedDayKeys={markedDayKeys}
+            selectedDayKey={selectedDay}
+            onPick={pickDay}
+          />
+        ) : null}
       </div>
       {panelError ? (
         <p className="text-xs text-red-600 dark:text-red-400">{panelError}</p>
-      ) : null}
-      {loaded && !panelError && runs.length === 0 ? (
+      ) : loaded && runDays.length === 0 ? (
         <p className={hintClass}>{i18nService.t('surfReportsEmpty')}</p>
+      ) : loaded && runs.length === 0 ? (
+        <p className={hintClass}>{i18nService.t('surfReportsDayEmpty')}</p>
       ) : (
         <div
           data-slot="surf-reports-list"

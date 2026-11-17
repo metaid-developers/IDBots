@@ -18256,6 +18256,32 @@ if (!gotTheLock) {
       }
     }));
 
+  registerIpcHandler('surf:listRunsByDay', async (_event, metabotId: number, dayStartIso: string, dayEndIso: string) =>
+    withSqliteRecovery('surf:listRunsByDay', async () => {
+      try {
+        const runs = getMetawebSurfStore().listRunsByMetabotAndDay(
+          Number(metabotId),
+          String(dayStartIso),
+          String(dayEndIso),
+        );
+        return { success: true, runs };
+      } catch (error) {
+        rethrowSqliteWasmBoundsError(error);
+        return { success: false, error: error instanceof Error ? error.message : 'Failed to list surf runs by day' };
+      }
+    }));
+
+  registerIpcHandler('surf:listRunDays', async (_event, metabotId: number) =>
+    withSqliteRecovery('surf:listRunDays', async () => {
+      try {
+        const days = getMetawebSurfStore().listRunDays(Number(metabotId));
+        return { success: true, days };
+      } catch (error) {
+        rethrowSqliteWasmBoundsError(error);
+        return { success: false, error: error instanceof Error ? error.message : 'Failed to list surf run days' };
+      }
+    }));
+
   registerIpcHandler('surf:runNow', async (_event, metabotId: number) =>
     withSqliteRecovery('surf:runNow', async () => {
       try {
