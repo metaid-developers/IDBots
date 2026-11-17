@@ -30,8 +30,9 @@ import React, { useEffect, useState } from 'react';
  * macOS green-dot semantic; the bridge verb is toggleMaximize.
  *
  * Focus dimming (owner ruling 2026-11-17, macOS-native semantics): an
- * UNFOCUSED window dims all three dots to gray (#C9C9CA) — gray dots stay
- * visible and clickable — and hovering the lights strip relights them.
+ * UNFOCUSED window dims all three dots to theme gray — #C9C9CA light /
+ * #565656 dark (tailwind darkMode:'class') — gray dots stay visible and
+ * clickable — and hovering the lights strip relights them.
  * Focus OR hover restores the red/amber/green trio with a 150ms
  * transition-colors fade. The focus state rides the EXISTING
  * window:state-changed IPC (preload onStateChanged, no new channels);
@@ -56,11 +57,19 @@ export const MAC_LIGHT_DOT_COLORS = {
 } as const;
 
 /**
- * Unfocused-and-unhovered dot color (macOS native gray lights; they stay
- * clickable while dimmed). Module-local on purpose — NOT part of the export
- * API, so every existing MAC_LIGHT_* constant keeps its value and shape.
+ * Dot background, switched by focus state via literal tailwind classes (the
+ * JIT compiler collects both variants from these source literals):
+ *  - dimmed (unfocused AND unhovered): macOS-native gray lights that stay
+ *    clickable while dimmed — theme split per darkMode:'class':
+ *    #C9C9CA light / #565656 dark.
+ *  - lit: bg-[var(--dot-color)] fed by the inline `--dot-color` custom
+ *    property (same idiom as ProposalCard) — the red/amber/green trio keeps
+ *    its exact values with NO dark variant.
+ * Module-local on purpose — NOT part of the export API, so every existing
+ * MAC_LIGHT_* constant keeps its value and shape.
  */
-const DIM_DOT_COLOR = '#C9C9CA';
+const DIM_DOT_CLASSES = 'bg-[#C9C9CA] dark:bg-[#565656]';
+const LIT_DOT_CLASSES = 'bg-[var(--dot-color)]';
 
 export type MacWindowAction = 'close' | 'minimize' | 'zoom';
 
@@ -142,8 +151,8 @@ const MacWindowLights: React.FC<MacWindowLightsProps> = ({ platform }) => {
           aria-label={dot.label}
           title={dot.label}
           onClick={dot.activate}
-          className="non-draggable h-[10px] w-[10px] rounded-full transition-colors duration-150 hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
-          style={{ backgroundColor: lit ? dot.color : DIM_DOT_COLOR }}
+          className={`non-draggable h-[10px] w-[10px] rounded-full transition-colors duration-150 hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40 ${lit ? LIT_DOT_CLASSES : DIM_DOT_CLASSES}`}
+          style={{ '--dot-color': dot.color } as React.CSSProperties}
         />
       ))}
     </div>
