@@ -17,9 +17,9 @@ import {
   ExclamationTriangleIcon,
   ArrowPathIcon,
   ArrowLeftIcon,
-  ArrowRightStartOnRectangleIcon,
   CreditCardIcon,
   ChevronRightIcon,
+  PencilIcon,
 } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import { coworkService } from '../../services/cowork';
@@ -1058,38 +1058,6 @@ const UserSettings: React.FC = () => {
       (!identity.sync_state && !chatPubkeyPinned);
     return (
       <div className="space-y-4">
-        {/* Header with backup + logout */}
-        <div className="flex items-center justify-between gap-3 pb-3 border-b dark:border-claude-darkBorder/60 border-claude-border/60">
-          <h3 className="text-sm font-medium dark:text-claude-darkText text-claude-text">
-            {i18nService.t('userSettingsProfileTitle')}
-          </h3>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setBackupModalOpen(true)}
-              className="inline-flex h-9 items-center px-3 text-xs font-medium justify-center gap-1.5 rounded-[var(--shape-radius-sm)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
-            >
-              <KeyIcon className="h-3.5 w-3.5" />
-              {i18nService.t('userSettingsBackupMnemonic')}
-            </button>
-            <button
-              type="button"
-              onClick={() => openLogoutModal('switch')}
-              className="inline-flex h-9 items-center px-3 text-xs font-medium justify-center gap-1.5 rounded-[var(--shape-radius-sm)] border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
-            >
-              <ArrowRightStartOnRectangleIcon className="h-3.5 w-3.5" />
-              {i18nService.t('userSettingsSwitchAccount')}
-            </button>
-            <button
-              type="button"
-              onClick={() => openLogoutModal('logout')}
-              className="inline-flex h-9 items-center justify-center px-3 text-xs font-semibold rounded-[var(--shape-radius-sm)] border border-red-600 text-red-600 hover:bg-red-600/5 transition-colors"
-            >
-              {i18nService.t('userSettingsLogout')}
-            </button>
-          </div>
-        </div>
-
         {/* Name missing warning */}
         {nameMissing && (
           <div className="flex items-start gap-3 rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3">
@@ -1100,22 +1068,9 @@ const UserSettings: React.FC = () => {
           </div>
         )}
 
-        {/* Identity card with editable name */}
-        <div className="flex items-start gap-4">
-          <div className="flex flex-col items-center gap-1.5 flex-shrink-0">
-            <NftAvatarFrame
-              avatar={identity.avatar}
-              fallbackSource={identity.avatar_fallback}
-              frameClassName="w-16 h-16 rounded-[8px]"
-              imgClassName="border dark:border-claude-darkBorder border-claude-border"
-              fallback={(
-                <div className="flex w-16 h-16 items-center justify-center rounded-[8px] dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border">
-                  <span className="text-xl font-semibold dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                    {nameInitial}
-                  </span>
-                </div>
-              )}
-            />
+        {/* Profile card: identity group (clickable avatar + inline name + daily message) with account actions */}
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-start gap-4">
             <button
               type="button"
               data-slot="user-avatar-set"
@@ -1125,56 +1080,88 @@ const UserSettings: React.FC = () => {
               }}
               disabled={avatarSaving}
               aria-expanded={avatarEditing}
-              className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-accent dark:hover:text-claude-accent hover:underline disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              aria-label={i18nService.t('metabotAvatarSet')}
+              className="group relative block flex-shrink-0 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {i18nService.t('metabotAvatarSet')}
-            </button>
-            {identity.avatar && (
-              <button
-                type="button"
-                onClick={() => { void handleAvatarChange(''); }}
-                disabled={avatarSaving}
-                className="text-xs text-red-500 hover:underline disabled:opacity-50"
-              >
-                {i18nService.t('userSettingsAvatarClear')}
-              </button>
-            )}
-          </div>
-          <div className="flex-1 min-w-0 space-y-1.5">
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                value={nameDraft}
-                onChange={(e) => {
-                  setNameDraft(e.target.value);
-                  if (nameError) setNameError('');
-                }}
-                disabled={nameSaving}
-                size={Math.max(nameDraft.length, i18nService.t('userSettingsNamePlaceholder').length * 2, 6)}
-                placeholder={i18nService.t('userSettingsNamePlaceholder')}
-                className="border-0 border-b border-[var(--color-primary)] bg-transparent px-0.5 text-[15px] font-semibold leading-[34px] text-claude-text dark:text-claude-darkText focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+              <NftAvatarFrame
+                avatar={identity.avatar}
+                fallbackSource={identity.avatar_fallback}
+                frameClassName="w-16 h-16 rounded-[8px]"
+                imgClassName="border dark:border-claude-darkBorder border-claude-border"
+                fallback={(
+                  <div className="flex w-16 h-16 items-center justify-center rounded-[8px] dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border">
+                    <span className="text-xl font-semibold dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                      {nameInitial}
+                    </span>
+                  </div>
+                )}
               />
-              {canSaveName && (
-                <button
-                  type="button"
-                  onClick={() => { void handleSaveName(); }}
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full border border-claude-border bg-claude-surface opacity-0 transition-opacity group-hover:opacity-100 dark:border-claude-darkBorder dark:bg-claude-darkSurface"
+              >
+                <PencilIcon className="h-3 w-3 text-claude-textSecondary dark:text-claude-darkTextSecondary" />
+              </span>
+            </button>
+            <div className="flex-1 min-w-0 space-y-1.5">
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={nameDraft}
+                  onChange={(e) => {
+                    setNameDraft(e.target.value);
+                    if (nameError) setNameError('');
+                  }}
                   disabled={nameSaving}
-                  className="shrink-0 inline-flex h-7 items-center justify-center px-3 text-xs font-medium rounded-[8px] bg-[var(--color-primary)] text-[#303133] border border-[var(--btn-primary-edge)] hover:brightness-105 disabled:opacity-50 disabled:cursor-not-allowed transition-[filter] cursor-pointer"
-                >
-                  {nameSaving ? i18nService.t('saving') : i18nService.t('save')}
-                </button>
+                  size={Math.max(nameDraft.length, i18nService.t('userSettingsNamePlaceholder').length * 2, 6)}
+                  placeholder={i18nService.t('userSettingsNamePlaceholder')}
+                  className="border-0 border-b border-[var(--color-primary)] bg-transparent px-0.5 text-[15px] font-semibold leading-[34px] text-claude-text dark:text-claude-darkText focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                />
+                {canSaveName && (
+                  <button
+                    type="button"
+                    onClick={() => { void handleSaveName(); }}
+                    disabled={nameSaving}
+                    className="shrink-0 inline-flex h-7 items-center justify-center px-3 text-xs font-medium rounded-[8px] bg-[var(--color-primary)] text-[#303133] border border-[var(--btn-primary-edge)] hover:brightness-105 disabled:opacity-50 disabled:cursor-not-allowed transition-[filter] cursor-pointer"
+                  >
+                    {nameSaving ? i18nService.t('saving') : i18nService.t('save')}
+                  </button>
+                )}
+              </div>
+              {signatureText && (
+                <p className="text-[13px] font-medium text-claude-text dark:text-claude-darkText truncate mt-1">
+                  {signatureText}
+                </p>
+              )}
+              {nameError && (
+                <div className="text-xs text-red-500 bg-red-500/10 px-3 py-2 rounded-lg">
+                  {nameError}
+                </div>
               )}
             </div>
-            {signatureText && (
-              <p className="text-[13px] font-medium text-claude-text dark:text-claude-darkText truncate mt-1">
-                {signatureText}
-              </p>
-            )}
-            {nameError && (
-              <div className="text-xs text-red-500 bg-red-500/10 px-3 py-2 rounded-lg">
-                {nameError}
-              </div>
-            )}
+          </div>
+          <div className="flex flex-shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setBackupModalOpen(true)}
+              className="inline-flex h-9 min-w-[128px] items-center justify-center whitespace-nowrap rounded-[var(--shape-radius-sm)] border px-3 text-xs font-medium transition-colors dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover"
+            >
+              {i18nService.t('userSettingsBackupMnemonic')}
+            </button>
+            <button
+              type="button"
+              onClick={() => openLogoutModal('switch')}
+              className="inline-flex h-9 min-w-[128px] items-center justify-center whitespace-nowrap rounded-[var(--shape-radius-sm)] border px-3 text-xs font-medium transition-colors dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover"
+            >
+              {i18nService.t('userSettingsSwitchAccount')}
+            </button>
+            <button
+              type="button"
+              onClick={() => openLogoutModal('logout')}
+              className="inline-flex h-9 min-w-[128px] items-center justify-center whitespace-nowrap rounded-[var(--shape-radius-sm)] border border-red-600 px-3 text-xs font-medium text-red-600 transition-colors hover:bg-red-600/5"
+            >
+              {i18nService.t('userSettingsLogout')}
+            </button>
           </div>
         </div>
 
