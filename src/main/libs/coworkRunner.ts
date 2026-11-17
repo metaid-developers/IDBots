@@ -337,6 +337,10 @@ import {
   type EscrowAgentToolsControl,
 } from './escrowAgentTools';
 import {
+  buildMeChargeAgentTools,
+  type MeChargeToolsControl,
+} from './meChargeAgentTools';
+import {
   buildPaymentCardAgentTools,
   type PaymentCardAgentToolsControl,
 } from './paymentCardAgentTools';
@@ -2596,6 +2600,13 @@ export interface CoworkRunnerOptions {
    */
   escrowTools?: { control: EscrowAgentToolsControl; orders: EscrowOrderStore };
   /**
+   * When set, every cowork session gets me_charge (G3): the buyer-side ME
+   * spend leg — status / freeze / capture / release / pay, signed with the
+   * SESSION BOT's own wallet. Off-chain ledger bookkeeping (no MVC tx), so no
+   * chain-write budget; the ME service's own bot daily pay limit is the cap.
+   */
+  meChargeTools?: MeChargeToolsControl;
+  /**
    * When set, every cowork session gets payment_card_emit (G1): the tool reads
    * the owner's S3 encrypted receiving info (decrypted in the main process)
    * and emits a real `pay-card` fence — the 设置 → 收款信息 → 卡 path without
@@ -2983,6 +2994,7 @@ export class CoworkRunner extends EventEmitter {
   private btcMultisigTools?: BtcMultisigToolsControl;
   private mrc721Tools?: Mrc721ToolsControl;
   private escrowTools?: { control: EscrowAgentToolsControl; orders: EscrowOrderStore };
+  private meChargeTools?: MeChargeToolsControl;
   private paymentCards?: PaymentCardAgentToolsControl;
   private visionRelay?: VisionRelayControl;
   private mediaTools?: MediaToolsControl;
@@ -3210,6 +3222,7 @@ export class CoworkRunner extends EventEmitter {
     this.btcMultisigTools = options?.btcMultisigTools;
     this.mrc721Tools = options?.mrc721Tools;
     this.escrowTools = options?.escrowTools;
+    this.meChargeTools = options?.meChargeTools;
     this.paymentCards = options?.paymentCards;
     this.visionRelay = options?.visionRelay;
     this.mediaTools = options?.mediaTools;
@@ -15220,6 +15233,19 @@ export class CoworkRunner extends EventEmitter {
           tool,
           control: this.escrowTools.control,
           orders: this.escrowTools.orders,
+          sessionId,
+          resolveMetabotId: (sid) => this.getMemoryBackend().resolveMetabotIdForMemory(sid) ?? undefined,
+        })
+      );
+    }
+    // me_charge (G3): the buyer-side ME spend leg, shared by the NFT purchase
+    // flow and (S8) paid chat / skill fees. Mounted BEFORE the payment-card
+    // block so a purchase session sees the payment tool next to mrc721_*.
+    if (this.meChargeTools) {
+      memoryTools.push(
+        ...buildMeChargeAgentTools({
+          tool,
+          control: this.meChargeTools,
           sessionId,
           resolveMetabotId: (sid) => this.getMemoryBackend().resolveMetabotIdForMemory(sid) ?? undefined,
         })

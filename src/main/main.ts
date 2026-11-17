@@ -270,6 +270,14 @@ import { getNftCaRegistry } from './services/nftCaService';
 import { parseNftAvatarReference, prepareNftAvatarForIdentity, resolveLatestNftAvatarForIdentity, resolveNftAvatar } from './services/nftAvatarService';
 import { initTrafficAccountService, registerTrafficAccountIpcHandlers } from './services/trafficAccountService';
 import { initMePointsService, registerMePointsIpcHandlers } from './services/mePointsService';
+import {
+  getMeChargeBalance,
+  listMeFreezes,
+  meCapture,
+  meFreeze,
+  mePay,
+  meRelease,
+} from './services/meChargeService';
 import { startCreditPullLoop, type CreditPullLoop } from './services/creditPullService';
 import { initBundleService, registerBundleIpcHandlers } from './services/bundleService';
 import { initLlmRelayService, registerLlmRelayIpcHandlers, getLlmRelayQuota } from './services/llmRelayService';
@@ -8592,6 +8600,33 @@ const getCoworkRunner = () => {
         },
         orders: getEscrowOrderStore(),
       },
+      // me_charge tool backend (G3): the buyer-side ME spend leg. The signer
+      // is the SESSION BOT's own wallet (mnemonic+path stay in this process;
+      // the service derives the identity address from the same key material,
+      // so the header can never disagree with the signature). ME movement is
+      // off-chain ledger bookkeeping — no chain-write budget, the ME service's
+      // bot daily pay limit is the cap.
+      meChargeTools: {
+        getMetabotMvcAddress: (metabotId) =>
+          getMetabotStore().getMetabotById(metabotId)?.mvc_address ?? null,
+        balance: ({ metabotId }) => getMeChargeBalance({ signer: meChargeSigner(metabotId) }),
+        freeze: ({ metabotId, ...rest }) => meFreeze({ signer: meChargeSigner(metabotId), ...rest }),
+        capture: ({ metabotId, ...rest }) => meCapture({ signer: meChargeSigner(metabotId), ...rest }),
+        release: ({ metabotId, ...rest }) => meRelease({ signer: meChargeSigner(metabotId), ...rest }),
+        pay: ({ metabotId, ...rest }) => mePay({ signer: meChargeSigner(metabotId), ...rest }),
+        listFreezes: ({ metabotId, limit }) => listMeFreezes({ signer: meChargeSigner(metabotId), limit }),
+        // Purchase guard read: the payee must be the item's CURRENT holder.
+        fetchItemInfo: async (pinId) => {
+          const item = await fetchMrc721ItemInfo({ pinId });
+          if (!item) return null;
+          return {
+            pinId: item.itemPinId,
+            ...(item.collectionName ? { collectionName: item.collectionName } : {}),
+            ...(item.ownerAddress ? { ownerAddress: item.ownerAddress } : {}),
+            ...(item.number != null ? { itemNumber: String(item.number) } : {}),
+          };
+        },
+      },
       // payment_card_emit tool backend (G1): reads the single encrypted
       // receiving-info row, derives the payment key from the local identity
       // and decrypts — all inside readPaymentReceivingInfo, so the mnemonic,
@@ -10540,6 +10575,21 @@ const getMetabotStore = () => {
     metabotStore = new MetabotStore(sqliteStore.getDatabase(), sqliteStore.getSaveFunction());
   }
   return metabotStore;
+};
+
+/**
+ * ME signer for one MetaBot: the bot's OWN wallet (mnemonic+path). ME
+ * signatures cannot be delegated — the server verifies the signature against
+ * X-Identity-Address, so a ledger debit is only ever produced by the paying
+ * identity's key, on this machine. The returned material never leaves the
+ * calling service (meChargeService signs in memory and drops it).
+ */
+const meChargeSigner = (metabotId: number): { mnemonic: string; path: string } => {
+  const wallet = getMetabotStore().getMetabotWalletByMetabotId(metabotId);
+  if (!wallet?.mnemonic?.trim()) {
+    throw new Error(`MetaBot ${metabotId} has no wallet; ME cannot be spent without the payer's own key`);
+  }
+  return { mnemonic: wallet.mnemonic, path: wallet.path };
 };
 
 let userIdentityStore: UserIdentityStore | null = null;

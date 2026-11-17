@@ -23,7 +23,7 @@ import { getMePointSettings, mirrorMePointSettings } from './mePointSettings';
 import type { MePointSettingsStore } from './mePointSettings';
 
 export const DEFAULT_ME_API_BASE_URL = 'https://www.metaso.network/assist-open-api';
-const DEFAULT_WALLET_PATH = "m/44'/10001'/0'/0/0";
+export const DEFAULT_ME_WALLET_PATH = "m/44'/10001'/0'/0/0";
 const DEFAULT_REQUEST_TIMEOUT_MS = 8_000;
 const BALANCE_CACHE_TTL_MS = 30_000;
 
@@ -60,7 +60,13 @@ export type MeApiStage =
   | 'topup_orders'
   | 'subscription_order'
   | 'subscription_orders'
-  | 'settings';
+  | 'settings'
+  // buyer-side spend legs (meChargeService): freeze → capture, release, pay.
+  | 'freeze'
+  | 'capture'
+  | 'release'
+  | 'pay'
+  | 'freezes';
 
 export class MePointsApiError extends Error {
   readonly stage: MeApiStage;
@@ -69,6 +75,11 @@ export class MePointsApiError extends Error {
   readonly errorCode: string;
   /** True when the backend returned 404 for /v1/me/* (ME disabled / not deployed). */
   readonly featureUnavailable: boolean;
+  /** INSUFFICIENT_ME only: shortfall detail (milliME) carried by the envelope. */
+  readonly neededMilli?: number;
+  readonly haveMilli?: number;
+  /** INSUFFICIENT_ME only: the identity's autoDeductFromPersistent gate blocked the persistent buckets. */
+  readonly autoDeductDisabled?: boolean;
 
   constructor(input: {
     stage: MeApiStage;
@@ -76,6 +87,9 @@ export class MePointsApiError extends Error {
     status?: number;
     errorCode?: string;
     featureUnavailable?: boolean;
+    neededMilli?: number;
+    haveMilli?: number;
+    autoDeductDisabled?: boolean;
   }) {
     super(input.message);
     this.name = 'MePointsApiError';
@@ -83,6 +97,9 @@ export class MePointsApiError extends Error {
     this.status = input.status;
     this.errorCode = input.errorCode ?? '';
     this.featureUnavailable = input.featureUnavailable ?? false;
+    this.neededMilli = input.neededMilli;
+    this.haveMilli = input.haveMilli;
+    this.autoDeductDisabled = input.autoDeductDisabled;
   }
 }
 
@@ -333,7 +350,12 @@ function getErrorMessage(error: unknown): string {
 // HTTP layer (unified {code, message, data} envelope; guide §4)
 // ---------------------------------------------------------------------------
 
-async function meRequestJson(input: {
+/**
+ * Exported transport for siblings that need the SAME signed-envelope rules
+ * (meChargeService's buyer-side spend legs): unified {code,message,data}
+ * envelope, 8s timeout, XML-free error lifting.
+ */
+export async function meRequestJson(input: {
   stage: MeApiStage;
   method: 'GET' | 'POST';
   path: string;
@@ -404,11 +426,23 @@ async function meRequestJson(input: {
       if (data && typeof data === 'object') return data as Record<string, unknown>;
       return {};
     }
+    // The house envelope carries the shortfall detail for INSUFFICIENT_ME
+    // (controller/me_controller.go meFail); lift it so callers can say
+    // "need X, have Y" instead of echoing a bare code.
+    const errorData = (record.data && typeof record.data === 'object' && !Array.isArray(record.data))
+      ? (record.data as Record<string, unknown>)
+      : {};
+    const neededMilli = pickNumber(errorData, 'neededMilli', 'needed_milli');
+    const haveMilli = pickNumber(errorData, 'haveMilli', 'have_milli');
     throw new MePointsApiError({
       stage: input.stage,
       message: pickText(record, 'message', 'msg', 'error')
+        || pickText(errorData, 'detail')
         || `ME service returned code ${normalizeText(record.code) || 'unknown'}.`,
       errorCode: pickErrorCode(record.data),
+      ...(neededMilli > 0 ? { neededMilli } : {}),
+      ...(haveMilli > 0 ? { haveMilli } : {}),
+      ...(errorData.autoDeductDisabled === true ? { autoDeductDisabled: true } : {}),
     });
   } catch (error) {
     if (error instanceof MePointsApiError) throw error;
@@ -431,7 +465,8 @@ async function meRequestJson(input: {
 // Identity signing
 // ---------------------------------------------------------------------------
 
-interface MeIdentity {
+/** Raw identity material for one ME signer (never logged; used in memory). */
+export interface MeIdentity {
   mnemonic: string;
   path: string;
   mvcAddress: string;
@@ -444,13 +479,25 @@ function requireIdentity(): MeIdentity {
   if (!identity || !mnemonic || !mvcAddress) {
     throw new MePointsApiError({ stage: 'balance', message: 'local user identity is missing or incomplete' });
   }
-  return { mnemonic, path: identity.path || DEFAULT_WALLET_PATH, mvcAddress };
+  return { mnemonic, path: identity.path || DEFAULT_ME_WALLET_PATH, mvcAddress };
 }
 
-async function signedAuth(stage: MeApiStage, action: string): Promise<{
-  identity: { address: string; timestamp: number; signature: string };
-}> {
-  const identity = requireIdentity();
+/** The identity envelope every signed /v1/me/* request carries. */
+export interface MeSignedIdentity {
+  address: string;
+  timestamp: number;
+  signature: string;
+}
+
+/**
+ * Sign one ME action for an EXPLICIT identity. mePointsService itself always
+ * signs the local user identity (requireIdentity), while meChargeService signs
+ * the SESSION BOT's own wallet — the same guide §3.2 rules, one implementation.
+ */
+export async function signMeAction(
+  action: string,
+  identity: MeIdentity,
+): Promise<MeSignedIdentity> {
   // Guide §3.2: the signed message binds the action with the SECONDS
   // timestamp; X-Timestamp carries milliseconds. Both MUST derive from the
   // same clock read — a second boundary between two reads makes the server's
@@ -463,7 +510,13 @@ async function signedAuth(stage: MeApiStage, action: string): Promise<{
     path: identity.path,
     message,
   });
-  return { identity: { address: identity.mvcAddress, timestamp, signature } };
+  return { address: identity.mvcAddress, timestamp, signature };
+}
+
+async function signedAuth(stage: MeApiStage, action: string): Promise<{
+  identity: MeSignedIdentity;
+}> {
+  return { identity: await signMeAction(action, requireIdentity()) };
 }
 
 // ---------------------------------------------------------------------------
