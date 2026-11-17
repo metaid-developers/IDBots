@@ -155,6 +155,10 @@ export interface StudioChiefOfStaffDeps {
   supervisionCoalesceMs?: number;
   idleDebounceMs?: number;
   waitingReassuranceIntervalsMs?: readonly number[];
+  /** Cheap local SQLite watermark of active tasks to broadcast live Worker DB updates on each 5s tick. */
+  getTaskWatermark?: () => string;
+  /** Live Worker progress checkpoint recorded on a Managed Task (`progress_note`). */
+  getTaskProgressNote?: (longtermTaskId: string | null | undefined) => string | null;
   now?: () => number;
   emitLog?: (line: string) => void;
 }
@@ -340,6 +344,7 @@ export class StudioChiefOfStaffService {
   }>();
   private activeSupervisionCount = 0;
   private heartbeatInFlight = false;
+  private lastObservedTaskWatermark: string | null = null;
   private readonly now: () => number;
   private readonly emitLog: (line: string) => void;
   private readonly coalesceMs: number;
@@ -864,6 +869,10 @@ export class StudioChiefOfStaffService {
 
     const primaryName = openWorkers[0]?.workerName ?? activeSup?.workerName ?? 'Worker';
     const primaryTitle = openWorkers[0]?.title ?? activeSup?.title ?? '';
+    const primaryLongtermTaskId = openWorkers[0]?.longtermTaskId ?? null;
+    const liveProgressNote = primaryLongtermTaskId
+      ? (this.deps.getTaskProgressNote?.(primaryLongtermTaskId) ?? '').trim()
+      : '';
     const isVerifying = openWorkers.length === 0 && Boolean(activeSup);
     const signature = openWorkers.length > 0
       ? `workers:${openWorkers.map((w) => w.attemptId).sort().join(',')}`
@@ -916,15 +925,17 @@ export class StudioChiefOfStaffService {
     const workerNamesSummary = openWorkers.length > 1
       ? [...new Set(openWorkers.map((w) => w.workerName).filter(Boolean))].slice(0, 2).join('、')
       : primaryName;
+    const progressSuffixZh = liveProgressNote ? `；当前登记进展：「${clipCleanTitle(liveProgressNote, 60)}」` : '';
+    const progressSuffixEn = liveProgressNote ? `; latest checkpoint: "${clipCleanTitle(liveProgressNote, 60)}"` : '';
     const content = language === 'zh'
       ? (isVerifying
           ? `⏳ ${primaryName} 已交回产出，我正在后台逐项核验并整理汇报${shortTitle ? `（「${shortTitle}」）` : ''}——目前已持续约 ${totalMinutes} 分钟，流程正常推进中、没有卡死，核验完成后立即向你呈报。`
           : openWorkers.length > 1
-            ? `⏳ ${workerNamesSummary}${openWorkers.length > 2 ? ` 等 ${openWorkers.length} 位同事` : ` ${openWorkers.length} 位同事`}仍在后台并行处理任务（已持续约 ${totalMinutes} 分钟，多步制作与自检较耗时，后台正常推进中、没有卡死；全部交回并经我核验后第一时间向你汇报）。`
-            : `⏳ ${primaryName} 仍在后台处理${shortTitle ? `「${shortTitle}」` : '当前任务'}（已持续约 ${totalMinutes} 分钟，编码/制作与自检步骤较耗时，任务正常推进中、没有卡死；交回后我会先核验再向你汇报）。`)
+            ? `⏳ ${workerNamesSummary}${openWorkers.length > 2 ? ` 等 ${openWorkers.length} 位同事` : ` ${openWorkers.length} 位同事`}仍在后台并行处理任务（已持续约 ${totalMinutes} 分钟${progressSuffixZh}，多步制作与自检较耗时，后台正常推进中、没有卡死；全部交回并经我核验后第一时间向你汇报）。`
+            : `⏳ ${primaryName} 仍在后台处理${shortTitle ? `「${shortTitle}」` : '当前任务'}（已持续约 ${totalMinutes} 分钟${progressSuffixZh}，编码/制作与自检步骤较耗时，任务正常推进中、没有卡死；交回后我会先核验再向你汇报）。`)
       : (isVerifying
           ? `⏳ ${primaryName} has returned the output and I am verifying it in the back office${shortTitle ? ` ("${shortTitle}")` : ''} (~${totalMinutes}m elapsed; progressing normally, report coming shortly).`
-          : `⏳ ${primaryName} is still working in the background${shortTitle ? ` on "${shortTitle}"` : ''} (~${totalMinutes}m elapsed; multi-step generation & self-checks take a bit longer, everything is progressing normally — I'll verify and report as soon as it's back).`);
+          : `⏳ ${primaryName} is still working in the background${shortTitle ? ` on "${shortTitle}"` : ''} (~${totalMinutes}m elapsed${progressSuffixEn}; multi-step generation & self-checks take a bit longer, everything is progressing normally — I'll verify and report as soon as it's back).`);
 
     const msg = this.deps.coworkStore().addMessage(studioSessionId, {
       type: 'assistant',
@@ -938,17 +949,32 @@ export class StudioChiefOfStaffService {
   async runHeartbeatTick(nowMs: number = this.now()): Promise<{
     presentedItemId: string | null;
     reassuranceMessageId?: string | null;
+    taskWatermarkChanged?: boolean;
     presence: StudioTwinPresenceSnapshot;
   }> {
+    let taskWatermarkChanged = false;
+    if (this.deps.getTaskWatermark) {
+      try {
+        const currentWatermark = this.deps.getTaskWatermark();
+        if (this.lastObservedTaskWatermark !== null && this.lastObservedTaskWatermark !== currentWatermark) {
+          taskWatermarkChanged = true;
+          this.deps.onStateChanged?.('task_db_updated');
+        }
+        this.lastObservedTaskWatermark = currentWatermark;
+      } catch {
+        // Best-effort watermark check.
+      }
+    }
     const snapshot = this.getPresenceSnapshot(nowMs);
     if (this.heartbeatInFlight) {
-      return { presentedItemId: null, presence: snapshot };
+      return { presentedItemId: null, ...(taskWatermarkChanged ? { taskWatermarkChanged: true } : {}), presence: snapshot };
     }
     const reassuranceMsg = this.checkProgressiveWaitingReassurance(snapshot.activeStudioSessionId, nowMs);
     if (reassuranceMsg) {
       return {
         presentedItemId: null,
         reassuranceMessageId: reassuranceMsg.id,
+        ...(taskWatermarkChanged ? { taskWatermarkChanged: true } : {}),
         presence: this.getPresenceSnapshot(nowMs),
       };
     }
@@ -959,7 +985,11 @@ export class StudioChiefOfStaffService {
       || snapshot.queuedCount === 0
       || !snapshot.activeStudioSessionId
     ) {
-      return { presentedItemId: null, presence: snapshot };
+      return {
+        presentedItemId: null,
+        ...(taskWatermarkChanged ? { taskWatermarkChanged: true } : {}),
+        presence: snapshot,
+      };
     }
 
     const studioSessionId = snapshot.activeStudioSessionId;

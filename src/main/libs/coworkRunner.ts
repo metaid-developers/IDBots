@@ -309,6 +309,11 @@ import {
 } from './practiceInteractionGuard';
 import { buildScheduledTaskAgentTools, type ScheduledTaskAgentControl } from './scheduledTaskAgentTools';
 import { buildLongTermTaskAgentTools, type LongTermTaskAgentControl } from './longTermTaskAgentTools';
+import {
+  buildPortableTaskIntentRubricSpec,
+  formatTaskIntentPromptHint,
+  type TaskIntentAssessment,
+} from '../cerebellum/taskIntentRubric';
 import { buildMetataskAgentTools, type MetaTaskAgentControl } from './metataskAgentTools';
 import { buildPreferenceAgentTools, type PreferenceAgentControl } from './preferenceAgentTools';
 import { buildPredictionAgentTools, type PredictionAgentControl } from './predictionAgentTools';
@@ -2547,6 +2552,8 @@ export interface CoworkRunnerOptions {
   twinTodoTools?: TwinTodoToolsControl;
   /** Live Studio decision-queue & active-briefing volatile context block. */
   getStudioVolatileContextPrompt?: (sessionId: string) => string;
+  /** Machine-wide active Task radar volatile block shared across Studio, BotWorks, Mobile, and IM/Telegram. */
+  getActiveTasksRadarPrompt?: (sessionId: string) => string;
   /** MetaTask (chain-side quadrant four): participation tools (claim-with-guard
    *  / submit / verify / publish / amend) over the local projection + chain writes. */
   metataskTools?: MetaTaskAgentControl;
@@ -2709,6 +2716,8 @@ export interface CoworkRunnerOptions {
     knowledge: ReadonlyArray<{ id: string; topic: string; summary: string; kind: string }>;
     /** Coalesce auto-effort classification into the same /v1/systemone call. */
     includeEffort?: boolean;
+    /** Coalesce 5-factor Task vs. Dialogue intent scoring into the same /v1/systemone call. */
+    includeTaskIntent?: boolean;
   }) => Promise<{
     memoryScores: ReadonlyMap<string, number> | null;
     knowledgeScores: ReadonlyMap<string, number> | null;
@@ -2726,6 +2735,7 @@ export interface CoworkRunnerOptions {
     }> | null;
     gateVerdicts: Record<string, boolean> | null;
     effortDistribution?: Record<'off' | 'low' | 'high' | 'max', number> | null;
+    taskIntentAssessment?: TaskIntentAssessment | null;
   } | null>;
   /**
    * Optional cerebellum re-rank for conversation_search hits. A score map
@@ -2975,6 +2985,7 @@ export class CoworkRunner extends EventEmitter {
   private studioChiefOfStaffTools?: StudioChiefOfStaffToolsControl;
   private twinTodoTools?: TwinTodoToolsControl;
   private getStudioVolatileContextPrompt?: (sessionId: string) => string;
+  private getActiveTasksRadarPrompt?: (sessionId: string) => string;
   private metataskTools?: MetaTaskAgentControl;
   private preferenceTools?: PreferenceAgentControl;
   private predictionTools?: PredictionAgentControl;
@@ -3202,6 +3213,7 @@ export class CoworkRunner extends EventEmitter {
     this.studioChiefOfStaffTools = options?.studioChiefOfStaffTools;
     this.twinTodoTools = options?.twinTodoTools;
     this.getStudioVolatileContextPrompt = options?.getStudioVolatileContextPrompt;
+    this.getActiveTasksRadarPrompt = options?.getActiveTasksRadarPrompt;
     this.metataskTools = options?.metataskTools;
     this.preferenceTools = options?.preferenceTools;
     this.predictionTools = options?.predictionTools;
@@ -7048,6 +7060,8 @@ export class CoworkRunner extends EventEmitter {
       'Speak in plain user language, not internal jargon: align with what the owner sees in the UI, lead with the conclusion, and never hand the owner homework. Your purpose is to reduce the owner\'s mental load.',
       'Own the task lifecycle: when the goal is met, lead with that conclusion, summarize the delivered result, and move the task to review — or close out a finished one-off yourself — instead of stalling in executing and asking the owner what to do next. The UI the owner sees is the source of truth: refer to tasks by title (never #id), use the UI status words, and leave zero ambiguity about what happened and what, if anything, you still need from the owner.',
       'Your closing message IS the delivery: when a task finishes — whether you did it yourself or a Worker did — lead with the delivered result itself (what was produced and where it lives), and show every on-chain artifact as a full-text MetaWeb URI markdown link (pin:// / metaapp:// / metafile:// — complete URI, never abbreviated with an ellipsis). Verification notes, retries, and worker anecdotes come AFTER the result and stay brief: the owner delegated the task to get the finished outcome, not a process narrative.',
+      'Tasks are first-class entities across all sessions and channels (Studio, BotWorks, Mobile, IM/Telegram); sessions are merely interaction channels. Use `task_list_active` and `task_search` at high priority to recall in-flight or historical tasks immediately, create tracked cards via `task_create` (1-step or serial/parallel DAG) whenever an intent produces a deliverable or external action without asking "should I create a task?", coordinate with Workers through the shared Task object (`task_get`, `task_context_read`, Worker `task_subtask_submit`), and park finished proposals/deliverables in `waiting_owner` (`task_subtask_propose` / `studio_decision_enqueue`) so the owner inspects the detailed result before final sign-off.',
+      buildPortableTaskIntentRubricSpec(),
     ].join('\n');
   }
 
@@ -7727,6 +7741,15 @@ export class CoworkRunner extends EventEmitter {
     );
     const activeForDecisions = this.activeSessions.get(sessionId);
     const includeBundledEffort = Boolean(activeForDecisions?.needsBundledEffort);
+    const isSyntheticSystemTurn =
+      prompt.includes('<studio_proactive_briefing>')
+      || prompt.includes('<studio_back_office_supervision>')
+      || prompt.includes('<cross_session_message');
+    const includeBundledTaskIntent = Boolean(
+      this.isTwinSession(sessionId)
+      && !trustSuppressed
+      && !isSyntheticSystemTurn,
+    );
     const decisionsStartedAt = Date.now();
     const decisionsPromise: ReturnType<NonNullable<CoworkRunnerOptions['cerebellumTurnDecisions']>> | null =
       this.cerebellumTurnDecisions && prompt.trim()
@@ -7746,6 +7769,7 @@ export class CoworkRunner extends EventEmitter {
             kind: entry.kind,
           })),
           ...(includeBundledEffort ? { includeEffort: true } : {}),
+          ...(includeBundledTaskIntent ? { includeTaskIntent: true } : {}),
         }).then((res) => {
           activeForDecisions?.bundledEffortResolver?.(res?.effortDistribution ?? null);
           return res;
@@ -7916,6 +7940,29 @@ export class CoworkRunner extends EventEmitter {
         key: 'team-nudge',
         text: await this.buildTwinTeamNudgePrompt(sessionId),
       });
+    }
+    if (this.getActiveTasksRadarPrompt && !trustSuppressed) {
+      try {
+        const radarBlock = this.getActiveTasksRadarPrompt(sessionId);
+        if (radarBlock) {
+          sections.push({
+            key: 'active-tasks-radar',
+            text: radarBlock,
+          });
+        }
+      } catch {
+        // Radar injection is best-effort.
+      }
+    }
+    if (includeBundledTaskIntent) {
+      const intentAssessment = (await awaitTurnDecisions())?.taskIntentAssessment ?? null;
+      if (intentAssessment) {
+        sections.push({
+          key: 'task-intent-assessment',
+          text: formatTaskIntentPromptHint(intentAssessment),
+          alwaysInject: true,
+        });
+      }
     }
     if (this.getStudioVolatileContextPrompt && !trustSuppressed) {
       const studioBlock = this.getStudioVolatileContextPrompt(sessionId);

@@ -119,6 +119,10 @@ const DEFAULT_EXTERNAL_REMINDER_MS = 4 * 3_600_000;
 export const DEFAULT_EXTERNAL_ESCALATE_TO_OWNER_MS = 24 * 3_600_000;
 const DEFAULT_FAILURE_STREAK_THRESHOLD = 2;
 const DEFAULT_EXPECTED_MINUTES = 240;
+/** Tighter supervision budget (minutes) for standard (non-`[长期]`) tasks when `expectedMinutes` is unset. */
+const DEFAULT_STANDARD_EXPECTED_MINUTES = 45;
+/** Silent lease threshold (minutes): if a subtask holds an execution lease whose `lastActivityAt` is frozen past this window AND the leased Worker session is no longer running, trigger recovery supervision immediately. */
+const DEFAULT_DEAD_LEASE_STALL_MINUTES = 15;
 const DEFAULT_ATTENTION_RETRY_MS = 30 * 60_000;
 const DEFAULT_ATTENTION_MAX_ATTEMPTS = 2;
 /**
@@ -311,6 +315,12 @@ export interface LongTermAdvanceDeps {
   failureStreakThreshold?: number;
   /** P1 supervision: default expected duration (minutes) when the sub-project sets none. */
   defaultExpectedMinutes?: number;
+  /** Default expected duration (minutes) for standard non-`[长期]` tasks when `expectedMinutes` is unset. */
+  standardExpectedMinutes?: number;
+  /** Quiet minutes before an inactive leased Worker session trips stall recovery supervision. */
+  deadLeaseStallMinutes?: number;
+  /** Probe whether an active subtask lease (`leaseAttemptId`) still has a live running Worker session. */
+  isSubtaskLeaseAlive?: (leaseAttemptId: string) => boolean;
   /** Session rotation: message budget for the bound session (default 180 — see DEFAULT_SESSION_ROTATION_MESSAGES for what is counted). */
   sessionRotationThreshold?: number;
   /** Recency window for owner engagement across related sessions (default 60 min — see DEFAULT_OWNER_ENGAGEMENT_WINDOW_MS). */
@@ -589,6 +599,8 @@ export class LongTermAdvanceService {
   private readonly externalEscalateToOwnerMs: number;
   private readonly failureStreakThreshold: number;
   private readonly defaultExpectedMinutes: number;
+  private readonly standardExpectedMinutes: number;
+  private readonly deadLeaseStallMinutes: number;
   private readonly sessionRotationThreshold: number;
   private readonly ownerEngagementWindowMs: number;
   private readonly ownerReplyUnansweredGraceMs: number;
@@ -608,6 +620,8 @@ export class LongTermAdvanceService {
     );
     this.failureStreakThreshold = Math.max(1, Math.trunc(deps.failureStreakThreshold ?? DEFAULT_FAILURE_STREAK_THRESHOLD));
     this.defaultExpectedMinutes = Math.max(1, Math.trunc(deps.defaultExpectedMinutes ?? DEFAULT_EXPECTED_MINUTES));
+    this.standardExpectedMinutes = Math.max(1, Math.trunc(deps.standardExpectedMinutes ?? DEFAULT_STANDARD_EXPECTED_MINUTES));
+    this.deadLeaseStallMinutes = Math.max(1, Math.trunc(deps.deadLeaseStallMinutes ?? DEFAULT_DEAD_LEASE_STALL_MINUTES));
     this.sessionRotationThreshold = Math.max(10, Math.trunc(deps.sessionRotationThreshold ?? DEFAULT_SESSION_ROTATION_MESSAGES));
     this.ownerEngagementWindowMs = Math.max(60_000, Math.trunc(deps.ownerEngagementWindowMs ?? DEFAULT_OWNER_ENGAGEMENT_WINDOW_MS));
     this.ownerReplyUnansweredGraceMs = Math.max(60_000, Math.trunc(deps.ownerReplyUnansweredGraceMs ?? DEFAULT_OWNER_REPLY_UNANSWERED_GRACE_MS));
@@ -1264,10 +1278,45 @@ export class LongTermAdvanceService {
         };
       }
     }
+    // Dead-lease liveness check: if a Worker claimed a subtask lease, its
+    // `lastActivityAt` heartbeat has been silent past `deadLeaseStallMinutes`,
+    // AND the host confirms that Worker session is no longer running (e.g.
+    // interrupted by restart or silent exit), escalate immediately instead of
+    // waiting hours for the full duration budget.
+    if (current.leaseAttemptId && this.deps.isSubtaskLeaseAlive) {
+      const leaseAlive = this.deps.isSubtaskLeaseAlive(current.leaseAttemptId);
+      const lastPulseMs = Date.parse(current.lastActivityAt ?? current.leaseClaimedAt ?? current.updatedAt);
+      const stallMs = this.deadLeaseStallMinutes * 60_000;
+      if (
+        !leaseAlive
+        && Number.isFinite(lastPulseMs)
+        && nowMs - lastPulseMs >= stallMs
+      ) {
+        const deadLeaseSig = `deadlease:${current.leaseAttemptId}`;
+        if (deadLeaseSig !== (state?.lastFailureSignal ?? '')) {
+          const silentMin = Math.max(1, Math.round((nowMs - lastPulseMs) / 60_000));
+          return {
+            reasons: [
+              `supervision: subtask lease ${current.leaseAttemptId} (bot #${current.assigneeMetabotId ?? 'unknown'}) has been inactive for ${silentMin}min and its Worker session is no longer running — inspect existing artifacts via task_get, release/re-dispatch or converge state`,
+            ],
+            failureSignature: deadLeaseSig,
+          };
+        }
+      }
+    }
+
     const enteredAtMs = this.enteredInProgressAtMs(detail, current);
-    const expectedMinutes = current.expectedMinutes ?? this.defaultExpectedMinutes;
+    const fallbackBudgetMin =
+      detail.taskKind === 'quick' && detail.isLongTerm === false && this.deps.defaultExpectedMinutes === undefined
+        ? this.standardExpectedMinutes
+        : this.defaultExpectedMinutes;
+    const expectedMinutes = current.expectedMinutes ?? fallbackBudgetMin;
     const budgetMs = expectedMinutes * 60_000;
+    const lastPulseAtMs = current.lastActivityAt ? Date.parse(current.lastActivityAt) : NaN;
+    const workerPulsedRecently =
+      Number.isFinite(lastPulseAtMs) && nowMs - lastPulseAtMs < 2 * 60_000;
     if (
+      !workerPulsedRecently &&
       enteredAtMs !== null &&
       nowMs - enteredAtMs > budgetMs &&
       (!state || nowMs - state.lastSuperviseAtMs >= budgetMs)

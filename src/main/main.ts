@@ -77,6 +77,12 @@ import { selectEffortWithCerebellum } from './cerebellum/effortSelector';
 import { classifyTurnAckNeedWithCerebellum } from './cerebellum/ackGate';
 import { askCerebellumIntuition } from './cerebellum/intuitionTool';
 import { runCerebellumTurnDecisions } from './cerebellum/turnDecisionBundle';
+import type { TaskIntentAssessment } from './cerebellum/taskIntentRubric';
+import {
+  computeActiveTaskWatermark,
+  formatActiveTasksRadarPromptBlock,
+  WorkerLivenessPulseTracker,
+} from './services/taskHeartbeatRadar';
 import {
   CEREBELLUM_SKILL_SHORTLIST_MIN_POOL,
   CEREBELLUM_SKILL_SHORTLIST_TOP_K,
@@ -3991,6 +3997,7 @@ const createCerebellumTurnDecisionCaller = () =>
     memories: ReadonlyArray<{ id: string; text: string }>;
     knowledge: ReadonlyArray<{ id: string; topic: string; summary: string; kind: string }>;
     includeEffort?: boolean;
+    includeTaskIntent?: boolean;
   }): Promise<{
     memoryScores: ReadonlyMap<string, number> | null;
     knowledgeScores: ReadonlyMap<string, number> | null;
@@ -3998,6 +4005,7 @@ const createCerebellumTurnDecisionCaller = () =>
     serviceRanking: Array<{ id: string; name: string; description: string; probability: number }> | null;
     gateVerdicts: Record<string, boolean> | null;
     effortDistribution?: Record<'off' | 'low' | 'high' | 'max', number> | null;
+    taskIntentAssessment?: TaskIntentAssessment | null;
   } | null> => {
     const context = await resolveCerebellumCallContext();
     if (!context) {
@@ -4047,6 +4055,7 @@ const createCerebellumTurnDecisionCaller = () =>
         services: services.length >= CEREBELLUM_REMOTE_SERVICE_SHORTLIST_MIN_POOL ? services : [],
         includeGate: true,
         includeEffort: input.includeEffort === true,
+        includeTaskIntent: input.includeTaskIntent === true,
       },
       onPayload: (stats) => {
         coworkLog('INFO', 'cerebellum:turnPayload', 'Cerebellum turn decision bundle payload', {
@@ -4096,6 +4105,7 @@ const createCerebellumTurnDecisionCaller = () =>
         }) ?? null,
       gateVerdicts: outcome.gateVerdicts,
       effortDistribution: outcome.effortDistribution ?? null,
+      taskIntentAssessment: outcome.taskIntentAssessment ?? null,
     };
   };
 
@@ -8160,6 +8170,15 @@ const getCoworkRunner = () => {
       },
       getStudioVolatileContextPrompt: (sid) =>
         getStudioChiefOfStaffService().buildVolatileTurnContext(sid),
+      getActiveTasksRadarPrompt: (sid) => {
+        const session = getCoworkStore().getSession(sid);
+        if (!session || session.sessionType === 'a2a') return '';
+        const metabotId = session.metabotId ?? getCoworkStore().getMetabotIdForSession(sid);
+        const bot = metabotId != null ? getMetabotStore().getMetabotById(metabotId) : null;
+        if (!bot || !bot.enabled || bot.metabot_type !== 'twin') return '';
+        const radarEntries = getLongTermTaskStore().listActiveTasksCompact(18);
+        return formatActiveTasksRadarPromptBlock(radarEntries, { currentSessionId: sid });
+      },
       // MetaTask (chain-side quadrant four): participation tools — claim with
       // replay guard, #8/#9-disciplined verify drafts, publish invariants.
       // Same chain-write pipeline as post_buzz (createPinForSession per bot).
@@ -9068,12 +9087,41 @@ const getCoworkRunner = () => {
         },
     });
 
+    const workerLivenessPulse = new WorkerLivenessPulseTracker({
+      resolveSubtaskIdsForSession: (sid) => {
+        const ltStore = getLongTermTaskStore();
+        const linked = ltStore.listTasksForSession(sid);
+        const matched: string[] = [];
+        for (const summary of linked) {
+          if (summary.stage !== 'active') continue;
+          const detail = ltStore.getTask(summary.id);
+          for (const sub of detail?.subtasks ?? []) {
+            if (sub.status === 'in_progress' && (sub.sessionId === sid || detail?.sessionLinks?.some((l) => l.sessionId === sid && l.subtaskId === sub.id))) {
+              matched.push(sub.id);
+            }
+          }
+        }
+        return matched;
+      },
+      touchSubtask: (subtaskId, iso) => getLongTermTaskStore().touchSubtaskActivity(subtaskId, iso),
+      onBroadcast: () => broadcastLongTermTaskUpdate([], 'worker_liveness_pulse'),
+    });
+
     // Set up event listeners to forward to renderer
     coworkRunner.on('message', (sessionId: string, message: any) => {
       // The Genesis Stage sees every message first: a work tool releases the
       // session before the Live Stage decides whether to create its run.
       getStudioGenesisStageService().observeMessage(sessionId, message);
       getStudioLiveStageService().observeMessage(sessionId, message);
+      if (message?.type === 'tool_use' || message?.type === 'assistant') {
+        try {
+          workerLivenessPulse.observeActivity(sessionId, {
+            toolName: message?.metadata?.toolName ?? null,
+          });
+        } catch {
+          // Best-effort worker liveness pulse.
+        }
+      }
       if (message?.type === 'user' && getStudioChiefOfStaffService().isStudioOwnerSession(sessionId)) {
         broadcastLongTermTaskUpdate([], 'studio_turn_started');
       }
@@ -10211,6 +10259,16 @@ const getLongTermAdvanceService = () => {
           return [];
         }
       },
+      isSubtaskLeaseAlive: (leaseAttemptId: string) => {
+        try {
+          const attempt = getOrchestrationStore().getAttempt(leaseAttemptId);
+          if (!attempt || !['queued', 'running', 'timed_out'].includes(attempt.status)) return false;
+          if (!attempt.workerSessionId) return attempt.status === 'queued';
+          return getCoworkRunner().isSessionActive(attempt.workerSessionId);
+        } catch {
+          return false;
+        }
+      },
       isStudioOwnerSession: (sid) => getStudioChiefOfStaffService().isStudioOwnerSession(sid),
     });
   }
@@ -10490,15 +10548,27 @@ const getStudioChiefOfStaffService = () => {
           .cards.some((card) => card.stage === 'defining' && ltStore.getTask(card.id)?.definitionSessionId === sid);
       },
       listOpenSiblingDelegations: (studioSessionId) =>
-        listRawOpenStudioDelegations(studioSessionId).map((entry) => ({
-          attemptId: entry.attemptId,
-          workerMetabotId: entry.workerMetabotId,
-          workerName: entry.workerName ?? `bot-${entry.workerMetabotId}`,
-          workerSessionId: entry.workerSessionId,
-          title: entry.title,
-          status: 'running',
-          startedAt: entry.startedAt,
-        })),
+        listRawOpenStudioDelegations(studioSessionId).map((entry) => {
+          const rawAttemptId = String(entry.attemptId ?? '').replace(/^verify:/, '');
+          const attempt = rawAttemptId ? getOrchestrationStore().getAttempt(rawAttemptId) : null;
+          const orchTask = attempt ? getOrchestrationStore().getTaskForStep(attempt.stepId) : null;
+          return {
+            attemptId: entry.attemptId,
+            workerMetabotId: entry.workerMetabotId,
+            workerName: entry.workerName ?? `bot-${entry.workerMetabotId}`,
+            workerSessionId: entry.workerSessionId,
+            longtermTaskId: orchTask?.longtermTaskId ?? null,
+            title: entry.title,
+            status: 'running',
+            startedAt: entry.startedAt,
+          };
+        }),
+      getTaskWatermark: () =>
+        computeActiveTaskWatermark(getLongTermTaskStore().listActiveTasksCompact(30)),
+      getTaskProgressNote: (ltTaskId) => {
+        if (!ltTaskId) return null;
+        return getLongTermTaskStore().getTask(ltTaskId)?.currentProgressNote ?? null;
+      },
       projectShowcaseHtml: async (input) => {
         const projInput = {
           sessionId: input.sessionId,
