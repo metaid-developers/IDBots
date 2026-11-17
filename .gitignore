@@ -1077,3 +1077,4 @@ blob-report/
 
 # First-class unified Task model & 5-factor intent rubric
 !tests/firstClassTaskPhase1.test.mjs
+!tests/firstClassTaskPhase2.test.mjs

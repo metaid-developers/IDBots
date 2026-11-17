@@ -2,12 +2,16 @@ import { z } from 'zod';
 import type { LongTermTaskStore } from '../longTermTaskStore';
 import { WAIT_UNTIL_STRICT_ISO } from '../longTermTaskStore';
 import type {
+  LongTermActor,
   LongTermBoard,
   LongTermEvent,
   LongTermParticipant,
   LongTermSubtask,
   LongTermTaskDetail,
+  LongTermTaskStage,
   LongTermTaskSummary,
+  TaskOriginChannel,
+  TaskWorkerSubmissionOutcome,
 } from '../../renderer/types/longTermTask';
 import { buildDelegationAnchorBlock } from './longTermDelegationAnchor';
 
@@ -215,22 +219,50 @@ function withActivationNextAction(detail: LongTermTaskDetail) {
   return nextAction ? { ...view, nextAction } : view;
 }
 
+export interface TaskAgentSessionIdentity {
+  actor: LongTermActor;
+  metabotId: number | null;
+  isTwin: boolean;
+  originChannel?: TaskOriginChannel | null;
+}
+
+export interface TaskOriginContextMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  createdAt: number;
+}
+
 export interface LongTermTaskAgentControl {
   store: () => LongTermTaskStore;
   /** Owner's UI language ('zh' | 'en') — delegation anchors follow it. */
   getAppLanguage?: () => string;
+  /** Resolve whether the calling session is the Twin Bot or a specialist Worker Bot. */
+  resolveSessionIdentity?: (sessionId: string) => TaskAgentSessionIdentity;
+  /** Latest genuine human-typed message id in `sessionId` for automatic origin anchoring. */
+  resolveLatestUserMessageId?: (sessionId: string) => string | null;
+  /** Read bounded verbatim origin context around anchor message ids. */
+  readOriginContextSlice?: (params: {
+    sessionId: string;
+    anchorMessageIds: string[];
+    windowTurns?: number;
+  }) => TaskOriginContextMessage[] | null;
+  /** Notify Studio HUD / session focus immediately when a task is created or focused. */
+  onTaskCreatedOrFocused?: (sessionId: string, taskId: string) => void;
 }
 
 const CHANNEL_ENUM = ['delegate_bot', 'group_task', 'owner_external', 'owner_together'] as const;
+const EVIDENCE_KIND_ENUM = ['dir', 'metaapp', 'metafile', 'pin', 'url', 'other'] as const;
 
 const subtaskDraftSchema = z.object({
-  title: z.string().min(1).describe('Sub-project title (short, verifiable).'),
-  description: z.string().optional().describe('What this sub-project means and its boundaries.'),
+  title: z.string().min(1).describe('Sub-project / subtask title (short, verifiable).'),
+  description: z.string().optional().describe('What this subtask means and its boundaries.'),
   acceptanceCriteria: z.array(z.string()).optional().describe('Checkable acceptance criteria, one per line.'),
-  dependsOnOrdinals: z.array(z.number()).optional().describe('1-based ordinals of sub-projects that must be accepted first.'),
+  dependsOnOrdinals: z.array(z.number()).optional().describe('1-based ordinals of sibling subtasks that must be accepted first (omit for parallel initial steps).'),
   preferredChannel: z.enum(CHANNEL_ENUM).optional().describe('delegate_bot | group_task | owner_external | owner_together.'),
+  assigneeMetabotId: z.number().int().positive().optional().describe('Optional assigned local Bot id responsible for this subtask.'),
   notes: z.string().optional(),
-  expectedMinutes: z.number().int().positive().optional().describe('Rough expected duration in minutes — estimate it during grilling; the supervision heartbeat checks in when the sub-project runs past its budget.'),
+  expectedMinutes: z.number().int().positive().optional().describe('Rough expected duration in minutes — the supervision heartbeat checks in when the subtask runs past its budget.'),
 });
 
 export function buildLongTermTaskAgentTools(deps: {
@@ -249,6 +281,28 @@ export function buildLongTermTaskAgentTools(deps: {
   const store = () => control.store();
   const mountedSessionId = String(deps.sessionId ?? '').trim();
 
+  const callerIdentity = (): TaskAgentSessionIdentity => {
+    if (control.resolveSessionIdentity && mountedSessionId) {
+      return control.resolveSessionIdentity(mountedSessionId);
+    }
+    return { actor: 'twin', metabotId: null, isTwin: true, originChannel: null };
+  };
+
+  const resolveOriginAnchors = (explicitSessionId?: string) => {
+    const identity = callerIdentity();
+    const originSessionId = String(explicitSessionId ?? '').trim() || mountedSessionId || null;
+    const originMessageId =
+      originSessionId && control.resolveLatestUserMessageId
+        ? control.resolveLatestUserMessageId(originSessionId)
+        : null;
+    return {
+      originSessionId,
+      originMessageId,
+      originChannel: identity.originChannel ?? null,
+      identity,
+    };
+  };
+
   const createTask = tool(
     'longterm_task_create',
     'Create a long-term task DRAFT after the full creation discipline (the long-term-task skill owns it — load and follow that skill; this description is only the checklist). Preconditions, all required: (1) you researched MetaWeb + Web2 BEFORE asking and opened with a research digest naming the searches; (2) you grilled the owner one question per round until no load-bearing detail was guessed; (3) you presented a visual plan page (infographic HTML linked in the bubble) and the owner confirmed it in prose — pass its URI as planArtifactUri (skip only on the owner\'s explicit instruction in THIS conversation, and say so in your reply). Never create from a fuzzy one-line ask. The draft is NOT active: after create, reconcile the echo against the approved plan page field by field and fix drift with the update tools; only call longterm_task_activate after the owner\'s final confirmation in prose. Not for one-session work (normal cowork turn) or a multi-bot short job (group task).',
@@ -261,17 +315,24 @@ export function buildLongTermTaskAgentTools(deps: {
     },
     async (args: { title?: string; goal?: string; subtasks?: unknown[]; definitionSessionId?: string; planArtifactUri?: string }) => {
       try {
+        const anchors = resolveOriginAnchors(args.definitionSessionId);
         const result = store().createTask(
           {
             title: String(args.title ?? ''),
             goal: String(args.goal ?? ''),
             subtasks: (args.subtasks ?? []) as never[],
-            definitionSessionId: String(args.definitionSessionId ?? '').trim() || mountedSessionId || null,
+            definitionSessionId: anchors.originSessionId,
+            originSessionId: anchors.originSessionId,
+            originMessageId: anchors.originMessageId,
+            originChannel: anchors.originChannel,
             planArtifactUri: args.planArtifactUri ?? null,
           },
           'twin',
         );
         if (!result.ok) return textResult(`Refused (${result.code}): ${result.error}`, true);
+        if (mountedSessionId && result.value) {
+          control.onTaskCreatedOrFocused?.(mountedSessionId, result.value.id);
+        }
         const view = toAgentTaskDetailView(result.value);
         // Missing plan artifact → the echo reminds, it does not refuse: the
         // owner may legitimately order a skip, but silence must not pass as
@@ -635,6 +696,7 @@ export function buildLongTermTaskAgentTools(deps: {
       definitionSessionId?: string;
     }) => {
       try {
+        const anchors = resolveOriginAnchors(args.definitionSessionId);
         const result = store().createQuickTask(
           {
             title: String(args.title ?? ''),
@@ -642,11 +704,17 @@ export function buildLongTermTaskAgentTools(deps: {
             acceptanceCriteria: args.acceptanceCriteria ?? [],
             preferredChannel: args.preferredChannel ?? 'delegate_bot',
             expectedMinutes: args.expectedMinutes,
-            definitionSessionId: String(args.definitionSessionId ?? '').trim() || mountedSessionId || null,
+            definitionSessionId: anchors.originSessionId,
+            originSessionId: anchors.originSessionId,
+            originMessageId: anchors.originMessageId,
+            originChannel: anchors.originChannel,
           },
           'twin',
         );
         if (!result.ok) return textResult(`Refused (${result.code}): ${result.error}`, true);
+        if (mountedSessionId && result.value) {
+          control.onTaskCreatedOrFocused?.(mountedSessionId, result.value.id);
+        }
         return jsonResult(toAgentTaskDetailView(result.value));
       } catch (error) {
         return textResult(`Failed to quick-create task: ${error instanceof Error ? error.message : String(error)}`, true);
@@ -654,7 +722,393 @@ export function buildLongTermTaskAgentTools(deps: {
     },
   );
 
+  // ── First-class universal `task_*` tools (Twin + Worker shared blackboard) ──
+
+  const taskListActive = tool(
+    'task_list_active',
+    'HIGH-PRIORITY RADAR: Instantly list all active / in-flight / waiting tasks on this machine in an ultra-compact summary (<2KB, never spills). Call FIRST whenever the owner asks what tasks are in progress, what still needs doing, or before deciding whether an incoming request continues an existing task vs creates a new one.',
+    {
+      limit: z.number().int().min(1).max(100).optional().describe('Maximum active tasks to return (default 25).'),
+    },
+    async (args: { limit?: number }) => {
+      try {
+        const active = store().listActiveTasksCompact(args.limit ?? 25);
+        return jsonResult({ count: active.length, tasks: active.map((entry) => dropEmpty(entry)) });
+      } catch (error) {
+        return textResult(`Failed to list active tasks: ${error instanceof Error ? error.message : String(error)}`, true);
+      }
+    },
+  );
+
+  const taskSearch = tool(
+    'task_search',
+    'Search ALL tasks on this machine (both active and completed/archived) by keyword, status, [long-term] badge, assignee Bot, or session. Matches task titles, goals, subtask descriptions/notes/progress, submitted deliverables/URIs, and event logs in milliseconds. Call immediately whenever the owner mentions a past or ongoing topic, keyword, feature, or Worker assignment.',
+    {
+      query: z.string().optional().describe('Space-separated keywords (e.g. "多签 review", "好友系统", "MRC721").'),
+      stage: z.enum(['defining', 'active', 'paused', 'done']).optional(),
+      managedState: z.enum(['in_progress', 'waiting_owner', 'waiting_external']).optional(),
+      isLongTerm: z.boolean().optional().describe('Filter by [long-term] badge (true) vs standard tasks (false).'),
+      assigneeMetabotId: z.number().int().positive().optional().describe('Filter tasks with subtasks assigned to this Bot id.'),
+      sessionId: z.string().optional().describe('Filter tasks linked to a specific conversation session id.'),
+      includeDone: z.boolean().optional().describe('Include completed/archived tasks (default true).'),
+      limit: z.number().int().min(1).max(100).optional().describe('Max results (default 20).'),
+    },
+    async (args: {
+      query?: string;
+      stage?: LongTermTaskStage;
+      managedState?: 'in_progress' | 'waiting_owner' | 'waiting_external';
+      isLongTerm?: boolean;
+      assigneeMetabotId?: number;
+      sessionId?: string;
+      includeDone?: boolean;
+      limit?: number;
+    }) => {
+      try {
+        const matches = store().searchTasks({
+          query: args.query,
+          stage: args.stage,
+          managedState: args.managedState,
+          isLongTerm: args.isLongTerm,
+          assigneeMetabotId: args.assigneeMetabotId,
+          sessionId: args.sessionId,
+          includeDone: args.includeDone ?? true,
+          limit: args.limit ?? 20,
+        });
+        return jsonResult({
+          count: matches.length,
+          tasks: matches.map((card) => toAgentTaskView(card)),
+        });
+      } catch (error) {
+        return textResult(`Failed to search tasks: ${error instanceof Error ? error.message : String(error)}`, true);
+      }
+    },
+  );
+
+  const taskGet = tool(
+    'task_get',
+    'Read one Task\'s complete shared state: goal, [long-term] badge, origin session/message anchors, all subtasks with serial/parallel dependencies, assignee Bots, live Worker progress checkpoints, Worker-registered deliverable submissions + evidence, and recent journal events. Call before starting, delegating, or verifying any task.',
+    { taskId: z.string().min(1) },
+    async (args: { taskId?: string }) => {
+      try {
+        const detail = store().getTask(String(args.taskId ?? ''));
+        if (!detail) return textResult('Task not found.', true);
+        return jsonResult(toAgentTaskDetailView(detail));
+      } catch (error) {
+        return textResult(`Failed to read task: ${error instanceof Error ? error.message : String(error)}`, true);
+      }
+    },
+  );
+
+  const taskContextRead = tool(
+    'task_context_read',
+    'Pull the exact verbatim conversation excerpt where a Task (or specific subtask) was initiated by the owner, resolved via its persisted `originSessionId` and `originMessageId` anchors. Eliminates natural-language relay loss in multi-Bot collaboration without exposing unrelated conversation history.',
+    {
+      taskId: z.string().min(1),
+      subtaskId: z.string().optional(),
+      windowTurns: z.number().int().min(1).max(10).optional().describe('Surrounding messages before/after the origin message (default 3).'),
+    },
+    async (args: { taskId?: string; subtaskId?: string; windowTurns?: number }) => {
+      try {
+        const detail = store().getTask(String(args.taskId ?? ''));
+        if (!detail) return textResult('Task not found.', true);
+        const sub = args.subtaskId
+          ? detail.subtasks.find((item) => item.id === String(args.subtaskId ?? '')) ?? null
+          : null;
+        const targetSessionId =
+          sub?.originSessionId
+          ?? detail.originSessionId
+          ?? detail.definitionSessionId
+          ?? null;
+        if (!targetSessionId) {
+          return jsonResult({
+            taskId: detail.id,
+            originSessionId: null,
+            messages: [],
+            note: 'No originSessionId recorded on this task; rely on task_get goal and acceptanceCriteria.',
+          });
+        }
+        const anchors = Array.from(
+          new Set(
+            [
+              sub?.originMessageId ?? null,
+              detail.originMessageId ?? null,
+              ...(detail.anchorMessageIds ?? []),
+            ].filter((id): id is string => Boolean(id)),
+          ),
+        );
+        const slice =
+          control.readOriginContextSlice?.({
+            sessionId: targetSessionId,
+            anchorMessageIds: anchors,
+            windowTurns: args.windowTurns ?? 3,
+          }) ?? [];
+        return jsonResult({
+          taskId: detail.id,
+          ...(sub ? { subtaskId: sub.id } : {}),
+          originSessionId: targetSessionId,
+          originMessageId: sub?.originMessageId ?? detail.originMessageId ?? null,
+          originChannel: detail.originChannel ?? null,
+          messages: slice,
+        });
+      } catch (error) {
+        return textResult(`Failed to read task origin context: ${error instanceof Error ? error.message : String(error)}`, true);
+      }
+    },
+  );
+
+  const taskCreate = tool(
+    'task_create',
+    'Create a first-class Task card (Twin Bot only). Supports BOTH simple 1–2 turn deliverables (omit `subtasks` or pass 1 item — e.g. drafting a proposal, producing 3 cover candidates, auditing a module) AND multi-subtask serial/parallel DAG workflows (`subtasks` with `dependsOnOrdinals` — omit `dependsOnOrdinals` for parallel subtasks, set `[1]` for serial subtasks). By default (`activateImmediately: true`) the task activates immediately (`in_progress`), mounts onto the Studio bottom-right Task HUD, and begins all dependency-free subtasks. Automatically records `originSessionId` and `originMessageId` for zero-loss Worker context lookup. IMPORTANT OWNER RULING RULE: When a deliverable or proposal is produced (whether by you directly or by Workers), park the task in `waiting_owner` via `task_subtask_propose` (or `studio_decision_enqueue`) and present the detailed plan/deliverable to the owner — NEVER mark the whole task `done` before the owner reviews and approves.',
+    {
+      title: z.string().min(1).describe('Concise task title shown on the Task Board and Studio HUD.'),
+      goal: z.string().optional().describe('Clear outcome & done-ness definition (defaults to title).'),
+      acceptanceCriteria: z.array(z.string()).optional().describe('Checkable acceptance criteria (used when `subtasks` is omitted).'),
+      subtasks: z.array(subtaskDraftSchema).optional().describe('Optional 1..N subtasks with serial/parallel `dependsOnOrdinals` and optional `assigneeMetabotId`.'),
+      preferredChannel: z.enum(CHANNEL_ENUM).optional(),
+      expectedMinutes: z.number().int().positive().optional(),
+      activateImmediately: z.boolean().optional().describe('Default true (immediately enters `in_progress`). Set false only for fuzzy multi-week drafts still in `defining`.'),
+      isLongTerm: z.boolean().optional().describe('Optional explicit [long-term] badge override (omit for automatic derivation from >=3 Bots, >=1440m duration, >24h span, or >=4 subtasks).'),
+      planArtifactUri: z.string().optional(),
+      definitionSessionId: z.string().optional(),
+    },
+    async (args: {
+      title?: string;
+      goal?: string;
+      acceptanceCriteria?: string[];
+      subtasks?: unknown[];
+      preferredChannel?: (typeof CHANNEL_ENUM)[number];
+      expectedMinutes?: number;
+      activateImmediately?: boolean;
+      isLongTerm?: boolean;
+      planArtifactUri?: string;
+      definitionSessionId?: string;
+    }) => {
+      try {
+        const anchors = resolveOriginAnchors(args.definitionSessionId);
+        if (!anchors.identity.isTwin) {
+          return textResult('Refused (FORBIDDEN): Only the Twin Bot may create top-level Tasks; Workers update/submit assigned subtasks.', true);
+        }
+        const result = store().createUnifiedTask(
+          {
+            title: String(args.title ?? ''),
+            goal: args.goal,
+            acceptanceCriteria: args.acceptanceCriteria,
+            subtasks: args.subtasks as never[] | undefined,
+            preferredChannel: args.preferredChannel,
+            expectedMinutes: args.expectedMinutes,
+            activateImmediately: args.activateImmediately !== false,
+            isLongTerm: args.isLongTerm ?? null,
+            planArtifactUri: args.planArtifactUri ?? null,
+            definitionSessionId: anchors.originSessionId,
+            originSessionId: anchors.originSessionId,
+            originMessageId: anchors.originMessageId,
+            originChannel: anchors.originChannel,
+          },
+          anchors.identity.actor,
+        );
+        if (!result.ok) return textResult(`Refused (${result.code}): ${result.error}`, true);
+        if (mountedSessionId && result.value) {
+          control.onTaskCreatedOrFocused?.(mountedSessionId, result.value.id);
+        }
+        const readySubtasks = result.value.subtasks
+          .filter((s) => s.status === 'in_progress')
+          .map((s) => ({ subtaskId: s.id, ordinal: s.ordinal, title: s.title, assigneeMetabotId: s.assigneeMetabotId ?? undefined }));
+        return jsonResult({
+          ...toAgentTaskDetailView(result.value),
+          readySubtasks,
+          closureRule: 'Present finished deliverables/plans in detail and move to waiting_owner (task_subtask_propose / studio_decision_enqueue) — wait for owner sign-off before final closure.',
+        });
+      } catch (error) {
+        return textResult(`Failed to create task: ${error instanceof Error ? error.message : String(error)}`, true);
+      }
+    },
+  );
+
+  const taskSubtaskProgress = tool(
+    'task_subtask_progress',
+    'Record a live milestone progress checkpoint on an in-flight subtask (e.g. "2/3: security audit complete, running regression suite"). Updates the local SQLite Task blackboard immediately so the Twin Bot heartbeat and Studio bottom-right HUD show live progress.',
+    {
+      subtaskId: z.string().min(1),
+      note: z.string().min(1).max(280).describe('Concise progress checkpoint.'),
+    },
+    async (args: { subtaskId?: string; note?: string }) => {
+      try {
+        const identity = callerIdentity();
+        const result = store().recordSubtaskProgress(
+          String(args.subtaskId ?? ''),
+          { note: String(args.note ?? '') },
+          identity.actor,
+        );
+        if (!result.ok) return textResult(`Refused (${result.code}): ${result.error}`, true);
+        return jsonResult(toAgentSubtaskView(result.value));
+      } catch (error) {
+        return textResult(`Failed to record progress: ${error instanceof Error ? error.message : String(error)}`, true);
+      }
+    },
+  );
+
+  const taskSubtaskSubmit = tool(
+    'task_subtask_submit',
+    'Worker self-registration on the Task blackboard: call BEFORE finishing your delegated turn to write your completion status (`ready_for_review` | `blocked` | `waiting_external` | `failed`), summary, produced digital artifacts (local file/dir paths, metaapp://, metafile://, pin://, URLs), and verification evidence directly into the Subtask object. The Twin Bot reads this structured record directly when verifying and advancing downstream subtasks.',
+    {
+      subtaskId: z.string().min(1),
+      outcome: z.enum(['ready_for_review', 'blocked', 'waiting_external', 'failed']),
+      summary: z.string().min(1).describe('Concise factual summary of what was accomplished and verified.'),
+      artifacts: z
+        .array(
+          z.object({
+            kind: z.string().min(1).describe('file | dir | metaapp | metafile | pin | url | branch | other'),
+            uri: z.string().min(1).describe('Full path or URI (never abbreviated).'),
+            label: z.string().optional(),
+            sha256: z.string().optional(),
+          }),
+        )
+        .optional(),
+      evidence: z
+        .array(
+          z.object({
+            kind: z.enum(EVIDENCE_KIND_ENUM),
+            uri: z.string().min(1),
+            note: z.string().optional(),
+          }),
+        )
+        .optional(),
+      blockers: z.array(z.string()).optional(),
+    },
+    async (args: {
+      subtaskId?: string;
+      outcome?: TaskWorkerSubmissionOutcome;
+      summary?: string;
+      artifacts?: Array<{ kind: string; uri: string; label?: string; sha256?: string }>;
+      evidence?: Array<{ kind: string; uri: string; note?: string }>;
+      blockers?: string[];
+    }) => {
+      try {
+        const identity = callerIdentity();
+        const result = store().submitSubtaskWork(
+          String(args.subtaskId ?? ''),
+          {
+            outcome: (args.outcome ?? 'ready_for_review') as TaskWorkerSubmissionOutcome,
+            workerMetabotId: identity.metabotId ?? 0,
+            workerSessionId: mountedSessionId || null,
+            summary: String(args.summary ?? ''),
+            artifacts: args.artifacts ?? [],
+            evidence: args.evidence ?? [],
+            blockers: args.blockers ?? [],
+          },
+          identity.actor,
+        );
+        if (!result.ok) return textResult(`Refused (${result.code}): ${result.error}`, true);
+        return jsonResult(toAgentSubtaskView(result.value));
+      } catch (error) {
+        return textResult(`Failed to submit subtask work: ${error instanceof Error ? error.message : String(error)}`, true);
+      }
+    },
+  );
+
+  const taskSubtaskPropose = tool(
+    'task_subtask_propose',
+    'Park a completed deliverable, plan, or candidate slate in `waiting_owner` (等你拍板) with verifiable evidence and a clear summary so the owner can inspect the detailed result before final sign-off. REQUIRED when you finish a 1–2 turn plan/deliverable yourself or when presenting the final stage of a task to the owner.',
+    {
+      subtaskId: z.string().min(1),
+      evidence: z
+        .array(
+          z.object({
+            kind: z.enum(EVIDENCE_KIND_ENUM),
+            uri: z.string().min(1),
+            note: z.string().optional(),
+          }),
+        )
+        .min(1),
+      summary: z.string().min(1).describe('Clear deliverable summary + what the owner is reviewing/approving.'),
+    },
+    async (args: { subtaskId?: string; evidence?: unknown[]; summary?: string }) => {
+      try {
+        const identity = callerIdentity();
+        if (!identity.isTwin) {
+          return textResult('Refused (FORBIDDEN): Workers should call task_subtask_submit; only the Twin Bot proposes owner acceptance.', true);
+        }
+        const result = store().proposeSubtask(
+          String(args.subtaskId ?? ''),
+          { evidence: (args.evidence ?? []) as never[], summary: String(args.summary ?? '') },
+          'twin',
+        );
+        if (!result.ok) return textResult(`Refused (${result.code}): ${result.error}`, true);
+        return jsonResult(toAgentSubtaskView(result.value));
+      } catch (error) {
+        return textResult(`Failed to propose subtask: ${error instanceof Error ? error.message : String(error)}`, true);
+      }
+    },
+  );
+
+  const taskSubtaskAccept = tool(
+    'task_subtask_accept',
+    'Accept a verified subtask as Twin Bot. For INTERMEDIATE subtasks in a multi-step DAG, accepting automatically unlocks dependent serial subtasks (returned in `unlockedSubtasks` so you can immediately begin/delegate them). IMPORTANT: Closing the LAST open subtask of a task completes the entire task to `done` — NEVER close the final deliverable of a task without the owner having reviewed and approved it (`ownerApprovedInChat: true`); if the owner has not seen/approved the deliverable yet, call `task_subtask_propose` (or `studio_decision_enqueue`) instead so it waits in `waiting_owner` (等你拍板).',
+    {
+      subtaskId: z.string().min(1),
+      note: z.string().optional(),
+      ownerApprovedInChat: z.boolean().optional().describe('Set true ONLY when closing the final subtask AFTER the owner explicitly approved/accepted the presented deliverable in chat.'),
+    },
+    async (args: { subtaskId?: string; note?: string; ownerApprovedInChat?: boolean }) => {
+      try {
+        const identity = callerIdentity();
+        if (!identity.isTwin) {
+          return textResult('Refused (FORBIDDEN): Only the Twin Bot or Owner may accept subtasks.', true);
+        }
+        const subtaskId = String(args.subtaskId ?? '');
+        const target = store().getSubtask(subtaskId);
+        if (!target) return textResult('Refused (NOT_FOUND): subtask not found', true);
+        const detailBefore = store().getTask(target.taskId);
+        if (!detailBefore) return textResult('Refused (NOT_FOUND): task not found', true);
+        const otherOpen = detailBefore.subtasks.filter(
+          (s) => s.id !== subtaskId && s.status !== 'accepted' && s.status !== 'skipped',
+        );
+        if (otherOpen.length === 0 && args.ownerApprovedInChat !== true) {
+          return textResult(
+            `Refused (OWNER_RULING_REQUIRED): Subtask "${target.title}" is the final open deliverable of task "${detailBefore.title}". Present the detailed result/plan to the owner and park it in waiting_owner via task_subtask_propose (or studio_decision_enqueue) first; pass ownerApprovedInChat: true only after the owner explicitly approves in chat.`,
+            true,
+          );
+        }
+        const result = store().acceptSubtask(subtaskId, 'twin', args.note ?? '');
+        if (!result.ok) return textResult(`Refused (${result.code}): ${result.error}`, true);
+        const detailAfter = store().getTask(target.taskId);
+        const acceptedIds = new Set(
+          (detailAfter?.subtasks ?? []).filter((s) => s.status === 'accepted').map((s) => s.id),
+        );
+        const unlockedSubtasks: Array<{ subtaskId: string; ordinal: number; title: string; assigneeMetabotId?: number }> = [];
+        for (const candidate of detailAfter?.subtasks ?? []) {
+          if (candidate.status === 'pending' && candidate.dependsOn.every((dep) => acceptedIds.has(dep))) {
+            const begun = store().beginSubtask(candidate.id, 'twin', candidate.preferredChannel);
+            const activeSub = begun.ok && begun.value ? begun.value : candidate;
+            unlockedSubtasks.push({
+              subtaskId: activeSub.id,
+              ordinal: activeSub.ordinal,
+              title: activeSub.title,
+              ...(activeSub.assigneeMetabotId ? { assigneeMetabotId: activeSub.assigneeMetabotId } : {}),
+            });
+          }
+        }
+        return jsonResult({
+          subtask: toAgentSubtaskView(result.value),
+          taskStage: detailAfter?.stage ?? 'active',
+          unlockedSubtasks,
+        });
+      } catch (error) {
+        return textResult(`Failed to accept subtask: ${error instanceof Error ? error.message : String(error)}`, true);
+      }
+    },
+  );
+
   return [
+    taskListActive,
+    taskSearch,
+    taskGet,
+    taskContextRead,
+    taskCreate,
+    taskSubtaskProgress,
+    taskSubtaskSubmit,
+    taskSubtaskPropose,
+    taskSubtaskAccept,
     createTask,
     quickCreateTask,
     activateTask,

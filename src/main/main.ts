@@ -7968,6 +7968,46 @@ const getCoworkRunner = () => {
       longTermTaskTools: {
         store: () => getLongTermTaskStore(),
         getAppLanguage: () => getPersistedAppLanguage(),
+        resolveSessionIdentity: (sid) => {
+          const metabotId = getCoworkStore().getMetabotIdForSession(sid);
+          const bot = metabotId != null ? getMetabotStore().getMetabotById(metabotId) : null;
+          const isTwin = Boolean(bot && bot.enabled && bot.metabot_type === 'twin');
+          const session = getCoworkStore().getSession(sid);
+          const sourceCtx = getCoworkStore().getConversationSourceContextBySession(sid);
+          const srcChannelLower = String(sourceCtx.sourceChannel ?? '').toLowerCase();
+          const extIdLower = String(sourceCtx.externalConversationId ?? '').toLowerCase();
+          const originChannel = getStudioChiefOfStaffService().isStudioOwnerSession(sid)
+            ? 'studio'
+            : srcChannelLower === 'telegram' || extIdLower.startsWith('telegram:')
+              ? 'telegram'
+              : srcChannelLower === 'mobile' || extIdLower.startsWith('mobile:')
+                ? 'mobile'
+                : srcChannelLower && srcChannelLower !== 'cowork_ui' && srcChannelLower !== 'orchestrator'
+                  ? 'im'
+                  : session?.sessionType === 'a2a'
+                    ? 'a2a'
+                    : session?.autoOrigin === 'schedule'
+                      ? 'schedule'
+                      : 'botworks';
+          return {
+            actor: isTwin ? 'twin' : metabotId != null ? (`worker:${metabotId}` as const) : 'twin',
+            metabotId: metabotId ?? null,
+            isTwin: metabotId == null ? true : isTwin,
+            originChannel,
+          };
+        },
+        resolveLatestUserMessageId: (sid) => getCoworkStore().getLatestHumanMessageId(sid),
+        readOriginContextSlice: (params) =>
+          getCoworkStore().getMessageContextSlice(params.sessionId, {
+            anchorMessageIds: params.anchorMessageIds,
+            windowTurns: params.windowTurns,
+          }),
+        onTaskCreatedOrFocused: (sid, taskId) => {
+          if (getStudioChiefOfStaffService().isStudioOwnerSession(sid)) {
+            getStudioChiefOfStaffService().focusTask(sid, taskId);
+          }
+          broadcastLongTermTaskUpdate([taskId], 'task_created_or_focused');
+        },
       },
       studioChiefOfStaffTools: {
         isTwinSession: (sid) => {
@@ -7992,6 +8032,39 @@ const getCoworkRunner = () => {
           });
           if (originSid && enqueued.item.longtermTaskId) {
             getStudioChiefOfStaffService().focusTask(originSid, enqueued.item.longtermTaskId);
+          }
+          // Owner Ruling #3: whenever a task decision or acceptance briefing is
+          // enqueued for the owner, converge its open target subtask onto
+          // `waiting_owner` (等你拍板) so the Task Board & HUD never leave a
+          // finished deliverable falsely reading as `in_progress` or auto-`done`.
+          try {
+            if (enqueued.item.longtermTaskId) {
+              const ltStore = getLongTermTaskStore();
+              const ltDetail = ltStore.getTask(enqueued.item.longtermTaskId);
+              if (ltDetail && ltDetail.stage === 'active') {
+                const targetSubId = enqueued.item.longtermSubtaskId ?? ltDetail.currentSubtaskId;
+                const targetSub = targetSubId
+                  ? ltDetail.subtasks.find((s) => s.id === targetSubId) ?? null
+                  : null;
+                if (targetSub && targetSub.status === 'in_progress') {
+                  const briefNote = `${input.title}: ${input.question}`.slice(0, 1500);
+                  if (enqueued.item.kind === 'acceptance' && (input.evidence?.length ?? 0) > 0) {
+                    const propRes = ltStore.proposeSubtask(
+                      targetSub.id,
+                      { evidence: input.evidence!, summary: briefNote },
+                      'twin',
+                    );
+                    if (!propRes.ok) {
+                      ltStore.waitSubtask(targetSub.id, { kind: 'owner', note: briefNote }, 'twin');
+                    }
+                  } else {
+                    ltStore.waitSubtask(targetSub.id, { kind: 'owner', note: briefNote }, 'twin');
+                  }
+                }
+              }
+            }
+          } catch {
+            // Best-effort subtask waiting_owner sync.
           }
           return { ok: true, ...enqueued };
         },

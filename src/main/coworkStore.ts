@@ -5887,6 +5887,124 @@ export class CoworkStore implements MemoryBackend {
   }
 
   /**
+   * Return the latest genuine human-authored message id in `sessionId`
+   * (skipping synthetic system/proactive-briefing/cross-session trigger rows).
+   */
+  getLatestHumanMessageId(sessionId: string): string | null {
+    const sid = String(sessionId ?? '').trim();
+    if (!sid) return null;
+    const rows = this.getAll<{ id: string; content: string; metadata: string | null }>(
+      `SELECT id, content, metadata
+         FROM cowork_messages
+        WHERE session_id = ? AND type = 'user'
+        ORDER BY created_at DESC, sequence DESC, ROWID DESC
+        LIMIT 12`,
+      [sid],
+    );
+    for (const row of rows) {
+      const text = String(row.content ?? '').trim();
+      if (!text) continue;
+      if (
+        /^<(?:studio_proactive_briefing|studio_back_office_supervision|longterm_heartbeat|cross_session_message)\b/i.test(text)
+        || text.includes('<cross_session_message')
+      ) {
+        continue;
+      }
+      return row.id;
+    }
+    return null;
+  }
+
+  /**
+   * Read a bounded, clean user/assistant conversation slice around specific
+   * anchor message ids (for `task_context_read`) without exposing unrelated
+   * history from long multi-topic Studio sessions.
+   */
+  getMessageContextSlice(
+    sessionId: string,
+    options?: {
+      anchorMessageIds?: string[];
+      windowTurns?: number;
+      maxCharsPerMessage?: number;
+    },
+  ): Array<{ id: string; role: 'user' | 'assistant'; content: string; createdAt: number }> {
+    const sid = String(sessionId ?? '').trim();
+    if (!sid) return [];
+    const windowRadius = Math.max(1, Math.min(10, Math.trunc(options?.windowTurns ?? 3)));
+    const maxChars = Math.max(200, Math.min(4000, Math.trunc(options?.maxCharsPerMessage ?? 1200)));
+    const anchors = (options?.anchorMessageIds ?? []).map((id) => String(id ?? '').trim()).filter(Boolean);
+
+    const isSyntheticTrigger = (content: string): boolean => {
+      const trimmed = content.trim();
+      return (
+        /^<(?:studio_proactive_briefing|studio_back_office_supervision|longterm_heartbeat)\b/i.test(trimmed)
+        || trimmed.includes('<cross_session_message')
+      );
+    };
+
+    const formatRows = (
+      rawRows: Array<{ id: string; type: string; content: string; created_at: number }>,
+    ): Array<{ id: string; role: 'user' | 'assistant'; content: string; createdAt: number }> => {
+      const out: Array<{ id: string; role: 'user' | 'assistant'; content: string; createdAt: number }> = [];
+      for (const r of rawRows) {
+        const text = String(r.content ?? '').trim();
+        if (!text || isSyntheticTrigger(text)) continue;
+        const clipped = text.length > maxChars ? `${text.slice(0, maxChars)}…` : text;
+        out.push({
+          id: r.id,
+          role: r.type === 'user' ? 'user' : 'assistant',
+          content: clipped,
+          createdAt: Number(r.created_at ?? 0),
+        });
+      }
+      return out;
+    };
+
+    if (anchors.length === 0) {
+      const recent = this.getAll<{ id: string; type: string; content: string; created_at: number; rowid: number }>(
+        `SELECT id, type, content, created_at, ROWID AS rowid
+           FROM cowork_messages
+          WHERE session_id = ? AND type IN ('user', 'assistant')
+          ORDER BY created_at DESC, sequence DESC, ROWID DESC
+          LIMIT ?`,
+        [sid, windowRadius * 2],
+      );
+      return formatRows(recent.slice().reverse());
+    }
+
+    const allConversational = this.getAll<{
+      id: string;
+      type: string;
+      content: string;
+      created_at: number;
+    }>(
+      `SELECT id, type, content, created_at
+         FROM cowork_messages
+        WHERE session_id = ? AND type IN ('user', 'assistant')
+        ORDER BY created_at ASC, sequence ASC, ROWID ASC`,
+      [sid],
+    ).filter((r) => Boolean(String(r.content ?? '').trim()) && !isSyntheticTrigger(String(r.content ?? '')));
+
+    const anchorSet = new Set(anchors);
+    const pickedIndices = new Set<number>();
+    allConversational.forEach((row, idx) => {
+      if (!anchorSet.has(row.id)) return;
+      const start = Math.max(0, idx - windowRadius);
+      const end = Math.min(allConversational.length - 1, idx + windowRadius);
+      for (let i = start; i <= end; i += 1) {
+        pickedIndices.add(i);
+      }
+    });
+
+    if (pickedIndices.size === 0) {
+      return formatRows(allConversational.slice(-windowRadius * 2));
+    }
+
+    const ordered = [...pickedIndices].sort((a, b) => a - b).map((idx) => allConversational[idx]);
+    return formatRows(ordered);
+  }
+
+  /**
    * Newest-first SQL page. `hasMoreBefore` means older rows exist beyond this chunk.
    *
    * Ordering is the sequence-led newest-first order, spelled without the
