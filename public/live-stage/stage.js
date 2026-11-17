@@ -471,8 +471,14 @@
     if (highlightCurrent) {
       const pinBadge = document.createElement('span');
       pinBadge.className = 'task-hud-current-pill';
-      pinBadge.textContent = tr('当前任务', 'Active');
+      pinBadge.textContent = tr('推进中', 'Active');
       titleWrap.append(pinBadge);
+    }
+    if (task?.isLongTerm === true) {
+      const ltBadge = document.createElement('span');
+      ltBadge.className = 'task-hud-longterm-pill';
+      ltBadge.textContent = tr('长期', 'Long-Term');
+      titleWrap.append(ltBadge);
     }
     const title = document.createElement('span');
     title.className = 'task-hud-title';
@@ -544,7 +550,7 @@
 
     if (tasks.length > 0) {
       const currentIdx = tasks.findIndex((t) => t?.isCurrent === true);
-      const currentTasks = tasks.filter((t) => t?.isCurrent === true).slice(0, 4);
+      const currentTasks = tasks.filter((t) => t?.isCurrent === true).slice(0, 5);
       currentTasks.forEach((curTask) => {
         hud.append(buildTaskHudRow(curTask, true));
       });
@@ -562,8 +568,8 @@
         otherList.hidden = !hudOthersExpanded;
         const syncToggleLabel = () => {
           toggle.textContent = hudOthersExpanded
-            ? tr(`▾ 收起其他任务 (${others.length})`, `▾ Hide other tasks (${others.length})`)
-            : tr(`▸ 其他任务 (${others.length})`, `▸ Other tasks (${others.length})`);
+            ? tr(`▾ 收起未激活/挂起任务 (${others.length})`, `▾ Hide inactive/parked tasks (${others.length})`)
+            : tr(`▸ 未激活/挂起任务 (${others.length})`, `▸ Inactive/parked tasks (${others.length})`);
         };
         syncToggleLabel();
         toggle.addEventListener('click', () => {

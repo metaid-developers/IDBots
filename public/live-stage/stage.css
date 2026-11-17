@@ -105,6 +105,7 @@ body[data-has-report="true"][data-family="complete"] .core-report-ready,body[dat
 .task-hud-top{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;color:#e2e8f0}
 .task-hud-title-wrap{min-width:0;display:flex;align-items:center;gap:6px;flex:1}
 .task-hud-current-pill{font-size:9px;font-weight:700;padding:1px 5px;border-radius:4px;background:var(--brand);color:#1e293b;flex-shrink:0}
+.task-hud-longterm-pill{font-size:9px;font-weight:700;padding:1px 5px;border-radius:4px;background:rgba(129,140,248,.22);border:1px solid rgba(129,140,248,.42);color:#c7d2fe;flex-shrink:0}
 .task-hud-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
 .task-hud-sub{font-size:11px;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .task-hud-state{font-size:10px;font-weight:650;padding:1px 6px;border-radius:999px;flex-shrink:0;background:rgba(56,189,248,.16);color:#7dd3fc}

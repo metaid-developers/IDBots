@@ -112,7 +112,23 @@ const LongTermTaskCard: React.FC<{ card: LongTermTaskSummary; onOpen: (taskId: s
           : 'dark:border-claude-darkBorder border-claude-border hover:border-brand/60'
       } ${dimmed ? 'opacity-75 hover:opacity-100' : ''} ${card.column === 'defining' ? 'border-dashed' : ''}`}
     >
-      <h3 className="text-[13px] font-semibold leading-snug dark:text-claude-darkText text-claude-text">{card.title}</h3>
+      <div className="flex items-start justify-between gap-2">
+        <h3 className="text-[13px] font-semibold leading-snug dark:text-claude-darkText text-claude-text">
+          {card.title}
+        </h3>
+        {card.isLongTerm && (
+          <span
+            data-slot="task-longterm-badge"
+            className={`inline-flex shrink-0 items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold leading-none ${
+              isWaitingOwner
+                ? 'border-amber-500/40 bg-amber-500/15 text-amber-700 dark:text-amber-300'
+                : 'border-indigo-500/35 bg-indigo-500/10 text-indigo-600 dark:text-indigo-300'
+            }`}
+          >
+            {i18nService.t('longTermTask.badge.longTerm')}
+          </span>
+        )}
+      </div>
       {card.participants.length > 0 && (
         <div className="mt-1.5">
           <ParticipantAvatars participants={card.participants} size="sm" />
@@ -135,6 +151,11 @@ const LongTermTaskCard: React.FC<{ card: LongTermTaskSummary; onOpen: (taskId: s
           <div className="text-xs dark:text-claude-darkText text-claude-text">
             {i18nService.t('longTermTask.currentPrefix').replace('{title}', card.currentSubtaskTitle)}
           </div>
+          {card.currentProgressNote && card.currentSubtaskStatus === 'in_progress' && (
+            <div className="mt-0.5 truncate text-[11px] text-sky-600 dark:text-sky-400">
+              {i18nService.t('longTermTask.liveProgressPrefix').replace('{note}', card.currentProgressNote)}
+            </div>
+          )}
           <div
             className={`mt-0.5 text-[11px] ${isWaitingOwner ? 'text-amber-600 dark:text-amber-400' : 'dark:text-claude-darkTextSecondary text-claude-textSecondary'} ${
               needsClamp && !expanded ? 'line-clamp-3' : ''

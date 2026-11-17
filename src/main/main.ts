@@ -591,6 +591,7 @@ import {
   initBotBrowserProjectionService,
 } from './services/botBrowserProjectionService';
 import { createStudioLiveStageService, type StudioLiveStageService } from './services/studioLiveStageService';
+import { buildStudioLiveTaskHud } from './services/studioLiveStageModel';
 import { listStudioOpenDelegations } from './services/studioOpenDelegations';
 import { describeStudioProjectionBlock } from './services/studioProjectionGate';
 import { applyStudioLiveStagePatch, drainStudioLiveStageInteractions, executeStageFrameScript } from './services/studioLiveStageFrame';
@@ -9704,32 +9705,25 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
           ),
         );
         const rawQueuedDecisions = twin ? getStudioDecisionQueueStore().listOpen(twin.id).length : 0;
-        const queuedDecisions = studioBusy ? 0 : rawQueuedDecisions;
-        const candidates = board.cards
-          .filter((card) => card.stage !== 'done' && card.stage !== 'cancelled' && card.managedState != null)
-          .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
-        const candidateById = new Map(candidates.map((c) => [c.id, c]));
+        const openCards = board.cards.filter(
+          (card) => card.stage !== 'done' && card.stage !== 'cancelled' && card.managedState != null,
+        );
+        const candidateById = new Map(openCards.map((c) => [c.id, c]));
 
-        // Track ALL parallel active tasks belonging to this Studio conversation:
-        //  1) all active focused tasks of this Studio session (MRU history);
-        //  2) active tasks born in `sessionId` (`definitionSessionId === sessionId`);
-        //  3) active tasks linked by currently open/verifying Studio delegations;
-        //  4) synthesized live rows for open Studio delegations whose linked
-        //     `longtermTaskId` was already closed (`done`), absent, or belongs
-        //     to another conversation's project card with a distinct Studio goal.
-        const currentIds = new Set<string>();
+        const sessionOwnedIds = new Set<string>();
         for (const focusedId of getStudioChiefOfStaffService().getFocusedTaskIds(sessionId)) {
           if (candidateById.has(focusedId)) {
-            currentIds.add(focusedId);
+            sessionOwnedIds.add(focusedId);
           }
         }
         if (sessionId) {
-          for (const card of candidates) {
-            if (ltStore.getTask(card.id)?.definitionSessionId === sessionId) {
-              currentIds.add(card.id);
+          for (const linked of ltStore.listTasksForSession(sessionId)) {
+            if (candidateById.has(linked.id)) {
+              sessionOwnedIds.add(linked.id);
             }
           }
         }
+
         const synthesizedCurrent: Array<{
           id: string;
           title: string;
@@ -9759,9 +9753,9 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
             && entryTitle !== linkedCard.currentSubtaskTitle,
           );
           if (linkedCard && !hijackedForeignProjectCard) {
-            currentIds.add(linkedCard.id);
+            sessionOwnedIds.add(linkedCard.id);
           } else {
-            if (linkedCard) currentIds.add(linkedCard.id);
+            if (linkedCard) sessionOwnedIds.add(linkedCard.id);
             const synthKey = orchTask?.id ?? rawAttemptId;
             if (seenSynthOrchIds.has(synthKey)) continue;
             seenSynthOrchIds.add(synthKey);
@@ -9779,32 +9773,13 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
           }
         }
 
-        if (currentIds.size === 0 && synthesizedCurrent.length === 0 && queuedDecisions === 0) {
-          return null;
-        }
-
-        const ordered = [...candidates].sort((a, b) => {
-          const aCur = currentIds.has(a.id) ? 1 : 0;
-          const bCur = currentIds.has(b.id) ? 1 : 0;
-          if (aCur !== bCur) return bCur - aCur;
-          return String(b.updatedAt).localeCompare(String(a.updatedAt));
+        return buildStudioLiveTaskHud({
+          cards: openCards,
+          sessionOwnedTaskIds: sessionOwnedIds,
+          synthesizedCurrent,
+          studioBusy,
+          rawQueuedDecisions,
         });
-
-        const mappedCards = ordered.map((card) => {
-          const isCurrent = currentIds.has(card.id);
-          const rawState = card.managedState ?? 'in_progress';
-          return {
-            id: card.id,
-            title: card.title,
-            state: isCurrent && studioBusy && rawState === 'waiting_owner' ? 'in_progress' : rawState,
-            accepted: card.progress.accepted,
-            total: Math.max(1, card.progress.total),
-            currentSubtask: card.currentSubtaskTitle,
-            isCurrent,
-          };
-        });
-        const activeTasks = [...synthesizedCurrent, ...mappedCards].slice(0, 8);
-        return { queuedDecisions, tasks: activeTasks };
       },
       getSettings: () => readStudioLiveStageSettings(getStoreOrNull()),
       getLanguage: () => getPersistedAppLanguage(),
