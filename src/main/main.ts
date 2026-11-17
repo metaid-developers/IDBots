@@ -9679,6 +9679,30 @@ const listBlockingStudioDelegations = (sessionId: string) => listStudioOpenDeleg
 const studioProjectionBlockedReason = (sessionId: string, kind: 'preview' | 'begin'): string | null =>
   describeStudioProjectionBlock(listBlockingStudioDelegations(sessionId), kind);
 
+const listOpenStudioDelegationsForBotStage = (sessionId: string) => {
+  const cur = getCoworkStore().getSessionWithoutMessages(sessionId);
+  const botId = cur?.metabotId ?? null;
+  if (botId == null) return listOpenStudioDelegations(sessionId);
+  const candidateSids = [
+    sessionId,
+    ...getCoworkStore()
+      .listSessions()
+      .filter((s) => s.id !== sessionId && s.sessionType === 'browser' && s.assistantMode === true && s.metabotId === botId)
+      .slice(0, 12)
+      .map((s) => s.id),
+  ];
+  const seen = new Set<string>();
+  const merged: ReturnType<typeof listOpenStudioDelegations> = [];
+  for (const sid of candidateSids) {
+    for (const item of listOpenStudioDelegations(sid)) {
+      if (seen.has(item.attemptId)) continue;
+      seen.add(item.attemptId);
+      merged.push(item);
+    }
+  }
+  return merged;
+};
+
 let studioLiveStageService: StudioLiveStageService | null = null;
 const getStudioLiveStageService = (): StudioLiveStageService => {
   if (!studioLiveStageService) {
@@ -9687,10 +9711,10 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
       getSession: (sessionId) => getCoworkStore().getSessionWithoutMessages(sessionId),
       hasMultipleUserMessages: (sessionId) => getCoworkStore().hasMultipleUserMessages(sessionId),
       getMetabotById: (id) => getMetabotStore().getMetabotById(id),
-      listOpenDelegations: listOpenStudioDelegations,
+      listOpenDelegations: listOpenStudioDelegationsForBotStage,
       listCollaboratingWorkers: (sessionId) => {
         const nowMs = Date.now();
-        const open = listOpenStudioDelegations(sessionId).map((entry) => ({
+        const open = listOpenStudioDelegationsForBotStage(sessionId).map((entry) => ({
           id: entry.attemptId,
           name: entry.workerName ?? `Bot #${entry.workerMetabotId}`,
           ...(entry.workerAvatar ? { avatar: entry.workerAvatar } : {}),

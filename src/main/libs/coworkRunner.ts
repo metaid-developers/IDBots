@@ -7074,7 +7074,7 @@ export class CoworkRunner extends EventEmitter {
       'Speak in plain user language, not internal jargon: align with what the owner sees in the UI, lead with the conclusion, and never hand the owner homework. Your purpose is to reduce the owner\'s mental load.',
       'Own the task lifecycle: when the goal is met, lead with that conclusion, summarize the delivered result, and move the task to review — or close out a finished one-off yourself — instead of stalling in executing and asking the owner what to do next. The UI the owner sees is the source of truth: refer to tasks by title (never #id), use the UI status words, and leave zero ambiguity about what happened and what, if anything, you still need from the owner.',
       'Your closing message IS the delivery: when a task finishes — whether you did it yourself or a Worker did — lead with the delivered result itself (what was produced and where it lives), and show every on-chain artifact as a full-text MetaWeb URI markdown link (pin:// / metaapp:// / metafile:// — complete URI, never abbreviated with an ellipsis). Verification notes, retries, and worker anecdotes come AFTER the result and stay brief: the owner delegated the task to get the finished outcome, not a process narrative.',
-      'Tasks are first-class entities across all sessions and channels (Studio, BotWorks, Mobile, IM/Telegram); sessions are merely interaction channels. Use `task_list_active` and `task_search` at high priority to recall in-flight or historical tasks immediately, create tracked cards via `task_create` (1-step or serial/parallel DAG) whenever an intent produces a deliverable or external action without asking "should I create a task?", coordinate with Workers through the shared Task object (`task_get`, `task_context_read`, Worker `task_subtask_submit`), and park finished proposals/deliverables in `waiting_owner` (`task_subtask_propose` / `studio_decision_enqueue`) so the owner inspects the detailed result before final sign-off.',
+      'Tasks are first-class entities across all sessions and channels (Studio, BotWorks, Mobile, IM/Telegram); sessions are merely interaction channels. Use `task_list_active` and `task_search` at high priority to recall in-flight or historical tasks immediately, create tracked cards via `task_create` (1-step or serial/parallel DAG) whenever an intent produces a deliverable or external action without asking "should I create a task?", coordinate with Workers through the shared Task object (`task_get`, `task_context_read`, Worker `task_subtask_submit`), and park finished proposals/deliverables in `waiting_owner` (`task_subtask_propose` / `studio_decision_enqueue`) so the owner inspects the detailed result before final sign-off. NEVER use `ask_user_question` for deliverable acceptance, approval rulings, or selecting among produced plans/articles/designs (`ask_user_question` is only for pre-task initial surveys); always present the full file/HTML on the right projector with clickable `preview-file://` / `preview-metaapp://` links and let the owner reply A or B in the left chat input.',
       buildPortableTaskIntentRubricSpec(),
     ].join('\n');
   }
@@ -13825,8 +13825,18 @@ export class CoworkRunner extends EventEmitter {
         && this.isTwinSession(sessionId),
       );
       if (isStudioTwinFrontOffice) {
+        const latestPage = this.store.getSessionMessagesPage?.(sessionId, { limit: 4 });
+        const inProactiveBriefing = Boolean(
+          latestPage?.messages?.some(
+            (m) =>
+              m.type === 'user'
+              && (String(m.content ?? '').includes('<studio_proactive_briefing>')
+                || (m.metadata as Record<string, unknown> | undefined)?.origin === 'studio_briefing'),
+          ),
+        );
         const studioVerdict = evaluateStudioTwinToolGuard({
           isStudioTwinFrontOffice: true,
+          isProactiveBriefingTurn: inProactiveBriefing,
           toolName,
           toolInput,
           workspaceRoot: activeSession?.workspaceRoot ?? sessionMetaForStudio?.cwd ?? process.cwd(),
