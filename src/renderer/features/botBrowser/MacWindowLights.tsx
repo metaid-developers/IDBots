@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 
 /**
  * macOS mini traffic lights (owner ruling 2026-11-14, the WeChat-style route).
@@ -29,6 +29,14 @@ import React from 'react';
  * handlers in main.ts (already allowlisted + contract-tested). "Zoom" is the
  * macOS green-dot semantic; the bridge verb is toggleMaximize.
  *
+ * Focus dimming (owner ruling 2026-11-17, macOS-native semantics): an
+ * UNFOCUSED window dims all three dots to gray (#C9C9CA) — gray dots stay
+ * visible and clickable — and hovering the lights strip relights them.
+ * Focus OR hover restores the red/amber/green trio with a 150ms
+ * transition-colors fade. The focus state rides the EXISTING
+ * window:state-changed IPC (preload onStateChanged, no new channels);
+ * without the electron bridge the lights simply stay lit.
+ *
  * Non-darwin platforms render nothing — the Windows/Linux titlebar chrome
  * (WindowTitleBar) and the native titlebar behavior stay untouched.
  */
@@ -46,6 +54,13 @@ export const MAC_LIGHT_DOT_COLORS = {
   minimize: '#FEBC2E',
   zoom: '#28C840',
 } as const;
+
+/**
+ * Unfocused-and-unhovered dot color (macOS native gray lights; they stay
+ * clickable while dimmed). Module-local on purpose — NOT part of the export
+ * API, so every existing MAC_LIGHT_* constant keeps its value and shape.
+ */
+const DIM_DOT_COLOR = '#C9C9CA';
 
 export type MacWindowAction = 'close' | 'minimize' | 'zoom';
 
@@ -65,7 +80,26 @@ const resolvePlatform = (override?: string): string | undefined => {
 };
 
 const MacWindowLights: React.FC<MacWindowLightsProps> = ({ platform }) => {
+  // Hooks live BEFORE the darwin early-return (React rules of hooks). The
+  // subscription is harmless on other platforms: the optional-chain guards
+  // make it a no-op wherever the electron bridge is absent, and the default
+  // isFocused=true keeps the lights lit — safe degradation, never a crash.
+  const [isFocused, setIsFocused] = useState(true);
+  const [isHovered, setIsHovered] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const unsubscribe = window.electron?.window.onStateChanged?.((nextState) => {
+      setIsFocused(nextState.isFocused);
+    });
+    return () => {
+      unsubscribe?.();
+    };
+  }, []);
+
   if (resolvePlatform(platform) !== 'darwin') return null;
+
+  const lit = isFocused || isHovered;
 
   const dots: Array<{
     action: MacWindowAction;
@@ -97,6 +131,8 @@ const MacWindowLights: React.FC<MacWindowLightsProps> = ({ platform }) => {
     <div
       data-slot="mac-window-lights"
       className="draggable flex items-center pt-[7.25px] pl-[15px] gap-[10px]"
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
     >
       {dots.map((dot) => (
         <button
@@ -106,8 +142,8 @@ const MacWindowLights: React.FC<MacWindowLightsProps> = ({ platform }) => {
           aria-label={dot.label}
           title={dot.label}
           onClick={dot.activate}
-          className="non-draggable h-[10px] w-[10px] rounded-full transition-opacity duration-150 hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
-          style={{ backgroundColor: dot.color }}
+          className="non-draggable h-[10px] w-[10px] rounded-full transition-colors duration-150 hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent/40"
+          style={{ backgroundColor: lit ? dot.color : DIM_DOT_COLOR }}
         />
       ))}
     </div>
