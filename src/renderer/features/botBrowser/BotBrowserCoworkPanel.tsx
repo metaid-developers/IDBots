@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
-import { FolderIcon } from '@heroicons/react/24/outline';
+import { ChevronDownIcon, FolderIcon } from '@heroicons/react/24/outline';
 import MarkdownContent from '../../components/MarkdownContent';
 import CoworkPromptInput, { type CoworkPromptInputRef } from '../../components/cowork/CoworkPromptInput';
 import { UserMessageBody } from '../../components/cowork/UserAttachmentBody';
@@ -827,10 +827,21 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     [currentSession],
   );
 
+  const shouldAutoScrollRef = useRef(true);
+  const pinningScrollRef = useRef(false);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+
+  useEffect(() => {
+    shouldAutoScrollRef.current = true;
+    setShowScrollToBottom(false);
+  }, [currentSession?.id]);
+
   useEffect(() => {
     const list = listRef.current;
-    if (list) {
+    if (list && shouldAutoScrollRef.current) {
+      pinningScrollRef.current = true;
       list.scrollTop = list.scrollHeight;
+      pinningScrollRef.current = false;
     }
   }, [visibleMessages.length, isStreaming]);
 
@@ -857,19 +868,47 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
     const scroller = listRef.current;
     const prevScrollHeight = scroller?.scrollHeight ?? 0;
     const prevScrollTop = scroller?.scrollTop ?? 0;
+    shouldAutoScrollRef.current = false;
     setIsLoadingEarlier(true);
     try {
       const count = await browserCoworkService.loadEarlierMessages();
       if (count > 0 && scroller) {
         window.requestAnimationFrame(() => {
           const addedHeight = scroller.scrollHeight - prevScrollHeight;
+          pinningScrollRef.current = true;
           scroller.scrollTop = Math.max(0, prevScrollTop + addedHeight);
+          pinningScrollRef.current = false;
         });
       }
     } finally {
       setIsLoadingEarlier(false);
     }
   }, [currentSession?.messageHistory?.hasMoreBefore, isLoadingEarlier]);
+
+  const handleListScroll = useCallback(() => {
+    if (pinningScrollRef.current) return;
+    const scroller = listRef.current;
+    if (!scroller) return;
+    const distanceToBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+    shouldAutoScrollRef.current = distanceToBottom <= 96;
+    // Generous threshold (280px) so the floating "back to bottom" button only
+    // appears once the owner has genuinely scrolled up away from the live tail.
+    const nextShow = distanceToBottom > 280;
+    setShowScrollToBottom((prev) => (prev === nextShow ? prev : nextShow));
+    if (scroller.scrollTop <= 96 && currentSession?.messageHistory?.hasMoreBefore && !isLoadingEarlier) {
+      void handleLoadEarlierMessages();
+    }
+  }, [currentSession?.messageHistory?.hasMoreBefore, handleLoadEarlierMessages, isLoadingEarlier]);
+
+  const handleScrollToBottomClick = useCallback(() => {
+    const scroller = listRef.current;
+    if (!scroller) return;
+    pinningScrollRef.current = true;
+    scroller.scrollTop = scroller.scrollHeight;
+    pinningScrollRef.current = false;
+    shouldAutoScrollRef.current = true;
+    setShowScrollToBottom(false);
+  }, []);
   const delegationSessionId = currentSession?.id ?? null;
   const delegationPollingActive = Boolean(currentSession && isAssistantMode && !isStreaming);
   useEffect(() => {
@@ -941,6 +980,8 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
   const handleSubmit = async (prompt: string, skillPrompt?: string) => {
     if (!currentSession && selectedMetabotId == null) return; // botless machines never start sessions here
     setShowHistory(false);
+    shouldAutoScrollRef.current = true;
+    setShowScrollToBottom(false);
     const captureOutgoingPrompt = async () => {
       // Element-picker capture (ABC v0.10.0): live marks first, then the
       // pre-navigation cache. First sends pass this preparation into start so
@@ -1105,7 +1146,11 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
             20px (14px w-3.5 rail lane + 1px ring + 5px gap) clear of the
             rail's right-edge zone, so a highlighted bubble never paints
             under the locator rail. */}
-        <div ref={listRef} className="h-full space-y-2.5 overflow-y-auto overflow-x-hidden pl-1 pr-5 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div
+          ref={listRef}
+          onScroll={handleListScroll}
+          className="h-full space-y-2.5 overflow-y-auto overflow-x-hidden pl-1 pr-5 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
         {visibleMessages.length === 0 ? (
           needsBootstrap ? (
             // No bot at all on this machine: block the chat with bootstrap
@@ -1162,16 +1207,24 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
         ) : (
           <>
             {currentSession?.messageHistory?.hasMoreBefore ? (
-              <div className="flex justify-center pt-1 pb-1">
-                <button
-                  type="button"
-                  data-slot="panel-load-earlier"
-                  disabled={isLoadingEarlier}
-                  onClick={() => { void handleLoadEarlierMessages(); }}
-                  className="rounded-lg border dark:border-claude-darkBorder/70 border-claude-border/70 px-2.5 py-1 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors disabled:opacity-50"
-                >
-                  {isLoadingEarlier ? i18nService.t('loading') : i18nService.t('coworkTurnNavigatorLoadEarlier')}
-                </button>
+              <div className="flex justify-center pt-1 pb-0.5">
+                {isLoadingEarlier ? (
+                  <span
+                    data-slot="panel-load-earlier"
+                    className="px-2.5 py-0.5 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary"
+                  >
+                    {i18nService.t('loading')}
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    data-slot="panel-load-earlier"
+                    onClick={() => { void handleLoadEarlierMessages(); }}
+                    className="px-2 py-0.5 text-[11px] opacity-60 hover:opacity-100 dark:text-claude-darkTextSecondary text-claude-textSecondary transition-opacity"
+                  >
+                    {i18nService.t('coworkTurnNavigatorLoadEarlier')}
+                  </button>
+                )}
               </div>
             ) : null}
             {visibleMessages.map(renderMessage)}
@@ -1208,6 +1261,18 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({
           />
         ) : null}
         </div>
+        {showScrollToBottom && visibleMessages.length > 0 ? (
+          <button
+            type="button"
+            data-slot="panel-scroll-to-bottom"
+            onClick={handleScrollToBottomClick}
+            title={i18nService.t('coworkScrollToBottom')}
+            aria-label={i18nService.t('coworkScrollToBottom')}
+            className="absolute bottom-3 right-6 z-20 flex h-[34px] w-[34px] items-center justify-center rounded-[var(--shape-radius-md)] border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/95 bg-claude-surface/95 shadow-sm backdrop-blur-sm dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+          >
+            <ChevronDownIcon className="h-3.5 w-3.5" />
+          </button>
+        ) : null}
         <PanelMessageLocatorRail
           containerRef={listRef}
           rows={locatorRows}

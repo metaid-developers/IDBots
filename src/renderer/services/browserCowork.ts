@@ -223,31 +223,57 @@ class BrowserCoworkService {
     if (!current || isOptimisticSession(current) || !history?.hasMoreBefore) {
       return 0;
     }
-    const beforeTranscriptCursor = history.beforeTranscriptCursor ?? null;
-    if (history.beforeSequence == null && beforeTranscriptCursor == null) {
-      return 0;
+    const countVisibleInBatch = (msgs: CoworkSession['messages']): number =>
+      msgs.reduce((acc, m) => {
+        if (m.metadata?.isDelegationInternal) return acc;
+        if (m.type === 'user') {
+          return (m.metadata as Record<string, unknown> | undefined)?.sourceChannel === 'idbots_cross_session' ? acc : acc + 1;
+        }
+        if (m.type === 'assistant') {
+          return !m.metadata?.isThinking && Boolean(m.content?.trim()) ? acc + 1 : acc;
+        }
+        return acc;
+      }, 0);
+
+    const targetPageSize = Math.max(history.pageSize || 0, 400);
+    let hasMoreBefore: boolean = history.hasMoreBefore;
+    let beforeSequence = history.beforeSequence;
+    let beforeTranscriptCursor = history.beforeTranscriptCursor ?? null;
+    const collected: CoworkSession['messages'] = [];
+    let visibleCount = 0;
+
+    // Tool-heavy stretches may span 200+ hidden tool/thinking rows; walk up to
+    // 3 slices so each scroll-to-top fetch yields at least ~24 visible bubbles.
+    for (let round = 0; round < 3 && hasMoreBefore && visibleCount < 24; round += 1) {
+      if (beforeSequence == null && beforeTranscriptCursor == null) break;
+      const result = await window.electron?.cowork?.getSessionMessagesPage?.({
+        sessionId: current.id,
+        beforeSequence,
+        beforeTranscriptCursor,
+        limit: targetPageSize,
+      });
+      if (!result?.success || !result.page) break;
+      collected.unshift(...result.page.messages);
+      visibleCount += countVisibleInBatch(result.page.messages);
+      hasMoreBefore = result.page.hasMoreBefore;
+      beforeSequence = result.page.beforeSequence;
+      beforeTranscriptCursor = result.page.beforeTranscriptCursor ?? null;
+      if (result.page.messages.length === 0) break;
     }
-    const result = await window.electron?.cowork?.getSessionMessagesPage?.({
-      sessionId: current.id,
-      beforeSequence: history.beforeSequence,
-      beforeTranscriptCursor,
-      limit: history.pageSize,
-    });
-    if (!result?.success || !result.page) {
-      return 0;
-    }
+
+    if (collected.length === 0) return 0;
     store.dispatch(prependBrowserMessages({
       sessionId: current.id,
-      messages: result.page.messages,
+      messages: collected,
       messageHistory: {
-        hasMoreBefore: result.page.hasMoreBefore,
-        beforeSequence: result.page.beforeSequence,
-        beforeTranscriptCursor: result.page.beforeTranscriptCursor ?? null,
-        pageSize: history.pageSize,
+        hasMoreBefore,
+        beforeSequence,
+        beforeTranscriptCursor,
+        pageSize: targetPageSize,
         beforeEpisodeIndex: history.beforeEpisodeIndex ?? null,
       },
     }));
-    return result.page.messages.length;
+    return collected.length;
   }
 
   async archiveSession(sessionId: string): Promise<void> {

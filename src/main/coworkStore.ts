@@ -231,7 +231,15 @@ const PRIVATE_CHAT_SIMPLEMSG_BACKFILL_TIME_WINDOW_MS = 10 * 60 * 1000;
  * both session kinds.
  */
 const COWORK_SESSION_VIEW_MESSAGE_LIMIT = 100;
-const COWORK_MESSAGE_PAGE_LIMIT_MAX = 200;
+/**
+ * Studio (`sessionType === 'browser'`) hides tool_use / tool_result / thinking
+ * rows (~85-90% of raw DB rows in tool-heavy turns), so a 100-row slice yielded
+ * only ~6-10 visible bubbles before hitting pagination. Give Studio sessions a
+ * 400-row window (~35-55 visible bubbles per page) while keeping standard/A2A
+ * sessions at 100.
+ */
+const COWORK_BROWSER_SESSION_VIEW_MESSAGE_LIMIT = 400;
+const COWORK_MESSAGE_PAGE_LIMIT_MAX = 500;
 
 /**
  * Page request normalization shared by the window and the page reader, so the
@@ -4018,11 +4026,15 @@ export class CoworkStore implements MemoryBackend {
    * renders a minimal projection of the transcript and has no "load earlier"
    * affordance, so those keep the full read.
    */
-  getSessionView(id: string, messageLimit: number = COWORK_SESSION_VIEW_MESSAGE_LIMIT): CoworkSession | null {
+  getSessionView(id: string, messageLimit?: number): CoworkSession | null {
     const session = this.getSessionWithoutMessages(id);
     if (!session) return null;
+    const effectiveLimit = messageLimit
+      ?? (session.sessionType === 'browser'
+        ? COWORK_BROWSER_SESSION_VIEW_MESSAGE_LIMIT
+        : COWORK_SESSION_VIEW_MESSAGE_LIMIT);
     if (session.sessionType === 'a2a') {
-      const limit = normalizeCoworkMessagePageRequest({ limit: messageLimit }).limit;
+      const limit = normalizeCoworkMessagePageRequest({ limit: effectiveLimit }).limit;
       const page = this.getSessionMessagesPage(id, { limit, displayWindow: true });
       // Thread aggregation: "load earlier" must be offered not only while the
       // session's own window has more, but also when previous episodes of the
@@ -4078,7 +4090,7 @@ export class CoworkStore implements MemoryBackend {
         },
       };
     }
-    const page = this.getSessionMessagesPage(id, { limit: messageLimit });
+    const page = this.getSessionMessagesPage(id, { limit: effectiveLimit });
     return {
       ...session,
       messages: page.messages,
@@ -4086,7 +4098,7 @@ export class CoworkStore implements MemoryBackend {
         hasMoreBefore: page.hasMoreBefore,
         beforeSequence: null,
         beforeTranscriptCursor: page.beforeTranscriptCursor ?? null,
-        pageSize: normalizeCoworkMessagePageRequest({ limit: messageLimit }).limit,
+        pageSize: normalizeCoworkMessagePageRequest({ limit: effectiveLimit }).limit,
         beforeEpisodeIndex: null,
       },
     };
