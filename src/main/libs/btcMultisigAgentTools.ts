@@ -116,17 +116,17 @@ export function buildBtcMultisigAgentTools(deps: {
 
   const utxos = tool(
     'wallet_btc_utxos',
-    'List plain BTC UTXOs for an address, including a multisig P2WSH address. Read-only. Use the txid, vout, and value when building a multisig PSBT. The provider list is UNFILTERED: it can contain inscription and MRC20 token UTXOs, so confirm each outpoint before spending it as plain BTC and never use it to locate MRC20 coins.',
+    'List plain BTC UTXOs for an address, including a multisig P2WSH address. Read-only. The list is FILTERED: every UTXO below 1000 sats is excluded, because a sub-1000-sat output may be an inscription / MRC20 carrier (546 sats) that must never be spent as plain BTC. Use the txid, vout, and value when building a multisig PSBT. Never use this list to locate MRC20 coins.',
     {
       address: z.string().min(1).describe('Bitcoin address to inspect.'),
     },
     async (args: { address: string }) => {
       try {
         const list = await control.listBtcUtxos(args.address.trim());
-        const warning = 'warning: the provider list is unfiltered — it can include inscription / MRC20 token UTXOs; confirm each outpoint before spending it as plain BTC.';
-        if (list.length === 0) return textResult(`address: ${args.address.trim()}\nutxos: none\n${warning}`);
+        const note = 'note: UTXOs below 1000 sats are filtered out — a sub-1000-sat output may be an inscription / MRC20 carrier and is not spendable as plain BTC.';
+        if (list.length === 0) return textResult(`address: ${args.address.trim()}\nutxos: none\n${note}`);
         const lines = list.map((item) => `- ${item.txid}:${item.vout}  ${item.value} sats`);
-        return textResult([`address: ${args.address.trim()}`, `count: ${list.length}`, ...lines, warning].join('\n'));
+        return textResult([`address: ${args.address.trim()}`, `count: ${list.length}`, ...lines, note].join('\n'));
       } catch (error) {
         return textResult(`wallet_btc_utxos failed: ${errorText(error)}`, true);
       }
@@ -158,7 +158,7 @@ export function buildBtcMultisigAgentTools(deps: {
 
   const build = tool(
     'wallet_btc_build_multisig_psbt',
-    'Build an unsigned PSBT that spends a P2WSH multisig output. The fee is the surplus of input sats over output sats. This does not sign or broadcast. For MRC20, spend the exact token UTXOs and pay the miner from those sats.',
+    'Build an unsigned PSBT that spends a P2WSH multisig output. The fee is the surplus of input sats over output sats. Every output must be at least 1000 sats: smaller outputs are frozen by the inscription-carrier rule and could never be spent. This does not sign or broadcast. For MRC20, spend the exact token UTXOs and pay the miner from those sats.',
     {
       witness_script: z.string().min(1).describe('Witness script hex from wallet_btc_multisig_address.'),
       inputs: z.array(z.object({
@@ -245,8 +245,12 @@ export function buildBtcMultisigAgentTools(deps: {
       const metabotId = requireSession('wallet_btc_sign_psbt');
       if (typeof metabotId !== 'number') return textResult(metabotId.error, true);
       let summary: PsbtSummary;
+      let indexes: number[];
       try {
-        const indexes = selectMultisigInputIndexes(args.psbt_hex, args.input_indexes);
+        // `indexes` is the carrier-filtered set: a sub-1000-sat input is never
+        // selected, and the signer must be asked for exactly what was shown to
+        // the owner — not the raw request, not the whole PSBT.
+        indexes = selectMultisigInputIndexes(args.psbt_hex, args.input_indexes);
         if (indexes.length === 0) throw new Error('no multisig input to sign');
         // Fail before the owner prompt when this key cannot actually sign the
         // selected inputs (not in the script / prevout mismatch).
@@ -270,7 +274,7 @@ export function buildBtcMultisigAgentTools(deps: {
       try {
         const signed = control.signBtcPsbtPartial(metabotId, {
           psbtHex: args.psbt_hex,
-          inputIndexes: args.input_indexes,
+          inputIndexes: indexes,
         });
         return textResult([
           'signed: partial',

@@ -5,6 +5,7 @@
  */
 
 import { freshGetUrlAndInit } from '../services/freshFetch';
+import { isBtcSpendableSats } from '../services/btcSpendPolicy';
 
 const METALET_HOST = 'https://www.metalet.space';
 const MEMPOOL_HOST = 'https://mempool.space';
@@ -172,7 +173,10 @@ function normalizeBtcUtxos(
           ? utxo.status.confirmed
           : undefined,
     }))
-    .filter((utxo) => /^[0-9a-f]{64}$/i.test(utxo.txId) && Number.isInteger(utxo.outputIndex) && utxo.outputIndex >= 0 && utxo.satoshis >= 600);
+    // Metalet e266b9c: a <1000 sat output may be an MRC20 / Pin carrier (546
+    // sats); the provider list carries no inscription marker, so the amount
+    // floor is the client-side fallback and must match the send boundary.
+    .filter((utxo) => /^[0-9a-f]{64}$/i.test(utxo.txId) && Number.isInteger(utxo.outputIndex) && utxo.outputIndex >= 0 && isBtcSpendableSats(utxo.satoshis));
 
   const confirmed = all.filter((utxo) => utxo.confirmed !== false);
   return confirmed.length > 0 ? confirmed : all;

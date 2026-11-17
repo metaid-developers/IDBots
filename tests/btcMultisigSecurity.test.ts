@@ -15,6 +15,7 @@ import {
   createMultisigAddress,
   finalizePsbt,
   parseMultisigScript,
+  selectMultisigInputIndexes,
   summarizePsbt,
 } from '../src/main/services/btcMultisigScript';
 import { openMetabotBtcWallet, signBtcPsbtPartial } from '../src/main/services/btcPartialSign';
@@ -113,13 +114,13 @@ test('D: build rejects an absurd fee rate and reports the rate otherwise', () =>
   assert.match(flagged.warning ?? '', /unusually high/);
 });
 
-test('D: build still enforces dust, positive fee and mainnet addresses', () => {
+test('D: build enforces the 1000-sat carrier floor, positive fee and mainnet addresses', () => {
   const descriptor = vaultOf([0, 1, 2], 2);
   assert.throws(() => buildMultisigPsbt({
     witnessScriptHex: descriptor.witnessScriptHex,
     inputs: [{ txid: TXID, vout: 0, value: 50_000 }],
-    outputs: [{ address: descriptor.address, value: 545 }],
-  }), /dust/);
+    outputs: [{ address: descriptor.address, value: 999 }],
+  }), /1000 sats/);
   assert.throws(() => buildMultisigPsbt({
     witnessScriptHex: descriptor.witnessScriptHex,
     inputs: [{ txid: TXID, vout: 0, value: 50_000 }],
@@ -274,18 +275,22 @@ test('C: finalize trims extra signatures on an M-of-N PSBT instead of failing', 
 
 function toolHarness(signerPubkey: string) {
   const handlers: Record<string, { handler: (args: any) => Promise<any> }> = {};
-  const tool = (name: string, _description: string, _schema: unknown, handler: (args: any) => Promise<any>) => {
+  const descriptions: Record<string, string> = {};
+  const tool = (name: string, description: string, _schema: unknown, handler: (args: any) => Promise<any>) => {
     handlers[name] = { handler };
+    descriptions[name] = description;
     return { name };
   };
   const calls: string[] = [];
+  const signIndexes: Array<number[] | undefined> = [];
   const control = {
     getBtcSignerIdentity() {
       calls.push('identity');
       return { address: '15Lofqw6Kpa6P8WnTYXKvmPyw3UZvvQWrB', publicKey: signerPubkey };
     },
-    signBtcPsbtPartial(_metabotId: number, input: { psbtHex: string }) {
+    signBtcPsbtPartial(_metabotId: number, input: { psbtHex: string; inputIndexes?: number[] }) {
       calls.push('sign');
+      signIndexes.push(input.inputIndexes);
       return { psbtHex: input.psbtHex };
     },
     broadcastBtcTx() {
@@ -296,11 +301,11 @@ function toolHarness(signerPubkey: string) {
       return Promise.resolve([{ txid: 'ab'.repeat(32), vout: 1, value: 80_000 }]);
     },
   };
-  return { tool, handlers, control, calls };
+  return { tool, handlers, descriptions, control, calls, signIndexes };
 }
 
-test('D: the utxo tool tells the truth about inscription / MRC20 coverage', async () => {
-  const { tool, handlers, control } = toolHarness(pubkeyOf(0));
+test('D: the utxo tool declares the <1000 sat carrier filter instead of an unfiltered list', async () => {
+  const { tool, handlers, descriptions, control } = toolHarness(pubkeyOf(0));
   buildBtcMultisigAgentTools({
     tool: tool as any,
     control,
@@ -309,9 +314,15 @@ test('D: the utxo tool tells the truth about inscription / MRC20 coverage', asyn
     confirmSign: async () => true,
     confirmBroadcast: async () => true,
   });
+  assert.match(descriptions.wallet_btc_utxos, /filtered/i);
+  assert.match(descriptions.wallet_btc_utxos, /1000 sats/);
+  assert.match(descriptions.wallet_btc_utxos, /MRC20/);
+  assert.doesNotMatch(descriptions.wallet_btc_utxos, /UNFILTERED/);
+
   const result = await handlers.wallet_btc_utxos.handler({ address: 'bc1qvault' });
-  assert.match(result.content[0].text, /warning:.*inscription/i);
+  assert.match(result.content[0].text, /1000 sats/);
   assert.match(result.content[0].text, /MRC20/);
+  assert.doesNotMatch(result.content[0].text, /unfiltered/i);
 });
 
 test('B: the sign tool refuses before the owner prompt when this key is not in the vault', async () => {
@@ -355,4 +366,56 @@ test('D: the build tool reports the implied fee rate', async () => {
   });
   assert.equal(result.isError, undefined);
   assert.match(result.content[0].text, /fee_rate_sat_vb: \d+/);
+});
+
+// ---------------------------------------------------------------------------
+// E. inscription-carrier floor — Metalet e266b9c (a <1000 sat UTXO is never
+//    spent as plain BTC) and 1b3f93a (the floor is exactly 1000: 999 refused,
+//    1000 allowed). Same three points on every boundary below: 999 / 1000 / 1001.
+// ---------------------------------------------------------------------------
+
+test('E: multisig outputs sit exactly on the 1000-sat floor (999 refused, 1000 and 1001 allowed)', () => {
+  const descriptor = vaultOf([0, 1, 2], 2);
+  assert.throws(() => buildMultisigPsbt({
+    witnessScriptHex: descriptor.witnessScriptHex,
+    inputs: [{ txid: TXID, vout: 0, value: 5_000 }],
+    outputs: [{ address: descriptor.address, value: 999 }],
+  }), /1000 sats/);
+  for (const value of [1_000, 1_001]) {
+    const built = buildMultisigPsbt({
+      witnessScriptHex: descriptor.witnessScriptHex,
+      inputs: [{ txid: TXID, vout: 0, value: 5_000 }],
+      outputs: [{ address: descriptor.address, value }],
+    });
+    assert.equal(summarizePsbt(built.psbtHex).outputs[0].value, value, `${value} sats must be allowed`);
+  }
+});
+
+test('E: a 999-sat multisig input is never selected, never prompted and never signed', async () => {
+  const descriptor = vaultOf([0, 1, 2], 2);
+  const psbtHex = buildMultisigPsbt({
+    witnessScriptHex: descriptor.witnessScriptHex,
+    inputs: [
+      { txid: '22'.repeat(32), vout: 0, value: 999 },
+      { txid: TXID, vout: 1, value: 80_000 },
+    ],
+    outputs: [{ address: descriptor.address, value: 70_000 }],
+  }).psbtHex;
+
+  assert.deepEqual(selectMultisigInputIndexes(psbtHex), [1], 'the 999-sat input is skipped');
+  assert.throws(() => selectMultisigInputIndexes(psbtHex, [0]), /1000 sats/);
+  assert.deepEqual(selectMultisigInputIndexes(psbtHex, [1]), [1], '1000+ sats stays selectable');
+
+  const { tool, handlers, control, signIndexes } = toolHarness(pubkeyOf(0));
+  buildBtcMultisigAgentTools({
+    tool: tool as any,
+    control,
+    sessionId: 's1',
+    resolveMetabotId: () => 7,
+    confirmSign: async () => true,
+    confirmBroadcast: async () => true,
+  });
+  const signed = await handlers.wallet_btc_sign_psbt.handler({ psbt_hex: psbtHex });
+  assert.equal(signed.isError, undefined, signed.content[0].text);
+  assert.deepEqual(signIndexes, [[1]], 'the signer is asked for the filtered set, not the raw PSBT');
 });

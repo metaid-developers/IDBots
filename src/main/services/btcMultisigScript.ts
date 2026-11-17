@@ -1,7 +1,7 @@
 import * as bitcoin from 'bitcoinjs-lib';
+import { BTC_MIN_SPENDABLE_SATS, isBtcSpendableSats } from './btcSpendPolicy';
 
 const NETWORK = bitcoin.networks.bitcoin;
-const DUST_SATS = 546;
 const MAX_KEYS = 16;
 const CHECKMULTISIG = 0xae;
 const OP_1 = 0x51;
@@ -294,7 +294,11 @@ export function buildMultisigPsbt(input: {
   let outputSum = 0;
   const outputScriptLengths: number[] = [];
   for (const item of input.outputs) {
-    if (!Number.isInteger(item.value) || item.value < DUST_SATS) fail(`output below dust (${DUST_SATS} sats)`);
+    // Metalet 1b3f93a: a plain transfer output below 1000 sats is frozen by
+    // the inscription-carrier rule, so the recipient could never spend it.
+    if (!Number.isInteger(item.value) || !isBtcSpendableSats(item.value)) {
+      fail(`output must be at least ${BTC_MIN_SPENDABLE_SATS} sats (inscription-carrier floor)`);
+    }
     // Throws for any address that is not on mainnet (network is pinned).
     const outputScript = bitcoin.address.toOutputScript(item.address, NETWORK);
     outputScriptLengths.push(outputScript.length);
@@ -350,15 +354,30 @@ export function summarizePsbt(psbtHex: string): PsbtSummary {
 
 export function selectMultisigInputIndexes(psbtHex: string, requested?: number[]): number[] {
   const psbt = readPsbt(psbtHex);
-  const multisig = psbt.data.inputs
-    .map((input, index) => (parseMultisigScriptShape(input.witnessScript) ? index : -1))
-    .filter((index) => index >= 0);
-  if (!requested || requested.length === 0) return multisig;
+  const isMultisigIndex = (index: number) => Boolean(parseMultisigScriptShape(psbt.data.inputs[index]?.witnessScript));
+  const witnessValue = (index: number): number | null => {
+    const utxo = psbt.data.inputs[index]?.witnessUtxo;
+    return utxo ? Number(utxo.value) : null;
+  };
+  const isSpendableIndex = (index: number) => {
+    const value = witnessValue(index);
+    // Metalet e266b9c: a <1000 sat input may be an MRC20 / Pin carrier. It is
+    // never selected for a plain BTC spend, whatever the caller asked for.
+    return isMultisigIndex(index) && value != null && isBtcSpendableSats(value);
+  };
+  if (!requested || requested.length === 0) {
+    return psbt.data.inputs.map((_, index) => index).filter(isSpendableIndex);
+  }
   for (const index of requested) {
     if (!Number.isInteger(index) || index < 0 || index >= psbt.data.inputs.length) {
       fail(`input index ${index} is out of range`);
     }
-    if (!multisig.includes(index)) fail(`input ${index} is not a multisig input`);
+    if (!isMultisigIndex(index)) fail(`input ${index} is not a multisig input`);
+    const value = witnessValue(index);
+    if (value == null) fail(`input ${index} is missing its witness UTXO`);
+    if (!isBtcSpendableSats(value)) {
+      fail(`input ${index} carries ${value} sats; UTXOs below ${BTC_MIN_SPENDABLE_SATS} sats may be inscription / MRC20 carriers and are never selected`);
+    }
   }
   return requested;
 }
