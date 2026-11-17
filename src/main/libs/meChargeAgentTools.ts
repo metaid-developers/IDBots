@@ -54,8 +54,31 @@ export interface MeChargeItemFacts {
   itemNumber?: string;
 }
 
+/**
+ * One money-moving action awaiting the owner's confirmation. `release` and
+ * `status` never build one: a refund is not a charge, and gating it could
+ * strand a hold while the owner is away.
+ */
+export interface MeChargeConfirmationInfo {
+  action: 'freeze' | 'capture' | 'pay';
+  metabotId: number;
+  orderId: string;
+  /** milliME for freeze/pay; for capture the known hold amount (0 when unknown). */
+  amountMilli: number;
+  payee: string;
+  refType?: string;
+  refId?: string;
+  /** capture only: the hold read back before settlement (null when the read failed). */
+  holdStatus?: number | null;
+}
+
 export type MeChargeToolsControl = {
   getMetabotMvcAddress(metabotId: number): string | null;
+  /**
+   * Settings switch (default ON). Absent → required: the tool refuses every
+   * unconfirmed charge rather than silently spending.
+   */
+  requireConfirmation?(): boolean;
   balance(input: { metabotId: number }): Promise<MeChargeBalanceView>;
   freeze(input: {
     metabotId: number;
@@ -155,6 +178,18 @@ export function buildMeChargeAgentTools(deps: {
   control: MeChargeToolsControl;
   sessionId: string;
   resolveMetabotId: (sessionId: string) => number | undefined;
+  /**
+   * Owner-confirmation gate for every money-moving action (freeze / capture /
+   * pay). `confirm` must resolve true ONLY for an explicit approval by the
+   * human owner in the current conversation — the host wires its 60s safety
+   * card here; a bot's own reply, a scheduler or a background heartbeat must
+   * resolve false. When `confirmation` is absent the gate is REQUIRED and
+   * refuses (fail-closed).
+   */
+  confirmation?: {
+    isRequired: () => boolean;
+    confirm: (info: MeChargeConfirmationInfo) => Promise<boolean>;
+  };
 }): unknown[] {
   const { tool, control, sessionId, resolveMetabotId } = deps;
 
@@ -166,12 +201,64 @@ export function buildMeChargeAgentTools(deps: {
     return id;
   };
 
+  const isChargeConfirmationRequired = (): boolean => {
+    if (!deps.confirmation) return true;
+    try {
+      return deps.confirmation.isRequired() !== false;
+    } catch {
+      return true;
+    }
+  };
+
+  const formatMe = (milli: number): string => {
+    if (!Number.isFinite(milli) || milli <= 0) return 'amount unknown';
+    return `${(milli / 1000).toFixed(3).replace(/\.?0+$/, '')} ME`;
+  };
+
+  /**
+   * Refuse unless the owner approved THIS charge. Runs before any
+   * control.freeze / capture / pay, so an unconfirmed charge never reaches
+   * the ME ledger and never produces a hold — a refusal is a no-op on the
+   * balance, not a rollback.
+   */
+  const confirmCharge = async (
+    info: MeChargeConfirmationInfo,
+  ): Promise<ReturnType<typeof textResult> | null> => {
+    if (!isChargeConfirmationRequired()) return null;
+    let approved = false;
+    let refusal = '';
+    if (!deps.confirmation) {
+      refusal = 'this session has no owner-confirmation channel wired in';
+    } else {
+      try {
+        approved = (await deps.confirmation.confirm(info)) === true;
+      } catch (error) {
+        refusal = error instanceof Error ? error.message : String(error);
+        approved = false;
+      }
+    }
+    if (approved) return null;
+    const target = info.payee || 'the hold payee';
+    return textResult([
+      `me_charge ${info.action} NOT executed — owner confirmation was not granted${refusal ? ` (${refusal})` : ''}.`,
+      `Pending confirmation item: me_charge/${info.action}/${info.orderId}`,
+      `- amount ${formatMe(info.amountMilli)} · payee ${target} · ref ${info.refType || 'freeze_order'}${info.refId ? ' / ' + info.refId : ''}`,
+      info.action === 'freeze'
+        ? 'No ME was frozen: the balance is untouched. Ask the owner to approve the confirmation card in this conversation, then retry the SAME order_id.'
+        : info.action === 'capture'
+          ? 'No ME was settled: the hold (if any) is still frozen. Ask the owner to approve the confirmation card in this conversation, then retry — or release the hold if the deal is off.'
+          : 'No ME was transferred: nothing moved. Ask the owner to approve the confirmation card in this conversation, then retry with the SAME order_id.',
+      'A confirmation must come from the owner in the current conversation (60s card, unanswered = refused); an unattended/background session can never satisfy it. Turning the gate off is a deliberate setting change (me_charge_require_confirmation=false).',
+    ].join('\n'), true);
+  };
+
   const meCharge = tool(
     'me_charge',
     [
       'Pay in ME (MetaID Energy) as THIS session MetaBot — the buyer-side spend leg. Freeze → capture for anything with a delivery step (NFT purchase, escrow-style service), pay for a one-shot charge (paid chat, skill call).',
       'Flow for a purchase: me_charge status → me_charge freeze (order_id, amount_me, payee, ref_type, ref_id) → the seller delivers → me_charge capture (order_id). If delivery fails or times out, me_charge release (order_id) gives the ME back. A hold is deducted from the balance immediately but becomes a payment only at capture.',
       'Guardrails: amount_me and payee are mandatory; payee must be an MVC address that differs from yours; order_id is mandatory and is the idempotency key (same order_id never freezes or captures twice); for ref_type "mrc721_purchase" the payee must be the item\'s current holder per the index — pass ref_id as the item pinId (64hex+iN), or item_pin_id explicitly, otherwise the call asks for confirm_unverified.',
+      'Owner confirmation: every freeze, capture and pay first asks the owner for a per-charge confirmation in the current conversation (60s card; unanswered = refused; default ON via setting me_charge_require_confirmation). Until the owner approves, the call returns a pending confirmation item and moves no ME — never claim a charge happened without an approved receipt.',
       'Receipts carry the orderId / entryId ledger口径 so both sides can reconcile in /v1/me/history. No platform money flow: ME moves only between the two identities\' ledgers.',
     ].join(' '),
     {
@@ -280,6 +367,17 @@ export function buildMeChargeAgentTools(deps: {
             }
           }
 
+          const refusal = await confirmCharge({
+            action: 'freeze',
+            metabotId: owner,
+            orderId,
+            amountMilli,
+            payee,
+            ...(refType ? { refType } : {}),
+            ...(refId ? { refId } : {}),
+          });
+          if (refusal) return refusal;
+
           const freeze = await control.freeze({
             metabotId: owner,
             orderId,
@@ -345,6 +443,17 @@ export function buildMeChargeAgentTools(deps: {
               true,
             );
           }
+          const refusal = await confirmCharge({
+            action: 'capture',
+            metabotId: owner,
+            orderId,
+            amountMilli: known?.amountMilli ?? expectedMilli ?? 0,
+            payee: known?.payee || expectedPayee,
+            ...(known?.refType ? { refType: known.refType } : {}),
+            ...(known?.refId ? { refId: known.refId } : {}),
+            holdStatus: known ? known.status : null,
+          });
+          if (refusal) return refusal;
           const settlement = await control.capture({ metabotId: owner, orderId });
           return textResult([
             formatSettlement(settlement),
@@ -380,6 +489,16 @@ export function buildMeChargeAgentTools(deps: {
           return textResult('me_charge pay refused: payee equals this bot\'s own address.', true);
         }
         if (!orderId) return textResult('me_charge pay refused: order_id (or an explicit idempotency key) is required so a retry cannot charge twice.', true);
+        const refusal = await confirmCharge({
+          action: 'pay',
+          metabotId: owner,
+          orderId,
+          amountMilli,
+          payee,
+          ...(refType ? { refType } : {}),
+          ...(refId ? { refId } : {}),
+        });
+        if (refusal) return refusal;
         const settlement = await control.pay({
           metabotId: owner,
           payee,

@@ -43,6 +43,13 @@
  * delivery, or mePay for a one-shot charge — the guard helpers
  * (normalizeOrderId / assertMvcPayee / describeMeChargeError) are exported so
  * a second caller cannot invent a second convention.
+ *
+ * Owner confirmation: the spend functions below are the transport, not the
+ * policy. The confirmation gate lives at the me_charge tool entrance
+ * (meChargeAgentTools) so every agent surface — interactive, delegated or
+ * unattended — passes through it; callers that bypass the tool are scripts,
+ * not agent sessions. The gate reads ME_CHARGE_REQUIRE_CONFIRMATION_SETTING_KEY
+ * through isMeChargeConfirmationRequired (default ON).
  */
 
 import { deriveMvcSponsorAddress } from './mvcSponsorClient';
@@ -65,6 +72,36 @@ export const ME_FREEZE_STATUS = {
 const ORDER_ID_PATTERN = /^[A-Za-z0-9_\-.:]{1,80}$/;
 /** MVC addresses are base58 P2PKH: leading '1', 26-34 chars, no 0OIl. */
 const MVC_ADDRESS_PATTERN = /^1[1-9A-HJ-NP-Za-km-z]{25,33}$/;
+
+/**
+ * Settings kv key for the per-charge owner confirmation gate (logical name
+ * `meChargeRequireConfirmation`, persisted in the same snake_case kv store as
+ * `wallet_transfer_external_confirm_enabled`). Absent/false-y reads keep the
+ * gate ON — the switch only ever takes effect when explicitly set to false.
+ */
+export const ME_CHARGE_REQUIRE_CONFIRMATION_SETTING_KEY = 'me_charge_require_confirmation';
+
+export interface MeChargeSettingsReader {
+  get<T = unknown>(key: string): T | undefined;
+}
+
+/**
+ * True when every ME charge (freeze / capture / pay) must be preceded by an
+ * explicit owner confirmation in the current conversation. Default ON: a
+ * missing reader, a missing key or a throwing reader all keep the gate, so a
+ * storage fault can never silently turn spending into an unconfirmed path.
+ */
+export function isMeChargeConfirmationRequired(
+  reader: MeChargeSettingsReader | null | undefined,
+): boolean {
+  if (!reader) return true;
+  try {
+    const value = reader.get<boolean>(ME_CHARGE_REQUIRE_CONFIRMATION_SETTING_KEY);
+    return value === undefined ? true : value !== false;
+  } catch {
+    return true;
+  }
+}
 
 /** Raw signer material for one charge (kept in memory only). */
 export interface MeChargeSigner {

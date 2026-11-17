@@ -50,6 +50,11 @@ function buildHarness(controlOverrides = {}) {
     control,
     sessionId: 's-1',
     resolveMetabotId: () => 15,
+    // These cases pin the PRE-GATE behaviour (the shape the tool had before
+    // the owner-confirmation switch): the switch is off, so no card is raised
+    // and every existing assertion must keep holding. The gate itself is
+    // covered by tests/meChargeConfirmationGate.test.mjs.
+    confirmation: { isRequired: () => false, confirm: async () => true },
   });
   assert.equal(tools.length, 1);
   return { handlers, calls, invoke: handlers.get('me_charge') };

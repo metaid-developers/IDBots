@@ -338,6 +338,7 @@ import {
 } from './escrowAgentTools';
 import {
   buildMeChargeAgentTools,
+  type MeChargeConfirmationInfo,
   type MeChargeToolsControl,
 } from './meChargeAgentTools';
 import {
@@ -8802,6 +8803,73 @@ export class CoworkRunner extends EventEmitter {
   }
 
   /**
+   * Per-charge owner gate for me_charge (freeze / capture / pay). Runs BEFORE
+   * the ME ledger is touched, so a refusal is a no-op on the balance rather
+   * than a rollback. 60s card; an unanswered card is a denial (timeoutDefault
+   * 'deny'); `ownerOnly` keeps the orchestrator text relay from answering it
+   * inside a delegated worker/group-task session. No ActiveSession means no
+   * owner seat (background / unattended turn): the charge is refused.
+   */
+  private async confirmMeCharge(sessionId: string, info: MeChargeConfirmationInfo): Promise<boolean> {
+    const activeSession = this.activeSessions.get(sessionId);
+    if (!activeSession) {
+      return false;
+    }
+    const me = (milli: number) => `${(milli / 1000).toFixed(3).replace(/\.?0+$/, '')} ME`;
+    const actionLabel = info.action === 'freeze'
+      ? tApp('冻结', 'freeze')
+      : info.action === 'capture' ? tApp('结算', 'capture') : tApp('直接支付', 'pay');
+    const effect = info.action === 'freeze'
+      ? tApp(
+        '冻结会立即从余额扣住这笔 ME，卖方交割后才结算；未结算前可释放回余额。',
+        'A freeze holds the ME from the balance immediately; it settles only when you capture after delivery, and can be released before that.',
+      )
+      : info.action === 'capture'
+        ? tApp(
+          '结算会把冻结的 ME 真正付给收款方（进入其 earned 池），不可撤销。',
+          'Capture turns the hold into a real payment to the payee (their earned pool). This cannot be undone.',
+        )
+        : tApp(
+          '直接支付会立即把 ME 转给收款方，不可撤销。',
+          'Pay transfers the ME immediately and cannot be undone.',
+        );
+    const question = tApp(
+      `Agent 准备用 ME 积分发起一笔扣款（${actionLabel}，账本内转移，不涉及链上资产）：\n` +
+      `- 金额: ${me(info.amountMilli)}\n` +
+      `- 收款方: ${info.payee || '(未知)'}\n` +
+      `- 订单号: ${info.orderId}\n` +
+      `- 用途: ${info.refType || 'freeze_order'}${info.refId ? ' / ' + info.refId : ''}\n` +
+      `${effect}\n` +
+      '是否允许这一笔扣款？（需要你本人确认；60 秒内未回答视为拒绝）',
+      `The agent is about to charge ME (${actionLabel}) — an off-chain ledger transfer, no chain assets:\n` +
+      `- amount: ${me(info.amountMilli)}\n` +
+      `- payee: ${info.payee || '(unknown)'}\n` +
+      `- order: ${info.orderId}\n` +
+      `- purpose: ${info.refType || 'freeze_order'}${info.refId ? ' / ' + info.refId : ''}\n` +
+      `${effect}\n` +
+      'Allow this charge? (the owner must confirm; unanswered after 60s = denied)',
+    );
+    const outcome = await this.requestSafetyApproval(
+      sessionId,
+      activeSession.abortController.signal,
+      activeSession,
+      question,
+      'me_charge',
+      {
+        action: info.action,
+        amount_milli: info.amountMilli,
+        payee: info.payee,
+        order_id: info.orderId,
+        ...(info.refType ? { ref_type: info.refType } : {}),
+        ...(info.refId ? { ref_id: info.refId } : {}),
+      } as Record<string, unknown>,
+      'deny',
+      { ownerOnly: true },
+    );
+    return outcome === 'approved';
+  }
+
+  /**
    * Owner gate for multisig signing and broadcast. Timeout is deny: an
    * unanswered prompt must not attach a signature or publish a transaction.
    */
@@ -15242,12 +15310,20 @@ export class CoworkRunner extends EventEmitter {
     // flow and (S8) paid chat / skill fees. Mounted BEFORE the payment-card
     // block so a purchase session sees the payment tool next to mrc721_*.
     if (this.meChargeTools) {
+      const meChargeTools = this.meChargeTools;
       memoryTools.push(
         ...buildMeChargeAgentTools({
           tool,
-          control: this.meChargeTools,
+          control: meChargeTools,
           sessionId,
           resolveMetabotId: (sid) => this.getMemoryBackend().resolveMetabotIdForMemory(sid) ?? undefined,
+          // Per-charge owner gate (G3 follow-up): every freeze/capture/pay
+          // asks here FIRST. The switch is default-ON; turning it off restores
+          // the previous ungated behaviour exactly.
+          confirmation: {
+            isRequired: () => meChargeTools.requireConfirmation?.() !== false,
+            confirm: (info) => this.confirmMeCharge(sessionId, info),
+          },
         })
       );
     }

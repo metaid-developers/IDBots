@@ -272,6 +272,7 @@ import { initTrafficAccountService, registerTrafficAccountIpcHandlers } from './
 import { initMePointsService, registerMePointsIpcHandlers } from './services/mePointsService';
 import {
   getMeChargeBalance,
+  isMeChargeConfirmationRequired,
   listMeFreezes,
   meCapture,
   meFreeze,
@@ -8609,6 +8610,11 @@ const getCoworkRunner = () => {
       meChargeTools: {
         getMetabotMvcAddress: (metabotId) =>
           getMetabotStore().getMetabotById(metabotId)?.mvc_address ?? null,
+        // Per-charge owner confirmation, default ON. The switch is the kv
+        // setting me_charge_require_confirmation (same global kv store as
+        // wallet_transfer_external_confirm_enabled); read at call time so a
+        // flip takes effect without a restart, and a read failure stays ON.
+        requireConfirmation: () => isMeChargeConfirmationRequired(getStore()),
         balance: ({ metabotId }) => getMeChargeBalance({ signer: meChargeSigner(metabotId) }),
         freeze: ({ metabotId, ...rest }) => meFreeze({ signer: meChargeSigner(metabotId), ...rest }),
         capture: ({ metabotId, ...rest }) => meCapture({ signer: meChargeSigner(metabotId), ...rest }),
