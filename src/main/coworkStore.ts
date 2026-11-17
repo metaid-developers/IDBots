@@ -6249,6 +6249,19 @@ export class CoworkStore implements MemoryBackend {
   private enqueueExplicitMemoryUpdate(sessionId: string, message: CoworkMessage): void {
     if (message.type !== 'user') return;
     if (!message.content?.trim()) return;
+    const meta = (message.metadata ?? {}) as Record<string, unknown>;
+    if (
+      meta.isDelegationInternal === true
+      || meta.origin === 'studio_briefing'
+      || meta.origin === 'studio_supervision'
+      || meta.origin === 'heartbeat'
+      || meta.origin === 'cross_session'
+      || meta.sourceChannel === 'idbots_cross_session'
+    ) {
+      return;
+    }
+    const sessionMeta = this.getSessionWithoutMessages(sessionId);
+    if (sessionMeta?.autoOrigin) return;
 
     const policy = this.getEffectiveMemoryPolicyForSession(sessionId);
     if (!this.shouldApplyExplicitMemoryFromUserText(message.content, policy.memoryGuardLevel)) {

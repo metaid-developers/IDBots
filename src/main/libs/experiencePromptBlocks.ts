@@ -183,15 +183,23 @@ export function buildRecentDailySummariesBlock(
  * matches — never as standing orders (Dream-RSI §5.1: strong semantic
  * directives over-constrain behavior).
  */
+export const PROVEN_TECHNIQUE_DESCRIPTION_MAX_CHARS = 240;
+
 export function buildProvenTechniquesBlock(
   entries: Array<{ title: string; description?: string | null }>,
   maxItems = 5,
 ): string {
   const items = entries
-    .map((entry) => ({
-      title: entry.title?.trim(),
-      description: entry.description?.trim() ?? '',
-    }))
+    .map((entry) => {
+      const rawDesc = entry.description?.replace(/\s+/g, ' ').trim() ?? '';
+      const description = rawDesc.length > PROVEN_TECHNIQUE_DESCRIPTION_MAX_CHARS
+        ? `${truncateUtf16Units(rawDesc, PROVEN_TECHNIQUE_DESCRIPTION_MAX_CHARS)}…`
+        : rawDesc;
+      return {
+        title: entry.title?.trim(),
+        description,
+      };
+    })
     .filter((entry) => Boolean(entry.title))
     .slice(0, Math.max(1, maxItems));
   if (items.length === 0) return '';
@@ -222,12 +230,18 @@ export function buildExperiencePromptBlocksXml(input: {
   // when it crowds the context. The three guidance blocks share one char
   // budget; when over it, trim the least-distilled layer first — techniques,
   // then reviews, and boundaries last (they are the hardest-won rules).
+  // Intermediate rungs ([5,4,2], [5,3,2], [5,3,1]) ensure real-world bots with
+  // 5 boundaries + 5 reviews do not jump straight to techniqueCap=0 and starve
+  // proven_techniques out of every turn.
   const boundaries = input.valueBoundaries ?? [];
   const reviews = input.workReviews ?? [];
   const techniques = input.provenTechniques ?? [];
   const capLadder: Array<[number, number, number]> = [
     [5, 5, 5],
     [5, 5, 3],
+    [5, 4, 2],
+    [5, 3, 2],
+    [5, 3, 1],
     [5, 3, 0],
     [3, 0, 0],
   ];

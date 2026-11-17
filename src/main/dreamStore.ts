@@ -215,6 +215,7 @@ export interface DailySummary {
 }
 
 export interface DreamActivityMessage {
+  messageId?: string;
   type: 'user' | 'assistant';
   content: string;
   createdAt: number;
@@ -222,6 +223,10 @@ export interface DreamActivityMessage {
   feedbackRating?: 'up' | 'down';
   /** Human's free-text comment attached to the rating, when present. */
   feedbackComment?: string | null;
+  /** True when the message is a compact host-injected briefing/supervision trigger rather than human speech. */
+  isSystemBriefing?: boolean;
+  /** Structured assistant owner_update kind ('opening' | 'milestone' | 'problem' | 'waiting') when present. */
+  ownerUpdateKind?: string;
 }
 
 export interface DreamSessionActivity {
@@ -230,7 +235,58 @@ export interface DreamSessionActivity {
   sessionType: string;
   peerName: string | null;
   isOrder: boolean;
+  /** True for persistent front-office Studio conversations with the human owner. */
+  isStudioOwner?: boolean;
+  /** Unattended automation origin ('orchestration' | 'longterm' | 'schedule') when set. */
+  autoOrigin?: string | null;
+  /** Preceding visible exchanges from earlier days when a multi-day session crosses midnight. */
+  priorContextMessages?: DreamActivityMessage[];
+  lastMessageId?: string | null;
+  lastMessageCreatedAt?: number | null;
   messages: DreamActivityMessage[];
+}
+
+export interface DreamSessionCursor {
+  metabotId: number;
+  sessionId: string;
+  lastDreamedDate: string;
+  lastMessageCreatedAt: number;
+  lastMessageId: string | null;
+  updatedAt: number;
+}
+
+export interface StudioContinuitySnapshot {
+  metabotId: number;
+  dreamDate: string;
+  activeWorkstreams: string[];
+  standingRulings: string[];
+  collaborationPlaybook: string[];
+  summaryMarkdown: string;
+  llmId: string | null;
+  updatedAt: number;
+}
+
+export interface DreamStudioDelegationActivity {
+  taskId: string;
+  ownerIntent: string;
+  status: string;
+  workerNames: string[];
+  attemptCount: number;
+  completedAttempts: number;
+  failedOrCancelledAttempts: number;
+  longtermTaskId: string | null;
+  updatedAtMs: number;
+}
+
+export interface DreamStudioDecisionActivity {
+  id: string;
+  kind: string;
+  title: string;
+  status: string;
+  question: string;
+  recommendation: string;
+  resolutionNote: string | null;
+  updatedAtMs: number;
 }
 
 export interface DreamTaskRunActivity {
@@ -329,7 +385,13 @@ export interface DreamServiceRatingActivity {
 }
 
 /** Structural implicit-signal kinds (mechanical facts, no sentiment). */
-export type DreamImplicitSignalKind = 'reask' | 'unanswered_burst' | 'repeat_order';
+export type DreamImplicitSignalKind =
+  | 'reask'
+  | 'unanswered_burst'
+  | 'repeat_order'
+  | 'studio_long_wait_followup'
+  | 'studio_multi_round_revision'
+  | 'studio_superseded_briefing';
 
 /**
  * One structural fact collected by the mechanical implicit-signal layer
@@ -360,6 +422,10 @@ export interface DreamDayActivity {
   chainReads?: DreamChainReadActivity[];
   /** Buyer ratings received that day on skill services this bot provides. */
   serviceRatings?: DreamServiceRatingActivity[];
+  /** Worker delegations dispatched/updated from Studio conversations that day. */
+  studioDelegations?: DreamStudioDelegationActivity[];
+  /** Studio Owner Decision Queue items created/presented/resolved that day. */
+  studioDecisions?: DreamStudioDecisionActivity[];
   /** Structural implicit signals, attached by the dream service post-query. */
   implicitSignals?: DreamImplicitSignal[];
 }
@@ -816,7 +882,196 @@ export class DreamStore {
     } catch (error) {
       console.warn('migrate metabot_exam_runs scored_count:', error);
     }
+    // Studio single-conversation dream cursors: explicit per-(bot, session)
+    // high-water marks so multi-day persistent conversations never re-review
+    // boundary messages or lose track of where the last dream stopped.
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS metabot_dream_session_cursors (
+        metabot_id INTEGER NOT NULL,
+        session_id TEXT NOT NULL,
+        last_dreamed_date TEXT NOT NULL,
+        last_message_created_at INTEGER NOT NULL,
+        last_message_id TEXT,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (metabot_id, session_id)
+      );
+    `);
+    // Nightly Studio continuity crystal: distilled executive state, standing
+    // owner rulings, and collaboration playbook that survives multi-day chat
+    // compactions and re-anchors the Twin each morning in Studio mode.
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS metabot_studio_continuity (
+        metabot_id INTEGER PRIMARY KEY,
+        dream_date TEXT NOT NULL,
+        active_workstreams_json TEXT NOT NULL DEFAULT '[]',
+        standing_rulings_json TEXT NOT NULL DEFAULT '[]',
+        collaboration_playbook_json TEXT NOT NULL DEFAULT '[]',
+        summary_markdown TEXT NOT NULL DEFAULT '',
+        llm_id TEXT,
+        updated_at INTEGER NOT NULL
+      );
+    `);
     this.backfillLegacyDreamMemoryDates();
+  }
+
+  private hasTable(tableName: string): boolean {
+    const row = this.getOne<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+      [tableName],
+    );
+    return Boolean(row?.name);
+  }
+
+  private hasTableColumn(tableName: string, columnName: string): boolean {
+    try {
+      const cols = this.db.exec(`PRAGMA table_info(${tableName});`);
+      const names = (cols[0]?.values ?? []).map((row) => String(row[1]));
+      return names.includes(columnName);
+    } catch {
+      return false;
+    }
+  }
+
+  getSessionCursor(metabotId: number, sessionId: string): DreamSessionCursor | null {
+    const row = this.getOne<{
+      metabot_id: number | string;
+      session_id: string;
+      last_dreamed_date: string;
+      last_message_created_at: number | string;
+      last_message_id: string | null;
+      updated_at: number | string;
+    }>(
+      'SELECT * FROM metabot_dream_session_cursors WHERE metabot_id = ? AND session_id = ? LIMIT 1',
+      [metabotId, sessionId],
+    );
+    if (!row) return null;
+    return {
+      metabotId: parseIdNumber(row.metabot_id) ?? metabotId,
+      sessionId: String(row.session_id),
+      lastDreamedDate: String(row.last_dreamed_date),
+      lastMessageCreatedAt: Number(row.last_message_created_at) || 0,
+      lastMessageId: row.last_message_id ?? null,
+      updatedAt: Number(row.updated_at) || 0,
+    };
+  }
+
+  advanceSessionCursorsForDate(
+    metabotId: number,
+    dreamDate: string,
+    sessions: ReadonlyArray<Pick<DreamSessionActivity, 'sessionId' | 'messages' | 'lastMessageId' | 'lastMessageCreatedAt'>>,
+  ): number {
+    const now = Date.now();
+    let updated = 0;
+    for (const session of sessions) {
+      if (!session.sessionId || session.messages.length === 0) continue;
+      const tailMessage = session.messages[session.messages.length - 1];
+      const lastMessageCreatedAt = session.lastMessageCreatedAt ?? tailMessage?.createdAt ?? 0;
+      if (!Number.isFinite(lastMessageCreatedAt) || lastMessageCreatedAt <= 0) continue;
+      const lastMessageId = session.lastMessageId ?? tailMessage?.messageId ?? null;
+      const existing = this.getSessionCursor(metabotId, session.sessionId);
+      if (existing) {
+        if (dreamDate < existing.lastDreamedDate) continue;
+        if (dreamDate === existing.lastDreamedDate && lastMessageCreatedAt < existing.lastMessageCreatedAt) continue;
+      }
+      this.db.run(`
+        INSERT INTO metabot_dream_session_cursors (
+          metabot_id, session_id, last_dreamed_date, last_message_created_at, last_message_id, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(metabot_id, session_id) DO UPDATE SET
+          last_dreamed_date = excluded.last_dreamed_date,
+          last_message_created_at = excluded.last_message_created_at,
+          last_message_id = excluded.last_message_id,
+          updated_at = excluded.updated_at
+      `, [metabotId, session.sessionId, dreamDate, Math.floor(lastMessageCreatedAt), lastMessageId, now]);
+      updated += 1;
+    }
+    if (updated > 0) {
+      this.saveDb();
+    }
+    return updated;
+  }
+
+  upsertStudioContinuity(input: {
+    metabotId: number;
+    dreamDate: string;
+    activeWorkstreams: string[];
+    standingRulings: string[];
+    collaborationPlaybook: string[];
+    summaryMarkdown?: string;
+    llmId?: string | null;
+  }): StudioContinuitySnapshot {
+    const existing = this.getStudioContinuity(input.metabotId);
+    if (existing && input.dreamDate < existing.dreamDate) {
+      return existing;
+    }
+    const cleanList = (items: string[], cap: number): string[] =>
+      items.map((item) => String(item ?? '').trim()).filter(Boolean).slice(0, cap);
+    const activeWorkstreams = cleanList(input.activeWorkstreams ?? [], 6);
+    const standingRulings = cleanList(input.standingRulings ?? [], 8);
+    const collaborationPlaybook = cleanList(input.collaborationPlaybook ?? [], 4);
+    const summaryMarkdown = String(input.summaryMarkdown ?? '').trim();
+    const now = Date.now();
+    this.db.run(`
+      INSERT INTO metabot_studio_continuity (
+        metabot_id, dream_date, active_workstreams_json, standing_rulings_json,
+        collaboration_playbook_json, summary_markdown, llm_id, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(metabot_id) DO UPDATE SET
+        dream_date = excluded.dream_date,
+        active_workstreams_json = excluded.active_workstreams_json,
+        standing_rulings_json = excluded.standing_rulings_json,
+        collaboration_playbook_json = excluded.collaboration_playbook_json,
+        summary_markdown = excluded.summary_markdown,
+        llm_id = excluded.llm_id,
+        updated_at = excluded.updated_at
+    `, [
+      input.metabotId,
+      input.dreamDate,
+      JSON.stringify(activeWorkstreams),
+      JSON.stringify(standingRulings),
+      JSON.stringify(collaborationPlaybook),
+      summaryMarkdown,
+      input.llmId ?? null,
+      now,
+    ]);
+    this.saveDb();
+    return this.getStudioContinuity(input.metabotId)!;
+  }
+
+  getStudioContinuity(metabotId: number): StudioContinuitySnapshot | null {
+    const row = this.getOne<{
+      metabot_id: number | string;
+      dream_date: string;
+      active_workstreams_json: string | null;
+      standing_rulings_json: string | null;
+      collaboration_playbook_json: string | null;
+      summary_markdown: string | null;
+      llm_id: string | null;
+      updated_at: number | string;
+    }>(
+      'SELECT * FROM metabot_studio_continuity WHERE metabot_id = ? LIMIT 1',
+      [metabotId],
+    );
+    if (!row) return null;
+    const parseStringArray = (raw: string | null): string[] => {
+      if (!raw) return [];
+      try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed.map((item) => String(item ?? '').trim()).filter(Boolean) : [];
+      } catch {
+        return [];
+      }
+    };
+    return {
+      metabotId: parseIdNumber(row.metabot_id) ?? metabotId,
+      dreamDate: String(row.dream_date),
+      activeWorkstreams: parseStringArray(row.active_workstreams_json),
+      standingRulings: parseStringArray(row.standing_rulings_json),
+      collaborationPlaybook: parseStringArray(row.collaboration_playbook_json),
+      summaryMarkdown: String(row.summary_markdown ?? '').trim(),
+      llmId: row.llm_id ?? null,
+      updatedAt: Number(row.updated_at) || 0,
+    };
   }
 
   /**
@@ -1739,20 +1994,124 @@ export class DreamStore {
    * Hidden sessions are included on purpose — order execution sessions are
    * hidden from the UI list but are still experience.
    */
+  private normalizeDreamMessageRow(row: {
+    id: string;
+    type: string;
+    content: string | null;
+    metadata: string | null;
+    created_at: number | string;
+    feedback_rating?: string | null;
+    feedback_comment?: string | null;
+  }): DreamActivityMessage | null {
+    if (row.type !== 'user' && row.type !== 'assistant') return null;
+    if (typeof row.content !== 'string') return null;
+    const rawContent = row.content.trim();
+    if (!rawContent) return null;
+
+    const meta = parseJsonObject<unknown>(row.metadata);
+    if (meta.isThinking === true || meta.isStreaming === true) return null;
+    if (meta.waitingReassurance === true || meta.turnAckReply === true) return null;
+    if (meta.projectorReport != null && typeof meta.projectorReport === 'object') return null;
+
+    const createdAt = Number(row.created_at);
+    const feedbackRating = row.feedback_rating === 'up' || row.feedback_rating === 'down'
+      ? row.feedback_rating
+      : undefined;
+    const feedbackComment = row.feedback_comment ?? undefined;
+    const ownerUpdateKind = typeof meta.ownerUpdateKind === 'string' && meta.ownerUpdateKind.trim()
+      ? meta.ownerUpdateKind.trim()
+      : undefined;
+
+    if (row.type === 'user') {
+      const origin = typeof meta.origin === 'string' ? meta.origin : '';
+      if (origin === 'studio_briefing' || rawContent.includes('<studio_proactive_briefing>')) {
+        const titleMatch = rawContent.match(/^(?:标题|Title):\s*(.+)$/m);
+        const kindMatch = rawContent.match(/\|\s*(?:类型|Kind):\s*([^\s|]+)/m);
+        const title = (titleMatch?.[1] ?? 'Studio briefing').trim().slice(0, 120);
+        const kind = (kindMatch?.[1] ?? 'decision').trim();
+        return {
+          messageId: row.id,
+          type: 'user',
+          content: `Studio待拍板简报呈报(${kind}): ${title}`,
+          createdAt,
+          isSystemBriefing: true,
+        };
+      }
+      if (origin === 'studio_supervision' || rawContent.includes('<studio_back_office_supervision>')) {
+        const intentMatch = rawContent.match(/^- taskIntent:\s*(.+)$/m);
+        const workerMatch = rawContent.match(/^- worker:\s*([^\n(]+)/m);
+        const outcomeMatch = rawContent.match(/\|\s*outcome:\s*([^\s|]+)/m);
+        const summary = [
+          workerMatch?.[1]?.trim(),
+          outcomeMatch?.[1]?.trim(),
+          intentMatch?.[1]?.trim()?.slice(0, 100),
+        ].filter(Boolean).join(' · ') || '后台督办交接核验';
+        return {
+          messageId: row.id,
+          type: 'user',
+          content: `后台督办核验: ${summary}`,
+          createdAt,
+          isSystemBriefing: true,
+        };
+      }
+      if (origin === 'heartbeat' || meta.isDelegationInternal === true || origin === 'cross_session') {
+        const flat = rawContent.replace(/\s+/g, ' ').slice(0, 220);
+        return {
+          messageId: row.id,
+          type: 'user',
+          content: flat,
+          createdAt,
+          isSystemBriefing: true,
+        };
+      }
+    }
+
+    return {
+      messageId: row.id,
+      type: row.type,
+      content: row.content,
+      createdAt,
+      ...(feedbackRating ? { feedbackRating } : {}),
+      ...(feedbackComment !== undefined ? { feedbackComment } : {}),
+      ...(ownerUpdateKind ? { ownerUpdateKind } : {}),
+    };
+  }
+
+  private isExcludedSelfAutomationSession(title: string, autoOrigin: string | null): boolean {
+    const trimmed = String(title ?? '').trim();
+    if (autoOrigin === 'orchestration' && /^\[编排任务\]\s*(?:Exam|MetaWeb Surf)\b/i.test(trimmed)) {
+      return true;
+    }
+    if (autoOrigin === 'schedule' && /^\[定时\]\s*\[Practice\]/i.test(trimmed)) {
+      return true;
+    }
+    return false;
+  }
+
   getActivityForDate(
     metabotId: number,
     dayStartMs: number,
     dayEndMs: number,
     dropCounters?: DreamInputDropCounters,
+    options?: { dreamDate?: string; honorSessionCursors?: boolean },
   ): DreamDayActivity {
+    const hasAssistantModeCol = this.hasTableColumn('cowork_sessions', 'assistant_mode');
+    const hasAutoOriginCol = this.hasTableColumn('cowork_sessions', 'auto_origin');
+    const assistantModeExpr = hasAssistantModeCol ? 's.assistant_mode' : '0';
+    const autoOriginExpr = hasAutoOriginCol ? 's.auto_origin' : 'NULL';
+
     const sessionRows = this.getAll<{
       id: string;
       title: string;
       session_type: string | null;
       peer_name: string | null;
+      assistant_mode: number | string | null;
+      auto_origin: string | null;
       is_order: number;
     }>(`
       SELECT s.id, s.title, s.session_type, s.peer_name,
+        ${assistantModeExpr} AS assistant_mode,
+        ${autoOriginExpr} AS auto_origin,
         EXISTS(SELECT 1 FROM service_orders o WHERE o.cowork_session_id = s.id) AS is_order
       FROM cowork_sessions s
       WHERE s.metabot_id = ?
@@ -1772,42 +2131,112 @@ export class DreamStore {
       ORDER BY s.updated_at ASC
     `, [metabotId, dayStartMs, dayEndMs]);
 
-    const sessions: DreamSessionActivity[] = sessionRows.map((session) => {
+    const sessions: DreamSessionActivity[] = [];
+    const dreamDate = options?.dreamDate?.trim() || null;
+    const honorSessionCursors = options?.honorSessionCursors !== false;
+
+    for (const session of sessionRows) {
+      const autoOrigin = typeof session.auto_origin === 'string' && session.auto_origin.trim()
+        ? session.auto_origin.trim()
+        : null;
+      if (this.isExcludedSelfAutomationSession(session.title, autoOrigin)) {
+        continue;
+      }
+
+      const rawType = session.session_type === 'agent_agent' ? 'a2a' : (session.session_type || 'standard');
+      const assistantMode = Number(session.assistant_mode) === 1;
+      const isStudioOwner = rawType === 'browser' && assistantMode && !autoOrigin;
+
+      let effectiveStartMs = dayStartMs;
+      if (dreamDate && honorSessionCursors) {
+        const cursor = this.getSessionCursor(metabotId, session.id);
+        if (
+          cursor
+          && cursor.lastDreamedDate < dreamDate
+          && cursor.lastMessageCreatedAt >= dayStartMs
+          && cursor.lastMessageCreatedAt < dayEndMs
+        ) {
+          effectiveStartMs = cursor.lastMessageCreatedAt + 1;
+        }
+      }
+
       const messageRows = this.getAll<{
+        id: string;
         type: string;
         content: string | null;
+        metadata: string | null;
         created_at: number | string;
         feedback_rating: string | null;
         feedback_comment: string | null;
       }>(`
-        SELECT m.type, m.content, m.created_at,
+        SELECT m.id, m.type, m.content, m.metadata, m.created_at,
           mf.rating AS feedback_rating, mf.comment AS feedback_comment
         FROM cowork_messages m
         LEFT JOIN message_feedback mf ON mf.message_id = m.id
         WHERE m.session_id = ?
           AND m.created_at >= ? AND m.created_at < ?
           AND m.type IN ('user', 'assistant')
-        ORDER BY m.created_at ASC
-      `, [session.id, dayStartMs, dayEndMs]);
-      return {
+        ORDER BY m.created_at ASC, m.ROWID ASC
+      `, [session.id, effectiveStartMs, dayEndMs]);
+
+      const normalizedMessages = messageRows
+        .map((row) => this.normalizeDreamMessageRow(row))
+        .filter((msg): msg is DreamActivityMessage => msg !== null);
+
+      if (normalizedMessages.length === 0) {
+        continue;
+      }
+
+      let priorContextMessages: DreamActivityMessage[] | undefined;
+      if (isStudioOwner) {
+        const priorRows = this.getAll<{
+          id: string;
+          type: string;
+          content: string | null;
+          metadata: string | null;
+          created_at: number | string;
+        }>(`
+          SELECT m.id, m.type, m.content, m.metadata, m.created_at
+          FROM cowork_messages m
+          WHERE m.session_id = ?
+            AND m.created_at < ?
+            AND m.type IN ('user', 'assistant')
+          ORDER BY m.created_at DESC, m.ROWID DESC
+          LIMIT 24
+        `, [session.id, effectiveStartMs]);
+
+        const priorVisible: DreamActivityMessage[] = [];
+        for (const row of priorRows) {
+          const normalized = this.normalizeDreamMessageRow(row);
+          if (!normalized || normalized.isSystemBriefing) continue;
+          const compact = normalized.content.replace(/\s+/g, ' ').trim();
+          if (!compact) continue;
+          priorVisible.push({
+            ...normalized,
+            content: compact.length > 200 ? `${compact.slice(0, 200)}…` : compact,
+          });
+          if (priorVisible.length >= 4) break;
+        }
+        if (priorVisible.length > 0) {
+          priorContextMessages = priorVisible.reverse();
+        }
+      }
+
+      const tailMsg = normalizedMessages[normalizedMessages.length - 1];
+      sessions.push({
         sessionId: session.id,
         title: session.title,
-        sessionType: session.session_type === 'agent_agent' ? 'a2a' : (session.session_type || 'standard'),
+        sessionType: rawType,
         peerName: session.peer_name ?? null,
         isOrder: Number(session.is_order) !== 0,
-        messages: messageRows
-          .filter((row) => (row.type === 'user' || row.type === 'assistant') && typeof row.content === 'string')
-          .map((row) => ({
-            type: row.type as 'user' | 'assistant',
-            content: row.content as string,
-            createdAt: Number(row.created_at),
-            feedbackRating: row.feedback_rating === 'up' || row.feedback_rating === 'down'
-              ? row.feedback_rating
-              : undefined,
-            feedbackComment: row.feedback_comment ?? undefined,
-          })),
-      };
-    });
+        ...(isStudioOwner ? { isStudioOwner: true } : {}),
+        ...(autoOrigin ? { autoOrigin } : {}),
+        ...(priorContextMessages ? { priorContextMessages } : {}),
+        lastMessageId: tailMsg?.messageId ?? null,
+        lastMessageCreatedAt: tailMsg?.createdAt ?? null,
+        messages: normalizedMessages,
+      });
+    }
 
     // scheduled_task_runs.started_at is a UTC ISO string (scheduledTaskStore
     // writes new Date().toISOString()); lexicographic comparison is safe for
@@ -2099,6 +2528,114 @@ export class DreamStore {
       dropCounters.serviceRatings += Math.max(0, total - MAX_SERVICE_RATINGS_PER_DAY);
     }
 
+    const dayStartIso = new Date(dayStartMs).toISOString();
+    const dayEndIso = new Date(dayEndMs).toISOString();
+    const studioDelegations: DreamStudioDelegationActivity[] = [];
+    if (this.hasTable('orchestration_tasks') && this.hasTable('orchestration_steps') && this.hasTable('orchestration_attempts')) {
+      try {
+        const hasLongtermTaskCol = this.hasTableColumn('orchestration_tasks', 'longterm_task_id');
+        const hasLongtermReportCol = this.hasTableColumn('orchestration_tasks', 'longterm_report_session_id');
+        const longtermTaskExpr = hasLongtermTaskCol ? 't.longterm_task_id' : 'NULL';
+        const reportJoinSql = hasLongtermReportCol
+          ? 'LEFT JOIN cowork_sessions rep ON rep.id = t.longterm_report_session_id'
+          : '';
+        const studioFilterSql = hasLongtermReportCol
+          ? "(src.session_type = 'browser' OR rep.session_type = 'browser' OR src.title LIKE '[督办]%')"
+          : "(src.session_type = 'browser' OR src.title LIKE '[督办]%')";
+        const taskRows = this.getAll<{
+          id: string;
+          owner_intent: string | null;
+          status: string | null;
+          longterm_task_id: string | null;
+          updated_at: string | null;
+        }>(`
+          SELECT t.id, t.owner_intent, t.status, ${longtermTaskExpr} AS longterm_task_id, t.updated_at
+          FROM orchestration_tasks t
+          LEFT JOIN cowork_sessions src ON src.id = t.source_session_id
+          ${reportJoinSql}
+          WHERE t.twin_metabot_id = ?
+            AND ((t.created_at >= ? AND t.created_at < ?) OR (t.updated_at >= ? AND t.updated_at < ?))
+            AND ${studioFilterSql}
+          ORDER BY t.created_at ASC
+          LIMIT 30
+        `, [metabotId, dayStartIso, dayEndIso, dayStartIso, dayEndIso]);
+
+        for (const task of taskRows) {
+          const attemptRows = this.getAll<{
+            status: string | null;
+            worker_name: string | null;
+            worker_metabot_id: number | string | null;
+          }>(`
+            SELECT a.status, b.name AS worker_name, a.worker_metabot_id
+            FROM orchestration_attempts a
+            JOIN orchestration_steps s ON s.id = a.step_id
+            LEFT JOIN metabots b ON b.id = a.worker_metabot_id
+            WHERE s.task_id = ?
+            ORDER BY a.queued_at ASC
+          `, [task.id]);
+          const workerNames = [...new Set(
+            attemptRows
+              .map((row) => (row.worker_name ?? '').trim() || (row.worker_metabot_id != null ? `Bot#${row.worker_metabot_id}` : ''))
+              .filter(Boolean),
+          )];
+          const completedAttempts = attemptRows.filter((row) => row.status === 'completed').length;
+          const failedOrCancelledAttempts = attemptRows.filter(
+            (row) => row.status === 'failed' || row.status === 'cancelled' || row.status === 'timed_out',
+          ).length;
+          studioDelegations.push({
+            taskId: task.id,
+            ownerIntent: String(task.owner_intent ?? '').trim(),
+            status: String(task.status ?? 'planning').trim(),
+            workerNames,
+            attemptCount: attemptRows.length,
+            completedAttempts,
+            failedOrCancelledAttempts,
+            longtermTaskId: task.longterm_task_id ?? null,
+            updatedAtMs: Date.parse(String(task.updated_at ?? '')) || dayStartMs,
+          });
+        }
+      } catch (error) {
+        console.warn('[DreamStore] Studio delegation query failed:', error);
+      }
+    }
+
+    const studioDecisions: DreamStudioDecisionActivity[] = [];
+    if (this.hasTable('studio_decision_queue')) {
+      try {
+        const decisionRows = this.getAll<{
+          id: string;
+          kind: string | null;
+          title: string | null;
+          status: string | null;
+          question: string | null;
+          recommendation: string | null;
+          resolution_note: string | null;
+          updated_at: string | null;
+        }>(`
+          SELECT id, kind, title, status, question, recommendation, resolution_note, updated_at
+          FROM studio_decision_queue
+          WHERE twin_metabot_id = ?
+            AND ((created_at >= ? AND created_at < ?) OR (updated_at >= ? AND updated_at < ?))
+          ORDER BY created_at ASC
+          LIMIT 30
+        `, [metabotId, dayStartIso, dayEndIso, dayStartIso, dayEndIso]);
+        for (const row of decisionRows) {
+          studioDecisions.push({
+            id: row.id,
+            kind: String(row.kind ?? 'decision').trim(),
+            title: String(row.title ?? '').trim(),
+            status: String(row.status ?? 'queued').trim(),
+            question: String(row.question ?? '').trim(),
+            recommendation: String(row.recommendation ?? '').trim(),
+            resolutionNote: row.resolution_note?.trim() || null,
+            updatedAtMs: Date.parse(String(row.updated_at ?? '')) || dayStartMs,
+          });
+        }
+      } catch (error) {
+        console.warn('[DreamStore] Studio decision queue query failed:', error);
+      }
+    }
+
     return {
       sessions,
       taskRuns,
@@ -2108,6 +2645,8 @@ export class DreamStore {
       chainWrites,
       chainReads,
       serviceRatings,
+      ...(studioDelegations.length > 0 ? { studioDelegations } : {}),
+      ...(studioDecisions.length > 0 ? { studioDecisions } : {}),
     };
   }
 

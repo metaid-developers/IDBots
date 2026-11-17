@@ -1064,3 +1064,4 @@ blob-report/
 !tests/studioWaitingAndAmend.test.mjs
 !tests/studioSeamlessSwitchAndFlow.test.mjs
 !tests/studioGlmStageAndAsk.test.mjs
+!tests/studioDreamMemoryContinuity.test.mjs

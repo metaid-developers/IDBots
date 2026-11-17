@@ -1126,6 +1126,31 @@ export class SqliteStore {
     `);
 
     this.db.run(`
+      CREATE TABLE IF NOT EXISTS metabot_dream_session_cursors (
+        metabot_id INTEGER NOT NULL,
+        session_id TEXT NOT NULL,
+        last_dreamed_date TEXT NOT NULL,
+        last_message_created_at INTEGER NOT NULL,
+        last_message_id TEXT,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (metabot_id, session_id)
+      );
+    `);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS metabot_studio_continuity (
+        metabot_id INTEGER PRIMARY KEY,
+        dream_date TEXT NOT NULL,
+        active_workstreams_json TEXT NOT NULL DEFAULT '[]',
+        standing_rulings_json TEXT NOT NULL DEFAULT '[]',
+        collaboration_playbook_json TEXT NOT NULL DEFAULT '[]',
+        summary_markdown TEXT NOT NULL DEFAULT '',
+        llm_id TEXT,
+        updated_at INTEGER NOT NULL
+      );
+    `);
+
+    this.db.run(`
       CREATE TABLE IF NOT EXISTS cowork_conversation_mappings (
         channel TEXT NOT NULL,
         external_conversation_id TEXT NOT NULL,

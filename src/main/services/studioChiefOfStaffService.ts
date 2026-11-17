@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import type { CoworkMessage, CoworkSession } from '../coworkStore';
+import type { StudioContinuitySnapshot } from '../dreamStore';
 import type { OrchestrationAttempt, OrchestrationTask } from '../orchestrationStore';
 import type {
   EnqueueStudioDecisionInput,
@@ -115,6 +116,7 @@ export interface StudioChiefOfStaffDeps {
   getBaseSystemPrompt?: () => string;
   getAppLanguage?: () => 'zh' | 'en';
   getPreferredStudioSessionId?: () => string | null;
+  getStudioContinuity?: (twinMetabotId: number) => StudioContinuitySnapshot | null;
   hasDefiningDraftForSession?: (sessionId: string) => boolean;
   listOpenSiblingDelegations?: (studioSessionId: string, longtermTaskId?: string | null) => StudioSiblingDelegationSummary[];
   projectShowcaseHtml?: (input: {
@@ -462,6 +464,49 @@ export class StudioChiefOfStaffService {
     const openItems = this.deps.decisionQueueStore().listOpen(twinId);
     const openWorkers = this.deps.listOpenSiblingDelegations?.(sessionId) ?? [];
     const blocks: string[] = [];
+
+    let continuity: StudioContinuitySnapshot | null = null;
+    try {
+      continuity = this.deps.getStudioContinuity?.(twinId) ?? null;
+    } catch {
+      continuity = null;
+    }
+    if (
+      continuity
+      && (
+        continuity.activeWorkstreams.length > 0
+        || continuity.standingRulings.length > 0
+        || continuity.collaborationPlaybook.length > 0
+      )
+    ) {
+      const continuityLines: string[] = [
+        `<studio_continuity_brief dreamDate="${escapeHtml(continuity.dreamDate)}">`,
+        `Nightly dream-distilled executive state for this persistent Studio stream (as of ${continuity.dreamDate}):`,
+      ];
+      if (continuity.activeWorkstreams.length > 0) {
+        continuityLines.push('Active Multi-Turn Workstreams:');
+        for (const ws of continuity.activeWorkstreams.slice(0, 6)) {
+          continuityLines.push(`- ${ws}`);
+        }
+      }
+      if (continuity.standingRulings.length > 0) {
+        continuityLines.push('Standing Owner Rulings & Constraints (keep honoring unless superseded by a newer owner message):');
+        for (const ruling of continuity.standingRulings.slice(0, 8)) {
+          continuityLines.push(`- ${ruling}`);
+        }
+      }
+      if (continuity.collaborationPlaybook.length > 0) {
+        continuityLines.push('Distilled Studio Collaboration Playbook:');
+        for (const rule of continuity.collaborationPlaybook.slice(0, 4)) {
+          continuityLines.push(`- ${rule}`);
+        }
+      }
+      continuityLines.push(
+        'Note: Newer messages in this conversation and live task/queue state always supersede older snapshot entries; never re-ask decisions already listed under Standing Owner Rulings.',
+        '</studio_continuity_brief>',
+      );
+      blocks.push(continuityLines.join('\n'));
+    }
 
     if (openWorkers.length > 0) {
       const workerLines = openWorkers.map((w) =>

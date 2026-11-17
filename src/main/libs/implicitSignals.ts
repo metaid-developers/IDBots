@@ -15,6 +15,9 @@ import type { DreamDayActivity, DreamImplicitSignal, DreamImplicitSignalKind, Dr
 export const IMPLICIT_REASK_WINDOW_MS = 10 * 60 * 1000;
 /** Character-bigram Jaccard threshold for "the user restated the same request". */
 export const IMPLICIT_REASK_MIN_SIMILARITY = 0.55;
+/** Long gap after an assistant turn before a terse follow-up in a persistent Studio session. */
+export const STUDIO_LONG_WAIT_FOLLOWUP_MIN_MS = 20 * 60 * 1000;
+const STUDIO_SHORT_FOLLOWUP_MAX_CHARS = 28;
 const REASK_MIN_CONTENT_CHARS = 8;
 const MAX_IMPLICIT_SIGNALS = 5;
 
@@ -57,13 +60,18 @@ export function extractImplicitSignals(
   const signals: DreamImplicitSignal[] = [];
 
   for (const session of activity.sessions) {
+    // Unattended background sessions ([督办], [长期], [定时]) carry machine-generated
+    // prompts rather than a human conversing live — never derive human implicit
+    // friction signals from them (prevents false prompt-layer rollbacks).
+    if (session.autoOrigin) continue;
+
     // Re-ask: a user message that closely restates the previous user message
-    // within the re-ask window. The assistant reply between them may or may
-    // not exist — that distinction is the dream's job, not ours.
+    // within the re-ask window. Synthetic briefing markers (isSystemBriefing)
+    // are host triggers, not human turns, so skip them.
     let bestReask: { index: number; similarity: number; gapMin: number } | null = null;
     let prevUserIndex = -1;
     session.messages.forEach((message, index) => {
-      if (message.type !== 'user') return;
+      if (message.type !== 'user' || message.isSystemBriefing) return;
       if (prevUserIndex >= 0) {
         const prev = session.messages[prevUserIndex];
         const gap = message.createdAt - prev.createdAt;
@@ -89,10 +97,12 @@ export function extractImplicitSignals(
       });
     }
 
-    // Unanswered burst: the session's tail is ≥2 consecutive user messages.
+    // Unanswered burst: the session's tail is ≥2 consecutive genuine user messages.
     let tailUserCount = 0;
     for (let index = session.messages.length - 1; index >= 0; index -= 1) {
-      if (session.messages[index].type === 'user') tailUserCount += 1;
+      const msg = session.messages[index];
+      if (msg.isSystemBriefing) continue;
+      if (msg.type === 'user') tailUserCount += 1;
       else break;
     }
     if (tailUserCount >= 2) {
@@ -101,6 +111,65 @@ export function extractImplicitSignals(
         sessionId: session.sessionId,
         messageIndex: session.messages.length - 1,
         text: `会话「${session.title}」:会话末尾用户连发 ${tailUserCount} 条消息,之后没有我的回复`,
+      });
+    }
+
+    // Studio long-wait terse follow-up: in a persistent Studio owner session,
+    // an assistant reply was followed >= 20 min later by a short owner message
+    // (<= 28 chars). Pure structural timing + length fact.
+    if (session.isStudioOwner) {
+      let bestLongWait: { index: number; gapMin: number; charLen: number } | null = null;
+      for (let index = 1; index < session.messages.length; index += 1) {
+        const msg = session.messages[index];
+        if (msg.type !== 'user' || msg.isSystemBriefing) continue;
+        const charLen = normalize(msg.content).length;
+        if (charLen === 0 || charLen > STUDIO_SHORT_FOLLOWUP_MAX_CHARS) continue;
+        let prevAssistantIdx = -1;
+        for (let back = index - 1; back >= 0; back -= 1) {
+          if (session.messages[back].isSystemBriefing) continue;
+          if (session.messages[back].type === 'assistant') {
+            prevAssistantIdx = back;
+            break;
+          }
+          if (session.messages[back].type === 'user') break;
+        }
+        if (prevAssistantIdx < 0) continue;
+        const gapMs = msg.createdAt - session.messages[prevAssistantIdx].createdAt;
+        if (gapMs >= STUDIO_LONG_WAIT_FOLLOWUP_MIN_MS) {
+          const gapMin = Math.round(gapMs / 60000);
+          if (!bestLongWait || gapMin > bestLongWait.gapMin) {
+            bestLongWait = { index, gapMin, charLen };
+          }
+        }
+      }
+      if (bestLongWait) {
+        signals.push({
+          kind: 'studio_long_wait_followup',
+          sessionId: session.sessionId,
+          messageIndex: bestLongWait.index,
+          text: `Studio 会话「${session.title}」:上一条回复后间隔 ${bestLongWait.gapMin} 分钟,主人发来一条 ${bestLongWait.charLen} 字的简短跟进`,
+        });
+      }
+    }
+  }
+
+  const primaryStudioSessionId = activity.sessions.find((s) => s.isStudioOwner)?.sessionId ?? null;
+  for (const delegation of activity.studioDelegations ?? []) {
+    if (delegation.attemptCount >= 2 || delegation.failedOrCancelledAttempts >= 1) {
+      signals.push({
+        kind: 'studio_multi_round_revision',
+        sessionId: primaryStudioSessionId,
+        text: `Studio 派工「${delegation.ownerIntent.slice(0, 48)}」:经历 ${delegation.attemptCount} 次执行尝试(完成 ${delegation.completedAttempts},失败/改派 ${delegation.failedOrCancelledAttempts})`,
+      });
+    }
+  }
+
+  for (const decision of activity.studioDecisions ?? []) {
+    if (decision.status === 'deferred') {
+      signals.push({
+        kind: 'studio_superseded_briefing',
+        sessionId: primaryStudioSessionId,
+        text: `Studio 拍板项「${decision.title.slice(0, 48)}」(${decision.kind}):呈报后状态转为 deferred`,
       });
     }
   }

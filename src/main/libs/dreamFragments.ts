@@ -6,6 +6,8 @@ import type {
   DreamGroupChatActivity,
   DreamGroupTaskEvaluation,
   DreamSessionActivity,
+  DreamStudioDecisionActivity,
+  DreamStudioDelegationActivity,
   DreamTaskRunActivity,
 } from '../dreamStore';
 import { estimateCoworkTextTokens } from './coworkContextBudget';
@@ -18,6 +20,9 @@ export interface DreamActivityChunk {
   sessionType: string;
   peerName: string | null;
   isOrder: boolean;
+  isStudioOwner?: boolean;
+  autoOrigin?: string | null;
+  priorContextMessages?: DreamActivityMessage[];
   chunkIndex: number;
   messages: DreamActivityMessage[];
   taskRuns: DreamTaskRunActivity[];
@@ -71,10 +76,23 @@ export function estimateDreamActivityTokens(activity: DreamDayActivity): number 
   );
   for (const session of [...activity.sessions, ...groupChatsToSessions(activity.groupChats ?? [])]) {
     tokens += SESSION_FRAME_TOKENS + estimateCoworkTextTokens(`${session.title} ${session.peerName ?? ''}`);
+    for (const prior of session.priorContextMessages ?? []) {
+      tokens += estimateDreamMessageTokens(prior);
+    }
     for (const message of session.messages) {
       tokens += estimateDreamMessageTokens(message);
     }
   }
+  tokens += estimateCoworkTextTokens(
+    (activity.studioDelegations ?? [])
+      .map((item) => `${item.ownerIntent} ${item.status} ${item.workerNames.join(' ')}`)
+      .join(' '),
+  );
+  tokens += estimateCoworkTextTokens(
+    (activity.studioDecisions ?? [])
+      .map((item) => `${item.title} ${item.status} ${item.question} ${item.resolutionNote ?? ''}`)
+      .join(' '),
+  );
   // Chain content history lines render directly (summary or stored text as
   // the gist), so the estimate mirrors what buildDreamPrompt will emit.
   tokens += estimateCoworkTextTokens(
@@ -144,6 +162,11 @@ function chunkSession(
       sessionType: session.sessionType,
       peerName: session.peerName,
       isOrder: session.isOrder,
+      ...(session.isStudioOwner ? { isStudioOwner: true } : {}),
+      ...(session.autoOrigin ? { autoOrigin: session.autoOrigin } : {}),
+      ...(chunkIndex === 0 && session.priorContextMessages?.length
+        ? { priorContextMessages: session.priorContextMessages }
+        : {}),
       chunkIndex,
       messages: current,
       taskRuns: chunkIndex === 0 ? taskRuns : [],
@@ -247,6 +270,8 @@ export function summariesToActivity(
   groupTasks: DreamGroupTaskEvaluation[] = [],
   chainWrites: DreamChainWriteActivity[] = [],
   chainReads: DreamChainReadActivity[] = [],
+  studioDelegations: DreamStudioDelegationActivity[] = [],
+  studioDecisions: DreamStudioDecisionActivity[] = [],
 ): DreamDayActivity {
   return {
     sessions: summaries.map((summary) => ({
@@ -275,5 +300,7 @@ export function summariesToActivity(
     // (fragment mode) keep the bot's own publications and reads in the dream.
     chainWrites,
     chainReads,
+    ...(studioDelegations.length > 0 ? { studioDelegations } : {}),
+    ...(studioDecisions.length > 0 ? { studioDecisions } : {}),
   };
 }

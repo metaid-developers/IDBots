@@ -244,7 +244,7 @@ test('approval ordering partitions under-explored first only while stalled', () 
 // component on practice proposals: parse, prompt schema, store (RRSI P4 Task 2)
 // ---------------------------------------------------------------------------
 
-const DREAM_VERSION_BEFORE = 17;
+const DREAM_VERSION_BEFORE = 18;
 const LONG_IDENTITY = `我是一个认真严谨的 MetaBot。${'我先验证再交付。'.repeat(30)}`;
 
 const proposalPayload = (component) => JSON.stringify({
