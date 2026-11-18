@@ -10,7 +10,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && pnpm run compile:electron && node scripts/verify-twemoji-bundle.mjs",
+    "build": "tsc && vite build && pnpm run compile:electron && node scripts/verify-twemoji-bundle.mjs && node scripts/verify-dist-electron.mjs",
     "dev:mobile": "cross-env VITE_MOBILE_MOCK=1 vite --config vite.mobile.config.ts --port 5176",
     "dev:mobile:real": "cross-env vite --config vite.mobile.config.ts --port 5176",
     "test:e2e:mobile": "node scripts/run-mobile-e2e.mjs",
@@ -23,6 +23,7 @@
     "check:cross-platform-paths": "node scripts/check-cross-platform-paths.js",
     "check:dsh-deps": "node scripts/check-dsh-runtime-deps.cjs",
     "check:twemoji-bundle": "node scripts/verify-twemoji-bundle.mjs",
+    "check:dist-electron": "node scripts/verify-dist-electron.mjs",
     "upgrade:dsh": "node scripts/upgrade-dsh-runtime.cjs",
     "probe:model-thinking": "node scripts/probe-model-thinking.mjs",
     "check:cross-platform-paths:full": "node scripts/check-cross-platform-paths.js --with-build",
