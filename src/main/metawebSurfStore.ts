@@ -378,6 +378,32 @@ export class MetawebSurfStore {
     ).map(rowToRunRecord);
   }
 
+  /**
+   * One day's runs, newest first, for the surf-report panel's calendar day
+   * view. `dayStartIso`/`dayEndIso` delimit a HALF-OPEN range (`>=` start,
+   * `<` end) in the same ISO coordinate system as `created_at`; the caller
+   * picks the boundaries (UTC day cut matches the `listRunDays` markers).
+   */
+  listRunsByMetabotAndDay(metabotId: number, dayStartIso: string, dayEndIso: string): MetawebSurfRunRecord[] {
+    return this.getAll<MetawebSurfRunRow>(
+      'SELECT * FROM metaweb_surf_runs WHERE metabot_id = ? AND created_at >= ? AND created_at < ? ORDER BY created_at DESC',
+      [metabotId, dayStartIso, dayEndIso],
+    ).map(rowToRunRecord);
+  }
+
+  /**
+   * Distinct UTC day prefixes (`YYYY-MM-DD`) of this bot's surf runs, newest
+   * first — the calendar's marker dots. Same coordinate system as
+   * `created_at` itself, so a marker, the selected day, and that day's
+   * `listRunsByMetabotAndDay` range always agree.
+   */
+  listRunDays(metabotId: number): string[] {
+    return this.getAll<{ day: string }>(
+      'SELECT DISTINCT substr(created_at, 1, 10) AS day FROM metaweb_surf_runs WHERE metabot_id = ? ORDER BY day DESC',
+      [metabotId],
+    ).map((row) => row.day);
+  }
+
   /** Latest finished run regardless of trigger — the "surfed within 20h" check. */
   getLatestFinishedRun(metabotId: number): MetawebSurfRunRecord | null {
     const row = this.getOne<MetawebSurfRunRow>(
