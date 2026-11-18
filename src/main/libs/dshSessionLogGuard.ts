@@ -21,6 +21,9 @@
  * Hard constraint (inherited from the work order): this module NEVER deletes,
  * truncates, rewrites, or "repairs" a log file. The only mutating syscall it
  * issues is `fsync` on an already-open handle, which cannot change content.
+ * (On Windows the handle is opened `'r+'` because FlushFileBuffers refuses a
+ * read-only one — still not a single byte is written; see
+ * flushSessionLogArtifact.)
  *
  * Frame format (authoritative source: dsh-runtime's
  * @deepseek-ai/dsh-session-persistence-jsonl):
@@ -268,19 +271,29 @@ export interface SessionLogGuardAuditLine {
 }
 
 /**
- * Flush (fsync) ONE artifact. Opens read-only and never writes. Returns the
- * size after the fsync and whether the flush succeeded; a missing file is
- * reported as `sizeBytes: null` with `verdict: 'unreadable'` and is NOT an
- * error (the guard runs on shutdown, a removed temp file is normal).
+ * Flush (fsync) ONE artifact. Never writes a byte. Returns the size after the
+ * fsync and whether the flush succeeded; a missing file is reported as
+ * `sizeBytes: null` with `error: null` and is NOT an error (the guard runs on
+ * shutdown, a removed temp file is normal).
+ *
+ * Windows: FlushFileBuffers requires a write-mode handle — fsync on the POSIX
+ * `'r'` handle fails with EPERM on EVERY quit, which both defeated the whole
+ * durability layer and spammed the quit audit with false 'unreadable' verdicts
+ * (every Windows upgrade force-kills the app, so this flush is the only thing
+ * standing between the runtime's buffered log bytes and `taskkill /F`). There
+ * the handle is opened `'r+'` instead: no byte is ever written, the write
+ * access only satisfies the API. Any remaining Windows fsync refusal (e.g. an
+ * antivirus holding the artifact) degrades to a clean "skipped" audit —
+ * `flushed:false, error:null` with a `detail` — so the quit verdict stays
+ * 'ok' instead of a false alarm. POSIX keeps the strictly-read-only `'r'`
+ * handle and real error reporting.
  */
 export async function flushSessionLogArtifact(
   artifactPath: string,
-): Promise<{ sizeBytes: number | null; mtimeMs: number | null; flushed: boolean; error: string | null }> {
+): Promise<{ sizeBytes: number | null; mtimeMs: number | null; flushed: boolean; error: string | null; detail?: string }> {
   let handle: Awaited<ReturnType<typeof fsp.open>> | null = null;
   try {
-    // 'r' — read-only. fsync on a read handle is valid on POSIX and flushes
-    // the page cache for the inode; it can never alter content.
-    handle = await fsp.open(artifactPath, 'r');
+    handle = await fsp.open(artifactPath, process.platform === 'win32' ? 'r+' : 'r');
     const stat = await handle.stat();
     await handle.sync();
     return { sizeBytes: stat.size, mtimeMs: stat.mtimeMs, flushed: true, error: null };
@@ -288,6 +301,15 @@ export async function flushSessionLogArtifact(
     const code = (error as { code?: string })?.code;
     if (code === 'ENOENT') {
       return { sizeBytes: null, mtimeMs: null, flushed: false, error: null };
+    }
+    if (process.platform === 'win32') {
+      return {
+        sizeBytes: null,
+        mtimeMs: null,
+        flushed: false,
+        error: null,
+        detail: `fsync skipped on win32 (${code ?? 'unknown'}): ${error instanceof Error ? error.message : String(error)}`,
+      };
     }
     return {
       sizeBytes: null,
@@ -338,7 +360,7 @@ export async function guardSessionLogAtQuit(
       mtimeMs: flush.mtimeMs,
       detail: flush.error
         ? `fsync failed: ${flush.error}`
-        : `fsync ok (${flush.sizeBytes ?? 0} bytes durable)`,
+        : flush.detail ?? `fsync ok (${flush.sizeBytes ?? 0} bytes durable)`,
     });
 
     let buffer: Buffer;
