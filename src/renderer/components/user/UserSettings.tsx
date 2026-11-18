@@ -1056,7 +1056,7 @@ const UserSettings: React.FC = () => {
         )}
 
         {/* Profile card: identity group (clickable avatar + inline name) with account actions;
-            the daily message renders as its own full-width row below. */}
+            the daily message renders inside the identity column, directly under the name. */}
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-4">
             <button
@@ -1116,6 +1116,12 @@ const UserSettings: React.FC = () => {
                   </button>
                 )}
               </div>
+              {/* Daily message: inside the identity column, directly under the name — wraps up to two lines, never truncated to an ellipsis. */}
+              {dailyMessage && (
+                <p className="break-words text-[13px] font-medium leading-relaxed line-clamp-2 text-claude-text dark:text-claude-darkText">
+                  {dailyMessage}
+                </p>
+              )}
               {nameError && (
                 <div className="text-xs text-red-500 bg-red-500/10 px-3 py-2 rounded-lg">
                   {nameError}
@@ -1147,13 +1153,6 @@ const UserSettings: React.FC = () => {
             </button>
           </div>
         </div>
-
-        {/* Daily message: its own full-width row below the identity row — wraps up to two lines, never truncated to an ellipsis. */}
-        {dailyMessage && (
-          <p className="break-words text-[13px] font-medium leading-relaxed line-clamp-2 text-claude-text dark:text-claude-darkText">
-            {dailyMessage}
-          </p>
-        )}
 
         {avatarEditing && (
           <AvatarPickerModal
