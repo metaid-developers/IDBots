@@ -9133,7 +9133,7 @@ const getCoworkRunner = () => {
           let activeSource: { dir: string; indexFile: string } | null = null;
           if (active?.uri) {
             try {
-              const infoResult = await getBotBrowserTabBridge().execute({ action: 'get-tab-info', tabId: active.id });
+              const infoResult = await getBotBrowserTabBridge().execute({ action: 'get-tab-info', tabId: active.id }, { focusWindow: false });
               const renderer = readRendererFromEnvelope(infoResult.info?.current);
               if (renderer.type) rendererType = renderer.type;
               if (renderer.type === 'html-iframe') {
@@ -10159,13 +10159,16 @@ const getStudioLiveStageService = (): StudioLiveStageService => {
         const result = await getBotBrowserTabBridge().execute({ action: 'get-tabs' }, { focusWindow: false });
         return result.tabs.find((tab) => tab.id === tabId)?.uri ?? null;
       },
+      // Host-side stage patches and interaction drains run on every state
+      // update — they must never raise the window over the owner's current
+      // app (focusWindow:false plus the bridge's background gate).
       applyPatch: (input) => applyStudioLiveStagePatch({
         getWindows: () => BrowserWindow.getAllWindows(),
-        executeTabCommand: (command) => getBotBrowserTabBridge().execute(command),
+        executeTabCommand: (command) => getBotBrowserTabBridge().execute(command, { focusWindow: false }),
       }, input),
       drainInteractions: (tabId, sessionId) => drainStudioLiveStageInteractions({
         getWindows: () => BrowserWindow.getAllWindows(),
-        executeTabCommand: (command) => getBotBrowserTabBridge().execute(command),
+        executeTabCommand: (command) => getBotBrowserTabBridge().execute(command, { focusWindow: false }),
       }, {
         tabId,
         sessionId,
@@ -10228,7 +10231,7 @@ const getStudioGenesisStageService = (): StudioGenesisStageService => {
     const fallbackAvatarDataUri = `data:image/png;base64,${fs.readFileSync(path.join(publicRoot, 'default_metabot.png')).toString('base64')}`;
     const frameDeps = {
       getWindows: () => BrowserWindow.getAllWindows(),
-      executeTabCommand: (command: BotBrowserTabCommand) => getBotBrowserTabBridge().execute(command),
+      executeTabCommand: (command: BotBrowserTabCommand) => getBotBrowserTabBridge().execute(command, { focusWindow: false }),
     };
     studioGenesisStageService = createStudioGenesisStageService({
       getSession: (sessionId) => getCoworkStore().getSession(sessionId),
@@ -10264,7 +10267,9 @@ const executeBotBrowserAct = (input: BotBrowserPreviewActRequest) =>
   executeBotBrowserPreviewAct(
     {
       getWindows: () => BrowserWindow.getAllWindows(),
-      executeTabCommand: (command) => getBotBrowserTabBridge().execute(command),
+      // Host-side renderer/frame lookups — acting on a page (attended or a
+      // background session) never raises the window over the owner's app.
+      executeTabCommand: (command) => getBotBrowserTabBridge().execute(command, { focusWindow: false }),
     },
     input,
   );

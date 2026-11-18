@@ -176,8 +176,12 @@ export function createBotBrowserTabBridge(options: {
         },
       });
       // Background writes (Bot Internet projections into a non-active tab)
-      // pass focusWindow: false so they never steal the OS focus.
-      if (opts?.focusWindow !== false) {
+      // pass focusWindow: false so they never steal the OS focus. The same
+      // holds for every command marked background: true — Studio stage
+      // patches, interaction drains and background-session browser mirrors
+      // ride the bridge on every state update, and raising the window from
+      // whatever app the owner is in was the reported focus steal.
+      if (opts?.focusWindow !== false && command.background !== true) {
         if (targetWindow.isMinimized()) targetWindow.restore();
         if (!targetWindow.isVisible()) targetWindow.show();
         targetWindow.focus();
