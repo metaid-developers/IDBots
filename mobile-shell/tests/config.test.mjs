@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { createCapacitorConfig, getFlavor } from '../scripts/flavors.mjs';
@@ -49,6 +49,31 @@ test('Android has API 26 and explicit staging and production variants', () => {
   const backPlugin = read('../android/app/src/main/java/com/idbots/world/NativeBackPlugin.java');
   assert.match(backPlugin, /@CapacitorPlugin\(name = "NativeBack"\)/);
   assert.match(backPlugin, /getBridge\(\)\.getActivity\(\)\.finish\(\)/);
+});
+
+test('production startup uses declarative config, version 0.1, and branded launcher assets', () => {
+  const build = read('../android/app/build.gradle');
+  assert.match(build, /versionCode 2/);
+  assert.match(build, /versionName "0\.1"/);
+  const activity = read('../android/app/src/main/java/com/idbots/world/MainActivity.java');
+  assert.doesNotMatch(activity, /CapConfig|setServerUrl|setErrorPath/);
+  for (const [path, size] of [
+    ['../android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png', 192],
+    ['../android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png', 192],
+    ['../android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png', 432],
+    ['../android/app/src/main/res/drawable/splash.png', 432],
+  ]) {
+    const png = readFileSync(new URL(path, import.meta.url));
+    assert.equal(png.readUInt32BE(16), size, path);
+    assert.equal(png.readUInt32BE(20), size, path);
+  }
+  const resRoot = new URL('../android/app/src/main/res/', import.meta.url);
+  for (const directory of readdirSync(resRoot)) {
+    if (!directory.startsWith('drawable-port-') && !directory.startsWith('drawable-land-')) continue;
+    const png = readFileSync(new URL(`${directory}/splash.png`, resRoot));
+    assert.equal(png.readUInt32BE(16), 432, directory);
+    assert.equal(png.readUInt32BE(20), 432, directory);
+  }
 });
 
 test('Gradle wrapper remains executable in Git and on disk', () => {
