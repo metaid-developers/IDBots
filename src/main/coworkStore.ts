@@ -1290,6 +1290,29 @@ export interface CoworkSessionMessageSearchHit {
   metadata?: Record<string, unknown>;
 }
 
+/** One chapter of a Studio owner conversation (Phase 1 in-session chapter model). */
+export interface CoworkSessionChapterRecord {
+  id: string;
+  sessionId: string;
+  metabotId: number | null;
+  chapterIndex: number;
+  title: string;
+  startedAt: number;
+  endedAt: number | null;
+  closeReason: string | null;
+  summaryMarkdown: string;
+  contentJson: string;
+  tokenWatermark: number | null;
+  llmId: string | null;
+  updatedAt: number;
+}
+
+/** A chapter-card hit for conversation_recall — the chapter plus its matched-term count. */
+export interface CoworkSessionChapterSearchHit {
+  chapter: CoworkSessionChapterRecord;
+  matched: number;
+}
+
 export interface CoworkConfig {
   workingDirectory: string;
   systemPrompt: string;
@@ -1657,6 +1680,7 @@ export class CoworkStore implements MemoryBackend {
     this.ensureMemoryPolicySchemaCompatibility();
     this.ensureConversationMappingSchemaCompatibility();
     this.ensureA2AConversationSchemaCompatibility();
+    this.ensureStudioChapterSchemaCompatibility();
     this.ensureCoworkMessageHealColumns();
     this.ensureCoworkMessageIndexes();
     this.ensureCoworkMessagesFtsSchema(deferHeavyStartupMaintenance);
@@ -2669,6 +2693,196 @@ export class CoworkStore implements MemoryBackend {
     } catch (error) {
       console.warn('[CoworkStore] Failed to verify A2A conversation schema:', error);
     }
+  }
+
+  /**
+   * Studio chapter schema (2026-11-19 Phase 1): cowork_session_chapters is
+   * created idempotently by SqliteStore's init too; this CoworkStore-side
+   * guard keeps the table available even when a CoworkStore is constructed
+   * over a database initialized by an older SqliteStore (test harnesses,
+   * partial migrations). Additive only — never drops or rewrites.
+   */
+  private ensureStudioChapterSchemaCompatibility(): void {
+    try {
+      let changed = false;
+      if (!this.tableExists('cowork_session_chapters')) {
+        this.db.run(`
+          CREATE TABLE IF NOT EXISTS cowork_session_chapters (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            metabot_id INTEGER,
+            chapter_index INTEGER NOT NULL,
+            title TEXT NOT NULL DEFAULT '',
+            started_at INTEGER NOT NULL,
+            ended_at INTEGER,
+            close_reason TEXT,
+            summary_markdown TEXT NOT NULL DEFAULT '',
+            content_json TEXT NOT NULL DEFAULT '{}',
+            token_watermark INTEGER,
+            llm_id TEXT,
+            updated_at INTEGER NOT NULL,
+            UNIQUE(session_id, chapter_index),
+            FOREIGN KEY (session_id) REFERENCES cowork_sessions(id) ON DELETE CASCADE
+          )
+        `);
+        changed = true;
+      }
+      if (!this.indexExists('idx_cowork_session_chapters_session')) {
+        this.db.run(`
+          CREATE INDEX IF NOT EXISTS idx_cowork_session_chapters_session
+          ON cowork_session_chapters(session_id, chapter_index DESC)
+        `);
+        changed = true;
+      }
+      if (changed) {
+        this.saveDb();
+      }
+    } catch (error) {
+      console.warn('[CoworkStore] Failed to verify cowork_session_chapters schema:', error);
+    }
+  }
+
+  private chapterRowToRecord(row: Record<string, unknown>): CoworkSessionChapterRecord {
+    return {
+      id: String(row.id ?? ''),
+      sessionId: String(row.session_id ?? ''),
+      metabotId: row.metabot_id == null ? null : Number(row.metabot_id),
+      chapterIndex: Number(row.chapter_index) || 0,
+      title: String(row.title ?? ''),
+      startedAt: Number(row.started_at) || 0,
+      endedAt: row.ended_at == null ? null : Number(row.ended_at),
+      closeReason: row.close_reason == null ? null : String(row.close_reason),
+      summaryMarkdown: String(row.summary_markdown ?? ''),
+      contentJson: String(row.content_json ?? '{}'),
+      tokenWatermark: row.token_watermark == null ? null : Number(row.token_watermark),
+      llmId: row.llm_id == null ? null : String(row.llm_id),
+      updatedAt: Number(row.updated_at) || 0,
+    };
+  }
+
+  /** All chapters of one session, oldest first. [] before the first chapter row exists. */
+  listStudioChapters(sessionId: string): CoworkSessionChapterRecord[] {
+    if (!sessionId || !this.tableExists('cowork_session_chapters')) return [];
+    const rows = this.getAll<Record<string, unknown>>(`
+      SELECT * FROM cowork_session_chapters
+      WHERE session_id = ?
+      ORDER BY chapter_index ASC
+    `, [sessionId]);
+    return rows.map((row) => this.chapterRowToRecord(row));
+  }
+
+  /** The chapter still in progress, or null when every chapter is closed (or none exists). */
+  getActiveStudioChapter(sessionId: string): CoworkSessionChapterRecord | null {
+    if (!sessionId || !this.tableExists('cowork_session_chapters')) return null;
+    const rows = this.getAll<Record<string, unknown>>(`
+      SELECT * FROM cowork_session_chapters
+      WHERE session_id = ? AND ended_at IS NULL
+      ORDER BY chapter_index DESC
+      LIMIT 1
+    `, [sessionId]);
+    return rows.length > 0 ? this.chapterRowToRecord(rows[0]) : null;
+  }
+
+  /**
+   * Lazily open chapter #1 (or keep the existing active chapter). Called from
+   * the Studio volatile build — one cheap SELECT per turn, one INSERT per
+   * session. Returns null only when the write fails (never blocks the turn).
+   */
+  ensureActiveStudioChapter(sessionId: string, metabotId: number | null): CoworkSessionChapterRecord | null {
+    const existing = this.getActiveStudioChapter(sessionId);
+    if (existing) return existing;
+    if (!sessionId || !this.tableExists('cowork_session_chapters')) return null;
+    const now = Date.now();
+    try {
+      const id = uuidv4();
+      const nextIndex = this.listStudioChapters(sessionId).length + 1;
+      this.db.run(`
+        INSERT INTO cowork_session_chapters
+          (id, session_id, metabot_id, chapter_index, title, started_at, ended_at, close_reason, summary_markdown, content_json, token_watermark, llm_id, updated_at)
+        VALUES (?, ?, ?, ?, '', ?, NULL, NULL, '', '{}', NULL, NULL, ?)
+      `, [id, sessionId, metabotId, nextIndex, now, now]);
+      this.saveDb();
+      return this.getActiveStudioChapter(sessionId);
+    } catch (error) {
+      console.warn('[CoworkStore] Failed to open studio chapter:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Close a chapter (slice 2's close flow and manual commands land here).
+   * Closes the ACTIVE chapter when chapterIndex is omitted. No-op (null)
+   * when there is nothing to close.
+   */
+  closeStudioChapter(sessionId: string, patch: {
+    chapterIndex?: number;
+    closeReason: string;
+    title?: string;
+    summaryMarkdown?: string;
+    contentJson?: string;
+    tokenWatermark?: number | null;
+    llmId?: string | null;
+  }): CoworkSessionChapterRecord | null {
+    if (!sessionId || !this.tableExists('cowork_session_chapters')) return null;
+    const target = patch.chapterIndex != null
+      ? this.listStudioChapters(sessionId).find((chapter) => chapter.chapterIndex === patch.chapterIndex) ?? null
+      : this.getActiveStudioChapter(sessionId);
+    if (!target || target.endedAt != null) return null;
+    const now = Date.now();
+    try {
+      this.db.run(`
+        UPDATE cowork_session_chapters
+        SET ended_at = ?, close_reason = ?, updated_at = ?,
+            title = ?, summary_markdown = ?, content_json = ?,
+            token_watermark = COALESCE(?, token_watermark), llm_id = COALESCE(?, llm_id)
+        WHERE session_id = ? AND chapter_index = ? AND ended_at IS NULL
+      `, [
+        now,
+        patch.closeReason,
+        now,
+        patch.title ?? target.title,
+        patch.summaryMarkdown ?? target.summaryMarkdown,
+        patch.contentJson ?? target.contentJson,
+        patch.tokenWatermark ?? null,
+        patch.llmId ?? null,
+        sessionId,
+        target.chapterIndex,
+      ]);
+      this.saveDb();
+      return this.listStudioChapters(sessionId).find((chapter) => chapter.chapterIndex === target.chapterIndex) ?? null;
+    } catch (error) {
+      console.warn('[CoworkStore] Failed to close studio chapter:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Term search over one session's CLOSED chapter cards (title + summary),
+   * ranked by matched-term count then newest — the same semantics
+   * conversation_recall applies to verbatim messages. Chapter cards are the
+   * condensed knowledge that survives compaction, so they lead the recall
+   * results ahead of raw message hits.
+   */
+  searchStudioChapters(sessionId: string, options: {
+    terms: string[];
+    limit?: number;
+  }): CoworkSessionChapterSearchHit[] {
+    const terms = (options.terms ?? [])
+      .map((term) => String(term ?? '').toLowerCase().trim())
+      .filter((term) => term.length > 0);
+    if (!sessionId || terms.length === 0) return [];
+    if (!this.tableExists('cowork_session_chapters')) return [];
+    const limit = Math.max(1, Math.min(10, Math.floor(options.limit ?? 5)));
+    const chapters = this.listStudioChapters(sessionId)
+      .filter((chapter) => chapter.endedAt != null)
+      .map((chapter) => {
+        const haystack = `${chapter.title}\n${chapter.summaryMarkdown}`.toLowerCase();
+        const matched = terms.reduce((count, term) => count + (haystack.includes(term) ? 1 : 0), 0);
+        return { chapter, matched };
+      })
+      .filter((entry) => entry.matched > 0)
+      .sort((a, b) => (b.matched - a.matched) || (b.chapter.endedAt ?? 0) - (a.chapter.endedAt ?? 0));
+    return chapters.slice(0, limit);
   }
 
   private backfillA2AConversationEpisodes(): number {
