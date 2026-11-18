@@ -19,6 +19,9 @@ public class NativeShellWebViewClient extends BridgeWebViewClient {
 
     @Override
     public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+        if (request == null || request.getUrl() == null) {
+            return true;
+        }
         String candidate = request.getUrl().toString();
         if (NativeOriginPolicy.isTrustedRemote(candidate, BuildConfig.NATIVE_REMOTE_ORIGIN) || NativeOriginPolicy.isBundledOffline(candidate)) {
             return false;
@@ -49,8 +52,10 @@ public class NativeShellWebViewClient extends BridgeWebViewClient {
             if (BuildConfig.DEBUG) {
                 Log.i("NS0_EXTERNAL_HANDOFF", "scheme=" + uri.getScheme() + " host=" + uri.getHost());
             }
-            bridge.getActivity().startActivity(new Intent(Intent.ACTION_VIEW, uri));
-        } catch (ActivityNotFoundException ignored) {
+            if (bridge.getActivity() != null) {
+                bridge.getActivity().startActivity(new Intent(Intent.ACTION_VIEW, uri));
+            }
+        } catch (ActivityNotFoundException | SecurityException ignored) {
             Log.w("NS0_NAVIGATION", "No system application accepted an approved external link");
         }
     }
